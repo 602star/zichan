@@ -1,0 +1,12 @@
+{
+  "name": "@zichan/e2e-tooling",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "install:chromium": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.1"
+  }
+}

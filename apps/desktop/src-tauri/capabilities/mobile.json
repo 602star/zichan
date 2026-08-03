@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "mobile-device-capabilities",
+  "description": "Camera, biometric, location and file-sharing access for the mobile shell",
+  "windows": ["main"],
+  "platforms": ["iOS", "android"],
+  "permissions": [
+    "biometric:default",
+    "barcode-scanner:default",
+    "system-share:default",
+    "geolocation:allow-check-permissions",
+    "geolocation:allow-request-permissions",
+    "geolocation:allow-get-current-position"
+  ]
+}

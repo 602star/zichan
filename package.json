@@ -1,0 +1,47 @@
+{
+  "name": "zichan",
+  "private": true,
+  "version": "0.1.0",
+  "description": "多资产生命周期记账系统 — local-first multi-asset lifecycle ledger",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-start.ps1 -Mode web",
+    "start:web": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-start.ps1 -Mode web",
+    "start:sync": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-start.ps1 -Mode sync",
+    "start:server": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-start.ps1 -Mode server",
+    "start:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-start.ps1 -Mode desktop",
+    "mobile:init:android": "npm run android:init --workspace @zichan/desktop",
+    "mobile:dev:android": "npm run android:dev --workspace @zichan/desktop",
+    "mobile:build:android": "npm run android:build --workspace @zichan/desktop",
+    "mobile:init:ios": "npm run ios:init --workspace @zichan/desktop",
+    "mobile:dev:ios": "npm run ios:dev --workspace @zichan/desktop",
+    "mobile:build:ios": "npm run ios:build --workspace @zichan/desktop",
+    "start:all": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-start.ps1 -Mode all",
+    "stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-stop.ps1 -Mode all",
+    "stop:web": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-stop.ps1 -Mode web",
+    "stop:sync": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-stop.ps1 -Mode sync",
+    "stop:server": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-stop.ps1 -Mode server",
+    "stop:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-stop.ps1 -Mode desktop",
+    "dev": "npm run dev --workspace @zichan/web",
+    "server": "npm run server --workspace @zichan/desktop",
+    "server:backup": "npm run backup --workspace @zichan/sync-server --",
+    "server:verify-backup": "npm run verify-backup --workspace @zichan/sync-server --",
+    "server:restore": "npm run restore --workspace @zichan/sync-server --",
+    "quality:setup": "npm install --prefix tools/eslint && npm install --prefix tools/coverage && npm install --prefix tools/e2e",
+    "lint": "npm run lint --prefix tools/eslint",
+    "test": "npm run test --workspaces --if-present",
+    "test:coverage": "npm run test --prefix tools/coverage",
+    "test:e2e": "npm run test --prefix tools/e2e",
+    "bench:transactions": "npm run build && node packages/db/bench/transaction-scale.mjs",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspace @zichan/logger --workspace @zichan/core --workspace @zichan/db",
+    "build:web": "npm run build --workspace @zichan/web",
+    "ci": "npm run lint && npm run typecheck && npm run test:coverage && npm run build:web"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

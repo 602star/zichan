@@ -1,0 +1,6 @@
+# Replace sync.example.com with your domain (A/AAAA record -> this host).
+# The unified server serves Web UI (/), sync API (/api/*), and admin API (/admin/*).
+# Caddy fetches + renews a Let's Encrypt certificate automatically.
+sync.example.com {
+	reverse_proxy sync-server:8787
+}

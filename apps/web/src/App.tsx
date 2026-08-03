@@ -1,0 +1,786 @@
+import { lazy, Suspense, useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
+import type { LedgerBackup } from '@zichan/db';
+import { useStore } from './db/store.js';
+import { loadSnapshot, useSnapshot, type Snapshot } from './db/snapshot.js';
+import { baseAsset } from './db/derive.js';
+import { setBaseSymbol } from './format.js';
+import { THEMES, ACCENTS, THEME_NAMES, FONT_FAMILY, type ThemeId } from './theme.js';
+import {
+  BackupPassphraseRequiredError,
+  describePreflight,
+  downloadBackup,
+  listSavedBackups,
+  parseEncryptedBackup,
+  rehearseRestore,
+  saveLedgerBackup,
+  type ParsedEncryptedBackup,
+  type SavedBackup,
+} from './db/backups.js';
+import { safetyStateFromSetting, safetyWarnings } from './db/safety.js';
+import { ConfirmDialog } from './ui/ConfirmDialog.js';
+import { AppSecurityGate } from './ui/AppSecurityGate.js';
+import { VaultUnlockPrompt } from './ui/VaultUnlockPrompt.js';
+import { installSyncLifecycle } from './background-sync.js';
+import {
+  exportPortableLedger,
+  importPortableLedger,
+  preflightPortableBackup,
+  type PortableLedgerBackup,
+} from './db/portable-backup.js';
+import { adoptUnlockedLedgerKeyEnvelope, runtimeLedgerCryptoSession } from './ledger-key-vault.js';
+
+const Dashboard = lazy(() => import('./screens/Dashboard.js').then((module) => ({ default: module.Dashboard })));
+const Convert = lazy(() => import('./screens/Convert.js').then((module) => ({ default: module.Convert })));
+const Game = lazy(() => import('./screens/Game.js').then((module) => ({ default: module.Game })));
+const Fixed = lazy(() => import('./screens/Fixed.js').then((module) => ({ default: module.Fixed })));
+const Reports = lazy(() => import('./screens/Reports.js').then((module) => ({ default: module.Reports })));
+const Manage = lazy(() => import('./screens/Manage.js').then((module) => ({ default: module.Manage })));
+const Transactions = lazy(() => import('./screens/Transactions.js').then((module) => ({ default: module.Transactions })));
+const Settings = lazy(() => import('./screens/Settings.js').then((module) => ({ default: module.Settings })));
+const Sync = lazy(() => import('./screens/Sync.js').then((module) => ({ default: module.Sync })));
+const History = lazy(() => import('./screens/History.js').then((module) => ({ default: module.History })));
+
+type ScreenId = 'dashboard' | 'convert' | 'transactions' | 'game' | 'fixed' | 'reports' | 'history' | 'manage' | 'sync' | 'settings';
+
+const NAV: [ScreenId, string, string][] = [
+  ['dashboard', '总览', '◈'],
+  ['convert', '资产转换', '⇄'],
+  ['transactions', '日常收支', '≋'],
+  ['game', '游戏赛季', '◆'],
+  ['fixed', '物品资产', '▤'],
+  ['reports', '报表', '▦'],
+  ['history', '历史', '◷'],
+  ['manage', '管理', '⊞'],
+  ['sync', '同步', '⇅'],
+  ['settings', '设置', '⚙'],
+];
+
+const META: Record<ScreenId, [string, string]> = {
+  dashboard: ['总览', '净资产、配置与近期动态一览'],
+  convert: ['资产转换', '多步换汇链路 · 汇率与手续费全程可追溯'],
+  transactions: ['日常收支', '工资、房租、餐饮、购物与现金流'],
+  game: ['游戏赛季', '按赛季与账号记录投入 · 产出 · 回收'],
+  fixed: ['物品资产', '使用成本 · 耗材 · 保修 · 生命周期'],
+  reports: ['报表', '跨模块的成本与盈亏报表'],
+  history: ['操作历史', '改前改后 · 批量操作 · 冲突解决记录'],
+  manage: ['管理', '资产 · 分类 · 商户 · 价格'],
+  sync: ['同步', '同步账户 · 服务器管理'],
+  settings: ['设置', '记账模式 · 数据自检 · 备份'],
+};
+
+function formatAsOfDate(date?: string): string {
+  const now = new Date();
+  const fallback = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const value = date || fallback;
+  const [y, m, d] = value.split('-');
+  return [y, m, d].filter(Boolean).join(' · ');
+}
+
+const ghostBtn: CSSProperties = {
+  padding: '8px 14px', borderRadius: 99, border: '1px solid var(--border)',
+  background: 'var(--surface)', color: 'var(--fg-muted)', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+};
+
+type ImportDialog =
+  | { kind: 'password'; file: File }
+  | { kind: 'confirm'; opened: ParsedEncryptedBackup; mode: 'merge' | 'replace'; summary: string; warnings: string[]; diff: ImportDiff }
+  | { kind: 'notice'; title: string; message: string; tone?: 'normal' | 'danger' };
+
+interface ImportDiff {
+  added: number;
+  updated: number;
+  unchanged: number;
+  byType: { label: string; added: number; updated: number; unchanged: number }[];
+  examples: { label: string; name: string; fields: string[] }[];
+}
+
+const TECHNICAL_IMPORT_KEYS = new Set(['id', 'createdAt', 'updatedAt', 'version', 'isDeleted']);
+const IMPORT_FIELD_LABELS: Record<string, string> = {
+  name: '名称',
+  code: '代码',
+  type: '类型',
+  category: '分类',
+  amount: '金额',
+  assetId: '资产',
+  accountId: '账户',
+  date: '日期',
+  time: '时间',
+  timezone: '时区',
+  payeeId: '商户',
+  merchant: '商户文本',
+  description: '描述',
+  note: '备注',
+  tagIds: '标签',
+  locationId: '地点',
+  locationName: '地点文本',
+  latitude: '纬度',
+  longitude: '经度',
+  locationAccuracyMeters: '定位精度（米）',
+  transactionFormOptionalFields: '记账表单字段',
+  categoryPickerDefaultScope: '记账分类默认范围',
+  refundAttributionMode: '退款统计归属',
+  refundForId: '关联原支出',
+  refundAppliedAmount: '冲减原支出金额',
+  refundAppliedAssetId: '冲减币种',
+  recordState: '记录状态',
+  voidedAt: '作废时间',
+  voidReason: '作废原因',
+  dataSafetyStateJson: '数据安全状态',
+};
+
+function idOf(row: unknown): string | undefined {
+  return row && typeof row === 'object' && !Array.isArray(row) && typeof (row as { id?: unknown }).id === 'string'
+    ? (row as { id: string }).id
+    : undefined;
+}
+
+function businessRow(row: unknown): Record<string, unknown> {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return {};
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (!TECHNICAL_IMPORT_KEYS.has(key)) result[key] = value;
+  }
+  return result;
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function changedBusinessFields(a: unknown, b: unknown): string[] {
+  const left = businessRow(a);
+  const right = businessRow(b);
+  return [...new Set([...Object.keys(left), ...Object.keys(right)])]
+    .sort()
+    .filter((key) => !sameValue(left[key], right[key]));
+}
+
+function importRowTitle(row: unknown): string {
+  if (!row || typeof row !== 'object' || Array.isArray(row)) return '未知记录';
+  const r = row as Record<string, unknown>;
+  const value = r.name ?? r.title ?? r.description ?? r.merchant ?? r.code ?? r.id;
+  return value ? String(value) : '未知记录';
+}
+
+function importFieldLabel(key: string): string {
+  return IMPORT_FIELD_LABELS[key] ?? key;
+}
+
+function importDiff(backup: LedgerBackup, snap: Snapshot | null): ImportDiff {
+  const collections: { label: string; local: unknown[]; incoming: unknown[] }[] = [
+    { label: '资产', local: snap?.assets ?? [], incoming: backup.assets },
+    { label: '账户', local: snap?.accounts ?? [], incoming: backup.accounts },
+    { label: '设置', local: snap?.setting ? [snap.setting] : [], incoming: backup.settings },
+    { label: '资产转换', local: snap?.chains.map((c) => c.chain) ?? [], incoming: backup.chains.map((c) => c.chain) },
+    { label: '转换步骤', local: snap?.chains.flatMap((c) => c.steps) ?? [], incoming: backup.chains.flatMap((c) => c.steps) },
+    { label: '持仓批次', local: snap?.lots ?? [], incoming: backup.lots },
+    { label: '价格', local: snap?.priceMarks ?? [], incoming: backup.priceMarks },
+    { label: '定投', local: [...(snap?.dcaPlans ?? []), ...(snap?.dcaExecutions ?? [])], incoming: [...backup.dcaPlans, ...backup.dcaExecutions] },
+    { label: '游戏', local: [...(snap?.games ?? []), ...(snap?.gameAccounts ?? []), ...(snap?.seasons ?? []), ...(snap?.gameRecords ?? [])], incoming: [...backup.games, ...backup.gameAccounts, ...backup.gameSeasons, ...backup.gameRecords] },
+    { label: '物品资产', local: [...(snap?.fixedAssets ?? []), ...(snap?.fixedAssetCategories ?? []), ...(snap?.fixedEvents ?? []), ...(snap?.fixedUsageMetrics ?? []), ...(snap?.fixedUsageLogs ?? []), ...(snap?.fixedConsumables ?? []), ...(snap?.fixedGoals ?? [])], incoming: [...backup.fixedAssets, ...backup.fixedAssetCategories, ...backup.fixedAssetEvents, ...backup.fixedAssetUsageMetrics, ...backup.fixedAssetUsageLogs, ...backup.fixedAssetConsumables, ...backup.fixedAssetGoals] },
+    { label: '日常收支', local: [...(snap?.categories ?? []), ...(snap?.payees ?? []), ...(snap?.transactions ?? []), ...(snap?.transactionSplits ?? []), ...(snap?.budgetCategories ?? []), ...(snap?.scheduledTransactions ?? []), ...(snap?.reconciliationSessions ?? [])], incoming: [...backup.categories, ...backup.payees, ...backup.transactions, ...backup.transactionSplits, ...backup.budgetCategories, ...backup.scheduledTransactions, ...backup.reconciliationSessions] },
+    { label: '标签/地点/模板', local: [...(snap?.transactionTags ?? []), ...(snap?.transactionLocations ?? []), ...(snap?.transactionTemplates ?? []), ...(snap?.transactionSavedViews ?? [])], incoming: [...backup.transactionTags, ...backup.transactionLocations, ...backup.transactionTemplates, ...backup.transactionSavedViews] },
+    { label: '附件', local: snap?.attachments ?? [], incoming: backup.attachments },
+  ];
+  const examples: ImportDiff['examples'] = [];
+  const byType = collections.map(({ label, local, incoming }) => {
+    const localById = new Map(local.map((row) => [idOf(row), row]).filter((entry): entry is [string, unknown] => !!entry[0]));
+    let added = 0;
+    let updated = 0;
+    let unchanged = 0;
+    for (const row of incoming) {
+      const id = idOf(row);
+      const current = id ? localById.get(id) : undefined;
+      if (!current) added += 1;
+      else {
+        const fields = changedBusinessFields(current, row);
+        if (fields.length === 0) unchanged += 1;
+        else {
+          updated += 1;
+          if (examples.length < 8) {
+            examples.push({ label, name: importRowTitle(row), fields: fields.map(importFieldLabel) });
+          }
+        }
+      }
+    }
+    return { label, added, updated, unchanged };
+  }).filter((row) => row.added || row.updated || row.unchanged);
+  return byType.reduce<ImportDiff>((acc, row) => ({
+    added: acc.added + row.added,
+    updated: acc.updated + row.updated,
+    unchanged: acc.unchanged + row.unchanged,
+    byType: [...acc.byType, row],
+    examples,
+  }), { added: 0, updated: 0, unchanged: 0, byType: [], examples });
+}
+
+export function App() {
+  const { store, bump, storageBackend, dataLocation } = useStore();
+  const snap = useSnapshot('shell');
+  const [screen, setScreen] = useState<ScreenId>('dashboard');
+  const [theme, setTheme] = useState<ThemeId>('terracotta');
+  const [importDialog, setImportDialog] = useState<ImportDialog | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importPassphrase, setImportPassphrase] = useState('');
+  const [importUnlockError, setImportUnlockError] = useState('');
+  const [backups, setBackups] = useState<SavedBackup[]>([]);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const bumpRef = useRef(bump);
+  bumpRef.current = bump;
+
+  // keep the money symbol in sync with the settlement currency
+  const base = snap ? baseAsset(snap) : undefined;
+  useEffect(() => {
+    if (base) setBaseSymbol(base.symbol ?? `${base.code} `);
+  }, [base]);
+
+  useEffect(() => {
+    const onNavigate = (event: Event) => {
+      const detail = (event as CustomEvent<{ screen?: ScreenId }>).detail;
+      if (detail?.screen) setScreen(detail.screen);
+    };
+    window.addEventListener('zichan:navigate', onNavigate);
+    return () => window.removeEventListener('zichan:navigate', onNavigate);
+  }, []);
+
+  useEffect(() => {
+    const refreshSafety = () => {
+      void listSavedBackups().then(setBackups);
+    };
+    refreshSafety();
+    window.addEventListener('zichan:safety-updated', refreshSafety);
+    return () => window.removeEventListener('zichan:safety-updated', refreshSafety);
+  }, []);
+
+  useEffect(() => installSyncLifecycle(store, () => bumpRef.current()), [store]);
+
+  async function doExport() {
+    const backup = await exportPortableLedger(store);
+    await downloadBackup({ backup, createdAt: new Date().toISOString(), label: '即时导出' });
+  }
+
+  async function prepareImportedBackup(opened: ParsedEncryptedBackup) {
+    const data = opened.payload.ledger;
+    const preflight = await preflightPortableBackup(data);
+    if (!preflight.ok) {
+      setImportDialog({
+        kind: 'notice',
+        title: '导入预检失败',
+        tone: 'danger',
+        message: preflight.issues.filter((i) => i.level === 'error').map((i) => `- ${i.message}`).join('\n'),
+      });
+      return;
+    }
+    const rehearsal = await rehearseRestore(data);
+    if (!rehearsal.ok) {
+      const details = rehearsal.error
+        ? rehearsal.error
+        : rehearsal.consistencyIssues.map((i) => `- ${i.kind}: ${i.detail}`).join('\n');
+      setImportDialog({ kind: 'notice', title: '恢复演练未通过', tone: 'danger', message: details || '演练未通过，已停止导入。' });
+      return;
+    }
+    const warnings = preflight.issues.filter((i) => i.level === 'warning');
+    const localSnapshot = await loadSnapshot(store, 'all');
+    setImportDialog({
+      kind: 'confirm',
+      opened,
+      mode: opened.payload.kind === 'device' ? 'replace' : 'merge',
+      summary: describePreflight(preflight),
+      warnings: warnings.slice(0, 5).map((i) => i.message),
+      diff: importDiff(data, localSnapshot),
+    });
+  }
+
+  async function doImport(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) {
+      try {
+        await prepareImportedBackup(await parseEncryptedBackup(file));
+      } catch (error) {
+        if (error instanceof BackupPassphraseRequiredError) {
+          setImportPassphrase('');
+          setImportUnlockError('');
+          setImportDialog({ kind: 'password', file });
+        } else {
+          setImportDialog({ kind: 'notice', title: '导入失败', tone: 'danger', message: error instanceof Error ? error.message : String(error) });
+        }
+      }
+    }
+    e.target.value = '';
+  }
+
+  async function unlockImportedBackup() {
+    if (importDialog?.kind !== 'password') return;
+    setImportBusy(true);
+    setImportUnlockError('');
+    try {
+      const opened = await parseEncryptedBackup(importDialog.file, importPassphrase);
+      setImportPassphrase('');
+      await prepareImportedBackup(opened);
+    } catch (error) {
+      setImportUnlockError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  async function confirmImport(opened: ParsedEncryptedBackup, mode: 'merge' | 'replace') {
+    setImportBusy(true);
+    try {
+      if (runtimeLedgerCryptoSession()) await saveLedgerBackup(store, 'pre-import');
+      const batch = await store.createAuditBatch({
+        id: crypto.randomUUID(),
+        type: 'import',
+        label: mode === 'replace' ? `精确恢复：${opened.container.label}` : `合并导入：${opened.container.label}`,
+        summary: mode === 'replace' ? '从外部备份替换当前活动账本' : '将外部备份合并到当前账本',
+      });
+      const result = await store.withAuditContext(
+        { batchId: batch.id, source: 'import' },
+        (scoped) => importPortableLedger(scoped, opened.payload.ledger, mode, {
+          deviceState: mode === 'replace' && opened.payload.kind === 'device' ? opened.payload.deviceState : undefined,
+        }),
+      );
+      if (mode === 'replace' && opened.payload.kind === 'device' && opened.payload.deviceState) {
+        adoptUnlockedLedgerKeyEnvelope(opened.container.keyEnvelope, opened.session, true);
+      } else {
+        await store.finishAuditBatch(batch.id, { entityCount: result.entities + Number(result.removed ?? 0) });
+      }
+      setImportDialog(null);
+      bump();
+    } catch (err) {
+      setImportDialog({ kind: 'notice', title: '导入失败', tone: 'danger', message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  function quickTransaction() {
+    setScreen('transactions');
+    try {
+      sessionStorage.setItem('zichan.quickTransaction', '1');
+    } catch {
+      // Session storage can be unavailable in hardened browser contexts.
+    }
+    window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('zichan:quick-transaction'));
+    }, 0);
+  }
+
+  const rootStyle: CSSProperties = {
+    ...(THEMES[theme] as CSSProperties),
+    background: 'var(--bg)',
+    color: 'var(--fg)',
+    fontFamily: FONT_FAMILY,
+    fontVariantNumeric: 'tabular-nums',
+  };
+
+  const [title, sub] = META[screen];
+  const asOfDate = snap?.setting?.asOfDate;
+  const safetyState = safetyStateFromSetting(snap?.setting);
+  const safety = safetyWarnings(backups, safetyState);
+
+  return (
+    <div className="zc-app-shell" style={rootStyle}>
+      <Sidebar screen={screen} setScreen={setScreen} theme={theme} setTheme={setTheme} onQuickTransaction={quickTransaction} />
+      <main className="zc-app-main">
+        <header className="zc-app-header" style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          borderBottom: '1px solid var(--border)',
+          position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 5,
+        }}>
+          <div className="zc-header-title">
+            <div style={{ fontSize: 22, fontWeight: 800 }}>{title}</div>
+            <div className="zc-header-subtitle" style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 3 }}>{sub}</div>
+          </div>
+          <div className="zc-header-meta" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div className="zc-header-actions" style={{ display: 'flex', gap: 8 }}>
+              <button onClick={doExport} style={ghostBtn} title="导出加密 .zcbak 备份">导出</button>
+              <button onClick={() => fileRef.current?.click()} style={ghostBtn} title="从加密归档导入">导入</button>
+              <input ref={fileRef} type="file" accept="application/x-zichan-backup,.zcbak" onChange={doImport} style={{ display: 'none' }} />
+            </div>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface)',
+              border: '1px solid var(--border)', borderRadius: 99, padding: '8px 15px',
+              fontSize: 13, fontWeight: 700,
+            }}>
+              <span style={{ color: 'var(--fg-subtle)', fontWeight: 500 }}>报表币种</span>
+              {base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--fg-subtle)', fontWeight: 700, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.25 }}>
+              <span style={{ fontSize: 10, fontWeight: 600 }}>报表基准日</span>
+              <span>{formatAsOfDate(asOfDate)}</span>
+            </div>
+          </div>
+        </header>
+
+        <div className="zc-page-content">
+          {safety.length > 0 && screen !== 'settings' && (
+            <div className="zc-safety-banner" style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 900, color: safety.some((w) => w.tone === 'danger') ? 'var(--negative)' : 'var(--accent)' }}>数据安全提醒</div>
+                <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 4 }}>{safety.slice(0, 3).map((w) => w.message).join('；')}</div>
+              </div>
+              <button onClick={() => setScreen('settings')} style={ghostBtn}>去处理</button>
+            </div>
+          )}
+          <Suspense fallback={<div role="status" style={{ minHeight: 240, padding: 24, color: 'var(--fg-subtle)' }}>正在载入…</div>}>
+            {screen === 'dashboard' && <Dashboard />}
+            {screen === 'convert' && <Convert />}
+            {screen === 'transactions' && <Transactions />}
+            {screen === 'game' && <Game />}
+            {screen === 'fixed' && <Fixed />}
+            {screen === 'reports' && <Reports />}
+            {screen === 'history' && <History />}
+            {screen === 'manage' && <Manage />}
+            {screen === 'sync' && <Sync />}
+            {screen === 'settings' && <Settings />}
+          </Suspense>
+        </div>
+      </main>
+      <MobileNavigation
+        screen={screen}
+        moreOpen={mobileMoreOpen}
+        onMoreOpen={setMobileMoreOpen}
+        onNavigate={(next) => { setScreen(next); setMobileMoreOpen(false); }}
+        onQuickTransaction={quickTransaction}
+        onExport={() => void doExport()}
+        onImport={() => fileRef.current?.click()}
+        theme={theme}
+        setTheme={setTheme}
+        storageLabel={storageBackend === 'native-sqlite' ? '原生 SQLite' : '浏览器 IndexedDB'}
+        dataLocation={dataLocation}
+        reportCurrency={base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}
+        asOf={formatAsOfDate(asOfDate)}
+      />
+      {importDialog?.kind === 'password' && (
+        <ConfirmDialog
+          title="解锁加密备份"
+          confirmLabel="解锁并预检"
+          cancelLabel="取消"
+          busy={importBusy}
+          onCancel={() => {
+            setImportDialog(null);
+            setImportPassphrase('');
+            setImportUnlockError('');
+          }}
+          onConfirm={unlockImportedBackup}
+        >
+          <div style={{ marginBottom: 10 }}>“{importDialog.file.name}”包含密码保护的账本密钥。密码只在本机内存中用于本次解密。</div>
+          <input
+            autoFocus
+            aria-label="备份账本加密密码"
+            className="zc-input"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={importPassphrase}
+            onChange={(event) => setImportPassphrase(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter' && importPassphrase.length >= 8) void unlockImportedBackup(); }}
+            placeholder="创建备份时的账本加密密码"
+          />
+          {importUnlockError && <div style={{ color: 'var(--negative)', fontSize: 12, fontWeight: 700, marginTop: 8 }}>{importUnlockError}</div>}
+        </ConfirmDialog>
+      )}
+      {importDialog?.kind === 'confirm' && (
+        <ConfirmDialog
+          title={importDialog.opened.payload.kind === 'device' ? '恢复完整设备备份' : '导入可移植账本'}
+          confirmLabel={importDialog.mode === 'replace' ? '精确恢复' : '合并导入'}
+          cancelLabel="取消"
+          busy={importBusy}
+          onCancel={() => setImportDialog(null)}
+          onConfirm={() => confirmImport(importDialog.opened, importDialog.mode)}
+        >
+          <div>导入预检通过：{importDialog.summary}</div>
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>恢复方式</div>
+            <div role="group" aria-label="备份恢复方式" style={{ display: 'flex', gap: 0, width: '100%' }}>
+              {(['merge', 'replace'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={importDialog.mode === mode}
+                  onClick={() => setImportDialog({ ...importDialog, mode })}
+                  style={{
+                    flex: 1,
+                    height: 36,
+                    border: '1px solid var(--border)',
+                    borderRadius: mode === 'merge' ? '7px 0 0 7px' : '0 7px 7px 0',
+                    background: importDialog.mode === mode ? 'var(--accent)' : 'var(--surface)',
+                    color: importDialog.mode === mode ? '#fff' : 'var(--fg-muted)',
+                    fontSize: 12,
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {mode === 'merge' ? '合并到当前账本' : '精确替换数据'}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 6 }}>
+              {importDialog.mode === 'merge'
+                ? '保留当前独有数据和当前密钥，仅合并备份中的账本内容。'
+                : importDialog.opened.payload.kind === 'device'
+                  ? '恢复账本、审计、同步状态和附件状态，并接管备份内的账本密钥。'
+                  : '用可移植账本替换当前业务数据；保留当前设备密钥和同步身份。'}
+            </div>
+          </div>
+          <div className="zc-import-stat-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginTop: 10 }}>
+            <ImportStat label="新增" value={importDialog.diff.added} />
+            <ImportStat label="更新" value={importDialog.diff.updated} />
+            <ImportStat label="未变" value={importDialog.diff.unchanged} />
+          </div>
+          {importDialog.diff.byType.length > 0 && (
+            <div style={{ marginTop: 10, maxHeight: 160, overflow: 'auto', borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+              {importDialog.diff.byType.map((row) => (
+                <div className="zc-import-diff-row" key={row.label} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 70px 70px', gap: 8, fontSize: 12, padding: '3px 0' }}>
+                  <span>{row.label}</span>
+                  <span>新增 {row.added}</span>
+                  <span>更新 {row.updated}</span>
+                  <span>未变 {row.unchanged}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {importDialog.diff.examples.length > 0 && (
+            <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 900, color: 'var(--fg-muted)', marginBottom: 5 }}>业务字段变化示例</div>
+              {importDialog.diff.examples.map((row, idx) => (
+                <div key={`${row.label}-${row.name}-${idx}`} style={{ fontSize: 12, color: 'var(--fg-muted)', lineHeight: 1.55 }}>
+                  {row.label} · {row.name}：{row.fields.slice(0, 6).join('、')}
+                </div>
+              ))}
+            </div>
+          )}
+          {importDialog.warnings.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              警告：
+              <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                {importDialog.warnings.map((w) => <li key={w}>{w}</li>)}
+              </ul>
+            </div>
+          )}
+          <div style={{ marginTop: 8 }}>当前账本密钥已解锁时，系统会先保存一份固定保留的“导入前备份”。</div>
+        </ConfirmDialog>
+      )}
+      {importDialog?.kind === 'notice' && (
+        <ConfirmDialog
+          title={importDialog.title}
+          confirmLabel="知道了"
+          tone={importDialog.tone}
+          onConfirm={() => setImportDialog(null)}
+        >
+          <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}>{importDialog.message}</pre>
+        </ConfirmDialog>
+      )}
+      <AppSecurityGate />
+      <VaultUnlockPrompt />
+    </div>
+  );
+}
+
+function ImportStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 8, background: 'var(--surface-2)' }}>
+      <div style={{ fontSize: 11, color: 'var(--fg-subtle)', fontWeight: 800 }}>{label}</div>
+      <div style={{ fontSize: 18, color: 'var(--fg)', fontWeight: 900, marginTop: 2 }}>{value}</div>
+    </div>
+  );
+}
+
+function Sidebar(props: {
+  screen: ScreenId;
+  setScreen: (s: ScreenId) => void;
+  theme: ThemeId;
+  setTheme: (t: ThemeId) => void;
+  onQuickTransaction: () => void;
+}) {
+  const { screen, setScreen, theme, setTheme, onQuickTransaction } = props;
+  return (
+    <aside className="zc-sidebar" style={{
+      background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex',
+      flexDirection: 'column', gap: 6,
+    }}>
+      <div className="zc-sidebar-brand" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px 20px' }}>
+        <div style={{
+          width: 36, height: 36, borderRadius: 11, background: 'var(--accent)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: 17,
+        }}>资</div>
+        <div className="zc-sidebar-brand-copy">
+          <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: 0 }}>资产生命周期</div>
+          <div style={{ fontSize: 10, color: 'var(--fg-subtle)', letterSpacing: 0, fontWeight: 600 }}>
+            LIFECYCLE LEDGER
+          </div>
+        </div>
+      </div>
+
+      <nav style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {NAV.map(([id, label, icon]) => {
+          const active = screen === id;
+          const withQuick = id === 'transactions';
+          return (
+            <div
+              key={id}
+              style={{
+                display: 'flex', alignItems: 'center', borderRadius: 10, overflow: 'hidden',
+                background: active ? 'var(--accent-soft)' : 'transparent',
+                color: active ? 'var(--accent)' : 'var(--fg-muted)',
+              }}
+            >
+              <button
+                title={label}
+                onClick={() => setScreen(id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 10,
+                  border: 'none', cursor: 'pointer', flex: 1, minWidth: 0, textAlign: 'left', fontSize: 14,
+                  background: 'transparent',
+                  color: 'inherit',
+                  fontWeight: active ? 700 : 600,
+                }}
+              >
+                <span style={{ width: 20, textAlign: 'center', fontSize: 15 }}>{icon}</span>
+                <span className="zc-sidebar-nav-label" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+              </button>
+              {withQuick && (
+                <button
+                  type="button"
+                  aria-label="快速记账"
+                  title="快速记账"
+                  onClick={onQuickTransaction}
+                  style={{
+                    width: 34,
+                    height: 34,
+                    marginRight: 5,
+                    borderRadius: 999,
+                    border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
+                    background: active ? 'var(--accent)' : 'var(--surface-2)',
+                    color: active ? '#fff' : 'var(--accent)',
+                    fontSize: 20,
+                    lineHeight: 1,
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                    flex: '0 0 auto',
+                  }}
+                >
+                  +
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </nav>
+
+      <div style={{ flex: 1 }} />
+
+      <div className="zc-sidebar-theme" style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 11 }}>
+        <div style={{ fontSize: 10, color: 'var(--fg-subtle)', fontWeight: 700, letterSpacing: 0, padding: '0 8px' }}>
+          视觉方案对比
+        </div>
+        <div style={{ display: 'flex', gap: 8, padding: '0 6px' }}>
+          {(Object.keys(THEMES) as ThemeId[]).map((id) => (
+            <button
+              key={id}
+              onClick={() => setTheme(id)}
+              title={THEME_NAMES[id]}
+              style={{
+                flex: 1, height: 40, borderRadius: 11, cursor: 'pointer', display: 'flex',
+                alignItems: 'center', justifyContent: 'center', background: 'var(--surface-2)',
+                border: theme === id ? '2px solid var(--accent)' : '1px solid var(--border)',
+              }}
+            >
+              <span style={{ width: 18, height: 18, borderRadius: '50%', background: ACCENTS[id] }} />
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--fg-muted)', padding: '0 8px', fontWeight: 600 }}>
+          {THEME_NAMES[theme]}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function MobileNavigation(props: {
+  screen: ScreenId;
+  moreOpen: boolean;
+  onMoreOpen: (open: boolean) => void;
+  onNavigate: (screen: ScreenId) => void;
+  onQuickTransaction: () => void;
+  onExport: () => void;
+  onImport: () => void;
+  theme: ThemeId;
+  setTheme: (theme: ThemeId) => void;
+  storageLabel: string;
+  dataLocation: string;
+  reportCurrency: string;
+  asOf: string;
+}) {
+  useEffect(() => {
+    if (!props.moreOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') props.onMoreOpen(false);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [props.moreOpen, props.onMoreOpen]);
+
+  const mainItems: [ScreenId, string, string][] = [
+    ['dashboard', '总览', '◈'],
+    ['transactions', '账本', '≋'],
+    ['convert', '资产', '⇄'],
+  ];
+  const moreIds = new Set<ScreenId>(['game', 'fixed', 'reports', 'history', 'manage', 'sync', 'settings']);
+  return (
+    <>
+      <nav className="zc-mobile-bottom-nav" aria-label="移动端主导航">
+        {mainItems.slice(0, 2).map(([id, label, icon]) => (
+          <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
+            <span>{icon}</span><small>{label}</small>
+          </button>
+        ))}
+        <button className="zc-mobile-quick" aria-label="快速记账" onClick={props.onQuickTransaction}><span>+</span><small>快记</small></button>
+        {mainItems.slice(2).map(([id, label, icon]) => (
+          <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
+            <span>{icon}</span><small>{label}</small>
+          </button>
+        ))}
+        <button className={moreIds.has(props.screen) || props.moreOpen ? 'is-active' : ''} onClick={() => props.onMoreOpen(true)}>
+          <span>•••</span><small>更多</small>
+        </button>
+      </nav>
+      {props.moreOpen && (
+        <div className="zc-mobile-drawer-backdrop" onClick={() => props.onMoreOpen(false)}>
+          <aside className="zc-mobile-drawer" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()} aria-label="更多功能">
+            <div className="zc-mobile-drawer-handle" />
+            <div className="zc-mobile-drawer-head"><b>更多功能</b><button autoFocus aria-label="关闭更多菜单" onClick={() => props.onMoreOpen(false)}>×</button></div>
+            <div className="zc-mobile-drawer-grid">
+              {NAV.filter(([id]) => moreIds.has(id)).map(([id, label, icon]) => (
+                <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}><span>{icon}</span><b>{label}</b></button>
+              ))}
+            </div>
+            <div className="zc-mobile-drawer-status">
+              <span>报表币种 <b>{props.reportCurrency}</b></span>
+              <span>基准日 <b>{props.asOf}</b></span>
+              <span>数据引擎 <b>{props.storageLabel}</b></span>
+              <small title={props.dataLocation}>{props.dataLocation}</small>
+            </div>
+            <div className="zc-mobile-drawer-actions">
+              <button onClick={props.onExport}>导出备份</button>
+              <button onClick={props.onImport}>导入备份</button>
+            </div>
+            <div className="zc-mobile-theme-row">
+              {(Object.keys(THEMES) as ThemeId[]).map((id) => (
+                <button key={id} aria-label={THEME_NAMES[id]} title={THEME_NAMES[id]} className={props.theme === id ? 'is-active' : ''} onClick={() => props.setTheme(id)}><span style={{ background: ACCENTS[id] }} /></button>
+              ))}
+            </div>
+          </aside>
+        </div>
+      )}
+    </>
+  );
+}

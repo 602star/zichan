@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "资产生命周期",
+  "version": "0.1.0",
+  "identifier": "com.zichan.ledger",
+  "build": {
+    "frontendDist": "../../web/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev --workspace @zichan/web",
+    "beforeBuildCommand": "npm run server:build --workspace @zichan/desktop && npm run prepare:resources --workspace @zichan/desktop"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "资产生命周期 · Lifecycle Ledger",
+        "width": 1320,
+        "height": 880,
+        "minWidth": 1024,
+        "minHeight": 700
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http: https: ws: wss:; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "resources": {
+      "../resources/server.mjs": "server/server.mjs",
+      "../resources/node.exe": "server/node.exe",
+      "../resources/web/**/*": "server/web/"
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

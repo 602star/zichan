@@ -1,0 +1,13 @@
+{
+  "name": "@zichan/eslint-tooling",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint --config eslint.config.mjs ../../apps ../../packages ../../scripts"
+  },
+  "devDependencies": {
+    "eslint": "9.39.1",
+    "eslint-plugin-react-hooks": "7.0.1",
+    "typescript-eslint": "8.46.1"
+  }
+}

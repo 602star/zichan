@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "stronghold:allow-initialize",
+    "stronghold:allow-load-client",
+    "stronghold:allow-create-client",
+    "stronghold:allow-save",
+    "stronghold:allow-get-store-record",
+    "stronghold:allow-save-store-record",
+    "stronghold:allow-destroy",
+    "stronghold:allow-remove-store-record"
+  ]
+}

@@ -1,0 +1,34 @@
+node_modules/
+.tools/
+coverage/
+tools/eslint/node_modules/
+tools/coverage/node_modules/
+tools/e2e/node_modules/
+tools/e2e/test-results/
+tools/e2e/playwright-report/
+dist/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.local
+# Sync-server runtime state and secrets
+apps/sync-server/server-data/
+apps/sync-server/sync-data.json*
+apps/sync-server/*.secret
+apps/sync-server/*.server-id
+**/server.secret
+**/server-id
+**/opaque.server-setup
+**/admin-token.txt
+**/server.sqlite
+**/server.sqlite-*
+# Tauri
+target/
+apps/desktop/resources/
+# editor / local tooling
+.vscode/
+.idea/
+.claude/
+# local caches (never commit)
+.npm-cache/
+.playwright-browsers/

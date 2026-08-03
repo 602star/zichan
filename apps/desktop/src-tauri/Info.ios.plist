@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>NSFaceIDUsageDescription</key>
+    <string>用于解锁本机账本，保护资产和同步设置。</string>
+    <key>NSCameraUsageDescription</key>
+    <string>用于拍摄发票、购买凭证以及扫描物品条形码。</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>用于在用户主动记账时记录当前地点。</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+      <key>NSAllowsLocalNetworking</key>
+      <true/>
+      <key>NSAllowsArbitraryLoadsInWebContent</key>
+      <true/>
+    </dict>
+  </dict>
+</plist>

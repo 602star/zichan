@@ -1,0 +1,33 @@
+{
+  "name": "@zichan/sync-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "End-to-end-encrypted commit-replica server with accounts and administration",
+  "type": "module",
+  "engines": {
+    "node": ">=22.3"
+  },
+  "scripts": {
+    "build": "npm run build:dependencies && tsc -p tsconfig.json && esbuild src/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/server.mjs",
+    "build:dependencies": "npm run build --workspace @zichan/logger --workspace @zichan/core --workspace @zichan/db",
+    "start": "npm run build && node dist/server.mjs",
+    "maintenance": "npm run build:dependencies && tsc -p tsconfig.json && node dist/maintenance.js",
+    "backup": "npm run maintenance -- backup",
+    "verify-backup": "npm run maintenance -- verify-backup",
+    "restore": "npm run maintenance -- restore",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@zichan/core": "*",
+    "@zichan/db": "*",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@serenity-kit/opaque": "^1.1.0"
+  }
+}
