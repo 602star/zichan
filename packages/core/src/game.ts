@@ -74,9 +74,10 @@ export function seasonSummary(
 
     // Fees can be recorded either as their own record (type 'fee') or attached to
     // a record via feeAmount. Count both; the standalone-fee settle is already in
-    // `expense` above, so only add the attached fee here.
+    // `expense` above, so only add the attached fee here. A standalone 'fee'
+    // record must not also carry feeAmount — that would double-count the fee.
     if (r.recordType === 'fee') fee = fee.plus(settle);
-    if (r.feeAmount && !D(r.feeAmount).isZero()) {
+    else if (r.feeAmount && !D(r.feeAmount).isZero()) {
       const f = D(r.feeAmount).abs();
       fee = fee.plus(f);
       expense = expense.plus(f);

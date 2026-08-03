@@ -45,6 +45,32 @@ describe('physical item cost', () => {
     expect(cost.heldDays).toBe(722);
   });
 
+  it('uses the latest same-day residual/terminal event by createdAt (stable ordering)', () => {
+    const item = asset({ id: 'cam', purchaseDate: '2026-01-01', status: 'active' });
+    const events: FixedAssetEvent[] = [
+      { ...base(), id: 'purchase', fixedAssetId: item.id, type: 'purchase', date: '2026-01-01', amountBase: '500' },
+      // Same day, two residual updates: the later-created one must win.
+      { ...base(), id: 'r1', fixedAssetId: item.id, type: 'residual_update', date: '2026-06-01', amountBase: '300', createdAt: '2026-06-01T08:00:00.000Z' },
+      { ...base(), id: 'r2', fixedAssetId: item.id, type: 'residual_update', date: '2026-06-01', amountBase: '250', createdAt: '2026-06-01T12:00:00.000Z' },
+    ];
+    const cost = fixedAssetCost(item, events, { asOf: '2026-07-01' });
+    expect(cost.currentResidual).toBe('250');
+    expect(round(cost.netCost, 2)).toBe('250.00');
+  });
+
+  it('terminal event of the same day picks the later-created one', () => {
+    const item = asset({ id: 'cam2', purchaseDate: '2026-01-01', status: 'scrapped' });
+    const events: FixedAssetEvent[] = [
+      { ...base(), id: 'purchase', fixedAssetId: item.id, type: 'purchase', date: '2026-01-01', amountBase: '500' },
+      { ...base(), id: 'sale-1', fixedAssetId: item.id, type: 'sale', date: '2026-06-01', amountBase: '120', createdAt: '2026-06-01T08:00:00.000Z' },
+      { ...base(), id: 'scrap-1', fixedAssetId: item.id, type: 'scrap', date: '2026-06-01', amountBase: '0', createdAt: '2026-06-01T09:00:00.000Z' },
+    ];
+    const cost = fixedAssetCost(item, events, { asOf: '2026-07-01' });
+    expect(cost.basis).toBe('final');
+    expect(cost.salePrice).toBeUndefined(); // scrap (not sale) is the latest terminal
+    expect(round(cost.netCost, 2)).toBe('500.00');
+  });
+
   it('supports meter readings, manual increments, and frozen unit-cost goals', () => {
     const item = asset({ id: 'car', purchaseDate: '2026-01-01', status: 'active' });
     const metric: FixedAssetUsageMetric = { ...base(), id: 'km', fixedAssetId: item.id, name: '里程', unit: 'km', entryMode: 'meter', startValue: '1000', isPrimary: true, isActive: true };

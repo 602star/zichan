@@ -3809,8 +3809,9 @@ export async function saveFixedAssetAcquisition(
 export async function reconcileFixedAssetStatus(store: SqlLedgerStore, assetId: string, resetIfNoTerminal = false): Promise<void> {
   const asset = await store.fixedAssets.get(assetId);
   if (!asset) throw new Error(`fixed asset not found: ${assetId}`);
-  const terminal = (await store.fixedAssetEvents.list({ where: { fixedAssetId: assetId }, orderBy: 'date' }))
+  const terminal = (await store.fixedAssetEvents.list({ where: { fixedAssetId: assetId } }))
     .filter((event) => ['sale', 'scrap', 'retire', 'gift'].includes(event.type))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt))
     .at(-1);
   const status = terminal?.type === 'sale' ? 'sold'
     : terminal?.type === 'scrap' ? 'scrapped'

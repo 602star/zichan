@@ -130,10 +130,18 @@ export function matchSell(lots: Lot[], input: SellMatchInput): SellMatchResult {
   }
 
   const matchedAmount = sellAmount.minus(remainingToSell);
-  // Allocate total proceeds pro-rata across matched slices.
-  for (const c of consumptions) {
+  // Allocate total proceeds pro-rata across matched slices. Every slice except
+  // the last is rounded independently (precision 40); the last slice takes the
+  // exact remainder so the allocated amounts always sum to total proceeds —
+  // otherwise per-slice rounding drifts (e.g. 3 equal slices sum to
+  // 99.999…9999 instead of 100) and realized P&L no longer reconciles.
+  const lastIndex = consumptions.length - 1;
+  let allocatedSoFar = D(0);
+  for (let i = 0; i < consumptions.length; i += 1) {
+    const c = consumptions[i]!;
     const share = safeDiv(c.consumedAmount, matchedAmount);
-    const alloc = proceeds.times(share);
+    const alloc = i === lastIndex ? proceeds.minus(allocatedSoFar) : proceeds.times(share);
+    allocatedSoFar = allocatedSoFar.plus(alloc);
     c.proceedsBase = alloc.toString();
     c.realizedPnlBase = alloc.minus(D(c.allocatedCostBase)).toString();
   }

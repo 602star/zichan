@@ -49,6 +49,17 @@ describe('seasonSummary — matches prototype S2 numbers', () => {
     expect(round(sum.perHour, 2)).toBe('0.93'); // 39 / 42h
     expect(round(sum.perDay, 2)).toBe('0.52'); // 39 / 75d
   });
+
+  it('does not double-count a fee when a standalone fee record also carries feeAmount', () => {
+    const withFeeAmount: GameRecord = {
+      ...rec('fee', '2.1'),
+      feeAssetId: 'GBP', feeAmount: '2.1',
+    };
+    const result = seasonSummary([withFeeAmount], s2, { asOf: '2026-03-04' });
+    // The attached feeAmount must not be added a second time on top of the record itself.
+    expect(round(result.feeBase, 2)).toBe('2.10');
+    expect(round(result.expenseBase, 2)).toBe('2.10');
+  });
   it('reference balance = 2,200 初火 (buy + produce − sell), may go negative elsewhere', () => {
     expect(round(sum.referenceBalance, 0)).toBe('2200');
   });

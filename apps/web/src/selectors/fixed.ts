@@ -112,7 +112,7 @@ export function buildFixed(snap: Snapshot, asOf = new Date().toLocaleDateString(
   const categoryById = new Map(snap.fixedAssetCategories.map((category) => [category.id, category]));
   const assetById = new Map(snap.assets.map((asset) => [asset.id, asset]));
   return snap.fixedAssets.map((asset): FixedCardVM => {
-    const events = snap.fixedEvents.filter((event) => event.fixedAssetId === asset.id).sort((a, b) => a.date.localeCompare(b.date));
+    const events = snap.fixedEvents.filter((event) => event.fixedAssetId === asset.id).sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
     const metrics = snap.fixedUsageMetrics.filter((metric) => metric.fixedAssetId === asset.id && metric.isActive);
     const logs = snap.fixedUsageLogs.filter((log) => log.fixedAssetId === asset.id);
     const consumables = snap.fixedConsumables.filter((item) => item.fixedAssetId === asset.id);

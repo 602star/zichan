@@ -512,7 +512,7 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
     missing(fixedCategoryIds.has(fixed.categoryId), 'fixed_asset', fixed.id, `引用了不存在的物品分类 ${fixed.categoryId}`);
     const terminal = fixedEvents
       .filter((event) => event.fixedAssetId === fixed.id && ['sale', 'scrap', 'retire', 'gift'].includes(event.type))
-      .sort((a, b) => a.date.localeCompare(b.date)).at(-1);
+      .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt)).at(-1);
     const expected = terminal?.type === 'sale' ? 'sold'
       : terminal?.type === 'scrap' ? 'scrapped'
         : terminal?.type === 'retire' ? 'retired'

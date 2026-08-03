@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { matchSell, remainingCostBasis, round, type Lot } from '../src/index.js';
+import { D, matchSell, remainingCostBasis, round, type Lot } from '../src/index.js';
 
 function lot(p: Partial<Lot> & Pick<Lot, 'id' | 'acquiredDate' | 'originalAmount' | 'baseCost'>): Lot {
   return {
@@ -62,6 +62,35 @@ describe('matchSell — realized P&L', () => {
       sellChainId: 'sell1', assetId: 'BTC', amount: '0.010', proceedsBase: '700', method: 'fifo',
     });
     expect(round(r.unmatchedAmount, 3)).toBe('0.003'); // 0.007 held, 0.010 sold
+  });
+
+  it('allocated proceeds always sum exactly to total proceeds (no rounding drift)', () => {
+    // 3 equal slices: naive per-slice rounding sums to 99.999…9999 instead of 100.
+    const equal = [lot({ id: 'E1', acquiredDate: '2026-01-01', originalAmount: '1', baseCost: '10' }),
+      lot({ id: 'E2', acquiredDate: '2026-01-02', originalAmount: '1', baseCost: '10' }),
+      lot({ id: 'E3', acquiredDate: '2026-01-03', originalAmount: '1', baseCost: '10' })];
+    for (const method of ['fifo', 'average'] as const) {
+      const r = matchSell(equal, {
+        sellChainId: 'sell-eq', assetId: 'BTC', amount: '3', proceedsBase: '100', method,
+      });
+      const sumAlloc = r.consumptions.reduce((total, c) => total.plus(c.proceedsBase), D(0));
+      expect(sumAlloc.toString()).toBe('100');
+      expect(r.totalProceedsBase).toBe('100');
+      const sumPnl = r.consumptions.reduce((total, c) => total.plus(c.realizedPnlBase), D(0));
+      expect(sumPnl.toString()).toBe(r.realizedPnlBase);
+    }
+  });
+
+  it('allocated proceeds stay exact for uneven non-divisible slices', () => {
+    const uneven = [lot({ id: 'U1', acquiredDate: '2026-01-01', originalAmount: '1.01', baseCost: '11' }),
+      lot({ id: 'U2', acquiredDate: '2026-01-02', originalAmount: '0.33', baseCost: '11' }),
+      lot({ id: 'U3', acquiredDate: '2026-01-03', originalAmount: '0.66', baseCost: '11' })];
+    const r = matchSell(uneven, {
+      sellChainId: 'sell-uneven', assetId: 'BTC', amount: '2', proceedsBase: '100', method: 'fifo',
+    });
+    const sumAlloc = r.consumptions.reduce((total, c) => total.plus(c.proceedsBase), D(0));
+    expect(sumAlloc.toString()).toBe('100');
+    expect(r.consumptions.map((c) => c.proceedsBase)).toEqual(['50.5', '16.5', '33']);
   });
 
   it('remainingCostBasis reflects open lots', () => {

@@ -1271,7 +1271,7 @@ async function tombstonePurgePreview(
         `SELECT COALESCE(batch_id, id) AS commit_id
          FROM operation_log
          WHERE entity_type = ? AND entity_id = ?
-         ORDER BY at DESC, id DESC LIMIT 1`,
+         ORDER BY rowid DESC LIMIT 1`,
         [entityType, row.id],
       );
       if (!auditRow?.commit_id) {

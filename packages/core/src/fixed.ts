@@ -85,7 +85,7 @@ export function fixedAssetCost(
   const asOf = opts.asOf ?? today();
   const evs = events
     .filter((event) => event.fixedAssetId === asset.id && !event.isDeleted)
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
   const consumables = (opts.consumables ?? [])
     .filter((item) => item.fixedAssetId === asset.id && !item.isDeleted);
   const bucket = (type: FixedEventType) => sum(evs.filter((event) => event.type === type).map((event) => event.amountBase));
@@ -168,7 +168,7 @@ export function fixedGoalProgress(
 ): FixedGoalProgress {
   const terminal = events
     .filter((event) => event.fixedAssetId === asset.id && TERMINAL_TYPES.has(event.type) && !event.isDeleted)
-    .sort((a, b) => a.date.localeCompare(b.date))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt))
     .at(-1);
   let current = D(0);
   if (goal.unit === 'day') {
