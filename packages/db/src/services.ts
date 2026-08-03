@@ -2421,6 +2421,11 @@ async function validateGameRecordReferences(store: SqlLedgerStore, record: GameR
       validation('游戏账号不存在、已归档或不属于所选游戏', 'gameAccountId');
     }
   }
+  // 独立手续费记录的费用必须写在结算字段；再填手续费字段会同时创建两条支出
+  // 流水并让报表重复计费（core/game.ts seasonSummary 同样依赖这一不变量）。
+  if (record.recordType === 'fee' && record.feeAssetId) {
+    validation('独立手续费记录的费用应填写在结算金额字段，不能同时填写手续费字段', 'feeAmount');
+  }
   for (const role of ['settlement', 'fee'] as const) {
     const source = gameCashflowSource(record, role);
     if (!!source.assetId !== !!source.amount) validation(`${role === 'settlement' ? '结算' : '手续费'}币种和金额必须同时填写`);

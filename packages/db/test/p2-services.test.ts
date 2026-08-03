@@ -128,6 +128,41 @@ describe('P2 business compensation commands', () => {
     }
   });
 
+  it('rejects a standalone fee record that also carries a fee amount', async () => {
+    const store = await openLedger();
+    try {
+      const { asset, account, expense } = await seedDailyLedger(store);
+      const game = await store.games.put({
+        ...base(),
+        name: '测试游戏',
+        enableSeason: false,
+        isActive: true,
+      });
+      await expect(saveGameRecordAggregate(store, {
+        record: {
+          ...base(),
+          date: '2026-07-21',
+          gameId: game.id,
+          recordType: 'fee',
+          settlementAssetId: asset.id,
+          settlementAmount: '5',
+          feeAssetId: asset.id,
+          feeAmount: '5',
+        },
+        settlement: {
+          mode: 'create_transaction',
+          createTransaction: { categoryId: expense.id, accountId: account.id },
+        },
+        fee: {
+          mode: 'create_transaction',
+          createTransaction: { categoryId: expense.id, accountId: account.id },
+        },
+      })).rejects.toThrow('独立手续费记录的费用应填写在结算金额字段');
+    } finally {
+      await store.close();
+    }
+  });
+
   it('restores operational deletes and state changes only from their exact CAS point', async () => {
     const store = await openLedger();
     try {

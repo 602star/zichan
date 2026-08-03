@@ -952,6 +952,9 @@ export function gameRecordForm(snap: Snapshot): EntityFormSpec<GameRecordFormVal
       if (feeHasMoney && v.feeCashflowMode === 'create_transaction' && (!v.feeCategoryId || !v.feeAccountId)) {
         return { feeCategoryId: '请选择二级分类', feeAccountId: '请选择手续费账户' };
       }
+      if (v.recordType === 'fee' && !!v.feeAssetId) {
+        return { feeAmount: '独立手续费记录的费用请填写在结算金额字段，不要重复填写手续费' } as Record<string, string>;
+      }
       return undefined;
     },
   };

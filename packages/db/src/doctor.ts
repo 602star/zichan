@@ -35,6 +35,7 @@ export type IssueKind =
   | 'refund_amount_exceeded'
   | 'game_reference_mismatch'
   | 'game_cashflow_invalid'
+  | 'game_fee_record_conflict'
   | 'fixed_status_mismatch'
   | 'fixed_cashflow_invalid'
   | 'invalid_enum'
@@ -438,6 +439,9 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
     }
     if (record.settlementAssetId) missing(assetIds.has(record.settlementAssetId), 'game_record', record.id, `引用了不存在的结算资产 ${record.settlementAssetId}`);
     if (record.feeAssetId) missing(assetIds.has(record.feeAssetId), 'game_record', record.id, `引用了不存在的手续费资产 ${record.feeAssetId}`);
+    if (record.recordType === 'fee' && record.feeAssetId) {
+      issues.push({ kind: 'game_fee_record_conflict', entityType: 'game_record', entityId: record.id, detail: '独立手续费记录同时填写了手续费字段，费用会被重复计入' });
+    }
   }
   const gameIncomeTypes = new Set(['sell_currency', 'sell_equipment', 'sell_material', 'withdraw', 'other_income']);
   const gameExpenseTypes = new Set(['buy_currency', 'topup', 'fee', 'account_cost', 'boosting_cost', 'other_expense']);
