@@ -147,7 +147,7 @@ function parseArgs(argv) {
 const scriptPath = fileURLToPath(import.meta.url);
 if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
   const options = parseArgs(process.argv.slice(2));
-  const root = options.root ?? resolve(dirname(scriptPath), '..');
+  const root = options.root ?? resolve(dirname(scriptPath), '..', '..');
   const result = await checkReleaseConsistency(root, { tag: options.tag });
   console.log(`release consistency ok: version=${result.version} schema=${result.schemaVersion} workspaces=${result.workspaceCount}`);
 }

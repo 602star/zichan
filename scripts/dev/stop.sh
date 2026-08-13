@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键关闭 zichan（POSIX）。用法：bash scripts/dev-stop.sh [web|sync|server|desktop|all]
+# 一键关闭 zichan（POSIX）。用法：bash scripts/dev/stop.sh [web|sync|server|desktop|all]
 set -euo pipefail
 MODE="${1:-all}"
 

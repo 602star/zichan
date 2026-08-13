@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { verifyReleaseArtifacts } from './verify-release-artifacts.mjs';
+import { verifyReleaseArtifacts } from './verify-artifacts.mjs';
 
 async function fixture(version = '1.2.3') {
   const root = await mkdtemp(join(tmpdir(), 'zichan-release-artifacts-'));

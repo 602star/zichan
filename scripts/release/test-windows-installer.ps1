@@ -1,3 +1,4 @@
+# Install, launch, and uninstall a Windows MSI in release CI.
 param(
   [Parameter(Mandatory = $true)]
   [string] $MsiPath,

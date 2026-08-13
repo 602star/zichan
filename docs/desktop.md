@@ -27,13 +27,15 @@ apps/desktop/
 ## 开发 / 打包
 
 ```bash
-# 前置：Rust 工具链（rustup）+ 平台依赖（Windows 自带 WebView2）
+# 前置：Rust 工具链（rustup）+ 平台依赖（Windows 为 MSVC/C++ 工具、WebView2、Perl）
 npm run dev   -w @zichan/desktop     # 起 vite + 原生窗口，热更新
 npm run build -w @zichan/desktop     # 产出安装包（.msi/.exe，或对应平台）
 npm run icon  -w @zichan/desktop     # 从 src-tauri/icons/icon.png 重新生成图标集
 npm run release:check -w @zichan/desktop # 打包前检查 web、sync-server 与 Rust 命令层
 npm run start:desktop                # 从根目录启动桌面开发壳，并纳入端口清理
 ```
+
+Windows 可双击 `scripts\windows\build-desktop.cmd` 完成本地正式构建。该入口检查 Node、npm、依赖、Rust 与 Perl，失败时保留错误信息；SQLCipher 使用 vendored OpenSSL，release 构建需要 `perl.exe` 位于 `PATH`。它不会生成正式发布签名。安装包位于 `apps\desktop\src-tauri\target\release\bundle\msi` 和 `bundle\nsis`。
 
 首次 `dev`/`build` 会用 cargo 拉取并编译 Tauri 依赖树（数百个 crate），耗时较久；之后走缓存很快。
 
@@ -114,7 +116,7 @@ npm run stop:server                       # 清理 8787 端口
 桌面壳内的「同步 → 服务器管理」会检测 Tauri 环境：
 
 - **Tauri 桌面**：可点击「启动本机服务器」在线拉起 `0.0.0.0:8787`，并显示数据文件和管理员 Token 文件位置；如果服务由桌面在线启动，也可在线停止。
-- **普通浏览器 Web**：不能直接启动本机进程，页面显示“Web 模式 / 未启用”，并提示使用 `npm run start:server` 或 `start.cmd server`。
+- **普通浏览器 Web**：不能直接启动本机进程，页面显示“Web 模式 / 未启用”，并提示在项目目录使用 `npm run start:server`。
 
 在线启动会复用 `apps/desktop/scripts/server.mjs`；如果 `apps/web/dist` 或 `apps/sync-server/dist` 缺失，会先尝试执行 `npm run server:build -w @zichan/desktop`。
 安装包使用 `prepare:resources` 生成的内置 `server.mjs`、Node 运行时和 Web 资源；`tauri build` 会自动重新构建并生成这些资源，不能手工维护生成文件。

@@ -72,11 +72,15 @@ apps/
 
 ## 一键启动 / 关闭
 
-- **Windows**：双击 `start.cmd`（或 `npm start`）启动 Web，浏览器打开 http://localhost:5173。
-  命令行可用 `start.cmd server` 启动常开电脑一体服务，`start.cmd desktop` 启动 Tauri 开发壳。
-  双击 `stop.cmd`（或 `npm stop`）会清理 Web + server 端口；也可 `stop.cmd server` 只停 8787。
-- **POSIX**（WSL / Git Bash / macOS）：`bash scripts/dev-start.sh [web|sync|server|desktop|all]` /
-  `bash scripts/dev-stop.sh [web|sync|server|desktop|all]`。
+- **Windows 双击入口**：`scripts/windows/start-all.cmd` 一键启动开发 Web（5173）和同步/管理服务器（8787）；
+  `scripts/windows/start-web.cmd` 只启动开发 Web，`scripts/windows/start-sync-server.cmd` 单独启动已经包含静态 Web 的一体服务器，
+  `scripts/windows/build-desktop.cmd` 构建桌面程序和安装包。失败时窗口会保留诊断信息。
+- **Windows 命令行**：`npm start`、`npm run start:all`、`npm run start:server`、`npm run build -w @zichan/desktop`；
+  现有多模式清理由 `npm stop` / `npm run stop:server` 提供。
+- **POSIX**（WSL / Git Bash / macOS）：`bash scripts/dev/start.sh [web|sync|server|desktop|all]` /
+  `bash scripts/dev/stop.sh [web|sync|server|desktop|all]`。
+
+Windows CMD 的依赖检查、数据位置、产物路径和无暂停调用方式见 [scripts/README.md](scripts/README.md)。
 
 ## Develop
 

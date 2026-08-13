@@ -8,23 +8,23 @@
     "apps/*"
   ],
   "scripts": {
-    "start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-start.ps1 -Mode web",
-    "start:web": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-start.ps1 -Mode web",
-    "start:sync": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-start.ps1 -Mode sync",
-    "start:server": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-start.ps1 -Mode server",
-    "start:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-start.ps1 -Mode desktop",
+    "start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/start.ps1 -Mode web",
+    "start:web": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/start.ps1 -Mode web",
+    "start:sync": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/start.ps1 -Mode sync",
+    "start:server": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/start.ps1 -Mode server",
+    "start:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/start.ps1 -Mode desktop",
     "mobile:init:android": "npm run android:init --workspace @zichan/desktop",
     "mobile:dev:android": "npm run android:dev --workspace @zichan/desktop",
     "mobile:build:android": "npm run android:build --workspace @zichan/desktop",
     "mobile:init:ios": "npm run ios:init --workspace @zichan/desktop",
     "mobile:dev:ios": "npm run ios:dev --workspace @zichan/desktop",
     "mobile:build:ios": "npm run ios:build --workspace @zichan/desktop",
-    "start:all": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-start.ps1 -Mode all",
-    "stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-stop.ps1 -Mode all",
-    "stop:web": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-stop.ps1 -Mode web",
-    "stop:sync": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-stop.ps1 -Mode sync",
-    "stop:server": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-stop.ps1 -Mode server",
-    "stop:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-stop.ps1 -Mode desktop",
+    "start:all": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/start.ps1 -Mode all",
+    "stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/stop.ps1 -Mode all",
+    "stop:web": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/stop.ps1 -Mode web",
+    "stop:sync": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/stop.ps1 -Mode sync",
+    "stop:server": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/stop.ps1 -Mode server",
+    "stop:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/stop.ps1 -Mode desktop",
     "dev": "npm run dev --workspace @zichan/web",
     "server": "npm run server --workspace @zichan/desktop",
     "server:backup": "npm run backup --workspace @zichan/sync-server --",
@@ -35,15 +35,15 @@
     "test": "npm run test --workspaces --if-present",
     "test:coverage": "npm run test --prefix tools/coverage",
     "test:e2e": "npm run test --prefix tools/e2e",
-    "test:release": "node --test scripts/check-release-consistency.test.mjs scripts/verify-release-artifacts.test.mjs apps/desktop/scripts/create-update-manifest.test.mjs",
+    "test:release": "node --test scripts/release/check-consistency.test.mjs scripts/release/verify-artifacts.test.mjs apps/desktop/scripts/create-update-manifest.test.mjs",
     "bench:transactions": "npm run build && node packages/db/bench/transaction-scale.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build": "npm run build --workspace @zichan/logger --workspace @zichan/core --workspace @zichan/db",
     "build:web": "npm run build --workspace @zichan/web",
-    "release:check": "node scripts/check-release-consistency.mjs",
+    "release:check": "node scripts/release/check-consistency.mjs",
     "ci": "npm run release:check && npm run test:release && npm run lint && npm run typecheck && npm run test:coverage && npm run build:web && npm run build --workspace @zichan/sync-server"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.3"
   }
 }

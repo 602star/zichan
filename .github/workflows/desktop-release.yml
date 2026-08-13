@@ -152,7 +152,7 @@ jobs:
       - name: Verify installer and manifest structure
         shell: pwsh
         run: |
-          node scripts/verify-release-artifacts.mjs `
+          node scripts/release/verify-artifacts.mjs `
             --bundle-dir apps/desktop/src-tauri/target/release/bundle `
             --manifest "apps/desktop/src-tauri/target/release/bundle/$env:MANIFEST_NAME" `
             --version "$env:APP_VERSION" `
@@ -173,7 +173,7 @@ jobs:
           $msi = Get-ChildItem apps/desktop/src-tauri/target/release/bundle/msi -Filter *.msi |
             Select-Object -First 1
           if (-not $msi) { throw 'MSI installer was not generated.' }
-          ./scripts/test-windows-installer.ps1 -MsiPath $msi.FullName
+          ./scripts/release/test-windows-installer.ps1 -MsiPath $msi.FullName
 
       - name: Upload release candidate
         uses: actions/upload-artifact@v4

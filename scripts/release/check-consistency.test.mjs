@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { checkReleaseConsistency } from './check-release-consistency.mjs';
+import { checkReleaseConsistency } from './check-consistency.mjs';
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const repositoryVersion = JSON.parse(await readFile(join(repositoryRoot, 'package.json'), 'utf8')).version;
 const driftVersion = repositoryVersion === '9.9.9' ? '9.9.8' : '9.9.9';
 

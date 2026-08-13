@@ -38,6 +38,8 @@ npm start -w @zichan/sync-server
 npm run start:server
 ```
 
+Windows 也可双击 `scripts\windows\start-sync-server.cmd`。该入口构建并启动同步 API 与 Web 管理页面，默认监听 8787，数据和管理员 Token 位于 `%APPDATA%\ZichanLedger\server`。它面向可信家庭局域网并启用局域网 HTTP，不应将 8787 直接暴露到公网。
+
 `npm run build -w @zichan/sync-server` 会生成独立的 `dist/server.mjs`，已包含工作区共享包；直接启动、
 桌面启动器和 Docker 最终镜像都运行该入口，不依赖仓库中的 `node_modules`。
 

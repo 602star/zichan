@@ -44,6 +44,8 @@ RFC 3161 时间戳签名，并对生成的 `.exe`/`.msi` 执行 `Get-Authenticod
 
 ## 本地发布检查
 
+Windows 本地 release 构建除 Node.js 22.3+、Rust 和 MSVC/C++ 工具外，还需要 `perl.exe` 位于 `PATH`，用于编译 SQLCipher 依赖的 vendored OpenSSL。`scripts\windows\build-desktop.cmd` 会在耗时构建前检查这些工具。
+
 ```bash
 npm run typecheck
 npm test
@@ -65,7 +67,7 @@ Runner 的 `127.0.0.1`，使用临时密钥和临时数据目录，依次验证 
 安装验收脚本可单独运行：
 
 ```powershell
-./scripts/test-windows-installer.ps1 -MsiPath `
+./scripts/release/test-windows-installer.ps1 -MsiPath `
   ./apps/desktop/src-tauri/target/release/bundle/msi/资产生命周期_0.1.0_x64_zh-CN.msi
 ```
 

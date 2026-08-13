@@ -77,7 +77,7 @@ jobs:
           npm run build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $contract = Join-Path $env:RUNNER_TEMP 'zichan-schema-contract.json'
-          node scripts/export-schema-contract.mjs --output $contract
+          node scripts/db/export-schema-contract.mjs --output $contract
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "ZICHAN_SCHEMA_CONTRACT_PATH=$contract" | Out-File $env:GITHUB_ENV -Append
       - name: Format, check, and test desktop Rust

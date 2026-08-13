@@ -5,8 +5,8 @@ import {
   CURRENT_SCHEMA_NAME,
   CURRENT_SCHEMA_VERSION,
   schemaStatements,
-} from '../packages/db/dist/index.js';
-import { MIGRATIONS_TABLE_SQL } from '../packages/db/dist/schema.js';
+} from '../../packages/db/dist/index.js';
+import { MIGRATIONS_TABLE_SQL } from '../../packages/db/dist/schema.js';
 
 export function currentSchemaContract() {
   return {
@@ -19,7 +19,7 @@ export function currentSchemaContract() {
 
 function parseArgs(argv) {
   if (argv.length !== 2 || argv[0] !== '--output' || !argv[1]) {
-    throw new Error('Usage: node scripts/export-schema-contract.mjs --output <path>');
+    throw new Error('Usage: node scripts/db/export-schema-contract.mjs --output <path>');
   }
   return resolve(argv[1]);
 }

@@ -5,6 +5,18 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
 
 ---
 
+## 2026-08-13 — Windows CMD 固定入口与桌面构建前置检查
+
+**Goal:** 为 Windows 双击场景提供可诊断的固定任务入口，同时避免在仓库根目录堆放启动脚本。
+
+- 按要求删除根目录 `start.cmd` / `stop.cmd`；当前使用文档统一指向 npm 命令或 `scripts/windows/`，旧工作日志保留当时的历史事实。
+- 新增 `start-all.cmd`、`start-web.cmd`、`start-sync-server.cmd` 和 `build-desktop.cmd`：组合入口一键打开 5173 开发 Web 与 8787 同步/管理服务器两个独立窗口；单项入口分别启动严格占用 5173 的 Web、使用 `%APPDATA%\ZichanLedger\server` 且自带静态 Web 的一体服务器，以及构建包含 Web/同步资源的 Tauri EXE、MSI 与 NSIS 安装包。
+- CMD 从自身位置解析仓库根目录，检查 Node.js 22.3+、npm 与依赖目录；桌面构建额外检查 Cargo、Rust 和 Perl。入口不自动安装依赖、不抢占端口、不结束未知程序，失败会保留窗口并传递真实退出码；`.gitattributes` 固定 CMD 为 CRLF，避免 Windows 批处理静默跳过命令。
+- 根 Node 约束从 `>=20` 对齐到同步服务实际要求的 `>=22.3`；`scripts/` 已按 `dev/`、`db/`、`release/`、`windows/` 落地分类，npm、CI、发布工作流、内部相对路径和当前文档引用全部同步更新。
+- 验证：四个 CMD 均由真实 `cmd.exe` 完成解析与环境检查；Web 返回 HTTP 200；同步服务使用隔离临时目录启动并通过 `/api/ready`，测试后 5173/8787 均无残留。分类后的 PowerShell、Git Bash 与 Node 脚本解析通过，schema 115 实际导出 122 条语句，release consistency 与 7 项发布测试通过。桌面构建的 Web、sync-server 和资源准备通过，release Rust 编译确认本机缺少 Perl；入口已把该条件前移为即时、可操作的预检错误，完整安装包需安装 Perl 后复跑或由 CI 构建。
+
+---
+
 ## 2026-08-13 — P1 首次启动、交互恢复、发布门禁与总览读模型
 
 **Goal:** 在不提前引入 1.0 迁移链的前提下，消除演示数据误混入、弹窗无障碍缺口、发布元数据漂移和 Dashboard 全量流水读取。

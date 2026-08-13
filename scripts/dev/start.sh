@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # 一键启动 zichan（POSIX：WSL / Git Bash / macOS / Linux）。
-# 用法：bash scripts/dev-start.sh [web|sync|server|desktop|all]
+# 用法：bash scripts/dev/start.sh [web|sync|server|desktop|all]
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 MODE="${1:-web}"
 case "$MODE" in

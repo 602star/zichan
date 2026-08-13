@@ -1,4 +1,4 @@
-# Stop processes listening on the ports owned by the selected development mode.
+# Stop processes listening on the ports used by the selected development mode.
 param(
   [ValidateSet('web', 'sync', 'server', 'desktop', 'all')]
   [string]$Mode = 'all'
