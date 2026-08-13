@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "lint": "eslint --config eslint.config.mjs ../../apps ../../packages ../../scripts"
+    "lint": "cd ../.. && node tools/eslint/node_modules/eslint/bin/eslint.js --config tools/eslint/eslint.config.mjs apps packages"
   },
   "devDependencies": {
     "eslint": "9.39.1",

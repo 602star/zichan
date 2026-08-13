@@ -140,4 +140,16 @@ Posting { assetId, accountId?, amount(带符号), source: {kind, id}, date }
 - `game.ts` — 赛季收入/支出/净收益/每小时/每日、参考余额。
 - `fixed.ts` — 累计投入、净使用成本、按天/次/公里/小时成本、目标进度和耗材提醒。
 - `transaction.ts` — 日常收支按分类、月份、趋势汇总。
-- `valuation.ts` — 用 `PriceMark` 的最新币对构建可逆汇率图，支持直接、反向和最短跨币种路径，再折算净资产、配置占比、成本和未实现盈亏。
+- `valuation.ts` — 用 `PriceMark` 的稳定决胜规则构建可逆汇率图，支持直接、反向和确定性最短跨币种路径，再折算已定价小计、配置占比、成本和未实现盈亏；缺价和陈旧价格必须通过元数据显式传播。
+
+### 4.1 `PriceMark` 决胜、换算路径与估值完整性
+
+- 估值先排除已删除、非正价格以及 `asOf` 之后的标记。对每个有向 `assetId / quoteAssetId` 币对，
+  依次比较 `date`、`updatedAt`、`createdAt`、`id`，选出唯一标记；因此同日冲突不依赖数组、SQL 或同步到达顺序。
+- 获胜标记同时生成正向与倒数边。从报表币种到目标资产选路时，先选边数最少的路径；等长时依次选“最旧一条边”仍最新、
+  倒数边更少、`pathAssetIds` 字典序更小、`priceMarkIds` 字典序更小的路径。直达价因仅一跳，总是优先于更长的交叉换算。
+- `ResolvedPrice` 保留 `pathAssetIds`、`priceMarkIds`、路径最旧标记日期和价格年龄。同时给出 `asOf` 与 `staleAfterDays` 时，
+  路径最旧一边超过阈值才标记为 `stale`；未提供陈旧阈值时是 `unknown`，报表币种自身是 `base`。陈旧价仍可计入已定价小计，但必须通过 `stalePriceAssetIds` 显式提示。
+- 非零持仓找不到路径时是 `unpriced`：`includedInTotal=false`，进入 `unpricedAssetIds`，整体 `completeness='partial'`，
+  且不生成未实现盈亏。`HoldingValue.valueInBase='0'` 只是兼容旧调用方的数值占位，**绝不能**被当成该资产的权威估值；
+  使用方必须先检查 `pricingStatus`、`includedInTotal`、`PortfolioValuation.completeness` 和缺价列表。`totalValue` 是已定价持仓小计，仅在 `complete` 时才可作为完整净值；未定价持仓的 `weight='0'` 也不是真实配置比例。

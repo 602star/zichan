@@ -13,7 +13,7 @@ export default [
     ],
   },
   {
-    files: ['../../**/*.{ts,tsx}'],
+    files: ['**/*.{ts,tsx}'],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
@@ -40,7 +40,7 @@ export default [
     },
   },
   {
-    files: ['../../**/*.{js,mjs,cjs}'],
+    files: ['**/*.{js,mjs,cjs}'],
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',

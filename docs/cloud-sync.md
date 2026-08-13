@@ -2,15 +2,15 @@
 
 `@zichan/sync-server` 可在一个进程中提供 Web、端到端加密同步和管理员 API，适合云主机、NAS 或家中常开的固定 IP 电脑。`ENABLE_WEB` 与 `ENABLE_SYNC` 可独立开关；`BASE_PATH=/home-ledger` 会把 Web、同步和管理端点统一挂到安全路径下。
 
-服务器只保存账号认证 verifier、设备会话、账本加密密码包装的密钥封套、密文提交、密文附件分块及路由元数据。账本字段、附件文件名、MIME、明文 SHA-256 和正文不会上传。不同服务器可使用不同用户名和账号密码；这些登录凭据不参与账本加密。附件对象 ID 和分块密钥由会话中的账本附件密钥按服务器、账本和用户名作用域派生。
+与用户和账本相关的服务端持久状态只包含 OPAQUE 注册记录、设备会话的 refresh token HMAC、账本加密密码包装的密钥封套、密文提交、密文附件分块及路由元数据，不保存账号密码。服务器自身另外持久化 `server.secret`、`server-id` 和 `opaque.server-setup`。账本字段、附件文件名、MIME、明文 SHA-256 和正文不会上传。不同服务器可使用不同用户名和账号密码；这些登录凭据不参与账本加密。附件对象 ID 和分块密钥由会话中的账本附件密钥按服务器、账本和用户名作用域派生。
 
 ## 当前 API
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/health`、`/api/ready` | 存活信息；SQLite 完整性与就绪状态 |
-| POST | `/api/register` | 注册账号，只接收客户端 PBKDF2 verifier |
-| POST | `/api/auth/challenge`、`/api/auth/login` | 一次性 nonce 登录，创建设备会话 |
+| POST | `/api/auth/register/start`、`/api/auth/register/finish` | OPAQUE 两阶段注册；客户端产生注册记录 |
+| POST | `/api/auth/login/start`、`/api/auth/login/finish` | OPAQUE 两阶段登录；成功后创建设备会话 |
 | POST | `/api/auth/refresh`、`/api/auth/logout` | 轮换 refresh token 或注销当前设备 |
 | GET/POST | `/api/auth/devices`、`/api/auth/devices/:id/revoke` | 查看并撤销账号设备 |
 | GET/POST | `/api/v3/replica[/bind]` | 查询或绑定账本副本 |
@@ -54,11 +54,13 @@ npm run start:server
 - `ALLOW_INSECURE_HTTP`：默认 `0`。仅家中私有局域网明确接受风险时设为 `1`；远程管理员 API 不受此开关影响，始终要求 HTTPS。
 
 有效对象、回收区和未完成上传都计入配额。上传会话 24 小时过期；服务启动及每小时清理过期暂存和到期回收对象。
-账户、一次性 challenge、设备会话、持久限流、邀请码、账本密钥封套、提交、配额、附件索引和管理日志统一保存在 `server.sqlite`。数据库启用 WAL、`synchronous=FULL`、外键、事务提交、提交 ID 唯一约束和严格 schema v3；密文提交拉取使用 `after` + `limit` 游标分页，请求体按端点限制大小。
+账户 OPAQUE 注册记录、单次登录状态、设备会话、持久限流、邀请码、账本密钥封套、提交、配额、备份索引、附件索引和管理日志统一保存在 `server.sqlite`。数据库启用 WAL、`synchronous=FULL`、外键、事务提交、提交 ID 唯一约束，并严格只接受 `server_opaque_pake_v5`（schema 5）。密文提交协议仍为 v3，拉取使用 `after` + `limit` 游标分页，请求体按端点限制大小。
 
 ## 认证与传输边界
 
-登录证明不是固定可重放值。challenge 绑定用户名、服务器 ID、随机 nonce、有效期和来源 IP，成功或失败尝试都会消费；访问令牌有效 15 分钟，refresh token 每次使用后立即轮换，设备会话最长 30 天。禁用用户会同时撤销其全部会话，管理后台可按设备查看最近 IP、最后访问时间并单独撤销。
+OPAQUE 注册和登录都由客户端与服务器交换 PAKE 消息，账号密码不发送到服务器。注册完成 token 有效 5 分钟；登录中间状态绑定用户名和来源 IP、有效 60 秒且只能消费一次。客户端校验 OPAQUE 返回的服务器静态公钥，调用方也可传入已信任公钥拒绝身份变化。
+
+登录成功后，访问令牌有效 15 分钟，refresh token 每次使用后立即轮换且旧 token 不能再使用，设备会话最长 7 天。服务器只持久化 refresh token 的 HMAC-SHA-256。禁用用户会同时撤销其全部会话，用户和管理员都可按设备查看最近 IP、最后访问时间并单独撤销。
 
 公网部署必须由 Caddy 等反向代理终止 HTTPS，且只向代理暴露 8787。客户端会拒绝向公网 HTTP 域名或地址发送认证信息与 Bearer token；本机和 RFC1918/本地 IPv6 地址仍可用于明确配置的家庭局域网 HTTP。管理员 Token 只允许本机 HTTP 或 HTTPS 发送。
 
@@ -81,7 +83,7 @@ Compose 将父目录 `/state` 挂载到 `zichan-data`，实际 `DATA_DIR` 为 `/
 
 ## 备份、迁移与恢复演练
 
-维护命令要求先停止服务器。备份先用 SQLite `VACUUM INTO` 生成一致快照，再复制身份、密钥和附件目录；每个文件写入 SHA-256 清单，全部校验通过后才原子提升备份目录。恢复会先预检到暂存目录，再保留原数据为 `*.before-restore-*` 并原子替换。
+维护命令要求先停止服务器。备份先用 SQLite `VACUUM INTO` 生成一致快照，再复制 `server.secret`、`server-id`、OPAQUE 服务器 setup、可选管理 token 和附件目录；每个文件写入 SHA-256 清单，全部校验通过后才原子提升备份目录。`server.sqlite`、`server.secret`、`server-id` 和 `opaque.server-setup` 是恢复必需文件。恢复会先预检到暂存目录，再保留原数据为 `*.before-restore-*` 并原子替换。
 
 ```bash
 # Windows/本机部署
@@ -97,4 +99,4 @@ docker compose run --rm -v ./backups:/backup sync-server \
   node dist/maintenance.js verify-backup --backup /backup/2026-07-19
 ```
 
-恢复演练应恢复到隔离目录，使用临时端口启动，检查 `/api/ready`，再在管理后台执行数据库和附件校验，并用测试客户端拉取一份带图片的账本。迁移成功后保留恢复前目录，直到所有设备完成一次同步。当前开发服务器只接受 `server_nonce_auth_sessions_rate_limits_v3`；旧固定证明认证、旧 JSON 状态与旧 SQLite 基线不读取、不转换。
+恢复演练应恢复到隔离目录，使用临时端口启动，检查 `/api/ready`，再在管理后台执行数据库和附件校验，并用测试客户端拉取一份带图片的账本。迁移成功后保留恢复前目录，直到所有设备完成一次同步。当前开发服务器只接受 `server_opaque_pake_v5`（schema 5）；旧 PBKDF2/固定证明/一次性 challenge 认证、旧 JSON 状态与旧 SQLite 基线都不读取、不转换。

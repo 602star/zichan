@@ -59,7 +59,8 @@ Indexes cover the hot query columns (FKs + dates): `game_records.season_id`,
 
 [migrations.ts](../packages/db/src/migrations.ts) 只创建并接受当前开发基线
 `current_schema_2026_07_23_p2_release_readiness`（version 110）。项目尚未发布，因此不保留历史升级链：发现旧 marker、旧表、缺列、
-多列或额外表时会抛出 `SchemaResetRequiredError`，Web/桌面初始化错误页提供“重置本地开发数据”。
+多列或额外表时会抛出 `SchemaResetRequiredError`，Web/桌面初始化错误页提供“重置本机开发数据”。Web 端另外会把未加密、
+无法解密或数据密钥不匹配的 IndexedDB 快照标记为需要显式重置，并同时提供重试和返回解锁入口。
 应用不会自动删除账本，也不会猜测性转换旧结构。
 
 每次启动都会逐表、逐列验证当前结构。默认收支分类与物品二级分类属于当前产品资料，由 seed 和
@@ -86,15 +87,24 @@ Indexes cover the hot query columns (FKs + dates): `game_records.season_id`,
 interface Collection<T> {
   get(id): Promise<T | null>;
   list(query?): Promise<T[]>;            // equality/order/limit/offset pagination
+  listPage(query?): Promise<CursorPage<T>>; // stable keyset pagination
   count(query?): Promise<number>;        // SQL COUNT without loading rows
   put(entity): Promise<T>;               // create or version-CAS update, then audit
-  remove(id, expectedVersion?): Promise<void>; // version-CAS tombstone for internal records
+  remove(id, expectedVersion): Promise<void>; // required version-CAS tombstone
 }
 ```
 
 `list` supports equality filters on known columns (`{ where: { seasonId: 's1' } }`),
 `orderBy`/`desc`, `limit`, and `offset`. Unknown filter fields throw (guards against injection).
 `SqlLedgerStore.subscribe()` publishes changed entity types after commit, so each page can invalidate only its scoped snapshot.
+
+设置页的“清理测试流水”使用 `testTransactionCleanupPage()` 作为专用有界读模型：SQLite 只匹配有效流水自身的
+`description / merchant / note`，通过 `id` 游标稳定分页，并分批附带命中流水的有效附件。它不依赖页面快照，
+也不会为设置页加载整库流水或整库附件。附件正文自检另行在 Web 端以 `Collection.listPage()` 遍历所有有效附件。
+
+`transactionBrowsePage()` 的金额上下限和高级筛选不会把金额 `CAST AS REAL`，也不会先转成 JavaScript
+`Number`。仓储层把有限十进制规范化为“十进制指数 + 有效数字”的 SQLite 可比较键，因此大额、小数和科学计数法
+都按 `decimal.js` 的精确值筛选；非有限值或超出 SQLite 整数指数范围的输入会显式拒绝，而不是静默错筛。
 
 `put` updates with `WHERE id=? AND version=?`; zero affected rows raise `ConcurrencyError`, so a stale tab cannot
 overwrite a newer edit. It then bumps `version` and preserves the original `createdAt`. User-facing categories,
@@ -168,7 +178,9 @@ or fixed-asset report.
 - **`previewReconciliation` / `closeReconciliation` / `undoLatestReconciliation`** —— 以最近账单期末余额为期初，
   按账户分录逐笔勾选本期已清算流水，只读计算差额；差额只能继续核对或生成不进入收支报表的余额调整。`reconciliation_items` 固化每期明细，且只能从最新一期逆序撤销。
 - **`materializeScheduledTransaction` / `runDueScheduledTransactions`** —— 从原始日期生成日/周/月/年周期，
-  支持月末锚点、IANA 时区、漏期全补或只补最近一期；`scheduled_executions` 用确定性 ID 保证多设备重复执行只产生一笔流水，并记录执行时间、失败原因、重试次数和下次重试时间。`previewScheduledBacklog` 与 `retryScheduledExecution` 提供积压预览和人工重试。
+  支持月末锚点、IANA 时区、漏期全补或只补最近一期；`scheduled_executions` 除确定性 ID 外，还用数据库唯一约束、
+  有时限的原子占用和所有者令牌 CAS 协调多个标签页或实例。占用过期后可接管，迟到的失败结果不能覆盖另一实例已完成的成功结果；
+  执行记录同时保留执行时间、失败原因、重试次数和下次重试时间。`previewScheduledBacklog` 与 `retryScheduledExecution` 提供积压预览和人工重试。
 - **`saveGameRecordAggregate` / `deleteGameRecord` / `restoreDeletedGameRecord`** —— 游戏结算和手续费统一为仅登记、关联已有流水或创建流水；资金关联冻结方向、币种、金额和所有权，删除/撤销使用 CAS 补偿命令。
 - **`exportLedger(store)` / `preflightImport(data)` / `validateLedgerBackup(data)` /
   `importLedger(store, backup)`** —— 构造和校验全量实体（含链路步骤、含软删）的内部结构化载荷；
