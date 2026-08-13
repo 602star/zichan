@@ -58,10 +58,21 @@ Indexes cover the hot query columns (FKs + dates): `game_records.season_id`,
 ## 当前 Schema 基线
 
 [migrations.ts](../packages/db/src/migrations.ts) 只创建并接受当前开发基线
-`current_schema_2026_07_23_p2_release_readiness`（version 110）。项目尚未发布，因此不保留历史升级链：发现旧 marker、旧表、缺列、
+`current_schema_2026_08_13_first_run_ledger`（version 115）。项目尚未发布，因此不保留历史升级链：发现旧 marker、旧表、缺列、
 多列或额外表时会抛出 `SchemaResetRequiredError`，Web/桌面初始化错误页提供“重置本机开发数据”。Web 端另外会把未加密、
 无法解密或数据密钥不匹配的 IndexedDB 快照标记为需要显式重置，并同时提供重试和返回解锁入口。
-应用不会自动删除账本，也不会猜测性转换旧结构。
+应用不会自动删除账本，也不会猜测性转换旧结构。若数据库已有业务表但缺少 `schema_migrations`，验证会在写入任何 marker
+之前以只读方式拒绝；sql.js 在纯读拒绝后不会导出覆盖 IndexedDB 快照，SQLCipher 探测也不会启用 WAL。真正空库则在同一事务中
+建立 marker 和完整当前结构，避免把未知旧库误标为当前版本。当前结构还用部分唯一索引保证最多一个未删除的 `Setting`，备份预检执行同一约束。
+
+### 1.0 迁移兼容边界
+
+产品决策（2026-08-13）：正式数据库迁移框架暂不纳入当前 `0.x` 开发阶段。开发期间仍允许直接提升当前 schema 基线，
+旧开发库继续通过导出备份或显式重置处理，不承诺从 version 114、115 或其他开发期 schema 原地升级到后续开发基线。
+
+到 `1.0` 发布准备阶段，再冻结**当时最终确认的 schema** 作为首个长期兼容基线；正式编号迁移只承诺覆盖
+`1.0 → 后续版本`。届时再单独审批迁移事务、失败回滚、幂等、未来版本拒绝、跨 sql.js / Node SQLite /
+Tauri SQLite 验证和升级测试矩阵。本事项当前状态为“已记录、延期”，不得在其他功能改造中顺带引入半套迁移机制。
 
 每次启动都会逐表、逐列验证当前结构。默认收支分类与物品二级分类属于当前产品资料，由 seed 和
 幂等维护任务写入，不再借 schema migration 播种。便携备份只接受完整的 `version=7` 当前格式，
@@ -70,7 +81,8 @@ Indexes cover the hot query columns (FKs + dates): `game_records.season_id`,
 ## 平台存储边界
 
 - Browser: `SqlJsDriver` exports `ledger.sqlite` bytes to IndexedDB; attachment bodies and
-  thumbnails are content-addressed IndexedDB `Blob` values.
+  thumbnails are content-addressed IndexedDB `Blob` values. Because persistence replaces a whole snapshot, the driver holds an exclusive
+  Web Lock for its full lifetime and rejects a second tab instead of allowing two independent in-memory copies to overwrite each other.
 - Tauri desktop/mobile: `TauriSqlDriver` stores `ledger.sqlite` under Tauri `AppData`;
   attachment bodies live under `AppData/attachments/{staging,objects,trash,quarantine}` and verified backups under `AppData/backups`.
 - Portable `.zcbak` backup embeds attachment bodies without Base64. Export lazily retrieves missing remote bodies; import preflight checks metadata,
@@ -101,6 +113,11 @@ interface Collection<T> {
 设置页的“清理测试流水”使用 `testTransactionCleanupPage()` 作为专用有界读模型：SQLite 只匹配有效流水自身的
 `description / merchant / note`，通过 `id` 游标稳定分页，并分批附带命中流水的有效附件。它不依赖页面快照，
 也不会为设置页加载整库流水或整库附件。附件正文自检另行在 Web 端以 `Collection.listPage()` 遍历所有有效附件。
+
+总览使用 `dashboardTransactionReadModel()` 读取流水侧数据：SQL 按资产聚合全部有效过账、按所选报表日期聚合收支，
+并只返回实际发生日在区间内的最近 6 条流水作为动态候选。聚合保留原始十进制字符串数组，由 Web 端使用
+`decimal.js` 求和和折算；账户类型为 `other` 的期初/权益过账继续排除。Dashboard 页面快照因此无需加载全部
+`transactions / transaction_splits / refund_allocations`。
 
 `transactionBrowsePage()` 的金额上下限和高级筛选不会把金额 `CAST AS REAL`，也不会先转成 JavaScript
 `Number`。仓储层把有限十进制规范化为“十进制指数 + 有效数字”的 SQLite 可比较键，因此大额、小数和科学计数法

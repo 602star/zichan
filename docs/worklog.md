@@ -5,6 +5,36 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
 
 ---
 
+## 2026-08-13 — P1 首次启动、交互恢复、发布门禁与总览读模型
+
+**Goal:** 在不提前引入 1.0 迁移链的前提下，消除演示数据误混入、弹窗无障碍缺口、发布元数据漂移和 Dashboard 全量流水读取。
+
+- 空库解锁后改为“空账本 / 导入备份 / 体验演示”三选一；空账本显式选择基础币种与账本模式，备份先预检和独立演练再原子恢复，演示数据只在明确选择时创建并持续标识。
+- `Setting` 增加 `ledgerKind / initializedAt`，当前开发 schema 提升为 115；初始化完成前不执行附件恢复、维护、定期任务和自动备份。个人账本的维护不会注入演示标签、地点、模板、预算或定期流水。
+- 浏览器 sql.js 驱动在整个打开周期持有跨标签页独占 Web Lock，第二个标签页会被明确拒绝，避免两个内存快照覆盖同一 IndexedDB；重置入口统一先关闭 Store 并释放锁，再清除本机账本并返回首次启动向导。
+- 解锁、首次初始化、返回解锁和重置都使用同步 single-flight，堵住 React busy 状态生效前的双击窗口；重置会先暂停并排空自动备份，防止删除后由晚到任务重新创建 IndexedDB。原生数据库在 open / prepare / dataPath 失败时也会关闭连接。
+- 设备备份恢复把数据库提交、设备密钥采用和附件 promotion 明确分段；业务事务一提交便采用新密钥并把 staging 标为可恢复，即使审计收尾或附件落盘失败，重启仍可继续完成。合并恢复只保留本机唯一 Setting，schema 以部分唯一索引保证一个活动设置，备份预检拒绝多个活动设置。
+- 拒绝旧开发库的路径保持物理零写入：sql.js 纯读关闭不再导出覆盖快照，SQLCipher schema 探测不启用 WAL；未标记旧表也不会被补写 migration marker。
+- 新增统一 portal `DialogShell` 和根级 `AppErrorBoundary`；弹窗具备焦点锁、Escape、焦点恢复、嵌套滚动锁和 ARIA 语义，渲染失败可重试、返回总览或复制诊断信息而不重置账本。
+- Dashboard 流水改为 SQL 有界读模型：精确余额聚合、所选期间收支聚合和最近 6 条动态；页面不再读取全部流水、拆分与退款分配，金额从 SQL 到格式化、颜色判断始终使用十进制字符串或 `decimal.js`，不经过 JavaScript 浮点数。
+- CI 增加 Rust fmt/check/test、schema 三驱动契约、sync-server 生产构建及 Docker health/ready；发布门禁校验 npm/Tauri/Cargo/lock/发布说明/schema、精确标签、签名材料和安装包/更新清单一致性。
+- updater 产物由 Rust 按 Tauri 的 Base64 包装规则执行真实 Minisign 公钥验签；Node SQLite、sql.js 与 SQLCipher 均执行从 `@zichan/db` 导出的同一 schema 115/关键查询契约。
+- 正式迁移框架仍按下述决策延后至 1.0；115 只是当前唯一开发基线，不提供 114 → 115 升级链。
+- 最终验证：全仓 **421 项**测试通过（core 87 · db 131 · logger 5 · sync-server 19 · web 179），覆盖率门禁同样 421 项通过；全部 workspace typecheck 与 ESLint、共享包/Web/sync-server 生产构建、release consistency/artifact 脚本、Rust fmt/check、8 项 Rust 单测及 1 项 SQLCipher schema 契约均通过。Playwright 新增首次启动与嵌套弹窗回归；本机会话未安装 Playwright 自带 Chromium，系统 Chrome 回退在受管桌面会话中未正常产出结果，CI E2E 继续作为浏览器实跑门禁。
+
+---
+
+## 2026-08-13 — 决策：正式数据库迁移延后至 1.0
+
+**Decision:** 当前仍是 `0.1.0` 开发阶段，不建立从 schema 114 开始的长期迁移链；以 `1.0` 最终结构作为首个正式兼容基线。
+
+- 当前账本继续只接受最新开发 schema；旧 marker、旧表或字段漂移仍走显式重置/备份恢复，不做猜测性原地转换。
+- `1.0` 发布准备时重新核定并冻结当时的 schema，正式迁移只承诺 `1.0 → 后续版本`，不预先承诺开发期 schema 114 可升级到 1.0。
+- 事务迁移、失败回滚、幂等、未来版本拒绝、sql.js / Node SQLite / Tauri SQLite 一致性及兼容测试矩阵均记为延期事项，实施前必须重新提交详细方案审批。
+- 首次启动向导获批后，当前开发基线推进为 `current_schema_2026_08_13_first_run_ledger`（version 115），用于持久化初始化状态与个人/演示账本标识；依照上述开发期规则，不提供 114 → 115 迁移链。
+
+---
+
 ## 2026-08-13 — P0 正确性修复与报表增强
 
 **Goal:** 消除设置维护、金额筛选、估值和定期任务中的静默错误，并把期间比较、预算偏差和可下钻驱动纳入报表。
