@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
-  D, newId, round,
+  D, newId, round, scheduleExecutionId, scheduledTransactionId,
   type BudgetCategory, type Category, type Payee, type ReconciliationSession,
   type ScheduledTransaction, type Transaction, type TransactionLocation, type TransactionSplit,
   type TransactionSavedView, type TransactionTag, type TransactionTemplate,
@@ -15,6 +18,7 @@ import {
   monthlyTransactionSummary,
   materializeScheduledTransaction,
   preflightImport,
+  previewScheduledBacklog,
   restoreTransaction,
   runDueScheduledTransactions,
   saveTransaction,
@@ -40,8 +44,7 @@ function tx(overrides: Partial<Transaction>): Transaction {
   } as Transaction;
 }
 
-async function openTransactionLedger() {
-  const store = await openLedger();
+async function seedTransactionLedger(store: Awaited<ReturnType<typeof openLedger>>) {
   await store.assets.put({ ...base(), id: 'GBP', code: 'GBP', name: 'Pound', type: 'fiat', decimals: 2, isActive: true } as never);
   await store.accounts.put({ ...base(), id: 'bank', name: 'Bank', kind: 'bank', isActive: true } as never);
   await store.categories.put({ ...base(), id: 'expense-root', name: '支出', type: 'expense', isActive: true } as never);
@@ -49,6 +52,11 @@ async function openTransactionLedger() {
   await store.categories.put({ ...base(), id: 'housing', name: '居住', type: 'expense', parentId: 'expense-root', isActive: true } as never);
   await store.categories.put({ ...base(), id: 'income-root', name: '收入', type: 'income', isActive: true } as never);
   await store.categories.put({ ...base(), id: 'salary', name: '工资', type: 'income', parentId: 'income-root', isActive: true } as never);
+}
+
+async function openTransactionLedger() {
+  const store = await openLedger();
+  await seedTransactionLedger(store);
   return store;
 }
 
@@ -255,6 +263,62 @@ describe('transactions persistence', () => {
     await store.close();
   });
 
+  it('filters large and high-precision amounts exactly across count and cursor pages', async () => {
+    const store = await openTransactionLedger();
+    const amounts = [
+      ['amount-low', '9007199254740992.01'],
+      ['amount-exact-fixed', '9007199254740992.02'],
+      ['amount-exact-exponent', '9.00719925474099202e+15'],
+      ['amount-high', '9007199254740993.01'],
+      ['amount-max-exponent', '1e9000000000000000'],
+    ] as const;
+    for (const [id, amount] of amounts) {
+      await saveTransaction(store, tx({ id, date: '2026-03-15', amount }));
+    }
+
+    const first = await store.transactionBrowsePage({
+      amountMin: '9007199254740992.0200',
+      amountMax: '9.00719925474099202e+15',
+      limit: 1,
+    });
+    expect(first.totalCount).toBe(2);
+    expect(first.transactions).toHaveLength(1);
+    expect(first.hasMore).toBe(true);
+    const second = await store.transactionBrowsePage({
+      amountMin: '9007199254740992.0200',
+      amountMax: '9.00719925474099202e+15',
+      limit: 1,
+      cursor: first.nextCursor,
+    });
+    expect(second.totalCount).toBe(2);
+    expect(new Set([...first.transactions, ...second.transactions].map((row) => row.id))).toEqual(
+      new Set(['amount-exact-fixed', 'amount-exact-exponent']),
+    );
+
+    const advanced = await store.transactionBrowsePage({
+      advanced: { groups: [{ conditions: [{
+        field: 'amount',
+        op: 'eq',
+        value: '09007199254740992.0200',
+      }] }] },
+    });
+    expect(advanced.totalCount).toBe(2);
+    expect(new Set(advanced.transactions.map((row) => row.id))).toEqual(
+      new Set(['amount-exact-fixed', 'amount-exact-exponent']),
+    );
+    const extreme = await store.transactionBrowsePage({
+      amountMin: '1e9000000000000000',
+      amountMax: '1e9000000000000000',
+    });
+    expect(extreme.totalCount).toBe(1);
+    expect(extreme.transactions.map((row) => row.id)).toEqual(['amount-max-exponent']);
+    await expect(store.transactionBrowsePage({ amountMin: '1e9000000000000001' }))
+      .rejects.toThrow('金额筛选值不是有限数字');
+    await expect(saveTransaction(store, tx({ id: 'amount-infinite', amount: 'Infinity' })))
+      .rejects.toThrow('金额必须是有限数字');
+    await store.close();
+  });
+
   it('aggregates and pages account ledgers without mixing currencies', async () => {
     const store = await openTransactionLedger();
     await store.assets.put({ ...base(), id: 'JPY', code: 'JPY', name: 'Yen', type: 'fiat', decimals: 0, isActive: true } as never);
@@ -379,6 +443,15 @@ describe('transactions persistence', () => {
     });
     await expect(saveTransaction(store, { ...reconciled, amount: '23' })).rejects.toThrow('已对账');
     await expect(voidTransaction(store, reconciled.id)).rejects.toThrow('已对账');
+    for (const patch of [{ amount: '23' }, { date: '2026-04-01' }, {
+      recordState: 'voided' as const,
+      voidedAt: '2026-04-01T00:00:00.000Z',
+      voidReason: '绕过服务层',
+    }]) {
+      const before = (await store.transactions.get(reconciled.id))!;
+      await expect(store.transactions.put({ ...before, ...patch })).rejects.toThrow('对账');
+      expect(await store.transactions.get(reconciled.id)).toEqual(before);
+    }
     const [session] = await store.reconciliationSessions.list();
     await undoLatestReconciliation(store, session!.id);
     const editable = (await store.transactions.get(reconciled.id))!;
@@ -615,5 +688,206 @@ describe('transactions persistence', () => {
     expect(await runDueScheduledTransactions(store, new Date('2026-03-31T03:00:00.000Z'))).toMatchObject({ created: 0, skipped: 0, errors: [] });
     expect(await materializeScheduledTransaction(store, schedule.id, 2)).toMatchObject({ id: 'scheduled-transaction-monthly-rent-2' });
     await store.close();
+  });
+
+  it('does not truncate daily schedules beyond 1000 occurrences', async () => {
+    const store = await openTransactionLedger();
+    const schedule: ScheduledTransaction = {
+      ...base(), id: 'daily-3y', name: '每日咖啡', type: 'expense', category: 'food', amount: '9.90', assetId: 'GBP',
+      frequency: 'daily', anchorDate: '2023-01-01', anchorMode: 'calendar_day', time: '09:00', timezone: 'Asia/Shanghai',
+      catchUpPolicy: 'all', autoCreate: true, status: 'active',
+    } as ScheduledTransaction;
+    await store.scheduledTransactions.put(schedule);
+
+    // 2023-01-01 → 2026-03-01 共 1156 期,超过原 1000 期上限。
+    const backlog = await previewScheduledBacklog(store, new Date('2026-03-01T02:00:00.000Z'));
+    expect(backlog.length).toBe(1156);
+    expect(backlog[0]).toMatchObject({ occurrenceIndex: 0, occurrenceDate: '2023-01-01', status: 'pending' });
+    expect(backlog[1155]).toMatchObject({ occurrenceIndex: 1155, occurrenceDate: '2026-03-01', status: 'pending' });
+
+    // 启动触发每轮有界，不会因多年积压卡住界面；剩余期次留给后续轮次。
+    const result = await runDueScheduledTransactions(store, new Date('2026-03-01T02:00:00.000Z'));
+    expect(result.created).toBe(100);
+    expect(result.backlog).toBe(1156);
+    expect(result.errors).toEqual([]);
+    expect((await store.scheduledExecutions.list()).length).toBe(100);
+    expect(await previewScheduledBacklog(store, new Date('2026-03-01T02:00:00.000Z'))).toHaveLength(1056);
+    await store.close();
+  });
+
+  it('validates coordinated reconciliation changes at the outer transaction boundary', async () => {
+    const store = await openTransactionLedger();
+    const transaction = await saveTransaction(store, tx({ amount: '22', accountId: 'bank', status: 'cleared' }));
+    const session = await closeReconciliation(store, {
+      accountId: 'bank', assetId: 'GBP', statementDate: '2026-03-31', statementBalance: '-22',
+      selectedTransactionIds: [transaction.id],
+    });
+    const [item] = await store.reconciliationItems.list({ where: { reconciliationId: session.id } });
+
+    await store.transaction(async (transactionStore) => {
+      const currentTransaction = (await transactionStore.transactions.get(transaction.id))!;
+      const currentItem = (await transactionStore.reconciliationItems.get(item!.id))!;
+      const currentSession = (await transactionStore.reconciliationSessions.get(session.id))!;
+      await transactionStore.transactions.put({ ...currentTransaction, amount: '23' });
+      await transactionStore.reconciliationItems.put({ ...currentItem, postingAmount: '-23' });
+      await transactionStore.reconciliationSessions.put({
+        ...currentSession,
+        statementBalance: '-23',
+        selectedTotal: '-23',
+        clearedBalance: '-23',
+        difference: '0',
+      });
+    });
+
+    expect(await store.transactions.get(transaction.id)).toMatchObject({ amount: '23' });
+    expect(await store.reconciliationItems.get(item!.id)).toMatchObject({ postingAmount: '-23' });
+    const savedSession = (await store.reconciliationSessions.get(session.id))!;
+    await expect(store.assertReconciliationAggregate(
+      savedSession,
+      await store.reconciliationItems.list({ where: { reconciliationId: session.id } }),
+    )).resolves.toBeUndefined();
+    await store.close();
+  });
+
+  it('materializes one occurrence once across two stores sharing the same database', async () => {
+    const filename = join(tmpdir(), `zichan-scheduled-concurrency-${newId()}.sqlite`);
+    let first: Awaited<ReturnType<typeof openLedger>> | undefined;
+    let second: Awaited<ReturnType<typeof openLedger>> | undefined;
+    try {
+      first = await openLedger({ filename, deviceId: 'window-a' });
+      await seedTransactionLedger(first);
+      const schedule: ScheduledTransaction = {
+        ...base(), id: 'shared-daily', name: '共享日计划', type: 'expense', category: 'food', amount: '8.88', assetId: 'GBP',
+        frequency: 'daily', anchorDate: '2026-03-01', anchorMode: 'calendar_day', time: '09:00', timezone: 'Asia/Shanghai',
+        catchUpPolicy: 'all', autoCreate: true, status: 'active',
+      } as ScheduledTransaction;
+      await first.scheduledTransactions.put(schedule);
+      second = await openLedger({ filename, deviceId: 'window-b' });
+
+      const [left, right] = await Promise.all([
+        materializeScheduledTransaction(first, schedule.id, 0),
+        materializeScheduledTransaction(second, schedule.id, 0),
+      ]);
+
+      const transactionId = scheduledTransactionId(schedule.id, 0);
+      const executionId = scheduleExecutionId(schedule.id, 0);
+      expect(left.id).toBe(transactionId);
+      expect(right.id).toBe(transactionId);
+      expect(await first.transactions.get(transactionId)).toMatchObject({ version: 1, scheduledExecutionId: executionId });
+      const savedExecution = (await first.scheduledExecutions.get(executionId))!;
+      expect(savedExecution).toMatchObject({
+        version: 2,
+        status: 'created',
+        transactionId,
+      });
+      expect(savedExecution.lastError).toBeUndefined();
+      expect(savedExecution.nextRetryAt).toBeUndefined();
+      expect(await first.operationLog({ entityType: 'transaction', entityId: transactionId })).toHaveLength(1);
+      expect(await first.operationLog({ entityType: 'scheduled_execution', entityId: executionId })).toHaveLength(1);
+      expect((await first.listAuditBatches({ limit: 100 }))
+        .filter((batch) => batch.label === `生成定期交易 ${schedule.name}`)).toHaveLength(1);
+
+      const beforeTransaction = (await first.transactions.get(transactionId))!;
+      const beforeExecution = (await first.scheduledExecutions.get(executionId))!;
+      await expect(materializeScheduledTransaction(second, schedule.id, 0)).resolves.toMatchObject({ id: transactionId });
+      expect(await first.transactions.get(transactionId)).toEqual(beforeTransaction);
+      expect(await first.scheduledExecutions.get(executionId)).toEqual(beforeExecution);
+    } finally {
+      await second?.close();
+      await first?.close();
+      for (const suffix of ['', '-wal', '-shm']) rmSync(`${filename}${suffix}`, { force: true });
+    }
+  });
+
+  it('does not let an expired scheduled claim overwrite a later success as failed', async () => {
+    const store = await openTransactionLedger();
+    const schedule: ScheduledTransaction = {
+      ...base(), id: 'claim-takeover', name: '租约接管', type: 'expense', category: 'food', amount: '6.66', assetId: 'GBP',
+      frequency: 'daily', anchorDate: '2026-03-01', anchorMode: 'calendar_day', time: '09:00', timezone: 'Asia/Shanghai',
+      catchUpPolicy: 'all', autoCreate: true, status: 'active',
+    } as ScheduledTransaction;
+    await store.scheduledTransactions.put(schedule);
+    const executionId = scheduleExecutionId(schedule.id, 0);
+    const transactionId = scheduledTransactionId(schedule.id, 0);
+    const claimInput = {
+      id: executionId,
+      scheduleId: schedule.id,
+      occurrenceIndex: 0,
+      occurrenceDate: '2026-03-01',
+      transactionId,
+      createdAt: '2026-03-01T09:00:00.000Z',
+    };
+    const stale = await store.claimScheduledExecution({
+      ...claimInput,
+      attemptedAt: '2026-03-01T00:00:00.000Z',
+      leaseUntil: '2026-03-01T00:01:00.000Z',
+    });
+    expect(stale.state).toBe('claimed');
+    if (stale.state !== 'claimed') throw new Error('测试未取得初始租约');
+    const winner = await store.claimScheduledExecution({
+      ...claimInput,
+      attemptedAt: '2026-03-01T00:02:00.000Z',
+      leaseUntil: '2026-03-01T00:03:00.000Z',
+    });
+    expect(winner.state).toBe('claimed');
+    if (winner.state !== 'claimed') throw new Error('测试未接管过期租约');
+
+    await store.transaction(async (transactionStore) => {
+      const owned = (await transactionStore.getScheduledExecutionClaim(executionId, winner.token))!;
+      await saveTransaction(transactionStore, tx({
+        id: transactionId,
+        date: '2026-03-01',
+        amount: schedule.amount,
+        scheduledExecutionId: executionId,
+      }));
+      await transactionStore.scheduledExecutions.put({
+        ...owned,
+        status: 'created',
+        transactionId,
+        completedAt: '2026-03-01T00:02:01.000Z',
+        lastError: undefined,
+        nextRetryAt: undefined,
+      });
+    });
+
+    const staleFailureRecorded = await store.transaction(async (transactionStore) => {
+      const owned = await transactionStore.getScheduledExecutionClaim(executionId, stale.token);
+      if (!owned) return false;
+      await transactionStore.scheduledExecutions.put({
+        ...owned,
+        status: 'failed',
+        lastError: '晚到的失败',
+      });
+      return true;
+    });
+    expect(staleFailureRecorded).toBe(false);
+    expect(await store.scheduledExecutions.get(executionId)).toMatchObject({
+      status: 'created',
+      transactionId,
+    });
+    await store.close();
+  });
+
+  it('allows different ledgers to run scheduled work concurrently', async () => {
+    const first = await openTransactionLedger();
+    const second = await openTransactionLedger();
+    const schedule = (id: string): ScheduledTransaction => ({
+      ...base(), id, name: id, type: 'expense', category: 'food', amount: '1', assetId: 'GBP',
+      frequency: 'daily', anchorDate: '2026-03-01', anchorMode: 'calendar_day', time: '09:00', timezone: 'Asia/Shanghai',
+      catchUpPolicy: 'all', autoCreate: true, status: 'active',
+    } as ScheduledTransaction);
+    try {
+      await first.scheduledTransactions.put(schedule('first-ledger-daily'));
+      await second.scheduledTransactions.put(schedule('second-ledger-daily'));
+      const [firstResult, secondResult] = await Promise.all([
+        runDueScheduledTransactions(first, new Date('2026-03-01T02:00:00.000Z')),
+        runDueScheduledTransactions(second, new Date('2026-03-01T02:00:00.000Z')),
+      ]);
+      expect(firstResult).toMatchObject({ created: 1, errors: [] });
+      expect(secondResult).toMatchObject({ created: 1, errors: [] });
+    } finally {
+      await first.close();
+      await second.close();
+    }
   });
 });

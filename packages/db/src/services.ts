@@ -5,9 +5,9 @@
  * seed; now it's one tested place.
  */
 import {
-  D, Decimal, traceChain, conversionStepAmounts, matchSell, lotFromTrace, isTransactionActive, newId, refundAppliedAmount,
+  D, Decimal, traceChain, conversionStepAmounts, assertConversionShape, matchSell, lotFromTrace, isTransactionActive, newId, refundAppliedAmount,
   assertDcaExecutionShape, assertDcaPlanShape, assertTransactionShape, dcaOccurrenceDate, transactionReportingEffect,
-  normalizeOccurrence,
+  normalizeOccurrence, canonicalJson,
   listScheduleOccurrences, nextUnhandledScheduleOccurrence, postingsFromTransaction,
   scheduleExecutionId, scheduleOccurrenceDate, scheduleOccurrenceIsDue, scheduledTransactionId, zonedCalendarNow,
   systemCategory,
@@ -37,8 +37,9 @@ import {
   type RefundAllocation,
   type BaseEntity,
   type Collection,
+  type ScheduleOccurrence,
 } from '@zichan/core';
-import { ConcurrencyError, type SqlLedgerStore } from './repository.js';
+import { ConcurrencyError, isScheduledExecutionClaim, type SqlLedgerStore } from './repository.js';
 import type {
   BusinessCompensationRecord,
   CompensationEntityState,
@@ -49,6 +50,25 @@ import {
   validateCategoryHierarchySnapshot,
 } from './domain-validation.js';
 export { DomainValidationError } from './domain-errors.js';
+
+const SCHEDULE_SCAN_CHUNK = 1_000;
+const MAX_SCHEDULE_OCCURRENCES = 100_000;
+const MAX_SCHEDULE_ACTIONS_PER_RUN = 100;
+const SCHEDULE_CLAIM_LEASE_MS = 2 * 60_000;
+const SCHEDULE_CLAIM_WAIT_MS = 5_000;
+
+class ScheduledExecutionUnavailableError extends Error {
+  readonly code = 'SCHEDULED_EXECUTION_UNAVAILABLE';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'ScheduledExecutionUnavailableError';
+  }
+}
+
+async function waitForScheduledClaim(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 25));
+}
 
 // ─────────────────────────── record a conversion ───────────────────────────
 
@@ -87,25 +107,7 @@ function conversionBusinessEqual(a: object, b: object, keys: string[]): boolean 
 }
 
 function validateConversionInput(chain: ConversionChain, steps: ConversionStep[]): void {
-  if (!steps.length) throw new Error('资产转换至少需要一个步骤');
-  const ids = new Set<string>();
-  for (let index = 0; index < steps.length; index += 1) {
-    const step = steps[index]!;
-    if (ids.has(step.id)) throw new Error(`步骤 ${index + 1} 的 ID 重复`);
-    ids.add(step.id);
-    const sameAssetAccountMove = (chain.type === 'deposit' || chain.type === 'withdraw')
-      && step.fromAssetId === step.toAssetId
-      && !!step.accountFromId
-      && !!step.accountToId
-      && step.accountFromId !== step.accountToId;
-    if (!step.fromAssetId || !step.toAssetId || (step.fromAssetId === step.toAssetId && !sameAssetAccountMove)) {
-      throw new Error(`步骤 ${index + 1} 的资产无效；同币种入金或提现需要两个不同账户`);
-    }
-    if (D(step.fromAmount).lte(0) || D(step.toAmount).lte(0)) throw new Error(`步骤 ${index + 1} 的数量必须大于 0`);
-    if (index > 0 && steps[index - 1]!.toAssetId !== step.fromAssetId) throw new Error(`步骤 ${index} 的目标资产必须与步骤 ${index + 1} 的来源资产一致`);
-    conversionStepAmounts(step);
-  }
-  traceChain({ chain, steps });
+  assertConversionShape(chain, steps);
 }
 
 async function validateConversionReferences(store: SqlLedgerStore, chain: ConversionChain, steps: ConversionStep[]): Promise<ConversionChain> {
@@ -168,6 +170,17 @@ export async function rebuildConversionDerivedInTransaction(store: SqlLedgerStor
     if (chain.type === 'buy' || chain.type === 'dca') {
       if (D(trace.totalBaseCost).lte(0)) throw new Error(`转换“${chain.title ?? chain.date}”没有形成账面成本`);
       const old = lotBySource.get(chain.id);
+      cacheByChain.set(chain.id, {
+        finalAssetId: trace.finalAssetId,
+        finalAmount: trace.finalAmount,
+        totalBaseCost: trace.totalBaseCost,
+        totalBaseProceeds: undefined,
+        totalFeesInBase: trace.totalFeesInBase,
+        realizedGainLoss: undefined,
+      });
+      if (D(trace.finalAmount).isZero()) {
+        throw new Error(`转换"${chain.title ?? chain.date}"：买入金额被手续费全部消耗，未产生有效持仓。请检查手续费设置或调整为非买入类型。`);
+      }
       const generated = lotFromTrace(trace, { sourceChainId: chain.id, acquiredDate: chain.date });
       const lot: Lot = {
         ...generated,
@@ -179,17 +192,8 @@ export async function rebuildConversionDerivedInTransaction(store: SqlLedgerStor
       };
       workingLots.set(lot.id, lot);
       desiredLots.set(lot.id, lot);
-      cacheByChain.set(chain.id, {
-        finalAssetId: trace.finalAssetId,
-        finalAmount: trace.finalAmount,
-        totalBaseCost: trace.totalBaseCost,
-        totalBaseProceeds: undefined,
-        totalFeesInBase: trace.totalFeesInBase,
-        realizedGainLoss: undefined,
-      });
       continue;
     }
-
     if (chain.type === 'sell') {
       const first = steps[0]!;
       if (D(trace.totalBaseProceeds).lte(0)) throw new Error(`卖出“${chain.title ?? chain.date}”没有形成账面收入`);
@@ -197,6 +201,7 @@ export async function rebuildConversionDerivedInTransaction(store: SqlLedgerStor
       const match = matchSell(available, {
         sellChainId: chain.id,
         assetId: first.fromAssetId,
+        baseCurrencyAssetId: chain.baseCurrencyAssetId,
         amount: conversionStepAmounts(first).sourceDebit,
         proceedsBase: trace.totalBaseProceeds,
         method: chain.lotMethod ?? 'fifo',
@@ -771,7 +776,8 @@ export async function saveTransactionAggregate(
   store: SqlLedgerStore,
   input: SaveTransactionAggregateInput,
 ): Promise<SavedTransactionAggregate> {
-  return store.runInAuditBatch(input.transaction.id ? '保存流水' : '新增流水', async (store) => {
+  const existedBeforeSave = await store.transactions.get(input.transaction.id);
+  return store.runInAuditBatch(existedBeforeSave ? '保存流水' : '新增流水', async (store) => {
     const existing = await store.transactions.get(input.transaction.id);
     if (existing && transactionFinancialChanged(existing, input.transaction) && await isTransactionReconciled(store, existing.id)) {
       validation('已对账流水不能直接修改，请先解除对账');
@@ -869,7 +875,7 @@ export async function saveTransactionAggregate(
       if (refunds.length) {
         const refunded = refunds.reduce((total, row) => total.plus(refundAppliedAmount(row)), D(0));
         if (D(next.amount).lt(refunded)) validation(`支出金额不能低于已退款金额 ${refunded.toString()}`, 'amount');
-        if (existing && existing.assetId !== next.assetId) validation('已有退款的支出不能修改币种，请先作废关联退款', 'assetId');
+        if (existing?.assetId !== next.assetId) validation('已有退款的支出不能修改币种，请先作废关联退款', 'assetId');
       }
     }
 
@@ -980,6 +986,34 @@ export interface ArchivedMasterDataCompensation {
   archivedVersion: number;
 }
 
+function transactionDependenciesFirst(left: Transaction, right: Transaction): number {
+  return Number(left.type === 'refund') - Number(right.type === 'refund');
+}
+
+async function migrateReconciliations(
+  store: SqlLedgerStore,
+  dimension: 'account' | 'asset',
+  sourceId: string,
+  targetId: string,
+): Promise<void> {
+  const sessions = (await store.reconciliationSessions.list()).filter((session) =>
+    dimension === 'account' ? session.accountId === sourceId : session.assetId === sourceId);
+  for (const session of sessions) {
+    const items = await store.reconciliationItems.list({ where: { reconciliationId: session.id } });
+    const nextSession: ReconciliationSession = dimension === 'account'
+      ? { ...session, accountId: targetId }
+      : { ...session, assetId: targetId };
+    const nextItems: ReconciliationItem[] = items.map((item) => dimension === 'account'
+      ? { ...item, accountId: targetId }
+      : { ...item, assetId: targetId });
+    await store.assertReconciliationAggregate(nextSession, nextItems);
+    await store.withPrevalidatedAggregates([`reconciliation:${session.id}`], async (aggregateStore) => {
+      await aggregateStore.reconciliationSessions.put(nextSession);
+      for (const item of nextItems) await aggregateStore.reconciliationItems.put(item);
+    });
+  }
+}
+
 function count(rows: unknown[]): number {
   return rows.length;
 }
@@ -1003,15 +1037,15 @@ export async function previewMasterDataChange(
       if (source.type !== target.type) blockedReasons.push('分类合并必须保持收入/支出类型一致');
       if (!!source.parentId !== !!target.parentId) blockedReasons.push('一级分类和二级分类不能互相合并');
     }
+    references.children = await store.categories.count({ where: { parentId: sourceId } });
+    references.transactions = await store.transactions.count({ where: { category: sourceId } });
+    references.splits = await store.transactionSplits.count({ where: { category: sourceId } });
+    references.refundAllocations = await store.refundAllocations.count({ where: { categoryId: sourceId } });
+    references.budgets = await store.budgetCategories.count({ where: { category: sourceId } });
+    references.schedules = await store.scheduledTransactions.count({ where: { category: sourceId } });
+    references.templates = await store.transactionTemplates.count({ where: { category: sourceId } });
+    references.payeeDefaults = await store.payees.count({ where: { defaultCategory: sourceId } });
     const children = await store.categories.list({ where: { parentId: sourceId } });
-    references.children = count(children);
-    references.transactions = count((await store.transactions.list()).filter((row) => row.category === sourceId));
-    references.splits = count((await store.transactionSplits.list()).filter((row) => row.category === sourceId));
-    references.refundAllocations = count((await store.refundAllocations.list()).filter((row) => row.categoryId === sourceId));
-    references.budgets = count((await store.budgetCategories.list()).filter((row) => row.category === sourceId));
-    references.schedules = count((await store.scheduledTransactions.list()).filter((row) => row.category === sourceId));
-    references.templates = count((await store.transactionTemplates.list()).filter((row) => row.category === sourceId));
-    references.payeeDefaults = count((await store.payees.list()).filter((row) => row.defaultCategory === sourceId));
     if (!targetId && children.some((row) => row.isActive)) blockedReasons.push('一级分类仍有启用的二级分类，请先归档子分类');
     if (source?.parentId && target?.parentId && source.parentId !== target.parentId) {
       const duplicate = await store.categories.list({ where: { parentId: target.parentId } });
@@ -1026,34 +1060,37 @@ export async function previewMasterDataChange(
     if (targetId && (!target || target.isDeleted || target.isActive === false)) blockedReasons.push('目标账户不存在或已归档');
     references.transactions = count((await store.transactions.list()).filter((row) => row.accountId === sourceId || row.transferAccountId === sourceId));
     references.schedules = count((await store.scheduledTransactions.list()).filter((row) => row.accountId === sourceId || row.transferAccountId === sourceId));
-    references.templates = count((await store.transactionTemplates.list()).filter((row) => row.accountId === sourceId));
-    references.payeeDefaults = count((await store.payees.list()).filter((row) => row.defaultAccountId === sourceId));
-    references.reconciliations = count((await store.reconciliationSessions.list()).filter((row) => row.accountId === sourceId));
-    const closed = (await store.reconciliationSessions.list()).filter((row) => row.accountId === sourceId && row.status === 'closed');
-    if (targetId && closed.length) blockedReasons.push(`账户包含 ${closed.length} 个已关闭对账批次，只能归档，不能普通合并`);
+    references.templates = await store.transactionTemplates.count({ where: { accountId: sourceId } });
+    references.payeeDefaults = await store.payees.count({ where: { defaultAccountId: sourceId } });
+    references.reconciliations = await store.reconciliationSessions.count({ where: { accountId: sourceId } });
+    // 需要额外加载 closed 状态判断，但 count 不支持 status 过滤，改用 list 加载带 where
+    const closedSessions = (await store.reconciliationSessions.list({ where: { accountId: sourceId } })).filter((row) => row.status === 'closed');
+    if (targetId && closedSessions.length) blockedReasons.push(`账户包含 ${closedSessions.length} 个已关闭对账批次，只能归档，不能普通合并`);
     let conversionRefs = 0;
-    for (const chain of await store.conversionChains.list()) {
-      const steps = await store.listStepsByChain(chain.id);
+    const previewChains = await store.conversionChains.list();
+    const previewStepsByChain = await store.listStepsByChains(previewChains.map((c) => c.id));
+    for (const chain of previewChains) {
+      const steps = previewStepsByChain.get(chain.id) ?? [];
       conversionRefs += steps.filter((step) => step.accountFromId === sourceId || step.accountToId === sourceId || step.fees?.some((fee) => fee.accountId === sourceId)).length;
     }
     references.conversionSteps = conversionRefs;
-    references.gameCashflows = count((await store.gameCashflowLinks.list()).filter((row) => row.accountId === sourceId));
+    references.gameCashflows = await store.gameCashflowLinks.count({ where: { accountId: sourceId } });
   } else if (kind === 'payee') {
     const source = await store.payees.get(sourceId);
     const target = targetId ? await store.payees.get(targetId) : null;
     if (!source || source.isDeleted) blockedReasons.push('原商户不存在');
     if (targetId && (!target || target.isDeleted || !target.isActive)) blockedReasons.push('目标商户不存在或已归档');
-    references.transactions = count((await store.transactions.list()).filter((row) => row.payeeId === sourceId));
-    references.schedules = count((await store.scheduledTransactions.list()).filter((row) => row.payeeId === sourceId));
-    references.templates = count((await store.transactionTemplates.list()).filter((row) => row.payeeId === sourceId));
+    references.transactions = await store.transactions.count({ where: { payeeId: sourceId } });
+    references.schedules = await store.scheduledTransactions.count({ where: { payeeId: sourceId } });
+    references.templates = await store.transactionTemplates.count({ where: { payeeId: sourceId } });
   } else if (kind === 'fixed_category') {
     const source = await store.fixedAssetCategories.get(sourceId);
     const target = targetId ? await store.fixedAssetCategories.get(targetId) : null;
     if (!source || source.isDeleted) blockedReasons.push('原物品分类不存在');
     if (targetId && (!target || target.isDeleted || !target.isActive)) blockedReasons.push('目标物品分类不存在或已归档');
     if (source && target && !!source.parentId !== !!target.parentId) blockedReasons.push('一级分类和二级分类不能互相合并');
-    references.children = count(await store.fixedAssetCategories.list({ where: { parentId: sourceId } }));
-    references.fixedAssets = count((await store.fixedAssets.list()).filter((row) => row.categoryId === sourceId));
+    references.children = await store.fixedAssetCategories.count({ where: { parentId: sourceId } });
+    references.fixedAssets = await store.fixedAssets.count({ where: { categoryId: sourceId } });
     if (!targetId && references.children > 0) blockedReasons.push('一级分类仍有二级分类，请先归档子分类');
   } else if (kind === 'tag') {
     const source = await store.transactionTags.get(sourceId);
@@ -1067,8 +1104,8 @@ export async function previewMasterDataChange(
     const target = targetId ? await store.transactionLocations.get(targetId) : null;
     if (!source || source.isDeleted) blockedReasons.push('原地点不存在');
     if (targetId && (!target || target.isDeleted || !target.isActive)) blockedReasons.push('目标地点不存在或已归档');
-    references.transactions = count((await store.transactions.list()).filter((row) => row.locationId === sourceId));
-    references.templates = count((await store.transactionTemplates.list()).filter((row) => row.locationId === sourceId));
+    references.transactions = await store.transactions.count({ where: { locationId: sourceId } });
+    references.templates = await store.transactionTemplates.count({ where: { locationId: sourceId } });
   } else if (kind === 'asset') {
     const source = await store.assets.get(sourceId);
     const target = targetId ? await store.assets.get(targetId) : null;
@@ -1076,6 +1113,15 @@ export async function previewMasterDataChange(
     if (targetId && (!target || target.isDeleted || !target.isActive)) blockedReasons.push('目标资产不存在或已归档');
     if (source && target && (source.type !== target.type || source.decimals !== target.decimals)) {
       blockedReasons.push('资产合并必须保持资产类型和小数精度一致');
+    }
+    if (targetId) {
+      const activeFrozenRefunds = (await store.transactions.list()).filter((row) =>
+        row.type === 'refund'
+        && row.recordState !== 'voided'
+        && row.refundAppliedAssetId === sourceId);
+      if (activeFrozenRefunds.length) {
+        blockedReasons.push(`资产包含 ${activeFrozenRefunds.length} 笔有效退款冻结关系，请先作废关联退款再合并`);
+      }
     }
     const settings = await store.settings.list();
     references.settings = count(settings.filter((row) => [
@@ -1085,20 +1131,22 @@ export async function previewMasterDataChange(
     references.transactions = count((await store.transactions.list()).filter((row) =>
       row.assetId === sourceId || row.transferAssetId === sourceId || row.refundAppliedAssetId === sourceId));
     references.schedules = count((await store.scheduledTransactions.list()).filter((row) => row.assetId === sourceId || row.transferAssetId === sourceId));
-    references.templates = count((await store.transactionTemplates.list()).filter((row) => row.assetId === sourceId));
-    references.budgets = count((await store.budgetCategories.list()).filter((row) => row.assetId === sourceId));
-    references.reconciliations = count((await store.reconciliationSessions.list()).filter((row) => row.assetId === sourceId));
+    references.templates = await store.transactionTemplates.count({ where: { assetId: sourceId } });
+    references.budgets = await store.budgetCategories.count({ where: { assetId: sourceId } });
+    references.reconciliations = await store.reconciliationSessions.count({ where: { assetId: sourceId } });
     references.priceMarks = count((await store.priceMarks.list()).filter((row) => row.assetId === sourceId || row.quoteAssetId === sourceId));
     references.lots = count((await store.lots.list()).filter((row) =>
       row.assetId === sourceId || row.baseCurrencyAssetId === sourceId || row.nativeCostAssetId === sourceId));
     references.dca = count((await store.dcaPlans.list()).filter((row) => row.targetAssetId === sourceId || row.baseCurrencyAssetId === sourceId))
       + count((await store.dcaExecutions.list()).filter((row) => row.baseCurrencyAssetId === sourceId || row.finalAssetId === sourceId));
     references.games = count((await store.gameRecords.list()).filter((row) => row.settlementAssetId === sourceId || row.feeAssetId === sourceId));
-    references.fixedAssets = count((await store.fixedAssets.list()).filter((row) => row.baseCurrencyAssetId === sourceId));
+    references.fixedAssets = await store.fixedAssets.count({ where: { baseCurrencyAssetId: sourceId } });
     let conversionRefs = 0;
-    for (const chain of await store.conversionChains.list()) {
+    const chains = await store.conversionChains.list();
+    const stepsByChain = await store.listStepsByChains(chains.map((c) => c.id));
+    for (const chain of chains) {
       if (chain.baseCurrencyAssetId === sourceId || chain.finalAssetId === sourceId) conversionRefs += 1;
-      const steps = await store.listStepsByChain(chain.id);
+      const steps = stepsByChain.get(chain.id) ?? [];
       for (const step of steps) {
         const from = step.fromAssetId === sourceId ? targetId : step.fromAssetId;
         const to = step.toAssetId === sourceId ? targetId : step.toAssetId;
@@ -1114,37 +1162,37 @@ export async function previewMasterDataChange(
     const target = targetId ? await store.games.get(targetId) : null;
     if (!source || source.isDeleted) blockedReasons.push('原游戏不存在');
     if (targetId && (!target || target.isDeleted || target.isActive === false)) blockedReasons.push('目标游戏不存在或已归档');
-    references.accounts = count((await store.gameAccounts.list()).filter((row) => row.gameId === sourceId));
-    references.seasons = count((await store.gameSeasons.list()).filter((row) => row.gameId === sourceId));
-    references.records = count((await store.gameRecords.list()).filter((row) => row.gameId === sourceId));
+    references.accounts = await store.gameAccounts.count({ where: { gameId: sourceId } });
+    references.seasons = await store.gameSeasons.count({ where: { gameId: sourceId } });
+    references.records = await store.gameRecords.count({ where: { gameId: sourceId } });
   } else if (kind === 'game_account') {
     const source = await store.gameAccounts.get(sourceId);
     const target = targetId ? await store.gameAccounts.get(targetId) : null;
     if (!source || source.isDeleted) blockedReasons.push('原游戏账号不存在');
     if (targetId && (!target || target.isDeleted || target.status !== 'active')) blockedReasons.push('目标游戏账号不存在或不可用');
     if (source && target && source.gameId !== target.gameId) blockedReasons.push('只能合并同一游戏下的账号');
-    references.records = count((await store.gameRecords.list()).filter((row) => row.gameAccountId === sourceId));
+    references.records = await store.gameRecords.count({ where: { gameAccountId: sourceId } });
   } else if (kind === 'game_season') {
     const source = await store.gameSeasons.get(sourceId);
     const target = targetId ? await store.gameSeasons.get(targetId) : null;
     if (!source || source.isDeleted) blockedReasons.push('原赛季不存在');
     if (targetId && (!target || target.isDeleted || target.status === 'ended')) blockedReasons.push('目标赛季不存在或已结束');
     if (source && target && source.gameId !== target.gameId) blockedReasons.push('只能合并同一游戏下的赛季');
-    references.records = count((await store.gameRecords.list()).filter((row) => row.seasonId === sourceId));
+    references.records = await store.gameRecords.count({ where: { seasonId: sourceId } });
   } else {
     const source = await store.fixedAssets.get(sourceId);
     const target = targetId ? await store.fixedAssets.get(targetId) : null;
     if (!source || source.isDeleted) blockedReasons.push('原物品资产不存在');
     if (targetId && (!target || target.isDeleted || target.archivedAt)) blockedReasons.push('目标物品资产不存在或已归档');
     if (source && target && source.baseCurrencyAssetId !== target.baseCurrencyAssetId) blockedReasons.push('只能合并记账币种相同的物品');
-    const events = await store.fixedAssetEvents.list();
-    references.events = count(events.filter((row) => row.fixedAssetId === sourceId));
-    references.cashflows = count((await store.fixedAssetCashflowLinks.list()).filter((row) => row.fixedAssetId === sourceId));
-    references.metrics = count((await store.fixedAssetUsageMetrics.list()).filter((row) => row.fixedAssetId === sourceId));
-    references.logs = count((await store.fixedAssetUsageLogs.list()).filter((row) => row.fixedAssetId === sourceId));
-    references.consumables = count((await store.fixedAssetConsumables.list()).filter((row) => row.fixedAssetId === sourceId));
-    references.goals = count((await store.fixedAssetGoals.list()).filter((row) => row.fixedAssetId === sourceId));
+    references.events = await store.fixedAssetEvents.count({ where: { fixedAssetId: sourceId } });
+    references.cashflows = await store.fixedAssetCashflowLinks.count({ where: { fixedAssetId: sourceId } });
+    references.metrics = await store.fixedAssetUsageMetrics.count({ where: { fixedAssetId: sourceId } });
+    references.logs = await store.fixedAssetUsageLogs.count({ where: { fixedAssetId: sourceId } });
+    references.consumables = await store.fixedAssetConsumables.count({ where: { fixedAssetId: sourceId } });
+    references.goals = await store.fixedAssetGoals.count({ where: { fixedAssetId: sourceId } });
     references.attachments = count((await store.attachments.list()).filter((row) => row.entityType === 'fixed_asset' && row.entityId === sourceId));
+    const events = await store.fixedAssetEvents.list();
     if (targetId && events.some((row) => row.fixedAssetId === sourceId && row.type === 'purchase')
       && events.some((row) => row.fixedAssetId === targetId && row.type === 'purchase')) {
       blockedReasons.push('原物品和目标物品都包含购买事件，合并会产生两个购买基准');
@@ -1291,18 +1339,24 @@ export async function mergeMasterData(
       const source = (await store.categories.get(sourceId))!;
       const target = (await store.categories.get(targetId))!;
       for (const row of await store.categories.list({ where: { parentId: sourceId } })) await store.categories.put({ ...row, parentId: targetId });
-      for (const row of (await store.transactions.list()).filter((item) => item.category === sourceId)) await store.transactions.put({ ...row, category: targetId });
-      for (const row of (await store.transactionSplits.list()).filter((item) => item.category === sourceId)) await store.transactionSplits.put({ ...row, category: targetId });
-      for (const row of (await store.refundAllocations.list()).filter((item) => item.categoryId === sourceId)) {
+      // Publish the merge alias before migrating an expense that has refunds.
+      // This gives both local validation and dependency-ordered sync replay a
+      // valid transitional interpretation of the old frozen category.
+      await store.categories.put({ ...source, version: expectedVersion, isActive: false, archivedAt, archiveReason: '已合并', mergedIntoId: targetId });
+      const categoryTransactions = await store.transactions.list({ where: { category: sourceId } });
+      for (const row of categoryTransactions.sort(transactionDependenciesFirst)) await store.transactions.put({ ...row, category: targetId });
+      for (const row of await store.transactionSplits.list({ where: { category: sourceId } })) await store.transactionSplits.put({ ...row, category: targetId });
+      for (const row of await store.refundAllocations.list({ where: { categoryId: sourceId } })) {
         await store.refundAllocations.put({ ...row, categoryId: targetId, categoryPathSnapshot: await categoryPath(store, target) });
       }
-      for (const row of (await store.budgetCategories.list()).filter((item) => item.category === sourceId)) await store.budgetCategories.put({ ...row, category: targetId });
-      for (const row of (await store.scheduledTransactions.list()).filter((item) => item.category === sourceId)) await store.scheduledTransactions.put({ ...row, category: targetId });
-      for (const row of (await store.transactionTemplates.list()).filter((item) => item.category === sourceId)) await store.transactionTemplates.put({ ...row, category: targetId });
-      for (const row of (await store.payees.list()).filter((item) => item.defaultCategory === sourceId)) await store.payees.put({ ...row, defaultCategory: targetId });
-      await store.categories.put({ ...source, version: expectedVersion, isActive: false, archivedAt, archiveReason: '已合并', mergedIntoId: targetId });
+      for (const row of await store.budgetCategories.list({ where: { category: sourceId } })) await store.budgetCategories.put({ ...row, category: targetId });
+      for (const row of await store.scheduledTransactions.list({ where: { category: sourceId } })) await store.scheduledTransactions.put({ ...row, category: targetId });
+      for (const row of await store.transactionTemplates.list({ where: { category: sourceId } })) await store.transactionTemplates.put({ ...row, category: targetId });
+      for (const row of await store.payees.list({ where: { defaultCategory: sourceId } })) await store.payees.put({ ...row, defaultCategory: targetId });
     } else if (kind === 'account') {
       const source = (await store.accounts.get(sourceId))!;
+      // 账户引用涉及 OR 条件(accountId || transferAccountId),无法用单字段 where 过滤,
+      // 保持 .list() + .filter() 模式,但数据量通常较小(仅关联特定账户的流水)。
       for (const row of (await store.transactions.list()).filter((item) => item.accountId === sourceId || item.transferAccountId === sourceId)) {
         const next = { ...row, accountId: row.accountId === sourceId ? targetId : row.accountId, transferAccountId: row.transferAccountId === sourceId ? targetId : row.transferAccountId };
         if (next.type === 'transfer' && next.accountId === next.transferAccountId) validation(`迁移会使转账 ${next.id} 的双方账户相同`);
@@ -1311,13 +1365,14 @@ export async function mergeMasterData(
       for (const row of (await store.scheduledTransactions.list()).filter((item) => item.accountId === sourceId || item.transferAccountId === sourceId)) {
         await store.scheduledTransactions.put({ ...row, accountId: row.accountId === sourceId ? targetId : row.accountId, transferAccountId: row.transferAccountId === sourceId ? targetId : row.transferAccountId });
       }
-      for (const row of (await store.transactionTemplates.list()).filter((item) => item.accountId === sourceId)) await store.transactionTemplates.put({ ...row, accountId: targetId });
-      for (const row of (await store.payees.list()).filter((item) => item.defaultAccountId === sourceId)) await store.payees.put({ ...row, defaultAccountId: targetId });
-      for (const row of (await store.reconciliationSessions.list()).filter((item) => item.accountId === sourceId)) await store.reconciliationSessions.put({ ...row, accountId: targetId });
-      for (const row of (await store.reconciliationItems.list()).filter((item) => item.accountId === sourceId)) await store.reconciliationItems.put({ ...row, accountId: targetId });
-      for (const row of (await store.gameCashflowLinks.list()).filter((item) => item.accountId === sourceId)) await store.gameCashflowLinks.put({ ...row, accountId: targetId });
-      for (const chain of await store.conversionChains.list()) {
-        const steps = await store.listStepsByChain(chain.id);
+      for (const row of await store.transactionTemplates.list({ where: { accountId: sourceId } })) await store.transactionTemplates.put({ ...row, accountId: targetId });
+      for (const row of await store.payees.list({ where: { defaultAccountId: sourceId } })) await store.payees.put({ ...row, defaultAccountId: targetId });
+      await migrateReconciliations(store, 'account', sourceId, targetId);
+      for (const row of await store.gameCashflowLinks.list({ where: { accountId: sourceId } })) await store.gameCashflowLinks.put({ ...row, accountId: targetId });
+      const accountChains = await store.conversionChains.list();
+      const accountStepsByChain = await store.listStepsByChains(accountChains.map((c) => c.id));
+      for (const chain of accountChains) {
+        const steps = accountStepsByChain.get(chain.id) ?? [];
         const affected = steps.some((step) => step.accountFromId === sourceId || step.accountToId === sourceId || step.fees?.some((fee) => fee.accountId === sourceId));
         if (!affected) continue;
         await store.saveChainWithSteps(chain, steps.map((step) => ({
@@ -1331,20 +1386,21 @@ export async function mergeMasterData(
     } else if (kind === 'payee') {
       const source = (await store.payees.get(sourceId))!;
       const target = (await store.payees.get(targetId))!;
-      for (const row of (await store.transactions.list()).filter((item) => item.payeeId === sourceId)) await store.transactions.put({ ...row, payeeId: targetId });
-      for (const row of (await store.scheduledTransactions.list()).filter((item) => item.payeeId === sourceId)) await store.scheduledTransactions.put({ ...row, payeeId: targetId });
-      for (const row of (await store.transactionTemplates.list()).filter((item) => item.payeeId === sourceId)) await store.transactionTemplates.put({ ...row, payeeId: targetId });
+      for (const row of await store.transactions.list({ where: { payeeId: sourceId } })) await store.transactions.put({ ...row, payeeId: targetId });
+      for (const row of await store.scheduledTransactions.list({ where: { payeeId: sourceId } })) await store.scheduledTransactions.put({ ...row, payeeId: targetId });
+      for (const row of await store.transactionTemplates.list({ where: { payeeId: sourceId } })) await store.transactionTemplates.put({ ...row, payeeId: targetId });
       const aliases = [...new Set([...(target.aliases ?? []), source.name, ...(source.aliases ?? [])])].filter((value) => value !== target.name);
       await store.payees.put({ ...target, aliases });
       await store.payees.put({ ...source, version: expectedVersion, isActive: false, archivedAt, archiveReason: '已合并', mergedIntoId: targetId });
     } else if (kind === 'fixed_category') {
       const source = (await store.fixedAssetCategories.get(sourceId))!;
       for (const row of await store.fixedAssetCategories.list({ where: { parentId: sourceId } })) await store.fixedAssetCategories.put({ ...row, parentId: targetId });
-      for (const row of (await store.fixedAssets.list()).filter((item) => item.categoryId === sourceId)) await store.fixedAssets.put({ ...row, categoryId: targetId });
+      for (const row of await store.fixedAssets.list({ where: { categoryId: sourceId } })) await store.fixedAssets.put({ ...row, categoryId: targetId });
       await store.fixedAssetCategories.put({ ...source, version: expectedVersion, isActive: false, archivedAt, archiveReason: '已合并', mergedIntoId: targetId });
     } else if (kind === 'tag') {
       const source = (await store.transactionTags.get(sourceId))!;
       const replace = (ids: string[] | undefined) => [...new Set((ids ?? []).map((id) => id === sourceId ? targetId : id))];
+      // tagIds 是 JSON 数组字段,无法用单字段 where 过滤,保持 .list() + .filter() 模式
       for (const row of (await store.transactions.list()).filter((item) => item.tagIds?.includes(sourceId))) {
         await store.transactions.put({ ...row, tagIds: replace(row.tagIds) });
       }
@@ -1354,10 +1410,10 @@ export async function mergeMasterData(
       await store.transactionTags.put({ ...source, version: expectedVersion, isActive: false, archivedAt, archiveReason: '已合并', mergedIntoId: targetId });
     } else if (kind === 'location') {
       const source = (await store.transactionLocations.get(sourceId))!;
-      for (const row of (await store.transactions.list()).filter((item) => item.locationId === sourceId)) {
+      for (const row of await store.transactions.list({ where: { locationId: sourceId } })) {
         await store.transactions.put({ ...row, locationId: targetId });
       }
-      for (const row of (await store.transactionTemplates.list()).filter((item) => item.locationId === sourceId)) {
+      for (const row of await store.transactionTemplates.list({ where: { locationId: sourceId } })) {
         await store.transactionTemplates.put({ ...row, locationId: targetId });
       }
       await store.transactionLocations.put({ ...source, version: expectedVersion, isActive: false, archivedAt, archiveReason: '已合并', mergedIntoId: targetId });
@@ -1374,6 +1430,7 @@ export async function mergeMasterData(
           gameDefaultSettlementAssetId: row.gameDefaultSettlementAssetId === sourceId ? targetId : row.gameDefaultSettlementAssetId,
         });
       }
+      // 以下 OR 条件过滤器无法用单字段 where 优化,保持 .list() + .filter() 模式
       for (const row of (await store.priceMarks.list()).filter((item) => item.assetId === sourceId || item.quoteAssetId === sourceId)) {
         await store.priceMarks.put({ ...row, assetId: row.assetId === sourceId ? targetId : row.assetId, quoteAssetId: row.quoteAssetId === sourceId ? targetId : row.quoteAssetId });
       }
@@ -1391,7 +1448,10 @@ export async function mergeMasterData(
       for (const row of (await store.dcaExecutions.list()).filter((item) => item.baseCurrencyAssetId === sourceId || item.finalAssetId === sourceId)) {
         await store.dcaExecutions.put({ ...row, baseCurrencyAssetId: row.baseCurrencyAssetId === sourceId ? targetId : row.baseCurrencyAssetId, finalAssetId: row.finalAssetId === sourceId ? targetId : row.finalAssetId });
       }
-      for (const row of (await store.transactions.list()).filter((item) => item.assetId === sourceId || item.transferAssetId === sourceId || item.refundAppliedAssetId === sourceId)) {
+      const assetTransactions = (await store.transactions.list())
+        .filter((item) => item.assetId === sourceId || item.transferAssetId === sourceId || item.refundAppliedAssetId === sourceId)
+        .sort(transactionDependenciesFirst);
+      for (const row of assetTransactions) {
         await store.transactions.put({
           ...row,
           assetId: row.assetId === sourceId ? targetId : row.assetId,
@@ -1399,14 +1459,13 @@ export async function mergeMasterData(
           refundAppliedAssetId: row.refundAppliedAssetId === sourceId ? targetId : row.refundAppliedAssetId,
         });
       }
-      for (const row of (await store.refundAllocations.list()).filter((item) => item.assetId === sourceId)) await store.refundAllocations.put({ ...row, assetId: targetId });
-      for (const row of (await store.budgetCategories.list()).filter((item) => item.assetId === sourceId)) await store.budgetCategories.put({ ...row, assetId: targetId });
+      for (const row of await store.refundAllocations.list({ where: { assetId: sourceId } })) await store.refundAllocations.put({ ...row, assetId: targetId });
+      for (const row of await store.budgetCategories.list({ where: { assetId: sourceId } })) await store.budgetCategories.put({ ...row, assetId: targetId });
       for (const row of (await store.scheduledTransactions.list()).filter((item) => item.assetId === sourceId || item.transferAssetId === sourceId)) {
         await store.scheduledTransactions.put({ ...row, assetId: row.assetId === sourceId ? targetId : row.assetId, transferAssetId: row.transferAssetId === sourceId ? targetId : row.transferAssetId });
       }
-      for (const row of (await store.transactionTemplates.list()).filter((item) => item.assetId === sourceId)) await store.transactionTemplates.put({ ...row, assetId: targetId });
-      for (const row of (await store.reconciliationSessions.list()).filter((item) => item.assetId === sourceId)) await store.reconciliationSessions.put({ ...row, assetId: targetId });
-      for (const row of (await store.reconciliationItems.list()).filter((item) => item.assetId === sourceId)) await store.reconciliationItems.put({ ...row, assetId: targetId });
+      for (const row of await store.transactionTemplates.list({ where: { assetId: sourceId } })) await store.transactionTemplates.put({ ...row, assetId: targetId });
+      await migrateReconciliations(store, 'asset', sourceId, targetId);
       for (const row of (await store.gameRecords.list()).filter((item) => item.settlementAssetId === sourceId || item.feeAssetId === sourceId)) {
         await store.gameRecords.put({
           ...row,
@@ -1414,8 +1473,8 @@ export async function mergeMasterData(
           feeAssetId: row.feeAssetId === sourceId ? targetId : row.feeAssetId,
         });
       }
-      for (const row of (await store.gameCashflowLinks.list()).filter((item) => item.sourceAssetId === sourceId)) await store.gameCashflowLinks.put({ ...row, sourceAssetId: targetId });
-      for (const row of (await store.fixedAssets.list()).filter((item) => item.baseCurrencyAssetId === sourceId)) await store.fixedAssets.put({ ...row, baseCurrencyAssetId: targetId });
+      for (const row of await store.gameCashflowLinks.list({ where: { sourceAssetId: sourceId } })) await store.gameCashflowLinks.put({ ...row, sourceAssetId: targetId });
+      for (const row of await store.fixedAssets.list({ where: { baseCurrencyAssetId: sourceId } })) await store.fixedAssets.put({ ...row, baseCurrencyAssetId: targetId });
       for (const row of (await store.fixedAssetCashflowLinks.list()).filter((item) => item.sourceAssetId === sourceId || item.baseAssetId === sourceId)) {
         await store.fixedAssetCashflowLinks.put({
           ...row,
@@ -1423,8 +1482,10 @@ export async function mergeMasterData(
           baseAssetId: row.baseAssetId === sourceId ? targetId : row.baseAssetId,
         });
       }
-      for (const chain of await store.conversionChains.list()) {
-        const steps = await store.listStepsByChain(chain.id);
+      const mergeChains = await store.conversionChains.list();
+      const mergeStepsByChain = await store.listStepsByChains(mergeChains.map((c) => c.id));
+      for (const chain of mergeChains) {
+        const steps = mergeStepsByChain.get(chain.id) ?? [];
         const affected = chain.baseCurrencyAssetId === sourceId || chain.finalAssetId === sourceId
           || steps.some((step) => step.fromAssetId === sourceId || step.toAssetId === sourceId || step.fees?.some((fee) => fee.assetId === sourceId));
         if (!affected) continue;
@@ -1445,26 +1506,26 @@ export async function mergeMasterData(
       await store.assets.put({ ...source, version: expectedVersion, isActive: false, archivedAt, archiveReason: '已合并', mergedIntoId: targetId });
     } else if (kind === 'game') {
       const source = (await store.games.get(sourceId))!;
-      for (const row of (await store.gameAccounts.list()).filter((item) => item.gameId === sourceId)) await store.gameAccounts.put({ ...row, gameId: targetId });
-      for (const row of (await store.gameSeasons.list()).filter((item) => item.gameId === sourceId)) await store.gameSeasons.put({ ...row, gameId: targetId });
-      for (const row of (await store.gameRecords.list()).filter((item) => item.gameId === sourceId)) await store.gameRecords.put({ ...row, gameId: targetId });
+      for (const row of await store.gameAccounts.list({ where: { gameId: sourceId } })) await store.gameAccounts.put({ ...row, gameId: targetId });
+      for (const row of await store.gameSeasons.list({ where: { gameId: sourceId } })) await store.gameSeasons.put({ ...row, gameId: targetId });
+      for (const row of await store.gameRecords.list({ where: { gameId: sourceId } })) await store.gameRecords.put({ ...row, gameId: targetId });
       await store.games.put({ ...source, version: expectedVersion, isActive: false, archivedAt, archiveReason: '已合并', mergedIntoId: targetId });
     } else if (kind === 'game_account') {
       const source = (await store.gameAccounts.get(sourceId))!;
-      for (const row of (await store.gameRecords.list()).filter((item) => item.gameAccountId === sourceId)) await store.gameRecords.put({ ...row, gameAccountId: targetId });
+      for (const row of await store.gameRecords.list({ where: { gameAccountId: sourceId } })) await store.gameRecords.put({ ...row, gameAccountId: targetId });
       await store.gameAccounts.put({ ...source, version: expectedVersion, status: 'inactive', archivedAt, archiveReason: '已合并', mergedIntoId: targetId });
     } else if (kind === 'game_season') {
       const source = (await store.gameSeasons.get(sourceId))!;
-      for (const row of (await store.gameRecords.list()).filter((item) => item.seasonId === sourceId)) await store.gameRecords.put({ ...row, seasonId: targetId });
+      for (const row of await store.gameRecords.list({ where: { seasonId: sourceId } })) await store.gameRecords.put({ ...row, seasonId: targetId });
       await store.gameSeasons.put({ ...source, version: expectedVersion, status: 'ended', archivedAt, archiveReason: '已合并', mergedIntoId: targetId });
     } else {
       const source = (await store.fixedAssets.get(sourceId))!;
-      for (const row of (await store.fixedAssetEvents.list()).filter((item) => item.fixedAssetId === sourceId)) await store.fixedAssetEvents.put({ ...row, fixedAssetId: targetId });
-      for (const row of (await store.fixedAssetCashflowLinks.list()).filter((item) => item.fixedAssetId === sourceId)) await store.fixedAssetCashflowLinks.put({ ...row, fixedAssetId: targetId });
-      for (const row of (await store.fixedAssetUsageMetrics.list()).filter((item) => item.fixedAssetId === sourceId)) await store.fixedAssetUsageMetrics.put({ ...row, fixedAssetId: targetId });
-      for (const row of (await store.fixedAssetUsageLogs.list()).filter((item) => item.fixedAssetId === sourceId)) await store.fixedAssetUsageLogs.put({ ...row, fixedAssetId: targetId });
-      for (const row of (await store.fixedAssetConsumables.list()).filter((item) => item.fixedAssetId === sourceId)) await store.fixedAssetConsumables.put({ ...row, fixedAssetId: targetId });
-      for (const row of (await store.fixedAssetGoals.list()).filter((item) => item.fixedAssetId === sourceId)) await store.fixedAssetGoals.put({ ...row, fixedAssetId: targetId });
+      for (const row of await store.fixedAssetEvents.list({ where: { fixedAssetId: sourceId } })) await store.fixedAssetEvents.put({ ...row, fixedAssetId: targetId });
+      for (const row of await store.fixedAssetCashflowLinks.list({ where: { fixedAssetId: sourceId } })) await store.fixedAssetCashflowLinks.put({ ...row, fixedAssetId: targetId });
+      for (const row of await store.fixedAssetUsageMetrics.list({ where: { fixedAssetId: sourceId } })) await store.fixedAssetUsageMetrics.put({ ...row, fixedAssetId: targetId });
+      for (const row of await store.fixedAssetUsageLogs.list({ where: { fixedAssetId: sourceId } })) await store.fixedAssetUsageLogs.put({ ...row, fixedAssetId: targetId });
+      for (const row of await store.fixedAssetConsumables.list({ where: { fixedAssetId: sourceId } })) await store.fixedAssetConsumables.put({ ...row, fixedAssetId: targetId });
+      for (const row of await store.fixedAssetGoals.list({ where: { fixedAssetId: sourceId } })) await store.fixedAssetGoals.put({ ...row, fixedAssetId: targetId });
       for (const row of (await store.attachments.list()).filter((item) => item.entityType === 'fixed_asset' && item.entityId === sourceId)) await store.attachments.put({ ...row, entityId: targetId });
       await store.fixedAssets.put({ ...source, version: expectedVersion, status: 'retired', archivedAt, archiveReason: '已合并', mergedIntoId: targetId });
       await reconcileFixedAssetStatus(store, targetId, true);
@@ -1520,20 +1581,8 @@ function collectionForCompensation(store: SqlLedgerStore, entityType: string): C
   return (collections[entityType] as CompensationCollection | undefined) ?? null;
 }
 
-function canonicalValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([, item]) => item !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => [key, canonicalValue(item)]),
-  );
-}
-
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(canonicalValue(value));
-}
+// canonicalJson is imported from @zichan/core (crypto.ts) — both implementations
+// filter undefined values and sort keys, so they are functionally identical.
 
 function aggregateKeysForCompensation(states: CompensationEntityState[]): Set<string> {
   const keys = new Set<string>();
@@ -2009,7 +2058,7 @@ export async function closeReconciliation(store: SqlLedgerStore, input: Reconcil
       adjustment = await saveTransaction(aggregateStore, {
         id: adjustmentId,
         createdAt: closedAt,
-        updatedAt: '',
+        updatedAt: closedAt,
         version: 1,
         isDeleted: false,
         date: input.statementDate,
@@ -2127,10 +2176,36 @@ async function saveScheduleExecution(
   });
 }
 
+async function completedScheduledTransaction(
+  store: SqlLedgerStore,
+  execution: ScheduledExecution | null | undefined,
+): Promise<Transaction | null> {
+  if (!execution || execution.isDeleted || execution.status !== 'created' || !execution.transactionId) return null;
+  const transaction = await store.transactions.get(execution.transactionId);
+  return transaction && !transaction.isDeleted ? transaction : null;
+}
+
+async function waitForCompletedScheduledTransaction(
+  store: SqlLedgerStore,
+  executionId: string,
+): Promise<Transaction | null> {
+  const deadline = Date.now() + SCHEDULE_CLAIM_WAIT_MS;
+  while (Date.now() < deadline) {
+    const execution = await store.scheduledExecutions.get(executionId);
+    const completed = await completedScheduledTransaction(store, execution);
+    if (completed) return completed;
+    if (execution?.status === 'skipped') throw new Error('该期已按补记策略跳过');
+    if (execution && !isScheduledExecutionClaim(execution)) return null;
+    await waitForScheduledClaim();
+  }
+  return null;
+}
+
 export async function materializeScheduledTransaction(
   store: SqlLedgerStore,
   scheduleId: string,
   occurrenceIndex?: number,
+  options: { forceRetry?: boolean } = {},
 ): Promise<Transaction> {
   const schedule = await store.scheduledTransactions.get(scheduleId);
   if (!schedule || schedule.isDeleted) throw new Error('定期交易不存在');
@@ -2145,12 +2220,43 @@ export async function materializeScheduledTransaction(
   if (existingExecution && !existingExecution.isDeleted) {
     if (existingExecution.status === 'skipped') throw new Error('该期已按补记策略跳过');
     if (existingExecution.status === 'created' && !existingExecution.transactionId) throw new Error('定期执行记录缺少流水引用');
-    if (existingExecution.status === 'created' && existingExecution.transactionId) {
-      const existing = await store.transactions.get(existingExecution.transactionId);
-      if (existing && !existing.isDeleted) return existing;
-    }
+    const completed = await completedScheduledTransaction(store, existingExecution);
+    if (completed) return completed;
   }
   const createdAt = deterministicCreatedAt(schedule, occurrence.date);
+  const attemptedAt = new Date().toISOString();
+  const claim = await store.claimScheduledExecution({
+    id: executionId,
+    scheduleId: schedule.id,
+    occurrenceIndex: occurrence.index,
+    occurrenceDate: occurrence.date,
+    transactionId: scheduledTransactionId(schedule.id, occurrence.index),
+    createdAt,
+    attemptedAt,
+    leaseUntil: new Date(Date.parse(attemptedAt) + SCHEDULE_CLAIM_LEASE_MS).toISOString(),
+    forceRetry: options.forceRetry,
+  });
+  if (claim.state === 'created') {
+    const completed = await completedScheduledTransaction(store, claim.execution);
+    if (completed) return completed;
+    throw new Error('定期执行记录引用的流水不存在');
+  }
+  if (claim.state === 'skipped') throw new Error('该期已按补记策略跳过');
+  if (claim.state === 'busy') {
+    const completed = await waitForCompletedScheduledTransaction(store, executionId);
+    if (completed) return completed;
+    throw new ScheduledExecutionUnavailableError('该期正在其他窗口生成，请稍后重试');
+  }
+  if (claim.state === 'retry_wait') {
+    throw new ScheduledExecutionUnavailableError(
+      claim.execution.nextRetryAt
+        ? `该期失败后正在退避，下次重试时间：${claim.execution.nextRetryAt}`
+        : '该期失败后正在等待重试',
+    );
+  }
+  if (claim.state !== 'claimed') throw new ScheduledExecutionUnavailableError('未能取得定期交易生成租约');
+  const claimToken = claim.token;
+
   const transaction: Transaction = {
     id: scheduledTransactionId(schedule.id, occurrence.index),
     createdAt,
@@ -2176,23 +2282,66 @@ export async function materializeScheduledTransaction(
     note: schedule.note,
   };
   const batchId = newId();
-  await store.createAuditBatch({ id: batchId, type: 'system', label: `生成定期交易 ${schedule.name}`, entityCount: 2 });
   try {
     const saved = await store.withAuditContext({ batchId, source: 'system' }, (scoped) => scoped.transaction(async (transactionStore) => {
-      const row = await saveTransaction(transactionStore, transaction);
+      const owned = await transactionStore.getScheduledExecutionClaim(executionId, claimToken);
+      if (!owned) throw new ScheduledExecutionUnavailableError('定期交易生成租约已被其他窗口接管');
+      await transactionStore.createAuditBatch({
+        id: batchId,
+        type: 'system',
+        label: `生成定期交易 ${schedule.name}`,
+        entityCount: 2,
+      });
+      const existing = await transactionStore.transactions.get(transaction.id);
+      if (existing?.isDeleted) throw new Error('定期交易对应的流水已删除，无法自动重建');
+      if (existing && existing.scheduledExecutionId !== executionId) {
+        throw new Error('定期交易确定性流水编号已被其他记录占用');
+      }
+      const row = existing ?? await saveTransaction(transactionStore, transaction);
       await saveScheduleExecution(transactionStore, schedule, occurrence.index, 'created');
       return row;
     }));
-    await store.finishAuditBatch(batchId);
+    const entityCount = (await store.operationLog({ batchId })).length;
+    await store.finishAuditBatch(batchId, { entityCount, appliedCount: entityCount, outcome: 'applied' });
     return saved;
   } catch (error) {
-    await store.finishAuditBatch(batchId, {
-      outcome: 'invalid',
-      summary: error instanceof Error ? error.message : String(error),
-    });
-    await store.runInAuditBatch(`记录定期交易失败 ${schedule.name}`, async (transactionStore) => {
-      await saveScheduleExecution(transactionStore, schedule, occurrence.index, 'failed', error);
-    }, 'system');
+    const completed = await completedScheduledTransaction(
+      store,
+      await store.scheduledExecutions.get(executionId),
+    );
+    if (completed) return completed;
+
+    const failureBatchId = newId();
+    const recorded = await store.withAuditContext(
+      { batchId: failureBatchId, source: 'system' },
+      (scoped) => scoped.transaction(async (transactionStore) => {
+        const owned = await transactionStore.getScheduledExecutionClaim(executionId, claimToken);
+        if (!owned) return false;
+        await transactionStore.createAuditBatch({
+          id: failureBatchId,
+          type: 'system',
+          label: `记录定期交易失败 ${schedule.name}`,
+          entityCount: 1,
+          summary: error instanceof Error ? error.message : String(error),
+        });
+        await saveScheduleExecution(transactionStore, schedule, occurrence.index, 'failed', error);
+        return true;
+      }),
+    );
+    if (recorded) {
+      await store.finishAuditBatch(failureBatchId, {
+        entityCount: 1,
+        appliedCount: 1,
+        outcome: 'invalid',
+        summary: error instanceof Error ? error.message : String(error),
+      });
+    } else {
+      const resolved = await completedScheduledTransaction(
+        store,
+        await store.scheduledExecutions.get(executionId),
+      );
+      if (resolved) return resolved;
+    }
     throw error;
   }
 }
@@ -2203,6 +2352,61 @@ export interface ScheduledRunResult {
   failed: number;
   backlog: number;
   errors: { scheduleId: string; message: string }[];
+}
+
+async function markScheduledOccurrencesSkipped(
+  store: SqlLedgerStore,
+  schedule: ScheduledTransaction,
+  occurrences: ScheduleOccurrence[],
+): Promise<number> {
+  const owned: { occurrence: ScheduleOccurrence; executionId: string; token: string }[] = [];
+  for (const occurrence of occurrences) {
+    const attemptedAt = new Date().toISOString();
+    const executionId = scheduleExecutionId(schedule.id, occurrence.index);
+    const claim = await store.claimScheduledExecution({
+      id: executionId,
+      scheduleId: schedule.id,
+      occurrenceIndex: occurrence.index,
+      occurrenceDate: occurrence.date,
+      transactionId: scheduledTransactionId(schedule.id, occurrence.index),
+      createdAt: deterministicCreatedAt(schedule, occurrence.date),
+      attemptedAt,
+      leaseUntil: new Date(Date.parse(attemptedAt) + SCHEDULE_CLAIM_LEASE_MS).toISOString(),
+    });
+    if (claim.state === 'claimed') owned.push({ occurrence, executionId, token: claim.token });
+  }
+  if (!owned.length) return 0;
+
+  const batchId = newId();
+  const saved = await store.withAuditContext(
+    { batchId, source: 'system' },
+    (scoped) => scoped.transaction(async (transactionStore) => {
+      const stillOwned: typeof owned = [];
+      for (const row of owned) {
+        if (await transactionStore.getScheduledExecutionClaim(row.executionId, row.token)) stillOwned.push(row);
+      }
+      if (!stillOwned.length) return 0;
+      await transactionStore.createAuditBatch({
+        id: batchId,
+        type: 'system',
+        label: `跳过定期交易 ${schedule.name}`,
+        entityCount: stillOwned.length,
+        summary: `按“只生成最近一期”策略跳过 ${stillOwned.length} 期`,
+      });
+      for (const row of stillOwned) {
+        await saveScheduleExecution(transactionStore, schedule, row.occurrence.index, 'skipped');
+      }
+      return stillOwned.length;
+    }),
+  );
+  if (saved > 0) {
+    await store.finishAuditBatch(batchId, {
+      entityCount: saved,
+      appliedCount: saved,
+      outcome: 'applied',
+    });
+  }
+  return saved;
 }
 
 export async function runDueScheduledTransactions(store: SqlLedgerStore, now = new Date()): Promise<ScheduledRunResult> {
@@ -2218,35 +2422,53 @@ export async function runDueScheduledTransactions(store: SqlLedgerStore, now = n
       const failedByIndex = new Map(executions
         .filter((row) => !row.isDeleted && row.status === 'failed')
         .map((row) => [row.occurrenceIndex, row]));
-      const due = listScheduleOccurrences(schedule, { throughDate: local.date, max: 1000 })
-        .filter((occurrence) => !handled.has(occurrence.index) && scheduleOccurrenceIsDue(schedule, occurrence, now));
+      // 分块扫描:listScheduleOccurrences 单次最多 1000 期,超过(日频约 2.7 年)会被静默截断。
+      // 从 0 起分块扫到 throughDate,跳过已处理期次,保证空洞(如失败待重试期次)不会被跳过。
+      const due: ScheduleOccurrence[] = [];
+      let fromIndex = 0;
+      for (let chunk = 0; chunk <= MAX_SCHEDULE_OCCURRENCES / SCHEDULE_SCAN_CHUNK; chunk += 1) {
+        const probingLimit = chunk === MAX_SCHEDULE_OCCURRENCES / SCHEDULE_SCAN_CHUNK ? 1 : SCHEDULE_SCAN_CHUNK;
+        const rows = listScheduleOccurrences(schedule, { fromIndex, throughDate: local.date, max: probingLimit });
+        if (!rows.length) break;
+        if (chunk === MAX_SCHEDULE_OCCURRENCES / SCHEDULE_SCAN_CHUNK) {
+          throw new Error(`定期交易 ${schedule.name} 的期次超过 10 万，请缩短有效期`);
+        }
+        due.push(...rows.filter((occurrence) => !handled.has(occurrence.index) && scheduleOccurrenceIsDue(schedule, occurrence, now)));
+        fromIndex = rows[rows.length - 1]!.index + 1;
+        if (rows.length < SCHEDULE_SCAN_CHUNK) break; // 已到 throughDate / endDate
+      }
       if (!due.length) continue;
       result.backlog += due.length;
-      const createRows = schedule.catchUpPolicy === 'latest' ? due.slice(-1) : due;
-      const createIds = new Set(createRows.map((row) => row.index));
-      const skippedRows = due.filter((occurrence) => !createIds.has(occurrence.index) && !failedByIndex.has(occurrence.index));
+      const retryReady = (occurrence: ScheduleOccurrence) => {
+        const failed = failedByIndex.get(occurrence.index);
+        return !failed?.nextRetryAt || failed.nextRetryAt <= now.toISOString();
+      };
+      let createRows: ScheduleOccurrence[];
+      let skippedRows: ScheduleOccurrence[] = [];
+      if (schedule.catchUpPolicy === 'latest') {
+        const pending = due.filter((occurrence) => !failedByIndex.has(occurrence.index));
+        const failed = due.filter((occurrence) => failedByIndex.has(occurrence.index) && retryReady(occurrence));
+        const maxHandled = handled.size ? Math.max(...handled) : -1;
+        const newest = pending.at(-1);
+        const newestToCreate = newest && newest.index > maxHandled ? newest : undefined;
+        createRows = [...(newestToCreate ? [newestToCreate] : []), ...failed]
+          .slice(0, MAX_SCHEDULE_ACTIONS_PER_RUN);
+        const createIds = new Set(createRows.map((row) => row.index));
+        skippedRows = pending
+          .filter((occurrence) => !createIds.has(occurrence.index))
+          .slice(0, MAX_SCHEDULE_ACTIONS_PER_RUN - createRows.length);
+      } else {
+        createRows = due.filter(retryReady).slice(0, MAX_SCHEDULE_ACTIONS_PER_RUN);
+      }
       if (skippedRows.length) {
-        const batchId = newId();
-        await store.createAuditBatch({
-          id: batchId,
-          type: 'system',
-          label: `跳过定期交易 ${schedule.name}`,
-          entityCount: skippedRows.length,
-          summary: `按“只生成最近一期”策略跳过 ${skippedRows.length} 期`,
-        });
-        await store.withAuditContext({ batchId, source: 'system' }, (scoped) => scoped.transaction(async (transactionStore) => {
-          for (const occurrence of skippedRows) await saveScheduleExecution(transactionStore, schedule, occurrence.index, 'skipped');
-        }));
-        await store.finishAuditBatch(batchId);
-        result.skipped += skippedRows.length;
+        result.skipped += await markScheduledOccurrencesSkipped(store, schedule, skippedRows);
       }
       for (const occurrence of createRows) {
-        const failed = failedByIndex.get(occurrence.index);
-        if (failed?.nextRetryAt && failed.nextRetryAt > now.toISOString()) continue;
         try {
           await materializeScheduledTransaction(store, schedule.id, occurrence.index);
           result.created += 1;
         } catch (error) {
+          if (error instanceof ScheduledExecutionUnavailableError) continue;
           result.failed += 1;
           result.errors.push({ scheduleId: schedule.id, message: error instanceof Error ? error.message : String(error) });
         }
@@ -2285,19 +2507,32 @@ export async function previewScheduledBacklog(
     const failed = new Map(executions
       .filter((row) => !row.isDeleted && row.status === 'failed')
       .map((row) => [row.occurrenceIndex, row]));
-    const due = listScheduleOccurrences(schedule, { throughDate: local.date, max: 1000 })
-      .filter((occurrence) => !handled.has(occurrence.index) && scheduleOccurrenceIsDue(schedule, occurrence, now));
+    // 分块扫描,避免 1000 期上限截断(与 runDueScheduledTransactions 一致)。
+    const due: ScheduleOccurrence[] = [];
+    let fromIndex = 0;
+    for (let chunk = 0; chunk <= MAX_SCHEDULE_OCCURRENCES / SCHEDULE_SCAN_CHUNK; chunk += 1) {
+      const probingLimit = chunk === MAX_SCHEDULE_OCCURRENCES / SCHEDULE_SCAN_CHUNK ? 1 : SCHEDULE_SCAN_CHUNK;
+      const chunkRows = listScheduleOccurrences(schedule, { fromIndex, throughDate: local.date, max: probingLimit });
+      if (!chunkRows.length) break;
+      if (chunk === MAX_SCHEDULE_OCCURRENCES / SCHEDULE_SCAN_CHUNK) {
+        throw new Error(`定期交易 ${schedule.name} 的期次超过 10 万，请缩短有效期`);
+      }
+      due.push(...chunkRows.filter((occurrence) => !handled.has(occurrence.index) && scheduleOccurrenceIsDue(schedule, occurrence, now)));
+      fromIndex = chunkRows[chunkRows.length - 1]!.index + 1;
+      if (chunkRows.length < SCHEDULE_SCAN_CHUNK) break; // 已到 throughDate / endDate
+    }
     for (const occurrence of due) {
       const execution = failed.get(occurrence.index);
+      const claimedElsewhere = isScheduledExecutionClaim(execution);
       rows.push({
         scheduleId: schedule.id,
         scheduleName: schedule.name,
         occurrenceIndex: occurrence.index,
         occurrenceDate: occurrence.date,
-        status: execution ? 'failed' : 'pending',
+        status: execution && !claimedElsewhere ? 'failed' : 'pending',
         retryCount: execution?.retryCount ?? 0,
-        lastError: execution?.lastError,
-        nextRetryAt: execution?.nextRetryAt,
+        lastError: claimedElsewhere ? undefined : execution?.lastError,
+        nextRetryAt: claimedElsewhere ? undefined : execution?.nextRetryAt,
       });
     }
   }
@@ -2315,7 +2550,12 @@ export async function retryScheduledExecution(
   if (!execution || execution.isDeleted || execution.status !== 'failed') {
     throw new Error('失败的定期执行记录不存在');
   }
-  return materializeScheduledTransaction(store, execution.scheduleId, execution.occurrenceIndex);
+  return materializeScheduledTransaction(
+    store,
+    execution.scheduleId,
+    execution.occurrenceIndex,
+    { forceRetry: true },
+  );
 }
 
 // ─────────────────────────── game cash-flow normalization ───────────────────────────
@@ -2837,6 +3077,7 @@ export function preflightImport(data: unknown): BackupPreflight {
   if (!Array.isArray(dataObj.chains)) pushIssue(issues, 'error', 'missing_array', 'chains 必须是数组', 'conversion_chain');
 
   const ids: Record<string, Set<string>> = {};
+  const referenceIds: Record<string, Set<string>> = {};
   const noteId = (type: string, id: string) => {
     ids[type] ??= new Set<string>();
     if (ids[type].has(id)) pushIssue(issues, 'error', 'duplicate_id', `${type} 重复 ID: ${id}`, type, id);
@@ -2849,11 +3090,18 @@ export function preflightImport(data: unknown): BackupPreflight {
     for (const row of list) {
       const id = rowId(row);
       if (!id) pushIssue(issues, 'error', 'missing_id', `${type} 缺少 id`, type);
-      else noteId(type, id);
+      else {
+        noteId(type, id);
+        if (asObj(row)?.['isDeleted'] !== true) {
+          referenceIds[type] ??= new Set<string>();
+          referenceIds[type].add(id);
+        }
+      }
     }
   }
 
   const chainIds = new Set<string>();
+  const referenceChainIds = new Set<string>();
   for (const item of Array.isArray(dataObj.chains) ? dataObj.chains : []) {
     const c = asObj(item)?.['chain'];
     const chain = asObj(c);
@@ -2864,6 +3112,7 @@ export function preflightImport(data: unknown): BackupPreflight {
     }
     if (chainIds.has(id)) pushIssue(issues, 'error', 'duplicate_id', `conversion_chain 重复 ID: ${id}`, 'conversion_chain', id);
     chainIds.add(id);
+    if (chain?.['isDeleted'] !== true) referenceChainIds.add(id);
     const stepList = asObj(item)?.['steps'];
     if (!Array.isArray(stepList)) {
       pushIssue(issues, 'error', 'missing_steps', `链路 ${id} 缺少 steps 数组`, 'conversion_chain', id);
@@ -2883,22 +3132,22 @@ export function preflightImport(data: unknown): BackupPreflight {
   }
   summary.chains = chainIds.size;
 
-  const assetIds = ids['asset'] ?? new Set<string>();
-  const accountIds = ids['account'] ?? new Set<string>();
-  const categoryIds = ids['category'] ?? new Set<string>();
-  const tagIds = ids['transaction_tag'] ?? new Set<string>();
-  const locationIds = ids['transaction_location'] ?? new Set<string>();
-  const payeeIds = ids['payee'] ?? new Set<string>();
-  const transactionIds = ids['transaction'] ?? new Set<string>();
-  const scheduleIds = ids['scheduled_transaction'] ?? new Set<string>();
-  const reconciliationIds = ids['reconciliation_session'] ?? new Set<string>();
-  const lotIds = ids['lot'] ?? new Set<string>();
-  const gameIds = ids['game'] ?? new Set<string>();
-  const gameAccountIds = ids['game_account'] ?? new Set<string>();
-  const seasonIds = ids['game_season'] ?? new Set<string>();
-  const fixedAssetIds = ids['fixed_asset'] ?? new Set<string>();
-  const fixedCategoryIds = ids['fixed_asset_category'] ?? new Set<string>();
-  const fixedMetricIds = ids['fixed_asset_usage_metric'] ?? new Set<string>();
+  const assetIds = referenceIds['asset'] ?? new Set<string>();
+  const accountIds = referenceIds['account'] ?? new Set<string>();
+  const categoryIds = referenceIds['category'] ?? new Set<string>();
+  const tagIds = referenceIds['transaction_tag'] ?? new Set<string>();
+  const locationIds = referenceIds['transaction_location'] ?? new Set<string>();
+  const payeeIds = referenceIds['payee'] ?? new Set<string>();
+  const transactionIds = referenceIds['transaction'] ?? new Set<string>();
+  const scheduleIds = referenceIds['scheduled_transaction'] ?? new Set<string>();
+  const reconciliationIds = referenceIds['reconciliation_session'] ?? new Set<string>();
+  const lotIds = referenceIds['lot'] ?? new Set<string>();
+  const gameIds = referenceIds['game'] ?? new Set<string>();
+  const gameAccountIds = referenceIds['game_account'] ?? new Set<string>();
+  const seasonIds = referenceIds['game_season'] ?? new Set<string>();
+  const fixedAssetIds = referenceIds['fixed_asset'] ?? new Set<string>();
+  const fixedCategoryIds = referenceIds['fixed_asset_category'] ?? new Set<string>();
+  const fixedMetricIds = referenceIds['fixed_asset_usage_metric'] ?? new Set<string>();
   const categoryRows = rows(dataObj, 'categories').map(asObj).filter((row): row is Record<string, unknown> => !!row);
   const categoryById = new Map(categoryRows.map((row) => [String(row['id']), row]));
   const categoryParentIds = new Set(categoryRows.filter((row) => row['isDeleted'] !== true).map((row) => row['parentId']).filter((id): id is string => typeof id === 'string' && !!id));
@@ -2916,11 +3165,13 @@ export function preflightImport(data: unknown): BackupPreflight {
   const fixedConsumableRows = rows(dataObj, 'fixedAssetConsumables').map(asObj).filter((row): row is Record<string, unknown> => !!row);
   const fixedConsumableById = new Map(fixedConsumableRows.map((row) => [String(row['id']), row]));
   const typedCategories = categoryRows.filter((row) =>
+    row['isDeleted'] !== true
+    &&
     typeof row['id'] === 'string'
     && typeof row['name'] === 'string'
     && (row['type'] === 'income' || row['type'] === 'expense')) as unknown as Category[];
   for (const category of typedCategories) {
-    for (const issue of validateCategoryHierarchySnapshot(typedCategories, category, undefined, 0)) {
+    for (const issue of validateCategoryHierarchySnapshot(typedCategories, category, undefined, 0, true)) {
       pushIssue(issues, 'error', 'category_hierarchy_invalid', issue.message, 'category', category.id);
     }
   }
@@ -2990,22 +3241,27 @@ export function preflightImport(data: unknown): BackupPreflight {
     } catch (error) {
       pushIssue(issues, 'error', 'invalid_dca_execution', error instanceof Error ? error.message : String(error), 'dca_execution', id);
     }
-    requireRef(issues, ids['dca_plan'] ?? new Set<string>(), row['planId'], 'missing_dca_plan_ref', '定投执行引用了不存在的计划', 'dca_execution', id);
+    requireRef(issues, referenceIds['dca_plan'] ?? new Set<string>(), row['planId'], 'missing_dca_plan_ref', '定投执行引用了不存在的计划', 'dca_execution', id);
     requireRef(issues, assetIds, row['baseCurrencyAssetId'], 'missing_asset_ref', '定投执行引用了不存在的投入资产', 'dca_execution', id);
     requireRef(issues, assetIds, row['finalAssetId'], 'missing_asset_ref', '定投执行引用了不存在的目标资产', 'dca_execution', id);
-    requireRef(issues, chainIds, row['chainId'], 'missing_chain_ref', '定投执行引用了不存在的转换链路', 'dca_execution', id);
+    requireRef(issues, referenceChainIds, row['chainId'], 'missing_chain_ref', '定投执行引用了不存在的转换链路', 'dca_execution', id);
   }
   for (const item of Array.isArray(dataObj.chains) ? dataObj.chains : []) {
     const wrapper = asObj(item);
     const chain = asObj(wrapper?.['chain']);
     const id = typeof chain?.['id'] === 'string' ? chain['id'] : undefined;
-    if (chain?.['recordState'] !== undefined && chain['recordState'] !== 'active' && chain['recordState'] !== 'voided') {
-      pushIssue(issues, 'error', 'invalid_record_state', '资产转换记录状态无效', 'conversion_chain', id);
-    }
     checkOccurrenceSnapshot(issues, chain, 'conversion_chain', id);
     requireRef(issues, assetIds, chain?.['baseCurrencyAssetId'], 'missing_asset_ref', '转换链路引用了不存在的结算资产', 'conversion_chain', id);
     const stepList = wrapper?.['steps'];
     if (!Array.isArray(stepList)) continue;
+    try {
+      assertConversionShape(
+        chain as unknown as ConversionChain,
+        stepList as unknown as ConversionStep[],
+      );
+    } catch (error) {
+      pushIssue(issues, 'error', 'invalid_conversion', error instanceof Error ? error.message : String(error), 'conversion_chain', id);
+    }
     for (const step of stepList) {
       const s = asObj(step);
       requireRef(issues, assetIds, s?.['fromAssetId'], 'missing_asset_ref', '转换步骤引用了不存在的转出资产', 'conversion_chain', id);
@@ -3016,38 +3272,21 @@ export function preflightImport(data: unknown): BackupPreflight {
           const f = asObj(fee);
           requireRef(issues, assetIds, f?.['assetId'], 'missing_asset_ref', '转换步骤引用了不存在的手续费资产', 'conversion_chain', id);
           requireRef(issues, accountIds, f?.['accountId'], 'missing_account_ref', '转换手续费引用了不存在的账户', 'conversion_chain', id);
-          const treatment = f?.['treatment'];
-          const feeAssetId = f?.['assetId'];
-          const validAsset = (treatment === 'source_included' || treatment === 'source_extra')
-            ? feeAssetId === s?.['fromAssetId']
-            : treatment === 'target_deducted' ? feeAssetId === s?.['toAssetId']
-              : treatment === 'third_asset_extra' && feeAssetId !== s?.['fromAssetId'] && feeAssetId !== s?.['toAssetId'];
-          if (!validAsset) pushIssue(issues, 'error', 'invalid_fee_treatment', '手续费位置与资产不匹配', 'conversion_chain', id);
-          try {
-            if (D(String(f?.['amount'] ?? '0')).lte(0)) pushIssue(issues, 'error', 'invalid_fee_amount', '手续费数量必须大于 0', 'conversion_chain', id);
-          } catch {
-            pushIssue(issues, 'error', 'invalid_fee_amount', '手续费数量格式无效', 'conversion_chain', id);
-          }
         }
       }
       requireRef(issues, accountIds, s?.['accountFromId'], 'missing_account_ref', '转换步骤引用了不存在的转出账户', 'conversion_chain', id);
       requireRef(issues, accountIds, s?.['accountToId'], 'missing_account_ref', '转换步骤引用了不存在的转入账户', 'conversion_chain', id);
-      try {
-        conversionStepAmounts(s as unknown as ConversionStep);
-      } catch (error) {
-        pushIssue(issues, 'error', 'invalid_conversion_step', error instanceof Error ? error.message : String(error), 'conversion_chain', id);
-      }
     }
   }
   for (const row of rows(dataObj, 'lots')) {
     const r = asObj(row); const id = rowId(row);
     requireRef(issues, assetIds, r?.['assetId'], 'missing_asset_ref', '批次引用了不存在的资产', 'lot', id);
-    requireRef(issues, chainIds, r?.['sourceChainId'], 'missing_chain_ref', '批次引用了不存在的来源链路', 'lot', id);
+    requireRef(issues, referenceChainIds, r?.['sourceChainId'], 'missing_chain_ref', '批次引用了不存在的来源链路', 'lot', id);
   }
   for (const row of rows(dataObj, 'lotConsumptions')) {
     const r = asObj(row); const id = rowId(row);
     requireRef(issues, lotIds, r?.['lotId'], 'missing_lot_ref', '批次消耗引用了不存在的 lot', 'lot_consumption', id);
-    requireRef(issues, chainIds, r?.['sellChainId'], 'missing_chain_ref', '批次消耗引用了不存在的卖出链路', 'lot_consumption', id);
+    requireRef(issues, referenceChainIds, r?.['sellChainId'], 'missing_chain_ref', '批次消耗引用了不存在的卖出链路', 'lot_consumption', id);
   }
   for (const row of rows(dataObj, 'priceMarks')) {
     const r = asObj(row); const id = rowId(row);
@@ -3059,11 +3298,11 @@ export function preflightImport(data: unknown): BackupPreflight {
     requireRef(issues, assetIds, r?.['targetAssetId'], 'missing_asset_ref', '定投计划引用了不存在的目标资产', 'dca_plan', id);
     requireRef(issues, assetIds, r?.['baseCurrencyAssetId'], 'missing_asset_ref', '定投计划引用了不存在的投入资产', 'dca_plan', id);
   }
-  const dcaPlanIds = ids['dca_plan'] ?? new Set<string>();
+  const dcaPlanIds = referenceIds['dca_plan'] ?? new Set<string>();
   for (const row of rows(dataObj, 'dcaExecutions')) {
     const r = asObj(row); const id = rowId(row);
     requireRef(issues, dcaPlanIds, r?.['planId'], 'missing_dca_plan_ref', '定投执行引用了不存在的计划', 'dca_execution', id);
-    requireRef(issues, chainIds, r?.['chainId'], 'missing_chain_ref', '定投执行引用了不存在的链路', 'dca_execution', id);
+    requireRef(issues, referenceChainIds, r?.['chainId'], 'missing_chain_ref', '定投执行引用了不存在的链路', 'dca_execution', id);
   }
   for (const row of rows(dataObj, 'transactions')) {
     const r = asObj(row); const id = rowId(row);
@@ -3080,11 +3319,11 @@ export function preflightImport(data: unknown): BackupPreflight {
     requireRef(issues, assetIds, r?.['transferAssetId'], 'missing_asset_ref', '转账引用了不存在的目标资产', 'transaction', id);
     requireRef(issues, accountIds, r?.['accountId'], 'missing_account_ref', '日常收支引用了不存在的账户', 'transaction', id);
     requireRef(issues, accountIds, r?.['transferAccountId'], 'missing_account_ref', '转账引用了不存在的目标账户', 'transaction', id);
-    if (categoryIds.size && r?.['type'] !== 'transfer' && r?.['type'] !== 'adjustment') {
+    if (r?.['type'] !== 'transfer' && r?.['type'] !== 'adjustment') {
       requireRef(issues, categoryIds, r?.['category'], 'missing_category_ref', '日常收支引用了不存在的分类', 'transaction', id);
     }
-    if (tagIds.size) requireRefs(issues, tagIds, r?.['tagIds'], 'missing_tag_ref', '日常收支引用了不存在的标签', 'transaction', id);
-    if (locationIds.size) requireRef(issues, locationIds, r?.['locationId'], 'missing_location_ref', '日常收支引用了不存在的地点', 'transaction', id);
+    requireRefs(issues, tagIds, r?.['tagIds'], 'missing_tag_ref', '日常收支引用了不存在的标签', 'transaction', id);
+    requireRef(issues, locationIds, r?.['locationId'], 'missing_location_ref', '日常收支引用了不存在的地点', 'transaction', id);
     requireRef(issues, payeeIds, r?.['payeeId'], 'missing_payee_ref', '日常收支引用了不存在的商户', 'transaction', id);
     requireRef(issues, transactionIds, r?.['refundForId'], 'missing_transaction_ref', '退款引用了不存在的原流水', 'transaction', id);
     const categoryId = typeof r?.['category'] === 'string' ? r['category'] : undefined;
@@ -3130,21 +3369,21 @@ export function preflightImport(data: unknown): BackupPreflight {
   }
   for (const row of rows(dataObj, 'transactionTemplates')) {
     const r = asObj(row); const id = rowId(row);
-    if (categoryIds.size) requireRef(issues, categoryIds, r?.['category'], 'missing_category_ref', '交易模板引用了不存在的分类', 'transaction_template', id);
+    requireRef(issues, categoryIds, r?.['category'], 'missing_category_ref', '交易模板引用了不存在的分类', 'transaction_template', id);
     requireRef(issues, assetIds, r?.['assetId'], 'missing_asset_ref', '交易模板引用了不存在的资产', 'transaction_template', id);
     requireRef(issues, accountIds, r?.['accountId'], 'missing_account_ref', '交易模板引用了不存在的账户', 'transaction_template', id);
     requireRef(issues, payeeIds, r?.['payeeId'], 'missing_payee_ref', '交易模板引用了不存在的商户', 'transaction_template', id);
-    if (tagIds.size) requireRefs(issues, tagIds, r?.['tagIds'], 'missing_tag_ref', '交易模板引用了不存在的标签', 'transaction_template', id);
-    if (locationIds.size) requireRef(issues, locationIds, r?.['locationId'], 'missing_location_ref', '交易模板引用了不存在的地点', 'transaction_template', id);
+    requireRefs(issues, tagIds, r?.['tagIds'], 'missing_tag_ref', '交易模板引用了不存在的标签', 'transaction_template', id);
+    requireRef(issues, locationIds, r?.['locationId'], 'missing_location_ref', '交易模板引用了不存在的地点', 'transaction_template', id);
   }
   for (const row of splitRows) {
     const r = asObj(row); const id = rowId(row);
     requireRef(issues, transactionIds, r?.['transactionId'], 'missing_transaction_ref', '拆分明细引用了不存在的流水', 'transaction_split', id);
-    if (categoryIds.size) requireRef(issues, categoryIds, r?.['category'], 'missing_category_ref', '拆分明细引用了不存在的分类', 'transaction_split', id);
+    requireRef(issues, categoryIds, r?.['category'], 'missing_category_ref', '拆分明细引用了不存在的分类', 'transaction_split', id);
   }
   for (const row of rows(dataObj, 'budgetCategories')) {
     const r = asObj(row); const id = rowId(row);
-    if (categoryIds.size) requireRef(issues, categoryIds, r?.['category'], 'missing_category_ref', '预算引用了不存在的分类', 'budget_category', id);
+    requireRef(issues, categoryIds, r?.['category'], 'missing_category_ref', '预算引用了不存在的分类', 'budget_category', id);
     if (typeof r?.['assetId'] !== 'string' || !r['assetId']) pushIssue(issues, 'error', 'required_field_missing', '预算缺少币种', 'budget_category', id);
     requireRef(issues, assetIds, r?.['assetId'], 'missing_asset_ref', '预算引用了不存在的币种', 'budget_category', id);
   }
@@ -3154,7 +3393,7 @@ export function preflightImport(data: unknown): BackupPreflight {
     requireRef(issues, assetIds, r?.['transferAssetId'], 'missing_asset_ref', '定期转账引用了不存在的目标资产', 'scheduled_transaction', id);
     requireRef(issues, accountIds, r?.['accountId'], 'missing_account_ref', '定期交易引用了不存在的账户', 'scheduled_transaction', id);
     requireRef(issues, accountIds, r?.['transferAccountId'], 'missing_account_ref', '定期转账引用了不存在的目标账户', 'scheduled_transaction', id);
-    if (categoryIds.size) requireRef(issues, categoryIds, r?.['category'], 'missing_category_ref', '定期交易引用了不存在的分类', 'scheduled_transaction', id);
+    requireRef(issues, categoryIds, r?.['category'], 'missing_category_ref', '定期交易引用了不存在的分类', 'scheduled_transaction', id);
     requireRef(issues, payeeIds, r?.['payeeId'], 'missing_payee_ref', '定期交易引用了不存在的商户', 'scheduled_transaction', id);
   }
   for (const row of rows(dataObj, 'scheduledExecutions')) {
@@ -3181,6 +3420,9 @@ export function preflightImport(data: unknown): BackupPreflight {
     requireRef(issues, accountIds, r?.['accountId'], 'missing_account_ref', '对账项目引用了不存在的账户', 'reconciliation_item', id);
     requireRef(issues, assetIds, r?.['assetId'], 'missing_asset_ref', '对账项目引用了不存在的币种', 'reconciliation_item', id);
     if (r['isDeleted'] === true) continue;
+    if (r['previousStatus'] !== 'pending' && r['previousStatus'] !== 'cleared') {
+      pushIssue(issues, 'error', 'invalid_reconciliation_previous_status', '对账项目的原流水状态无效', 'reconciliation_item', id);
+    }
     const session = reconciliationById.get(String(r['reconciliationId'] ?? ''));
     if (session && (session['accountId'] !== r['accountId'] || session['assetId'] !== r['assetId'])) {
       pushIssue(issues, 'error', 'reconciliation_item_scope_mismatch', '对账项目与批次的账户或币种不一致', 'reconciliation_item', id);
@@ -3197,6 +3439,10 @@ export function preflightImport(data: unknown): BackupPreflight {
       }
       if (String(transaction['date'] ?? '') > String(session['statementDate'] ?? '')) {
         pushIssue(issues, 'error', 'reconciliation_item_after_statement', '对账项目日期晚于账单截止日', 'reconciliation_item', id);
+      }
+      if (session['adjustmentTransactionId'] === transaction['id']
+        && (transaction['type'] !== 'adjustment' || transaction['reconciliationSessionId'] !== session['id'])) {
+        pushIssue(issues, 'error', 'reconciliation_adjustment_mismatch', '对账调整流水与对账批次不一致', 'reconciliation_item', id);
       }
       try {
         const expected = postingsFromTransaction(transaction as unknown as Transaction)
@@ -3259,7 +3505,7 @@ export function preflightImport(data: unknown): BackupPreflight {
     requireRef(issues, assetIds, r?.['settlementAssetId'], 'missing_asset_ref', '游戏记录引用了不存在的结算资产', 'game_record', id);
     requireRef(issues, assetIds, r?.['feeAssetId'], 'missing_asset_ref', '游戏记录引用了不存在的手续费资产', 'game_record', id);
   }
-  const gameRecordIds = ids['game_record'] ?? new Set<string>();
+  const gameRecordIds = referenceIds['game_record'] ?? new Set<string>();
   const gameCashflowKeys = new Set<string>();
   for (const row of rows(dataObj, 'gameCashflowLinks')) {
     const r = asObj(row); const id = rowId(row);
@@ -3276,7 +3522,7 @@ export function preflightImport(data: unknown): BackupPreflight {
   for (const row of rows(dataObj, 'fixedAssets')) {
     const r = asObj(row); const id = rowId(row);
     requireRef(issues, assetIds, r?.['baseCurrencyAssetId'], 'missing_asset_ref', '固定资产引用了不存在的结算资产', 'fixed_asset', id);
-    if (fixedCategoryIds.size) requireRef(issues, fixedCategoryIds, r?.['categoryId'], 'missing_fixed_category_ref', '物品资产引用了不存在的分类', 'fixed_asset', id);
+    requireRef(issues, fixedCategoryIds, r?.['categoryId'], 'missing_fixed_category_ref', '物品资产引用了不存在的分类', 'fixed_asset', id);
     const category = rows(dataObj, 'fixedAssetCategories').map(asObj)
       .find((candidate) => candidate?.['id'] === r?.['categoryId']);
     const parent = rows(dataObj, 'fixedAssetCategories').map(asObj)
@@ -3478,15 +3724,15 @@ export function preflightImport(data: unknown): BackupPreflight {
 
   const attachmentTargets: Record<string, Set<string>> = {
     transaction: transactionIds,
-    conversion_chain: chainIds,
+    conversion_chain: referenceChainIds,
     game: gameIds,
     game_account: gameAccountIds,
-    game_record: ids['game_record'] ?? new Set<string>(),
+    game_record: referenceIds['game_record'] ?? new Set<string>(),
     fixed_asset: fixedAssetIds,
-    fixed_asset_event: ids['fixed_asset_event'] ?? new Set<string>(),
-    fixed_asset_consumable: ids['fixed_asset_consumable'] ?? new Set<string>(),
-    fixed_asset_usage_log: ids['fixed_asset_usage_log'] ?? new Set<string>(),
-    price_mark: ids['price_mark'] ?? new Set<string>(),
+    fixed_asset_event: referenceIds['fixed_asset_event'] ?? new Set<string>(),
+    fixed_asset_consumable: referenceIds['fixed_asset_consumable'] ?? new Set<string>(),
+    fixed_asset_usage_log: referenceIds['fixed_asset_usage_log'] ?? new Set<string>(),
+    price_mark: referenceIds['price_mark'] ?? new Set<string>(),
     asset: assetIds,
     account: accountIds,
   };
@@ -4166,7 +4412,7 @@ export async function importLedger(
     throw new Error(`importLedger: preflight failed (${preflight.issues.filter((i) => i.level === 'error').map((i) => `${i.code}: ${i.message}`).join('; ')})`);
   }
 
-  return store.transaction(async (store) => {
+  return store.runInAuditBatch('导入账本', (batchStore) => batchStore.withBackupImportContext(async (store) => {
     let entities = 0;
     const putAll = async (coll: { put: (e: never) => Promise<unknown> }, rows: unknown[]) => {
       for (const row of rows) {
@@ -4184,8 +4430,8 @@ export async function importLedger(
     const transactions = [...data.transactions].sort((left, right) =>
       Number(left.type === 'refund') - Number(right.type === 'refund'));
 
-    // Restore in dependency order. Runtime validation deliberately treats an
-    // import exactly like normal writes, so references must already exist.
+    // Restore in dependency order. The scoped import context accepts historical
+    // references to archived rows, but still rejects missing or deleted targets.
     await putAll(store.assets, data.assets);
     await putAll(store.accounts, data.accounts);
     await putAll(store.categories, hierarchyFirst(data.categories));
@@ -4244,9 +4490,9 @@ export async function importLedger(
       }
     });
     await putAll(store.attachments, data.attachments);
-    await options.afterImport?.(store);
+    await options.afterImport?.(batchStore);
     return { entities, chains: data.chains.length };
-  });
+  }), 'import', { undoable: false });
 }
 
 /**
@@ -4268,7 +4514,7 @@ export async function restoreLedger(
     const value = data[key];
     return Array.isArray(value) ? value : [];
   };
-  return store.transaction(async (store) => {
+  return store.runInAuditBatch('恢复账本', async (store) => {
     type RestoreCollection = {
       key: keyof LedgerBackup;
       type: string;
@@ -4374,7 +4620,7 @@ export async function restoreLedger(
         const imported = await importLedger(aggregateStore, data, options);
         return { ...imported, removed: pendingDeletes.length };
       }));
-  });
+  }, 'import', { undoable: false });
 }
 
 // ─────────────────────────── daily transaction services ───────────────────────────
@@ -4517,7 +4763,7 @@ export async function monthlyTransactionSummary(
     expense: expense.toString(),
     net: income.minus(expense).toString(),
     transactionCount: cashRows.length,
-    byCategory: [...byKey.values()].sort((a, b) => D(b.totalAmount).minus(a.totalAmount).toNumber()),
+    byCategory: [...byKey.values()].sort((a, b) => D(b.totalAmount).comparedTo(D(a.totalAmount))),
   };
 }
 

@@ -23,6 +23,8 @@ import {
   type FixedAssetConsumable,
   type FixedAssetEvent,
   type Payee,
+  type ReconciliationItem,
+  type ReconciliationSession,
   type Transaction,
 } from '@zichan/core';
 
@@ -265,6 +267,66 @@ describe('P1 correctness boundaries', () => {
     const leaf = refs.expenseLeaf;
     await archiveMasterData(store, 'category', leaf.id, leaf.version, '暂不使用');
     expect(await store.categories.get(leaf.id)).toMatchObject({ isActive: false, archiveReason: '暂不使用' });
+    await store.close();
+  });
+
+  it('migrates an open reconciliation as one validated aggregate during an account merge', async () => {
+    const store = await openLedger();
+    const refs = await seedReferences(store);
+    const target = await store.accounts.put({ ...base(), name: '新账户', kind: 'bank', isActive: true } as Account);
+    const transaction = (await saveTransactionAggregate(store, {
+      transaction: { ...expense(refs, '10'), status: 'cleared' },
+    })).transaction;
+    const session = {
+      ...base(), id: 'open-reconciliation', accountId: refs.account.id, assetId: refs.currency.id,
+      statementDate: '2026-07-31', statementBalance: '-10', openingBalance: '0', selectedTotal: '-10',
+      clearedBalance: '-10', difference: '0', status: 'open',
+    } as ReconciliationSession;
+    const item = {
+      ...base(), id: 'open-reconciliation-item', reconciliationId: session.id, transactionId: transaction.id,
+      accountId: refs.account.id, assetId: refs.currency.id, postingAmount: '-10', previousStatus: 'cleared',
+    } as ReconciliationItem;
+    await store.transaction(async (transactionStore) => {
+      await transactionStore.assertReconciliationAggregate(session, [item]);
+      await transactionStore.withPrevalidatedAggregates([`reconciliation:${session.id}`], async (aggregateStore) => {
+        await aggregateStore.reconciliationSessions.put(session);
+        await aggregateStore.reconciliationItems.put(item);
+      });
+    });
+
+    await mergeMasterData(store, 'account', refs.account.id, target.id, refs.account.version);
+
+    expect(await store.transactions.get(transaction.id)).toMatchObject({ accountId: target.id });
+    expect(await store.reconciliationSessions.get(session.id)).toMatchObject({ accountId: target.id });
+    expect(await store.reconciliationItems.get(item.id)).toMatchObject({ accountId: target.id });
+    expect(await store.accounts.get(refs.account.id)).toMatchObject({ isActive: false, mergedIntoId: target.id });
+    await store.close();
+  });
+
+  it('orders category refund dependencies and blocks unsafe asset merges with active refunds', async () => {
+    const store = await openLedger();
+    const refs = await seedReferences(store);
+    const targetCategory = await store.categories.put({
+      ...base(), name: '家庭日用', type: 'expense', parentId: refs.expenseParent.id, isActive: true,
+    } as Category);
+    const original = (await saveTransactionAggregate(store, { transaction: expense(refs, '100') })).transaction;
+    const refund = await saveTransactionAggregate(store, {
+      transaction: { ...expense(refs, '20'), type: 'refund', refundForId: original.id, refundAppliedAmount: '20' },
+    });
+
+    await mergeMasterData(store, 'category', refs.expenseLeaf.id, targetCategory.id, refs.expenseLeaf.version);
+    expect(await store.transactions.get(original.id)).toMatchObject({ category: targetCategory.id });
+    expect(await store.transactions.get(refund.transaction.id)).toMatchObject({ category: targetCategory.id });
+    expect(refund.refundAllocations.length).toBeGreaterThan(0);
+    expect(await store.refundAllocations.get(refund.refundAllocations[0]!.id)).toMatchObject({ categoryId: targetCategory.id });
+
+    const targetAsset = await store.assets.put({
+      ...base(), code: 'CNY2', name: '人民币二', type: 'fiat', decimals: 2, isActive: true,
+    } as Asset);
+    await expect(mergeMasterData(store, 'asset', refs.currency.id, targetAsset.id, refs.currency.version))
+      .rejects.toThrow('有效退款冻结关系');
+    expect(await store.transactions.get(original.id)).toMatchObject({ assetId: refs.currency.id });
+    expect(await store.assets.get(refs.currency.id)).toMatchObject({ isActive: true });
     await store.close();
   });
 

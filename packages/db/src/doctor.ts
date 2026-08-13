@@ -5,16 +5,15 @@
  * source-of-truth (steps + consumptions) and can rewrite them.
  */
 import {
+  assertConversionShape,
   D,
   assertDcaExecutionShape,
   assertDcaPlanShape,
   assertScheduledExecutionShape,
   assertTransactionShape,
-  conversionStepAmounts,
   dcaOccurrenceDate,
   isTransactionActive,
   normalizeOccurrence,
-  refundAppliedAmount,
   sum,
   traceChain,
 } from '@zichan/core';
@@ -28,11 +27,13 @@ export type IssueKind =
   | 'conversion_step_invalid'
   | 'missing_reference'
   | 'category_mismatch'
+  | 'category_cycle'
   | 'split_amount_exceeded'
   | 'split_total_mismatch'
   | 'refund_invalid'
   | 'refund_allocation_invalid'
   | 'refund_amount_exceeded'
+  | 'reconciliation_invalid'
   | 'game_reference_mismatch'
   | 'game_cashflow_invalid'
   | 'game_fee_record_conflict'
@@ -145,7 +146,7 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
     if (!exp) continue;
     for (const [k, v] of Object.entries(exp)) {
       const cur = (ch as unknown as Record<string, unknown>)[k];
-      if (cur == null) continue; // never-populated cache: recompute will fill it
+      if (cur == null || cur === '') continue; // never-populated cache: recompute will fill it
       // Only treat *fully numeric* strings as amounts — ids are ULIDs that start
       // with a digit, so a loose /^\d/ test would feed them to Decimal and throw.
       const isNumeric = typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v);
@@ -191,7 +192,6 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
   const fixedAssetIds = ids(fixedAssets);
   const fixedCategoryIds = ids(fixedCategories);
   const fixedMetricIds = ids(fixedMetrics);
-  const fixedEventIds = ids(fixedEvents);
   const chainIds = ids(chains);
   const dcaPlanIds = ids(dcaPlans);
   const dcaPlanById = new Map(dcaPlans.map((row) => [row.id, row]));
@@ -229,6 +229,19 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
   for (const category of categories) {
     if (!category.name.trim()) issues.push({ kind: 'required_field_missing', entityType: 'category', entityId: category.id, detail: '分类名称为空' });
     if (category.parentId) missing(categoryIds.has(category.parentId), 'category', category.id, `引用了不存在的父级分类 ${category.parentId}`);
+  }
+  // 分类父链循环检测(A→B→A):沿 parentId 链上溯,遇到已访问分类即循环。
+  for (const category of categories) {
+    const seen = new Set<string>();
+    let current = category.parentId ? categoryById.get(category.parentId) : undefined;
+    while (current) {
+      if (seen.has(current.id)) {
+        issues.push({ kind: 'category_cycle', entityType: 'category', entityId: category.id, detail: `分类父链存在循环引用(${current.name})` });
+        break;
+      }
+      seen.add(current.id);
+      current = current.parentId ? categoryById.get(current.parentId) : undefined;
+    }
   }
   for (const game of games) {
     if (!game.name.trim()) issues.push({ kind: 'required_field_missing', entityType: 'game', entityId: game.id, detail: '游戏名称为空' });
@@ -312,7 +325,13 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
     if (lot.sourceChainId) missing(chainIds.has(lot.sourceChainId), 'lot', lot.id, `引用了不存在的来源链路 ${lot.sourceChainId}`);
   }
   for (const chain of chains) {
-    for (const step of await store.listStepsByChain(chain.id)) {
+    const steps = await store.listStepsByChain(chain.id);
+    try {
+      assertConversionShape(chain, steps);
+    } catch (error) {
+      issues.push({ kind: 'conversion_step_invalid', entityType: 'conversion_chain', entityId: chain.id, detail: error instanceof Error ? error.message : String(error) });
+    }
+    for (const step of steps) {
       missing(assetIds.has(step.fromAssetId), 'conversion_chain', chain.id, `转换步骤引用了不存在的来源资产 ${step.fromAssetId}`);
       missing(assetIds.has(step.toAssetId), 'conversion_chain', chain.id, `转换步骤引用了不存在的目标资产 ${step.toAssetId}`);
       if (step.accountFromId) missing(accountIds.has(step.accountFromId), 'conversion_chain', chain.id, `转换步骤引用了不存在的来源账户 ${step.accountFromId}`);
@@ -320,18 +339,6 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
       for (const fee of step.fees ?? []) {
         missing(assetIds.has(fee.assetId), 'conversion_chain', chain.id, `手续费引用了不存在的资产 ${fee.assetId}`);
         if (fee.accountId) missing(accountIds.has(fee.accountId), 'conversion_chain', chain.id, `手续费引用了不存在的账户 ${fee.accountId}`);
-      }
-      try {
-        conversionStepAmounts(step);
-        for (const fee of step.fees ?? []) {
-          const validAsset = (fee.treatment === 'source_included' || fee.treatment === 'source_extra')
-            ? fee.assetId === step.fromAssetId
-            : fee.treatment === 'target_deducted' ? fee.assetId === step.toAssetId
-              : fee.assetId !== step.fromAssetId && fee.assetId !== step.toAssetId;
-          if (!validAsset || D(fee.amount).lte(0)) throw new Error('手续费位置、资产或数量无效');
-        }
-      } catch (error) {
-        issues.push({ kind: 'conversion_step_invalid', entityType: 'conversion_chain', entityId: chain.id, detail: error instanceof Error ? error.message : String(error) });
       }
     }
   }
@@ -639,6 +646,19 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
   for (const reconciliation of reconciliations) {
     missing(accountIds.has(reconciliation.accountId), 'reconciliation_session', reconciliation.id, `引用了不存在的账户 ${reconciliation.accountId}`);
     missing(assetIds.has(reconciliation.assetId), 'reconciliation_session', reconciliation.id, `引用了不存在的资产 ${reconciliation.assetId}`);
+    try {
+      await store.withBackupImportContext((historicalStore) => historicalStore.assertReconciliationAggregate(
+        reconciliation,
+        reconciliationItems.filter((item) => item.reconciliationId === reconciliation.id),
+      ));
+    } catch (error) {
+      issues.push({
+        kind: 'reconciliation_invalid',
+        entityType: 'reconciliation_session',
+        entityId: reconciliation.id,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   for (const item of reconciliationItems) {
     missing(reconciliationIds.has(item.reconciliationId), 'reconciliation_item', item.id, `引用了不存在的对账批次 ${item.reconciliationId}`);
@@ -656,29 +676,39 @@ export interface RecomputeResult {
 
 /** Recompute and rewrite all derived caches. Safe to run anytime. */
 export async function recomputeCaches(store: SqlLedgerStore): Promise<RecomputeResult> {
-  const lots = await store.lots.list();
-  const cons = await store.lotConsumptions.list();
-  const consByLot = groupBy(cons, (c) => c.lotId);
+  return store.withBackupImportContext((historicalStore) => historicalStore.transaction(async (txStore) => {
+    const lots = await txStore.lots.list();
+    const cons = await txStore.lotConsumptions.list();
+    const consByLot = groupBy(cons, (c) => c.lotId);
 
-  let lotN = 0;
-  for (const lot of lots) {
-    const consumed = sum((consByLot.get(lot.id) ?? []).map((c) => c.consumedAmount));
-    const remaining = D(lot.originalAmount).minus(consumed);
-    const status = remaining.lte(0) ? 'closed' as const : 'open' as const;
-    if (!remaining.eq(D(lot.remainingAmount)) || status !== lot.status) {
-      await store.lots.put({ ...lot, remainingAmount: remaining.toString(), status });
-      lotN += 1;
+    let lotN = 0;
+    for (const lot of lots) {
+      const consumed = sum((consByLot.get(lot.id) ?? []).map((c) => c.consumedAmount));
+      const remaining = D(lot.originalAmount).minus(consumed);
+      const status = remaining.lte(0) ? 'closed' as const : 'open' as const;
+      if (!remaining.eq(D(lot.remainingAmount)) || status !== lot.status) {
+        await txStore.lots.put({ ...lot, remainingAmount: remaining.toString(), status });
+        lotN += 1;
+      }
     }
-  }
 
-  let chN = 0;
-  for (const ch of await store.conversionChains.list()) {
-    const exp = await chainExpected(store, ch.id, ch.type);
-    if (!exp) continue;
-    await store.conversionChains.put({ ...ch, ...exp });
-    chN += 1;
-  }
-  return { lots: lotN, chains: chN };
+    let chN = 0;
+    for (const ch of await txStore.conversionChains.list()) {
+      const exp = await chainExpected(txStore, ch.id, ch.type);
+      if (!exp) continue;
+      const changed = Object.entries(exp).some(([k, v]) => {
+        const cur = (ch as unknown as Record<string, unknown>)[k];
+        if (cur == null || cur === '') return true;
+        const isNumeric = typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v);
+        return isNumeric ? !numericEqualWithinTolerance(cur, v) : cur !== v;
+      });
+      if (changed) {
+        await txStore.conversionChains.put({ ...ch, ...exp });
+        chN += 1;
+      }
+    }
+    return { lots: lotN, chains: chN };
+  }));
 }
 
 /**

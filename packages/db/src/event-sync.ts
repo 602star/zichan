@@ -20,7 +20,6 @@ import {
   replicaKey,
   type StoredSyncCommit,
   type SyncConflictBranchRow,
-  type SyncConflictGroupRow,
   type SyncGraph,
   type SyncReplicaIdentity,
 } from './sync-types.js';
@@ -117,6 +116,36 @@ type RevisionDecision = {
   nextHeads: string[];
   changedPaths: string[];
 };
+
+async function assertCommitReconciliationFinalState(
+  store: SqlLedgerStore,
+  changes: Pick<SyncRevisionV2, 'aggregateType' | 'aggregateId'>[],
+): Promise<void> {
+  const reconciliationIds = new Set<string>();
+  const transactionIds = new Set<string>();
+  for (const change of changes) {
+    if (change.aggregateType === 'reconciliation') {
+      reconciliationIds.add(change.aggregateId);
+    } else if (change.aggregateType === 'transaction') {
+      transactionIds.add(change.aggregateId);
+    }
+  }
+
+  for (const transactionId of transactionIds) {
+    const items = await store.reconciliationItems.list({ where: { transactionId } });
+    for (const item of items) reconciliationIds.add(item.reconciliationId);
+  }
+
+  for (const reconciliationId of reconciliationIds) {
+    const session = await store.reconciliationSessions.get(reconciliationId);
+    const items = await store.reconciliationItems.list({ where: { reconciliationId } });
+    if (!session || session.isDeleted) {
+      if (items.length) throw new Error(`已删除的对账批次 ${reconciliationId} 仍有有效项目`);
+      continue;
+    }
+    await store.assertReconciliationAggregate(session, items);
+  }
+}
 
 function unique(values: string[]): string[] {
   return [...new Set(values)].sort();
@@ -230,6 +259,7 @@ function isDeletedPayload(type: string, payload: Record<string, unknown> | null)
   if (!payload) return true;
   if (type === 'conversion') return (payload['chain'] as Record<string, unknown> | undefined)?.['isDeleted'] === true;
   if (type === 'transaction') return (payload['transaction'] as Record<string, unknown> | undefined)?.['isDeleted'] === true;
+  if (type === 'reconciliation') return (payload['session'] as Record<string, unknown> | undefined)?.['isDeleted'] === true;
   return payload['isDeleted'] === true;
 }
 
@@ -466,7 +496,7 @@ export async function applyPendingCommits(store: SqlLedgerStore): Promise<ApplyC
         await ensureAudit();
         await store.withAuditContext(
           { batchId: commit.commitId, source: 'remote_sync', actorName: commit.originDeviceName ?? commit.originDeviceId, suppressSync: true },
-          (scoped) => scoped.transaction(async (tx) => {
+          (scoped) => scoped.withBackupImportContext((historicalStore) => historicalStore.transaction(async (tx) => {
             let conversionChanged = false;
             for (const decision of [...decisions].sort((left, right) => syncApplyOrder(
               {
@@ -490,6 +520,10 @@ export async function applyPendingCommits(store: SqlLedgerStore): Promise<ApplyC
               if (decision.revision.aggregateType === 'conversion') conversionChanged = true;
             }
             if (conversionChanged) await rebuildConversionDerivedInTransaction(tx);
+            await assertCommitReconciliationFinalState(
+              tx,
+              decisions.filter((decision) => decision.action !== 'skip').map((decision) => decision.revision),
+            );
             for (const decision of decisions) {
               await tx.setSyncEntityHeads(decision.revision.aggregateType, decision.revision.aggregateId, decision.nextHeads);
             }
@@ -516,7 +550,7 @@ export async function applyPendingCommits(store: SqlLedgerStore): Promise<ApplyC
               }
             }
             graph.ledgerHeads = ledgerHeads;
-          }),
+          })),
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -832,7 +866,7 @@ export async function resolveConflictGroup(
   try {
     await store.withAuditContext(
       { batchId: commitId, source: 'conflict_resolution', actorName: '冲突解决', suppressSync: true },
-      (scoped) => scoped.transaction(async (tx) => {
+      (scoped) => scoped.withBackupImportContext((historicalStore) => historicalStore.transaction(async (tx) => {
         await tx.storeSyncCommit(commit, { source: 'local', state: 'applied' });
         let conversionChanged = false;
         for (const revision of [...revisions].sort((left, right) => syncApplyOrder(left, right))) {
@@ -841,6 +875,7 @@ export async function resolveConflictGroup(
           if (revision.aggregateType === 'conversion') conversionChanged = true;
         }
         if (conversionChanged) await rebuildConversionDerivedInTransaction(tx);
+        await assertCommitReconciliationFinalState(tx, revisions);
         await tx.setSyncLedgerHeads([commitId]);
         for (const resolvedCommitId of commit.resolvesConflictCommitIds ?? []) await tx.setSyncCommitState(resolvedCommitId, 'applied');
         await tx.finishConflictGroup({
@@ -850,7 +885,7 @@ export async function resolveConflictGroup(
           detail: { branchRevisionIds: input.branchRevisionIds, aggregates: aggregateKeys, changedPaths: group.changedPaths },
           note: input.note,
         });
-      }),
+      })),
     );
     const entityCount = (await store.operationLog({ batchId: commitId })).length;
     await store.finishAuditBatch(commitId, {

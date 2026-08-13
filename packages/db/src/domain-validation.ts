@@ -1,20 +1,18 @@
 import {
   D,
+  assertConversionShape,
   assertDcaExecutionShape,
   assertDcaPlanShape,
   assertScheduledExecutionShape,
   assertTransactionShape,
-  conversionStepAmounts,
   isValidDay,
   normalizeOccurrence,
   postingsFromTransaction,
-  traceChain,
   type Account,
   type Asset,
   type BaseEntity,
   type BudgetCategory,
   type Category,
-  type ChainWithSteps,
   type ConversionChain,
   type ConversionStep,
   type FixedAssetCategory,
@@ -72,11 +70,14 @@ function normalizedName(value: string): string {
 }
 
 function decimal(value: unknown, label: string, field: string) {
+  let parsed;
   try {
-    return D(String(value));
+    parsed = D(String(value));
   } catch {
     fail(`${label}不是有效数字`, field);
   }
+  if (!parsed.isFinite()) fail(`${label}必须是有限数字`, field);
+  return parsed;
 }
 
 function decimalPlaces(value: unknown): number {
@@ -91,6 +92,13 @@ function isActive(row: BaseEntity & { isActive?: boolean; mergedIntoId?: string 
   return !row.isDeleted && row.isActive !== false && !row.mergedIntoId;
 }
 
+function isAllowedReference<T extends BaseEntity & { isActive?: boolean; mergedIntoId?: string }>(
+  row: T | undefined,
+  allowInactiveReferences: boolean,
+): row is T {
+  return !!row && !row.isDeleted && (allowInactiveReferences || isActive(row));
+}
+
 async function getEntity<T extends BaseEntity>(
   driver: SqlDriver,
   spec: TableSpec,
@@ -101,7 +109,7 @@ async function getEntity<T extends BaseEntity>(
 }
 
 async function listEntities<T extends BaseEntity>(driver: SqlDriver, spec: TableSpec): Promise<T[]> {
-  const rows = await driver.all<Record<string, unknown>>(`SELECT * FROM ${spec.name}`);
+  const rows = await driver.all<Record<string, unknown>>(`SELECT * FROM ${spec.name} WHERE is_deleted = 0`);
   return rows.map((row) => rowToEntity<T>(spec, row));
 }
 
@@ -133,15 +141,25 @@ async function arrayReferenceCount(
   return rows.filter((row) => !row.isDeleted && Array.isArray(row[field]) && row[field].includes(id)).length;
 }
 
-async function activeAsset(driver: SqlDriver, id: string, field: string): Promise<Asset> {
+async function activeAsset(
+  driver: SqlDriver,
+  id: string,
+  field: string,
+  allowInactiveReferences = false,
+): Promise<Asset> {
   const asset = await getEntity<Asset>(driver, TABLES.assets, id);
-  if (!asset || !isActive(asset)) fail(`引用的资产不存在或已停用：${id}`, field);
+  if (!isAllowedReference(asset, allowInactiveReferences)) fail(`引用的资产不存在或已停用：${id}`, field);
   return asset;
 }
 
-async function activeAccount(driver: SqlDriver, id: string, field: string): Promise<Account> {
+async function activeAccount(
+  driver: SqlDriver,
+  id: string,
+  field: string,
+  allowInactiveReferences = false,
+): Promise<Account> {
   const account = await getEntity<Account>(driver, TABLES.accounts, id);
-  if (!account || !isActive(account)) fail(`引用的账户不存在或已归档：${id}`, field);
+  if (!isAllowedReference(account, allowInactiveReferences)) fail(`引用的账户不存在或已归档：${id}`, field);
   return account;
 }
 
@@ -150,13 +168,14 @@ async function leafCategory(
   id: string,
   expectedType: Category['type'],
   field: string,
+  allowInactiveReferences = false,
 ): Promise<Category> {
   const category = await getEntity<Category>(driver, TABLES.categories, id);
-  if (!category || !isActive(category)) fail(`分类不存在或已归档：${id}`, field);
+  if (!isAllowedReference(category, allowInactiveReferences)) fail(`分类不存在或已归档：${id}`, field);
   if (!category.parentId) fail('请选择二级分类，不能直接选择一级分类', field);
   if (category.type !== expectedType) fail('分类与收支类型不匹配', field);
   const parent = await getEntity<Category>(driver, TABLES.categories, category.parentId);
-  if (!parent || !isActive(parent) || parent.parentId || parent.type !== expectedType) {
+  if (!isAllowedReference(parent, allowInactiveReferences) || parent.parentId || parent.type !== expectedType) {
     fail('二级分类的一级分类无效或类型不一致', field);
   }
   const children = await listEntities<Category>(driver, TABLES.categories);
@@ -401,12 +420,16 @@ export function validateCategoryHierarchySnapshot(
   candidate: Category,
   current: Category | undefined,
   referenceCount: number,
+  allowInactiveReferences = false,
 ): DomainValidationIssue[] {
   const issues: DomainValidationIssue[] = [];
   const activeRows = categories
     .filter((row) => row.id !== candidate.id && isActive(row))
     .concat(isActive(candidate) ? [candidate] : []);
-  const parent = candidate.parentId ? activeRows.find((row) => row.id === candidate.parentId) : undefined;
+  const referenceRows = allowInactiveReferences
+    ? categories.filter((row) => row.id !== candidate.id && !row.isDeleted).concat(!candidate.isDeleted ? [candidate] : [])
+    : activeRows;
+  const parent = candidate.parentId ? referenceRows.find((row) => row.id === candidate.parentId) : undefined;
   const children = activeRows.filter((row) => row.parentId === candidate.id);
 
   if (!candidate.name.trim()) issues.push({ field: 'name', message: '分类名称不能为空' });
@@ -496,10 +519,11 @@ async function validateCategoryWrite(
   candidate: Category,
   current?: Category,
   allowReferencedChanges = false,
+  allowInactiveReferences = false,
 ): Promise<void> {
   const categories = await listEntities<Category>(driver, TABLES.categories);
   const refs = current && !allowReferencedChanges ? await categoryReferenceCount(driver, current.id) : 0;
-  throwIssues(validateCategoryHierarchySnapshot(categories, candidate, current, refs));
+  throwIssues(validateCategoryHierarchySnapshot(categories, candidate, current, refs, allowInactiveReferences));
 }
 
 async function validateFixedCategoryWrite(
@@ -507,11 +531,15 @@ async function validateFixedCategoryWrite(
   candidate: FixedAssetCategory,
   current?: FixedAssetCategory,
   allowReferencedChanges = false,
+  allowInactiveReferences = false,
 ): Promise<void> {
   requireText(candidate.name, '物品分类名称', 'name');
   const categories = await listEntities<FixedAssetCategory>(driver, TABLES.fixedAssetCategories);
   const activeRows = categories.filter((row) => row.id !== candidate.id && isActive(row));
-  const parent = candidate.parentId ? activeRows.find((row) => row.id === candidate.parentId) : undefined;
+  const referenceRows = allowInactiveReferences
+    ? categories.filter((row) => row.id !== candidate.id && !row.isDeleted)
+    : activeRows;
+  const parent = candidate.parentId ? referenceRows.find((row) => row.id === candidate.parentId) : undefined;
   const children = activeRows.filter((row) => row.parentId === candidate.id);
   if (candidate.parentId === candidate.id) fail('分类不能把自己设为父级', 'parentId');
   if (candidate.parentId && !parent) fail('父级物品分类不存在或已归档', 'parentId');
@@ -527,12 +555,17 @@ async function validateFixedCategoryWrite(
   }
 }
 
-async function fixedLeafCategory(driver: SqlDriver, id: string, field: string): Promise<FixedAssetCategory> {
+async function fixedLeafCategory(
+  driver: SqlDriver,
+  id: string,
+  field: string,
+  allowInactiveReferences = false,
+): Promise<FixedAssetCategory> {
   const category = await getEntity<FixedAssetCategory>(driver, TABLES.fixedAssetCategories, id);
-  if (!category || !isActive(category)) fail('物品二级分类不存在或已归档', field);
+  if (!isAllowedReference(category, allowInactiveReferences)) fail('物品二级分类不存在或已归档', field);
   if (!category.parentId) fail('物品必须选择二级分类', field);
   const parent = await getEntity<FixedAssetCategory>(driver, TABLES.fixedAssetCategories, category.parentId);
-  if (!parent || !isActive(parent) || parent.parentId) fail('物品二级分类的一级分类无效', field);
+  if (!isAllowedReference(parent, allowInactiveReferences) || parent.parentId) fail('物品二级分类的一级分类无效', field);
   const categories = await listEntities<FixedAssetCategory>(driver, TABLES.fixedAssetCategories);
   if (categories.some((row) => isActive(row) && row.parentId === category.id)) {
     fail('物品必须选择分类树的叶子节点', field);
@@ -602,16 +635,29 @@ async function validateAccountWrite(
   }
 }
 
-async function validatePayeeWrite(driver: SqlDriver, candidate: Payee): Promise<void> {
+async function validatePayeeWrite(
+  driver: SqlDriver,
+  candidate: Payee,
+  allowInactiveReferences = false,
+): Promise<void> {
   requireText(candidate.name, '商户名称', 'name');
   if (candidate.defaultCategory) {
     const category = await getEntity<Category>(driver, TABLES.categories, candidate.defaultCategory);
-    if (!category || !isActive(category) || !category.parentId) fail('商户默认分类必须是启用的二级分类', 'defaultCategory');
+    if (!isAllowedReference(category, allowInactiveReferences) || !category.parentId) {
+      fail('商户默认分类必须是启用的二级分类', 'defaultCategory');
+    }
   }
-  if (candidate.defaultAccountId) await activeAccount(driver, candidate.defaultAccountId, 'defaultAccountId');
+  if (candidate.defaultAccountId) {
+    await activeAccount(driver, candidate.defaultAccountId, 'defaultAccountId', allowInactiveReferences);
+  }
 }
 
-async function validateTransactionWrite(driver: SqlDriver, transaction: Transaction): Promise<void> {
+async function validateTransactionWrite(
+  driver: SqlDriver,
+  transaction: Transaction,
+  allowReferencedChanges = false,
+  allowInactiveReferences = false,
+): Promise<void> {
   try {
     assertTransactionShape(transaction);
   } catch (error) {
@@ -619,32 +665,32 @@ async function validateTransactionWrite(driver: SqlDriver, transaction: Transact
   }
   const amount = decimal(transaction.amount, '金额', 'amount');
   if (!amount.gt(0)) fail('金额必须大于 0', 'amount');
-  const asset = await activeAsset(driver, transaction.assetId, 'assetId');
+  const asset = await activeAsset(driver, transaction.assetId, 'assetId', allowInactiveReferences);
   if (decimalPlaces(transaction.amount) > asset.decimals) fail(`金额最多支持 ${asset.decimals} 位小数`, 'amount');
   const setting = await driver.get<{ ledger_mode?: string }>('SELECT ledger_mode FROM settings WHERE is_deleted = 0 ORDER BY rowid LIMIT 1');
   const accountRequired = (setting?.ledger_mode ?? 'spending') !== 'spending';
 
   if (transaction.type === 'transfer') {
     if (!transaction.accountId || !transaction.transferAccountId) fail('转账必须填写转出和转入账户', 'accountId');
-    await activeAccount(driver, transaction.accountId, 'accountId');
-    await activeAccount(driver, transaction.transferAccountId, 'transferAccountId');
+    await activeAccount(driver, transaction.accountId, 'accountId', allowInactiveReferences);
+    await activeAccount(driver, transaction.transferAccountId, 'transferAccountId', allowInactiveReferences);
     if (transaction.accountId === transaction.transferAccountId) fail('转出和转入账户不能相同', 'transferAccountId');
-    const target = await activeAsset(driver, transaction.transferAssetId ?? '', 'transferAssetId');
+    const target = await activeAsset(driver, transaction.transferAssetId ?? '', 'transferAssetId', allowInactiveReferences);
     const transferAmount = decimal(transaction.transferAmount, '转入金额', 'transferAmount');
     if (!transferAmount.gt(0)) fail('转入金额必须大于 0', 'transferAmount');
     if (decimalPlaces(transaction.transferAmount) > target.decimals) {
       fail(`转入金额最多支持 ${target.decimals} 位小数`, 'transferAmount');
     }
   } else if (transaction.accountId) {
-    await activeAccount(driver, transaction.accountId, 'accountId');
+    await activeAccount(driver, transaction.accountId, 'accountId', allowInactiveReferences);
   } else if (accountRequired || transaction.type === 'adjustment') {
     fail('当前账本模式必须选择账户', 'accountId');
   }
 
   if (transaction.type === 'income' || transaction.type === 'expense') {
-    await leafCategory(driver, transaction.category, transaction.type, 'category');
+    await leafCategory(driver, transaction.category, transaction.type, 'category', allowInactiveReferences);
   } else if (transaction.type === 'refund') {
-    await leafCategory(driver, transaction.category, 'expense', 'category');
+    await leafCategory(driver, transaction.category, 'expense', 'category', allowInactiveReferences);
     const original = transaction.refundForId
       ? await getEntity<Transaction>(driver, TABLES.transactions, transaction.refundForId)
       : undefined;
@@ -675,80 +721,93 @@ async function validateTransactionWrite(driver: SqlDriver, transaction: Transact
 
   if (transaction.type === 'expense') {
     const refunds = await listEntities<Transaction>(driver, TABLES.transactions);
-    const applied = refunds
-      .filter((row) => !row.isDeleted
-        && row.recordState !== 'voided'
-        && row.type === 'refund'
-        && row.refundForId === transaction.id)
-      .reduce((total, row) => total.plus(row.refundAppliedAmount ?? row.amount), D(0));
-    if (applied.gt(transaction.amount)) fail(`支出金额不能低于已退款金额 ${applied.toString()}`, 'amount');
-    if (refunds.some((row) => !row.isDeleted
+    const linkedRefunds = refunds.filter((row) => !row.isDeleted
       && row.recordState !== 'voided'
       && row.type === 'refund'
-      && row.refundForId === transaction.id
-      && row.refundAppliedAssetId !== transaction.assetId)) {
+      && row.refundForId === transaction.id);
+    const applied = linkedRefunds
+      .reduce((total, row) => total.plus(row.refundAppliedAmount ?? row.amount), D(0));
+    if (applied.gt(transaction.amount)) fail(`支出金额不能低于已退款金额 ${applied.toString()}`, 'amount');
+    if (!allowReferencedChanges && linkedRefunds.some((refund) => refund.refundAppliedAssetId !== transaction.assetId)) {
       fail('已有退款的支出不能修改币种，请先作废关联退款', 'assetId');
     }
   }
 
   if (transaction.payeeId) {
     const payee = await getEntity<Payee>(driver, TABLES.payees, transaction.payeeId);
-    if (!payee || !isActive(payee)) fail('商户不存在或已归档', 'payeeId');
+    if (!isAllowedReference(payee, allowInactiveReferences)) fail('商户不存在或已归档', 'payeeId');
   }
   if (transaction.locationId) {
     const location = await driver.get<{ is_deleted: number; is_active: number }>(
       'SELECT is_deleted, is_active FROM transaction_locations WHERE id = ?',
       [transaction.locationId],
     );
-    if (!location || location.is_deleted || !location.is_active) fail('地点不存在或已停用', 'locationId');
+    if (!location || location.is_deleted || (!allowInactiveReferences && !location.is_active)) {
+      fail('地点不存在或已停用', 'locationId');
+    }
   }
   for (const tagId of transaction.tagIds ?? []) {
     const tag = await driver.get<{ is_deleted: number; is_active: number }>(
       'SELECT is_deleted, is_active FROM transaction_tags WHERE id = ?',
       [tagId],
     );
-    if (!tag || tag.is_deleted || !tag.is_active) fail(`标签不存在或已停用：${tagId}`, 'tagIds');
+    if (!tag || tag.is_deleted || (!allowInactiveReferences && !tag.is_active)) {
+      fail(`标签不存在或已停用：${tagId}`, 'tagIds');
+    }
   }
 }
 
-async function validateBudgetWrite(driver: SqlDriver, budget: BudgetCategory): Promise<void> {
+async function validateBudgetWrite(
+  driver: SqlDriver,
+  budget: BudgetCategory,
+  allowInactiveReferences = false,
+): Promise<void> {
   if (!/^\d{4}-\d{2}$/.test(budget.month)) fail('预算月份必须使用 YYYY-MM', 'month');
-  await leafCategory(driver, budget.category, 'expense', 'category');
-  const asset = await activeAsset(driver, budget.assetId, 'assetId');
+  await leafCategory(driver, budget.category, 'expense', 'category', allowInactiveReferences);
+  const asset = await activeAsset(driver, budget.assetId, 'assetId', allowInactiveReferences);
   const amount = decimal(budget.plannedAmount, '预算金额', 'plannedAmount');
   if (amount.lt(0)) fail('预算金额不能小于 0', 'plannedAmount');
   if (decimalPlaces(budget.plannedAmount) > asset.decimals) fail('预算金额超过币种精度', 'plannedAmount');
 }
 
-async function validateScheduledWrite(driver: SqlDriver, row: ScheduledTransaction): Promise<void> {
+async function validateScheduledWrite(
+  driver: SqlDriver,
+  row: ScheduledTransaction,
+  allowInactiveReferences = false,
+): Promise<void> {
   requireText(row.name, '定期交易名称', 'name');
   if (!SCHEDULE_FREQUENCIES.has(row.frequency)) fail('定期交易频率无效', 'frequency');
   if (!SCHEDULE_STATUSES.has(row.status)) fail('定期交易状态无效', 'status');
   if (!SCHEDULE_ANCHORS.has(row.anchorMode)) fail('定期交易月末规则无效', 'anchorMode');
   if (!SCHEDULE_CATCH_UP.has(row.catchUpPolicy)) fail('定期交易补齐策略无效', 'catchUpPolicy');
   normalizeOccurrence({ date: row.anchorDate, time: row.time, timezone: row.timezone, timePrecision: row.time ? 'minute' : 'day' });
-  const asset = await activeAsset(driver, row.assetId, 'assetId');
+  const asset = await activeAsset(driver, row.assetId, 'assetId', allowInactiveReferences);
   if (!decimal(row.amount, '定期金额', 'amount').gt(0)) fail('定期金额必须大于 0', 'amount');
   if (decimalPlaces(row.amount) > asset.decimals) fail('定期金额超过币种精度', 'amount');
   if (row.type === 'transfer') {
     if (!row.accountId || !row.transferAccountId) fail('定期转账必须填写双方账户', 'accountId');
-    await activeAccount(driver, row.accountId, 'accountId');
-    await activeAccount(driver, row.transferAccountId, 'transferAccountId');
+    await activeAccount(driver, row.accountId, 'accountId', allowInactiveReferences);
+    await activeAccount(driver, row.transferAccountId, 'transferAccountId', allowInactiveReferences);
     if (row.accountId === row.transferAccountId) fail('转出和转入账户不能相同', 'transferAccountId');
-    await activeAsset(driver, row.transferAssetId ?? '', 'transferAssetId');
+    await activeAsset(driver, row.transferAssetId ?? '', 'transferAssetId', allowInactiveReferences);
   } else if (row.type === 'income' || row.type === 'expense') {
-    await leafCategory(driver, row.category, row.type, 'category');
-    if (row.accountId) await activeAccount(driver, row.accountId, 'accountId');
+    await leafCategory(driver, row.category, row.type, 'category', allowInactiveReferences);
+    if (row.accountId) await activeAccount(driver, row.accountId, 'accountId', allowInactiveReferences);
   } else {
     fail('定期交易只支持收入、支出或转账', 'type');
   }
   if (row.payeeId) {
     const payee = await getEntity<Payee>(driver, TABLES.payees, row.payeeId);
-    if (!payee || !isActive(payee)) fail('定期交易商户不存在或已归档', 'payeeId');
+    if (!isAllowedReference(payee, allowInactiveReferences)) fail('定期交易商户不存在或已归档', 'payeeId');
   }
 }
 
-async function validateReferenceEntity(driver: SqlDriver, entityType: string, row: Record<string, unknown>): Promise<void> {
+async function validateReferenceEntity(
+  driver: SqlDriver,
+  entityType: string,
+  row: Record<string, unknown>,
+  allowInactiveReferences = false,
+): Promise<void> {
   const ref = async (spec: TableSpec, id: unknown, field: string, label: string) => {
     if (typeof id !== 'string' || !id) fail(`${label}不能为空`, field);
     const target = await getEntity<BaseEntity>(driver, spec, id);
@@ -756,20 +815,22 @@ async function validateReferenceEntity(driver: SqlDriver, entityType: string, ro
   };
   switch (entityType) {
     case 'setting':
-      await activeAsset(driver, String(row['baseCurrencyAssetId'] ?? ''), 'baseCurrencyAssetId');
+      await activeAsset(driver, String(row['baseCurrencyAssetId'] ?? ''), 'baseCurrencyAssetId', allowInactiveReferences);
       for (const field of ['transactionDefaultAssetId', 'investmentCostAssetId', 'fixedAssetDefaultCurrencyAssetId', 'gameDefaultSettlementAssetId']) {
-        if (row[field]) await activeAsset(driver, String(row[field]), field);
+        if (row[field]) await activeAsset(driver, String(row[field]), field, allowInactiveReferences);
       }
       break;
     case 'price_mark':
-      await activeAsset(driver, String(row['assetId'] ?? ''), 'assetId');
-      await activeAsset(driver, String(row['quoteAssetId'] ?? ''), 'quoteAssetId');
+      await activeAsset(driver, String(row['assetId'] ?? ''), 'assetId', allowInactiveReferences);
+      await activeAsset(driver, String(row['quoteAssetId'] ?? ''), 'quoteAssetId', allowInactiveReferences);
       if (!decimal(row['price'], '价格', 'price').gt(0)) fail('价格必须大于 0', 'price');
       break;
     case 'lot': {
-      const asset = await activeAsset(driver, String(row['assetId'] ?? ''), 'assetId');
-      await activeAsset(driver, String(row['baseCurrencyAssetId'] ?? ''), 'baseCurrencyAssetId');
-      if (row['nativeCostAssetId']) await activeAsset(driver, String(row['nativeCostAssetId']), 'nativeCostAssetId');
+      const asset = await activeAsset(driver, String(row['assetId'] ?? ''), 'assetId', allowInactiveReferences);
+      await activeAsset(driver, String(row['baseCurrencyAssetId'] ?? ''), 'baseCurrencyAssetId', allowInactiveReferences);
+      if (row['nativeCostAssetId']) {
+        await activeAsset(driver, String(row['nativeCostAssetId']), 'nativeCostAssetId', allowInactiveReferences);
+      }
       if (row['sourceChainId']) await ref(TABLES.conversionChains, row['sourceChainId'], 'sourceChainId', '来源转换');
       if (row['sourceDcaExecutionId']) await ref(TABLES.dcaExecutions, row['sourceDcaExecutionId'], 'sourceDcaExecutionId', '定投执行');
       const original = decimal(row['originalAmount'], '批次数量', 'originalAmount');
@@ -800,8 +861,8 @@ async function validateReferenceEntity(driver: SqlDriver, entityType: string, ro
       } catch (error) {
         fail(error instanceof Error ? error.message : '定投计划无效');
       }
-      await activeAsset(driver, String(row['targetAssetId'] ?? ''), 'targetAssetId');
-      await activeAsset(driver, String(row['baseCurrencyAssetId'] ?? ''), 'baseCurrencyAssetId');
+      await activeAsset(driver, String(row['targetAssetId'] ?? ''), 'targetAssetId', allowInactiveReferences);
+      await activeAsset(driver, String(row['baseCurrencyAssetId'] ?? ''), 'baseCurrencyAssetId', allowInactiveReferences);
       break;
     case 'dca_execution':
       try {
@@ -820,8 +881,8 @@ async function validateReferenceEntity(driver: SqlDriver, entityType: string, ro
       await ref(TABLES.scheduledTransactions, row['scheduleId'], 'scheduleId', '定期交易');
       break;
     case 'fixed_asset':
-      await fixedLeafCategory(driver, String(row['categoryId'] ?? ''), 'categoryId');
-      await activeAsset(driver, String(row['baseCurrencyAssetId'] ?? ''), 'baseCurrencyAssetId');
+      await fixedLeafCategory(driver, String(row['categoryId'] ?? ''), 'categoryId', allowInactiveReferences);
+      await activeAsset(driver, String(row['baseCurrencyAssetId'] ?? ''), 'baseCurrencyAssetId', allowInactiveReferences);
       requireText(row['name'], '物品名称', 'name');
       if (!FIXED_ASSET_STATUSES.has(String(row['status']))) fail('物品状态无效', 'status');
       normalizeOccurrence({ date: String(row['purchaseDate'] ?? ''), timePrecision: 'day' });
@@ -889,8 +950,12 @@ async function validateReferenceEntity(driver: SqlDriver, entityType: string, ro
         const account = await getEntity<Record<string, unknown> & BaseEntity>(driver, TABLES.gameAccounts, String(row['gameAccountId']));
         if (account?.['gameId'] !== row['gameId']) fail('游戏账号不属于所选游戏', 'gameAccountId');
       }
-      if (row['settlementAssetId']) await activeAsset(driver, String(row['settlementAssetId']), 'settlementAssetId');
-      if (row['feeAssetId']) await activeAsset(driver, String(row['feeAssetId']), 'feeAssetId');
+      if (row['settlementAssetId']) {
+        await activeAsset(driver, String(row['settlementAssetId']), 'settlementAssetId', allowInactiveReferences);
+      }
+      if (row['feeAssetId']) {
+        await activeAsset(driver, String(row['feeAssetId']), 'feeAssetId', allowInactiveReferences);
+      }
       if (row['settlementAmount'] && !decimal(row['settlementAmount'], '结算金额', 'settlementAmount').gt(0)) {
         fail('结算金额必须大于 0', 'settlementAmount');
       }
@@ -900,8 +965,8 @@ async function validateReferenceEntity(driver: SqlDriver, entityType: string, ro
     case 'game_cashflow_link':
       await ref(TABLES.gameRecords, row['gameRecordId'], 'gameRecordId', '游戏记录');
       await ref(TABLES.transactions, row['transactionId'], 'transactionId', '资金流水');
-      await activeAsset(driver, String(row['sourceAssetId'] ?? ''), 'sourceAssetId');
-      if (row['accountId']) await activeAccount(driver, String(row['accountId']), 'accountId');
+      await activeAsset(driver, String(row['sourceAssetId'] ?? ''), 'sourceAssetId', allowInactiveReferences);
+      if (row['accountId']) await activeAccount(driver, String(row['accountId']), 'accountId', allowInactiveReferences);
       if (!['settlement', 'fee'].includes(String(row['role']))) fail('游戏资金角色无效', 'role');
       if (!['inflow', 'outflow'].includes(String(row['direction']))) fail('游戏资金方向无效', 'direction');
       if (!['linked', 'created'].includes(String(row['ownership']))) fail('游戏资金归属无效', 'ownership');
@@ -913,8 +978,8 @@ async function validateReferenceEntity(driver: SqlDriver, entityType: string, ro
       if (sourceType !== 'event' && sourceType !== 'consumable') fail('物品资金来源类型无效', 'sourceType');
       await ref(sourceType === 'event' ? TABLES.fixedAssetEvents : TABLES.fixedAssetConsumables, row['sourceId'], 'sourceId', '物品资金来源');
       await ref(TABLES.transactions, row['transactionId'], 'transactionId', '资金流水');
-      await activeAsset(driver, String(row['sourceAssetId'] ?? ''), 'sourceAssetId');
-      await activeAsset(driver, String(row['baseAssetId'] ?? ''), 'baseAssetId');
+      await activeAsset(driver, String(row['sourceAssetId'] ?? ''), 'sourceAssetId', allowInactiveReferences);
+      await activeAsset(driver, String(row['baseAssetId'] ?? ''), 'baseAssetId', allowInactiveReferences);
       if (!decimal(row['sourceAmount'], '来源金额', 'sourceAmount').gt(0)
         || !decimal(row['amountBase'], '记账金额', 'amountBase').gt(0)) {
         fail('物品资金金额必须大于 0');
@@ -926,10 +991,12 @@ async function validateReferenceEntity(driver: SqlDriver, entityType: string, ro
     }
     case 'transaction_template': {
       const type = String(row['type']);
-      if (type === 'income' || type === 'expense') await leafCategory(driver, String(row['category'] ?? ''), type, 'category');
+      if (type === 'income' || type === 'expense') {
+        await leafCategory(driver, String(row['category'] ?? ''), type, 'category', allowInactiveReferences);
+      }
       else if (type !== 'transfer') fail('交易模板类型无效', 'type');
-      if (row['assetId']) await activeAsset(driver, String(row['assetId']), 'assetId');
-      if (row['accountId']) await activeAccount(driver, String(row['accountId']), 'accountId');
+      if (row['assetId']) await activeAsset(driver, String(row['assetId']), 'assetId', allowInactiveReferences);
+      if (row['accountId']) await activeAccount(driver, String(row['accountId']), 'accountId', allowInactiveReferences);
       if (row['payeeId']) await ref(TABLES.payees, row['payeeId'], 'payeeId', '商户');
       if (row['locationId']) await ref(TABLES.transactionLocations, row['locationId'], 'locationId', '地点');
       for (const tagId of Array.isArray(row['tagIds']) ? row['tagIds'] : []) {
@@ -941,7 +1008,7 @@ async function validateReferenceEntity(driver: SqlDriver, entityType: string, ro
       const transaction = await getEntity<Transaction>(driver, TABLES.transactions, String(row['transactionId'] ?? ''));
       if (!transaction || transaction.isDeleted) fail('拆分引用的流水不存在', 'transactionId');
       if (transaction.type !== 'income' && transaction.type !== 'expense') fail('只有收入或支出可以拆分', 'transactionId');
-      await leafCategory(driver, String(row['category'] ?? ''), transaction.type, 'category');
+      await leafCategory(driver, String(row['category'] ?? ''), transaction.type, 'category', allowInactiveReferences);
       if (!decimal(row['amount'], '拆分金额', 'amount').gt(0)) fail('拆分金额必须大于 0', 'amount');
       break;
     }
@@ -974,7 +1041,7 @@ export async function validateEntityWrite<T extends BaseEntity>(
   entityType: string,
   candidate: T,
   current?: T,
-  options: { allowReferencedChanges?: boolean } = {},
+  options: { allowReferencedChanges?: boolean; allowInactiveReferences?: boolean } = {},
 ): Promise<void> {
   if (!candidate.id) fail('实体 ID 不能为空', 'id');
   if (candidate.isDeleted && current && !current.isDeleted) {
@@ -988,6 +1055,7 @@ export async function validateEntityWrite<T extends BaseEntity>(
         candidate as unknown as Category,
         current as unknown as Category | undefined,
         options.allowReferencedChanges,
+        options.allowInactiveReferences,
       );
       return;
     case 'fixed_asset_category':
@@ -996,6 +1064,7 @@ export async function validateEntityWrite<T extends BaseEntity>(
         candidate as unknown as FixedAssetCategory,
         current as unknown as FixedAssetCategory | undefined,
         options.allowReferencedChanges,
+        options.allowInactiveReferences,
       );
       return;
     case 'asset':
@@ -1015,16 +1084,21 @@ export async function validateEntityWrite<T extends BaseEntity>(
       );
       return;
     case 'payee':
-      await validatePayeeWrite(driver, candidate as unknown as Payee);
+      await validatePayeeWrite(driver, candidate as unknown as Payee, options.allowInactiveReferences);
       return;
     case 'transaction':
-      await validateTransactionWrite(driver, candidate as unknown as Transaction);
+      await validateTransactionWrite(
+        driver,
+        candidate as unknown as Transaction,
+        options.allowReferencedChanges,
+        options.allowInactiveReferences,
+      );
       return;
     case 'budget_category':
-      await validateBudgetWrite(driver, candidate as unknown as BudgetCategory);
+      await validateBudgetWrite(driver, candidate as unknown as BudgetCategory, options.allowInactiveReferences);
       return;
     case 'scheduled_transaction':
-      await validateScheduledWrite(driver, candidate as unknown as ScheduledTransaction);
+      await validateScheduledWrite(driver, candidate as unknown as ScheduledTransaction, options.allowInactiveReferences);
       return;
     case 'transaction_tag':
     case 'transaction_location':
@@ -1033,7 +1107,12 @@ export async function validateEntityWrite<T extends BaseEntity>(
       requireText((candidate as unknown as Record<string, unknown>)['name'], '名称', 'name');
       return;
     default:
-      await validateReferenceEntity(driver, entityType, candidate as unknown as Record<string, unknown>);
+      await validateReferenceEntity(
+        driver,
+        entityType,
+        candidate as unknown as Record<string, unknown>,
+        options.allowInactiveReferences,
+      );
   }
 }
 
@@ -1129,6 +1208,7 @@ export async function validateAggregateMutation(
   entityType: string,
   candidate: BaseEntity & Record<string, unknown>,
   current?: BaseEntity & Record<string, unknown>,
+  options: { allowInactiveReferences?: boolean } = {},
 ): Promise<void> {
   const mutation = { entityType, candidate };
   for (const key of aggregateValidationKeys(entityType, candidate, current)) {
@@ -1137,10 +1217,10 @@ export async function validateAggregateMutation(
     const id = key.slice(separator + 1);
     if (kind === 'transaction') {
       const snapshot = await transactionAggregateFromDriver(driver, id, mutation);
-      if (snapshot) await validateTransactionAggregateSnapshot(driver, snapshot);
+      if (snapshot) await validateTransactionAggregateSnapshot(driver, snapshot, options);
     } else if (kind === 'reconciliation') {
       const snapshot = await reconciliationAggregateFromDriver(driver, id, mutation);
-      if (snapshot) await validateReconciliationAggregateSnapshot(driver, snapshot.session, snapshot.items);
+      if (snapshot) await validateReconciliationAggregateSnapshot(driver, snapshot.session, snapshot.items, options);
     }
   }
 }
@@ -1154,8 +1234,9 @@ export interface TransactionAggregateSnapshot {
 export async function validateTransactionAggregateSnapshot(
   driver: SqlDriver,
   snapshot: TransactionAggregateSnapshot,
+  options: { allowInactiveReferences?: boolean } = {},
 ): Promise<void> {
-  await validateTransactionWrite(driver, snapshot.transaction);
+  await validateTransactionWrite(driver, snapshot.transaction, false, options.allowInactiveReferences);
   const activeSplits = snapshot.splits.filter((row) => !row.isDeleted);
   const activeAllocations = snapshot.refundAllocations.filter((row) => !row.isDeleted);
   if (snapshot.transaction.type === 'transfer' || snapshot.transaction.type === 'adjustment' || snapshot.transaction.type === 'refund') {
@@ -1168,7 +1249,7 @@ export async function validateTransactionAggregateSnapshot(
       if (split.transactionId !== snapshot.transaction.id) fail('拆分不属于当前流水', 'splits');
       if (ids.has(split.id)) fail('拆分项目 ID 重复', 'splits');
       ids.add(split.id);
-      await leafCategory(driver, split.category, snapshot.transaction.type, 'splits');
+      await leafCategory(driver, split.category, snapshot.transaction.type, 'splits', options.allowInactiveReferences);
       const value = decimal(split.amount, '拆分金额', 'splits');
       if (!value.gt(0)) fail('拆分金额必须大于 0', 'splits');
       total = total.plus(value);
@@ -1200,7 +1281,7 @@ export async function validateTransactionAggregateSnapshot(
     if (allocation.assetId !== original.assetId) fail('退款分配冻结币种与原支出不一致', 'refundAllocations');
     if (!allocation.categoryPathSnapshot.trim()) fail('退款分配缺少冻结分类路径', 'refundAllocations');
     const category = await getEntity<Category>(driver, TABLES.categories, allocation.categoryId);
-    if (!category) fail('退款分配引用的冻结分类不存在', 'refundAllocations');
+    if (!category || category.isDeleted) fail('退款分配引用的冻结分类不存在', 'refundAllocations');
     const value = decimal(allocation.amount, '退款分配金额', 'refundAllocations');
     if (!value.gt(0)) fail('退款分配金额必须大于 0', 'refundAllocations');
     total = total.plus(value);
@@ -1214,42 +1295,37 @@ export async function validateConversionAggregateSnapshot(
   driver: SqlDriver,
   chain: ConversionChain,
   steps: ConversionStep[],
+  options: { allowInactiveReferences?: boolean } = {},
 ): Promise<ConversionChain> {
   const normalized = normalizeDomainEntity('conversion_chain', chain);
-  if (!steps.length) fail('资产转换至少需要一个步骤', 'steps');
-  await activeAsset(driver, normalized.baseCurrencyAssetId, 'baseCurrencyAssetId');
-  const ids = new Set<string>();
-  for (const [index, step] of steps.entries()) {
-    if (step.chainId !== normalized.id) fail(`步骤 ${index + 1} 不属于当前转换`, 'steps');
-    if (ids.has(step.id)) fail(`步骤 ${index + 1} 的 ID 重复`, 'steps');
-    ids.add(step.id);
-    const from = await activeAsset(driver, step.fromAssetId, `steps.${index}.fromAssetId`);
-    const to = await activeAsset(driver, step.toAssetId, `steps.${index}.toAssetId`);
+  try {
+    assertConversionShape(normalized, steps);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : '资产转换链路无效', 'steps');
+  }
+  await activeAsset(driver, normalized.baseCurrencyAssetId, 'baseCurrencyAssetId', options.allowInactiveReferences);
+  const orderedSteps = [...steps].sort((left, right) => left.order - right.order);
+  for (const [index, step] of orderedSteps.entries()) {
+    const from = await activeAsset(driver, step.fromAssetId, `steps.${index}.fromAssetId`, options.allowInactiveReferences);
+    const to = await activeAsset(driver, step.toAssetId, `steps.${index}.toAssetId`, options.allowInactiveReferences);
     if (decimalPlaces(step.fromAmount) > from.decimals || decimalPlaces(step.toAmount) > to.decimals) {
       fail(`步骤 ${index + 1} 的金额精度超过资产限制`, 'steps');
     }
-    if (index > 0 && steps[index - 1]!.toAssetId !== step.fromAssetId) {
-      fail(`步骤 ${index} 的目标资产必须与步骤 ${index + 1} 的来源资产一致`, 'steps');
+    if (step.accountFromId) {
+      await activeAccount(driver, step.accountFromId, `steps.${index}.accountFromId`, options.allowInactiveReferences);
     }
-    if (step.accountFromId) await activeAccount(driver, step.accountFromId, `steps.${index}.accountFromId`);
-    if (step.accountToId) await activeAccount(driver, step.accountToId, `steps.${index}.accountToId`);
+    if (step.accountToId) {
+      await activeAccount(driver, step.accountToId, `steps.${index}.accountToId`, options.allowInactiveReferences);
+    }
     for (const fee of step.fees ?? []) {
-      const asset = await activeAsset(driver, fee.assetId, `steps.${index}.fees`);
+      const asset = await activeAsset(driver, fee.assetId, `steps.${index}.fees`, options.allowInactiveReferences);
       if (!decimal(fee.amount, '手续费', `steps.${index}.fees`).gt(0) || decimalPlaces(fee.amount) > asset.decimals) {
         fail(`步骤 ${index + 1} 手续费金额无效`, `steps.${index}.fees`);
       }
-      if (fee.accountId) await activeAccount(driver, fee.accountId, `steps.${index}.fees.accountId`);
+      if (fee.accountId) {
+        await activeAccount(driver, fee.accountId, `steps.${index}.fees.accountId`, options.allowInactiveReferences);
+      }
     }
-    try {
-      conversionStepAmounts(step);
-    } catch (error) {
-      fail(error instanceof Error ? error.message : `步骤 ${index + 1} 金额口径无效`, 'steps');
-    }
-  }
-  try {
-    traceChain({ chain: normalized, steps } satisfies ChainWithSteps);
-  } catch (error) {
-    fail(error instanceof Error ? error.message : '资产转换链路无效', 'steps');
   }
   return normalized;
 }
@@ -1258,9 +1334,10 @@ export async function validateReconciliationAggregateSnapshot(
   driver: SqlDriver,
   session: ReconciliationSession,
   items: ReconciliationItem[],
+  options: { allowInactiveReferences?: boolean } = {},
 ): Promise<void> {
-  await activeAccount(driver, session.accountId, 'accountId');
-  const asset = await activeAsset(driver, session.assetId, 'assetId');
+  await activeAccount(driver, session.accountId, 'accountId', options.allowInactiveReferences);
+  const asset = await activeAsset(driver, session.assetId, 'assetId', options.allowInactiveReferences);
   normalizeOccurrence({ date: session.statementDate, timePrecision: 'day' });
   for (const field of ['statementBalance', 'openingBalance', 'selectedTotal', 'clearedBalance', 'difference'] as const) {
     decimal(session[field], '对账金额', field);
@@ -1307,6 +1384,18 @@ export async function validateReconciliationAggregateSnapshot(
   if (session.status === 'closed' && !expectedDifference.isZero()) fail('差额不为零时不能关闭对账', 'difference');
 }
 
+/** Validate one reconciliation from the database's current (final) state. */
+export async function validateStoredReconciliationAggregate(
+  driver: SqlDriver,
+  reconciliationId: string,
+  options: { allowInactiveReferences?: boolean } = {},
+): Promise<void> {
+  const snapshot = await reconciliationAggregateFromDriver(driver, reconciliationId);
+  if (snapshot) {
+    await validateReconciliationAggregateSnapshot(driver, snapshot.session, snapshot.items, options);
+  }
+}
+
 export function syncAggregateApplyPriority(type: string, op: 'put' | 'delete'): number {
   const order: Record<string, number> = {
     asset: 10,
@@ -1317,12 +1406,12 @@ export function syncAggregateApplyPriority(type: string, op: 'put' | 'delete'): 
     transaction_location: 13,
     payee: 14,
     game: 14,
-    reconciliation: 18,
     transaction: 20,
     conversion: 20,
     fixed_asset: 20,
     game_account: 21,
     game_season: 21,
+    reconciliation: 22,
     price_mark: 25,
     dca_plan: 25,
     transaction_template: 25,

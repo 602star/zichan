@@ -1,12 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { newId, sha256Json, wireSyncCommit, type Asset, type PriceMark, type SyncCommitV2 } from '@zichan/core';
+import {
+  newId,
+  sha256Json,
+  wireSyncCommit,
+  type Account,
+  type Asset,
+  type Category,
+  type PriceMark,
+  type ReconciliationItem,
+  type ReconciliationSession,
+  type SyncCommitV2,
+  type Transaction,
+} from '@zichan/core';
 import {
   aggregateKey,
   applyPendingCommits,
+  archiveMasterData,
+  closeReconciliation,
+  exportLedger,
+  importLedger,
   memoryCommitTransport,
+  mergeMasterData,
   resolveConflictGroup,
+  restoreLedger,
+  restoreTransaction,
+  saveTransactionAggregate,
   syncReplica,
   syncReplicas,
+  undoLatestReconciliation,
+  voidTransaction,
   replicaKey,
   type CommitTransport,
 } from '../src/index.js';
@@ -37,7 +59,433 @@ async function openPriceLedger(deviceId: string) {
   return store;
 }
 
+async function seedTransactionReferences(store: Awaited<ReturnType<typeof openLedger>>) {
+  const currency = await store.assets.put({
+    ...base(), id: 'GBP', code: 'GBP', name: 'Pound', type: 'fiat', decimals: 2, isActive: true,
+  } as Asset);
+  const account = await store.accounts.put({
+    ...base(), id: 'bank', name: 'Bank', kind: 'bank', isActive: true,
+  } as Account);
+  const targetAccount = await store.accounts.put({
+    ...base(), id: 'bank-target', name: 'Target bank', kind: 'bank', isActive: true,
+  } as Account);
+  const expenseRoot = await store.categories.put({
+    ...base(), id: 'expense-root', name: 'Expense', type: 'expense', isActive: true,
+  } as Category);
+  const expenseCategory = await store.categories.put({
+    ...base(), id: 'food', name: 'Food', type: 'expense', parentId: expenseRoot.id, isActive: true,
+  } as Category);
+  const targetCategory = await store.categories.put({
+    ...base(), id: 'groceries', name: 'Groceries', type: 'expense', parentId: expenseRoot.id, isActive: true,
+  } as Category);
+  return { currency, account, targetAccount, expenseCategory, targetCategory };
+}
+
+function expenseTransaction(
+  refs: Awaited<ReturnType<typeof seedTransactionReferences>>,
+  overrides: Partial<Transaction> = {},
+): Transaction {
+  return {
+    ...base(),
+    date: '2026-03-12',
+    timePrecision: 'day',
+    type: 'expense',
+    category: refs.expenseCategory.id,
+    amount: '80',
+    assetId: refs.currency.id,
+    accountId: refs.account.id,
+    status: 'pending',
+    recordState: 'active',
+    ...overrides,
+  } as Transaction;
+}
+
+async function syncOneWay(
+  source: Awaited<ReturnType<typeof openLedger>>,
+  target: Awaited<ReturnType<typeof openLedger>>,
+  transport: ReturnType<typeof memoryCommitTransport>,
+) {
+  await syncReplica(source, transport, 'memory');
+  return syncReplica(target, transport, 'memory');
+}
+
+async function expectHealthyReplica(store: Awaited<ReturnType<typeof openLedger>>) {
+  expect(await store.listConflicts()).toEqual([]);
+  expect((await store.listSyncCommits({ includeInvalid: true })).filter((row) => row.state === 'invalid')).toEqual([]);
+}
+
 describe('sync protocol v2', () => {
+  it('applies reconciliation adjustments before their closed snapshot and replays an undo', async () => {
+    const a = await openLedger({ deviceId: 'A' });
+    const b = await openLedger({ deviceId: 'B' });
+    await shareLedgerId(a, b);
+    const transport = memoryCommitTransport();
+    const refs = await seedTransactionReferences(a);
+    const original = (await saveTransactionAggregate(a, { transaction: expenseTransaction(refs) })).transaction;
+    await syncOneWay(a, b, transport);
+
+    const session = await closeReconciliation(a, {
+      accountId: refs.account.id,
+      assetId: refs.currency.id,
+      statementDate: '2026-03-31',
+      statementBalance: '-100',
+      selectedTransactionIds: [original.id],
+      createAdjustment: true,
+    });
+    const result = await syncOneWay(a, b, transport);
+
+    expect(result).toMatchObject({ conflicts: 0, invalid: 0, pending: 0 });
+    const adjustment = await b.transactions.get(session.adjustmentTransactionId!);
+    expect(adjustment).toMatchObject({
+      type: 'adjustment', amount: '20', adjustmentDirection: 'decrease', reconciliationSessionId: session.id,
+    });
+    expect(await b.transactions.get(original.id)).toMatchObject({ status: 'cleared' });
+    expect(await b.reconciliationSessions.get(session.id)).toMatchObject({
+      status: 'closed', difference: '0', adjustmentTransactionId: adjustment!.id,
+    });
+    expect(await b.reconciliationItems.list({ where: { reconciliationId: session.id } })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ transactionId: original.id, postingAmount: '-80' }),
+        expect.objectContaining({ transactionId: adjustment!.id, postingAmount: '-20' }),
+      ]),
+    );
+    await expectHealthyReplica(b);
+
+    await undoLatestReconciliation(a, session.id);
+    const undoResult = await syncOneWay(a, b, transport);
+
+    expect(undoResult).toMatchObject({ conflicts: 0, invalid: 0, pending: 0 });
+    expect(await b.reconciliationSessions.get(session.id)).toMatchObject({ isDeleted: true });
+    expect(await b.reconciliationItems.list({
+      where: { reconciliationId: session.id }, includeDeleted: true,
+    })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ transactionId: original.id, isDeleted: true }),
+      expect.objectContaining({ transactionId: adjustment!.id, isDeleted: true }),
+    ]));
+    expect(await b.transactions.get(original.id)).toMatchObject({ status: 'pending', recordState: 'active' });
+    expect(await b.transactions.get(adjustment!.id)).toMatchObject({
+      recordState: 'voided', voidReason: '撤销对账调整',
+    });
+    await expectHealthyReplica(b);
+
+    await a.close();
+    await b.close();
+  });
+
+  it('rejects a commit that changes a reconciled posting without updating its reconciliation', async () => {
+    const a = await openLedger({ deviceId: 'A' });
+    const b = await openLedger({ deviceId: 'B' });
+    await shareLedgerId(a, b);
+    const transport = memoryCommitTransport();
+    const refs = await seedTransactionReferences(a);
+    const original = (await saveTransactionAggregate(a, { transaction: expenseTransaction(refs) })).transaction;
+    await syncOneWay(a, b, transport);
+
+    const session = await closeReconciliation(a, {
+      accountId: refs.account.id,
+      assetId: refs.currency.id,
+      statementDate: '2026-03-31',
+      statementBalance: '-80',
+      selectedTransactionIds: [original.id],
+    });
+    await syncOneWay(a, b, transport);
+
+    const reconciled = (await a.transactions.get(original.id))!;
+    const graph = await b.syncGraph();
+    const malicious: SyncCommitV2 = {
+      protocol: 2,
+      ledgerId: await b.getLedgerId(),
+      commitId: newId(),
+      originDeviceId: 'malicious-device',
+      createdAt: new Date().toISOString(),
+      parentCommitIds: graph.ledgerHeads,
+      revisions: [{
+        revisionId: newId(),
+        aggregateType: 'transaction',
+        aggregateId: original.id,
+        parentRevisionIds: graph.entityHeads.get(aggregateKey('transaction', original.id)) ?? [],
+        op: 'put',
+        payload: { transaction: { ...reconciled, amount: '81' }, splits: [], refundAllocations: [] },
+      }],
+    };
+    await b.storeSyncCommit(malicious, { source: 'remote', state: 'pending' });
+    const result = await applyPendingCommits(b);
+
+    expect(result).toMatchObject({ conflicts: 0, invalid: 1, pending: 0 });
+    expect(await b.transactions.get(original.id)).toMatchObject({ amount: '80', status: 'cleared' });
+    expect(await b.reconciliationSessions.get(session.id)).toMatchObject({
+      selectedTotal: '-80', clearedBalance: '-80', difference: '0', status: 'closed',
+    });
+    expect((await b.listSyncCommits({ includeInvalid: true })).find((row) => row.state === 'invalid')?.error)
+      .toContain('对账项目金额与流水实际过账金额不一致');
+
+    await a.close();
+    await b.close();
+  });
+
+  it('replays a concurrent historical transaction and reconciliation after its account was archived', async () => {
+    const store = await openLedger({ deviceId: 'receiver' });
+    const refs = await seedTransactionReferences(store);
+    const beforeArchive = await store.syncGraph();
+    await archiveMasterData(store, 'account', refs.account.id, refs.account.version);
+
+    const transaction = expenseTransaction(refs, { id: 'offline-expense', status: 'cleared' });
+    const session: ReconciliationSession = {
+      ...base(),
+      id: 'offline-reconciliation',
+      accountId: refs.account.id,
+      assetId: refs.currency.id,
+      statementDate: '2026-03-31',
+      statementBalance: '-80',
+      openingBalance: '0',
+      selectedTotal: '-80',
+      clearedBalance: '-80',
+      difference: '0',
+      status: 'closed',
+      closedAt: '2026-04-01T00:00:00.000Z',
+    };
+    const item: ReconciliationItem = {
+      ...base(),
+      id: 'offline-reconciliation-item',
+      reconciliationId: session.id,
+      transactionId: transaction.id,
+      accountId: refs.account.id,
+      assetId: refs.currency.id,
+      postingAmount: '-80',
+      previousStatus: 'cleared',
+      selectedAt: '2026-04-01T00:00:00.000Z',
+    };
+    const commit: SyncCommitV2 = {
+      protocol: 2,
+      ledgerId: await store.getLedgerId(),
+      commitId: newId(),
+      originDeviceId: 'offline-device',
+      createdAt: '2026-04-01T00:00:01.000Z',
+      parentCommitIds: beforeArchive.ledgerHeads,
+      revisions: [{
+        revisionId: newId(),
+        aggregateType: 'transaction',
+        aggregateId: transaction.id,
+        parentRevisionIds: [],
+        op: 'put',
+        payload: { transaction, splits: [], refundAllocations: [] },
+      }, {
+        revisionId: newId(),
+        aggregateType: 'reconciliation',
+        aggregateId: session.id,
+        parentRevisionIds: [],
+        op: 'put',
+        payload: { session, items: [item] },
+      }],
+    };
+    await store.storeSyncCommit(commit, { source: 'remote', state: 'pending' });
+
+    expect(await applyPendingCommits(store)).toMatchObject({ invalid: 0, conflicts: 0, pending: 0 });
+    expect((await store.listSyncCommits()).find((row) => row.commitId === commit.commitId)).toMatchObject({ state: 'applied' });
+    expect(await store.transactions.get(transaction.id)).toMatchObject({ accountId: refs.account.id, amount: '80' });
+    expect(await store.reconciliationSessions.get(session.id)).toMatchObject({ status: 'closed' });
+    await store.close();
+  });
+
+  it('syncs a restore as one final aggregate state without exposing reconciliation intermediates', async () => {
+    const a = await openLedger({ deviceId: 'A' });
+    const b = await openLedger({ deviceId: 'B' });
+    await shareLedgerId(a, b);
+    const transport = memoryCommitTransport();
+    const refs = await seedTransactionReferences(a);
+    const original = (await saveTransactionAggregate(a, { transaction: expenseTransaction(refs) })).transaction;
+    const beforeReconciliation = await exportLedger(a);
+    await syncOneWay(a, b, transport);
+
+    const session = await closeReconciliation(a, {
+      accountId: refs.account.id,
+      assetId: refs.currency.id,
+      statementDate: '2026-03-31',
+      statementBalance: '-80',
+      selectedTransactionIds: [original.id],
+    });
+    await syncOneWay(a, b, transport);
+    expect(await b.reconciliationSessions.get(session.id)).toMatchObject({ status: 'closed' });
+
+    await restoreLedger(a, beforeReconciliation);
+    const result = await syncOneWay(a, b, transport);
+
+    expect(result).toMatchObject({ conflicts: 0, invalid: 0, pending: 0 });
+    expect(await b.transactions.get(original.id)).toMatchObject({ status: 'pending', recordState: 'active' });
+    expect(await b.reconciliationSessions.get(session.id)).toMatchObject({ isDeleted: true });
+    expect(await b.reconciliationItems.list({
+      where: { reconciliationId: session.id }, includeDeleted: true,
+    })).toEqual([expect.objectContaining({ transactionId: original.id, isDeleted: true })]);
+    await expectHealthyReplica(b);
+
+    await a.close();
+    await b.close();
+  });
+
+  it('publishes a closed reconciliation import as one sync commit', async () => {
+    const source = await openLedger({ deviceId: 'source' });
+    const refs = await seedTransactionReferences(source);
+    const original = (await saveTransactionAggregate(source, {
+      transaction: expenseTransaction(refs, { status: 'cleared' }),
+    })).transaction;
+    const session = await closeReconciliation(source, {
+      accountId: refs.account.id,
+      assetId: refs.currency.id,
+      statementDate: '2026-03-31',
+      statementBalance: '-80',
+      selectedTransactionIds: [original.id],
+    });
+    const backup = await exportLedger(source);
+    await source.close();
+
+    const a = await openLedger({ deviceId: 'A' });
+    const b = await openLedger({ deviceId: 'B' });
+    await shareLedgerId(a, b);
+    const transport = memoryCommitTransport();
+    await importLedger(a, backup);
+
+    const result = await syncOneWay(a, b, transport);
+
+    expect(result).toMatchObject({ conflicts: 0, invalid: 0, pending: 0 });
+    expect(await b.transactions.get(original.id)).toMatchObject({ status: 'cleared', amount: '80' });
+    expect(await b.reconciliationSessions.get(session.id)).toMatchObject({ status: 'closed', difference: '0' });
+    expect(await b.reconciliationItems.list({ where: { reconciliationId: session.id } }))
+      .toEqual([expect.objectContaining({ transactionId: original.id, postingAmount: '-80' })]);
+    await expectHealthyReplica(b);
+
+    await a.close();
+    await b.close();
+  });
+
+  it('syncs an account merge together with its open reconciliation aggregate', async () => {
+    const a = await openLedger({ deviceId: 'A' });
+    const b = await openLedger({ deviceId: 'B' });
+    await shareLedgerId(a, b);
+    const transport = memoryCommitTransport();
+    const refs = await seedTransactionReferences(a);
+    const transaction = (await saveTransactionAggregate(a, {
+      transaction: expenseTransaction(refs, { amount: '10', status: 'cleared' }),
+    })).transaction;
+    const session = {
+      ...base(), id: 'open-reconciliation', accountId: refs.account.id, assetId: refs.currency.id,
+      statementDate: '2026-03-31', statementBalance: '-10', openingBalance: '0', selectedTotal: '-10',
+      clearedBalance: '-10', difference: '0', status: 'open',
+    } as ReconciliationSession;
+    const item = {
+      ...base(), id: 'open-reconciliation-item', reconciliationId: session.id, transactionId: transaction.id,
+      accountId: refs.account.id, assetId: refs.currency.id, postingAmount: '-10', previousStatus: 'cleared',
+    } as ReconciliationItem;
+    await a.withAuditContext({ batchId: newId(), source: 'local' }, (scoped) => scoped.transaction(async (tx) => {
+      await tx.assertReconciliationAggregate(session, [item]);
+      await tx.withPrevalidatedAggregates([`reconciliation:${session.id}`], async (aggregateStore) => {
+        await aggregateStore.reconciliationSessions.put(session);
+        await aggregateStore.reconciliationItems.put(item);
+      });
+    }));
+    await syncOneWay(a, b, transport);
+
+    await mergeMasterData(a, 'account', refs.account.id, refs.targetAccount.id, refs.account.version);
+    const result = await syncOneWay(a, b, transport);
+
+    expect(result).toMatchObject({ conflicts: 0, invalid: 0, pending: 0 });
+    expect(await b.transactions.get(transaction.id)).toMatchObject({ accountId: refs.targetAccount.id });
+    expect(await b.reconciliationSessions.get(session.id)).toMatchObject({ accountId: refs.targetAccount.id });
+    expect(await b.reconciliationItems.get(item.id)).toMatchObject({ accountId: refs.targetAccount.id });
+    expect(await b.accounts.get(refs.account.id)).toMatchObject({ isActive: false, mergedIntoId: refs.targetAccount.id });
+    await expectHealthyReplica(b);
+
+    await a.close();
+    await b.close();
+  });
+
+  it('syncs a category merge with an active refund after its original expense', async () => {
+    const a = await openLedger({ deviceId: 'A' });
+    const b = await openLedger({ deviceId: 'B' });
+    await shareLedgerId(a, b);
+    const transport = memoryCommitTransport();
+    const refs = await seedTransactionReferences(a);
+    const original = (await saveTransactionAggregate(a, {
+      transaction: expenseTransaction(refs, { amount: '100', status: 'cleared' }),
+    })).transaction;
+    const refund = await saveTransactionAggregate(a, {
+      transaction: expenseTransaction(refs, {
+        date: '2026-03-20', type: 'refund', amount: '20', refundForId: original.id,
+        refundAppliedAmount: '20', status: 'cleared',
+      }),
+    });
+    await syncOneWay(a, b, transport);
+
+    await mergeMasterData(a, 'category', refs.expenseCategory.id, refs.targetCategory.id, refs.expenseCategory.version);
+    const result = await syncOneWay(a, b, transport);
+
+    expect(result).toMatchObject({ conflicts: 0, invalid: 0, pending: 0 });
+    expect(await b.transactions.get(original.id)).toMatchObject({ category: refs.targetCategory.id });
+    expect(await b.transactions.get(refund.transaction.id)).toMatchObject({
+      category: refs.targetCategory.id, refundForId: original.id, recordState: 'active',
+    });
+    expect(await b.refundAllocations.get(refund.refundAllocations[0]!.id)).toMatchObject({ categoryId: refs.targetCategory.id });
+    expect(await b.categories.get(refs.expenseCategory.id)).toMatchObject({
+      isActive: false, mergedIntoId: refs.targetCategory.id,
+    });
+    await expectHealthyReplica(b);
+
+    await a.close();
+    await b.close();
+  });
+
+  it('replays refund void, restore and aggregate deletion without leaving active children', async () => {
+    const a = await openLedger({ deviceId: 'A' });
+    const b = await openLedger({ deviceId: 'B' });
+    await shareLedgerId(a, b);
+    const transport = memoryCommitTransport();
+    const refs = await seedTransactionReferences(a);
+    const original = (await saveTransactionAggregate(a, {
+      transaction: expenseTransaction(refs, { amount: '100', status: 'cleared' }),
+    })).transaction;
+    const refund = await saveTransactionAggregate(a, {
+      transaction: expenseTransaction(refs, {
+        date: '2026-03-20', type: 'refund', amount: '20', refundForId: original.id,
+        refundAppliedAmount: '20', status: 'cleared',
+      }),
+    });
+    await syncOneWay(a, b, transport);
+
+    await voidTransaction(a, refund.transaction.id, 'duplicate refund');
+    const voidResult = await syncOneWay(a, b, transport);
+    expect(voidResult).toMatchObject({ conflicts: 0, invalid: 0, pending: 0 });
+    expect(await b.transactions.get(refund.transaction.id)).toMatchObject({
+      recordState: 'voided', voidReason: 'duplicate refund',
+    });
+
+    await restoreTransaction(a, refund.transaction.id);
+    const restoreResult = await syncOneWay(a, b, transport);
+    expect(restoreResult).toMatchObject({ conflicts: 0, invalid: 0, pending: 0 });
+    expect(await b.transactions.get(refund.transaction.id)).toMatchObject({ recordState: 'active' });
+
+    const activeRefund = (await a.transactions.get(refund.transaction.id))!;
+    const activeAllocations = await a.refundAllocations.list({ where: { refundTransactionId: activeRefund.id } });
+    await a.withAuditContext({ batchId: newId(), source: 'local' }, (scoped) => scoped.transaction(async (tx) => {
+      await tx.withPrevalidatedAggregates([`transaction:${activeRefund.id}`], async (aggregateStore) => {
+        for (const allocation of activeAllocations) {
+          await aggregateStore.refundAllocations.remove(allocation.id, allocation.version);
+        }
+        await aggregateStore.transactions.remove(activeRefund.id, activeRefund.version);
+      });
+    }));
+    const deleteResult = await syncOneWay(a, b, transport);
+
+    expect(deleteResult).toMatchObject({ conflicts: 0, invalid: 0, pending: 0 });
+    expect(await b.transactions.get(activeRefund.id)).toMatchObject({ isDeleted: true });
+    expect(await b.refundAllocations.list({
+      where: { refundTransactionId: activeRefund.id }, includeDeleted: true,
+    })).toEqual(activeAllocations.map((allocation) => expect.objectContaining({ id: allocation.id, isDeleted: true })));
+    expect(await b.transactions.get(original.id)).toMatchObject({ recordState: 'active', amount: '100' });
+    await expectHealthyReplica(b);
+
+    await a.close();
+    await b.close();
+  });
+
   it('converges disjoint commits through one replica', async () => {
     const a = await openLedger({ deviceId: 'A' });
     const b = await openLedger({ deviceId: 'B' });
@@ -239,6 +687,44 @@ describe('sync protocol v2', () => {
     expect((await store.listSyncCommits({ includeInvalid: true })).find((row) => row.commitId === malformed.commitId))
       .toMatchObject({ state: 'invalid', error: '应用失败：资产转换同步快照缺少 chain' });
     expect(await store.operationLog()).toEqual([]);
+    await store.close();
+  });
+
+  it('rejects an aggregate whose signed child owner differs from its revision id', async () => {
+    const store = await openLedger({ deviceId: 'A' });
+    const aggregateId = newId();
+    const malformed: SyncCommitV2 = {
+      protocol: 2,
+      ledgerId: await store.getLedgerId(),
+      commitId: newId(),
+      originDeviceId: 'broken-client',
+      createdAt: new Date().toISOString(),
+      parentCommitIds: [],
+      revisions: [{
+        revisionId: newId(),
+        aggregateType: 'conversion',
+        aggregateId,
+        parentRevisionIds: [],
+        op: 'put',
+        payload: {
+          chain: {
+            ...base(), id: aggregateId, date: '2026-07-23', type: 'buy', baseCurrencyAssetId: 'GBP',
+          },
+          steps: [{
+            id: newId(), chainId: 'different-chain', order: 1,
+            fromAssetId: 'GBP', fromAmount: '1', toAssetId: 'BTC', toAmount: '0.00001', fees: [],
+          }],
+        },
+      }],
+    };
+    await store.storeSyncCommit(malformed, { source: 'remote', state: 'pending' });
+
+    const result = await applyPendingCommits(store);
+
+    expect(result.invalid).toBe(1);
+    expect(await store.conversionChains.get(aggregateId)).toBeNull();
+    expect((await store.listSyncCommits({ includeInvalid: true })).find((row) => row.commitId === malformed.commitId)?.error)
+      .toContain('资产转换步骤与同步聚合');
     await store.close();
   });
 

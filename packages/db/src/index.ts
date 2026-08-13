@@ -31,6 +31,7 @@ export {
   SqlLedgerStore,
   createLedgerStore,
   ConcurrencyError,
+  isScheduledExecutionClaim,
   type StoreOptions,
   type DeviceRecoveryState,
   type TombstonePurgeCandidate,
@@ -39,6 +40,7 @@ export {
   type TombstonePurgeResult,
   type TransactionReportPage,
   type TransactionReportAggregateRow,
+  type TestTransactionCleanupPage,
   type TransactionBrowseField,
   type TransactionBrowseOperator,
   type TransactionBrowseCondition,
@@ -47,6 +49,8 @@ export {
   type AccountBalanceAggregateRow,
   type AccountLedgerReadRow,
   type AccountLedgerPage,
+  type ScheduledExecutionClaimInput,
+  type ScheduledExecutionClaimResult,
 } from './repository.js';
 export type {
   BusinessCompensationStatus,

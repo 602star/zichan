@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { openLedger } from '../src/node.js';
-import { recordConversion, recordSell, checkConsistency, recomputeCaches, purgeTombstones } from '../src/index.js';
+import {
+  closeReconciliation,
+  archiveMasterData,
+  recordConversion,
+  recordSell,
+  checkConsistency,
+  recomputeCaches,
+  purgeTombstones,
+  saveTransaction,
+} from '../src/index.js';
 import { D, newId, round, type ConversionChain, type ConversionStep } from '@zichan/core';
 import { openDiagnosticLedger } from './diagnostic-ledger.js';
 
@@ -41,6 +50,8 @@ describe('doctor', () => {
   it('detects a tampered lot remaining and recompute fixes it', async () => {
     const { store, rawPut } = await openDiagnosticLedger();
     const { lot } = await buy(store, '2026-01-01', '0.003');
+    const bitcoin = (await store.assets.get('BTC'))!;
+    await archiveMasterData(store, 'asset', bitcoin.id, bitcoin.version);
     // tamper: set remaining wrong
     await rawPut('lots', { ...lot!, remainingAmount: '0.009' });
 
@@ -52,6 +63,32 @@ describe('doctor', () => {
     expect(await checkConsistency(store)).toEqual([]);
     const fixed = await store.lots.get(lot!.id);
     expect(round(fixed!.remainingAmount, 3)).toBe('0.003');
+    await store.close();
+  });
+
+  it('detects a transaction that no longer matches its closed reconciliation', async () => {
+    const { store, rawPut } = await openDiagnosticLedger();
+    await store.assets.put({ ...base(), id: 'GBP', code: 'GBP', name: 'Pound', type: 'fiat', decimals: 2, isActive: true } as never);
+    await store.accounts.put({ ...base(), id: 'bank', name: 'Bank', kind: 'bank', isActive: true } as never);
+    await store.categories.put({ ...base(), id: 'expense-root', name: '支出', type: 'expense', isActive: true } as never);
+    await store.categories.put({ ...base(), id: 'food', name: '餐饮', type: 'expense', parentId: 'expense-root', isActive: true } as never);
+    const transaction = await saveTransaction(store, {
+      ...base(), date: '2026-03-01', type: 'expense', category: 'food', amount: '22',
+      assetId: 'GBP', accountId: 'bank', status: 'cleared', recordState: 'active',
+    } as never);
+    const session = await closeReconciliation(store, {
+      accountId: 'bank', assetId: 'GBP', statementDate: '2026-03-31', statementBalance: '-22',
+      selectedTransactionIds: [transaction.id],
+    });
+    const current = (await store.transactions.get(transaction.id))!;
+    await rawPut('transactions', { ...current, amount: '23' });
+
+    expect(await checkConsistency(store)).toContainEqual(expect.objectContaining({
+      kind: 'reconciliation_invalid',
+      entityType: 'reconciliation_session',
+      entityId: session.id,
+      detail: expect.stringContaining('实际过账金额'),
+    }));
     await store.close();
   });
 
@@ -186,6 +223,15 @@ describe('doctor', () => {
     expect(issues.some((issue) => issue.kind === 'game_reference_mismatch')).toBe(true);
     expect(issues.some((issue) => issue.kind === 'required_field_missing')).toBe(true);
     expect(issues.some((issue) => issue.kind === 'fixed_status_mismatch')).toBe(true);
+    await store.close();
+  });
+
+  it('detects a category parent chain cycle (A→B→A dirty data)', async () => {
+    const { store, rawPut } = await openDiagnosticLedger();
+    await rawPut('categories', { ...base(), id: 'cat-a', name: 'A', type: 'expense', parentId: 'cat-b' });
+    await rawPut('categories', { ...base(), id: 'cat-b', name: 'B', type: 'expense', parentId: 'cat-a' });
+    const issues = await checkConsistency(store);
+    expect(issues.some((issue) => issue.kind === 'category_cycle')).toBe(true);
     await store.close();
   });
 

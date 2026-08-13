@@ -46,6 +46,7 @@ import {
   validateEntityDelete,
   validateEntityWrite,
   validateReconciliationAggregateSnapshot,
+  validateStoredReconciliationAggregate,
   validateTransactionAggregateSnapshot,
 } from './domain-validation.js';
 import { runMigrations } from './migrations.js';
@@ -100,10 +101,71 @@ interface StoreCtx {
   audit?: AuditContext;
   changeBus: StoreChangeBus;
   pendingChanges?: Set<string>;
+  pendingReconciliationValidations?: Map<string, boolean>;
   prevalidatedAggregates?: Set<string>;
   restoreWriteKeys?: Set<string>;
   restoreDeleteKeys?: Set<string>;
+  allowInactiveReferences?: boolean;
+  inactiveReferenceScope?: { active: boolean };
   compensationSignal: { latestId?: string };
+}
+
+function inactiveReferencesAllowed(ctx: StoreCtx): boolean {
+  return ctx.allowInactiveReferences === true && ctx.inactiveReferenceScope?.active === true;
+}
+
+async function affectedReconciliationIds(
+  driver: SqlDriver,
+  entityType: string,
+  candidate: BaseEntity & Record<string, unknown>,
+  current?: BaseEntity & Record<string, unknown>,
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+  if (entityType === 'transaction') {
+    const rows = await driver.all<{ id: string }>(
+      `SELECT reconciliation_id AS id
+       FROM reconciliation_items
+       WHERE transaction_id = ? AND is_deleted = 0
+       UNION
+       SELECT id
+       FROM reconciliation_sessions
+       WHERE adjustment_transaction_id = ? AND is_deleted = 0`,
+      [candidate.id, candidate.id],
+    );
+    for (const row of rows) if (row.id) ids.add(String(row.id));
+  } else if (entityType === 'reconciliation_session') {
+    ids.add(candidate.id);
+    if (current?.id) ids.add(current.id);
+  } else if (entityType === 'reconciliation_item') {
+    for (const id of [candidate['reconciliationId'], current?.['reconciliationId']]) {
+      if (typeof id === 'string' && id) ids.add(id);
+    }
+  }
+  return ids;
+}
+
+async function deferOrValidateReconciliations(
+  ctx: StoreCtx,
+  entityType: string,
+  candidate: BaseEntity & Record<string, unknown>,
+  current?: BaseEntity & Record<string, unknown>,
+): Promise<void> {
+  const ids = await affectedReconciliationIds(ctx.driver, entityType, candidate, current);
+  if (!ids.size) return;
+  const allowInactiveReferences = inactiveReferencesAllowed(ctx);
+  if (ctx.pendingReconciliationValidations) {
+    for (const id of ids) {
+      const previous = ctx.pendingReconciliationValidations.get(id);
+      ctx.pendingReconciliationValidations.set(
+        id,
+        previous === undefined ? allowInactiveReferences : previous && allowInactiveReferences,
+      );
+    }
+    return;
+  }
+  for (const id of ids) {
+    await validateStoredReconciliationAggregate(ctx.driver, id, { allowInactiveReferences });
+  }
 }
 
 export interface StoreChange {
@@ -384,19 +446,26 @@ class SqlCollection<T extends BaseEntity> implements Collection<T> {
         this.entityType,
         normalized,
         existing ?? undefined,
-        { allowReferencedChanges: restoreWrite },
+        {
+          allowReferencedChanges: restoreWrite,
+          allowInactiveReferences: inactiveReferencesAllowed(ctx),
+        },
       );
       const aggregateKeys = aggregateValidationKeys(
         this.entityType,
         normalized as T & Record<string, unknown>,
         existing as (T & Record<string, unknown>) | undefined,
       );
-      if (aggregateKeys.some((key) => !ctx.prevalidatedAggregates?.has(key))) {
+      const reconciliationValidationDeferred = !!ctx.pendingReconciliationValidations
+        && aggregateKeys.some((key) => key.startsWith('reconciliation:'));
+      if (!reconciliationValidationDeferred
+        && aggregateKeys.some((key) => !ctx.prevalidatedAggregates?.has(key))) {
         await validateAggregateMutation(
           driver,
           this.entityType,
           normalized as T & Record<string, unknown>,
           existing as (T & Record<string, unknown>) | undefined,
+          { allowInactiveReferences: inactiveReferencesAllowed(ctx) },
         );
       }
       const now = nowIso();
@@ -436,6 +505,12 @@ class SqlCollection<T extends BaseEntity> implements Collection<T> {
       }
       const op: OperationType = existing ? 'update' : 'create';
       await audit(ctx, op, this.entityType, stored, stored, existing ?? undefined);
+      await deferOrValidateReconciliations(
+        ctx,
+        this.entityType,
+        stored as T & Record<string, unknown>,
+        existing as (T & Record<string, unknown>) | undefined,
+      );
       ctx.log.debug('put', { table: this.spec.name, id: stored.id, op, version: stored.version });
       return stored;
     });
@@ -450,7 +525,7 @@ class SqlCollection<T extends BaseEntity> implements Collection<T> {
       const existing = row ? rowToEntity<T>(this.spec, row) : null;
       if (!existing) return;
       if (expectedVersion === undefined) {
-        throw new ConcurrencyError(this.entityType, id, Number.NaN, existing.version);
+        throw new ConcurrencyError(this.entityType, id, -1, existing.version);
       }
       if (!ctx.restoreDeleteKeys?.has(`${this.entityType}:${id}`)) {
         await validateEntityDelete(driver, this.entityType, existing);
@@ -461,12 +536,16 @@ class SqlCollection<T extends BaseEntity> implements Collection<T> {
         deleted,
         existing as T & Record<string, unknown>,
       );
-      if (aggregateKeys.some((key) => !ctx.prevalidatedAggregates?.has(key))) {
+      const reconciliationValidationDeferred = !!ctx.pendingReconciliationValidations
+        && aggregateKeys.some((key) => key.startsWith('reconciliation:'));
+      if (!reconciliationValidationDeferred
+        && aggregateKeys.some((key) => !ctx.prevalidatedAggregates?.has(key))) {
         await validateAggregateMutation(
           driver,
           this.entityType,
           deleted,
           existing as T & Record<string, unknown>,
+          { allowInactiveReferences: inactiveReferencesAllowed(ctx) },
         );
       }
       const expected = expectedVersion;
@@ -482,6 +561,12 @@ class SqlCollection<T extends BaseEntity> implements Collection<T> {
         throw new ConcurrencyError(this.entityType, id, expected, actual?.version);
       }
       await audit(ctx, 'delete', this.entityType, stored, stored, existing);
+      await deferOrValidateReconciliations(
+        ctx,
+        this.entityType,
+        stored as T & Record<string, unknown>,
+        existing as T & Record<string, unknown>,
+      );
       ctx.log.debug('remove', { table: this.spec.name, id });
     });
     recordChange(this.ctx, this.entityType);
@@ -575,6 +660,42 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function assertSyncAggregateIdentity(
+  type: string,
+  id: string,
+  payload: Record<string, unknown> | null,
+): void {
+  if (!payload) return;
+  const assertOwner = (value: unknown, idField: string, label: string) => {
+    const row = asRecord(value);
+    if (!row || row[idField] !== id) throw new Error(`${label}与同步聚合 ${type}:${id} 不一致`);
+  };
+  const assertChildren = (value: unknown, ownerField: string, label: string) => {
+    if (!Array.isArray(value)) throw new Error(`${label} 同步快照必须是数组`);
+    for (const child of value) assertOwner(child, ownerField, label);
+  };
+  if (type === 'conversion') {
+    if (payload['chain'] === undefined) return;
+    assertOwner(payload['chain'], 'id', '资产转换');
+    assertChildren(payload['steps'], 'chainId', '资产转换步骤');
+    return;
+  }
+  if (type === 'transaction') {
+    if (payload['transaction'] === undefined) return;
+    assertOwner(payload['transaction'], 'id', '日常流水');
+    assertChildren(payload['splits'], 'transactionId', '流水拆分');
+    assertChildren(payload['refundAllocations'], 'refundTransactionId', '退款分配');
+    return;
+  }
+  if (type === 'reconciliation') {
+    if (payload['session'] === undefined) return;
+    assertOwner(payload['session'], 'id', '对账批次');
+    assertChildren(payload['items'], 'reconciliationId', '对账项目');
+    return;
+  }
+  assertOwner(payload, 'id', '实体');
 }
 
 function projectEntity(value: Record<string, unknown>): Record<string, unknown> {
@@ -893,6 +1014,14 @@ export interface TransactionReportPage {
   nextCursor?: import('@zichan/core').QueryCursor;
 }
 
+/** Bounded read model used by the Settings maintenance command. */
+export interface TestTransactionCleanupPage {
+  transactions: import('@zichan/core').Transaction[];
+  attachments: import('@zichan/core').Attachment[];
+  hasMore: boolean;
+  nextCursor?: import('@zichan/core').QueryCursor;
+}
+
 export interface TransactionReportAggregateRow {
   reportDate: string;
   reportAssetId: string;
@@ -967,9 +1096,142 @@ export interface AccountLedgerPage {
   nextStartingBalances: Record<string, string>;
 }
 
+export interface ScheduledExecutionClaimInput {
+  id: string;
+  scheduleId: string;
+  occurrenceIndex: number;
+  occurrenceDate: string;
+  transactionId: string;
+  createdAt: string;
+  attemptedAt: string;
+  leaseUntil: string;
+  forceRetry?: boolean;
+}
+
+export type ScheduledExecutionClaimResult =
+  | { state: 'claimed'; execution: import('@zichan/core').ScheduledExecution; token: string }
+  | { state: 'created' | 'skipped' | 'busy' | 'retry_wait'; execution: import('@zichan/core').ScheduledExecution };
+
+const SCHEDULED_EXECUTION_CLAIM_PREFIX = '__zichan_scheduled_execution_claim__:';
+
+function scheduledExecutionClaimMarker(token: string): string {
+  return `${SCHEDULED_EXECUTION_CLAIM_PREFIX}${token}`;
+}
+
+function isScheduledExecutionClaimMarker(value: string | undefined): boolean {
+  return value?.startsWith(SCHEDULED_EXECUTION_CLAIM_PREFIX) ?? false;
+}
+
+export function isScheduledExecutionClaim(
+  execution: import('@zichan/core').ScheduledExecution | null | undefined,
+): boolean {
+  return !!execution
+    && !execution.isDeleted
+    && execution.status === 'failed'
+    && isScheduledExecutionClaimMarker(execution.lastError);
+}
+
+function sqliteBusy(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b(?:SQLITE_)?BUSY\b|database is locked/i.test(message);
+}
+
+async function retryAfterContention(attempt: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, Math.min(100, 5 * (2 ** attempt))));
+}
+
 interface SqlFilter {
   clauses: string[];
   params: SqlParam[];
+}
+
+interface DecimalComparisonKey {
+  sign: -1 | 0 | 1;
+  /** Digits to the left of the decimal point after leading zeroes are removed. */
+  adjustedExponent: string;
+  /** Significant digits with both insignificant leading and trailing zeroes removed. */
+  significantDigits: string;
+}
+
+const SQLITE_INTEGER_MIN = -9_223_372_036_854_775_808n;
+const SQLITE_INTEGER_MAX = 9_223_372_036_854_775_807n;
+
+/**
+ * Build a comparison key without ever coercing a financial value through a JS
+ * number. The exponent is kept as a decimal string until SQLite parses it as a
+ * signed 64-bit INTEGER; values outside that explicit range are rejected rather
+ * than silently saturating. decimal.js's finite exponent range is narrower, but
+ * the additional guard documents and protects the storage-engine boundary.
+ */
+function decimalComparisonKey(value: string): DecimalComparisonKey {
+  let decimal;
+  try {
+    decimal = D(value);
+  } catch {
+    throw new Error(`金额筛选值不是有效数字：${value}`);
+  }
+  if (!decimal.isFinite()) throw new Error(`金额筛选值不是有限数字：${value}`);
+  if (decimal.isZero()) return { sign: 0, adjustedExponent: '0', significantDigits: '0' };
+
+  const scientific = decimal.abs().toExponential();
+  const match = /^(\d)(?:\.(\d+))?e([+-]?\d+)$/.exec(scientific);
+  if (!match) throw new Error(`金额筛选值无法标准化：${value}`);
+  const significantDigits = `${match[1]}${match[2] ?? ''}`.replace(/0+$/, '') || '0';
+  const adjustedExponent = BigInt(match[3]!) + 1n;
+  if (adjustedExponent < SQLITE_INTEGER_MIN || adjustedExponent > SQLITE_INTEGER_MAX) {
+    throw new Error(`金额筛选值指数超出 SQLite 精确比较范围：${value}`);
+  }
+  return {
+    sign: decimal.isNegative() ? -1 : 1,
+    adjustedExponent: adjustedExponent.toString(),
+    significantDigits,
+  };
+}
+
+/**
+ * SQLite has no built-in arbitrary-precision decimal type. Amounts are valid,
+ * positive decimal strings, so compare their exact scientific representation as
+ * `(adjusted exponent, significant digits)`. This works for fixed and exponent
+ * notation and uses only SQLite text/integer functions shared by node:sqlite,
+ * sql.js and Tauri SQLite.
+ */
+function positiveDecimalSqlParts(expression: string): {
+  adjustedExponent: string;
+  significantDigits: string;
+} {
+  const raw = `LOWER(TRIM(COALESCE(${expression}, '0')))`;
+  const unsigned = `CASE WHEN SUBSTR(${raw}, 1, 1) = '+' THEN SUBSTR(${raw}, 2) ELSE ${raw} END`;
+  const exponentPosition = `INSTR(${unsigned}, 'e')`;
+  const mantissa = `CASE WHEN ${exponentPosition} > 0 THEN SUBSTR(${unsigned}, 1, ${exponentPosition} - 1) ELSE ${unsigned} END`;
+  const exponent = `CASE WHEN ${exponentPosition} > 0 THEN CAST(SUBSTR(${unsigned}, ${exponentPosition} + 1) AS INTEGER) ELSE 0 END`;
+  const decimalPosition = `INSTR(${mantissa}, '.')`;
+  const integerDigits = `CASE WHEN ${decimalPosition} > 0 THEN ${decimalPosition} - 1 ELSE LENGTH(${mantissa}) END`;
+  const digits = `REPLACE(${mantissa}, '.', '')`;
+  const withoutLeadingZeroes = `LTRIM(${digits}, '0')`;
+  const leadingZeroes = `(LENGTH(${digits}) - LENGTH(${withoutLeadingZeroes}))`;
+  const canonicalDigits = `RTRIM(${withoutLeadingZeroes}, '0')`;
+  return {
+    adjustedExponent: `(${integerDigits} + ${exponent} - ${leadingZeroes})`,
+    significantDigits: `CASE WHEN ${canonicalDigits} = '' THEN '0' ELSE ${canonicalDigits} END`,
+  };
+}
+
+function exactPositiveDecimalPredicate(
+  expression: string,
+  operator: '=' | '>=' | '<=',
+  value: string,
+  params: SqlParam[],
+): string {
+  const key = decimalComparisonKey(value);
+  // Persisted transaction amounts are strictly positive. Handling non-positive
+  // filter bounds here keeps zero separate from the scientific magnitude tuple.
+  if (key.sign <= 0) {
+    if (operator === '>=') return '1 = 1';
+    return '0 = 1';
+  }
+  const stored = positiveDecimalSqlParts(expression);
+  params.push(key.adjustedExponent, key.significantDigits);
+  return `((${stored.adjustedExponent}, ${stored.significantDigits}) ${operator} (CAST(? AS INTEGER), ?))`;
 }
 
 const TRANSACTION_REPORT_DATE_SQL =
@@ -1123,14 +1385,22 @@ function transactionConditionSql(
   if (condition.op === 'in') {
     const values = value.split(/[\n,，]+/).map((item) => item.trim().toLowerCase()).filter(Boolean);
     if (!values.length) return '1 = 1';
+    if (condition.field === 'amount') {
+      const predicates = values.map((item) => exactPositiveDecimalPredicate('v.value', '=', item, params));
+      return `EXISTS (SELECT 1 FROM (${set}) v WHERE ${predicates.map((item) => `(${item})`).join(' OR ')})`;
+    }
     params.push(...values);
     return `EXISTS (SELECT 1 FROM (${set}) v
       WHERE LOWER(TRIM(COALESCE(CAST(v.value AS TEXT), ''))) IN (${values.map(() => '?').join(', ')}))`;
   }
   if (condition.op === 'eq' || condition.op === 'neq') {
-    params.push(value.toLowerCase());
-    const exists = `EXISTS (SELECT 1 FROM (${set}) v
-      WHERE LOWER(TRIM(COALESCE(CAST(v.value AS TEXT), ''))) = ?)`;
+    const predicate = condition.field === 'amount'
+      ? exactPositiveDecimalPredicate('v.value', '=', value, params)
+      : (() => {
+        params.push(value.toLowerCase());
+        return "LOWER(TRIM(COALESCE(CAST(v.value AS TEXT), ''))) = ?";
+      })();
+    const exists = `EXISTS (SELECT 1 FROM (${set}) v WHERE ${predicate})`;
     return condition.op === 'neq' ? `NOT ${exists}` : exists;
   }
   if (condition.op === 'contains' || condition.op === 'not_contains') {
@@ -1141,14 +1411,26 @@ function transactionConditionSql(
   }
   if (condition.op === 'between' && (!value || !value2)) return '1 = 1';
   const numeric = condition.field === 'amount';
-  const comparable = numeric
-    ? "CAST(COALESCE(v.value, '0') AS REAL)"
-    : "TRIM(COALESCE(CAST(v.value AS TEXT), ''))";
+  const comparable = "TRIM(COALESCE(CAST(v.value AS TEXT), ''))";
   if (condition.op === 'gte' || condition.op === 'lte') {
-    params.push(numeric ? Number(value) : value);
+    if (numeric) {
+      const predicate = exactPositiveDecimalPredicate(
+        'v.value',
+        condition.op === 'gte' ? '>=' : '<=',
+        value,
+        params,
+      );
+      return `EXISTS (SELECT 1 FROM (${set}) v WHERE ${predicate})`;
+    }
+    params.push(value);
     return `EXISTS (SELECT 1 FROM (${set}) v WHERE ${comparable} ${condition.op === 'gte' ? '>=' : '<='} ?)`;
   }
-  params.push(numeric ? Number(value) : value, numeric ? Number(value2) : value2);
+  if (numeric) {
+    const lower = exactPositiveDecimalPredicate('v.value', '>=', value, params);
+    const upper = exactPositiveDecimalPredicate('v.value', '<=', value2, params);
+    return `EXISTS (SELECT 1 FROM (${set}) v WHERE ${lower} AND ${upper})`;
+  }
+  params.push(value, value2);
   return `EXISTS (SELECT 1 FROM (${set}) v WHERE ${comparable} >= ? AND ${comparable} <= ?)`;
 }
 
@@ -1197,12 +1479,10 @@ function transactionBrowseFilter(input: TransactionBrowseInput, includeCursor: b
     params.push(input.status);
   }
   if (input.amountMin?.trim()) {
-    clauses.push('CAST(t.amount AS REAL) >= ?');
-    params.push(Number(input.amountMin));
+    clauses.push(exactPositiveDecimalPredicate('t.amount', '>=', input.amountMin.trim(), params));
   }
   if (input.amountMax?.trim()) {
-    clauses.push('CAST(t.amount AS REAL) <= ?');
-    params.push(Number(input.amountMax));
+    clauses.push(exactPositiveDecimalPredicate('t.amount', '<=', input.amountMax.trim(), params));
   }
   const search = input.search?.trim().toLowerCase();
   if (search) {
@@ -1382,9 +1662,12 @@ export class SqlLedgerStore implements LedgerStore {
         audit: parentContext.audit,
         changeBus: parentContext.changeBus,
         pendingChanges: parentContext.pendingChanges,
+        pendingReconciliationValidations: parentContext.pendingReconciliationValidations,
         prevalidatedAggregates: parentContext.prevalidatedAggregates,
         restoreWriteKeys: parentContext.restoreWriteKeys,
         restoreDeleteKeys: parentContext.restoreDeleteKeys,
+        allowInactiveReferences: parentContext.allowInactiveReferences,
+        inactiveReferenceScope: parentContext.inactiveReferenceScope,
         compensationSignal: parentContext.compensationSignal,
       }
       : {
@@ -1438,6 +1721,154 @@ export class SqlLedgerStore implements LedgerStore {
     this.attachmentState = new AttachmentStateRepository(driver);
   }
 
+  /**
+   * Atomically reserve one scheduled occurrence across every store/connection
+   * sharing the SQLite database. The lease is deliberately stored in the
+   * existing execution row and is not audited or synced; only the eventual
+   * `created`, `skipped`, or real `failed` state becomes a business revision.
+   */
+  async claimScheduledExecution(input: ScheduledExecutionClaimInput): Promise<ScheduledExecutionClaimResult> {
+    const token = newId();
+    const marker = scheduledExecutionClaimMarker(token);
+    const spec = TABLES.scheduledExecutions;
+    const columns = allCols(spec);
+
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.driver.transaction(async (driver) => {
+          const initial: import('@zichan/core').ScheduledExecution = {
+            id: input.id,
+            createdAt: input.createdAt,
+            updatedAt: input.attemptedAt,
+            version: 1,
+            isDeleted: false,
+            scheduleId: input.scheduleId,
+            occurrenceIndex: input.occurrenceIndex,
+            occurrenceDate: input.occurrenceDate,
+            status: 'failed',
+            attemptedAt: input.attemptedAt,
+            retryCount: 0,
+            lastError: marker,
+            nextRetryAt: input.leaseUntil,
+          };
+          // The write happens before any read. SQLite therefore serializes
+          // competing claimants instead of allowing two deferred snapshots to
+          // both conclude that the occurrence is absent.
+          const inserted = await driver.run(
+            `INSERT OR IGNORE INTO ${spec.name} (${columns.map((column) => column.col).join(', ')})
+             VALUES (${columns.map(() => '?').join(', ')})`,
+            entityToParams(spec, initial as unknown as Record<string, unknown>),
+          );
+          if (inserted.changes === 1) return { state: 'claimed', execution: initial, token };
+
+          const activeRow = await driver.get<Record<string, unknown>>(
+            `SELECT * FROM scheduled_executions
+             WHERE schedule_id = ? AND occurrence_index = ? AND is_deleted = 0
+             ORDER BY rowid LIMIT 1`,
+            [input.scheduleId, input.occurrenceIndex],
+          );
+          const idRow = activeRow ?? await driver.get<Record<string, unknown>>(
+            'SELECT * FROM scheduled_executions WHERE id = ?',
+            [input.id],
+          );
+          if (!idRow) throw new Error('定期执行唯一约束冲突，但未找到冲突记录');
+          const current = rowToEntity<import('@zichan/core').ScheduledExecution>(spec, idRow);
+          if (current.id !== input.id) {
+            // A non-deterministic historical id still owns this logical
+            // occurrence. Never create a second active execution beside it.
+            if (current.status === 'skipped') return { state: 'skipped', execution: current };
+            if (current.status === 'created') return { state: 'created', execution: current };
+            return { state: 'busy', execution: current };
+          }
+          if (!current.isDeleted && current.status === 'skipped') {
+            return { state: 'skipped', execution: current };
+          }
+          if (!current.isDeleted && current.status === 'created') {
+            const transaction = current.transactionId
+              ? await driver.get<{ id: string }>(
+                'SELECT id FROM transactions WHERE id = ? AND is_deleted = 0',
+                [current.transactionId],
+              )
+              : undefined;
+            if (transaction) return { state: 'created', execution: current };
+            if (current.transactionId !== input.transactionId) {
+              return { state: 'created', execution: current };
+            }
+            // Repair a historical orphan using the same lease/CAS path.
+          } else if (!current.isDeleted && current.status === 'failed') {
+            const activeClaim = isScheduledExecutionClaimMarker(current.lastError)
+              && !!current.nextRetryAt
+              && current.nextRetryAt > input.attemptedAt;
+            if (activeClaim) return { state: 'busy', execution: current };
+            const retryWaiting = !isScheduledExecutionClaimMarker(current.lastError)
+              && !!current.nextRetryAt
+              && current.nextRetryAt > input.attemptedAt;
+            if (retryWaiting && !input.forceRetry) return { state: 'retry_wait', execution: current };
+          }
+
+          const claimed = await driver.run(
+            `UPDATE scheduled_executions
+             SET created_at = CASE WHEN created_at IS NULL OR created_at = '' THEN ? ELSE created_at END,
+                 updated_at = ?, version = version + 1, is_deleted = 0,
+                 schedule_id = ?, occurrence_index = ?, occurrence_date = ?, status = 'failed',
+                 transaction_id = NULL, attempted_at = ?, completed_at = NULL,
+                 retry_count = COALESCE(retry_count, 0), last_error = ?, next_retry_at = ?
+             WHERE id = ? AND version = ?`,
+            [
+              input.createdAt,
+              input.attemptedAt,
+              input.scheduleId,
+              input.occurrenceIndex,
+              input.occurrenceDate,
+              input.attemptedAt,
+              marker,
+              input.leaseUntil,
+              current.id,
+              current.version,
+            ],
+          );
+          if (claimed.changes !== 1) {
+            const latestRow = await driver.get<Record<string, unknown>>(
+              'SELECT * FROM scheduled_executions WHERE id = ?',
+              [current.id],
+            );
+            if (!latestRow) throw new Error('定期执行 claim 竞争后记录消失');
+            return {
+              state: 'busy',
+              execution: rowToEntity<import('@zichan/core').ScheduledExecution>(spec, latestRow),
+            };
+          }
+          const claimedRow = await driver.get<Record<string, unknown>>(
+            'SELECT * FROM scheduled_executions WHERE id = ?',
+            [current.id],
+          );
+          if (!claimedRow) throw new Error('定期执行 claim 写入后记录消失');
+          return {
+            state: 'claimed',
+            execution: rowToEntity<import('@zichan/core').ScheduledExecution>(spec, claimedRow),
+            token,
+          };
+        });
+      } catch (error) {
+        if (!sqliteBusy(error) || attempt >= 7) throw error;
+        await retryAfterContention(attempt);
+      }
+    }
+  }
+
+  async getScheduledExecutionClaim(
+    id: string,
+    token: string,
+  ): Promise<import('@zichan/core').ScheduledExecution | null> {
+    const row = await this.scheduledExecutions.get(id);
+    return row
+      && !row.isDeleted
+      && row.status === 'failed'
+      && row.lastError === scheduledExecutionClaimMarker(token)
+      ? row
+      : null;
+  }
+
   private scoped(
     driver: SqlDriver,
     audit = this.ctx.audit,
@@ -1445,6 +1876,9 @@ export class SqlLedgerStore implements LedgerStore {
     prevalidatedAggregates = this.ctx.prevalidatedAggregates,
     restoreWriteKeys = this.ctx.restoreWriteKeys,
     restoreDeleteKeys = this.ctx.restoreDeleteKeys,
+    allowInactiveReferences = this.ctx.allowInactiveReferences,
+    pendingReconciliationValidations = this.ctx.pendingReconciliationValidations,
+    inactiveReferenceScope = this.ctx.inactiveReferenceScope,
   ): SqlLedgerStore {
     return new SqlLedgerStore(driver, {}, {
       log: this.ctx.log,
@@ -1452,9 +1886,12 @@ export class SqlLedgerStore implements LedgerStore {
       audit,
       changeBus: this.ctx.changeBus,
       pendingChanges,
+      pendingReconciliationValidations,
       prevalidatedAggregates,
       restoreWriteKeys,
       restoreDeleteKeys,
+      allowInactiveReferences,
+      inactiveReferenceScope,
       compensationSignal: this.ctx.compensationSignal,
     });
   }
@@ -1707,6 +2144,68 @@ export class SqlLedgerStore implements LedgerStore {
       if (!page.hasMore || !page.nextCursor) return;
       cursor = page.nextCursor;
     } while (true);
+  }
+
+  /**
+   * Find active transactions whose own free-text fields contain the explicit
+   * test markers used by the Settings cleanup command. The query is keyset
+   * paged so maintenance never depends on a page snapshot or a fixed row cap.
+   */
+  async testTransactionCleanupPage(input: {
+    cursor?: import('@zichan/core').QueryCursor;
+    limit?: number;
+  } = {}): Promise<TestTransactionCleanupPage> {
+    const limit = Math.max(1, Math.min(1000, Math.trunc(Number(input.limit ?? 400))));
+    const clauses = [
+      'is_deleted = 0',
+      "COALESCE(record_state, 'active') = 'active'",
+      `(
+        INSTR(COALESCE(description, ''), '测试') > 0
+        OR INSTR(COALESCE(merchant, ''), '测试') > 0
+        OR INSTR(COALESCE(note, ''), '测试') > 0
+        OR INSTR(LOWER(COALESCE(description, '')), 'test') > 0
+        OR INSTR(LOWER(COALESCE(merchant, '')), 'test') > 0
+        OR INSTR(LOWER(COALESCE(note, '')), 'test') > 0
+      )`,
+    ];
+    const params: SqlParam[] = [];
+    if (input.cursor) {
+      clauses.push('id > ?');
+      params.push(input.cursor.id);
+    }
+    const raw = await this.driver.all<Record<string, unknown>>(
+      `SELECT * FROM transactions
+       WHERE ${clauses.join(' AND ')}
+       ORDER BY id
+       LIMIT ?`,
+      [...params, limit + 1],
+    );
+    const hasMore = raw.length > limit;
+    const pageRows = hasMore ? raw.slice(0, limit) : raw;
+    const transactions = pageRows.map((row) =>
+      rowToEntity<import('@zichan/core').Transaction>(TABLES.transactions, row));
+    const ids = transactions.map((transaction) => transaction.id);
+    const attachmentRows: Record<string, unknown>[] = [];
+    for (let offset = 0; offset < ids.length; offset += 500) {
+      const batch = ids.slice(offset, offset + 500);
+      if (!batch.length) continue;
+      attachmentRows.push(...await this.driver.all<Record<string, unknown>>(
+        `SELECT * FROM attachments
+         WHERE is_deleted = 0 AND entity_type = 'transaction'
+           AND entity_id IN (${batch.map(() => '?').join(', ')})
+         ORDER BY id`,
+        batch,
+      ));
+    }
+    const attachments = attachmentRows.map((row) =>
+      rowToEntity<import('@zichan/core').Attachment>(TABLES.attachments, row));
+    const last = transactions.at(-1);
+    return {
+      transactions,
+      attachments,
+      hasMore,
+      ...(hasMore && last ? { nextCursor: { value: last.id, id: last.id } } : {}),
+    };
   }
 
   async transactionBrowsePage(input: TransactionBrowseInput = {}): Promise<TransactionBrowsePage> {
@@ -2114,21 +2613,27 @@ export class SqlLedgerStore implements LedgerStore {
     splits: import('@zichan/core').TransactionSplit[];
     refundAllocations: import('@zichan/core').RefundAllocation[];
   }): Promise<void> {
-    await validateTransactionAggregateSnapshot(this.driver, snapshot);
+    await validateTransactionAggregateSnapshot(this.driver, snapshot, {
+      allowInactiveReferences: inactiveReferencesAllowed(this.ctx),
+    });
   }
 
   async assertConversionAggregate(
     chain: ConversionChain,
     steps: ConversionStep[],
   ): Promise<void> {
-    await validateConversionAggregateSnapshot(this.driver, chain, steps);
+    await validateConversionAggregateSnapshot(this.driver, chain, steps, {
+      allowInactiveReferences: inactiveReferencesAllowed(this.ctx),
+    });
   }
 
   async assertReconciliationAggregate(
     session: import('@zichan/core').ReconciliationSession,
     items: import('@zichan/core').ReconciliationItem[],
   ): Promise<void> {
-    await validateReconciliationAggregateSnapshot(this.driver, session, items);
+    await validateReconciliationAggregateSnapshot(this.driver, session, items, {
+      allowInactiveReferences: inactiveReferencesAllowed(this.ctx),
+    });
   }
 
   async withPrevalidatedAggregates<T>(keys: Iterable<string>, fn: (store: this) => Promise<T>): Promise<T> {
@@ -2156,12 +2661,36 @@ export class SqlLedgerStore implements LedgerStore {
     ) as this);
   }
 
+  /** @internal Restrict historical-reference permission to the awaited callback lifetime. */
+  async withBackupImportContext<T>(fn: (store: this) => Promise<T>): Promise<T> {
+    if (inactiveReferencesAllowed(this.ctx)) return fn(this);
+    const scope = { active: true };
+    const historicalStore = this.scoped(
+      this.driver,
+      this.ctx.audit,
+      this.ctx.pendingChanges,
+      this.ctx.prevalidatedAggregates,
+      this.ctx.restoreWriteKeys,
+      this.ctx.restoreDeleteKeys,
+      true,
+      this.ctx.pendingReconciliationValidations,
+      scope,
+    ) as this;
+    try {
+      return await fn(historicalStore);
+    } finally {
+      scope.active = false;
+    }
+  }
+
   async saveChainWithSteps(
     chain: ConversionChain,
     steps: ConversionStep[],
   ): Promise<ChainWithSteps> {
     return this.transaction(async (store) => {
-      const normalizedChain = await validateConversionAggregateSnapshot(store.driver, chain, steps);
+      const normalizedChain = await validateConversionAggregateSnapshot(store.driver, chain, steps, {
+        allowInactiveReferences: inactiveReferencesAllowed(store.ctx),
+      });
       const before = await store.getChainWithSteps(chain.id);
       const savedChain = await store.conversionChains.put(normalizedChain);
       await store.driver.run('DELETE FROM conversion_steps WHERE chain_id = ?', [savedChain.id]);
@@ -2357,7 +2886,24 @@ export class SqlLedgerStore implements LedgerStore {
       return this.driver.transaction((driver) => fn(this.scoped(driver) as this));
     }
     const pendingChanges = new Set<string>();
-    const result = await this.driver.transaction((driver) => fn(this.scoped(driver, this.ctx.audit, pendingChanges) as this));
+    const pendingReconciliationValidations = new Map<string, boolean>();
+    const result = await this.driver.transaction(async (driver) => {
+      const scoped = this.scoped(
+        driver,
+        this.ctx.audit,
+        pendingChanges,
+        this.ctx.prevalidatedAggregates,
+        this.ctx.restoreWriteKeys,
+        this.ctx.restoreDeleteKeys,
+        this.ctx.allowInactiveReferences,
+        pendingReconciliationValidations,
+      );
+      const value = await fn(scoped as this);
+      for (const [reconciliationId, allowInactiveReferences] of pendingReconciliationValidations) {
+        await validateStoredReconciliationAggregate(driver, reconciliationId, { allowInactiveReferences });
+      }
+      return value;
+    });
     this.ctx.changeBus.publish(pendingChanges);
     return result;
   }
@@ -2665,8 +3211,12 @@ export class SqlLedgerStore implements LedgerStore {
   }
 
   async applySyncAggregate(type: string, id: string, payload: Record<string, unknown> | null, op: 'put' | 'delete'): Promise<void> {
-    if (!payload) {
-      if (op !== 'delete') throw new Error(`同步聚合 ${type}:${id} 缺少快照`);
+    assertSyncAggregateIdentity(type, id, payload);
+    // Local delete revisions may carry a final tombstone snapshot for audit and
+    // conflict resolution. The operation is authoritative: trying to validate
+    // that snapshot as a live aggregate fails after dependent rows were removed
+    // (for example reconciliation items or refund allocations).
+    if (op === 'delete') {
       if (type === 'conversion') {
         const current = await this.conversionChains.get(id);
         if (current) await this.conversionChains.remove(id, current.version);
@@ -2701,6 +3251,7 @@ export class SqlLedgerStore implements LedgerStore {
       if (current) await collection.remove(id, current.version);
       return;
     }
+    if (!payload) throw new Error(`同步聚合 ${type}:${id} 缺少快照`);
     if (type === 'conversion') {
       const incomingChain = asRecord(payload['chain']);
       const incomingSteps = Array.isArray(payload['steps']) ? payload['steps'].map(asRecord).filter((row): row is Record<string, unknown> => !!row) : [];
@@ -2710,7 +3261,7 @@ export class SqlLedgerStore implements LedgerStore {
         ...(current ?? {}), ...incomingChain, id,
         createdAt: current?.createdAt || String(incomingChain['createdAt'] ?? ''),
         updatedAt: current?.updatedAt ?? '', version: current?.version ?? 0,
-        isDeleted: op === 'delete' || incomingChain['isDeleted'] === true,
+        isDeleted: incomingChain['isDeleted'] === true,
       } as ConversionChain;
       const steps = incomingSteps.map((step) => ({ ...step, chainId: id })) as unknown as ConversionStep[];
       await this.saveChainWithSteps(chain, steps);
@@ -2728,7 +3279,7 @@ export class SqlLedgerStore implements LedgerStore {
         ...(current ?? {}), ...incomingTransaction, id,
         createdAt: current?.createdAt || String(incomingTransaction['createdAt'] ?? ''),
         updatedAt: current?.updatedAt ?? '', version: current?.version ?? 0,
-        isDeleted: op === 'delete' || incomingTransaction['isDeleted'] === true,
+        isDeleted: incomingTransaction['isDeleted'] === true,
       } as import('@zichan/core').Transaction;
       const splits = incomingSplits.map((split) => ({
         ...split,
@@ -2745,7 +3296,7 @@ export class SqlLedgerStore implements LedgerStore {
       await ensureSystemCategoryRow(this.driver, transaction.category);
       for (const split of splits) await ensureSystemCategoryRow(this.driver, split.category);
       for (const allocation of allocations) await ensureSystemCategoryRow(this.driver, allocation.categoryId);
-      await validateTransactionAggregateSnapshot(this.driver, {
+      await this.assertTransactionAggregate({
         transaction: normalizeDomainEntity('transaction', transaction),
         splits,
         refundAllocations: allocations,
@@ -2798,7 +3349,7 @@ export class SqlLedgerStore implements LedgerStore {
         ...(current ?? {}), ...incomingSession, id,
         createdAt: current?.createdAt || String(incomingSession['createdAt'] ?? ''),
         updatedAt: current?.updatedAt ?? '', version: current?.version ?? 0,
-        isDeleted: op === 'delete' || incomingSession['isDeleted'] === true,
+        isDeleted: incomingSession['isDeleted'] === true,
       } as import('@zichan/core').ReconciliationSession;
       const items = incomingItems.map((item) => ({
         ...item,
@@ -2806,7 +3357,7 @@ export class SqlLedgerStore implements LedgerStore {
         reconciliationId: id,
         isDeleted: item['isDeleted'] === true,
       })) as unknown as import('@zichan/core').ReconciliationItem[];
-      await validateReconciliationAggregateSnapshot(this.driver, session, items);
+      await this.assertReconciliationAggregate(session, items);
       await this.withPrevalidatedAggregates([`reconciliation:${id}`], async (aggregateStore) => {
         await aggregateStore.reconciliationSessions.put(session);
         const currentItems = await aggregateStore.reconciliationItems.list({ where: { reconciliationId: id }, includeDeleted: true });
@@ -2834,7 +3385,7 @@ export class SqlLedgerStore implements LedgerStore {
       ...(current ?? {}), ...payload, id,
       createdAt: current?.createdAt || String(payload['createdAt'] ?? ''),
       updatedAt: current?.updatedAt ?? '', version: current?.version ?? 0,
-      isDeleted: op === 'delete' || payload['isDeleted'] === true,
+      isDeleted: payload['isDeleted'] === true,
     });
   }
 

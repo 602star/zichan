@@ -324,10 +324,12 @@ describe('P2 scheduled execution recovery', () => {
 
       await expect(materializeScheduledTransaction(store, schedule.id, 0)).rejects.toThrow('账户');
       const executionId = scheduleExecutionId(schedule.id, 0);
-      expect(await store.scheduledExecutions.get(executionId)).toMatchObject({
+      const failed = await store.scheduledExecutions.get(executionId);
+      expect(failed).toMatchObject({
         status: 'failed',
         retryCount: 1,
       });
+      expect(Date.parse(failed!.nextRetryAt!) - Date.parse(failed!.attemptedAt!)).toBe(5 * 60_000);
       const backlog = await previewScheduledBacklog(store, new Date('2026-07-02T04:00:00.000Z'));
       expect(backlog).toContainEqual(expect.objectContaining({
         scheduleId: schedule.id,

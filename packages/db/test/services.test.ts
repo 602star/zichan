@@ -90,7 +90,7 @@ describe('services: recordSell', () => {
 describe('services: voidConversion', () => {
   it('voiding a buy removes its lot impact and retains a restorable chain', async () => {
     const store = await openLedger();
-    const { chain, lot } = await buyBtc(store, '2026-01-01', '0.003317');
+    const { chain } = await buyBtc(store, '2026-01-01', '0.003317');
     expect((await store.lots.list()).length).toBe(1);
 
     await voidConversion(store, chain.id);
