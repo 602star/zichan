@@ -31,7 +31,8 @@ export async function verifyReleaseArtifacts(options) {
   const updaterArchives = files.filter((path) => /(?:\.msi\.zip|\.nsis\.zip|\.app\.tar\.gz|\.AppImage\.tar\.gz)$/.test(path));
   if (!installers.some((path) => path.endsWith('.msi'))) failures.push('MSI installer is missing');
   if (!installers.some((path) => path.endsWith('.exe'))) failures.push('NSIS installer is missing');
-  if (!updaterArchives.length) failures.push('signed updater archive is missing');
+  if (!updaterArchives.some((path) => path.endsWith('.msi.zip'))) failures.push('MSI updater archive is missing');
+  if (!updaterArchives.some((path) => path.endsWith('.nsis.zip'))) failures.push('NSIS updater archive is missing');
   for (const path of [...installers, ...updaterArchives]) {
     if (!hasVersion(basename(path), version)) failures.push(`${basename(path)} does not contain release version ${version}`);
   }
@@ -43,6 +44,7 @@ export async function verifyReleaseArtifacts(options) {
   if (!platforms.length) failures.push('manifest has no updater platforms');
   const expectedTagPath = `/releases/download/${encodeURIComponent(tag)}/`;
   const archiveByName = new Map(updaterArchives.map((path) => [basename(path), path]));
+  const referencedArchives = new Set();
   for (const row of platforms) {
     if (!row || typeof row !== 'object' || typeof row.url !== 'string' || typeof row.signature !== 'string' || !row.signature.trim()) {
       failures.push('manifest contains an incomplete updater platform');
@@ -61,8 +63,12 @@ export async function verifyReleaseArtifacts(options) {
       failures.push(`manifest references missing updater archive: ${fileName}`);
       continue;
     }
+    referencedArchives.add(fileName);
     const signature = (await readFile(`${archive}.sig`, 'utf8')).trim();
     if (signature !== row.signature.trim()) failures.push(`manifest signature does not match ${fileName}.sig`);
+  }
+  for (const archive of archiveByName.keys()) {
+    if (!referencedArchives.has(archive)) failures.push(`manifest does not reference updater archive: ${archive}`);
   }
 
   if (failures.length) throw new Error(`Release artifact verification failed:\n- ${[...new Set(failures)].join('\n- ')}`);

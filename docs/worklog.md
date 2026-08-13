@@ -5,6 +5,17 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
 
 ---
 
+## 2026-08-13 — Windows 桌面主程序与中文安装包修复
+
+**Goal:** 修复多 Cargo 二进制导致的 Tauri 主程序误选，以及中文产品名在默认英文 MSI 代码页下无法链接的问题。
+
+- Cargo 与 Tauri 双层显式固定主程序为 `zichan`；发布验签辅助程序改由 `release-verifier` feature 隔离，普通桌面构建和安装包不再携带内部 verifier。
+- WiX MSI 固定使用 `zh-CN` / 代码页 936，NSIS 提供简体中文与英文；解决 WiX `LGHT0311` 中文字符无法写入 codepage 1252 的失败。
+- 发布一致性门禁新增主二进制、验签 feature 与 Windows 安装器语言检查；Windows CMD 在构建前执行该门禁、清除旧安装器并在构建后强制确认 `zichan.exe`、MSI 和 NSIS 三类新产物存在。CI 显式启用 feature 测试和验签工具，要求 MSI/NSIS updater archive 都存在并被更新清单引用。
+- 验证：全 workspace 类型检查和 421 项应用/共享测试通过；9 项 release 测试、Rust 格式检查、5 项桌面测试与 3 项 verifier 测试通过。`build-desktop.cmd` 在删除旧产物后完整生成 `资产生命周期_0.1.0_x64_zh-CN.msi` 和 `资产生命周期_0.1.0_x64-setup.exe`；生成的 WiX 清单主文件指向 `zichan.exe`，且不再包含 `verify-updater-signature.exe`。
+
+---
+
 ## 2026-08-13 — Windows CMD 固定入口与桌面构建前置检查
 
 **Goal:** 为 Windows 双击场景提供可诊断的固定任务入口，同时避免在仓库根目录堆放启动脚本。

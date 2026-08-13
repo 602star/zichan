@@ -62,3 +62,45 @@ test('reports workspace, tag, notes, and schema documentation drift together', a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('rejects desktop bundling config that targets a helper binary or incompatible installer locales', async () => {
+  const root = await fixture();
+  try {
+    const cargoPath = join(root, 'apps', 'desktop', 'src-tauri', 'Cargo.toml');
+    const cargo = await readFile(cargoPath, 'utf8');
+    await writeFile(
+      cargoPath,
+      cargo
+        .replace('default-run = "zichan"', 'default-run = "verify-updater-signature"')
+        .replace('release-verifier = ["dep:base64", "dep:minisign-verify"]', '')
+        .replace('required-features = ["release-verifier"]', 'required-features = []'),
+    );
+
+    const tauriPath = join(root, 'apps', 'desktop', 'src-tauri', 'tauri.conf.json');
+    const tauri = JSON.parse(await readFile(tauriPath, 'utf8'));
+    tauri.mainBinaryName = 'verify-updater-signature';
+    tauri.bundle.active = false;
+    tauri.bundle.targets = [];
+    tauri.bundle.windows.wix.language = ['zh-CN', 'en-US'];
+    tauri.bundle.windows.nsis.languages = ['SimpChinese'];
+    await writeFile(tauriPath, `${JSON.stringify(tauri, null, 2)}\n`);
+
+    await assert.rejects(
+      checkReleaseConsistency(root),
+      (error) => {
+        assert.match(error.message, /default-run is verify-updater-signature, expected zichan/);
+        assert.match(error.message, /mainBinaryName is verify-updater-signature, expected zichan/);
+        assert.match(error.message, /must enable desktop bundling/);
+        assert.match(error.message, /bundle targets must include msi/);
+        assert.match(error.message, /bundle targets must include nsis/);
+        assert.match(error.message, /must declare the release-verifier feature/);
+        assert.match(error.message, /must gate verify-updater-signature behind the release-verifier feature/);
+        assert.match(error.message, /must build the MSI only with zh-CN/);
+        assert.match(error.message, /must include SimpChinese and English/);
+        return true;
+      },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

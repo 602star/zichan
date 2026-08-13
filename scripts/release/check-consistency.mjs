@@ -34,9 +34,37 @@ async function workspacePackageFiles(root, patterns) {
   return files.sort();
 }
 
-function cargoPackageVersion(source) {
+function cargoPackageMetadata(source) {
   const packageBlock = source.match(/(?:^|\n)\[package\]\s*\n([\s\S]*?)(?=\n\[|$)/)?.[1];
-  return packageBlock?.match(/^version\s*=\s*"([^"]+)"\s*$/m)?.[1];
+  return {
+    version: packageBlock?.match(/^version\s*=\s*"([^"]+)"\s*$/m)?.[1],
+    defaultRun: packageBlock?.match(/^default-run\s*=\s*"([^"]+)"\s*$/m)?.[1],
+  };
+}
+
+function cargoBinaryMetadata(source, name) {
+  const blocks = [...source.matchAll(/(?:^|\n)\[\[bin\]\]\s*\n([\s\S]*?)(?=\n\[|$)/g)].map((match) => match[1]);
+  const block = blocks.find((value) => value.match(/^name\s*=\s*"([^"]+)"\s*$/m)?.[1] === name);
+  return {
+    requiredFeatures: [...(block?.match(/^required-features\s*=\s*\[([^\]]*)\]\s*$/m)?.[1].matchAll(/"([^"]+)"/g) ?? [])]
+      .map((match) => match[1]),
+  };
+}
+
+function cargoFeatureNames(source) {
+  const featureBlock = source.match(/(?:^|\n)\[features\]\s*\n([\s\S]*?)(?=\n\[|$)/)?.[1];
+  return [...(featureBlock?.matchAll(/^([A-Za-z0-9_-]+)\s*=/gm) ?? [])].map((match) => match[1]);
+}
+
+function wixLanguages(language) {
+  if (typeof language === 'string') return [language];
+  if (Array.isArray(language)) return language;
+  if (language && typeof language === 'object') return Object.keys(language);
+  return [];
+}
+
+function includesBundleTarget(targets, target) {
+  return targets === 'all' || (Array.isArray(targets) && targets.includes(target));
 }
 
 function migrationBaseline(source) {
@@ -69,10 +97,42 @@ export async function checkReleaseConsistency(rootDirectory, options = {}) {
   const tauriConfigPath = join(root, 'apps', 'desktop', 'src-tauri', 'tauri.conf.json');
   const tauriConfig = await json(tauriConfigPath);
   if (tauriConfig.version !== version) failures.push(`apps/desktop/src-tauri/tauri.conf.json is ${String(tauriConfig.version)}, expected ${version}`);
+  if (tauriConfig.mainBinaryName !== 'zichan') {
+    failures.push(`apps/desktop/src-tauri/tauri.conf.json mainBinaryName is ${String(tauriConfig.mainBinaryName)}, expected zichan`);
+  }
+  if (tauriConfig.bundle?.active !== true) {
+    failures.push('apps/desktop/src-tauri/tauri.conf.json must enable desktop bundling');
+  }
+  for (const target of ['msi', 'nsis']) {
+    if (!includesBundleTarget(tauriConfig.bundle?.targets, target)) {
+      failures.push(`apps/desktop/src-tauri/tauri.conf.json bundle targets must include ${target}`);
+    }
+  }
+  const configuredWixLanguages = wixLanguages(tauriConfig.bundle?.windows?.wix?.language);
+  if (configuredWixLanguages.length !== 1 || configuredWixLanguages[0] !== 'zh-CN') {
+    failures.push('apps/desktop/src-tauri/tauri.conf.json must build the MSI only with zh-CN so every MSI code page supports the Chinese product name');
+  }
+  const configuredNsisLanguages = tauriConfig.bundle?.windows?.nsis?.languages;
+  if (!Array.isArray(configuredNsisLanguages)
+    || !configuredNsisLanguages.includes('SimpChinese')
+    || !configuredNsisLanguages.includes('English')) {
+    failures.push('apps/desktop/src-tauri/tauri.conf.json must include SimpChinese and English in the NSIS installer languages');
+  }
 
   const cargoTomlPath = join(root, 'apps', 'desktop', 'src-tauri', 'Cargo.toml');
-  const cargoVersion = cargoPackageVersion(await readFile(cargoTomlPath, 'utf8'));
-  if (cargoVersion !== version) failures.push(`apps/desktop/src-tauri/Cargo.toml is ${String(cargoVersion)}, expected ${version}`);
+  const cargoSource = await readFile(cargoTomlPath, 'utf8');
+  const cargoPackage = cargoPackageMetadata(cargoSource);
+  if (cargoPackage.version !== version) failures.push(`apps/desktop/src-tauri/Cargo.toml is ${String(cargoPackage.version)}, expected ${version}`);
+  if (cargoPackage.defaultRun !== 'zichan') {
+    failures.push(`apps/desktop/src-tauri/Cargo.toml default-run is ${String(cargoPackage.defaultRun)}, expected zichan`);
+  }
+  const releaseVerifier = cargoBinaryMetadata(cargoSource, 'verify-updater-signature');
+  if (!cargoFeatureNames(cargoSource).includes('release-verifier')) {
+    failures.push('apps/desktop/src-tauri/Cargo.toml must declare the release-verifier feature');
+  }
+  if (!releaseVerifier.requiredFeatures.includes('release-verifier')) {
+    failures.push('apps/desktop/src-tauri/Cargo.toml must gate verify-updater-signature behind the release-verifier feature');
+  }
 
   const cargoLockPath = join(root, 'apps', 'desktop', 'src-tauri', 'Cargo.lock');
   const cargoLock = await readFile(cargoLockPath, 'utf8');

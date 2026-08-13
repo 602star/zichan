@@ -43,6 +43,7 @@ Windows 可双击 `scripts\windows\build-desktop.cmd` 完成本地正式构建�
 
 - 应用名：`资产生命周期`；窗口标题：`资产生命周期 · Lifecycle Ledger`。
 - 版本号：`apps/desktop/package.json` 与 `src-tauri/tauri.conf.json` 同步为 `0.1.0`。
+- Windows MSI 固定使用 `zh-CN`（代码页 936），NSIS 提供简体中文与英文，确保中文产品名可被安装器安全编码。
 - Bundle ID：`com.zichan.ledger`；图标来自 `src-tauri/icons/icon.png`，改图后运行 `npm run icon -w @zichan/desktop`。
 - 主库：Tauri `AppData/ledger.sqlite`（Rust 先解析绝对路径，再交给 `tauri-plugin-sql`；“更多”抽屉会显示实际路径）。
 - 附件：Tauri `AppData/attachments/{staging,objects,trash,quarantine}`，正文按 SHA-256 寻址；加密 `.zcbak` 备份：`AppData/backups`。
@@ -52,8 +53,9 @@ Windows 可双击 `scripts\windows\build-desktop.cmd` 完成本地正式构建�
 - 自动化发布、签名 Secret 和全新 Windows Runner 安装验收见 [desktop-release.md](desktop-release.md)。
 
 原生 SQL、Stronghold 和本地 system-share 依赖均已写入 `Cargo.lock`。未使用的原生 notification
-插件已删除，主窗口权限只保留 SQL load/close 与实际调用的 Stronghold 命令。当前环境已通过
-`cargo fmt --check`、`cargo check` 和 3 项 Rust 单测；正式安装包由发布流水线完成 bundle、签名及安装测试。
+插件已删除，主窗口权限只保留 SQL load/close 与实际调用的 Stronghold 命令。发布验签辅助程序由
+`release-verifier` feature 隔离，普通桌面构建不会把它装入用户目录；CI 会显式启用该 feature 运行
+其测试与签名校验。正式安装包由发布流水线完成 bundle、签名及安装测试。
 
 ## 原生安全边界
 

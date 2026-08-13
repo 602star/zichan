@@ -4,10 +4,19 @@ version = "0.1.0"
 description = "资产生命周期 · Lifecycle Ledger"
 edition = "2021"
 rust-version = "1.77.2"
+default-run = "zichan"
 
 [lib]
 name = "zichan_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
+
+[features]
+release-verifier = ["dep:base64", "dep:minisign-verify"]
+
+[[bin]]
+name = "verify-updater-signature"
+path = "src/bin/verify-updater-signature.rs"
+required-features = ["release-verifier"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -23,8 +32,8 @@ fs2 = "0.4"
 tokio = { version = "1", features = ["sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-base64 = "0.22"
-minisign-verify = "0.2.5"
+base64 = { version = "0.22", optional = true }
+minisign-verify = { version = "0.2.5", optional = true }
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2"

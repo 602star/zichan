@@ -111,18 +111,41 @@ jobs:
       - name: Build installers and updater artifacts
         shell: pwsh
         run: |
-          $bundle = @{ createUpdaterArtifacts = $true }
-          if (-not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_THUMBPRINT)) {
-            $bundle.windows = @{
-              certificateThumbprint = $env:WINDOWS_CERT_THUMBPRINT
-              digestAlgorithm = 'sha256'
-              timestampUrl = 'http://timestamp.digicert.com'
-              tsp = $true
+          $bundle = @{
+            createUpdaterArtifacts = $true
+            targets = @('msi', 'nsis')
+            windows = @{
+              wix = @{ language = 'zh-CN' }
+              nsis = @{ languages = @('SimpChinese', 'English') }
             }
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:WINDOWS_CERT_THUMBPRINT)) {
+            $bundle.windows['certificateThumbprint'] = $env:WINDOWS_CERT_THUMBPRINT
+            $bundle.windows['digestAlgorithm'] = 'sha256'
+            $bundle.windows['timestampUrl'] = 'http://timestamp.digicert.com'
+            $bundle.windows['tsp'] = $true
           }
           $configPath = Join-Path $env:RUNNER_TEMP 'tauri-release.json'
           @{ bundle = $bundle } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $configPath -Encoding utf8
           npm run tauri --workspace @zichan/desktop -- build --config $configPath --ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          if (-not (Test-Path apps/desktop/src-tauri/target/release/zichan.exe -PathType Leaf)) {
+            throw 'Desktop executable was not generated: target/release/zichan.exe'
+          }
+          if (-not (Get-ChildItem apps/desktop/src-tauri/target/release/bundle/msi -Filter *.msi -File -ErrorAction SilentlyContinue)) {
+            throw 'MSI installer was not generated.'
+          }
+          if (-not (Get-ChildItem apps/desktop/src-tauri/target/release/bundle/nsis -Filter *.exe -File -ErrorAction SilentlyContinue)) {
+            throw 'NSIS installer was not generated.'
+          }
+          $wixSource = Get-Content apps/desktop/src-tauri/target/release/wix/x64/main.wxs -Raw
+          if (-not $wixSource.Contains('target\release\zichan.exe')) {
+            throw 'WiX package does not target zichan.exe.'
+          }
+          if ($wixSource.Contains('verify-updater-signature')) {
+            throw 'Release verifier leaked into the MSI package.'
+          }
 
       - name: Verify Authenticode signatures
         if: ${{ env.WINDOWS_CERTIFICATE_BASE64 != '' }}
@@ -163,6 +186,7 @@ jobs:
         run: |
           cargo run --locked --release `
             --manifest-path apps/desktop/src-tauri/Cargo.toml `
+            --features release-verifier `
             --bin verify-updater-signature -- `
             --bundle-dir apps/desktop/src-tauri/target/release/bundle `
             --public-key-env ZICHAN_UPDATE_PUBLIC_KEY

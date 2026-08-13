@@ -3,6 +3,7 @@
   "productName": "资产生命周期",
   "version": "0.1.0",
   "identifier": "com.zichan.ledger",
+  "mainBinaryName": "zichan",
   "build": {
     "frontendDist": "../../web/dist",
     "devUrl": "http://localhost:5173",
@@ -26,6 +27,17 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "windows": {
+      "wix": {
+        "language": "zh-CN"
+      },
+      "nsis": {
+        "languages": [
+          "SimpChinese",
+          "English"
+        ]
+      }
+    },
     "resources": {
       "../resources/server.mjs": "server/server.mjs",
       "../resources/node.exe": "server/node.exe",

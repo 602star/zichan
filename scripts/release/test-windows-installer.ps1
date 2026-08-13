@@ -50,13 +50,21 @@ try {
     $candidates += Join-Path $application.InstallLocation $ExecutableName
   }
   if ($application.DisplayIcon) {
-    $candidates += ($application.DisplayIcon -replace ',\d+$', '').Trim('"')
+    $displayIcon = ($application.DisplayIcon -replace ',\d+$', '').Trim('"')
+    if ([IO.Path]::GetFileName($displayIcon) -ine $ExecutableName) {
+      throw "Installed application DisplayIcon does not point to '$ExecutableName': $displayIcon"
+    }
+    $candidates += $displayIcon
   }
   $executable = $candidates |
     Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
     Select-Object -First 1
   if (-not $executable) {
     throw "Installed executable '$ExecutableName' was not found."
+  }
+  $executable = (Resolve-Path -LiteralPath $executable).Path
+  if ([IO.Path]::GetFileName($executable) -ine $ExecutableName) {
+    throw "Installed executable is not '$ExecutableName': $executable"
   }
 
   $launched = Start-Process -FilePath $executable -PassThru

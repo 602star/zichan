@@ -46,9 +46,49 @@ echo Building Web, sync-server resources, desktop executable, MSI, and NSIS inst
 echo The first build may take a long time and may need network access for Rust dependencies.
 echo Local installers are development artifacts; signed releases are produced by CI.
 echo.
+call npm.cmd run release:check
+set "EXIT_CODE=%ERRORLEVEL%"
+if not "%EXIT_CODE%"=="0" (
+  echo [ERROR] Release consistency check failed before the desktop build.
+  goto :finish
+)
+
+if exist "apps\desktop\src-tauri\target\release\bundle\msi\*.msi" (
+  del /q "apps\desktop\src-tauri\target\release\bundle\msi\*.msi" >nul 2>nul
+  if errorlevel 1 (
+    echo [ERROR] Could not remove the previous MSI build output.
+    goto :finish
+  )
+)
+if exist "apps\desktop\src-tauri\target\release\bundle\nsis\*.exe" (
+  del /q "apps\desktop\src-tauri\target\release\bundle\nsis\*.exe" >nul 2>nul
+  if errorlevel 1 (
+    echo [ERROR] Could not remove the previous NSIS build output.
+    goto :finish
+  )
+)
+
 call npm.cmd run build --workspace @zichan/desktop -- --ci
 set "EXIT_CODE=%ERRORLEVEL%"
 if not "%EXIT_CODE%"=="0" goto :finish
+
+if not exist "apps\desktop\src-tauri\target\release\zichan.exe" (
+  echo [ERROR] Desktop executable was not generated: target\release\zichan.exe
+  set "EXIT_CODE=1"
+  goto :finish
+)
+dir /b "apps\desktop\src-tauri\target\release\bundle\msi\*.msi" >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] MSI installer was not generated.
+  set "EXIT_CODE=1"
+  goto :finish
+)
+dir /b "apps\desktop\src-tauri\target\release\bundle\nsis\*.exe" >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] NSIS installer was not generated.
+  set "EXIT_CODE=1"
+  goto :finish
+)
 
 echo.
 echo [OK] Desktop build completed.

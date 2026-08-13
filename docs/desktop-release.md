@@ -56,8 +56,10 @@ npm run release:check -w @zichan/desktop
 npm run build -w @zichan/desktop -- --ci
 ```
 
-普通 CI 还会在独立任务中运行桌面 Rust 的 `cargo fmt --check`、`cargo check` 和
-`cargo test`。数据库门禁由三种实际运行时共同承担：Node SQLite 与 sql.js 执行 schema 115、
+普通 CI 还会在独立任务中运行桌面 Rust 的 `cargo fmt --check`、`cargo check` 和启用
+`release-verifier` 的 `cargo test`。验签工具由该 feature 隔离，只在显式启用它的 CI 测试与验签
+流程中构建，不会进入用户安装包。发布门禁要求 MSI、NSIS 及各自的 updater archive 同时存在并被
+更新清单引用。数据库门禁由三种实际运行时共同承担：Node SQLite 与 sql.js 执行 schema 115、
 Dashboard JSON 聚合及精确金额查询；Rust 从已构建的 `@zichan/db` 导出同一份 DDL，在
 SQLCipher/SQLite 中执行并验证 JSON1 与字符串 SQL，不维护手抄的第二份 schema。CI 还会构建
 sync-server 生产 bundle，并从仓库根目录构建 Docker 镜像。容器烟测只绑定
