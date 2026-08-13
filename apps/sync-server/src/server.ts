@@ -369,7 +369,16 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   const dataDir = blobStore.dataDir;
   const secret = loadPersistedValue(dataDir, 'server.secret', options.secret, () => randomBytes(32).toString('hex'));
   const serverId = loadPersistedValue(dataDir, 'server-id', options.serverId, () => `srv-${randomBytes(8).toString('hex')}`);
-  const store = new SyncServerStore(join(dataDir, 'server.sqlite'), options.registrationMode ?? 'open', serverId, options.commitQuotaBytes);
+  // Both stores use separate SQLite connections to the same file. Initialize
+  // them in sequence so catalog recovery cannot hold a write transaction while
+  // the server schema connection synchronously waits for that lock.
+  const store = new SyncServerStore(
+    join(dataDir, 'server.sqlite'),
+    options.registrationMode ?? 'open',
+    serverId,
+    options.commitQuotaBytes,
+    blobStore.ready,
+  );
   let opaqueServerSetup = '';
   let opaqueServerPublicKey = '';
   const ready = Promise.all([blobStore.ready, store.ready, opaque.ready]).then(() => {

@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { NodeSqliteDriver } from '@zichan/db/node';
 
 export type RegistrationMode = 'open' | 'invite' | 'closed';
@@ -222,9 +222,12 @@ export class SyncServerStore {
     private readonly defaultRegistrationMode: RegistrationMode,
     private readonly serverId: string,
     private readonly defaultCommitQuotaBytes = DEFAULT_COMMIT_QUOTA_BYTES,
+    initializeAfter?: Promise<unknown>,
   ) {
     this.driver = new NodeSqliteDriver(databaseFile);
-    this.ready = this.initialize();
+    this.ready = initializeAfter
+      ? initializeAfter.then(() => this.initialize())
+      : this.initialize();
   }
 
   private async initialize(): Promise<void> {
@@ -602,7 +605,7 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
          VALUES (?, ?, ?, ?, ?)`,
         [bucketKey, windowStartedAt, hits, blockedUntil, now],
       );
-      if (Math.random() < 0.01) {
+      if (randomInt(0, 100) < 1) {
         await driver.run('DELETE FROM server_rate_limits WHERE updated_at < ?', [now - 7 * 24 * 60 * 60 * 1000]);
       }
       return {
@@ -914,7 +917,7 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     if (options.level) { clauses.push('level = ?'); params.push(options.level); }
     if (options.from) { clauses.push('at >= ?'); params.push(options.from); }
     if (options.until) { clauses.push('at < ?'); params.push(options.until); }
-    if (options.cursor) { clauses.push('(at < ? OR (at = ? AND id < ?))'); params.push(options.cursor.split('|')[0] ?? '', options.cursor.split('|')[0] ?? '', options.cursor.split('|')[1] ?? ''); }
+    if (options.cursor) { const [cursorAt, cursorId] = options.cursor.split('|'); clauses.push('(at < ? OR (at = ? AND id < ?))'); params.push(cursorAt ?? '', cursorAt ?? '', cursorId ?? ''); }
     let sql = 'SELECT * FROM server_logs';
     if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
     sql += ' ORDER BY at DESC, id DESC LIMIT ?';

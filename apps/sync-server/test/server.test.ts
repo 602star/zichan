@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import * as opaque from '@serenity-kit/opaque';
 import { createSyncServer, type SyncServer } from '../src/server.js';
+import { EncryptedBlobStore } from '../src/blob-store.js';
 import { createServerBackup, restoreServerBackup, verifyServerBackup } from '../src/backup.js';
 import { normalizeSyncUsername } from '@zichan/core';
 import { NodeSqliteDriver } from '@zichan/db/node';
@@ -645,6 +646,57 @@ describe('sync-server endpoints', () => {
     } finally {
       await first?.close();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('serializes SQLite initialization while recovering a non-empty blob catalog', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zichan-blob-restart-'));
+    const dataDir = join(root, 'server');
+    const encrypted = new TextEncoder().encode('encrypted-blob-survives-a-server-restart');
+    const blobId = createHash('sha256').update(encrypted).digest('hex');
+    const manifest = {
+      v: 1 as const,
+      blobId,
+      cipherBytes: encrypted.byteLength,
+      chunkCount: 1,
+      chunks: [{
+        index: 0,
+        sizeBytes: encrypted.byteLength,
+        ciphertextSha256: blobId,
+        iv: 'stable-restart-vector',
+      }],
+    };
+    const writer = new EncryptedBlobStore({ dataDir });
+    let writerOpen = true;
+    let restarted: SyncServer | undefined;
+    try {
+      await writer.ready;
+      const plan = await writer.beginUpload('restart-user', 'restart-ledger', manifest);
+      expect(plan.status).toBe('upload');
+      await writer.putChunk('restart-user', plan.uploadId!, 0, encrypted);
+      await writer.completeUpload('restart-user', plan.uploadId!);
+      await writer.close();
+      writerOpen = false;
+
+      restarted = createSyncServer({ dataDir });
+      await restarted.ready;
+      expect(existsSync(join(dataDir, 'server.sqlite'))).toBe(true);
+      await restarted.close();
+      restarted = undefined;
+
+      const reader = new EncryptedBlobStore({ dataDir });
+      try {
+        expect(await reader.status('restart-user', 'restart-ledger', [blobId]))
+          .toEqual({ [blobId]: 'available' });
+        expect(Array.from(await reader.chunk('restart-user', 'restart-ledger', blobId, 0)))
+          .toEqual(Array.from(encrypted));
+      } finally {
+        await reader.close();
+      }
+    } finally {
+      await restarted?.close();
+      if (writerOpen) await writer.close();
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

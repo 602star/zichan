@@ -269,25 +269,27 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
   }
 
   private async recoverCatalog(): Promise<void> {
-    await this.driver.run('DELETE FROM blob_objects');
-    for (const [folder, state] of [['objects', 'available'], ['trash', 'trash']] as const) {
-      for (const path of objectDirectories(join(this.dataDir, 'blobs', folder))) {
-        const catalog = catalogAt(path);
-        if (!catalog || catalog.state !== state) continue;
-        const at = nowIso();
-        await this.driver.run(
-          `INSERT OR REPLACE INTO blob_objects
-           (username, ledger_id, blob_id, namespace, state, cipher_bytes, chunk_count, manifest_json,
-            created_at, updated_at, deleted_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            catalog.username, catalog.ledgerId, catalog.blobId, namespace(catalog.username, catalog.ledgerId),
-            state, catalog.manifest.cipherBytes, catalog.manifest.chunkCount, JSON.stringify(catalog.manifest),
-            catalog.createdAt, at, catalog.deletedAt ?? null,
-          ],
-        );
+    await this.driver.transaction(async (driver) => {
+      await driver.run('DELETE FROM blob_objects');
+      for (const [folder, state] of [['objects', 'available'], ['trash', 'trash']] as const) {
+        for (const path of objectDirectories(join(this.dataDir, 'blobs', folder))) {
+          const catalog = catalogAt(path);
+          if (!catalog || catalog.state !== state) continue;
+          const at = nowIso();
+          await driver.run(
+            `INSERT OR REPLACE INTO blob_objects
+             (username, ledger_id, blob_id, namespace, state, cipher_bytes, chunk_count, manifest_json,
+              created_at, updated_at, deleted_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              catalog.username, catalog.ledgerId, catalog.blobId, namespace(catalog.username, catalog.ledgerId),
+              state, catalog.manifest.cipherBytes, catalog.manifest.chunkCount, JSON.stringify(catalog.manifest),
+              catalog.createdAt, at, catalog.deletedAt ?? null,
+            ],
+          );
+        }
       }
-    }
+    });
   }
 
   async usage(username: string): Promise<BlobUsage> {
