@@ -368,6 +368,16 @@ export function categoryForm(snap?: Snapshot): EntityFormSpec<Category> {
     }) as Category,
     validate: (v, existing) => {
       if (existing && v.parentId === existing.id) return { parentId: '分类不能把自己设为父级' } as Record<string, string>;
+      // 防循环:新父级若沿现有父链上溯能回到自身,则会形成 A→B→A 死循环。
+      if (snap && existing && v.parentId) {
+        const seen = new Set<string>([existing.id]);
+        let current = snap.categories.find((c) => c.id === v.parentId);
+        while (current?.parentId) {
+          if (seen.has(current.parentId)) return { parentId: '父级分类会形成循环引用' } as Record<string, string>;
+          seen.add(current.id);
+          current = snap.categories.find((c) => c.id === current?.parentId);
+        }
+      }
       const duplicate = snap?.categories.some((category) => category.id !== existing?.id && !category.isDeleted && category.type === v.type && (category.parentId ?? '') === (v.parentId ?? '') && category.name.trim().toLowerCase() === (v.name ?? '').trim().toLowerCase());
       return duplicate ? { name: '同一父级下已经存在同名分类' } as Record<string, string> : undefined;
     },

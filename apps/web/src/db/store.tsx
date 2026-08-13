@@ -1,7 +1,7 @@
 import {
   createContext, useContext, useEffect, useState, type ReactNode,
 } from 'react';
-import { createLedgerStore, isSchemaResetRequiredError, runDueScheduledTransactions, type SqlLedgerStore } from '@zichan/db';
+import { createLedgerStore, runDueScheduledTransactions, type SqlLedgerStore } from '@zichan/db';
 import { createLogger, consoleSink } from '@zichan/logger';
 import { seedIfEmpty } from './seed.js';
 import { getDeviceId } from './cloud.js';
@@ -10,6 +10,7 @@ import { runLedgerMaintenance } from './maintenance.js';
 import { writeSafetyState } from './safety.js';
 import { openPlatformDriver, resetPlatformData, type StorageBackend } from './platform-driver.js';
 import { recoverAttachmentStorage } from './attachment-storage.js';
+import { isInitializationResetRequiredError } from './initialization-error.js';
 import {
   lockDeviceStorage,
   refreshDeviceStorageState,
@@ -131,6 +132,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [storageProtection, setStorageProtection] = useState<DeviceStorageState | null>(null);
   const [unlockBusy, setUnlockBusy] = useState(false);
   const [unlockError, setUnlockError] = useState('');
+  const [initializationAttempt, setInitializationAttempt] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -196,7 +198,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (!cancelled) {
           setError({
             message: e instanceof Error ? e.message : String(e),
-            resetRequired: isSchemaResetRequiredError(e),
+            resetRequired: isInitializationResetRequiredError(e),
           });
         }
       }
@@ -205,7 +207,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       if (published) void closeOpenedStore();
     };
-  }, [storageProtection?.unlocked]);
+  }, [storageProtection?.unlocked, initializationAttempt]);
 
   useEffect(() => {
     if (!store || rev === 0) return;
@@ -247,7 +249,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [store]);
 
   async function resetDevelopmentData() {
-    if (!window.confirm('将删除本机开发账本、附件和浏览器缓存数据。确定继续吗？')) return;
+    if (
+      !window.confirm(
+        '将删除本机开发账本、附件、表单草稿和浏览器内备份。此操作不可撤销；只有浏览器外的 .zcbak 或服务器副本可用于恢复。确定继续吗？',
+      )
+    ) return;
     setResetting(true);
     try {
       if (store) {
@@ -279,6 +285,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  function retryInitialization() {
+    setError(null);
+    setInitializationAttempt((attempt) => attempt + 1);
+  }
+
+  async function returnToStorageUnlock() {
+    setError(null);
+    setUnlockError('');
+    try {
+      await lockDeviceStorage();
+      setStorageProtection(await refreshDeviceStorageState());
+    } catch (reason) {
+      setError({
+        message: reason instanceof Error ? reason.message : '无法返回设备解锁页面',
+        resetRequired: false,
+      });
+    }
+  }
+
   if (!storageProtection) return <Splash label={unlockError || '正在检查本机加密存储…'} />;
   if (!storageProtection.unlocked) {
     return (
@@ -297,16 +322,39 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         <div style={{ maxWidth: 720, margin: '10vh auto 0' }}>
           <div style={{ fontSize: 18, fontWeight: 900 }}>数据库初始化失败</div>
           <div style={{ marginTop: 12, fontFamily: 'ui-monospace, monospace', overflowWrap: 'anywhere' }}>{error.message}</div>
-          {error.resetRequired && (
+          {error.resetRequired ? (
+            <div style={{ marginTop: 12 }}>
+              旧数据尚未被修改。请先确认已有浏览器外的 .zcbak 备份或服务器副本，再执行重置。
+            </div>
+          ) : null}
+          <div style={{ marginTop: 20, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            {error.resetRequired && (
+              <button
+                type="button"
+                disabled={resetting}
+                onClick={() => void resetDevelopmentData()}
+                style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 8, background: '#b4483d', color: '#fff', fontWeight: 800 }}
+              >
+                {resetting ? '正在重置…' : '重置本机开发数据'}
+              </button>
+            )}
             <button
               type="button"
               disabled={resetting}
-              onClick={() => void resetDevelopmentData()}
-              style={{ marginTop: 20, minHeight: 44, padding: '0 16px', border: 0, borderRadius: 8, background: '#b4483d', color: '#fff', fontWeight: 800 }}
+              onClick={retryInitialization}
+              style={{ minHeight: 44, padding: '0 16px', border: '1px solid #b9a99a', borderRadius: 8, background: '#fffdf9', color: '#6b2f27', fontWeight: 800 }}
             >
-              {resetting ? '正在重置…' : '重置本地开发数据'}
+              重新尝试
             </button>
-          )}
+            <button
+              type="button"
+              disabled={resetting}
+              onClick={() => void returnToStorageUnlock()}
+              style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 8, background: 'transparent', color: '#6b2f27', fontWeight: 800 }}
+            >
+              返回解锁
+            </button>
+          </div>
         </div>
       </div>
     );

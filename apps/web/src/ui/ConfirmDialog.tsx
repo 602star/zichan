@@ -1,4 +1,5 @@
-import { useEffect, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { useBodyScrollLock } from './body-scroll-lock.js';
 
 const panel = {
   background: 'var(--surface)',
@@ -31,13 +32,7 @@ export function ConfirmDialog(props: {
   onConfirm: () => void | Promise<void>;
   onCancel?: () => void;
 }) {
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, []);
+  useBodyScrollLock();
 
   const confirmStyle = props.tone === 'danger'
     ? { ...button, border: '1px solid var(--negative)', background: 'var(--negative)', color: '#fff' }

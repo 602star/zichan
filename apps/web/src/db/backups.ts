@@ -1,4 +1,5 @@
 import {
+  newId,
   unlockLedgerKeyEnvelope,
   type LedgerCryptoSession,
 } from '@zichan/core';
@@ -138,7 +139,7 @@ const emptyPreflight = (): BackupPreflight => ({
 });
 
 function newBackupId(): string {
-  return `bk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  return `bk-${newId()}`;
 }
 
 function backupFileName(entry: Pick<SavedBackup, 'createdAt' | 'reason' | 'id'>): string {

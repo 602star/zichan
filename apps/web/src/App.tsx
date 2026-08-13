@@ -20,12 +20,12 @@ import { safetyStateFromSetting, safetyWarnings } from './db/safety.js';
 import { ConfirmDialog } from './ui/ConfirmDialog.js';
 import { AppSecurityGate } from './ui/AppSecurityGate.js';
 import { VaultUnlockPrompt } from './ui/VaultUnlockPrompt.js';
+import { useBodyScrollLock } from './ui/body-scroll-lock.js';
 import { installSyncLifecycle } from './background-sync.js';
 import {
   exportPortableLedger,
   importPortableLedger,
   preflightPortableBackup,
-  type PortableLedgerBackup,
 } from './db/portable-backup.js';
 import { adoptUnlockedLedgerKeyEnvelope, runtimeLedgerCryptoSession } from './ledger-key-vault.js';
 
@@ -715,19 +715,27 @@ function MobileNavigation(props: {
   reportCurrency: string;
   asOf: string;
 }) {
+  const { moreOpen, onMoreOpen } = props;
+  useBodyScrollLock(moreOpen);
   useEffect(() => {
-    if (!props.moreOpen) return undefined;
-    const previousOverflow = document.body.style.overflow;
+    if (!moreOpen) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') props.onMoreOpen(false);
+      if (event.key === 'Escape') onMoreOpen(false);
     };
-    document.body.style.overflow = 'hidden';
     window.addEventListener('keydown', onKeyDown);
     return () => {
-      document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [props.moreOpen, props.onMoreOpen]);
+  }, [moreOpen, onMoreOpen]);
+  useEffect(() => {
+    const mobileViewport = window.matchMedia('(max-width: 767px)');
+    const closeOnDesktop = () => {
+      if (!mobileViewport.matches) onMoreOpen(false);
+    };
+    closeOnDesktop();
+    mobileViewport.addEventListener('change', closeOnDesktop);
+    return () => mobileViewport.removeEventListener('change', closeOnDesktop);
+  }, [onMoreOpen]);
 
   const mainItems: [ScreenId, string, string][] = [
     ['dashboard', '总览', '◈'],
@@ -770,8 +778,8 @@ function MobileNavigation(props: {
               <small title={props.dataLocation}>{props.dataLocation}</small>
             </div>
             <div className="zc-mobile-drawer-actions">
-              <button onClick={props.onExport}>导出备份</button>
-              <button onClick={props.onImport}>导入备份</button>
+              <button onClick={() => { props.onMoreOpen(false); props.onExport(); }}>导出备份</button>
+              <button onClick={() => { props.onMoreOpen(false); props.onImport(); }}>导入备份</button>
             </div>
             <div className="zc-mobile-theme-row">
               {(Object.keys(THEMES) as ThemeId[]).map((id) => (

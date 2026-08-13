@@ -334,8 +334,11 @@ function locationValues(snap: Snapshot, t: Transaction): string[] {
 function categoryParents(snap: Snapshot, categories: string[]): string[] {
   const rows = new Set<string>();
   for (const category of categories) {
+    const seen = new Set<string>();
     let current = snap.categories.find((c) => c.id === category);
-    while (current?.parentId) {
+    // 防御:parentId 链出现循环(脏数据)时停止,避免无限循环。
+    while (current?.parentId && !seen.has(current.id)) {
+      seen.add(current.id);
       rows.add(current.parentId);
       current = snap.categories.find((c) => c.id === current?.parentId);
     }

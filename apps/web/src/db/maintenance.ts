@@ -102,7 +102,7 @@ export async function runLedgerMaintenance(store: SqlLedgerStore): Promise<boole
   };
   const tagWork = ensureTag('工作日', '场景', '#14b8a6', 10);
   const tagRecurring = ensureTag('固定', '项目', '#6366f1', 20);
-  const tagReimburse = ensureTag('待报销', '报销', '#f97316', 30);
+  ensureTag('待报销', '报销', '#f97316', 30);
   ensureTag('游戏', '项目', '#db2777', 40);
 
   const newLocations: TransactionLocation[] = [];

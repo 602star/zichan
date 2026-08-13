@@ -18,6 +18,7 @@ import {
 } from './credential-vault.js';
 import { loadSyncProfiles } from './sync-config.js';
 import { isTauriRuntime } from './tauri.js';
+import { DeviceStorageResetRequiredError } from './device-storage-error.js';
 
 export const DEVICE_STORAGE_ENVELOPE_KEY = 'zichan.device.storageEnvelope.v1';
 export const DEVICE_STORAGE_STATE_CHANGED_EVENT = 'zichan:device-storage-state-changed';
@@ -311,7 +312,7 @@ export async function decryptDeviceAttachmentBlob(
   const bytes = new Uint8Array(await encryptedBlob.arrayBuffer());
   if (bytes.length < ATTACHMENT_MAGIC.length + 4
     || !ATTACHMENT_MAGIC.every((byte, index) => bytes[index] === byte)) {
-    throw new Error('发现未加密的旧版附件，请重置开发数据后重新导入');
+    throw new DeviceStorageResetRequiredError('发现未加密的旧版附件，请重置本机开发数据后重新导入备份');
   }
   const headerLength = readU32(bytes, ATTACHMENT_MAGIC.length);
   const headerStart = ATTACHMENT_MAGIC.length + 4;

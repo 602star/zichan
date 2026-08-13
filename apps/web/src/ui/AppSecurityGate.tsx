@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   authenticateBiometric,
   biometricStatus,
@@ -52,12 +52,12 @@ export function AppSecurityGate() {
   const busyRef = useRef(false);
   const requestId = useRef(0);
 
-  function setLockState(next: boolean) {
+  const setLockState = useCallback((next: boolean) => {
     lockedRef.current = next;
     setLocked(next);
-  }
+  }, []);
 
-  async function unlock() {
+  const unlock = useCallback(async () => {
     if (busyRef.current || !enabled) return;
     const id = ++requestId.current;
     busyRef.current = true;
@@ -72,7 +72,7 @@ export function AppSecurityGate() {
       busyRef.current = false;
       if (id === requestId.current) setBusy(false);
     }
-  }
+  }, [enabled, setLockState]);
 
   useEffect(() => {
     const onPreferences = () => {
@@ -110,7 +110,7 @@ export function AppSecurityGate() {
       window.removeEventListener('zichan:device-preferences-changed', onPreferences);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [enabled]);
+  }, [enabled, setLockState, unlock]);
 
   if (!enabled || !locked) return null;
   return (

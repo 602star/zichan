@@ -3,18 +3,18 @@
  * prototype. Numbers are realistic (computed by the core), not penny-copies of
  * the mock's hand-typed values. Runs once — guarded by an empty-assets check.
  */
-import { D, addDays, newId } from '@zichan/core';
-import { recordConversion, recordSell, saveTransaction, type SqlLedgerStore } from '@zichan/db';
-import type {
-  Asset, Account, BudgetCategory, Category, ConversionChain, ConversionStep, DcaExecution,
-  Game, GameAccount, GameSeason, GameRecord, FixedAsset, FixedAssetConsumable, FixedAssetEvent,
-  FixedAssetCategory, FixedAssetGoal, FixedAssetUsageLog, FixedAssetUsageMetric, Payee, PriceMark,
-  ScheduledTransaction, Transaction, TransactionLocation, TransactionSavedView, TransactionTag, TransactionTemplate,
+import {
+  D, addDays, newId,
+  type Asset, type Account, type BudgetCategory, type Category, type ConversionChain, type ConversionStep,
+  type DcaExecution, type Game, type GameAccount, type GameSeason, type GameRecord, type FixedAsset,
+  type FixedAssetConsumable, type FixedAssetEvent, type FixedAssetCategory, type FixedAssetGoal,
+  type FixedAssetUsageLog, type FixedAssetUsageMetric, type Payee, type PriceMark, type ScheduledTransaction,
+  type Transaction, type TransactionLocation, type TransactionSavedView, type TransactionTag, type TransactionTemplate,
 } from '@zichan/core';
+import { recordConversion, recordSell, saveTransaction, type SqlLedgerStore } from '@zichan/db';
 import { DEFAULT_ENABLED_CATEGORY_IDS, SYSTEM_CATEGORY_CATALOG, storedCategory } from '../transactionMeta.js';
 import { DEFAULT_FIXED_ASSET_CATEGORIES } from '../fixedAssetCategories.js';
 
-const nowIso = () => new Date().toISOString();
 const localDate = () => new Date().toLocaleDateString('en-CA');
 function baseFields() {
   return { id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false };

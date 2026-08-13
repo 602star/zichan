@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { checkConsistency, recomputeCaches, purgeTombstones, voidTransaction, type ConsistencyIssue } from '@zichan/db';
+import { checkConsistency, recomputeCaches, purgeTombstones, type ConsistencyIssue } from '@zichan/db';
 import { newId, type LedgerMode, type LotMethod, type Setting } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { useSnapshot } from '../db/snapshot.js';
@@ -37,6 +37,7 @@ import {
 import { loadSyncProfiles, type SyncServerProfile } from '../sync-config.js';
 import {
   readSafetyState,
+  parseSafetyState,
   safetyStateFromSetting,
   safetyWarnings,
   serializeSafetyState,
@@ -45,7 +46,8 @@ import {
 } from '../db/safety.js';
 import { moduleCurrencyId, moduleCurrencyPatch, type CurrencyModule } from '../currencyPreferences.js';
 import { importPortableLedger } from '../db/portable-backup.js';
-import { reconcileAttachmentStorage, verifyAttachmentContent } from '../db/attachment-storage.js';
+import { reconcileAttachmentStorage } from '../db/attachment-storage.js';
+import { checkAllAttachmentFiles, cleanupAllTestTransactions } from '../db/settings-maintenance.js';
 import { resetPlatformData } from '../db/platform-driver.js';
 
 const METHODS: [LotMethod, string][] = [
@@ -102,7 +104,10 @@ export function Settings() {
     void navigator.storage?.estimate().then((estimate) => setStorageEstimate({ usage: estimate.usage ?? 0, quota: estimate.quota ?? 0 }));
   }, []);
   useEffect(() => {
-    setSafetyState(safetyStateFromSetting(snap?.setting));
+    setSafetyState({
+      ...readSafetyState(),
+      ...parseSafetyState(snap?.setting?.dataSafetyStateJson),
+    });
   }, [snap?.setting?.dataSafetyStateJson]);
   if (!snap) return null;
   const readySnap = snap;
@@ -338,17 +343,7 @@ export function Settings() {
     }
   }
   async function checkAttachmentFiles(): Promise<ConsistencyIssue[]> {
-    const result: ConsistencyIssue[] = [];
-    for (const attachment of readySnap.attachments.filter((row) => !row.isDeleted)) {
-      try {
-        if (!(await verifyAttachmentContent(attachment))) {
-          result.push({ kind: 'attachment_file_invalid', entityType: 'attachment', entityId: attachment.id, detail: `${attachment.fileName} 的大小或 SHA-256 不一致` });
-        }
-      } catch (error) {
-        result.push({ kind: 'attachment_file_invalid', entityType: 'attachment', entityId: attachment.id, detail: `${attachment.fileName} 无法读取：${error instanceof Error ? error.message : String(error)}` });
-      }
-    }
-    return result;
+    return checkAllAttachmentFiles(store);
   }
   async function confirmRestore() {
     const pending = pendingRestore;
@@ -392,22 +387,14 @@ export function Settings() {
     setBackupBusy('cleanup-test');
     try {
       await saveLedgerBackup(store, 'manual', '清理测试流水前');
-      const isTestText = (value?: string) => /测试|test/i.test(value ?? '');
-      const rows = readySnap.transactions.filter((t) => !t.isDeleted && (isTestText(t.description) || isTestText(t.merchant) || isTestText(t.note)));
-      const ids = new Set(rows.map((t) => t.id));
-      await store.runInAuditBatch(`清理 ${rows.length} 条测试流水`, async (transactionStore) => {
-        for (const attachment of readySnap.attachments.filter((a) => a.entityType === 'transaction' && ids.has(a.entityId))) {
-          await transactionStore.attachments.remove(attachment.id, attachment.version);
-        }
-        for (const tx of rows) {
-          await voidTransaction(transactionStore, tx.id, '清理测试流水');
-        }
-      }, 'bulk_update');
+      const cleaned = await cleanupAllTestTransactions(store);
       await reconcileAttachmentStorage(store);
-      setBackupNote(`已作废 ${rows.length} 条测试流水、移除其附件，并保留清理前备份。`);
+      setBackupNote(`已作废 ${cleaned.transactions} 条测试流水、移除 ${cleaned.attachments} 个附件，并保留清理前备份。`);
       setCleanupOpen(false);
       await refreshBackups();
       bump();
+    } catch (error) {
+      setBackupNote(`清理测试流水失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setBackupBusy(null);
     }
@@ -826,7 +813,7 @@ export function Settings() {
           onCancel={() => setCleanupOpen(false)}
           onConfirm={cleanupTestTransactions}
         >
-          将删除描述、商户或备注中包含“测试 / test”的日常流水，并同步删除对应拆分和附件。执行前会自动创建一份手动备份。
+          将作废描述、商户或备注中包含“测试 / test”的有效日常流水，并移除其附件。拆分保留在作废记录中供审计与恢复，不再进入有效报表。执行前会自动创建一份手动备份。
         </ConfirmDialog>
       )}
       {resetOpen && (

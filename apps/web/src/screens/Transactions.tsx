@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import {
   D, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, newId,
-  type Attachment, type BudgetCategory, type Category, type Payee, type ReconciliationSession,
+  type BudgetCategory, type Category, type Payee, type ReconciliationSession,
   type LedgerMode, type ScheduledTransaction, type Setting, type Transaction, type TransactionSavedView, type TransactionSplit, type TransactionTemplate, type TransactionType,
 } from '@zichan/core';
 import {
@@ -291,7 +291,6 @@ export function Transactions() {
     } : undefined,
     recordState: 'active',
   }), [queryDateRange.from, queryDateRange.to, usesAccounts, viewFilters]);
-  const browseKey = JSON.stringify(browseInput);
   useEffect(() => {
     if (!snap) return;
     let cancelled = false;
@@ -319,7 +318,7 @@ export function Transactions() {
     return () => {
       cancelled = true;
     };
-  }, [browseKey, queryAsOf, rev, snap, store]);
+  }, [browseInput, queryAsOf, rev, snap, store]);
   useEffect(() => {
     if (!showVoided) {
       setVoidedPage(null);

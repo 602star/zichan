@@ -254,7 +254,7 @@ export function History() {
 
   useEffect(() => {
     let cancelled = false;
-    const utc = localDateRangeToUtc(range);
+    const utc = localDateRangeToUtc({ from: range.from, to: range.to });
     void Promise.all([
       store.operationLog({ desc: true, since: utc.since, until: utc.until }),
       store.listAuditBatches({ since: utc.since, until: utc.until }),

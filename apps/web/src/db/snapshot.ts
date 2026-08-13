@@ -1,14 +1,13 @@
 import { useEffect, useState } from 'react';
-import type { Collection, BaseEntity, Query } from '@zichan/core';
-import type { SqlLedgerStore } from '@zichan/db';
 import type {
-  Account, Asset, Attachment, BudgetCategory, Category, ChainWithSteps, DcaExecution, DcaPlan,
+  Account, Asset, Attachment, BaseEntity, BudgetCategory, Category, ChainWithSteps, Collection, DcaExecution, DcaPlan,
   FixedAsset, FixedAssetCategory, FixedAssetConsumable, FixedAssetEvent, FixedAssetGoal,
   FixedAssetCashflowLink, FixedAssetUsageLog, FixedAssetUsageMetric, Game, GameAccount, GameCashflowLink, GameRecord, GameSeason, Lot, LotConsumption, Payee, PriceMark,
   RefundAllocation,
   ReconciliationItem, ReconciliationSession, ScheduledExecution, ScheduledTransaction, Setting, Transaction, TransactionLocation,
-  TransactionSavedView, TransactionSplit, TransactionTag, TransactionTemplate,
+  TransactionSavedView, TransactionSplit, TransactionTag, TransactionTemplate, Query,
 } from '@zichan/core';
+import type { SqlLedgerStore } from '@zichan/db';
 import { useStore } from './store.js';
 
 export type SnapshotScope =
@@ -108,8 +107,9 @@ const SCOPE_FIELDS: Record<Exclude<SnapshotScope, 'all'>, SnapshotField[]> = {
     'assets', 'settings', 'chains', 'priceMarks', 'dcaExecutions', 'games', 'gameAccounts', 'seasons',
     'gameRecords', 'gameCashflowLinks', 'fixedAssets', 'fixedAssetCategories', 'fixedEvents', 'fixedCashflowLinks',
     'fixedUsageMetrics', 'fixedUsageLogs', 'fixedConsumables', 'fixedGoals', 'categories', 'payees',
+    'budgetCategories',
   ],
-  settings: ['assets', 'settings'],
+  settings: ['assets', 'settings', 'categories'],
   manage: [
     'assets', 'accounts', 'settings', 'priceMarks', 'dcaPlans', 'games', 'gameAccounts', 'seasons',
     'fixedAssetCategories', 'attachments', 'categories', 'transactionTags', 'transactionLocations',

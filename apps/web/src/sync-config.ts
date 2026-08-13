@@ -1,3 +1,5 @@
+import { prefixedId } from '@zichan/core';
+
 export type SyncProtocol = 'http' | 'https';
 export type SyncTestStatus = 'idle' | 'online' | 'unauthorized' | 'offline';
 
@@ -41,7 +43,7 @@ export const AUTO_SYNC_KEY = 'zichan.sync.auto.v1';
 export const SYNC_CONFIG_CHANGED_EVENT = 'zichan:sync-config-changed';
 
 function newId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `server-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return prefixedId('server');
 }
 
 export function normalizeBasePath(path: string): string {

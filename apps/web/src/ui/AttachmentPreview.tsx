@@ -17,6 +17,12 @@ export function AttachmentPreview({ attachment, alt, className, style }: {
   useEffect(() => {
     let active = true;
     let objectUrl = '';
+    const previewReference = {
+      sha256: attachment.sha256,
+      thumbnailSha256: attachment.thumbnailSha256,
+      mimeType: attachment.mimeType,
+      thumbnailMimeType: attachment.thumbnailMimeType,
+    };
     const local = attachment.thumbnailBlob ?? attachment.contentBlob;
     setError('');
     if (local) {
@@ -30,11 +36,11 @@ export function AttachmentPreview({ attachment, alt, className, style }: {
         : attachment.mimeType || 'application/octet-stream';
       void (async () => {
         try {
-          return await attachmentPreviewUrl(attachment);
+          return await attachmentPreviewUrl(previewReference);
         } catch {
           if (sizeBytes == null) throw new Error('附件缺少大小信息');
           await ensureAttachmentBlobAvailable(store, { sha256, sizeBytes, mimeType });
-          return attachmentPreviewUrl(attachment);
+          return attachmentPreviewUrl(previewReference);
         }
       })().then((value) => {
         if (!active) {

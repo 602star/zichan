@@ -1173,6 +1173,23 @@ button {
     flex: 1;
   }
 
+  .zc-report-insight-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .zc-report-driver-row {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+
+  .zc-report-driver-row > :last-child {
+    grid-column: 1 / -1;
+    justify-content: stretch !important;
+  }
+
+  .zc-report-driver-row > :last-child > button {
+    flex: 1;
+  }
+
   .zc-responsive-action-row {
     align-items: stretch !important;
     flex-direction: column;

@@ -3,6 +3,10 @@ import {
   encryptBackupChunk,
   type LedgerCryptoSession,
 } from '@zichan/core';
+import {
+  DeviceStorageResetRequiredError,
+  isDeviceStorageResetRequiredError,
+} from '../device-storage-error.js';
 
 /** Minimal IndexedDB store for the encrypted sql.js database and attachment objects. */
 const DB_NAME = 'zichan-web';
@@ -67,7 +71,7 @@ export async function decryptDatabaseSnapshot(
   snapshot: EncryptedDatabaseSnapshot,
 ): Promise<Uint8Array> {
   if (snapshot.storageId !== session.ledgerId || snapshot.keyringId !== session.keyringId) {
-    throw new Error('浏览器数据库不属于当前本机数据密钥');
+    throw new DeviceStorageResetRequiredError('浏览器数据库不属于当前本机数据密钥，请重置本机开发数据后重新导入备份');
   }
   return decryptBackupChunk(session, {
     v: 1,
@@ -76,13 +80,24 @@ export async function decryptDatabaseSnapshot(
   }, databaseContext(session));
 }
 
-export async function loadDbBytes(session: LedgerCryptoSession): Promise<Uint8Array | null> {
-  const stored = await loadKv<unknown>(KEY);
+export async function decodeDatabaseStorageValue(
+  session: LedgerCryptoSession,
+  stored: unknown,
+): Promise<Uint8Array | null> {
   if (stored == null) return null;
   if (!validEncryptedDatabaseSnapshot(stored)) {
-    throw new Error('发现未加密的旧版浏览器数据库，请重置开发数据后重新导入');
+    throw new DeviceStorageResetRequiredError('发现未加密的旧版浏览器数据库，请重置本机开发数据后重新导入备份');
   }
-  return decryptDatabaseSnapshot(session, stored);
+  try {
+    return await decryptDatabaseSnapshot(session, stored);
+  } catch (error) {
+    if (isDeviceStorageResetRequiredError(error)) throw error;
+    throw new DeviceStorageResetRequiredError('浏览器加密数据库无法解密或已损坏，请重置本机开发数据后重新导入备份');
+  }
+}
+
+export async function loadDbBytes(session: LedgerCryptoSession): Promise<Uint8Array | null> {
+  return decodeDatabaseStorageValue(session, await loadKv<unknown>(KEY));
 }
 
 export async function saveDbBytes(bytes: Uint8Array, session: LedgerCryptoSession): Promise<void> {

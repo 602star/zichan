@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SqlLedgerStore } from '@zichan/db';
-import { installSyncLifecycle, SYNC_LIFECYCLE_RESULT_EVENT, type LifecycleSyncResult, type SyncLifecycleReason } from '../src/background-sync.js';
+import { installSyncLifecycle, type LifecycleSyncResult, type SyncLifecycleReason } from '../src/background-sync.js';
 import {
   authenticateBiometric,
   currentDevicePosition,

@@ -19,10 +19,11 @@ import {
 import { previewConversionImpact, recordConversion, recordSell, updateConversion, voidConversion } from '@zichan/db';
 import { useStore } from '../db/store.js';
 import { useSnapshot } from '../db/snapshot.js';
-import { money, amount as fmtAmount } from '../format.js';
+import { amount as fmtAmount } from '../format.js';
 import { moduleCurrencyId } from '../currencyPreferences.js';
 import { useUndo } from '../ui/UndoToast.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
+import { useBodyScrollLock } from '../ui/body-scroll-lock.js';
 
 type FeeSide = 'source' | 'target' | 'third';
 
@@ -178,19 +179,16 @@ export function AddConversionModal({ onClose, initial }: { onClose: () => void; 
   const [pending, setPending] = useState<PreparedConversion | null>(null);
   const [impactText, setImpactText] = useState('');
 
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, []);
+  useBodyScrollLock();
 
   const defaultBookCurrencyId = snap
     ? moduleCurrencyId(snap.setting, 'investment', snap.assets[0]?.id ?? '')
     : '';
   const effectiveBookCurrencyId = bookCurrencyId || defaultBookCurrencyId;
-  const drafts = steps.length ? steps : [emptyStep(effectiveBookCurrencyId)];
+  const drafts = useMemo(
+    () => steps.length ? steps : [emptyStep(effectiveBookCurrencyId)],
+    [effectiveBookCurrencyId, steps],
+  );
   const usesAccounts = (snap?.setting?.ledgerMode ?? 'spending') !== 'spending';
   const existingDcaExecution = initial && snap
     ? snap.dcaExecutions.find((execution) => !execution.isDeleted && execution.chainId === initial.chain.id)
@@ -299,7 +297,8 @@ export function AddConversionModal({ onClose, initial }: { onClose: () => void; 
     setSaving(true);
     setErr(null);
     try {
-      const result = await store.transaction(async (transactionStore) => {
+      const label = initial ? '更新资产转换及定投记录' : '保存资产转换及定投记录';
+      const result = await store.runInAuditBatch(label, async (transactionStore) => {
         const conversionResult = initial
           ? await updateConversion(transactionStore, { ...prepared, expectedVersion: initial.chain.version })
           : prepared.chain.type === 'sell'
@@ -347,7 +346,7 @@ export function AddConversionModal({ onClose, initial }: { onClose: () => void; 
       if (initial) {
         const before = initial;
         undo.offer('资产转换已更新', async () => {
-          await store.transaction(async (transactionStore) => {
+          await store.runInAuditBatch('撤销资产转换更新', async (transactionStore) => {
             const current = await transactionStore.conversionChains.get(savedChain.id);
             if (!current || current.version !== savedChain.version) throw new Error('该转换后来又被修改，不能直接撤销');
             await updateConversion(transactionStore, {

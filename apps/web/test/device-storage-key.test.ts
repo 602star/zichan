@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { createLedgerKeyEnvelope } from '@zichan/core';
+import { SchemaResetRequiredError } from '@zichan/db';
 import {
   decryptDeviceAttachmentBlob,
   encryptDeviceAttachmentBlob,
 } from '../src/device-storage-key.js';
 import {
+  DeviceStorageResetRequiredError,
+  isDeviceStorageResetRequiredError,
+} from '../src/device-storage-error.js';
+import {
+  decodeDatabaseStorageValue,
   decryptDatabaseSnapshot,
   encryptDatabaseSnapshot,
 } from '../src/db/idb.js';
+import { isInitializationResetRequiredError } from '../src/db/initialization-error.js';
 
 async function sha256(blob: Blob): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()));
@@ -25,6 +32,25 @@ describe('device storage encryption', () => {
     expect(new TextDecoder().decode(encrypted.ciphertext)).not.toContain('private ledger rows');
     expect(await decryptDatabaseSnapshot(left.session, encrypted)).toEqual(plaintext);
     await expect(decryptDatabaseSnapshot(right.session, encrypted)).rejects.toThrow('不属于当前本机数据密钥');
+  });
+
+  it('classifies legacy browser data as reset-required without rewriting it', async () => {
+    const storage = await createLedgerKeyEnvelope('device-storage-legacy', 'legacy storage password');
+    const plaintext = new TextEncoder().encode('SQLite format 3\0legacy ledger rows');
+    let caught: unknown;
+
+    try {
+      await decodeDatabaseStorageValue(storage.session, plaintext);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(DeviceStorageResetRequiredError);
+    expect(isDeviceStorageResetRequiredError(caught)).toBe(true);
+    expect(isInitializationResetRequiredError(caught)).toBe(true);
+    expect(plaintext).toEqual(new TextEncoder().encode('SQLite format 3\0legacy ledger rows'));
+    expect(isInitializationResetRequiredError(new SchemaResetRequiredError('legacy schema'))).toBe(true);
+    expect(isInitializationResetRequiredError(new Error('temporary failure'))).toBe(false);
   });
 
   it('encrypts attachment content in independently authenticated chunks', async () => {

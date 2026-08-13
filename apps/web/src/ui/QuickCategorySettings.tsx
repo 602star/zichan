@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Category, TransactionCategoryType } from '@zichan/core';
 import {
   categoryPreferenceUpdates,
@@ -30,6 +30,8 @@ export function QuickCategorySettings({ categories, onSave }: QuickCategorySetti
     () => catalog.map((category) => `${category.id}:${category.version}:${category.isHidden}:${category.sortOrder}:${isCatalogOnly(category)}`).join('|'),
     [catalog],
   );
+  const catalogRef = useRef(catalog);
+  catalogRef.current = catalog;
   const [baseline, setBaseline] = useState<Category[]>(catalog);
   const [draft, setDraft] = useState<Category[]>(catalog);
   const [type, setType] = useState<TransactionCategoryType>('expense');
@@ -41,7 +43,7 @@ export function QuickCategorySettings({ categories, onSave }: QuickCategorySetti
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
-    const next = catalog.map((category) => ({ ...category }));
+    const next = catalogRef.current.map((category) => ({ ...category }));
     setBaseline(next);
     setDraft(next);
     setSelectedIds(new Set());

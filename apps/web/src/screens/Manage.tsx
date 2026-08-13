@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { isDateInRange, nextUnhandledScheduleOccurrence, type Attachment, type Category, type FixedAssetCategory } from '@zichan/core';
 import {
   archiveMasterData,
@@ -901,11 +901,11 @@ function AttachmentSection({ items, onDelete }: { items: Attachment[]; onDelete:
   const [fetching, setFetching] = useState('');
   const [message, setMessage] = useState('');
   const profileNames = Object.fromEntries(loadSyncProfiles().map((profile) => [profile.id, profile.alias]));
-  const refreshStates = async () => {
+  const refreshStates = useCallback(async () => {
     const entries = await Promise.all(items.map(async (attachment) => [attachment.sha256, await attachmentStorageStatus(attachment.sha256)] as const));
     setLocalStates(Object.fromEntries(entries));
     setReplicas(await store.attachmentState.listReplicaBlobs());
-  };
+  }, [items, store]);
   useEffect(() => {
     let active = true;
     const refresh = () => void refreshStates().catch(() => undefined);
@@ -922,7 +922,7 @@ function AttachmentSection({ items, onDelete }: { items: Attachment[]; onDelete:
       active = false;
       window.removeEventListener(ATTACHMENT_SYNC_STATE_EVENT, refresh);
     };
-  }, [items, store]);
+  }, [items, refreshStates, store]);
   const fetchBody = async (attachment: Attachment) => {
     setFetching(attachment.id);
     setMessage('');

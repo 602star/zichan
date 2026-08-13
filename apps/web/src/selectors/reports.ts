@@ -168,7 +168,7 @@ function transactionTable(snap: Snapshot, options: TransactionReportOptions = {}
       { v: weight ? `${num(weight, 1)}%` : '—', color: 'var(--fg-muted)' },
     ];
     return { total, cells };
-  }).sort((a, b) => b.total.minus(a.total).toNumber());
+  }).sort((a, b) => b.total.comparedTo(a.total));
   return reportTable(
     report,
     [`${range.label || asOf.slice(0, 7)} 类型`, '分类', `金额（${report.code}）`, '笔数', '支出占比'],
@@ -192,6 +192,7 @@ export function transactionTableFromAggregates(
   }>();
   let totalExpense = D(0);
   for (const aggregate of aggregates) {
+    if (!isDateInRange(aggregate.reportDate, range)) continue;
     if (options.transactionCategory && aggregate.category !== options.transactionCategory) continue;
     const native = sum(aggregate.amounts);
     const converted = report.toReportAt(native, aggregate.reportAssetId, aggregate.reportDate);
@@ -227,7 +228,7 @@ export function transactionTableFromAggregates(
       { v: weight ? `${num(weight, 1)}%` : '—', color: 'var(--fg-muted)' },
     ];
     return { total: row.total, cells };
-  }).sort((left, right) => right.total.minus(left.total).toNumber());
+  }).sort((left, right) => right.total.comparedTo(left.total));
   return reportTable(
     report,
     [`${range.label || asOf.slice(0, 7)} 类型`, '分类', `金额（${report.code}）`, '笔数', '支出占比'],

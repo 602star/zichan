@@ -115,11 +115,15 @@ class RemoteBackupClient {
     const chunks: RemoteChunk[] = [];
     for (const [index, range] of ranges.entries()) {
       const bytes = new Uint8Array(await archive.slice(range.offset, range.offset + range.length).arrayBuffer());
+      const ciphertextSha256 = await sha256Bytes(bytes);
       chunks.push({
         index,
         sizeBytes: bytes.byteLength,
-        ciphertextSha256: await sha256Bytes(bytes),
-        iv: `encrypted-archive-v4-${index}`,
+        ciphertextSha256,
+        // The archive is already encrypted internally; this protocol field is
+        // catalog metadata. Keep it unique per chunk but stable across retries,
+        // because the server requires one canonical manifest for each blobId.
+        iv: (await sha256Json({ format: 'zichan-remote-chunk', blobId, index, ciphertextSha256 })).slice(0, 24),
       });
     }
     const manifest: RemoteManifest = {

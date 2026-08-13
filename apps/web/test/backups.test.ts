@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
-import type { LedgerBackup } from '@zichan/db';
-import { loginAccount, registerAccount } from '@zichan/db';
+import { loginAccount, registerAccount, type LedgerBackup } from '@zichan/db';
 import { openLedger } from '@zichan/db/node';
 import { createSyncServer, type SyncServer } from '../../sync-server/src/server.js';
 import {
@@ -236,6 +235,15 @@ describe('encrypted backup archives', () => {
         sessionId: session.session.id,
       }, false);
 
+      expect(await saveEncryptedBackupToSyncServers(created.header, created.blob)).toEqual([
+        expect.objectContaining({
+          profileId: profile.id,
+          saved: true,
+          archiveId: created.header.archiveId,
+        }),
+      ]);
+      // A completed upload may be retried after a client-side timeout. Its
+      // manifest must remain byte-for-byte stable for server idempotency.
       expect(await saveEncryptedBackupToSyncServers(created.header, created.blob)).toEqual([
         expect.objectContaining({
           profileId: profile.id,

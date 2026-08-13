@@ -129,11 +129,6 @@ export function Fixed() {
     .filter((row) => isDateInRange(row.entry.date, dateRange))
     .sort((a, b) => b.entry.date.localeCompare(a.entry.date));
   const parents = snap.fixedAssetCategories.filter((category) => !category.parentId && category.isActive && !category.isDeleted);
-  const categoryLabel = (id: string) => {
-    const child = snap.fixedAssetCategories.find((category) => category.id === id);
-    const parent = snap.fixedAssetCategories.find((category) => category.id === child?.parentId);
-    return child ? `${parent?.name ?? '父级缺失'} / ${child.name}` : id;
-  };
   const activeCount = vm.filter((item) => !item.sold).length;
   const warrantyWarnings = vm.filter((item) => item.warrantyTone === 'warning').length;
   const consumableWarnings = vm.reduce((sum, item) => sum + item.consumables.filter((row) => row.needsAttention).length, 0);

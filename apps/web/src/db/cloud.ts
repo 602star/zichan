@@ -1,3 +1,5 @@
+import { newId } from '@zichan/core';
+
 const DEVICES_KEY = 'zichan-cloud-devices';
 const DEVICE_ID_KEY = 'zichan-device-id-v2';
 
@@ -5,7 +7,7 @@ const DEVICE_ID_KEY = 'zichan-device-id-v2';
 export function getDeviceId(): string {
   let id = localStorage.getItem(DEVICE_ID_KEY);
   if (!id) {
-    id = `dev-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
+    id = `dev-${newId()}`;
     localStorage.setItem(DEVICE_ID_KEY, id);
   }
   return id;

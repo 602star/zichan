@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ConfirmDialog } from './ConfirmDialog.js';
+import { useBodyScrollLock } from './body-scroll-lock.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
 import { readAttachmentBlob, type AttachmentDraftData } from '../db/attachment-storage.js';
 import { useStore } from '../db/store.js';
@@ -168,13 +169,7 @@ export function EntityFormModal<T>({ spec, initial, onSave, onDelete, deleteLabe
   const fingerprint = formDraftFingerprint(values, fileValues);
   const dirty = fingerprint !== initialFingerprint.current;
 
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, []);
+  useBodyScrollLock();
 
   useEffect(() => {
     let cancelled = false;

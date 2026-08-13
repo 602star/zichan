@@ -6,6 +6,7 @@ const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const transactions = readFileSync(new URL('../src/screens/Transactions.tsx', import.meta.url), 'utf8');
 const reports = readFileSync(new URL('../src/screens/Reports.tsx', import.meta.url), 'utf8');
+const reportInsights = readFileSync(new URL('../src/ui/TransactionReportInsights.tsx', import.meta.url), 'utf8');
 const serverAdmin = readFileSync(new URL('../src/screens/ServerAdmin.tsx', import.meta.url), 'utf8');
 
 describe('responsive shell contract', () => {
@@ -26,6 +27,12 @@ describe('responsive shell contract', () => {
     expect(html).toContain('interactive-widget=resizes-content');
   });
 
+  it('releases the mobile drawer lock when leaving the phone breakpoint', () => {
+    expect(app).toContain("window.matchMedia('(max-width: 767px)')");
+    expect(app).toContain("mobileViewport.addEventListener('change', closeOnDesktop)");
+    expect(app).toContain('props.onMoreOpen(false); props.onImport();');
+  });
+
   it('makes phone forms keyboard-safe and keeps large category lists scrollable', () => {
     expect(css).toContain('.zc-entity-modal');
     expect(css).toContain('height: 100dvh');
@@ -42,6 +49,9 @@ describe('responsive shell contract', () => {
     expect(serverAdmin).toContain('zc-server-admin-connection');
     expect(serverAdmin).toContain('zc-server-admin-kpi-grid');
     expect(reports).toContain('zc-report-chart-grid');
+    expect(reportInsights).toContain('zc-report-insight-grid');
+    expect(css).toContain('.zc-report-insight-grid');
+    expect(css).toContain('.zc-report-driver-row');
     expect(css).toContain('.zc-report-chart-grid');
     expect(css).toContain('overscroll-behavior-inline: contain');
   });

@@ -48,6 +48,18 @@ describe('buildReport', () => {
     expect(details[0]?.category).toBe('购物');
   });
 
+  it('filters pre-aggregated transaction rows to the requested report range', () => {
+    const s = makeSnapshot();
+    const table = transactionTableFromAggregates(s, [
+      { reportDate: '2026-03-02', reportAssetId: s.ids.gbp, direction: 'expense', category: 'food', amounts: ['20'], count: 1 },
+      { reportDate: '2026-02-02', reportAssetId: s.ids.gbp, direction: 'expense', category: 'shopping', amounts: ['80'], count: 1 },
+    ], { dateRange: { from: '2026-03-01', to: '2026-03-31' } });
+
+    expect(table.rows).toHaveLength(1);
+    expect(table.rows[0]?.[1]?.data?.category).toBe('food');
+    expect(table.rows[0]?.[2]?.data?.reportAmount).toBe('20');
+  });
+
   it('reports refunds as negative spending without inflating income', () => {
     const s = makeSnapshot();
     const original = makeTransaction({ id: 'original', date: '2026-03-05', type: 'expense', category: 'food', amount: '100', assetId: s.ids.gbp });

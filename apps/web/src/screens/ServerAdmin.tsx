@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { card, th as thStyle, td as tdStyle } from '../ui/styles.js';
 import { tauriInvoke } from '../tauri.js';
 import { DateRangeBar, dateRangeValue, localDateRangeToUtc, type DateRangeValue } from '../ui/DateRangeBar.js';
@@ -151,11 +151,7 @@ export function ServerAdmin() {
   const [desktopBusy, setDesktopBusy] = useState(false);
   const [message, setMessage] = useState('');
 
-  useEffect(() => {
-    void refreshDesktopStatus();
-  }, []);
-
-  async function refreshDesktopStatus() {
+  const refreshDesktopStatus = useCallback(async () => {
     const call = tauriInvoke<DesktopServerStatus>('desktop_server_status');
     if (!call) {
       setDesktopStatus({
@@ -174,7 +170,7 @@ export function ServerAdmin() {
       const s = await call;
       setDesktopStatus(s);
       if (s.running) setEndpoint(s.endpoint);
-      if (s.adminToken && !token) setToken(s.adminToken);
+      if (s.adminToken) setToken((current) => current || s.adminToken!);
     } catch (e) {
       setDesktopStatus({
         available: false,
@@ -187,7 +183,11 @@ export function ServerAdmin() {
         message: `桌面服务状态读取失败：${e instanceof Error ? e.message : String(e)}`,
       });
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    void refreshDesktopStatus();
+  }, [refreshDesktopStatus]);
 
   async function controlDesktopServer(command: 'desktop_start_server' | 'desktop_stop_server') {
     const call = tauriInvoke<DesktopServerStatus>(command);

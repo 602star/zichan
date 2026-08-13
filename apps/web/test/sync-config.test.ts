@@ -52,4 +52,11 @@ describe('sync configuration', () => {
     expect(isUnauthorizedSyncError('HTTP 403 account disabled')).toBe(true);
     expect(isUnauthorizedSyncError(new Error('network timeout'))).toBe(false);
   });
+
+  it('creates distinct profile ids without depending on randomUUID', () => {
+    const first = newSyncProfile();
+    const second = newSyncProfile();
+    expect(first.id).toMatch(/^server_/);
+    expect(second.id).not.toBe(first.id);
+  });
 });

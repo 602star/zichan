@@ -1,9 +1,12 @@
 /** Test fixtures — build a small but representative Snapshot for selector tests. */
-import { newId } from '@zichan/core';
-import type {
-  Asset, Account, BudgetCategory, Category, Setting, ConversionChain, ConversionStep, Lot, Payee, PriceMark,
-  FixedAsset, FixedAssetCategory, FixedAssetEvent, Game, GameSeason, GameRecord, ReconciliationItem, ReconciliationSession,
-  ScheduledExecution, ScheduledTransaction, Transaction, TransactionLocation, TransactionSavedView, TransactionSplit, TransactionTag, TransactionTemplate,
+import {
+  newId,
+  type Asset, type Account, type BudgetCategory, type Category, type Setting, type ConversionChain,
+  type ConversionStep, type Lot, type Payee, type PriceMark, type FixedAsset, type FixedAssetCategory,
+  type FixedAssetEvent, type Game, type GameSeason, type GameRecord, type ReconciliationItem,
+  type ReconciliationSession, type ScheduledExecution, type ScheduledTransaction, type Transaction,
+  type TransactionLocation, type TransactionSavedView, type TransactionSplit, type TransactionTag,
+  type TransactionTemplate,
 } from '@zichan/core';
 import type { Snapshot } from '../src/db/snapshot.js';
 

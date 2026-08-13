@@ -1,9 +1,8 @@
 import type { SqlDriver } from '@zichan/db';
-import { isTauriRuntime } from '../tauri.js';
+import { isTauriRuntime, tauriInvoke } from '../tauri.js';
 import { loadDbBytes, saveDbBytes } from './idb.js';
 import { SqlJsDriver } from './sqljs-driver.js';
 import { TauriSqlDriver } from './tauri-sql-driver.js';
-import { tauriInvoke } from '../tauri.js';
 import {
   DEVICE_STORAGE_ENVELOPE_KEY,
   requireDeviceStorageSession,
