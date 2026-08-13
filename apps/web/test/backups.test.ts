@@ -10,6 +10,7 @@ import {
   openBackupContainer,
   parseEncryptedBackup,
   saveLedgerBackup,
+  suspendAutomaticBackups,
   type BackupPayload,
 } from '../src/db/backups.js';
 import { initializeLedgerKey, lockLedgerKey } from '../src/ledger-key-vault.js';
@@ -303,6 +304,54 @@ describe('encrypted backup archives', () => {
       expect(saved?.reason).toBe('auto');
       expect(bytes.length).toBeGreaterThan(128);
     } finally {
+      await store.close();
+    }
+  });
+
+  it('blocks new automatic backups and drains an existing flight before reset continues', async () => {
+    await initializeLedgerKey('ledger-auto-backup-drain-1234', 'backup-password');
+    let releaseCommit!: () => void;
+    let markCommitStarted!: () => void;
+    const commitMayFinish = new Promise<void>((resolve) => { releaseCommit = resolve; });
+    const commitStarted = new Promise<void>((resolve) => { markCommitStarted = resolve; });
+    let bytes: number[] = [];
+    const invoke = async <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
+      if (command === 'desktop_list_backup_files') return [] as T;
+      if (command === 'desktop_begin_backup_write') bytes = [];
+      if (command === 'desktop_append_backup_chunk') bytes.push(...args?.['chunk'] as number[]);
+      if (command === 'desktop_commit_backup_write') {
+        markCommitStarted();
+        await commitMayFinish;
+        return { path: 'C:/backups/drain.zcbak' } as T;
+      }
+      if (command === 'desktop_read_backup_chunk') {
+        const offset = Number(args?.['offset']);
+        return bytes.slice(offset, offset + Number(args?.['length'])) as T;
+      }
+      return undefined as T;
+    };
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { __TAURI_INTERNALS__: { invoke }, dispatchEvent: () => true },
+    });
+    const store = await openLedger({ deviceId: 'automatic-backup-drain' });
+    const flight = maybeAutoBackup(store);
+    await commitStarted;
+    const suspension = suspendAutomaticBackups();
+    try {
+      await expect(maybeAutoBackup(store)).resolves.toBeNull();
+      let drained = false;
+      const drain = suspension.drain().then(() => { drained = true; });
+      await Promise.resolve();
+      expect(drained).toBe(false);
+      releaseCommit();
+      await flight;
+      await drain;
+      expect(drained).toBe(true);
+    } finally {
+      releaseCommit();
+      suspension.resume();
+      await flight.catch(() => undefined);
       await store.close();
     }
   });

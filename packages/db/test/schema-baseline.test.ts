@@ -25,6 +25,13 @@ describe('current development schema baseline', () => {
     expect(syncTables).toContain('sync_conflict_groups');
     expect(syncTables).not.toContain('sync_events');
     expect(syncTables).not.toContain('sync_cursors');
+    expect(await driver.all<{ name: string; unique: number; partial: number }>('PRAGMA index_list(settings)'))
+      .toContainEqual(expect.objectContaining({ name: 'idx_settings_single_active', unique: 1, partial: 1 }));
+    await driver.run("INSERT INTO settings (id, is_deleted) VALUES ('first-setting', 0)");
+    await expect(driver.run("INSERT INTO settings (id, is_deleted) VALUES ('second-setting', 0)"))
+      .rejects.toThrow(/UNIQUE/);
+    await expect(driver.run("INSERT INTO settings (id, is_deleted) VALUES ('deleted-setting', 1)"))
+      .resolves.toBeDefined();
     expect(await runMigrations(driver, log)).toBe(0);
     await driver.close();
   });
@@ -42,11 +49,36 @@ INSERT INTO schema_migrations (version, name, applied_at) VALUES (16, 'old-item-
     await driver.close();
   });
 
+  it('does not add a migration marker to an unmarked historical database', async () => {
+    const driver = new NodeSqliteDriver();
+    await driver.exec('CREATE TABLE legacy_assets (id TEXT PRIMARY KEY, amount TEXT NOT NULL)');
+    await driver.run('INSERT INTO legacy_assets (id, amount) VALUES (?, ?)', ['kept', '12.34']);
+    const before = await driver.all<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    );
+
+    await expect(runMigrations(driver, log)).rejects.toBeInstanceOf(SchemaResetRequiredError);
+
+    expect(await driver.all<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    )).toEqual(before);
+    expect(await driver.all('SELECT * FROM legacy_assets')).toEqual([{ id: 'kept', amount: '12.34' }]);
+    await driver.close();
+  });
+
   it('rejects drift even when the current baseline marker exists', async () => {
     const driver = new NodeSqliteDriver();
     await runMigrations(driver, log);
     await driver.exec('ALTER TABLE fixed_assets ADD COLUMN unexpected_extra TEXT');
     await expect(runMigrations(driver, log)).rejects.toThrow(/fixed_assets 列不一致/);
+    await driver.close();
+  });
+
+  it('rejects a current marker when the singleton setting index is missing', async () => {
+    const driver = new NodeSqliteDriver();
+    await runMigrations(driver, log);
+    await driver.exec('DROP INDEX idx_settings_single_active');
+    await expect(runMigrations(driver, log)).rejects.toThrow(/idx_settings_single_active/);
     await driver.close();
   });
 });

@@ -374,6 +374,51 @@ describe('transactions persistence', () => {
     await store.close();
   });
 
+  it('builds a bounded dashboard transaction read model with exact balances', async () => {
+    const store = await openTransactionLedger();
+    await store.assets.put({ ...base(), id: 'JPY', code: 'JPY', name: 'Yen', type: 'fiat', decimals: 0, isActive: true } as never);
+    await store.accounts.put({ ...base(), id: 'cash', name: 'Cash', kind: 'cash', isActive: true } as never);
+    await store.accounts.put({ ...base(), id: 'opening', name: 'Opening', kind: 'other', isActive: true } as never);
+    await saveTransaction(store, tx({
+      id: 'dashboard-income', date: '2026-03-01', type: 'income', category: 'salary',
+      amount: '9007199254740992.01', accountId: undefined,
+    }));
+    await saveTransaction(store, tx({
+      id: 'dashboard-expense', date: '2026-03-02', amount: '9007199254740992.00', accountId: 'bank',
+    }));
+    await saveTransaction(store, tx({
+      id: 'dashboard-opening', date: '2026-03-03', type: 'income', category: 'salary', amount: '500',
+      accountId: 'opening', reportingTreatment: 'balance_only',
+    }));
+    await saveTransaction(store, tx({
+      id: 'dashboard-transfer', date: '2026-03-04', type: 'transfer', amount: '20',
+      accountId: 'bank', transferAmount: '3000', transferAssetId: 'JPY', transferAccountId: 'cash',
+    }));
+    await saveTransaction(store, tx({
+      id: 'dashboard-april', date: '2026-04-01', type: 'income', category: 'salary', amount: '7',
+    }));
+
+    const readModel = await store.dashboardTransactionReadModel({
+      from: '2026-03-01',
+      to: '2026-03-31',
+      activityLimit: 2,
+    });
+    const balance = (assetId: string) => readModel.balanceAggregates
+      .find((row) => row.assetId === assetId)!.amounts
+      .reduce((value, amount) => value.plus(amount), D(0)).toString();
+    expect(balance('GBP')).toBe('-12.99');
+    expect(balance('JPY')).toBe('3000');
+    expect(readModel.reportAggregates.map((row) => [row.direction, row.reportDate])).toEqual([
+      ['income', '2026-03-01'],
+      ['expense', '2026-03-02'],
+    ]);
+    expect(readModel.recentTransactions.map((row) => row.id)).toEqual([
+      'dashboard-transfer',
+      'dashboard-opening',
+    ]);
+    await store.close();
+  });
+
   it('keeps refund category allocation frozen after the original split is edited', async () => {
     const store = await openTransactionLedger();
     const draft = tx({ amount: '100', category: 'housing' });

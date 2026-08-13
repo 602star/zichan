@@ -47,6 +47,8 @@ export {
   type TransactionBrowseInput,
   type TransactionBrowsePage,
   type AccountBalanceAggregateRow,
+  type DashboardTransactionBalanceAggregateRow,
+  type DashboardTransactionReadModel,
   type AccountLedgerReadRow,
   type AccountLedgerPage,
   type ScheduledExecutionClaimInput,

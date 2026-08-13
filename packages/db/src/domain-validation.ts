@@ -819,6 +819,13 @@ async function validateReferenceEntity(
       for (const field of ['transactionDefaultAssetId', 'investmentCostAssetId', 'fixedAssetDefaultCurrencyAssetId', 'gameDefaultSettlementAssetId']) {
         if (row[field]) await activeAsset(driver, String(row[field]), field, allowInactiveReferences);
       }
+      if (row['ledgerKind'] !== undefined && row['ledgerKind'] !== 'personal' && row['ledgerKind'] !== 'demo') {
+        fail('账本类型无效', 'ledgerKind');
+      }
+      if (row['initializedAt'] !== undefined
+        && (typeof row['initializedAt'] !== 'string' || Number.isNaN(Date.parse(row['initializedAt'])))) {
+        fail('账本初始化时间无效', 'initializedAt');
+      }
       break;
     case 'price_mark':
       await activeAsset(driver, String(row['assetId'] ?? ''), 'assetId', allowInactiveReferences);

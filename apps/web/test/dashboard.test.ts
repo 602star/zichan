@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { round } from '@zichan/core';
+import type { DashboardTransactionReadModel } from '@zichan/db';
 import { buildDashboard } from '../src/selectors/dashboard.js';
 import { makeSnapshot, makeTransaction } from './fixtures.js';
 
@@ -49,6 +50,58 @@ describe('buildDashboard', () => {
     expect(round(v.txIncome, 2)).toBe('3000.00');
     expect(round(v.txExpense, 2)).toBe('40.00');
     expect(round(v.txNet, 2)).toBe('2960.00');
+  });
+
+  it('keeps selector results when transactions come from the bounded SQL read model', () => {
+    const s = makeSnapshot();
+    const income = makeTransaction({ id: 'income', date: '2026-03-01', type: 'income', category: 'salary', amount: '3000', assetId: s.ids.gbp });
+    const expense = makeTransaction({ id: 'expense', date: '2026-03-02', type: 'expense', category: 'food', amount: '40', assetId: s.ids.gbp });
+    const older = makeTransaction({ id: 'older', date: '2026-02-25', type: 'expense', category: 'shopping', amount: '99', assetId: s.ids.gbp });
+    s.transactions = [expense, income, older];
+    const range = { from: '2026-03-01', to: '2026-03-31' };
+    const legacy = buildDashboard(s, range);
+    const readModel: DashboardTransactionReadModel = {
+      balanceAggregates: [{ assetId: s.ids.gbp, amounts: ['3000', '-40', '-99'] }],
+      reportAggregates: [
+        { reportDate: income.date, reportAssetId: s.ids.gbp, direction: 'income', category: 'salary', amounts: ['3000'], count: 1 },
+        { reportDate: expense.date, reportAssetId: s.ids.gbp, direction: 'expense', category: 'food', amounts: ['40'], count: 1 },
+      ],
+      recentTransactions: [expense, income],
+    };
+    const bounded = buildDashboard({
+      ...s,
+      transactions: [],
+      transactionSplits: [],
+      refundAllocations: [],
+    }, range, readModel);
+
+    expect(bounded.netWorth).toBe(legacy.netWorth);
+    expect(bounded.txIncome.toString()).toBe(legacy.txIncome.toString());
+    expect(bounded.txExpense.toString()).toBe(legacy.txExpense.toString());
+    expect(bounded.txNet.toString()).toBe(legacy.txNet.toString());
+    expect(bounded.alloc).toEqual(legacy.alloc);
+    expect(bounded.activity).toEqual(legacy.activity);
+  });
+
+  it('keeps large activity amounts as exact decimal text through the read model', () => {
+    const s = makeSnapshot();
+    const transaction = makeTransaction({
+      id: 'large-activity', date: '2026-03-31', type: 'income', category: 'salary',
+      amount: '9007199254740992.01', assetId: s.ids.gbp, description: '精确大额',
+    });
+    const readModel: DashboardTransactionReadModel = {
+      balanceAggregates: [{ assetId: s.ids.gbp, amounts: [transaction.amount] }],
+      reportAggregates: [{
+        reportDate: transaction.date, reportAssetId: s.ids.gbp, direction: 'income',
+        category: transaction.category, amounts: [transaction.amount], count: 1,
+      }],
+      recentTransactions: [transaction],
+    };
+    const vm = buildDashboard({
+      ...s, transactions: [], transactionSplits: [], refundAllocations: [],
+    }, { from: '2026-03-01', to: '2026-03-31' }, readModel);
+
+    expect(vm.activity.find((row) => row.desc === '精确大额')?.amt).toBe('9007199254740992.01');
   });
 
   it('normalizes module-native amounts into the global report currency', () => {

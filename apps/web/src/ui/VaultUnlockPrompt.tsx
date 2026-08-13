@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   credentialVaultState,
   refreshCredentialVaultState,
@@ -9,6 +9,20 @@ import {
 import { loadAutoSync, loadSyncProfiles, SYNC_CONFIG_CHANGED_EVENT } from '../sync-config.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 
+export function runSynchronousFlight<T>(
+  flightRef: { current: Promise<T> | null },
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (flightRef.current) return flightRef.current;
+  const flight = Promise.resolve().then(operation);
+  flightRef.current = flight;
+  const release = () => {
+    if (flightRef.current === flight) flightRef.current = null;
+  };
+  void flight.then(release, release);
+  return flight;
+}
+
 export function VaultUnlockPrompt() {
   const [vault, setVault] = useState<CredentialVaultState>(credentialVaultState);
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(() => loadAutoSync().enabled);
@@ -16,6 +30,7 @@ export function VaultUnlockPrompt() {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const unlockFlight = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     void refreshCredentialVaultState().then(setVault).catch(() => undefined);
@@ -32,18 +47,20 @@ export function VaultUnlockPrompt() {
     };
   }, []);
 
-  async function unlock() {
-    setBusy(true);
-    setError('');
-    try {
-      await unlockCredentialVault(password, loadSyncProfiles().map((profile) => profile.id));
-      setVault(credentialVaultState());
-      setPassword('');
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setBusy(false);
-    }
+  function unlock(): Promise<void> {
+    return runSynchronousFlight(unlockFlight, async () => {
+      setBusy(true);
+      setError('');
+      try {
+        await unlockCredentialVault(password, loadSyncProfiles().map((profile) => profile.id));
+        setVault(credentialVaultState());
+        setPassword('');
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        setBusy(false);
+      }
+    });
   }
 
   if (dismissed || !autoSyncEnabled || vault.kind !== 'native-stronghold' || !vault.initialized || vault.unlocked) return null;

@@ -434,13 +434,46 @@ function compareValue(field: AdvancedQueryField, actual: unknown, expected: stri
   const b = expected.trim();
   if (!a || !b) return null;
   if (field === 'date' || field === 'time') return a.localeCompare(b);
+  if (field === 'amount') return finiteAmountFilterDecimal(a).cmp(finiteAmountFilterDecimal(b));
   try {
     const an = D(a);
     const bn = D(b);
     if (!an.isFinite() || !bn.isFinite()) return a.localeCompare(b);
-    return an.minus(bn).toNumber();
+    return an.cmp(bn);
   } catch {
     return a.localeCompare(b);
+  }
+}
+
+function finiteAmountFilterDecimal(value: string): ReturnType<typeof D> {
+  let decimal: ReturnType<typeof D>;
+  try {
+    decimal = D(value);
+  } catch {
+    throw new Error(`金额筛选值不是有效数字：${value}`);
+  }
+  if (!decimal.isFinite()) throw new Error(`金额筛选值不是有限数字：${value}`);
+  return decimal;
+}
+
+function assertFiniteAmountFilters(filters: TransactionFilters): void {
+  for (const value of [filters.amountMin, filters.amountMax]) {
+    if (value?.trim()) finiteAmountFilterDecimal(value.trim());
+  }
+  for (const group of filters.advanced?.groups ?? []) {
+    for (const condition of group.conditions) {
+      if (condition.field !== 'amount') continue;
+      if (condition.op === 'in') {
+        for (const value of valueList(condition.value)) finiteAmountFilterDecimal(value);
+      } else if (condition.op === 'between') {
+        if (condition.value?.trim() && condition.value2?.trim()) {
+          finiteAmountFilterDecimal(condition.value.trim());
+          finiteAmountFilterDecimal(condition.value2.trim());
+        }
+      } else if (['eq', 'neq', 'gte', 'lte'].includes(condition.op) && condition.value?.trim()) {
+        finiteAmountFilterDecimal(condition.value.trim());
+      }
+    }
   }
 }
 
@@ -450,13 +483,21 @@ function matchesCondition(snap: Snapshot, t: Transaction, condition: AdvancedQue
   if (condition.op === 'empty') return isEmptyValues(values);
   if (condition.op === 'not_empty') return !isEmptyValues(values);
   if (!needle && condition.op !== 'between') return true;
-  if (condition.op === 'eq') return values.some((v) => normalize(v) === needle);
-  if (condition.op === 'neq') return !values.some((v) => normalize(v) === needle);
+  if (condition.op === 'eq') return condition.field === 'amount'
+    ? values.some((v) => compareValue('amount', v, condition.value ?? '') === 0)
+    : values.some((v) => normalize(v) === needle);
+  if (condition.op === 'neq') return condition.field === 'amount'
+    ? !values.some((v) => compareValue('amount', v, condition.value ?? '') === 0)
+    : !values.some((v) => normalize(v) === needle);
   if (condition.op === 'contains') return values.some((v) => normalize(v).includes(needle));
   if (condition.op === 'not_contains') return !values.some((v) => normalize(v).includes(needle));
   if (condition.op === 'in') {
-    const allowed = valueList(condition.value).map(normalize);
-    return allowed.length === 0 || values.some((v) => allowed.includes(normalize(v)));
+    const allowed = valueList(condition.value);
+    if (condition.field === 'amount') {
+      return allowed.length === 0 || values.some((v) => allowed.some((item) => compareValue('amount', v, item) === 0));
+    }
+    const normalizedAllowed = allowed.map(normalize);
+    return normalizedAllowed.length === 0 || values.some((v) => normalizedAllowed.includes(normalize(v)));
   }
   if (condition.op === 'gte') return values.some((v) => {
     const cmp = compareValue(condition.field, v, condition.value ?? '');
@@ -497,8 +538,10 @@ function matches(snap: Snapshot, t: Transaction, filters: TransactionFilters, ra
   }
   if (filters.payeeId && filters.payeeId !== 'all' && t.payeeId !== filters.payeeId) return false;
   if (filters.tagId && filters.tagId !== 'all' && !(t.tagIds ?? []).includes(filters.tagId)) return false;
-  if (filters.amountMin && Number.isFinite(Number(filters.amountMin)) && D(t.amount || 0).lt(filters.amountMin)) return false;
-  if (filters.amountMax && Number.isFinite(Number(filters.amountMax)) && D(t.amount || 0).gt(filters.amountMax)) return false;
+  const amountMin = filters.amountMin?.trim();
+  const amountMax = filters.amountMax?.trim();
+  if (amountMin && D(t.amount || 0).lt(finiteAmountFilterDecimal(amountMin))) return false;
+  if (amountMax && D(t.amount || 0).gt(finiteAmountFilterDecimal(amountMax))) return false;
   if (filters.category !== 'all') {
     const cats = splitRows(snap, t).map((s) => s.category);
     if (t.category !== filters.category && !cats.includes(filters.category)) return false;
@@ -727,6 +770,7 @@ function itemForTransaction(snap: Snapshot, tx: Transaction, report: ReportCurre
 }
 
 export function buildFilteredTransactions(snap: Snapshot, filters: TransactionFilters): Transaction[] {
+  assertFiniteAmountFilters(filters);
   const asOf = snap.setting?.asOfDate ?? localDateIso();
   const range = transactionDateRange(asOf, filters);
   return snap.transactions

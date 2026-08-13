@@ -10,7 +10,15 @@ import {
 } from '../src/device-capabilities.js';
 import { appLockResumeAction, authenticateAppLock, shouldRelockApp } from '../src/ui/AppSecurityGate.js';
 import { getDeviceId } from '../src/db/cloud.js';
-import { closeStoreWhenCancelled } from '../src/db/store.js';
+import {
+  closeStoreOnce,
+  closeStoresBeforeStorageLock,
+  closeStoreWhenCancelled,
+  createVoidSingleFlight,
+  refreshLedgerKindSafely,
+  resetStoreLifecycle,
+  runScheduledTransactionsSafely,
+} from '../src/db/store.js';
 import { sharedBackupFileName } from '../src/db/backups.js';
 
 class MemoryStorage implements Storage {
@@ -125,6 +133,93 @@ describe('application lifecycle sync', () => {
     expect(close).toHaveBeenCalledOnce();
     expect(await closeStoreWhenCancelled({ close }, () => false)).toBe(false);
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('shares one close flight across initialization retry and effect cleanup', async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    const store = { close };
+    await Promise.all([
+      closeStoreOnce(store),
+      closeStoreOnce(store),
+      closeStoreWhenCancelled(store, () => true),
+    ]);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('shares one synchronous unlock flight and allows a retry after it settles', async () => {
+    const run = createVoidSingleFlight();
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => { release = resolve; });
+    const task = vi.fn(() => waiting);
+
+    const first = run(task);
+    const second = run(task);
+    expect(second).toBe(first);
+    expect(task).toHaveBeenCalledOnce();
+    release();
+    await first;
+
+    await run(task);
+    expect(task).toHaveBeenCalledTimes(2);
+  });
+
+  it('closes and clears every unique store before locking device storage', async () => {
+    const order: string[] = [];
+    const first = { close: vi.fn(async () => { order.push('close:first'); }) };
+    const second = { close: vi.fn(async () => { order.push('close:second'); }) };
+    await closeStoresBeforeStorageLock(
+      [first, second, first],
+      () => { order.push('clear'); },
+      async () => { order.push('lock'); },
+    );
+    expect(order).toEqual(['close:first', 'close:second', 'clear', 'lock']);
+    expect(first.close).toHaveBeenCalledOnce();
+  });
+
+  it('drains automatic backup work before reset and resumes it after reset failure', async () => {
+    const order: string[] = [];
+    let releaseDrain!: () => void;
+    const waiting = new Promise<void>((resolve) => { releaseDrain = resolve; });
+    const resume = vi.fn();
+    const reset = resetStoreLifecycle({
+      stores: [{ close: async () => { order.push('close'); } }],
+      clearStores: () => { order.push('clear'); },
+      lockStorage: async () => { order.push('lock'); },
+      resetPlatform: async () => {
+        order.push('reset');
+        throw new Error('delete blocked');
+      },
+      suspendBackups: () => ({
+        drain: async () => { order.push('drain'); await waiting; },
+        resume,
+      }),
+    });
+    await Promise.resolve();
+    expect(order).toEqual(['drain']);
+    releaseDrain();
+    await expect(reset).rejects.toThrow('delete blocked');
+    expect(order).toEqual(['drain', 'close', 'clear', 'lock', 'reset']);
+    expect(resume).toHaveBeenCalledOnce();
+  });
+
+  it('contains settings refresh and scheduled-runner rejections', async () => {
+    const report = vi.fn();
+    const apply = vi.fn();
+    const settingsStore = {
+      settings: { list: vi.fn().mockRejectedValue(new Error('settings unavailable')) },
+    } as unknown as Pick<SqlLedgerStore, 'settings'>;
+    await expect(refreshLedgerKindSafely(settingsStore, apply, report)).resolves.toBeUndefined();
+    await expect(runScheduledTransactionsSafely(
+      {} as SqlLedgerStore,
+      vi.fn(),
+      async () => { throw new Error('scheduler unavailable'); },
+      report,
+    )).resolves.toBeUndefined();
+    expect(apply).not.toHaveBeenCalled();
+    expect(report.mock.calls.map(([message]) => message)).toEqual([
+      'setting subscription refresh failed',
+      'scheduled transaction execution rejected',
+    ]);
   });
 
   it('uses unique timestamped names for shared backups', () => {

@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ConfirmDialog } from './ConfirmDialog.js';
-import { useBodyScrollLock } from './body-scroll-lock.js';
+import { DialogShell } from './DialogShell.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
 import { readAttachmentBlob, type AttachmentDraftData } from '../db/attachment-storage.js';
 import { useStore } from '../db/store.js';
@@ -131,6 +131,14 @@ function normalizeValues(fields: FieldDef[], values: Record<string, string>, cha
   return next;
 }
 
+export async function persistDraftBeforeClose(
+  persist: () => Promise<unknown>,
+  close: () => void,
+): Promise<void> {
+  await persist();
+  close();
+}
+
 export function EntityFormModal<T>({ spec, initial, onSave, onDelete, deleteLabel = '删除', onClose, optionalFieldKeys, onOptionalFieldKeysChange, optionalFieldPresets }: {
   spec: EntityFormSpec<T>;
   initial?: T;
@@ -143,6 +151,7 @@ export function EntityFormModal<T>({ spec, initial, onSave, onDelete, deleteLabe
   optionalFieldPresets?: { label: string; keys: string[] }[];
 }) {
   const formId = useId().replace(/:/g, '');
+  const titleId = `${formId}-title`;
   const initialValues = useMemo(
     () => initial ? { ...defaults(spec), ...spec.toValues(initial) } : defaults(spec),
     [initial, spec],
@@ -168,8 +177,6 @@ export function EntityFormModal<T>({ spec, initial, onSave, onDelete, deleteLabe
 
   const fingerprint = formDraftFingerprint(values, fileValues);
   const dirty = fingerprint !== initialFingerprint.current;
-
-  useBodyScrollLock();
 
   useEffect(() => {
     let cancelled = false;
@@ -338,18 +345,20 @@ export function EntityFormModal<T>({ spec, initial, onSave, onDelete, deleteLabe
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
       setBusy(false);
+      throw e;
     }
   }
 
   return (
-    <div className="zc-backdrop" onClick={requestClose}>
-      <div
-        className="zc-entity-modal"
-        onClick={(e) => e.stopPropagation()}
-        style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 26, width: `min(${spec.modalWidth ?? 560}px, 100%)`, maxHeight: '90vh', overflow: 'auto' }}
-      >
+    <DialogShell
+      labelledBy={titleId}
+      onDismiss={requestClose}
+      dismissDisabled={busy}
+      panelClassName="zc-entity-modal"
+      panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 26, width: `min(${spec.modalWidth ?? 560}px, 100%)`, maxHeight: '90vh', overflow: 'auto' }}
+    >
         <div className="zc-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
-          <div style={{ fontSize: 17, fontWeight: 800 }}>{initial ? '编辑' : '新增'} · {spec.title}</div>
+          <div id={titleId} style={{ fontSize: 17, fontWeight: 800 }}>{initial ? '编辑' : '新增'} · {spec.title}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {moreFields.length > 0 && onOptionalFieldKeysChange && (
               <button
@@ -359,7 +368,7 @@ export function EntityFormModal<T>({ spec, initial, onSave, onDelete, deleteLabe
                 字段显示
               </button>
             )}
-            <button onClick={requestClose} style={{ border: 'none', background: 'transparent', fontSize: 20, cursor: 'pointer', color: 'var(--fg-subtle)' }}>×</button>
+            <button type="button" data-dialog-initial-focus aria-label="关闭" onClick={requestClose} disabled={busy} style={{ border: 'none', background: 'transparent', fontSize: 20, cursor: busy ? 'not-allowed' : 'pointer', color: 'var(--fg-subtle)', opacity: busy ? 0.6 : 1 }}>×</button>
           </div>
         </div>
 
@@ -472,7 +481,7 @@ export function EntityFormModal<T>({ spec, initial, onSave, onDelete, deleteLabe
             )}
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={requestClose} style={{ padding: '9px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg-muted)', fontWeight: 700, cursor: 'pointer' }}>取消</button>
+            <button onClick={requestClose} disabled={busy} style={{ padding: '9px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg-muted)', fontWeight: 700, cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>取消</button>
             <button onClick={save} disabled={busy} style={{ padding: '9px 18px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 800, cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
               {busy ? '保存中…' : '保存'}
             </button>
@@ -497,15 +506,15 @@ export function EntityFormModal<T>({ spec, initial, onSave, onDelete, deleteLabe
             confirmLabel="保留草稿并关闭"
             cancelLabel="继续编辑"
             onCancel={() => setCloseOpen(false)}
-            onConfirm={() => {
-              void saveFormDraft(draftKey, values, fileValues, entityVersion).finally(onClose);
-            }}
+            onConfirm={() => persistDraftBeforeClose(
+              () => saveFormDraft(draftKey, values, fileValues, entityVersion),
+              onClose,
+            )}
           >
             当前修改尚未提交。关闭后会保留自动草稿，下次打开同一表单时继续填写。
           </ConfirmDialog>
         )}
-      </div>
-    </div>
+    </DialogShell>
   );
 }
 

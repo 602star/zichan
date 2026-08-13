@@ -92,6 +92,44 @@ describe('TauriSqlDriver', () => {
     expect(calls.some((call) => call.command === 'native_sql_execute' && String(call.args?.['query']).startsWith('RELEASE'))).toBe(true);
   });
 
+  it('closes the native pool when connection preparation fails', async () => {
+    const calls = installTauriMock((command) => {
+      if (command === 'native_sql_prepare') throw new Error('pragma failed');
+    });
+    await expect(TauriSqlDriver.open(DATABASE_KEY)).rejects.toThrow('pragma failed');
+    expect(calls.map((call) => call.command)).toEqual([
+      'native_sql_database_url',
+      'native_sql_open',
+      'native_sql_prepare',
+      'native_sql_close',
+    ]);
+  });
+
+  it('attempts native cleanup when opening the pool fails partway through', async () => {
+    const calls = installTauriMock((command) => {
+      if (command === 'native_sql_open') throw new Error('pool open failed');
+    });
+    await expect(TauriSqlDriver.open(DATABASE_KEY)).rejects.toThrow('pool open failed');
+    expect(calls.map((call) => call.command)).toEqual([
+      'native_sql_database_url',
+      'native_sql_open',
+      'native_sql_close',
+    ]);
+  });
+
+  it('preserves the open error when best-effort native cleanup also fails', async () => {
+    const calls = installTauriMock((command) => {
+      if (command === 'native_sql_open') throw new Error('original open failure');
+      if (command === 'native_sql_close') throw new Error('cleanup failure');
+    });
+    await expect(TauriSqlDriver.open(DATABASE_KEY)).rejects.toThrow('original open failure');
+    expect(calls.map((call) => call.command)).toEqual([
+      'native_sql_database_url',
+      'native_sql_open',
+      'native_sql_close',
+    ]);
+  });
+
   it('serializes independent root transactions instead of nesting them', async () => {
     let releaseFirst!: () => void;
     let markFirstStarted!: () => void;
@@ -135,6 +173,20 @@ describe('TauriSqlDriver', () => {
     expect(platform.backend).toBe('native-sqlite');
     expect(platform.dataLocation).toContain('ledger.sqlite');
     await platform.driver.close();
+  });
+
+  it('closes a prepared native driver when its display path cannot be read', async () => {
+    const calls = installTauriMock((command) => {
+      if (command === 'native_sql_database_path') throw new Error('path unavailable');
+    });
+    await expect(openPlatformDriver(TEST_PROTECTION)).rejects.toThrow('path unavailable');
+    expect(calls.map((call) => call.command)).toEqual([
+      'native_sql_database_url',
+      'native_sql_open',
+      'native_sql_prepare',
+      'native_sql_database_path',
+      'native_sql_close',
+    ]);
   });
 
   it('resets the same AppData database URL and native attachments', async () => {

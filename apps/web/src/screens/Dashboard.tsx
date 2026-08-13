@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useDashboardTransactionReadModel } from '../db/dashboard-read-model.js';
 import { useSnapshot } from '../db/snapshot.js';
 import { buildDashboard } from '../selectors/dashboard.js';
 import { money, signedMoney, pct } from '../format.js';
@@ -12,7 +13,11 @@ function fmtDate(d: string) {
 export function Dashboard() {
   const snap = useSnapshot('dashboard');
   const [dateRange, setDateRange] = useState<DateRangeValue>(() => dateRangeValue('this_month'));
-  const vm = useMemo(() => (snap ? buildDashboard(snap, dateRange) : null), [dateRange, snap]);
+  const transactionReadModel = useDashboardTransactionReadModel(dateRange);
+  const vm = useMemo(
+    () => (snap && transactionReadModel ? buildDashboard(snap, dateRange, transactionReadModel) : null),
+    [dateRange, snap, transactionReadModel],
+  );
   if (!vm) return null;
   const partial = (metric: string) => vm.incompleteMetrics.includes(metric);
   const partialText = (metric: string, value: string) => partial(metric) ? `${value}（已知部分）` : value;
@@ -44,7 +49,7 @@ export function Dashboard() {
           <div style={{ fontSize: 12, color: 'var(--fg-subtle)', fontWeight: 700, letterSpacing: 0, marginBottom: 6 }}>资产快照</div>
           {[
             ['所选期间投入', partialText('investedFiat', money(vm.investedFiat)), 'var(--fg)'],
-            ['未实现盈亏', partialText('unrealized', signedMoney(vm.unrealized)), Number(vm.unrealized) >= 0 ? 'var(--positive)' : 'var(--negative)'],
+            ['未实现盈亏', partialText('unrealized', signedMoney(vm.unrealized)), vm.unrealized.isNegative() ? 'var(--negative)' : 'var(--positive)'],
             ['持仓资产类别', `${vm.alloc.length} 类`, 'var(--fg)'],
             ['物品资产每日成本', partialText('fixedPerDay', money(vm.fixedPerDay)), 'var(--fg)'],
             ['报表基准日', vm.asOf, 'var(--fg)'],
@@ -60,10 +65,10 @@ export function Dashboard() {
       <div className="zc-dashboard-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 16 }}>
         {[
           ['期间法币投入', partialText('investedFiat', money(vm.investedFiat)), '买入与定投链路', 'var(--fg)'],
-          ['未实现盈亏', partialText('unrealized', signedMoney(vm.unrealized)), '加密资产持仓', Number(vm.unrealized) >= 0 ? 'var(--positive)' : 'var(--negative)'],
-          ['期间已实现盈亏', partialText('realizedCrypto', signedMoney(vm.realizedCrypto)), '所选日期内卖出链路', Number(vm.realizedCrypto) >= 0 ? 'var(--positive)' : 'var(--negative)'],
-          ['期间游戏净收益', partialText('seasonNet', signedMoney(vm.seasonNet)), '所选日期内游戏记录', Number(vm.seasonNet) >= 0 ? 'var(--positive)' : 'var(--negative)'],
-          ['期间日常收支', partialText('transactions', signedMoney(vm.txNet)), `收入 ${money(vm.txIncome)} · 支出 ${money(vm.txExpense)}${partial('transactions') ? ' · 均为已知部分' : ''}`, Number(vm.txNet) >= 0 ? 'var(--positive)' : 'var(--negative)'],
+          ['未实现盈亏', partialText('unrealized', signedMoney(vm.unrealized)), '加密资产持仓', vm.unrealized.isNegative() ? 'var(--negative)' : 'var(--positive)'],
+          ['期间已实现盈亏', partialText('realizedCrypto', signedMoney(vm.realizedCrypto)), '所选日期内卖出链路', vm.realizedCrypto.isNegative() ? 'var(--negative)' : 'var(--positive)'],
+          ['期间游戏净收益', partialText('seasonNet', signedMoney(vm.seasonNet)), '所选日期内游戏记录', vm.seasonNet.isNegative() ? 'var(--negative)' : 'var(--positive)'],
+          ['期间日常收支', partialText('transactions', signedMoney(vm.txNet)), `收入 ${money(vm.txIncome)} · 支出 ${money(vm.txExpense)}${partial('transactions') ? ' · 均为已知部分' : ''}`, vm.txNet.isNegative() ? 'var(--negative)' : 'var(--positive)'],
         ].map(([label, value, subv, color]) => (
           <div key={label} style={cardTight}>
             <div style={{ fontSize: 12, color: 'var(--fg-muted)', fontWeight: 600 }}>{label}</div>
@@ -135,7 +140,7 @@ export function Dashboard() {
                   <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 1 }}>{ev.type} · {ev.detail}</div>
                 </div>
                 <div style={{ fontSize: 13, flexShrink: 0, ...(ev.amt === undefined ? { color: 'var(--warning)' } : amountColor(ev.amt)) }}>
-                  {ev.amt === undefined ? '未折算' : ev.amt === 0 ? money(0) : signedMoney(ev.amt)}
+                  {ev.amt === undefined ? '未折算' : signedMoney(ev.amt)}
                 </div>
               </div>
             ))}

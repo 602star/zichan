@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { useEffect, useId, useMemo, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import {
   D, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, newId,
   type BudgetCategory, type Category, type Payee, type ReconciliationSession,
@@ -69,6 +69,7 @@ import {
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
 import { ReconciliationModal } from './ReconciliationModal.js';
+import { DialogShell } from '../ui/DialogShell.js';
 
 const TYPE_OPTIONS: { value: 'all' | TransactionType; label: string }[] = [
   { value: 'all', label: '全部' },
@@ -281,8 +282,10 @@ export function Transactions() {
     payeeId: !viewFilters.payeeId || viewFilters.payeeId === 'all' ? undefined : viewFilters.payeeId,
     tagId: !viewFilters.tagId || viewFilters.tagId === 'all' ? undefined : viewFilters.tagId,
     status: !viewFilters.status || viewFilters.status === 'all' ? undefined : viewFilters.status,
-    amountMin: viewFilters.amountMin && Number.isFinite(Number(viewFilters.amountMin)) ? viewFilters.amountMin : undefined,
-    amountMax: viewFilters.amountMax && Number.isFinite(Number(viewFilters.amountMax)) ? viewFilters.amountMax : undefined,
+    // Keep the user's decimal text intact. The repository validates finite
+    // Decimal values and reports invalid input through transactionReadError.
+    amountMin: viewFilters.amountMin?.trim() || undefined,
+    amountMax: viewFilters.amountMax?.trim() || undefined,
     search: viewFilters.search,
     advanced: viewFilters.advanced ? {
       groups: viewFilters.advanced.groups.map((group) => ({
@@ -1059,7 +1062,7 @@ export function Transactions() {
                     <span style={{ fontSize: 11, color: 'var(--fg-subtle)' }}>{item.tx.date}{item.tx.time ? ` ${item.tx.time}` : ''}</span>
                     <b style={{ fontSize: 12 }}>{item.categoryLabel}</b>
                     <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.tx.description ?? item.payeeName}</span>
-                    <b style={{ justifySelf: 'end', ...amountColor(Number(item.signedAmount)) }}>{item.tx.type === 'income' || item.tx.type === 'refund' ? '+' : item.tx.type === 'expense' ? '-' : ''}{item.tx.amount} {item.assetCode}</b>
+                    <b style={{ justifySelf: 'end', ...amountColor(item.signedAmount) }}>{item.tx.type === 'income' || item.tx.type === 'refund' ? '+' : item.tx.type === 'expense' ? '-' : ''}{item.tx.amount} {item.assetCode}</b>
                   </div>
                 )}
                 renderSummary={(rows) => {
@@ -1124,7 +1127,7 @@ export function Transactions() {
                 <td style={tdStyle}>{r.title}</td>
                 <td style={tdStyle}>{r.categoryLabel}</td>
                 <td style={tdStyle}>{r.statusLabel}</td>
-                <td style={{ ...tdStyle, ...amountColor(Number(r.amount)) }}>{signedMoney(r.amount)} {r.assetCode}</td>
+                <td style={{ ...tdStyle, ...amountColor(r.amount) }}>{signedMoney(r.amount)} {r.assetCode}</td>
                 <td style={tdStyle}>{r.balance} {r.assetCode}</td>
               </tr>
             ))}
@@ -1148,7 +1151,7 @@ export function Transactions() {
                 <td style={tdStyle}>{snap.accounts.find((a) => a.id === r.accountId)?.name ?? r.accountId}</td>
                 <td style={tdStyle}>{snap.assets.find((a) => a.id === r.assetId)?.code ?? r.assetId}</td>
                 <td style={tdStyle}>{r.statementBalance}</td>
-                <td style={{ ...tdStyle, ...amountColor(-Number(r.difference)) }}>{r.difference}</td>
+                <td style={{ ...tdStyle, ...amountColor(D(r.difference).negated()) }}>{r.difference}</td>
                 <td style={tdStyle}>{r.status === 'closed' ? '已完成' : '进行中'}</td>
               </tr>
             ))}
@@ -1942,7 +1945,7 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, usesAccounts, 
                     </span>
                   </span>
                   {usesAccounts && <span style={{ fontSize: 11, color: 'var(--fg-subtle)', fontWeight: 800 }}>{item.statusLabel}</span>}
-                  <span style={{ justifySelf: 'end', fontSize: 14, ...amountColor(Number(item.signedAmount)) }}>
+                  <span style={{ justifySelf: 'end', fontSize: 14, ...amountColor(item.signedAmount) }}>
                     {tx.type === 'transfer' ? '' : tx.type === 'income' || tx.type === 'refund' || (tx.type === 'adjustment' && tx.adjustmentDirection === 'increase') ? '+' : '-'}{tx.amount} {item.assetCode}
                   </span>
                   <span style={{ justifySelf: 'end' }}>
@@ -1973,6 +1976,7 @@ function BatchEditModal(props: {
   onSave: (patch: BatchPatch) => Promise<void>;
   onClose: () => void;
 }) {
+  const titleId = useId();
   const { snap, usesAccounts, count, transactions, onSave, onClose } = props;
   const [category, setCategory] = useState('');
   const [payeeId, setPayeeId] = useState('');
@@ -1983,6 +1987,7 @@ function BatchEditModal(props: {
   const [removeTagIds, setRemoveTagIds] = useState<string[]>([]);
   const [review, setReview] = useState(false);
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
   const readMulti = (e: ChangeEvent<HTMLSelectElement>) => [...e.target.selectedOptions].map((o) => o.value);
   const patch: BatchPatch = {
     category: category || undefined,
@@ -2016,20 +2021,28 @@ function BatchEditModal(props: {
     }
     try {
       setError('');
+      setBusy(true);
       await onSave(patch);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setBusy(false);
     }
   };
   return (
-    <div className="zc-backdrop" style={{ background: 'rgba(0,0,0,.34)', zIndex: 30 }}>
-      <div className="zc-entity-modal zc-batch-modal" style={{ width: 'min(760px, 100%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18, boxShadow: '0 18px 60px rgba(0,0,0,.2)' }}>
+    <DialogShell
+      labelledBy={titleId}
+      onDismiss={onClose}
+      dismissDisabled={busy}
+      backdropStyle={{ background: 'rgba(0,0,0,.34)' }}
+      panelClassName="zc-entity-modal zc-batch-modal"
+      panelStyle={{ width: 'min(760px, 100%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18, boxShadow: '0 18px 60px rgba(0,0,0,.2)' }}
+    >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 900 }}>批量修改流水</div>
+            <div id={titleId} style={{ fontSize: 16, fontWeight: 900 }}>批量修改流水</div>
             <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 3 }}>将修改应用到 {count} 条流水，金额不会被批量改动。</div>
           </div>
-          <button onClick={onClose} style={button}>关闭</button>
+          <button type="button" data-dialog-initial-focus disabled={busy} onClick={onClose} style={button}>关闭</button>
         </div>
         <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
           <select style={selectStyle} value={category} onChange={(e) => { markDirty(); setCategory(e.target.value); }}>
@@ -2091,11 +2104,10 @@ function BatchEditModal(props: {
         </div>
         {error && <div style={{ color: 'var(--negative)', fontSize: 12, fontWeight: 800, marginTop: 12 }}>{error}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-          <button onClick={onClose} style={button}>取消</button>
-          <button onClick={() => void submit()} style={primary}>{review ? '确认应用' : '预览修改'}</button>
+          <button onClick={onClose} disabled={busy} style={button}>取消</button>
+          <button onClick={() => void submit()} disabled={busy} style={primary}>{busy ? '正在应用…' : review ? '确认应用' : '预览修改'}</button>
         </div>
-      </div>
-    </div>
+    </DialogShell>
   );
 }
 

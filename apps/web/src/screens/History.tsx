@@ -16,6 +16,7 @@ import { card, tag as tagStyle, th as thStyle, td as tdStyle } from '../ui/style
 import { categoryLabel, TYPE_LABEL } from '../transactionMeta.js';
 import { DateRangeBar, localDateOfInstant, localDateRangeToUtc, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
+import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 
 type EventKind = 'batch' | 'operation' | 'resolution';
 type SourceFilter = 'user' | 'all' | 'local' | 'remote_sync' | 'import' | 'system' | 'conflict_resolution';
@@ -200,6 +201,7 @@ export function History() {
   const [search, setSearch] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
   const [actionMessage, setActionMessage] = useState('');
+  const [pendingReverseBatch, setPendingReverseBatch] = useState<BusinessCompensationRecord | null>(null);
 
   async function reverseOperation(log: OperationLogEntry) {
     setActionBusy(true);
@@ -237,16 +239,17 @@ export function History() {
   }
 
   async function reverseBatch(compensation: BusinessCompensationRecord) {
-    if (!window.confirm(`撤销“${compensation.label}”的全部 ${compensation.affectedEntities.length} 项变更？`)) return;
     setActionBusy(true);
     setActionMessage('');
     try {
       await undoBusinessCompensation(store, compensation.id);
       await reconcileAttachmentStorage(store);
       setActionMessage('已完整撤销该批次。');
+      setPendingReverseBatch(null);
       bump();
     } catch (error) {
       setActionMessage(error instanceof Error ? error.message : String(error));
+      throw error;
     } finally {
       setActionBusy(false);
     }
@@ -336,6 +339,7 @@ export function History() {
   const selected = filtered.find((e) => e.id === selectedId) ?? filtered[0];
 
   return (
+    <>
     <div className="zc-history-layout" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.05fr) minmax(360px, .95fr)', gap: 18, alignItems: 'start' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
         <div style={card}>
@@ -426,10 +430,24 @@ export function History() {
           actionMessage={actionMessage}
           compensation={selected?.kind === 'batch' ? compensationByBatch.get(selected.batch.id) : undefined}
           onReverse={reverseOperation}
-          onReverseBatch={reverseBatch}
+          onReverseBatch={async (compensation) => setPendingReverseBatch(compensation)}
         />
       </div>
     </div>
+    {pendingReverseBatch && (
+      <ConfirmDialog
+        title="撤销整批操作"
+        confirmLabel="确认撤销"
+        cancelLabel="取消"
+        tone="danger"
+        busy={actionBusy}
+        onCancel={() => setPendingReverseBatch(null)}
+        onConfirm={() => reverseBatch(pendingReverseBatch)}
+      >
+        确定撤销“{pendingReverseBatch.label}”的全部 {pendingReverseBatch.affectedEntities.length} 项变更？附件状态也会一并重新核对。
+      </ConfirmDialog>
+    )}
+    </>
   );
 }
 

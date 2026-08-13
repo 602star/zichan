@@ -1080,6 +1080,22 @@ export interface AccountBalanceAggregateRow {
   amounts: string[];
 }
 
+export interface DashboardTransactionBalanceAggregateRow {
+  assetId: string;
+  amounts: string[];
+}
+
+/** Transaction-only slice of the dashboard read model.
+ *
+ * Amounts remain decimal strings so the caller can sum and convert them with
+ * @zichan/core instead of losing precision in SQLite or JavaScript numbers.
+ */
+export interface DashboardTransactionReadModel {
+  balanceAggregates: DashboardTransactionBalanceAggregateRow[];
+  reportAggregates: TransactionReportAggregateRow[];
+  recentTransactions: import('@zichan/core').Transaction[];
+}
+
 export interface AccountLedgerReadRow {
   transaction: import('@zichan/core').Transaction;
   assetId: string;
@@ -1256,6 +1272,33 @@ const TRANSACTION_POSTINGS_CTE = `postings AS (
   FROM transactions t
   WHERE t.is_deleted = 0 AND COALESCE(t.record_state, 'active') = 'active'
     AND t.type = 'transfer' AND t.transfer_account_id IS NOT NULL
+)`;
+
+/** Dashboard balances include account-less postings but exclude the special
+ * equity/opening accounts, matching apps/web's financialPostings contract. */
+const DASHBOARD_TRANSACTION_POSTINGS_CTE = `dashboard_postings AS (
+  SELECT t.asset_id AS asset_id,
+         CASE
+           WHEN t.type IN ('income', 'refund') THEN t.amount
+           WHEN t.type = 'adjustment' AND t.adjustment_direction <> 'decrease' THEN t.amount
+           ELSE CASE WHEN substr(t.amount, 1, 1) = '-' THEN t.amount ELSE '-' || t.amount END
+         END AS posting_amount
+  FROM transactions t
+  WHERE t.is_deleted = 0 AND COALESCE(t.record_state, 'active') = 'active'
+    AND NOT EXISTS (
+      SELECT 1 FROM accounts a
+      WHERE a.id = t.account_id AND a.is_deleted = 0 AND a.kind = 'other'
+    )
+  UNION ALL
+  SELECT COALESCE(t.transfer_asset_id, t.asset_id) AS asset_id,
+         COALESCE(t.transfer_amount, t.amount) AS posting_amount
+  FROM transactions t
+  WHERE t.is_deleted = 0 AND COALESCE(t.record_state, 'active') = 'active'
+    AND t.type = 'transfer'
+    AND NOT EXISTS (
+      SELECT 1 FROM accounts a
+      WHERE a.id = t.transfer_account_id AND a.is_deleted = 0 AND a.kind = 'other'
+    )
 )`;
 
 const TRANSACTION_RECONCILIATION_STATUS_SQL = `CASE
@@ -1962,11 +2005,16 @@ export class SqlLedgerStore implements LedgerStore {
     label: string,
     fn: (store: this) => Promise<T>,
     type: AuditBatch['type'] = 'system',
-    options: { undoable?: boolean } = {},
+    options: {
+      undoable?: boolean;
+      /** Runs immediately after the outer SQLite transaction commits. */
+      onCommitted?: (result: T) => void | Promise<void>;
+    } = {},
   ): Promise<T> {
     if (this.ctx.audit?.batchId) return this.transaction(fn);
     this.ctx.compensationSignal.latestId = undefined;
     const batch = await this.createAuditBatch({ id: newId(), type, label, entityCount: 0 });
+    let transactionCommitted = false;
     try {
       const result = await this.withAuditContext(
         { batchId: batch.id, source: 'local' },
@@ -1978,16 +2026,34 @@ export class SqlLedgerStore implements LedgerStore {
           return value;
         }),
       );
+      transactionCommitted = true;
+      await options.onCommitted?.(result);
       const entityCount = (await this.operationLog({ batchId: batch.id })).length;
       await this.finishAuditBatch(batch.id, { entityCount, appliedCount: entityCount, outcome: 'applied' });
       return result;
     } catch (error) {
-      await this.finishAuditBatch(batch.id, {
-        entityCount: 0,
-        appliedCount: 0,
-        outcome: 'invalid',
-        summary: error instanceof Error ? error.message : String(error),
-      });
+      if (!transactionCommitted) {
+        try {
+          await this.finishAuditBatch(batch.id, {
+            entityCount: 0,
+            appliedCount: 0,
+            outcome: 'invalid',
+            summary: error instanceof Error ? error.message : String(error),
+          });
+        } catch (auditError) {
+          this.log.warn('failed to finalize rejected audit batch', {
+            batchId: batch.id,
+            error: auditError instanceof Error ? auditError.message : String(auditError),
+          });
+        }
+      } else {
+        // The business mutation can no longer be rolled back. In particular,
+        // callers coordinating recoverable file staging must retain that state.
+        this.log.warn('post-commit audit batch finalization failed', {
+          batchId: batch.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       throw error;
     }
   }
@@ -2063,7 +2129,7 @@ export class SqlLedgerStore implements LedgerStore {
     const reportDate = "CASE WHEN type = 'refund' THEN COALESCE(refund_effect_date, date) ELSE date END";
     const clauses = [
       'is_deleted = 0',
-      "record_state = 'active'",
+      "COALESCE(record_state, 'active') = 'active'",
       "type NOT IN ('transfer', 'adjustment')",
     ];
     const params: SqlParam[] = [];
@@ -2410,6 +2476,55 @@ export class SqlLedgerStore implements LedgerStore {
     }));
   }
 
+  async dashboardTransactionReadModel(input: {
+    from?: string;
+    to?: string;
+    activityLimit?: number;
+  } = {}): Promise<DashboardTransactionReadModel> {
+    const activityLimit = Math.max(1, Math.min(100, Math.trunc(Number(input.activityLimit ?? 6))));
+    const activityClauses = [
+      't.is_deleted = 0',
+      "COALESCE(t.record_state, 'active') = 'active'",
+    ];
+    const activityParams: SqlParam[] = [];
+    if (input.from) {
+      activityClauses.push('t.date >= ?');
+      activityParams.push(input.from);
+    }
+    if (input.to) {
+      activityClauses.push('t.date <= ?');
+      activityParams.push(input.to);
+    }
+
+    const [balanceRows, reportAggregates, recentRows] = await Promise.all([
+      this.driver.all<Record<string, unknown>>(
+        `WITH ${DASHBOARD_TRANSACTION_POSTINGS_CTE}
+         SELECT asset_id, json_group_array(posting_amount) AS amounts_json
+         FROM dashboard_postings
+         GROUP BY asset_id
+         ORDER BY asset_id`,
+      ),
+      this.transactionReportAggregate({ from: input.from, to: input.to }),
+      this.driver.all<Record<string, unknown>>(
+        `SELECT t.* FROM transactions t
+         WHERE ${activityClauses.join(' AND ')}
+         ORDER BY t.date DESC, t.id DESC
+         LIMIT ?`,
+        [...activityParams, activityLimit],
+      ),
+    ]);
+
+    return {
+      balanceAggregates: balanceRows.map((row) => ({
+        assetId: String(row['asset_id']),
+        amounts: JSON.parse(String(row['amounts_json'])) as string[],
+      })),
+      reportAggregates,
+      recentTransactions: recentRows.map((row) =>
+        rowToEntity<import('@zichan/core').Transaction>(TABLES.transactions, row)),
+    };
+  }
+
   async accountLedgerPage(input: {
     accountId: string;
     assetId?: string;
@@ -2529,7 +2644,7 @@ export class SqlLedgerStore implements LedgerStore {
     const assetExpression = "CASE WHEN type = 'refund' THEN COALESCE(refund_applied_asset_id, asset_id) ELSE asset_id END";
     const clauses = [
       'is_deleted = 0',
-      "record_state = 'active'",
+      "COALESCE(record_state, 'active') = 'active'",
       "type IN ('income', 'expense', 'refund')",
       "COALESCE(reporting_treatment, 'ordinary') <> 'balance_only'",
     ];

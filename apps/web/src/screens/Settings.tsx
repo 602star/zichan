@@ -48,7 +48,6 @@ import { moduleCurrencyId, moduleCurrencyPatch, type CurrencyModule } from '../c
 import { importPortableLedger } from '../db/portable-backup.js';
 import { reconcileAttachmentStorage } from '../db/attachment-storage.js';
 import { checkAllAttachmentFiles, cleanupAllTestTransactions } from '../db/settings-maintenance.js';
-import { resetPlatformData } from '../db/platform-driver.js';
 
 const METHODS: [LotMethod, string][] = [
   ['fifo', 'FIFO · 先进先出'], ['lifo', 'LIFO · 后进先出'], ['average', '平均成本'], ['manual', '手动选择批次'],
@@ -80,7 +79,7 @@ const ISSUE_LABELS: Record<string, string> = {
 };
 
 export function Settings() {
-  const { store, bump, storageBackend, dataLocation } = useStore();
+  const { store, bump, storageBackend, dataLocation, resetLocalData } = useStore();
   const snap = useSnapshot('settings');
   const [issues, setIssues] = useState<ConsistencyIssue[] | null>(null);
   const [lastCheck, setLastCheck] = useState<{ at: string; count: number } | null>(null);
@@ -257,10 +256,11 @@ export function Settings() {
       setRemoteBackups((rows) => rows.filter((row) =>
         row.profile.id !== pending.profile.id || row.backup.archiveId !== pending.backup.archiveId));
       setBackupNote(`已将“${pending.backup.label}”移入 ${pending.profile.alias} 的服务器回收区。`);
+      setPendingRemoteDelete(null);
     } catch (error) {
       setBackupNote(`删除服务器备份失败：${error instanceof Error ? error.message : String(error)}`);
+      throw error;
     } finally {
-      setPendingRemoteDelete(null);
       setBackupBusy(null);
     }
   }
@@ -372,16 +372,16 @@ export function Settings() {
         : `合并导入完成：处理 ${result.entities} 条数据。`);
       await refreshBackups();
       bump();
+      setPendingRestore(null);
     } catch (error) {
       setBackupNote(`恢复失败：${error instanceof Error ? error.message : String(error)}`);
+      throw error;
     } finally {
-      setPendingRestore(null);
       setBackupBusy(null);
     }
   }
   async function resetData() {
-    await resetPlatformData();
-    location.reload();
+    await resetLocalData();
   }
   async function cleanupTestTransactions() {
     setBackupBusy('cleanup-test');
@@ -395,6 +395,7 @@ export function Settings() {
       bump();
     } catch (error) {
       setBackupNote(`清理测试流水失败：${error instanceof Error ? error.message : String(error)}`);
+      throw error;
     } finally {
       setBackupBusy(null);
     }
@@ -767,12 +768,12 @@ export function Settings() {
       <div style={card}>
         <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 8 }}>数据</div>
         <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginBottom: 12 }}>
-          导出 / 导入加密 .zcbak 备份在顶栏。重置会清空本地库并重新载入演示数据。
+          导出 / 导入加密 .zcbak 备份在顶栏。重置会清空本机数据并返回首次设置，可重新选择空账本、导入备份或演示账本。
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={purgeOld} style={outline}>清理已确认的删除记录</button>
           <button onClick={() => setCleanupOpen(true)} disabled={backupBusy !== null} style={outline}>清理测试流水</button>
-          <button onClick={() => setResetOpen(true)} style={{ ...outline, border: '1px solid var(--negative)', color: 'var(--negative)' }}>重置为演示数据</button>
+          <button onClick={() => setResetOpen(true)} style={{ ...outline, border: '1px solid var(--negative)', color: 'var(--negative)' }}>重置本机账本</button>
         </div>
       </div>
       {pendingRestore && (
@@ -818,14 +819,14 @@ export function Settings() {
       )}
       {resetOpen && (
         <ConfirmDialog
-          title="重置为演示数据"
+          title="重置本机账本"
           confirmLabel="重置"
           cancelLabel="取消"
           tone="danger"
           onCancel={() => setResetOpen(false)}
           onConfirm={resetData}
         >
-          重置会清空当前浏览器本地数据库并重新载入演示账本。同库自动备份会一起删除，外部目录或桌面备份目录中的副本不受影响。
+          重置会关闭当前数据库，并清空本机账本、附件、表单草稿和浏览器内备份。重新打开后需要再次设置本机数据密码，并从“空账本 / 导入备份 / 体验演示”中选择；外部目录或服务器副本不受影响。
         </ConfirmDialog>
       )}
     </div>

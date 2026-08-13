@@ -3,6 +3,7 @@ import { isTauriRuntime, tauriInvoke } from '../tauri.js';
 import { loadDbBytes, saveDbBytes } from './idb.js';
 import { SqlJsDriver } from './sqljs-driver.js';
 import { TauriSqlDriver } from './tauri-sql-driver.js';
+import { acquireBrowserLedgerLock } from './browser-ledger-lock.js';
 import {
   DEVICE_STORAGE_ENVELOPE_KEY,
   requireDeviceStorageSession,
@@ -23,18 +24,33 @@ export async function openPlatformDriver(
   if (isTauriRuntime()) {
     if (!protection.databaseKeyHex) throw new Error('Stronghold 未提供原生数据库密钥');
     const driver = await TauriSqlDriver.open(protection.databaseKeyHex);
-    return {
-      driver,
-      backend: 'native-sqlite',
-      dataLocation: `${await driver.dataPath()} · SQLCipher`,
-    };
+    try {
+      return {
+        driver,
+        backend: 'native-sqlite',
+        dataLocation: `${await driver.dataPath()} · SQLCipher`,
+      };
+    } catch (error) {
+      await driver.close().catch(() => undefined);
+      throw error;
+    }
   }
-  const bytes = await loadDbBytes(protection.cryptoSession);
-  return {
-    driver: await SqlJsDriver.open(bytes, (next) => saveDbBytes(next, protection.cryptoSession)),
-    backend: 'browser-indexeddb',
-    dataLocation: 'IndexedDB · 加密 ledger.sqlite',
-  };
+  const releaseLock = await acquireBrowserLedgerLock();
+  try {
+    const bytes = await loadDbBytes(protection.cryptoSession);
+    return {
+      driver: await SqlJsDriver.open(
+        bytes,
+        (next) => saveDbBytes(next, protection.cryptoSession),
+        releaseLock,
+      ),
+      backend: 'browser-indexeddb',
+      dataLocation: 'IndexedDB · 加密 ledger.sqlite（单标签独占）',
+    };
+  } catch (error) {
+    await releaseLock().catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function resetPlatformData(): Promise<void> {

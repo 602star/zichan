@@ -31,6 +31,38 @@ test('auto-saves a form draft and restores it on the next open', async ({ page }
   await expect(page.getByLabel('描述')).toHaveValue('未提交草稿');
 });
 
+test('traps modal focus and preserves the parent lock across nested confirmation', async ({ page }) => {
+  await openTransactions(page);
+  const trigger = page.getByRole('button', { name: '+ 记账' });
+  await trigger.click();
+  const form = page.getByRole('dialog', { name: '新增 · 日常收支' });
+  await expect(form).toBeVisible();
+  await expect(page.locator('body')).toHaveCSS('overflow', 'hidden');
+
+  await page.getByLabel('描述').fill('嵌套弹窗焦点验证');
+  await page.keyboard.press('Escape');
+  const confirmation = page.getByRole('dialog', { name: '关闭未保存表单' });
+  await expect(confirmation).toBeVisible();
+  await expect(page.locator('body')).toHaveCSS('overflow', 'hidden');
+  await expect(page.getByRole('button', { name: '继续编辑' })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.getByRole('button', { name: '保留草稿并关闭' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: '继续编辑' })).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(confirmation).toBeHidden();
+  await expect(form).toBeVisible();
+  await expect(page.locator('body')).toHaveCSS('overflow', 'hidden');
+  await expect(page.getByLabel('描述')).toBeFocused();
+
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  await page.getByRole('button', { name: '保留草稿并关闭' }).click();
+  await expect(form).toBeHidden();
+  await expect(page.locator('body')).not.toHaveCSS('overflow', 'hidden');
+  await expect(trigger).toBeFocused();
+});
+
 test('exports a real PDF report with a valid PDF header', async ({ page }) => {
   await openLedger(page);
   await page.getByText('报表', { exact: true }).first().click();

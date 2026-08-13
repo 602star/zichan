@@ -1,16 +1,22 @@
 import {
-  createContext, useContext, useEffect, useState, type ReactNode,
+  createContext, useContext, useEffect, useRef, useState, type ReactNode,
 } from 'react';
+import type { LedgerKind, Setting } from '@zichan/core';
 import { createLedgerStore, runDueScheduledTransactions, type SqlLedgerStore } from '@zichan/db';
 import { createLogger, consoleSink } from '@zichan/logger';
-import { seedIfEmpty } from './seed.js';
 import { getDeviceId } from './cloud.js';
-import { maybeAutoBackup } from './backups.js';
+import {
+  maybeAutoBackup,
+  suspendAutomaticBackups,
+  type AutomaticBackupSuspension,
+} from './backups.js';
 import { runLedgerMaintenance } from './maintenance.js';
 import { writeSafetyState } from './safety.js';
 import { openPlatformDriver, resetPlatformData, type StorageBackend } from './platform-driver.js';
 import { recoverAttachmentStorage } from './attachment-storage.js';
 import { isInitializationResetRequiredError } from './initialization-error.js';
+import { initializedLedgerSetting } from './ledger-initialization.js';
+import { FirstRunWizard } from '../ui/FirstRunWizard.js';
 import {
   lockDeviceStorage,
   refreshDeviceStorageState,
@@ -25,17 +31,132 @@ interface StoreCtx {
   bump: () => void;
   storageBackend: StorageBackend;
   dataLocation: string;
+  resetLocalData: () => Promise<void>;
 }
 
 const Ctx = createContext<StoreCtx | null>(null);
+const storeCloseFlights = new WeakMap<object, Promise<void>>();
+
+type ClosableStore = Pick<SqlLedgerStore, 'close'>;
+type LifecycleErrorReporter = (message: string, detail: unknown) => void;
+
+export type VoidSingleFlight = (task: () => Promise<void>) => Promise<void>;
+
+/** Start the task synchronously and return the same Promise to every concurrent caller. */
+export function createVoidSingleFlight(): VoidSingleFlight {
+  let active: Promise<void> | null = null;
+  return (task) => {
+    if (active) return active;
+    let flight: Promise<void>;
+    try {
+      flight = Promise.resolve(task());
+    } catch (error) {
+      flight = Promise.reject(error);
+    }
+    active = flight;
+    void flight.then(
+      () => { if (active === flight) active = null; },
+      () => { if (active === flight) active = null; },
+    );
+    return flight;
+  };
+}
+
+interface PendingInitialization {
+  store: SqlLedgerStore;
+  storageBackend: StorageBackend;
+  dataLocation: string;
+}
 
 export async function closeStoreWhenCancelled(
   store: Pick<SqlLedgerStore, 'close'>,
   isCancelled: () => boolean,
 ): Promise<boolean> {
   if (!isCancelled()) return false;
-  await store.close();
+  await closeStoreOnce(store);
   return true;
+}
+
+/** Await one shared close flight so retry cannot race a still-open SQLite connection. */
+export function closeStoreOnce(store: Pick<SqlLedgerStore, 'close'>): Promise<void> {
+  const existing = storeCloseFlights.get(store);
+  if (existing) return existing;
+  const flight = Promise.resolve().then(() => store.close()).catch((error) => {
+    storeCloseFlights.delete(store);
+    throw error;
+  });
+  storeCloseFlights.set(store, flight);
+  return flight;
+}
+
+async function closeUniqueStores(stores: Array<ClosableStore | null | undefined>): Promise<void> {
+  const unique = [...new Set(stores.filter((value): value is ClosableStore => !!value))];
+  for (const current of unique) await closeStoreOnce(current);
+}
+
+/** Close every live ledger and clear published references before the key vault is locked. */
+export async function closeStoresBeforeStorageLock(
+  stores: Array<ClosableStore | null | undefined>,
+  clearStores: () => void,
+  lockStorage: () => Promise<void>,
+): Promise<void> {
+  await closeUniqueStores(stores);
+  clearStores();
+  await lockStorage();
+}
+
+interface ResetStoreLifecycleOptions {
+  stores: Array<ClosableStore | null | undefined>;
+  clearStores: () => void;
+  lockStorage: () => Promise<void>;
+  resetPlatform: () => Promise<void>;
+  suspendBackups?: () => AutomaticBackupSuspension;
+}
+
+/**
+ * Pause and drain automatic backups before closing SQLite and deleting platform data.
+ * A successful reset intentionally leaves backups paused until the document reloads.
+ */
+export async function resetStoreLifecycle(options: ResetStoreLifecycleOptions): Promise<void> {
+  const suspension = (options.suspendBackups ?? suspendAutomaticBackups)();
+  try {
+    await suspension.drain();
+    await closeUniqueStores(options.stores);
+    options.clearStores();
+    await options.lockStorage();
+    await options.resetPlatform();
+  } catch (error) {
+    suspension.resume();
+    throw error;
+  }
+}
+
+export async function refreshLedgerKindSafely(
+  store: Pick<SqlLedgerStore, 'settings'>,
+  apply: (kind: LedgerKind) => void,
+  report: LifecycleErrorReporter = (message, detail) => console.warn(message, detail),
+): Promise<void> {
+  try {
+    const settings = await store.settings.list({ limit: 1 });
+    apply(settings[0]?.ledgerKind === 'demo' ? 'demo' : 'personal');
+  } catch (error) {
+    report('setting subscription refresh failed', error);
+  }
+}
+
+export async function runScheduledTransactionsSafely(
+  store: SqlLedgerStore,
+  onChanged: () => void,
+  execute: typeof runDueScheduledTransactions = runDueScheduledTransactions,
+  report: LifecycleErrorReporter = (message, detail) => console.warn(message, detail),
+): Promise<void> {
+  try {
+    const result = await execute(store);
+    if (result.created || result.skipped || result.failed) onChanged();
+    if (result.errors.length) report('scheduled transaction execution failed', result.errors);
+  } catch (error) {
+    report('scheduled transaction execution rejected', error);
+  }
 }
 
 function Splash({ label }: { label: string }) {
@@ -133,6 +254,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [unlockBusy, setUnlockBusy] = useState(false);
   const [unlockError, setUnlockError] = useState('');
   const [initializationAttempt, setInitializationAttempt] = useState(0);
+  const [pendingInitialization, setPendingInitialization] = useState<PendingInitialization | null>(null);
+  const [ledgerKind, setLedgerKind] = useState<LedgerKind>('personal');
+  const unlockStorageFlight = useRef(createVoidSingleFlight()).current;
+  const resetStorageFlight = useRef(createVoidSingleFlight()).current;
+  const storageLockFlight = useRef(createVoidSingleFlight()).current;
 
   useEffect(() => {
     let active = true;
@@ -153,7 +279,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const current = openedStore;
       openedStore = null;
       published = false;
-      await current?.close();
+      if (current) await closeStoreOnce(current);
     };
     (async () => {
       try {
@@ -172,9 +298,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           openedStore = null;
           return;
         }
-        await seedIfEmpty(s);
+        const setting = await initializedLedgerSetting(s);
         if (await closeStoreWhenCancelled(s, () => cancelled)) {
           openedStore = null;
+          return;
+        }
+        if (!setting) {
+          published = true;
+          setStorageBackend(platform.backend);
+          setDataLocation(platform.dataLocation);
+          setPendingInitialization({
+            store: s,
+            storageBackend: platform.backend,
+            dataLocation: platform.dataLocation,
+          });
           return;
         }
         await recoverAttachmentStorage(s);
@@ -187,6 +324,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         published = true;
         setStorageBackend(platform.backend);
         setDataLocation(platform.dataLocation);
+        setLedgerKind(setting.ledgerKind ?? 'personal');
         setStore(s);
         void maybeAutoBackup(s)
           .then((entry) => {
@@ -205,7 +343,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })();
     return () => {
       cancelled = true;
-      if (published) void closeOpenedStore();
+      if (published) void closeOpenedStore().catch(() => undefined);
     };
   }, [storageProtection?.unlocked, initializationAttempt]);
 
@@ -220,7 +358,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!store) return;
-    return store.subscribe(() => setRev((value) => value + 1));
+    return store.subscribe((change) => {
+      setRev((value) => value + 1);
+      if (change.entityTypes.includes('setting') || change.entityTypes.includes('*')) {
+        void refreshLedgerKindSafely(store, setLedgerKind);
+      }
+    });
   }, [store]);
 
   useEffect(() => {
@@ -230,78 +373,134 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (running) return;
       running = true;
       try {
-        const result = await runDueScheduledTransactions(store);
-        if (result.created || result.skipped || result.failed) setRev((value) => value + 1);
-        if (result.errors.length) console.warn('scheduled transaction execution failed', result.errors);
+        await runScheduledTransactionsSafely(store, () => setRev((value) => value + 1));
       } finally {
         running = false;
       }
     };
     const onVisibility = () => { if (document.visibilityState === 'visible') void execute(); };
-    window.addEventListener('focus', execute);
+    const onFocus = () => { void execute(); };
+    window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibility);
     const timer = window.setInterval(() => void execute(), 60_000);
     return () => {
-      window.removeEventListener('focus', execute);
+      window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
       window.clearInterval(timer);
     };
   }, [store]);
 
-  async function resetDevelopmentData() {
-    if (
-      !window.confirm(
-        '将删除本机开发账本、附件、表单草稿和浏览器内备份。此操作不可撤销；只有浏览器外的 .zcbak 或服务器副本可用于恢复。确定继续吗？',
-      )
-    ) return;
-    setResetting(true);
-    try {
-      if (store) {
-        await store.close();
-        setStore(null);
+  function resetDevelopmentData(requireConfirmation = true): Promise<void> {
+    return resetStorageFlight(async () => {
+      if (
+        requireConfirmation
+        &&
+        !window.confirm(
+          '将删除本机开发账本、附件、表单草稿和浏览器内备份。此操作不可撤销；只有浏览器外的 .zcbak 或服务器副本可用于恢复。确定继续吗？',
+        )
+      ) return;
+      setResetting(true);
+      try {
+        await resetStoreLifecycle({
+          stores: [store, pendingInitialization?.store],
+          clearStores: () => {
+            setStore(null);
+            setPendingInitialization(null);
+          },
+          lockStorage: lockDeviceStorage,
+          resetPlatform: resetPlatformData,
+        });
+        window.location.reload();
+      } catch (reason) {
+        setError({
+          message: `重置失败：${reason instanceof Error ? reason.message : String(reason)}`,
+          resetRequired: true,
+        });
+        setResetting(false);
       }
-      await lockDeviceStorage();
-      await resetPlatformData();
-      window.location.reload();
-    } catch (reason) {
-      setError({
-        message: `重置失败：${reason instanceof Error ? reason.message : String(reason)}`,
-        resetRequired: true,
-      });
-      setResetting(false);
-    }
+    });
   }
 
-  async function unlockStorage(password: string) {
-    setUnlockBusy(true);
-    setUnlockError('');
-    try {
-      const unlocked = await unlockDeviceStorage(password);
-      setStorageProtection(unlocked.state);
-    } catch (reason) {
-      setUnlockError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setUnlockBusy(false);
-    }
+  function unlockStorage(password: string): Promise<void> {
+    return unlockStorageFlight(async () => {
+      setUnlockBusy(true);
+      setUnlockError('');
+      try {
+        const unlocked = await unlockDeviceStorage(password);
+        setStorageProtection(unlocked.state);
+      } catch (reason) {
+        setUnlockError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        setUnlockBusy(false);
+      }
+    });
   }
 
-  function retryInitialization() {
+  async function retryInitialization() {
+    const pending = pendingInitialization;
+    if (pending) {
+      try {
+        await closeStoreOnce(pending.store);
+      } catch (reason) {
+        setError({
+          message: `关闭上一次数据库连接失败：${reason instanceof Error ? reason.message : String(reason)}`,
+          resetRequired: false,
+        });
+        return;
+      }
+    }
     setError(null);
+    setPendingInitialization(null);
     setInitializationAttempt((attempt) => attempt + 1);
   }
 
-  async function returnToStorageUnlock() {
-    setError(null);
-    setUnlockError('');
+  async function finishFirstRun(setting: Setting) {
+    const pending = pendingInitialization;
+    if (!pending) throw new Error('首次初始化上下文已经失效，请重新打开账本');
     try {
-      await lockDeviceStorage();
-      setStorageProtection(await refreshDeviceStorageState());
+      await recoverAttachmentStorage(pending.store);
+      await runLedgerMaintenance(pending.store);
+      await runDueScheduledTransactions(pending.store);
+      setStorageBackend(pending.storageBackend);
+      setDataLocation(pending.dataLocation);
+      setLedgerKind(setting.ledgerKind ?? 'personal');
+      setPendingInitialization(null);
+      setStore(pending.store);
+      void maybeAutoBackup(pending.store)
+        .then((entry) => {
+          if (entry?.externalSaved) writeSafetyState({ lastExternalBackupAt: entry.createdAt, lastBackupError: undefined, lastBackupErrorAt: undefined });
+        })
+        .catch((backupError) => writeSafetyState({ lastBackupErrorAt: new Date().toISOString(), lastBackupError: backupError instanceof Error ? backupError.message : String(backupError) }));
     } catch (reason) {
       setError({
-        message: reason instanceof Error ? reason.message : '无法返回设备解锁页面',
-        resetRequired: false,
+        message: reason instanceof Error ? reason.message : String(reason),
+        resetRequired: isInitializationResetRequiredError(reason),
       });
+      throw reason;
     }
+  }
+
+  function returnToStorageUnlock(): Promise<void> {
+    return storageLockFlight(async () => {
+      setError(null);
+      setUnlockError('');
+      try {
+        await closeStoresBeforeStorageLock(
+          [store, pendingInitialization?.store],
+          () => {
+            setStore(null);
+            setPendingInitialization(null);
+          },
+          lockDeviceStorage,
+        );
+        setStorageProtection(await refreshDeviceStorageState());
+      } catch (reason) {
+        setError({
+          message: reason instanceof Error ? reason.message : '无法返回设备解锁页面',
+          resetRequired: false,
+        });
+      }
+    });
   }
 
   if (!storageProtection) return <Splash label={unlockError || '正在检查本机加密存储…'} />;
@@ -359,9 +558,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       </div>
     );
   }
+  if (pendingInitialization) {
+    return <FirstRunWizard store={pendingInitialization.store} onInitialized={finishFirstRun} />;
+  }
   if (!store) return <Splash label="正在加载账本…" />;
 
-  return <Ctx.Provider value={{ store, rev, bump: () => setRev((n) => n + 1), storageBackend, dataLocation }}>{children}</Ctx.Provider>;
+  return (
+      <Ctx.Provider value={{ store, rev, bump: () => setRev((n) => n + 1), storageBackend, dataLocation, resetLocalData: () => resetDevelopmentData(false) }}>
+      {ledgerKind === 'demo' && (
+        <div
+          role="status"
+          aria-label="当前是演示账本"
+          style={{ position: 'fixed', top: 8, left: '50%', zIndex: 10000, transform: 'translateX(-50%)', border: '1px solid #d8ad75', borderRadius: 999, padding: '4px 10px', background: '#fff4dc', color: '#7b451d', boxShadow: '0 4px 12px rgba(75,61,43,.13)', fontFamily: 'system-ui, sans-serif', fontSize: 12, fontWeight: 900, pointerEvents: 'none' }}
+        >
+          演示账本
+        </div>
+      )}
+      {children}
+    </Ctx.Provider>
+  );
 }
 
 export function useStore(): StoreCtx {

@@ -7,8 +7,8 @@ import type { SqlDriver } from './driver.js';
 import { MIGRATIONS_TABLE_SQL, schemaStatements } from './schema.js';
 import { TABLES, allCols, type TableSpec } from './tables.js';
 
-export const CURRENT_SCHEMA_VERSION = 114;
-export const CURRENT_SCHEMA_NAME = 'current_schema_2026_07_23_catalog_accounts_assets';
+export const CURRENT_SCHEMA_VERSION = 115;
+export const CURRENT_SCHEMA_NAME = 'current_schema_2026_08_13_first_run_ledger';
 export const SCHEMA_RESET_REQUIRED_CODE = 'SCHEMA_RESET_REQUIRED';
 
 export class SchemaResetRequiredError extends Error {
@@ -139,6 +139,27 @@ export async function assertCurrentSchema(driver: SqlDriver): Promise<void> {
       );
     }
   }
+
+  for (const spec of Object.values(TABLES) as TableSpec[]) {
+    if (!spec.indexes?.length) continue;
+    const actualIndexes = await driver.all<{ name: string; unique: number; partial: number }>(
+      `PRAGMA index_list(${spec.name})`,
+    );
+    const byName = new Map(actualIndexes.map((index) => [index.name, index]));
+    for (const wanted of spec.indexes) {
+      const actual = byName.get(wanted.name);
+      if (!actual) throw new SchemaResetRequiredError(`${spec.name} 缺少索引 ${wanted.name}。`);
+      if (Boolean(actual.unique) !== Boolean(wanted.unique) || Boolean(actual.partial) !== Boolean(wanted.where)) {
+        throw new SchemaResetRequiredError(`${spec.name} 索引 ${wanted.name} 的唯一性或条件属性不一致。`);
+      }
+      const actualColumns = (await driver.all<{ name: string }>(`PRAGMA index_info(${wanted.name})`))
+        .map((row) => row.name);
+      if (actualColumns.length !== wanted.cols.length
+        || actualColumns.some((column, index) => column !== wanted.cols[index])) {
+        throw new SchemaResetRequiredError(`${spec.name} 索引 ${wanted.name} 的列不一致。`);
+      }
+    }
+  }
 }
 
 export function isSchemaResetRequiredError(error: unknown): error is SchemaResetRequiredError {
@@ -151,13 +172,33 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
   const tablesBefore = await driver.all<{ name: string }>(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
   );
-  await driver.exec(MIGRATIONS_TABLE_SQL);
+  const tableNames = tablesBefore.map((row) => row.name);
+  const hasMigrationTable = tableNames.includes('schema_migrations');
+  if (!hasMigrationTable && tableNames.length) {
+    throw new SchemaResetRequiredError(`检测到未标记的旧表：${tableNames.join('、')}。`);
+  }
+
+  if (!hasMigrationTable) {
+    const baseline = MIGRATIONS[0]!;
+    log.info('creating current schema baseline', { version: baseline.version, name: baseline.name });
+    await driver.transaction(async (transaction) => {
+      await transaction.exec(MIGRATIONS_TABLE_SQL);
+      await baseline.up(transaction);
+      await assertCurrentSchema(transaction);
+      await transaction.run(
+        'INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)',
+        [baseline.version, baseline.name, new Date().toISOString()],
+      );
+    });
+    return 1;
+  }
+
   const applied = await driver.all<{ version: number; name: string }>(
     'SELECT version, name FROM schema_migrations ORDER BY version',
   );
 
   if (applied.length === 0) {
-    const preexisting = tablesBefore.map((row) => row.name).filter((name) => name !== 'schema_migrations');
+    const preexisting = tableNames.filter((name) => name !== 'schema_migrations');
     if (preexisting.length) {
       throw new SchemaResetRequiredError(`检测到未标记的旧表：${preexisting.join('、')}。`);
     }

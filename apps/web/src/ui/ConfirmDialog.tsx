@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { useBodyScrollLock } from './body-scroll-lock.js';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { DialogShell } from './DialogShell.js';
 
 const panel = {
   background: 'var(--surface)',
@@ -22,6 +22,12 @@ const button = {
   cursor: 'pointer',
 } as const;
 
+export function confirmDialogErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === 'string' && error.trim()) return error;
+  return '操作失败，请稍后重试';
+}
+
 export function ConfirmDialog(props: {
   title: string;
   children: ReactNode;
@@ -32,26 +38,75 @@ export function ConfirmDialog(props: {
   onConfirm: () => void | Promise<void>;
   onCancel?: () => void;
 }) {
-  useBodyScrollLock();
+  const titleId = useId();
+  const descriptionId = useId();
+  const [internalBusy, setInternalBusy] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const confirmFlight = useRef<Promise<void> | null>(null);
+  const mounted = useRef(false);
+  const busy = !!props.busy || internalBusy;
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      confirmFlight.current = null;
+    };
+  }, []);
+
+  function confirm() {
+    if (busy || confirmFlight.current) return;
+    setActionError('');
+    let result: void | Promise<void>;
+    try {
+      result = props.onConfirm();
+    } catch (error) {
+      setActionError(confirmDialogErrorMessage(error));
+      return;
+    }
+    if (!result || typeof result.then !== 'function') return;
+    setInternalBusy(true);
+    const flight = Promise.resolve(result);
+    confirmFlight.current = flight;
+    void flight.catch((error: unknown) => {
+      if (mounted.current && confirmFlight.current === flight) {
+        setActionError(confirmDialogErrorMessage(error));
+      }
+    }).finally(() => {
+      if (confirmFlight.current !== flight) return;
+      confirmFlight.current = null;
+      if (mounted.current) setInternalBusy(false);
+    });
+  }
 
   const confirmStyle = props.tone === 'danger'
     ? { ...button, border: '1px solid var(--negative)', background: 'var(--negative)', color: '#fff' }
     : { ...button, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff' };
 
   return (
-    <div className="zc-backdrop" onClick={props.onCancel}>
-      <div className="zc-confirm-panel" style={panel} onClick={(e) => e.stopPropagation()}>
-        <div style={{ fontSize: 17, fontWeight: 900, marginBottom: 10 }}>{props.title}</div>
-        <div style={{ fontSize: 13, color: 'var(--fg-muted)', lineHeight: 1.65 }}>{props.children}</div>
+    <DialogShell
+      labelledBy={titleId}
+      describedBy={descriptionId}
+      onDismiss={props.onCancel}
+      dismissDisabled={busy}
+      panelClassName="zc-confirm-panel"
+      panelStyle={panel}
+    >
+        <div id={titleId} style={{ fontSize: 17, fontWeight: 900, marginBottom: 10 }}>{props.title}</div>
+        <div id={descriptionId} style={{ fontSize: 13, color: 'var(--fg-muted)', lineHeight: 1.65 }}>{props.children}</div>
+        {actionError && (
+          <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 12, fontWeight: 750, lineHeight: 1.55, overflowWrap: 'anywhere' }}>
+            操作失败：{actionError}
+          </div>
+        )}
         <div className="zc-confirm-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
           {props.cancelLabel !== undefined && props.onCancel && (
-            <button onClick={props.onCancel} disabled={props.busy} style={button}>{props.cancelLabel}</button>
+            <button data-dialog-initial-focus onClick={props.onCancel} disabled={busy} style={button}>{props.cancelLabel}</button>
           )}
-          <button onClick={() => void props.onConfirm()} disabled={props.busy} style={{ ...confirmStyle, opacity: props.busy ? 0.65 : 1 }}>
-            {props.busy ? '处理中…' : props.confirmLabel ?? '确定'}
+          <button data-dialog-initial-focus={!props.onCancel ? '' : undefined} onClick={confirm} disabled={busy} style={{ ...confirmStyle, opacity: busy ? 0.65 : 1 }}>
+            {busy ? '处理中…' : props.confirmLabel ?? '确定'}
           </button>
         </div>
-      </div>
-    </div>
+    </DialogShell>
   );
 }

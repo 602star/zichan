@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { newId, type Asset } from '@zichan/core';
+import { createLedgerKeyEnvelope, newId, type Asset } from '@zichan/core';
 import { openLedger } from '@zichan/db/node';
 import {
   abortPreparedAttachments,
@@ -18,7 +18,10 @@ import {
   preflightPortableBackup,
   setPortableAttachmentSource,
 } from '../src/db/portable-backup.js';
+import { initializeEmptyLedger, initializedLedgerSetting } from '../src/db/ledger-initialization.js';
+import { restoreFirstRunBackup } from '../src/ui/FirstRunWizard.js';
 import { lockDeviceStorage, unlockDeviceStorage } from '../src/device-storage-key.js';
+import { ledgerKeyState, lockLedgerKey } from '../src/ledger-key-vault.js';
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>();
@@ -30,7 +33,11 @@ class MemoryStorage implements Storage {
   setItem(key: string, value: string) { this.values.set(key, value); }
 }
 
-function installAttachmentMock() {
+interface AttachmentMockControl {
+  failPromote?: boolean;
+}
+
+function installAttachmentMock(control: AttachmentMockControl = {}) {
   const files = new Map<string, number[]>();
   const key = (area: string, value: string) => `${area}:${value}`;
   const invoke = async <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
@@ -67,6 +74,7 @@ function installAttachmentMock() {
       return undefined as T;
     }
     if (command === 'native_attachment_promote') {
+      if (control.failPromote) throw new Error('injected attachment promotion failure');
       const staged = files.get(key('staging', tempKey));
       if (!files.has(key('objects', sha256)) && staged === undefined) throw new Error('missing staged fixture file');
       if (staged !== undefined) files.set(key('objects', sha256), staged);
@@ -113,6 +121,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  lockLedgerKey();
   await lockDeviceStorage();
   delete (globalThis as unknown as { window?: unknown }).window;
   delete (globalThis as unknown as { localStorage?: unknown }).localStorage;
@@ -281,6 +290,154 @@ describe('portable attachment storage', () => {
       await expect(importPortableLedger(target, backup, 'replace', { deviceState: state })).rejects.toThrow('未知表');
       expect(await target.assets.get(existing.id)).toMatchObject({ isDeleted: false, code: 'KEEP' });
       expect(await target.assets.get(incoming.id)).toBeNull();
+    } finally {
+      await source.close();
+      await target.close();
+    }
+  });
+
+  it('restores a first-run full-device backup with attachment staging intact', async () => {
+    installAttachmentMock();
+    const source = await openLedger({ deviceId: 'device-attachment-source' });
+    const target = await openLedger({ deviceId: 'device-attachment-target' });
+    try {
+      const setting = await initializeEmptyLedger(source, { baseCurrencyCode: 'GBP', ledgerMode: 'accounts' });
+      const prepared = await prepareAttachmentDraft(source, newId(), {
+        fileName: 'device-receipt.txt',
+        mimeType: 'text/plain',
+        contentBlob: new Blob(['full device attachment'], { type: 'text/plain' }),
+      });
+      await source.transaction((transaction) => commitPreparedAttachment(
+        transaction,
+        prepared,
+        'asset',
+        setting.baseCurrencyAssetId,
+      ));
+      await finalizePreparedAttachment(source, prepared);
+
+      const backup = await exportPortableLedger(source);
+      const deviceState = await source.exportDeviceRecoveryState();
+      await importPortableLedger(target, backup, 'replace', {
+        deviceState,
+        initialize: { initializedAt: '2026-08-13T02:00:00.000Z' },
+      });
+
+      const restored = await target.attachments.get(prepared.attachmentId);
+      expect(restored && await verifyAttachmentContent(restored)).toBe(true);
+      expect((await target.attachmentState.listFileOps(['completed']))).toHaveLength(1);
+      expect((await initializedLedgerSetting(target))?.baseCurrencyAssetId).toBe(setting.baseCurrencyAssetId);
+    } finally {
+      await source.close();
+      await target.close();
+    }
+  });
+
+  it('adopts the device ledger key immediately after the database commit even when attachment promotion fails', async () => {
+    const control: AttachmentMockControl = {};
+    const files = installAttachmentMock(control);
+    const source = await openLedger({ deviceId: 'device-key-source' });
+    const target = await openLedger({ deviceId: 'device-key-target' });
+    try {
+      const setting = await initializeEmptyLedger(source, { baseCurrencyCode: 'EUR', ledgerMode: 'spending' });
+      const prepared = await prepareAttachmentDraft(source, newId(), {
+        fileName: 'recoverable-key.txt',
+        mimeType: 'text/plain',
+        contentBlob: new Blob(['recover after commit'], { type: 'text/plain' }),
+      });
+      await source.transaction((transaction) => commitPreparedAttachment(
+        transaction,
+        prepared,
+        'asset',
+        setting.baseCurrencyAssetId,
+      ));
+      await finalizePreparedAttachment(source, prepared);
+      const backup = await exportPortableLedger(source);
+      setPortableAttachmentSource(backup, async () => new Blob(['recover after commit'], { type: 'text/plain' }));
+      const deviceState = await source.exportDeviceRecoveryState();
+      const key = await createLedgerKeyEnvelope(await source.getLedgerId(), 'restored-ledger-password');
+      for (const fileKey of [...files.keys()]) files.delete(fileKey);
+      control.failPromote = true;
+
+      await expect(restoreFirstRunBackup(target, {
+        payload: { version: 2, kind: 'device', ledger: backup, deviceState },
+        container: { keyEnvelope: key.envelope },
+        session: key.session,
+        usedCurrentSession: false,
+      } as never, '2026-08-13T03:00:00.000Z')).rejects.toThrow('injected attachment promotion failure');
+
+      expect(ledgerKeyState()).toMatchObject({
+        initialized: true,
+        unlocked: true,
+        ledgerId: key.session.ledgerId,
+        keyringId: key.session.keyringId,
+      });
+      expect(await initializedLedgerSetting(target)).not.toBeNull();
+      expect((await target.attachmentState.listFileOps(['db_committed']))).toHaveLength(1);
+
+      control.failPromote = false;
+      await recoverAttachmentStorage(target);
+      const restored = await target.attachments.get(prepared.attachmentId);
+      expect(restored && await verifyAttachmentContent(restored)).toBe(true);
+    } finally {
+      await source.close();
+      await target.close();
+    }
+  });
+
+  it('keeps committed attachment staging and the restored key when audit finalization fails', async () => {
+    const files = installAttachmentMock();
+    const source = await openLedger({ deviceId: 'device-audit-source' });
+    const target = await openLedger({ deviceId: 'device-audit-target' });
+    try {
+      const setting = await initializeEmptyLedger(source, { baseCurrencyCode: 'GBP', ledgerMode: 'accounts' });
+      const prepared = await prepareAttachmentDraft(source, newId(), {
+        fileName: 'audit-recovery.txt',
+        mimeType: 'text/plain',
+        contentBlob: new Blob(['retain after audit failure'], { type: 'text/plain' }),
+      });
+      await source.transaction((transaction) => commitPreparedAttachment(
+        transaction,
+        prepared,
+        'asset',
+        setting.baseCurrencyAssetId,
+      ));
+      await finalizePreparedAttachment(source, prepared);
+      const backup = await exportPortableLedger(source);
+      setPortableAttachmentSource(backup, async () => new Blob(['retain after audit failure'], { type: 'text/plain' }));
+      const deviceState = await source.exportDeviceRecoveryState();
+      const key = await createLedgerKeyEnvelope(await source.getLedgerId(), 'audit-restored-password');
+      for (const fileKey of [...files.keys()]) files.delete(fileKey);
+
+      const finishAuditBatch = target.finishAuditBatch.bind(target);
+      let injected = false;
+      target.finishAuditBatch = async (id, patch) => {
+        if (!injected && patch?.outcome === 'applied') {
+          injected = true;
+          throw new Error('injected audit finalization failure');
+        }
+        return finishAuditBatch(id, patch);
+      };
+
+      await expect(restoreFirstRunBackup(target, {
+        payload: { version: 2, kind: 'device', ledger: backup, deviceState },
+        container: { keyEnvelope: key.envelope },
+        session: key.session,
+        usedCurrentSession: false,
+      } as never, '2026-08-13T04:00:00.000Z')).rejects.toThrow('injected audit finalization failure');
+
+      expect(ledgerKeyState()).toMatchObject({
+        initialized: true,
+        unlocked: true,
+        ledgerId: key.session.ledgerId,
+        keyringId: key.session.keyringId,
+      });
+      expect(await initializedLedgerSetting(target)).not.toBeNull();
+      expect((await target.attachmentState.listFileOps(['db_committed']))).toHaveLength(1);
+      expect([...files.keys()].some((value) => value.startsWith('staging:'))).toBe(true);
+
+      await recoverAttachmentStorage(target);
+      const restored = await target.attachments.get(prepared.attachmentId);
+      expect(restored && await verifyAttachmentContent(restored)).toBe(true);
     } finally {
       await source.close();
       await target.close();

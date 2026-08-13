@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import {
   D,
   conversionStepAmounts,
@@ -23,7 +23,7 @@ import { amount as fmtAmount } from '../format.js';
 import { moduleCurrencyId } from '../currencyPreferences.js';
 import { useUndo } from '../ui/UndoToast.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
-import { useBodyScrollLock } from '../ui/body-scroll-lock.js';
+import { DialogShell } from '../ui/DialogShell.js';
 
 type FeeSide = 'source' | 'target' | 'third';
 
@@ -160,6 +160,7 @@ interface PreparedConversion {
 }
 
 export function AddConversionModal({ onClose, initial }: { onClose: () => void; initial?: ChainWithSteps }) {
+  const titleId = useId();
   const { store, bump } = useStore();
   const undo = useUndo(store, bump);
   const snap = useSnapshot('convert');
@@ -178,8 +179,6 @@ export function AddConversionModal({ onClose, initial }: { onClose: () => void; 
   const [err, setErr] = useState<string | null>(null);
   const [pending, setPending] = useState<PreparedConversion | null>(null);
   const [impactText, setImpactText] = useState('');
-
-  useBodyScrollLock();
 
   const defaultBookCurrencyId = snap
     ? moduleCurrencyId(snap.setting, 'investment', snap.assets[0]?.id ?? '')
@@ -407,11 +406,16 @@ export function AddConversionModal({ onClose, initial }: { onClose: () => void; 
   );
 
   return (
-    <div className="zc-backdrop" onClick={onClose}>
-      <div className="zc-conversion-modal" onClick={(event) => event.stopPropagation()} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 24, width: 980, maxHeight: '92vh', overflow: 'auto' }}>
+    <DialogShell
+      labelledBy={titleId}
+      onDismiss={onClose}
+      dismissDisabled={saving}
+      panelClassName="zc-conversion-modal"
+      panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 24, width: 980, maxHeight: '92vh', overflow: 'auto' }}
+    >
         <div className="zc-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
-          <div style={{ fontSize: 18, fontWeight: 850 }}>{initial ? '编辑资产转换' : '新增资产转换'}</div>
-          <button aria-label="关闭" title="关闭" onClick={onClose} style={iconButton}>×</button>
+          <div id={titleId} style={{ fontSize: 18, fontWeight: 850 }}>{initial ? '编辑资产转换' : '新增资产转换'}</div>
+          <button type="button" data-dialog-initial-focus aria-label="关闭" title="关闭" onClick={onClose} disabled={saving} style={iconButton}>×</button>
         </div>
 
         <div className="zc-conversion-head-grid" style={{ display: 'grid', gridTemplateColumns: '140px 110px 130px minmax(180px, 1fr) 180px', gap: 12, marginBottom: 14 }}>
@@ -526,23 +530,23 @@ export function AddConversionModal({ onClose, initial }: { onClose: () => void; 
         <button onClick={() => setSteps([...drafts, emptyStep(effectiveBookCurrencyId, drafts.at(-1)?.toAssetId || effectiveBookCurrencyId)])} style={{ ...smallButton, width: '100%', padding: 10, borderStyle: 'dashed', marginBottom: 16 }}>+ 添加转换步骤</button>
         {err && <div style={{ color: 'var(--negative)', fontSize: 12, fontWeight: 700, marginBottom: 12 }}>{err}</div>}
         <div className="zc-modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-          <button onClick={onClose} style={secondaryButton}>取消</button>
+          <button onClick={onClose} disabled={saving} style={secondaryButton}>取消</button>
           <button onClick={() => void save()} disabled={saving} style={{ ...primaryButton, opacity: saving ? 0.6 : 1 }}>{saving ? '处理中…' : initial ? '预览影响' : '保存转换'}</button>
         </div>
-      </div>
       {pending && (
         <ConfirmDialog
           title="确认重算资产成本"
           confirmLabel="确认保存"
           cancelLabel="返回修改"
           tone="danger"
+          busy={saving}
           onCancel={() => setPending(null)}
           onConfirm={() => persist(pending)}
         >
           {impactText} 若后续卖出不再有足够的历史持仓，保存会被整体拒绝，不会留下半套数据。
         </ConfirmDialog>
       )}
-    </div>
+    </DialogShell>
   );
 }
 

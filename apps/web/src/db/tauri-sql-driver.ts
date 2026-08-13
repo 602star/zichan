@@ -78,8 +78,19 @@ export class TauriSqlDriver implements SqlDriver {
   static async open(databaseKeyHex: string): Promise<TauriSqlDriver> {
     if (!/^[a-f0-9]{64}$/.test(databaseKeyHex)) throw new Error('原生数据库密钥无效');
     const databaseUrl = await invokeRequired<string>('native_sql_database_url');
-    await invokeRequired<void>('native_sql_open', { db: databaseUrl, databaseKeyHex });
-    await invokeRequired<void>('native_sql_prepare', { db: databaseUrl });
+    try {
+      await invokeRequired<void>('native_sql_open', { db: databaseUrl, databaseKeyHex });
+      await invokeRequired<void>('native_sql_prepare', { db: databaseUrl });
+    } catch (error) {
+      // native_sql_open may reject after allocating a pool; close is idempotent on
+      // the Rust side and also releases a successfully opened, unprepared pool.
+      try {
+        await invokeRequired<void>('native_sql_close', { db: databaseUrl });
+      } catch {
+        // Preserve the opening/preparation error; cleanup is best-effort here.
+      }
+      throw error;
+    }
     return new TauriSqlDriver(databaseUrl);
   }
 

@@ -1,10 +1,11 @@
-import type { Attachment } from '@zichan/core';
+import type { Attachment, LedgerKind, Setting } from '@zichan/core';
 import {
   exportLedger,
   importLedger,
   preflightImport,
   restoreLedger,
   type BackupPreflight,
+  type AttachmentFileOpRow,
   type DeviceRecoveryState,
   type LedgerBackup,
   type SqlLedgerStore,
@@ -22,6 +23,11 @@ import {
 import { ensureAttachmentBlobAvailable } from '../attachment-sync.js';
 
 export type PortableLedgerBackup = LedgerBackup;
+
+export interface PortableImportResult {
+  entities: number;
+  removed?: number;
+}
 
 export type PortableAttachmentSource = (
   sha256: string,
@@ -175,21 +181,57 @@ export async function importPortableLedger(
   store: SqlLedgerStore,
   data: PortableLedgerBackup,
   mode: 'merge' | 'replace' = 'merge',
-  importOptions: { deviceState?: DeviceRecoveryState } = {},
-): Promise<{ entities: number; removed?: number }> {
+  importOptions: {
+    deviceState?: DeviceRecoveryState;
+    /** Mark a first-run restore initialized inside the same database transaction. */
+    initialize?: { initializedAt: string; fallbackLedgerKind?: LedgerKind };
+    /** Runs once after SQLite commits, before recoverable attachment promotion begins. */
+    onDatabaseCommitted?: (result: PortableImportResult) => void | Promise<void>;
+  } = {},
+): Promise<PortableImportResult> {
   const staged = await stagePortableAttachments(store, data);
   let committed = false;
   try {
+    const currentSettings = mode === 'merge' ? await store.settings.list() : [];
+    if (currentSettings.length > 1) throw new Error('当前账本包含多个活动设置，无法安全合并备份');
+    const backup = currentSettings.length === 1 ? { ...staged.backup, settings: [] } : staged.backup;
     const ledgerOptions = {
       afterImport: async (transaction: SqlLedgerStore) => {
-        if (importOptions.deviceState) await transaction.restoreDeviceRecoveryState(importOptions.deviceState);
+        if (importOptions.deviceState) {
+          const stagedFileOps: AttachmentFileOpRow[] = [];
+          for (const prepared of staged.prepared) {
+            if (!prepared.operationId) continue;
+            const operation = await transaction.attachmentState.getFileOp(prepared.operationId);
+            if (!operation) throw new Error(`附件暂存操作不存在：${prepared.operationId}`);
+            stagedFileOps.push(operation);
+          }
+          await transaction.restoreDeviceRecoveryState(importOptions.deviceState);
+          for (const operation of stagedFileOps) await transaction.attachmentState.putFileOp(operation);
+        }
+        if (importOptions.initialize) {
+          const settings = await transaction.settings.list();
+          if (settings.length !== 1 || !settings[0]) {
+            throw new Error('备份必须包含且只能包含一个活动账本设置');
+          }
+          const setting = settings[0] as Setting;
+          await transaction.settings.put({
+            ...setting,
+            ledgerKind: setting.ledgerKind === 'demo'
+              ? 'demo'
+              : (importOptions.initialize.fallbackLedgerKind ?? 'personal'),
+            initializedAt: setting.initializedAt || importOptions.initialize.initializedAt,
+          });
+        }
         for (const prepared of staged.prepared) await commitPreparedStorageState(transaction, prepared);
+      },
+      onCommitted: async (result: PortableImportResult) => {
+        committed = true;
+        await importOptions.onDatabaseCommitted?.(result);
       },
     };
     const result = mode === 'replace'
-      ? await restoreLedger(store, staged.backup, ledgerOptions)
-      : await importLedger(store, staged.backup, ledgerOptions);
-    committed = true;
+      ? await restoreLedger(store, backup, ledgerOptions)
+      : await importLedger(store, backup, ledgerOptions);
     await finalizePreparedAttachments(store, staged.prepared);
     await reconcileAttachmentStorage(store);
     return result;

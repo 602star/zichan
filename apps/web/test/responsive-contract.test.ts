@@ -8,6 +8,9 @@ const transactions = readFileSync(new URL('../src/screens/Transactions.tsx', imp
 const reports = readFileSync(new URL('../src/screens/Reports.tsx', import.meta.url), 'utf8');
 const reportInsights = readFileSync(new URL('../src/ui/TransactionReportInsights.tsx', import.meta.url), 'utf8');
 const serverAdmin = readFileSync(new URL('../src/screens/ServerAdmin.tsx', import.meta.url), 'utf8');
+const dialogShell = readFileSync(new URL('../src/ui/DialogShell.tsx', import.meta.url), 'utf8');
+const errorBoundary = readFileSync(new URL('../src/ui/AppErrorBoundary.tsx', import.meta.url), 'utf8');
+const main = readFileSync(new URL('../src/main.tsx', import.meta.url), 'utf8');
 
 describe('responsive shell contract', () => {
   it('defines the agreed phone, tablet, and desktop breakpoints', () => {
@@ -31,6 +34,18 @@ describe('responsive shell contract', () => {
     expect(app).toContain("window.matchMedia('(max-width: 767px)')");
     expect(app).toContain("mobileViewport.addEventListener('change', closeOnDesktop)");
     expect(app).toContain('props.onMoreOpen(false); props.onImport();');
+  });
+
+  it('uses one accessible portal dialog foundation and a root recovery boundary', () => {
+    expect(dialogShell).toContain('createPortal');
+    expect(dialogShell).toContain('aria-modal="true"');
+    expect(dialogShell).toContain('aria-labelledby={labelledBy}');
+    expect(dialogShell).toContain("event.key !== 'Tab'");
+    expect(dialogShell).toContain('restoreFocus.focus');
+    expect(errorBoundary).toContain('重试当前页面');
+    expect(errorBoundary).toContain('返回总览');
+    expect(errorBoundary).toContain('复制诊断信息');
+    expect(main.indexOf('<AppErrorBoundary>')).toBeLessThan(main.indexOf('<StoreProvider>'));
   });
 
   it('makes phone forms keyboard-safe and keeps large category lists scrollable', () => {

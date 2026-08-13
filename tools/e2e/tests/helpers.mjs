@@ -16,7 +16,11 @@ export async function openLedger(page) {
       await unlock.click();
     }
   }
-  await expect(page.getByText('总览', { exact: true }).first()).toBeVisible({ timeout: 30_000 });
+  const dashboard = page.getByText('总览', { exact: true }).first();
+  const initializeEmpty = page.getByRole('button', { name: '确认创建空账本', exact: true });
+  await expect(dashboard.or(initializeEmpty)).toBeVisible({ timeout: 30_000 });
+  if (await initializeEmpty.isVisible().catch(() => false)) await initializeEmpty.click();
+  await expect(dashboard).toBeVisible({ timeout: 30_000 });
 }
 
 export async function openTransactions(page) {

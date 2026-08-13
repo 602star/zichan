@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react';
+import { D, type Numeric } from '@zichan/core';
 
 export const card: CSSProperties = {
   background: 'var(--surface)',
@@ -50,9 +51,12 @@ export const pillBtn = (active: boolean): CSSProperties => ({
   border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
 });
 
-export function amountColor(v: number): CSSProperties {
+export function amountColor(v: Numeric): CSSProperties {
+  const amount = D(v);
   return {
     fontWeight: 700,
-    color: v > 0 ? 'var(--positive)' : v < 0 ? 'var(--negative)' : 'var(--fg-muted)',
+    color: amount.isPositive() && !amount.isZero()
+      ? 'var(--positive)'
+      : amount.isNegative() && !amount.isZero() ? 'var(--negative)' : 'var(--fg-muted)',
   };
 }

@@ -8,10 +8,13 @@ import { buildFixed } from '../src/selectors/fixed.js';
 describe('real demo ledger workflow', () => {
   it('seeds, calculates, backs up, and keeps module defaults non-retroactive', async () => {
     const store = await openLedger({ deviceId: 'web-real-flow' });
-    await seedIfEmpty(store);
+    await Promise.all([seedIfEmpty(store), seedIfEmpty(store)]);
     expect(await checkConsistency(store)).toEqual([]);
+    expect(await store.settings.count()).toBe(1);
 
     const snapshot = await loadSnapshot(store);
+    expect(snapshot.setting?.ledgerKind).toBe('demo');
+    expect(snapshot.setting?.initializedAt).toBeTruthy();
     expect(snapshot.setting?.transactionDefaultAssetId).toBe(snapshot.setting?.baseCurrencyAssetId);
     expect(snapshot.fixedAssetCategories.length).toBeGreaterThan(40);
     expect(snapshot.fixedUsageMetrics.length).toBeGreaterThanOrEqual(2);

@@ -80,6 +80,7 @@ export interface Account extends BaseEntity {
 }
 
 export type LedgerMode = 'spending' | 'accounts' | 'assets';
+export type LedgerKind = 'personal' | 'demo';
 
 /** Global config. There is one active Setting row. */
 export interface Setting extends BaseEntity {
@@ -92,6 +93,10 @@ export interface Setting extends BaseEntity {
   gameDefaultSettlementAssetId?: string;
   /** Daily ledger depth: lightweight spending, account ledger, or full asset ledger. */
   ledgerMode?: LedgerMode;
+  /** Whether this ledger contains user data or the explicitly selected demo dataset. */
+  ledgerKind?: LedgerKind;
+  /** Durable first-run completion marker. Startup work must not run before this exists. */
+  initializedAt?: string;
   /** Default lot-matching method for sells. */
   defaultLotMethod: LotMethod;
   /** As-of date used by valuation, holding period, and season calculations. */

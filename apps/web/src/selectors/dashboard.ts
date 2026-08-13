@@ -7,13 +7,14 @@ import {
   type DateRange,
 } from '@zichan/core';
 import type { Snapshot } from '../db/snapshot.js';
+import type { DashboardTransactionReadModel } from '@zichan/db';
 import { balanceOfAsset, isZeroish } from '../db/derive.js';
 import { categoryLabel } from '../transactionMeta.js';
 import { createReportCurrency } from '../reportCurrency.js';
 import { reportingEffect } from './transaction-effect.js';
 
 export interface Alloc { name: string; note: string; value: string; weight: number }
-export interface DashActivity { date: string; desc: string; type: string; detail: string; amt?: number }
+export interface DashActivity { date: string; desc: string; type: string; detail: string; amt?: string }
 export interface DcaReminderVM {
   id: string;
   name: string;
@@ -55,7 +56,11 @@ function daysBetween(a: string, b: string): number {
   return Math.round((Date.UTC(by!, bm! - 1, bd!) - Date.UTC(ay!, am! - 1, ad!)) / 86_400_000);
 }
 
-export function buildDashboard(snap: Snapshot, selectedRange?: DateRange): DashboardVM {
+export function buildDashboard(
+  snap: Snapshot,
+  selectedRange?: DateRange,
+  transactionReadModel?: DashboardTransactionReadModel,
+): DashboardVM {
   const asOf = snap.setting?.asOfDate ?? defaultAsOf();
   const codeOf = (id: string) => snap.assets.find((a) => a.id === id)?.code ?? id;
   const report = createReportCurrency(snap, asOf);
@@ -70,12 +75,21 @@ export function buildDashboard(snap: Snapshot, selectedRange?: DateRange): Dashb
   };
   const inSelectedRange = (date: string) => !selectedRange || isDateInRange(date, selectedRange);
   const activeChain = (row: Snapshot['chains'][number]) => row.chain.recordState !== 'voided';
+  const snapshotWithoutTransactions = transactionReadModel
+    ? { ...snap, transactions: [] }
+    : snap;
+  const transactionBalances = new Map((transactionReadModel?.balanceAggregates ?? []).map((row) => [
+    row.assetId,
+    sum(row.amounts),
+  ]));
   // Market positions come from lots (authoritative cost/holding ledger);
   // fiat/stablecoin come from posting balances.
   const holdingsOf = (assetType: string, assetId: string) =>
     isLotTrackedAssetType(assetType as Snapshot['assets'][number]['type'])
       ? remainingHoldings(snap.lots, assetId)
-      : balanceOfAsset(snap, assetId);
+      : D(balanceOfAsset(snapshotWithoutTransactions, assetId))
+        .plus(transactionBalances.get(assetId) ?? 0)
+        .toString();
 
   const financial: Alloc[] = [];
   for (const a of snap.assets) {
@@ -108,7 +122,7 @@ export function buildDashboard(snap: Snapshot, selectedRange?: DateRange): Dashb
   const total = sum(alloc.map((a) => a.value));
   const netWorthComplete = !incompleteMetrics.has('netWorth');
   for (const a of alloc) a.weight = !netWorthComplete || total.isZero() ? 0 : D(a.value).div(total).toNumber();
-  alloc.sort((a, b) => D(b.value).minus(D(a.value)).toNumber());
+  alloc.sort((a, b) => D(b.value).cmp(D(a.value)));
 
   const investedFiat = sum(snap.chains
     .filter((c) => activeChain(c) && (c.chain.type === 'dca' || c.chain.type === 'buy') && inSelectedRange(c.chain.date))
@@ -150,22 +164,33 @@ export function buildDashboard(snap: Snapshot, selectedRange?: DateRange): Dashb
       f.baseCurrencyAssetId,
     ))
     .filter((value): value is Decimal => value !== undefined));
-  const txRows = snap.transactions.filter((t) => {
-    if (!isTransactionActive(t)) return false;
-    const date = reportingEffect(snap, t).reportDate;
-    return selectedRange ? isDateInRange(date, selectedRange) : date.slice(0, 7) === asOf.slice(0, 7);
-  });
   const incomeValues: Decimal[] = [];
   const expenseValues: Decimal[] = [];
-  for (const transaction of txRows) {
-    const effect = reportingEffect(snap, transaction);
-    if (!D(effect.incomeDelta).isZero()) {
-      const value = converted('transactions', effect.incomeDelta, effect.reportAssetId, effect.reportDate);
-      if (value) incomeValues.push(value);
+  if (transactionReadModel) {
+    for (const row of transactionReadModel.reportAggregates) {
+      const amount = sum(row.amounts);
+      if (amount.isZero()) continue;
+      const value = converted('transactions', amount, row.reportAssetId, row.reportDate);
+      if (!value) continue;
+      if (row.direction === 'income') incomeValues.push(value);
+      else expenseValues.push(value);
     }
-    if (!D(effect.expenseDelta).isZero()) {
-      const value = converted('transactions', effect.expenseDelta, effect.reportAssetId, effect.reportDate);
-      if (value) expenseValues.push(value);
+  } else {
+    const txRows = snap.transactions.filter((t) => {
+      if (!isTransactionActive(t)) return false;
+      const date = reportingEffect(snap, t).reportDate;
+      return selectedRange ? isDateInRange(date, selectedRange) : date.slice(0, 7) === asOf.slice(0, 7);
+    });
+    for (const transaction of txRows) {
+      const effect = reportingEffect(snap, transaction);
+      if (!D(effect.incomeDelta).isZero()) {
+        const value = converted('transactions', effect.incomeDelta, effect.reportAssetId, effect.reportDate);
+        if (value) incomeValues.push(value);
+      }
+      if (!D(effect.expenseDelta).isZero()) {
+        const value = converted('transactions', effect.expenseDelta, effect.reportAssetId, effect.reportDate);
+        if (value) expenseValues.push(value);
+      }
     }
   }
   const txIncome = sum(incomeValues);
@@ -203,7 +228,9 @@ export function buildDashboard(snap: Snapshot, selectedRange?: DateRange): Dashb
     const isSell = c.chain.type === 'sell';
     const nativeValue = isSell ? t.totalBaseProceeds : t.totalBaseCost;
     const reportValue = converted('activity', nativeValue, c.chain.baseCurrencyAssetId, c.chain.date);
-    const amt = reportValue ? (isSell || c.chain.type === 'deposit' ? reportValue.toNumber() : reportValue.negated().toNumber()) : undefined;
+    const amt = reportValue
+      ? (isSell || c.chain.type === 'deposit' ? reportValue : reportValue.negated()).toString()
+      : undefined;
     evs.push({
       date: c.chain.date, desc: c.chain.title ?? c.chain.type,
       type: TYPE_LABEL[c.chain.type] ?? c.chain.type,
@@ -227,10 +254,11 @@ export function buildDashboard(snap: Snapshot, selectedRange?: DateRange): Dashb
     evs.push({
       date: r.date, desc: r.note ?? r.recordType, type: '游戏',
       detail: [game?.name ?? '游戏记录', native].filter(Boolean).join(' · '),
-      amt: reportNet?.toNumber(),
+      amt: reportNet?.toString(),
     });
   }
-  for (const t of snap.transactions.filter(isTransactionActive)) {
+  const activityTransactions = transactionReadModel?.recentTransactions ?? snap.transactions;
+  for (const t of activityTransactions.filter(isTransactionActive)) {
     const effect = reportingEffect(snap, t);
     if (!inSelectedRange(effect.cashDate)) continue;
     const base = converted('activity', effect.cashAmount, effect.cashAssetId, effect.cashDate);
@@ -244,7 +272,7 @@ export function buildDashboard(snap: Snapshot, selectedRange?: DateRange): Dashb
       desc: t.description ?? t.merchant ?? label,
       type: activityType,
       detail: t.merchant ?? label,
-      amt: base?.toNumber(),
+      amt: base?.toString(),
     });
   }
   evs.sort((a, b) => b.date.localeCompare(a.date));

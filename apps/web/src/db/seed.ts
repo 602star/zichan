@@ -1,7 +1,7 @@
 /**
- * Seeds demo data on first run so every screen is populated and close to the
- * prototype. Numbers are realistic (computed by the core), not penny-copies of
- * the mock's hand-typed values. Runs once — guarded by an empty-assets check.
+ * Creates the explicitly selected demo ledger. Numbers are realistic (computed
+ * by the core), not penny-copies of the mock's hand-typed values. StoreProvider
+ * must never call this automatically.
  */
 import {
   D, addDays, newId,
@@ -20,19 +20,27 @@ function baseFields() {
   return { id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false };
 }
 
-export async function seedIfEmpty(store: SqlLedgerStore): Promise<void> {
-  const existing = await store.assets.list();
-  if (existing.length > 0) return;
+export async function seedDemoLedger(store: SqlLedgerStore): Promise<void> {
+  await store.runInAuditBatch('初始化演示账本', async (store) => {
+  // This check belongs to the same transaction as the seed. Concurrent first-
+  // run submissions therefore serialize, and the later one becomes a no-op.
+  const settings = await store.settings.list();
+  if (settings.length > 1) throw new Error('数据库包含多个活动账本设置，无法创建演示账本');
+  const current = settings[0];
+  if (current) {
+    if (current.ledgerKind === 'demo' && typeof current.initializedAt === 'string'
+      && !Number.isNaN(Date.parse(current.initializedAt))) return;
+    throw new Error('账本已经初始化，不能创建演示账本');
+  }
+  const [assetCount, categoryCount, fixedCategoryCount] = await Promise.all([
+    store.assets.count(),
+    store.categories.count(),
+    store.fixedAssetCategories.count(),
+  ]);
+  if (assetCount || categoryCount || fixedCategoryCount) {
+    throw new Error('数据库存在未完成的初始化数据，不能创建演示账本');
+  }
 
-  const batch = await store.createAuditBatch({
-    id: newId(),
-    type: 'system',
-    label: '初始化演示账本',
-    actorName: '系统',
-    summary: '首次打开时创建演示资产、流水、定投、游戏和物品资产数据',
-  });
-  await store.withAuditContext({ batchId: batch.id, source: 'system', actorName: '系统' }, async (store) => {
-  await store.transaction(async (store) => {
   for (const category of DEFAULT_FIXED_ASSET_CATEGORIES) {
     await store.fixedAssetCategories.put({ ...baseFields(), ...category } as FixedAssetCategory);
   }
@@ -56,6 +64,8 @@ export async function seedIfEmpty(store: SqlLedgerStore): Promise<void> {
     categoryPickerDefaultScope: 'frequent',
     refundAttributionMode: 'original_date',
     ledgerMode: 'spending',
+    ledgerKind: 'demo',
+    initializedAt: new Date().toISOString(),
     defaultLotMethod: 'fifo',
     asOfDate: localDate(),
   } as never);
@@ -403,11 +413,8 @@ export async function seedIfEmpty(store: SqlLedgerStore): Promise<void> {
     ({ ...baseFields(), fixedAssetId, name, metricId, unit, mode: 'unit_cost', costBasisAmount, targetUnitCost, targetUsage, startDate, status: 'active' }) as FixedAssetGoal;
   await store.fixedAssetGoals.put(goal(aircon.id, '每小时使用成本控制', 'hour', '638', '1.5', D('638').div('1.5').ceil().toString(), '2025-05-22', airHours.id));
   await store.fixedAssetGoals.put(goal(car.id, '每公里净使用成本', 'km', '12028', '0.5', D('12028').div('0.5').ceil().toString(), '2024-01-15', carKm.id));
-  });
-  });
-  const entityCount = (await store.operationLog({ batchId: batch.id })).length;
-  await store.finishAuditBatch(batch.id, {
-    entityCount,
-    summary: `初始化完成：${entityCount} 条演示数据变更`,
-  });
+  }, 'system', { undoable: false });
 }
+
+/** Kept for fixture compatibility; production startup must use seedDemoLedger explicitly. */
+export const seedIfEmpty = seedDemoLedger;

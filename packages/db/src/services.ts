@@ -3075,6 +3075,12 @@ export function preflightImport(data: unknown): BackupPreflight {
     if (!Array.isArray(dataObj[key])) pushIssue(issues, 'error', 'missing_array', `${String(key)} 必须是数组`, type);
   }
   if (!Array.isArray(dataObj.chains)) pushIssue(issues, 'error', 'missing_array', 'chains 必须是数组', 'conversion_chain');
+  const activeSettings = rows(dataObj, 'settings')
+    .map(asObj)
+    .filter((setting): setting is Record<string, unknown> => !!setting && setting['isDeleted'] !== true);
+  if (activeSettings.length > 1) {
+    pushIssue(issues, 'error', 'multiple_active_settings', '备份包含多个活动账本设置', 'setting');
+  }
 
   const ids: Record<string, Set<string>> = {};
   const referenceIds: Record<string, Set<string>> = {};
@@ -3801,6 +3807,8 @@ export interface RestoreResult extends ImportResult {
 export interface ImportLedgerOptions {
   /** Runs inside the same SQLite transaction after all imported entities exist. */
   afterImport?: (store: SqlLedgerStore) => Promise<void>;
+  /** Runs immediately after the outer import/restore SQLite transaction commits. */
+  onCommitted?: (result: ImportResult | RestoreResult) => void | Promise<void>;
 }
 
 export interface FixedAssetCashflowDraft {
@@ -4492,7 +4500,7 @@ export async function importLedger(
     await putAll(store.attachments, data.attachments);
     await options.afterImport?.(batchStore);
     return { entities, chains: data.chains.length };
-  }), 'import', { undoable: false });
+  }), 'import', { undoable: false, onCommitted: options.onCommitted });
 }
 
 /**
@@ -4620,7 +4628,7 @@ export async function restoreLedger(
         const imported = await importLedger(aggregateStore, data, options);
         return { ...imported, removed: pendingDeletes.length };
       }));
-  }, 'import', { undoable: false });
+  }, 'import', { undoable: false, onCommitted: options.onCommitted });
 }
 
 // ─────────────────────────── daily transaction services ───────────────────────────

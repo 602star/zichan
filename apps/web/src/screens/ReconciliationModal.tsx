@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import {
   D,
   localToday,
@@ -15,6 +15,8 @@ import {
 } from '@zichan/db';
 import type { Snapshot } from '../db/snapshot.js';
 import { categoryLabel } from '../transactionMeta.js';
+import { ConfirmDialog } from '../ui/ConfirmDialog.js';
+import { DialogShell } from '../ui/DialogShell.js';
 
 const inputStyle = {
   width: '100%', height: 40, border: '1px solid var(--border)', borderRadius: 8,
@@ -50,6 +52,7 @@ interface Props {
 }
 
 export function ReconciliationModal(props: Props) {
+  const titleId = useId();
   const { store, snap, session } = props;
   const [accountId, setAccountId] = useState(session?.accountId ?? props.initialAccountId);
   const [assetId, setAssetId] = useState(session?.assetId ?? props.initialAssetId);
@@ -67,6 +70,7 @@ export function ReconciliationModal(props: Props) {
   const [busy, setBusy] = useState(false);
   const [sessionItems, setSessionItems] = useState<ReconciliationItem[]>([]);
   const [sessionTransactions, setSessionTransactions] = useState<Record<string, Transaction>>({});
+  const [undoOpen, setUndoOpen] = useState(false);
 
   useEffect(() => {
     if (session) return;
@@ -136,7 +140,7 @@ export function ReconciliationModal(props: Props) {
   }
 
   async function undo() {
-    if (!session || !window.confirm(`撤销 ${session.statementDate} 的对账？相关流水将恢复到对账前状态。`)) return;
+    if (!session) return;
     setBusy(true);
     setError('');
     try {
@@ -145,6 +149,7 @@ export function ReconciliationModal(props: Props) {
       props.onClose();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
+      throw reason;
     } finally {
       setBusy(false);
     }
@@ -152,11 +157,17 @@ export function ReconciliationModal(props: Props) {
 
   const difference = D(preview?.difference ?? session?.difference ?? 0);
   return (
-    <div role="dialog" aria-modal="true" aria-label={session ? '对账详情' : '银行对账'} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(33, 30, 27, .42)', display: 'grid', placeItems: 'center', padding: 24 }}>
-      <div style={{ width: 'min(1120px, 96vw)', maxHeight: '92dvh', overflow: 'hidden', background: 'var(--surface)', color: 'var(--fg)', borderRadius: 8, boxShadow: '0 24px 70px rgba(0,0,0,.24)', display: 'flex', flexDirection: 'column' }}>
+    <DialogShell
+      labelledBy={titleId}
+      onDismiss={props.onClose}
+      dismissDisabled={busy}
+      backdropStyle={{ zIndex: 90, background: 'rgba(33, 30, 27, .42)' }}
+      panelClassName="zc-reconciliation-modal"
+      panelStyle={{ width: 'min(1120px, 96vw)', maxHeight: '92dvh', overflow: 'hidden', background: 'var(--surface)', color: 'var(--fg)', borderRadius: 8, boxShadow: '0 24px 70px rgba(0,0,0,.24)', display: 'flex', flexDirection: 'column' }}
+    >
         <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' }}>
-          <div><div style={{ fontSize: 18, fontWeight: 900 }}>{session ? '对账详情' : '银行对账'}</div><div style={{ marginTop: 4, fontSize: 12, color: 'var(--fg-subtle)' }}>按银行账单逐笔核对账户分录</div></div>
-          <button type="button" onClick={props.onClose} aria-label="关闭" style={{ ...button, minWidth: 40, padding: 0 }}>×</button>
+          <div><div id={titleId} style={{ fontSize: 18, fontWeight: 900 }}>{session ? '对账详情' : '银行对账'}</div><div style={{ marginTop: 4, fontSize: 12, color: 'var(--fg-subtle)' }}>按银行账单逐笔核对账户分录</div></div>
+          <button type="button" data-dialog-initial-focus onClick={props.onClose} disabled={busy} aria-label="关闭" style={{ ...button, minWidth: 40, padding: 0 }}>×</button>
         </div>
 
         <div style={{ overflowY: 'auto', padding: 24 }}>
@@ -218,11 +229,23 @@ export function ReconciliationModal(props: Props) {
 
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
           {session
-            ? <button type="button" disabled={busy} onClick={() => void undo()} style={{ ...button, color: 'var(--negative)', borderColor: 'var(--negative)' }}>{busy ? '处理中…' : '撤销本次对账'}</button>
+            ? <button type="button" disabled={busy} onClick={() => setUndoOpen(true)} style={{ ...button, color: 'var(--negative)', borderColor: 'var(--negative)' }}>{busy ? '处理中…' : '撤销本次对账'}</button>
             : <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, fontWeight: 800, color: difference.isZero() ? 'var(--fg-subtle)' : 'var(--fg)' }}><input type="checkbox" disabled={difference.isZero()} checked={createAdjustment && !difference.isZero()} onChange={(event) => setCreateAdjustment(event.target.checked)} />创建 {difference.abs().toString()} 的余额调整流水</label>}
-          <div style={{ display: 'flex', gap: 8 }}><button type="button" onClick={props.onClose} style={button}>关闭</button>{!session && <button type="button" disabled={busy || !preview || (!difference.isZero() && !createAdjustment)} onClick={() => void finish()} style={primary}>{busy ? '正在完成…' : '完成对账'}</button>}</div>
+          <div style={{ display: 'flex', gap: 8 }}><button type="button" disabled={busy} onClick={props.onClose} style={button}>关闭</button>{!session && <button type="button" disabled={busy || !preview || (!difference.isZero() && !createAdjustment)} onClick={() => void finish()} style={primary}>{busy ? '正在完成…' : '完成对账'}</button>}</div>
         </div>
-      </div>
-    </div>
+        {undoOpen && session && (
+          <ConfirmDialog
+            title="撤销本次对账"
+            confirmLabel="确认撤销"
+            cancelLabel="取消"
+            tone="danger"
+            busy={busy}
+            onCancel={() => setUndoOpen(false)}
+            onConfirm={undo}
+          >
+            确定撤销 {session.statementDate} 的对账？相关流水将恢复到对账前状态。
+          </ConfirmDialog>
+        )}
+    </DialogShell>
   );
 }

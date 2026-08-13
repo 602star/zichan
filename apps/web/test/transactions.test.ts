@@ -136,6 +136,25 @@ describe('buildTransactions', () => {
     expect(round(vm.filteredIncome, 2)).toBe('0.00');
   });
 
+  it('filters Decimal amounts beyond the JavaScript number range without silently dropping bounds', () => {
+    const s = makeSnapshot();
+    s.transactions = [
+      makeTransaction({ id: 'below', amount: '9e8999999999999999', assetId: s.ids.gbp }),
+      makeTransaction({ id: 'exact', amount: '1e9000000000000000', assetId: s.ids.gbp }),
+    ];
+
+    const exact = buildFilteredTransactions(s, {
+      range: 'this_month', type: 'all', category: 'all', accountId: 'all', search: '',
+      amountMin: '1e9000000000000000', amountMax: '1e9000000000000000',
+    });
+    expect(exact.map((row) => row.id)).toEqual(['exact']);
+    s.transactions = [];
+    expect(() => buildFilteredTransactions(s, {
+      range: 'this_month', type: 'all', category: 'all', accountId: 'all', search: '',
+      amountMin: 'Infinity',
+    })).toThrow('金额筛选值不是有限数字');
+  });
+
   it('filters with advanced AND groups joined by OR', () => {
     const s = makeSnapshot();
     s.transactions = [

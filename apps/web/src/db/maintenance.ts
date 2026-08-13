@@ -55,6 +55,7 @@ export async function runLedgerMaintenance(store: SqlLedgerStore): Promise<boole
   ]);
 
   const baseAssetId = settings[0]?.baseCurrencyAssetId ?? assets.find((a) => !a.isDeleted && a.type === 'fiat')?.id ?? assets.find((a) => !a.isDeleted)?.id ?? '';
+  const includeDemoDefaults = settings[0]?.ledgerKind === 'demo';
   const transactionAssetId = settings[0]?.transactionDefaultAssetId ?? baseAssetId;
   const defaultAccountId = payees.find((p) => !p.isDeleted && p.defaultAccountId)?.defaultAccountId;
   const month = (settings[0]?.asOfDate ?? new Date().toISOString().slice(0, 10)).slice(0, 7);
@@ -100,10 +101,12 @@ export async function runLedgerMaintenance(store: SqlLedgerStore): Promise<boole
     tagByName.set(keyOf(name), row);
     return row;
   };
-  const tagWork = ensureTag('工作日', '场景', '#14b8a6', 10);
-  const tagRecurring = ensureTag('固定', '项目', '#6366f1', 20);
-  ensureTag('待报销', '报销', '#f97316', 30);
-  ensureTag('游戏', '项目', '#db2777', 40);
+  const tagWork = includeDemoDefaults ? ensureTag('工作日', '场景', '#14b8a6', 10) : undefined;
+  const tagRecurring = includeDemoDefaults ? ensureTag('固定', '项目', '#6366f1', 20) : undefined;
+  if (includeDemoDefaults) {
+    ensureTag('待报销', '报销', '#f97316', 30);
+    ensureTag('游戏', '项目', '#db2777', 40);
+  }
 
   const newLocations: TransactionLocation[] = [];
   const ensureLocation = (name: string, address?: string): TransactionLocation => {
@@ -114,9 +117,9 @@ export async function runLedgerMaintenance(store: SqlLedgerStore): Promise<boole
     locationByName.set(keyOf(name), row);
     return row;
   };
-  const locHome = ensureLocation('家', 'Home');
-  const locOffice = ensureLocation('公司附近', 'Office area');
-  ensureLocation('地铁站', 'Transit station');
+  const locHome = includeDemoDefaults ? ensureLocation('家', 'Home') : undefined;
+  const locOffice = includeDemoDefaults ? ensureLocation('公司附近', 'Office area') : undefined;
+  if (includeDemoDefaults) ensureLocation('地铁站', 'Transit station');
 
   const newTemplates: TransactionTemplate[] = [];
   const ensureTemplate = (
@@ -148,16 +151,20 @@ export async function runLedgerMaintenance(store: SqlLedgerStore): Promise<boole
     newTemplates.push(row);
     templateByName.set(keyOf(name), row);
   };
-  ensureTemplate('午餐', 'expense', 'food', '20', 'Noodle Bar', [tagWork.id], locOffice.id);
-  ensureTemplate('房租', 'expense', 'housing', '980', '公寓', [tagRecurring.id], locHome.id);
-  ensureTemplate('工资', 'income', 'salary', '3200', '雇主', [tagRecurring.id], locHome.id);
+  if (includeDemoDefaults && tagWork && tagRecurring && locHome && locOffice) {
+    ensureTemplate('午餐', 'expense', 'food', '20', 'Noodle Bar', [tagWork.id], locOffice.id);
+    ensureTemplate('房租', 'expense', 'housing', '980', '公寓', [tagRecurring.id], locHome.id);
+    ensureTemplate('工资', 'income', 'salary', '3200', '雇主', [tagRecurring.id], locHome.id);
+  }
 
   const budgetKeys = new Set(budgets.filter((b) => !b.isDeleted && b.month === month).map((b) => b.category));
   const newBudgets: BudgetCategory[] = [];
-  for (const [category, plannedAmount] of [['food', '420'], ['transport', '160'], ['shopping', '300'], ['housing', '980'], ['entertainment', '180']] as const) {
-    if (!budgetKeys.has(category) && transactionAssetId) {
-      newBudgets.push({ ...baseFields(), month, category, plannedAmount, assetId: transactionAssetId, rolloverMode: 'none' } as BudgetCategory);
-      budgetKeys.add(category);
+  if (includeDemoDefaults) {
+    for (const [category, plannedAmount] of [['food', '420'], ['transport', '160'], ['shopping', '300'], ['housing', '980'], ['entertainment', '180']] as const) {
+      if (!budgetKeys.has(category) && transactionAssetId) {
+        newBudgets.push({ ...baseFields(), month, category, plannedAmount, assetId: transactionAssetId, rolloverMode: 'none' } as BudgetCategory);
+        budgetKeys.add(category);
+      }
     }
   }
 
@@ -186,8 +193,10 @@ export async function runLedgerMaintenance(store: SqlLedgerStore): Promise<boole
     } as ScheduledTransaction);
     scheduleNames.add(keyOf(name));
   };
-  ensureSchedule('工资', 'income', 'salary', '3200', `${month}-01`, '雇主');
-  ensureSchedule('房租', 'expense', 'housing', '980', `${month}-02`, '公寓');
+  if (includeDemoDefaults) {
+    ensureSchedule('工资', 'income', 'salary', '3200', `${month}-01`, '雇主');
+    ensureSchedule('房租', 'expense', 'housing', '980', `${month}-02`, '公寓');
+  }
 
   const entityCount = categoryWrites.length + newFixedCategories.length + newTags.length + newLocations.length + newTemplates.length + newBudgets.length + newSchedules.length;
   if (entityCount === 0) return false;

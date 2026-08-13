@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
+import { lazy, Suspense, useEffect, useId, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
 import type { LedgerBackup } from '@zichan/db';
 import { useStore } from './db/store.js';
 import { loadSnapshot, useSnapshot, type Snapshot } from './db/snapshot.js';
@@ -19,8 +19,8 @@ import {
 import { safetyStateFromSetting, safetyWarnings } from './db/safety.js';
 import { ConfirmDialog } from './ui/ConfirmDialog.js';
 import { AppSecurityGate } from './ui/AppSecurityGate.js';
-import { VaultUnlockPrompt } from './ui/VaultUnlockPrompt.js';
-import { useBodyScrollLock } from './ui/body-scroll-lock.js';
+import { runSynchronousFlight, VaultUnlockPrompt } from './ui/VaultUnlockPrompt.js';
+import { DialogShell } from './ui/DialogShell.js';
 import { installSyncLifecycle } from './background-sync.js';
 import {
   exportPortableLedger,
@@ -41,6 +41,20 @@ const Sync = lazy(() => import('./screens/Sync.js').then((module) => ({ default:
 const History = lazy(() => import('./screens/History.js').then((module) => ({ default: module.History })));
 
 type ScreenId = 'dashboard' | 'convert' | 'transactions' | 'game' | 'fixed' | 'reports' | 'history' | 'manage' | 'sync' | 'settings';
+
+const ACTIVE_SCREEN_KEY = 'zichan.activeScreen';
+const RETRY_SCREEN_KEY = 'zichan.retryScreen';
+const SCREEN_IDS = new Set<ScreenId>(['dashboard', 'convert', 'transactions', 'game', 'fixed', 'reports', 'history', 'manage', 'sync', 'settings']);
+
+function initialScreen(): ScreenId {
+  try {
+    const stored = sessionStorage.getItem(RETRY_SCREEN_KEY);
+    sessionStorage.removeItem(RETRY_SCREEN_KEY);
+    return stored && SCREEN_IDS.has(stored as ScreenId) ? stored as ScreenId : 'dashboard';
+  } catch {
+    return 'dashboard';
+  }
+}
 
 const NAV: [ScreenId, string, string][] = [
   ['dashboard', '总览', '◈'],
@@ -217,7 +231,7 @@ function importDiff(backup: LedgerBackup, snap: Snapshot | null): ImportDiff {
 export function App() {
   const { store, bump, storageBackend, dataLocation } = useStore();
   const snap = useSnapshot('shell');
-  const [screen, setScreen] = useState<ScreenId>('dashboard');
+  const [screen, setScreen] = useState<ScreenId>(initialScreen);
   const [theme, setTheme] = useState<ThemeId>('terracotta');
   const [importDialog, setImportDialog] = useState<ImportDialog | null>(null);
   const [importBusy, setImportBusy] = useState(false);
@@ -226,6 +240,7 @@ export function App() {
   const [backups, setBackups] = useState<SavedBackup[]>([]);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const importUnlockFlight = useRef<Promise<void> | null>(null);
   const bumpRef = useRef(bump);
   bumpRef.current = bump;
 
@@ -243,6 +258,14 @@ export function App() {
     window.addEventListener('zichan:navigate', onNavigate);
     return () => window.removeEventListener('zichan:navigate', onNavigate);
   }, []);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(ACTIVE_SCREEN_KEY, screen);
+    } catch {
+      // Session storage can be unavailable in hardened browser contexts.
+    }
+  }, [screen]);
 
   useEffect(() => {
     const refreshSafety = () => {
@@ -310,19 +333,22 @@ export function App() {
     e.target.value = '';
   }
 
-  async function unlockImportedBackup() {
-    if (importDialog?.kind !== 'password') return;
-    setImportBusy(true);
-    setImportUnlockError('');
-    try {
-      const opened = await parseEncryptedBackup(importDialog.file, importPassphrase);
-      setImportPassphrase('');
-      await prepareImportedBackup(opened);
-    } catch (error) {
-      setImportUnlockError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setImportBusy(false);
-    }
+  function unlockImportedBackup(): Promise<void> {
+    const dialog = importDialog;
+    if (dialog?.kind !== 'password') return Promise.resolve();
+    return runSynchronousFlight(importUnlockFlight, async () => {
+      setImportBusy(true);
+      setImportUnlockError('');
+      try {
+        const opened = await parseEncryptedBackup(dialog.file, importPassphrase);
+        setImportPassphrase('');
+        await prepareImportedBackup(opened);
+      } catch (error) {
+        setImportUnlockError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setImportBusy(false);
+      }
+    });
   }
 
   async function confirmImport(opened: ParsedEncryptedBackup, mode: 'merge' | 'replace') {
@@ -453,6 +479,7 @@ export function App() {
         reportCurrency={base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}
         asOf={formatAsOfDate(asOfDate)}
       />
+      <div id="zc-dialog-portal" />
       {importDialog?.kind === 'password' && (
         <ConfirmDialog
           title="解锁加密备份"
@@ -715,18 +742,8 @@ function MobileNavigation(props: {
   reportCurrency: string;
   asOf: string;
 }) {
-  const { moreOpen, onMoreOpen } = props;
-  useBodyScrollLock(moreOpen);
-  useEffect(() => {
-    if (!moreOpen) return undefined;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onMoreOpen(false);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [moreOpen, onMoreOpen]);
+  const { onMoreOpen } = props;
+  const drawerTitleId = useId();
   useEffect(() => {
     const mobileViewport = window.matchMedia('(max-width: 767px)');
     const closeOnDesktop = () => {
@@ -762,10 +779,15 @@ function MobileNavigation(props: {
         </button>
       </nav>
       {props.moreOpen && (
-        <div className="zc-mobile-drawer-backdrop" onClick={() => props.onMoreOpen(false)}>
-          <aside className="zc-mobile-drawer" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()} aria-label="更多功能">
+        <DialogShell
+          labelledBy={drawerTitleId}
+          onDismiss={() => props.onMoreOpen(false)}
+          backdropClassName="zc-mobile-drawer-backdrop"
+          backdropStyle={{ zIndex: 80 }}
+          panelClassName="zc-mobile-drawer"
+        >
             <div className="zc-mobile-drawer-handle" />
-            <div className="zc-mobile-drawer-head"><b>更多功能</b><button autoFocus aria-label="关闭更多菜单" onClick={() => props.onMoreOpen(false)}>×</button></div>
+            <div className="zc-mobile-drawer-head"><b id={drawerTitleId}>更多功能</b><button type="button" data-dialog-initial-focus aria-label="关闭更多菜单" onClick={() => props.onMoreOpen(false)}>×</button></div>
             <div className="zc-mobile-drawer-grid">
               {NAV.filter(([id]) => moreIds.has(id)).map(([id, label, icon]) => (
                 <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}><span>{icon}</span><b>{label}</b></button>
@@ -786,8 +808,7 @@ function MobileNavigation(props: {
                 <button key={id} aria-label={THEME_NAMES[id]} title={THEME_NAMES[id]} className={props.theme === id ? 'is-active' : ''} onClick={() => props.setTheme(id)}><span style={{ background: ACCENTS[id] }} /></button>
               ))}
             </div>
-          </aside>
-        </div>
+        </DialogShell>
       )}
     </>
   );

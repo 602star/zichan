@@ -8,6 +8,7 @@ import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
 import { SerialTaskQueue, type SqlDriver, type SqlParam, type SqlRunResult } from '@zichan/db';
 
 type Persist = (bytes: Uint8Array) => void | Promise<void>;
+type CloseHook = () => void | Promise<void>;
 
 function runtimeWasmUrl(): string {
   if (typeof window === 'undefined') {
@@ -23,6 +24,9 @@ interface SqlJsState {
   onPersist?: Persist;
   queue: SerialTaskQueue;
   nextSavepoint: number;
+  onClose?: CloseHook;
+  closed: boolean;
+  dirty: boolean;
 }
 
 export class SqlJsDriver implements SqlDriver {
@@ -33,20 +37,25 @@ export class SqlJsDriver implements SqlDriver {
     private readonly transactionScoped = false,
   ) {}
 
-  static async open(bytes: Uint8Array | null, onPersist?: Persist): Promise<SqlJsDriver> {
+  static async open(bytes: Uint8Array | null, onPersist?: Persist, onClose?: CloseHook): Promise<SqlJsDriver> {
     const SQL = await initSqlJs({ locateFile: runtimeWasmUrl });
     const db = bytes ? new SQL.Database(bytes) : new SQL.Database();
-    return new SqlJsDriver({ db, onPersist, queue: new SerialTaskQueue(), nextSavepoint: 0 });
+    return new SqlJsDriver({ db, onPersist, onClose, queue: new SerialTaskQueue(), nextSavepoint: 0, closed: false, dirty: false });
   }
 
   private async persist(): Promise<void> {
-    await this.state.onPersist?.(this.state.db.export());
+    if (!this.state.dirty) return;
+    if (this.state.onPersist) await this.state.onPersist(this.state.db.export());
+    this.state.dirty = false;
   }
 
   async exec(sql: string): Promise<void> {
     await this.operation(async () => {
       this.state.db.run(sql);
-      if (!this.transactionScoped) await this.persist();
+      if (!this.transactionScoped) {
+        this.state.dirty = true;
+        await this.persist();
+      }
     });
   }
 
@@ -54,7 +63,10 @@ export class SqlJsDriver implements SqlDriver {
     return this.operation(async () => {
       this.state.db.run(sql, params as (string | number | null)[]);
       const changes = this.state.db.getRowsModified();
-      if (!this.transactionScoped) await this.persist();
+      if (!this.transactionScoped) {
+        this.state.dirty = true;
+        await this.persist();
+      }
       return { changes };
     });
   }
@@ -86,6 +98,7 @@ export class SqlJsDriver implements SqlDriver {
         try {
           result = await fn(scoped);
           this.state.db.run('COMMIT');
+          this.state.dirty = true;
         } catch (error) {
           this.state.db.run('ROLLBACK');
           throw error;
@@ -114,8 +127,17 @@ export class SqlJsDriver implements SqlDriver {
   async close(): Promise<void> {
     if (this.transactionScoped) return;
     await this.state.queue.run(async () => {
-      await this.persist();
-      this.state.db.close();
+      if (this.state.closed) return;
+      try {
+        await this.persist();
+      } finally {
+        try {
+          this.state.db.close();
+        } finally {
+          this.state.closed = true;
+          await this.state.onClose?.();
+        }
+      }
     });
   }
 

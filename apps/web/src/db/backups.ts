@@ -131,6 +131,37 @@ interface DesktopBackupStatus {
 }
 
 const automaticBackupFlights = new WeakMap<SqlLedgerStore, Promise<SavedBackup | null>>();
+const pendingAutomaticBackupFlights = new Set<Promise<SavedBackup | null>>();
+let automaticBackupSuspensions = 0;
+
+export interface AutomaticBackupSuspension {
+  /** Wait for every backup that started before this suspension to settle. */
+  drain(): Promise<void>;
+  /** Allow automatic backups again. Safe to call more than once. */
+  resume(): void;
+}
+
+/**
+ * Atomically stop new automatic backups and provide a drain for work already in flight.
+ * Reset keeps the suspension active until the document reloads so a late React effect
+ * cannot recreate IndexedDB after it has been deleted.
+ */
+export function suspendAutomaticBackups(): AutomaticBackupSuspension {
+  automaticBackupSuspensions += 1;
+  let active = true;
+  return {
+    async drain() {
+      while (pendingAutomaticBackupFlights.size) {
+        await Promise.allSettled([...pendingAutomaticBackupFlights]);
+      }
+    },
+    resume() {
+      if (!active) return;
+      active = false;
+      automaticBackupSuspensions = Math.max(0, automaticBackupSuspensions - 1);
+    },
+  };
+}
 
 const emptyPreflight = (): BackupPreflight => ({
   ok: true,
@@ -537,6 +568,7 @@ export async function saveLedgerBackup(
 }
 
 export function maybeAutoBackup(store: SqlLedgerStore): Promise<SavedBackup | null> {
+  if (automaticBackupSuspensions > 0) return Promise.resolve(null);
   const active = automaticBackupFlights.get(store);
   if (active) return active;
   const flight = (async () => {
@@ -549,12 +581,15 @@ export function maybeAutoBackup(store: SqlLedgerStore): Promise<SavedBackup | nu
     return saveLedgerBackup(store, 'auto', undefined, 'device', { sourceGeneration });
   })();
   automaticBackupFlights.set(store, flight);
+  pendingAutomaticBackupFlights.add(flight);
   void flight.then(
     () => {
       if (automaticBackupFlights.get(store) === flight) automaticBackupFlights.delete(store);
+      pendingAutomaticBackupFlights.delete(flight);
     },
     () => {
       if (automaticBackupFlights.get(store) === flight) automaticBackupFlights.delete(store);
+      pendingAutomaticBackupFlights.delete(flight);
     },
   );
   return flight;

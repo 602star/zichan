@@ -71,8 +71,11 @@ export const TABLES = {
     cols: [
       c('baseCurrencyAssetId'), c('transactionDefaultAssetId'), c('investmentCostAssetId'),
       c('fixedAssetDefaultCurrencyAssetId'), c('gameDefaultSettlementAssetId'),
-      c('ledgerMode'), c('defaultLotMethod'), c('asOfDate'),
+      c('ledgerMode'), c('ledgerKind'), c('initializedAt'), c('defaultLotMethod'), c('asOfDate'),
       c('transactionFormOptionalFields'), c('categoryPickerDefaultScope'), c('refundAttributionMode'), c('dataSafetyStateJson'),
+    ],
+    indexes: [
+      { name: 'idx_settings_single_active', cols: ['is_deleted'], unique: true, where: 'is_deleted = 0' },
     ],
   },
   conversionChains: {
