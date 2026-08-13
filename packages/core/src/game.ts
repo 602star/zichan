@@ -3,7 +3,7 @@
  * record flow — no stock check; the reference balance may go negative and is
  * informational only.
  */
-import { D, safeDiv, sum } from './decimal.js';
+import { D, safeDiv } from './decimal.js';
 import { daysBetween } from './dates.js';
 import type { GameRecord, GameRecordType, GameSeason } from './types.js';
 

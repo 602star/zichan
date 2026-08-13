@@ -1,13 +1,17 @@
 /**
  * ID generation. Uses a ULID-like scheme: a 48-bit timestamp prefix (sortable by
- * creation time) + random suffix. Falls back to crypto.randomUUID when needed.
- * Kept dependency-free so the core stays portable across web/desktop/mobile.
+ * creation time) + a Web Crypto random suffix. Kept dependency-free so the
+ * core stays portable across web/desktop/mobile.
  */
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
-function randomChar(): string {
-  return CROCKFORD[Math.floor(Math.random() * CROCKFORD.length)]!;
+function randomBytes(count: number): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(count));
+}
+
+function randomChar(bytes: Uint8Array, index: number): string {
+  return CROCKFORD[bytes[index]! % CROCKFORD.length]!;
 }
 
 function encodeTime(now: number, len: number): string {
@@ -23,8 +27,9 @@ function encodeTime(now: number, len: number): string {
 
 /** Monotonic-ish, time-sortable 26-char id. */
 export function newId(now: number = Date.now()): string {
+  const bytes = randomBytes(16);
   let rand = '';
-  for (let i = 0; i < 16; i++) rand += randomChar();
+  for (let i = 0; i < 16; i++) rand += randomChar(bytes, i);
   return encodeTime(now, 10) + rand;
 }
 

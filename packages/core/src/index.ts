@@ -127,6 +127,7 @@ export {
   type ConversionStepAmounts,
   type NormalizeConversionAmountsInput,
   normalizeConversionAmounts,
+  assertConversionShape,
   conversionStepAmounts,
   traceChain,
 } from './conversion.js';
@@ -166,9 +167,14 @@ export {
 } from './fixed.js';
 
 export {
+  type PriceFreshness,
+  type ResolvedPrice,
+  type ResolveLatestPricesOptions,
+  type HoldingPricingStatus,
   type HoldingValue,
   type PortfolioValuation,
   type ValuePortfolioInput,
+  resolveLatestPrices,
   latestPrices,
   valuePortfolio,
 } from './valuation.js';

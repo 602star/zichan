@@ -58,6 +58,31 @@ describe('physical item cost', () => {
     expect(round(cost.netCost, 2)).toBe('250.00');
   });
 
+  it('excludes future events, consumables, and usage from an as-of snapshot', () => {
+    const item = asset({ id: 'snapshot', purchaseDate: '2026-01-01', status: 'sold' });
+    const metric: FixedAssetUsageMetric = {
+      ...base(), id: 'snapshot-km', fixedAssetId: item.id, name: '里程', unit: 'km', entryMode: 'increment',
+      startValue: '0', isPrimary: true, isActive: true,
+    };
+    const cost = fixedAssetCost(item, [
+      event(item.id, 'purchase', '2026-01-01', '500'),
+      event(item.id, 'residual_update', '2026-12-01', '100'),
+      event(item.id, 'sale', '2026-12-15', '120'),
+    ], {
+      asOf: '2026-06-01',
+      consumables: [{ ...consumable(item.id, '50'), purchaseDate: '2026-07-01' }],
+      usageMetrics: [metric],
+      usageLogs: [
+        { ...base(), id: 'past', fixedAssetId: item.id, metricId: metric.id, date: '2026-05-01', value: '10', entryMode: 'increment' },
+        { ...base(), id: 'future', fixedAssetId: item.id, metricId: metric.id, date: '2026-07-01', value: '20', entryMode: 'increment' },
+      ],
+    });
+    expect(cost.investedCost).toBe('500');
+    expect(cost.basis).toBe('current');
+    expect(cost.currentResidual).toBeUndefined();
+    expect(cost.usageCosts.find((row) => row.metricId === metric.id)?.totalUsage).toBe('10');
+  });
+
   it('terminal event of the same day picks the later-created one', () => {
     const item = asset({ id: 'cam2', purchaseDate: '2026-01-01', status: 'scrapped' });
     const events: FixedAssetEvent[] = [

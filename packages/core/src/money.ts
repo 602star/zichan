@@ -24,7 +24,11 @@ export function sumMoney(values: Money[], assetId?: string): Money {
 
 export function groupMoney(values: Money[]): Map<string, Money> {
   const groups = new Map<string, Money[]>();
-  for (const value of values) groups.set(value.assetId, [...(groups.get(value.assetId) ?? []), value]);
+  for (const value of values) {
+    const prev = groups.get(value.assetId);
+    if (prev) prev.push(value);
+    else groups.set(value.assetId, [value]);
+  }
   return new Map([...groups].map(([assetId, rows]) => [assetId, sumMoney(rows, assetId)]));
 }
 

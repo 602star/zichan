@@ -148,7 +148,9 @@ export function nextUnhandledScheduleOccurrence(
     .map((row) => row.occurrenceIndex));
   const maxHandled = handled.size ? Math.max(...handled) : -1;
   const searchLimit = Math.min(Math.max(maxHandled + 2, 64), 10_000);
-  for (let index = 0; index < searchLimit; index += 1) {
+  // 从 0 找最早未处理期次;handled 稠密时 searchLimit 本身也要被检查,
+  // 否则已执行满 searchLimit 期后会错误地返回 undefined(视为"没有待执行期次")。
+  for (let index = 0; index <= searchLimit; index += 1) {
     if (handled.has(index)) continue;
     const date = scheduleOccurrenceDate(schedule, index);
     if (schedule.endDate && date > schedule.endDate) return undefined;
@@ -177,7 +179,7 @@ export function nextUnhandledDcaOccurrence(
     .map((row) => row.occurrenceIndex));
   const maxHandled = handled.size ? Math.max(...handled) : -1;
   const searchLimit = Math.min(Math.max(maxHandled + 2, 64), 10_000);
-  for (let index = 0; index < searchLimit; index += 1) {
+  for (let index = 0; index <= searchLimit; index += 1) {
     if (!handled.has(index)) return { index, date: dcaOccurrenceDate(plan, index) };
   }
   throw new Error(`定投计划 ${plan.name} 的执行记录过多，请归档旧计划`);

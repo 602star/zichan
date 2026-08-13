@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  assertConversionShape,
   conversionStepAmounts,
   normalizeConversionAmounts,
   round,
@@ -12,6 +13,12 @@ import {
 const fee = (id: string, assetId: string, amount: string, treatment: ConversionFee['treatment'], valueInBase?: string): ConversionFee => ({ id, assetId, amount, treatment, valueInBase });
 
 describe('conversion amount semantics', () => {
+  it('turns blank form amounts into domain validation errors', () => {
+    expect(() => normalizeConversionAmounts({
+      fromInput: '', toInput: '', sourceAmountMode: 'trade_principal', targetAmountMode: 'account_credit', fees: [],
+    })).toThrow('来源实扣必须大于');
+  });
+
   it('normalizes a source amount that already includes the source fee', () => {
     const fees = [fee('f1', 'ETH', '1', 'source_included')];
     const normalized = normalizeConversionAmounts({ fromInput: '20', toInput: '18', sourceAmountMode: 'account_debit', targetAmountMode: 'account_credit', fees });
@@ -49,6 +56,26 @@ const buyChain: ChainWithSteps = {
 };
 
 describe('traceChain', () => {
+  it('requires book-currency values for non-base fees and ignores base-currency overrides', () => {
+    const invalid = {
+      ...buyChain,
+      steps: [{
+        ...buyChain.steps[0]!,
+        fees: [fee('foreign-fee', 'ETH', '1', 'third_asset_extra')],
+      }],
+    };
+    expect(() => assertConversionShape(invalid.chain, invalid.steps)).toThrow('非本位币手续费必须填写');
+
+    const baseFee = {
+      chain: { ...buyChain.chain, id: 'base-fee' },
+      steps: [{
+        ...buyChain.steps[0]!, chainId: 'base-fee', toAssetId: 'BTC', toAmount: '0.001',
+        fees: [fee('base-fee-row', 'GBP', '1', 'source_extra', '999')],
+      }],
+    };
+    expect(traceChain(baseFee).totalFeesInBase).toBe('1');
+  });
+
   it('uses actual base account outflow and net final receipt', () => {
     const trace = traceChain(buyChain);
     expect(trace.finalAssetId).toBe('BTC');

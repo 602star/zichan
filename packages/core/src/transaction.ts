@@ -197,13 +197,13 @@ export function summarizeByCategory(
 
   const active = transactions.filter(isTransactionActive);
   const effects = active.map((transaction) => transactionReportingEffect(transaction, opts));
-  const reportable = effects.filter((effect) => !D(effect.incomeDelta).isZero() || !D(effect.expenseDelta).isZero());
   if (!opts.baseAssetId) {
-    const assetIds = new Set(reportable.map((effect) => effect.reportAssetId));
+    const assetIds = new Set(effects
+      .filter((effect) => !D(effect.incomeDelta).isZero() || !D(effect.expenseDelta).isZero())
+      .map((effect) => effect.reportAssetId));
     if (assetIds.size > 1) throw new Error(`禁止跨币种直接汇总：${[...assetIds].sort().join('、')}`);
   }
-  for (const t of active) {
-    const effect = transactionReportingEffect(t, opts);
+  for (const effect of effects) {
     if (opts.baseAssetId && effect.reportAssetId !== opts.baseAssetId) continue;
     const direction = D(effect.expenseDelta).isNegative() ? -1 : 1;
     for (const row of effect.categoryRows) {
@@ -249,13 +249,13 @@ export function monthlyCashFlow(
 
   const active = transactions.filter(isTransactionActive);
   const effects = active.map((transaction) => transactionReportingEffect(transaction, opts));
-  const reportable = effects.filter((effect) => !D(effect.incomeDelta).isZero() || !D(effect.expenseDelta).isZero());
   if (!opts.baseAssetId) {
-    const assetIds = new Set(reportable.map((effect) => effect.reportAssetId));
+    const assetIds = new Set(effects
+      .filter((effect) => !D(effect.incomeDelta).isZero() || !D(effect.expenseDelta).isZero())
+      .map((effect) => effect.reportAssetId));
     if (assetIds.size > 1) throw new Error(`禁止跨币种直接汇总：${[...assetIds].sort().join('、')}`);
   }
-  for (const t of active) {
-    const effect = transactionReportingEffect(t, opts);
+  for (const effect of effects) {
     if (opts.baseAssetId && effect.reportAssetId !== opts.baseAssetId) continue;
     if (D(effect.incomeDelta).isZero() && D(effect.expenseDelta).isZero()) continue;
     const month = effect.reportDate.slice(0, 7);
@@ -305,8 +305,7 @@ export function categoryTrend(
   const effects = active.map((transaction) => transactionReportingEffect(transaction, opts));
   const assetIds = new Set(effects.map((effect) => effect.reportAssetId));
   if (!opts.baseAssetId && assetIds.size > 1) throw new Error(`禁止跨币种直接汇总：${[...assetIds].sort().join('、')}`);
-  for (const t of active) {
-    const effect = transactionReportingEffect(t, opts);
+  for (const effect of effects) {
     if (opts.baseAssetId && effect.reportAssetId !== opts.baseAssetId) continue;
     const month = effect.reportDate.slice(0, 7);
     const rows = effect.categoryRows.filter((row) => row.categoryId === category);

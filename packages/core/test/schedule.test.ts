@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   dcaOccurrenceDate,
   nextUnhandledDcaOccurrence,
+  nextUnhandledScheduleOccurrence,
+  scheduleOccurrenceDate,
   zonedCalendarNow,
-  type DcaExecution,
   type DcaPlan,
+  type ScheduledTransaction,
 } from '../src/index.js';
 
 function plan(overrides: Partial<DcaPlan> = {}): DcaPlan {
@@ -62,5 +64,32 @@ describe('DCA calendar recurrence', () => {
     const instant = new Date('2026-01-31T16:30:00.000Z');
     expect(zonedCalendarNow(instant, 'Asia/Shanghai').date).toBe('2026-02-01');
     expect(zonedCalendarNow(instant, 'America/New_York').date).toBe('2026-01-31');
+  });
+
+  it('checks the capped boundary after 10000 dense executions', () => {
+    const p = plan({ frequency: 'daily', anchorDate: '2020-01-01', anchorMode: 'calendar_day' });
+    const executions = Array.from({ length: 10_000 }, (_, index) => ({
+      planId: p.id,
+      occurrenceIndex: index,
+      isDeleted: false,
+    }));
+    expect(nextUnhandledDcaOccurrence(p, executions)).toEqual({
+      index: 10_000,
+      date: dcaOccurrenceDate(p, 10_000),
+    });
+
+    const schedule = {
+      id: 'daily-schedule', createdAt: '', updatedAt: '', version: 1, isDeleted: false,
+      name: '每日任务', type: 'expense', category: 'food', amount: '1', assetId: 'GBP',
+      frequency: 'daily', anchorDate: '2020-01-01', anchorMode: 'calendar_day', timezone: 'Asia/Shanghai',
+      catchUpPolicy: 'all', autoCreate: true, status: 'active',
+    } as ScheduledTransaction;
+    const scheduleExecutions = Array.from({ length: 10_000 }, (_, index) => ({
+      scheduleId: schedule.id, occurrenceIndex: index, status: 'created' as const, isDeleted: false,
+    }));
+    expect(nextUnhandledScheduleOccurrence(schedule, scheduleExecutions)).toEqual({
+      index: 10_000,
+      date: scheduleOccurrenceDate(schedule, 10_000),
+    });
   });
 });

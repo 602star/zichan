@@ -84,10 +84,10 @@ export function fixedAssetCost(
   const opts = typeof options === 'string' ? { asOf: options } : options;
   const asOf = opts.asOf ?? today();
   const evs = events
-    .filter((event) => event.fixedAssetId === asset.id && !event.isDeleted)
+    .filter((event) => event.fixedAssetId === asset.id && !event.isDeleted && event.date <= asOf)
     .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
   const consumables = (opts.consumables ?? [])
-    .filter((item) => item.fixedAssetId === asset.id && !item.isDeleted);
+    .filter((item) => item.fixedAssetId === asset.id && !item.isDeleted && item.purchaseDate <= asOf);
   const bucket = (type: FixedEventType) => sum(evs.filter((event) => event.type === type).map((event) => event.amountBase));
   const purchase = bucket('purchase');
   const repair = bucket('repair');
@@ -95,13 +95,16 @@ export function fixedAssetCost(
   const consumable = sum(consumables.map((item) => item.amountBase));
   const eventCosts = sum(evs.filter((event) => COST_TYPES.has(event.type)).map((event) => event.amountBase));
   const investedCost = eventCosts.plus(consumable);
-  const otherCost = eventCosts.minus(purchase).minus(repair).minus(upgrade);
 
   const residualEvents = evs.filter((event) => event.type === 'residual_update');
   const currentResidual = residualEvents.length ? D(residualEvents.at(-1)!.amountBase) : undefined;
   const terminalEvent = evs.filter((event) => TERMINAL_TYPES.has(event.type)).at(-1);
   const salePrice = terminalEvent?.type === 'sale' ? D(terminalEvent.amountBase) : undefined;
-  const final = !!terminalEvent || ['sold', 'scrapped', 'retired', 'gifted'].includes(asset.status);
+  // Current status has no effective date, so it cannot determine an explicit
+  // historical snapshot. In that mode only terminal events on/before asOf are
+  // authoritative.
+  const final = !!terminalEvent
+    || (opts.asOf === undefined && ['sold', 'scrapped', 'retired', 'gifted'].includes(asset.status));
   const residual = final
     ? (salePrice ?? (terminalEvent?.type === 'gift' ? currentResidual : undefined) ?? D(0))
     : (currentResidual ?? D(0));
@@ -117,7 +120,7 @@ export function fixedAssetCost(
     perUnit: safeDiv(netCost, days).toString(),
   }];
   for (const metric of (opts.usageMetrics ?? []).filter((row) => row.fixedAssetId === asset.id && row.isActive && !row.isDeleted)) {
-    const totalUsage = fixedUsageTotal(metric, opts.usageLogs ?? []);
+    const totalUsage = fixedUsageTotal(metric, (opts.usageLogs ?? []).filter((row) => row.date <= asOf));
     usageCosts.push({
       metricId: metric.id,
       name: metric.name,
@@ -133,7 +136,7 @@ export function fixedAssetCost(
     repair: repair.toString(),
     consumable: consumable.toString(),
     upgrade: upgrade.toString(),
-    otherCost: otherCost.toString(),
+    otherCost: '0',
     investedCost: investedCost.toString(),
     grossCost: investedCost.toString(),
     netCost: netCost.toString(),
@@ -144,6 +147,8 @@ export function fixedAssetCost(
   };
   if (currentResidual !== undefined) {
     result.currentResidual = currentResidual.toString();
+    // The fixed-asset model has no independent market marks, so valuation uses
+    // the latest residual book value available at the requested cutoff.
     result.currentValuation = currentResidual.toString();
   }
   if (salePrice !== undefined) result.salePrice = salePrice.toString();
@@ -167,7 +172,7 @@ export function fixedGoalProgress(
   asOf: string = today(),
 ): FixedGoalProgress {
   const terminal = events
-    .filter((event) => event.fixedAssetId === asset.id && TERMINAL_TYPES.has(event.type) && !event.isDeleted)
+    .filter((event) => event.fixedAssetId === asset.id && TERMINAL_TYPES.has(event.type) && !event.isDeleted && event.date <= asOf)
     .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt))
     .at(-1);
   let current = D(0);
@@ -175,7 +180,7 @@ export function fixedGoalProgress(
     current = D(heldDays(goal.startDate || asset.activatedDate || asset.purchaseDate, terminal?.date ?? asOf));
   } else {
     const metric = metrics.find((row) => row.id === goal.metricId);
-    if (metric) current = D(fixedUsageTotal(metric, logs));
+    if (metric) current = D(fixedUsageTotal(metric, logs.filter((row) => row.date <= asOf)));
   }
   const target = D(goal.targetUsage || 0);
   return {

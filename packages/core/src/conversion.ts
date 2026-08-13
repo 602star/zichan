@@ -6,6 +6,7 @@
 import { D, safeDiv, sum } from './decimal.js';
 import type {
   ChainWithSteps,
+  ConversionChain,
   ConversionFee,
   ConversionSourceAmountMode,
   ConversionStep,
@@ -96,9 +97,68 @@ export interface ChainTrace {
 }
 
 function feeInBase(fee: ConversionFee, baseId: string) {
-  if (fee.valueInBase != null && fee.valueInBase !== '') return D(fee.valueInBase);
   if (fee.assetId === baseId) return D(fee.amount);
+  if (fee.valueInBase != null && fee.valueInBase !== '') return D(fee.valueInBase);
   return D(0);
+}
+
+const CONVERSION_TYPES = new Set(['buy', 'sell', 'exchange', 'dca', 'deposit', 'withdraw']);
+const FEE_TREATMENTS = new Set(['source_included', 'source_extra', 'target_deducted', 'third_asset_extra']);
+const SOURCE_AMOUNT_MODES = new Set(['trade_principal', 'account_debit']);
+const TARGET_AMOUNT_MODES = new Set(['trade_gross', 'account_credit']);
+const LOT_METHODS = new Set(['fifo', 'lifo', 'average', 'manual']);
+
+/** Validate portable conversion invariants without consulting persistence. */
+export function assertConversionShape(chain: ConversionChain, steps: ConversionStep[]): void {
+  if (!CONVERSION_TYPES.has(chain.type)) throw new Error(`资产转换类型无效：${String(chain.type)}`);
+  if (chain.recordState !== undefined && chain.recordState !== 'active' && chain.recordState !== 'voided') throw new Error('资产转换记录状态无效');
+  if (chain.bookValueInBase !== undefined && !D(chain.bookValueInBase).gt(0)) throw new Error('资产转换账面折算金额必须大于 0');
+  if (chain.lotMethod !== undefined && !LOT_METHODS.has(chain.lotMethod)) throw new Error('资产转换批次匹配方式无效');
+  if (!steps.length) throw new Error('资产转换至少需要一个步骤');
+  const ordered = [...steps].sort((left, right) => left.order - right.order);
+  const ids = new Set<string>();
+  for (let index = 0; index < ordered.length; index += 1) {
+    const step = ordered[index]!;
+    if (!step.id || ids.has(step.id)) throw new Error(`步骤 ${index + 1} 的 ID 缺失或重复`);
+    ids.add(step.id);
+    if (step.chainId !== chain.id) throw new Error(`步骤 ${index + 1} 不属于当前转换`);
+    if (!Number.isSafeInteger(step.order) || step.order !== index + 1) throw new Error('转换步骤顺序必须从 1 连续编号');
+    if (step.sourceAmountMode !== undefined && !SOURCE_AMOUNT_MODES.has(step.sourceAmountMode)) throw new Error(`步骤 ${index + 1} 来源金额口径无效`);
+    if (step.targetAmountMode !== undefined && !TARGET_AMOUNT_MODES.has(step.targetAmountMode)) throw new Error(`步骤 ${index + 1} 目标金额口径无效`);
+    if (step.referenceRate !== undefined && !D(step.referenceRate).gt(0)) throw new Error(`步骤 ${index + 1} 参考汇率必须大于 0`);
+    const sameAssetAccountMove = (chain.type === 'deposit' || chain.type === 'withdraw')
+      && step.fromAssetId === step.toAssetId
+      && !!step.accountFromId
+      && !!step.accountToId
+      && step.accountFromId !== step.accountToId;
+    if (!step.fromAssetId || !step.toAssetId || (step.fromAssetId === step.toAssetId && !sameAssetAccountMove)) {
+      throw new Error(`步骤 ${index + 1} 的资产无效；同币种入金或提现需要两个不同账户`);
+    }
+    if (!D(step.fromAmount).gt(0) || !D(step.toAmount).gt(0)) throw new Error(`步骤 ${index + 1} 的数量必须大于 0`);
+    if (index > 0 && ordered[index - 1]!.toAssetId !== step.fromAssetId) {
+      throw new Error(`步骤 ${index} 的目标资产必须与步骤 ${index + 1} 的来源资产一致`);
+    }
+    for (const fee of step.fees ?? []) {
+      if (!FEE_TREATMENTS.has(fee.treatment) || !D(fee.amount).gt(0)) throw new Error(`步骤 ${index + 1} 手续费类型或数量无效`);
+      const validAsset = fee.treatment === 'source_included' || fee.treatment === 'source_extra'
+        ? fee.assetId === step.fromAssetId
+        : fee.treatment === 'target_deducted'
+          ? fee.assetId === step.toAssetId
+          : fee.assetId !== step.fromAssetId && fee.assetId !== step.toAssetId;
+      if (!validAsset) throw new Error(`步骤 ${index + 1} 手续费位置与资产不匹配`);
+      if (fee.assetId !== chain.baseCurrencyAssetId && !D(fee.valueInBase ?? 0).gt(0)) {
+        throw new Error(`步骤 ${index + 1} 非本位币手续费必须填写本位币金额`);
+      }
+    }
+    if (!D(conversionStepAmounts(step).targetCredit).gt(0)) throw new Error(`步骤 ${index + 1} 的目标净入金额必须大于 0`);
+  }
+  const trace = traceChain({ chain, steps: ordered });
+  if ((chain.type === 'buy' || chain.type === 'dca') && !D(trace.totalBaseCost).gt(0)) {
+    throw new Error('买入或定投必须形成大于 0 的账面成本');
+  }
+  if (chain.type === 'sell' && !D(trace.totalBaseProceeds).gt(0)) {
+    throw new Error('卖出必须形成大于 0 的账面收入');
+  }
 }
 
 export function traceChain(cws: ChainWithSteps): ChainTrace {

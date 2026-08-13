@@ -17,7 +17,7 @@ describe('matchSell — realized P&L', () => {
 
   it('FIFO consumes oldest lot first', () => {
     const r = matchSell(lots, {
-      sellChainId: 'sell1', assetId: 'BTC', amount: '0.005', proceedsBase: '386.60', method: 'fifo',
+      sellChainId: 'sell1', assetId: 'BTC', baseCurrencyAssetId: 'GBP', amount: '0.005', proceedsBase: '386.60', method: 'fifo',
     });
     // 0.003 from L1 (cost 180) + 0.002 from L2 (cost 260*0.002/0.004=130) = 310 cost
     expect(round(r.totalCostBase, 2)).toBe('310.00');
@@ -31,7 +31,7 @@ describe('matchSell — realized P&L', () => {
 
   it('LIFO consumes newest lot first', () => {
     const r = matchSell(lots, {
-      sellChainId: 'sell1', assetId: 'BTC', amount: '0.004', proceedsBase: '300', method: 'lifo',
+      sellChainId: 'sell1', assetId: 'BTC', baseCurrencyAssetId: 'GBP', amount: '0.004', proceedsBase: '300', method: 'lifo',
     });
     // all 0.004 from L2, cost 260
     expect(round(r.totalCostBase, 2)).toBe('260.00');
@@ -41,7 +41,7 @@ describe('matchSell — realized P&L', () => {
 
   it('manual selection honors the given lot order', () => {
     const r = matchSell(lots, {
-      sellChainId: 'sell1', assetId: 'BTC', amount: '0.003', proceedsBase: '210',
+      sellChainId: 'sell1', assetId: 'BTC', baseCurrencyAssetId: 'GBP', amount: '0.003', proceedsBase: '210',
       method: 'manual', selectedLotIds: ['L2', 'L1'],
     });
     expect(round(r.totalCostBase, 2)).toBe('195.00'); // 0.003 of L2 = 260*0.003/0.004
@@ -50,16 +50,29 @@ describe('matchSell — realized P&L', () => {
 
   it('average cost pools all open lots', () => {
     const r = matchSell(lots, {
-      sellChainId: 'sell1', assetId: 'BTC', amount: '0.007', proceedsBase: '500', method: 'average',
+      sellChainId: 'sell1', assetId: 'BTC', baseCurrencyAssetId: 'GBP', amount: '0.007', proceedsBase: '500', method: 'average',
     });
     // pool = 0.007 for 440 total => whole pool consumed, cost 440
     expect(round(r.totalCostBase, 2)).toBe('440.00');
     expect(round(r.realizedPnlBase, 2)).toBe('60.00');
   });
 
+  it('keeps the remaining pool basis exact after a partial average-cost sale', () => {
+    const pool = [
+      lot({ id: 'A1', acquiredDate: '2026-01-01', originalAmount: '1', baseCost: '10' }),
+      lot({ id: 'A2', acquiredDate: '2026-02-01', originalAmount: '1', baseCost: '30' }),
+    ];
+    const r = matchSell(pool, {
+      sellChainId: 'sell-average-partial', assetId: 'BTC', baseCurrencyAssetId: 'GBP', amount: '1', proceedsBase: '25', method: 'average',
+    });
+    expect(r.totalCostBase).toBe('20');
+    expect(r.updatedLots.map((row) => row.remainingAmount)).toEqual(['0.5', '0.5']);
+    expect(remainingCostBasis(r.updatedLots, 'BTC')).toBe('20');
+  });
+
   it('flags oversell (sold more than held) as unmatched, no stock forced', () => {
     const r = matchSell(lots, {
-      sellChainId: 'sell1', assetId: 'BTC', amount: '0.010', proceedsBase: '700', method: 'fifo',
+      sellChainId: 'sell1', assetId: 'BTC', baseCurrencyAssetId: 'GBP', amount: '0.010', proceedsBase: '700', method: 'fifo',
     });
     expect(round(r.unmatchedAmount, 3)).toBe('0.003'); // 0.007 held, 0.010 sold
   });
@@ -71,7 +84,7 @@ describe('matchSell — realized P&L', () => {
       lot({ id: 'E3', acquiredDate: '2026-01-03', originalAmount: '1', baseCost: '10' })];
     for (const method of ['fifo', 'average'] as const) {
       const r = matchSell(equal, {
-        sellChainId: 'sell-eq', assetId: 'BTC', amount: '3', proceedsBase: '100', method,
+        sellChainId: 'sell-eq', assetId: 'BTC', baseCurrencyAssetId: 'GBP', amount: '3', proceedsBase: '100', method,
       });
       const sumAlloc = r.consumptions.reduce((total, c) => total.plus(c.proceedsBase), D(0));
       expect(sumAlloc.toString()).toBe('100');
@@ -86,7 +99,7 @@ describe('matchSell — realized P&L', () => {
       lot({ id: 'U2', acquiredDate: '2026-01-02', originalAmount: '0.33', baseCost: '11' }),
       lot({ id: 'U3', acquiredDate: '2026-01-03', originalAmount: '0.66', baseCost: '11' })];
     const r = matchSell(uneven, {
-      sellChainId: 'sell-uneven', assetId: 'BTC', amount: '2', proceedsBase: '100', method: 'fifo',
+      sellChainId: 'sell-uneven', assetId: 'BTC', baseCurrencyAssetId: 'GBP', amount: '2', proceedsBase: '100', method: 'fifo',
     });
     const sumAlloc = r.consumptions.reduce((total, c) => total.plus(c.proceedsBase), D(0));
     expect(sumAlloc.toString()).toBe('100');
@@ -95,5 +108,20 @@ describe('matchSell — realized P&L', () => {
 
   it('remainingCostBasis reflects open lots', () => {
     expect(round(remainingCostBasis(lots, 'BTC'), 2)).toBe('440.00');
+  });
+
+  it('rejects lots whose cost currency differs from the sale proceeds currency', () => {
+    expect(() => matchSell([{ ...lots[0]!, baseCurrencyAssetId: 'USD' }], {
+      sellChainId: 'sell-mixed', assetId: 'BTC', baseCurrencyAssetId: 'GBP', amount: '0.001', proceedsBase: '70', method: 'fifo',
+    })).toThrow('禁止将 USD 计价的持仓成本与 GBP 卖出收入直接汇总');
+  });
+
+  it('does not reject an untouched later lot in another cost currency', () => {
+    const result = matchSell([lots[0]!, { ...lots[1]!, baseCurrencyAssetId: 'USD' }], {
+      sellChainId: 'sell-before-mixed', assetId: 'BTC', baseCurrencyAssetId: 'GBP', amount: '0.001', proceedsBase: '70', method: 'fifo',
+    });
+    expect(result.consumptions).toHaveLength(1);
+    expect(result.consumptions[0]?.lotId).toBe('L1');
+    expect(result.unmatchedAmount).toBe('0');
   });
 });

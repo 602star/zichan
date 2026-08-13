@@ -286,7 +286,11 @@ export async function unlockLedgerKeyEnvelope(passphrase: string, envelope: Ledg
 }
 
 export async function changeLedgerPassphrase(session: LedgerCryptoSession, newPassphrase: string): Promise<{ envelope: LedgerKeyEnvelope; session: LedgerCryptoSession }> {
-  const next = { ...session, generation: session.generation + 1 } satisfies LedgerCryptoSession;
+  const next: LedgerCryptoSession = {
+    ...session,
+    generation: session.generation + 1,
+    dataKeys: new Map(session.dataKeys),
+  };
   return { session: next, envelope: await wrapLedgerCryptoSession(next, newPassphrase) };
 }
 

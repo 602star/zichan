@@ -41,6 +41,8 @@ export function lotFromTrace(
 export interface SellMatchInput {
   sellChainId: string;
   assetId: string;
+  /** Currency in which proceedsBase and every matched lot cost are expressed. */
+  baseCurrencyAssetId: string;
   amount: string; // amount of asset being sold
   proceedsBase: string; // total base-currency proceeds for the whole sell
   method: LotMethod;
@@ -100,30 +102,45 @@ export function matchSell(lots: Lot[], input: SellMatchInput): SellMatchResult {
   let totalCost = D(0);
 
   if (input.method === 'average') {
-    // Average cost across the open pool.
+    // Average cost is one synthetic pool. Consume every lot by the same
+    // proportion so the remaining per-lot basis still adds up to the pool's
+    // remaining basis after a partial sale.
+    const incompatible = ordered.find((lot) => lot.baseCurrencyAssetId !== input.baseCurrencyAssetId);
+    if (sellAmount.gt(0) && incompatible) {
+      throw new Error(`禁止将 ${incompatible.baseCurrencyAssetId} 计价的持仓成本与 ${input.baseCurrencyAssetId} 卖出收入直接汇总`);
+    }
     const poolAmount = sum(ordered.map((l) => l.remainingAmount));
     const poolCost = sum(
       ordered.map((l) => D(l.baseCost).times(safeDiv(l.remainingAmount, l.originalAmount))),
     );
     const avgUnit = safeDiv(poolCost, poolAmount);
-    for (const lot of ordered) {
-      if (remainingToSell.lte(0)) break;
-      const take = DecimalMin(remainingToSell, D(lot.remainingAmount));
+    const matchedTarget = DecimalMin(sellAmount, poolAmount);
+    let remainingToMatch = matchedTarget;
+    for (let index = 0; index < ordered.length; index += 1) {
+      if (remainingToMatch.lte(0)) break;
+      const lot = ordered[index]!;
+      const take = index === ordered.length - 1
+        ? remainingToMatch
+        : DecimalMin(remainingToMatch, matchedTarget.times(safeDiv(lot.remainingAmount, poolAmount)));
       const cost = avgUnit.times(take);
       totalCost = totalCost.plus(cost);
-      applyConsumption(byId, lot.id, take, cost, now);
+      applyConsumption(byId, lot.id, take, now);
       consumptions.push(makeConsumption(input, lot.id, take, cost, now));
       remainingToSell = remainingToSell.minus(take);
+      remainingToMatch = remainingToMatch.minus(take);
     }
   } else {
     for (const lot of ordered) {
       if (remainingToSell.lte(0)) break;
+      if (lot.baseCurrencyAssetId !== input.baseCurrencyAssetId) {
+        throw new Error(`禁止将 ${lot.baseCurrencyAssetId} 计价的持仓成本与 ${input.baseCurrencyAssetId} 卖出收入直接汇总`);
+      }
       const take = DecimalMin(remainingToSell, D(lot.remainingAmount));
       // Cost basis for the slice = lot cost pro-rated by consumed fraction of original.
       const unit = safeDiv(lot.baseCost, lot.originalAmount);
       const cost = unit.times(take);
       totalCost = totalCost.plus(cost);
-      applyConsumption(byId, lot.id, take, cost, now);
+      applyConsumption(byId, lot.id, take, now);
       consumptions.push(makeConsumption(input, lot.id, take, cost, now));
       remainingToSell = remainingToSell.minus(take);
     }
@@ -165,7 +182,6 @@ function applyConsumption(
   byId: Map<string, Lot>,
   lotId: string,
   take: import('./decimal.js').Decimal,
-  _cost: import('./decimal.js').Decimal,
   now: string,
 ): void {
   const lot = byId.get(lotId);
