@@ -1,6 +1,7 @@
 node_modules/
 .tools/
 coverage/
+ci-artifacts/
 tools/eslint/node_modules/
 tools/coverage/node_modules/
 tools/e2e/node_modules/

@@ -129,7 +129,9 @@ fn normalize_state(app: &AppHandle, mut state: PersistedUpdateState) -> Persiste
         } else if state.previous_version.as_deref() == Some(current.as_str()) {
             state.phase = "failed".into();
             state.message = Some("更新未完成，当前版本保持不变".into());
-            state.error.get_or_insert_with(|| "安装程序未完成更新".into());
+            state
+                .error
+                .get_or_insert_with(|| "安装程序未完成更新".into());
         }
     }
     state
@@ -141,8 +143,16 @@ fn public_status(app: &AppHandle, state: PersistedUpdateState) -> DesktopUpdateS
         supported: cfg!(desktop),
         configured,
         current_version: app.package_info().version.to_string(),
-        channel: if state.channel.is_empty() { "stable".into() } else { state.channel },
-        phase: if state.phase.is_empty() { "idle".into() } else { state.phase },
+        channel: if state.channel.is_empty() {
+            "stable".into()
+        } else {
+            state.channel
+        },
+        phase: if state.phase.is_empty() {
+            "idle".into()
+        } else {
+            state.phase
+        },
         available_version: state.target_version,
         previous_version: state.previous_version,
         notes: state.notes,

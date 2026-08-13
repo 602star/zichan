@@ -35,11 +35,13 @@
     "test": "npm run test --workspaces --if-present",
     "test:coverage": "npm run test --prefix tools/coverage",
     "test:e2e": "npm run test --prefix tools/e2e",
+    "test:release": "node --test scripts/check-release-consistency.test.mjs scripts/verify-release-artifacts.test.mjs apps/desktop/scripts/create-update-manifest.test.mjs",
     "bench:transactions": "npm run build && node packages/db/bench/transaction-scale.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build": "npm run build --workspace @zichan/logger --workspace @zichan/core --workspace @zichan/db",
     "build:web": "npm run build --workspace @zichan/web",
-    "ci": "npm run lint && npm run typecheck && npm run test:coverage && npm run build:web"
+    "release:check": "node scripts/check-release-consistency.mjs",
+    "ci": "npm run release:check && npm run test:release && npm run lint && npm run typecheck && npm run test:coverage && npm run build:web && npm run build --workspace @zichan/sync-server"
   },
   "engines": {
     "node": ">=20"

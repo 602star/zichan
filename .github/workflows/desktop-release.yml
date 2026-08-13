@@ -48,34 +48,52 @@ jobs:
           workspaces: apps/desktop/src-tauri
       - run: npm ci
 
+      - name: Verify project version, release notes, and schema metadata
+        run: npm run release:check
+
+      - name: Test release integrity gates
+        run: npm run test:release
+
       - name: Resolve release metadata
         id: metadata
         shell: pwsh
         run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
           $isTag = '${{ github.ref_type }}' -eq 'tag'
-          $channel = if ($isTag) { 'stable' } else { '${{ inputs.channel }}' }
-          $publish = if ($isTag) { 'true' } else { '${{ inputs.publish }}' }
+          $isDispatch = '${{ github.event_name }}' -eq 'workflow_dispatch'
+          $channel = if (-not $isDispatch -and $isTag) { 'stable' } else { '${{ inputs.channel }}' }
+          $publish = $isDispatch -and '${{ inputs.publish }}' -eq 'true'
+          if ($channel -eq 'stable' -and $isTag -and '${{ github.ref_name }}' -ne "v$version") {
+            throw "Stable release tag must be exactly v$version."
+          }
+          if ($publish -and $channel -eq 'stable' -and (-not $isTag -or '${{ github.ref_name }}' -ne "v$version")) {
+            throw "Publishing stable requires manually dispatching this workflow from the existing v$version tag."
+          }
           $tag = if ($channel -eq 'stable') {
-            if ($isTag) { '${{ github.ref_name }}' } else { "v$((Get-Content apps/desktop/src-tauri/tauri.conf.json | ConvertFrom-Json).version)" }
+            "v$version"
           } else {
             'desktop-preview'
           }
           "RELEASE_CHANNEL=$channel" | Out-File $env:GITHUB_ENV -Append
-          "PUBLISH_RELEASE=$publish" | Out-File $env:GITHUB_ENV -Append
+          "PUBLISH_RELEASE=$($publish.ToString().ToLowerInvariant())" | Out-File $env:GITHUB_ENV -Append
           "RELEASE_TAG=$tag" | Out-File $env:GITHUB_ENV -Append
-          "APP_VERSION=$((Get-Content apps/desktop/src-tauri/tauri.conf.json | ConvertFrom-Json).version)" | Out-File $env:GITHUB_ENV -Append
+          "APP_VERSION=$version" | Out-File $env:GITHUB_ENV -Append
           "MANIFEST_NAME=$(if ($channel -eq 'stable') { 'latest.json' } else { 'preview.json' })" | Out-File $env:GITHUB_ENV -Append
           "channel=$channel" | Out-File $env:GITHUB_OUTPUT -Append
-          "publish=$publish" | Out-File $env:GITHUB_OUTPUT -Append
+          "publish=$($publish.ToString().ToLowerInvariant())" | Out-File $env:GITHUB_OUTPUT -Append
           "tag=$tag" | Out-File $env:GITHUB_OUTPUT -Append
-          "version=$((Get-Content apps/desktop/src-tauri/tauri.conf.json | ConvertFrom-Json).version)" | Out-File $env:GITHUB_OUTPUT -Append
+          "version=$version" | Out-File $env:GITHUB_OUTPUT -Append
           "manifest=$(if ($channel -eq 'stable') { 'latest.json' } else { 'preview.json' })" | Out-File $env:GITHUB_OUTPUT -Append
 
-      - name: Require updater signing material
+      - name: Require channel signing material
         shell: pwsh
         run: |
           if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) { throw 'TAURI_SIGNING_PRIVATE_KEY is required.' }
           if ([string]::IsNullOrWhiteSpace($env:ZICHAN_UPDATE_PUBLIC_KEY)) { throw 'TAURI_SIGNING_PUBLIC_KEY is required.' }
+          if ($env:RELEASE_CHANNEL -eq 'stable') {
+            if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_BASE64)) { throw 'WINDOWS_CERTIFICATE_BASE64 is required for stable releases.' }
+            if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_PASSWORD)) { throw 'WINDOWS_CERTIFICATE_PASSWORD is required for stable releases.' }
+          }
 
       - name: Import Windows signing certificate
         if: ${{ env.WINDOWS_CERTIFICATE_BASE64 != '' }}
@@ -131,6 +149,24 @@ jobs:
             --version "$env:APP_VERSION" `
             --notes-file docs/release-notes.md
 
+      - name: Verify installer and manifest structure
+        shell: pwsh
+        run: |
+          node scripts/verify-release-artifacts.mjs `
+            --bundle-dir apps/desktop/src-tauri/target/release/bundle `
+            --manifest "apps/desktop/src-tauri/target/release/bundle/$env:MANIFEST_NAME" `
+            --version "$env:APP_VERSION" `
+            --tag "$env:RELEASE_TAG"
+
+      - name: Cryptographically verify updater archives
+        shell: pwsh
+        run: |
+          cargo run --locked --release `
+            --manifest-path apps/desktop/src-tauri/Cargo.toml `
+            --bin verify-updater-signature -- `
+            --bundle-dir apps/desktop/src-tauri/target/release/bundle `
+            --public-key-env ZICHAN_UPDATE_PUBLIC_KEY
+
       - name: Clean-runner install, launch, and uninstall
         shell: pwsh
         run: |
@@ -152,6 +188,14 @@ jobs:
             apps/desktop/src-tauri/target/release/bundle/nsis/*.sig
             apps/desktop/src-tauri/target/release/bundle/${{ steps.metadata.outputs.manifest }}
           if-no-files-found: error
+
+      - name: Verify publication tag already exists
+        if: ${{ steps.metadata.outputs.publish == 'true' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/git/ref/tags/$env:RELEASE_TAG" | Out-Null
 
       - name: Publish stable or preview release
         if: ${{ steps.metadata.outputs.publish == 'true' }}

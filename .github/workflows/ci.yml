@@ -18,20 +18,142 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Verify release and schema metadata
+        run: npm run release:check
+      - name: Test release gates
+        run: npm run test:release
       - name: Install isolated quality tools
         run: |
           npm install --prefix tools/eslint
           npm install --prefix tools/coverage
       - run: npm run lint
       - run: npm run typecheck
+      - name: Verify Node SQLite schema/query contract
+        run: npm test --workspace @zichan/db -- test/schema-baseline.test.ts test/transaction.test.ts
+      - name: Verify sql.js and Tauri bridge contracts
+        run: npm test --workspace @zichan/web -- test/sqljs-driver.test.ts test/tauri-sql-driver.test.ts
       - run: npm run test:coverage
       - run: npm run build:web
+      - name: Build sync server production bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ci-artifacts | Out-Null
+          npm run build --workspace @zichan/sync-server 2>&1 | Tee-Object ci-artifacts/sync-server-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage/
+          if-no-files-found: ignore
+      - name: Upload quality failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-failure-logs
+          path: ci-artifacts/
+          if-no-files-found: ignore
+
+  desktop-rust:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: npm ci
+      - name: Export the canonical database schema for SQLCipher
+        shell: pwsh
+        run: |
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $contract = Join-Path $env:RUNNER_TEMP 'zichan-schema-contract.json'
+          node scripts/export-schema-contract.mjs --output $contract
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "ZICHAN_SCHEMA_CONTRACT_PATH=$contract" | Out-File $env:GITHUB_ENV -Append
+      - name: Format, check, and test desktop Rust
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ci-artifacts | Out-Null
+          cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check 2>&1 | Tee-Object ci-artifacts/cargo-fmt.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo fmt --manifest-path apps/desktop/plugins/system-share/Cargo.toml -- --check 2>&1 | Tee-Object ci-artifacts/plugin-cargo-fmt.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml 2>&1 | Tee-Object ci-artifacts/cargo-check.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml 2>&1 | Tee-Object ci-artifacts/cargo-test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml generated_schema_contract_executes_on_sqlcipher -- --ignored 2>&1 | Tee-Object ci-artifacts/schema-contract.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Rust failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-rust-failure-logs
+          path: ci-artifacts/
+          if-no-files-found: ignore
+
+  sync-server-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image and verify health endpoints
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p ci-artifacts "$RUNNER_TEMP/zichan-sync-state"
+          container=zichan-sync-ci
+          cleanup() {
+            docker logs "$container" > ci-artifacts/docker-container.log 2>&1 || true
+            docker inspect "$container" > ci-artifacts/docker-inspect.json 2>&1 || true
+            docker rm --force "$container" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker build --file apps/sync-server/Dockerfile --tag "zichan-sync-ci:${GITHUB_SHA}" . 2>&1 | tee ci-artifacts/docker-build.log
+          sync_secret="$(openssl rand -hex 32)"
+          admin_token="$(openssl rand -hex 24)"
+          docker run --detach --name "$container" \
+            --publish 127.0.0.1:18787:8787 \
+            --env HOST=0.0.0.0 \
+            --env DATA_DIR=/state/server \
+            --env SYNC_SECRET="$sync_secret" \
+            --env ADMIN_TOKEN="$admin_token" \
+            --env REGISTRATION_MODE=closed \
+            --env ENABLE_WEB=0 \
+            --env ENABLE_SYNC=1 \
+            --env ALLOW_INSECURE_HTTP=1 \
+            --mount "type=bind,src=$RUNNER_TEMP/zichan-sync-state,dst=/state" \
+            "zichan-sync-ci:${GITHUB_SHA}"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:18787/api/health --output ci-artifacts/health.json; then
+              break
+            fi
+            if ! docker inspect --format '{{.State.Running}}' "$container" | grep --quiet true; then
+              echo 'sync-server container stopped before becoming healthy' >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          test -s ci-artifacts/health.json
+          curl --fail --silent --show-error http://127.0.0.1:18787/api/ready --output ci-artifacts/ready.json
+          jq --exit-status '.ok == true' ci-artifacts/health.json >/dev/null
+          jq --exit-status '.ok == true and .database.ok == true' ci-artifacts/ready.json >/dev/null
+      - name: Upload container failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-server-container-failure-logs
+          path: ci-artifacts/
           if-no-files-found: ignore
 
   browser-flows:

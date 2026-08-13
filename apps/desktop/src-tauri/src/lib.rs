@@ -11,9 +11,9 @@ use std::{
 };
 use tauri::Manager;
 
+mod desktop_updater;
 mod native_attachments;
 mod native_sql;
-mod desktop_updater;
 use native_sql::NativeSqlState;
 
 #[derive(Default)]
