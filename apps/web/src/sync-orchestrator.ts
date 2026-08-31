@@ -10,8 +10,8 @@ import {
 import {
   buildSyncBaseUrl,
   isUnauthorizedSyncError,
-  patchSavedSyncProfile,
-  type SyncServerProfile,
+  patchSavedSyncConnection,
+  type SyncConnection,
 } from './sync-config.js';
 import { authenticateSyncProfile } from './sync-auth.js';
 import {
@@ -37,40 +37,101 @@ export interface ConfiguredSyncResult extends Omit<MultiReplicaSyncResult, 'endp
 type MeteredTransport = {
   transport: CommitTransport;
   latencyMs(): number;
+  activeUrl(): string;
 };
 
 function elapsedSince(started: number): number {
   return Math.max(0, Math.round(performance.now() - started));
 }
 
-function authenticatedTransport(profile: SyncServerProfile): MeteredTransport {
-  const baseUrl = buildSyncBaseUrl(profile);
+function endpointUnavailable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /failed to fetch|fetch failed|network(?: error)?|econn(?:refused|reset|aborted)|enotfound|eai_again|timed? ?out|timeout|HTTP (?:404|408|5\d\d)\b/i.test(message);
+}
+
+function identityChanged(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /身份(?:已变化|与已信任记录不一致)|公钥|fingerprint|指纹/i.test(message);
+}
+
+function authenticatedTransport(profile: SyncConnection): MeteredTransport {
+  const urls = [...new Set([profile.baseUrl, ...profile.alternateUrls].map((baseUrl) => buildSyncBaseUrl({ baseUrl })))];
   let inner: CommitTransport | undefined;
+  let activeIndex = 0;
   let measuredMs = 0;
 
-  const create = async (forceLogin = false): Promise<CommitTransport> => {
-    const accessToken = await authenticateSyncProfile(profile, forceLogin);
+  const create = async (index: number, forceLogin = false): Promise<CommitTransport> => {
+    const baseUrl = urls[index]!;
+    const candidate = { ...profile, baseUrl, activeUrl: baseUrl };
+    const accessToken = await authenticateSyncProfile(candidate, forceLogin);
     const keyEnvelope = storedLedgerKeyEnvelope();
     if (!keyEnvelope) throw new Error('本机没有账本密钥包，请先在同步页创建或获取');
-    inner = httpCommitTransport({
+    return httpCommitTransport({
       baseUrl,
       token: accessToken,
       cryptoSession: requireLedgerCryptoSession(keyEnvelope.ledgerId),
       keyEnvelope,
     });
-    return inner;
   };
 
-  const current = async (): Promise<CommitTransport> => inner ?? create();
+  const executeAt = async <T>(
+    index: number,
+    operation: (transport: CommitTransport) => Promise<T>,
+    forceLogin = false,
+  ): Promise<T> => {
+    let candidate = await create(index, forceLogin);
+    try {
+      const result = await operation(candidate);
+      inner = candidate;
+      activeIndex = index;
+      return result;
+    } catch (error) {
+      if (forceLogin || !isUnauthorizedSyncError(error)) throw error;
+      candidate = await create(index, true);
+      const result = await operation(candidate);
+      inner = candidate;
+      activeIndex = index;
+      return result;
+    }
+  };
+
+  const tryCandidates = async <T>(
+    operation: (transport: CommitTransport) => Promise<T>,
+    startIndex: number,
+  ): Promise<T> => {
+    let lastError: unknown = new Error('同步服务器没有可用地址');
+    for (let offset = 0; offset < urls.length; offset += 1) {
+      const index = (startIndex + offset) % urls.length;
+      try {
+        return await executeAt(index, operation);
+      } catch (error) {
+        lastError = error;
+        if (identityChanged(error) || isUnauthorizedSyncError(error) || !endpointUnavailable(error)) throw error;
+      }
+    }
+    throw lastError;
+  };
+
   const invoke = async <T>(operation: (transport: CommitTransport) => Promise<T>): Promise<T> => {
     const started = performance.now();
     try {
+      if (!inner) return await tryCandidates(operation, activeIndex);
       try {
-        return await operation(await current());
+        return await operation(inner);
       } catch (error) {
+        if (identityChanged(error)) throw error;
+        if (endpointUnavailable(error)) {
+          inner = undefined;
+          return await tryCandidates(operation, (activeIndex + 1) % urls.length);
+        }
         if (!isUnauthorizedSyncError(error)) throw error;
         inner = undefined;
-        return await operation(await create(true));
+        try {
+          return await executeAt(activeIndex, operation, true);
+        } catch (retryError) {
+          if (identityChanged(retryError) || isUnauthorizedSyncError(retryError) || !endpointUnavailable(retryError)) throw retryError;
+          return await tryCandidates(operation, (activeIndex + 1) % urls.length);
+        }
       }
     } finally {
       measuredMs += elapsedSince(started);
@@ -84,12 +145,13 @@ function authenticatedTransport(profile: SyncServerProfile): MeteredTransport {
       pushCommits: (identity, commits) => invoke((transport) => transport.pushCommits(identity, commits)),
     },
     latencyMs: () => measuredMs,
+    activeUrl: () => urls[activeIndex]!,
   };
 }
 
 export async function syncConfiguredServers(
   store: SqlLedgerStore,
-  profiles: SyncServerProfile[],
+  profiles: SyncConnection[],
 ): Promise<ConfiguredSyncResult> {
   const selected = profiles.filter((profile) => profile.enabled);
   const meters = new Map<string, MeteredTransport>();
@@ -103,7 +165,18 @@ export async function syncConfiguredServers(
   try {
     attachmentSync = await syncAttachmentReplicas(store, result.endpoints.flatMap((endpoint) => {
       const profile = selected.find((row) => row.id === endpoint.id);
-      return profile && endpoint.identity && !endpoint.error ? [{ profile, identity: endpoint.identity }] : [];
+      const meter = meters.get(endpoint.id);
+      if (!profile || !meter || !endpoint.identity || endpoint.error) return [];
+      const activeUrl = meter.activeUrl();
+      return [{
+        profile: {
+          ...profile,
+          baseUrl: activeUrl,
+          activeUrl,
+          alternateUrls: [...new Set([profile.baseUrl, ...profile.alternateUrls])].filter((url) => url !== activeUrl),
+        },
+        identity: endpoint.identity,
+      }];
     }));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -128,27 +201,38 @@ export async function syncConfiguredServers(
   const finishedAt = new Date().toISOString();
   const endpoints = result.endpoints.map((endpoint): ConfiguredSyncEndpoint => {
     const profile = selected.find((row) => row.id === endpoint.id)!;
-    const latencyMs = meters.get(endpoint.id)?.latencyMs() ?? 0;
+    const meter = meters.get(endpoint.id);
+    const latencyMs = meter?.latencyMs() ?? 0;
+    const activeUrl = meter?.activeUrl() ?? buildSyncBaseUrl(profile);
+    const alternateUrls = [...new Set([profile.baseUrl, ...profile.alternateUrls])].filter((url) => url !== activeUrl);
     const attachments = attachmentSync.endpoints.find((row) => row.profileId === endpoint.id);
     if (endpoint.error) {
-      patchSavedSyncProfile(profile.id, {
-        lastStatus: isUnauthorizedSyncError(endpoint.error) ? 'unauthorized' : 'offline',
+      const identityChanged = /身份|公钥|fingerprint|指纹/i.test(endpoint.error);
+      patchSavedSyncConnection(profile.id, {
+        status: identityChanged ? 'identity_changed' : isUnauthorizedSyncError(endpoint.error) ? 'login_required' : 'offline',
         lastLatencyMs: latencyMs,
         lastError: endpoint.error,
+        lastSyncError: endpoint.error,
       });
     } else {
-      patchSavedSyncProfile(profile.id, {
+      const syncError = attachments?.error
+        ?? (result.converged ? undefined : '本轮尚未完全收敛，将在下次同步继续');
+      patchSavedSyncConnection(profile.id, {
+        baseUrl: activeUrl,
+        activeUrl,
+        alternateUrls,
         serverId: endpoint.identity?.serverId,
         replicaId: endpoint.identity?.replicaId,
         streamEpoch: endpoint.identity?.streamEpoch,
         ledgerId: endpoint.identity?.ledgerId,
-        lastStatus: 'online',
+        status: 'online',
         lastLatencyMs: latencyMs,
         lastSyncAt: finishedAt,
-        lastError: attachments?.error ?? (result.converged ? undefined : '本轮尚未完全收敛，将在下次同步继续'),
+        lastError: syncError,
+        lastSyncError: syncError,
       });
     }
-    return { ...endpoint, alias: profile.alias, url: buildSyncBaseUrl(profile), latencyMs, attachments };
+    return { ...endpoint, alias: profile.alias, url: activeUrl, latencyMs, attachments };
   });
   return { ...result, endpoints, attachmentSync, finishedAt };
 }

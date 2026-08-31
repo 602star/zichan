@@ -23,8 +23,8 @@ apps ──▶ LedgerStore (core port)
 - **`NodeSqliteDriver`** ([drivers/node-sqlite.ts](../packages/db/src/drivers/node-sqlite.ts)) —
   Node's built-in `node:sqlite`, loaded via `process.getBuiltinModule` so web bundlers
   never try to resolve this new builtin. Node-only; never imported on web.
-- **`TauriSqlDriver`** (`apps/web/src/db/tauri-sql-driver.ts`) — asks Rust for the absolute
-  `AppData/ledger.sqlite` URL and opens it through `tauri-plugin-sql`; Rust keeps one connection for each
+- **`TauriSqlDriver`** (`apps/web/src/db/tauri-sql-driver.ts`) — uses the dedicated Rust SQL command
+  bridge against an absolute path selected before the WebView starts; Rust keeps one connection for each
   `BEGIN IMMEDIATE` transaction and uses savepoints for nesting. Browser builds never load it.
 - **`SqlLedgerStore`** ([repository.ts](../packages/db/src/repository.ts)) — the port
   implementation: one typed `Collection<T>` per entity + relational helpers.
@@ -83,15 +83,27 @@ Tauri SQLite 验证和升级测试矩阵。本事项当前状态为“已记录�
 - Browser: `SqlJsDriver` exports `ledger.sqlite` bytes to IndexedDB; attachment bodies and
   thumbnails are content-addressed IndexedDB `Blob` values. Because persistence replaces a whole snapshot, the driver holds an exclusive
   Web Lock for its full lifetime and rejects a second tab instead of allowing two independent in-memory copies to overwrite each other.
-- Tauri desktop/mobile: `TauriSqlDriver` stores `ledger.sqlite` under Tauri `AppData`;
-  attachment bodies live under `AppData/attachments/{staging,objects,trash,quarantine}` and verified backups under `AppData/backups`.
+- Windows portable desktop: `TauriSqlDriver` stores the database at `<exe-root>/data/ledger/ledger.sqlite`;
+  attachment bodies live under `data/attachments/{staging,objects,trash,quarantine}` and verified backups under `data/backups`.
+  Stronghold, WebView profile and built-in server state also live under the same root. Release code never scans or falls back to
+  AppData/LocalAppData; debug desktop uses the ignored repository `.runtime/desktop` tree. Mobile keeps its platform application directory.
 - Portable `.zcbak` backup embeds attachment bodies without Base64. Export lazily retrieves missing remote bodies; import preflight checks metadata,
   byte length, SHA-256 and thumbnail presence before staging. The ledger import and file journal commit in one SQLite transaction,
   followed by an idempotent atomic promotion; startup completes committed promotions and discards uncommitted staging.
+  On Windows, `data/backups` shares the portable volume with `data/ledger`, so it is a local recovery point rather than an independent copy.
+  The desktop saves the archive there atomically first, then reads it in bounded chunks for every enabled sync server; a remote failure is
+  recorded per server, persists into the safety/task state until a later successful attempt, and never removes the completed local archive. An archive from an older key-envelope generation can be opened with
+  the ledger password that was in use when that archive was created.
 - Backup files use encrypted archive format v3. A small authenticated header is followed by independently authenticated 1 MiB
   AES-GCM frames, so archives can be written/read incrementally instead of materializing all attachments in memory. Each file carries the password-wrapped Argon2id key envelope, so the file plus its ledger passphrase is sufficient on a replacement device. Portable backups contain ledger
   data and attachment bodies; full-device backups additionally contain ledger identity, audit history, sync cursors/conflicts and
   attachment transfer state. Manual and pre-import backups are pinned; automatic backups use hourly/daily/weekly retention.
+- `resetPlatformData()` treats the database/attachments and their surrounding identity as one reset boundary. After the platform
+  deletion and native Stronghold reset succeed, it also deletes the WebView/browser `zichan-web` IndexedDB (including form drafts),
+  then clears the device-storage envelope, ledger key envelope and runtime session,
+  sync profiles/auto-sync/session credentials, credential runtime cache, cloud device registry and backup safety state. A native
+  Stronghold failure is surfaced instead of reporting a completed reset. Existing Windows files in `data/backups` are intentionally
+  retained as historical encrypted archives and may require their creation-time ledger password.
 
 ## Collection API
 
@@ -159,7 +171,14 @@ so the history page filters in SQLite instead of loading an arbitrary client-sid
 
 Batch operations use `createAuditBatch()` + `withAuditContext({ batchId })`, so dozens of
 entity changes can appear as one product-level action in the UI while still preserving every
-row-level diff. Commit-DAG conflict decisions are recorded in `sync_conflict_resolutions` by
+row-level diff. `runInAuditBatch()` defaults ordinary product commands to `type=user` and, unless explicitly
+disabled, stores one `business_compensations` record containing the first before-state and final after-state of
+every changed entity. `inspectBusinessCompensation()` applies the complete inverse in a rollback-only transaction:
+it checks every current version, restore/delete boundary and aggregate invariant without mutating data or the
+compensation status. `undoBusinessCompensation()` then repeats the checks and writes the whole inverse in one
+transaction and one new user audit batch. A deterministic domain/version conflict marks the compensation `blocked`;
+a transient infrastructure error leaves it `pending` with the last error so History can retry without accepting a
+partially reverted batch. Commit-DAG conflict decisions are recorded in `sync_conflict_resolutions` by
 `resolveConflictGroup()` and reference the merge commit that closed the branches.
 
 Applying a remote commit uses `source=remote_sync` and suppresses creation of another outbound revision. Its audit batch
@@ -271,7 +290,7 @@ await store.close();
 ```
 
 On web, construct `SqlLedgerStore` with `SqlJsDriver`; exported SQLite bytes persist in
-IndexedDB. Tauri uses `TauriSqlDriver` against `AppData/ledger.sqlite`; repository behavior is unchanged.
+IndexedDB. Windows portable Tauri uses `TauriSqlDriver` against `data/ledger/ledger.sqlite`; repository behavior is unchanged.
 
 ## 测试
 

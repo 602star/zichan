@@ -15,7 +15,7 @@ import type { SyncReplicaIdentity } from './sync-types.js';
 
 declare const fetch: (
   url: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: string },
+  init?: { method?: string; headers?: Record<string, string>; body?: string; redirect?: 'error' },
 ) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
 export interface HttpTransportOptions {
@@ -25,16 +25,25 @@ export interface HttpTransportOptions {
   cryptoSession: LedgerCryptoSession;
   /** Opaque password-wrapped keyring replicated to every configured server. */
   keyEnvelope: LedgerKeyEnvelope;
+  /** Refuse to create a server-side binding; used by destructive join preflight. */
+  requireExistingReplica?: boolean;
 }
 
 export interface RegisterAccountOptions {
   inviteCode?: string;
+  expectedServerId?: string;
+  expectedServerPublicKey?: string;
+}
+
+export interface RegisterAccountResult {
+  role: 'admin' | 'member';
 }
 
 export interface LoginAccountOptions {
   deviceId?: string;
   deviceName?: string;
   expectedServerPublicKey?: string;
+  expectedServerId?: string;
 }
 
 export interface SyncAuthSession {
@@ -54,6 +63,18 @@ export interface SyncAuthSession {
     revokedAt: string | null;
     active: boolean;
   };
+  role?: 'admin' | 'member';
+  ledgerId?: string;
+}
+
+export interface SyncAuthMe {
+  username: string;
+  role: 'admin' | 'member';
+  disabled: boolean;
+  session: SyncAuthSession['session'];
+  ledgerId?: string;
+  replicaId?: string;
+  streamEpoch?: string;
 }
 
 function context(ledgerId: string, commitId: string, contentHash: string) {
@@ -70,9 +91,20 @@ async function errorMessage(prefix: string, response: { status: number; json(): 
 }
 
 function localNetworkHostname(hostname: string): boolean {
-  const value = hostname.toLowerCase().replace(/^\[(.*)\]$/, '$1');
-  if (value === 'localhost' || value.endsWith('.localhost') || value === '::1') return true;
-  if (value.startsWith('fc') || value.startsWith('fd') || value.startsWith('fe80:')) return true;
+  const normalized = hostname.toLowerCase();
+  const ipv6Literal = normalized.startsWith('[') && normalized.endsWith(']');
+  const value = ipv6Literal ? normalized.slice(1, -1) : normalized;
+  if (value === 'localhost' || value.endsWith('.localhost')) return true;
+  if (ipv6Literal) {
+    if (value === '::1') return true;
+    // The URL parser has already validated and canonicalized a bracketed IPv6
+    // literal. Apply CIDR checks only to that literal, never to a DNS name that
+    // happens to begin with "fc" or "fd".
+    const firstHextet = Number.parseInt(value.split(':', 1)[0] ?? '', 16);
+    if (!Number.isInteger(firstHextet)) return false;
+    return (firstHextet & 0xfe00) === 0xfc00 // fc00::/7 (ULA)
+      || (firstHextet & 0xffc0) === 0xfe80; // fe80::/10 (link-local)
+  }
   const parts = value.split('.').map(Number);
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
   return parts[0] === 127
@@ -80,6 +112,15 @@ function localNetworkHostname(hostname: string): boolean {
     || (parts[0] === 172 && parts[1]! >= 16 && parts[1]! <= 31)
     || (parts[0] === 192 && parts[1] === 168)
     || (parts[0] === 169 && parts[1] === 254);
+}
+
+export function isLocalNetworkSyncUrl(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && localNetworkHostname(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -95,7 +136,7 @@ export function assertSecureSyncUrl(baseUrl: string): void {
   }
   if (url.username || url.password) throw new Error('同步服务器地址不能包含用户名或密码');
   if (url.protocol === 'https:') return;
-  if (url.protocol === 'http:' && localNetworkHostname(url.hostname)) return;
+  if (url.protocol === 'http:' && isLocalNetworkSyncUrl(url.toString())) return;
   throw new Error('公网同步必须使用 HTTPS；HTTP 仅允许本机或私有局域网地址');
 }
 
@@ -112,7 +153,7 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
     streamEpoch?: string;
     headSeq?: number;
   }> => {
-    const response = await fetch(`${opts.baseUrl}/api/v3/replica`, { headers });
+    const response = await fetch(`${opts.baseUrl}/api/v3/replica`, { headers, redirect: 'error' });
     if (!response.ok) throw await errorMessage('replica lookup failed', response);
     return response.json() as Promise<{
       serverId: string;
@@ -132,8 +173,9 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
       }
       let replica = await readReplica();
       if (!replica.bound) {
+        if (opts.requireExistingReplica) throw new Error('同步账号尚未绑定远端账本');
         const response = await fetch(`${opts.baseUrl}/api/v3/replica/bind`, {
-          method: 'POST', headers, body: JSON.stringify({ ledgerId }),
+          method: 'POST', headers, body: JSON.stringify({ ledgerId }), redirect: 'error',
         });
         if (!response.ok) throw await errorMessage('replica bind failed', response);
         replica = await readReplica();
@@ -151,7 +193,12 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
         throw new Error('账本数据与已解锁密钥包不匹配');
       }
       const remoteEnvelope = await fetchLedgerKeyEnvelope(opts.baseUrl, opts.token);
-      if (!remoteEnvelope) {
+      if (opts.requireExistingReplica) {
+        if (!remoteEnvelope) throw new Error('远端账本密钥封套在预检期间消失');
+        if (await sha256Json(remoteEnvelope) !== await sha256Json(opts.keyEnvelope)) {
+          throw new Error('远端账本密钥封套在预检期间发生变化');
+        }
+      } else if (!remoteEnvelope) {
         await putLedgerKeyEnvelope(opts.baseUrl, opts.token, opts.keyEnvelope);
       } else if (remoteEnvelope.keyringId !== opts.keyEnvelope.keyringId) {
         throw new Error('同步服务器保存的是另一个账本密钥包');
@@ -166,7 +213,7 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
     async pullCommits(identity: SyncReplicaIdentity, afterSeq: number, limit = 200) {
       const response = await fetch(
         `${opts.baseUrl}/api/v3/commits?after=${encodeURIComponent(String(afterSeq))}&limit=${encodeURIComponent(String(limit))}`,
-        { headers },
+        { headers, redirect: 'error' },
       );
       if (!response.ok) throw await errorMessage('commit pull failed', response);
       const body = await response.json() as {
@@ -212,7 +259,7 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
         });
       }
       const response = await fetch(`${opts.baseUrl}/api/v3/commits`, {
-        method: 'POST', headers, body: JSON.stringify({ commits: encrypted }),
+        method: 'POST', headers, body: JSON.stringify({ commits: encrypted }), redirect: 'error',
       });
       if (!response.ok) throw await errorMessage('commit push failed', response);
       const body = await response.json() as {
@@ -232,7 +279,7 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
 
 export async function fetchLedgerKeyEnvelope(baseUrl: string, token: string): Promise<LedgerKeyEnvelope | undefined> {
   assertSecureSyncUrl(baseUrl);
-  const response = await fetch(`${baseUrl}/api/v3/key-envelope`, { headers: { Authorization: `Bearer ${token}` } });
+  const response = await fetch(`${baseUrl}/api/v3/key-envelope`, { headers: { Authorization: `Bearer ${token}` }, redirect: 'error' });
   if (!response.ok) throw await errorMessage('key envelope lookup failed', response);
   const body = await response.json() as { envelope?: LedgerKeyEnvelope | null };
   return body.envelope ?? undefined;
@@ -244,11 +291,12 @@ export async function putLedgerKeyEnvelope(baseUrl: string, token: string, envel
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ envelope }),
+    redirect: 'error',
   });
   if (!response.ok) throw await errorMessage('key envelope update failed', response);
 }
 
-export async function registerAccount(baseUrl: string, username: string, password: string, opts: RegisterAccountOptions = {}): Promise<void> {
+export async function registerAccount(baseUrl: string, username: string, password: string, opts: RegisterAccountOptions = {}): Promise<RegisterAccountResult> {
   assertSecureSyncUrl(baseUrl);
   const normalized = normalizeSyncUsername(username);
   if (!normalized || !password) throw new Error('同步用户名和密码不能为空');
@@ -262,6 +310,7 @@ export async function registerAccount(baseUrl: string, username: string, passwor
       registrationRequest: start.registrationRequest,
       inviteCode: opts.inviteCode || undefined,
     }),
+    redirect: 'error',
   });
   if (!startResponse.ok) throw await errorMessage('register start failed', startResponse);
   const startBody = await startResponse.json() as {
@@ -272,6 +321,12 @@ export async function registerAccount(baseUrl: string, username: string, passwor
   };
   if (!startBody.registrationResponse || !startBody.registrationToken || !startBody.serverId || !startBody.serverPublicKey) {
     throw new Error('register start returned an incomplete OPAQUE response');
+  }
+  if (opts.expectedServerId && opts.expectedServerId !== startBody.serverId) {
+    throw new Error('同步服务器 ID 与已验证记录不一致');
+  }
+  if (opts.expectedServerPublicKey && opts.expectedServerPublicKey !== startBody.serverPublicKey) {
+    throw new Error('同步服务器身份公钥与已验证记录不一致');
   }
   const finish = opaque.client.finishRegistration({
     password,
@@ -290,8 +345,12 @@ export async function registerAccount(baseUrl: string, username: string, passwor
       registrationToken: startBody.registrationToken,
       registrationRecord: finish.registrationRecord,
     }),
+    redirect: 'error',
   });
   if (!finishResponse.ok) throw await errorMessage('register finish failed', finishResponse);
+  const result = await finishResponse.json() as { role?: 'admin' | 'member' };
+  if (result.role !== 'admin' && result.role !== 'member') throw new Error('register finish returned an invalid account role');
+  return { role: result.role };
 }
 
 function generatedDeviceId(): string {
@@ -314,6 +373,7 @@ export async function loginAccount(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: normalized, startLoginRequest: start.startLoginRequest }),
+    redirect: 'error',
   });
   if (!startResponse.ok) throw await errorMessage('login start failed', startResponse);
   const startBody = await startResponse.json() as {
@@ -324,6 +384,9 @@ export async function loginAccount(
   };
   if (!startBody.loginId || !startBody.loginResponse || !startBody.serverId || !startBody.serverPublicKey) {
     throw new Error('login start returned an incomplete OPAQUE response');
+  }
+  if (options.expectedServerId && options.expectedServerId !== startBody.serverId) {
+    throw new Error('同步服务器 ID 与已信任记录不一致');
   }
   if (options.expectedServerPublicKey && options.expectedServerPublicKey !== startBody.serverPublicKey) {
     throw new Error('同步服务器身份公钥与已信任记录不一致');
@@ -348,6 +411,7 @@ export async function loginAccount(
       deviceId: options.deviceId ?? generatedDeviceId(),
       deviceName: options.deviceName?.trim() || 'Zichan client',
     }),
+    redirect: 'error',
   });
   if (!loginResponse.ok) throw await errorMessage('login failed', loginResponse);
   return loginResponse.json() as Promise<SyncAuthSession>;
@@ -359,7 +423,22 @@ export async function refreshAccountSession(baseUrl: string, refreshToken: strin
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
+    redirect: 'error',
   });
   if (!response.ok) throw await errorMessage('session refresh failed', response);
   return response.json() as Promise<SyncAuthSession>;
+}
+
+export async function fetchAuthMe(baseUrl: string, accessToken: string): Promise<SyncAuthMe> {
+  assertSecureSyncUrl(baseUrl);
+  const response = await fetch(`${baseUrl}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    redirect: 'error',
+  });
+  if (!response.ok) throw await errorMessage('account lookup failed', response);
+  const body = await response.json() as SyncAuthMe;
+  if (!body.username || (body.role !== 'admin' && body.role !== 'member') || !body.session?.id) {
+    throw new Error('account lookup returned an incomplete response');
+  }
+  return body;
 }

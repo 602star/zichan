@@ -5,6 +5,79 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
 
 ---
 
+## 2026-08-31 — 账号化多服务器同步与纯本地模式重构
+
+- 首次启动在数据库初始化前选择“纯本地”或“连接同步服务器”。Windows 纯本地直接使用便携数据目录；浏览器只有在 IndexedDB、WebCrypto、WASM、Web Locks 可用且持久存储授权确认成功后才能新建纯本地账本。已有浏览器数据失去持久授权时进入只读恢复模式，可重新申请授权、导出 `.zcbak` 或连接服务器。
+- 同步连接改为“共享服务器目录 + 当前设备连接”双层模型，持久化内容只保存规范化完整 URL；当前网站、本机、局域网和公网向导以及协议、Host、端口、Path 高级字段均为同一 URL 的编辑视图。支持多台独立服务器同步同一 `ledgerId`，提交 DAG 可在局域网与公网服务器之间桥接。
+- 账号认证改为 OPAQUE。每次注册、登录、刷新和携带 Bearer 的管理请求前先匿名校验 `serverId`、OPAQUE 公钥及可选连接链接指纹，禁止跨 Origin 重定向和跨服务器复用凭据。同一身份的备用地址自动合并，服务器 ID 相同但公钥变化时立即阻断。
+- 同步服务器默认监听 `0.0.0.0` 并开放注册；第一位成功完成注册的账号在同一 SQLite 事务中成为唯一管理员，后续账号为成员。新增 `/api/auth/me` 与 `/api/admin/*` 账号管理接口，彻底删除人工 Admin Token、`X-Admin-Token`、旧管理路由及相关文件和配置。
+- 同一服务器的备用地址不再只保存：主地址网络不可用时逐个匿名核对身份后切换，成功地址同时用于提交和附件同步并成为当前地址；身份变化或账号认证失败不会触发盲目切换。合并地址时保留用户手工指定的“随账本共享 / 仅此设备”范围。
+- 修复公网 HTTP 域名绕过：IPv6 ULA/link-local 只对合法 IPv6 字面量按 `fc00::/7`、`fe80::/10` 判断，`fcorp.example`、`fdomain.example` 等域名不再被误认成私网。
+- 为支持官方 Web 连接自建服务器，CORS 允许任意 Origin，但不启用 Cookie 凭据，只开放必要方法和 Header；公网地址要求 HTTPS。连接链接和二维码只携带 URL、`serverId` 与 OPAQUE 公钥指纹，不包含密码或会话。
+- 服务器模式在浏览器未取得持久授权时可作为非持久本地缓存运行，默认自动同步，并在每次账本写入后触发防抖增量同步。加密公共服务器目录会随账本恢复到新设备，各服务器密码和 refresh session 仍保持独立。
+- 当前开发基线直接更新为本地 schema 115、同步服务器 `server_account_owner_v6`（schema 6）；不读取或迁移旧 profile、旧会话凭据、PBKDF2/HMAC 认证、Admin Token 或旧服务器数据库，发现旧开发数据时明确要求重置。
+- 验证：全仓 Vitest 与覆盖率各通过 496 项用例；浏览器 Playwright 首启与账本工作流 7/7；ESLint、全部 TypeScript 类型检查、共享包/Web/同步服务器生产构建、21 项发行契约及版本一致性检查通过；桌面 Rust `fmt`、`check` 通过，`cargo test` 为 20 项通过、1 项按约定忽略。
+
+---
+
+## 2026-08-30 — 便携版原生备份另存为
+
+- Windows WebView2 不提供可靠的 Blob 下载保存或桌面系统分享，已完成的 `data/backups` 归档会表现为点击「分享 / 下载」没有任何结果。便携桌面现在改用 Windows 原生「另存为」窗口：历史备份和顶栏即时导出均先使用原子本地归档，再复制到用户选择的 `data/` 外位置。
+- 导出使用临时文件、`sync_all`、SHA-256 比对和原子替换；取消或失败不触碰原归档，且拒绝把所谓“独立副本”重新保存进便携 `data/`。设置页显示保存中、成功、取消和失败结果。
+
+---
+
+## 2026-08-29 — Windows 脚本目录收敛
+
+- `scripts/` 现只保留可直接执行的开发启动/停止、Windows 双击入口和便携构建链；发布构建测试迁至 `tools/release/tests/`，CI 专用 schema 契约导出器迁至 `tools/ci/`。
+- 根 npm 命令、GitHub Actions 和脚本说明已同步到新位置；目录内不再包含 `*.test.*` 文件，日常启动与构建命令保持不变。
+- v0.1 完全便携发行仍明确只支持 Windows x64。后续可单独做 i686 Debug 编译冒烟，但在引入 x86 Node、WebView2、打包契约和验收矩阵前，不将其作为可运行或可发布的便携版本。
+
+---
+
+## 2026-08-29 — 便携版规范化路径 SQLite 修复
+
+- Windows 便携根目录规范化为 `\\?\` 扩展路径后，SQLx 不再把该路径拼接并重新解析为 SQLite URL；数据库连接改为直接接收 `Path`，避免把扩展路径中的 `?` 误解为 URL 查询参数。
+- 新增规范化数据库路径回归测试，覆盖实际 portable 目录的 Windows 连接方式。打包器也会在同名输出目录已有 `data/` 时拒绝覆盖，避免本地构建删除正在验证的便携账本。
+
+---
+
+## 2026-08-29 — 便携 WebAssembly 与诊断可复制性修复
+
+- 桌面 CSP 对本地 `sql.js` 仅加入 `wasm-unsafe-eval`，允许 WebAssembly 编译而不放宽为 JavaScript `unsafe-eval`；避免便携版在数据库初始化阶段被 CSP 拦截。
+- Windows WebView 显式启用剪贴板访问；数据库初始化失败页新增可选择的完整诊断文本、复制按钮和 `Ctrl+A`/`Ctrl+C` 回退提示，不再要求通过截图转录错误。
+
+---
+
+## 2026-08-29 — 便携同步服务器扩展路径修复
+
+- 内置 Node.js 无法把 Windows `\\?\` 扩展路径作为主脚本或工作目录加载，会在 `lstat 'D:'` 后以 exit code 1 退出。桌面启动器现在在交给 Node 前恢复普通本地路径，入口改为相对 `server.mjs`，并同样规范化 `DATA_DIR`。
+- 新增 Windows 回归测试和隔离启动检查，覆盖启动、`/api/health`/`/api/ready` 就绪与标准输入 `shutdown` 正常退出；服务器状态和失败提示不再向界面暴露扩展路径前缀。
+
+---
+
+## 2026-08-28 — P0 数据安全闭环与日常操作入口
+
+- 价格标记表单移除没有行情提供商和刷新链路支撑的“自动”伪入口；v0.1 新增和编辑统一写为手工来源，同时保留旧数据的读取兼容。
+- 加入已绑定远端账本改为分阶段安全流程：只读确认副本、用远端账本密码解锁密钥封套、在隔离库拉取并验证全部提交、创建本机保护备份，再事务替换数据库与设备同步状态；采用密钥、附件整理或服务器副本身份持久化失败会恢复原账本、原设备状态、原密钥和原服务器配置。
+- 新账本首次初始化即创建或解锁备份密钥。Windows `data/backups` 明确降级为同介质本机恢复点，不再冒充独立副本；归档先本地原子落盘，再分块上传所有已启用同步服务器，单台失败保留本机文件并记录远端结果。设置页新增历史归档的旧账本密码入口，校验、演练与恢复复用同一次内存解锁结果。
+- 重置成功路径除数据库和附件外，同时清理 WebView IndexedDB 表单草稿、Stronghold、本机数据密钥、账本密钥封套/会话、同步配置与自动同步、运行时凭据、设备身份和备份安全状态，避免新账本继承旧 `ledgerId`、草稿或密钥；Windows `data/backups` 历史加密归档按恢复点语义保留。
+- 报表把用户范围先统一截断到账本 `asOfDate`，主表、趋势、指标、预算、同比/环比、下钻、分页和导出共享同一有效范围，未来流水不再在同页形成不同口径。
+- Dashboard 增加统一待办中心，汇总定期账单、定投、耗材、本机/逐服务器备份失败和持久化同步异常；完整成功会清除相应旧错误。备份运行结果仅保存在当前设备，不会被账本设置中的遗留值或其他设备覆盖。定投待办可直接打开预填转换弹窗，保存时在事务内重新核对计划与期次，并把转换和 DCA 执行一起提交。
+- `runInAuditBatch` 承载的普通产品命令默认记为用户审计批次并保存整批业务补偿。History 在只回滚事务中预演全部逆向状态，确认后原子撤销整批；确定性冲突阻止撤销，临时错误保持待处理并允许重试；事务已经提交后即使审计摘要或同步提交封存失败也不会重新开放补偿，避免二次撤销。
+- 最终门禁实际通过：全仓 Vitest 与覆盖率各为 72 个测试文件、466 项用例；发行契约 16/16；ESLint、全部 TypeScript 类型检查、Web 与同步服务器生产构建通过；系统 Edge Playwright 交互冒烟 4/4。桌面 Rust `fmt`、Debug/Release `check` 通过，`cargo test` 为 16 项通过、1 项按平台条件忽略。
+
+---
+
+## 2026-08-23 — Windows v0.1 完全便携发布基线
+
+- Windows v0.1 改为 portable-only ZIP：`zichan.exe` 同级 `data/` 承载账本、附件、备份、Stronghold、WebView 和内置服务器状态；Release 不读取或回退 AppData。
+- 发布脚本改用 `tauri build --no-bundle --ci`，固定并校验 WebView2 x64 Runtime，生成便携标记、逐文件 SHA-256 清单、ZIP 和外层哈希旁车；敏感数据、数据库、PDB 和 updater 产物禁止入包。
+- 开发同步服务器显式使用仓库 `.runtime/sync-server`；移动/备份要求完全退出，运行中克隆和两个副本并发不受支持。
+- MSI/NSIS、PFX/Authenticode、updater、GitHub 发布和正式 schema 迁移基线统一延期至 1.0，v0.1 不保留活跃安装器门禁。
+
+---
+
 ## 2026-08-13 — Windows 桌面主程序与中文安装包修复
 
 **Goal:** 修复多 Cargo 二进制导致的 Tauri 主程序误选，以及中文产品名在默认英文 MSI 代码页下无法链接的问题。
@@ -107,7 +180,7 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
 - `fixed_asset_cashflow_links` 将购买、维修、升级、耗材和出售统一为“仅登记 / 关联已有流水 / 同时创建流水”。链接一对一冻结资金方向、来源金额、记账金额、实际汇率和流水所有权；保存/编辑/删除同事务执行，用户关联流水不被误作废，系统创建流水随来源作废。
 - 同步账号改为 PBKDF2 verifier + 一次性 HMAC nonce challenge；challenge 绑定服务器、用户名、来源 IP 和有效期。登录产生 15 分钟 access token 与轮换 refresh token，设备会话可由用户或管理员查看、撤销，禁用用户会撤销全部会话；客户端串行化同配置认证，避免并发 refresh 竞争。
 - 公网同步强制 HTTPS，客户端拒绝向公网 HTTP 发送 verifier 或 Bearer token；私有局域网 HTTP 必须由服务器显式开启。反向代理头仅接受可信代理，CORS 使用白名单，限流状态落 SQLite；远程管理始终要求 HTTPS。
-- 清除仓库内服务器密钥、身份和旧 JSON 运行数据，补齐 `.gitignore`。历史运行密钥按已泄露处理，部署文档要求轮换 `SYNC_SECRET`、`ADMIN_TOKEN` 并撤销设备会话。
+- 清除仓库内服务器密钥、身份和旧 JSON 运行数据，补齐 `.gitignore`。历史运行密钥按已泄露处理，部署文档要求轮换 `SYNC_SECRET` 并撤销设备会话。
 - 验证：全 workspace typecheck 通过；`npm test` 共 **277 项**通过（core 63 · db 80 · logger 5 · sync-server 17 · web 112）；共享包、Web、sync-server 生产构建、桌面资源生成、`cargo fmt --check` 和 `cargo check` 均通过。桌面内置服务器从临时数据目录实际启动，`/api/health` 返回协议 3、nonce 认证和设备会话能力，`/api/ready` 确认 SQLite 数据库正常。
 
 ---
@@ -641,9 +714,9 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
 **Goal:** 完善同步服务器安全路径、管理员日志，以及同步页按服务器测试密码和延迟。
 
 ### Sync server
-- `@zichan/sync-server` 支持 `BASE_PATH=/xxxxx`，Web、同步 API、管理员 API 都可挂到端口后的路径前缀；未带前缀访问 `/api/*`/`/admin/*` 会返回 404。
-- `/api/health` 返回 `basePath`；`/admin/logs` 返回最近服务日志，支持 `limit` 和 `level` 过滤。
-- 日志覆盖登录、注册、限流、同步推送、快照更新、邀请码、用户禁用和注册策略变更；不记录同步密码、管理员 Token、authProof、密文内容或邀请码明文。
+- `@zichan/sync-server` 支持 `BASE_PATH=/xxxxx`，Web、同步 API、账号管理 API 都可挂到端口后的路径前缀；未带前缀访问 `/api/*` 会返回 404。
+- `/api/health` 返回 `basePath`；`/api/admin/logs` 返回最近服务日志，支持 `limit` 和 `level` 过滤。
+- 日志覆盖登录、注册、限流、同步推送、快照更新、邀请码、用户禁用和注册策略变更；不记录账号密码、会话凭据、authProof、密文内容或邀请码明文。
 - 数据文件 v2 envelope 持久化最近 500 条日志。
 
 ### Web
@@ -671,7 +744,7 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
 
 ### Desktop
 - Tauri Rust 端新增 `desktop_server_status`、`desktop_start_server`、`desktop_stop_server` 命令。
-- 桌面命令会检测 `127.0.0.1:8787`、返回数据文件和管理员 Token 文件位置；可读取本机 token 自动填入管理页。
+- 桌面命令会检测 `127.0.0.1:8787`、校验 `serverId` 并返回数据文件位置；管理页使用已登录管理员账号的会话。
 - 在线启动复用 `apps/desktop/scripts/server.mjs`，默认 `HOST=0.0.0.0 PORT=8787`；dist 缺失时尝试执行
   `npm run server:build -w @zichan/desktop`。
 - 只停止由桌面在线启动的进程；如果 8787 是外部脚本启动的服务，页面会提示不能安全停止。
@@ -680,7 +753,7 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
 - 新增无依赖 Tauri invoke 适配器；普通浏览器没有 invoke 时自动降级为 Web 模式。
 - 移除左侧独立「服务器」导航，把「服务器管理」并入「同步」页 Tab。
 - 「服务器管理」默认显示本机服务状态：Web 模式为未启用，Tauri 模式可在线启动/停止。
-- 管理连接拆成「检查」和「管理」：未填管理员 Token 时只能健康检查，不能误认为已授权。
+- 管理连接拆成「检查」和「管理」：未登录时只能健康检查，成员访问管理接口返回 403，不能误认为已授权。
 
 ### Verified
 - `npm run typecheck -w @zichan/web` 通过。
@@ -728,19 +801,18 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
 
 ### Sync server
 - `@zichan/sync-server` 从纯同步服务升级为统一服务：`ENABLE_WEB` 托管 Web 构建产物，`ENABLE_SYNC`
-  控制 `/api/*` 同步接口，`/admin/*` 提供管理 API。
+  控制 `/api/*` 同步接口，`/api/admin/*` 提供账号角色保护的管理 API。
 - 数据文件使用 v2 envelope：`users`、`invites`、`registrationMode`。
 - 新增注册策略 `open | invite | closed`、邀请码创建/禁用、用户禁用/启用、运行状态统计。
 - 管理 API 只返回元数据：不暴露 `authHash` 或密文 payload。
-- 静态 Web 服务支持 `/`、`/app/*` 和 Vite `/assets/*`，可与 `/api/*`、`/admin/*` 同域部署。
+- 静态 Web 服务支持 `/`、`/app/*` 和 Vite `/assets/*`，可与 `/api/*` 同域部署。
 
 ### Web + desktop + deploy
 - Web 新增「服务器」页面：连接任意服务器，管理注册策略、邀请码和用户状态。
 - 同步页注册增加可选邀请码；`@zichan/db.registerAccount()` 支持 `{inviteCode}`。
 - `apps/desktop` 新增 `npm run server -w @zichan/desktop`：构建 Web/同步服务后，用当前用户数据目录启动一体服务；
-  默认邀请码注册，并生成/复用 `admin-token.txt`。
-- Docker 镜像现在同时构建并复制 Web dist；Compose 默认启用 Web+同步，要求显式设置 `SYNC_SECRET` 和
-  `ADMIN_TOKEN`，Caddy 统一反代。
+  默认开放注册，第一位成功完成注册的账号成为管理员。
+- Docker 镜像现在同时构建并复制 Web dist；Compose 默认启用 Web+同步，要求显式设置 `SYNC_SECRET`，Caddy 统一反代。
 - 更新 `docs/cloud-sync.md`、`docs/desktop.md`、`README.md`。
 
 ### Verified

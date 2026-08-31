@@ -6,7 +6,7 @@ import {
   VAULT_STATE_CHANGED_EVENT,
   type CredentialVaultState,
 } from '../credential-vault.js';
-import { loadAutoSync, loadSyncProfiles, SYNC_CONFIG_CHANGED_EVENT } from '../sync-config.js';
+import { loadAutoSync, loadSyncConnections, SYNC_CONFIG_CHANGED_EVENT } from '../sync-config.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 
 export function runSynchronousFlight<T>(
@@ -52,7 +52,7 @@ export function VaultUnlockPrompt() {
       setBusy(true);
       setError('');
       try {
-        await unlockCredentialVault(password, loadSyncProfiles().map((profile) => profile.id));
+        await unlockCredentialVault(password, loadSyncConnections().map((profile) => profile.id));
         setVault(credentialVaultState());
         setPassword('');
       } catch (reason) {

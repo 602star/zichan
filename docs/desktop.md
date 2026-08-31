@@ -1,8 +1,8 @@
 # 桌面端 `@zichan/desktop`（Tauri 2）
 
 一个供桌面与移动端共用的 **Tauri 2** 外壳。UI、业务计算和仓储仍复用
-`@zichan/web` + `@zichan/core` + `@zichan/db`，但持久化已原生化：
-`TauriSqlDriver` 通过 `tauri-plugin-sql` 使用 `ledger.sqlite`，附件使用平台文件目录。
+`@zichan/web` + `@zichan/core` + `@zichan/db`。桌面端由自有 Rust 命令桥管理
+SQLCipher/SQLite 和附件；Windows v0.1 只提供数据随 ZIP 移动的完全便携模式。
 
 ## 结构
 
@@ -12,9 +12,9 @@ apps/desktop/
   plugins/system-share/        # Android/iOS 原生 JSON 文件分享插件
   src-tauri/
     tauri.conf.json            # 指向 ../../web/dist；devUrl localhost:5173；窗口 1320×880
-    Cargo.toml                 # tauri 2 + tauri-plugin-sql + sqlx
+    Cargo.toml                 # tauri 2 + sqlx/SQLCipher
     build.rs
-    src/lib.rs                 # Tauri 入口、桌面服务器、备份与凭据命令
+    src/lib.rs                 # Tauri 入口、便携预检、桌面服务器、备份与凭据命令
     src/native_sql.rs          # SQLite 查询及绑定连接的事务桥
     src/native_attachments.rs  # 附件正文/缩略图文件桥
     capabilities/default.json  # 主窗口默认权限
@@ -24,45 +24,64 @@ apps/desktop/
 - `beforeDevCommand` / `beforeBuildCommand` 会自动先跑 `@zichan/web` 的 dev/build，所以桌面端
   与 web 永远同源，无需手动构建前端。
 
-## 开发 / 打包
+## 开发 / 便携打包
 
 ```bash
 # 前置：Rust 工具链（rustup）+ 平台依赖（Windows 为 MSVC/C++ 工具、WebView2、Perl）
 npm run dev   -w @zichan/desktop     # 起 vite + 原生窗口，热更新
-npm run build -w @zichan/desktop     # 产出安装包（.msi/.exe，或对应平台）
+npm run build -w @zichan/desktop -- --no-bundle --ci # 仅构建 Windows 桌面可执行文件
 npm run icon  -w @zichan/desktop     # 从 src-tauri/icons/icon.png 重新生成图标集
 npm run release:check -w @zichan/desktop # 打包前检查 web、sync-server 与 Rust 命令层
 npm run start:desktop                # 从根目录启动桌面开发壳，并纳入端口清理
 ```
 
-Windows 可双击 `scripts\windows\build-desktop.cmd` 完成本地正式构建。该入口检查 Node、npm、依赖、Rust 与 Perl，失败时保留错误信息；SQLCipher 使用 vendored OpenSSL，release 构建需要 `perl.exe` 位于 `PATH`。它不会生成正式发布签名。安装包位于 `apps\desktop\src-tauri\target\release\bundle\msi` 和 `bundle\nsis`。
+Windows 首次先运行 `scripts\windows\setup-webview2-runtime.cmd` 准备锁定的固定版 WebView2，随后双击
+`scripts\windows\build-desktop.cmd` 完成本地正式构建。该入口检查 Node、npm、依赖、Rust 与 Perl，运行
+发布门禁，以 `--no-bundle` 构建并生成 ZIP。SQLCipher 使用 vendored OpenSSL，release 构建需要
+`perl.exe` 位于 `PATH`。产物位于 `apps\desktop\src-tauri\target\release\portable`。
 
 首次 `dev`/`build` 会用 cargo 拉取并编译 Tauri 依赖树（数百个 crate），耗时较久；之后走缓存很快。
+Debug 模式只写仓库内被忽略的 `.runtime/desktop/`；自动化测试可用绝对路径
+`ZICHAN_PORTABLE_TEST_ROOT` 覆盖该位置。Release 不读取这个变量，也不存在环境变量路径覆盖。
 
 ## 发布验收清单
 
 - 应用名：`资产生命周期`；窗口标题：`资产生命周期 · Lifecycle Ledger`。
 - 版本号：`apps/desktop/package.json` 与 `src-tauri/tauri.conf.json` 同步为 `0.1.0`。
-- Windows MSI 固定使用 `zh-CN`（代码页 936），NSIS 提供简体中文与英文，确保中文产品名可被安装器安全编码。
 - Bundle ID：`com.zichan.ledger`；图标来自 `src-tauri/icons/icon.png`，改图后运行 `npm run icon -w @zichan/desktop`。
-- 主库：Tauri `AppData/ledger.sqlite`（Rust 先解析绝对路径，再交给 `tauri-plugin-sql`；“更多”抽屉会显示实际路径）。
-- 附件：Tauri `AppData/attachments/{staging,objects,trash,quarantine}`，正文按 SHA-256 寻址；加密 `.zcbak` 备份：`AppData/backups`。
-- 一体服务器数据在 `%APPDATA%\ZichanLedger\server`，包括 `server.sqlite`、`server.secret`、`server-id`、`blobs/` 和 `admin-token.txt`。
-- 打包前先跑 `npm run release:check -w @zichan/desktop`，再跑 `npm run build -w @zichan/desktop` 生成安装包。
+- Windows Release 根目录唯一来自 `zichan.exe` 所在位置；缺少/损坏 `portable-mode.json`、路径不可写或处于网络盘时，启动失败且不回退 AppData。
+- 主库：`data/ledger/ledger.sqlite`；附件：`data/attachments/{staging,objects,trash,quarantine}`；加密 `.zcbak`：`data/backups`。
+- Stronghold 位于 `data/security`；WebView 的 localStorage、IndexedDB 和缓存固定在 `data/webview`；一体服务器状态位于 `data/server`。
+- 打包前运行 `npm run release:check` 和 `npm run test:release`；正式入口统一为 `scripts\windows\build-desktop.cmd`。
 - 发布说明至少写清：新增功能、数据目录、备份建议、同步服务器是否需要重新登录、已知限制。
-- 自动化发布、签名 Secret 和全新 Windows Runner 安装验收见 [desktop-release.md](desktop-release.md)。
+- 完整 ZIP 契约、WebView2 准备和 Windows Sandbox 验收见 [desktop-release.md](desktop-release.md)。
 
-原生 SQL、Stronghold 和本地 system-share 依赖均已写入 `Cargo.lock`。未使用的原生 notification
-插件已删除，主窗口权限只保留 SQL load/close 与实际调用的 Stronghold 命令。发布验签辅助程序由
-`release-verifier` feature 隔离，普通桌面构建不会把它装入用户目录；CI 会显式启用该 feature 运行
-其测试与签名校验。正式安装包由发布流水线完成 bundle、签名及安装测试。
+原生 SQL、Stronghold 和本地 system-share 依赖均已写入 `Cargo.lock`。Windows 主窗口在配置中
+`create=false`，只有便携目录、磁盘、实例锁和 WebView2 预检全部成功后才手动创建。v0.1 不注册 updater，
+不生成 MSI/NSIS，也不写服务、启动项、文件关联或卸载信息；PFX、updater 和安装验收推迟至 1.0。
+
+## 备份另存为
+
+Windows 便携版的 `data/backups` 是同一便携目录内的本机恢复点，不算独立副本。设置页历史备份和顶栏
+「导出」在桌面端都会先安全写入该目录，再打开 Windows 原生「另存为」窗口；请选择另一块磁盘、U 盘或受控
+目录。应用会校验副本、原子替换目标文件，并拒绝保存回 `data/`；取消窗口或保存失败都不会移动、删除或修改
+原备份。桌面端不依赖 WebView 的 Blob 下载或 Android/iOS 专用系统分享插件，因此不会出现“点击无反应”的假成功。
+
+浏览器 Web 继续使用浏览器下载/可用时的系统分享能力；Android/iOS 继续使用原生系统分享面板。
 
 ## 原生安全边界
 
-Tauri CSP 明确限制为本应用脚本，禁止对象、外部 frame 和非本源表单；图片仅允许应用资源、
+Tauri CSP 明确限制为本应用脚本，禁止对象、外部 frame 和非本源表单；为本地 `sql.js` 编译
+WebAssembly 仅额外允许 `wasm-unsafe-eval`，仍禁止 JavaScript `unsafe-eval`；图片仅允许应用资源、
 `asset:`、`blob:` 与 `data:`，网络连接保留同步服务所需的 HTTP(S)/WS(S)。桌面 capability
 不授予通用 SQL 执行权限，业务写入统一走 Rust 事务桥；移动端相机、生物识别、扫码、定位和分享
 权限放在仅 iOS/Android 生效的独立 capability。
+
+数据库初始化失败页会显示可选择的完整诊断文本，并提供“复制诊断信息”按钮；若 WebView 剪贴板仍被
+系统策略拒绝，可点击文本框后按 `Ctrl+A`、`Ctrl+C` 手动复制，不需要截图。
+
+Windows Stronghold 仍保持前端插件 API，但由桌面自有的受限命令层托管；快照只能是
+`data/security/sync-vault.hold`，salt 只能是同目录 32 字节普通文件，链接、重解析点和目录外路径均拒绝。
 
 ## 数据与同步
 
@@ -94,14 +113,14 @@ npm run start:server
 
 - `ENABLE_WEB=1`：浏览器可访问 Web UI。
 - `ENABLE_SYNC=1`：其他设备可填该电脑的内网/公网地址同步。
-- `REGISTRATION_MODE=invite`：默认邀请码注册。
+- `REGISTRATION_MODE=open`：默认开放注册；第一位成功完成注册的账号会原子成为管理员，后续账号为普通成员。
 - `BASE_PATH=/xxxxx`：可选，把 Web、同步和后台都挂到端口后的安全路径。
 - `HOST=0.0.0.0`：默认对局域网开放监听；如只想本机访问，可改成 `127.0.0.1`。
-- `DATA_DIR=D:\ledger-server` 可指定完整数据目录；未设置时回退到 Windows `%APPDATA%\ZichanLedger\server`。
+- 仓库开发入口显式使用 `.runtime/sync-server`；便携桌面在线启动固定使用 EXE 根目录下的 `data/server`。服务器入口缺少 `DATA_DIR` 时直接失败，不回退 AppData。
   主库固定为 `server.sqlite`；备份与恢复使用 `npm run server:backup` / `server:restore`，不要在服务运行时逐文件复制。
-- 管理员 Token 会生成到同目录 `admin-token.txt`；Web 的「服务器」页用它管理邀请码和用户状态。
+- 账号管理复用正常 OPAQUE 登录与设备会话；管理员可在 Web 的「服务器」页管理注册模式、邀请、用户、设备和配额，不存在额外的人工管理凭据。
 - 桌面/脚本启动器显式设置 `ALLOW_INSECURE_HTTP=1`，仅用于固定私有局域网 IP；客户端会拒绝公网 HTTP，
-  远程管理员 API 仍只接受 HTTPS。本机管理可继续使用 `http://localhost:8787`。
+  公网登录与管理必须使用 HTTPS。本机管理可继续使用 `http://localhost:8787`。
 
 可拆分命令：
 
@@ -117,12 +136,12 @@ npm run stop:server                       # 清理 8787 端口
 
 桌面壳内的「同步 → 服务器管理」会检测 Tauri 环境：
 
-- **Tauri 桌面**：可点击「启动本机服务器」在线拉起 `0.0.0.0:8787`，并显示数据文件和管理员 Token 文件位置；如果服务由桌面在线启动，也可在线停止。
+- **Tauri 桌面**：可点击「启动本机服务器」在线拉起 `0.0.0.0:8787`，并显示数据文件位置；如果服务由桌面在线启动，也可在线停止。首次注册成功的账号自动成为管理员。
 - **普通浏览器 Web**：不能直接启动本机进程，页面显示“Web 模式 / 未启用”，并提示在项目目录使用 `npm run start:server`。
 
 在线启动会复用 `apps/desktop/scripts/server.mjs`；如果 `apps/web/dist` 或 `apps/sync-server/dist` 缺失，会先尝试执行 `npm run server:build -w @zichan/desktop`。
-安装包使用 `prepare:resources` 生成的内置 `server.mjs`、Node 运行时和 Web 资源；`tauri build` 会自动重新构建并生成这些资源，不能手工维护生成文件。
-启动后在「同步」页可为每台同步服务器单独设置中文别名、协议、主机、端口、服务路径、同步用户名和同步密码，并用「测试」检查在线状态、密码是否正确和延迟。账号使用一次性 nonce 登录、15 分钟访问令牌和可轮换设备会话；同一配置的并发同步共享一次认证，避免 refresh token 竞争。管理员后台可查看最近日志、在线设备、最后 IP，并撤销单台设备。
+便携包使用 `prepare:resources` 生成的内置 `server.mjs`、Node 运行时和 Web 资源；构建会自动重新生成这些资源，不能手工维护生成文件。
+启动后在「同步」页可为每台同步服务器单独设置中文别名和完整 URL，也可展开协议、主机、端口、服务路径的高级编辑视图，并用「检查」验证在线状态和服务器身份。每台服务器账号独立，账号使用 OPAQUE 登录、15 分钟访问令牌和可轮换设备会话；同一连接的并发同步共享一次认证，避免 refresh token 竞争。管理员后台复用同一账号会话，可查看最近日志、在线设备、最后 IP，并撤销单台设备。
 
 原生端的同步密码保存在 Tauri Stronghold，不写入配置文件或 WebView 存储。首次使用需设置至少 8 位本机密码并解锁；本机密码只用于打开当前进程的 vault，不会上传。浏览器 Web 不创建 Stronghold，同步密码仅保留在当前标签页会话。
 

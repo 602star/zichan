@@ -1681,6 +1681,66 @@ async function assertCompensationAggregates(
   }
 }
 
+async function applyBusinessCompensationStates(
+  store: SqlLedgerStore,
+  compensation: BusinessCompensationRecord,
+): Promise<void> {
+  for (const state of compensation.payload.states) await assertCompensationCurrent(store, state);
+  const writeKeys = compensation.payload.states
+    .filter((state) => state.entityType !== 'conversion_chain_steps')
+    .map((state) => `${state.entityType}:${state.entityId}`);
+  const deleteKeys = compensation.payload.states
+    .filter((state) => !state.before || state.before['isDeleted'] === true)
+    .map((state) => `${state.entityType}:${state.entityId}`);
+  const aggregateKeys = aggregateKeysForCompensation(compensation.payload.states);
+  await store.withValidatedRestore(writeKeys, deleteKeys, (restoreStore) =>
+    restoreStore.withPrevalidatedAggregates(aggregateKeys, async (aggregateStore) => {
+      const ordered = [...compensation.payload.states].sort((left, right) => right.sequence - left.sequence);
+      for (const state of ordered) await applyCompensationState(aggregateStore, state);
+      await assertCompensationAggregates(aggregateStore, aggregateKeys);
+    }));
+}
+
+export interface BusinessCompensationInspection {
+  reversible: boolean;
+  affectedEntities: { entityType: string; entityId: string }[];
+  blocker?: string;
+}
+
+class CompensationInspectionRollback extends Error {}
+
+/** Run the complete compensation in a rollback-only transaction without changing its status. */
+export async function inspectBusinessCompensation(
+  store: SqlLedgerStore,
+  compensationId: string,
+): Promise<BusinessCompensationInspection> {
+  const compensation = await store.getBusinessCompensation(compensationId);
+  if (!compensation) return { reversible: false, affectedEntities: [], blocker: '撤销记录不存在' };
+  if (compensation.status !== 'pending') {
+    return {
+      reversible: false,
+      affectedEntities: compensation.affectedEntities,
+      blocker: compensation.status === 'applied' ? '该操作已经撤销' : compensation.error ?? '该操作已不可撤销',
+    };
+  }
+  try {
+    await store.transaction(async (transactionStore) => {
+      await applyBusinessCompensationStates(transactionStore, compensation);
+      throw new CompensationInspectionRollback();
+    });
+  } catch (error) {
+    if (error instanceof CompensationInspectionRollback) {
+      return { reversible: true, affectedEntities: compensation.affectedEntities };
+    }
+    return {
+      reversible: false,
+      affectedEntities: compensation.affectedEntities,
+      blocker: error instanceof Error ? error.message : String(error),
+    };
+  }
+  return { reversible: false, affectedEntities: compensation.affectedEntities, blocker: '撤销预检没有完成' };
+}
+
 export async function undoBusinessCompensation(
   store: SqlLedgerStore,
   compensationId: string,
@@ -1691,40 +1751,44 @@ export async function undoBusinessCompensation(
   const batchId = newId();
   await store.createAuditBatch({
     id: batchId,
-    type: 'system',
+    type: 'user',
     label: `撤销：${compensation.label}`,
     entityCount: compensation.payload.states.length,
     summary: `补偿 ${compensation.affectedEntities.length} 个对象`,
   });
+  let transactionCommitted = false;
   try {
     await store.withAuditContext(
       { batchId, source: 'local' },
       (scoped) => scoped.transaction(async (transactionStore) => {
-        for (const state of compensation.payload.states) await assertCompensationCurrent(transactionStore, state);
-        const writeKeys = compensation.payload.states
-          .filter((state) => state.entityType !== 'conversion_chain_steps')
-          .map((state) => `${state.entityType}:${state.entityId}`);
-        const deleteKeys = compensation.payload.states
-          .filter((state) => !state.before || state.before['isDeleted'] === true)
-          .map((state) => `${state.entityType}:${state.entityId}`);
-        const aggregateKeys = aggregateKeysForCompensation(compensation.payload.states);
-        await transactionStore.withValidatedRestore(writeKeys, deleteKeys, (restoreStore) =>
-          restoreStore.withPrevalidatedAggregates(aggregateKeys, async (aggregateStore) => {
-            const ordered = [...compensation.payload.states].sort((left, right) => right.sequence - left.sequence);
-            for (const state of ordered) await applyCompensationState(aggregateStore, state);
-            await assertCompensationAggregates(aggregateStore, aggregateKeys);
-          }));
+        await applyBusinessCompensationStates(transactionStore, compensation);
         await transactionStore.markBusinessCompensation(compensation.id, 'applied', {
           appliedAt: new Date().toISOString(),
           appliedBatchId: batchId,
         });
       }),
     );
+    transactionCommitted = true;
     const entityCount = (await store.operationLog({ batchId })).length;
     await store.finishAuditBatch(batchId, { entityCount, appliedCount: entityCount, outcome: 'applied' });
   } catch (error) {
+    // The status changes to `applied` in the same transaction as the inverse
+    // writes. `withAuditContext` can still fail while sealing the sync commit
+    // after SQLite has committed, so confirm the durable status before ever
+    // writing `pending` again. Otherwise a retry could apply the inverse twice.
+    if (!transactionCommitted) {
+      try {
+        transactionCommitted = (await store.getBusinessCompensation(compensation.id))?.status === 'applied';
+      } catch {
+        // If durable state cannot be read, leave it untouched. Retrying the
+        // status write under uncertainty is less safe than surfacing the error.
+        throw error;
+      }
+    }
+    if (transactionCommitted) throw error;
     const message = error instanceof Error ? error.message : String(error);
-    await store.markBusinessCompensation(compensation.id, 'blocked', { error: message });
+    const deterministic = error instanceof DomainValidationError || error instanceof ConcurrencyError;
+    await store.markBusinessCompensation(compensation.id, deterministic ? 'blocked' : 'pending', { error: message });
     await store.finishAuditBatch(batchId, {
       entityCount: 0,
       appliedCount: 0,

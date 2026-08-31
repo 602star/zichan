@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { createServerBackup, restoreServerBackup, verifyServerBackup } from './backup.js';
+import { developmentDataDir } from './runtime-config.js';
 
 function option(name: string, fallback?: string): string {
   const index = process.argv.indexOf(`--${name}`);
@@ -11,7 +12,7 @@ function option(name: string, fallback?: string): string {
 
 async function main(): Promise<void> {
   const command = process.argv[2];
-  const dataDir = resolve(option('data-dir', process.env.DATA_DIR?.trim() || 'server-data'));
+  const dataDir = resolve(option('data-dir', process.env.DATA_DIR?.trim() || developmentDataDir(import.meta.url)));
   if (command === 'backup') {
     const output = resolve(option('output'));
     const manifest = await createServerBackup(dataDir, output);

@@ -119,7 +119,7 @@ export interface OperationLogQuery {
 
 export interface AuditBatch {
   id: string;
-  type: 'bulk_update' | 'import' | 'sync' | 'conflict_resolution' | 'system';
+  type: 'user' | 'bulk_update' | 'import' | 'sync' | 'conflict_resolution' | 'system';
   label: string;
   startedAt: string;
   finishedAt?: string;

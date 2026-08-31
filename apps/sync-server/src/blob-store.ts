@@ -207,6 +207,7 @@ export class EncryptedBlobStore {
 
   private async initialize(): Promise<void> {
     await this.driver.exec(`
+PRAGMA temp_store = MEMORY;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = FULL;
 PRAGMA foreign_keys = ON;

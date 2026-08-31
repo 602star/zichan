@@ -16,7 +16,7 @@ import {
   unlockCredentialVault,
   writeCredentialVaultRecord,
 } from './credential-vault.js';
-import { loadSyncProfiles } from './sync-config.js';
+import { loadSyncConnections } from './sync-config.js';
 import { isTauriRuntime } from './tauri.js';
 import { DeviceStorageResetRequiredError } from './device-storage-error.js';
 
@@ -178,7 +178,7 @@ export async function refreshDeviceStorageState(): Promise<DeviceStorageState> {
 export async function unlockDeviceStorage(passphrase: string): Promise<DeviceStorageSession> {
   if (passphrase.length < 8) throw new Error('本机数据密码至少需要 8 个字符');
   if (isTauriRuntime()) {
-    await unlockCredentialVault(passphrase, loadSyncProfiles().map((profile) => profile.id));
+    await unlockCredentialVault(passphrase, loadSyncConnections().map((profile) => profile.id));
     const raw = await readCredentialVaultRecord(NATIVE_STORAGE_RECORD);
     let record: NativeStorageRecord;
     if (raw?.length) {
@@ -235,6 +235,13 @@ export function requireDeviceStorageSession(): DeviceStorageSession {
 export async function lockDeviceStorage(): Promise<void> {
   runtimeSession = undefined;
   if (isTauriRuntime() && credentialVaultState().unlocked) await lockCredentialVault();
+  emit();
+}
+
+/** Forget the in-memory and browser-wrapped device key after deleting all platform data. */
+export function clearDeviceStorageState(): void {
+  runtimeSession = undefined;
+  globalThis.localStorage?.removeItem(DEVICE_STORAGE_ENVELOPE_KEY);
   emit();
 }
 

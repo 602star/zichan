@@ -1,14 +1,19 @@
 import type { SqlDriver } from '@zichan/db';
 import { isTauriRuntime, tauriInvoke } from '../tauri.js';
-import { loadDbBytes, saveDbBytes } from './idb.js';
+import { deleteWebDatabase, loadDbBytes, saveDbBytes } from './idb.js';
 import { SqlJsDriver } from './sqljs-driver.js';
 import { TauriSqlDriver } from './tauri-sql-driver.js';
 import { acquireBrowserLedgerLock } from './browser-ledger-lock.js';
 import {
-  DEVICE_STORAGE_ENVELOPE_KEY,
+  clearDeviceStorageState,
   requireDeviceStorageSession,
   type DeviceStorageSession,
 } from '../device-storage-key.js';
+import { clearLedgerKey } from '../ledger-key-vault.js';
+import { clearSyncConfiguration } from '../sync-config.js';
+import { clearCredentialVaultRuntimeState, resetCredentialVault } from '../credential-vault.js';
+import { clearCloudIdentity } from './cloud.js';
+import { clearSafetyState } from './safety.js';
 
 export type StorageBackend = 'browser-indexeddb' | 'native-sqlite';
 
@@ -64,14 +69,14 @@ export async function resetPlatformData(): Promise<void> {
     if (!removeDatabase || !clearAttachments) throw new Error('原生数据清理命令不可用');
     await removeDatabase;
     await clearAttachments;
-    await tauriInvoke('native_reset_security_vault')?.catch(() => undefined);
-    return;
+    await resetCredentialVault();
   }
-  await new Promise<void>((resolve, reject) => {
-    const request = indexedDB.deleteDatabase('zichan-web');
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-    request.onblocked = () => reject(new Error('浏览器存储仍被占用，请关闭其他本应用页面后重试'));
-  });
-  globalThis.localStorage?.removeItem(DEVICE_STORAGE_ENVELOPE_KEY);
+  await deleteWebDatabase();
+
+  clearDeviceStorageState();
+  clearLedgerKey();
+  clearSyncConfiguration();
+  clearCredentialVaultRuntimeState();
+  clearCloudIdentity();
+  clearSafetyState();
 }

@@ -1,10 +1,13 @@
 import { createSyncServer, type RegistrationMode } from './server.js';
-import { resolve } from 'node:path';
 import { rmSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { developmentDataDir } from './runtime-config.js';
+import { watchShutdownInput } from './shutdown-input.js';
 
 const port = Number(process.env.PORT ?? 8787);
-const host = process.env.HOST?.trim();
-const dataDir = resolve(process.env.DATA_DIR?.trim() || 'server-data');
+const host = process.env.HOST?.trim() || '0.0.0.0';
+const configuredDataDir = process.env.DATA_DIR?.trim();
+const dataDir = configuredDataDir ? resolve(configuredDataDir) : developmentDataDir(import.meta.url);
 const positiveNumber = (name: string): number | undefined => {
   const value = Number(process.env[name]);
   return Number.isSafeInteger(value) && value > 0 ? value : undefined;
@@ -23,7 +26,6 @@ const registrationMode: RegistrationMode = modeEnv === 'invite' || modeEnv === '
 const webDir = process.env.WEB_DIST;
 const enableWeb = boolEnv('ENABLE_WEB', Boolean(webDir));
 const enableSync = boolEnv('ENABLE_SYNC', true);
-const adminToken = process.env.ADMIN_TOKEN?.trim() || undefined;
 const basePath = process.env.BASE_PATH?.trim() || undefined;
 const service = createSyncServer({
   dataDir,
@@ -33,13 +35,11 @@ const service = createSyncServer({
   attachmentTrashRetentionMs: positiveNumber('ATTACHMENT_TRASH_RETENTION_MS'),
   secret: process.env.SYNC_SECRET,
   serverId: process.env.SERVER_ID,
-  adminToken,
   registrationMode,
   enableSync,
   enableWeb,
   webDir,
   basePath,
-  allowedOrigins: listEnv('CORS_ALLOWED_ORIGINS'),
   trustedProxies: listEnv('TRUSTED_PROXIES'),
   allowInsecureHttp: boolEnv('ALLOW_INSECURE_HTTP', false),
 });
@@ -52,22 +52,33 @@ server.listen(port, host, () => {
   const bind = host ? `${host}:${port}` : `localhost:${port}`;
   console.log(`zichan server -> http://${bind}  (data directory: ${dataDir})`);
   console.log(`serverId=${serverId} sync=${enableSync ? 'on' : 'off'} web=${enableWeb && webDir ? 'on' : 'off'} registration=${registrationMode} basePath=${basePath || '/'}`);
-  console.log(`admin=${adminToken ? 'on' : 'off'}${webDir ? ` webDir=${webDir}` : ''}`);
+  console.log(`account-admin=owner-session${webDir ? ` webDir=${webDir}` : ''}`);
   console.log(`transport=${boolEnv('ALLOW_INSECURE_HTTP', false) ? 'explicit HTTP allowed' : 'HTTPS required outside loopback'} trustedProxies=${listEnv('TRUSTED_PROXIES')?.join(',') || 'none'}`);
   console.log('E2E sync stores encrypted commits and attachment chunks only; the server cannot read ledger contents.');
 });
 
-let stopping = false;
+let shutdownPromise: Promise<void> | undefined;
 const shutdown = async (signal: string) => {
-  if (stopping) return;
-  stopping = true;
-  console.log(`Received ${signal}; closing SQLite and HTTP server...`);
-  try {
-    await service.close();
-  } finally {
-    rmSync(pidFile, { force: true });
-  }
+  shutdownPromise ??= (async () => {
+    console.log(`Received ${signal}; closing SQLite and HTTP server...`);
+    try {
+      await service.close();
+    } finally {
+      rmSync(pidFile, { force: true });
+    }
+  })();
+  return shutdownPromise;
 };
-process.once('SIGINT', () => void shutdown('SIGINT').then(() => process.exit(0)));
-process.once('SIGTERM', () => void shutdown('SIGTERM').then(() => process.exit(0)));
+const terminate = (reason: string) => {
+  void shutdown(reason).then(
+    () => process.exit(0),
+    (error) => {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    },
+  );
+};
+process.once('SIGINT', () => terminate('SIGINT'));
+process.once('SIGTERM', () => terminate('SIGTERM'));
+if (boolEnv('CONTROL_STDIN', false)) watchShutdownInput(process.stdin, terminate);
 process.once('exit', () => rmSync(pidFile, { force: true }));

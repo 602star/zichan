@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "runtimeVersion": "151.0.4129.101",
+  "architecture": "x64",
+  "downloadUrl": "https://msedge.sf.dl.delivery.mp.microsoft.com/filestreamingservice/files/d480b710-fe1e-4e4d-ae99-5b62e6391fd3/Microsoft.WebView2.FixedVersionRuntime.151.0.4129.101.x64.cab",
+  "sha256": "c386640d35f7a4604d088925a9bb01938400297f6da6fe985b72614daba87cda",
+  "runtimeTreeSha256": "435dc3bc91a298465be3f8404bd70a1b09e4dd4fe5785895b3526a5792506456",
+  "sourcePage": "https://developer.microsoft.com/en-us/microsoft-edge/webview2/",
+  "releaseNotes": "https://learn.microsoft.com/en-us/microsoft-edge/webview2/release-notes/runtime/",
+  "distributionGuide": "https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution",
+  "verificationStatus": "verified-from-official-microsoft-download"
+}

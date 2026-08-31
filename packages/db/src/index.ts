@@ -2,7 +2,7 @@
  * @zichan/db — SQLite persistence for the ledger. This entry is driver-agnostic
  * (no node/web imports), so it bundles cleanly for any platform. Import a driver
  * separately: `@zichan/db/node` for node:sqlite, or supply your own SqlDriver
- * (wa-sqlite on web, tauri-plugin-sql on native).
+ * (wa-sqlite on web, a dedicated Rust SQL bridge on native).
  */
 export { SerialTaskQueue, type SqlDriver, type SqlParam, type SqlRunResult } from './driver.js';
 export { schemaStatements } from './schema.js';
@@ -97,6 +97,7 @@ export {
   archiveMasterData,
   restoreArchivedMasterData,
   mergeMasterData,
+  inspectBusinessCompensation,
   undoBusinessCompensation,
   deleteBudgetCategory,
   restoreDeletedBudgetCategory,
@@ -186,6 +187,7 @@ export {
   type ArchivedMasterDataCompensation,
   DomainValidationError,
 } from './services.js';
+export type { BusinessCompensationInspection } from './services.js';
 export {
   checkConsistency,
   recomputeCaches,
@@ -197,15 +199,19 @@ export {
 export {
   httpCommitTransport,
   assertSecureSyncUrl,
+  isLocalNetworkSyncUrl,
   registerAccount,
   loginAccount,
   refreshAccountSession,
+  fetchAuthMe,
   fetchLedgerKeyEnvelope,
   putLedgerKeyEnvelope,
   type HttpTransportOptions,
   type RegisterAccountOptions,
+  type RegisterAccountResult,
   type LoginAccountOptions,
   type SyncAuthSession,
+  type SyncAuthMe,
 } from './http-transport.js';
 export {
   applyPendingCommits,

@@ -1,7 +1,7 @@
 import type { SavedBackup } from './backups.js';
 import type { Setting } from '@zichan/core';
 
-const SAFETY_KEY = 'zichan.safety.v1';
+export const SAFETY_STATE_KEY = 'zichan.safety.v1';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface SafetyState {
@@ -13,6 +13,8 @@ export interface SafetyState {
   lastBackupErrorAt?: string;
   lastBackupError?: string;
   lastExternalBackupAt?: string;
+  lastExternalBackupErrorAt?: string;
+  lastExternalBackupError?: string;
 }
 
 export interface SafetyWarning {
@@ -21,9 +23,37 @@ export interface SafetyWarning {
   tone: 'warning' | 'danger';
 }
 
+const SHARED_SAFETY_KEYS = [
+  'lastCheckAt',
+  'lastCheckCount',
+  'lastRehearsalAt',
+  'lastRehearsalOk',
+  'lastRehearsalLabel',
+] as const satisfies readonly (keyof SafetyState)[];
+
+const DEVICE_SAFETY_KEYS = [
+  'lastBackupErrorAt',
+  'lastBackupError',
+  'lastExternalBackupAt',
+  'lastExternalBackupErrorAt',
+  'lastExternalBackupError',
+] as const satisfies readonly (keyof SafetyState)[];
+
+function pickSafetyState(
+  state: SafetyState,
+  keys: readonly (keyof SafetyState)[],
+): SafetyState {
+  const picked: Record<string, unknown> = {};
+  for (const key of keys) {
+    const value = state[key];
+    if (value !== undefined) picked[key] = value;
+  }
+  return picked as SafetyState;
+}
+
 export function readSafetyState(): SafetyState {
   try {
-    return parseSafetyState(localStorage.getItem(SAFETY_KEY) ?? '{}');
+    return parseSafetyState(localStorage.getItem(SAFETY_STATE_KEY) ?? '{}');
   } catch {
     return {};
   }
@@ -43,15 +73,57 @@ export function serializeSafetyState(state: SafetyState): string {
   return JSON.stringify(state);
 }
 
+/** Only consistency-check and restore-rehearsal results belong to ledger settings. */
+export function serializeSharedSafetyState(state: SafetyState): string {
+  return serializeSafetyState(pickSafetyState(state, SHARED_SAFETY_KEYS));
+}
+
+export function safetyStateFromStoredJson(raw?: string): SafetyState {
+  const local = readSafetyState();
+  const stored = parseSafetyState(raw);
+  return {
+    ...pickSafetyState(local, SHARED_SAFETY_KEYS),
+    ...pickSafetyState(stored, SHARED_SAFETY_KEYS),
+    ...pickSafetyState(local, DEVICE_SAFETY_KEYS),
+  };
+}
+
 export function safetyStateFromSetting(setting?: Setting): SafetyState {
-  return { ...readSafetyState(), ...parseSafetyState(setting?.dataSafetyStateJson) };
+  return safetyStateFromStoredJson(setting?.dataSafetyStateJson);
 }
 
 export function writeSafetyState(patch: Partial<SafetyState>): SafetyState {
   const next = { ...readSafetyState(), ...patch };
-  localStorage.setItem(SAFETY_KEY, JSON.stringify(next));
+  localStorage.setItem(SAFETY_STATE_KEY, JSON.stringify(next));
   window.dispatchEvent(new CustomEvent('zichan:safety-updated'));
   return next;
+}
+
+/** Translate a completed local archive plus per-server results into durable safety state. */
+export function successfulBackupSafetyPatch(entry: SavedBackup, now = Date.now()): Partial<SafetyState> {
+  const patch: Partial<SafetyState> = {
+    lastBackupErrorAt: undefined,
+    lastBackupError: undefined,
+  };
+  const remoteFailures = (entry.remoteCopies ?? []).filter((copy) => !copy.saved && copy.error);
+  if (entry.externalSaved) patch.lastExternalBackupAt = entry.createdAt;
+  if (remoteFailures.length) {
+    patch.lastExternalBackupErrorAt = new Date(Math.max(
+      now,
+      (Date.parse(entry.createdAt) || 0) + 1,
+    )).toISOString();
+    patch.lastExternalBackupError = remoteFailures.map((copy) => `${copy.alias}：${copy.error}`).join('；');
+  } else if (entry.externalSaved) {
+    patch.lastExternalBackupErrorAt = undefined;
+    patch.lastExternalBackupError = undefined;
+  }
+  return patch;
+}
+
+/** Drop backup/check timestamps that describe the ledger being deleted. */
+export function clearSafetyState(): void {
+  globalThis.localStorage?.removeItem(SAFETY_STATE_KEY);
+  globalThis.dispatchEvent?.(new CustomEvent('zichan:safety-updated'));
 }
 
 export function safetyWarnings(backups: SavedBackup[], state: SafetyState, now = Date.now()): SafetyWarning[] {
@@ -63,10 +135,14 @@ export function safetyWarnings(backups: SavedBackup[], state: SafetyState, now =
     warnings.push({ key: 'backup-stale', message: '最近备份已超过 24 小时', tone: 'warning' });
   }
   if (state.lastBackupErrorAt && (!latestBackup || Date.parse(state.lastBackupErrorAt) > Date.parse(latestBackup.createdAt))) {
-    warnings.push({ key: 'backup-error', message: `最近自动备份失败：${state.lastBackupError ?? '未知错误'}`, tone: 'danger' });
+    warnings.push({ key: 'backup-error', message: `最近本机备份失败：${state.lastBackupError ?? '未知错误'}`, tone: 'danger' });
   }
-  if (!backups.some((backup) => backup.externalSaved)) {
-    warnings.push({ key: 'no-external-backup', message: '还没有独立于主账本存储的备份', tone: 'warning' });
+  if (state.lastExternalBackupErrorAt
+    && (!state.lastExternalBackupAt || state.lastExternalBackupErrorAt >= state.lastExternalBackupAt)) {
+    warnings.push({ key: 'external-backup-error', message: `最近远端备份失败：${state.lastExternalBackupError ?? '未知错误'}`, tone: 'danger' });
+  }
+  if (!backups.some((backup) => backup.externalSaved) && !state.lastExternalBackupAt) {
+    warnings.push({ key: 'no-external-backup', message: '尚未成功写入远端或外部目录副本；便携 data/backups 与主数据位于同一目录', tone: 'warning' });
   }
   if (!state.lastCheckAt) {
     warnings.push({ key: 'no-check', message: '还没有运行过数据自检', tone: 'warning' });

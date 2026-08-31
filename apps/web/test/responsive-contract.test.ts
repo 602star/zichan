@@ -10,6 +10,8 @@ const reportInsights = readFileSync(new URL('../src/ui/TransactionReportInsights
 const serverAdmin = readFileSync(new URL('../src/screens/ServerAdmin.tsx', import.meta.url), 'utf8');
 const dialogShell = readFileSync(new URL('../src/ui/DialogShell.tsx', import.meta.url), 'utf8');
 const errorBoundary = readFileSync(new URL('../src/ui/AppErrorBoundary.tsx', import.meta.url), 'utf8');
+const store = readFileSync(new URL('../src/db/store.tsx', import.meta.url), 'utf8');
+const settings = readFileSync(new URL('../src/screens/Settings.tsx', import.meta.url), 'utf8');
 const main = readFileSync(new URL('../src/main.tsx', import.meta.url), 'utf8');
 
 describe('responsive shell contract', () => {
@@ -45,7 +47,19 @@ describe('responsive shell contract', () => {
     expect(errorBoundary).toContain('重试当前页面');
     expect(errorBoundary).toContain('返回总览');
     expect(errorBoundary).toContain('复制诊断信息');
+    expect(store).toContain('复制诊断信息');
+    expect(store).toContain("userSelect: 'text'");
+    expect(store).toContain('aria-live="polite"');
     expect(main.indexOf('<AppErrorBoundary>')).toBeLessThan(main.indexOf('<StoreProvider>'));
+  });
+
+  it('keeps backup export actions observable instead of silently ignoring a click', () => {
+    expect(settings).toContain('shareOrDownloadBackup');
+    expect(settings).toContain('另存为…');
+    expect(settings).toContain('保存中…');
+    expect(settings).toContain('分享 / 下载失败');
+    expect(app).toContain('if (isTauriRuntime())');
+    expect(app).toContain("saveLedgerBackup(store, 'manual', '即时导出', 'portable')");
   });
 
   it('makes phone forms keyboard-safe and keeps large category lists scrollable', () => {

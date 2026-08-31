@@ -24,7 +24,7 @@ import {
   type RemoteBackupArchive,
   type RemoteBackupResult,
 } from '../remote-backup.js';
-import type { SyncServerProfile } from '../sync-config.js';
+import type { SyncConnection } from '../sync-config.js';
 import {
   createBackupArchive,
   openBackupArchive,
@@ -93,7 +93,7 @@ export class BackupPassphraseRequiredError extends Error {
 }
 
 export interface ExternalBackupStatus {
-  kind: 'desktop' | 'directory' | 'none';
+  kind: 'portable' | 'directory' | 'none';
   configured: boolean;
   label: string;
 }
@@ -112,6 +112,8 @@ export interface SavedBackup {
   preflight: BackupPreflight;
   checksum: string;
   sizeBytes: number;
+  /** Local archive path. On Windows portable builds this remains inside data/backups. */
+  localPath?: string;
   externalSaved?: boolean;
   externalPath?: string;
   externalError?: string;
@@ -268,9 +270,20 @@ function nativeArchiveSource(fileName: string, size: number): BackupArchiveSourc
   return {
     size,
     async read(offset, length) {
-      const request = tauriInvoke<number[]>('desktop_read_backup_chunk', { fileName, offset, length });
-      if (!request) throw new Error('当前环境不能读取桌面备份文件');
-      return new Uint8Array(await request);
+      const result = new Uint8Array(length);
+      for (let readOffset = 0; readOffset < length; readOffset += DESKTOP_TRANSFER_BYTES) {
+        const chunkLength = Math.min(DESKTOP_TRANSFER_BYTES, length - readOffset);
+        const request = tauriInvoke<number[]>('desktop_read_backup_chunk', {
+          fileName,
+          offset: offset + readOffset,
+          length: chunkLength,
+        });
+        if (!request) throw new Error('当前环境不能读取桌面备份文件');
+        const chunk = new Uint8Array(await request);
+        if (chunk.byteLength !== chunkLength) throw new Error('桌面备份分块读取长度不一致');
+        result.set(chunk, readOffset);
+      }
+      return result;
     },
   };
 }
@@ -296,7 +309,14 @@ async function externalDirectory(): Promise<FileSystemDirectoryHandle | null> {
 
 export async function externalBackupStatus(): Promise<ExternalBackupStatus> {
   const desktop = tauriInvoke<DesktopBackupStatus>('desktop_backup_status');
-  if (desktop) return { kind: 'desktop', configured: true, label: (await desktop).directory };
+  if (desktop) {
+    const status = await desktop;
+    return {
+      kind: 'portable',
+      configured: false,
+      label: `${status.directory}（便携目录内，非独立副本）`,
+    };
+  }
   const handle = await externalDirectory();
   return handle
     ? { kind: 'directory', configured: true, label: handle.name }
@@ -305,7 +325,7 @@ export async function externalBackupStatus(): Promise<ExternalBackupStatus> {
 
 export async function configureExternalBackupDirectory(): Promise<ExternalBackupStatus> {
   const desktop = await externalBackupStatus();
-  if (desktop.kind === 'desktop') return desktop;
+  if (desktop.kind === 'portable') throw new Error('便携桌面的 data/backups 是本地恢复点；请使用同步服务器或“分享 / 下载”保存到其他磁盘');
   const picker = (window as BackupWindow).showDirectoryPicker;
   if (!picker) throw new Error('当前浏览器不支持选择外部备份目录');
   const handle = await picker({ mode: 'readwrite' });
@@ -368,16 +388,7 @@ async function writeExternalBackup(
 ): Promise<{ saved: boolean; sizeBytes: number; path?: string; error?: string }> {
   try {
     const fileName = backupFileName(entry);
-    if (isTauriRuntime()) {
-      const result = await writeDesktopArchive(
-        fileName,
-        stream,
-        estimatedSizeBytes,
-        entry.container.archiveId,
-        signal,
-      );
-      return { saved: true, ...result };
-    }
+    if (isTauriRuntime()) throw new Error('便携目录内的本地备份不能登记为外部副本');
     const handle = await externalDirectory();
     if (!handle) return { saved: false, sizeBytes: 0, error: '尚未选择外部备份目录' };
     const permission = await (handle as WritableDirectoryHandle).requestPermission({ mode: 'readwrite' });
@@ -472,8 +483,8 @@ export async function listSavedBackups(): Promise<SavedBackup[]> {
         entries.push(savedFromArchive(header, file.sizeBytes, {
           id,
           nativeFileName: file.fileName,
-          externalSaved: true,
-          externalPath: file.path,
+          localPath: file.path,
+          externalSaved: false,
         }));
       } catch {
         // A partial or unsupported file is not offered as a restore point.
@@ -527,17 +538,25 @@ export async function saveLedgerBackup(
     archiveOptions,
   );
   let entry: SavedBackup;
-  let external: Awaited<ReturnType<typeof writeExternalBackup>>;
+  let external: Awaited<ReturnType<typeof writeExternalBackup>> = { saved: false, sizeBytes: 0 };
   let remoteCopies: RemoteBackupResult[] = [];
   if (isTauriRuntime()) {
     entry = savedFromArchive(prepared.header, 0, { preflight });
-    external = await writeExternalBackup(
-      entry,
+    const fileName = backupFileName(entry);
+    const local = await writeDesktopArchive(
+      fileName,
       prepared.createStream(),
       prepared.estimatedSizeBytes,
+      entry.container.archiveId,
       archiveOptions.signal,
     );
-    entry.sizeBytes = external.sizeBytes;
+    entry.sizeBytes = local.sizeBytes;
+    entry.nativeFileName = fileName;
+    entry.localPath = local.path;
+    remoteCopies = await saveEncryptedBackupToSyncServers(
+      prepared.header,
+      nativeArchiveSource(fileName, local.sizeBytes),
+    );
   } else {
     const body = await new Response(prepared.createStream()).blob();
     const archive = body.slice(0, body.size, 'application/x-zichan-backup');
@@ -562,7 +581,9 @@ export async function saveLedgerBackup(
     ].filter(Boolean).join('；') || undefined,
     remoteCopies,
   });
-  if (isTauriRuntime() && !external.saved) throw new Error(`桌面备份写入失败：${external.error ?? '未知错误'}`);
+  if (isTauriRuntime() && !entry.externalSaved && !entry.externalError) {
+    entry.externalError = '仅保存在便携目录 data/backups；尚无远端或外部目录副本';
+  }
   await writeBackups([entry, ...await listSavedBackups()]);
   return entry;
 }
@@ -646,28 +667,49 @@ export async function rehearseRestore(backup: PortableLedgerBackup): Promise<Res
   }
 }
 
-export async function openSavedBackup(entry: SavedBackup): Promise<BackupPayload> {
-  return (await parseEncryptedBackup(archiveSource(entry))).payload;
+export async function openSavedBackup(entry: SavedBackup, passphrase?: string): Promise<BackupPayload> {
+  return (await parseSavedBackup(entry, passphrase)).payload;
 }
 
-export async function verifySavedBackup(entry: SavedBackup): Promise<boolean> {
+export async function parseSavedBackup(
+  entry: SavedBackup,
+  passphrase?: string,
+): Promise<ParsedEncryptedBackup> {
+  return parseEncryptedBackup(archiveSource(entry), passphrase);
+}
+
+export async function openVerifiedSavedBackup(
+  entry: SavedBackup,
+  passphrase?: string,
+): Promise<ParsedEncryptedBackup> {
+  const source = archiveSource(entry);
+  const header = await readBackupArchiveHeader(source);
+  if (header.archiveId !== entry.container.archiveId || header.ledgerSha256 !== entry.checksum) {
+    throw new Error('备份目录元数据与归档校验信息不一致');
+  }
+  const opened = await parseEncryptedBackup(source, passphrase);
+  const preflight = await preflightPortableBackup(opened.payload.ledger);
+  if (!preflight.ok) throw new Error('备份账本预检未通过');
+  return opened;
+}
+
+export async function verifySavedBackup(entry: SavedBackup, passphrase?: string): Promise<boolean> {
   try {
-    const source = archiveSource(entry);
-    const header = await readBackupArchiveHeader(source);
-    if (header.archiveId !== entry.container.archiveId || header.ledgerSha256 !== entry.checksum) return false;
-    const payload = (await parseEncryptedBackup(source)).payload;
-    return (await preflightPortableBackup(payload.ledger)).ok;
-  } catch {
+    await openVerifiedSavedBackup(entry, passphrase);
+    return true;
+  } catch (error) {
+    if (error instanceof BackupPassphraseRequiredError || passphrase) throw error;
     return false;
   }
 }
 
 export async function prepareRemoteBackupForRestore(
-  profile: SyncServerProfile,
+  profile: SyncConnection,
   remote: RemoteBackupArchive,
-): Promise<SavedBackup> {
+  passphrase?: string,
+): Promise<{ entry: SavedBackup; opened: ParsedEncryptedBackup }> {
   const archive = await downloadRemoteBackup(profile, remote);
-  const parsed = await parseEncryptedBackup(archive);
+  const parsed = await parseEncryptedBackup(archive, passphrase);
   if (parsed.container.archiveId !== remote.archiveId
     || parsed.container.ledgerId !== remote.ledgerId
     || parsed.container.createdAt !== remote.createdAt) {
@@ -680,7 +722,7 @@ export async function prepareRemoteBackupForRestore(
       .map((issue) => issue.message)
       .join('；')}`);
   }
-  return savedFromArchive(parsed.container, archive.size, {
+  const entry = savedFromArchive(parsed.container, archive.size, {
     id: `remote-${profile.id}-${remote.archiveId}`,
     archive,
     preflight,
@@ -693,11 +735,19 @@ export async function prepareRemoteBackupForRestore(
       archiveId: remote.archiveId,
     }],
   });
+  return { entry, opened: parsed };
 }
 
 export async function downloadBackup(
   entry: SavedBackup | { backup: PortableLedgerBackup; createdAt: string; label: string },
 ): Promise<'shared' | 'downloaded' | 'cancelled'> {
+  if ('container' in entry && entry.nativeFileName && isTauriRuntime()) {
+    const request = tauriInvoke<{ path: string } | null>('desktop_export_backup_file', {
+      fileName: entry.nativeFileName,
+    });
+    if (!request) throw new Error('当前桌面版本不支持原生备份另存为；请更新便携包');
+    return (await request) ? 'downloaded' : 'cancelled';
+  }
   const created = 'container' in entry
     ? { header: entry.container, blob: entry.archive ?? await archiveToBlob(archiveSource(entry)) }
     : await createEncryptedBackupContainer({

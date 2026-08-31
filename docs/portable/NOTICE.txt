@@ -1,0 +1,29 @@
+资产生命周期 v0.1 便携开发版声明
+=================================
+
+本仓库当前没有声明项目级开源或再分发许可证。本文件不授予复制、修改或再发布本项目
+自有代码和资源的许可；公开分发前必须由项目权利人另行确认许可条款。
+
+便携包包含独立第三方组件，第三方组件继续适用其各自许可证和分发条款，包括但不限于：
+
+1. Microsoft Edge WebView2 Fixed Version Runtime
+   官方下载：https://developer.microsoft.com/en-us/microsoft-edge/webview2/
+   分发说明：https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution
+   Microsoft 软件许可条款：https://www.microsoft.com/en-us/legal/terms-of-use
+
+   构建脚本会原样复制固定版 Runtime 目录；若微软 CAB 内含 license、notices 或 Chromium
+   第三方声明文件，它们会随 runtime\webview2 一同进入便携包并保持原名。
+
+2. Node.js Runtime
+   项目主页：https://nodejs.org/
+   许可证与第三方声明：https://github.com/nodejs/node/blob/main/LICENSE
+   便携包同时在 server\node-LICENSE.txt 保留构建所用 Node.js 运行时的许可证原文。
+
+3. Tauri、Chromium 及 JavaScript/Rust 依赖
+   各组件的版权和许可证归相应权利人所有。正式公开发布前应从锁文件和构建产物生成完整的
+   第三方软件清单并完成法务审核；v0.1 当前仅作为开发和功能验证候选物。
+
+4. qrcode 1.5.4
+   项目主页：https://github.com/soldair/node-qrcode
+   许可证：MIT
+   仅在本机生成服务器连接二维码；服务器地址不会发送给第三方二维码服务。

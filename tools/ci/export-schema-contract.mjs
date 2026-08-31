@@ -19,7 +19,7 @@ export function currentSchemaContract() {
 
 function parseArgs(argv) {
   if (argv.length !== 2 || argv[0] !== '--output' || !argv[1]) {
-    throw new Error('Usage: node scripts/db/export-schema-contract.mjs --output <path>');
+    throw new Error('Usage: node tools/ci/export-schema-contract.mjs --output <path>');
   }
   return resolve(argv[1]);
 }

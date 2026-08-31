@@ -2,6 +2,7 @@ import { isTauriRuntime, tauriInvoke } from './tauri.js';
 import {
   loadSessionCredentials,
   saveSessionCredentials,
+  SESSION_CREDENTIALS_KEY,
   type ServerCredential,
 } from './sync-config.js';
 
@@ -268,6 +269,25 @@ export async function resetCredentialVault(): Promise<void> {
     initialized: false,
     message: '请设置本机密码创建 Stronghold',
   };
+  emit(CREDENTIALS_CHANGED_EVENT);
+  emit(VAULT_STATE_CHANGED_EVENT);
+}
+
+/** Clear cached browser credentials after a full local-data reset. */
+export function clearCredentialVaultRuntimeState(): void {
+  runtimeCredentials = {};
+  globalThis.sessionStorage?.removeItem(SESSION_CREDENTIALS_KEY);
+  if (!isTauriRuntime()) {
+    snapshotPath = '';
+    vaultState = {
+      kind: 'browser-session',
+      unlocked: true,
+      initialized: true,
+      platform: 'web',
+      mobile: false,
+      message: '密码仅保存在当前浏览器标签页',
+    };
+  }
   emit(CREDENTIALS_CHANGED_EVENT);
   emit(VAULT_STATE_CHANGED_EVENT);
 }

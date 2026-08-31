@@ -1,3 +1,4 @@
+use crate::portable::PortablePaths;
 use serde_json::{Map, Number, Value};
 use sqlx::{
     pool::PoolConnection,
@@ -10,23 +11,27 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
 };
-use tauri::{AppHandle, Manager, State};
+use tauri::State;
 use tokio::sync::Mutex;
 
 type SqliteQuery<'q> = sqlx::query::Query<'q, Sqlite, SqliteArguments<'q>>;
 type NativeConnection = Arc<Mutex<PoolConnection<Sqlite>>>;
 
-fn ledger_database_path(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map(|path| path.join("ledger.sqlite"))
-        .map_err(|error| error.to_string())
+fn ledger_database_path(paths: &PortablePaths) -> PathBuf {
+    paths.ledger_database.clone()
+}
+
+fn database_url(paths: &PortablePaths) -> Result<String, String> {
+    let path = ledger_database_path(paths);
+    let parent = path.parent().ok_or("原生数据库路径无效")?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("创建数据库目录 {} 失败：{error}", parent.display()))?;
+    Ok(format!("sqlite:{}", path.display()))
 }
 
 #[derive(Default)]
@@ -123,10 +128,16 @@ async fn sqlite_pool(state: &NativeSqlState, db: &str) -> Result<SqlitePool, Str
 
 async fn open_encrypted_pool(path: &Path, database_key_hex: &str) -> Result<SqlitePool, String> {
     let key_pragma = format!("\"x'{database_key_hex}'\"");
-    let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", path.display()))
-        .map_err(|error| error.to_string())?
+    // PortablePaths is canonicalized before use. On Windows that can produce a
+    // verbatim `\\\\?\\D:\\...` path, whose `?` must never be interpolated into a
+    // SQLite URL: SQLx would parse the rest as URL query parameters. Give SQLx
+    // the filesystem path directly so ordinary and verbatim Windows paths are
+    // both handled as paths.
+    let options = SqliteConnectOptions::new()
+        .filename(path)
         .create_if_missing(true)
         .pragma("key", key_pragma)
+        .pragma("temp_store", "MEMORY")
         .disable_statement_logging();
     let pool = SqlitePoolOptions::new()
         .min_connections(1)
@@ -163,7 +174,11 @@ async fn open_encrypted_pool(path: &Path, database_key_hex: &str) -> Result<Sqli
 async fn configure_read_connection(connection: &mut PoolConnection<Sqlite>) -> Result<(), String> {
     // These are connection-local. Keep schema inspection read-only so rejecting
     // a development-era database cannot rewrite its header or create WAL files.
-    for pragma in ["PRAGMA foreign_keys = ON", "PRAGMA busy_timeout = 5000"] {
+    for pragma in [
+        "PRAGMA foreign_keys = ON",
+        "PRAGMA busy_timeout = 5000",
+        "PRAGMA temp_store = MEMORY",
+    ] {
         sqlx::query(pragma)
             .execute(&mut **connection)
             .await
@@ -207,21 +222,16 @@ async fn select_on_connection(
 }
 
 #[tauri::command]
-pub fn native_sql_database_url(app: AppHandle) -> Result<String, String> {
-    let path = ledger_database_path(&app)?;
-    let parent = path.parent().ok_or("原生数据库路径无效")?;
-    fs::create_dir_all(parent)
-        .map_err(|error| format!("创建数据库目录 {} 失败：{error}", parent.display()))?;
-    // An absolute suffix keeps tauri-plugin-sql from remapping this file to AppConfig.
-    Ok(format!("sqlite:{}", path.display()))
+pub fn native_sql_database_url(paths: State<'_, PortablePaths>) -> Result<String, String> {
+    database_url(&paths)
 }
 
 #[tauri::command]
 pub async fn native_sql_open(
-    app: AppHandle,
     db: String,
     database_key_hex: String,
     state: State<'_, NativeSqlState>,
+    paths: State<'_, PortablePaths>,
 ) -> Result<(), String> {
     if database_key_hex.len() != 64
         || !database_key_hex
@@ -230,7 +240,7 @@ pub async fn native_sql_open(
     {
         return Err("native database key must be 32 lowercase hex bytes".into());
     }
-    let expected = native_sql_database_url(app.clone())?;
+    let expected = database_url(&paths)?;
     if db != expected {
         return Err("native database URL does not match the application data path".into());
     }
@@ -241,7 +251,7 @@ pub async fn native_sql_open(
         existing.close().await;
     }
 
-    let path = ledger_database_path(&app)?;
+    let path = ledger_database_path(&paths);
     let pool = open_encrypted_pool(&path, &database_key_hex).await?;
     state.pools.lock().await.insert(db, pool);
     Ok(())
@@ -370,13 +380,13 @@ pub async fn native_sql_rollback(
 }
 
 #[tauri::command]
-pub fn native_sql_database_path(app: AppHandle) -> Result<String, String> {
-    ledger_database_path(&app).map(|path| path.display().to_string())
+pub fn native_sql_database_path(paths: State<'_, PortablePaths>) -> String {
+    ledger_database_path(&paths).display().to_string()
 }
 
 #[tauri::command]
-pub fn native_sql_delete_database(app: AppHandle) -> Result<(), String> {
-    let path = ledger_database_path(&app)?;
+pub fn native_sql_delete_database(paths: State<'_, PortablePaths>) -> Result<(), String> {
+    let path = ledger_database_path(&paths);
     for candidate in [
         path.clone(),
         path.with_file_name("ledger.sqlite-wal"),
@@ -422,6 +432,19 @@ mod tests {
             "zichan-{label}-{}-{nonce}.sqlite",
             std::process::id()
         ))
+    }
+
+    fn temporary_database_directory(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory =
+            env::temp_dir().join(format!("zichan-{label}-{}-{nonce}", std::process::id()));
+        fs::create_dir_all(&directory).expect("create SQLCipher test directory");
+        directory
+            .canonicalize()
+            .expect("canonicalize SQLCipher test directory")
     }
 
     fn remove_sqlite_files(path: &std::path::Path) {
@@ -517,6 +540,47 @@ mod tests {
             assert!(wrong.is_err(), "a wrong key must not open the database");
 
             remove_sqlite_files(&path);
+        });
+    }
+
+    #[test]
+    fn sqlcipher_opens_a_canonicalized_database_path() {
+        tauri::async_runtime::block_on(async {
+            let directory = temporary_database_directory("canonical-path");
+            let path = directory.join("ledger.sqlite");
+            let key = "55".repeat(32);
+            #[cfg(windows)]
+            assert!(
+                path.to_string_lossy().starts_with(r"\\?\"),
+                "Windows canonical paths must exercise the verbatim-path case: {}",
+                path.display()
+            );
+
+            let pool = open_encrypted_pool(&path, &key)
+                .await
+                .expect("open SQLCipher database through a canonicalized path");
+            sqlx::query("CREATE TABLE canonical_path_check (value TEXT NOT NULL)")
+                .execute(&pool)
+                .await
+                .expect("write canonical-path database");
+            sqlx::query("INSERT INTO canonical_path_check (value) VALUES ('ok')")
+                .execute(&pool)
+                .await
+                .expect("insert canonical-path database row");
+            pool.close().await;
+
+            let reopened = open_encrypted_pool(&path, &key)
+                .await
+                .expect("reopen SQLCipher database through a canonicalized path");
+            let value = sqlx::query_scalar::<_, String>("SELECT value FROM canonical_path_check")
+                .fetch_one(&reopened)
+                .await
+                .expect("read canonical-path database row");
+            assert_eq!(value, "ok");
+            reopened.close().await;
+
+            remove_sqlite_files(&path);
+            fs::remove_dir_all(&directory).expect("remove SQLCipher test directory");
         });
     }
 

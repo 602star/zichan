@@ -1,10 +1,11 @@
+use crate::portable::PortablePaths;
 use serde::Serialize;
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
-use tauri::{AppHandle, Manager};
+use tauri::State;
 
 const MAX_TRANSFER_BYTES: usize = 1024 * 1024;
 
@@ -22,11 +23,8 @@ pub struct NativeAttachmentStorageStatus {
     available_bytes: u64,
 }
 
-fn attachment_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map(|path| path.join("attachments"))
-        .map_err(|error| error.to_string())
+fn attachment_dir(paths: &PortablePaths) -> PathBuf {
+    paths.attachments.clone()
 }
 
 fn validate_key(value: &str, label: &str) -> Result<(), String> {
@@ -48,13 +46,13 @@ fn validate_sha256(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn stage_path(app: &AppHandle, temp_key: &str) -> Result<PathBuf, String> {
+fn stage_path(paths: &PortablePaths, temp_key: &str) -> Result<PathBuf, String> {
     validate_key(temp_key, "附件暂存键")?;
-    Ok(attachment_dir(app)?.join("staging").join(temp_key))
+    Ok(attachment_dir(paths).join("staging").join(temp_key))
 }
 
-fn stage_part_path(app: &AppHandle, temp_key: &str) -> Result<PathBuf, String> {
-    let path = stage_path(app, temp_key)?;
+fn stage_part_path(paths: &PortablePaths, temp_key: &str) -> Result<PathBuf, String> {
+    let path = stage_path(paths, temp_key)?;
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
@@ -62,12 +60,12 @@ fn stage_part_path(app: &AppHandle, temp_key: &str) -> Result<PathBuf, String> {
     Ok(path.with_file_name(format!(".{file_name}.part")))
 }
 
-fn content_path(app: &AppHandle, area: &str, sha256: &str) -> Result<PathBuf, String> {
+fn content_path(paths: &PortablePaths, area: &str, sha256: &str) -> Result<PathBuf, String> {
     validate_sha256(sha256)?;
     if area != "objects" && area != "trash" && area != "quarantine" {
         return Err("附件存储区域无效".into());
     }
-    Ok(attachment_dir(app)?
+    Ok(attachment_dir(paths)
         .join(area)
         .join(&sha256[0..2])
         .join(sha256.to_ascii_lowercase()))
@@ -109,12 +107,12 @@ fn read_range(path: &Path, offset: u64, length: usize) -> Result<Vec<u8>, String
 
 #[tauri::command]
 pub fn native_attachment_stage_begin(
-    app: AppHandle,
+    paths: State<'_, PortablePaths>,
     temp_key: String,
     expected_size_bytes: u64,
 ) -> Result<NativeAttachmentStatus, String> {
-    let target = stage_path(&app, &temp_key)?;
-    let temporary = stage_part_path(&app, &temp_key)?;
+    let target = stage_path(&paths, &temp_key)?;
+    let temporary = stage_part_path(&paths, &temp_key)?;
     ensure_parent(&target)?;
     let available = fs2::available_space(target.parent().ok_or("附件暂存目录无效")?)
         .map_err(|error| format!("读取附件目录剩余空间失败：{error}"))?;
@@ -135,14 +133,14 @@ pub fn native_attachment_stage_begin(
 
 #[tauri::command]
 pub fn native_attachment_stage_append(
-    app: AppHandle,
+    paths: State<'_, PortablePaths>,
     temp_key: String,
     chunk: Vec<u8>,
 ) -> Result<NativeAttachmentStatus, String> {
     if chunk.is_empty() || chunk.len() > MAX_TRANSFER_BYTES {
         return Err(format!("附件写入分块必须为 1 至 {MAX_TRANSFER_BYTES} 字节"));
     }
-    let temporary = stage_part_path(&app, &temp_key)?;
+    let temporary = stage_part_path(&paths, &temp_key)?;
     let mut file = OpenOptions::new()
         .append(true)
         .open(&temporary)
@@ -154,12 +152,12 @@ pub fn native_attachment_stage_append(
 
 #[tauri::command]
 pub fn native_attachment_stage_commit(
-    app: AppHandle,
+    paths: State<'_, PortablePaths>,
     temp_key: String,
     expected_size_bytes: u64,
 ) -> Result<NativeAttachmentStatus, String> {
-    let target = stage_path(&app, &temp_key)?;
-    let temporary = stage_part_path(&app, &temp_key)?;
+    let target = stage_path(&paths, &temp_key)?;
+    let temporary = stage_part_path(&paths, &temp_key)?;
     let file = OpenOptions::new()
         .write(true)
         .open(&temporary)
@@ -182,26 +180,29 @@ pub fn native_attachment_stage_commit(
 
 #[tauri::command]
 pub fn native_attachment_stage_status(
-    app: AppHandle,
+    paths: State<'_, PortablePaths>,
     temp_key: String,
 ) -> Result<NativeAttachmentStatus, String> {
-    file_status(&stage_path(&app, &temp_key)?)
+    file_status(&stage_path(&paths, &temp_key)?)
 }
 
 #[tauri::command]
 pub fn native_attachment_stage_read_range(
-    app: AppHandle,
+    paths: State<'_, PortablePaths>,
     temp_key: String,
     offset: u64,
     length: usize,
 ) -> Result<Vec<u8>, String> {
-    read_range(&stage_path(&app, &temp_key)?, offset, length)
+    read_range(&stage_path(&paths, &temp_key)?, offset, length)
 }
 
 #[tauri::command]
-pub fn native_attachment_stage_discard(app: AppHandle, temp_key: String) -> Result<(), String> {
-    let path = stage_path(&app, &temp_key)?;
-    let temporary = stage_part_path(&app, &temp_key)?;
+pub fn native_attachment_stage_discard(
+    paths: State<'_, PortablePaths>,
+    temp_key: String,
+) -> Result<(), String> {
+    let path = stage_path(&paths, &temp_key)?;
+    let temporary = stage_part_path(&paths, &temp_key)?;
     for candidate in [path, temporary] {
         if candidate.is_file() {
             fs::remove_file(candidate).map_err(|error| format!("删除暂存附件失败：{error}"))?;
@@ -212,12 +213,12 @@ pub fn native_attachment_stage_discard(app: AppHandle, temp_key: String) -> Resu
 
 #[tauri::command]
 pub fn native_attachment_promote(
-    app: AppHandle,
+    paths: State<'_, PortablePaths>,
     temp_key: String,
     sha256: String,
 ) -> Result<NativeAttachmentStatus, String> {
-    let source = stage_path(&app, &temp_key)?;
-    let target = content_path(&app, "objects", &sha256)?;
+    let source = stage_path(&paths, &temp_key)?;
+    let target = content_path(&paths, "objects", &sha256)?;
     ensure_parent(&target)?;
     if target.is_file() {
         if source.is_file() {
@@ -237,38 +238,38 @@ pub fn native_attachment_promote(
 
 #[tauri::command]
 pub fn native_attachment_status(
-    app: AppHandle,
+    paths: State<'_, PortablePaths>,
     sha256: String,
     area: Option<String>,
 ) -> Result<NativeAttachmentStatus, String> {
-    let path = content_path(&app, area.as_deref().unwrap_or("objects"), &sha256)?;
+    let path = content_path(&paths, area.as_deref().unwrap_or("objects"), &sha256)?;
     file_status(&path)
 }
 
 #[tauri::command]
 pub fn native_attachment_read_range(
-    app: AppHandle,
+    paths: State<'_, PortablePaths>,
     sha256: String,
     area: Option<String>,
     offset: u64,
     length: usize,
 ) -> Result<Vec<u8>, String> {
-    let path = content_path(&app, area.as_deref().unwrap_or("objects"), &sha256)?;
+    let path = content_path(&paths, area.as_deref().unwrap_or("objects"), &sha256)?;
     read_range(&path, offset, length)
 }
 
 #[tauri::command]
 pub fn native_attachment_exists(
-    app: AppHandle,
+    paths: State<'_, PortablePaths>,
     sha256: String,
     area: Option<String>,
 ) -> Result<bool, String> {
-    Ok(content_path(&app, area.as_deref().unwrap_or("objects"), &sha256)?.is_file())
+    Ok(content_path(&paths, area.as_deref().unwrap_or("objects"), &sha256)?.is_file())
 }
 
-fn move_content(app: &AppHandle, sha256: &str, from: &str, to: &str) -> Result<(), String> {
-    let source = content_path(app, from, sha256)?;
-    let target = content_path(app, to, sha256)?;
+fn move_content(paths: &PortablePaths, sha256: &str, from: &str, to: &str) -> Result<(), String> {
+    let source = content_path(paths, from, sha256)?;
+    let target = content_path(paths, to, sha256)?;
     if !source.is_file() {
         return Ok(());
     }
@@ -282,24 +283,36 @@ fn move_content(app: &AppHandle, sha256: &str, from: &str, to: &str) -> Result<(
 }
 
 #[tauri::command]
-pub fn native_attachment_trash(app: AppHandle, sha256: String) -> Result<(), String> {
-    move_content(&app, &sha256, "objects", "trash")
+pub fn native_attachment_trash(
+    paths: State<'_, PortablePaths>,
+    sha256: String,
+) -> Result<(), String> {
+    move_content(&paths, &sha256, "objects", "trash")
 }
 
 #[tauri::command]
-pub fn native_attachment_restore(app: AppHandle, sha256: String) -> Result<(), String> {
-    move_content(&app, &sha256, "trash", "objects")
+pub fn native_attachment_restore(
+    paths: State<'_, PortablePaths>,
+    sha256: String,
+) -> Result<(), String> {
+    move_content(&paths, &sha256, "trash", "objects")
 }
 
 #[tauri::command]
-pub fn native_attachment_quarantine(app: AppHandle, sha256: String) -> Result<(), String> {
-    move_content(&app, &sha256, "objects", "quarantine")
+pub fn native_attachment_quarantine(
+    paths: State<'_, PortablePaths>,
+    sha256: String,
+) -> Result<(), String> {
+    move_content(&paths, &sha256, "objects", "quarantine")
 }
 
 #[tauri::command]
-pub fn native_attachment_purge(app: AppHandle, sha256: String) -> Result<(), String> {
+pub fn native_attachment_purge(
+    paths: State<'_, PortablePaths>,
+    sha256: String,
+) -> Result<(), String> {
     for area in ["objects", "trash", "quarantine"] {
-        let path = content_path(&app, area, &sha256)?;
+        let path = content_path(&paths, area, &sha256)?;
         if path.is_file() {
             fs::remove_file(path).map_err(|error| format!("永久删除附件失败：{error}"))?;
         }
@@ -308,15 +321,15 @@ pub fn native_attachment_purge(app: AppHandle, sha256: String) -> Result<(), Str
 }
 
 #[tauri::command]
-pub fn native_attachment_directory(app: AppHandle) -> Result<String, String> {
-    attachment_dir(&app).map(|path| path.display().to_string())
+pub fn native_attachment_directory(paths: State<'_, PortablePaths>) -> String {
+    attachment_dir(&paths).display().to_string()
 }
 
 #[tauri::command]
 pub fn native_attachment_storage_status(
-    app: AppHandle,
+    paths: State<'_, PortablePaths>,
 ) -> Result<NativeAttachmentStorageStatus, String> {
-    let directory = attachment_dir(&app)?;
+    let directory = attachment_dir(&paths);
     fs::create_dir_all(&directory).map_err(|error| format!("创建附件目录失败：{error}"))?;
     let available_bytes = fs2::available_space(&directory)
         .map_err(|error| format!("读取附件目录剩余空间失败：{error}"))?;
@@ -327,8 +340,8 @@ pub fn native_attachment_storage_status(
 }
 
 #[tauri::command]
-pub fn native_attachment_clear(app: AppHandle) -> Result<(), String> {
-    let directory = attachment_dir(&app)?;
+pub fn native_attachment_clear(paths: State<'_, PortablePaths>) -> Result<(), String> {
+    let directory = attachment_dir(&paths);
     if directory.is_dir() {
         fs::remove_dir_all(&directory).map_err(|error| format!("清空附件目录失败：{error}"))?;
     }

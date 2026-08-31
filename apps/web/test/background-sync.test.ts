@@ -33,11 +33,15 @@ describe('background sync lifecycle', () => {
     const localStorage = new MemoryStorage();
     const sessionStorage = new MemoryStorage();
     localStorage.setItem('zichan.sync.auto.v1', JSON.stringify({ enabled: true, minutes: 5 }));
-    localStorage.setItem('zichan.sync.serverProfiles.v3', JSON.stringify([{
-      id: 'home', alias: '家里电脑', protocol: 'https', host: 'ledger.example.com', port: '', basePath: '',
-      username: 'owner', enabled: true, lastStatus: 'online',
-    }]));
-    sessionStorage.setItem('zichan.sync.sessionCredentials.v3', JSON.stringify({
+    localStorage.setItem('zichan.sync.connections.v1', JSON.stringify({
+      version: 1,
+      servers: [{ id: 'home', alias: '家里电脑', sharedUrls: ['https://ledger.example.com'] }],
+      connections: [{
+        serverRef: 'home', activeUrl: 'https://ledger.example.com', deviceUrls: [],
+        username: 'owner', enabled: true, status: 'online',
+      }],
+    }));
+    sessionStorage.setItem('zichan.sync.connectionCredentials.v1', JSON.stringify({
       home: { password: 'sync-password', inviteCode: '', accessToken: 'expired-token', accessExpiresAt: '2099-01-01T00:00:00.000Z' },
     }));
     Object.defineProperty(globalThis, 'window', { configurable: true, value: undefined });

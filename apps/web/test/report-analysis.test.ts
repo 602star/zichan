@@ -4,6 +4,7 @@ import type { TransactionReportAggregateRow } from '@zichan/db';
 import {
   buildBudgetVariance,
   buildTransactionComparison,
+  effectiveReportRange,
   reportComparisonRanges,
 } from '../src/selectors/report-analysis.js';
 import { makeSnapshot } from './fixtures.js';
@@ -19,6 +20,27 @@ function aggregate(
 }
 
 describe('report comparison analysis', () => {
+  it('caps every report range at the ledger as-of date', () => {
+    expect(effectiveReportRange({
+      preset: 'this_month',
+      from: '2026-08-01',
+      to: '2026-08-31',
+    }, '2026-08-13')).toEqual({
+      preset: 'this_month',
+      from: '2026-08-01',
+      to: '2026-08-13',
+    });
+    expect(effectiveReportRange({ preset: 'all' }, '2026-08-13')).toEqual({
+      preset: 'all',
+      to: '2026-08-13',
+    });
+    expect(effectiveReportRange({
+      preset: 'custom',
+      from: '2026-07-01',
+      to: '2026-07-31',
+    }, '2026-08-13').to).toBe('2026-07-31');
+  });
+
   it('compares in-progress calendar periods with like-for-like prior windows', () => {
     expect(reportComparisonRanges({
       preset: 'this_month',

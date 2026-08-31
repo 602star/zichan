@@ -21,27 +21,15 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http: https: ws: wss:; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost http: https: ws: wss:; img-src 'self' asset: http://asset.localhost blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
     }
   },
   "bundle": {
-    "active": true,
-    "targets": "all",
+    "active": false,
     "windows": {
-      "wix": {
-        "language": "zh-CN"
-      },
-      "nsis": {
-        "languages": [
-          "SimpChinese",
-          "English"
-        ]
+      "webviewInstallMode": {
+        "type": "skip"
       }
-    },
-    "resources": {
-      "../resources/server.mjs": "server/server.mjs",
-      "../resources/node.exe": "server/node.exe",
-      "../resources/web/**/*": "server/web/"
     },
     "icon": [
       "icons/32x32.png",

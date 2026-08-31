@@ -4,6 +4,7 @@ import {
   restoreConversion,
   restoreTransaction,
   saveTransaction,
+  inspectBusinessCompensation,
   undoBusinessCompensation,
   voidConversion,
   voidTransaction,
@@ -242,14 +243,45 @@ export function History() {
     setActionBusy(true);
     setActionMessage('');
     try {
-      await undoBusinessCompensation(store, compensation.id);
-      await reconcileAttachmentStorage(store);
-      setActionMessage('已完整撤销该批次。');
+      let postCommitWarning = '';
+      try {
+        await undoBusinessCompensation(store, compensation.id);
+      } catch (error) {
+        const durable = await store.getBusinessCompensation(compensation.id).catch(() => null);
+        if (durable?.status !== 'applied') throw error;
+        postCommitWarning = `整批撤销已经提交，但审计收尾未完成：${error instanceof Error ? error.message : String(error)}`;
+      }
+      try {
+        await reconcileAttachmentStorage(store);
+      } catch (error) {
+        postCommitWarning = [
+          postCommitWarning,
+          `整批撤销已经提交；附件整理未完成，重新打开应用后会继续：${error instanceof Error ? error.message : String(error)}`,
+        ].filter(Boolean).join('；');
+      }
+      setActionMessage(postCommitWarning || '已完整撤销该批次。');
       setPendingReverseBatch(null);
       bump();
     } catch (error) {
       setActionMessage(error instanceof Error ? error.message : String(error));
       throw error;
+    } finally {
+      setActionBusy(false);
+    }
+  }
+
+  async function prepareReverseBatch(compensation: BusinessCompensationRecord) {
+    setActionBusy(true);
+    setActionMessage('');
+    try {
+      const inspection = await inspectBusinessCompensation(store, compensation.id);
+      if (!inspection.reversible) {
+        setActionMessage(`撤销预检未通过：${inspection.blocker ?? '相关对象状态不允许撤销'}`);
+        return;
+      }
+      setPendingReverseBatch(compensation);
+    } catch (error) {
+      setActionMessage(`撤销预检失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setActionBusy(false);
     }
@@ -430,7 +462,7 @@ export function History() {
           actionMessage={actionMessage}
           compensation={selected?.kind === 'batch' ? compensationByBatch.get(selected.batch.id) : undefined}
           onReverse={reverseOperation}
-          onReverseBatch={async (compensation) => setPendingReverseBatch(compensation)}
+          onReverseBatch={prepareReverseBatch}
         />
       </div>
     </div>
@@ -444,7 +476,8 @@ export function History() {
         onCancel={() => setPendingReverseBatch(null)}
         onConfirm={() => reverseBatch(pendingReverseBatch)}
       >
-        确定撤销“{pendingReverseBatch.label}”的全部 {pendingReverseBatch.affectedEntities.length} 项变更？附件状态也会一并重新核对。
+        确定撤销“{pendingReverseBatch.label}”的全部 {pendingReverseBatch.affectedEntities.length} 项变更？
+        涉及 {affectedEntitySummary(pendingReverseBatch)}。系统会再次核对版本和聚合约束，任一项不安全就整批不动；附件状态也会一并重新核对。
       </ConfirmDialog>
     )}
     </>
@@ -532,8 +565,14 @@ function BatchDetail({
       )}
       {compensation?.status === 'applied' && <div style={{ color: 'var(--positive)', fontSize: 12, fontWeight: 800, marginBottom: 12 }}>该批次已完整撤销</div>}
       {compensation?.status === 'blocked' && <div style={{ color: 'var(--negative)', fontSize: 12, fontWeight: 800, marginBottom: 12 }}>不可撤销：{compensation.error ?? '相关对象后来发生了变化'}</div>}
-      {actionMessage && <div style={{ color: actionMessage === '已完整撤销该批次。' ? 'var(--positive)' : 'var(--negative)', fontSize: 12, fontWeight: 800, marginBottom: 12 }}>{actionMessage}</div>}
+      {compensation?.status === 'pending' && compensation.error && <div style={{ color: 'var(--warning)', fontSize: 12, fontWeight: 800, marginBottom: 12 }}>上次尝试未完成，可重试：{compensation.error}</div>}
+      {actionMessage && <div style={{ color: actionMessage === '已完整撤销该批次。'
+        ? 'var(--positive)'
+        : actionMessage.includes('已经提交')
+          ? 'var(--warning)'
+          : 'var(--negative)', fontSize: 12, fontWeight: 800, marginBottom: 12 }}>{actionMessage}</div>}
       {event.batch.summary && <div style={{ fontSize: 13, color: 'var(--fg-muted)', marginBottom: 12 }}>{event.batch.summary}</div>}
+      {compensation && <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginBottom: 12 }}>影响范围：{affectedEntitySummary(compensation)}</div>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {event.logs.map((log) => (
           <div key={log.id} style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
@@ -744,6 +783,17 @@ function objectName(log: OperationLogEntry): string {
 
 function entityLabel(type: string): string {
   return ENTITY_LABELS[type] ?? type;
+}
+
+function affectedEntitySummary(compensation: BusinessCompensationRecord): string {
+  const counts = new Map<string, number>();
+  for (const row of compensation.affectedEntities) {
+    counts.set(row.entityType, (counts.get(row.entityType) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort(([left], [right]) => entityLabel(left).localeCompare(entityLabel(right), 'zh-CN'))
+    .map(([type, count]) => `${entityLabel(type)} ${count} 项`)
+    .join('、') || '无业务对象';
 }
 
 function fieldLabel(key: string): string {

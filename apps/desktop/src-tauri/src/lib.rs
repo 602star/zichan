@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fs,
     fs::OpenOptions,
@@ -7,14 +7,16 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::Manager;
-
-mod desktop_updater;
 mod native_attachments;
+mod native_backup_export;
 mod native_sql;
+mod portable;
+mod restricted_stronghold;
 use native_sql::NativeSqlState;
+use portable::PortablePaths;
 
 #[derive(Default)]
 struct DesktopServerState {
@@ -24,11 +26,9 @@ struct DesktopServerState {
 impl Drop for DesktopServerState {
     fn drop(&mut self) {
         if let Ok(slot) = self.child.get_mut() {
-            if let Some(child) = slot.as_mut() {
-                let _ = child.kill();
-                let _ = child.wait();
+            if let Some(mut child) = slot.take() {
+                stop_managed_child(&mut child);
             }
-            *slot = None;
         }
     }
 }
@@ -41,8 +41,6 @@ struct DesktopServerStatus {
     managed: bool,
     endpoint: String,
     data_file: Option<String>,
-    admin_token_file: Option<String>,
-    admin_token: Option<String>,
     message: String,
 }
 
@@ -56,6 +54,12 @@ struct DesktopBackupStatus {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopBackupWriteResult {
+    path: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopBackupExportResult {
     path: String,
 }
 
@@ -77,37 +81,133 @@ struct DesktopBackupFile {
     header_bytes: Vec<u8>,
 }
 
-fn server_data_dir() -> PathBuf {
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        return PathBuf::from(appdata).join("ZichanLedger").join("server");
-    }
-    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-        return PathBuf::from(xdg).join("zichan-ledger").join("server");
-    }
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
-        .join(".zichan-ledger")
-        .join("server")
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ServerHealthResponse {
+    ok: bool,
+    server_id: String,
 }
 
-fn backup_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_data_dir()
-        .map(|path| path.join("backups"))
-        .map_err(|error| error.to_string())
+fn backup_dir(paths: &PortablePaths) -> PathBuf {
+    paths.backups.clone()
 }
 
-fn read_admin_token(file: &Path) -> Option<String> {
-    fs::read_to_string(file)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
-fn local_server_running() -> bool {
+fn local_server_port_open() -> bool {
     let addr: SocketAddr = "127.0.0.1:8787".parse().expect("static local address");
     TcpStream::connect_timeout(&addr, Duration::from_millis(250)).is_ok()
 }
 
+fn fetch_server_status(path: &str) -> Result<ServerHealthResponse, String> {
+    let addr: SocketAddr = "127.0.0.1:8787".parse().expect("static local address");
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(300))
+        .map_err(|error| format!("连接 8787 失败：{error}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .map_err(|error| format!("设置服务器读取超时失败：{error}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_millis(500)))
+        .map_err(|error| format!("设置服务器写入超时失败：{error}"))?;
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:8787\r\nConnection: close\r\nAccept: application/json\r\n\r\n"
+    )
+    .map_err(|error| format!("发送服务器状态请求失败：{error}"))?;
+    stream
+        .flush()
+        .map_err(|error| format!("刷新服务器状态请求失败：{error}"))?;
+    let mut bytes = Vec::new();
+    stream
+        .take(64 * 1024)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("读取服务器状态失败：{error}"))?;
+    let response = String::from_utf8(bytes).map_err(|_| "服务器状态不是有效 UTF-8")?;
+    let (headers, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or("8787 返回的不是有效 HTTP 响应")?;
+    if !headers
+        .lines()
+        .next()
+        .is_some_and(|line| line.contains(" 200 "))
+    {
+        return Err(format!(
+            "服务器状态接口返回异常：{}",
+            headers.lines().next().unwrap_or("unknown status")
+        ));
+    }
+    let health: ServerHealthResponse =
+        serde_json::from_str(body).map_err(|error| format!("服务器状态 JSON 无效：{error}"))?;
+    if !health.ok || health.server_id.trim().is_empty() {
+        return Err("服务器状态未就绪或缺少 serverId".into());
+    }
+    Ok(health)
+}
+
+fn read_expected_server_id(paths: &PortablePaths) -> Result<Option<String>, String> {
+    let file = paths.server.join("server-id");
+    if !file.is_file() {
+        return Ok(None);
+    }
+    let value = fs::read_to_string(&file)
+        .map_err(|error| format!("读取服务器身份 {} 失败：{error}", file.display()))?;
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        return Err("服务器身份文件为空".into());
+    }
+    Ok(Some(value))
+}
+
+fn validate_server_identity(paths: &PortablePaths) -> Result<Option<String>, String> {
+    let has_state = fs::read_dir(&paths.server)
+        .map_err(|error| format!("读取服务器数据目录失败：{error}"))?
+        .next()
+        .is_some();
+    if !has_state {
+        return Ok(None);
+    }
+    for name in [
+        "server.sqlite",
+        "server.secret",
+        "server-id",
+        "opaque.server-setup",
+    ] {
+        let path = paths.server.join(name);
+        let metadata = path.metadata().map_err(|_| {
+            format!("服务器数据不完整：已有状态但缺少 {name}；为防止身份被静默重建，启动已中止")
+        })?;
+        if !metadata.is_file() || metadata.len() == 0 {
+            return Err(format!("服务器数据不完整或为空：{name}"));
+        }
+    }
+    read_expected_server_id(paths)
+}
+
+fn stop_managed_child(child: &mut Child) {
+    if let Some(stdin) = child.stdin.as_mut() {
+        let _ = stdin.write_all(b"shutdown\n");
+        let _ = stdin.flush();
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+            Err(_) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn stop_server_before_exit(app: &tauri::AppHandle) {
+    let state = app.state::<DesktopServerState>();
+    if let Ok(mut guard) = state.child.lock() {
+        if let Some(mut child) = guard.take() {
+            stop_managed_child(&mut child);
+        }
+    };
+}
+
+#[cfg(debug_assertions)]
 fn find_repo_root() -> Option<PathBuf> {
     let mut starts = Vec::new();
     if let Ok(dir) = std::env::current_dir() {
@@ -131,8 +231,9 @@ fn find_repo_root() -> Option<PathBuf> {
     None
 }
 
-fn bundled_server_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
-    let dir = app.path().resource_dir().ok()?.join("server");
+#[cfg(not(debug_assertions))]
+fn bundled_server_dir(paths: &PortablePaths) -> Option<PathBuf> {
+    let dir = paths.server_resources.clone();
     let runtime = dir.join(if cfg!(windows) { "node.exe" } else { "node" });
     if runtime.is_file() && dir.join("server.mjs").is_file() && dir.join("web/index.html").is_file()
     {
@@ -142,13 +243,48 @@ fn bundled_server_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
     }
 }
 
+#[cfg(debug_assertions)]
+fn bundled_server_dir(_paths: &PortablePaths) -> Option<PathBuf> {
+    None
+}
+
+fn child_process_path(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let value = path.to_string_lossy();
+        if let Some(unc_path) = value.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{unc_path}"));
+        }
+        if let Some(local_path) = value.strip_prefix(r"\\?\") {
+            return PathBuf::from(local_path);
+        }
+    }
+    path.to_path_buf()
+}
+
+fn user_visible_path(path: &Path) -> String {
+    child_process_path(path).display().to_string()
+}
+
+fn bundled_server_command(bundle: &Path) -> Command {
+    let bundle = child_process_path(bundle);
+    let mut command = Command::new(bundle.join(if cfg!(windows) { "node.exe" } else { "node" }));
+    // PortablePaths uses Windows extended-length paths after canonicalization. Node.js 26
+    // cannot load a `\\\\?\\`-prefixed main-script argument, so keep the entrypoint
+    // relative to the explicitly selected bundle directory.
+    command
+        .arg("server.mjs")
+        .current_dir(&bundle)
+        .env("WEB_DIST", bundle.join("web"));
+    command
+}
+
 fn desktop_status(
-    app: &tauri::AppHandle,
+    paths: &PortablePaths,
     state: &DesktopServerState,
     message: String,
 ) -> DesktopServerStatus {
-    let data_dir = server_data_dir();
-    let token_file = data_dir.join("admin-token.txt");
+    let data_dir = paths.server.clone();
     let managed = state
         .child
         .lock()
@@ -156,17 +292,24 @@ fn desktop_status(
         .and_then(|guard| guard.as_ref().map(|_| true))
         .unwrap_or(false);
     DesktopServerStatus {
-        available: find_repo_root().is_some() || bundled_server_dir(app).is_some(),
-        running: local_server_running(),
+        available: development_server_available() || bundled_server_dir(paths).is_some(),
+        running: fetch_server_status("/api/health")
+            .ok()
+            .and_then(|health| {
+                read_expected_server_id(paths)
+                    .ok()
+                    .flatten()
+                    .map(|expected| expected == health.server_id)
+            })
+            .unwrap_or(false),
         managed,
         endpoint: "http://localhost:8787".into(),
-        data_file: Some(data_dir.join("server.sqlite").display().to_string()),
-        admin_token_file: Some(token_file.display().to_string()),
-        admin_token: read_admin_token(&token_file),
+        data_file: Some(user_visible_path(&data_dir.join("server.sqlite"))),
         message,
     }
 }
 
+#[cfg(debug_assertions)]
 fn npm_cmd() -> &'static str {
     if cfg!(windows) {
         "npm.cmd"
@@ -175,6 +318,7 @@ fn npm_cmd() -> &'static str {
     }
 }
 
+#[cfg(debug_assertions)]
 fn node_cmd() -> &'static str {
     if cfg!(windows) {
         "node.exe"
@@ -191,6 +335,22 @@ fn hide_window(cmd: &mut Command) {
     }
 }
 
+fn configure_server_output(cmd: &mut Command, paths: &PortablePaths) -> Result<PathBuf, String> {
+    let path = paths.logs.join("sync-server.log");
+    let stdout = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .map_err(|error| format!("创建同步服务器日志 {} 失败：{error}", path.display()))?;
+    let stderr = stdout
+        .try_clone()
+        .map_err(|error| format!("打开同步服务器日志副本失败：{error}"))?;
+    cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
+    Ok(path)
+}
+
+#[cfg(debug_assertions)]
 fn ensure_server_build(root: &Path) -> Result<(), String> {
     let web_index = root.join("apps/web/dist/index.html");
     let server_entry = root.join("apps/sync-server/dist/main.js");
@@ -213,9 +373,37 @@ fn ensure_server_build(root: &Path) -> Result<(), String> {
     }
 }
 
+#[cfg(debug_assertions)]
+fn development_server_available() -> bool {
+    find_repo_root().is_some()
+}
+
+#[cfg(not(debug_assertions))]
+fn development_server_available() -> bool {
+    false
+}
+
+#[cfg(debug_assertions)]
+fn development_server_command() -> Result<Command, String> {
+    let root = find_repo_root().ok_or("无法定位开发仓库")?;
+    ensure_server_build(&root)?;
+    let mut command = Command::new(node_cmd());
+    command
+        .arg("apps/desktop/scripts/server.mjs")
+        .current_dir(&root);
+    Ok(command)
+}
+
+#[cfg(not(debug_assertions))]
+fn development_server_command() -> Result<Command, String> {
+    Err("便携版服务器资源损坏或缺失；Release 不允许回退仓库或系统 Node.js".into())
+}
+
 #[tauri::command]
-fn desktop_backup_status(app: tauri::AppHandle) -> Result<DesktopBackupStatus, String> {
-    let directory = backup_dir(&app)?;
+fn desktop_backup_status(
+    paths: tauri::State<'_, PortablePaths>,
+) -> Result<DesktopBackupStatus, String> {
+    let directory = backup_dir(&paths);
     fs::create_dir_all(&directory).map_err(|error| format!("创建备份目录失败：{error}"))?;
     Ok(DesktopBackupStatus {
         available_bytes: fs2::available_space(&directory)
@@ -235,18 +423,18 @@ fn checked_backup_name(file_name: &str) -> Result<&str, String> {
     Ok(clean_name)
 }
 
-fn backup_temp_path(app: &tauri::AppHandle, file_name: &str) -> Result<PathBuf, String> {
-    Ok(backup_dir(app)?.join(format!(".{file_name}.tmp")))
+fn backup_temp_path(paths: &PortablePaths, file_name: &str) -> PathBuf {
+    backup_dir(paths).join(format!(".{file_name}.tmp"))
 }
 
 #[tauri::command]
 fn desktop_begin_backup_write(
-    app: tauri::AppHandle,
+    paths: tauri::State<'_, PortablePaths>,
     file_name: String,
     estimated_size_bytes: u64,
 ) -> Result<(), String> {
     let clean_name = checked_backup_name(&file_name)?;
-    let dir = backup_dir(&app)?;
+    let dir = backup_dir(&paths);
     fs::create_dir_all(&dir).map_err(|error| format!("创建备份目录失败：{error}"))?;
     let available =
         fs2::available_space(&dir).map_err(|error| format!("读取备份目录剩余空间失败：{error}"))?;
@@ -259,7 +447,7 @@ fn desktop_begin_backup_write(
     if target.exists() {
         return Err("同名备份已经存在".into());
     }
-    let temp = backup_temp_path(&app, clean_name)?;
+    let temp = backup_temp_path(&paths, clean_name);
     let file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -272,7 +460,7 @@ fn desktop_begin_backup_write(
 
 #[tauri::command]
 fn desktop_append_backup_chunk(
-    app: tauri::AppHandle,
+    paths: tauri::State<'_, PortablePaths>,
     file_name: String,
     chunk: Vec<u8>,
 ) -> Result<(), String> {
@@ -280,7 +468,7 @@ fn desktop_append_backup_chunk(
     if chunk.is_empty() || chunk.len() > 1024 * 1024 {
         return Err("备份写入分块大小无效".into());
     }
-    let temp = backup_temp_path(&app, clean_name)?;
+    let temp = backup_temp_path(&paths, clean_name);
     let mut file = OpenOptions::new()
         .append(true)
         .open(&temp)
@@ -291,14 +479,14 @@ fn desktop_append_backup_chunk(
 
 #[tauri::command]
 fn desktop_commit_backup_write(
-    app: tauri::AppHandle,
+    paths: tauri::State<'_, PortablePaths>,
     file_name: String,
     expected_size_bytes: u64,
 ) -> Result<DesktopBackupWriteResult, String> {
     let clean_name = checked_backup_name(&file_name)?;
-    let dir = backup_dir(&app)?;
+    let dir = backup_dir(&paths);
     let target = dir.join(clean_name);
-    let temp = backup_temp_path(&app, clean_name)?;
+    let temp = backup_temp_path(&paths, clean_name);
     let file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -328,9 +516,12 @@ fn desktop_commit_backup_write(
 }
 
 #[tauri::command]
-fn desktop_abort_backup_write(app: tauri::AppHandle, file_name: String) -> Result<(), String> {
+fn desktop_abort_backup_write(
+    paths: tauri::State<'_, PortablePaths>,
+    file_name: String,
+) -> Result<(), String> {
     let clean_name = checked_backup_name(&file_name)?;
-    let temp = backup_temp_path(&app, clean_name)?;
+    let temp = backup_temp_path(&paths, clean_name);
     if temp.is_file() {
         fs::remove_file(temp).map_err(|error| format!("清理临时备份失败：{error}"))?;
     }
@@ -338,9 +529,12 @@ fn desktop_abort_backup_write(app: tauri::AppHandle, file_name: String) -> Resul
 }
 
 #[tauri::command]
-fn desktop_delete_backup_file(app: tauri::AppHandle, file_name: String) -> Result<(), String> {
+fn desktop_delete_backup_file(
+    paths: tauri::State<'_, PortablePaths>,
+    file_name: String,
+) -> Result<(), String> {
     let clean_name = checked_backup_name(&file_name)?;
-    let target = backup_dir(&app)?.join(clean_name);
+    let target = backup_dir(&paths).join(clean_name);
     if target.is_file() {
         fs::remove_file(target).map_err(|error| format!("删除轮换备份失败：{error}"))?;
     }
@@ -348,8 +542,26 @@ fn desktop_delete_backup_file(app: tauri::AppHandle, file_name: String) -> Resul
 }
 
 #[tauri::command]
-fn desktop_list_backup_files(app: tauri::AppHandle) -> Result<Vec<DesktopBackupFile>, String> {
-    let dir = backup_dir(&app)?;
+fn desktop_export_backup_file(
+    paths: tauri::State<'_, PortablePaths>,
+    file_name: String,
+) -> Result<Option<DesktopBackupExportResult>, String> {
+    let clean_name = checked_backup_name(&file_name)?;
+    let source = backup_dir(&paths).join(clean_name);
+    native_backup_export::export_backup_to_user_selected_path(&source, &paths.data, clean_name).map(
+        |path| {
+            path.map(|path| DesktopBackupExportResult {
+                path: user_visible_path(&path),
+            })
+        },
+    )
+}
+
+#[tauri::command]
+fn desktop_list_backup_files(
+    paths: tauri::State<'_, PortablePaths>,
+) -> Result<Vec<DesktopBackupFile>, String> {
+    let dir = backup_dir(&paths);
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -393,7 +605,7 @@ fn desktop_list_backup_files(app: tauri::AppHandle) -> Result<Vec<DesktopBackupF
 
 #[tauri::command]
 fn desktop_read_backup_chunk(
-    app: tauri::AppHandle,
+    paths: tauri::State<'_, PortablePaths>,
     file_name: String,
     offset: u64,
     length: usize,
@@ -402,7 +614,7 @@ fn desktop_read_backup_chunk(
     if length == 0 || length > 1024 * 1024 {
         return Err("备份读取分块大小无效".into());
     }
-    let path = backup_dir(&app)?.join(clean_name);
+    let path = backup_dir(&paths).join(clean_name);
     let mut file = fs::File::open(&path)
         .map_err(|error| format!("打开备份 {} 失败：{error}", path.display()))?;
     let size = file
@@ -423,16 +635,15 @@ fn desktop_read_backup_chunk(
     Ok(bytes)
 }
 
-fn security_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_local_data_dir()
-        .map(|path| path.join("security"))
-        .map_err(|error| error.to_string())
+fn security_dir(paths: &PortablePaths) -> PathBuf {
+    paths.security.clone()
 }
 
 #[tauri::command]
-fn native_security_status(app: tauri::AppHandle) -> Result<NativeSecurityStatus, String> {
-    let stronghold_path = security_dir(&app)?.join("sync-vault.hold");
+fn native_security_status(
+    paths: tauri::State<'_, PortablePaths>,
+) -> Result<NativeSecurityStatus, String> {
+    let stronghold_path = security_dir(&paths).join("sync-vault.hold");
     Ok(NativeSecurityStatus {
         platform: std::env::consts::OS,
         mobile: cfg!(mobile),
@@ -442,8 +653,8 @@ fn native_security_status(app: tauri::AppHandle) -> Result<NativeSecurityStatus,
 }
 
 #[tauri::command]
-fn native_reset_security_vault(app: tauri::AppHandle) -> Result<(), String> {
-    let security = security_dir(&app)?;
+fn native_reset_security_vault(paths: tauri::State<'_, PortablePaths>) -> Result<(), String> {
+    let security = security_dir(&paths);
     for file_name in ["sync-vault.hold", "stronghold-salt.txt"] {
         let path = security.join(file_name);
         if path.is_file() {
@@ -456,8 +667,8 @@ fn native_reset_security_vault(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn desktop_server_status(
-    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopServerState>,
+    paths: tauri::State<'_, PortablePaths>,
 ) -> DesktopServerStatus {
     if let Ok(mut guard) = state.child.lock() {
         if let Some(child) = guard.as_mut() {
@@ -466,126 +677,151 @@ fn desktop_server_status(
             }
         }
     }
-    let msg = if bundled_server_dir(&app).is_some() {
-        "安装包已内置 Web 与同步服务器，可在线启动".into()
-    } else if find_repo_root().is_some() {
+    let msg = if bundled_server_dir(&paths).is_some() {
+        "便携版已内置 Web 与同步服务器；启动后将监听局域网 0.0.0.0:8787".into()
+    } else if development_server_available() {
         "开发环境可在线启动本机服务器".into()
     } else {
         "当前安装包尚未内置服务脚本，请使用 npm run start:server".into()
     };
-    desktop_status(&app, &state, msg)
+    desktop_status(&paths, &state, msg)
 }
 
 #[tauri::command]
 fn desktop_start_server(
-    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopServerState>,
+    paths: tauri::State<'_, PortablePaths>,
 ) -> DesktopServerStatus {
-    if local_server_running() {
-        return desktop_status(&app, &state, "本机服务器已经在运行".into());
+    let expected_before_start = match validate_server_identity(&paths) {
+        Ok(value) => value,
+        Err(error) => return desktop_status(&paths, &state, error),
+    };
+    if local_server_port_open() {
+        let message = match fetch_server_status("/api/health") {
+            Ok(health)
+                if expected_before_start
+                    .as_deref()
+                    .is_some_and(|expected| expected == health.server_id) =>
+            {
+                "本便携目录的服务器已经在运行".into()
+            }
+            Ok(health) => format!(
+                "端口 8787 已被另一个服务器占用（serverId={}），未启动也未终止该进程",
+                health.server_id
+            ),
+            Err(error) => format!("端口 8787 已被其他程序占用：{error}"),
+        };
+        return desktop_status(&paths, &state, message);
     }
-    let mut cmd = if let Some(bundle) = bundled_server_dir(&app) {
-        let mut command =
-            Command::new(bundle.join(if cfg!(windows) { "node.exe" } else { "node" }));
-        command
-            .arg(bundle.join("server.mjs"))
-            .current_dir(&bundle)
-            .env("WEB_DIST", bundle.join("web"));
-        command
-    } else if let Some(root) = find_repo_root() {
-        if let Err(e) = ensure_server_build(&root) {
-            return desktop_status(&app, &state, e);
-        }
-        let mut command = Command::new(node_cmd());
-        command
-            .arg("apps/desktop/scripts/server.mjs")
-            .current_dir(&root);
-        command
+    let mut cmd = if let Some(bundle) = bundled_server_dir(&paths) {
+        bundled_server_command(&bundle)
     } else {
-        return desktop_status(
-            &app,
-            &state,
-            "当前安装包缺少服务器资源，无法在线启动".into(),
-        );
+        match development_server_command() {
+            Ok(command) => command,
+            Err(error) => return desktop_status(&paths, &state, error),
+        }
     };
     cmd.env("HOST", "0.0.0.0")
         .env("PORT", "8787")
+        .env("REGISTRATION_MODE", "open")
         .env("ALLOW_INSECURE_HTTP", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .env("DATA_DIR", child_process_path(&paths.server))
+        .env("CONTROL_STDIN", "1")
+        .stdin(Stdio::piped());
+    let server_log = match configure_server_output(&mut cmd, &paths) {
+        Ok(path) => path,
+        Err(error) => return desktop_status(&paths, &state, error),
+    };
     hide_window(&mut cmd);
 
     match cmd.spawn() {
-        Ok(child) => {
-            if let Ok(mut guard) = state.child.lock() {
-                *guard = Some(child);
-            }
-            for _ in 0..20 {
-                if local_server_running() {
-                    return desktop_status(&app, &state, "本机服务器已启动".into());
+        Ok(mut child) => {
+            for _ in 0..40 {
+                if let Ok(Some(status)) = child.try_wait() {
+                    return desktop_status(
+                        &paths,
+                        &state,
+                        format!(
+                            "同步服务器启动失败，子进程已退出：{status}；日志：{}",
+                            user_visible_path(&server_log)
+                        ),
+                    );
+                }
+                if let (Ok(health), Ok(ready), Ok(Some(expected))) = (
+                    fetch_server_status("/api/health"),
+                    fetch_server_status("/api/ready"),
+                    read_expected_server_id(&paths),
+                ) {
+                    if health.server_id != expected || ready.server_id != expected {
+                        stop_managed_child(&mut child);
+                        return desktop_status(
+                            &paths,
+                            &state,
+                            "端口 8787 的服务器身份与便携目录不一致，启动已中止".into(),
+                        );
+                    }
+                    if let Ok(mut guard) = state.child.lock() {
+                        *guard = Some(child);
+                    }
+                    return desktop_status(
+                        &paths,
+                        &state,
+                        "本机服务器已启动，正在监听局域网 0.0.0.0:8787；请确认防火墙暴露范围"
+                            .into(),
+                    );
                 }
                 std::thread::sleep(Duration::from_millis(250));
             }
-            desktop_status(&app, &state, "已发起启动，但 8787 暂未响应".into())
+            stop_managed_child(&mut child);
+            desktop_status(
+                &paths,
+                &state,
+                format!(
+                    "同步服务器在 10 秒内未同时通过 health、ready 和 serverId 校验，已停止；日志：{}",
+                    user_visible_path(&server_log)
+                ),
+            )
         }
-        Err(e) => desktop_status(&app, &state, format!("启动服务失败：{e}")),
+        Err(e) => desktop_status(
+            &paths,
+            &state,
+            format!(
+                "启动服务失败：{e}；日志：{}",
+                user_visible_path(&server_log)
+            ),
+        ),
     }
 }
 
 #[tauri::command]
 fn desktop_stop_server(
-    app: tauri::AppHandle,
     state: tauri::State<'_, DesktopServerState>,
+    paths: tauri::State<'_, PortablePaths>,
 ) -> DesktopServerStatus {
     if let Ok(mut guard) = state.child.lock() {
-        if let Some(child) = guard.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
-            *guard = None;
-            return desktop_status(&app, &state, "本机服务器已停止".into());
+        if let Some(mut child) = guard.take() {
+            stop_managed_child(&mut child);
+            return desktop_status(&paths, &state, "本机服务器已安全停止".into());
         }
     }
-    if local_server_running() {
+    if local_server_port_open() {
         desktop_status(
-            &app,
+            &paths,
             &state,
             "服务器正在运行，但不是由桌面在线启动，不能安全停止".into(),
         )
     } else {
-        desktop_status(&app, &state, "本机服务器未运行".into())
+        desktop_status(&paths, &state, "本机服务器未运行".into())
     }
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+fn app_builder() -> tauri::Builder<tauri::Wry> {
     tauri::Builder::default()
-        .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_system_share::init())
         .manage(DesktopServerState::default())
         .manage(NativeSqlState::default())
-        .setup(|app| {
-            let security = security_dir(app.handle()).map_err(std::io::Error::other)?;
-            fs::create_dir_all(&security)?;
-            app.handle().plugin(
-                tauri_plugin_stronghold::Builder::with_argon2(
-                    &security.join("stronghold-salt.txt"),
-                )
-                .build(),
-            )?;
-            #[cfg(mobile)]
-            {
-                app.handle()
-                    .plugin(tauri_plugin_biometric::Builder::new().build())?;
-                app.handle().plugin(tauri_plugin_barcode_scanner::init())?;
-                app.handle().plugin(tauri_plugin_geolocation::init())?;
-            }
-            #[cfg(desktop)]
-            app.handle()
-                .plugin(tauri_plugin_updater::Builder::new().build())?;
-            Ok(())
-        })
         .invoke_handler(tauri::generate_handler![
+            portable::desktop_storage_status,
             native_sql::native_sql_database_url,
             native_sql::native_sql_open,
             native_sql::native_sql_close,
@@ -627,11 +863,129 @@ pub fn run() {
             desktop_read_backup_chunk,
             desktop_list_backup_files,
             desktop_delete_backup_file,
-            desktop_updater::desktop_update_status,
-            desktop_updater::desktop_check_for_update,
-            desktop_updater::desktop_install_update,
-            desktop_updater::desktop_confirm_update_healthy
+            desktop_export_backup_file
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+}
+
+fn install_stronghold(
+    app: &tauri::App,
+    paths: &PortablePaths,
+) -> Result<(), Box<dyn std::error::Error>> {
+    fs::create_dir_all(&paths.security)?;
+    app.handle().plugin(restricted_stronghold::init())?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn run_windows() {
+    let portable = match PortablePaths::prepare() {
+        Ok(portable) => portable,
+        Err(error) => {
+            portable::show_native_error(&error);
+            return;
+        }
+    };
+    let portable::PortableRuntime { paths, lock } = portable;
+    let setup_paths = paths.clone();
+    let mut context = tauri::generate_context!();
+    let Some(window_config) = context.config().app.windows.first().cloned() else {
+        portable::show_native_error("桌面窗口配置缺失");
+        return;
+    };
+    for window in &mut context.config_mut().app.windows {
+        window.create = false;
+    }
+    let builder = app_builder().manage(paths).manage(lock).setup(move |app| {
+        let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+            install_stronghold(app, &setup_paths)?;
+            tauri::WebviewWindowBuilder::from_config(app.handle(), &window_config)?
+                .data_directory(setup_paths.webview.clone())
+                .enable_clipboard_access()
+                .build()?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            portable::show_native_error(&format!("初始化便携桌面失败：{error}"));
+            app.handle().exit(1);
+        }
+        Ok(())
+    });
+    match builder.build(context) {
+        Ok(app) => app.run(|handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                stop_server_before_exit(handle);
+            }
+        }),
+        Err(error) => portable::show_native_error(&format!("构建桌面运行时失败：{error}")),
+    }
+}
+
+#[cfg(not(windows))]
+fn run_platform() {
+    let builder = app_builder().setup(|app| {
+        let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+            let paths = PortablePaths::from_platform_app(app.handle())?;
+            install_stronghold(app, &paths)?;
+            app.manage(paths);
+            #[cfg(mobile)]
+            {
+                app.handle()
+                    .plugin(tauri_plugin_biometric::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_barcode_scanner::init())?;
+                app.handle().plugin(tauri_plugin_geolocation::init())?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            portable::show_native_error(&format!("初始化应用数据目录失败：{error}"));
+            app.handle().exit(1);
+        }
+        Ok(())
+    });
+    match builder.build(tauri::generate_context!()) {
+        Ok(app) => app.run(|handle, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                stop_server_before_exit(handle);
+            }
+        }),
+        Err(error) => portable::show_native_error(&format!("构建应用运行时失败：{error}")),
+    }
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    #[cfg(windows)]
+    run_windows();
+    #[cfg(not(windows))]
+    run_platform();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn bundled_server_normalizes_an_extended_windows_bundle_path() {
+        let bundle = PathBuf::from(r"\\?\D:\portable path\server");
+        let command = bundled_server_command(&bundle);
+        let args: Vec<String> = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(args, vec!["server.mjs"]);
+        assert_eq!(
+            command.get_current_dir(),
+            Some(Path::new(r"D:\portable path\server"))
+        );
+        assert_eq!(
+            command.get_program(),
+            std::ffi::OsStr::new(r"D:\portable path\server\node.exe")
+        );
+        assert_eq!(
+            child_process_path(Path::new(r"\\?\D:\portable path\data\server")),
+            PathBuf::from(r"D:\portable path\data\server")
+        );
+    }
 }

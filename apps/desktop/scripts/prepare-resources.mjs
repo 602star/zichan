@@ -22,5 +22,6 @@ await build({
   minify: true,
 });
 await copyFile(process.execPath, resolve(resources, runtimeName));
+await copyFile(resolve(dirname(process.execPath), 'LICENSE'), resolve(resources, 'node-LICENSE.txt'));
 await cp(resolve(repoRoot, 'apps/web/dist'), resolve(resources, 'web'), { recursive: true });
 console.log(`Desktop resources prepared in ${resources}`);

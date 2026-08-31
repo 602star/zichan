@@ -32,7 +32,7 @@ if "%ZICHAN_CHECK_ONLY%"=="1" (
 echo.
 echo Launching two independent windows:
 echo   Web development server  http://127.0.0.1:5173/
-echo   Sync and admin server    http://127.0.0.1:8787/
+echo   Sync and account server  http://127.0.0.1:8787/
 echo Use Ctrl+C in each child window to stop that service.
 echo.
 

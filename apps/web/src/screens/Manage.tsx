@@ -28,7 +28,7 @@ import { allCategories, CATEGORY_PACKS, categoryIsHidden, categoryLabel, TYPE_LA
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { attachmentStorageStatus, reconcileAttachmentStorage } from '../db/attachment-storage.js';
 import { ATTACHMENT_SYNC_STATE_EVENT, ensureAttachmentBlobAvailable } from '../attachment-sync.js';
-import { loadSyncProfiles } from '../sync-config.js';
+import { loadSyncConnections } from '../sync-config.js';
 import { useUndo } from '../ui/UndoToast.js';
 
 const ASSET_TYPE_LABEL: Record<string, string> = {
@@ -900,7 +900,7 @@ function AttachmentSection({ items, onDelete }: { items: Attachment[]; onDelete:
   const [replicas, setReplicas] = useState<AttachmentReplicaBlobRow[]>([]);
   const [fetching, setFetching] = useState('');
   const [message, setMessage] = useState('');
-  const profileNames = Object.fromEntries(loadSyncProfiles().map((profile) => [profile.id, profile.alias]));
+  const profileNames = Object.fromEntries(loadSyncConnections().map((profile) => [profile.id, profile.alias]));
   const refreshStates = useCallback(async () => {
     const entries = await Promise.all(items.map(async (attachment) => [attachment.sha256, await attachmentStorageStatus(attachment.sha256)] as const));
     setLocalStates(Object.fromEntries(entries));

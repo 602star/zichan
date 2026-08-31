@@ -77,7 +77,7 @@ jobs:
           npm run build
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $contract = Join-Path $env:RUNNER_TEMP 'zichan-schema-contract.json'
-          node scripts/db/export-schema-contract.mjs --output $contract
+          node tools/ci/export-schema-contract.mjs --output $contract
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "ZICHAN_SCHEMA_CONTRACT_PATH=$contract" | Out-File $env:GITHUB_ENV -Append
       - name: Format, check, and test desktop Rust
@@ -90,7 +90,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml 2>&1 | Tee-Object ci-artifacts/cargo-check.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cargo test --locked --features release-verifier --manifest-path apps/desktop/src-tauri/Cargo.toml 2>&1 | Tee-Object ci-artifacts/cargo-test.log
+          cargo check --release --locked --manifest-path apps/desktop/src-tauri/Cargo.toml 2>&1 | Tee-Object ci-artifacts/cargo-check-release.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml 2>&1 | Tee-Object ci-artifacts/cargo-test.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml generated_schema_contract_executes_on_sqlcipher -- --ignored 2>&1 | Tee-Object ci-artifacts/schema-contract.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -121,14 +123,12 @@ jobs:
           trap cleanup EXIT
           docker build --file apps/sync-server/Dockerfile --tag "zichan-sync-ci:${GITHUB_SHA}" . 2>&1 | tee ci-artifacts/docker-build.log
           sync_secret="$(openssl rand -hex 32)"
-          admin_token="$(openssl rand -hex 24)"
           docker run --detach --name "$container" \
             --publish 127.0.0.1:18787:8787 \
             --env HOST=0.0.0.0 \
             --env DATA_DIR=/state/server \
             --env SYNC_SECRET="$sync_secret" \
-            --env ADMIN_TOKEN="$admin_token" \
-            --env REGISTRATION_MODE=closed \
+            --env REGISTRATION_MODE=open \
             --env ENABLE_WEB=0 \
             --env ENABLE_SYNC=1 \
             --env ALLOW_INSECURE_HTTP=1 \

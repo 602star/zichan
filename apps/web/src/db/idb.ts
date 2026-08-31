@@ -31,6 +31,18 @@ function openIdb(): Promise<IDBDatabase> {
   });
 }
 
+/** Delete ledger-bound WebView/browser KV data such as form drafts and browser archives. */
+export function deleteWebDatabase(): Promise<void> {
+  const factory = globalThis.indexedDB;
+  if (!factory) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const request = factory.deleteDatabase(DB_NAME);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error('浏览器存储仍被占用，请关闭其他本应用页面后重试'));
+  });
+}
+
 function databaseContext(session: LedgerCryptoSession): Record<string, unknown> {
   return {
     purpose: 'zichan-browser-database',

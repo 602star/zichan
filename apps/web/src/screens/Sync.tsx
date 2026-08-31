@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  aggregateKey, registerAccount, loginAccount, fetchLedgerKeyEnvelope, checkConsistency, recomputeCaches, resolveConflictGroup,
+  aggregateKey, registerAccount, loginAccount, fetchAuthMe, fetchLedgerKeyEnvelope, checkConsistency, recomputeCaches, resolveConflictGroup,
   type StoredSyncCommit, type SyncConflictBranchRow, type SyncConflictGroupRow,
 } from '@zichan/db';
 import { isDateInRange } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { useSnapshot, type Snapshot } from '../db/snapshot.js';
 import { reconcileAttachmentStorage } from '../db/attachment-storage.js';
+import { saveLedgerBackup } from '../db/backups.js';
 import {
   getDeviceId,
   listDevices,
@@ -18,16 +19,23 @@ import { ServerAdmin } from './ServerAdmin.js';
 import { DateRangeBar, dateRangeValue, localDateOfInstant, type DateRangeValue } from '../ui/DateRangeBar.js';
 import {
   buildSyncBaseUrl as buildBaseUrl,
+  buildSyncUrlFromParts,
+  isDeviceLocalSyncUrl,
   loadAutoSync,
-  loadSyncProfiles,
-  newSyncProfile as newProfile,
-  normalizeBasePath,
+  loadSyncConnections,
+  mergeSyncUrlScopes,
+  newSyncConnection as newProfile,
+  normalizeSyncBaseUrl,
+  parseSyncBaseUrl,
   saveAutoSync,
-  saveSyncProfiles,
+  saveSyncConnections,
+  syncAddressPresetUrl,
   type ServerCredential,
+  type SyncAddressPreset,
+  type SyncConnection,
+  type SyncConnectionStatus,
   type SyncProtocol as Protocol,
-  type SyncServerProfile,
-  type SyncTestStatus as TestStatus,
+  type SyncUrlParts,
 } from '../sync-config.js';
 import {
   CREDENTIALS_CHANGED_EVENT,
@@ -46,17 +54,43 @@ import { syncConfiguredServers, type ConfiguredSyncEndpoint, type ConfiguredSync
 import {
   LEDGER_KEY_STATE_CHANGED_EVENT,
   adoptLedgerKeyEnvelope,
+  adoptUnlockedLedgerKeyEnvelope,
   initializeLedgerKey,
   ledgerKeyState,
   lockLedgerKey,
+  requireLedgerCryptoSession,
   rotateLedgerKey,
+  storedLedgerKeyEnvelope,
   unlockLedgerKey,
   updateLedgerPassphrase,
   type LedgerKeyState,
 } from '../ledger-key-vault.js';
+import { commitRemoteLedgerJoin, prepareRemoteLedgerJoin } from '../remote-ledger-join.js';
+import { successfulBackupSafetyPatch, writeSafetyState } from '../db/safety.js';
+import {
+  loadSharedSyncDirectory,
+  mergeSharedSyncDirectory,
+  saveSharedSyncDirectory,
+  sharedDirectoryFromConnections,
+} from '../sync-server-directory.js';
+import {
+  clearConnectionLinkHash,
+  connectionLinkFromLocation,
+  createSyncConnectionLink,
+  fingerprintServerPublicKey,
+  parseSyncConnectionLink,
+} from '../connection-link.js';
+import { copyTextToClipboard } from '../ui/diagnostics.js';
 
 const REQUEST_TIMEOUT_MS = 5_000;
-type WizardMode = 'local' | 'lan' | 'public';
+type WizardMode = SyncAddressPreset;
+
+interface SyncHealthInfo {
+  serverId: string;
+  serverPublicKey: string;
+  claimed: boolean;
+  registrationMode: 'open' | 'invite' | 'closed';
+}
 
 function sameCredentialMaps(
   left: Record<string, ServerCredential>,
@@ -259,19 +293,33 @@ function ledgerMismatchId(error?: string): string | undefined {
 }
 
 const WIZARD_MODES: { mode: WizardMode; label: string; hint: string }[] = [
+  { mode: 'current', label: '当前网站', hint: '使用当前 Web 所在地址及部署路径' },
   { mode: 'local', label: '本机服务器', hint: '桌面端或当前电脑运行 8787 服务' },
   { mode: 'lan', label: '局域网电脑', hint: '家里常开电脑、NAS 或固定内网 IP' },
   { mode: 'public', label: '公网域名', hint: 'HTTPS 域名，可带安全路径' },
 ];
 
-function wizardPatch(mode: WizardMode, host: string, basePath: string): Partial<SyncServerProfile> {
-  if (mode === 'local') {
-    return { alias: '本机服务器', protocol: 'http', host: 'localhost', port: '8787', basePath: '', enabled: true };
-  }
-  if (mode === 'lan') {
-    return { alias: '家里电脑', protocol: 'http', host: host.trim() || '192.168.1.100', port: '8787', basePath: '', enabled: true };
-  }
-  return { alias: '公网服务器', protocol: 'https', host: host.trim() || 'ledger.example.com', port: '', basePath: normalizeBasePath(basePath || '/zichan'), enabled: true };
+function wizardPatch(mode: WizardMode, host: string, path: string): Partial<SyncConnection> {
+  const baseUrl = syncAddressPresetUrl(mode, { host, path });
+  const local = isDeviceLocalSyncUrl(baseUrl);
+  const alias = mode === 'current'
+    ? '当前网站'
+    : mode === 'local'
+      ? '本机服务器'
+      : mode === 'lan'
+        ? '家里电脑'
+        : '公网服务器';
+  return {
+    alias,
+    baseUrl,
+    activeUrl: baseUrl,
+    sharedUrls: local ? [] : [baseUrl],
+    deviceUrls: local ? [baseUrl] : [],
+    alternateUrls: [],
+    enabled: true,
+    status: 'unchecked',
+    lastError: undefined,
+  };
 }
 
 function timeoutMessage(label: string): string {
@@ -301,7 +349,7 @@ async function fetchHealth(baseUrl: string): Promise<{ ok: boolean; status: numb
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    return await fetch(`${baseUrl}/api/health`, { signal: controller.signal });
+    return await fetch(`${baseUrl}/api/health`, { signal: controller.signal, redirect: 'error' });
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw new Error(timeoutMessage('连通性测试'));
     throw e;
@@ -310,11 +358,12 @@ async function fetchHealth(baseUrl: string): Promise<{ ok: boolean; status: numb
   }
 }
 
-const statusText: Record<TestStatus, string> = {
-  idle: '未测试',
+const statusText: Record<SyncConnectionStatus, string> = {
+  unchecked: '未测试',
   online: '在线',
-  unauthorized: '认证失败',
+  login_required: '需要登录',
   offline: '离线',
+  identity_changed: '身份已变化',
 };
 
 const outline = { padding: '7px 13px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg-muted)', fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' } as const;
@@ -326,7 +375,7 @@ export function Sync() {
   const { store, bump } = useStore();
   const snap = useSnapshot('sync');
   const [tab, setTab] = useState<'account' | 'admin'>('account');
-  const [profiles, setProfiles] = useState<SyncServerProfile[]>(loadSyncProfiles);
+  const [profiles, setProfiles] = useState<SyncConnection[]>(loadSyncConnections);
   const [selectedId, setSelectedId] = useState(profiles[0]?.id ?? '');
   const [credentials, setCredentials] = useState<Record<string, ServerCredential>>(runtimeCredentialMap);
   const initialAutoSync = useMemo(loadAutoSync, []);
@@ -357,20 +406,77 @@ export function Sync() {
   const [syncNotice, setSyncNotice] = useState('');
   const [mergeNotice, setMergeNotice] = useState('');
   const [endpointRows, setEndpointRows] = useState<ConfiguredSyncEndpoint[]>([]);
+  const [healthByConnection, setHealthByConnection] = useState<Record<string, SyncHealthInfo>>({});
+  const [sharedDirectoryReady, setSharedDirectoryReady] = useState(false);
+  const [connectionLinkDraft, setConnectionLinkDraft] = useState('');
+  const [connectionShare, setConnectionShare] = useState<{ link: string; qrDataUrl: string } | null>(null);
   const [wizardMode, setWizardMode] = useState<WizardMode>('local');
   const [wizardHost, setWizardHost] = useState('192.168.1.100');
   const [wizardBasePath, setWizardBasePath] = useState('/zichan');
   const [joinTarget, setJoinTarget] = useState<{ profileId: string; ledgerId: string } | null>(null);
   const [joinConfirmation, setJoinConfirmation] = useState('');
+  const [joinLedgerPassword, setJoinLedgerPassword] = useState('');
   const deviceId = getDeviceId();
   const [devices, setDevices] = useState(listDevices());
   const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
   const selected = useMemo(() => profiles.find((p) => p.id === selectedId) ?? profiles[0], [profiles, selectedId]);
+  const selectedConnectionId = selected?.id;
+  const selectedBaseUrl = selected?.baseUrl;
+  const sharedDirectorySignature = useMemo(() => JSON.stringify(sharedDirectoryFromConnections(profiles)), [profiles]);
+  const latestProfiles = useRef(profiles);
+  latestProfiles.current = profiles;
+  const [addressDraft, setAddressDraft] = useState(selected?.baseUrl ?? '');
+  const [addressParts, setAddressParts] = useState<SyncUrlParts>(() => parseSyncBaseUrl(selected?.baseUrl ?? syncAddressPresetUrl('current')));
+  const [addressError, setAddressError] = useState('');
+  const [advancedAddress, setAdvancedAddress] = useState(false);
 
   useEffect(() => {
-    saveSyncProfiles(profiles);
+    saveSyncConnections(profiles);
   }, [profiles]);
+
+  useEffect(() => {
+    const payload = connectionLinkFromLocation();
+    if (payload) importConnectionLink(globalThis.location.href);
+    // Importing the initial hash is intentionally a mount-only action; the handler clears it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadSharedSyncDirectory(store).then((servers) => {
+      if (cancelled) return;
+      setProfiles((current) => mergeSharedSyncDirectory(current, servers));
+      setSharedDirectoryReady(true);
+    }).catch((error) => {
+      if (!cancelled) {
+        setSharedDirectoryReady(true);
+        setSyncNotice(`共享服务器目录读取失败：${msg(error)}`);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [store]);
+
+  useEffect(() => {
+    if (!sharedDirectoryReady) return;
+    const timer = window.setTimeout(() => {
+      void saveSharedSyncDirectory(store, latestProfiles.current).catch((error) => {
+        setSyncNotice(`共享服务器目录保存失败：${msg(error)}`);
+      });
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [sharedDirectoryReady, sharedDirectorySignature, store]);
+
+  useEffect(() => {
+    if (!selectedBaseUrl) return;
+    setAddressDraft(selectedBaseUrl);
+    try {
+      setAddressParts(parseSyncBaseUrl(selectedBaseUrl));
+      setAddressError('');
+    } catch (error) {
+      setAddressError(msg(error));
+    }
+  }, [selectedConnectionId, selectedBaseUrl]);
 
   useEffect(() => {
     const refreshCredentials = () => {
@@ -428,8 +534,66 @@ export function Sync() {
     return () => { cancelled = true; };
   }, [store]);
 
-  function patchProfile(id: string, patch: Partial<SyncServerProfile>) {
+  function patchProfile(id: string, patch: Partial<SyncConnection>) {
     setProfiles((rows) => rows.map((row) => row.id === id ? { ...row, ...patch } : row));
+  }
+
+  function editAddressDraft(value: string) {
+    setAddressDraft(value);
+    try {
+      setAddressParts(parseSyncBaseUrl(value));
+      setAddressError('');
+    } catch (error) {
+      setAddressError(msg(error));
+    }
+  }
+
+  function editAddressPart(patch: Partial<SyncUrlParts>) {
+    const next = { ...addressParts, ...patch };
+    setAddressParts(next);
+    try {
+      setAddressDraft(buildSyncUrlFromParts(next));
+      setAddressError('');
+    } catch (error) {
+      setAddressError(msg(error));
+    }
+  }
+
+  function saveAddress() {
+    if (!selected) return;
+    try {
+      const baseUrl = normalizeSyncBaseUrl(addressDraft);
+      const local = isDeviceLocalSyncUrl(baseUrl);
+      const previousUrls = [selected.baseUrl, ...selected.alternateUrls];
+      const alternateUrls = [...new Set(previousUrls.filter((url) => url !== baseUrl))];
+      patchProfile(selected.id, {
+        baseUrl,
+        activeUrl: baseUrl,
+        alternateUrls,
+        sharedUrls: local ? selected.sharedUrls.filter((url) => url !== baseUrl) : [...new Set([...selected.sharedUrls, baseUrl])],
+        deviceUrls: local ? [...new Set([...selected.deviceUrls, baseUrl])] : selected.deviceUrls.filter((url) => url !== baseUrl),
+        status: 'unchecked',
+        lastError: '地址已保存，请先验证服务器身份后再登录',
+      });
+      setAddressDraft(baseUrl);
+      setAddressParts(parseSyncBaseUrl(baseUrl));
+      setAddressError('');
+    } catch (error) {
+      setAddressError(msg(error));
+    }
+  }
+
+  function setActiveAddressShared(shared: boolean) {
+    if (!selected) return;
+    const baseUrl = normalizeSyncBaseUrl(selected.baseUrl);
+    patchProfile(selected.id, {
+      sharedUrls: shared
+        ? [...new Set([...selected.sharedUrls, baseUrl])]
+        : selected.sharedUrls.filter((url) => url !== baseUrl),
+      deviceUrls: shared
+        ? selected.deviceUrls.filter((url) => url !== baseUrl)
+        : [...new Set([...selected.deviceUrls, baseUrl])],
+    });
   }
 
   function patchCredential(id: string, patch: Partial<ServerCredential>) {
@@ -517,7 +681,7 @@ export function Sync() {
     }
   }
 
-  async function fetchRemoteLedgerKey(profile: SyncServerProfile) {
+  async function fetchRemoteLedgerKey(profile: SyncConnection) {
     setLedgerKeyBusy(true);
     setLedgerKeyError('');
     try {
@@ -534,9 +698,72 @@ export function Sync() {
   }
 
   function addProfile() {
-    const p = { ...newProfile(), id: crypto.randomUUID?.() ?? `server-${Date.now()}`, alias: `服务器${profiles.length + 1}` };
+    const p = {
+      ...newProfile(),
+      alias: `服务器${profiles.length + 1}`,
+      username: profiles.find((profile) => profile.username.trim())?.username ?? '',
+    };
     setProfiles((rows) => [...rows, p]);
     setSelectedId(p.id);
+  }
+
+  function importConnectionLink(input: string) {
+    try {
+      const payload = parseSyncConnectionLink(input);
+      const existing = profiles.find((profile) => profile.serverId === payload.serverId);
+      if (existing) {
+        const local = isDeviceLocalSyncUrl(payload.url);
+        patchProfile(existing.id, {
+          baseUrl: payload.url,
+          activeUrl: payload.url,
+          alternateUrls: [...new Set([existing.baseUrl, ...existing.alternateUrls].filter((url) => url !== payload.url))],
+          sharedUrls: local ? existing.sharedUrls : [...new Set([...existing.sharedUrls, payload.url])],
+          deviceUrls: local ? [...new Set([...existing.deviceUrls, payload.url])] : existing.deviceUrls,
+          expectedServerPublicKeyFingerprint: payload.serverPublicKeyFingerprint,
+          status: 'unchecked',
+          lastError: '已导入备用地址，请验证服务器身份',
+        });
+        setSelectedId(existing.id);
+      } else {
+        const connection = {
+          ...newProfile(payload.url),
+          alias: payload.alias,
+          serverId: payload.serverId,
+          expectedServerPublicKeyFingerprint: payload.serverPublicKeyFingerprint,
+          status: 'unchecked' as const,
+          lastError: '连接来自无秘密分享链接；登录前必须验证服务器身份',
+        };
+        setProfiles((rows) => [...rows, connection]);
+        setSelectedId(connection.id);
+      }
+      setConnectionLinkDraft('');
+      clearConnectionLinkHash();
+      setSyncNotice('连接链接已导入；链接不含用户名、密码或会话，请先测试身份再登录。');
+    } catch (error) {
+      setSyncNotice(`连接链接导入失败：${msg(error)}`);
+    }
+  }
+
+  async function createConnectionShare(profile: SyncConnection) {
+    if (!profile.serverId || !profile.serverPublicKey) {
+      setSyncNotice('请先测试连通性并固定服务器身份，再创建连接链接。');
+      return;
+    }
+    try {
+      const fingerprint = await fingerprintServerPublicKey(profile.serverPublicKey);
+      const link = createSyncConnectionLink({
+        version: 1,
+        alias: profile.alias,
+        url: profile.baseUrl,
+        serverId: profile.serverId,
+        serverPublicKeyFingerprint: fingerprint,
+      });
+      const { toDataURL } = await import('qrcode');
+      const qrDataUrl = await toDataURL(link, { errorCorrectionLevel: 'M', margin: 2, width: 260, color: { dark: '#672f20', light: '#fffdf9' } });
+      setConnectionShare({ link, qrDataUrl });
+    } catch (error) {
+      setSyncNotice(`连接链接生成失败：${msg(error)}`);
+    }
   }
 
   async function removeProfile(id: string) {
@@ -571,10 +798,13 @@ export function Sync() {
     if (mode === 'public' && (!wizardHost || wizardHost === '192.168.1.100' || wizardHost === 'localhost')) setWizardHost('ledger.example.com');
   }
 
-  function applyWizard(): SyncServerProfile | undefined {
+  function applyWizard(): SyncConnection | undefined {
     if (!selected) return undefined;
     const next = { ...selected, ...wizardPatch(wizardMode, wizardHost, wizardBasePath) };
     patchProfile(selected.id, next);
+    setAddressDraft(next.baseUrl);
+    setAddressParts(parseSyncBaseUrl(next.baseUrl));
+    setAddressError('');
     setSyncNotice(`已套用“${WIZARD_MODES.find((m) => m.mode === wizardMode)?.label ?? '同步'}”配置；继续填写用户名和服务器账号密码后验证。`);
     return next;
   }
@@ -584,7 +814,7 @@ export function Sync() {
     if (next) await testProfile(next, 'health');
   }
 
-  async function testProfile(profile: SyncServerProfile, mode: 'health' | 'auth' = 'auth') {
+  async function testProfile(profile: SyncConnection, mode: 'health' | 'auth' = 'auth') {
     const baseUrl = buildBaseUrl(profile);
     const started = performance.now();
     setTestingId(profile.id);
@@ -593,18 +823,107 @@ export function Sync() {
       const health = await fetchHealth(baseUrl);
       const latencyMs = Math.round(performance.now() - started);
       if (!health.ok) throw new Error(`health HTTP ${health.status}`);
-      const body = (await health.json()) as { serverId?: string; protocols?: number[]; features?: string[] };
-      if (!body.protocols?.includes(3) || !body.features?.includes('encrypted-blobs-v1') || !body.features?.includes('ledger-key-envelope-v1')) {
+      const body = (await health.json()) as {
+        serverId?: string;
+        serverPublicKey?: string;
+        claimed?: boolean;
+        registrationMode?: 'open' | 'invite' | 'closed';
+        protocols?: number[];
+        capabilities?: string[];
+      };
+      if (!body.protocols?.includes(3) || !body.capabilities?.includes('encrypted-blobs-v1') || !body.capabilities?.includes('ledger-key-envelope-v1')) {
         throw new Error('服务器不支持当前端到端加密同步协议');
       }
+      const serverPublicKey = body.serverPublicKey;
+      if (!body.serverId || !serverPublicKey || !body.registrationMode) {
+        throw new Error('服务器身份或注册策略响应不完整');
+      }
+      const serverPublicKeyFingerprint = await fingerprintServerPublicKey(serverPublicKey);
+      if (profile.expectedServerPublicKeyFingerprint
+        && profile.expectedServerPublicKeyFingerprint !== serverPublicKeyFingerprint) {
+        patchProfile(profile.id, {
+          status: 'identity_changed',
+          lastLatencyMs: latencyMs,
+          lastTestAt: new Date().toISOString(),
+          lastError: '服务器公钥指纹与连接链接不一致，已阻止发送账号密码',
+        });
+        return;
+      }
+      if ((profile.serverId && profile.serverId !== body.serverId)
+        || (profile.serverPublicKey && profile.serverPublicKey !== serverPublicKey)) {
+        patchProfile(profile.id, {
+          status: 'identity_changed',
+          lastLatencyMs: latencyMs,
+          lastTestAt: new Date().toISOString(),
+          lastError: '服务器身份与已信任记录不一致，已阻止发送账号密码',
+        });
+        return;
+      }
+      const conflictingIdentity = profiles.find((row) => row.id !== profile.id && row.serverId === body.serverId && row.serverPublicKey && row.serverPublicKey !== serverPublicKey);
+      if (conflictingIdentity) {
+        patchProfile(profile.id, {
+          status: 'identity_changed',
+          lastLatencyMs: latencyMs,
+          lastTestAt: new Date().toISOString(),
+          lastError: `服务器 ID 与“${conflictingIdentity.alias}”相同，但 OPAQUE 公钥不同，已阻止连接`,
+        });
+        return;
+      }
+      const duplicate = profiles.find((row) => row.id !== profile.id && row.serverId === body.serverId && row.serverPublicKey === serverPublicKey);
+      if (duplicate) {
+        const candidates = [...new Set([duplicate.baseUrl, ...duplicate.alternateUrls, profile.baseUrl, ...profile.alternateUrls])];
+        const { sharedUrls, deviceUrls } = mergeSyncUrlScopes(duplicate, profile, candidates);
+        setProfiles((rows) => rows
+          .filter((row) => row.id !== profile.id)
+          .map((row) => row.id === duplicate.id ? {
+            ...row,
+            alternateUrls: candidates.filter((url) => url !== row.baseUrl),
+            sharedUrls,
+            deviceUrls,
+            lastError: `已把 ${profile.baseUrl} 合并为同一服务器的备用地址`,
+          } : row));
+        const incomingCredential = credentials[profile.id];
+        const existingCredential = credentials[duplicate.id];
+        if (incomingCredential?.password && !existingCredential?.password) {
+          patchCredential(duplicate.id, incomingCredential);
+        }
+        void deleteCredential(profile.id).catch((error) => setVaultError(`删除重复服务器凭据失败：${msg(error)}`));
+        setSelectedId(duplicate.id);
+        setHealthByConnection((current) => ({
+          ...current,
+          [duplicate.id]: {
+            serverId: body.serverId!,
+            serverPublicKey,
+            claimed: body.claimed === true,
+            registrationMode: body.registrationMode!,
+          },
+        }));
+        setSyncNotice(`检测到同一服务器身份；地址已合并到“${duplicate.alias}”，不会创建重复连接。`);
+        return;
+      }
+      setHealthByConnection((current) => ({
+        ...current,
+        [profile.id]: {
+          serverId: body.serverId!,
+          serverPublicKey,
+          claimed: body.claimed === true,
+          registrationMode: body.registrationMode!,
+        },
+      }));
       const cred = credentials[profile.id];
       if (mode === 'auth' && profile.username.trim() && cred?.password) {
         try {
           const session = await withTimeout(loginAccount(baseUrl, profile.username.trim(), cred.password, {
             deviceId,
             deviceName: 'Zichan · 同步设置',
+            expectedServerPublicKey: serverPublicKey,
+            expectedServerId: body.serverId,
           }), '账号密码验证');
-          const usageResponse = await withTimeout(fetch(`${baseUrl}/api/v3/blobs/usage`, { headers: { Authorization: `Bearer ${session.accessToken}` } }), '附件能力测试');
+          const account = await withTimeout(fetchAuthMe(baseUrl, session.accessToken), '账号状态验证');
+          const usageResponse = await withTimeout(fetch(`${baseUrl}/api/v3/blobs/usage`, {
+            headers: { Authorization: `Bearer ${session.accessToken}` },
+            redirect: 'error',
+          }), '附件能力测试');
           if (!usageResponse.ok) throw new Error(`附件能力 HTTP ${usageResponse.status}`);
           const usageBody = (await usageResponse.json()) as { usage?: { usedBytes?: number; quotaBytes?: number } };
           const used = usageBody.usage?.usedBytes ?? 0;
@@ -617,50 +936,105 @@ export function Sync() {
           });
           patchProfile(profile.id, {
             serverId: body.serverId,
-            lastStatus: 'online',
+            serverPublicKey,
+            role: account.role,
+            status: 'online',
             lastLatencyMs: latencyMs,
             lastTestAt: new Date().toISOString(),
             lastError: `账号、密码和附件能力验证通过 · ${formatBytes(used)} / ${formatBytes(quota)}`,
           });
         } catch (e) {
-          patchProfile(profile.id, { serverId: body.serverId, lastStatus: 'unauthorized', lastLatencyMs: latencyMs, lastTestAt: new Date().toISOString(), lastError: msg(e) });
+          patchProfile(profile.id, { serverId: body.serverId, status: 'login_required', lastLatencyMs: latencyMs, lastTestAt: new Date().toISOString(), lastError: msg(e) });
         }
       } else {
         const lastError = mode === 'auth' ? '未填写用户名或密码，仅完成连通性测试' : '连通性正常';
-        patchProfile(profile.id, { serverId: body.serverId, lastStatus: 'online', lastLatencyMs: latencyMs, lastTestAt: new Date().toISOString(), lastError });
+        patchProfile(profile.id, { serverId: body.serverId, serverPublicKey, status: 'online', lastLatencyMs: latencyMs, lastTestAt: new Date().toISOString(), lastError });
       }
     } catch (e) {
-      patchProfile(profile.id, { lastStatus: 'offline', lastLatencyMs: Math.round(performance.now() - started), lastTestAt: new Date().toISOString(), lastError: msg(e) });
+      patchProfile(profile.id, { status: 'offline', lastLatencyMs: Math.round(performance.now() - started), lastTestAt: new Date().toISOString(), lastError: msg(e) });
     } finally {
       setTestingId('');
     }
   }
 
-  async function registerProfile(profile: SyncServerProfile) {
-    const cred = credentials[profile.id];
-    if (!profile.username.trim() || !cred?.password) throw new Error('请先填写用户名和密码');
-    await registerAccount(buildBaseUrl(profile), profile.username.trim(), cred.password, { inviteCode: cred.inviteCode.trim() || undefined });
-    patchProfile(profile.id, { lastError: '注册成功，请登录', lastStatus: 'online' });
+  async function inspectConnectionIdentity(profile: SyncConnection): Promise<SyncHealthInfo> {
+    const baseUrl = buildBaseUrl(profile);
+    const response = await fetchHealth(baseUrl);
+    if (!response.ok) throw new Error(`health HTTP ${response.status}`);
+    const body = await response.json() as {
+      serverId?: string;
+      serverPublicKey?: string;
+      claimed?: boolean;
+      registrationMode?: 'open' | 'invite' | 'closed';
+      protocols?: number[];
+      capabilities?: string[];
+    };
+    const serverPublicKey = body.serverPublicKey;
+    if (!body.serverId || !serverPublicKey || !body.registrationMode
+      || !body.protocols?.includes(3)
+      || !body.capabilities?.includes('opaque-pake-v1')
+      || !body.capabilities.includes('ledger-key-envelope-v1')) {
+      throw new Error('服务器身份或端到端加密能力响应不完整');
+    }
+    if (profile.serverId && profile.serverId !== body.serverId) throw new Error('服务器 ID 与已信任记录不一致');
+    if (profile.serverPublicKey && profile.serverPublicKey !== serverPublicKey) throw new Error('服务器 OPAQUE 公钥与已信任记录不一致');
+    const fingerprint = await fingerprintServerPublicKey(serverPublicKey);
+    if (profile.expectedServerPublicKeyFingerprint && profile.expectedServerPublicKeyFingerprint !== fingerprint) {
+      throw new Error('服务器 OPAQUE 公钥指纹与连接链接不一致');
+    }
+    const identity = {
+      serverId: body.serverId,
+      serverPublicKey,
+      claimed: body.claimed === true,
+      registrationMode: body.registrationMode,
+    };
+    setHealthByConnection((current) => ({ ...current, [profile.id]: identity }));
+    patchProfile(profile.id, { serverId: identity.serverId, serverPublicKey: identity.serverPublicKey });
+    return identity;
   }
 
-  async function loginProfile(profile: SyncServerProfile): Promise<string> {
+  async function registerProfile(profile: SyncConnection) {
     const cred = credentials[profile.id];
     if (!profile.username.trim() || !cred?.password) throw new Error('请先填写用户名和密码');
+    const identity = await inspectConnectionIdentity(profile);
+    const registered = await registerAccount(buildBaseUrl(profile), profile.username.trim(), cred.password, {
+      inviteCode: cred.inviteCode.trim() || undefined,
+      expectedServerId: identity.serverId,
+      expectedServerPublicKey: identity.serverPublicKey,
+    });
+    await loginProfile({ ...profile, ...identity, role: registered.role });
+    patchProfile(profile.id, { role: registered.role, lastError: registered.role === 'admin' ? '注册并登录成功；你是此服务器管理员' : '注册并登录成功', status: 'online' });
+  }
+
+  async function loginProfile(profile: SyncConnection): Promise<string> {
+    const cred = credentials[profile.id];
+    if (!profile.username.trim() || !cred?.password) throw new Error('请先填写用户名和密码');
+    const identity = await inspectConnectionIdentity(profile);
     const session = await loginAccount(buildBaseUrl(profile), profile.username.trim(), cred.password, {
       deviceId,
       deviceName: 'Zichan · 当前设备',
+      expectedServerPublicKey: identity.serverPublicKey,
+      expectedServerId: identity.serverId,
     });
+    const account = await fetchAuthMe(buildBaseUrl(profile), session.accessToken);
     patchCredential(profile.id, {
       accessToken: session.accessToken,
       refreshToken: session.refreshToken,
       accessExpiresAt: session.accessExpiresAt,
       sessionId: session.session.id,
     });
-    patchProfile(profile.id, { lastStatus: 'online', lastError: '登录成功' });
+    patchProfile(profile.id, {
+      status: 'online',
+      role: account.role,
+      ledgerId: account.ledgerId ?? profile.ledgerId,
+      replicaId: account.replicaId ?? profile.replicaId,
+      streamEpoch: account.streamEpoch ?? profile.streamEpoch,
+      lastError: account.role === 'admin' ? '管理员登录成功' : '登录成功',
+    });
     return session.accessToken;
   }
 
-  async function doSync(profile?: SyncServerProfile) {
+  async function doSync(profile?: SyncConnection) {
     setBusy(true);
     try {
       if (!ledgerKey.unlocked) throw new Error('请先解锁账本加密密钥');
@@ -681,7 +1055,7 @@ export function Sync() {
       setResult(res);
       setConflicts(pending);
       setInvalidCommits(invalid);
-      setProfiles(loadSyncProfiles());
+      setProfiles(mergeSharedSyncDirectory(loadSyncConnections(), await loadSharedSyncDirectory(store)));
       setLastSyncAt(new Date(res.finishedAt).toLocaleString());
       if (res.endpoints.some((row) => row.error || row.attachments?.error)) {
         setSyncNotice(res.endpoints.flatMap((row) => [row.error, row.attachments?.error].filter((value): value is string => Boolean(value)).map((value) => `${row.alias}：${value}`)).join('；'));
@@ -700,27 +1074,79 @@ export function Sync() {
     }
   }
 
-  async function joinRemoteLedger(profile: SyncServerProfile, ledgerId: string) {
-    if (joinConfirmation !== '替换本机') return;
+  async function joinRemoteLedger(profile: SyncConnection, ledgerId: string) {
+    if (joinConfirmation !== '替换本机' || joinLedgerPassword.length < 8) return;
     setBusy(true);
-    setSyncNotice('正在清空本机账本并加入远端账本…');
+    setSyncNotice('正在只读预检远端账本、验证密码和全部提交…');
     try {
-      await store.resetToLedger(ledgerId);
-      await reconcileAttachmentStorage(store);
+      const localLedgerId = await store.getLedgerId();
+      const localEnvelope = storedLedgerKeyEnvelope();
+      const localSession = requireLedgerCryptoSession(localLedgerId);
+      if (!localEnvelope
+        || localEnvelope.ledgerId !== localSession.ledgerId
+        || localEnvelope.keyringId !== localSession.keyringId
+        || localEnvelope.generation !== localSession.generation) {
+        throw new Error('本机账本密钥封套与已解锁会话不一致，请重新解锁后再加入');
+      }
+      const token = await loginProfile(profile);
+      const prepared = await prepareRemoteLedgerJoin({
+        baseUrl: buildBaseUrl(profile),
+        token,
+        ledgerId,
+        passphrase: joinLedgerPassword,
+        endpointLabel: profile.alias,
+        expectedServerId: profile.serverId,
+      });
+      const joinedAt = new Date().toISOString();
+      const localProfiles = loadSyncConnections();
+      if (!localProfiles.some((row) => row.id === profile.id)) {
+        throw new Error('本机同步服务器配置在预检期间发生变化，请重新选择后再试');
+      }
+      const joinedProfiles = localProfiles.map((row) => row.id === profile.id ? {
+        ...row,
+        serverId: prepared.identity.serverId,
+        replicaId: prepared.identity.replicaId,
+        streamEpoch: prepared.identity.streamEpoch,
+        ledgerId: prepared.identity.ledgerId,
+        status: 'online' as const,
+        lastSyncAt: joinedAt,
+        lastError: '',
+        lastSyncError: undefined,
+      } : row);
+      setSyncNotice('远端账本已验证；正在创建本机保护备份并原子替换…');
+      await commitRemoteLedgerJoin(store, prepared, {
+        createProtectionBackup: async () => {
+          const protection = await saveLedgerBackup(store, 'pre-import', `加入远端账本 ${ledgerId} 前`, 'device');
+          writeSafetyState(successfulBackupSafetyPatch(protection));
+        },
+        adoptRemoteKey: () => {
+          adoptUnlockedLedgerKeyEnvelope(prepared.keyEnvelope, prepared.cryptoSession, true);
+        },
+        restoreLocalKey: () => {
+          adoptUnlockedLedgerKeyEnvelope(localEnvelope, localSession, true);
+        },
+        commitClientState: () => saveSyncConnections(joinedProfiles),
+        restoreClientState: () => saveSyncConnections(localProfiles),
+        reconcileAttachments: () => reconcileAttachmentStorage(store),
+      });
+      const joinedWithSharedDirectory = mergeSharedSyncDirectory(joinedProfiles, await loadSharedSyncDirectory(store));
+      saveSyncConnections(joinedWithSharedDirectory);
+      setProfiles(joinedWithSharedDirectory);
       setJoinTarget(null);
       setJoinConfirmation('');
-      setConflicts([]);
-      setInvalidCommits([]);
+      setJoinLedgerPassword('');
+      setConflicts(await store.listConflicts());
+      setInvalidCommits(await store.listSyncCommits({ state: 'invalid', includeInvalid: true }));
       setResult(null);
       setEndpointRows([]);
+      setLastSyncAt(new Date(joinedAt).toLocaleString());
+      setSyncNotice(`已安全加入远端账本；预检并拉取 ${prepared.pulled} 条提交，本机原账本已保存为导入前保护备份。`);
       bump();
     } catch (error) {
       setSyncNotice(`加入远端账本失败：${msg(error)}`);
+    } finally {
       setBusy(false);
-      return;
     }
-    setBusy(false);
-    await doSync(profile);
   }
 
   useEffect(() => {
@@ -736,7 +1162,9 @@ export function Sync() {
     }
     const onResult = (event: Event) => {
       const detail = (event as CustomEvent<LifecycleSyncResult>).detail;
-      setProfiles(loadSyncProfiles());
+      void loadSharedSyncDirectory(store).then((servers) => {
+        setProfiles(mergeSharedSyncDirectory(loadSyncConnections(), servers));
+      }).catch((error) => setAutoSyncStatus(`共享服务器目录读取失败 · ${msg(error)}`));
       setAutoSyncStatus(detail.errors.length
         ? `自动同步部分失败 · ${detail.finishedAt ? new Date(detail.finishedAt).toLocaleTimeString() : ''}`
         : `上次自动同步 ${new Date(detail.finishedAt).toLocaleTimeString()}`);
@@ -880,8 +1308,9 @@ export function Sync() {
   }
 
   const cred = selected ? credentials[selected.id] ?? { password: '', inviteCode: '' } : { password: '', inviteCode: '' };
+  const selectedHealth = selected ? healthByConnection[selected.id] : undefined;
   const enabledProfiles = profiles.filter((p) => p.enabled);
-  const onlineProfiles = profiles.filter((p) => p.lastStatus === 'online');
+  const onlineProfiles = profiles.filter((p) => p.status === 'online');
   const syncReadyCount = enabledProfiles.filter((p) => credentials[p.id]?.password).length;
   const filteredConflicts = conflicts.filter((conflict) => isDateInRange(localDateOfInstant(conflict.at), conflictRange));
   const selectedRemoteLedgerId = ledgerMismatchId(selected?.lastError);
@@ -902,7 +1331,7 @@ export function Sync() {
         <button onClick={() => setTab('admin')} style={tabBtn(tab === 'admin')}>管理后台</button>
       </div>
 
-      {tab === 'admin' ? <ServerAdmin /> : (
+      {tab === 'admin' ? <ServerAdmin connection={selected} accessToken={selected ? credentials[selected.id]?.accessToken : undefined} /> : (
         <>
           <div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginBottom: 14 }}>
@@ -1011,6 +1440,19 @@ export function Sync() {
               <button onClick={addProfile} style={primary}>新增服务器</button>
             </div>
 
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '10px 0 14px', borderTop: '1px solid var(--border)' }}>
+              <input
+                aria-label="服务器连接链接"
+                className="zc-input"
+                style={{ flex: '1 1 420px' }}
+                value={connectionLinkDraft}
+                onChange={(event) => setConnectionLinkDraft(event.target.value)}
+                placeholder="粘贴不含秘密的连接链接"
+                spellCheck={false}
+              />
+              <button type="button" onClick={() => importConnectionLink(connectionLinkDraft)} disabled={!connectionLinkDraft.trim()} style={outline}>导入连接</button>
+            </div>
+
             {vault.kind === 'native-stronghold' && (
               <div style={{ display: 'flex', alignItems: 'end', gap: 10, flexWrap: 'wrap', padding: 12, marginBottom: 14, borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
                 <div style={{ minWidth: 230, flex: '1 1 260px' }}>
@@ -1060,7 +1502,7 @@ export function Sync() {
                     ))}
                   </div>
                 </div>
-                {wizardMode !== 'local' && (
+                {(wizardMode === 'lan' || wizardMode === 'public') && (
                   <div className="zc-sync-wizard-grid" style={{ display: 'grid', gridTemplateColumns: wizardMode === 'public' ? '1fr 180px' : '1fr', gap: 10, marginBottom: 10 }}>
                     <div>
                       <label className="zc-label">{wizardMode === 'public' ? '公网域名' : '局域网 IP / 主机名'}</label>
@@ -1085,18 +1527,22 @@ export function Sync() {
                   <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--negative)' }}>
                     <div style={{ color: 'var(--negative)', fontSize: 12, fontWeight: 900 }}>此账号已绑定另一个账本</div>
                     <div style={{ color: 'var(--fg-subtle)', fontSize: 11, marginTop: 4 }}>
-                      远端账本 {selectedRemoteLedgerId}。加入会清空本机账本和操作历史，未引用附件正文先进入本机回收区，然后从该服务器重新拉取。
+                      远端账本 {selectedRemoteLedgerId}。系统会先只读验证远端密码、提交和账本一致性，再保存本机保护备份并原子替换；任何一步失败都会保留本机账本。
                     </div>
                     {joinTarget?.profileId !== selected.id ? (
-                      <button type="button" disabled={busy} onClick={() => { setJoinTarget({ profileId: selected.id, ledgerId: selectedRemoteLedgerId }); setJoinConfirmation(''); }} style={{ ...danger, marginTop: 10 }}>加入远端账本</button>
+                      <button type="button" disabled={busy} onClick={() => { setJoinTarget({ profileId: selected.id, ledgerId: selectedRemoteLedgerId }); setJoinConfirmation(''); setJoinLedgerPassword(''); }} style={{ ...danger, marginTop: 10 }}>加入远端账本</button>
                     ) : (
                       <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap', marginTop: 10 }}>
                         <div style={{ minWidth: 240 }}>
                           <label className="zc-label">输入“替换本机”确认</label>
                           <input aria-label="确认替换本机账本" className="zc-input" value={joinConfirmation} onChange={(event) => setJoinConfirmation(event.target.value)} autoComplete="off" />
                         </div>
-                        <button type="button" disabled={busy || joinConfirmation !== '替换本机'} onClick={() => void joinRemoteLedger(selected, selectedRemoteLedgerId)} style={danger}>确认清空并加入</button>
-                        <button type="button" disabled={busy} onClick={() => { setJoinTarget(null); setJoinConfirmation(''); }} style={outline}>取消</button>
+                        <div style={{ minWidth: 240 }}>
+                          <label className="zc-label">远端账本加密密码</label>
+                          <input aria-label="远端账本加密密码" className="zc-input" type="password" value={joinLedgerPassword} onChange={(event) => setJoinLedgerPassword(event.target.value)} autoComplete="off" />
+                        </div>
+                        <button type="button" disabled={busy || joinConfirmation !== '替换本机' || joinLedgerPassword.length < 8} onClick={() => void joinRemoteLedger(selected, selectedRemoteLedgerId)} style={danger}>验证、备份并加入</button>
+                        <button type="button" disabled={busy} onClick={() => { setJoinTarget(null); setJoinConfirmation(''); setJoinLedgerPassword(''); }} style={outline}>取消</button>
                       </div>
                     )}
                   </div>
@@ -1114,7 +1560,7 @@ export function Sync() {
                       <td style={tdStyle}>{p.alias}</td>
                       <td style={{ ...tdStyle, color: 'var(--fg-muted)' }}>{buildBaseUrl(p)}</td>
                       <td style={tdStyle}>{p.username || '—'}</td>
-                      <td style={{ ...tdStyle, color: p.lastStatus === 'online' ? 'var(--positive)' : p.lastStatus === 'unauthorized' ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 700 }}>{statusText[p.lastStatus ?? 'idle']}</td>
+                      <td style={{ ...tdStyle, color: p.status === 'online' ? 'var(--positive)' : p.status === 'offline' || p.status === 'identity_changed' ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 700 }}>{statusText[p.status]}</td>
                       <td style={tdStyle}>{p.lastLatencyMs !== undefined ? `${p.lastLatencyMs}ms` : '—'}</td>
                       <td style={{ ...tdStyle, textAlign: 'right' }}>
                         <button onClick={(e) => { e.stopPropagation(); void testProfile(p, 'health'); }} disabled={testingId === p.id} style={outline}>{testingId === p.id ? '测试中…' : '测试连通性'}</button>
@@ -1128,21 +1574,61 @@ export function Sync() {
             {selected && (
               <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 14, background: 'var(--surface-2)' }}>
                 <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>编辑服务器 · {selected.alias}</div>
+                <div style={{ marginBottom: 10 }}>
+                  <label className="zc-label">完整服务器地址</label>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                      aria-label="完整服务器地址"
+                      className="zc-input"
+                      style={{ flex: '1 1 420px' }}
+                      value={addressDraft}
+                      onChange={(event) => editAddressDraft(event.target.value)}
+                      placeholder="https://ledger.example.com/zichan"
+                      spellCheck={false}
+                    />
+                    <button type="button" onClick={() => setAdvancedAddress((value) => !value)} style={outline}>{advancedAddress ? '收起高级设置' : '高级设置'}</button>
+                    <button type="button" onClick={saveAddress} disabled={Boolean(addressError) || addressDraft === selected.baseUrl} style={primary}>保存地址</button>
+                  </div>
+                  <div style={{ marginTop: 5, fontSize: 11, color: addressError ? 'var(--negative)' : 'var(--fg-subtle)', fontWeight: addressError ? 700 : 500 }}>
+                    {addressError || '完整 URL 是唯一保存值；高级字段只是同一地址的编辑视图。公网必须使用 HTTPS。'}
+                  </div>
+                  <div style={{ marginTop: 4, fontSize: 11, color: 'var(--fg-subtle)', lineHeight: 1.5 }}>
+                    HTTPS 网站中的浏览器可能阻止普通 HTTP 局域网地址；可改用可信 HTTPS、服务器自带 Web，或 Windows 便携版。
+                  </div>
+                </div>
+                {advancedAddress && (
+                  <>
+                    <div className="zc-sync-input-grid" style={inputGrid}>
+                      <div><label className="zc-label">协议</label><select aria-label="协议" className="zc-select" value={addressParts.protocol} onChange={(e) => editAddressPart({ protocol: e.target.value as Protocol })}><option value="http">http</option><option value="https">https</option></select></div>
+                      <div><label className="zc-label">主机 / 域名</label><input aria-label="主机或域名" className="zc-input" value={addressParts.host} onChange={(e) => editAddressPart({ host: e.target.value })} /></div>
+                      <div><label className="zc-label">端口</label><input aria-label="端口" className="zc-input" value={addressParts.port} onChange={(e) => editAddressPart({ port: e.target.value })} placeholder="443" /></div>
+                      <div><label className="zc-label">服务路径</label><input aria-label="服务路径" className="zc-input" value={addressParts.path} onChange={(e) => editAddressPart({ path: e.target.value })} placeholder="/zichan" /></div>
+                    </div>
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', margin: '-2px 0 12px', fontSize: 11, color: 'var(--fg-subtle)', lineHeight: 1.5 }}>
+                      <input type="checkbox" checked={selected.sharedUrls.includes(selected.baseUrl)} onChange={(event) => setActiveAddressShared(event.target.checked)} />
+                      将此地址写入账本的加密服务器目录，供其他设备发现。公网 HTTPS 默认开启；localhost 或局域网地址默认仅当前设备，手动共享前请确认其他设备也能访问该地址。
+                    </label>
+                  </>
+                )}
                 <div className="zc-sync-input-grid" style={inputGrid}>
                   <div><label className="zc-label">中文别名</label><input aria-label="中文别名" className="zc-input" value={selected.alias} onChange={(e) => patchProfile(selected.id, { alias: e.target.value })} /></div>
-                  <div><label className="zc-label">协议</label><select aria-label="协议" className="zc-select" value={selected.protocol} onChange={(e) => patchProfile(selected.id, { protocol: e.target.value as Protocol })}><option value="http">http</option><option value="https">https</option></select></div>
-                  <div><label className="zc-label">主机 / 域名</label><input aria-label="主机或域名" className="zc-input" value={selected.host} onChange={(e) => patchProfile(selected.id, { host: e.target.value })} /></div>
-                  <div><label className="zc-label">端口</label><input aria-label="端口" className="zc-input" value={selected.port} onChange={(e) => patchProfile(selected.id, { port: e.target.value })} placeholder="443" /></div>
-                  <div><label className="zc-label">服务路径</label><input aria-label="服务路径" className="zc-input" value={selected.basePath} onChange={(e) => patchProfile(selected.id, { basePath: normalizeBasePath(e.target.value) })} placeholder="/zichan-home" /></div>
                   <div><label className="zc-label">用户名</label><input aria-label="用户名" className="zc-input" value={selected.username} onChange={(e) => patchProfile(selected.id, { username: e.target.value })} /></div>
                   <div><label className="zc-label">服务器账号密码{vault.kind === 'browser-session' ? '（当前标签页）' : '（Stronghold）'}</label><input aria-label="服务器账号密码" className="zc-input" type="password" value={cred.password} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { password: e.target.value, accessToken: undefined, refreshToken: undefined, accessExpiresAt: undefined, sessionId: undefined })} /></div>
-                  <div><label className="zc-label">邀请码</label><input aria-label="邀请码" className="zc-input" value={cred.inviteCode} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { inviteCode: e.target.value })} /></div>
+                  {selectedHealth?.registrationMode === 'invite' && <div><label className="zc-label">邀请码</label><input aria-label="邀请码" className="zc-input" value={cred.inviteCode} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { inviteCode: e.target.value })} /></div>}
                 </div>
+                {selectedHealth && (
+                  <div style={{ margin: '-2px 0 10px', fontSize: 11, color: !selectedHealth.claimed ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: !selectedHealth.claimed ? 800 : 500 }}>
+                    {!selectedHealth.claimed
+                      ? '这是一台尚未认领的空服务器：第一个完成注册的账号将原子成为管理员。'
+                      : `注册策略：${selectedHealth.registrationMode === 'open' ? '开放注册' : selectedHealth.registrationMode === 'invite' ? '仅邀请码' : '已关闭'}${selected.role ? ` · 当前账号：${selected.role === 'admin' ? '管理员' : '成员'}` : ''}`}
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button onClick={() => void testProfile(selected, 'auth')} disabled={busy || testingId === selected.id} style={outline}>{testingId === selected.id ? '验证中…' : '验证账号密码'}</button>
-                  <button onClick={() => void registerProfile(selected).catch((e) => patchProfile(selected.id, { lastStatus: 'offline', lastError: msg(e) }))} disabled={busy} style={outline}>注册</button>
-                  <button onClick={() => void loginProfile(selected).catch((e) => patchProfile(selected.id, { lastStatus: 'unauthorized', lastError: msg(e) }))} disabled={busy} style={outline}>登录</button>
+                  <button onClick={() => void registerProfile(selected).catch((e) => patchProfile(selected.id, { status: 'offline', lastError: msg(e) }))} disabled={busy} style={outline}>注册</button>
+                  <button onClick={() => void loginProfile(selected).catch((e) => patchProfile(selected.id, { status: 'login_required', lastError: msg(e) }))} disabled={busy} style={outline}>登录</button>
                   <button onClick={() => void doSync(selected)} disabled={busy || !ledgerKey.unlocked} style={primary}>{busy ? '同步中…' : '同步此服务器'}</button>
+                  <button type="button" onClick={() => void createConnectionShare(selected)} disabled={busy || !selected.serverId || !selected.serverPublicKey} style={outline}>连接链接 / 二维码</button>
                   <button
                     onClick={() => void removeProfile(selected.id)}
                     disabled={profiles.length <= 1 || busy || (vault.kind === 'native-stronghold' && vault.initialized && !vault.unlocked)}
@@ -1157,6 +1643,20 @@ export function Sync() {
                     {selected.lastError ? ` · ${selected.lastError}` : ''}
                   </span>
                 </div>
+                {connectionShare && (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, alignItems: 'center', marginTop: 14, padding: 12, border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface)' }}>
+                    <img src={connectionShare.qrDataUrl} alt="服务器连接二维码" width={260} height={260} style={{ display: 'block', width: '100%', maxWidth: 260, height: 'auto', imageRendering: 'pixelated' }} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 900 }}>无秘密连接信息</div>
+                      <div style={{ marginTop: 5, fontSize: 11, color: 'var(--fg-subtle)', lineHeight: 1.6 }}>只包含应用入口、服务器完整 URL、serverId 和 OPAQUE 公钥指纹；扫码或导入后仍必须单独登录。</div>
+                      <textarea readOnly value={connectionShare.link} aria-label="无秘密连接链接" onFocus={(event) => event.currentTarget.select()} style={{ boxSizing: 'border-box', width: '100%', minHeight: 92, marginTop: 9, padding: 9, resize: 'vertical', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)', color: 'var(--fg-muted)', fontSize: 11, userSelect: 'text', WebkitUserSelect: 'text' }} />
+                      <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                        <button type="button" onClick={() => void copyTextToClipboard(connectionShare.link).then(() => setSyncNotice('连接链接已复制。')).catch((error) => setSyncNotice(`复制失败：${msg(error)}`))} style={outline}>复制链接</button>
+                        <button type="button" onClick={() => setConnectionShare(null)} style={outline}>关闭</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

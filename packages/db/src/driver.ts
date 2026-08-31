@@ -1,7 +1,8 @@
 /**
  * SQL driver port. `@zichan/db` speaks to storage through this narrow async
  * interface, so the same repository runs on any SQLite binding: node:sqlite
- * (desktop/tests), wa-sqlite/OPFS (web), or tauri-plugin-sql (native shells).
+ * (desktop/tests), wa-sqlite/OPFS (web), or a dedicated Rust SQL bridge
+ * (native shells).
  */
 
 export type SqlParam = string | number | null;

@@ -4,13 +4,13 @@ import { readDevicePreferences, sendDeviceNotification } from './device-capabili
 import { getDeviceId, registerSync } from './db/cloud.js';
 import {
   loadAutoSync,
-  loadSyncProfiles,
+  loadSyncConnections,
   SYNC_CONFIG_CHANGED_EVENT,
 } from './sync-config.js';
 import { syncConfiguredServers } from './sync-orchestrator.js';
 import { runtimeLedgerCryptoSession } from './ledger-key-vault.js';
 
-export type SyncLifecycleReason = 'startup' | 'interval' | 'online' | 'foreground' | 'credentials';
+export type SyncLifecycleReason = 'startup' | 'interval' | 'online' | 'foreground' | 'credentials' | 'write';
 
 export interface LifecycleSyncResult {
   reason: SyncLifecycleReason;
@@ -36,8 +36,8 @@ export function runLifecycleSync(store: SqlLedgerStore, reason: SyncLifecycleRea
   if (!runtimeLedgerCryptoSession()) return Promise.resolve(null);
   const now = Date.now();
   if (inFlight) return inFlight;
-  if (reason !== 'interval' && reason !== 'credentials' && now - lastAttemptAt < 5_000) return Promise.resolve(null);
-  const profiles = loadSyncProfiles().filter((profile) => profile.enabled && profile.username.trim() && runtimeCredential(profile.id)?.password);
+  if (reason !== 'interval' && reason !== 'credentials' && reason !== 'write' && now - lastAttemptAt < 5_000) return Promise.resolve(null);
+  const profiles = loadSyncConnections().filter((profile) => profile.enabled && profile.username.trim() && runtimeCredential(profile.id)?.password);
   if (profiles.length === 0) return Promise.resolve(null);
   lastAttemptAt = now;
   inFlight = (async () => {
@@ -79,6 +79,7 @@ export function installSyncLifecycle(
 ): () => void {
   let timer = 0;
   let credentialTimer = 0;
+  let writeTimer = 0;
   const run = (reason: SyncLifecycleReason) => {
     void runner(store, reason).then((result) => {
       if (result?.applied) onApplied();
@@ -112,6 +113,12 @@ export function installSyncLifecycle(
     window.clearTimeout(credentialTimer);
     credentialTimer = window.setTimeout(() => run('credentials'), 1_500);
   };
+  const unsubscribeWrites = typeof store.subscribe === 'function'
+    ? store.subscribe(() => {
+      window.clearTimeout(writeTimer);
+      writeTimer = window.setTimeout(() => run('write'), 1_500);
+    })
+    : () => undefined;
   const onConfig = (event: Event) => {
     configureTimer();
     if ((event as CustomEvent<{ kind?: string }>).detail?.kind === 'auto') run('startup');
@@ -125,6 +132,8 @@ export function installSyncLifecycle(
   return () => {
     window.clearInterval(timer);
     window.clearTimeout(credentialTimer);
+    window.clearTimeout(writeTimer);
+    unsubscribeWrites();
     window.removeEventListener('online', onOnline);
     document.removeEventListener('visibilitychange', onVisibility);
     window.removeEventListener(CREDENTIALS_CHANGED_EVENT, onCredentials);

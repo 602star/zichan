@@ -23,6 +23,7 @@ import { downloadReportPdf } from '../report-pdf.js';
 import {
   buildBudgetVariance,
   buildTransactionComparison,
+  effectiveReportRange,
   reportComparisonRanges,
 } from '../selectors/report-analysis.js';
 import { TransactionReportInsights } from '../ui/TransactionReportInsights.js';
@@ -54,21 +55,34 @@ export function Reports() {
   const [transactionAggregateError, setTransactionAggregateError] = useState('');
   const [transactionPageBusy, setTransactionPageBusy] = useState(false);
   const [transactionLoadError, setTransactionLoadError] = useState('');
+  const asOfDate = baseSnap?.setting?.asOfDate ?? localToday();
   const dateRange = ranges[tab];
+  const effectiveRange = useMemo(
+    () => effectiveReportRange(dateRange, asOfDate),
+    [asOfDate, dateRange],
+  );
   const transactionRange = ranges.transactions;
+  const effectiveTransactionRange = useMemo(
+    () => effectiveReportRange(transactionRange, asOfDate),
+    [asOfDate, transactionRange],
+  );
+  const effectiveTransactionDetailRange = useMemo(
+    () => effectiveReportRange(transactionDetailRange, asOfDate),
+    [asOfDate, transactionDetailRange],
+  );
   const comparisonRanges = useMemo(() => reportComparisonRanges(
-    transactionRange,
-    baseSnap?.setting?.asOfDate ?? localToday(),
-  ), [baseSnap?.setting?.asOfDate, transactionRange]);
+    effectiveTransactionRange,
+    asOfDate,
+  ), [asOfDate, effectiveTransactionRange]);
   const aggregateQueryRange = useMemo(() => {
-    let from = transactionRange.from;
-    let to = transactionRange.to;
+    let from = effectiveTransactionRange.from;
+    let to = effectiveTransactionRange.to;
     if (from && comparisonRanges) {
       from = [from, comparisonRanges.previous.from, comparisonRanges.yearOverYear.from]
         .sort((left, right) => left.localeCompare(right))[0];
     }
     if (from && baseSnap) {
-      const latestMonth = transactionRange.to?.slice(0, 7);
+      const latestMonth = effectiveTransactionRange.to?.slice(0, 7);
       const firstBudgetMonth = baseSnap.budgetCategories
         .filter((budget) => !budget.isDeleted && (!latestMonth || budget.month <= latestMonth))
         .map((budget) => `${budget.month}-01`)
@@ -80,7 +94,7 @@ export function Reports() {
         .sort((left, right) => right.localeCompare(left))[0];
     }
     return { from, to };
-  }, [baseSnap, comparisonRanges, transactionRange.from, transactionRange.to]);
+  }, [baseSnap, comparisonRanges, effectiveTransactionRange.from, effectiveTransactionRange.to]);
   useEffect(() => store.subscribe((change) => {
     if (change.entityTypes.includes('*')
       || change.entityTypes.some((type) => ['transaction', 'transaction_split', 'refund_allocation'].includes(type))) {
@@ -121,8 +135,8 @@ export function Reports() {
     setTransactionLoadError('');
     setTransactionPageBusy(true);
     void store.transactionBrowsePage({
-      from: transactionDetailRange.from,
-      to: transactionDetailRange.to,
+      from: effectiveTransactionDetailRange.from,
+      to: effectiveTransactionDetailRange.to,
       category: selectedCategory || undefined,
       excludeTypes: ['transfer', 'adjustment'],
       limit: 200,
@@ -146,7 +160,7 @@ export function Reports() {
     return () => {
       cancelled = true;
     };
-  }, [selectedCategory, store, tab, transactionDetailRange.from, transactionDetailRange.to, transactionRevision]);
+  }, [effectiveTransactionDetailRange.from, effectiveTransactionDetailRange.to, selectedCategory, store, tab, transactionRevision]);
   const snap = useMemo(() => {
     if (!baseSnap) return null;
     if (tab !== 'transactions') return baseSnap;
@@ -159,14 +173,14 @@ export function Reports() {
     if (!snap) return null;
     if (tab === 'transactions') {
       return transactionAggregates
-        ? transactionTableFromAggregates(snap, transactionAggregates, { dateRange })
+        ? transactionTableFromAggregates(snap, transactionAggregates, { dateRange: effectiveRange })
         : null;
     }
-    return buildReport(snap, tab, { dateRange });
-  }, [dateRange, snap, tab, transactionAggregates]);
+    return buildReport(snap, tab, { dateRange: effectiveRange });
+  }, [effectiveRange, snap, tab, transactionAggregates]);
   const details = useMemo(
-    () => (snap && tab === 'transactions' ? transactionDetails(snap, { dateRange: transactionDetailRange, transactionCategory: selectedCategory || undefined }) : []),
-    [selectedCategory, snap, tab, transactionDetailRange],
+    () => (snap && tab === 'transactions' ? transactionDetails(snap, { dateRange: effectiveTransactionDetailRange, transactionCategory: selectedCategory || undefined }) : []),
+    [effectiveTransactionDetailRange, selectedCategory, snap, tab],
   );
   const comparison = useMemo(() => (
     snap && tab === 'transactions' && transactionAggregates && comparisonRanges
@@ -175,18 +189,19 @@ export function Reports() {
   ), [comparisonRanges, snap, tab, transactionAggregates]);
   const budgetVariance = useMemo(() => (
     snap && tab === 'transactions' && transactionAggregates
-      ? buildBudgetVariance(snap, transactionAggregates, comparisonRanges?.current ?? transactionRange)
+      ? buildBudgetVariance(snap, transactionAggregates, comparisonRanges?.current ?? effectiveTransactionRange)
       : { planned: '0', actual: '0', variance: '0', overCount: 0, complete: true, rows: [] }
-  ), [comparisonRanges, snap, tab, transactionAggregates, transactionRange]);
+  ), [comparisonRanges, effectiveTransactionRange, snap, tab, transactionAggregates]);
   if (!snap) return null;
   if (!table) return <div role="status" style={{ color: 'var(--fg-subtle)', fontSize: 13 }}>{transactionAggregateBusy ? '正在计算报表…' : '报表暂不可用'}</div>;
   const reportTable = table;
   const tabLabel = TABS.find(([id]) => id === tab)?.[1] ?? '报表';
-  const reportCurrency = createReportCurrency(snap, dateRange.to);
+  const reportCurrency = createReportCurrency(snap, effectiveRange.to);
 
   function drillTransactions(category: string, range: DateRange) {
+    const effective = effectiveReportRange(range, asOfDate);
     setSelectedCategory(category);
-    setTransactionDetailRange({ preset: 'custom', from: range.from, to: range.to });
+    setTransactionDetailRange({ preset: 'custom', from: effective.from, to: effective.to });
     requestAnimationFrame(() => document.getElementById('transaction-report-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }
 
@@ -194,9 +209,9 @@ export function Reports() {
     setPdfBusy(true);
     try {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      downloadReportPdf(`zichan-${tab}-${rangeFilePart(dateRange)}.pdf`, {
+      downloadReportPdf(`zichan-${tab}-${rangeFilePart(effectiveRange)}.pdf`, {
         title: `资产生命周期 · ${tabLabel}`,
-        range: rangeLabel(dateRange),
+        range: rangeLabel(effectiveRange),
         table: reportTable,
       });
     } finally {
@@ -210,8 +225,8 @@ export function Reports() {
     setTransactionLoadError('');
     try {
       const page = await store.transactionBrowsePage({
-        from: transactionDetailRange.from,
-        to: transactionDetailRange.to,
+        from: effectiveTransactionDetailRange.from,
+        to: effectiveTransactionDetailRange.to,
         category: selectedCategory || undefined,
         excludeTypes: ['transfer', 'adjustment'],
         cursor: transactionCursor,
@@ -236,8 +251,8 @@ export function Reports() {
         yield `${DETAIL_CSV_HEADER.join(',')}\n`;
         let exported = 0;
         for await (const page of store.iterateTransactionBrowse({
-          from: transactionDetailRange.from,
-          to: transactionDetailRange.to,
+          from: effectiveTransactionDetailRange.from,
+          to: effectiveTransactionDetailRange.to,
           category: selectedCategory || undefined,
           excludeTypes: ['transfer', 'adjustment'],
           pageSize: 500,
@@ -249,7 +264,7 @@ export function Reports() {
             refundAllocations: page.refundAllocations,
           };
           const rows = transactionDetails(pageSnap, {
-            dateRange: transactionDetailRange,
+            dateRange: effectiveTransactionDetailRange,
             transactionCategory: selectedCategory || undefined,
           });
           if (rows.length) yield `${detailRowsToCsv(rows)}\n`;
@@ -258,7 +273,7 @@ export function Reports() {
         }
       })();
       await downloadTextChunks(
-        `zichan-transactions-detail-${rangeFilePart(transactionDetailRange)}.csv`,
+        `zichan-transactions-detail-${rangeFilePart(effectiveTransactionDetailRange)}.csv`,
         chunks,
         'text/csv;charset=utf-8',
       );
@@ -277,7 +292,7 @@ export function Reports() {
         ))}
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-        <DateRangeBar value={dateRange} onChange={(next) => {
+        <DateRangeBar value={dateRange} anchor={asOfDate} onChange={(next) => {
           setRanges((current) => ({ ...current, [tab]: next }));
           setSelectedCategory('');
           if (tab === 'transactions') setTransactionDetailRange(next);
@@ -298,10 +313,10 @@ export function Reports() {
         )}
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button onClick={() => downloadText(`zichan-${tab}-${rangeFilePart(dateRange)}.csv`, tableToCsv(table), 'text/csv;charset=utf-8')} style={pillBtn(false)}>导出 CSV</button>
+        <button onClick={() => downloadText(`zichan-${tab}-${rangeFilePart(effectiveRange)}.csv`, tableToCsv(table), 'text/csv;charset=utf-8')} style={pillBtn(false)}>导出 CSV</button>
         <button onClick={() => void exportPdf()} disabled={pdfBusy} style={pillBtn(false)}>{pdfBusy ? '生成 PDF…' : '导出 PDF'}</button>
-        <button onClick={() => downloadText(`zichan-${tab}-${rangeFilePart(dateRange)}.md`, tableToMarkdown(table), 'text/markdown;charset=utf-8')} style={pillBtn(false)}>导出 Markdown</button>
-        <button onClick={() => downloadText(`zichan-${tab}-${rangeFilePart(dateRange)}.mmd`, tableToMermaid(table, tabLabel), 'text/plain;charset=utf-8')} style={pillBtn(false)}>导出 Mermaid</button>
+        <button onClick={() => downloadText(`zichan-${tab}-${rangeFilePart(effectiveRange)}.md`, tableToMarkdown(table), 'text/markdown;charset=utf-8')} style={pillBtn(false)}>导出 Markdown</button>
+        <button onClick={() => downloadText(`zichan-${tab}-${rangeFilePart(effectiveRange)}.mmd`, tableToMermaid(table, tabLabel), 'text/plain;charset=utf-8')} style={pillBtn(false)}>导出 Mermaid</button>
       </div>
       {!!table.missingRateAssetCodes?.length && (
         <div style={{ ...card, padding: '12px 14px', borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 13, fontWeight: 700 }}>
@@ -322,13 +337,13 @@ export function Reports() {
           onDrill={drillTransactions}
         />
       )}
-      <TimeTrendChart snap={snap} tab={tab} dateRange={dateRange} granularity={granularity} transactionAggregates={transactionAggregates ?? []} />
+      <TimeTrendChart snap={snap} tab={tab} dateRange={effectiveRange} granularity={granularity} transactionAggregates={transactionAggregates ?? []} />
       <ReportChart
         snap={snap}
         tab={tab}
-        dateRange={dateRange}
+        dateRange={effectiveRange}
         selectedCategory={selectedCategory}
-        onSelectCategory={(category) => drillTransactions(category, dateRange)}
+        onSelectCategory={(category) => drillTransactions(category, effectiveRange)}
         transactionTable={tab === 'transactions' ? table : undefined}
       />
       <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
@@ -346,11 +361,11 @@ export function Reports() {
                   key={i}
                   role={clickable ? 'button' : undefined}
                   tabIndex={clickable ? 0 : undefined}
-                  onClick={() => { if (clickable) drillTransactions(rowCategory, dateRange); }}
+                  onClick={() => { if (clickable) drillTransactions(rowCategory, effectiveRange); }}
                   onKeyDown={(event) => {
                     if (!clickable || (event.key !== 'Enter' && event.key !== ' ')) return;
                     event.preventDefault();
-                    drillTransactions(rowCategory, dateRange);
+                    drillTransactions(rowCategory, effectiveRange);
                   }}
                   style={{ cursor: clickable ? 'pointer' : undefined, background: selectedCategory && selectedCategory === rowCategory ? 'var(--surface-2)' : undefined }}
                 >
@@ -370,7 +385,7 @@ export function Reports() {
       {tab === 'transactions' && (
         <TransactionDetailTable
           rows={details}
-          range={transactionDetailRange}
+          range={effectiveTransactionDetailRange}
           selectedCategory={selectedCategory}
           loadedCount={transactionSlice?.transactions.length ?? 0}
           hasMore={transactionHasMore}

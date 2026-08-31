@@ -70,7 +70,7 @@ afterEach(() => {
 });
 
 describe('application lifecycle sync', () => {
-  it('runs on startup, interval, foreground, online and debounced credential readiness', async () => {
+  it('runs on startup, interval, foreground, online, credentials and debounced local writes', async () => {
     const fakeWindow = new LifecycleWindow();
     const fakeDocument = new LifecycleDocument();
     const storage = new MemoryStorage();
@@ -84,7 +84,14 @@ describe('application lifecycle sync', () => {
       reasons.push(reason);
       return null;
     };
-    const cleanup = installSyncLifecycle({} as SqlLedgerStore, () => undefined, runner);
+    let writeListener: (() => void) | undefined;
+    const store = {
+      subscribe(listener: () => void) {
+        writeListener = listener;
+        return () => { writeListener = undefined; };
+      },
+    } as unknown as SqlLedgerStore;
+    const cleanup = installSyncLifecycle(store, () => undefined, runner);
     await Promise.resolve();
     expect(reasons).toEqual(['startup']);
 
@@ -94,11 +101,14 @@ describe('application lifecycle sync', () => {
     fakeDocument.dispatchEvent(new Event('visibilitychange'));
     fakeWindow.dispatchEvent(new Event('zichan:credentials-changed'));
     fakeWindow.timeout?.();
-    expect(reasons).toEqual(['startup', 'interval', 'online', 'foreground', 'credentials']);
+    writeListener?.();
+    fakeWindow.timeout?.();
+    expect(reasons).toEqual(['startup', 'interval', 'online', 'foreground', 'credentials', 'write']);
 
     cleanup();
     fakeWindow.dispatchEvent(new Event('online'));
-    expect(reasons).toHaveLength(5);
+    expect(reasons).toHaveLength(6);
+    expect(writeListener).toBeUndefined();
   });
 
   it('relocks only after a meaningful background interval', () => {

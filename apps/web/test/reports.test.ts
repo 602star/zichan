@@ -7,6 +7,7 @@ import {
   transactionDetails,
   transactionTableFromAggregates,
 } from '../src/selectors/reports.js';
+import { effectiveReportRange } from '../src/selectors/report-analysis.js';
 import { makeSnapshot, makeTransaction } from './fixtures.js';
 
 describe('buildReport', () => {
@@ -58,6 +59,25 @@ describe('buildReport', () => {
     expect(table.rows).toHaveLength(1);
     expect(table.rows[0]?.[1]?.data?.category).toBe('food');
     expect(table.rows[0]?.[2]?.data?.reportAmount).toBe('20');
+  });
+
+  it('keeps future transactions out of the as-of main table and drill-down details', () => {
+    const s = makeSnapshot();
+    s.setting!.asOfDate = '2026-03-04';
+    s.transactions = [
+      makeTransaction({ id: 'visible', date: '2026-03-04', type: 'expense', category: 'food', amount: '20', assetId: s.ids.gbp }),
+      makeTransaction({ id: 'future', date: '2026-03-05', type: 'expense', category: 'shopping', amount: '80', assetId: s.ids.gbp }),
+    ];
+    const selected = { preset: 'this_month' as const, from: '2026-03-01', to: '2026-03-31' };
+    const effective = effectiveReportRange(selected, s.setting.asOfDate);
+    const table = transactionTableFromAggregates(s, [
+      { reportDate: '2026-03-04', reportAssetId: s.ids.gbp, direction: 'expense', category: 'food', amounts: ['20'], count: 1 },
+      { reportDate: '2026-03-05', reportAssetId: s.ids.gbp, direction: 'expense', category: 'shopping', amounts: ['80'], count: 1 },
+    ], { dateRange: effective });
+
+    expect(effective.to).toBe('2026-03-04');
+    expect(table.rows.map((row) => row[1]?.data?.category)).toEqual(['food']);
+    expect(transactionDetails(s, { dateRange: effective }).map((row) => row.id)).toEqual(['visible']);
   });
 
   it('reports refunds as negative spending without inflating income', () => {

@@ -8,7 +8,7 @@ import { setBaseSymbol } from '../format.js';
 import { card, th as thStyle, td as tdStyle } from '../ui/styles.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { DeviceSecurityPanel } from '../ui/DeviceSecurityPanel.js';
-import { DesktopUpdatePanel } from '../ui/DesktopUpdatePanel.js';
+import { PortableStoragePanel } from '../ui/PortableStoragePanel.js';
 import { allCategories, categoryIsHidden } from '../transactionMeta.js';
 import {
   optionalTransactionFields,
@@ -16,17 +16,18 @@ import {
   transactionFormPresetKeys,
 } from '../transactionFormPrefs.js';
 import {
+  BackupPassphraseRequiredError,
   describePreflight,
   configureExternalBackupDirectory,
   downloadBackup,
   externalBackupStatus,
   listSavedBackups,
-  openSavedBackup,
+  openVerifiedSavedBackup,
   prepareRemoteBackupForRestore,
   rehearseRestore,
   saveLedgerBackup,
-  verifySavedBackup,
   type ExternalBackupStatus,
+  type ParsedEncryptedBackup,
   type SavedBackup,
 } from '../db/backups.js';
 import {
@@ -34,13 +35,14 @@ import {
   removeRemoteBackup,
   type RemoteBackupArchive,
 } from '../remote-backup.js';
-import { loadSyncProfiles, type SyncServerProfile } from '../sync-config.js';
+import { loadSyncConnections, type SyncConnection } from '../sync-config.js';
 import {
   readSafetyState,
-  parseSafetyState,
   safetyStateFromSetting,
+  safetyStateFromStoredJson,
   safetyWarnings,
-  serializeSafetyState,
+  serializeSharedSafetyState,
+  successfulBackupSafetyPatch,
   writeSafetyState,
   type SafetyState,
 } from '../db/safety.js';
@@ -48,6 +50,7 @@ import { moduleCurrencyId, moduleCurrencyPatch, type CurrencyModule } from '../c
 import { importPortableLedger } from '../db/portable-backup.js';
 import { reconcileAttachmentStorage } from '../db/attachment-storage.js';
 import { checkAllAttachmentFiles, cleanupAllTestTransactions } from '../db/settings-maintenance.js';
+import { adoptUnlockedLedgerKeyEnvelope } from '../ledger-key-vault.js';
 
 const METHODS: [LotMethod, string][] = [
   ['fifo', 'FIFO · 先进先出'], ['lifo', 'LIFO · 后进先出'], ['average', '平均成本'], ['manual', '手动选择批次'],
@@ -57,6 +60,10 @@ const LEDGER_MODES: [LedgerMode, string][] = [
   ['accounts', '账户记账 · 收支 + 转账 + 对账'],
   ['assets', '完整资产账本 · 投资/物品资产/游戏资产'],
 ];
+type RemoteBackupRow = { profile: SyncConnection; backup: RemoteBackupArchive };
+type BackupPasswordRequest =
+  | { kind: 'local'; entry: SavedBackup; action: 'rehearse' | 'merge' | 'replace' }
+  | { kind: 'remote'; row: RemoteBackupRow; action: 'rehearse' | 'merge' | 'replace' };
 function todayDate(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -79,7 +86,7 @@ const ISSUE_LABELS: Record<string, string> = {
 };
 
 export function Settings() {
-  const { store, bump, storageBackend, dataLocation, resetLocalData } = useStore();
+  const { store, bump, storageBackend, dataLocation, firstUseMode, browserStoragePersistent, resetLocalData } = useStore();
   const snap = useSnapshot('settings');
   const [issues, setIssues] = useState<ConsistencyIssue[] | null>(null);
   const [lastCheck, setLastCheck] = useState<{ at: string; count: number } | null>(null);
@@ -88,26 +95,30 @@ export function Settings() {
   const [backupFilter, setBackupFilter] = useState<'important' | 'all' | SavedBackup['reason']>('important');
   const [backupNote, setBackupNote] = useState('');
   const [backupBusy, setBackupBusy] = useState<string | null>(null);
-  const [pendingRestore, setPendingRestore] = useState<{ entry: SavedBackup; mode: 'replace' | 'merge' } | null>(null);
-  const [remoteBackups, setRemoteBackups] = useState<{ profile: SyncServerProfile; backup: RemoteBackupArchive }[]>([]);
+  const [pendingRestore, setPendingRestore] = useState<{
+    entry: SavedBackup;
+    mode: 'replace' | 'merge';
+    opened: ParsedEncryptedBackup;
+  } | null>(null);
+  const [remoteBackups, setRemoteBackups] = useState<RemoteBackupRow[]>([]);
   const [remoteLoaded, setRemoteLoaded] = useState(false);
-  const [pendingRemoteDelete, setPendingRemoteDelete] = useState<{ profile: SyncServerProfile; backup: RemoteBackupArchive } | null>(null);
+  const [pendingRemoteDelete, setPendingRemoteDelete] = useState<{ profile: SyncConnection; backup: RemoteBackupArchive } | null>(null);
+  const [backupPasswordRequest, setBackupPasswordRequest] = useState<BackupPasswordRequest | null>(null);
+  const [backupPassphrase, setBackupPassphrase] = useState('');
   const [externalStatus, setExternalStatus] = useState<ExternalBackupStatus>({ kind: 'none', configured: false, label: '检测中…' });
   const [storageEstimate, setStorageEstimate] = useState<{ usage: number; quota: number } | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [safetyState, setSafetyState] = useState(readSafetyState);
+  const storedSafetyStateJson = snap?.setting?.dataSafetyStateJson;
   useEffect(() => {
     void listSavedBackups().then(setBackups);
     void externalBackupStatus().then(setExternalStatus).catch((error) => setExternalStatus({ kind: 'none', configured: false, label: error instanceof Error ? error.message : String(error) }));
     void navigator.storage?.estimate().then((estimate) => setStorageEstimate({ usage: estimate.usage ?? 0, quota: estimate.quota ?? 0 }));
   }, []);
   useEffect(() => {
-    setSafetyState({
-      ...readSafetyState(),
-      ...parseSafetyState(snap?.setting?.dataSafetyStateJson),
-    });
-  }, [snap?.setting?.dataSafetyStateJson]);
+    setSafetyState(safetyStateFromStoredJson(storedSafetyStateJson));
+  }, [storedSafetyStateJson]);
   if (!snap) return null;
   const readySnap = snap;
 
@@ -140,11 +151,14 @@ export function Settings() {
   }
 
   async function saveSafetyState(patch: Partial<SafetyState>) {
-    const next = { ...safetyStateFromSetting(setting), ...safetyState, ...patch };
-    await saveSetting(
-      { dataSafetyStateJson: serializeSafetyState(next) },
-      { label: '更新数据安全状态', undoable: false },
-    );
+    const current = { ...safetyStateFromSetting(setting), ...safetyState };
+    const next = { ...current, ...patch };
+    if (serializeSharedSafetyState(current) !== serializeSharedSafetyState(next)) {
+      await saveSetting(
+        { dataSafetyStateJson: serializeSharedSafetyState(next) },
+        { label: '更新数据安全状态', undoable: false },
+      );
+    }
     setSafetyState(writeSafetyState(next));
     return next;
   }
@@ -192,7 +206,7 @@ export function Settings() {
     setBackupBusy('remote-list');
     try {
       const ledgerId = await store.getLedgerId();
-      const profiles = loadSyncProfiles().filter((profile) =>
+      const profiles = loadSyncConnections().filter((profile) =>
         profile.enabled && profile.serverId && profile.ledgerId === ledgerId);
       const results = await Promise.allSettled(profiles.map(async (profile) => ({
         profile,
@@ -217,15 +231,16 @@ export function Settings() {
     }
   }
   async function prepareRemoteRestore(
-    row: { profile: SyncServerProfile; backup: RemoteBackupArchive },
+    row: RemoteBackupRow,
     action: 'rehearse' | 'merge' | 'replace',
+    passphrase?: string,
   ) {
     const busyId = `remote-${row.profile.id}-${row.backup.archiveId}`;
     setBackupBusy(busyId);
     try {
-      const entry = await prepareRemoteBackupForRestore(row.profile, row.backup);
+      const { entry, opened } = await prepareRemoteBackupForRestore(row.profile, row.backup, passphrase);
       if (action === 'rehearse') {
-        const result = await rehearseRestore((await openSavedBackup(entry)).ledger);
+        const result = await rehearseRestore(opened.payload.ledger);
         await saveSafetyState({
           lastRehearsalAt: new Date().toISOString(),
           lastRehearsalOk: result.ok,
@@ -236,13 +251,19 @@ export function Settings() {
           : `服务器备份恢复演练未通过：${result.error ?? result.consistencyIssues.map((issue) => issue.detail).join('；')}`);
         return;
       }
-      const rehearsal = await rehearseRestore((await openSavedBackup(entry)).ledger);
+      const rehearsal = await rehearseRestore(opened.payload.ledger);
       if (!rehearsal.ok) {
         throw new Error(rehearsal.error ?? rehearsal.consistencyIssues.map((issue) => issue.detail).join('；'));
       }
-      setPendingRestore({ entry, mode: action });
+      setPendingRestore({ entry, mode: action, opened });
     } catch (error) {
+      if (error instanceof BackupPassphraseRequiredError) {
+        setBackupPassphrase('');
+        setBackupPasswordRequest({ kind: 'remote', row, action });
+        return;
+      }
       setBackupNote(`服务器备份校验失败：${error instanceof Error ? error.message : String(error)}`);
+      if (passphrase) throw error;
     } finally {
       setBackupBusy(null);
     }
@@ -269,7 +290,7 @@ export function Settings() {
     try {
       const entry = await saveLedgerBackup(store, 'manual');
       setBackupNote(`已创建：${entry.label} · ${describePreflight(entry.preflight)}${entry.externalSaved ? ` · 已写入 ${entry.externalPath}` : ` · 外部副本未写入：${entry.externalError}`}`);
-      if (entry.externalSaved) await saveSafetyState({ lastExternalBackupAt: entry.createdAt, lastBackupError: undefined, lastBackupErrorAt: undefined });
+      await saveSafetyState(successfulBackupSafetyPatch(entry));
       await refreshBackups();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -279,37 +300,67 @@ export function Settings() {
       setBackupBusy(null);
     }
   }
-  async function rehearse(entry: SavedBackup) {
+  async function shareOrDownloadBackup(entry: SavedBackup) {
+    const busyId = `download-${entry.id}`;
+    setBackupBusy(busyId);
+    try {
+      const result = await downloadBackup(entry);
+      if (result === 'shared') {
+        setBackupNote('已打开系统分享面板，请选择保存位置或接收应用。');
+      } else if (result === 'downloaded') {
+        setBackupNote(storageBackend === 'native-sqlite'
+          ? '已保存独立备份副本。请将其保存在另一块可信介质或安全位置。'
+          : '已开始下载加密备份文件。');
+      } else {
+        setBackupNote('已取消分享 / 下载，原有本机备份未受影响。');
+      }
+    } catch (error) {
+      setBackupNote(`分享 / 下载失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setBackupBusy(null);
+    }
+  }
+  async function rehearse(entry: SavedBackup, passphrase?: string) {
     setBackupBusy(entry.id);
     try {
-      const result = await rehearseRestore((await openSavedBackup(entry)).ledger);
+      const opened = await openVerifiedSavedBackup(entry, passphrase);
+      const result = await rehearseRestore(opened.payload.ledger);
       await saveSafetyState({ lastRehearsalAt: new Date().toISOString(), lastRehearsalOk: result.ok, lastRehearsalLabel: entry.label });
       setBackupNote(result.ok
         ? `恢复演练通过：${describePreflight(result.preflight)}`
         : `恢复演练未通过：${result.error ?? result.consistencyIssues.map((i) => i.detail).join('；')}`);
     } catch (error) {
+      if (error instanceof BackupPassphraseRequiredError) {
+        setBackupPassphrase('');
+        setBackupPasswordRequest({ kind: 'local', entry, action: 'rehearse' });
+        return;
+      }
       setBackupNote(`恢复演练失败：${error instanceof Error ? error.message : String(error)}`);
+      if (passphrase) throw error;
     } finally {
       setBackupBusy(null);
     }
   }
-  async function restore(entry: SavedBackup, mode: 'replace' | 'merge') {
+  async function restore(entry: SavedBackup, mode: 'replace' | 'merge', passphrase?: string) {
     setBackupBusy(entry.id);
     try {
-      if (!(await verifySavedBackup(entry))) {
-        setBackupNote('备份校验和不一致或当前密钥未解锁，已停止恢复。');
-        return;
-      }
-      const rehearsal = await rehearseRestore((await openSavedBackup(entry)).ledger);
+      const opened = await openVerifiedSavedBackup(entry, passphrase);
+      const rehearsal = await rehearseRestore(opened.payload.ledger);
       if (!rehearsal.ok) {
         setBackupNote(`恢复演练未通过，已停止导入：${rehearsal.error ?? rehearsal.consistencyIssues.map((i) => i.detail).join('；')}`);
         await saveSafetyState({ lastRehearsalAt: new Date().toISOString(), lastRehearsalOk: false, lastRehearsalLabel: entry.label });
         return;
       }
       await saveSafetyState({ lastRehearsalAt: new Date().toISOString(), lastRehearsalOk: true, lastRehearsalLabel: entry.label });
-      setPendingRestore({ entry, mode });
+      setPendingRestore({ entry, mode, opened });
     } catch (error) {
+      if (error instanceof BackupPassphraseRequiredError) {
+        setBackupPassphrase('');
+        setBackupPasswordRequest({ kind: 'local', entry, action: mode });
+        return;
+      }
       setBackupNote(`备份恢复检查失败：${error instanceof Error ? error.message : String(error)}`);
+      if (passphrase) throw error;
     } finally {
       setBackupBusy(null);
     }
@@ -319,7 +370,7 @@ export function Settings() {
     try {
       const status = await configureExternalBackupDirectory();
       setExternalStatus(status);
-      setBackupNote(status.kind === 'desktop' ? `原生备份目录：${status.label}` : `已选择外部备份目录：${status.label}`);
+      setBackupNote(`已选择外部备份目录：${status.label}`);
     } catch (error) {
       setBackupNote(`外部备份目录设置失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -333,7 +384,11 @@ export function Settings() {
       const next = [...await checkConsistency(store), ...await checkAttachmentFiles()];
       setIssues(next);
       setLastCheck({ at: new Date().toISOString(), count: next.length });
-      await saveSafetyState({ lastCheckAt: new Date().toISOString(), lastCheckCount: next.length });
+      await saveSafetyState({
+        ...successfulBackupSafetyPatch(entry),
+        lastCheckAt: new Date().toISOString(),
+        lastCheckCount: next.length,
+      });
       setBackupNote(`已完成安全检查：${entry.label} · 自检${next.length === 0 ? '通过' : `发现 ${next.length} 个问题`}`);
       await refreshBackups();
     } catch (error) {
@@ -348,25 +403,28 @@ export function Settings() {
   async function confirmRestore() {
     const pending = pendingRestore;
     if (!pending) return;
-    const { entry, mode } = pending;
+    const { entry, mode, opened } = pending;
     setBackupBusy(entry.id);
+    let databaseCommitted = false;
+    let requiresDeviceKey = false;
+    let deviceKeyAdopted = false;
     try {
-      await saveLedgerBackup(store, 'pre-import', '从备份恢复前');
-      const payload = await openSavedBackup(entry);
-      const batch = await store.createAuditBatch({
-        id: newId(),
-        type: 'import',
-        label: mode === 'replace' ? `精确恢复：${entry.label}` : `合并导入：${entry.label}`,
-        summary: mode === 'replace' ? '用备份替换当前活动账本' : '将备份合并到当前账本',
+      const protection = await saveLedgerBackup(store, 'pre-import', '从备份恢复前');
+      setSafetyState(writeSafetyState(successfulBackupSafetyPatch(protection)));
+      const payload = opened.payload;
+      const restoresDevice = mode === 'replace' && payload.kind === 'device' && payload.deviceState;
+      requiresDeviceKey = Boolean(restoresDevice);
+      const result = await importPortableLedger(store, payload.ledger, mode, {
+        deviceState: restoresDevice ? payload.deviceState : undefined,
+        onDatabaseCommitted: () => {
+          databaseCommitted = true;
+          if (restoresDevice) {
+            adoptUnlockedLedgerKeyEnvelope(opened.container.keyEnvelope, opened.session, true);
+            deviceKeyAdopted = true;
+          }
+        },
       });
-      const result = await store.withAuditContext(
-        { batchId: batch.id, source: 'import' },
-        (store) => importPortableLedger(store, payload.ledger, mode, {
-          deviceState: mode === 'replace' && payload.kind === 'device' ? payload.deviceState : undefined,
-        }),
-      );
       const removed = 'removed' in result ? Number(result.removed) : 0;
-      await store.finishAuditBatch(batch.id, { entityCount: result.entities + removed });
       setBackupNote(mode === 'replace'
         ? `精确恢复完成：恢复 ${result.entities} 条，移除 ${removed} 条备份外数据。`
         : `合并导入完成：处理 ${result.entities} 条数据。`);
@@ -374,11 +432,33 @@ export function Settings() {
       bump();
       setPendingRestore(null);
     } catch (error) {
-      setBackupNote(`恢复失败：${error instanceof Error ? error.message : String(error)}`);
+      if (databaseCommitted) {
+        const nextStep = requiresDeviceKey && !deviceKeyAdopted
+          ? '备份账本密钥未能持久化，请停止继续记账，并使用刚创建的“从备份恢复前”保护归档恢复原账本。'
+          : '请勿重复导入；完全退出后重新打开，应用会继续处理已提交的附件暂存。';
+        setBackupNote(`账本数据已经提交，但恢复收尾未完成：${error instanceof Error ? error.message : String(error)}。${nextStep}`);
+        setPendingRestore(null);
+        bump();
+        return;
+      }
+      setBackupNote(`恢复失败，当前账本保持不变：${error instanceof Error ? error.message : String(error)}`);
       throw error;
     } finally {
       setBackupBusy(null);
     }
+  }
+  async function submitBackupPassphrase() {
+    const request = backupPasswordRequest;
+    if (!request) return;
+    if (backupPassphrase.length < 8) throw new Error('备份密码至少需要 8 个字符');
+    if (request.kind === 'local') {
+      if (request.action === 'rehearse') await rehearse(request.entry, backupPassphrase);
+      else await restore(request.entry, request.action, backupPassphrase);
+    } else {
+      await prepareRemoteRestore(request.row, request.action, backupPassphrase);
+    }
+    setBackupPasswordRequest(null);
+    setBackupPassphrase('');
   }
   async function resetData() {
     await resetLocalData();
@@ -386,7 +466,8 @@ export function Settings() {
   async function cleanupTestTransactions() {
     setBackupBusy('cleanup-test');
     try {
-      await saveLedgerBackup(store, 'manual', '清理测试流水前');
+      const protection = await saveLedgerBackup(store, 'manual', '清理测试流水前');
+      setSafetyState(writeSafetyState(successfulBackupSafetyPatch(protection)));
       const cleaned = await cleanupAllTestTransactions(store);
       await reconcileAttachmentStorage(store);
       setBackupNote(`已作废 ${cleaned.transactions} 条测试流水、移除 ${cleaned.attachments} 个附件，并保留清理前备份。`);
@@ -416,6 +497,7 @@ export function Settings() {
   const latestBackup = backups[0];
   const latestAuto = backups.find((b) => b.reason === 'auto');
   const warnings = safetyWarnings(backups, safetyState);
+  const hasIndependentBackup = backups.some((backup) => backup.externalSaved) || Boolean(safetyState.lastExternalBackupAt);
   const usesAccounts = (setting?.ledgerMode ?? 'spending') !== 'spending';
   const formFields = new Set(optionalTransactionFields(setting, usesAccounts));
   const formFieldOptions = transactionFormFieldOptions(usesAccounts);
@@ -561,18 +643,13 @@ export function Settings() {
 
       <DeviceSecurityPanel />
 
-      <DesktopUpdatePanel
-        beforeInstall={async (label) => {
-          await saveLedgerBackup(store, 'manual', label, 'device');
-          await refreshBackups();
-        }}
-      />
+      <PortableStoragePanel />
 
       <div style={card}>
         <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 15, fontWeight: 800 }}>备份与恢复</div>
-            <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4 }}>自动备份按小时、日、周分层保留；手动和导入前备份固定保留。桌面端同时写入独立目录。</div>
+            <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4 }}>自动备份按小时、日、周分层保留；手动和导入前备份固定保留。桌面端写入便携目录 data/backups，该目录随主数据一起移动，不属于独立副本。</div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <select aria-label="备份来源筛选" className="zc-select" value={backupFilter} onChange={(e) => setBackupFilter(e.target.value as typeof backupFilter)} style={{ width: 120 }}>
@@ -582,7 +659,7 @@ export function Settings() {
               <option value="manual">手动</option>
               <option value="pre-import">导入前</option>
             </select>
-            <button onClick={chooseExternalDirectory} disabled={backupBusy !== null} style={outline}>{externalStatus.kind === 'desktop' ? '查看备份目录' : externalStatus.configured ? '更换外部目录' : '选择外部目录'}</button>
+            {externalStatus.kind !== 'portable' && <button onClick={chooseExternalDirectory} disabled={backupBusy !== null} style={outline}>{externalStatus.configured ? '更换外部目录' : '选择外部目录'}</button>}
             <button onClick={manualBackup} disabled={backupBusy !== null} style={primary}>创建手动备份</button>
           </div>
         </div>
@@ -597,12 +674,29 @@ export function Settings() {
             </div>
           </div>
         )}
+        {storageBackend !== 'native-sqlite' && firstUseMode === 'local' && (
+          <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--surface-2)', marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 900, color: hasIndependentBackup ? 'var(--positive)' : 'var(--negative)' }}>浏览器纯本地账本</div>
+            <div style={{ marginTop: 5, fontSize: 12, color: 'var(--fg-muted)', lineHeight: 1.65 }}>
+              数据仅属于 Origin <code>{globalThis.location?.origin ?? '当前网站'}</code>；清理网站数据会删除账本，切换浏览器或 Origin 等同新设备。持久存储：{browserStoragePersistent ? '已授权' : '未确认'}。
+              {!hasIndependentBackup && ' 请先使用下方“分享 / 下载”把一份加密 .zcbak 保存到浏览器外；完成前此安全提醒不会消失。'}
+            </div>
+          </div>
+        )}
+        {storageBackend !== 'native-sqlite' && firstUseMode === 'server' && !browserStoragePersistent && (
+          <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--surface-2)', marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 900, color: 'var(--accent)' }}>非持久本地缓存</div>
+            <div style={{ marginTop: 5, fontSize: 12, color: 'var(--fg-muted)', lineHeight: 1.65 }}>
+              浏览器未保证保留当前 Origin 的 IndexedDB；服务器端加密副本是主要恢复来源。自动增量同步已默认开启，请保持至少一台服务器可用。
+            </div>
+          </div>
+        )}
         <div className="zc-settings-health-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10, marginBottom: 12 }}>
           <HealthTile label="最近备份" value={latestBackup ? new Date(latestBackup.createdAt).toLocaleString() : '暂无'} tone={latestBackup ? 'var(--positive)' : 'var(--negative)'} />
           <HealthTile label="自动备份" value={latestAuto ? new Date(latestAuto.createdAt).toLocaleString() : '暂无'} tone={latestAuto ? 'var(--positive)' : 'var(--fg-subtle)'} />
           <HealthTile label="最近演练" value={safetyState.lastRehearsalAt ? `${safetyState.lastRehearsalOk ? '通过' : '未通过'} · ${safetyState.lastRehearsalLabel ?? ''}` : '未运行'} tone={safetyState.lastRehearsalOk ? 'var(--positive)' : safetyState.lastRehearsalAt ? 'var(--negative)' : 'var(--fg-subtle)'} />
           <HealthTile label="备份数量" value={`${backups.length} 份`} tone={backups.length > 0 ? 'var(--positive)' : 'var(--fg-subtle)'} />
-          <HealthTile label="独立备份" value={externalStatus.label} tone={backups.some((backup) => backup.externalSaved) ? 'var(--positive)' : 'var(--negative)'} />
+          <HealthTile label="独立副本最近成功" value={hasIndependentBackup ? (safetyState.lastExternalBackupAt ? new Date(safetyState.lastExternalBackupAt).toLocaleString() : '本次已写入') : '暂无'} tone={hasIndependentBackup ? 'var(--positive)' : 'var(--negative)'} />
           <HealthTile
             label={storageBackend === 'native-sqlite' ? '原生存储' : '浏览器存储'}
             value={storageBackend === 'native-sqlite' ? 'ledger.sqlite + 文件' : storageEstimate?.quota ? `${(storageEstimate.usage / 1024 / 1024).toFixed(1)} / ${(storageEstimate.quota / 1024 / 1024).toFixed(0)} MB` : '不可用'}
@@ -610,7 +704,8 @@ export function Settings() {
           />
         </div>
         <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginBottom: 10, overflowWrap: 'anywhere' }}>主数据位置：{dataLocation}</div>
-        {backupNote && <div style={{ fontSize: 12, color: backupNote.includes('未通过') ? 'var(--negative)' : 'var(--positive)', fontWeight: 700, marginBottom: 10 }}>{backupNote}</div>}
+        {externalStatus.kind === 'portable' && <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginBottom: 10, overflowWrap: 'anywhere' }}>便携本地备份：{externalStatus.label}。请启用同步服务器备份，或用“分享 / 下载”复制到其他磁盘。</div>}
+        {backupNote && <div style={{ fontSize: 12, color: backupNote.includes('未通过') || backupNote.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 700, marginBottom: 10 }}>{backupNote}</div>}
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -625,14 +720,21 @@ export function Settings() {
                   </td>
                   <td style={tdStyle}>
                     <div>{reasonLabel(b.reason)} · {b.kind === 'device' ? '完整设备' : '可移植账本'} · {b.tier === 'pinned' ? '固定保留' : b.tier === 'hourly' ? '小时层' : b.tier === 'daily' ? '日层' : '周层'}</div>
-                    <div style={{ fontSize: 10, color: b.externalSaved ? 'var(--positive)' : 'var(--fg-subtle)', marginTop: 3 }}>{b.externalSaved ? '本机 + 独立副本' : '仅本机存储'}</div>
+                    <div style={{ fontSize: 10, color: b.externalSaved ? 'var(--positive)' : 'var(--fg-subtle)', marginTop: 3 }}>{b.externalSaved ? '创建时已写入远端 / 外部副本' : storageBackend === 'native-sqlite' ? '便携目录内本地备份；远端副本见服务器列表' : '仅本机存储'}</div>
                   </td>
                   <td style={tdStyle}>{backupSize(b)}</td>
                   <td style={{ ...tdStyle, color: b.preflight.ok ? 'var(--positive)' : 'var(--negative)' }}>{describePreflight(b.preflight)}</td>
                   <td style={tdStyle}>
                     <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                       <button onClick={() => rehearse(b)} disabled={backupBusy !== null} style={outline}>{backupBusy === b.id ? '演练中…' : '演练'}</button>
-                      <button onClick={() => void downloadBackup(b)} style={outline}>分享 / 下载</button>
+                      <button
+                        type="button"
+                        onClick={() => void shareOrDownloadBackup(b)}
+                        disabled={backupBusy !== null}
+                        style={outline}
+                      >
+                        {backupBusy === `download-${b.id}` ? '保存中…' : storageBackend === 'native-sqlite' ? '另存为…' : '分享 / 下载'}
+                      </button>
                       <button onClick={() => restore(b, 'merge')} disabled={backupBusy !== null} style={outline}>合并</button>
                       <button onClick={() => restore(b, 'replace')} disabled={backupBusy !== null} style={{ ...outline, border: '1px solid var(--accent)', color: 'var(--accent)' }}>精确恢复</button>
                     </div>
@@ -776,6 +878,30 @@ export function Settings() {
           <button onClick={() => setResetOpen(true)} style={{ ...outline, border: '1px solid var(--negative)', color: 'var(--negative)' }}>重置本机账本</button>
         </div>
       </div>
+      {backupPasswordRequest && (
+        <ConfirmDialog
+          title="解锁旧备份"
+          confirmLabel="解锁并继续"
+          cancelLabel="取消"
+          busy={backupBusy !== null}
+          onCancel={() => { setBackupPasswordRequest(null); setBackupPassphrase(''); }}
+          onConfirm={submitBackupPassphrase}
+        >
+          <div>
+            这份备份使用的密钥代次与当前会话不同。请输入创建该备份时使用的账本加密密码；这里只解锁归档，不会修改当前账本密码。
+          </div>
+          <input
+            autoFocus
+            aria-label="旧备份账本加密密码"
+            className="zc-input"
+            type="password"
+            autoComplete="off"
+            value={backupPassphrase}
+            onChange={(event) => setBackupPassphrase(event.target.value)}
+            style={{ marginTop: 12 }}
+          />
+        </ConfirmDialog>
+      )}
       {pendingRestore && (
         <ConfirmDialog
           title={pendingRestore.mode === 'replace' ? '精确恢复账本' : '合并导入备份'}
@@ -826,7 +952,10 @@ export function Settings() {
           onCancel={() => setResetOpen(false)}
           onConfirm={resetData}
         >
-          重置会关闭当前数据库，并清空本机账本、附件、表单草稿和浏览器内备份。重新打开后需要再次设置本机数据密码，并从“空账本 / 导入备份 / 体验演示”中选择；外部目录或服务器副本不受影响。
+          {storageBackend === 'native-sqlite'
+            ? '重置会关闭当前数据库，并清空本机账本、附件、表单草稿、账本密钥、Stronghold 凭据和同步配置。便携 data/backups 中的旧归档会保留，恢复时需要创建归档时的原密码；服务器副本不受影响。'
+            : '重置会关闭当前数据库，并清空本机账本、附件、表单草稿、浏览器内备份、账本密钥和同步配置；外部目录或服务器副本不受影响。'}
+          重新打开后需要再次设置本机数据密码，并从“空账本 / 导入备份 / 体验演示”中选择。
         </ConfirmDialog>
       )}
     </div>

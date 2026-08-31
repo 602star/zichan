@@ -3,6 +3,7 @@ import { randomBytes, randomInt } from 'node:crypto';
 import { NodeSqliteDriver } from '@zichan/db/node';
 
 export type RegistrationMode = 'open' | 'invite' | 'closed';
+export type AccountRole = 'admin' | 'member';
 export type ServerLogLevel = 'info' | 'warn' | 'error';
 export type JsonRecord = Record<string, unknown>;
 
@@ -80,6 +81,8 @@ export interface ServerLog {
 }
 
 export interface ServerStatus {
+  claimed: boolean;
+  ownerUsername?: string;
   registrationMode: RegistrationMode;
   userCount: number;
   disabledUserCount: number;
@@ -88,6 +91,7 @@ export interface ServerStatus {
   commitBytes: number;
   activeSessionCount: number;
   journalMode: string;
+  tempStore: string;
   schemaVersion: number;
 }
 
@@ -109,8 +113,8 @@ export class ServerStoreError extends Error {
   }
 }
 
-export const CURRENT_SERVER_SCHEMA = 5;
-export const CURRENT_SERVER_SCHEMA_NAME = 'server_opaque_pake_v5';
+export const CURRENT_SERVER_SCHEMA = 6;
+export const CURRENT_SERVER_SCHEMA_NAME = 'server_account_owner_v6';
 const DEFAULT_COMMIT_QUOTA_BYTES = 512 * 1024 * 1024;
 const LOG_RETENTION = 5_000;
 
@@ -232,12 +236,14 @@ export class SyncServerStore {
 
   private async initialize(): Promise<void> {
     await this.driver.exec(`
+PRAGMA temp_store = MEMORY;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = FULL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 PRAGMA wal_autocheckpoint = 1000;
-PRAGMA journal_size_limit = 67108864;
+PRAGMA journal_size_limit = 67108864;`);
+    await this.driver.exec(`
 CREATE TABLE IF NOT EXISTS server_schema_migrations (
   version INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -255,6 +261,11 @@ CREATE TABLE IF NOT EXISTS sync_users (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   last_login_at TEXT
+);
+CREATE TABLE IF NOT EXISTS server_ownership (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  username TEXT NOT NULL COLLATE NOCASE UNIQUE REFERENCES sync_users(username) ON DELETE RESTRICT,
+  created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sync_opaque_login_states (
   login_id TEXT PRIMARY KEY,
@@ -376,6 +387,8 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
 
   async registrationMode(): Promise<RegistrationMode> {
     await this.ready;
+    const owner = await this.driver.get<{ singleton: number }>('SELECT singleton FROM server_ownership WHERE singleton = 1');
+    if (!owner) return 'open';
     const row = await this.driver.get<{ value: string }>('SELECT value FROM server_meta WHERE key = ?', ['registration_mode']);
     return row?.value === 'invite' || row?.value === 'closed' ? row.value : 'open';
   }
@@ -406,11 +419,35 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     return row ? userFromRow(row) : undefined;
   }
 
-  async register(username: string, opaqueRegistrationRecord: string, inviteCode?: string): Promise<void> {
+  async ownerUsername(): Promise<string | undefined> {
     await this.ready;
-    await this.driver.transaction(async (driver) => {
+    const row = await this.driver.get<{ username: string }>(
+      'SELECT username FROM server_ownership WHERE singleton = 1',
+    );
+    return row?.username;
+  }
+
+  async roleForUser(username: string): Promise<AccountRole> {
+    await this.ready;
+    const owner = await this.driver.get<{ singleton: number }>(
+      'SELECT singleton FROM server_ownership WHERE username = ?',
+      [username],
+    );
+    return owner ? 'admin' : 'member';
+  }
+
+  async register(
+    username: string,
+    opaqueRegistrationRecord: string,
+    inviteCode?: string,
+  ): Promise<{ role: AccountRole }> {
+    await this.ready;
+    return this.driver.transaction(async (driver) => {
+      const existingOwner = await driver.get<{ singleton: number }>('SELECT singleton FROM server_ownership WHERE singleton = 1');
       const modeRow = await driver.get<{ value: string }>('SELECT value FROM server_meta WHERE key = ?', ['registration_mode']);
-      const mode = modeRow?.value === 'invite' || modeRow?.value === 'closed' ? modeRow.value : 'open';
+      const mode = !existingOwner
+        ? 'open'
+        : modeRow?.value === 'invite' || modeRow?.value === 'closed' ? modeRow.value : 'open';
       if (mode === 'closed') throw new ServerStoreError('REGISTRATION_CLOSED', 403, 'registration closed');
       let invite: Record<string, unknown> | undefined;
       if (mode === 'invite') {
@@ -424,7 +461,15 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
         'INSERT INTO sync_users (username, opaque_registration_record, disabled, created_at, updated_at) VALUES (?, ?, 0, ?, ?)',
         [username, opaqueRegistrationRecord, at, at],
       );
+      await driver.run(
+        'INSERT OR IGNORE INTO server_ownership (singleton, username, created_at) VALUES (1, ?, ?)',
+        [username, at],
+      );
       if (inviteCode) await driver.run('UPDATE registration_invites SET used_by = ?, used_at = ? WHERE code = ?', [username, at, inviteCode]);
+      const assignedOwner = await driver.get<{ username: string }>(
+        'SELECT username FROM server_ownership WHERE singleton = 1',
+      );
+      return { role: assignedOwner?.username === username ? 'admin' : 'member' };
     });
   }
 
@@ -619,12 +664,14 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     await this.ready;
     const rows = await this.driver.all<Record<string, unknown>>(
       `SELECT u.username, u.disabled, u.created_at, u.updated_at, u.last_login_at,
+              CASE WHEN o.username IS NULL THEN 'member' ELSE 'admin' END AS role,
               r.ledger_id, r.replica_id, COALESCE(r.head_seq, 0) AS commit_count,
               COALESCE(SUM(c.cipher_bytes), 0) AS commit_bytes,
               COALESCE(q.commit_quota_bytes, ?) AS commit_quota_bytes,
               (SELECT COUNT(*) FROM sync_sessions s
                WHERE s.username = u.username AND s.revoked_at IS NULL AND s.expires_at > ?) AS active_device_count
        FROM sync_users u
+       LEFT JOIN server_ownership o ON o.username = u.username
        LEFT JOIN sync_replicas r ON r.username = u.username
        LEFT JOIN sync_server_commits c ON c.username = u.username
        LEFT JOIN sync_user_quotas q ON q.username = u.username
@@ -636,6 +683,7 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     );
     const page = rows.slice(0, limit).map((row) => ({
       username: String(row['username']), disabled: bool(row['disabled']),
+      role: row['role'] === 'admin' ? 'admin' : 'member',
       createdAt: String(row['created_at']), updatedAt: String(row['updated_at']),
       lastLoginAt: row['last_login_at'] ?? null, ledgerId: row['ledger_id'] ?? null,
       replicaId: row['replica_id'] ?? null, commitCount: Number(row['commit_count'] ?? 0),
@@ -648,6 +696,14 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
   async setUserDisabled(username: string, disabled: boolean): Promise<SyncUser | undefined> {
     await this.ready;
     await this.driver.transaction(async (driver) => {
+      const existing = await driver.get<{ username: string }>('SELECT username FROM sync_users WHERE username = ?', [username]);
+      if (!existing) return;
+      if (disabled) {
+        const owner = await driver.get<{ username: string }>('SELECT username FROM server_ownership WHERE singleton = 1');
+        if (owner?.username === existing.username) {
+          throw new ServerStoreError('OWNER_CANNOT_BE_DISABLED', 409, 'server owner cannot be disabled');
+        }
+      }
       const at = nowIso();
       await driver.run('UPDATE sync_users SET disabled = ?, updated_at = ? WHERE username = ?', [disabled ? 1 : 0, at, username]);
       if (disabled) await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE username = ?', [at, at, username]);
@@ -939,6 +995,7 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     await this.ready;
     const row = await this.driver.get<Record<string, unknown>>(
       `SELECT
+        (SELECT username FROM server_ownership WHERE singleton = 1) AS owner_username,
         (SELECT COUNT(*) FROM sync_users) AS user_count,
         (SELECT COUNT(*) FROM sync_users WHERE disabled = 1) AS disabled_user_count,
         (SELECT COUNT(*) FROM registration_invites) AS invite_count,
@@ -948,22 +1005,33 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
       [nowIso()],
     );
     const journal = await this.driver.get<{ journal_mode: string }>('PRAGMA journal_mode');
+    const temp = await this.driver.get<{ temp_store: number }>('PRAGMA temp_store');
     return {
+      claimed: row?.['owner_username'] != null,
+      ...(row?.['owner_username'] == null ? {} : { ownerUsername: String(row['owner_username']) }),
       registrationMode: await this.registrationMode(),
       userCount: Number(row?.['user_count'] ?? 0), disabledUserCount: Number(row?.['disabled_user_count'] ?? 0),
       inviteCount: Number(row?.['invite_count'] ?? 0), commitCount: Number(row?.['commit_count'] ?? 0),
       commitBytes: Number(row?.['commit_bytes'] ?? 0), activeSessionCount: Number(row?.['active_session_count'] ?? 0),
       journalMode: String(journal?.journal_mode ?? ''),
+      tempStore: Number(temp?.temp_store) === 2 ? 'memory' : String(temp?.temp_store ?? ''),
       schemaVersion: CURRENT_SERVER_SCHEMA,
     };
   }
 
-  async verify(): Promise<{ ok: boolean; result: string; journalMode: string; schemaVersion: number }> {
+  async verify(): Promise<{ ok: boolean; result: string; journalMode: string; tempStore: string; schemaVersion: number }> {
     await this.ready;
     const check = await this.driver.get<Record<string, unknown>>('PRAGMA quick_check');
     const result = String(Object.values(check ?? {})[0] ?? 'unknown');
     const journal = await this.driver.get<{ journal_mode: string }>('PRAGMA journal_mode');
-    return { ok: result === 'ok', result, journalMode: String(journal?.journal_mode ?? ''), schemaVersion: CURRENT_SERVER_SCHEMA };
+    const temp = await this.driver.get<{ temp_store: number }>('PRAGMA temp_store');
+    return {
+      ok: result === 'ok',
+      result,
+      journalMode: String(journal?.journal_mode ?? ''),
+      tempStore: Number(temp?.temp_store) === 2 ? 'memory' : String(temp?.temp_store ?? ''),
+      schemaVersion: CURRENT_SERVER_SCHEMA,
+    };
   }
 
   async checkpoint(): Promise<void> {

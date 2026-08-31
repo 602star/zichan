@@ -104,6 +104,33 @@ describe('buildDashboard', () => {
     expect(vm.activity.find((row) => row.desc === '精确大额')?.amt).toBe('9007199254740992.01');
   });
 
+  it('uses the real action date rather than the report as-of date for DCA reminders', () => {
+    const s = makeSnapshot();
+    s.setting!.asOfDate = '2020-01-01';
+    s.dcaPlans = [{
+      ...s.assets[0]!,
+      id: 'dca-reminder',
+      name: '每月定投',
+      targetAssetId: s.ids.btc,
+      baseCurrencyAssetId: s.ids.gbp,
+      anchorDate: '2026-03-10',
+      anchorMode: 'calendar_day',
+      timezone: 'Asia/Shanghai',
+      frequency: 'monthly',
+      plannedAmount: '100',
+      reminderDaysBefore: 3,
+      status: 'active',
+    }];
+
+    const result = buildDashboard(s, undefined, undefined, '2026-03-08');
+    expect(result.dcaReminders[0]).toMatchObject({
+      id: 'dca-reminder',
+      nextDate: '2026-03-10',
+      daysLeft: 2,
+      state: 'due',
+    });
+  });
+
   it('normalizes module-native amounts into the global report currency', () => {
     const s = makeSnapshot();
     const usd = { ...s.assets[0]!, id: 'asset-usd', code: 'USD', name: '美元', symbol: '$' };

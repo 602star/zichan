@@ -1,10 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useDashboardTransactionReadModel } from '../db/dashboard-read-model.js';
 import { useSnapshot } from '../db/snapshot.js';
 import { buildDashboard } from '../selectors/dashboard.js';
 import { money, signedMoney, pct } from '../format.js';
 import { card, cardTight, amountColor } from '../ui/styles.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue } from '../ui/DateRangeBar.js';
+import { AddConversionModal } from './AddConversionModal.js';
+import { listSavedBackups, type SavedBackup } from '../db/backups.js';
+import { readSafetyState, type SafetyState } from '../db/safety.js';
+import { loadSyncConnections, SYNC_CONFIG_CHANGED_EVENT, type SyncConnection } from '../sync-config.js';
+import { SYNC_LIFECYCLE_RESULT_EVENT, type LifecycleSyncResult } from '../background-sync.js';
+import { buildTaskCenter, type TaskCenterItem } from '../selectors/task-center.js';
 
 function fmtDate(d: string) {
   return d.slice(5); // MM-DD
@@ -13,11 +19,64 @@ function fmtDate(d: string) {
 export function Dashboard() {
   const snap = useSnapshot('dashboard');
   const [dateRange, setDateRange] = useState<DateRangeValue>(() => dateRangeValue('this_month'));
+  const [dcaPlanToRecord, setDcaPlanToRecord] = useState<string | null>(null);
+  const today = useMemo(() => new Date().toLocaleDateString('en-CA'), []);
+  const [backups, setBackups] = useState<SavedBackup[]>([]);
+  const [safetyState, setSafetyState] = useState<SafetyState>(readSafetyState);
+  const [syncProfiles, setSyncProfiles] = useState<SyncConnection[]>(loadSyncConnections);
+  const [lifecycleErrors, setLifecycleErrors] = useState<string[]>([]);
   const transactionReadModel = useDashboardTransactionReadModel(dateRange);
   const vm = useMemo(
-    () => (snap && transactionReadModel ? buildDashboard(snap, dateRange, transactionReadModel) : null),
-    [dateRange, snap, transactionReadModel],
+    () => (snap && transactionReadModel ? buildDashboard(snap, dateRange, transactionReadModel, today) : null),
+    [dateRange, snap, today, transactionReadModel],
   );
+  const tasks = useMemo(() => snap ? buildTaskCenter({
+    snap,
+    today,
+    backups,
+    safety: safetyState,
+    syncProfiles,
+    lifecycleErrors,
+  }) : [], [backups, lifecycleErrors, safetyState, snap, syncProfiles, today]);
+
+  useEffect(() => {
+    let active = true;
+    const refreshSafety = () => {
+      setSafetyState(readSafetyState());
+      void listSavedBackups().then((rows) => { if (active) setBackups(rows); }).catch(() => undefined);
+    };
+    const refreshSync = () => setSyncProfiles(loadSyncConnections());
+    const onLifecycle = (event: Event) => {
+      const result = (event as CustomEvent<LifecycleSyncResult>).detail;
+      setLifecycleErrors(result.errors);
+      refreshSync();
+    };
+    refreshSafety();
+    window.addEventListener('zichan:safety-updated', refreshSafety);
+    window.addEventListener(SYNC_CONFIG_CHANGED_EVENT, refreshSync);
+    window.addEventListener(SYNC_LIFECYCLE_RESULT_EVENT, onLifecycle);
+    return () => {
+      active = false;
+      window.removeEventListener('zichan:safety-updated', refreshSafety);
+      window.removeEventListener(SYNC_CONFIG_CHANGED_EVENT, refreshSync);
+      window.removeEventListener(SYNC_LIFECYCLE_RESULT_EVENT, onLifecycle);
+    };
+  }, []);
+
+  function openTask(task: TaskCenterItem) {
+    if (task.action === 'record_dca' && task.dcaPlanId) {
+      setDcaPlanToRecord(task.dcaPlanId);
+      return;
+    }
+    if (task.action === 'open_bills') {
+      try { sessionStorage.setItem('zichan.transactions.tab', 'bills'); } catch { /* hardened browser */ }
+    }
+    const screen = task.action === 'open_bills' ? 'transactions'
+      : task.action === 'open_fixed' ? 'fixed'
+        : task.action === 'open_settings' ? 'settings'
+          : 'sync';
+    window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen } }));
+  }
   if (!vm) return null;
   const partial = (metric: string) => vm.incompleteMetrics.includes(metric);
   const partialText = (metric: string, value: string) => partial(metric) ? `${value}（已知部分）` : value;
@@ -78,30 +137,33 @@ export function Dashboard() {
         ))}
       </div>
 
-      {vm.dcaReminders.length > 0 && (
-        <div style={card}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
-            <div style={{ fontSize: 15, fontWeight: 800 }}>定投提醒</div>
-            <div style={{ fontSize: 12, color: 'var(--fg-subtle)', fontWeight: 600 }}>按计划锚点与未完成期次推算</div>
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
+          <div style={{ fontSize: 15, fontWeight: 800 }}>任务中心</div>
+          <div style={{ fontSize: 12, color: 'var(--fg-subtle)', fontWeight: 600 }}>
+            账单 · 定投 · 耗材 · 备份 · 同步
           </div>
-          <div className="zc-dashboard-allocation-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
-            {vm.dcaReminders.map((r) => {
-              const color = r.state === 'overdue' || r.state === 'due' ? 'var(--negative)' : r.state === 'manual' ? 'var(--fg-muted)' : 'var(--positive)';
-              const dueText = r.state === 'manual' ? '手动执行' : r.daysLeft < 0 ? `逾期 ${Math.abs(r.daysLeft)} 天` : r.daysLeft === 0 ? '今天' : `${r.daysLeft} 天后`;
+        </div>
+        {tasks.length === 0 ? (
+          <div style={{ color: 'var(--positive)', fontSize: 13, fontWeight: 750 }}>当前没有需要处理的任务</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {tasks.map((task) => {
+              const color = task.severity === 'danger' ? 'var(--negative)' : task.severity === 'warning' ? 'var(--warning)' : 'var(--accent)';
               return (
-                <div key={r.id} style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 12, padding: 14, minWidth: 0 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
-                    <div style={{ fontSize: 13, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</div>
-                    <div style={{ fontSize: 12, fontWeight: 800, color, whiteSpace: 'nowrap' }}>{dueText}</div>
+                <div key={task.id} style={{ display: 'grid', gridTemplateColumns: '10px minmax(0, 1fr) auto', gap: 10, alignItems: 'center', border: '1px solid var(--border)', background: 'var(--surface-2)', padding: '10px 12px' }}>
+                  <span aria-hidden style={{ width: 8, height: 8, borderRadius: 99, background: color }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 850 }}>{task.title}</div>
+                    <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 3, overflowWrap: 'anywhere' }}>{task.detail}</div>
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--fg-muted)', fontWeight: 600 }}>{r.amount} · {r.target}</div>
-                  <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 4 }}>{r.nextDate}{r.path ? ` · ${r.path}` : ''}</div>
+                  <button type="button" onClick={() => openTask(task)} style={{ border: '1px solid var(--border)', background: 'var(--surface)', color, padding: '6px 10px', fontSize: 12, fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap' }}>{task.actionLabel}</button>
                 </div>
               );
             })}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="zc-dashboard-detail-grid" style={{ display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: 18 }}>
         <div style={card}>
@@ -147,6 +209,12 @@ export function Dashboard() {
           </div>
         </div>
       </div>
+      {dcaPlanToRecord && (
+        <AddConversionModal
+          preset={{ dcaPlanId: dcaPlanToRecord }}
+          onClose={() => setDcaPlanToRecord(null)}
+        />
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   D,
   conversionStepAmounts,
@@ -24,6 +24,7 @@ import { moduleCurrencyId } from '../currencyPreferences.js';
 import { useUndo } from '../ui/UndoToast.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { DialogShell } from '../ui/DialogShell.js';
+import { buildDcaConversionPreset } from '../dca-conversion-preset.js';
 
 type FeeSide = 'source' | 'target' | 'third';
 
@@ -159,7 +160,15 @@ interface PreparedConversion {
   steps: ConversionStep[];
 }
 
-export function AddConversionModal({ onClose, initial }: { onClose: () => void; initial?: ChainWithSteps }) {
+export function AddConversionModal({
+  onClose,
+  initial,
+  preset,
+}: {
+  onClose: () => void;
+  initial?: ChainWithSteps;
+  preset?: { dcaPlanId: string };
+}) {
   const titleId = useId();
   const { store, bump } = useStore();
   const undo = useUndo(store, bump);
@@ -179,6 +188,8 @@ export function AddConversionModal({ onClose, initial }: { onClose: () => void; 
   const [err, setErr] = useState<string | null>(null);
   const [pending, setPending] = useState<PreparedConversion | null>(null);
   const [impactText, setImpactText] = useState('');
+  const [presetNotice, setPresetNotice] = useState('');
+  const presetApplied = useRef(false);
 
   const defaultBookCurrencyId = snap
     ? moduleCurrencyId(snap.setting, 'investment', snap.assets[0]?.id ?? '')
@@ -202,6 +213,32 @@ export function AddConversionModal({ onClose, initial }: { onClose: () => void; 
   useEffect(() => {
     if (existingDcaExecution?.planId) setDcaPlanId(existingDcaExecution.planId);
   }, [existingDcaExecution?.planId]);
+
+  useEffect(() => {
+    if (!snap || initial || !preset?.dcaPlanId || presetApplied.current) return;
+    presetApplied.current = true;
+    const plan = snap.dcaPlans.find((row) => !row.isDeleted && row.id === preset.dcaPlanId);
+    if (!plan || plan.status !== 'active') {
+      setErr('定投计划不存在或已经停用');
+      return;
+    }
+    try {
+      const built = buildDcaConversionPreset(plan, snap.assets);
+      setType('dca');
+      setDcaPlanId(built.planId);
+      setTitle(built.title);
+      setBookCurrencyId(built.bookCurrencyAssetId);
+      setDate(todayDate());
+      setSteps(built.assetPathIds.slice(0, -1).map((fromAssetId, index) => ({
+        ...emptyStep(built.bookCurrencyAssetId, fromAssetId),
+        fromInput: index === 0 ? built.plannedAmount : '',
+        toAssetId: built.assetPathIds[index + 1]!,
+      })));
+      setPresetNotice(built.pathWarning ?? '已按计划预填来源金额与资产路径；请填写每一步实际到账数量后保存。');
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
+    }
+  }, [initial, preset?.dcaPlanId, snap]);
 
   const preview = useMemo(() => drafts.map((step) => {
     try {
@@ -292,12 +329,16 @@ export function AddConversionModal({ onClose, initial }: { onClose: () => void; 
 
   async function persist(prepared: PreparedConversion) {
     if (!snap) return;
-    const currentSnap = snap;
     setSaving(true);
     setErr(null);
     try {
       const label = initial ? '更新资产转换及定投记录' : '保存资产转换及定投记录';
       const result = await store.runInAuditBatch(label, async (transactionStore) => {
+        const chainExecutions = initial
+          ? await transactionStore.dcaExecutions.list({ where: { chainId: initial.chain.id } })
+          : [];
+        if (chainExecutions.length > 1) throw new Error('该转换关联了多条定投执行记录，请先运行数据自检');
+        const currentExecution = chainExecutions[0];
         const conversionResult = initial
           ? await updateConversion(transactionStore, { ...prepared, expectedVersion: initial.chain.version })
           : prepared.chain.type === 'sell'
@@ -305,11 +346,14 @@ export function AddConversionModal({ onClose, initial }: { onClose: () => void; 
             : await recordConversion(transactionStore, prepared);
         const savedChain = conversionResult.chain;
         if (prepared.chain.type === 'dca' && dcaPlanId) {
-          const plan = activePlans.find((row) => row.id === dcaPlanId);
-          if (!plan) throw new Error('关联的定投计划不存在');
-          const planExecutions = currentSnap.dcaExecutions.filter((row) => row.planId === plan.id && row.id !== existingDcaExecution?.id);
-          const occurrence = existingDcaExecution
-            ? { index: existingDcaExecution.occurrenceIndex, date: existingDcaExecution.scheduledDate }
+          const plan = await transactionStore.dcaPlans.get(dcaPlanId);
+          if (!plan || plan.isDeleted || (plan.status !== 'active' && plan.id !== currentExecution?.planId)) {
+            throw new Error('关联的定投计划不存在或已经停用');
+          }
+          const planExecutions = (await transactionStore.dcaExecutions.list({ where: { planId: plan.id } }))
+            .filter((row) => row.id !== currentExecution?.id);
+          const occurrence = currentExecution
+            ? { index: currentExecution.occurrenceIndex, date: currentExecution.scheduledDate }
             : plan.frequency === 'manual'
               ? {
                 index: Math.max(-1, ...planExecutions.map((row) => row.occurrenceIndex)) + 1,
@@ -318,10 +362,10 @@ export function AddConversionModal({ onClose, initial }: { onClose: () => void; 
               : nextUnhandledDcaOccurrence(plan, planExecutions);
           if (!occurrence) throw new Error('该定投计划没有可执行的下一期');
           await transactionStore.dcaExecutions.put({
-            id: existingDcaExecution?.id ?? newId(),
-            createdAt: existingDcaExecution?.createdAt ?? '',
-            updatedAt: existingDcaExecution?.updatedAt ?? '',
-            version: existingDcaExecution?.version ?? 1,
+            id: currentExecution?.id ?? newId(),
+            createdAt: currentExecution?.createdAt ?? '',
+            updatedAt: currentExecution?.updatedAt ?? '',
+            version: currentExecution?.version ?? 1,
             isDeleted: false,
             planId: dcaPlanId,
             occurrenceIndex: occurrence.index,
@@ -335,8 +379,8 @@ export function AddConversionModal({ onClose, initial }: { onClose: () => void; 
             totalFeeInBase: savedChain.totalFeesInBase ?? '0',
             chainId: savedChain.id,
           } as DcaExecution);
-        } else if (existingDcaExecution) {
-          await transactionStore.dcaExecutions.remove(existingDcaExecution.id, existingDcaExecution.version);
+        } else if (currentExecution) {
+          await transactionStore.dcaExecutions.remove(currentExecution.id, currentExecution.version);
         }
         return conversionResult;
       });
@@ -439,6 +483,7 @@ export function AddConversionModal({ onClose, initial }: { onClose: () => void; 
           ) : <div />}
           <Field label="时区"><input aria-label="时区" className="zc-input" value={timezone} readOnly /></Field>
         </div>
+        {presetNotice && <div style={{ color: presetNotice.includes('回退') ? 'var(--warning)' : 'var(--fg-muted)', fontSize: 12, fontWeight: 700, marginBottom: 14 }}>{presetNotice}</div>}
 
         {type === 'sell' && (
           <div style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', padding: 12, marginBottom: 14 }}>

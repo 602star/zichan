@@ -1,6 +1,20 @@
 # 0.1.0
 
-- Added encrypted local storage, streaming backups, attachment replication, and restore rehearsal.
-- Added real bank reconciliation, frozen refund reporting, persistent aggregate undo, and conflict quarantine.
-- Added system category packs, credit-card and loan accounts, plus stock, fund, bond, and precious-metal assets.
-- Added signed stable/preview desktop updates with a separately controlled rollback channel.
+- 新增首次使用模式选择：Windows 与浏览器都可选择纯本地或连接同步服务器；浏览器新建纯本地账本前必须取得持久存储授权，已有数据失去授权时进入只读恢复模式。
+- 同步全面改为账号制 OPAQUE 注册与登录。服务器默认开放注册，第一位成功完成注册的账号在同一事务中成为管理员，后续账号为成员。
+- 删除人工 Admin Token、旧 `/admin/*` 路由及 Token 管理界面；管理 API 统一为 `/api/admin/*`，复用账号会话并实时校验管理员角色。
+- 新增多服务器同步：同一账本可同时连接局域网和公网服务器并通过提交 DAG 双向桥接；每台服务器使用独立账号、密码和设备会话。
+- 同步地址改为单一规范化完整 URL，并提供“当前网站 / 本机 / 局域网 / 公网”向导及可折叠高级拆分字段；同一服务器的备用地址按 `serverId` 与 OPAQUE 公钥合并，主地址不可用时经身份复核后自动切换并记住可用地址。
+- 收紧 HTTP 私网判断：只允许 loopback、RFC1918、IPv4 link-local、IPv6 ULA 与 IPv6 link-local 字面量，普通公网域名即使以 `fc`/`fd` 开头也必须使用 HTTPS。
+- 所有凭据发送前都会先匿名核对服务器身份和公钥固定值；连接链接与二维码只携带 URL、`serverId` 和公钥指纹，不包含密码或会话秘密。
+- 自建服务器允许任意 Web Origin 以支持官方 Web 连接，但不使用认证 Cookie；OPAQUE、Bearer 会话、设备撤销、角色、持久限流和配额继续承担访问控制。
+- 服务器模式允许使用非持久浏览器缓存，默认开启自动同步，并在账本写入后触发防抖增量同步；公共服务器目录端到端加密后随账本同步，新设备仍需分别登录各服务器。
+- 当前仍处于开发期，不迁移旧同步 profile、旧会话凭据、Admin Token 或旧服务器数据库；检测到旧开发数据时明确要求重置。
+- 新增加密本地存储、流式备份、附件复制与恢复演练，以及真实银行对账、冻结退款报表、持久化聚合撤销和冲突隔离。
+- 新增系统分类包、信用卡与贷款账户，以及股票、基金、债券和贵金属资产。
+- 新增 Windows x64 完全便携 ZIP：账本、附件、凭据、WebView 状态、备份及内置同步服务器统一随 `data/` 目录移动。
+- 固定并校验内置 WebView2 Fixed Version Runtime；Windows 10 无法设置固定版 ACL 时回退系统 Evergreen。
+- 修复 Windows 扩展 `\\?\` 路径下的便携数据库初始化和内置同步服务器启动，并在报告启动成功前校验服务器就绪状态。
+- 修复便携 WebView 的 `sql.js` WebAssembly CSP；无需开放 JavaScript `unsafe-eval`，初始化诊断可选择并复制。
+- 便携备份改用 Windows 原生“另存为”创建经过校验的独立 `.zcbak` 副本，不再依赖 WebView Blob 下载或分享。
+- MSI/NSIS、桌面自动更新、签名 Secrets、GitHub 发布和长期数据库迁移基线统一推迟至 1.0。

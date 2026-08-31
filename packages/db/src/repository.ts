@@ -2004,7 +2004,7 @@ export class SqlLedgerStore implements LedgerStore {
   async runInAuditBatch<T>(
     label: string,
     fn: (store: this) => Promise<T>,
-    type: AuditBatch['type'] = 'system',
+    type: AuditBatch['type'] = 'user',
     options: {
       undoable?: boolean;
       /** Runs immediately after the outer SQLite transaction commits. */

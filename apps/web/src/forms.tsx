@@ -114,7 +114,6 @@ const FIXED_USAGE_UNITS = [
 const FIXED_ENTRY_MODES = [{ value: 'increment', label: '每次增加量' }, { value: 'meter', label: '当前累计读数' }];
 const GACC_STATUS = [{ value: 'active', label: '正常' }, { value: 'inactive', label: '停用' }, { value: 'sold', label: '出售' }, { value: 'banned', label: '封禁' }];
 const SEASON_STATUS = [{ value: 'upcoming', label: '未开始' }, { value: 'active', label: '进行中' }, { value: 'ended', label: '已结束' }];
-const PRICE_SOURCE = [{ value: 'manual', label: '手动' }, { value: 'api', label: '自动' }];
 const CATEGORY_TYPES = [{ value: 'expense', label: '支出' }, { value: 'income', label: '收入' }];
 const TX_TYPES_STANDARD = [{ value: 'expense', label: '支出' }, { value: 'income', label: '收入' }, { value: 'transfer', label: '转账' }];
 const TX_TYPES = [...TX_TYPES_STANDARD, { value: 'refund', label: '退款' }];
@@ -284,11 +283,10 @@ export function priceMarkForm(snap: Snapshot): EntityFormSpec<PriceMark> {
       { key: 'quoteAssetId', label: '计价币种', type: 'select', half: true, options: settlementOpts(snap), required: true },
       { key: 'price', label: '价格', type: 'number', half: true, required: true },
       { key: 'date', label: '日期', type: 'date', half: true, defaultValue: asOf, required: true },
-      { key: 'source', label: '来源', type: 'select', half: true, options: PRICE_SOURCE },
       { key: 'note', label: '备注', type: 'text', half: true },
     ],
-    toValues: (m) => ({ assetId: m.assetId, quoteAssetId: m.quoteAssetId, price: m.price, date: m.date, source: m.source, note: m.note ?? '' }),
-    fromValues: (v, e) => ({ ...base(e), assetId: v.assetId, quoteAssetId: v.quoteAssetId, price: v.price || '0', date: v.date, source: (v.source as PriceMark['source']) || 'manual', note: S(v.note) }) as PriceMark,
+    toValues: (m) => ({ assetId: m.assetId, quoteAssetId: m.quoteAssetId, price: m.price, date: m.date, note: m.note ?? '' }),
+    fromValues: (v, e) => ({ ...base(e), assetId: v.assetId, quoteAssetId: v.quoteAssetId, price: v.price || '0', date: v.date, source: 'manual', note: S(v.note) }) as PriceMark,
     validate: (v) => D(v.price || '0').gt(0) ? undefined : { price: '价格必须大于 0' },
   };
 }

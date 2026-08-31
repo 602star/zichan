@@ -21,8 +21,12 @@ if "%ZICHAN_CHECK_ONLY%"=="1" (
 )
 
 echo.
-echo Starting the all-in-one sync server on http://127.0.0.1:8787/
-echo Data and the admin token are stored under %%APPDATA%%\ZichanLedger\server.
+echo Starting the all-in-one sync server on http://127.0.0.1:8787/ (bind 0.0.0.0:8787)
+set "DATA_DIR=%CD%\.runtime\sync-server"
+set "HOST=0.0.0.0"
+set "REGISTRATION_MODE=open"
+echo Development data are stored under %DATA_DIR%.
+echo Registration is open; the first successfully registered account becomes the administrator.
 echo This enables LAN HTTP for private-network use. Do not expose port 8787 publicly.
 echo Press Ctrl+C to stop. Port 8787 must be free.
 echo.

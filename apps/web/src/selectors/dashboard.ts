@@ -60,6 +60,7 @@ export function buildDashboard(
   snap: Snapshot,
   selectedRange?: DateRange,
   transactionReadModel?: DashboardTransactionReadModel,
+  today = defaultAsOf(),
 ): DashboardVM {
   const asOf = snap.setting?.asOfDate ?? defaultAsOf();
   const codeOf = (id: string) => snap.assets.find((a) => a.id === id)?.code ?? id;
@@ -208,8 +209,8 @@ export function buildDashboard(
         };
       }
       const occurrence = nextUnhandledDcaOccurrence(p, snap.dcaExecutions);
-      const next = occurrence?.date ?? asOf;
-      const daysLeft = daysBetween(asOf, next);
+      const next = occurrence?.date ?? today;
+      const daysLeft = daysBetween(today, next);
       const threshold = p.reminderDaysBefore ?? 3;
       return {
         id: p.id, name: p.name, target: codeOf(p.targetAssetId),

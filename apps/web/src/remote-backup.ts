@@ -3,13 +3,15 @@ import { assertSecureSyncUrl } from '@zichan/db';
 import {
   readBackupArchiveHeader,
   type BackupArchiveHeader,
+  type BackupArchiveInput,
+  type BackupArchiveSource,
 } from './db/backup-archive.js';
 import { authenticateSyncProfile } from './sync-auth.js';
 import { runtimeCredential } from './credential-vault.js';
 import {
   buildSyncBaseUrl,
-  loadSyncProfiles,
-  type SyncServerProfile,
+  loadSyncConnections,
+  type SyncConnection,
 } from './sync-config.js';
 
 const REMOTE_CHUNK_BYTES = 4 * 1024 * 1024;
@@ -72,6 +74,24 @@ function chunkRanges(size: number): { offset: number; length: number }[] {
   return ranges;
 }
 
+function archiveSource(input: BackupArchiveInput): BackupArchiveSource {
+  if (!(input instanceof Blob)) return input;
+  return {
+    size: input.size,
+    async read(offset, length) {
+      return new Uint8Array(await input.slice(offset, offset + length).arrayBuffer());
+    },
+  };
+}
+
+async function readRange(source: BackupArchiveSource, offset: number, length: number): Promise<Uint8Array> {
+  const bytes = await source.read(offset, length);
+  if (bytes.byteLength !== length) {
+    throw new Error(`加密备份分块读取长度不一致：应为 ${length}，实际为 ${bytes.byteLength}`);
+  }
+  return bytes;
+}
+
 async function responseError(response: Response): Promise<Error> {
   try {
     const body = await response.json() as { code?: string; error?: string };
@@ -84,7 +104,7 @@ async function responseError(response: Response): Promise<Error> {
 class RemoteBackupClient {
   private readonly baseUrl: string;
 
-  constructor(private readonly profile: SyncServerProfile) {
+  constructor(private readonly profile: SyncConnection) {
     this.baseUrl = buildSyncBaseUrl(profile);
     assertSecureSyncUrl(this.baseUrl);
   }
@@ -93,7 +113,7 @@ class RemoteBackupClient {
     const token = await authenticateSyncProfile(this.profile, forceLogin);
     const headers = new Headers(init.headers);
     headers.set('Authorization', `Bearer ${token}`);
-    const response = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
+    const response = await fetch(`${this.baseUrl}${path}`, { ...init, headers, redirect: 'error' });
     if (response.status === 401 && !forceLogin) return this.request(path, init, true);
     if (!response.ok) throw await responseError(response);
     return response;
@@ -103,7 +123,8 @@ class RemoteBackupClient {
     return this.request(path, init).then((response) => response.json() as Promise<T>);
   }
 
-  async upload(header: BackupArchiveHeader, archive: Blob): Promise<RemoteBackupArchive> {
+  async upload(header: BackupArchiveHeader, input: BackupArchiveInput): Promise<RemoteBackupArchive> {
+    const archive = archiveSource(input);
     const blobId = await sha256Json({
       format: 'zichan-remote-backup',
       version: 1,
@@ -114,7 +135,7 @@ class RemoteBackupClient {
     const ranges = chunkRanges(archive.size);
     const chunks: RemoteChunk[] = [];
     for (const [index, range] of ranges.entries()) {
-      const bytes = new Uint8Array(await archive.slice(range.offset, range.offset + range.length).arrayBuffer());
+      const bytes = await readRange(archive, range.offset, range.length);
       const ciphertextSha256 = await sha256Bytes(bytes);
       chunks.push({
         index,
@@ -143,11 +164,11 @@ class RemoteBackupClient {
       for (const index of plan.missingChunks) {
         const range = ranges[index];
         if (!range) throw new Error(`同步服务器请求了无效的备份分块 ${index}`);
-        const bytes = await archive.slice(range.offset, range.offset + range.length).arrayBuffer();
+        const bytes = await readRange(archive, range.offset, range.length);
         await this.request(`/api/v3/blobs/uploads/${plan.uploadId}/chunks/${index}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/octet-stream' },
-          body: bytes,
+          body: bytes.slice().buffer as ArrayBuffer,
         });
       }
       await this.json(`/api/v3/blobs/uploads/${plan.uploadId}/complete`, {
@@ -237,49 +258,50 @@ function remoteAutoRetention(backups: RemoteBackupArchive[], now = Date.now()): 
 
 export async function saveEncryptedBackupToSyncServers(
   header: BackupArchiveHeader,
-  archive: Blob,
+  archive: BackupArchiveInput,
 ): Promise<RemoteBackupResult[]> {
-  const profiles = loadSyncProfiles().filter((profile) =>
-    profile.enabled
-    && profile.serverId
-    && profile.ledgerId === header.ledgerId
-    && profile.username.trim()
-    && runtimeCredential(profile.id)?.password);
-  return Promise.all(profiles.map(async (profile): Promise<RemoteBackupResult> => {
-    const client = new RemoteBackupClient(profile);
+  const profiles = loadSyncConnections().filter((profile) => profile.enabled);
+  const results: RemoteBackupResult[] = [];
+  for (const profile of profiles) {
     try {
+      if (!profile.serverId) throw new Error('尚未识别服务器 ID，请先在同步页测试连接');
+      if (profile.ledgerId !== header.ledgerId) throw new Error('服务器尚未绑定当前账本');
+      if (!profile.username.trim()) throw new Error('尚未填写同步用户名');
+      if (!runtimeCredential(profile.id)?.password) throw new Error('同步密码尚未解锁');
+      const client = new RemoteBackupClient(profile);
       await client.upload(header, archive);
       const backups = await client.list();
       const retained = remoteAutoRetention(backups);
       await Promise.all(backups
         .filter((backup) => backup.reason === 'auto' && !retained.has(backup.archiveId))
         .map((backup) => client.remove(backup.archiveId)));
-      return { profileId: profile.id, alias: profile.alias, saved: true, archiveId: header.archiveId };
+      results.push({ profileId: profile.id, alias: profile.alias, saved: true, archiveId: header.archiveId });
     } catch (error) {
-      return {
+      results.push({
         profileId: profile.id,
         alias: profile.alias,
         saved: false,
         archiveId: header.archiveId,
         error: error instanceof Error ? error.message : String(error),
-      };
+      });
     }
-  }));
+  }
+  return results;
 }
 
-export async function listRemoteBackups(profile: SyncServerProfile): Promise<RemoteBackupArchive[]> {
+export async function listRemoteBackups(profile: SyncConnection): Promise<RemoteBackupArchive[]> {
   return new RemoteBackupClient(profile).list();
 }
 
 export async function downloadRemoteBackup(
-  profile: SyncServerProfile,
+  profile: SyncConnection,
   backup: RemoteBackupArchive,
 ): Promise<Blob> {
   return new RemoteBackupClient(profile).download(backup);
 }
 
 export async function removeRemoteBackup(
-  profile: SyncServerProfile,
+  profile: SyncConnection,
   archiveId: string,
 ): Promise<void> {
   await new RemoteBackupClient(profile).remove(archiveId);

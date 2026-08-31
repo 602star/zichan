@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { copyTextToClipboard } from './diagnostics.js';
 
 interface ErrorState {
   error: Error | null;
@@ -26,22 +27,6 @@ export function formatAppDiagnostic(error: Error, componentStack = ''): string {
     error.stack ? `堆栈：\n${error.stack}` : '',
     componentStack ? `组件：${componentStack}` : '',
   ].filter(Boolean).join('\n');
-}
-
-async function copyDiagnostic(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  document.body.appendChild(textarea);
-  textarea.select();
-  const copied = document.execCommand('copy');
-  textarea.remove();
-  if (!copied) throw new Error('clipboard unavailable');
 }
 
 export class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorState> {
@@ -80,7 +65,7 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorSt
     const { error, componentStack } = this.state;
     if (!error) return;
     try {
-      await copyDiagnostic(formatAppDiagnostic(error, componentStack));
+      await copyTextToClipboard(formatAppDiagnostic(error, componentStack));
       this.setState({ copyStatus: 'copied' });
     } catch {
       this.setState({ copyStatus: 'failed' });

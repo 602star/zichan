@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { AddressInfo } from 'node:net';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -8,6 +8,7 @@ import * as opaque from '@serenity-kit/opaque';
 import { createSyncServer, type SyncServer } from '../src/server.js';
 import { EncryptedBlobStore } from '../src/blob-store.js';
 import { createServerBackup, restoreServerBackup, verifyServerBackup } from '../src/backup.js';
+import { SyncServerStore } from '../src/store.js';
 import { normalizeSyncUsername } from '@zichan/core';
 import { NodeSqliteDriver } from '@zichan/db/node';
 
@@ -99,14 +100,51 @@ async function accessToken(base: string, username: string, password: string, pre
 }
 
 describe('sync-server endpoints', () => {
-  it('registers, binds one ledger replica, and stores encrypted commits idempotently', async () => {
-    const health = (await (await fetch(url + '/api/health')).json()) as { ok: boolean; serverId: string; protocols: number[] };
-    expect(health.ok).toBe(true);
-    expect(health.serverId).toBeTruthy();
-    expect(health.protocols).toEqual([3]);
-    expect((await fetch(url + '/api/ready')).status).toBe(200);
+  it('atomically assigns exactly one administrator during concurrent registration', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zichan-owner-race-'));
+    const store = new SyncServerStore(join(dir, 'server.sqlite'), 'open', 'srv-owner-race');
+    try {
+      await store.ready;
+      const registrations = await Promise.all(Array.from({ length: 100 }, (_, index) =>
+        store.register(`race-user-${String(index).padStart(3, '0')}`, `opaque-record-${index}`)));
+      expect(registrations.filter((registration) => registration.role === 'admin')).toHaveLength(1);
+      const users = await store.listUsers('', 200);
+      expect(users.users).toHaveLength(100);
+      expect(users.users.filter((user) => user['role'] === 'admin')).toHaveLength(1);
+      expect(await store.ownerUsername()).toBeTruthy();
+    } finally {
+      await store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
-    expect((await registerUser(url, 'alice', 'pw')).status).toBe(200);
+  it('registers, binds one ledger replica, and stores encrypted commits idempotently', async () => {
+    const health = (await (await fetch(url + '/api/health')).json()) as {
+      ok: boolean;
+      serverId: string;
+      serverPublicKey: string;
+      claimed: boolean;
+      protocols: number[];
+      capabilities: string[];
+    };
+    expect(health.ok).toBe(true);
+    expect(health.serverId).toBe(readFileSync(join(sv.dataDir, 'server-id'), 'utf8').trim());
+    expect(health.serverPublicKey).toBeTruthy();
+    expect(health.claimed).toBe(false);
+    expect(health.protocols).toEqual([3]);
+    expect(health.capabilities).toContain('admin-session-v1');
+    const ready = await fetch(url + '/api/ready');
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toMatchObject({
+      ok: true,
+      serverId: health.serverId,
+      database: { ok: true, tempStore: 'memory' },
+    });
+
+    const registration = await registerUser(url, 'alice', 'pw');
+    expect(registration.status).toBe(200);
+    expect(await registration.json()).toMatchObject({ role: 'admin' });
+    expect(await (await fetch(url + '/api/health')).json()).toMatchObject({ claimed: true });
     expect((await registerUser(url, 'alice', 'pw')).status).toBe(409); // dup
 
     // wrong proof
@@ -125,6 +163,14 @@ describe('sync-server endpoints', () => {
     expect(replica).toMatchObject({ bound: true, ledgerId });
     expect(replica.replicaId).toBeTruthy();
     expect(replica.streamEpoch).toBeTruthy();
+    expect(await (await fetch(url + '/api/auth/me', { headers })).json()).toMatchObject({
+      username: 'alice',
+      role: 'admin',
+      disabled: false,
+      ledgerId,
+      replicaId: replica.replicaId,
+      streamEpoch: replica.streamEpoch,
+    });
 
     const commit = {
       commitId: 'commit-000000000001', ledgerId, contentHash: 'a'.repeat(64),
@@ -390,14 +436,25 @@ describe('sync-server endpoints', () => {
     }
   });
 
-  it('requires HTTPS for a proxied public client and enforces the CORS allowlist', async () => {
+  it('requires HTTPS for a proxied public client and allows credential-free CORS from any origin', async () => {
     const s = createSyncServer({
       trustedProxies: ['loopback'],
-      allowedOrigins: ['https://ledger.example.test'],
     });
     await new Promise<void>((resolve) => s.server.listen(0, resolve));
     const base = `http://localhost:${(s.server.address() as AddressInfo).port}`;
     try {
+      const preflight = await fetch(base + '/api/auth/me', {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://official-web.example.test',
+          'Access-Control-Request-Method': 'GET',
+          'Access-Control-Request-Headers': 'authorization',
+        },
+      });
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get('access-control-allow-origin')).toBe('*');
+      expect(preflight.headers.get('access-control-allow-headers')).toBe('Content-Type,Authorization');
+      expect(preflight.headers.has('access-control-allow-credentials')).toBe(false);
       const forwarded = { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.8' };
       const startLoginRequest = opaque.client.startLogin({ password: 'public-test' }).startLoginRequest;
       expect((await fetch(base + '/api/auth/login/start', {
@@ -405,7 +462,7 @@ describe('sync-server endpoints', () => {
         headers: forwarded,
         body: JSON.stringify({ username: 'public-user', startLoginRequest }),
       })).status).toBe(426);
-      expect((await fetch(base + '/api/auth/login/start', {
+      const crossOrigin = await fetch(base + '/api/auth/login/start', {
         method: 'POST',
         headers: {
           ...forwarded,
@@ -413,7 +470,10 @@ describe('sync-server endpoints', () => {
           Origin: 'https://evil.example.test',
         },
         body: JSON.stringify({ username: 'public-user', startLoginRequest }),
-      })).status).toBe(403);
+      });
+      expect(crossOrigin.status).toBe(200);
+      expect(crossOrigin.headers.get('access-control-allow-origin')).toBe('*');
+      expect(crossOrigin.headers.has('access-control-allow-credentials')).toBe(false);
       const allowed = await fetch(base + '/api/auth/login/start', {
         method: 'POST',
         headers: {
@@ -424,7 +484,7 @@ describe('sync-server endpoints', () => {
         body: JSON.stringify({ username: 'public-user', startLoginRequest }),
       });
       expect(allowed.status).toBe(200);
-      expect(allowed.headers.get('access-control-allow-origin')).toBe('https://ledger.example.test');
+      expect(allowed.headers.get('access-control-allow-origin')).toBe('*');
     } finally {
       await s.close();
     }
@@ -461,61 +521,90 @@ describe('sync-server endpoints', () => {
     }
   });
 
-  it('supports invite registration and user disable via admin API', async () => {
-    const s = createSyncServer({ adminToken: 'admin-token', registrationMode: 'invite' });
+  it('uses the first account as administrator and protects management with account sessions', async () => {
+    const s = createSyncServer({ registrationMode: 'invite' });
     await new Promise<void>((r) => s.server.listen(0, r));
     const u = `http://localhost:${(s.server.address() as AddressInfo).port}`;
     try {
-      const adminHeaders = { 'Content-Type': 'application/json', Authorization: 'Bearer admin-token' };
+      const ownerRegistration = await registerUser(u, 'owner-user', 'owner-password');
+      expect(ownerRegistration.status).toBe(200);
+      expect(await ownerRegistration.json()).toMatchObject({ role: 'admin' });
+      const ownerToken = await accessToken(u, 'owner-user', 'owner-password');
+      const adminHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerToken}` };
+      expect(await (await fetch(u + '/api/auth/me', { headers: adminHeaders })).json()).toMatchObject({
+        username: 'owner-user',
+        role: 'admin',
+        disabled: false,
+        session: { username: 'owner-user', active: true },
+      });
+      expect((await fetch(u + '/api/admin/status', {
+        headers: { Authorization: 'Bearer retired-static-credential' },
+      })).status).toBe(401);
+      const retiredHeaderName = ['X', 'Admin', 'Token'].join('-');
+      expect((await fetch(u + '/api/admin/status', {
+        headers: { [retiredHeaderName]: 'retired-static-credential' },
+      })).status).toBe(401);
       expect((await registerUser(u, 'invite-user', 'pw')).status).toBe(403);
 
-      const inviteRes = await fetch(u + '/admin/invites', { method: 'POST', headers: adminHeaders, body: '{}' });
+      const inviteRes = await fetch(u + '/api/admin/invites', { method: 'POST', headers: adminHeaders, body: '{}' });
       expect(inviteRes.status).toBe(200);
       const { invite } = (await inviteRes.json()) as { invite: { code: string } };
       expect(invite.code).toBeTruthy();
 
-      expect((await registerUser(u, 'invite-user', 'pw', invite.code)).status).toBe(200);
-      const usersRes = await fetch(u + '/admin/users', { headers: adminHeaders });
+      const memberRegistration = await registerUser(u, 'invite-user', 'pw', invite.code);
+      expect(memberRegistration.status).toBe(200);
+      expect(await memberRegistration.json()).toMatchObject({ role: 'member' });
+      const memberToken = await accessToken(u, 'invite-user', 'pw');
+      expect((await fetch(u + '/api/admin/status', {
+        headers: { Authorization: `Bearer ${memberToken}` },
+      })).status).toBe(403);
+      const usersRes = await fetch(u + '/api/admin/users', { headers: adminHeaders });
       const usersBody = await usersRes.json();
       expect(JSON.stringify(usersBody)).not.toContain('opaqueRegistrationRecord');
-      expect((usersBody as { users: { username: string; commitCount: number }[] }).users).toEqual([
-        expect.objectContaining({ username: 'invite-user', commitCount: 0 }),
-      ]);
-      const quota = await fetch(u + '/admin/blobs/invite-user/quota', {
+      expect((usersBody as { users: { username: string; role: string; commitCount: number }[] }).users).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ username: 'owner-user', role: 'admin', commitCount: 0 }),
+          expect.objectContaining({ username: 'invite-user', role: 'member', commitCount: 0 }),
+        ]),
+      );
+      const quota = await fetch(u + '/api/admin/quotas/invite-user/blobs', {
         method: 'POST',
         headers: adminHeaders,
         body: JSON.stringify({ quotaBytes: 8 * 1024 * 1024 }),
       });
       expect(quota.status).toBe(200);
-      expect(await (await fetch(u + '/admin/blobs', { headers: adminHeaders })).json()).toMatchObject({
-        users: [expect.objectContaining({ username: 'invite-user', quotaBytes: 8 * 1024 * 1024 })],
+      expect(await (await fetch(u + '/api/admin/quotas', { headers: adminHeaders })).json()).toMatchObject({
+        users: expect.arrayContaining([expect.objectContaining({ username: 'invite-user', quotaBytes: 8 * 1024 * 1024 })]),
       });
-      expect(await (await fetch(u + '/admin/blobs/verify', { method: 'POST', headers: adminHeaders, body: '{}' })).json()).toMatchObject({
+      expect(await (await fetch(u + '/api/admin/quotas/blobs/verify', { method: 'POST', headers: adminHeaders, body: '{}' })).json()).toMatchObject({
         verification: { checkedObjects: 0, checkedChunks: 0, issues: [] },
       });
-      expect((await fetch(u + '/admin/users/invite-user/quota', {
+      expect((await fetch(u + '/api/admin/quotas/invite-user/commits', {
         method: 'POST', headers: adminHeaders, body: JSON.stringify({ commitQuotaBytes: 8 * 1024 * 1024 }),
       })).status).toBe(200);
-      expect(await (await fetch(u + '/admin/users?limit=1', { headers: adminHeaders })).json()).toMatchObject({
-        users: [expect.objectContaining({ username: 'invite-user', commitQuotaBytes: 8 * 1024 * 1024 })],
+      expect(await (await fetch(u + '/api/admin/users?limit=10', { headers: adminHeaders })).json()).toMatchObject({
+        users: expect.arrayContaining([expect.objectContaining({ username: 'invite-user', commitQuotaBytes: 8 * 1024 * 1024 })]),
       });
-      expect(await (await fetch(u + '/admin/database/verify', { headers: adminHeaders })).json()).toMatchObject({
-        verification: { ok: true, result: 'ok', journalMode: 'wal', schemaVersion: 5 },
+      expect(await (await fetch(u + '/api/admin/database/verify', { headers: adminHeaders })).json()).toMatchObject({
+        verification: { ok: true, result: 'ok', journalMode: 'wal', schemaVersion: 6 },
       });
 
       const login = await loginUser(u, 'invite-user', 'pw');
       const session = await login.json() as { accessToken: string; session: { id: string } };
-      expect(await (await fetch(u + '/admin/users/invite-user/devices', { headers: adminHeaders })).json()).toMatchObject({
-        devices: [expect.objectContaining({ id: session.session.id, active: true })],
+      expect(await (await fetch(u + '/api/admin/users/invite-user/devices', { headers: adminHeaders })).json()).toMatchObject({
+        devices: expect.arrayContaining([expect.objectContaining({ id: session.session.id, active: true })]),
       });
-      expect((await fetch(`${u}/admin/sessions/${session.session.id}/revoke`, {
+      expect((await fetch(`${u}/api/admin/sessions/${session.session.id}/revoke`, {
         method: 'POST', headers: adminHeaders, body: '{}',
       })).status).toBe(200);
       expect((await fetch(u + '/api/v3/replica', {
         headers: { Authorization: `Bearer ${session.accessToken}` },
       })).status).toBe(401);
       expect((await loginUser(u, 'invite-user', 'pw')).status).toBe(200);
-      const disable = await fetch(u + '/admin/users/invite-user/disable', {
+      expect((await fetch(u + '/api/admin/users/owner-user/disable', {
+        method: 'POST', headers: adminHeaders, body: JSON.stringify({ disabled: true }),
+      })).status).toBe(409);
+      const disable = await fetch(u + '/api/admin/users/invite-user/disable', {
         method: 'POST',
         headers: adminHeaders,
         body: JSON.stringify({ disabled: true }),
@@ -527,8 +616,8 @@ describe('sync-server endpoints', () => {
     }
   });
 
-  it('mounts API/admin under a base path and exposes admin logs', async () => {
-    const s = createSyncServer({ adminToken: 'admin-token', basePath: '/账本-2026' });
+  it('mounts account, sync, and management APIs under a base path and exposes logs', async () => {
+    const s = createSyncServer({ basePath: '/账本-2026' });
     await new Promise<void>((r) => s.server.listen(0, r));
     const u = `http://localhost:${(s.server.address() as AddressInfo).port}`;
     try {
@@ -540,10 +629,13 @@ describe('sync-server endpoints', () => {
       const prefix = '/%E8%B4%A6%E6%9C%AC-2026';
       expect((await registerUser(u, 'logger', 'pw', undefined, prefix)).status).toBe(200);
       expect((await loginUser(u, 'logger', 'bad', prefix)).status).toBe(401);
-      expect((await loginUser(u, 'logger', 'pw', prefix)).status).toBe(200);
+      const ownerAccessToken = await accessToken(u, 'logger', 'pw', prefix);
 
-      const logs = await fetch(u + '/%E8%B4%A6%E6%9C%AC-2026/admin/logs?limit=20', {
-        headers: { Authorization: 'Bearer admin-token' },
+      expect((await fetch(u + '/%E8%B4%A6%E6%9C%AC-2026/admin/logs', {
+        headers: { Authorization: `Bearer ${ownerAccessToken}` },
+      })).status).toBe(404);
+      const logs = await fetch(u + '/%E8%B4%A6%E6%9C%AC-2026/api/admin/logs?limit=20', {
+        headers: { Authorization: `Bearer ${ownerAccessToken}` },
       });
       expect(logs.status).toBe(200);
       const body = (await logs.json()) as { logs: { action: string; username?: string; opaqueRegistrationRecord?: string }[] };
@@ -551,12 +643,12 @@ describe('sync-server endpoints', () => {
       expect(body.logs.map((row) => row.action)).toContain('login_success');
       expect(JSON.stringify(body)).not.toContain('opaqueRegistrationRecord');
       expect(body.logs.some((row) => row.username === 'logger')).toBe(true);
-      const future = await fetch(u + '/%E8%B4%A6%E6%9C%AC-2026/admin/logs?from=2099-01-01T00%3A00%3A00.000Z', {
-        headers: { Authorization: 'Bearer admin-token' },
+      const future = await fetch(u + '/%E8%B4%A6%E6%9C%AC-2026/api/admin/logs?from=2099-01-01T00%3A00%3A00.000Z', {
+        headers: { Authorization: `Bearer ${ownerAccessToken}` },
       });
       expect(((await future.json()) as { logs: unknown[] }).logs).toEqual([]);
-      const past = await fetch(u + '/%E8%B4%A6%E6%9C%AC-2026/admin/logs?until=2000-01-01T00%3A00%3A00.000Z', {
-        headers: { Authorization: 'Bearer admin-token' },
+      const past = await fetch(u + '/%E8%B4%A6%E6%9C%AC-2026/api/admin/logs?until=2000-01-01T00%3A00%3A00.000Z', {
+        headers: { Authorization: `Bearer ${ownerAccessToken}` },
       });
       expect(((await past.json()) as { logs: unknown[] }).logs).toEqual([]);
     } finally {
@@ -573,6 +665,10 @@ describe('sync-server endpoints', () => {
     try {
       const page = await fetch(u + '/');
       expect(page.status).toBe(200);
+      const csp = page.headers.get('content-security-policy') ?? '';
+      expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'");
+      expect(csp).toContain("connect-src 'self' https:");
+      expect(csp).not.toContain("script-src 'self' 'unsafe-eval'");
       expect(await page.text()).toContain('Zichan Web');
       expect((await post2(u, '/api/auth/login/start', { username: 'offline-user' })).status).toBe(503);
     } finally {
@@ -615,14 +711,15 @@ describe('sync-server endpoints', () => {
   it('persists users in SQLite WAL and survives a restart', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zichan-state-'));
     const dataDir = join(dir, 'server');
-    let first: SyncServer | null = createSyncServer({ dataDir, adminToken: 'admin-token' });
+    let first: SyncServer | null = createSyncServer({ dataDir });
     try {
       await first.ready;
       await new Promise<void>((resolve) => first!.server.listen(0, resolve));
       const firstUrl = `http://localhost:${(first.server.address() as AddressInfo).port}`;
       expect((await registerUser(firstUrl, 'persisted', 'pw')).status).toBe(200);
-      const status = await fetch(firstUrl + '/admin/status', { headers: { Authorization: 'Bearer admin-token' } });
-      expect(await status.json()).toMatchObject({ journalMode: 'wal', schemaVersion: 5, userCount: 1 });
+      const ownerAccessToken = await accessToken(firstUrl, 'persisted', 'pw');
+      const status = await fetch(firstUrl + '/api/admin/status', { headers: { Authorization: `Bearer ${ownerAccessToken}` } });
+      expect(await status.json()).toMatchObject({ journalMode: 'wal', tempStore: 'memory', schemaVersion: 6, userCount: 1, claimed: true });
       await first.close();
       first = null;
       expect(existsSync(join(dataDir, 'server.sqlite'))).toBe(true);
@@ -666,6 +763,9 @@ describe('sync-server endpoints', () => {
         iv: 'stable-restart-vector',
       }],
     };
+    const initialized = createSyncServer({ dataDir });
+    await initialized.ready;
+    await initialized.close();
     const writer = new EncryptedBlobStore({ dataDir });
     let writerOpen = true;
     let restarted: SyncServer | undefined;
@@ -719,13 +819,55 @@ describe('sync-server endpoints', () => {
     }
   });
 
+  it('fails closed when an existing server identity is incomplete', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zichan-state-partial-'));
+    const dataDir = join(root, 'server');
+    const seed = createSyncServer({ dataDir });
+    let seedOpen = true;
+    try {
+      await seed.ready;
+      await seed.close();
+      seedOpen = false;
+      const names = ['server.secret', 'server-id', 'opaque.server-setup'] as const;
+      for (const name of names) {
+        const path = join(dataDir, name);
+        const original = readFileSync(path, 'utf8');
+        rmSync(path);
+        const before = readdirSync(dataDir).sort();
+        expect(() => createSyncServer({ dataDir })).toThrow(/数据目录不完整.*拒绝自动重建/);
+        expect(readdirSync(dataDir).sort()).toEqual(before);
+        expect(existsSync(path)).toBe(false);
+        writeFileSync(path, original, 'utf8');
+      }
+    } finally {
+      if (seedOpen) await seed.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not add identity files to an existing unidentified database', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'zichan-state-unidentified-'));
+    try {
+      const driver = new NodeSqliteDriver(join(dataDir, 'server.sqlite'));
+      await driver.exec('CREATE TABLE legacy_state (id INTEGER PRIMARY KEY);');
+      await driver.close();
+      const before = readdirSync(dataDir).sort();
+      expect(() => createSyncServer({ dataDir })).toThrow(/缺少 server.secret.*server-id.*opaque.server-setup/);
+      expect(readdirSync(dataDir).sort()).toEqual(before);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a server database that is not the current development schema', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zichan-state-invalid-'));
     try {
+      const seed = createSyncServer({ dataDir: dir });
+      await seed.ready;
+      await seed.close();
       const database = join(dir, 'server.sqlite');
       const driver = new NodeSqliteDriver(database);
-      await driver.exec('CREATE TABLE server_schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL);');
-      await driver.run('INSERT INTO server_schema_migrations (version, name, applied_at) VALUES (99, ?, ?)', ['retired', new Date().toISOString()]);
+      await driver.run('UPDATE server_schema_migrations SET version = 99, name = ?', ['retired']);
       await driver.close();
       const s = createSyncServer({ dataDir: dir });
       await expect(s.ready).rejects.toThrow(/不是当前开发版结构/);

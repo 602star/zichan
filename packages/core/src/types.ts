@@ -109,6 +109,8 @@ export interface Setting extends BaseEntity {
   refundAttributionMode?: 'original_date' | 'refund_date';
   /** JSON payload for backup/check/rehearsal health status. */
   dataSafetyStateJson?: string;
+  /** Encrypted, ledger-synchronized directory of public sync server identities and URLs; never contains credentials. */
+  syncServersJson?: string;
 }
 
 // ─────────────────────────── Conversion chains ───────────────────────────

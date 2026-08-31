@@ -2,8 +2,24 @@ import { access, readFile, readdir } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readWebView2RuntimeLock } from './webview2-runtime.mjs';
 
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+const TEXT_SOURCE_EXTENSIONS = new Set(['.cmd', '.cjs', '.js', '.json', '.md', '.mjs', '.ps1', '.rs', '.sh', '.toml', '.ts', '.tsx', '.txt', '.yaml', '.yml']);
+const REMOVED_MANAGEMENT_CREDENTIAL_MARKERS = [
+  ['ADMIN', 'TOKEN'].join('_'),
+  ['PERSIST', 'ADMIN', 'TOKEN'].join('_'),
+  ['X', 'Admin', 'Token'].join('-'),
+  ['admin', 'token.txt'].join('-'),
+];
+const REMOVED_SYNC_CONFIGURATION_MARKERS = [
+  ['zichan.sync.server', 'Profiles.v3'].join(''),
+  ['zichan.sync.session', 'Credentials.v3'].join(''),
+  ['Sync', 'Server', 'Profile'].join(''),
+  ['opaque', 'PublicKey'].join(''),
+];
+const REMOVED_ADMIN_ROUTE = /(?:^|[^A-Za-z0-9/])\/admin(?:\/|['"`])/m;
+const INVITE_REGISTRATION_DEFAULT = /REGISTRATION_MODE\s*(?:\|\|=|\?\?=|[:=])\s*['"]invite['"]|registrationMode\s*\?\?\s*['"]invite['"]/;
 
 async function json(path) {
   return JSON.parse(await readFile(path, 'utf8'));
@@ -34,37 +50,85 @@ async function workspacePackageFiles(root, patterns) {
   return files.sort();
 }
 
+async function sourceFilesUnder(root, relativeRoot) {
+  const directory = join(root, ...relativeRoot.split('/'));
+  if (!await exists(directory)) return [];
+  const files = [];
+  async function visit(current) {
+    for (const entry of await readdir(current, { withFileTypes: true })) {
+      if (entry.isDirectory() && ['dist', 'node_modules', 'resources', 'target', 'test', 'tests'].includes(entry.name)) continue;
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) {
+        await visit(path);
+        continue;
+      }
+      const extension = entry.name.includes('.') ? `.${entry.name.split('.').at(-1).toLowerCase()}` : '';
+      if (entry.isFile() && (TEXT_SOURCE_EXTENSIONS.has(extension) || entry.name === 'Dockerfile')) files.push(path);
+    }
+  }
+  await visit(directory);
+  return files;
+}
+
+async function findRemovedManagementCredentials(root) {
+  const ignored = new Set([
+    join(root, 'scripts', 'release', 'create-windows-portable.mjs').toLowerCase(),
+  ]);
+  const files = (await Promise.all([
+    sourceFilesUnder(root, '.github'),
+    sourceFilesUnder(root, 'apps/desktop'),
+    sourceFilesUnder(root, 'apps/sync-server/src'),
+    sourceFilesUnder(root, 'apps/web/src'),
+    sourceFilesUnder(root, 'docs'),
+    sourceFilesUnder(root, 'scripts'),
+  ])).flat();
+  const findings = [];
+  for (const path of files) {
+    if (ignored.has(path.toLowerCase())) continue;
+    const source = await readFile(path, 'utf8');
+    const relativePath = path.slice(root.length + 1);
+    const documentation = relativePath.toLowerCase().startsWith(`docs${process.platform === 'win32' ? '\\' : '/'}`);
+    const marker = REMOVED_MANAGEMENT_CREDENTIAL_MARKERS.find((value) => source.split(/\r?\n/).some((line) => {
+      if (!line.toLowerCase().includes(value.toLowerCase())) return false;
+      return !documentation || !/删除|移除|不再|不读取|不迁移|禁用|旧|removed|legacy/i.test(line);
+    }));
+    if (marker) findings.push(`${path.slice(root.length + 1)} still references removed manual management credentials`);
+  }
+  return findings;
+}
+
+async function findRemovedSyncImplementations(root) {
+  const files = (await Promise.all([
+    sourceFilesUnder(root, 'apps/desktop/scripts'),
+    sourceFilesUnder(root, 'apps/sync-server'),
+    sourceFilesUnder(root, 'apps/web/src'),
+    sourceFilesUnder(root, 'scripts/windows'),
+  ])).flat();
+  const findings = [];
+  for (const path of files) {
+    const source = await readFile(path, 'utf8');
+    const marker = REMOVED_SYNC_CONFIGURATION_MARKERS.find((value) => source.includes(value));
+    if (marker) {
+      findings.push(`${path.slice(root.length + 1)} still references removed sync configuration ${marker}`);
+      continue;
+    }
+    if (REMOVED_ADMIN_ROUTE.test(source)) {
+      findings.push(`${path.slice(root.length + 1)} still exposes the removed /admin route`);
+      continue;
+    }
+    if (INVITE_REGISTRATION_DEFAULT.test(source)) {
+      findings.push(`${path.slice(root.length + 1)} still defaults registration to invite instead of open`);
+    }
+  }
+  return findings;
+}
+
 function cargoPackageMetadata(source) {
   const packageBlock = source.match(/(?:^|\n)\[package\]\s*\n([\s\S]*?)(?=\n\[|$)/)?.[1];
   return {
     version: packageBlock?.match(/^version\s*=\s*"([^"]+)"\s*$/m)?.[1],
     defaultRun: packageBlock?.match(/^default-run\s*=\s*"([^"]+)"\s*$/m)?.[1],
   };
-}
-
-function cargoBinaryMetadata(source, name) {
-  const blocks = [...source.matchAll(/(?:^|\n)\[\[bin\]\]\s*\n([\s\S]*?)(?=\n\[|$)/g)].map((match) => match[1]);
-  const block = blocks.find((value) => value.match(/^name\s*=\s*"([^"]+)"\s*$/m)?.[1] === name);
-  return {
-    requiredFeatures: [...(block?.match(/^required-features\s*=\s*\[([^\]]*)\]\s*$/m)?.[1].matchAll(/"([^"]+)"/g) ?? [])]
-      .map((match) => match[1]),
-  };
-}
-
-function cargoFeatureNames(source) {
-  const featureBlock = source.match(/(?:^|\n)\[features\]\s*\n([\s\S]*?)(?=\n\[|$)/)?.[1];
-  return [...(featureBlock?.matchAll(/^([A-Za-z0-9_-]+)\s*=/gm) ?? [])].map((match) => match[1]);
-}
-
-function wixLanguages(language) {
-  if (typeof language === 'string') return [language];
-  if (Array.isArray(language)) return language;
-  if (language && typeof language === 'object') return Object.keys(language);
-  return [];
-}
-
-function includesBundleTarget(targets, target) {
-  return targets === 'all' || (Array.isArray(targets) && targets.includes(target));
 }
 
 function migrationBaseline(source) {
@@ -100,23 +164,15 @@ export async function checkReleaseConsistency(rootDirectory, options = {}) {
   if (tauriConfig.mainBinaryName !== 'zichan') {
     failures.push(`apps/desktop/src-tauri/tauri.conf.json mainBinaryName is ${String(tauriConfig.mainBinaryName)}, expected zichan`);
   }
-  if (tauriConfig.bundle?.active !== true) {
-    failures.push('apps/desktop/src-tauri/tauri.conf.json must enable desktop bundling');
+  if (tauriConfig.bundle?.active !== false) failures.push('apps/desktop/src-tauri/tauri.conf.json must disable Tauri bundling for v0.1 portable-only releases');
+  if (tauriConfig.bundle?.windows?.webviewInstallMode?.type !== 'skip') {
+    failures.push('apps/desktop/src-tauri/tauri.conf.json must set bundle.windows.webviewInstallMode.type to skip');
   }
-  for (const target of ['msi', 'nsis']) {
-    if (!includesBundleTarget(tauriConfig.bundle?.targets, target)) {
-      failures.push(`apps/desktop/src-tauri/tauri.conf.json bundle targets must include ${target}`);
-    }
-  }
-  const configuredWixLanguages = wixLanguages(tauriConfig.bundle?.windows?.wix?.language);
-  if (configuredWixLanguages.length !== 1 || configuredWixLanguages[0] !== 'zh-CN') {
-    failures.push('apps/desktop/src-tauri/tauri.conf.json must build the MSI only with zh-CN so every MSI code page supports the Chinese product name');
-  }
-  const configuredNsisLanguages = tauriConfig.bundle?.windows?.nsis?.languages;
-  if (!Array.isArray(configuredNsisLanguages)
-    || !configuredNsisLanguages.includes('SimpChinese')
-    || !configuredNsisLanguages.includes('English')) {
-    failures.push('apps/desktop/src-tauri/tauri.conf.json must include SimpChinese and English in the NSIS installer languages');
+  const windowsConfigPath = join(root, 'apps', 'desktop', 'src-tauri', 'tauri.windows.conf.json');
+  const windowsConfig = await json(windowsConfigPath);
+  const mainWindow = windowsConfig.app?.windows?.find((window) => window.label === 'main');
+  if (!mainWindow || mainWindow.create !== false) {
+    failures.push('apps/desktop/src-tauri/tauri.windows.conf.json must declare the main window with create=false');
   }
 
   const cargoTomlPath = join(root, 'apps', 'desktop', 'src-tauri', 'Cargo.toml');
@@ -125,13 +181,6 @@ export async function checkReleaseConsistency(rootDirectory, options = {}) {
   if (cargoPackage.version !== version) failures.push(`apps/desktop/src-tauri/Cargo.toml is ${String(cargoPackage.version)}, expected ${version}`);
   if (cargoPackage.defaultRun !== 'zichan') {
     failures.push(`apps/desktop/src-tauri/Cargo.toml default-run is ${String(cargoPackage.defaultRun)}, expected zichan`);
-  }
-  const releaseVerifier = cargoBinaryMetadata(cargoSource, 'verify-updater-signature');
-  if (!cargoFeatureNames(cargoSource).includes('release-verifier')) {
-    failures.push('apps/desktop/src-tauri/Cargo.toml must declare the release-verifier feature');
-  }
-  if (!releaseVerifier.requiredFeatures.includes('release-verifier')) {
-    failures.push('apps/desktop/src-tauri/Cargo.toml must gate verify-updater-signature behind the release-verifier feature');
   }
 
   const cargoLockPath = join(root, 'apps', 'desktop', 'src-tauri', 'Cargo.lock');
@@ -184,8 +233,33 @@ export async function checkReleaseConsistency(rootDirectory, options = {}) {
     if (!await exists(join(root, ...relativePath.split('/')))) failures.push(`missing current-schema driver contract: ${relativePath}`);
   }
 
+  let runtimeLock = null;
+  try {
+    runtimeLock = await readWebView2RuntimeLock(join(root, 'scripts', 'release', 'webview2-runtime.lock.json'));
+  } catch (error) {
+    failures.push(error.message);
+  }
+  const portableRust = await readFile(join(root, 'apps', 'desktop', 'src-tauri', 'src', 'portable.rs'), 'utf8');
+  if (!portableRust.includes('include_str!("../../../../scripts/release/webview2-runtime.lock.json")')) {
+    failures.push('apps/desktop/src-tauri/src/portable.rs must embed the tracked WebView2 runtime lock instead of duplicating its version');
+  }
+  if (!/pub const PORTABLE_FORMAT_VERSION:\s*u32\s*=\s*1\s*;/.test(portableRust)) {
+    failures.push('apps/desktop/src-tauri/src/portable.rs must keep portable format version 1 aligned with portable-mode.json');
+  }
+  for (const relativePath of ['docs/portable/README-便携版.txt', 'docs/portable/NOTICE.txt']) {
+    if (!await exists(join(root, ...relativePath.split('/')))) failures.push(`missing portable release document: ${relativePath}`);
+  }
+  failures.push(...await findRemovedManagementCredentials(root));
+  failures.push(...await findRemovedSyncImplementations(root));
+
   if (failures.length) throw new Error(`Release consistency check failed:\n- ${failures.join('\n- ')}`);
-  return { version, schemaVersion: Number(baseline.version), workspaceCount: workspaceFiles.length };
+  return {
+    version,
+    schemaVersion: Number(baseline.version),
+    workspaceCount: workspaceFiles.length,
+    webview2RuntimeVersion: runtimeLock.runtimeVersion,
+    webview2LockComplete: runtimeLock.complete,
+  };
 }
 
 function parseArgs(argv) {
@@ -209,5 +283,5 @@ if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
   const options = parseArgs(process.argv.slice(2));
   const root = options.root ?? resolve(dirname(scriptPath), '..', '..');
   const result = await checkReleaseConsistency(root, { tag: options.tag });
-  console.log(`release consistency ok: version=${result.version} schema=${result.schemaVersion} workspaces=${result.workspaceCount}`);
+  console.log(`release consistency ok: version=${result.version} schema=${result.schemaVersion} workspaces=${result.workspaceCount} webview2=${result.webview2RuntimeVersion}`);
 }

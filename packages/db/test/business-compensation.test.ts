@@ -14,6 +14,7 @@ import {
   type TransactionSplit,
 } from '@zichan/core';
 import {
+  inspectBusinessCompensation,
   saveTransactionAggregate,
   undoBusinessCompensation,
 } from '../src/index.js';
@@ -157,11 +158,18 @@ describe('persistent business compensation', () => {
     });
     const compensation = (await store.listBusinessCompensations({ status: 'pending' }))
       .find((row) => row.label === '保存流水');
+    await expect(inspectBusinessCompensation(store, compensation!.id)).resolves.toMatchObject({ reversible: true });
     const latest = (await store.transactions.get(saved.id))!;
     await saveTransactionAggregate(store, {
       transaction: { ...latest, description: '后来又修改' },
       expectedVersion: latest.version,
     });
+
+    await expect(inspectBusinessCompensation(store, compensation!.id)).resolves.toMatchObject({
+      reversible: false,
+      blocker: expect.stringContaining('后来发生了变化'),
+    });
+    expect((await store.getBusinessCompensation(compensation!.id))?.status).toBe('pending');
 
     await expect(undoBusinessCompensation(store, compensation!.id)).rejects.toThrow('后来发生了变化');
     expect((await store.transactions.get(saved.id))?.description).toBe('后来又修改');
@@ -182,6 +190,8 @@ describe('persistent business compensation', () => {
     const compensation = await store.consumeLatestBusinessCompensation();
     expect(compensation?.label).toBe('批量调整分类');
     expect(compensation?.payload.states).toHaveLength(2);
+    const sourceBatch = (await store.listAuditBatches()).find((batch) => batch.id === compensation?.sourceBatchId);
+    expect(sourceBatch?.type).toBe('bulk_update');
     const mealState = compensation?.payload.states.find((state) => state.entityId === refs.meal.id);
     expect(mealState?.before).not.toHaveProperty('isHidden');
     expect(mealState?.before).not.toHaveProperty('sortOrder');
@@ -194,6 +204,77 @@ describe('persistent business compensation', () => {
     expect(restoredMeal).not.toHaveProperty('isHidden');
     expect(restoredMeal).not.toHaveProperty('sortOrder');
     expect(restoredDrink).not.toHaveProperty('isHidden');
+    await store.close();
+  });
+
+  it('keeps a compensation retryable after a transient infrastructure failure', async () => {
+    const store = await openLedger();
+    const refs = await seed(store);
+    await saveTransactionAggregate(store, { transaction: transaction(refs) });
+    const compensation = await store.consumeLatestBusinessCompensation();
+    expect((await store.listAuditBatches()).find((batch) => batch.id === compensation!.sourceBatchId)?.type).toBe('user');
+    const originalWithAuditContext = store.withAuditContext.bind(store);
+    (store as unknown as { withAuditContext: typeof store.withAuditContext }).withAuditContext = async () => {
+      throw new Error('SQLITE_BUSY: temporary lock');
+    };
+
+    await expect(undoBusinessCompensation(store, compensation!.id)).rejects.toThrow('temporary lock');
+    expect(await store.getBusinessCompensation(compensation!.id)).toMatchObject({
+      status: 'pending',
+      error: expect.stringContaining('temporary lock'),
+    });
+
+    (store as unknown as { withAuditContext: typeof store.withAuditContext }).withAuditContext = originalWithAuditContext;
+    await expect(undoBusinessCompensation(store, compensation!.id)).resolves.toMatchObject({ status: 'applied' });
+    await store.close();
+  });
+
+  it('never reopens an applied compensation when audit finalization fails after commit', async () => {
+    const store = await openLedger();
+    const refs = await seed(store);
+    await store.runInAuditBatch('修改分类名称', async (transactionStore) => {
+      await transactionStore.categories.put({ ...refs.meal, name: '工作餐' });
+    });
+    const compensation = await store.consumeLatestBusinessCompensation();
+    const originalFinishAuditBatch = store.finishAuditBatch.bind(store);
+    let failOnce = true;
+    (store as unknown as { finishAuditBatch: typeof store.finishAuditBatch }).finishAuditBatch = async (...args) => {
+      if (failOnce) {
+        failOnce = false;
+        throw new Error('audit storage unavailable');
+      }
+      return originalFinishAuditBatch(...args);
+    };
+
+    await expect(undoBusinessCompensation(store, compensation!.id)).rejects.toThrow('audit storage unavailable');
+    expect(await store.getBusinessCompensation(compensation!.id)).toMatchObject({ status: 'applied' });
+    await expect(undoBusinessCompensation(store, compensation!.id)).rejects.toThrow('已经撤销');
+    expect((await store.categories.get(refs.meal.id))?.name).toBe(refs.meal.name);
+    await store.close();
+  });
+
+  it('never reopens an applied compensation when sync-commit sealing fails after commit', async () => {
+    const store = await openLedger();
+    const refs = await seed(store);
+    await store.runInAuditBatch('修改分类名称', async (transactionStore) => {
+      await transactionStore.categories.put({ ...refs.meal, name: '工作餐' });
+    });
+    const compensation = await store.consumeLatestBusinessCompensation();
+    const originalWithAuditContext = store.withAuditContext.bind(store);
+    let failOnce = true;
+    (store as unknown as { withAuditContext: typeof store.withAuditContext }).withAuditContext = async (...args) => {
+      const result = await originalWithAuditContext(...args);
+      if (failOnce) {
+        failOnce = false;
+        throw new Error('sync commit seal unavailable');
+      }
+      return result;
+    };
+
+    await expect(undoBusinessCompensation(store, compensation!.id)).rejects.toThrow('sync commit seal unavailable');
+    expect(await store.getBusinessCompensation(compensation!.id)).toMatchObject({ status: 'applied' });
+    await expect(undoBusinessCompensation(store, compensation!.id)).rejects.toThrow('已经撤销');
+    expect((await store.categories.get(refs.meal.id))?.name).toBe(refs.meal.name);
     await store.close();
   });
 

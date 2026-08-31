@@ -24,8 +24,8 @@ import {
 import {
   buildSyncBaseUrl,
   isUnauthorizedSyncError,
-  loadSyncProfiles,
-  type SyncServerProfile,
+  loadSyncConnections,
+  type SyncConnection,
 } from './sync-config.js';
 import { runtimeCredential } from './credential-vault.js';
 import { requireLedgerCryptoSession } from './ledger-key-vault.js';
@@ -76,7 +76,7 @@ export interface AttachmentSyncResult {
 }
 
 export interface AttachmentSyncTarget {
-  profile: SyncServerProfile;
+  profile: SyncConnection;
   identity: SyncReplicaIdentity;
 }
 
@@ -174,9 +174,9 @@ export async function listAttachmentBlobReferences(store: SqlLedgerStore): Promi
 }
 
 class AttachmentBlobClient {
-  private readonly profile: SyncServerProfile;
+  private readonly profile: SyncConnection;
 
-  constructor(profile: SyncServerProfile) {
+  constructor(profile: SyncConnection) {
     this.profile = profile;
   }
 
@@ -187,7 +187,7 @@ class AttachmentBlobClient {
   private async request(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
     const headers = new Headers(init.headers);
     headers.set('Authorization', `Bearer ${await this.accessToken()}`);
-    const response = await fetch(`${buildSyncBaseUrl(this.profile)}${path}`, { ...init, headers });
+    const response = await fetch(`${buildSyncBaseUrl(this.profile)}${path}`, { ...init, headers, redirect: 'error' });
     if ((response.status === 401 || response.status === 403) && retry) {
       await this.accessToken(true);
       return this.request(path, init, false);
@@ -610,7 +610,7 @@ export async function ensureAttachmentBlobAvailable(
     if (status === 'ready') return;
     if (status === 'trash' && await restoreAttachmentBlobFromTrash(store, descriptor)) return;
     const ref: AttachmentBlobReference = { ...descriptor, kind: 'content', attachmentIds: [] };
-    const candidates = loadSyncProfiles()
+    const candidates = loadSyncConnections()
       .filter((profile) => profile.enabled && profile.serverId && profile.ledgerId === ledgerId && profile.username.trim() && runtimeCredential(profile.id)?.password)
       .sort((left, right) => (left.lastLatencyMs ?? Number.MAX_SAFE_INTEGER) - (right.lastLatencyMs ?? Number.MAX_SAFE_INTEGER));
     const errors: string[] = [];

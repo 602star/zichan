@@ -170,11 +170,21 @@ const primary = { ...button, border: '1px solid var(--accent)', background: 'var
 
 type Tab = 'records' | 'accounts' | 'budget' | 'bills';
 
+function initialTransactionTab(): Tab {
+  try {
+    const requested = sessionStorage.getItem('zichan.transactions.tab');
+    sessionStorage.removeItem('zichan.transactions.tab');
+    return requested === 'accounts' || requested === 'budget' || requested === 'bills' ? requested : 'records';
+  } catch {
+    return 'records';
+  }
+}
+
 export function Transactions() {
   const { store, bump, rev } = useStore();
   const undo = useUndo(store, bump);
   const snap = useSnapshot('transactions');
-  const [tab, setTab] = useState<Tab>('records');
+  const [tab, setTab] = useState<Tab>(initialTransactionTab);
   const [editingTx, setEditingTx] = useState<Transaction | 'new' | null>(null);
   const [refundDraft, setRefundDraft] = useState<Transaction | null>(null);
   const [editingSplit, setEditingSplit] = useState<TransactionSplit | 'new' | null>(null);

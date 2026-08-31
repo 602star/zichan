@@ -1,5 +1,5 @@
 # HTTPS-terminated deployment: Caddy (auto Let's Encrypt) in front of the unified server.
-# Usage: SYNC_SECRET=$(openssl rand -hex 32) ADMIN_TOKEN=$(openssl rand -hex 24) docker compose up -d
+# Usage: SYNC_SECRET=$(openssl rand -hex 32) docker compose up -d
 services:
   sync-server:
     build:
@@ -7,19 +7,18 @@ services:
       dockerfile: apps/sync-server/Dockerfile
     environment:
       - PORT=8787
+      - HOST=0.0.0.0
       - DATA_DIR=/state/server
       - COMMIT_QUOTA_BYTES=${COMMIT_QUOTA_BYTES:-536870912}
       - ATTACHMENT_QUOTA_BYTES=${ATTACHMENT_QUOTA_BYTES:-2147483648}
       - ATTACHMENT_MAX_FILE_BYTES=${ATTACHMENT_MAX_FILE_BYTES:-104857600}
       - ATTACHMENT_TRASH_RETENTION_MS=${ATTACHMENT_TRASH_RETENTION_MS:-2592000000}
       - SYNC_SECRET=${SYNC_SECRET:?set SYNC_SECRET (e.g. openssl rand -hex 32)}
-      - ADMIN_TOKEN=${ADMIN_TOKEN:?set ADMIN_TOKEN (e.g. openssl rand -hex 24)}
-      - REGISTRATION_MODE=${REGISTRATION_MODE:-invite}
+      - REGISTRATION_MODE=${REGISTRATION_MODE:-open}
       - ENABLE_WEB=${ENABLE_WEB:-1}
       - ENABLE_SYNC=${ENABLE_SYNC:-1}
       - BASE_PATH=${BASE_PATH:-}
       - TRUSTED_PROXIES=${TRUSTED_PROXIES:-private}
-      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-tauri://localhost,http://tauri.localhost,https://tauri.localhost}
       - ALLOW_INSECURE_HTTP=0
       - WEB_DIST=/app/web-dist
     volumes:

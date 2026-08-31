@@ -16,18 +16,25 @@ import {
   type ParsedEncryptedBackup,
   type SavedBackup,
 } from './db/backups.js';
-import { safetyStateFromSetting, safetyWarnings } from './db/safety.js';
+import {
+  safetyStateFromSetting,
+  safetyWarnings,
+  successfulBackupSafetyPatch,
+  writeSafetyState,
+} from './db/safety.js';
 import { ConfirmDialog } from './ui/ConfirmDialog.js';
 import { AppSecurityGate } from './ui/AppSecurityGate.js';
 import { runSynchronousFlight, VaultUnlockPrompt } from './ui/VaultUnlockPrompt.js';
 import { DialogShell } from './ui/DialogShell.js';
 import { installSyncLifecycle } from './background-sync.js';
+import { connectionLinkFromLocation } from './connection-link.js';
 import {
   exportPortableLedger,
   importPortableLedger,
   preflightPortableBackup,
 } from './db/portable-backup.js';
 import { adoptUnlockedLedgerKeyEnvelope, runtimeLedgerCryptoSession } from './ledger-key-vault.js';
+import { isTauriRuntime } from './tauri.js';
 
 const Dashboard = lazy(() => import('./screens/Dashboard.js').then((module) => ({ default: module.Dashboard })));
 const Convert = lazy(() => import('./screens/Convert.js').then((module) => ({ default: module.Convert })));
@@ -48,6 +55,7 @@ const SCREEN_IDS = new Set<ScreenId>(['dashboard', 'convert', 'transactions', 'g
 
 function initialScreen(): ScreenId {
   try {
+    if (connectionLinkFromLocation()) return 'sync';
     const stored = sessionStorage.getItem(RETRY_SCREEN_KEY);
     sessionStorage.removeItem(RETRY_SCREEN_KEY);
     return stored && SCREEN_IDS.has(stored as ScreenId) ? stored as ScreenId : 'dashboard';
@@ -279,6 +287,13 @@ export function App() {
   useEffect(() => installSyncLifecycle(store, () => bumpRef.current()), [store]);
 
   async function doExport() {
+    // The portable desktop cannot reliably download a Blob from WebView2.  Write
+    // the archive through the native backup path first so downloadBackup can
+    // open the native Save As dialog for the resulting nativeFileName.
+    if (isTauriRuntime()) {
+      await downloadBackup(await saveLedgerBackup(store, 'manual', '即时导出', 'portable'));
+      return;
+    }
     const backup = await exportPortableLedger(store);
     await downloadBackup({ backup, createdAt: new Date().toISOString(), label: '即时导出' });
   }
@@ -354,7 +369,10 @@ export function App() {
   async function confirmImport(opened: ParsedEncryptedBackup, mode: 'merge' | 'replace') {
     setImportBusy(true);
     try {
-      if (runtimeLedgerCryptoSession()) await saveLedgerBackup(store, 'pre-import');
+      if (runtimeLedgerCryptoSession()) {
+        const protection = await saveLedgerBackup(store, 'pre-import');
+        writeSafetyState(successfulBackupSafetyPatch(protection));
+      }
       const batch = await store.createAuditBatch({
         id: crypto.randomUUID(),
         type: 'import',

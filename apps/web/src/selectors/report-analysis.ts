@@ -90,6 +90,17 @@ export interface BudgetVarianceSummary {
   rows: BudgetVarianceRow[];
 }
 
+/**
+ * Apply the ledger's reporting cut-off to every report surface. Open-ended
+ * ranges are also capped so future-dated records never leak into "all time".
+ */
+export function effectiveReportRange<T extends DateRange>(range: T, asOf: string): T {
+  return {
+    ...range,
+    to: !range.to || range.to > asOf ? asOf : range.to,
+  };
+}
+
 function percentChange(current: string, baseline: string): string | undefined {
   const base = D(baseline);
   if (base.isZero()) return undefined;
@@ -123,10 +134,11 @@ export function reportComparisonRanges(
   range: ComparableReportRange,
   asOf: string,
 ): ReportComparisonRanges | null {
-  if (!range.from || !range.to) return null;
+  const effective = effectiveReportRange(range, asOf);
+  if (!effective.from || !effective.to) return null;
   const current = {
-    from: range.from,
-    to: range.to > asOf ? asOf : range.to,
+    from: effective.from,
+    to: effective.to,
   };
   if (current.from > current.to) return null;
 

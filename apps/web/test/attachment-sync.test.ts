@@ -17,7 +17,7 @@ import {
   readAttachmentBlob,
   reconcileAttachmentStorage,
 } from '../src/db/attachment-storage.js';
-import { saveSyncProfiles, type SyncServerProfile } from '../src/sync-config.js';
+import { saveSyncConnections, type SyncConnection } from '../src/sync-config.js';
 import { initializeLedgerKey, requireLedgerCryptoSession, storedLedgerKeyEnvelope } from '../src/ledger-key-vault.js';
 import { lockDeviceStorage, unlockDeviceStorage } from '../src/device-storage-key.js';
 
@@ -128,32 +128,44 @@ function filesUnder(root: string): string[] {
   return result;
 }
 
-function profile(id: string, alias: string, url: string, username: string): SyncServerProfile {
-  const parsed = new URL(url);
+function profile(id: string, alias: string, url: string, username: string): SyncConnection {
   return {
     id,
+    serverRef: id,
     alias,
-    protocol: 'http',
-    host: parsed.hostname,
-    port: parsed.port,
-    basePath: '',
+    baseUrl: url,
+    activeUrl: url,
+    alternateUrls: [],
+    sharedUrls: [],
+    deviceUrls: [url],
     username,
     enabled: true,
+    status: 'online',
   };
 }
 
 async function bind(
-  profileRow: SyncServerProfile,
+  profileRow: SyncConnection,
   password: string,
   ledgerId: string,
   cryptoSession: LedgerCryptoSession,
   keyEnvelope: LedgerKeyEnvelope,
 ) {
-  const baseUrl = `${profileRow.protocol}://${profileRow.host}:${profileRow.port}`;
-  await registerAccount(baseUrl, profileRow.username, password);
+  const baseUrl = profileRow.baseUrl;
+  const healthResponse = await fetch(`${baseUrl}/api/health`, { redirect: 'error' });
+  expect(healthResponse.ok).toBe(true);
+  const health = await healthResponse.json() as { serverId: string; serverPublicKey: string };
+  profileRow.serverId = health.serverId;
+  profileRow.serverPublicKey = health.serverPublicKey;
+  await registerAccount(baseUrl, profileRow.username, password, {
+    expectedServerId: health.serverId,
+    expectedServerPublicKey: health.serverPublicKey,
+  });
   const session = await loginAccount(baseUrl, profileRow.username, password, {
     deviceId: `device-${profileRow.id}`,
     deviceName: `Attachment ${profileRow.alias}`,
+    expectedServerId: health.serverId,
+    expectedServerPublicKey: health.serverPublicKey,
   });
   setRuntimeCredential(profileRow.id, {
     password,
@@ -209,7 +221,7 @@ describe('attachment replica sync', () => {
       Object.assign(firstProfile, firstIdentity);
       Object.assign(secondProfile, secondIdentity);
       Object.assign(thirdProfile, thirdIdentity);
-      saveSyncProfiles([firstProfile, secondProfile, thirdProfile]);
+      saveSyncConnections([firstProfile, secondProfile, thirdProfile]);
 
       const attachmentId = newId();
       const prepared = await prepareAttachmentDraft(store, attachmentId, {

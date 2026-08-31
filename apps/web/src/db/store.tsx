@@ -1,28 +1,55 @@
 import {
-  createContext, useContext, useEffect, useRef, useState, type ReactNode,
+  createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode,
 } from 'react';
 import type { LedgerKind, Setting } from '@zichan/core';
-import { createLedgerStore, runDueScheduledTransactions, type SqlLedgerStore } from '@zichan/db';
-import { createLogger, consoleSink } from '@zichan/logger';
-import { getDeviceId } from './cloud.js';
 import {
+  assertCurrentSchema,
+  createLedgerStore,
+  runDueScheduledTransactions,
+  SqlLedgerStore,
+} from '@zichan/db';
+import { createLogger, consoleSink } from '@zichan/logger';
+import { CLOUD_DEVICE_ID_KEY, getDeviceId } from './cloud.js';
+import {
+  downloadBackup,
   maybeAutoBackup,
   suspendAutomaticBackups,
   type AutomaticBackupSuspension,
 } from './backups.js';
 import { runLedgerMaintenance } from './maintenance.js';
-import { writeSafetyState } from './safety.js';
+import { successfulBackupSafetyPatch, writeSafetyState } from './safety.js';
 import { openPlatformDriver, resetPlatformData, type StorageBackend } from './platform-driver.js';
 import { recoverAttachmentStorage } from './attachment-storage.js';
 import { isInitializationResetRequiredError } from './initialization-error.js';
 import { initializedLedgerSetting } from './ledger-initialization.js';
+import { exportPortableLedger } from './portable-backup.js';
 import { FirstRunWizard } from '../ui/FirstRunWizard.js';
+import { FirstUseModeGate } from '../ui/FirstUseModeGate.js';
+import { FirstServerConnectionGate } from '../ui/FirstServerConnectionGate.js';
+import { FirstRemoteLedgerRestoreGate } from '../ui/FirstRemoteLedgerRestoreGate.js';
 import {
   lockDeviceStorage,
   refreshDeviceStorageState,
   unlockDeviceStorage,
   type DeviceStorageState,
 } from '../device-storage-key.js';
+import { ensureLedgerKeyForStore } from '../ledger-key-lifecycle.js';
+import { ledgerKeyState, unlockLedgerKey } from '../ledger-key-vault.js';
+import { copyTextToClipboard, formatInitializationDiagnostic } from '../ui/diagnostics.js';
+import {
+  browserStorageDisposition,
+  browserPersistenceStatus,
+  clearFirstUseMode,
+  loadFirstUseMode,
+  prepareBrowserStorageForMode,
+  saveFirstUseMode,
+  type FirstUseMode,
+} from '../browser-storage-policy.js';
+import { isTauriRuntime } from '../tauri.js';
+import { clearSyncConfiguration, hasSavedSyncConnection, loadSyncConnections, saveSyncConnections } from '../sync-config.js';
+import { syncConfiguredServers } from '../sync-orchestrator.js';
+import { persistCredential, runtimeCredentialMap, unlockCredentialVault } from '../credential-vault.js';
+import { loadSharedSyncDirectory, mergeSharedSyncDirectory, saveSharedSyncDirectory } from '../sync-server-directory.js';
 
 interface StoreCtx {
   store: SqlLedgerStore;
@@ -31,6 +58,8 @@ interface StoreCtx {
   bump: () => void;
   storageBackend: StorageBackend;
   dataLocation: string;
+  firstUseMode: FirstUseMode;
+  browserStoragePersistent: boolean;
   resetLocalData: () => Promise<void>;
 }
 
@@ -195,6 +224,9 @@ function DeviceStorageGate(props: {
       >
         <div style={{ fontSize: 20, fontWeight: 900 }}>{creating ? '保护本机账本' : '解锁本机账本'}</div>
         <div style={{ marginTop: 7, color: '#756b60', fontSize: 13, lineHeight: 1.55 }}>{props.state.message}</div>
+        <div style={{ marginTop: 5, color: '#8c8175', fontSize: 11, lineHeight: 1.5 }}>
+          新账本会使用同一密码保护加密备份与端到端同步密钥；密码不会写入磁盘。
+        </div>
         <label style={{ display: 'block', marginTop: 20, fontSize: 12, fontWeight: 800 }}>
           本机数据密码
           <input
@@ -243,10 +275,85 @@ function DeviceStorageGate(props: {
   );
 }
 
+function BrowserStorageRecoveryGate(props: {
+  store: SqlLedgerStore;
+  reason: string;
+  onPersistenceRestored: () => void;
+  onUseServer: () => void;
+}) {
+  const [busy, setBusy] = useState<'persist' | 'export' | null>(null);
+  const [message, setMessage] = useState('');
+
+  async function retryPersistence() {
+    setBusy('persist');
+    setMessage('');
+    try {
+      const result = await browserPersistenceStatus(true);
+      if (!result.persisted) throw new Error(result.reason || '浏览器仍未授予持久存储权限');
+      props.onPersistenceRestored();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function exportRecoveryBackup() {
+    setBusy('export');
+    setMessage('');
+    try {
+      const backup = await exportPortableLedger(props.store);
+      const result = await downloadBackup({ backup, createdAt: new Date().toISOString(), label: '浏览器本地恢复备份' });
+      setMessage(result === 'cancelled' ? '已取消导出。' : '加密 .zcbak 已导出，请确认文件已保存到浏览器外。');
+    } catch (error) {
+      setMessage(`导出失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(24px, 6vw, 64px)', boxSizing: 'border-box', background: '#f0e9dc', color: '#4e473f', fontFamily: 'system-ui, sans-serif' }}>
+      <section style={{ width: 'min(760px, 100%)', margin: '6vh auto 0', padding: 'clamp(20px, 5vw, 34px)', border: '1px solid #d7b1a8', borderRadius: 14, background: '#fffaf5' }}>
+        <div style={{ color: '#9b4037', fontSize: 12, fontWeight: 900, letterSpacing: '.1em' }}>只读恢复模式</div>
+        <h1 style={{ margin: '9px 0 8px', color: '#672f20', fontSize: 28 }}>浏览器不再保证本地数据持久保存</h1>
+        <p style={{ color: '#756b60', lineHeight: 1.7 }}>{props.reason}</p>
+        <p style={{ color: '#756b60', lineHeight: 1.7 }}>账本没有被删除。恢复持久授权前不会运行定期任务、自动备份或普通写入；你可以先导出加密备份，或者改为连接同步服务器。</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 20 }}>
+          <button type="button" disabled={busy !== null} onClick={() => void retryPersistence()} style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 8, background: '#985734', color: '#fff', fontWeight: 850 }}>重新申请持久授权</button>
+          <button type="button" disabled={busy !== null} onClick={() => void exportRecoveryBackup()} style={{ minHeight: 44, padding: '0 16px', border: '1px solid #b9a99a', borderRadius: 8, background: '#fff', color: '#672f20', fontWeight: 850 }}>导出加密 .zcbak</button>
+          <button type="button" disabled={busy !== null} onClick={props.onUseServer} style={{ minHeight: 44, padding: '0 16px', border: 0, background: 'transparent', color: '#672f20', fontWeight: 850 }}>改为连接服务器</button>
+        </div>
+        {message && <div role="status" style={{ marginTop: 14, color: message.includes('失败') ? '#9b4037' : '#4f704d', lineHeight: 1.6 }}>{message}</div>}
+      </section>
+    </main>
+  );
+}
+
+function recoveryDeviceId(): string {
+  try {
+    return globalThis.localStorage?.getItem(CLOUD_DEVICE_ID_KEY) || 'browser-read-only-recovery';
+  } catch {
+    return 'browser-read-only-recovery';
+  }
+}
+
+async function unlockExistingLedgerKeyForRecovery(
+  store: Pick<SqlLedgerStore, 'getLedgerId'>,
+  passphrase: string,
+): Promise<void> {
+  const ledgerId = await store.getLedgerId();
+  const state = ledgerKeyState();
+  if (!state.initialized) throw new Error('只读恢复模式没有可用的账本备份密钥，请先恢复持久授权');
+  if (state.ledgerId !== ledgerId) throw new Error('本机账本密钥与当前恢复账本不匹配');
+  if (!state.unlocked) await unlockLedgerKey(passphrase);
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [store, setStore] = useState<SqlLedgerStore | null>(null);
   const [rev, setRev] = useState(0);
   const [error, setError] = useState<{ message: string; resetRequired: boolean } | null>(null);
+  const [errorCopyStatus, setErrorCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [resetting, setResetting] = useState(false);
   const [storageBackend, setStorageBackend] = useState<StorageBackend>('browser-indexeddb');
   const [dataLocation, setDataLocation] = useState('');
@@ -256,9 +363,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [initializationAttempt, setInitializationAttempt] = useState(0);
   const [pendingInitialization, setPendingInitialization] = useState<PendingInitialization | null>(null);
   const [ledgerKind, setLedgerKind] = useState<LedgerKind>('personal');
+  const [firstUseMode, setFirstUseMode] = useState<FirstUseMode | null>(() => {
+    const mode = loadFirstUseMode();
+    return mode === 'server' && !hasSavedSyncConnection() ? null : mode;
+  });
+  const [serverSetupRequested, setServerSetupRequested] = useState(false);
+  const [modeBusy, setModeBusy] = useState(false);
+  const [modeError, setModeError] = useState('');
+  const [browserPersistence, setBrowserPersistence] = useState<{
+    checked: boolean;
+    persisted: boolean;
+    reason: string;
+  }>(() => ({ checked: isTauriRuntime(), persisted: isTauriRuntime(), reason: '' }));
   const unlockStorageFlight = useRef(createVoidSingleFlight()).current;
   const resetStorageFlight = useRef(createVoidSingleFlight()).current;
   const storageLockFlight = useRef(createVoidSingleFlight()).current;
+  const storagePassphrase = useRef<string | null>(null);
+  const initializationDiagnostic = useMemo(
+    () => error ? formatInitializationDiagnostic(error.message, error.resetRequired) : '',
+    [error],
+  );
+
+  useEffect(() => {
+    setErrorCopyStatus('idle');
+  }, [error?.message]);
 
   useEffect(() => {
     let active = true;
@@ -271,7 +399,56 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!storageProtection?.unlocked) return;
+    if (isTauriRuntime() || !firstUseMode) return;
+    let active = true;
+    void browserPersistenceStatus(false).then((result) => {
+      if (!active) return;
+      setBrowserPersistence({ checked: true, persisted: result.persisted, reason: result.reason ?? '' });
+    });
+    return () => { active = false; };
+  }, [firstUseMode]);
+
+  async function selectFirstUseMode(mode: FirstUseMode) {
+    setModeBusy(true);
+    setModeError('');
+    try {
+      if (!isTauriRuntime()) {
+        const result = await prepareBrowserStorageForMode(mode);
+        setBrowserPersistence({ checked: true, persisted: result.persisted, reason: result.reason ?? '' });
+        if (mode === 'local' && !result.persisted) {
+          throw new Error(result.reason || '浏览器没有授予持久存储权限，不能创建纯本地账本');
+        }
+      }
+      if (mode === 'server') {
+        setServerSetupRequested(true);
+        return;
+      }
+      saveFirstUseMode(mode);
+      setFirstUseMode(mode);
+    } catch (error) {
+      setModeError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setModeBusy(false);
+    }
+  }
+
+  async function finishFirstServerConnection() {
+    saveFirstUseMode('server');
+    setFirstUseMode('server');
+    setServerSetupRequested(false);
+  }
+
+  const storageDisposition = browserStorageDisposition({
+    mode: firstUseMode,
+    persistenceChecked: browserPersistence.checked,
+    persisted: browserPersistence.persisted,
+    hasExistingLocalData: storageProtection?.initialized === true,
+    desktop: isTauriRuntime(),
+  });
+  const browserLocalRecovery = storageDisposition === 'recovery';
+
+  useEffect(() => {
+    if (!storageProtection?.unlocked || storageDisposition === 'pending' || storageDisposition === 'blocked') return;
     let cancelled = false;
     let openedStore: SqlLedgerStore | null = null;
     let published = false;
@@ -283,12 +460,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
     (async () => {
       try {
+        if (!isTauriRuntime() && firstUseMode === 'local' && storageDisposition === 'writable') {
+          const currentPersistence = await browserPersistenceStatus(false);
+          if (cancelled) return;
+          setBrowserPersistence({
+            checked: true,
+            persisted: currentPersistence.persisted,
+            reason: currentPersistence.reason ?? '',
+          });
+          if (!currentPersistence.persisted) return;
+        }
         const platform = await openPlatformDriver();
         if (await closeStoreWhenCancelled(platform.driver, () => cancelled)) return;
         const log = createLogger({ level: 'info', sinks: [consoleSink()], fields: { app: platform.backend === 'native-sqlite' ? 'native' : 'web' } });
         let s: SqlLedgerStore;
         try {
-          s = await createLedgerStore(platform.driver, { logger: log, deviceId: getDeviceId() });
+          const deviceId = browserLocalRecovery ? recoveryDeviceId() : getDeviceId();
+          if (browserLocalRecovery) {
+            await assertCurrentSchema(platform.driver);
+            s = new SqlLedgerStore(platform.driver, { logger: log, deviceId });
+          } else {
+            s = await createLedgerStore(platform.driver, { logger: log, deviceId });
+          }
         } catch (error) {
           await platform.driver.close().catch(() => undefined);
           throw error;
@@ -307,6 +500,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           published = true;
           setStorageBackend(platform.backend);
           setDataLocation(platform.dataLocation);
+          if (browserLocalRecovery) {
+            setLedgerKind('personal');
+            setStore(s);
+            return;
+          }
           setPendingInitialization({
             store: s,
             storageBackend: platform.backend,
@@ -314,9 +512,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           });
           return;
         }
-        await recoverAttachmentStorage(s);
-        await runLedgerMaintenance(s);
-        await runDueScheduledTransactions(s);
+        const passphrase = storagePassphrase.current;
+        if (passphrase) {
+          try {
+            if (browserLocalRecovery) await unlockExistingLedgerKeyForRecovery(s, passphrase);
+            else await ensureLedgerKeyForStore(s, passphrase);
+          } catch (ledgerKeyError) {
+            const message = ledgerKeyError instanceof Error ? ledgerKeyError.message : String(ledgerKeyError);
+            log.warn('ledger backup key was not unlocked with the device passphrase', { error: message });
+            if (!browserLocalRecovery) {
+              writeSafetyState({
+                lastBackupErrorAt: new Date().toISOString(),
+                lastBackupError: `账本备份密钥需要手动解锁：${message}`,
+              });
+            }
+          } finally {
+            storagePassphrase.current = null;
+          }
+        }
+        if (!browserLocalRecovery) {
+          await recoverAttachmentStorage(s);
+          await runLedgerMaintenance(s);
+          await runDueScheduledTransactions(s);
+        }
         if (await closeStoreWhenCancelled(s, () => cancelled)) {
           openedStore = null;
           return;
@@ -326,11 +544,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setDataLocation(platform.dataLocation);
         setLedgerKind(setting.ledgerKind ?? 'personal');
         setStore(s);
-        void maybeAutoBackup(s)
-          .then((entry) => {
-            if (entry?.externalSaved) writeSafetyState({ lastExternalBackupAt: entry.createdAt, lastBackupError: undefined, lastBackupErrorAt: undefined });
-          })
-          .catch((backupError) => writeSafetyState({ lastBackupErrorAt: new Date().toISOString(), lastBackupError: backupError instanceof Error ? backupError.message : String(backupError) }));
+        if (!browserLocalRecovery) {
+          void maybeAutoBackup(s)
+            .then((entry) => {
+              if (entry) writeSafetyState(successfulBackupSafetyPatch(entry));
+            })
+            .catch((backupError) => writeSafetyState({ lastBackupErrorAt: new Date().toISOString(), lastBackupError: backupError instanceof Error ? backupError.message : String(backupError) }));
+        }
       } catch (e) {
         await closeOpenedStore().catch(() => undefined);
         if (!cancelled) {
@@ -345,29 +565,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       if (published) void closeOpenedStore().catch(() => undefined);
     };
-  }, [storageProtection?.unlocked, initializationAttempt]);
+  }, [storageProtection?.unlocked, initializationAttempt, browserLocalRecovery, firstUseMode, storageDisposition]);
 
   useEffect(() => {
-    if (!store || rev === 0) return;
+    if (!store || rev === 0 || browserLocalRecovery) return;
     void maybeAutoBackup(store)
       .then((entry) => {
-        if (entry?.externalSaved) writeSafetyState({ lastExternalBackupAt: entry.createdAt, lastBackupError: undefined, lastBackupErrorAt: undefined });
+        if (entry) writeSafetyState(successfulBackupSafetyPatch(entry));
       })
       .catch((backupError) => writeSafetyState({ lastBackupErrorAt: new Date().toISOString(), lastBackupError: backupError instanceof Error ? backupError.message : String(backupError) }));
-  }, [store, rev]);
+  }, [store, rev, browserLocalRecovery]);
 
   useEffect(() => {
-    if (!store) return;
+    if (!store || browserLocalRecovery) return;
     return store.subscribe((change) => {
       setRev((value) => value + 1);
       if (change.entityTypes.includes('setting') || change.entityTypes.includes('*')) {
         void refreshLedgerKindSafely(store, setLedgerKind);
       }
     });
-  }, [store]);
+  }, [store, browserLocalRecovery]);
 
   useEffect(() => {
-    if (!store) return;
+    if (!store || browserLocalRecovery) return;
     let running = false;
     const execute = async () => {
       if (running) return;
@@ -388,7 +608,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', onVisibility);
       window.clearInterval(timer);
     };
-  }, [store]);
+  }, [store, browserLocalRecovery]);
 
   function resetDevelopmentData(requireConfirmation = true): Promise<void> {
     return resetStorageFlight(async () => {
@@ -406,10 +626,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           clearStores: () => {
             setStore(null);
             setPendingInitialization(null);
+            storagePassphrase.current = null;
           },
           lockStorage: lockDeviceStorage,
           resetPlatform: resetPlatformData,
         });
+        clearFirstUseMode();
         window.location.reload();
       } catch (reason) {
         setError({
@@ -426,7 +648,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setUnlockBusy(true);
       setUnlockError('');
       try {
+        const pendingCredentials = runtimeCredentialMap();
         const unlocked = await unlockDeviceStorage(password);
+        if (isTauriRuntime() && firstUseMode === 'server') {
+          const connectionIds = loadSyncConnections().map((connection) => connection.id);
+          await unlockCredentialVault(password, connectionIds);
+          for (const [connectionId, credential] of Object.entries(pendingCredentials)) {
+            if (credential.password || credential.inviteCode) await persistCredential(connectionId, credential);
+          }
+        }
+        storagePassphrase.current = password;
         setStorageProtection(unlocked.state);
       } catch (reason) {
         setUnlockError(reason instanceof Error ? reason.message : String(reason));
@@ -458,17 +689,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const pending = pendingInitialization;
     if (!pending) throw new Error('首次初始化上下文已经失效，请重新打开账本');
     try {
+      const passphrase = storagePassphrase.current;
+      if (!passphrase) throw new Error('本机数据密码会话已经失效，请返回解锁页后重试');
+      await ensureLedgerKeyForStore(pending.store, passphrase);
       await recoverAttachmentStorage(pending.store);
       await runLedgerMaintenance(pending.store);
       await runDueScheduledTransactions(pending.store);
+      if (firstUseMode === 'server') {
+        const connections = mergeSharedSyncDirectory(
+          loadSyncConnections(),
+          await loadSharedSyncDirectory(pending.store),
+        );
+        saveSyncConnections(connections);
+        const enabledConnections = connections.filter((connection) => connection.enabled);
+        if (!enabledConnections.length) throw new Error('服务器模式没有可用连接，请重新完成服务器登录');
+        await saveSharedSyncDirectory(pending.store, connections);
+        const syncResult = await syncConfiguredServers(pending.store, enabledConnections);
+        const failed = syncResult.endpoints.filter((endpoint) => endpoint.error || endpoint.attachments?.error);
+        if (failed.length) {
+          throw new Error(`首次同步失败：${failed.map((endpoint) => `${endpoint.alias}：${endpoint.error ?? endpoint.attachments?.error}`).join('；')}`);
+        }
+      }
       setStorageBackend(pending.storageBackend);
       setDataLocation(pending.dataLocation);
       setLedgerKind(setting.ledgerKind ?? 'personal');
       setPendingInitialization(null);
       setStore(pending.store);
+      storagePassphrase.current = null;
       void maybeAutoBackup(pending.store)
         .then((entry) => {
-          if (entry?.externalSaved) writeSafetyState({ lastExternalBackupAt: entry.createdAt, lastBackupError: undefined, lastBackupErrorAt: undefined });
+          if (entry) writeSafetyState(successfulBackupSafetyPatch(entry));
         })
         .catch((backupError) => writeSafetyState({ lastBackupErrorAt: new Date().toISOString(), lastBackupError: backupError instanceof Error ? backupError.message : String(backupError) }));
     } catch (reason) {
@@ -490,6 +740,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           () => {
             setStore(null);
             setPendingInitialization(null);
+            storagePassphrase.current = null;
           },
           lockDeviceStorage,
         );
@@ -503,7 +754,45 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
   }
 
+  function reloadAfterPersistenceRestore() {
+    window.location.reload();
+  }
+
+  function switchRecoveryToServerMode() {
+    clearFirstUseMode();
+    try {
+      sessionStorage.setItem('zichan.retryScreen', 'sync');
+    } catch {
+      // Hardened browser contexts can reject session storage; the app still opens safely.
+    }
+    window.location.reload();
+  }
+
+  function restartFirstUseWithDifferentAccount() {
+    clearSyncConfiguration();
+    clearFirstUseMode();
+    window.location.reload();
+  }
+
   if (!storageProtection) return <Splash label={unlockError || '正在检查本机加密存储…'} />;
+  if (!firstUseMode) {
+    if (serverSetupRequested) {
+      return <FirstServerConnectionGate onReady={finishFirstServerConnection} onCancel={() => { setServerSetupRequested(false); setModeError(''); }} />;
+    }
+    return <FirstUseModeGate busy={modeBusy} error={modeError} onSelect={selectFirstUseMode} />;
+  }
+  if (storageDisposition === 'pending' && firstUseMode === 'local' && !isTauriRuntime()) {
+    return <Splash label="正在确认浏览器持久存储…" />;
+  }
+  if (storageDisposition === 'blocked') {
+    return (
+      <FirstUseModeGate
+        busy={modeBusy}
+        error={modeError || browserPersistence.reason || '浏览器没有授予持久存储权限'}
+        onSelect={selectFirstUseMode}
+      />
+    );
+  }
   if (!storageProtection.unlocked) {
     return (
       <DeviceStorageGate
@@ -516,11 +805,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     );
   }
   if (error) {
+    const diagnostic = initializationDiagnostic;
+    const copyInitializationDiagnostic = async () => {
+      try {
+        await copyTextToClipboard(diagnostic);
+        setErrorCopyStatus('copied');
+      } catch {
+        setErrorCopyStatus('failed');
+      }
+    };
     return (
       <div style={{ minHeight: '100dvh', padding: 40, fontFamily: 'system-ui, sans-serif', background: '#f0e9dc', color: '#6b2f27' }}>
         <div style={{ maxWidth: 720, margin: '10vh auto 0' }}>
           <div style={{ fontSize: 18, fontWeight: 900 }}>数据库初始化失败</div>
-          <div style={{ marginTop: 12, fontFamily: 'ui-monospace, monospace', overflowWrap: 'anywhere' }}>{error.message}</div>
+          <label style={{ display: 'block', marginTop: 12, fontSize: 13, fontWeight: 800 }}>
+            错误详情（可选择后按 Ctrl+C 复制）
+            <textarea
+              readOnly
+              value={diagnostic}
+              aria-label="数据库初始化错误详情"
+              onFocus={(event) => event.currentTarget.select()}
+              spellCheck={false}
+              style={{ display: 'block', boxSizing: 'border-box', width: '100%', minHeight: 156, maxHeight: '42dvh', marginTop: 8, padding: 12, border: '1px solid #b9a99a', borderRadius: 8, background: '#fffdf9', color: '#6b2f27', fontFamily: 'ui-monospace, monospace', fontSize: 13, lineHeight: 1.5, resize: 'vertical', overflow: 'auto', userSelect: 'text', WebkitUserSelect: 'text' }}
+            />
+          </label>
           {error.resetRequired ? (
             <div style={{ marginTop: 12 }}>
               旧数据尚未被修改。请先确认已有浏览器外的 .zcbak 备份或服务器副本，再执行重置。
@@ -548,23 +856,70 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             <button
               type="button"
               disabled={resetting}
+              onClick={() => void copyInitializationDiagnostic()}
+              style={{ minHeight: 44, padding: '0 16px', border: '1px solid #b9a99a', borderRadius: 8, background: '#fffdf9', color: '#6b2f27', fontWeight: 800 }}
+            >
+              {errorCopyStatus === 'copied' ? '已复制诊断信息' : '复制诊断信息'}
+            </button>
+            <button
+              type="button"
+              disabled={resetting}
               onClick={() => void returnToStorageUnlock()}
               style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 8, background: 'transparent', color: '#6b2f27', fontWeight: 800 }}
             >
               返回解锁
             </button>
           </div>
+          {errorCopyStatus !== 'idle' && (
+            <div role="status" aria-live="polite" style={{ marginTop: 12, fontSize: 13 }}>
+              {errorCopyStatus === 'copied'
+                ? '诊断信息已复制。'
+                : '自动复制失败。点击错误详情后按 Ctrl+A、Ctrl+C 可手动复制。'}
+            </div>
+          )}
         </div>
       </div>
     );
   }
   if (pendingInitialization) {
+    const boundConnection = firstUseMode === 'server'
+      ? loadSyncConnections().find((connection) => Boolean(connection.enabled && connection.ledgerId))
+      : undefined;
+    if (boundConnection) {
+      return (
+        <FirstRemoteLedgerRestoreGate
+          store={pendingInitialization.store}
+          connection={boundConnection}
+          onRestored={finishFirstRun}
+          onUseDifferentAccount={restartFirstUseWithDifferentAccount}
+        />
+      );
+    }
     return <FirstRunWizard store={pendingInitialization.store} onInitialized={finishFirstRun} />;
   }
   if (!store) return <Splash label="正在加载账本…" />;
+  if (browserLocalRecovery) {
+    return (
+      <BrowserStorageRecoveryGate
+        store={store}
+        reason={browserPersistence.reason || '浏览器没有授予持久存储权限'}
+        onPersistenceRestored={reloadAfterPersistenceRestore}
+        onUseServer={switchRecoveryToServerMode}
+      />
+    );
+  }
 
   return (
-      <Ctx.Provider value={{ store, rev, bump: () => setRev((n) => n + 1), storageBackend, dataLocation, resetLocalData: () => resetDevelopmentData(false) }}>
+      <Ctx.Provider value={{
+        store,
+        rev,
+        bump: () => setRev((n) => n + 1),
+        storageBackend,
+        dataLocation,
+        firstUseMode,
+        browserStoragePersistent: isTauriRuntime() || browserPersistence.persisted,
+        resetLocalData: () => resetDevelopmentData(false),
+      }}>
       {ledgerKind === 'demo' && (
         <div
           role="status"

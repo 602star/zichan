@@ -22,7 +22,7 @@ apps/
 ```
 
 - **SQLite everywhere** via a storage *port* (`LedgerStore`) in the core: `NodeSqliteDriver`
-  in tests, `sql.js` + IndexedDB in browsers, and `TauriSqlDriver` + `tauri-plugin-sql` on desktop/mobile — one
+  in tests, `sql.js` + IndexedDB in browsers, and `TauriSqlDriver` + the dedicated Rust SQL bridge on desktop/mobile — one
   schema, one repository. See [docs/db.md](docs/db.md).
 - **decimal.js** for all money math — never JS floats on a ledger.
 - **Logging**: `@zichan/logger` (ephemeral diagnostics) + an `operation_log` audit table
@@ -65,7 +65,9 @@ apps/
   `npm start -w @zichan/sync-server`.
   [docs/cloud-sync.md](docs/cloud-sync.md).
 - **`@zichan/desktop`** — **Tauri 2** desktop shell wrapping the web build; compiles to a native
-  binary and supplies the native SQLite/attachment file bridge used by desktop and mobile. Native sync credentials use Stronghold; mobile adds an optional biometric app lock, receipt capture, barcode scanning, location, and native encrypted-backup sharing. Notifications use the standard Web Notification surface only when the runtime supports it. It can also run a fixed-PC all-in-one server with `npm run server -w @zichan/desktop`.
+  binary and supplies the native SQLite/attachment file bridge used by desktop and mobile. Windows v0.1 is a fully portable x64 ZIP:
+  ledger, attachments, backups, credentials, WebView state, and the built-in server all live below EXE-sibling `data/` and move together.
+  Release mode neither scans nor falls back to AppData. Native sync credentials use Stronghold; mobile adds an optional biometric app lock, receipt capture, barcode scanning, location, and native encrypted-backup sharing. Notifications use the standard Web Notification surface only when the runtime supports it. It can also run a fixed-PC all-in-one server with `npm run server -w @zichan/desktop`.
   In the Tauri desktop shell, **同步 → 服务器管理** can start/stop the local server online;
   browser Web mode shows the server as not enabled and points to the startup command.
   `npm run dev -w @zichan/desktop`. [docs/desktop.md](docs/desktop.md).
@@ -74,7 +76,7 @@ apps/
 
 - **Windows 双击入口**：`scripts/windows/start-all.cmd` 一键启动开发 Web（5173）和同步/管理服务器（8787）；
   `scripts/windows/start-web.cmd` 只启动开发 Web，`scripts/windows/start-sync-server.cmd` 单独启动已经包含静态 Web 的一体服务器，
-  `scripts/windows/build-desktop.cmd` 构建桌面程序和安装包。失败时窗口会保留诊断信息。
+  `scripts/windows/setup-webview2-runtime.cmd` 显式准备固定版 WebView2，`scripts/windows/build-desktop.cmd` 构建完全便携 ZIP。失败时窗口会保留诊断信息。
 - **Windows 命令行**：`npm start`、`npm run start:all`、`npm run start:server`、`npm run build -w @zichan/desktop`；
   现有多模式清理由 `npm stop` / `npm run stop:server` 提供。
 - **POSIX**（WSL / Git Bash / macOS）：`bash scripts/dev/start.sh [web|sync|server|desktop|all]` /
@@ -98,6 +100,8 @@ npm run dev          # web dev server only
 npm run start:desktop # Tauri dev shell
 npm run server -w @zichan/desktop  # fixed-PC all-in-one server
 npm run start:server # same fixed-PC server through the root startup wrapper
+npm run release:webview2:setup # explicitly download/verify the pinned fixed WebView2 runtime
+npm run release:portable # package an already-built Windows executable as the portable ZIP
 npm run mobile:init:android # one-time Android project generation (requires Android SDK/JDK 17+)
 npm run mobile:dev:android  # run the shared Tauri app on Android
 ```

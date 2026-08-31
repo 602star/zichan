@@ -35,12 +35,15 @@
     "test": "npm run test --workspaces --if-present",
     "test:coverage": "npm run test --prefix tools/coverage",
     "test:e2e": "npm run test --prefix tools/e2e",
-    "test:release": "node --test scripts/release/check-consistency.test.mjs scripts/release/verify-artifacts.test.mjs apps/desktop/scripts/create-update-manifest.test.mjs",
+    "test:release": "node --test tools/release/tests/check-consistency.test.mjs tools/release/tests/webview2-runtime.test.mjs tools/release/tests/create-windows-portable.test.mjs tools/release/tests/verify-artifacts.test.mjs",
     "bench:transactions": "npm run build && node packages/db/bench/transaction-scale.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build": "npm run build --workspace @zichan/logger --workspace @zichan/core --workspace @zichan/db",
     "build:web": "npm run build --workspace @zichan/web",
     "release:check": "node scripts/release/check-consistency.mjs",
+    "release:webview2:setup": "node scripts/release/setup-webview2-runtime.mjs",
+    "release:webview2:check": "node scripts/release/setup-webview2-runtime.mjs --check",
+    "release:portable": "node scripts/release/create-windows-portable.mjs",
     "ci": "npm run release:check && npm run test:release && npm run lint && npm run typecheck && npm run test:coverage && npm run build:web && npm run build --workspace @zichan/sync-server"
   },
   "engines": {

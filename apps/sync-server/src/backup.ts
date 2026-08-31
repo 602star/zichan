@@ -18,7 +18,7 @@ import { NodeSqliteDriver } from '@zichan/db/node';
 import { CURRENT_SERVER_SCHEMA, CURRENT_SERVER_SCHEMA_NAME } from './store.js';
 
 const BACKUP_VERSION = 1;
-const SIDE_CARS = ['server.secret', 'server-id', 'opaque.server-setup', 'admin-token.txt'] as const;
+const SIDE_CARS = ['server.secret', 'server-id', 'opaque.server-setup'] as const;
 const REQUIRED_FILES = ['server.sqlite', 'server.secret', 'server-id', 'opaque.server-setup'] as const;
 
 export interface ServerBackupFile {

@@ -53,9 +53,12 @@ export async function restoreFirstRunBackup(
   await importPortableLedger(store, openedBackup.payload.ledger, 'replace', {
     deviceState: deviceRestore,
     initialize: { initializedAt, fallbackLedgerKind: 'personal' },
-    onDatabaseCommitted: deviceRestore
-      ? () => { adoptUnlockedLedgerKeyEnvelope(openedBackup.container.keyEnvelope, openedBackup.session, true); }
-      : undefined,
+    // Every encrypted archive carries the ledger key envelope. Adopting it is
+    // required for portable-ledger backups too; otherwise the restored ledger
+    // opens but cannot create its first automatic backup.
+    onDatabaseCommitted: () => {
+      adoptUnlockedLedgerKeyEnvelope(openedBackup.container.keyEnvelope, openedBackup.session, true);
+    },
   });
   const setting = await initializedLedgerSetting(store);
   if (!setting) throw new Error('备份恢复后缺少初始化标识');
@@ -171,7 +174,7 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
       <section style={{ width: 'min(920px, 100%)', margin: '0 auto' }}>
         <div style={{ color: '#985734', fontSize: 12, fontWeight: 900, letterSpacing: '.12em' }}>ZICHAN · 首次设置</div>
         <h1 style={{ margin: '10px 0 4px', fontSize: 'clamp(28px, 5vw, 46px)', color: '#672f20' }}>开始你的账本</h1>
-        <p style={{ margin: 0, color: '#756b60', lineHeight: 1.7 }}>请选择一种初始化方式。完成之前不会运行定期任务、维护任务或自动备份。</p>
+        <p style={{ margin: 0, color: '#756b60', lineHeight: 1.7 }}>请选择一种初始化方式。完成后，本机数据密码同时用于加密备份与端到端同步密钥；完成之前不会运行定期任务、维护任务或自动备份。</p>
 
         <div role="radiogroup" aria-label="账本初始化方式" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginTop: 28 }}>
           {([

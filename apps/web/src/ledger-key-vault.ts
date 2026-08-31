@@ -7,7 +7,7 @@ import {
   type LedgerKeyEnvelope,
 } from '@zichan/core';
 
-const ENVELOPE_KEY = 'zichan.ledger.keyEnvelope.v1';
+export const LEDGER_KEY_ENVELOPE_KEY = 'zichan.ledger.keyEnvelope.v1';
 export const LEDGER_KEY_STATE_CHANGED_EVENT = 'zichan:ledger-key-state-changed';
 
 export interface LedgerKeyState {
@@ -36,7 +36,7 @@ function validEnvelope(value: unknown): value is LedgerKeyEnvelope {
 
 export function storedLedgerKeyEnvelope(): LedgerKeyEnvelope | undefined {
   try {
-    const raw = globalThis.localStorage?.getItem(ENVELOPE_KEY);
+    const raw = globalThis.localStorage?.getItem(LEDGER_KEY_ENVELOPE_KEY);
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as unknown;
     return validEnvelope(parsed) ? parsed : undefined;
@@ -46,7 +46,7 @@ export function storedLedgerKeyEnvelope(): LedgerKeyEnvelope | undefined {
 }
 
 function persist(envelope: LedgerKeyEnvelope): void {
-  globalThis.localStorage?.setItem(ENVELOPE_KEY, JSON.stringify(envelope));
+  globalThis.localStorage?.setItem(LEDGER_KEY_ENVELOPE_KEY, JSON.stringify(envelope));
 }
 
 export function ledgerKeyState(): LedgerKeyState {
@@ -93,6 +93,13 @@ export function lockLedgerKey(): void {
   emit();
 }
 
+/** Forget every local reference to the current ledger key after a full data reset. */
+export function clearLedgerKey(): void {
+  session = undefined;
+  globalThis.localStorage?.removeItem(LEDGER_KEY_ENVELOPE_KEY);
+  emit();
+}
+
 export async function updateLedgerPassphrase(newPassphrase: string): Promise<LedgerKeyState> {
   const current = requireLedgerCryptoSession();
   const changed = await changeLedgerPassphrase(current, newPassphrase);
@@ -119,8 +126,8 @@ export function adoptLedgerKeyEnvelope(envelope: LedgerKeyEnvelope, replace = fa
   if (current && current.keyringId === envelope.keyringId && current.generation > envelope.generation) {
     throw new Error('服务器上的账本密钥包比本机旧');
   }
-  session = undefined;
   persist(envelope);
+  session = undefined;
   emit();
   return ledgerKeyState();
 }
@@ -139,8 +146,8 @@ export function adoptUnlockedLedgerKeyEnvelope(
   }
   const current = storedLedgerKeyEnvelope();
   if (current && !replace && current.keyringId !== envelope.keyringId) throw new Error('本机已有另一个账本密钥包');
-  session = unlocked;
   persist(envelope);
+  session = unlocked;
   emit();
   return ledgerKeyState();
 }

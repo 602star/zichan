@@ -2,12 +2,16 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { card, th as thStyle, td as tdStyle } from '../ui/styles.js';
 import { tauriInvoke } from '../tauri.js';
 import { DateRangeBar, dateRangeValue, localDateRangeToUtc, type DateRangeValue } from '../ui/DateRangeBar.js';
+import { normalizeSyncBaseUrl, type SyncConnection } from '../sync-config.js';
+import { assertSyncServerIdentity } from '../sync-auth.js';
 
 type RegistrationMode = 'open' | 'invite' | 'closed';
 
 interface AdminStatus {
   ok: boolean;
   serverId: string;
+  claimed: boolean;
+  ownerUsername?: string;
   basePath?: string;
   syncEnabled: boolean;
   webEnabled: boolean;
@@ -37,6 +41,7 @@ interface AdminBlobUser {
 
 interface AdminUser {
   username: string;
+  role: 'admin' | 'member';
   disabled: boolean;
   createdAt: string | null;
   updatedAt: string | null;
@@ -86,40 +91,35 @@ interface DesktopServerStatus {
   managed: boolean;
   endpoint: string;
   dataFile: string | null;
-  adminTokenFile: string | null;
-  adminToken: string | null;
   message: string;
 }
 
-const defaultEndpoint = () => {
-  if (typeof window === 'undefined') return 'http://localhost:8787';
-  return window.location.port === '5173' ? 'http://localhost:8787' : window.location.origin;
-};
+const LAN_EXPOSURE_ACK_KEY = 'zichan.desktop.lan-exposure-ack.v1';
 
 const fmt = (v: string | null) => v ? new Date(v).toLocaleString() : '—';
 const compact = (v: string) => v.length > 18 ? `${v.slice(0, 18)}…` : v;
 
-function assertSecureAdminEndpoint(baseUrl: string): void {
-  let url: URL;
+const adminIdentityChecks = new Map<string, Promise<void>>();
+
+async function verifyAdminConnection(connection: SyncConnection): Promise<void> {
+  const key = `${connection.id}\u0000${connection.baseUrl}\u0000${connection.serverId ?? ''}\u0000${connection.serverPublicKey ?? ''}`;
+  const current = adminIdentityChecks.get(key);
+  if (current) return current;
+  const pending = assertSyncServerIdentity(connection);
+  adminIdentityChecks.set(key, pending);
   try {
-    url = new URL(baseUrl);
-  } catch {
-    throw new Error('管理地址无效');
-  }
-  const hostname = url.hostname.toLowerCase();
-  const loopback = hostname === 'localhost'
-    || hostname.endsWith('.localhost')
-    || hostname === '127.0.0.1'
-    || hostname === '::1';
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
-    throw new Error('远程管理必须使用 HTTPS；HTTP 管理仅允许本机');
+    await pending;
+  } finally {
+    if (adminIdentityChecks.get(key) === pending) adminIdentityChecks.delete(key);
   }
 }
 
-async function adminFetch<T>(baseUrl: string, token: string, path: string, init: RequestInit = {}): Promise<T> {
-  assertSecureAdminEndpoint(baseUrl);
-  const res = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
+async function adminFetch<T>(connection: SyncConnection, token: string, path: string, init: RequestInit = {}): Promise<T> {
+  await verifyAdminConnection(connection);
+  const normalized = normalizeSyncBaseUrl(connection.baseUrl);
+  const res = await fetch(`${normalized}${path}`, {
     ...init,
+    redirect: 'error',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
@@ -130,9 +130,9 @@ async function adminFetch<T>(baseUrl: string, token: string, path: string, init:
   return (await res.json()) as T;
 }
 
-export function ServerAdmin() {
-  const [endpoint, setEndpoint] = useState(defaultEndpoint);
-  const [token, setToken] = useState('');
+export function ServerAdmin({ connection, accessToken }: { connection?: SyncConnection; accessToken?: string }) {
+  const endpoint = connection?.baseUrl ?? '';
+  const token = accessToken?.trim() ?? '';
   const [desktopStatus, setDesktopStatus] = useState<DesktopServerStatus | null>(null);
   const [status, setStatus] = useState<AdminStatus | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -150,6 +150,13 @@ export function ServerAdmin() {
   const [busy, setBusy] = useState(false);
   const [desktopBusy, setDesktopBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [lanExposureAccepted, setLanExposureAccepted] = useState(() => {
+    try {
+      return localStorage.getItem(LAN_EXPOSURE_ACK_KEY) === 'accepted';
+    } catch {
+      return false;
+    }
+  });
 
   const refreshDesktopStatus = useCallback(async () => {
     const call = tauriInvoke<DesktopServerStatus>('desktop_server_status');
@@ -160,8 +167,6 @@ export function ServerAdmin() {
         managed: false,
         endpoint: 'http://localhost:8787',
         dataFile: null,
-        adminTokenFile: null,
-        adminToken: null,
         message: '当前是浏览器 Web 模式，不能在线启动本机服务。',
       });
       return;
@@ -169,8 +174,6 @@ export function ServerAdmin() {
     try {
       const s = await call;
       setDesktopStatus(s);
-      if (s.running) setEndpoint(s.endpoint);
-      if (s.adminToken) setToken((current) => current || s.adminToken!);
     } catch (e) {
       setDesktopStatus({
         available: false,
@@ -178,8 +181,6 @@ export function ServerAdmin() {
         managed: false,
         endpoint: 'http://localhost:8787',
         dataFile: null,
-        adminTokenFile: null,
-        adminToken: null,
         message: `桌面服务状态读取失败：${e instanceof Error ? e.message : String(e)}`,
       });
     }
@@ -190,14 +191,16 @@ export function ServerAdmin() {
   }, [refreshDesktopStatus]);
 
   async function controlDesktopServer(command: 'desktop_start_server' | 'desktop_stop_server') {
+    if (command === 'desktop_start_server' && !lanExposureAccepted) {
+      setMessage('请先确认局域网暴露与防火墙提示。');
+      return;
+    }
     const call = tauriInvoke<DesktopServerStatus>(command);
     if (!call) return;
     setDesktopBusy(true);
     try {
       const s = await call;
       setDesktopStatus(s);
-      setEndpoint(s.endpoint);
-      if (s.adminToken) setToken(s.adminToken);
       setMessage(s.message);
     } catch (e) {
       setMessage(`操作失败：${e instanceof Error ? e.message : String(e)}`);
@@ -210,10 +213,11 @@ export function ServerAdmin() {
     setBusy(true);
     setMessage('');
     try {
-      const res = await fetch(`${endpoint.replace(/\/+$/, '')}/api/health`);
+      if (!endpoint) throw new Error('请先在“账号与同步”中选择服务器');
+      const res = await fetch(`${normalizeSyncBaseUrl(endpoint)}/api/health`, { redirect: 'error' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const body = (await res.json()) as { serverId?: string; syncEnabled?: boolean; webEnabled?: boolean; registrationMode?: string; basePath?: string };
-      setMessage(`服务器在线：${body.serverId ?? 'unknown'} · 路径 ${body.basePath || '/'} · 同步 ${body.syncEnabled ? '开启' : '关闭'} · Web ${body.webEnabled ? '开启' : '关闭'} · 管理需要管理员 Token`);
+      setMessage(`服务器在线：${body.serverId ?? 'unknown'} · 路径 ${body.basePath || '/'} · 同步 ${body.syncEnabled ? '开启' : '关闭'} · Web ${body.webEnabled ? '开启' : '关闭'} · 管理操作使用当前管理员账号会话`);
     } catch (e) {
       setStatus(null);
       setMessage(`连接失败：${e instanceof Error ? e.message : String(e)}`);
@@ -228,6 +232,7 @@ export function ServerAdmin() {
     try {
       if (!token.trim()) {
         await checkHealth();
+        setMessage('服务器在线；请先在“账号与同步”中登录管理员账号。');
         return;
       }
       const utcRange = localDateRangeToUtc(logRange);
@@ -235,13 +240,13 @@ export function ServerAdmin() {
       if (logLevel !== 'all') logParams.set('level', logLevel);
       if (utcRange.since) logParams.set('from', utcRange.since);
       if (utcRange.until) logParams.set('until', utcRange.until);
-      const logQuery = `/admin/logs?${logParams.toString()}`;
+      const logQuery = `/api/admin/logs?${logParams.toString()}`;
       const [s, u, i, l, b] = await Promise.all([
-        adminFetch<AdminStatus>(endpoint, token, '/admin/status'),
-        adminFetch<{ users: AdminUser[] }>(endpoint, token, '/admin/users?limit=500'),
-        adminFetch<{ invites: AdminInvite[] }>(endpoint, token, '/admin/invites'),
-        adminFetch<{ logs: ServerLog[] }>(endpoint, token, logQuery),
-        adminFetch<{ users: AdminBlobUser[] }>(endpoint, token, '/admin/blobs'),
+        adminFetch<AdminStatus>(connection!, token, '/api/admin/status'),
+        adminFetch<{ users: AdminUser[] }>(connection!, token, '/api/admin/users?limit=500'),
+        adminFetch<{ invites: AdminInvite[] }>(connection!, token, '/api/admin/invites'),
+        adminFetch<{ logs: ServerLog[] }>(connection!, token, logQuery),
+        adminFetch<{ users: AdminBlobUser[] }>(connection!, token, '/api/admin/quotas'),
       ]);
       setStatus(s);
       setMode(s.registrationMode);
@@ -262,7 +267,7 @@ export function ServerAdmin() {
   async function saveRegistrationMode() {
     setBusy(true);
     try {
-      await adminFetch<{ mode: RegistrationMode }>(endpoint, token, '/admin/registration', {
+      await adminFetch<{ mode: RegistrationMode }>(connection!, token, '/api/admin/registration', {
         method: 'POST',
         body: JSON.stringify({ mode }),
       });
@@ -276,7 +281,7 @@ export function ServerAdmin() {
   async function createInvite() {
     setBusy(true);
     try {
-      await adminFetch<{ invite: AdminInvite }>(endpoint, token, '/admin/invites', {
+      await adminFetch<{ invite: AdminInvite }>(connection!, token, '/api/admin/invites', {
         method: 'POST',
         body: JSON.stringify({ code: newInvite.trim() || undefined }),
       });
@@ -291,7 +296,7 @@ export function ServerAdmin() {
   async function setUserDisabled(user: AdminUser, disabled: boolean) {
     setBusy(true);
     try {
-      await adminFetch(endpoint, token, `/admin/users/${encodeURIComponent(user.username)}/disable`, {
+      await adminFetch(connection!, token, `/api/admin/users/${encodeURIComponent(user.username)}/disable`, {
         method: 'POST',
         body: JSON.stringify({ disabled }),
       });
@@ -306,9 +311,9 @@ export function ServerAdmin() {
     setBusy(true);
     try {
       const response = await adminFetch<{ devices: AdminDevice[] }>(
-        endpoint,
+        connection!,
         token,
-        `/admin/users/${encodeURIComponent(user.username)}/devices`,
+        `/api/admin/users/${encodeURIComponent(user.username)}/devices`,
       );
       setDeviceOwner(user.username);
       setDevices(response.devices);
@@ -323,7 +328,7 @@ export function ServerAdmin() {
   async function revokeDevice(device: AdminDevice) {
     setBusy(true);
     try {
-      await adminFetch(endpoint, token, `/admin/sessions/${encodeURIComponent(device.id)}/revoke`, {
+      await adminFetch(connection!, token, `/api/admin/sessions/${encodeURIComponent(device.id)}/revoke`, {
         method: 'POST',
         body: '{}',
       });
@@ -340,7 +345,7 @@ export function ServerAdmin() {
   async function setInviteDisabled(invite: AdminInvite, disabled: boolean) {
     setBusy(true);
     try {
-      await adminFetch(endpoint, token, `/admin/invites/${encodeURIComponent(invite.code)}/disable`, {
+      await adminFetch(connection!, token, `/api/admin/invites/${encodeURIComponent(invite.code)}/disable`, {
         method: 'POST',
         body: JSON.stringify({ disabled }),
       });
@@ -360,7 +365,7 @@ export function ServerAdmin() {
     }
     setBusy(true);
     try {
-      await adminFetch(endpoint, token, `/admin/blobs/${encodeURIComponent(user.username)}/quota`, {
+      await adminFetch(connection!, token, `/api/admin/quotas/${encodeURIComponent(user.username)}/blobs`, {
         method: 'POST',
         body: JSON.stringify({ quotaBytes: Math.round(gigabytes * 1024 ** 3) }),
       });
@@ -374,7 +379,7 @@ export function ServerAdmin() {
   async function verifyBlobStorage() {
     setBusy(true);
     try {
-      const response = await adminFetch<{ verification: { checkedObjects: number; checkedChunks: number; issues: { detail: string }[] } }>(endpoint, token, '/admin/blobs/verify', {
+      const response = await adminFetch<{ verification: { checkedObjects: number; checkedChunks: number; issues: { detail: string }[] } }>(connection!, token, '/api/admin/quotas/blobs/verify', {
         method: 'POST',
         body: '{}',
       });
@@ -399,7 +404,7 @@ export function ServerAdmin() {
     }
     setBusy(true);
     try {
-      await adminFetch(endpoint, token, `/admin/users/${encodeURIComponent(user.username)}/quota`, {
+      await adminFetch(connection!, token, `/api/admin/quotas/${encodeURIComponent(user.username)}/commits`, {
         method: 'POST',
         body: JSON.stringify({ commitQuotaBytes: Math.round(gigabytes * 1024 ** 3) }),
       });
@@ -413,7 +418,7 @@ export function ServerAdmin() {
   async function verifyDatabaseStorage() {
     setBusy(true);
     try {
-      const response = await adminFetch<{ verification: { ok: boolean; result: string; journalMode: string; schemaVersion: number } }>(endpoint, token, '/admin/database/verify');
+      const response = await adminFetch<{ verification: { ok: boolean; result: string; journalMode: string; schemaVersion: number } }>(connection!, token, '/api/admin/database/verify');
       const verification = response.verification;
       await refresh();
       setMessage(verification.ok
@@ -460,27 +465,46 @@ export function ServerAdmin() {
             <code style={{ fontSize: 12, color: 'var(--fg-muted)' }}>npm run start:server</code>
           )}
         </div>
+        {!desktopStatus?.running && desktopStatus?.available && (
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 12, fontSize: 12, lineHeight: 1.6, color: 'var(--negative)' }}>
+            <input
+              type="checkbox"
+              checked={lanExposureAccepted}
+              onChange={(event) => {
+                const accepted = event.target.checked;
+                setLanExposureAccepted(accepted);
+                try {
+                  if (accepted) localStorage.setItem(LAN_EXPOSURE_ACK_KEY, 'accepted');
+                  else localStorage.removeItem(LAN_EXPOSURE_ACK_KEY);
+                } catch {
+                  // The native command still checks this in-memory acknowledgement.
+                }
+              }}
+            />
+            我了解：服务器监听 0.0.0.0:8787，同一局域网设备可以访问，Windows 可能显示防火墙提示；应用不会代替我创建防火墙规则。
+          </label>
+        )}
         {desktopStatus?.dataFile && (
           <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 10 }}>
             数据文件：{desktopStatus.dataFile}
-            {desktopStatus.adminTokenFile && <> · Token：{desktopStatus.adminTokenFile}</>}
           </div>
         )}
       </div>
 
       <div style={card}>
         <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 14 }}>服务器连接</div>
-        <div className="zc-server-admin-connection" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: 10, alignItems: 'end' }}>
+        <div className="zc-server-admin-connection" style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: 10, alignItems: 'end' }}>
           <div>
-            <label className="zc-label">服务器地址</label>
-            <input className="zc-input" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="http://localhost:8787" />
-          </div>
-          <div>
-            <label className="zc-label">管理员 Token</label>
-            <input className="zc-input" type="password" value={token} onChange={(e) => setToken(e.target.value)} />
+            <label className="zc-label">当前服务器</label>
+            <div style={{ minHeight: 38, display: 'flex', alignItems: 'center', padding: '0 11px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface)', color: 'var(--fg-muted)', fontSize: 12 }}>
+              {connection ? `${connection.alias} · ${endpoint}` : '请先在“账号与同步”中新增并选择服务器'}
+            </div>
           </div>
           <button onClick={checkHealth} disabled={busy} style={outline}>检查</button>
-          <button onClick={refresh} disabled={busy} style={primary}>管理</button>
+          <button onClick={refresh} disabled={busy || !connection || !token} style={primary}>载入管理后台</button>
+        </div>
+        <div style={{ marginTop: 8, fontSize: 11, color: 'var(--fg-subtle)' }}>
+          地址在“账号与同步”中编辑；这里复用当前账号会话。成员账号会收到 403，只有管理员可以载入管理数据。
         </div>
         {message && <div style={{ marginTop: 10, fontSize: 12, fontWeight: 700, color: message.includes('失败') ? 'var(--negative)' : 'var(--positive)' }}>{message}</div>}
       </div>
@@ -618,11 +642,11 @@ export function ServerAdmin() {
       {status && (
         <div style={card}>
           <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 12 }}>用户</div>
-          <Table headers={['用户名', '状态', '设备', '提交', '提交存储 / 配额', '配额（GB）', '最后登录', '']}>
+          <Table headers={['用户名', '角色 / 状态', '设备', '提交', '提交存储 / 配额', '配额（GB）', '最后登录', '']}>
             {users.map((u) => (
               <tr key={u.username}>
                 <td style={tdStyle}>{u.username}</td>
-                <td style={{ ...tdStyle, color: u.disabled ? 'var(--negative)' : 'var(--positive)', fontWeight: 700 }}>{u.disabled ? '已禁用' : '正常'}</td>
+                <td style={{ ...tdStyle, color: u.disabled ? 'var(--negative)' : 'var(--positive)', fontWeight: 700 }}>{u.role === 'admin' ? '管理员' : '成员'} · {u.disabled ? '已禁用' : '正常'}</td>
                 <td style={tdStyle}>{u.activeDeviceCount}</td>
                 <td style={tdStyle}>{u.commitCount}</td>
                 <td style={tdStyle}>{formatBytes(u.commitBytes)} / {formatBytes(u.commitQuotaBytes)}</td>
@@ -636,7 +660,7 @@ export function ServerAdmin() {
                 <td style={{ ...tdStyle, textAlign: 'right' }}>
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
                     <button onClick={() => void loadDevices(u)} disabled={busy} style={outline}>设备</button>
-                    <button onClick={() => setUserDisabled(u, !u.disabled)} disabled={busy} style={u.disabled ? outline : danger}>
+                    <button onClick={() => setUserDisabled(u, !u.disabled)} disabled={busy || u.role === 'admin'} title={u.role === 'admin' ? '不能禁用服务器所有者' : undefined} style={u.disabled ? outline : danger}>
                       {u.disabled ? '启用' : '禁用'}
                     </button>
                   </div>

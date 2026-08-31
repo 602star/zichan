@@ -7,6 +7,7 @@ import {
 } from '../src/ui/DialogShell.js';
 import { confirmDialogErrorMessage } from '../src/ui/ConfirmDialog.js';
 import { formatAppDiagnostic } from '../src/ui/AppErrorBoundary.js';
+import { formatInitializationDiagnostic } from '../src/ui/diagnostics.js';
 
 describe('dialog shell keyboard contract', () => {
   it('wraps focus only at the two edges', () => {
@@ -57,6 +58,14 @@ describe('application error diagnostic', () => {
     expect(diagnostic).toContain('组件：');
     expect(diagnostic).toContain('at Reports');
     expect(diagnostic).toContain('页面：unknown');
+    expect(diagnostic).toMatch(/时间：\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('keeps database initialization diagnostics actionable without requiring a screenshot', () => {
+    const diagnostic = formatInitializationDiagnostic('WebAssembly.compile() blocked by CSP', true);
+    expect(diagnostic).toContain('错误：数据库初始化失败');
+    expect(diagnostic).toContain('详情：WebAssembly.compile() blocked by CSP');
+    expect(diagnostic).toContain('恢复建议：');
     expect(diagnostic).toMatch(/时间：\d{4}-\d{2}-\d{2}T/);
   });
 });
