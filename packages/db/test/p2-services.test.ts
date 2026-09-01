@@ -6,12 +6,15 @@ import {
   scheduleExecutionId,
   type Asset,
   type Category,
+  type LedgerMode,
+  type Setting,
 } from '@zichan/core';
 import { openLedger } from '../src/node.js';
 import {
   archiveFixedUsageMetric,
   archiveScheduledTransaction,
   cancelFixedAssetGoal,
+  checkConsistency,
   deleteBudgetCategory,
   deleteFixedUsageLog,
   deleteGameRecord,
@@ -127,6 +130,91 @@ describe('P2 business compensation commands', () => {
       await store.close();
     }
   });
+
+  it('creates an accountless ordinary transaction for game cashflow in spending mode', async () => {
+    const store = await openLedger();
+    try {
+      const { asset, income } = await seedDailyLedger(store);
+      await store.settings.put({
+        ...base('setting-spending'),
+        baseCurrencyAssetId: asset.id,
+        ledgerMode: 'spending',
+        defaultLotMethod: 'fifo',
+      } satisfies Setting);
+      const game = await store.games.put({
+        ...base(),
+        name: '轻量游戏',
+        enableSeason: true,
+        isActive: true,
+      });
+
+      const saved = await saveGameRecordAggregate(store, {
+        record: {
+          ...base(),
+          date: '2026-08-31',
+          gameId: game.id,
+          recordType: 'withdraw',
+          settlementAssetId: asset.id,
+          settlementAmount: '75',
+        },
+        settlement: {
+          mode: 'create_transaction',
+          createTransaction: { categoryId: income.id },
+        },
+        fee: { mode: 'record_only' },
+      });
+
+      expect(saved.settlementTransaction).toMatchObject({ type: 'income', amount: '75' });
+      expect(saved.settlementTransaction?.accountId).toBeUndefined();
+      expect(saved.settlementLink?.accountId).toBeUndefined();
+      expect((await checkConsistency(store)).filter((issue) =>
+        issue.entityType === 'game_cashflow_link')).toEqual([]);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it.each(['accounts', 'assets'] satisfies LedgerMode[])(
+    'still requires a game cashflow account in %s mode',
+    async (ledgerMode) => {
+      const store = await openLedger();
+      try {
+        const { asset, income } = await seedDailyLedger(store);
+        await store.settings.put({
+          ...base(`setting-${ledgerMode}`),
+          baseCurrencyAssetId: asset.id,
+          ledgerMode,
+          defaultLotMethod: 'fifo',
+        } satisfies Setting);
+        const game = await store.games.put({
+          ...base(),
+          name: '账户游戏',
+          enableSeason: true,
+          isActive: true,
+        });
+
+        await expect(saveGameRecordAggregate(store, {
+          record: {
+            ...base(),
+            date: '2026-08-31',
+            gameId: game.id,
+            recordType: 'withdraw',
+            settlementAssetId: asset.id,
+            settlementAmount: '75',
+          },
+          settlement: {
+            mode: 'create_transaction',
+            createTransaction: { categoryId: income.id },
+          },
+          fee: { mode: 'record_only' },
+        })).rejects.toThrow('请选择账户');
+        expect(await store.gameRecords.count()).toBe(0);
+        expect(await store.transactions.count()).toBe(0);
+      } finally {
+        await store.close();
+      }
+    },
+  );
 
   it('rejects a standalone fee record that also carries a fee amount', async () => {
     const store = await openLedger();

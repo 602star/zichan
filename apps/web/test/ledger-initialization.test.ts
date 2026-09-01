@@ -6,6 +6,8 @@ import { newId } from '@zichan/core';
 import { exportLedger, preflightImport, type LedgerBackup, type SqlLedgerStore } from '@zichan/db';
 import { openLedger } from '@zichan/db/node';
 import {
+  DEFAULT_EXPENSE_TEMPLATES,
+  QUICK_START_LEDGER_OPTIONS,
   initializeEmptyLedger,
   initializedLedgerSetting,
 } from '../src/db/ledger-initialization.js';
@@ -25,7 +27,7 @@ describe('first-run ledger initialization', () => {
     expect(claimFirstRunFlight(flight)).toBe(true);
   });
 
-  it('creates a minimal personal ledger exactly once', async () => {
+  it('creates a ready-to-use personal expense ledger exactly once', async () => {
     const store = await openLedger({ deviceId: 'first-run-empty' });
     try {
       expect(await initializedLedgerSetting(store)).toBeNull();
@@ -36,15 +38,15 @@ describe('first-run ledger initialization', () => {
       })).rejects.toThrow(/初始化时间/);
       expect(await store.assets.count()).toBe(0);
       const setting = await initializeEmptyLedger(store, {
-        baseCurrencyCode: 'CNY',
-        ledgerMode: 'accounts',
+        ...QUICK_START_LEDGER_OPTIONS,
         initializedAt: '2026-08-13T00:00:00.000Z',
       });
 
       expect(setting.ledgerKind).toBe('personal');
       expect(setting.initializedAt).toBe('2026-08-13T00:00:00.000Z');
-      expect(setting.ledgerMode).toBe('accounts');
-      expect((await store.assets.list()).map((asset) => asset.code)).toEqual(['CNY']);
+      expect(setting.ledgerMode).toBe('spending');
+      const assets = await store.assets.list();
+      expect(assets.map((asset) => asset.code)).toEqual(['CNY']);
       expect(await store.settings.count()).toBe(1);
       expect(await store.categories.count()).toBeGreaterThan(0);
       expect(await store.fixedAssetCategories.count()).toBeGreaterThan(0);
@@ -55,10 +57,29 @@ describe('first-run ledger initialization', () => {
       expect(await store.games.count()).toBe(0);
       expect(await store.fixedAssets.count()).toBe(0);
 
+      const templates = (await store.transactionTemplates.list())
+        .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0));
+      expect(templates.map((template) => ({
+        name: template.name,
+        category: template.category,
+        type: template.type,
+        amount: template.amount,
+        assetId: template.assetId,
+        description: template.description,
+        isActive: template.isActive,
+      }))).toEqual(DEFAULT_EXPENSE_TEMPLATES.map((template) => ({
+        ...template,
+        type: 'expense',
+        amount: undefined,
+        assetId: assets[0]!.id,
+        description: template.name,
+        isActive: true,
+      })));
+
       await runLedgerMaintenance(store);
       expect(await store.transactionTags.count()).toBe(0);
       expect(await store.transactionLocations.count()).toBe(0);
-      expect(await store.transactionTemplates.count()).toBe(0);
+      expect(await store.transactionTemplates.count()).toBe(10);
       expect(await store.budgetCategories.count()).toBe(0);
       expect(await store.scheduledTransactions.count()).toBe(0);
 

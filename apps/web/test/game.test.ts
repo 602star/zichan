@@ -1,6 +1,41 @@
 import { describe, it, expect } from 'vitest';
+import { openLedger } from '@zichan/db/node';
+import { createGameWithDefaultSeason } from '../src/screens/Game.js';
 import { buildGameSeason } from '../src/selectors/game.js';
 import { makeSnapshot } from './fixtures.js';
+
+describe('game first use', () => {
+  it('creates the game and default current season in one command', async () => {
+    const store = await openLedger({ deviceId: 'game-first-use' });
+    try {
+      const created = await createGameWithDefaultSeason(store, '  最终幻想 XIV  ', '2026-08-31');
+
+      expect(created.game).toMatchObject({ name: '最终幻想 XIV', enableSeason: true, isActive: true });
+      expect(created.season).toMatchObject({
+        gameId: created.game.id,
+        name: '当前赛季',
+        status: 'active',
+        startDate: '2026-08-31',
+      });
+      expect(await store.games.count()).toBe(1);
+      expect(await store.gameSeasons.count()).toBe(1);
+      expect(await store.gameAccounts.count()).toBe(0);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('does not write a partial game when the name is blank', async () => {
+    const store = await openLedger({ deviceId: 'game-first-use-blank' });
+    try {
+      await expect(createGameWithDefaultSeason(store, '   ', '2026-08-31')).rejects.toThrow('请输入游戏名称');
+      expect(await store.games.count()).toBe(0);
+      expect(await store.gameSeasons.count()).toBe(0);
+    } finally {
+      await store.close();
+    }
+  });
+});
 
 describe('buildGameSeason', () => {
   const snap = makeSnapshot();

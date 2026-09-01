@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   D,
   conversionStepAmounts,
@@ -25,6 +25,12 @@ import { useUndo } from '../ui/UndoToast.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { DialogShell } from '../ui/DialogShell.js';
 import { buildDcaConversionPreset } from '../dca-conversion-preset.js';
+import {
+  activeAssetByCode,
+  ASSET_PRESETS,
+  ensureAssetPreset,
+  type AssetPresetCode,
+} from '../assetPresets.js';
 
 type FeeSide = 'source' | 'target' | 'third';
 
@@ -164,10 +170,12 @@ export function AddConversionModal({
   onClose,
   initial,
   preset,
+  assetPresetCode,
 }: {
   onClose: () => void;
   initial?: ChainWithSteps;
   preset?: { dcaPlanId: string };
+  assetPresetCode?: AssetPresetCode;
 }) {
   const titleId = useId();
   const { store, bump } = useStore();
@@ -189,7 +197,10 @@ export function AddConversionModal({
   const [pending, setPending] = useState<PreparedConversion | null>(null);
   const [impactText, setImpactText] = useState('');
   const [presetNotice, setPresetNotice] = useState('');
+  const [createdAssets, setCreatedAssets] = useState<import('@zichan/core').Asset[]>([]);
+  const [creatingAssetCode, setCreatingAssetCode] = useState<AssetPresetCode | null>(null);
   const presetApplied = useRef(false);
+  const assetPresetApplied = useRef(false);
 
   const defaultBookCurrencyId = snap
     ? moduleCurrencyId(snap.setting, 'investment', snap.assets[0]?.id ?? '')
@@ -199,6 +210,31 @@ export function AddConversionModal({
     () => steps.length ? steps : [emptyStep(effectiveBookCurrencyId)],
     [effectiveBookCurrencyId, steps],
   );
+  const applyAssetPreset = useCallback(async (code: AssetPresetCode, stepIndex = 0) => {
+    setCreatingAssetCode(code);
+    setErr(null);
+    try {
+      const result = await ensureAssetPreset(store, code);
+      setCreatedAssets((current) => current.some((asset) => asset.id === result.asset.id)
+        ? current
+        : [...current, result.asset]);
+      setType(result.asset.type === 'fiat' ? 'exchange' : 'buy');
+      setSteps((current) => {
+        const currentDrafts = current.length ? current : [emptyStep(effectiveBookCurrencyId)];
+        return currentDrafts.map((step, index) => index === stepIndex
+          ? { ...step, toAssetId: result.asset.id }
+          : step);
+      });
+      setPresetNotice(result.change === 'created'
+        ? `已添加 ${result.asset.code} 资产定义；未生成余额或转换记录，请继续填写实际数量。`
+        : `已选择 ${result.asset.code}；请继续填写实际来源和到账数量。`);
+      if (result.change !== 'existing') bump();
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCreatingAssetCode(null);
+    }
+  }, [bump, effectiveBookCurrencyId, store]);
   const usesAccounts = (snap?.setting?.ledgerMode ?? 'spending') !== 'spending';
   const existingDcaExecution = initial && snap
     ? snap.dcaExecutions.find((execution) => !execution.isDeleted && execution.chainId === initial.chain.id)
@@ -240,6 +276,12 @@ export function AddConversionModal({
     }
   }, [initial, preset?.dcaPlanId, snap]);
 
+  useEffect(() => {
+    if (!snap || initial || !assetPresetCode || assetPresetApplied.current) return;
+    assetPresetApplied.current = true;
+    void applyAssetPreset(assetPresetCode);
+  }, [applyAssetPreset, assetPresetCode, initial, snap]);
+
   const preview = useMemo(() => drafts.map((step) => {
     try {
       if (!step.fromAssetId || !step.toAssetId || !step.fromInput || !step.toInput) return null;
@@ -251,7 +293,10 @@ export function AddConversionModal({
   }), [drafts]);
 
   if (!snap) return null;
-  const assets = snap.assets.filter((asset) => !asset.isDeleted && asset.isActive);
+  const assets = [
+    ...snap.assets,
+    ...createdAssets.filter((created) => !snap.assets.some((asset) => asset.id === created.id)),
+  ].filter((asset) => !asset.isDeleted && asset.isActive && !asset.mergedIntoId);
   const activePlans = snap.dcaPlans.filter((plan) => plan.status === 'active' || plan.id === existingDcaExecution?.planId);
   const code = (id: string) => assets.find((asset) => asset.id === id)?.code ?? '—';
   const update = (index: number, patch: Partial<StepDraft>) => {
@@ -484,6 +529,36 @@ export function AddConversionModal({
           <Field label="时区"><input aria-label="时区" className="zc-input" value={timezone} readOnly /></Field>
         </div>
         {presetNotice && <div style={{ color: presetNotice.includes('回退') ? 'var(--warning)' : 'var(--fg-muted)', fontSize: 12, fontWeight: 700, marginBottom: 14 }}>{presetNotice}</div>}
+
+        {!initial && (
+          <div style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', padding: 12, marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 850, color: 'var(--fg-muted)', marginBottom: 8 }}>常用目标资产</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {ASSET_PRESETS.map((row) => {
+                const existing = activeAssetByCode(assets, row.code);
+                const selected = !!existing && drafts.some((step) => step.toAssetId === existing.id);
+                return (
+                  <button
+                    key={row.code}
+                    type="button"
+                    onClick={() => void applyAssetPreset(row.code)}
+                    disabled={creatingAssetCode !== null}
+                    aria-pressed={selected}
+                    style={{
+                      ...smallButton,
+                      color: selected ? 'var(--accent)' : 'var(--fg-muted)',
+                      background: selected ? 'var(--accent-soft)' : 'var(--surface)',
+                      opacity: creatingAssetCode && creatingAssetCode !== row.code ? 0.55 : 1,
+                    }}
+                  >
+                    {creatingAssetCode === row.code ? '添加中…' : `${row.code} · ${row.name}${existing ? ' · 已有' : ''}`}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 11, color: 'var(--fg-subtle)' }}>选择后只会补充可选资产，不会自动生成持仓、余额或交易。</div>
+          </div>
+        )}
 
         {type === 'sell' && (
           <div style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', padding: 12, marginBottom: 14 }}>

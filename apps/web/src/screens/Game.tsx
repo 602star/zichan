@@ -1,10 +1,18 @@
-import { useMemo, useState } from 'react';
-import { localToday, type GameRecordType, type GameRecord } from '@zichan/core';
+import { useMemo, useRef, useState } from 'react';
+import {
+  localToday,
+  newId,
+  type Game as GameEntity,
+  type GameRecordType,
+  type GameRecord,
+  type GameSeason,
+} from '@zichan/core';
 import {
   deleteGameRecord,
   restoreDeletedGameRecord,
   saveGameRecordAggregate,
   type GameCashflowDraft,
+  type SqlLedgerStore,
 } from '@zichan/db';
 import { useSnapshot } from '../db/snapshot.js';
 import { useStore } from '../db/store.js';
@@ -31,7 +39,7 @@ function recBadge(type: GameRecordType) {
   return { ...base, background: 'rgba(63,143,107,.13)', color: 'var(--positive)' };
 }
 
-function cashflowDraft(value: GameRecordFormValue, role: 'settlement' | 'fee'): GameCashflowDraft {
+function cashflowDraft(value: GameRecordFormValue, role: 'settlement' | 'fee', usesAccounts: boolean): GameCashflowDraft {
   const mode = role === 'settlement'
     ? value.settlementCashflowMode ?? 'record_only'
     : value.feeCashflowMode ?? 'record_only';
@@ -44,10 +52,62 @@ function cashflowDraft(value: GameRecordFormValue, role: 'settlement' | 'fee'): 
   return {
     mode,
     linkedTransactionId,
-    createTransaction: mode === 'create_transaction' && categoryId && accountId
-      ? { categoryId, accountId, merchant, description: value.note }
+    createTransaction: mode === 'create_transaction' && categoryId
+      ? { categoryId, accountId: usesAccounts ? accountId : undefined, merchant, description: value.note }
       : undefined,
   };
+}
+
+export async function createGameWithDefaultSeason(
+  store: SqlLedgerStore,
+  rawName: string,
+  startDate = localToday(),
+): Promise<{ game: GameEntity; season: GameSeason }> {
+  const name = rawName.trim();
+  if (!name) throw new Error('请输入游戏名称');
+  return store.runInAuditBatch(`创建游戏“${name}”和当前赛季`, async (transactionStore) => {
+    const game = await transactionStore.games.put({
+      id: newId(),
+      createdAt: '',
+      updatedAt: '',
+      version: 1,
+      isDeleted: false,
+      name,
+      enableSeason: true,
+      isActive: true,
+    });
+    const season = await transactionStore.gameSeasons.put({
+      id: newId(),
+      createdAt: '',
+      updatedAt: '',
+      version: 1,
+      isDeleted: false,
+      gameId: game.id,
+      name: '当前赛季',
+      status: 'active',
+      startDate,
+    });
+    return { game, season };
+  });
+}
+
+async function createDefaultSeason(
+  store: SqlLedgerStore,
+  game: GameEntity,
+  startDate = localToday(),
+): Promise<GameSeason> {
+  return store.runInAuditBatch(`为游戏“${game.name}”创建当前赛季`, (transactionStore) =>
+    transactionStore.gameSeasons.put({
+      id: newId(),
+      createdAt: '',
+      updatedAt: '',
+      version: 1,
+      isDeleted: false,
+      gameId: game.id,
+      name: '当前赛季',
+      status: 'active',
+      startDate,
+    }));
 }
 
 function gameRecordEntity(value: GameRecordFormValue): GameRecord {
@@ -80,9 +140,75 @@ export function Game() {
   const [dateRange, setDateRange] = useState<DateRangeValue>(() => dateRangeValue('all'));
   const [accountFilter, setAccountFilter] = useState('');
   const [recordTypeFilter, setRecordTypeFilter] = useState<'all' | GameRecordType>('all');
-  const vm = useMemo(() => (snap ? buildGameSeason(snap, gameId, seasonId, { dateRange, accountId: accountFilter || undefined, recordType: recordTypeFilter }) : null), [accountFilter, dateRange, gameId, recordTypeFilter, seasonId, snap]);
-  if (!snap || !vm) return null;
-  const selectedGameId = gameId ?? snap.games.find((game) => !game.isDeleted && game.isActive !== false && !game.mergedIntoId)?.id ?? '';
+  const [newGameName, setNewGameName] = useState('');
+  const [creatingGame, setCreatingGame] = useState(false);
+  const [createGameError, setCreateGameError] = useState('');
+  const createGameFlight = useRef(false);
+  const activeGames = snap?.games.filter((game) => !game.isDeleted && game.isActive !== false && !game.mergedIntoId) ?? [];
+  const selectedGameId = activeGames.some((game) => game.id === gameId) ? gameId! : activeGames[0]?.id ?? '';
+  const selectedGame = activeGames.find((game) => game.id === selectedGameId);
+  const vm = useMemo(() => (snap && selectedGameId
+    ? buildGameSeason(snap, selectedGameId, seasonId, { dateRange, accountId: accountFilter || undefined, recordType: recordTypeFilter })
+    : null), [accountFilter, dateRange, recordTypeFilter, seasonId, selectedGameId, snap]);
+  if (!snap) return null;
+
+  const startFirstGame = async () => {
+    if (createGameFlight.current) return;
+    createGameFlight.current = true;
+    setCreatingGame(true);
+    setCreateGameError('');
+    try {
+      const created = selectedGame
+        ? { game: selectedGame, season: await createDefaultSeason(store, selectedGame) }
+        : await createGameWithDefaultSeason(store, newGameName);
+      setGameId(created.game.id);
+      setSeasonId(created.season.id);
+      bump();
+    } catch (error) {
+      setCreateGameError(error instanceof Error ? error.message : String(error));
+    } finally {
+      createGameFlight.current = false;
+      setCreatingGame(false);
+    }
+  };
+
+  if (!vm) {
+    return (
+      <div style={{ ...card, maxWidth: 620, margin: '8vh auto 0', padding: 28 }}>
+        <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 800 }}>首次使用</div>
+        <h2 style={{ margin: '8px 0 0', fontSize: 24 }}>{selectedGame ? '创建当前赛季' : '开始记录游戏'}</h2>
+        <p style={{ margin: '10px 0 20px', color: 'var(--fg-muted)', fontSize: 13, lineHeight: 1.65 }}>
+          {selectedGame
+            ? `“${selectedGame.name}”还没有赛季。创建后即可直接添加记录，游戏账号仍可留空。`
+            : '只需填写游戏名称。系统会同时创建一个从今天开始的“当前赛季”，游戏账号以后需要时再添加。'}
+        </p>
+        <form onSubmit={(event) => { event.preventDefault(); void startFirstGame(); }}>
+          {!selectedGame && (
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>
+              游戏名称
+              <input
+                autoFocus
+                value={newGameName}
+                onChange={(event) => setNewGameName(event.target.value)}
+                placeholder="例如：最终幻想 XIV"
+                className="zc-input"
+                style={{ display: 'block', width: '100%', boxSizing: 'border-box', marginTop: 7 }}
+              />
+            </label>
+          )}
+          {createGameError && <div role="alert" style={{ marginTop: 10, color: 'var(--negative)', fontSize: 12 }}>{createGameError}</div>}
+          <button
+            type="submit"
+            disabled={creatingGame || (!selectedGame && !newGameName.trim())}
+            style={{ ...primaryBtn, minHeight: 42, marginTop: 18, opacity: creatingGame || (!selectedGame && !newGameName.trim()) ? 0.55 : 1 }}
+          >
+            {creatingGame ? '正在创建…' : selectedGame ? '创建并进入' : '开始记录'}
+          </button>
+        </form>
+      </div>
+    );
+  }
+  const usesAccounts = (snap.setting?.ledgerMode ?? 'spending') !== 'spending';
   const accountOptions = snap.gameAccounts.filter((account) =>
     !account.isDeleted && !account.archivedAt && !account.mergedIntoId && account.gameId === selectedGameId);
 
@@ -94,14 +220,14 @@ export function Game() {
         </div>
       )}
       <div className="zc-game-header" style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-        {snap.games.filter((g) => !g.isDeleted && g.isActive !== false && !g.mergedIntoId).length > 1 ? (
+        {activeGames.length > 1 ? (
           <select
             className="zc-select"
-            value={gameId ?? snap.games.find((g) => !g.isDeleted && g.isActive !== false && !g.mergedIntoId)?.id ?? ''}
+            value={selectedGameId}
             onChange={(e) => { setGameId(e.target.value); setSeasonId(null); setAccountFilter(''); }}
             style={{ width: 180, fontWeight: 800, fontSize: 15 }}
           >
-            {snap.games.filter((g) => !g.isDeleted && g.isActive !== false && !g.mergedIntoId).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+            {activeGames.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
         ) : (
           <div style={{ fontSize: 15, fontWeight: 800 }}>{vm.gameName}</div>
@@ -131,7 +257,7 @@ export function Game() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         {(['overview', 'list', 'year', 'month', 'day'] as const).map((mode) => <button key={mode} onClick={() => setView(mode)} style={pillBtn(view === mode)}>{mode === 'overview' ? '赛季概览' : mode === 'list' ? '记录流' : mode === 'year' ? '年度' : mode === 'month' ? '月历' : '单日'}</button>)}
         <div style={{ flex: 1 }} />
-        <select aria-label="游戏账号筛选" className="zc-select" value={accountFilter} onChange={(event) => setAccountFilter(event.target.value)} style={{ width: 150 }}><option value="">全部账号</option>{accountOptions.map((account) => <option key={account.id} value={account.id}>{account.accountName}</option>)}</select>
+        {accountOptions.length > 0 && <select aria-label="游戏账号筛选" className="zc-select" value={accountFilter} onChange={(event) => setAccountFilter(event.target.value)} style={{ width: 150 }}><option value="">全部账号</option>{accountOptions.map((account) => <option key={account.id} value={account.id}>{account.accountName}</option>)}</select>}
         <select aria-label="游戏记录类型筛选" className="zc-select" value={recordTypeFilter} onChange={(event) => setRecordTypeFilter(event.target.value as typeof recordTypeFilter)} style={{ width: 150 }}><option value="all">全部记录类型</option>{Object.entries(REC_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       </div>
       <DateRangeBar value={dateRange} onChange={setDateRange} />
@@ -186,8 +312,8 @@ export function Game() {
         </div>
       </div>
 
-      <div className="zc-game-detail-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
-        <EfficiencyPanel title="账号效率" rows={vm.byAccount.map((r) => ({ ...r, label: r.label }))} />
+      <div className="zc-game-detail-grid" style={{ display: 'grid', gridTemplateColumns: accountOptions.length > 0 ? '1fr 1fr' : '1fr', gap: 18 }}>
+        {accountOptions.length > 0 && <EfficiencyPanel title="账号效率" rows={vm.byAccount.map((r) => ({ ...r, label: r.label }))} />}
         <EfficiencyPanel title="类型拆分" rows={vm.byType.map((r) => ({ ...r, label: REC_LABEL[r.id as GameRecordType] ?? r.label }))} />
       </div></> : (
         <TimelineExplorer
@@ -217,8 +343,8 @@ export function Game() {
           onSave={async (value) => {
             const saved = await saveGameRecordAggregate(store, {
               record: gameRecordEntity(value),
-              settlement: cashflowDraft(value, 'settlement'),
-              fee: cashflowDraft(value, 'fee'),
+              settlement: cashflowDraft(value, 'settlement', usesAccounts),
+              fee: cashflowDraft(value, 'fee', usesAccounts),
               expectedVersion: editRec === 'new' ? undefined : editRec.version,
             });
             bump();

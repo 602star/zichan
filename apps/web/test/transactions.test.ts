@@ -12,6 +12,7 @@ import {
   transactionReconciliationCoverage,
 } from '../src/selectors/transactions.js';
 import { categoryOptions } from '../src/transactionMeta.js';
+import { COMMON_TRANSACTION_FORM_FIELDS, optionalTransactionFields } from '../src/transactionFormPrefs.js';
 import { makeSnapshot, makeTransaction } from './fixtures.js';
 import type { FieldDef } from '../src/ui/EntityFormModal.js';
 
@@ -393,6 +394,40 @@ describe('ledger mode forms', () => {
     expect(payeeForm(s).fields.map((f) => f.key)).not.toContain('defaultAccountId');
   });
 
+  it('provides a full accountless expense form for the daily-expense entry', () => {
+    const s = makeSnapshot();
+    s.setting!.ledgerMode = 'spending';
+    delete s.setting!.transactionFormOptionalFields;
+
+    const tx = transactionForm(s, { usesAccounts: false, expenseOnly: true });
+    const typeField = tx.fields.find((field) => field.key === 'type')!;
+    const categoryField = tx.fields.find((field) => field.key === 'category')!;
+
+    expect(tx.title).toBe('日常支出');
+    expect(typeField).toMatchObject({ hidden: true, defaultValue: 'expense' });
+    expect(optionsOf(typeField).map((option) => option.value)).toEqual(['expense']);
+    expect(optionsOf(categoryField, { type: 'income' }).map((option) => option.value)).toContain('food');
+    expect(optionsOf(categoryField, { type: 'income' }).map((option) => option.value)).not.toContain('salary');
+    expect(tx.fields.map((field) => field.key)).toEqual(expect.arrayContaining([
+      'date', 'time', 'category', 'amount', 'assetId', 'description', 'attachmentDrafts',
+      'merchant', 'locationName', 'tagIds', 'note',
+    ]));
+    expect(optionalTransactionFields(s.setting, false)).toEqual(COMMON_TRANSACTION_FORM_FIELDS);
+    expect(tx.fromValues({
+      date: '2026-09-01',
+      time: '12:30',
+      timezone: 'Asia/Shanghai',
+      type: 'income',
+      category: 'food',
+      amount: '18.80',
+      assetId: s.ids.gbp,
+      description: '午餐',
+    }).type).toBe('expense');
+
+    s.setting!.transactionFormOptionalFields = '';
+    expect(optionalTransactionFields(s.setting, false)).toEqual([]);
+  });
+
   it('uses leaf categories and exposes template tags and locations', () => {
     const s = makeSnapshot();
     s.categories.push({ id: 'daily', name: '日常消费', type: 'expense', createdAt: '', updatedAt: '', version: 1, isDeleted: false, isActive: true, sortOrder: 1 });
@@ -460,5 +495,39 @@ describe('ledger mode forms', () => {
     const accounts = optionsOf(form.fields.find((field) => field.key === 'gameAccountId')!, { gameId: 'game-b' });
     expect(seasons.map((option) => option.value)).toEqual(['season-b']);
     expect(accounts.map((option) => option.value)).toEqual(['account-b']);
+  });
+
+  it('keeps game cashflow accountless in spending mode and requires accounts in deeper modes', () => {
+    const spending = makeSnapshot();
+    spending.setting!.ledgerMode = 'spending';
+    const spendingForm = gameRecordForm(spending);
+    const spendingAccount = spendingForm.fields.find((field) => field.key === 'settlementAccountId')!;
+    expect(spendingAccount.required).toBe(false);
+    expect(spendingAccount.visibleWhen?.({ settlementCashflowMode: 'create_transaction' })).toBe(false);
+    expect(spendingForm.validate?.({
+      gameId: spending.ids.game,
+      recordType: 'withdraw',
+      settlementAssetId: spending.ids.gbp,
+      settlementAmount: '10',
+      settlementCashflowMode: 'create_transaction',
+      settlementCategoryId: 'income-leaf',
+    })).toBeUndefined();
+
+    for (const ledgerMode of ['accounts', 'assets'] as const) {
+      const deeper = makeSnapshot();
+      deeper.setting!.ledgerMode = ledgerMode;
+      const deeperForm = gameRecordForm(deeper);
+      const account = deeperForm.fields.find((field) => field.key === 'settlementAccountId')!;
+      expect(account.required).toBe(true);
+      expect(account.visibleWhen?.({ settlementCashflowMode: 'create_transaction' })).toBe(true);
+      expect(deeperForm.validate?.({
+        gameId: deeper.ids.game,
+        recordType: 'withdraw',
+        settlementAssetId: deeper.ids.gbp,
+        settlementAmount: '10',
+        settlementCashflowMode: 'create_transaction',
+        settlementCategoryId: 'income-leaf',
+      })).toMatchObject({ settlementAccountId: '请选择结算账户' });
+    }
   });
 });

@@ -70,6 +70,7 @@ import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
 import { ReconciliationModal } from './ReconciliationModal.js';
 import { DialogShell } from '../ui/DialogShell.js';
+import { QuickExpenseModal, type QuickExpenseDraft } from '../ui/QuickExpenseModal.js';
 
 const TYPE_OPTIONS: { value: 'all' | TransactionType; label: string }[] = [
   { value: 'all', label: '全部' },
@@ -187,6 +188,9 @@ export function Transactions() {
   const [tab, setTab] = useState<Tab>(initialTransactionTab);
   const [editingTx, setEditingTx] = useState<Transaction | 'new' | null>(null);
   const [refundDraft, setRefundDraft] = useState<Transaction | null>(null);
+  const [templateDraft, setTemplateDraft] = useState<Transaction | null>(null);
+  const [quickExpenseOpen, setQuickExpenseOpen] = useState(false);
+  const [quickTemplate, setQuickTemplate] = useState<TransactionTemplate | null>(null);
   const [editingSplit, setEditingSplit] = useState<TransactionSplit | 'new' | null>(null);
   const [editingBudget, setEditingBudget] = useState<BudgetCategory | 'new' | null>(null);
   const [editingSchedule, setEditingSchedule] = useState<ScheduledTransaction | 'new' | null>(null);
@@ -222,6 +226,8 @@ export function Transactions() {
   const [accountBalanceAggregates, setAccountBalanceAggregates] = useState<AccountBalanceAggregateRow[]>([]);
   const [accountLedgerPage, setAccountLedgerPage] = useState<AccountLedgerPage | null>(null);
   const [accountLedgerBusy, setAccountLedgerBusy] = useState(false);
+  const ledgerMode: LedgerMode = snap?.setting?.ledgerMode ?? 'spending';
+  const usesAccounts = ledgerMode !== 'spending';
 
   useEffect(() => {
     const raw = sessionStorage.getItem('zichan.transactions.filterPreset');
@@ -251,12 +257,23 @@ export function Transactions() {
   useEffect(() => {
     const openQuickTransaction = () => {
       setTab('records');
+      setEditingTx(null);
       setRefundDraft(null);
-      setEditingTx('new');
+      setTemplateDraft(null);
+      if (ledgerMode === 'spending') {
+        setQuickTemplate(null);
+        setQuickExpenseOpen(true);
+      } else {
+        setEditingTx('new');
+      }
     };
     try {
       if (sessionStorage.getItem('zichan.quickTransaction') === '1') {
         sessionStorage.removeItem('zichan.quickTransaction');
+        openQuickTransaction();
+      }
+      if (sessionStorage.getItem('zichan.postFirstRun') === 'quick-expense') {
+        sessionStorage.removeItem('zichan.postFirstRun');
         openQuickTransaction();
       }
     } catch {
@@ -264,19 +281,16 @@ export function Transactions() {
     }
     window.addEventListener('zichan:quick-transaction', openQuickTransaction);
     return () => window.removeEventListener('zichan:quick-transaction', openQuickTransaction);
-  }, []);
-
-  const ledgerMode: LedgerMode = snap?.setting?.ledgerMode ?? 'spending';
-  const usesAccounts = ledgerMode !== 'spending';
+  }, [ledgerMode]);
   const visibleTabs: [Tab, string][] = usesAccounts
     ? [['records', '流水'], ['accounts', '账户'], ['budget', '预算'], ['bills', '账单']]
-    : [['records', '流水'], ['budget', '预算'], ['bills', '账单']];
-  const activeTab = usesAccounts || tab !== 'accounts' ? tab : 'records';
+    : [['records', '支出']];
+  const activeTab = usesAccounts ? tab : 'records';
   const viewFilters = useMemo<TransactionFilters>(() => {
     if (usesAccounts) return filters;
     return {
       ...filters,
-      type: filters.type === 'transfer' || filters.type === 'adjustment' ? 'all' : filters.type,
+      type: 'expense',
       accountId: 'all',
     };
   }, [filters, usesAccounts]);
@@ -513,7 +527,7 @@ export function Transactions() {
     .slice(0, 50);
   const accountAssets = [...new Set(readyVm.accountBalances.filter((b) => b.accountId === selectedAccountId).map((b) => b.assetId))];
   const activeTemplates = readySnap.transactionTemplates
-    .filter((t) => !t.isDeleted && t.isActive)
+    .filter((t) => !t.isDeleted && t.isActive && (usesAccounts || t.type === 'expense'))
     .sort((a, b) => (a.sortOrder ?? 100) - (b.sortOrder ?? 100) || a.name.localeCompare(b.name));
   const tagName = (id: string) => {
     const t = readySnap.transactionTags.find((x) => x.id === id);
@@ -528,7 +542,10 @@ export function Transactions() {
     .sort((a, b) => Number(b.isPinned ?? false) - Number(a.isPinned ?? false) || (a.sortOrder ?? 100) - (b.sortOrder ?? 100) || a.name.localeCompare(b.name));
 
   function openNewTransaction() {
+    setQuickExpenseOpen(false);
+    setQuickTemplate(null);
     setRefundDraft(null);
+    setTemplateDraft(null);
     setEditingTx('new');
   }
 
@@ -848,7 +865,7 @@ export function Transactions() {
     return saved;
   }
 
-  async function createFromTemplate(tpl: TransactionTemplate) {
+  function createFromTemplate(tpl: TransactionTemplate) {
     const tx: Transaction = {
       id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false,
       date: todayDate(),
@@ -867,7 +884,27 @@ export function Transactions() {
       note: tpl.note,
       status: 'cleared',
     };
-    await saveTx(tx);
+    setQuickExpenseOpen(false);
+    setQuickTemplate(null);
+    setRefundDraft(null);
+    setTemplateDraft(tx);
+    setEditingTx('new');
+  }
+
+  async function saveQuickExpense(draft: QuickExpenseDraft) {
+    await saveTx({
+      id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false,
+      date: draft.date,
+      time: draft.time,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '系统默认',
+      type: 'expense',
+      category: draft.category,
+      amount: D(draft.amount).abs().toString(),
+      assetId: draft.assetId,
+      description: draft.description,
+      status: 'cleared',
+      recordState: 'active',
+    });
   }
 
   async function voidTx(entity: Transaction) {
@@ -975,9 +1012,9 @@ export function Transactions() {
           <div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 800 }}>日常流水</div>
+                <div style={{ fontSize: 15, fontWeight: 800 }}>{usesAccounts ? '日常流水' : '日常支出'}</div>
                 <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 3 }}>
-                  {usesAccounts ? '收入、支出、转账、退款和拆分交易' : '只记收入和支出，可按分类、商户、标签和预算追踪'}
+                  {usesAccounts ? '收入、支出、转账、退款和拆分交易' : '完整记录支出详情；侧栏或移动端“快记”可只填金额'}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -985,7 +1022,7 @@ export function Transactions() {
                 <button onClick={() => setEditingCategory('new')} style={button}>+ 分类</button>
                 <button onClick={() => setEditingPayee('new')} style={button}>+ 商户</button>
                 <button onClick={() => setEditingSplit('new')} style={button}>+ 拆分</button>
-                <button onClick={openNewTransaction} style={primary}>+ 记账</button>
+                <button onClick={openNewTransaction} style={primary}>{usesAccounts ? '+ 记账' : '+ 记支出'}</button>
               </div>
             </div>
             <div style={{ marginBottom: 14 }}>
@@ -996,8 +1033,8 @@ export function Transactions() {
                 onViewChange={setRecordView}
               />
             </div>
-            <Filters snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} />
-            <SavedViews
+            {usesAccounts && <Filters snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} />}
+            {usesAccounts && <SavedViews
               views={savedViews}
               name={savedViewName}
               error={savedViewError}
@@ -1007,8 +1044,8 @@ export function Transactions() {
               onRename={(v, name) => void renameSavedView(v, name)}
               onTogglePin={(v) => void toggleSavedViewPin(v)}
               onRemove={(v) => void removeSavedView(v)}
-            />
-            <AdvancedQueryBuilder snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} />
+            />}
+            {usesAccounts && <AdvancedQueryBuilder snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} />}
             {showVoided && (
               <div style={{ borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
                 <div style={{ padding: '10px 0', fontSize: 12, fontWeight: 900 }}>已作废流水</div>
@@ -1028,8 +1065,8 @@ export function Transactions() {
             )}
             {activeTemplates.length > 0 && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-                {activeTemplates.slice(0, 8).map((tpl) => (
-                  <button key={tpl.id} onClick={() => void createFromTemplate(tpl)} style={button}>
+                {activeTemplates.slice(0, 10).map((tpl) => (
+                  <button key={tpl.id} onClick={() => createFromTemplate(tpl)} style={button}>
                     {tpl.name}{tpl.amount ? ` · ${tpl.amount}` : ''}
                   </button>
                 ))}
@@ -1315,10 +1352,29 @@ export function Transactions() {
         </div>
       )}
 
+      {quickExpenseOpen && !usesAccounts && (
+        <QuickExpenseModal
+          key={quickTemplate?.id ?? 'quick-expense'}
+          assets={readySnap.assets}
+          categories={categoryOptions(readySnap.categories, 'expense', { leafOnly: true })}
+          recentTransactions={readySnap.transactions}
+          templates={activeTemplates}
+          initialTemplate={quickTemplate ?? undefined}
+          defaultAssetId={moduleCurrencyId(readySnap.setting, 'transaction', readySnap.assets[0]?.id || '')}
+          onSave={saveQuickExpense}
+          onClose={() => { setQuickExpenseOpen(false); setQuickTemplate(null); }}
+        />
+      )}
+
       {editingTx && (
         <EntityFormModal
-          spec={transactionForm(readySnap, { usesAccounts, refundMode: editingTx === 'new' ? !!refundDraft : editingTx.type === 'refund' })}
-          initial={editingTx === 'new' ? refundDraft ?? undefined : editingTx}
+          spec={transactionForm(readySnap, {
+            usesAccounts,
+            refundMode: editingTx === 'new' ? !!refundDraft : editingTx.type === 'refund',
+            expenseOnly: !usesAccounts && !(editingTx === 'new' ? refundDraft : editingTx.type === 'refund'),
+          })}
+          initial={editingTx === 'new' ? refundDraft ?? templateDraft ?? undefined : editingTx}
+          isNew={editingTx === 'new'}
           optionalFieldKeys={optionalTransactionFields(snap.setting, usesAccounts)}
           optionalFieldPresets={[
             { label: '仅核心', keys: transactionFormPresetKeys('core', usesAccounts) },
@@ -1326,10 +1382,10 @@ export function Transactions() {
             { label: '完整', keys: transactionFormPresetKeys('full', usesAccounts) },
           ]}
           onOptionalFieldKeysChange={(keys) => saveTransactionFormFields(keys)}
-          onSave={async (entity) => { await saveTx(entity); }}
+          onSave={async (entity) => { await saveTx(entity); setTemplateDraft(null); }}
           onDelete={editingTx !== 'new' ? async () => voidTx(editingTx) : undefined}
           deleteLabel="作废"
-          onClose={() => { setEditingTx(null); setRefundDraft(null); }}
+          onClose={() => { setEditingTx(null); setRefundDraft(null); setTemplateDraft(null); }}
         />
       )}
       {editingSplit && (
@@ -1848,6 +1904,25 @@ function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilter
 }
 
 function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof buildTransactions>>; usesAccounts: boolean }) {
+  if (!usesAccounts) {
+    return (
+      <div className="zc-transaction-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
+        <div style={cardTight}><Kpi label={`${vm.month} 本月支出`} value={money(vm.expense)} tone="var(--negative)" sub="自动汇总全部支出" /></div>
+        <div style={cardTight}><Kpi label="当前范围" value={`${vm.count} 笔`} tone="var(--accent)" sub={`合计支出 ${money(vm.filteredExpense)}`} /></div>
+        <div style={cardTight}>
+          <div style={{ fontSize: 12, color: 'var(--fg-muted)', fontWeight: 700 }}>常用支出分类</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 11 }}>
+            {vm.topExpenseCategories.length === 0 && <div style={{ fontSize: 12, color: 'var(--fg-subtle)' }}>记下第一笔支出后会自动汇总</div>}
+            {vm.topExpenseCategories.slice(0, 3).map((category) => (
+              <div key={category.category} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12, fontWeight: 700 }}>
+                <span>{category.label}</span><span>{money(category.amount)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="zc-transaction-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16 }}>
       <div style={cardTight}><Kpi label={`${vm.month} 本月收入`} value={money(vm.income)} tone="var(--positive)" sub="不受筛选影响" /></div>

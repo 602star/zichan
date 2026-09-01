@@ -7,8 +7,8 @@ import {
   type Transaction,
 } from '@zichan/core';
 import {
+  disableSystemCategories,
   enableSystemCategories,
-  hideUnusedSystemCategories,
   saveTransactionAggregate,
 } from '../src/index.js';
 import { openLedger } from '../src/node.js';
@@ -71,12 +71,14 @@ describe('category catalog and account modes', () => {
     await store.close();
   });
 
-  it('hides unused pack categories but retains categories referenced by history', async () => {
+  it('disables every pack category without changing historical transactions and can re-enable them', async () => {
     const store = await openLedger();
     const { asset, account } = await seedMoney(store);
     const pack = CATEGORY_PACKS.find((candidate) => candidate.id === 'pet')!;
     await enableSystemCategories(store, pack.categoryIds);
-    await saveTransactionAggregate(store, {
+    expect(await store.categories.get('pet_medical')).toMatchObject({ isActive: true, isHidden: false });
+    expect(await store.categories.get('pet_food')).toMatchObject({ isActive: true, isHidden: false });
+    const saved = await saveTransactionAggregate(store, {
       transaction: {
         ...base(),
         date: '2026-07-23',
@@ -91,11 +93,22 @@ describe('category catalog and account modes', () => {
       } as Transaction,
     });
 
-    const result = await hideUnusedSystemCategories(store, pack.categoryIds);
+    const result = await disableSystemCategories(store, pack.categoryIds);
     expect(result.retainedUsedIds).toContain('pet_medical');
-    expect(result.hiddenIds).toContain('pet_food');
-    expect(await store.categories.get('pet_medical')).toMatchObject({ isHidden: true });
-    expect(await store.categories.get('pet_food')).toMatchObject({ isHidden: true });
+    expect(result.disabledIds).toEqual(expect.arrayContaining(pack.categoryIds));
+    expect(await store.categories.get('pet_medical')).toMatchObject({ isActive: false, isHidden: true, archiveReason: '系统分类包停用' });
+    expect(await store.categories.get('pet_food')).toMatchObject({ isActive: false, isHidden: true, archiveReason: '系统分类包停用' });
+    expect(await store.transactions.get(saved.transaction.id)).toMatchObject({ category: 'pet_medical', amount: '88' });
+
+    await enableSystemCategories(store, pack.categoryIds);
+    const restoredMedical = await store.categories.get('pet_medical');
+    const restoredFood = await store.categories.get('pet_food');
+    expect(restoredMedical).toMatchObject({ isActive: true, isHidden: false });
+    expect(restoredFood).toMatchObject({ isActive: true, isHidden: false });
+    expect(restoredMedical).not.toHaveProperty('archivedAt');
+    expect(restoredMedical).not.toHaveProperty('archiveReason');
+    expect(restoredFood).not.toHaveProperty('archivedAt');
+    expect(restoredFood).not.toHaveProperty('archiveReason');
     await store.close();
   });
 

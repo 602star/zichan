@@ -13,6 +13,7 @@ import {
 } from '../db/backups.js';
 import {
   BASE_CURRENCY_CHOICES,
+  QUICK_START_LEDGER_OPTIONS,
   initializeDemoLedger,
   initializeEmptyLedger,
   initializedLedgerSetting,
@@ -20,7 +21,7 @@ import {
 } from '../db/ledger-initialization.js';
 import { importPortableLedger, preflightPortableBackup } from '../db/portable-backup.js';
 
-type FirstRunChoice = 'empty' | 'import' | 'demo';
+type FirstRunChoice = 'advanced' | 'import' | 'demo' | null;
 
 export interface FirstRunWizardProps {
   store: SqlLedgerStore;
@@ -40,6 +41,14 @@ export function claimFirstRunFlight(flight: FirstRunFlight): boolean {
 
 export function releaseFirstRunFlight(flight: FirstRunFlight): void {
   flight.active = false;
+}
+
+function rememberQuickExpenseStart(): void {
+  try {
+    window.sessionStorage.setItem('zichan.postFirstRun', 'quick-expense');
+  } catch {
+    // Session storage is only a navigation hint; ledger creation must still succeed without it.
+  }
 }
 
 export async function restoreFirstRunBackup(
@@ -90,7 +99,7 @@ const field: CSSProperties = {
 
 export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
   const flight = useRef<FirstRunFlight>({ active: false });
-  const [choice, setChoice] = useState<FirstRunChoice>('empty');
+  const [choice, setChoice] = useState<FirstRunChoice>(null);
   const [baseCurrencyCode, setBaseCurrencyCode] = useState<BaseCurrencyChoice['code']>('CNY');
   const [ledgerMode, setLedgerMode] = useState<LedgerMode>('spending');
   const [busy, setBusy] = useState(false);
@@ -100,12 +109,14 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
   const [lockedFile, setLockedFile] = useState<File | null>(null);
   const [passphrase, setPassphrase] = useState('');
 
-  async function complete(action: () => Promise<Setting>) {
+  async function complete(action: () => Promise<Setting>, afterCreate?: () => void) {
     if (!claimFirstRunFlight(flight.current)) return;
     setBusy(true);
     setError('');
     try {
-      await onInitialized(await action());
+      const setting = await action();
+      afterCreate?.();
+      await onInitialized(setting);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -174,36 +185,56 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
       <section style={{ width: 'min(920px, 100%)', margin: '0 auto' }}>
         <div style={{ color: '#985734', fontSize: 12, fontWeight: 900, letterSpacing: '.12em' }}>ZICHAN · 首次设置</div>
         <h1 style={{ margin: '10px 0 4px', fontSize: 'clamp(28px, 5vw, 46px)', color: '#672f20' }}>开始你的账本</h1>
-        <p style={{ margin: 0, color: '#756b60', lineHeight: 1.7 }}>请选择一种初始化方式。完成后，本机数据密码同时用于加密备份与端到端同步密钥；完成之前不会运行定期任务、维护任务或自动备份。</p>
+        <p style={{ margin: 0, color: '#756b60', lineHeight: 1.7 }}>默认账本只用于记录日常支出，无需配置账户、币种或账本模式。</p>
 
-        <div role="radiogroup" aria-label="账本初始化方式" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginTop: 28 }}>
-          {([
-            ['empty', '创建空账本', '只建立基础币种、设置和系统分类，不写入任何业务流水。'],
-            ['import', '导入备份', '预检并演练加密 .zcbak，全部通过后再原子恢复。'],
-            ['demo', '体验演示', '显式创建完整演示数据，并持续标记为演示账本。'],
-          ] as const).map(([value, title, detail]) => (
-            <button
-              key={value}
-              type="button"
-              role="radio"
-              aria-checked={choice === value}
-              disabled={busy}
-              onClick={() => choose(value)}
-              style={{ minHeight: 126, padding: 18, textAlign: 'left', border: choice === value ? '2px solid #985734' : '1px solid #d6ccbd', borderRadius: 12, background: choice === value ? '#fff9f1' : '#fffdf9', color: '#4e473f', cursor: busy ? 'wait' : 'pointer' }}
-            >
-              <span style={{ display: 'block', fontSize: 17, fontWeight: 900 }}>{title}</span>
-              <span style={{ display: 'block', marginTop: 8, color: '#756b60', fontSize: 13, lineHeight: 1.55 }}>{detail}</span>
-            </button>
-          ))}
+        <section style={{ marginTop: 28, padding: 'clamp(20px, 4vw, 32px)', border: '2px solid #985734', borderRadius: 14, background: '#fff9f1', boxShadow: '0 18px 48px rgba(75,61,43,.08)' }}>
+          <h2 style={{ margin: 0, fontSize: 22, color: '#672f20' }}>直接开始记支出</h2>
+          <p style={{ margin: '8px 0 0', color: '#756b60', fontSize: 14, lineHeight: 1.65 }}>自动创建人民币轻量账本，并准备常用支出模板；不会写入账户、余额或虚假流水。</p>
+          <button
+            type="button"
+            aria-label="直接开始记支出"
+            disabled={busy}
+            onClick={() => void complete(
+              () => initializeEmptyLedger(store, QUICK_START_LEDGER_OPTIONS),
+              rememberQuickExpenseStart,
+            )}
+            style={{ ...button, marginTop: 18, opacity: busy ? 0.55 : 1 }}
+          >
+            {busy ? '正在创建…' : '直接开始记支出'}
+          </button>
+        </section>
+
+        <div style={{ marginTop: 22 }}>
+          <div style={{ color: '#756b60', fontSize: 12, fontWeight: 850 }}>其他方式</div>
+          <div aria-label="其他账本初始化方式" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 10 }}>
+            {([
+              ['import', '导入备份'],
+              ['demo', '体验演示'],
+              ['advanced', '高级创建'],
+            ] as const).map(([value, title]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={choice === value}
+                disabled={busy}
+                onClick={() => choose(value)}
+                style={{ minHeight: 40, padding: '0 14px', border: choice === value ? '2px solid #985734' : '1px solid #cfc4b4', borderRadius: 9, background: choice === value ? '#fff9f1' : '#fffdf9', color: '#4e473f', fontWeight: 800, cursor: busy ? 'wait' : 'pointer' }}
+              >
+                {title}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <section style={{ marginTop: 18, padding: 'clamp(18px, 4vw, 28px)', border: '1px solid #d6ccbd', borderRadius: 12, background: '#fffdf9', boxShadow: '0 18px 48px rgba(75,61,43,.08)' }}>
-          {choice === 'empty' && (
+        {choice && (
+          <section style={{ marginTop: 18, padding: 'clamp(18px, 4vw, 28px)', border: '1px solid #d6ccbd', borderRadius: 12, background: '#fffdf9', boxShadow: '0 18px 48px rgba(75,61,43,.08)' }}>
+          {choice === 'advanced' && (
             <form onSubmit={(event) => {
               event.preventDefault();
               void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode }));
             }}>
-              <h2 style={{ margin: 0, fontSize: 19 }}>创建空账本</h2>
+              <h2 style={{ margin: 0, fontSize: 19 }}>高级创建</h2>
+              <p style={{ color: '#756b60', fontSize: 13, lineHeight: 1.6 }}>仅在需要其他基础币种或账户、资产模式时调整。个人账本仍不会创建业务流水。</p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 14, marginTop: 16 }}>
                 <label style={{ fontSize: 12, fontWeight: 850 }}>
                   基础币种
@@ -220,7 +251,7 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
                   </select>
                 </label>
               </div>
-              <button type="submit" aria-label="确认创建空账本" disabled={busy} style={{ ...button, marginTop: 20, opacity: busy ? 0.55 : 1 }}>{busy ? '正在创建…' : '创建空账本'}</button>
+              <button type="submit" aria-label="确认高级创建" disabled={busy} style={{ ...button, marginTop: 20, opacity: busy ? 0.55 : 1 }}>{busy ? '正在创建…' : '使用这些设置创建'}</button>
             </form>
           )}
 
@@ -259,7 +290,9 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
           )}
 
           <div aria-live="polite" style={{ minHeight: 20, marginTop: 14, color: '#a43f36', fontSize: 13 }}>{error}</div>
-        </section>
+          </section>
+        )}
+        {!choice && <div aria-live="polite" style={{ minHeight: 20, marginTop: 14, color: '#a43f36', fontSize: 13 }}>{error}</div>}
       </section>
     </main>
   );

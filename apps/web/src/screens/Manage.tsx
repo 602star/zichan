@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { isDateInRange, nextUnhandledScheduleOccurrence, type Attachment, type Category, type FixedAssetCategory } from '@zichan/core';
 import {
   archiveMasterData,
+  disableSystemCategories,
   enableSystemCategories,
-  hideUnusedSystemCategories,
   mergeMasterData,
   previewMasterDataChange,
   restoreArchivedMasterData,
@@ -64,6 +64,7 @@ export function Manage() {
   const [categoryMode, setCategoryMode] = useState<CategoryCenterMode>(initialTarget.categoryMode ?? 'structure');
   const [categoryPackBusy, setCategoryPackBusy] = useState('');
   const [categoryPackNotice, setCategoryPackNotice] = useState('');
+  const [categoryPackError, setCategoryPackError] = useState('');
   useEffect(() => {
     try {
       sessionStorage.removeItem(MANAGE_TARGET_KEY);
@@ -90,10 +91,13 @@ export function Manage() {
   async function enableCategoryPack(packId: string, categoryIds: readonly string[]) {
     setCategoryPackBusy(packId);
     setCategoryPackNotice('');
+    setCategoryPackError('');
     try {
       await enableSystemCategories(store, categoryIds);
       bump();
-      setCategoryPackNotice('分类包已加入分类中心；默认隐藏项可在搜索结果中设为高频。');
+      setCategoryPackNotice(`已启用 ${categoryIds.length} 个分类；现在可在新增记账中选择。`);
+    } catch (error) {
+      setCategoryPackError(error instanceof Error ? error.message : String(error));
     } finally {
       setCategoryPackBusy('');
     }
@@ -102,13 +106,16 @@ export function Manage() {
   async function disableCategoryPack(packId: string, categoryIds: readonly string[]) {
     setCategoryPackBusy(packId);
     setCategoryPackNotice('');
+    setCategoryPackError('');
     try {
-      const result = await hideUnusedSystemCategories(store, categoryIds);
+      const result = await disableSystemCategories(store, categoryIds);
       bump();
       setCategoryPackNotice(
-        `已隐藏 ${result.hiddenIds.length} 个未使用分类`
-        + (result.retainedUsedIds.length ? `；${result.retainedUsedIds.length} 个已有记录的分类已保留` : ''),
+        `已停用 ${result.disabledIds.length} 个分类；新增记账将不再显示`
+        + (result.retainedUsedIds.length ? `；其中 ${result.retainedUsedIds.length} 个分类仍保留历史引用` : ''),
       );
+    } catch (error) {
+      setCategoryPackError(error instanceof Error ? error.message : String(error));
     } finally {
       setCategoryPackBusy('');
     }
@@ -145,7 +152,7 @@ export function Manage() {
                 <div style={card}>
                   <div style={{ fontSize: 15, fontWeight: 850 }}>按需分类包</div>
                   <div style={{ marginTop: 4, color: 'var(--fg-subtle)', fontSize: 12 }}>
-                    分类包只启用系统目录项；停用时不会删除历史分类或改动已有流水。
+                    启用后分类会出现在新增记账中；停用后不再可选，但不会删除历史分类或改动已有流水。
                   </div>
                   <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 8 }}>
                     {CATEGORY_PACKS.map((pack) => {
@@ -154,17 +161,17 @@ export function Manage() {
                       ).length;
                       const busy = categoryPackBusy === pack.id;
                       return (
-                        <div key={pack.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 11, display: 'grid', gap: 8 }}>
+                        <div key={pack.id} data-testid={`category-pack-${pack.id}`} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 11, display: 'grid', gap: 8 }}>
                           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                             <b style={{ fontSize: 13 }}>{pack.name}</b>
-                            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--fg-subtle)' }}>{enabled}/{pack.categoryIds.length}</span>
+                            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--fg-subtle)' }}>已启用 {enabled}/{pack.categoryIds.length}</span>
                           </div>
                           <div style={{ color: 'var(--fg-muted)', fontSize: 11, minHeight: 30 }}>{pack.description}</div>
                           <div style={{ display: 'flex', gap: 7 }}>
-                            <button type="button" disabled={busy} onClick={() => void enableCategoryPack(pack.id, pack.categoryIds)} style={packButton(true)}>
-                              {busy ? '处理中…' : enabled === pack.categoryIds.length ? '补齐目录' : '启用'}
+                            <button type="button" aria-label={`启用${pack.name}分类包`} disabled={busy || enabled === pack.categoryIds.length} onClick={() => void enableCategoryPack(pack.id, pack.categoryIds)} style={packButton(true)}>
+                              {busy ? '处理中…' : enabled === pack.categoryIds.length ? '已启用' : enabled > 0 ? '补齐并启用' : '启用'}
                             </button>
-                            <button type="button" disabled={busy || enabled === 0} onClick={() => void disableCategoryPack(pack.id, pack.categoryIds)} style={packButton(false)}>
+                            <button type="button" aria-label={`停用${pack.name}分类包`} disabled={busy || enabled === 0} onClick={() => void disableCategoryPack(pack.id, pack.categoryIds)} style={packButton(false)}>
                               停用
                             </button>
                           </div>
@@ -173,6 +180,7 @@ export function Manage() {
                     })}
                   </div>
                   {categoryPackNotice && <div style={{ marginTop: 10, color: 'var(--positive)', fontSize: 12, fontWeight: 750 }}>{categoryPackNotice}</div>}
+                  {categoryPackError && <div role="alert" style={{ marginTop: 10, color: 'var(--negative)', fontSize: 12, fontWeight: 750 }}>分类包操作失败：{categoryPackError}</div>}
                 </div>
                 <div style={card}><QuickCategorySettings categories={snap.categories} onSave={saveCategoryPreferences} /></div>
               </>

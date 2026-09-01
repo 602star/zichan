@@ -600,7 +600,7 @@ export function categoryIsHidden(category: Pick<Category, 'id' | 'isHidden'>): b
 }
 
 export function categoryLabel(category: string, categories: Category[] = []): string {
-  const cats = allCategories(categories, { includeCatalog: true });
+  const cats = allCategories(categories, { includeCatalog: true, includeInactive: true });
   const found = cats.find((c) => c.id === category);
   if (!found) return CATEGORY_LABEL[category] ?? category;
   const parent = found.parentId ? cats.find((c) => c.id === found.parentId) : undefined;
@@ -608,7 +608,7 @@ export function categoryLabel(category: string, categories: Category[] = []): st
 }
 
 export function categoryType(category: string, categories: Category[] = []): TransactionCategoryType | undefined {
-  return allCategories(categories, { includeCatalog: true }).find((c) => c.id === category)?.type ?? CATEGORY_TYPE[category];
+  return allCategories(categories, { includeCatalog: true, includeInactive: true }).find((c) => c.id === category)?.type ?? CATEGORY_TYPE[category];
 }
 
 export interface CategoryOption {

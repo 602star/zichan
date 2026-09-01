@@ -4,28 +4,56 @@ import { openLedger, openTransactions } from './helpers.mjs';
 
 test.setTimeout(90_000);
 
-test('records a lightweight expense and keeps it visible after reload', async ({ page }) => {
+test('records a detailed expense and keeps it visible after reload', async ({ page }) => {
   await openTransactions(page);
-  await page.getByRole('button', { name: '+ 记账' }).click();
-  await expect(page.getByText('新增 · 日常收支')).toBeVisible();
+  await page.getByRole('button', { name: '+ 记支出' }).click();
+  const expenseForm = page.getByRole('dialog', { name: '新增 · 日常支出' });
+  await expect(expenseForm).toBeVisible();
+  await expect(expenseForm.getByLabel('类型')).toHaveCount(0);
+  await expect(expenseForm.getByLabel('附件 / 图片')).toBeVisible();
+  await expect(expenseForm.getByLabel('新商户名称')).toBeVisible();
+  await expect(expenseForm.getByLabel('标签')).toBeVisible();
   await page.getByRole('textbox', { name: /^金额/ }).fill('68');
   await page.getByLabel('描述').fill('Playwright 午餐');
+  await page.getByLabel('新商户名称').fill('Playwright 食堂');
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await expect(page.getByText('Playwright 午餐', { exact: true })).toBeVisible();
   await page.reload();
   await openLedger(page);
-  await page.getByText('日常收支', { exact: true }).first().click();
+  await page.getByText('日常支出', { exact: true }).first().click();
   await expect(page.getByText('Playwright 午餐', { exact: true })).toBeVisible();
+});
+
+test('opens templates in the full expense form without saving immediately', async ({ page }) => {
+  await openTransactions(page);
+  await page.getByRole('button', { name: '午餐', exact: true }).click();
+  const expenseForm = page.getByRole('dialog', { name: '新增 · 日常支出' });
+  await expect(expenseForm).toBeVisible();
+  await expect(expenseForm.getByLabel('描述')).toHaveValue('午餐');
+  await expect(expenseForm.getByRole('textbox', { name: /^金额/ })).toHaveValue('0');
+  await expenseForm.getByRole('button', { name: '取消', exact: true }).click();
+});
+
+test('keeps the compact modal on the explicit quick-entry action', async ({ page }) => {
+  await openTransactions(page);
+  await page.getByRole('button', { name: '快速记账', exact: true }).click();
+  const quickExpense = page.getByRole('dialog', { name: '记一笔支出' });
+  await expect(quickExpense).toBeVisible();
+  await quickExpense.getByRole('button', { name: '午餐', exact: true }).click();
+  await page.getByRole('textbox', { name: '支出金额' }).fill('12.50');
+  await page.getByLabel('支出备注').fill('明确使用快记');
+  await page.getByRole('button', { name: '保存支出', exact: true }).click();
+  await expect(page.getByText('明确使用快记', { exact: true })).toBeVisible();
 });
 
 test('auto-saves a form draft and restores it on the next open', async ({ page }) => {
   await openTransactions(page);
-  await page.getByRole('button', { name: '+ 记账' }).click();
+  await page.getByRole('button', { name: '+ 记支出' }).click();
   await page.getByRole('textbox', { name: /^金额/ }).fill('23.50');
   await page.getByLabel('描述').fill('未提交草稿');
   await page.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '保留草稿并关闭' }).click();
-  await page.getByRole('button', { name: '+ 记账' }).click();
+  await page.getByRole('button', { name: '+ 记支出' }).click();
   await expect(page.getByRole('status')).toContainText('已恢复');
   await expect(page.getByRole('textbox', { name: /^金额/ })).toHaveValue('23.50');
   await expect(page.getByLabel('描述')).toHaveValue('未提交草稿');
@@ -33,9 +61,9 @@ test('auto-saves a form draft and restores it on the next open', async ({ page }
 
 test('traps modal focus and preserves the parent lock across nested confirmation', async ({ page }) => {
   await openTransactions(page);
-  const trigger = page.getByRole('button', { name: '+ 记账' });
+  const trigger = page.getByRole('button', { name: '+ 记支出' });
   await trigger.click();
-  const form = page.getByRole('dialog', { name: '新增 · 日常收支' });
+  const form = page.getByRole('dialog', { name: '新增 · 日常支出' });
   await expect(form).toBeVisible();
   await expect(page.locator('body')).toHaveCSS('overflow', 'hidden');
 
@@ -63,9 +91,46 @@ test('traps modal focus and preserves the parent lock across nested confirmation
   await expect(trigger).toBeFocused();
 });
 
+test('disables a category pack for new entries and restores it when re-enabled', async ({ page }) => {
+  await openLedger(page);
+  await page.getByRole('button', { name: '更多功能', exact: true }).click();
+  await page.getByRole('button', { name: /管理$/ }).click();
+  await expect(page.getByText('分类与资料中心', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '快捷显示与排序', exact: true }).click();
+
+  const studentPack = page.getByTestId('category-pack-student');
+  await expect(studentPack.getByText(/已启用 \d+\/10/)).toBeVisible();
+  await studentPack.getByRole('button', { name: '启用学生分类包', exact: true }).click();
+  await expect(studentPack.getByText('已启用 10/10', { exact: true })).toBeVisible();
+  await studentPack.getByRole('button', { name: '停用学生分类包', exact: true }).click();
+  await expect(studentPack.getByText('已启用 0/10', { exact: true })).toBeVisible();
+  await expect(page.getByText(/已停用 10 个分类；新增记账将不再显示/)).toBeVisible();
+
+  await page.getByText('日常支出', { exact: true }).first().click();
+  await page.getByRole('button', { name: '+ 记支出' }).click();
+  const expenseForm = page.getByRole('dialog', { name: '新增 · 日常支出' });
+  await expenseForm.getByLabel('二级分类').click();
+  await expenseForm.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('食堂');
+  await expect(expenseForm.getByRole('option', { name: /食堂/ })).toHaveCount(0);
+  await expenseForm.getByRole('button', { name: '关闭', exact: true }).click();
+
+  await page.getByRole('button', { name: /管理$/ }).click();
+  await page.getByRole('button', { name: '快捷显示与排序', exact: true }).click();
+  const disabledStudentPack = page.getByTestId('category-pack-student');
+  await disabledStudentPack.getByRole('button', { name: '启用学生分类包', exact: true }).click();
+  await expect(disabledStudentPack.getByText('已启用 10/10', { exact: true })).toBeVisible();
+
+  await page.getByText('日常支出', { exact: true }).first().click();
+  await page.getByRole('button', { name: '+ 记支出' }).click();
+  const restoredForm = page.getByRole('dialog', { name: '新增 · 日常支出' });
+  await restoredForm.getByLabel('二级分类').click();
+  await restoredForm.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('食堂');
+  await expect(restoredForm.getByRole('option', { name: /食堂/ })).toBeVisible();
+});
+
 test('exports a real PDF report with a valid PDF header', async ({ page }) => {
   await openLedger(page);
-  await page.getByText('报表', { exact: true }).first().click();
+  await page.getByRole('button', { name: /支出报表$/ }).click();
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出 PDF' }).click();
   const download = await downloadPromise;

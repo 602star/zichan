@@ -202,6 +202,7 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
   const fixedAssetById = new Map(fixedAssets.map((row) => [row.id, row]));
   const fixedEventById = new Map(fixedEvents.map((row) => [row.id, row]));
   const fixedConsumableById = new Map(fixedConsumables.map((row) => [row.id, row]));
+  const gameCashflowRequiresAccount = (settings[0]?.ledgerMode ?? 'spending') !== 'spending';
   const parentCategoryIds = new Set(categories.map((row) => row.parentId).filter((id): id is string => !!id));
   const accountGame = new Map(gameAccounts.map((row) => [row.id, row.gameId]));
   const seasonGame = new Map(seasons.map((row) => [row.id, row.gameId]));
@@ -479,6 +480,9 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
       amountMatches = false;
       transactionAmountMatches = false;
     }
+    const accountMatches = !!transaction
+      && transaction.accountId === link.accountId
+      && (!gameCashflowRequiresAccount || !!transaction.accountId);
     if (!record || !transaction || !isTransactionActive(transaction)
       || !['settlement', 'fee'].includes(link.role)
       || !['linked', 'created'].includes(link.ownership)
@@ -487,7 +491,7 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
       || sourceAssetId !== link.sourceAssetId
       || transaction.assetId !== link.sourceAssetId
       || !amountMatches || !transactionAmountMatches
-      || !transaction.accountId || transaction.accountId !== link.accountId) {
+      || !accountMatches) {
       issues.push({
         kind: 'game_cashflow_invalid',
         entityType: 'game_cashflow_link',

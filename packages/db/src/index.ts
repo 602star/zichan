@@ -89,7 +89,7 @@ export {
   saveTransactionAggregate,
   enableSystemCategory,
   enableSystemCategories,
-  hideUnusedSystemCategories,
+  disableSystemCategories,
   voidTransaction,
   restoreTransaction,
   isTransactionReconciled,

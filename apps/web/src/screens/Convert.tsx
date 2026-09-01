@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { restoreConversion, voidConversion } from '@zichan/db';
-import { isDateInRange, localToday, type ChainWithSteps, type ConversionType } from '@zichan/core';
+import { isDateInRange, localToday, type Asset, type ChainWithSteps, type ConversionType } from '@zichan/core';
 import { useSnapshot } from '../db/snapshot.js';
 import { useStore } from '../db/store.js';
 import { buildConvert, type ConvertChainVM } from '../selectors/convert.js';
@@ -11,6 +11,11 @@ import { AddConversionModal } from './AddConversionModal.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
+import {
+  activeAssetByCode,
+  ASSET_PRESETS,
+  type AssetPresetCode,
+} from '../assetPresets.js';
 
 const TYPE_LABEL: Record<string, string> = {
   dca: '定投', buy: '买入', sell: '卖出', exchange: '换汇', deposit: '入金', withdraw: '提现',
@@ -32,7 +37,7 @@ export function Convert() {
   const undo = useUndo(store, bump);
   const [openGroup, setOpenGroup] = useState<Record<string, boolean>>({});
   const [openChain, setOpenChain] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<{ assetPresetCode?: AssetPresetCode } | null>(null);
   const [editing, setEditing] = useState<ChainWithSteps | null>(null);
   const [showVoided, setShowVoided] = useState(false);
   const [view, setView] = useState<'overview' | TimelineViewMode>('overview');
@@ -85,9 +90,13 @@ export function Convert() {
           {TYPE_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
         <button onClick={() => setShowVoided((value) => !value)} style={pillBtn(showVoided)}>作废记录 {snap.chains.filter((row) => row.chain.recordState === 'voided').length}</button>
-        <button onClick={() => setAdding(true)} style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>+ 新增转换</button>
+        <button onClick={() => setAdding({})} style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>+ 新增转换</button>
       </div>
       <DateRangeBar value={dateRange} onChange={setDateRange} />
+
+      {view === 'overview' && vm.groups.length === 0 && (
+        <ConvertEmptyState assets={snap.assets} onSelect={(assetPresetCode) => setAdding({ assetPresetCode })} />
+      )}
 
       {showVoided && (
         <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
@@ -222,7 +231,7 @@ export function Convert() {
         />
       )}
 
-      {adding && <AddConversionModal onClose={() => setAdding(false)} />}
+      {adding && <AddConversionModal assetPresetCode={adding.assetPresetCode} onClose={() => setAdding(null)} />}
       {editing && <AddConversionModal initial={editing} onClose={() => setEditing(null)} />}
       {deletingChainId && (
         <ConfirmDialog
@@ -237,5 +246,43 @@ export function Convert() {
         </ConfirmDialog>
       )}
     </div>
+  );
+}
+
+function ConvertEmptyState({
+  assets,
+  onSelect,
+}: {
+  assets: readonly Asset[];
+  onSelect: (code: AssetPresetCode) => void;
+}) {
+  const active = assets.filter((asset) => !asset.isDeleted && asset.isActive && !asset.mergedIntoId);
+  const onlyCny = active.length === 1 && active[0]?.code.trim().toUpperCase() === 'CNY';
+  return (
+    <section style={{ ...card, padding: 22 }}>
+      <div style={{ fontSize: 17, fontWeight: 900 }}>{onlyCny ? '当前只有人民币' : '还没有资产转换记录'}</div>
+      <div style={{ marginTop: 7, color: 'var(--fg-muted)', fontSize: 13, lineHeight: 1.7 }}>
+        选一个常用目标资产开始填写真实转换。系统只会在需要时补充资产定义，不会伪造余额、持仓或交易。
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(128px, 1fr))', gap: 10, marginTop: 16 }}>
+        {ASSET_PRESETS.map((preset) => {
+          const existing = activeAssetByCode(active, preset.code);
+          return (
+            <button
+              key={preset.code}
+              type="button"
+              onClick={() => onSelect(preset.code)}
+              style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--fg)', padding: '13px 12px', textAlign: 'left', cursor: 'pointer' }}
+            >
+              <div style={{ fontSize: 15, fontWeight: 900 }}>{preset.code}</div>
+              <div style={{ marginTop: 4, fontSize: 12, color: 'var(--fg-muted)' }}>{preset.name}</div>
+              <div style={{ marginTop: 8, fontSize: 10, color: existing ? 'var(--positive)' : 'var(--accent)', fontWeight: 800 }}>
+                {existing ? '已有定义 · 直接填写' : '选择时添加'}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }

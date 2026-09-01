@@ -33,7 +33,9 @@ export const TRANSACTION_FORM_FIELDS: { key: TransactionFormOptionalKey; label: 
   { key: 'note', label: '备注' },
 ];
 
-export const COMMON_TRANSACTION_FORM_FIELDS: TransactionFormOptionalKey[] = ['payeeId', 'merchant', 'locationId', 'tagIds'];
+export const COMMON_TRANSACTION_FORM_FIELDS: TransactionFormOptionalKey[] = [
+  'payeeId', 'merchant', 'locationId', 'locationName', 'tagIds', 'note',
+];
 
 export function transactionFormFieldOptions(usesAccounts: boolean) {
   return TRANSACTION_FORM_FIELDS.filter((field) => usesAccounts || !field.accountsOnly);
@@ -48,7 +50,9 @@ export function transactionFormPresetKeys(preset: 'core' | 'common' | 'full', us
 
 export function optionalTransactionFields(setting: Setting | undefined, usesAccounts: boolean): string[] {
   const allowed = new Set(transactionFormFieldOptions(usesAccounts).map((field) => field.key));
-  return (setting?.transactionFormOptionalFields ?? '')
+  const configured = setting?.transactionFormOptionalFields;
+  if (configured === undefined) return COMMON_TRANSACTION_FORM_FIELDS.filter((key) => allowed.has(key));
+  return configured
     .split(',')
     .map((x) => x.trim())
     .filter((key) => allowed.has(key as TransactionFormOptionalKey));

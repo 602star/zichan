@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
 import type { LedgerBackup } from '@zichan/db';
+import type { LedgerMode } from '@zichan/core';
 import { useStore } from './db/store.js';
 import { loadSnapshot, useSnapshot, type Snapshot } from './db/snapshot.js';
 import { baseAsset } from './db/derive.js';
@@ -56,9 +57,12 @@ const SCREEN_IDS = new Set<ScreenId>(['dashboard', 'convert', 'transactions', 'g
 function initialScreen(): ScreenId {
   try {
     if (connectionLinkFromLocation()) return 'sync';
+    if (sessionStorage.getItem('zichan.postFirstRun') === 'quick-expense') return 'transactions';
     const stored = sessionStorage.getItem(RETRY_SCREEN_KEY);
     sessionStorage.removeItem(RETRY_SCREEN_KEY);
-    return stored && SCREEN_IDS.has(stored as ScreenId) ? stored as ScreenId : 'dashboard';
+    if (stored && SCREEN_IDS.has(stored as ScreenId)) return stored as ScreenId;
+    const active = sessionStorage.getItem(ACTIVE_SCREEN_KEY);
+    return active && SCREEN_IDS.has(active as ScreenId) ? active as ScreenId : 'dashboard';
   } catch {
     return 'dashboard';
   }
@@ -254,6 +258,7 @@ export function App() {
 
   // keep the money symbol in sync with the settlement currency
   const base = snap ? baseAsset(snap) : undefined;
+  const ledgerMode: LedgerMode = snap?.setting?.ledgerMode ?? 'spending';
   useEffect(() => {
     if (base) setBaseSymbol(base.symbol ?? `${base.code} `);
   }, [base]);
@@ -419,14 +424,16 @@ export function App() {
     fontVariantNumeric: 'tabular-nums',
   };
 
-  const [title, sub] = META[screen];
+  const [title, sub] = ledgerMode === 'spending' && screen === 'transactions'
+    ? ['日常支出', '只记录真实支出，打开即可记账']
+    : META[screen];
   const asOfDate = snap?.setting?.asOfDate;
   const safetyState = safetyStateFromSetting(snap?.setting);
   const safety = safetyWarnings(backups, safetyState);
 
   return (
     <div className="zc-app-shell" style={rootStyle}>
-      <Sidebar screen={screen} setScreen={setScreen} theme={theme} setTheme={setTheme} onQuickTransaction={quickTransaction} />
+      <Sidebar screen={screen} setScreen={setScreen} theme={theme} setTheme={setTheme} onQuickTransaction={quickTransaction} ledgerMode={ledgerMode} />
       <main className="zc-app-main">
         <header className="zc-app-header" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -496,6 +503,7 @@ export function App() {
         dataLocation={dataLocation}
         reportCurrency={base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}
         asOf={formatAsOfDate(asOfDate)}
+        ledgerMode={ledgerMode}
       />
       <div id="zc-dialog-portal" />
       {importDialog?.kind === 'password' && (
@@ -639,8 +647,17 @@ function Sidebar(props: {
   theme: ThemeId;
   setTheme: (t: ThemeId) => void;
   onQuickTransaction: () => void;
+  ledgerMode: LedgerMode;
 }) {
-  const { screen, setScreen, theme, setTheme, onQuickTransaction } = props;
+  const { screen, setScreen, theme, setTheme, onQuickTransaction, ledgerMode } = props;
+  const spendingMainIds = new Set<ScreenId>(['transactions', 'reports', 'settings']);
+  const advancedScreenActive = ledgerMode === 'spending' && !spendingMainIds.has(screen);
+  const [advancedOpen, setAdvancedOpen] = useState(advancedScreenActive);
+  useEffect(() => {
+    if (advancedScreenActive) setAdvancedOpen(true);
+  }, [advancedScreenActive]);
+  const mainNav = ledgerMode === 'spending' ? NAV.filter(([id]) => spendingMainIds.has(id)) : NAV;
+  const advancedNav = ledgerMode === 'spending' ? NAV.filter(([id]) => !spendingMainIds.has(id)) : [];
   return (
     <aside className="zc-sidebar" style={{
       background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex',
@@ -660,7 +677,10 @@ function Sidebar(props: {
       </div>
 
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {NAV.map(([id, label, icon]) => {
+        {mainNav.map(([id, originalLabel, icon]) => {
+          const label = ledgerMode === 'spending' && id === 'transactions' ? '日常支出'
+            : ledgerMode === 'spending' && id === 'reports' ? '支出报表'
+              : originalLabel;
           const active = screen === id;
           const withQuick = id === 'transactions';
           return (
@@ -713,6 +733,35 @@ function Sidebar(props: {
             </div>
           );
         })}
+        {ledgerMode === 'spending' && (
+          <>
+            <button
+              type="button"
+              aria-expanded={advancedOpen}
+              onClick={() => setAdvancedOpen((open) => !open)}
+              style={{ ...ghostBtn, borderRadius: 10, marginTop: 4, textAlign: 'left', padding: '9px 12px' }}
+            >
+              {advancedOpen ? '收起更多功能' : '更多功能'}
+            </button>
+            {advancedOpen && advancedNav.map(([id, label, icon]) => (
+              <button
+                key={id}
+                type="button"
+                title={label}
+                onClick={() => setScreen(id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '9px 12px', borderRadius: 10,
+                  border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 13,
+                  background: screen === id ? 'var(--accent-soft)' : 'transparent',
+                  color: screen === id ? 'var(--accent)' : 'var(--fg-subtle)',
+                  fontWeight: screen === id ? 750 : 600,
+                }}
+              >
+                <span style={{ width: 20, textAlign: 'center' }}>{icon}</span><span>{label}</span>
+              </button>
+            ))}
+          </>
+        )}
       </nav>
 
       <div style={{ flex: 1 }} />
@@ -759,6 +808,7 @@ function MobileNavigation(props: {
   dataLocation: string;
   reportCurrency: string;
   asOf: string;
+  ledgerMode: LedgerMode;
 }) {
   const { onMoreOpen } = props;
   const drawerTitleId = useId();
@@ -772,22 +822,26 @@ function MobileNavigation(props: {
     return () => mobileViewport.removeEventListener('change', closeOnDesktop);
   }, [onMoreOpen]);
 
-  const mainItems: [ScreenId, string, string][] = [
-    ['dashboard', '总览', '◈'],
-    ['transactions', '账本', '≋'],
-    ['convert', '资产', '⇄'],
-  ];
-  const moreIds = new Set<ScreenId>(['game', 'fixed', 'reports', 'history', 'manage', 'sync', 'settings']);
+  const mainItems: [ScreenId, string, string][] = props.ledgerMode === 'spending'
+    ? [['transactions', '支出', '≋'], ['reports', '报表', '▦']]
+    : [['dashboard', '总览', '◈'], ['transactions', '账本', '≋'], ['convert', '资产', '⇄']];
+  const moreIds = props.ledgerMode === 'spending'
+    ? new Set<ScreenId>(['dashboard', 'convert', 'game', 'fixed', 'history', 'manage', 'sync', 'settings'])
+    : new Set<ScreenId>(['game', 'fixed', 'reports', 'history', 'manage', 'sync', 'settings']);
   return (
     <>
-      <nav className="zc-mobile-bottom-nav" aria-label="移动端主导航">
-        {mainItems.slice(0, 2).map(([id, label, icon]) => (
+      <nav
+        className="zc-mobile-bottom-nav"
+        aria-label="移动端主导航"
+        style={{ gridTemplateColumns: `repeat(${mainItems.length + 2}, minmax(0, 1fr))` }}
+      >
+        {mainItems.slice(0, props.ledgerMode === 'spending' ? 1 : 2).map(([id, label, icon]) => (
           <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
             <span>{icon}</span><small>{label}</small>
           </button>
         ))}
         <button className="zc-mobile-quick" aria-label="快速记账" onClick={props.onQuickTransaction}><span>+</span><small>快记</small></button>
-        {mainItems.slice(2).map(([id, label, icon]) => (
+        {mainItems.slice(props.ledgerMode === 'spending' ? 1 : 2).map(([id, label, icon]) => (
           <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
             <span>{icon}</span><small>{label}</small>
           </button>

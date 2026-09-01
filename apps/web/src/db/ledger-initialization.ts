@@ -4,6 +4,7 @@ import {
   type LedgerKind,
   type LedgerMode,
   type Setting,
+  type TransactionTemplate,
 } from '@zichan/core';
 import type { SqlLedgerStore } from '@zichan/db';
 import { DEFAULT_FIXED_ASSET_CATEGORIES } from '../fixedAssetCategories.js';
@@ -27,6 +28,24 @@ export const BASE_CURRENCY_CHOICES: readonly BaseCurrencyChoice[] = [
   { code: 'EUR', name: '欧元', symbol: '€', decimals: 2 },
   { code: 'GBP', name: '英镑', symbol: '£', decimals: 2 },
 ];
+
+export const QUICK_START_LEDGER_OPTIONS = {
+  baseCurrencyCode: 'CNY',
+  ledgerMode: 'spending',
+} as const satisfies EmptyLedgerOptions;
+
+export const DEFAULT_EXPENSE_TEMPLATES = [
+  { name: '午餐', category: 'food' },
+  { name: '外卖', category: 'takeaway' },
+  { name: '买菜', category: 'groceries' },
+  { name: '咖啡奶茶', category: 'coffee_drinks' },
+  { name: '公交地铁', category: 'transport' },
+  { name: '打车', category: 'taxi_ride' },
+  { name: '日用百货', category: 'shopping' },
+  { name: '房租', category: 'housing' },
+  { name: '水电燃气', category: 'utilities' },
+  { name: '其他支出', category: 'uncategorized' },
+] as const satisfies ReadonlyArray<Pick<TransactionTemplate, 'name' | 'category'>>;
 
 export interface EmptyLedgerOptions {
   baseCurrencyCode: BaseCurrencyChoice['code'];
@@ -108,6 +127,17 @@ export async function initializeEmptyLedger(
     }
     for (const category of DEFAULT_FIXED_ASSET_CATEGORIES) {
       await transaction.fixedAssetCategories.put({ ...baseFields(), ...category } as never);
+    }
+    for (const [index, template] of DEFAULT_EXPENSE_TEMPLATES.entries()) {
+      await transaction.transactionTemplates.put({
+        ...baseFields(),
+        ...template,
+        type: 'expense',
+        assetId: asset.id,
+        description: template.name,
+        sortOrder: (index + 1) * 10,
+        isActive: true,
+      } as TransactionTemplate);
     }
     return setting;
   }, 'system', { undoable: false });

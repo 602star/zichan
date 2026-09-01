@@ -139,9 +139,11 @@ export async function persistDraftBeforeClose(
   close();
 }
 
-export function EntityFormModal<T>({ spec, initial, onSave, onDelete, deleteLabel = '删除', onClose, optionalFieldKeys, onOptionalFieldKeysChange, optionalFieldPresets }: {
+export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, deleteLabel = '删除', onClose, optionalFieldKeys, onOptionalFieldKeysChange, optionalFieldPresets }: {
   spec: EntityFormSpec<T>;
   initial?: T;
+  /** Treat a prefilled entity as a new record rather than an existing record being edited. */
+  isNew?: boolean;
   onSave: (entity: T) => Promise<void> | void;
   onDelete?: () => Promise<void> | void;
   deleteLabel?: string;
@@ -174,6 +176,7 @@ export function EntityFormModal<T>({ spec, initial, onSave, onDelete, deleteLabe
   const [draftReady, setDraftReady] = useState(false);
   const [draftRestoredAt, setDraftRestoredAt] = useState('');
   const [closeOpen, setCloseOpen] = useState(false);
+  const creating = isNew ?? !initial;
 
   const fingerprint = formDraftFingerprint(values, fileValues);
   const dirty = fingerprint !== initialFingerprint.current;
@@ -358,7 +361,7 @@ export function EntityFormModal<T>({ spec, initial, onSave, onDelete, deleteLabe
       panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 26, width: `min(${spec.modalWidth ?? 560}px, 100%)`, maxHeight: '90vh', overflow: 'auto' }}
     >
         <div className="zc-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
-          <div id={titleId} style={{ fontSize: 17, fontWeight: 800 }}>{initial ? '编辑' : '新增'} · {spec.title}</div>
+          <div id={titleId} style={{ fontSize: 17, fontWeight: 800 }}>{creating ? '新增' : '编辑'} · {spec.title}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {moreFields.length > 0 && onOptionalFieldKeysChange && (
               <button

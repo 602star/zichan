@@ -26,12 +26,16 @@ export async function openLedger(page, options = {}) {
   const create = page.getByRole('button', { name: '创建并打开' });
   const unlock = page.getByRole('button', { name: '解锁', exact: true });
   const dashboard = page.getByText('总览', { exact: true }).first();
-  const initializeEmpty = page.getByRole('button', { name: '确认创建空账本', exact: true });
+  const dailyExpenses = page.getByText('日常支出', { exact: true }).first();
+  const quickStart = page.getByRole('button', { name: '直接开始记支出', exact: true });
+  const appReady = dashboard.or(dailyExpenses);
+  const quickExpense = page.getByRole('dialog', { name: '记一笔支出' });
+  let startedQuickLedger = false;
 
-  await expect(localMode.or(create).or(unlock).or(dashboard).or(initializeEmpty)).toBeVisible({ timeout: 30_000 });
+  await expect(localMode.or(create).or(unlock).or(appReady).or(quickStart)).toBeVisible({ timeout: 30_000 });
   if (await localMode.isVisible().catch(() => false)) {
     await localMode.click();
-    await expect(create.or(unlock).or(dashboard).or(initializeEmpty)).toBeVisible({ timeout: 30_000 });
+    await expect(create.or(unlock).or(appReady).or(quickStart)).toBeVisible({ timeout: 30_000 });
   }
 
   if (await create.isVisible().catch(() => false)) {
@@ -44,13 +48,23 @@ export async function openLedger(page, options = {}) {
       await unlock.click();
     }
   }
-  await expect(dashboard.or(initializeEmpty)).toBeVisible({ timeout: 30_000 });
-  if (await initializeEmpty.isVisible().catch(() => false)) await initializeEmpty.click();
-  await expect(dashboard).toBeVisible({ timeout: 30_000 });
+  await expect(appReady.or(quickStart)).toBeVisible({ timeout: 30_000 });
+  if (await quickStart.isVisible().catch(() => false)) {
+    startedQuickLedger = true;
+    await quickStart.click();
+  }
+  await expect(appReady).toBeVisible({ timeout: 30_000 });
+  if (startedQuickLedger) await expect(quickExpense).toBeVisible({ timeout: 30_000 });
+
+  if (options.keepQuickExpense !== true && await quickExpense.isVisible().catch(() => false)) {
+    await page.getByRole('button', { name: '关闭快速记账' }).click();
+    await expect(quickExpense).toBeHidden();
+  }
 }
 
 export async function openTransactions(page) {
   await openLedger(page);
-  await page.getByText('日常收支', { exact: true }).first().click();
-  await expect(page.getByRole('button', { name: '+ 记账' })).toBeVisible();
+  const dailyExpenses = page.getByText('日常支出', { exact: true }).first();
+  await dailyExpenses.click();
+  await expect(page.getByRole('button', { name: '+ 记支出' })).toBeVisible();
 }

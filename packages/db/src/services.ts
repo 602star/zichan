@@ -463,21 +463,36 @@ function amountPrecision(value: string): number {
   }
 }
 
+const SYSTEM_CATEGORY_PACK_DISABLED_REASON = '系统分类包停用';
+
 export async function enableSystemCategory(
   store: SqlLedgerStore,
   id: string,
+  options: { restorePackDisabled?: boolean; makeVisible?: boolean } = {},
 ): Promise<Category> {
   const existing = await store.categories.get(id);
   if (existing) {
-    if (existing.isDeleted || !existing.isActive || existing.mergedIntoId) {
+    if (existing.isDeleted || existing.mergedIntoId) {
       validation(`分类已归档，不能由系统目录自动启用：${id}`, 'category');
+    }
+    if (!existing.isActive && (!options.restorePackDisabled || existing.archiveReason !== SYSTEM_CATEGORY_PACK_DISABLED_REASON)) {
+      validation(`分类已归档，不能由系统目录自动启用：${id}`, 'category');
+    }
+    if (!existing.isActive || (options.makeVisible && existing.isHidden)) {
+      return store.categories.put({
+        ...existing,
+        isActive: true,
+        isHidden: options.makeVisible ? false : existing.isHidden,
+        archivedAt: undefined,
+        archiveReason: undefined,
+      });
     }
     return existing;
   }
   const catalog = systemCategory(id, false);
   if (!catalog) validation(`系统分类目录中不存在：${id}`, 'category');
-  if (catalog.parentId) await enableSystemCategory(store, catalog.parentId);
-  return store.categories.put(catalog);
+  if (catalog.parentId) await enableSystemCategory(store, catalog.parentId, options);
+  return store.categories.put({ ...catalog, isHidden: options.makeVisible ? false : catalog.isHidden });
 }
 
 export async function enableSystemCategories(
@@ -486,32 +501,42 @@ export async function enableSystemCategories(
 ): Promise<Category[]> {
   return store.runInAuditBatch(`启用系统分类 ${ids.length} 项`, async (transactionStore) => {
     const rows: Category[] = [];
-    for (const id of [...new Set(ids)]) rows.push(await enableSystemCategory(transactionStore, id));
+    for (const id of [...new Set(ids)]) {
+      rows.push(await enableSystemCategory(transactionStore, id, { restorePackDisabled: true, makeVisible: true }));
+    }
     return rows;
   });
 }
 
 export interface DisabledSystemCategoriesResult {
-  hiddenIds: string[];
+  disabledIds: string[];
   retainedUsedIds: string[];
 }
 
-export async function hideUnusedSystemCategories(
+export async function disableSystemCategories(
   store: SqlLedgerStore,
   ids: readonly string[],
 ): Promise<DisabledSystemCategoriesResult> {
   return store.runInAuditBatch(`停用系统分类包 ${ids.length} 项`, async (transactionStore) => {
-    const result: DisabledSystemCategoriesResult = { hiddenIds: [], retainedUsedIds: [] };
+    const result: DisabledSystemCategoriesResult = { disabledIds: [], retainedUsedIds: [] };
+    const archivedAt = new Date().toISOString();
     for (const id of [...new Set(ids)]) {
-      const category = await transactionStore.categories.get(id);
-      if (!category || category.isDeleted || !category.isActive) continue;
-      const impact = await previewMasterDataChange(transactionStore, 'category', id);
-      if (impact.total > 0) {
-        result.retainedUsedIds.push(id);
+      const category = await transactionStore.categories.get(id) ?? await enableSystemCategory(transactionStore, id);
+      if (category.isDeleted || category.mergedIntoId) continue;
+      if (!category.isActive) {
+        if (category.archiveReason === SYSTEM_CATEGORY_PACK_DISABLED_REASON) result.disabledIds.push(id);
         continue;
       }
-      if (!category.isHidden) await transactionStore.categories.put({ ...category, isHidden: true });
-      result.hiddenIds.push(id);
+      const impact = await previewMasterDataChange(transactionStore, 'category', id);
+      if (impact.total > 0) result.retainedUsedIds.push(id);
+      await transactionStore.categories.put({
+        ...category,
+        isActive: false,
+        isHidden: true,
+        archivedAt,
+        archiveReason: SYSTEM_CATEGORY_PACK_DISABLED_REASON,
+      });
+      result.disabledIds.push(id);
     }
     return result;
   });
@@ -2633,7 +2658,7 @@ const GAME_EXPENSE_RECORD_TYPES = new Set<GameRecordType>([
 
 export interface GameCashflowTransactionDraft {
   categoryId: string;
-  accountId: string;
+  accountId?: string;
   payeeId?: string;
   merchant?: string;
   description?: string;
@@ -2781,7 +2806,11 @@ async function saveGameCashflow(
     const create = draft.createTransaction;
     if (!create) validation('请填写要创建的流水信息');
     await requireLeafCategory(store, create.categoryId, expectedType, `${role}CategoryId`);
-    await requireAccount(store, create.accountId, `${role}AccountId`, true);
+    const setting = (await store.settings.list({ limit: 1 }))[0];
+    const accountRequired = (setting?.ledgerMode ?? 'spending') !== 'spending';
+    const account = accountRequired
+      ? await requireAccount(store, create.accountId, `${role}AccountId`, true)
+      : undefined;
     if (create.payeeId) {
       const payee = await store.payees.get(create.payeeId);
       if (!payee || payee.isDeleted || !payee.isActive || payee.mergedIntoId) validation('商户不存在或已归档');
@@ -2802,7 +2831,7 @@ async function saveGameCashflow(
       category: create.categoryId,
       amount: D(source.amount).abs().toString(),
       assetId: source.assetId,
-      accountId: create.accountId,
+      accountId: account?.id,
       status: 'cleared',
       payeeId: create.payeeId,
       merchant: create.merchant,

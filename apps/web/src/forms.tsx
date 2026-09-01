@@ -133,6 +133,7 @@ const DCA_STATUS = [{ value: 'active', label: '启用' }, { value: 'paused', lab
 interface LedgerFormOptions {
   usesAccounts?: boolean;
   refundMode?: boolean;
+  expenseOnly?: boolean;
 }
 
 function defaultSettlementAssetId(snap: Snapshot): string {
@@ -493,6 +494,7 @@ export function payeeForm(snap: Snapshot, options: LedgerFormOptions = {}): Enti
 export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {}): EntityFormSpec<Transaction> {
   const usesAccounts = options.usesAccounts ?? snap.setting?.ledgerMode !== 'spending';
   const refundMode = options.refundMode ?? false;
+  const expenseOnly = options.expenseOnly ?? false;
   const defaultAssetId = defaultSettlementAssetId(snap);
   const accountFields: FieldDef[] = usesAccounts ? [
     { key: 'accountId', label: '账户', type: 'select', half: true, options: accountOpts(snap), allowEmpty: true, section: 'more' },
@@ -511,23 +513,30 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       : [{ value: '__root__', label: `${categoryLabel(original.category, snap.categories)} · 可退基数 ${original.amount}` }];
   };
   return {
-    title: refundMode ? '记录退款' : '日常收支',
+    title: refundMode ? '记录退款' : expenseOnly ? '日常支出' : '日常收支',
     modalWidth: 880,
     fields: [
       { key: 'date', label: '日期', type: 'date', half: true, defaultValue: currentDate(), lockedVisible: true, required: true },
       { key: 'time', label: '交易时间', type: 'time', half: true, defaultValue: currentTime(), lockedVisible: true, required: true },
-      { key: 'type', label: '类型', type: 'select', half: true, options: refundMode ? [{ value: 'refund', label: '退款' }] : usesAccounts ? TX_TYPES : TX_TYPES_BASIC, lockedVisible: true, required: true },
-      { key: 'category', label: '二级分类', type: 'category', options: (v) => categoryOptions(snap.categories, v.type === 'income' ? 'income' : 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), lockedVisible: true, required: true },
+      {
+        key: 'type', label: '类型', type: 'select', half: true,
+        options: refundMode ? [{ value: 'refund', label: '退款' }] : expenseOnly ? [{ value: 'expense', label: '支出' }] : usesAccounts ? TX_TYPES : TX_TYPES_BASIC,
+        defaultValue: expenseOnly ? 'expense' : undefined,
+        hidden: expenseOnly,
+        lockedVisible: true,
+        required: true,
+      },
+      { key: 'category', label: '二级分类', type: 'category', options: (v) => categoryOptions(snap.categories, expenseOnly ? 'expense' : v.type === 'income' ? 'income' : 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), lockedVisible: true, required: true },
       { key: 'amount', label: '金额', type: 'number', half: true, lockedVisible: true, required: true },
       { key: 'assetId', label: '币种', type: 'select', half: true, options: settlementOpts(snap), lockedVisible: true, required: true },
       { key: 'description', label: '描述', type: 'text', half: true, placeholder: '午餐 / 工资 / 房租', lockedVisible: true, required: true },
       { key: 'attachmentDrafts', label: '附件 / 图片', type: 'file', accept: 'image/*,.pdf', multiple: true, capture: 'environment', lockedVisible: true },
       { key: 'timezone', label: '交易时区', type: 'text', half: true, defaultValue: currentTimezone(), section: 'more' },
       ...accountFields,
-      { key: 'refundForId', label: '退款关联原支出', type: 'select', options: refundableExpenses.map((t) => ({ value: t.id, label: `${t.date} · ${t.description ?? t.merchant ?? t.category} · ${t.amount} ${snap.assets.find((a) => a.id === t.assetId)?.code ?? ''}` })), allowEmpty: !refundMode, section: refundMode ? undefined : 'more', lockedVisible: refundMode, required: refundMode },
-      { key: 'refundAppliedAmount', label: '冲减原消费金额', type: 'number', half: true, placeholder: '与到账币种不同时必填', section: refundMode ? undefined : 'more', lockedVisible: refundMode },
-      { key: 'refundAllocationMode', label: '退款分配方式', type: 'select', half: true, options: [{ value: 'proportional', label: '按原单剩余比例' }, { value: 'specified', label: '指定退款项目' }], defaultValue: 'proportional', section: refundMode ? undefined : 'more', lockedVisible: refundMode },
-      { key: 'refundAllocationDrafts', label: '指定退款项目金额', type: 'allocation', options: refundAllocationOptions, section: refundMode ? undefined : 'more', lockedVisible: refundMode },
+      { key: 'refundForId', label: '退款关联原支出', type: 'select', options: refundableExpenses.map((t) => ({ value: t.id, label: `${t.date} · ${t.description ?? t.merchant ?? t.category} · ${t.amount} ${snap.assets.find((a) => a.id === t.assetId)?.code ?? ''}` })), allowEmpty: !refundMode, section: refundMode ? undefined : 'more', lockedVisible: refundMode, required: refundMode, hidden: expenseOnly },
+      { key: 'refundAppliedAmount', label: '冲减原消费金额', type: 'number', half: true, placeholder: '与到账币种不同时必填', section: refundMode ? undefined : 'more', lockedVisible: refundMode, hidden: expenseOnly },
+      { key: 'refundAllocationMode', label: '退款分配方式', type: 'select', half: true, options: [{ value: 'proportional', label: '按原单剩余比例' }, { value: 'specified', label: '指定退款项目' }], defaultValue: 'proportional', section: refundMode ? undefined : 'more', lockedVisible: refundMode, hidden: expenseOnly },
+      { key: 'refundAllocationDrafts', label: '指定退款项目金额', type: 'allocation', options: refundAllocationOptions, section: refundMode ? undefined : 'more', lockedVisible: refundMode, hidden: expenseOnly },
       { key: 'payeeId', label: '已有商户', type: 'select', half: true, options: payeeOpts(snap), allowEmpty: true, section: 'more' },
       { key: 'merchant', label: '新商户名称', type: 'text', half: true, placeholder: '没有维护商户时填写', section: 'more' },
       { key: 'locationId', label: '地点', type: 'select', half: true, options: locationOpts(snap), allowEmpty: true, section: 'more' },
@@ -580,7 +589,7 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       date: v.date,
       time: S(v.time),
       timezone: S(v.timezone),
-      type: v.type as Transaction['type'],
+      type: expenseOnly ? 'expense' : v.type as Transaction['type'],
       category: v.category as Transaction['category'],
       amount: D(v.amount || '0').abs().toString(),
       assetId: v.assetId || defaultAssetId,
@@ -865,6 +874,7 @@ function gameCashflowFormValues(snap: Snapshot, record: GameRecord, role: GameCa
 
 export function gameRecordForm(snap: Snapshot): EntityFormSpec<GameRecordFormValue> {
   const asOf = currentDate();
+  const usesAccounts = (snap.setting?.ledgerMode ?? 'spending') !== 'spending';
   return {
     title: '游戏记录',
     draftKey: 'game-record',
@@ -874,7 +884,7 @@ export function gameRecordForm(snap: Snapshot): EntityFormSpec<GameRecordFormVal
       { key: 'recordType', label: '记录类型', type: 'select', half: true, options: REC_TYPES, required: true },
       { key: 'gameId', label: '游戏', type: 'select', half: true, options: gameOpts(snap), required: true },
       { key: 'seasonId', label: '赛季', type: 'select', half: true, options: (v) => seasonOpts(snap, v.gameId), allowEmpty: true },
-      { key: 'gameAccountId', label: '账号', type: 'select', half: true, options: (v) => gameAccountOpts(snap, v.gameId), allowEmpty: true },
+      { key: 'gameAccountId', label: '账号（可选）', type: 'select', half: true, options: (v) => gameAccountOpts(snap, v.gameId), allowEmpty: true },
       { key: 'gameCurrencyName', label: '游戏货币', type: 'text', half: true, placeholder: '初火' },
       { key: 'gameCurrencyAmount', label: '货币数量', type: 'number', half: true },
       { key: 'settlementAssetId', label: '结算币种', type: 'select', half: true, options: settlementOpts(snap, moduleCurrencyId(snap.setting, 'game')) },
@@ -891,7 +901,11 @@ export function gameRecordForm(snap: Snapshot): EntityFormSpec<GameRecordFormVal
         ...categoryPickerPreference(snap),
         visibleWhen: (values) => values.settlementCashflowMode === 'create_transaction',
       },
-      { key: 'settlementAccountId', label: '结算账户', type: 'select', half: true, options: accountOpts(snap), visibleWhen: (values) => values.settlementCashflowMode === 'create_transaction' },
+      {
+        key: 'settlementAccountId', label: '结算账户', type: 'select', half: true,
+        options: accountOpts(snap), allowEmpty: !usesAccounts, required: usesAccounts,
+        visibleWhen: (values) => usesAccounts && values.settlementCashflowMode === 'create_transaction',
+      },
       { key: 'settlementMerchant', label: '结算商户 / 平台', type: 'text', half: true, section: 'more', visibleWhen: (values) => values.settlementCashflowMode === 'create_transaction' },
       { key: 'feeAssetId', label: '手续费币种', type: 'select', half: true, options: assetOpts(snap), allowEmpty: true },
       { key: 'feeAmount', label: '手续费', type: 'number', half: true },
@@ -907,7 +921,11 @@ export function gameRecordForm(snap: Snapshot): EntityFormSpec<GameRecordFormVal
         ...categoryPickerPreference(snap),
         visibleWhen: (values) => values.feeCashflowMode === 'create_transaction',
       },
-      { key: 'feeAccountId', label: '手续费账户', type: 'select', half: true, options: accountOpts(snap), visibleWhen: (values) => values.feeCashflowMode === 'create_transaction' },
+      {
+        key: 'feeAccountId', label: '手续费账户', type: 'select', half: true,
+        options: accountOpts(snap), allowEmpty: !usesAccounts, required: usesAccounts,
+        visibleWhen: (values) => usesAccounts && values.feeCashflowMode === 'create_transaction',
+      },
       { key: 'feeMerchant', label: '手续费商户 / 平台', type: 'text', half: true, section: 'more', visibleWhen: (values) => values.feeCashflowMode === 'create_transaction' },
       { key: 'note', label: '备注', type: 'text' },
     ],
@@ -952,13 +970,19 @@ export function gameRecordForm(snap: Snapshot): EntityFormSpec<GameRecordFormVal
       if (account && account.gameId !== v.gameId) return { gameAccountId: '账号不属于所选游戏' } as Record<string, string>;
       const settlementHasMoney = !!v.settlementAssetId && D(v.settlementAmount || 0).gt(0);
       if (settlementHasMoney && v.settlementCashflowMode === 'linked_transaction' && !v.settlementTransactionId) return { settlementTransactionId: '请选择已有流水' };
-      if (settlementHasMoney && v.settlementCashflowMode === 'create_transaction' && (!v.settlementCategoryId || !v.settlementAccountId)) {
-        return { settlementCategoryId: '请选择二级分类', settlementAccountId: '请选择结算账户' };
+      if (settlementHasMoney && v.settlementCashflowMode === 'create_transaction') {
+        const errors: Record<string, string> = {};
+        if (!v.settlementCategoryId) errors.settlementCategoryId = '请选择二级分类';
+        if (usesAccounts && !v.settlementAccountId) errors.settlementAccountId = '请选择结算账户';
+        if (Object.keys(errors).length) return errors;
       }
       const feeHasMoney = !!v.feeAssetId && D(v.feeAmount || 0).gt(0);
       if (feeHasMoney && v.feeCashflowMode === 'linked_transaction' && !v.feeTransactionId) return { feeTransactionId: '请选择已有流水' };
-      if (feeHasMoney && v.feeCashflowMode === 'create_transaction' && (!v.feeCategoryId || !v.feeAccountId)) {
-        return { feeCategoryId: '请选择二级分类', feeAccountId: '请选择手续费账户' };
+      if (feeHasMoney && v.feeCashflowMode === 'create_transaction') {
+        const errors: Record<string, string> = {};
+        if (!v.feeCategoryId) errors.feeCategoryId = '请选择二级分类';
+        if (usesAccounts && !v.feeAccountId) errors.feeAccountId = '请选择手续费账户';
+        if (Object.keys(errors).length) return errors;
       }
       if (v.recordType === 'fee' && !!v.feeAssetId) {
         return { feeAmount: '独立手续费记录的费用请填写在结算金额字段，不要重复填写手续费' } as Record<string, string>;

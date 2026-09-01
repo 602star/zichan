@@ -5,6 +5,7 @@ import {
   newId,
   type Attachment,
   type FixedAsset,
+  type FixedAssetCategory,
   type FixedAssetConsumable,
   type FixedAssetEvent,
   type FixedAssetGoal,
@@ -59,9 +60,13 @@ import { card, pillBtn } from '../ui/styles.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
+import {
+  FIXED_ASSET_QUICK_PRESETS,
+  fixedAssetPresetCategoryId,
+} from '../assetPresets.js';
 
 type ViewMode = 'overview' | TimelineViewMode;
-type AssetModal = FixedAsset | 'new' | null;
+type AssetModal = FixedAsset | 'new' | { kind: 'preset'; categoryId: string } | null;
 type EventModal = { assetId: string; event?: FixedAssetEvent } | null;
 type MetricModal = { assetId: string; metric?: FixedAssetUsageMetric } | null;
 type UsageModal = { metric: FixedAssetUsageMetric; log?: FixedAssetUsageLog } | null;
@@ -267,7 +272,12 @@ export function Fixed() {
 
       {view !== 'overview' && <DateRangeBar value={dateRange} onChange={setDateRange} />}
 
-      {view === 'overview' ? (
+      {view === 'overview' ? (vm.length === 0 ? (
+        <FixedEmptyState
+          categories={snap.fixedAssetCategories}
+          onSelect={(categoryId) => setAssetModal({ kind: 'preset', categoryId })}
+        />
+      ) : (
         <>
           <div className="zc-fixed-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
             <Kpi label="物品总数" value={`${vm.length} 件`} />
@@ -283,7 +293,7 @@ export function Fixed() {
           </div>
           <Overview cards={cards} onEdit={setAssetModal} onEvent={(assetId) => setEventModal({ assetId })} onMetric={(assetId, metric) => setMetricModal({ assetId, metric })} onUsage={(metric) => setUsageModal({ metric })} onConsumable={(assetId) => setConsumableModal({ assetId })} onGoal={(assetId, goal) => setGoalModal({ assetId, goal })} onTimeline={openTimeline} />
         </>
-      ) : (
+      )) : (
         <TimelineExplorer
           items={allTimeline}
           view={view}
@@ -305,10 +315,20 @@ export function Fixed() {
       )}
 
       {assetModal !== null && (() => {
-        const existing = assetModal === 'new' ? undefined : assetModal;
+        const isPreset = typeof assetModal === 'object' && 'kind' in assetModal;
+        const existing = assetModal === 'new' || isPreset ? undefined : assetModal;
         const attachments = existing ? snap.attachments.filter((row) => row.entityType === 'fixed_asset' && row.entityId === existing.id) : [];
         const purchase = existing ? snap.fixedEvents.find((row) => row.fixedAssetId === existing.id && row.type === 'purchase') : undefined;
-        return <EntityFormModal spec={fixedAssetForm(snap, attachments, purchase)} initial={existing} onSave={saveAsset} onDelete={existing ? async () => deleteAsset(existing) : undefined} deleteLabel="归档" onClose={() => setAssetModal(null)} />;
+        const baseSpec = fixedAssetForm(snap, attachments, purchase);
+        const spec = isPreset
+          ? {
+            ...baseSpec,
+            fields: baseSpec.fields.map((field) => field.key === 'categoryId'
+              ? { ...field, defaultValue: assetModal.categoryId }
+              : field),
+          }
+          : baseSpec;
+        return <EntityFormModal spec={spec} initial={existing} onSave={saveAsset} onDelete={existing ? async () => deleteAsset(existing) : undefined} deleteLabel="归档" onClose={() => setAssetModal(null)} />;
       })()}
       {eventModal && <EntityFormModal spec={fixedEventForm(snap, eventModal.assetId, todayDate(), vm.find((item) => item.id === eventModal.assetId)?.invested ?? '0')} initial={eventModal.event} onSave={saveEventValue} onDelete={eventModal.event ? async () => {
         const compensation = await deleteFixedAssetEvent(store, eventModal.event!);
@@ -379,6 +399,42 @@ export function Fixed() {
         } : undefined} deleteLabel="取消目标" onClose={() => setGoalModal(null)} />;
       })()}
     </div>
+  );
+}
+
+function FixedEmptyState({
+  categories,
+  onSelect,
+}: {
+  categories: readonly FixedAssetCategory[];
+  onSelect: (categoryId: string) => void;
+}) {
+  return (
+    <section style={{ ...card, padding: 22 }}>
+      <div style={{ fontSize: 17, fontWeight: 900 }}>记录第一件真实物品</div>
+      <div style={{ marginTop: 7, color: 'var(--fg-muted)', fontSize: 13, lineHeight: 1.7 }}>
+        选择常用类型可直接打开现有新增表单并预选分类。你仍需填写真实名称，取消表单不会留下任何物品或资金记录。
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginTop: 16 }}>
+        {FIXED_ASSET_QUICK_PRESETS.map((preset) => {
+          const categoryId = fixedAssetPresetCategoryId(preset, categories);
+          return (
+            <button
+              key={preset.key}
+              type="button"
+              aria-label={`新增${preset.label}物品`}
+              disabled={!categoryId}
+              onClick={() => categoryId && onSelect(categoryId)}
+              style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--fg)', padding: '15px 14px', textAlign: 'left', cursor: categoryId ? 'pointer' : 'not-allowed', opacity: categoryId ? 1 : 0.55 }}
+            >
+              <div style={{ fontSize: 16, fontWeight: 900 }}>{preset.label}</div>
+              <div style={{ marginTop: 5, fontSize: 11, color: 'var(--fg-muted)', lineHeight: 1.5 }}>{categoryId ? preset.hint : '该分类已被归档'}</div>
+              <div style={{ marginTop: 9, fontSize: 10, color: 'var(--accent)', fontWeight: 850 }}>预选分类 · 填写名称</div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

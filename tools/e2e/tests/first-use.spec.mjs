@@ -74,5 +74,5 @@ test('opens existing browser data in read-only recovery after persistence is los
   await expect(page.getByText('只读恢复模式', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '导出加密 .zcbak' })).toBeVisible();
   await expect(page.getByRole('button', { name: '改为连接服务器' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '+ 记账' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^\+ 记(?:账|支出)$/ })).toHaveCount(0);
 });
