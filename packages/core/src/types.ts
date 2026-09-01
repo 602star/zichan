@@ -105,6 +105,8 @@ export interface Setting extends BaseEntity {
   transactionFormOptionalFields?: string;
   /** Default category picker scope; users can still toggle it for the current picker session. */
   categoryPickerDefaultScope?: 'frequent' | 'all';
+  /** Versioned JSON containing the per-ledger module visibility and navigation order. */
+  navigationLayoutJson?: string;
   /** Which period receives the spending offset created by a refund. */
   refundAttributionMode?: 'original_date' | 'refund_date';
   /** JSON payload for backup/check/rehearsal health status. */

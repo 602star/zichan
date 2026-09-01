@@ -7,8 +7,8 @@ import type { SqlDriver } from './driver.js';
 import { MIGRATIONS_TABLE_SQL, schemaStatements } from './schema.js';
 import { TABLES, allCols, type TableSpec } from './tables.js';
 
-export const CURRENT_SCHEMA_VERSION = 115;
-export const CURRENT_SCHEMA_NAME = 'current_schema_2026_08_13_first_run_ledger';
+export const CURRENT_SCHEMA_VERSION = 116;
+export const CURRENT_SCHEMA_NAME = 'current_schema_2026_09_01_navigation_layout';
 export const SCHEMA_RESET_REQUIRED_CODE = 'SCHEMA_RESET_REQUIRED';
 
 export class SchemaResetRequiredError extends Error {

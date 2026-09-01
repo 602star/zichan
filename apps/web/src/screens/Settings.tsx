@@ -51,6 +51,18 @@ import { importPortableLedger } from '../db/portable-backup.js';
 import { reconcileAttachmentStorage } from '../db/attachment-storage.js';
 import { checkAllAttachmentFiles, cleanupAllTestTransactions } from '../db/settings-maintenance.js';
 import { adoptUnlockedLedgerKeyEnvelope } from '../ledger-key-vault.js';
+import {
+  REQUIRED_NAVIGATION_IDS,
+  defaultNavigationPreferences,
+  moveNavigationItem,
+  navigationLabel,
+  orderedNavigationItems,
+  parseNavigationPreferences,
+  serializeNavigationPreferences,
+  setNavigationItemVisible,
+  type NavigationPreferences,
+  type ScreenId,
+} from '../navigationPreferences.js';
 
 const METHODS: [LotMethod, string][] = [
   ['fifo', 'FIFO · 先进先出'], ['lifo', 'LIFO · 后进先出'], ['average', '平均成本'], ['manual', '手动选择批次'],
@@ -109,6 +121,7 @@ export function Settings() {
   const [storageEstimate, setStorageEstimate] = useState<{ usage: number; quota: number } | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [navigationBusy, setNavigationBusy] = useState(false);
   const [safetyState, setSafetyState] = useState(readSafetyState);
   const storedSafetyStateJson = snap?.setting?.dataSafetyStateJson;
   useEffect(() => {
@@ -124,6 +137,8 @@ export function Settings() {
 
   const setting = readySnap.setting;
   const base = baseAsset(readySnap);
+  const ledgerMode = setting?.ledgerMode ?? 'spending';
+  const navigation = parseNavigationPreferences(setting?.navigationLayoutJson, ledgerMode);
 
   async function saveSetting(
     patch: Partial<Setting>,
@@ -148,6 +163,26 @@ export function Settings() {
 
   async function saveFormFields(keys: string[]) {
     await saveSetting({ transactionFormOptionalFields: keys.join(',') }, { label: '调整记账表单字段' });
+  }
+
+  async function saveNavigation(next: NavigationPreferences) {
+    setNavigationBusy(true);
+    try {
+      await saveSetting(
+        { navigationLayoutJson: serializeNavigationPreferences(next) },
+        { label: '调整侧边栏模块' },
+      );
+    } finally {
+      setNavigationBusy(false);
+    }
+  }
+
+  function setNavigationVisible(id: ScreenId, visible: boolean) {
+    void saveNavigation(setNavigationItemVisible(navigation, id, visible));
+  }
+
+  function moveNavigation(id: ScreenId, direction: -1 | 1) {
+    void saveNavigation(moveNavigationItem(navigation, id, direction));
   }
 
   async function saveSafetyState(patch: Partial<SafetyState>) {
@@ -582,6 +617,57 @@ export function Settings() {
       </div>
 
       <div style={card}>
+        <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>侧边栏与模块</div>
+            <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4, lineHeight: 1.6 }}>
+              勾选的模块会按下方顺序直接显示在桌面和平板侧栏；手机底栏显示前 3 项，其余已启用项进入“更多”。隐藏入口不会删除模块数据。
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={navigationBusy}
+            onClick={() => void saveNavigation(defaultNavigationPreferences(ledgerMode))}
+            style={outline}
+          >
+            恢复当前模式推荐布局
+          </button>
+        </div>
+        <div className="zc-navigation-settings-list" style={{ display: 'grid', gap: 8, marginTop: 14 }}>
+          {orderedNavigationItems(navigation, true).map((item, index, items) => {
+            const required = REQUIRED_NAVIGATION_IDS.has(item.id);
+            const visible = navigation.visible.includes(item.id);
+            return (
+              <div
+                key={item.id}
+                className="zc-navigation-settings-row"
+                style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', gap: 12, border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', background: visible ? 'var(--surface)' : 'var(--surface-2)' }}
+              >
+                <label style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, cursor: required ? 'default' : 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    aria-label={`在侧边栏显示${navigationLabel(item.id, ledgerMode)}`}
+                    checked={visible}
+                    disabled={required || navigationBusy}
+                    onChange={(event) => setNavigationVisible(item.id, event.target.checked)}
+                  />
+                  <span style={{ width: 22, textAlign: 'center', color: 'var(--accent)', fontSize: 17 }}>{item.icon}</span>
+                  <span style={{ minWidth: 0 }}>
+                    <b style={{ display: 'block', fontSize: 13 }}>{navigationLabel(item.id, ledgerMode)}{required ? ' · 固定入口' : ''}</b>
+                    <small style={{ color: 'var(--fg-subtle)' }}>{item.description}</small>
+                  </span>
+                </label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" aria-label={`上移${navigationLabel(item.id, ledgerMode)}`} disabled={navigationBusy || index === 0} onClick={() => moveNavigation(item.id, -1)} style={navigationOrderButton(!navigationBusy && index > 0)}>↑</button>
+                  <button type="button" aria-label={`下移${navigationLabel(item.id, ledgerMode)}`} disabled={navigationBusy || index === items.length - 1} onClick={() => moveNavigation(item.id, 1)} style={navigationOrderButton(!navigationBusy && index < items.length - 1)}>↓</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={card}>
         <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 12 }}>记账表单字段</div>
         <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginBottom: 12 }}>
           日期、交易时间、类型、二级分类、金额、币种、描述和附件固定显示；下方字段会出现在“更多信息”里。当前模式：{usesAccounts ? '账户/资产模式' : '轻量记账'}。
@@ -964,6 +1050,17 @@ export function Settings() {
 
 const outline = { padding: '8px 14px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg-muted)', fontWeight: 700, fontSize: 13, cursor: 'pointer' } as const;
 const primary = { padding: '8px 14px', borderRadius: 9, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' } as const;
+const navigationOrderButton = (enabled: boolean) => ({
+  width: 34,
+  height: 34,
+  borderRadius: 8,
+  border: '1px solid var(--border)',
+  background: 'var(--surface)',
+  color: enabled ? 'var(--fg-muted)' : 'var(--fg-subtle)',
+  fontWeight: 900,
+  cursor: enabled ? 'pointer' : 'not-allowed',
+  opacity: enabled ? 1 : 0.45,
+} as const);
 
 function HealthTile({ label, value, tone }: { label: string; value: string; tone: string }) {
   return (

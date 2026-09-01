@@ -35,11 +35,23 @@ test('opens templates in the full expense form without saving immediately', asyn
 });
 
 test('keeps the compact modal on the explicit quick-entry action', async ({ page }) => {
+  await page.clock.setFixedTime(new Date(2026, 8, 1, 12, 15));
   await openTransactions(page);
   await page.getByRole('button', { name: '快速记账', exact: true }).click();
   const quickExpense = page.getByRole('dialog', { name: '记一笔支出' });
   await expect(quickExpense).toBeVisible();
-  await quickExpense.getByRole('button', { name: '午餐', exact: true }).click();
+  await expect(quickExpense).toHaveCSS('background-color', 'rgb(255, 252, 246)');
+  await expect(quickExpense.getByTestId('quick-expense-recommendation')).toContainText('已推荐：午餐');
+  await expect(quickExpense.getByTestId('quick-expense-recommendation')).toContainText('当前时间 12:15');
+  const quickCategory = quickExpense.getByLabel('分类', { exact: true });
+  await expect(quickCategory).toContainText('食品餐饮');
+  await expect(quickCategory).toContainText('堂食餐饮');
+  await quickCategory.click();
+  await expect(quickExpense.getByPlaceholder('查找分类，输入可搜索隐藏分类')).toBeVisible();
+  await expect(quickExpense.locator('.zc-category-picker-grid')).toBeVisible();
+  await quickCategory.click();
+  await expect(quickExpense.getByLabel('支出备注')).toHaveValue('午餐');
+  await expect(quickExpense.getByRole('textbox', { name: '支出金额' })).toHaveValue('');
   await page.getByRole('textbox', { name: '支出金额' }).fill('12.50');
   await page.getByLabel('支出备注').fill('明确使用快记');
   await page.getByRole('button', { name: '保存支出', exact: true }).click();
@@ -91,10 +103,45 @@ test('traps modal focus and preserves the parent lock across nested confirmation
   await expect(trigger).toBeFocused();
 });
 
+test('customizes sidebar modules and keeps their order after reload', async ({ page }) => {
+  await openLedger(page);
+  const sidebar = page.locator('.zc-sidebar');
+  await sidebar.getByRole('button', { name: /设置$/ }).click();
+  await expect(page.getByText('侧边栏与模块', { exact: true })).toBeVisible();
+  await expect(sidebar.getByRole('button', { name: /管理$/ })).toHaveCount(0);
+
+  await page.getByLabel('在侧边栏显示管理').click();
+  await expect(page.getByLabel('在侧边栏显示管理')).toBeChecked();
+  await expect(sidebar.getByRole('button', { name: /管理$/ })).toBeVisible();
+  await page.getByRole('button', { name: '上移管理', exact: true }).click();
+  await page.getByRole('button', { name: '上移管理', exact: true }).click();
+
+  const sidebarLabels = async () => page.locator('.zc-sidebar nav > div > button:first-child .zc-sidebar-nav-label').allTextContents();
+  await expect.poll(sidebarLabels).toEqual(['日常支出', '管理', '支出报表', '设置']);
+
+  await page.reload();
+  await openLedger(page);
+  await expect.poll(sidebarLabels).toEqual(['日常支出', '管理', '支出报表', '设置']);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileNavigation = page.getByRole('navigation', { name: '移动端主导航' });
+  await expect(mobileNavigation.getByRole('button', { name: /管理$/ })).toBeVisible();
+  await mobileNavigation.getByRole('button', { name: /更多$/ }).click();
+  const moreDrawer = page.getByRole('dialog', { name: '更多功能' });
+  await expect(moreDrawer.getByRole('button', { name: /设置$/ })).toBeVisible();
+  await moreDrawer.getByRole('button', { name: /设置$/ }).click();
+  await page.getByLabel('在侧边栏显示管理').click();
+  await expect(page.getByLabel('在侧边栏显示管理')).not.toBeChecked();
+  await expect(mobileNavigation.getByRole('button', { name: /管理$/ })).toHaveCount(0);
+});
+
 test('disables a category pack for new entries and restores it when re-enabled', async ({ page }) => {
   await openLedger(page);
-  await page.getByRole('button', { name: '更多功能', exact: true }).click();
-  await page.getByRole('button', { name: /管理$/ }).click();
+  const sidebar = page.locator('.zc-sidebar');
+  await sidebar.getByRole('button', { name: /设置$/ }).click();
+  await page.getByLabel('在侧边栏显示管理').click();
+  await expect(page.getByLabel('在侧边栏显示管理')).toBeChecked();
+  await sidebar.getByRole('button', { name: /管理$/ }).click();
   await expect(page.getByText('分类与资料中心', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '快捷显示与排序', exact: true }).click();
 
@@ -114,7 +161,7 @@ test('disables a category pack for new entries and restores it when re-enabled',
   await expect(expenseForm.getByRole('option', { name: /食堂/ })).toHaveCount(0);
   await expenseForm.getByRole('button', { name: '关闭', exact: true }).click();
 
-  await page.getByRole('button', { name: /管理$/ }).click();
+  await sidebar.getByRole('button', { name: /管理$/ }).click();
   await page.getByRole('button', { name: '快捷显示与排序', exact: true }).click();
   const disabledStudentPack = page.getByTestId('category-pack-student');
   await disabledStudentPack.getByRole('button', { name: '启用学生分类包', exact: true }).click();

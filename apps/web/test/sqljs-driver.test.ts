@@ -33,7 +33,7 @@ function transaction(id: string, amount: string): Transaction {
 }
 
 describe('SqlJsDriver', () => {
-  it('runs schema 115 and the exact-money Dashboard SQL contract in real sql.js', async () => {
+  it('runs schema 116 and the exact-money Dashboard SQL contract in real sql.js', async () => {
     const driver = await SqlJsDriver.open(null);
     expect(await runMigrations(driver, log)).toBe(1);
     await expect(assertCurrentSchema(driver)).resolves.toBeUndefined();

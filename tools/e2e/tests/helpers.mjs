@@ -25,10 +25,8 @@ export async function openLedger(page, options = {}) {
   const localMode = page.getByRole('button', { name: /^纯本地使用/ });
   const create = page.getByRole('button', { name: '创建并打开' });
   const unlock = page.getByRole('button', { name: '解锁', exact: true });
-  const dashboard = page.getByText('总览', { exact: true }).first();
-  const dailyExpenses = page.getByText('日常支出', { exact: true }).first();
   const quickStart = page.getByRole('button', { name: '直接开始记支出', exact: true });
-  const appReady = dashboard.or(dailyExpenses);
+  const appReady = page.locator('.zc-app-shell');
   const quickExpense = page.getByRole('dialog', { name: '记一笔支出' });
   let startedQuickLedger = false;
 
@@ -64,7 +62,7 @@ export async function openLedger(page, options = {}) {
 
 export async function openTransactions(page) {
   await openLedger(page);
-  const dailyExpenses = page.getByText('日常支出', { exact: true }).first();
+  const dailyExpenses = page.locator('.zc-sidebar').getByText('日常支出', { exact: true });
   await dailyExpenses.click();
   await expect(page.getByRole('button', { name: '+ 记支出' })).toBeVisible();
 }

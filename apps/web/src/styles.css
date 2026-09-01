@@ -192,6 +192,15 @@ button {
   padding: 24px;
 }
 
+.zc-quick-expense-dialog {
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px rgba(20, 16, 12, 0.28);
+  overscroll-behavior: contain;
+}
+
 .zc-entity-modal,
 .zc-confirm-panel,
 .zc-conversion-modal {
@@ -688,6 +697,14 @@ button {
     width: 100%;
   }
 
+  .zc-navigation-settings-row {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .zc-navigation-settings-row > div:last-child {
+    justify-content: flex-end;
+  }
+
   .zc-mobile-bottom-nav {
     position: fixed;
     z-index: 40;
@@ -912,6 +929,19 @@ button {
     padding: 20px 16px calc(18px + env(safe-area-inset-bottom)) !important;
     border-radius: 8px 8px 0 0 !important;
     overflow-y: auto;
+  }
+
+  .zc-quick-expense-dialog {
+    width: 100% !important;
+    max-height: min(90dvh, 760px) !important;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 16px 16px 0 0;
+  }
+
+  .zc-quick-expense-dialog > div {
+    padding-bottom: calc(22px + env(safe-area-inset-bottom)) !important;
   }
 
   .zc-modal-form-grid {

@@ -9,11 +9,9 @@ import {
 } from '../db/form-drafts.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { DialogShell } from './DialogShell.js';
+import { CategoryPicker, type FieldOption } from './EntityFormModal.js';
 
-export interface QuickExpenseCategoryOption {
-  value: string;
-  label: string;
-}
+export type QuickExpenseCategoryOption = FieldOption;
 
 export interface QuickExpenseDraft {
   amount: string;
@@ -24,6 +22,16 @@ export interface QuickExpenseDraft {
   assetId: string;
 }
 
+export type QuickExpenseRecommendationSource = 'personal' | 'time' | 'recent' | 'fallback';
+
+export interface QuickExpenseRecommendation {
+  category: string;
+  description?: string;
+  label: string;
+  reason: string;
+  source: QuickExpenseRecommendationSource;
+}
+
 interface QuickExpenseModalProps {
   assets: Asset[];
   categories: QuickExpenseCategoryOption[];
@@ -31,6 +39,7 @@ interface QuickExpenseModalProps {
   templates: TransactionTemplate[];
   initialTemplate?: TransactionTemplate;
   defaultAssetId: string;
+  categoryShowHiddenDefault?: boolean;
   onSave: (draft: QuickExpenseDraft) => Promise<void>;
   onClose: () => void;
 }
@@ -68,6 +77,85 @@ function localTime(): string {
   return new Date().toTimeString().slice(0, 5);
 }
 
+function minutesSinceMidnight(value: string | undefined): number | null {
+  const match = /^(\d{2}):(\d{2})/.exec(value ?? '');
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function localDayNumber(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const number = Date.UTC(year, month - 1, day) / 86_400_000;
+  return Number.isFinite(number) ? number : null;
+}
+
+function isWeekendDate(value: string): boolean | null {
+  const dayNumber = localDayNumber(value);
+  if (dayNumber === null) return null;
+  const day = new Date(dayNumber * 86_400_000).getUTCDay();
+  return day === 0 || day === 6;
+}
+
+interface MealPeriod {
+  label: '早餐' | '午餐' | '晚餐' | '夜宵';
+  categoryIds: string[];
+}
+
+function mealPeriod(minutes: number): MealPeriod | null {
+  if (minutes < 120 || minutes >= 1260) return { label: '夜宵', categoryIds: ['late_night_snack', 'food'] };
+  if (minutes >= 300 && minutes < 600) return { label: '早餐', categoryIds: ['breakfast', 'food'] };
+  if (minutes >= 630 && minutes < 870) return { label: '午餐', categoryIds: ['lunch_work_meal', 'food'] };
+  if (minutes >= 1020 && minutes < 1260) return { label: '晚餐', categoryIds: ['dinner', 'food'] };
+  return null;
+}
+
+function shortCategoryLabel(category: QuickExpenseCategoryOption | undefined): string {
+  return category?.label.split(' / ').at(-1) ?? '待分类';
+}
+
+function personalizedCategory(
+  transactions: readonly Pick<Transaction, 'type' | 'category' | 'date' | 'time' | 'isDeleted' | 'recordState'>[],
+  allowedCategoryIds: ReadonlySet<string>,
+  now: Date,
+): { category: string; count: number } | null {
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const todayNumber = localDayNumber(today)!;
+  const weekend = now.getDay() === 0 || now.getDay() === 6;
+  const counts = new Map<string, number>();
+  let total = 0;
+  for (const transaction of transactions) {
+    const transactionMinutes = minutesSinceMidnight(transaction.time);
+    const transactionDay = localDayNumber(transaction.date);
+    if (
+      transaction.type !== 'expense'
+      || transaction.isDeleted
+      || transaction.recordState === 'voided'
+      || !allowedCategoryIds.has(transaction.category)
+      || transactionMinutes === null
+      || transactionDay === null
+      || transactionDay > todayNumber
+      || todayNumber - transactionDay > 60
+      || isWeekendDate(transaction.date) !== weekend
+    ) continue;
+    const distance = Math.abs(transactionMinutes - nowMinutes);
+    if (Math.min(distance, 1440 - distance) > 90) continue;
+    counts.set(transaction.category, (counts.get(transaction.category) ?? 0) + 1);
+    total += 1;
+  }
+  const ranked = [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
+  const [top, second] = ranked;
+  if (!top || top[1] < 3 || top[1] / total < 0.6 || top[1] === second?.[1]) return null;
+  return { category: top[0], count: top[1] };
+}
+
 export function latestExpenseCategory(
   transactions: readonly Pick<Transaction, 'type' | 'category' | 'date' | 'time' | 'isDeleted' | 'recordState'>[],
   allowedCategoryIds: ReadonlySet<string>,
@@ -92,6 +180,61 @@ export function defaultQuickExpenseCategory(
     ?? (allowed.has('uncategorized') ? 'uncategorized' : categories[0]?.value ?? '');
 }
 
+export function quickExpenseRecommendationCategories(
+  categories: readonly QuickExpenseCategoryOption[],
+): QuickExpenseCategoryOption[] {
+  return categories.filter((category) => !category.hidden && !category.catalogOnly);
+}
+
+export function recommendQuickExpense(
+  transactions: readonly Pick<Transaction, 'type' | 'category' | 'date' | 'time' | 'isDeleted' | 'recordState'>[],
+  categories: readonly QuickExpenseCategoryOption[],
+  now = new Date(),
+): QuickExpenseRecommendation {
+  const allowed = new Set(categories.map((category) => category.value));
+  const byId = new Map(categories.map((category) => [category.value, category]));
+  const meal = mealPeriod(now.getHours() * 60 + now.getMinutes());
+  const personal = personalizedCategory(transactions, allowed, now);
+  if (personal) {
+    const isMealCategory = meal?.categoryIds.includes(personal.category) || personal.category === 'food';
+    return {
+      category: personal.category,
+      ...(isMealCategory && meal ? { description: meal.label } : {}),
+      label: isMealCategory && meal ? meal.label : shortCategoryLabel(byId.get(personal.category)),
+      reason: `根据近 60 天同时段的 ${personal.count} 笔记录`,
+      source: 'personal',
+    };
+  }
+  if (meal) {
+    const category = meal.categoryIds.find((candidate) => allowed.has(candidate));
+    if (category) {
+      return {
+        category,
+        description: meal.label,
+        label: meal.label,
+        reason: `根据当前时间 ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
+        source: 'time',
+      };
+    }
+  }
+  const recent = latestExpenseCategory(transactions, allowed);
+  if (recent) {
+    return {
+      category: recent,
+      label: shortCategoryLabel(byId.get(recent)),
+      reason: '沿用最近一次有效支出分类',
+      source: 'recent',
+    };
+  }
+  const category = allowed.has('uncategorized') ? 'uncategorized' : categories[0]?.value ?? '';
+  return {
+    category,
+    label: shortCategoryLabel(byId.get(category)),
+    reason: '还没有足够的记账习惯，保存后会逐步学习',
+    source: 'fallback',
+  };
+}
+
 export function QuickExpenseModal({
   assets,
   categories,
@@ -99,21 +242,26 @@ export function QuickExpenseModal({
   templates,
   initialTemplate,
   defaultAssetId,
+  categoryShowHiddenDefault = false,
   onSave,
   onClose,
 }: QuickExpenseModalProps) {
   const titleId = useId();
   const amountRef = useRef<HTMLInputElement>(null);
-  const fallbackCategory = useMemo(
-    () => defaultQuickExpenseCategory(recentTransactions, categories),
-    [categories, recentTransactions],
+  const recommendationCategories = useMemo(
+    () => quickExpenseRecommendationCategories(categories),
+    [categories],
+  );
+  const recommendation = useMemo(
+    () => recommendQuickExpense(recentTransactions, recommendationCategories),
+    [recentTransactions, recommendationCategories],
   );
   const initialValues = useRef<QuickExpenseDraft>({
     amount: initialTemplate?.amount ?? '',
     category: categories.some((option) => option.value === initialTemplate?.category)
       ? initialTemplate!.category
-      : fallbackCategory,
-    description: initialTemplate?.description ?? initialTemplate?.name ?? '',
+      : recommendation.category,
+    description: initialTemplate?.description ?? initialTemplate?.name ?? recommendation.description ?? '',
     date: localDate(),
     time: localTime(),
     assetId: assets.some((asset) => !asset.isDeleted && asset.isActive && asset.id === initialTemplate?.assetId)
@@ -223,6 +371,13 @@ export function QuickExpenseModal({
     amountRef.current?.focus();
   }
 
+  function applyRecommendation() {
+    touched.current = true;
+    setCategory(recommendation.category);
+    setDescription(recommendation.description ?? '');
+    amountRef.current?.focus();
+  }
+
   async function submit() {
     setError('');
     try {
@@ -270,6 +425,18 @@ export function QuickExpenseModal({
           </div>
           <button type="button" aria-label="关闭快速记账" onClick={requestClose} disabled={busy} style={{ border: 0, background: 'transparent', color: 'var(--fg-muted)', fontSize: 22, cursor: 'pointer' }}>×</button>
         </div>
+
+        {!initialTemplate && recommendation.category && (
+          <div data-testid="quick-expense-recommendation" aria-live="polite" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 14, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--accent-soft)', color: 'var(--fg-muted)', fontSize: 12 }}>
+            <span>
+              <b style={{ color: 'var(--accent)' }}>{category === recommendation.category && description === (recommendation.description ?? '') ? '已推荐' : '推荐'}：{recommendation.label}</b>
+              <span style={{ marginLeft: 7 }}>{recommendation.reason}</span>
+            </span>
+            {(category !== recommendation.category || description !== (recommendation.description ?? '')) && (
+              <button type="button" onClick={applyRecommendation} style={{ flex: '0 0 auto', border: '1px solid var(--accent)', borderRadius: 999, background: 'var(--surface)', color: 'var(--accent)', padding: '5px 9px', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>使用推荐</button>
+            )}
+          </div>
+        )}
 
         {draftRestoredAt && (
           <div role="status" style={{ marginTop: 14, padding: '8px 10px', border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--fg-muted)', fontSize: 12 }}>
@@ -321,12 +488,20 @@ export function QuickExpenseModal({
         )}
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginTop: 18 }}>
-          <label>
-            <span style={{ display: 'block', marginBottom: 7, fontSize: 12, fontWeight: 800 }}>分类</span>
-            <select aria-label="支出分类" value={category} onChange={(event) => { touched.current = true; setCategory(event.target.value); }} style={field}>
-              {categories.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          </label>
+          <div>
+            <label htmlFor="quick-expense-category" style={{ display: 'block', marginBottom: 7, fontSize: 12, fontWeight: 800 }}>分类</label>
+            <CategoryPicker
+              fieldId="quick-expense-category"
+              name="category"
+              value={category}
+              options={categories}
+              defaultShowHidden={categoryShowHiddenDefault}
+              onChange={(value) => {
+                touched.current = true;
+                setCategory(value);
+              }}
+            />
+          </div>
           <label>
             <span style={{ display: 'block', marginBottom: 7, fontSize: 12, fontWeight: 800 }}>备注（可选）</span>
             <input aria-label="支出备注" value={description} onChange={(event) => { touched.current = true; setDescription(event.target.value); }} placeholder="例如：午餐" style={field} />

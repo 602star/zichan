@@ -748,7 +748,7 @@ function categoryGroups(options: FieldOption[], search: string, selectedValue: s
   return [...grouped.entries()].map(([parent, children]) => ({ parent, children }));
 }
 
-function CategoryPicker(props: {
+export function CategoryPicker(props: {
   fieldId: string;
   name: string;
   value: string;

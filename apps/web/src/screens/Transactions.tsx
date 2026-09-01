@@ -218,6 +218,7 @@ export function Transactions() {
     page: TransactionBrowsePage;
     summaryAggregates: TransactionReportAggregateRow[];
     filteredAggregates: TransactionReportAggregateRow[];
+    recommendationTransactions: Transaction[];
   } | null>(null);
   const [transactionPageBusy, setTransactionPageBusy] = useState(false);
   const [transactionReadError, setTransactionReadError] = useState('');
@@ -329,9 +330,15 @@ export function Transactions() {
       store.transactionBrowsePage({ ...browseInput, limit: 100 }),
       store.transactionBrowseAggregate(browseInput),
       store.transactionReportAggregate(summaryRange),
-    ]).then(([page, filteredAggregates, summaryAggregates]) => {
+      store.transactions.list({ where: { type: 'expense' }, orderBy: 'date', desc: true, limit: 1000 }),
+    ]).then(([page, filteredAggregates, summaryAggregates, recommendationTransactions]) => {
       if (!cancelled) {
-        setTransactionRead({ page, filteredAggregates, summaryAggregates });
+        setTransactionRead({
+          page,
+          filteredAggregates,
+          summaryAggregates,
+          recommendationTransactions,
+        });
         setSelectedIds([]);
       }
     }).catch((error) => {
@@ -1356,11 +1363,12 @@ export function Transactions() {
         <QuickExpenseModal
           key={quickTemplate?.id ?? 'quick-expense'}
           assets={readySnap.assets}
-          categories={categoryOptions(readySnap.categories, 'expense', { leafOnly: true })}
-          recentTransactions={readySnap.transactions}
+          categories={categoryOptions(readySnap.categories, 'expense', { leafOnly: true, includeHidden: true })}
+          recentTransactions={readyTransactionRead.recommendationTransactions}
           templates={activeTemplates}
           initialTemplate={quickTemplate ?? undefined}
           defaultAssetId={moduleCurrencyId(readySnap.setting, 'transaction', readySnap.assets[0]?.id || '')}
+          categoryShowHiddenDefault={readySnap.setting?.categoryPickerDefaultScope === 'all'}
           onSave={saveQuickExpense}
           onClose={() => { setQuickExpenseOpen(false); setQuickTemplate(null); }}
         />
