@@ -1,3 +1,4 @@
+import { accountLocalStorage } from '../account-storage.js';
 import type { SavedBackup } from './backups.js';
 import type { Setting } from '@zichan/core';
 
@@ -53,7 +54,7 @@ function pickSafetyState(
 
 export function readSafetyState(): SafetyState {
   try {
-    return parseSafetyState(localStorage.getItem(SAFETY_STATE_KEY) ?? '{}');
+    return parseSafetyState(accountLocalStorage.getItem(SAFETY_STATE_KEY) ?? '{}');
   } catch {
     return {};
   }
@@ -94,7 +95,7 @@ export function safetyStateFromSetting(setting?: Setting): SafetyState {
 
 export function writeSafetyState(patch: Partial<SafetyState>): SafetyState {
   const next = { ...readSafetyState(), ...patch };
-  localStorage.setItem(SAFETY_STATE_KEY, JSON.stringify(next));
+  accountLocalStorage.setItem(SAFETY_STATE_KEY, JSON.stringify(next));
   window.dispatchEvent(new CustomEvent('zichan:safety-updated'));
   return next;
 }
@@ -122,7 +123,7 @@ export function successfulBackupSafetyPatch(entry: SavedBackup, now = Date.now()
 
 /** Drop backup/check timestamps that describe the ledger being deleted. */
 export function clearSafetyState(): void {
-  globalThis.localStorage?.removeItem(SAFETY_STATE_KEY);
+  accountLocalStorage?.removeItem(SAFETY_STATE_KEY);
   globalThis.dispatchEvent?.(new CustomEvent('zichan:safety-updated'));
 }
 

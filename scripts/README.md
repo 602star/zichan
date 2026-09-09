@@ -8,7 +8,7 @@
 
 | 脚本 | 用途 | 主要产物或地址 |
 |---|---|---|
-| `windows/start-all.cmd` | 一键打开开发 Web 与同步服务器两个窗口 | Web `5173` + 同步/账号管理 `8787` |
+| `windows/start-all.cmd` | 同一窗口编排开发 Web 与服务器，任一退出会停止同组服务 | Web `5173` + 同步/账号管理 `8787` |
 | `windows/start-web.cmd` | 启动 Web 开发服务 | `http://127.0.0.1:5173/` |
 | `windows/start-sync-server.cmd` | 构建并启动同步 API + Web 管理入口 | `http://127.0.0.1:8787/`，数据位于仓库 `.runtime/sync-server/` |
 | `windows/setup-webview2-runtime.cmd` | 显式下载、校验并解包锁定的 WebView2 固定版 | `.tools/webview2-fixed/<版本>/x64/` |
@@ -18,9 +18,30 @@
 
 CMD 默认在结束或失败时暂停，以便双击运行时看到诊断信息。终端或自动化调用可设置 `ZICHAN_NO_PAUSE=1`；只检查本机基础工具时再设置 `ZICHAN_CHECK_ONLY=1`。
 
-同步服务器入口显式把 `DATA_DIR` 设为仓库内 `.runtime/sync-server`，不使用 AppData。它默认监听 `0.0.0.0:8787` 并允许可信家庭局域网 HTTP；不要直接暴露到公网。普通开发只需 `start-sync-server.cmd`，它同时提供构建后的 Web、同步 API 和管理入口；需要 Vite 热更新时才使用 `start-all.cmd`。
+同步服务器入口显式把 `DATA_DIR` 设为仓库内 `.runtime/sync-server`，不使用 AppData。默认只监听 `127.0.0.1:8787`，新数据库采用邀请注册；已有数据库的注册策略不被覆盖。首次打开 `/admin/` 在 Web 引导中设置管理员用户名和密码，不需要初始化密钥；已有管理员直接登录。远程访问应配置受信 HTTPS；单独打开局域网 HTTP 不会获得浏览器账号或管理 Cookie 会话。
+
+## 日常命令
+
+| 命令 | 行为 |
+|---|---|
+| `npm start` / `npm run start:server` | 构建后提供同站 `/app/`、`/admin/` 和 `/api/health`，默认端口 8787 |
+| `npm run build:server` | 依次构建共享包、服务器和 Web，共享依赖只构建一次 |
+| `npm run start:server:built` | 使用现有产物启动；修改源码后须先重新构建 |
+| `npm run start:all` | 同时提供服务器与 Vite 热更新页面 |
+| `npm run start:web` / `npm run start:sync` | 分别只运行 Vite、只构建并运行 API（无 Web 管理页面） |
+| `npm start -- --check` | 只检查依赖、端口和数据目录占用，不构建或创建数据目录 |
+| `npm stop` | 请求本仓库启动器停止自己创建的进程；不按端口杀进程 |
+| `npm run test:scripts` | 验证启动配置、端口冲突、控制鉴权、正常停止和失败退出 |
+
+启动前明确安装依赖：`npm ci`。启动器不会静默安装，也不会抢占端口。可通过 `PORT`、`WEB_PORT`、`DATA_DIR`、`BASE_PATH`、`HOST` 配置入口；终端打印解析后的地址与数据目录。PowerShell/Bash 包装与 CMD 共用 Node 编排器，支持 `--check` 和 `--no-build`（PowerShell 对应 `-Check`、`-NoBuild`）。
+
+Vite 开发页面（默认 5173）将 `/api/*` 同源代理到后端（默认 8787）。`start:all` 自动传入后端地址；单独运行前端时，可用 `ZICHAN_DEV_API_TARGET=http://127.0.0.1:8787` 指定后端，也可在地址后带后端 `BASE_PATH`。开发页面仍使用根 `/admin/` 和 `/app/`。代理保留 Host/Origin 校验并映射 Cookie 路径，不放宽管理会话的跨域限制。修改代理配置或环境变量后重新启动开发服务；只运行前端不会创建服务器账号。
+
+`.runtime/launchers/` 存放本次编排的本机控制记录，不应提交或分享。停止使用带随机凭据的本机控制通道，先让服务器正常关闭数据库，超时才结束其子进程。`start:all` 是一个生命周期，停止其中一个会同时停止同组服务。手工启动的 `npm run dev`、旧版启动脚本或其他进程不归此启动器管理，请在原窗口用 `Ctrl+C` 退出。
 
 ## 便携发布流程
+
+发布门禁现在包含启动脚本测试，并在全量测试前完成服务器与 Web 构建，避免干净检出时测试缺少产物。Windows 发布入口在同次构建成功后设置内部标记 `ZICHAN_BUILD_PREPARED=1`，让 Tauri 只准备资源、不重复构建；不要手工长期设置此变量。直接运行 `npm run build:desktop` 仍会完整构建依赖，但不替代下面的便携发布门禁。
 
 固定版 WebView2 不在普通构建中静默下载。首次准备或升级锁定版本时运行：
 

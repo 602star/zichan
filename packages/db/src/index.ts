@@ -62,6 +62,7 @@ export type {
   BusinessCompensationQuery,
 } from './business-compensation.js';
 export { TABLES, snake, type TableSpec, type TableKey } from './tables.js';
+export { saveConversionAggregate } from './conversion-aggregate.js';
 export {
   normalizeDomainEntity,
   validateAssetMutationSnapshot,

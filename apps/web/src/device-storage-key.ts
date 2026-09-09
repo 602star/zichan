@@ -1,3 +1,4 @@
+import { accountLocalStorage } from './account-storage.js';
 import {
   createLedgerKeyEnvelope,
   decryptAttachmentChunk,
@@ -104,7 +105,7 @@ function validEnvelope(value: unknown): value is LedgerKeyEnvelope {
 
 function storedBrowserEnvelope(): LedgerKeyEnvelope | undefined {
   try {
-    const raw = globalThis.localStorage?.getItem(DEVICE_STORAGE_ENVELOPE_KEY);
+    const raw = accountLocalStorage?.getItem(DEVICE_STORAGE_ENVELOPE_KEY);
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as unknown;
     return validEnvelope(parsed) ? parsed : undefined;
@@ -210,7 +211,7 @@ export async function unlockDeviceStorage(passphrase: string): Promise<DeviceSto
     const unlocked = envelope
       ? { envelope, session: await unlockLedgerKeyEnvelope(passphrase, envelope) }
       : await createLedgerKeyEnvelope(newId(), passphrase);
-    if (!envelope) globalThis.localStorage?.setItem(DEVICE_STORAGE_ENVELOPE_KEY, JSON.stringify(unlocked.envelope));
+    if (!envelope) accountLocalStorage?.setItem(DEVICE_STORAGE_ENVELOPE_KEY, JSON.stringify(unlocked.envelope));
     runtimeSession = {
       state: {
         kind: 'browser-envelope',
@@ -241,7 +242,7 @@ export async function lockDeviceStorage(): Promise<void> {
 /** Forget the in-memory and browser-wrapped device key after deleting all platform data. */
 export function clearDeviceStorageState(): void {
   runtimeSession = undefined;
-  globalThis.localStorage?.removeItem(DEVICE_STORAGE_ENVELOPE_KEY);
+  accountLocalStorage?.removeItem(DEVICE_STORAGE_ENVELOPE_KEY);
   emit();
 }
 

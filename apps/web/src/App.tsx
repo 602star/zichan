@@ -1,3 +1,4 @@
+import { accountSessionStorage } from './account-storage.js';
 import { lazy, Suspense, useEffect, useId, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
 import type { LedgerBackup } from '@zichan/db';
 import type { LedgerMode } from '@zichan/core';
@@ -63,11 +64,11 @@ const SCREEN_IDS = new Set<ScreenId>(NAVIGATION_ITEMS.map((item) => item.id));
 function initialScreen(): ScreenId {
   try {
     if (connectionLinkFromLocation()) return 'sync';
-    if (sessionStorage.getItem('zichan.postFirstRun') === 'quick-expense') return 'transactions';
-    const stored = sessionStorage.getItem(RETRY_SCREEN_KEY);
-    sessionStorage.removeItem(RETRY_SCREEN_KEY);
+    if (accountSessionStorage.getItem('zichan.postFirstRun') === 'quick-expense') return 'transactions';
+    const stored = accountSessionStorage.getItem(RETRY_SCREEN_KEY);
+    accountSessionStorage.removeItem(RETRY_SCREEN_KEY);
     if (stored && SCREEN_IDS.has(stored as ScreenId)) return stored as ScreenId;
-    const active = sessionStorage.getItem(ACTIVE_SCREEN_KEY);
+    const active = accountSessionStorage.getItem(ACTIVE_SCREEN_KEY);
     return active && SCREEN_IDS.has(active as ScreenId) ? active as ScreenId : 'dashboard';
   } catch {
     return 'dashboard';
@@ -83,7 +84,7 @@ const META: Record<ScreenId, [string, string]> = {
   reports: ['报表', '跨模块的成本与盈亏报表'],
   history: ['操作历史', '改前改后 · 批量操作 · 冲突解决记录'],
   manage: ['管理', '资产 · 分类 · 商户 · 价格'],
-  sync: ['同步', '同步账户 · 服务器管理'],
+  sync: ['同步', '账号同步 · 加密数据与冲突处理'],
   settings: ['设置', '记账模式 · 数据自检 · 备份'],
 };
 
@@ -268,7 +269,7 @@ export function App() {
 
   useEffect(() => {
     try {
-      sessionStorage.setItem(ACTIVE_SCREEN_KEY, screen);
+      accountSessionStorage.setItem(ACTIVE_SCREEN_KEY, screen);
     } catch {
       // Session storage can be unavailable in hardened browser contexts.
     }
@@ -401,7 +402,7 @@ export function App() {
   function quickTransaction() {
     setScreen('transactions');
     try {
-      sessionStorage.setItem('zichan.quickTransaction', '1');
+      accountSessionStorage.setItem('zichan.quickTransaction', '1');
     } catch {
       // Session storage can be unavailable in hardened browser contexts.
     }

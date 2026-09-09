@@ -1,11 +1,13 @@
 /** End-to-end encrypted sync relay backed by a transactional SQLite WAL store. */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import * as opaque from '@serenity-kit/opaque';
 import { normalizeSyncUsername } from '@zichan/core';
 import { EncryptedBlobStore, MAX_ENCRYPTED_CHUNK_BYTES } from './blob-store.js';
+import { createRequestOrigin } from './request-origin.js';
+import { createBrowserSessionCookies } from './browser-session.js';
 import {
   ServerStoreError,
   SyncServerStore,
@@ -71,6 +73,9 @@ function signToken(secret: string, payload: JsonRecord): string {
 }
 
 interface TokenClaims {
+  claimOwner?: boolean;
+  ownerSetupOrigin?: string;
+  passwordResetHash?: string;
   username?: string;
   sessionId?: string;
   purpose?: string;
@@ -174,51 +179,6 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 function sendBinary(res: ServerResponse, status: number, body: Uint8Array): void {
   res.writeHead(status, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.byteLength), 'Cache-Control': 'private, max-age=31536000, immutable' });
   res.end(body);
-}
-
-function remoteIp(req: IncomingMessage): string {
-  return (req.socket.remoteAddress ?? 'unknown').replace(/^::ffff:/, '');
-}
-
-function isLoopback(ip: string): boolean {
-  return ip === '127.0.0.1' || ip === '::1' || ip === 'localhost';
-}
-
-function isPrivateIp(ip: string): boolean {
-  if (isLoopback(ip)) return true;
-  const parts = ip.split('.').map(Number);
-  if (parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
-    return parts[0] === 10
-      || (parts[0] === 172 && parts[1]! >= 16 && parts[1]! <= 31)
-      || (parts[0] === 192 && parts[1] === 168);
-  }
-  return ip.startsWith('fc') || ip.startsWith('fd') || ip.startsWith('fe80:');
-}
-
-function isTrustedProxy(req: IncomingMessage, trustedProxies: string[]): boolean {
-  const remote = remoteIp(req);
-  return trustedProxies.some((rule) =>
-    rule === remote || (rule === 'loopback' && isLoopback(remote)) || (rule === 'private' && isPrivateIp(remote)));
-}
-
-function forwardedValue(req: IncomingMessage, name: string, trustedProxies: string[]): string {
-  if (!isTrustedProxy(req, trustedProxies)) return '';
-  return headerValue(req, name).split(',')[0]?.trim() ?? '';
-}
-
-function clientIp(req: IncomingMessage, trustedProxies: string[]): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  return isTrustedProxy(req, trustedProxies) && typeof forwarded === 'string' && forwarded
-    ? forwarded.split(',')[0]!.trim().replace(/^::ffff:/, '')
-    : remoteIp(req);
-}
-
-function requestProtocol(req: IncomingMessage, trustedProxies: string[]): 'http' | 'https' {
-  return forwardedValue(req, 'x-forwarded-proto', trustedProxies).toLowerCase() === 'https' ? 'https' : 'http';
-}
-
-function secureTransport(req: IncomingMessage, trustedProxies: string[], allowInsecureHttp: boolean): boolean {
-  return requestProtocol(req, trustedProxies) === 'https' || isLoopback(clientIp(req, trustedProxies)) || allowInsecureHttp;
 }
 
 function applyCors(req: IncomingMessage, res: ServerResponse): void {
@@ -346,6 +306,8 @@ function pathParts(path: string): string[] {
 }
 
 export interface SyncServerOptions {
+  /** Deployment-only secret. Never include it in health, logs or connection links. */
+  ownerSetupToken?: string;
   dataDir?: string;
   attachmentQuotaBytes?: number;
   attachmentMaxFileBytes?: number;
@@ -376,6 +338,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   const enableWeb = options.enableWeb ?? Boolean(options.webDir);
   const basePath = normalizeBasePath(options.basePath);
   const trustedProxies = options.trustedProxies ?? [];
+  const origin = createRequestOrigin(trustedProxies);
+  const browserSession = createBrowserSessionCookies(basePath, origin.browserOrigin);
   const allowInsecureHttp = options.allowInsecureHttp === true;
   const requestedDataDir = options.dataDir ? resolve(options.dataDir) : undefined;
   assertServerIdentityComplete(requestedDataDir);
@@ -387,13 +351,15 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   });
   const dataDir = blobStore.dataDir;
   const secret = loadPersistedValue(dataDir, 'server.secret', options.secret, () => randomBytes(32).toString('hex'));
+  const ownerSetupToken = loadPersistedValue(dataDir, 'owner-setup.secret', options.ownerSetupToken, () => randomBytes(32).toString('hex'));
+  if (ownerSetupToken.length < 32) throw new Error('owner-setup.secret must contain at least 32 characters');
   const serverId = loadPersistedValue(dataDir, 'server-id', options.serverId, () => `srv-${randomBytes(8).toString('hex')}`);
   // Both stores use separate SQLite connections to the same file. Initialize
   // them in sequence so catalog recovery cannot hold a write transaction while
   // the server schema connection synchronously waits for that lock.
   const store = new SyncServerStore(
     join(dataDir, 'server.sqlite'),
-    options.registrationMode ?? 'open',
+    options.registrationMode ?? 'invite',
     serverId,
     options.commitQuotaBytes,
     blobStore.ready,
@@ -451,8 +417,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     apiPath: string,
     auth: NonNullable<Awaited<ReturnType<typeof authenticateRequest>>>,
   ) => {
-    const ip = clientIp(req, trustedProxies);
-    if (auth.role !== 'admin') {
+    const ip = origin.clientIp(req);
+    if (auth.role === 'member') {
       await log('warn', 'admin_forbidden', 'Member attempted an administrative request', {
         ip,
         username: auth.user.username,
@@ -460,8 +426,49 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       });
       return send(res, 403, { code: 'ADMIN_REQUIRED', error: 'administrator role required' });
     }
-    const suffix = apiPath.slice('/api/admin'.length) || '/';
-    const parts = pathParts(suffix);
+    let suffix = apiPath.slice('/api/admin'.length) || '/';
+    let parts = pathParts(suffix);
+    const assertManageTarget = async (username: string, quota = false) => {
+      const target = await store.getUser(username);
+      if (!target) throw new ServerStoreError('NOT_FOUND', 404, 'account not found');
+      const role = await store.roleForUser(target.username);
+      if ((!quota && role === 'owner') || auth.role === 'admin' && role !== 'member') throw new ServerStoreError('PROTECTED_ACCOUNT', 403, 'cannot manage this privileged account');
+      return target;
+    };
+    // New management URLs use immutable IDs. Legacy URLs below keep the same guards.
+    if (parts[0] === 'accounts' && parts.length === 3) {
+      const target = await store.userByAccountId(parts[1]!);
+      if (!target) return send(res, 404, { error: 'account not found' });
+      if (req.method === 'POST' && parts[2] === 'password-reset') {
+        const code = randomBytes(32).toString('base64url');
+        const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
+        await store.mutateAdmin(auth.session.id, { action: 'password-reset-issue', accountId: target.accountId, codeHash: createHash('sha256').update(code).digest('hex'), expiresAt });
+        res.setHeader('Cache-Control', 'no-store');
+        return send(res, 200, { code, expiresAt, username: target.username });
+      }
+      if (req.method === 'POST' && parts[2] === 'role') {
+        const { role } = await readBody(req, ADMIN_BODY_BYTES);
+        if (role !== 'admin' && role !== 'member') return send(res, 400, { error: 'invalid role' });
+        await store.mutateAdmin(auth.session.id, { action: 'role', accountId: target.accountId, role });
+        return send(res, 200, { ok: true });
+      }
+      if (req.method === 'GET' && parts[2] === 'usage') {
+        return send(res, 200, await blobStore.usage(target.username));
+      }
+      const routes: Record<string, string> = { state: 'users', devices: 'users', blobs: 'quotas', commits: 'quotas' };
+      const group = routes[parts[2]!];
+      if (!group) return send(res, 404, { error: 'not found' });
+      suffix = `/${group}/${encodeURIComponent(target.username)}/${parts[2] === 'state' ? 'disable' : parts[2]}`;
+      parts = pathParts(suffix);
+    }
+    if (req.method === 'GET' && suffix === '/audit') {
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      const before = Number(params.get('cursor') ?? Number.MAX_SAFE_INTEGER);
+      if (!Number.isSafeInteger(before) || before < 1) return send(res, 400, { error: 'invalid cursor' });
+      const search = params.get('search')?.trim() ?? '';
+      if (search.length > 128) return send(res, 400, { error: 'search must not exceed 128 characters' });
+      return send(res, 200, await store.listAdminAudit(before, 50, search));
+    }
     if (req.method === 'GET' && suffix === '/status') {
       return send(res, 200, {
         ok: true,
@@ -478,13 +485,17 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       return send(res, 200, { verification: await store.verify() });
     }
     if (req.method === 'GET' && suffix === '/quotas') {
-      const { users } = await store.listUsers('', 1000);
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      const limit = Number(params.get('limit') ?? 100);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) return send(res, 400, { error: 'limit must be between 1 and 500' });
+      const { users, nextCursor } = await store.listUsers(params.get('cursor') ?? '', limit);
       return send(res, 200, {
         users: await Promise.all(users.map(async (user) => ({
           username: user['username'],
           ...await blobStore.usage(String(user['username'])),
         }))),
         dataDir,
+        nextCursor,
       });
     }
     if (req.method === 'POST' && suffix === '/quotas/blobs/verify') {
@@ -498,13 +509,14 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     }
     if (req.method === 'POST' && parts[0] === 'quotas' && parts[2] === 'blobs') {
       const username = parts[1] ?? '';
-      if (!await store.getUser(username)) return send(res, 404, { error: 'user not found' });
+      const target = await assertManageTarget(username, true);
       const { quotaBytes } = await readBody(req, ADMIN_BODY_BYTES);
       if (quotaBytes !== null && (!Number.isSafeInteger(quotaBytes)
         || Number(quotaBytes) < 1024 * 1024 || Number(quotaBytes) > 1024 ** 4)) {
         return send(res, 400, { error: 'invalid quotaBytes' });
       }
-      const usage = await blobStore.setUserQuota(username, quotaBytes === null ? undefined : Number(quotaBytes));
+      await store.mutateAdmin(auth.session.id, { action: 'blob-quota', accountId: target.accountId, bytes: quotaBytes === null ? null : Number(quotaBytes) });
+      const usage = await blobStore.usage(username);
       await log('info', 'blob_quota_changed', 'Attachment quota changed', {
         ip,
         username,
@@ -514,13 +526,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     }
     if (req.method === 'POST' && parts[0] === 'quotas' && parts[2] === 'commits') {
       const username = parts[1] ?? '';
-      if (!await store.getUser(username)) return send(res, 404, { error: 'user not found' });
+      const target = await assertManageTarget(username, true);
       const { commitQuotaBytes } = await readBody(req, ADMIN_BODY_BYTES);
       if (commitQuotaBytes !== null && (!Number.isSafeInteger(commitQuotaBytes)
         || Number(commitQuotaBytes) < 1024 * 1024 || Number(commitQuotaBytes) > 1024 ** 4)) {
         return send(res, 400, { error: 'invalid commitQuotaBytes' });
       }
-      await store.setCommitQuota(username, commitQuotaBytes === null ? undefined : Number(commitQuotaBytes));
+      await store.mutateAdmin(auth.session.id, { action: 'commit-quota', accountId: target.accountId, bytes: commitQuotaBytes === null ? null : Number(commitQuotaBytes) });
       await log('info', 'commit_quota_changed', 'Encrypted commit quota changed', {
         ip,
         username,
@@ -542,21 +554,30 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     if (req.method === 'GET' && suffix === '/users') {
       const requestUrl = new URL(req.url ?? '/', 'http://localhost');
       const limit = Math.min(Math.max(Number(requestUrl.searchParams.get('limit') ?? 100), 1), 500);
-      return send(res, 200, await store.listUsers(requestUrl.searchParams.get('cursor') ?? '', limit));
+      if (!Number.isSafeInteger(limit)) return send(res, 400, { error: 'invalid limit' });
+      const role = requestUrl.searchParams.get('role') ?? '';
+      const state = requestUrl.searchParams.get('state') ?? '';
+      if (!['', 'owner', 'admin', 'member'].includes(role) || !['', 'enabled', 'disabled'].includes(state)) return send(res, 400, { error: 'invalid filter' });
+      return send(res, 200, await store.listUsers(requestUrl.searchParams.get('cursor') ?? '', limit, { search: (requestUrl.searchParams.get('search') ?? '').slice(0, 128), role, state }));
     }
     if (req.method === 'GET' && suffix === '/devices') {
-      const { users } = await store.listUsers('', 1000);
-      const devices = (await Promise.all(users.map(async (user) =>
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      const limit = Number(params.get('limit') ?? 100);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) return send(res, 400, { error: 'limit must be between 1 and 500' });
+      const { users, nextCursor } = await store.listUsers(params.get('cursor') ?? '', limit, auth.role === 'admin' ? { role: 'member' } : {});
+      const devices = (await Promise.all(users.filter((user) => auth.role === 'owner' || user['role'] === 'member').map(async (user) =>
         (await store.listSessions(String(user['username']))).map((session) => publicSession(session))))).flat();
-      return send(res, 200, { devices });
+      return send(res, 200, { devices, nextCursor, paginationUnit: 'account' });
     }
     if (req.method === 'GET' && parts[0] === 'users' && parts[2] === 'devices') {
       const username = parts[1] ?? '';
       if (!await store.getUser(username)) return send(res, 404, { error: 'user not found' });
+      if (auth.role !== 'owner') await assertManageTarget(username);
       return send(res, 200, { devices: (await store.listSessions(username)).map(publicSession) });
     }
     if (req.method === 'POST' && parts[0] === 'sessions' && parts[2] === 'revoke') {
-      const targetSession = await store.revokeSession(parts[1] ?? '');
+      await store.mutateAdmin(auth.session.id, { action: 'revoke-session', sessionId: parts[1] ?? '' });
+      const targetSession = await store.getSession(parts[1] ?? '');
       if (!targetSession) return send(res, 404, { error: 'session not found' });
       await log('info', 'device_revoked', 'Revoked sync device session', {
         ip,
@@ -571,8 +592,10 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         return send(res, 409, { code: 'OWNER_CANNOT_BE_DISABLED', error: 'administrator cannot disable the current account' });
       }
       const body = await readBody(req, ADMIN_BODY_BYTES);
-      const targetUser = await store.setUserDisabled(username, typeof body.disabled === 'boolean' ? body.disabled : true);
-      if (!targetUser) return send(res, 404, { error: 'user not found' });
+      if (typeof body.disabled !== 'boolean') return send(res, 400, { error: 'disabled must be a boolean' });
+      const target = await assertManageTarget(username);
+      await store.mutateAdmin(auth.session.id, { action: 'state', accountId: target.accountId, disabled: body.disabled });
+      const targetUser = (await store.getUser(username))!;
       await log('info', targetUser.disabled ? 'user_disabled' : 'user_enabled', targetUser.disabled ? 'Disabled sync user' : 'Enabled sync user', {
         ip,
         username,
@@ -593,14 +616,19 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     if (req.method === 'POST' && suffix === '/invites') {
       const body = await readBody(req, ADMIN_BODY_BYTES);
       const code = typeof body.code === 'string' && body.code.trim() ? body.code.trim() : randomBytes(12).toString('base64url');
-      const invite = await store.createInvite(code);
+      const days = body.days === undefined ? 7 : Number(body.days);
+      if (!Number.isInteger(days) || days < 1 || days > 30) return send(res, 400, { error: 'invite expiry must be 1–30 days' });
+      await store.mutateAdmin(auth.session.id, { action: 'invite-create', code, expiresAt: new Date(Date.now() + days * 86_400_000).toISOString() });
+      const invite = await store.getInvite(code);
       await log('info', 'invite_created', 'Created registration invite', { ip, username: auth.user.username });
       return send(res, 200, { invite });
     }
     if (req.method === 'POST' && parts[0] === 'invites' && parts[2] === 'disable') {
       const code = parts[1] ?? '';
       const body = await readBody(req, ADMIN_BODY_BYTES);
-      const invite = await store.setInviteDisabled(code, typeof body.disabled === 'boolean' ? body.disabled : true);
+      if (typeof body.disabled !== 'boolean') return send(res, 400, { error: 'disabled must be a boolean' });
+      await store.mutateAdmin(auth.session.id, { action: 'invite-state', code, disabled: body.disabled });
+      const invite = await store.getInvite(code);
       if (!invite) return send(res, 404, { error: 'invite not found' });
       await log('info', invite.disabled ? 'invite_disabled' : 'invite_enabled', invite.disabled ? 'Disabled invite' : 'Enabled invite', {
         ip,
@@ -612,7 +640,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     if (req.method === 'POST' && suffix === '/registration') {
       const { mode } = await readBody(req, ADMIN_BODY_BYTES);
       if (mode !== 'open' && mode !== 'invite' && mode !== 'closed') return send(res, 400, { error: 'invalid registration mode' });
-      await store.setRegistrationMode(mode);
+      await store.mutateAdmin(auth.session.id, { action: 'registration', mode });
       await log('info', 'registration_mode_changed', 'Changed registration mode', {
         ip,
         username: auth.user.username,
@@ -629,15 +657,20 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = decodePathname(url.pathname);
     const routedPath = stripBasePath(path, basePath);
-    const ip = clientIp(req, trustedProxies);
+    const ip = origin.clientIp(req);
     try {
       await ready;
       if (routedPath === '/api/health' && req.method === 'GET') {
         const status = await store.status();
         const capabilities = [
           'account-roles-v1',
+          'account-identity-v1',
+          'owner-setup-v1',
           'admin-session-v1',
           'device-sessions-v1',
+          'same-origin-session-v1',
+          'server-management-v1',
+          'password-reset-v1',
           'encrypted-blobs-v1',
           'encrypted-commits-v3',
           'ledger-key-envelope-v1',
@@ -670,16 +703,16 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       }
       if (basePath && (path === '/api' || path.startsWith('/api/'))) return send(res, 404, { error: 'not found' });
       if (routedPath && serveWeb(req, res, routedPath, enableWeb ? options.webDir : undefined)) return;
-      if (serveWeb(req, res, path, enableWeb ? options.webDir : undefined)) return;
+      if (!routedPath && serveWeb(req, res, path, enableWeb ? options.webDir : undefined)) return;
       if (!routedPath) return send(res, 404, { error: 'not found' });
       const apiPath = routedPath;
       if (apiPath !== '/api' && !apiPath.startsWith('/api/')) return send(res, 404, { error: 'not found' });
       if (!enableSync && (apiPath === '/api' || apiPath.startsWith('/api/'))) return send(res, 503, { error: 'sync api disabled' });
       const isAdmin = apiPath === '/api/admin' || apiPath.startsWith('/api/admin/');
-      if (isAdmin && !secureTransport(req, trustedProxies, false)) {
+      if (isAdmin && !origin.secureTransport(req, false)) {
         return send(res, 426, { code: 'HTTPS_REQUIRED', error: 'HTTPS is required for remote administration' });
       }
-      if (!secureTransport(req, trustedProxies, allowInsecureHttp)) return send(res, 426, { code: 'HTTPS_REQUIRED', error: 'HTTPS is required for remote synchronization' });
+      if (!origin.secureTransport(req, allowInsecureHttp)) return send(res, 426, { code: 'HTTPS_REQUIRED', error: 'HTTPS is required for remote synchronization' });
       const isAuth = apiPath.startsWith('/api/auth/');
       const isBlob = apiPath.startsWith('/api/v3/blobs');
       const rate = await allow(
@@ -694,8 +727,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         return send(res, 429, { error: 'rate limited, slow down' });
       }
 
-      if (req.method === 'POST' && apiPath === '/api/auth/register/start') {
-        const { username: rawUsername, registrationRequest, inviteCode } = await readBody(req, AUTH_BODY_BYTES);
+      if (req.method === 'POST' && (apiPath === '/api/auth/register/start' || apiPath === '/api/auth/password-reset/start')) {
+        const resettingPassword = apiPath === '/api/auth/password-reset/start';
+        const { username: rawUsername, registrationRequest, inviteCode, ownerSetupToken: suppliedSetup, initializeOwner, passwordResetCode } = await readBody(req, AUTH_BODY_BYTES);
         const username = typeof rawUsername === 'string' ? normalizeSyncUsername(rawUsername) : '';
         if (!/^[\p{L}\p{N}_.-]{3,64}$/u.test(username)
           || typeof registrationRequest !== 'string'
@@ -705,8 +739,24 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           return send(res, 400, { error: 'invalid registration fields' });
         }
         const normalizedInvite = typeof inviteCode === 'string' ? inviteCode : undefined;
-        await store.assertRegistrationAllowed(normalizedInvite);
-        if (await store.getUser(username)) return send(res, 409, { code: 'USER_EXISTS', error: 'user exists' });
+        let passwordResetHash: string | undefined;
+        if (resettingPassword) {
+          if (typeof passwordResetCode !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(passwordResetCode)) return send(res, 403, { code: 'INVALID_PASSWORD_RESET', error: '重置码无效、已使用或已过期' });
+          passwordResetHash = createHash('sha256').update(passwordResetCode).digest('hex');
+          await store.assertPasswordReset(username, passwordResetHash);
+        }
+        const webSetup = initializeOwner === true;
+        if (webSetup && (req.headers['x-zichan-session'] !== 'admin-cookie' || !browserSession.requested(req))) {
+          return send(res, 403, { code: 'SESSION_ORIGIN_REJECTED', error: 'owner initialization requires the same-origin management page' });
+        }
+        const claimOwner = webSetup || suppliedSetup !== undefined;
+        if (!webSetup && claimOwner && (typeof suppliedSetup !== 'string' || !safeEqual(suppliedSetup, ownerSetupToken))) {
+          return send(res, 403, { code: 'INVALID_OWNER_SETUP', error: 'invalid owner setup secret' });
+        }
+        if (!resettingPassword) {
+          await store.assertRegistrationAllowed(normalizedInvite, claimOwner);
+          if (await store.getUser(username)) return send(res, 409, { code: 'USER_EXISTS', error: 'user exists' });
+        }
         let registrationResponse: string;
         try {
           registrationResponse = opaque.server.createRegistrationResponse({
@@ -718,7 +768,10 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           return send(res, 400, { error: 'invalid registration request' });
         }
         const registrationToken = signToken(secret, {
-          purpose: 'opaque-registration',
+          purpose: resettingPassword ? 'opaque-password-reset' : 'opaque-registration',
+          ...(passwordResetHash ? { passwordResetHash } : {}),
+          ...(claimOwner ? { claimOwner: true } : {}),
+          ...(webSetup ? { ownerSetupOrigin: req.headers.origin } : {}),
           username,
           ...(normalizedInvite ? { inviteCode: normalizedInvite } : {}),
           exp: Date.now() + OPAQUE_REGISTRATION_TTL_MS,
@@ -730,17 +783,28 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           serverPublicKey: opaqueServerPublicKey,
         });
       }
-      if (req.method === 'POST' && apiPath === '/api/auth/register/finish') {
+      if (req.method === 'POST' && (apiPath === '/api/auth/register/finish' || apiPath === '/api/auth/password-reset/finish')) {
+        const resettingPassword = apiPath === '/api/auth/password-reset/finish';
         const { registrationToken, registrationRecord } = await readBody(req, AUTH_BODY_BYTES);
         const claims = typeof registrationToken === 'string' ? verifyToken(secret, registrationToken) : null;
-        if (claims?.purpose !== 'opaque-registration'
+        if (claims?.purpose !== (resettingPassword ? 'opaque-password-reset' : 'opaque-registration')
           || typeof claims.username !== 'string'
           || typeof registrationRecord !== 'string'
           || !registrationRecord
           || registrationRecord.length > AUTH_BODY_BYTES) {
           return send(res, 400, { error: 'invalid registration completion' });
         }
-        const registration = await store.register(claims.username, registrationRecord, claims.inviteCode);
+        if (claims.ownerSetupOrigin && (req.headers.origin !== claims.ownerSetupOrigin
+          || req.headers['x-zichan-session'] !== 'admin-cookie' || !browserSession.requested(req))) {
+          return send(res, 403, { code: 'SESSION_ORIGIN_REJECTED', error: 'owner initialization origin changed' });
+        }
+        if (resettingPassword) {
+          if (typeof claims.passwordResetHash !== 'string') return send(res, 400, { error: 'invalid password reset completion' });
+          await store.completePasswordReset(claims.username, claims.passwordResetHash, registrationRecord);
+          res.setHeader('Cache-Control', 'no-store');
+          return send(res, 200, { ok: true, serverId, role: await store.roleForUser(claims.username) });
+        }
+        const registration = await store.register(claims.username, registrationRecord, claims.inviteCode, claims.claimOwner === true);
         await log('info', 'register_success', 'Registered sync user', {
           ip,
           username: claims.username,
@@ -772,7 +836,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         }
         const loginState = await store.createOpaqueLoginState(
           username,
-          login.serverLoginState,
+          JSON.stringify({ state: login.serverLoginState, credentialHash: createHash('sha256').update(user?.opaqueRegistrationRecord ?? '').digest('hex') }),
           ip,
           new Date(Date.now() + OPAQUE_LOGIN_TTL_MS).toISOString(),
         );
@@ -784,6 +848,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         });
       }
       if (req.method === 'POST' && apiPath === '/api/auth/login/finish') {
+        const cookieSession = browserSession.requested(req);
         const { loginId, finishLoginRequest, deviceId, deviceName } = await readBody(req, AUTH_BODY_BYTES);
         const loginState = typeof loginId === 'string'
           ? await store.consumeOpaqueLoginState(loginId, ip)
@@ -792,8 +857,10 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         let authenticated = false;
         if (loginState && typeof finishLoginRequest === 'string' && finishLoginRequest.length <= AUTH_BODY_BYTES) {
           try {
+            const stored = JSON.parse(loginState.serverLoginState) as { state: string; credentialHash: string };
+            if (!user || stored.credentialHash !== createHash('sha256').update(user.opaqueRegistrationRecord).digest('hex')) throw new Error('credentials changed');
             opaque.server.finishLogin({
-              serverLoginState: loginState.serverLoginState,
+              serverLoginState: stored.state,
               finishLoginRequest,
               identifiers: { client: loginState.username, server: serverId },
             });
@@ -817,6 +884,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         const sessionId = `session-${randomBytes(16).toString('hex')}`;
         const refreshToken = createRefreshToken(sessionId);
         const session = await store.createSession({
+          expectedRegistrationRecord: user.opaqueRegistrationRecord,
           id: sessionId,
           username: user.username,
           deviceId,
@@ -828,16 +896,21 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         await store.noteLogin(user.username);
         await log('info', 'login_success', 'Sync user logged in', { ip, username: user.username, detail: { sessionId: session.id, deviceId: session.deviceId } });
         const replica = await store.getReplica(user.username);
+        if (cookieSession) browserSession.write(req, res, refreshToken);
         return send(res, 200, {
           ...issueAccessToken(user.username, session.id),
-          refreshToken,
+          accountId: user.accountId,
+          ...(cookieSession ? { sessionTransport: 'cookie' } : { refreshToken }),
           session: publicSession(session),
           role: await store.roleForUser(user.username),
           ...(replica ? { ledgerId: replica.ledgerId } : {}),
         });
       }
       if (req.method === 'POST' && apiPath === '/api/auth/refresh') {
-        const { refreshToken } = await readBody(req, AUTH_BODY_BYTES);
+        const cookieSession = browserSession.requested(req);
+        const body = await readBody(req, AUTH_BODY_BYTES);
+        if (cookieSession && body.refreshToken !== undefined) return send(res, 400, { code: 'MIXED_SESSION_TRANSPORT', error: 'cookie sessions do not accept body tokens' });
+        const refreshToken = cookieSession ? browserSession.read(req) : body.refreshToken;
         const sessionId = typeof refreshToken === 'string' ? refreshToken.split('.')[0] ?? '' : '';
         const session = sessionId ? await store.getSession(sessionId) : undefined;
         const user = session ? await store.getUser(session.username) : undefined;
@@ -845,21 +918,36 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         if (!session || !user || user.disabled || session.revokedAt || session.expiresAt <= nowIso()
           || !safeEqual(session.refreshHash, suppliedHash)) {
           await log('warn', 'refresh_failed', 'Session refresh failed', { ip, username: user?.username, status: 401 });
+          if (cookieSession) browserSession.write(req, res);
           return send(res, 401, { error: 'invalid refresh token' });
         }
         const nextRefreshToken = createRefreshToken(session.id);
         const rotated = await store.rotateSessionRefresh(session.id, session.refreshHash, opaqueHash(secret, nextRefreshToken), ip);
         if (!rotated) return send(res, 401, { error: 'refresh token already used' });
         const replica = await store.getReplica(user.username);
+        if (cookieSession) browserSession.write(req, res, nextRefreshToken);
         return send(res, 200, {
           ...issueAccessToken(user.username, session.id),
-          refreshToken: nextRefreshToken,
+          accountId: user.accountId,
+          ...(cookieSession ? { sessionTransport: 'cookie' } : { refreshToken: nextRefreshToken }),
           session: publicSession(rotated),
           role: await store.roleForUser(user.username),
           ...(replica ? { ledgerId: replica.ledgerId } : {}),
         });
       }
 
+      // Logout must still clear the HttpOnly cookie after an access token expires.
+      if (req.method === 'POST' && apiPath === '/api/auth/logout' && browserSession.requested(req)) {
+        const refreshToken = browserSession.read(req);
+        const sessionId = refreshToken?.split('.')[0];
+        const current = sessionId ? await store.getSession(sessionId) : undefined;
+        if (current && refreshToken && safeEqual(current.refreshHash, opaqueHash(secret, refreshToken))) {
+          await store.revokeSession(current.id, current.username);
+          await log('info', 'logout', 'Browser session logged out', { ip, username: current.username, detail: { sessionId: current.id } });
+        }
+        browserSession.write(req, res);
+        return send(res, 200, { ok: true });
+      }
       const auth = await authenticateRequest(req);
       if (!auth) {
         return send(res, 401, { error: 'unauthorized' });
@@ -872,6 +960,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         return send(res, 200, {
           username: user.username,
           role: auth.role,
+          accountId: user.accountId,
           disabled: false,
           session: publicSession(session),
           ...(replica ? {
@@ -881,7 +970,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           } : {}),
         });
       }
-      if (isAdmin) return handleAdmin(req, res, apiPath, auth);
+      if (isAdmin) return await handleAdmin(req, res, apiPath, auth);
 
       if (req.method === 'GET' && apiPath === '/api/auth/devices') {
         return send(res, 200, { devices: (await store.listSessions(user.username)).map(publicSession), currentSessionId: session.id });
@@ -894,7 +983,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         return send(res, 200, { device: publicSession(revoked) });
       }
       if (req.method === 'POST' && apiPath === '/api/auth/logout') {
+        const cookieSession = browserSession.requested(req);
         await store.revokeSession(session.id, user.username);
+        if (cookieSession) browserSession.write(req, res);
         await log('info', 'logout', 'Sync session logged out', { ip, username: user.username, detail: { sessionId: session.id } });
         return send(res, 200, { ok: true });
       }
@@ -1045,7 +1136,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         status >= 500 ? 'error' : 'warn',
         isBlob ? 'blob_request_failed' : 'request_failed',
         isBlob ? 'Encrypted attachment request failed' : 'Server request failed',
-        { ip, status, detail: { method: req.method, path: routedPath?.replace(/[a-f0-9]{32,64}/g, '<opaque-id>'), code, error: error instanceof Error ? error.message : String(error) } },
+        { ip, status, detail: { method: req.method, path: routedPath?.replace(/(\/invites\/)[^/]+/g, '$1<redacted>').replace(/[a-f0-9]{32,64}/g, '<opaque-id>'), code, error: error instanceof Error ? error.message : String(error) } },
       ).catch(() => undefined);
       return send(res, status, { ...(code ? { code } : {}), error: error instanceof Error ? error.message : String(error) });
     }

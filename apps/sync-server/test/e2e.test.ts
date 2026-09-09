@@ -15,7 +15,7 @@ import {
   syncReplicas,
 } from '@zichan/db';
 import { openLedger } from '@zichan/db/node';
-import { createSyncServer } from '../src/server.js';
+import { createTestSyncServer as createSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
 
 function asset(code: string): Asset {
   return { id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false, code, name: code, type: 'crypto', decimals: 8, isActive: true } as Asset;
@@ -47,7 +47,7 @@ describe('end-to-end encrypted sync protocol v3', () => {
     try {
       await b.adoptLedgerId(await a.getLedgerId());
       const keys = testKeyring(await a.getLedgerId());
-      await registerAccount(url, 'cara', 'commit-pw');
+      await registerAccount(url, 'cara', 'commit-pw', { ownerSetupToken: OWNER_SETUP_TOKEN });
       const tokenA = (await loginAccount(url, 'cara', 'commit-pw', { deviceId: 'device-cara-a', deviceName: 'Cara A' })).accessToken;
       const tokenB = (await loginAccount(url, 'cara', 'commit-pw', { deviceId: 'device-cara-b', deviceName: 'Cara B' })).accessToken;
       const transportA = transport(url, tokenA, keys);
@@ -85,8 +85,8 @@ describe('end-to-end encrypted sync protocol v3', () => {
     try {
       await b.adoptLedgerId(await a.getLedgerId());
       const keys = testKeyring(await a.getLedgerId());
-      await registerAccount(firstUrl, 'nway', 'first-password');
-      await registerAccount(secondUrl, 'nway', 'second-password');
+      await registerAccount(firstUrl, 'nway', 'first-password', { ownerSetupToken: OWNER_SETUP_TOKEN });
+      await registerAccount(secondUrl, 'nway', 'second-password', { ownerSetupToken: OWNER_SETUP_TOKEN });
       const firstToken = (await loginAccount(firstUrl, 'nway', 'first-password', { deviceId: 'device-nway-first', deviceName: 'N-way first' })).accessToken;
       const secondToken = (await loginAccount(secondUrl, 'nway', 'second-password', { deviceId: 'device-nway-second', deviceName: 'N-way second' })).accessToken;
       const targets = () => [
@@ -134,7 +134,7 @@ describe('end-to-end encrypted sync protocol v3', () => {
     const owner = await openLedger({ deviceId: 'owner' });
     const joining = await openLedger({ deviceId: 'joining' });
     try {
-      await registerAccount(url, 'join', 'join-password');
+      await registerAccount(url, 'join', 'join-password', { ownerSetupToken: OWNER_SETUP_TOKEN });
       const token = (await loginAccount(url, 'join', 'join-password', { deviceId: 'device-join-owner', deviceName: 'Join owner' })).accessToken;
       const keys = testKeyring(await owner.getLedgerId());
       await owner.assets.put(asset('REMOTE'));

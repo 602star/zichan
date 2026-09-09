@@ -1,7 +1,7 @@
 import type { AddressInfo } from 'node:net';
 import { loginAccount, registerAccount } from '@zichan/db';
 import { describe, expect, it } from 'vitest';
-import { createSyncServer } from '../../sync-server/src/server.js';
+import { createTestSyncServer as createSyncServer, OWNER_SETUP_TOKEN } from '../../sync-server/test/support/server-fixture.js';
 
 describe('sync account server identity pinning', () => {
   it('never completes registration or login against an unexpected server identity', async () => {
@@ -18,6 +18,7 @@ describe('sync account server identity pinning', () => {
       expect(health.claimed).toBe(false);
 
       await expect(registerAccount(baseUrl, 'owner', 'account-password', {
+        ownerSetupToken: OWNER_SETUP_TOKEN,
         expectedServerId: 'another-server',
         expectedServerPublicKey: health.serverPublicKey,
       })).rejects.toThrow('服务器 ID');
@@ -26,9 +27,10 @@ describe('sync account server identity pinning', () => {
       expect(afterRejectedRegistration.claimed).toBe(false);
 
       await expect(registerAccount(baseUrl, 'owner', 'account-password', {
+        ownerSetupToken: OWNER_SETUP_TOKEN,
         expectedServerId: health.serverId,
         expectedServerPublicKey: health.serverPublicKey,
-      })).resolves.toEqual({ role: 'admin' });
+      })).resolves.toEqual({ role: 'owner' });
 
       await expect(loginAccount(baseUrl, 'owner', 'account-password', {
         expectedServerId: health.serverId,
@@ -39,7 +41,7 @@ describe('sync account server identity pinning', () => {
         expectedServerPublicKey: health.serverPublicKey,
         deviceId: 'identity-test-device',
         deviceName: 'Identity pinning test',
-      })).resolves.toMatchObject({ role: 'admin' });
+      })).resolves.toMatchObject({ role: 'owner' });
     } finally {
       await runtime.close();
     }

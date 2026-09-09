@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { loginAccount, registerAccount, type LedgerBackup } from '@zichan/db';
 import { openLedger } from '@zichan/db/node';
-import { createSyncServer, type SyncServer } from '../../sync-server/src/server.js';
+import type { SyncServer } from '../../sync-server/src/server.js';
+import { createTestSyncServer as createSyncServer, OWNER_SETUP_TOKEN } from '../../sync-server/test/support/server-fixture.js';
 import {
   BackupPassphraseRequiredError,
   createEncryptedBackupContainer,
@@ -210,6 +211,7 @@ describe('encrypted backup archives', () => {
       const health = await fetch(`${baseUrl}/api/health`, { redirect: 'error' })
         .then((response) => response.json()) as { serverId: string; serverPublicKey: string };
       await registerAccount(baseUrl, username, password, {
+        ownerSetupToken: OWNER_SETUP_TOKEN,
         expectedServerId: health.serverId,
         expectedServerPublicKey: health.serverPublicKey,
       });
@@ -459,6 +461,7 @@ describe('encrypted backup archives', () => {
       const health = await fetch(`${baseUrl}/api/health`, { redirect: 'error' })
         .then((response) => response.json()) as { serverId: string; serverPublicKey: string };
       await registerAccount(baseUrl, username, password, {
+        ownerSetupToken: OWNER_SETUP_TOKEN,
         expectedServerId: health.serverId,
         expectedServerPublicKey: health.serverPublicKey,
       });
@@ -494,7 +497,7 @@ describe('encrypted backup archives', () => {
       };
       saveSyncConnections([profile]);
       setRuntimeCredential(profile.id, {
-        password,
+        password: '',
         inviteCode: '',
         accessToken: session.accessToken,
         refreshToken: session.refreshToken,

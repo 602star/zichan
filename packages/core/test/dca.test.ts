@@ -3,7 +3,7 @@ import { buildDcaReport, round, type DcaExecution } from '../src/index.js';
 
 function exec(date: string, actualBaseCost: string, finalAmount: string, fee: string): DcaExecution {
   return {
-    id: 'e' + date, planId: 'p1', date, plannedAmount: '250', actualBaseCost,
+    id: 'e' + date, planId: 'p1', date, occurrenceIndex: 0, scheduledDate: date, plannedAmount: '250', actualBaseCost,
     baseCurrencyAssetId: 'GBP', finalAssetId: 'BTC', finalAmount, totalFeeInBase: fee,
     createdAt: '', updatedAt: '', version: 1, isDeleted: false,
   };
@@ -40,5 +40,21 @@ describe('buildDcaReport — cumulative + average cost', () => {
   it('rows are ordered by date regardless of input order', () => {
     const shuffled = buildDcaReport([execs[1]!, execs[0]!]);
     expect(shuffled.rows[0]!.date).toBe('2025-12-08');
+  });
+
+  it.each([
+    { planId: 'p2' }, { baseCurrencyAssetId: 'USD' }, { finalAssetId: 'ETH' },
+  ])('rejects mixed report dimensions: %j', (change) => {
+    expect(() => buildDcaReport([execs[0]!, { ...execs[1]!, ...change }])).toThrow('分别汇总');
+  });
+
+  it('ignores deleted dimensions and handles empty input', () => {
+    expect(buildDcaReport([execs[0]!, { ...execs[1]!, planId: 'p2', isDeleted: true }]).rows).toHaveLength(1);
+    expect(buildDcaReport([]).totalInvested).toBe('0');
+  });
+
+  it('breaks same-day ties by execution ID', () => {
+    const sameDay = [{ ...execs[0]!, id: 'b' }, { ...execs[0]!, id: 'a' }];
+    expect(buildDcaReport(sameDay).rows.map((row) => row.executionId)).toEqual(['a', 'b']);
   });
 });

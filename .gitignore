@@ -1,13 +1,14 @@
 node_modules/
 .tools/
 .runtime/
-coverage/
+/coverage/
 ci-artifacts/
 tools/eslint/node_modules/
 tools/coverage/node_modules/
 tools/e2e/node_modules/
 tools/e2e/test-results/
 tools/e2e/playwright-report/
+tools/e2e/*.log
 dist/
 *.tsbuildinfo
 .DS_Store
@@ -19,6 +20,7 @@ apps/sync-server/sync-data.json*
 apps/sync-server/*.secret
 apps/sync-server/*.server-id
 **/server.secret
+**/owner-setup.secret
 **/server-id
 **/opaque.server-setup
 **/admin-token.txt

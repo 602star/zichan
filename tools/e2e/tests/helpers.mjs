@@ -22,7 +22,7 @@ async function grantDeterministicPersistentStorage(page) {
 export async function openLedger(page, options = {}) {
   if (options.grantPersistentStorage !== false) await grantDeterministicPersistentStorage(page);
   await page.goto('/');
-  const localMode = page.getByRole('button', { name: /^纯本地使用/ });
+  const login = page.getByRole('heading', { name: '账号登录', exact: true });
   const create = page.getByRole('button', { name: '创建并打开' });
   const unlock = page.getByRole('button', { name: '解锁', exact: true });
   const quickStart = page.getByRole('button', { name: '直接开始记支出', exact: true });
@@ -30,9 +30,13 @@ export async function openLedger(page, options = {}) {
   const quickExpense = page.getByRole('dialog', { name: '记一笔支出' });
   let startedQuickLedger = false;
 
-  await expect(localMode.or(create).or(unlock).or(appReady).or(quickStart)).toBeVisible({ timeout: 30_000 });
-  if (await localMode.isVisible().catch(() => false)) {
-    await localMode.click();
+  await expect(login.or(create).or(unlock).or(appReady).or(quickStart)).toBeVisible({ timeout: 30_000 });
+  if (await login.isVisible().catch(() => false)) {
+    await page.getByRole('button', { name: '注册新账号', exact: true }).click();
+    await page.getByLabel('服务器用户名').fill(`member-${crypto.randomUUID()}`);
+    await page.getByLabel('服务器账号密码', { exact: true }).fill('E2E-account-password');
+    await page.getByLabel('确认账号密码', { exact: true }).fill('E2E-account-password');
+    await page.getByRole('button', { name: '注册并登录', exact: true }).click();
     await expect(create.or(unlock).or(appReady).or(quickStart)).toBeVisible({ timeout: 30_000 });
   }
 

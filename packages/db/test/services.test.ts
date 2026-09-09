@@ -64,7 +64,7 @@ describe('services: recordSell', () => {
     const { chain: saved, match } = await recordSell(store, {
       chain: c,
       steps: [
-        step(c.id, 1, 'BTC', '0.005', 'USDT', '489.40', { assetId: 'USDT', amount: '0.80', base: '0.64' }),
+        step(c.id, 1, 'BTC', '0.005', 'USDT', '488.60', { assetId: 'USDT', amount: '0.80', base: '0.64' }),
         step(c.id, 2, 'USDT', '488.60', 'GBP', '387.90', { assetId: 'GBP', amount: '1.30' }),
       ],
       method: 'fifo',
@@ -108,7 +108,7 @@ describe('services: voidConversion', () => {
     await recordSell(store, {
       chain: c,
       steps: [
-        step(c.id, 1, 'BTC', '0.005', 'USDT', '489', { assetId: 'USDT', amount: '0.8', base: '0.64' }),
+        step(c.id, 1, 'BTC', '0.005', 'USDT', '488', { assetId: 'USDT', amount: '0.8', base: '0.64' }),
         step(c.id, 2, 'USDT', '488', 'GBP', '387.90', { assetId: 'GBP', amount: '1.30' }),
       ],
       method: 'fifo',
@@ -134,7 +134,7 @@ describe('services: voidConversion', () => {
     await recordSell(store, {
       chain: sell,
       steps: [
-        step(sell.id, 1, 'BTC', '0.005', 'USDT', '489', { assetId: 'USDT', amount: '0.8', base: '0.64' }),
+        step(sell.id, 1, 'BTC', '0.005', 'USDT', '488', { assetId: 'USDT', amount: '0.8', base: '0.64' }),
         step(sell.id, 2, 'USDT', '488', 'GBP', '387.90', { assetId: 'GBP', amount: '1.30' }),
       ],
       method: 'fifo',

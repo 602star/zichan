@@ -1,0 +1,29 @@
+.zc-admin-root { line-height: 1.6; }
+.zc-admin-root h1 { margin: 12px 0; font-size: clamp(24px, 4vw, 34px); }
+.zc-admin-root h2 { margin-top: 0; font-size: 22px; }
+.zc-admin-root p { color: var(--fg-muted); }
+.zc-admin-root a { color: var(--accent); text-underline-offset: 4px; }
+.zc-admin-root button, .zc-admin-root input, .zc-admin-root select { font: inherit; box-sizing: border-box; }
+.zc-admin-root button {
+  min-height: 40px; padding: 8px 13px; border-radius: 8px;
+  border: 1px solid var(--border); color: var(--fg); background: var(--surface);
+  cursor: pointer; white-space: nowrap; font-size: 13px; font-weight: 650;
+}
+.zc-admin-root button:hover:not(:disabled) { border-color: var(--accent); }
+.zc-admin-root button:disabled { opacity: .45; cursor: not-allowed; }
+.zc-admin-root :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.zc-admin-root input, .zc-admin-root select {
+  min-height: 40px; max-width: 100%; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--fg);
+}
+.zc-admin-root input[type="number"] { width: 140px; margin: 4px 10px; }
+.zc-admin-root form > button[type="submit"] { background: var(--accent); color: white; border-color: var(--accent); }
+.zc-admin-root small { display: block; margin-top: 5px; font-size: 12px; color: var(--fg-muted); }
+.zc-admin-root td small { font-family: ui-monospace, monospace; font-size: 11px; }
+.zc-admin-root table { min-width: 760px; font-size: 13px; }
+.zc-admin-root tbody tr:hover { background: var(--surface-2); }
+@media (max-width: 767px) {
+  .zc-admin-root button, .zc-admin-root input, .zc-admin-root select { min-height: 44px; }
+  .zc-admin-root input, .zc-admin-root select { font-size: 16px; }
+  .zc-admin-root header { align-items: flex-start; }
+}

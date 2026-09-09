@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { newId, type LedgerCryptoSession, type LedgerKeyEnvelope } from '@zichan/core';
 import { httpCommitTransport, loginAccount, registerAccount } from '@zichan/db';
 import { openLedger } from '@zichan/db/node';
-import { createSyncServer, type SyncServer } from '../../sync-server/src/server.js';
+import type { SyncServer } from '../../sync-server/src/server.js';
+import { createTestSyncServer as createSyncServer, OWNER_SETUP_TOKEN } from '../../sync-server/test/support/server-fixture.js';
 import { ensureAttachmentBlobAvailable, syncAttachmentReplicas } from '../src/attachment-sync.js';
 import { setRuntimeCredential } from '../src/credential-vault.js';
 import {
@@ -158,6 +159,7 @@ async function bind(
   profileRow.serverId = health.serverId;
   profileRow.serverPublicKey = health.serverPublicKey;
   await registerAccount(baseUrl, profileRow.username, password, {
+    ownerSetupToken: OWNER_SETUP_TOKEN,
     expectedServerId: health.serverId,
     expectedServerPublicKey: health.serverPublicKey,
   });

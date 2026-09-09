@@ -4,6 +4,7 @@
   "private": true,
   "description": "Tauri 2 desktop shell wrapping the @zichan/web build",
   "scripts": {
+    "prepare:build": "node scripts/before-build.mjs",
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
@@ -16,7 +17,7 @@
     "ios:build": "tauri ios build",
     "icon": "tauri icon src-tauri/icons/icon.png",
     "server": "npm run server:build && npm run server:run",
-    "server:build": "npm run build --workspace @zichan/web && npm run build --workspace @zichan/sync-server",
+    "server:build": "npm run build:server --prefix ../..",
     "server:run": "node scripts/server.mjs",
     "prepare:resources": "node scripts/prepare-resources.mjs",
     "release:check": "npm run server:build && npm run prepare:resources && cargo check --manifest-path src-tauri/Cargo.toml"

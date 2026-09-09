@@ -15,7 +15,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { NodeSqliteDriver } from '@zichan/db/node';
-import { CURRENT_SERVER_SCHEMA, CURRENT_SERVER_SCHEMA_NAME } from './store.js';
+import { supportedServerSchema } from './store.js';
 
 const BACKUP_VERSION = 1;
 const SIDE_CARS = ['server.secret', 'server-id', 'opaque.server-setup'] as const;
@@ -127,8 +127,9 @@ async function verifyDatabase(path: string): Promise<string> {
   try {
     const check = await driver.get<Record<string, unknown>>('PRAGMA quick_check');
     const result = String(Object.values(check ?? {})[0] ?? 'unknown');
-    const migration = await driver.get<{ version: number; name: string }>('SELECT version, name FROM server_schema_migrations ORDER BY version DESC LIMIT 1');
-    if (!migration || Number(migration.version) !== CURRENT_SERVER_SCHEMA || migration.name !== CURRENT_SERVER_SCHEMA_NAME) {
+    const migrations = await driver.all<{ version: number; name: string }>('SELECT version, name FROM server_schema_migrations ORDER BY version');
+    const migration = migrations[0];
+    if (migrations.length !== 1 || !migration || !supportedServerSchema(Number(migration.version), migration.name)) {
       return `schema:${migration?.version ?? 'missing'}:${migration?.name ?? 'missing'}`;
     }
     return result;
@@ -282,6 +283,16 @@ export async function restoreServerBackup(backupDirValue: string, dataDirValue: 
       fsyncFile(target);
     }
     if (await verifyDatabase(join(staging, 'server.sqlite')) !== 'ok') throw new Error('恢复暂存数据库完整性检查失败');
+    // Restore data, not previously consumed recovery capabilities or old login sessions.
+    const restoredDb = new NodeSqliteDriver(join(staging, 'server.sqlite'));
+    try {
+      await restoredDb.transaction(async (driver) => {
+        if (await driver.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'account_password_resets'")) await driver.run('DELETE FROM account_password_resets');
+        await driver.run('DELETE FROM sync_opaque_login_states');
+        const at = new Date().toISOString();
+        await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ?', [at, at]);
+      });
+    } finally { await restoredDb.close(); }
     if (previous) renameSync(dataDir, previous);
     try {
       renameSync(staging, dataDir);

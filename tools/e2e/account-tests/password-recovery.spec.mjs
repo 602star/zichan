@@ -1,0 +1,48 @@
+import { test, expect } from '@playwright/test';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
+import { registerAccount, loginAccount } from '../../../packages/db/dist/index.js';
+
+const root = fileURLToPath(new URL('../../../', import.meta.url));
+test('administrator reviews and issues a code, user resets only account credentials', async ({ page, browser }) => {
+  const setup = 'test-password-recovery-owner-secret-000000';
+  const server = createSyncServer({ webDir: resolve(root, 'apps/web/dist'), enableWeb: true, registrationMode: 'open', ownerSetupToken: setup });
+  let recipient;
+  try {
+    await server.ready;
+    await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+    const url = `http://127.0.0.1:${server.server.address().port}`;
+    await registerAccount(url, 'reviewer', 'reviewer-test-password', { ownerSetupToken: setup });
+    await registerAccount(url, 'recover-user', 'old-user-test-password');
+    const original = await loginAccount(url, 'recover-user', 'old-user-test-password');
+    await page.goto(`${url}/admin/`);
+    await page.getByLabel('管理账号用户名').fill('reviewer');
+    await page.getByLabel('管理账号密码').fill('reviewer-test-password');
+    await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
+    await page.getByRole('button', { name: '用户管理', exact: true }).click();
+    await page.getByRole('row').filter({ has: page.getByText('recover-user', { exact: true }) }).getByRole('button', { name: '设备与配额' }).click();
+    await expect(page.getByRole('button', { name: '发放一次性重置码', exact: true })).toBeDisabled();
+    await page.getByLabel('我已通过可信渠道核实 recover-user 的身份和恢复请求').check();
+    await page.getByRole('button', { name: '发放一次性重置码', exact: true }).click();
+    await page.getByRole('button', { name: '确认发放', exact: true }).click();
+    await expect(page.getByLabel('本次重置码')).toBeVisible();
+    const code = await page.getByLabel('本次重置码').inputValue();
+    recipient = await browser.newContext();
+    const user = await recipient.newPage();
+    await user.goto(`${url}/app/`);
+    await user.getByText('忘记账号密码', { exact: true }).click();
+    await user.getByLabel('找回账号用户名').fill('recover-user');
+    await user.getByLabel('一次性重置码', { exact: true }).fill(code);
+    await user.getByLabel('新账号密码', { exact: true }).fill('new-user-test-password');
+    await user.getByLabel('确认新账号密码', { exact: true }).fill('new-user-test-password');
+    await user.getByRole('button', { name: '重置账号密码', exact: true }).click();
+    await expect(user.getByText('账号密码已重置，旧登录会话已撤销。请使用新密码登录；账本加密密码不变。')).toBeVisible();
+    expect((await loginAccount(url, 'recover-user', 'new-user-test-password')).accountId).toBe(original.accountId);
+    await expect(loginAccount(url, 'recover-user', 'old-user-test-password')).rejects.toThrow();
+    expect((await fetch(`${url}/api/auth/me`, { headers: { Authorization: `Bearer ${original.accessToken}` } })).status).toBe(401);
+    await user.getByLabel('服务器账号密码').fill('new-user-test-password');
+    await user.getByRole('button', { name: '登录已有账号' }).click();
+    await expect(user.getByLabel('本机数据密码', { exact: true })).toBeVisible();
+  } finally { await recipient?.close(); server.server.closeAllConnections(); await server.close(); }
+});

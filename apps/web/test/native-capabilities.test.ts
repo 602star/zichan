@@ -92,15 +92,20 @@ describe('application lifecycle sync', () => {
       },
     } as unknown as SqlLedgerStore;
     const cleanup = installSyncLifecycle(store, () => undefined, runner);
-    await Promise.resolve();
+    const settle = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+    await settle();
     expect(reasons).toEqual(['startup']);
 
     fakeWindow.interval?.();
+    await settle();
     fakeWindow.dispatchEvent(new Event('online'));
+    await settle();
     fakeDocument.visibilityState = 'visible';
     fakeDocument.dispatchEvent(new Event('visibilitychange'));
+    await settle();
     fakeWindow.dispatchEvent(new Event('zichan:credentials-changed'));
     fakeWindow.timeout?.();
+    await settle();
     writeListener?.();
     fakeWindow.timeout?.();
     expect(reasons).toEqual(['startup', 'interval', 'online', 'foreground', 'credentials', 'write']);
@@ -261,9 +266,9 @@ describe('Stronghold credential vault', () => {
 
     const vault = await import('../src/credential-vault.js');
     await vault.unlockCredentialVault('local-password', ['home']);
-    await vault.persistCredential('home', { password: 'sync-secret', inviteCode: 'invite-1' });
-    expect(vault.runtimeCredential('home')).toMatchObject({ password: 'sync-secret', inviteCode: 'invite-1' });
-    expect(new TextDecoder().decode(new Uint8Array(records.get('sync-server:home')!))).toBe('{"password":"sync-secret","inviteCode":"invite-1"}');
+    await vault.persistCredential('home', { password: 'sync-secret', inviteCode: 'invite-1', refreshToken: 'refresh-secret', sessionId: 'session-home' });
+    expect(vault.runtimeCredential('home')).toMatchObject({ password: '', inviteCode: '', refreshToken: 'refresh-secret' });
+    expect(new TextDecoder().decode(new Uint8Array(records.get('sync-server:home')!))).toBe('{"refreshToken":"refresh-secret","sessionId":"session-home"}');
     await vault.lockCredentialVault();
     expect(vault.runtimeCredentialMap()).toEqual({});
     expect(calls.map((call) => call.command)).toEqual(expect.arrayContaining([
@@ -275,9 +280,9 @@ describe('Stronghold credential vault', () => {
     ]));
   });
 
-  it('restores an existing server password after a new application process unlocks', async () => {
+  it('restores a refresh token, never an account password, after a new process unlocks', async () => {
     vi.resetModules();
-    const stored = [...new TextEncoder().encode('{"password":"restored-secret","inviteCode":""}')];
+    const stored = [...new TextEncoder().encode('{"password":"ignored-legacy-password","refreshToken":"restored-refresh","sessionId":"office-session"}')];
     const invoke = async <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
       if (command === 'native_security_status') {
         return { platform: 'windows', mobile: false, strongholdPath: 'C:/App/security/sync-vault.hold', strongholdExists: true } as T;
@@ -288,12 +293,12 @@ describe('Stronghold credential vault', () => {
     Object.defineProperty(globalThis, 'window', { configurable: true, value: { __TAURI_INTERNALS__: { invoke } } });
     const vault = await import('../src/credential-vault.js');
     const credentials = await vault.unlockCredentialVault('local-password', ['office']);
-    expect(credentials.office).toMatchObject({ password: 'restored-secret', inviteCode: '' });
+    expect(credentials.office).toMatchObject({ password: '', inviteCode: '', refreshToken: 'restored-refresh', sessionId: 'office-session' });
   });
 
   it('unloads a partially opened Stronghold after a record read failure so unlock can retry', async () => {
     vi.resetModules();
-    const stored = [...new TextEncoder().encode('{"password":"retry-secret","inviteCode":""}')];
+    const stored = [...new TextEncoder().encode('{"refreshToken":"retry-refresh","sessionId":"retry-session"}')];
     const calls: string[] = [];
     let reads = 0;
     const invoke = async <T>(command: string): Promise<T> => {
@@ -314,7 +319,7 @@ describe('Stronghold credential vault', () => {
     expect(vault.credentialVaultState().unlocked).toBe(false);
     expect(calls.filter((command) => command === 'plugin:stronghold|destroy')).toHaveLength(1);
     await expect(vault.unlockCredentialVault('local-password', ['home'])).resolves.toMatchObject({
-      home: { password: 'retry-secret', inviteCode: '' },
+      home: { password: '', inviteCode: '', refreshToken: 'retry-refresh', sessionId: 'retry-session' },
     });
   });
 

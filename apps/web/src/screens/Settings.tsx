@@ -1,3 +1,4 @@
+import { accountSessionStorage } from '../account-storage.js';
 import { useEffect, useState } from 'react';
 import { checkConsistency, recomputeCaches, purgeTombstones, type ConsistencyIssue } from '@zichan/db';
 import { newId, type LedgerMode, type LotMethod, type Setting } from '@zichan/core';
@@ -97,8 +98,17 @@ const ISSUE_LABELS: Record<string, string> = {
   attachment_file_invalid: '附件正文缺失或损坏',
 };
 
+function BrowserAccountExit({ onExit }: { onExit: () => Promise<void> }) {
+  const [confirm, setConfirm] = useState(false);
+  return <section style={card} aria-label="账号与会话"><h2>账号与会话</h2>
+    <p>退出会锁定本机账本并撤销本站记账会话，不影响管理后台登录，不删除加密缓存和未同步记录。重新登录后可继续同步。</p>
+    <button onClick={() => setConfirm(true)}>退出记账账号</button>
+    {confirm && <ConfirmDialog title="退出记账账号" confirmLabel="确认退出" onCancel={() => setConfirm(false)} onConfirm={onExit}><p>退出前请确认重要记录已同步，或已导出加密备份。未同步数据会保留在本机；不要清除网站数据。</p></ConfirmDialog>}
+  </section>;
+}
+
 export function Settings() {
-  const { store, bump, storageBackend, dataLocation, firstUseMode, browserStoragePersistent, resetLocalData } = useStore();
+  const { store, bump, storageBackend, dataLocation, firstUseMode, browserStoragePersistent, resetLocalData, exitAccount } = useStore();
   const snap = useSnapshot('settings');
   const [issues, setIssues] = useState<ConsistencyIssue[] | null>(null);
   const [lastCheck, setLastCheck] = useState<{ at: string; count: number } | null>(null);
@@ -541,7 +551,7 @@ export function Settings() {
   const hiddenCategoryCount = categoryCatalog.length - frequentCategoryCount;
   const openCategoryCenter = () => {
     try {
-      sessionStorage.setItem('zichan.manage.target', JSON.stringify({ tab: 'transactionCategories', categoryMode: 'quick' }));
+      accountSessionStorage.setItem('zichan.manage.target', JSON.stringify({ tab: 'transactionCategories', categoryMode: 'quick' }));
     } catch {
       // Navigation still works when session storage is unavailable.
     }
@@ -556,6 +566,7 @@ export function Settings() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 980 }}>
+      {exitAccount && <BrowserAccountExit onExit={exitAccount} />}
       <div style={card}>
         <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 14 }}>结算与偏好</div>
         <div className="zc-settings-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
@@ -764,7 +775,7 @@ export function Settings() {
           <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--surface-2)', marginBottom: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 900, color: hasIndependentBackup ? 'var(--positive)' : 'var(--negative)' }}>浏览器纯本地账本</div>
             <div style={{ marginTop: 5, fontSize: 12, color: 'var(--fg-muted)', lineHeight: 1.65 }}>
-              数据仅属于 Origin <code>{globalThis.location?.origin ?? '当前网站'}</code>；清理网站数据会删除账本，切换浏览器或 Origin 等同新设备。持久存储：{browserStoragePersistent ? '已授权' : '未确认'}。
+              数据仅属于 Origin <code>{globalThis.location?.origin ?? '当前网站'}</code>；清理网站数据会删除账本，切换浏览器或 Origin 等同新设备。防自动清理保护：{browserStoragePersistent ? '已授予（不能防止手动清理）' : '未授予或未确认；普通本地存储仍可使用，请定期导出浏览器外备份'}。
               {!hasIndependentBackup && ' 请先使用下方“分享 / 下载”把一份加密 .zcbak 保存到浏览器外；完成前此安全提醒不会消失。'}
             </div>
           </div>

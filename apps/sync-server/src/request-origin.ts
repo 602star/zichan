@@ -1,0 +1,77 @@
+import { BlockList, isIP } from 'node:net';
+import type { IncomingMessage } from 'node:http';
+
+const normalize = (ip: string) => ip.replace(/^::ffff:/i, '');
+const loopback = (ip: string) => ip === '::1' || /^127\./.test(ip) && isIP(ip) === 4;
+
+/** Compile deployment trust once, never accept a request header as a trust rule. */
+export function createRequestOrigin(trustedProxies: string[]) {
+  const allowed = new BlockList();
+  function add(rule: string) {
+    const [rawAddress, prefix, extra] = rule.split('/');
+    const address = normalize(rawAddress ?? '');
+    const family = isIP(address);
+    if (!family || extra !== undefined) throw new Error(`Invalid trusted proxy: ${rule}`);
+    const type = family === 4 ? 'ipv4' : 'ipv6';
+    if (prefix === undefined) allowed.addAddress(address, type);
+    else {
+      const bits = Number(prefix);
+      if (!/^\d+$/.test(prefix) || !Number.isInteger(bits) || bits < 0 || bits > (family === 4 ? 32 : 128)) {
+        throw new Error(`Invalid trusted proxy prefix: ${rule}`);
+      }
+      allowed.addSubnet(address, bits, type);
+    }
+  }
+  for (const rule of trustedProxies) {
+    if (rule === 'loopback' || rule === 'private') {
+      add('127.0.0.0/8');
+      add('::1');
+    }
+    if (rule === 'private') {
+      // Legacy explicit opt-in; deployments should prefer their proxy IP/CIDR.
+      for (const subnet of ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', 'fc00::/7', 'fe80::/10']) add(subnet);
+    } else if (rule !== 'loopback') add(rule);
+  }
+  const trusted = (address: string) => {
+    const family = isIP(address);
+    return family !== 0 && allowed.check(address, family === 4 ? 'ipv4' : 'ipv6');
+  };
+  return {
+    browserOrigin(req: IncomingMessage): string | undefined {
+      const remote = normalize(req.socket.remoteAddress ?? 'unknown');
+      const host = req.headers.host;
+      if (!host || /[\s/\\@?#]/.test(host)) return undefined;
+      const protocol = trusted(remote) ? req.headers['x-forwarded-proto'] : 'http';
+      if (protocol !== 'https' && protocol !== 'http') return undefined;
+      try {
+        const url = new URL(`${protocol}://${host}`);
+        // Never offer non-Secure session cookies over LAN/public HTTP, even if
+        // the native Bearer API has an explicit insecure development override.
+        const hostname = url.hostname.replace(/^\[|\]$/g, '');
+        if (protocol === 'http' && (!loopback(remote) || trusted(remote)
+          || !(hostname === 'localhost' || loopback(hostname)))) return undefined;
+        return url.origin;
+      } catch {
+        return undefined;
+      }
+    },
+    clientIp(req: IncomingMessage): string {
+      const remote = normalize(req.socket.remoteAddress ?? 'unknown');
+      const header = req.headers['x-forwarded-for'];
+      if (!trusted(remote) || typeof header !== 'string') return remote;
+      const hops = header.split(',').map((value) => normalize(value.trim()));
+      if (hops.some((hop) => !isIP(hop))) return remote;
+      let current = remote;
+      for (let index = hops.length - 1; index >= 0 && trusted(current); index -= 1) current = hops[index]!;
+      return current;
+    },
+    secureTransport(req: IncomingMessage, allowInsecureHttp: boolean): boolean {
+      if (allowInsecureHttp) return true;
+      const remote = normalize(req.socket.remoteAddress ?? 'unknown');
+      // A loopback proxy is still forwarding a remote request. XFF must never
+      // grant the direct-local HTTP exception. Require one overwritten proto.
+      if (trusted(remote)) return req.headers['x-forwarded-proto'] === 'https';
+      return loopback(remote);
+    },
+  };
+}

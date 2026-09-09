@@ -1,3 +1,4 @@
+import { accountSessionStorage } from '../account-storage.js';
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { copyTextToClipboard } from './diagnostics.js';
 
@@ -14,7 +15,7 @@ export function formatAppDiagnostic(error: Error, componentStack = ''): string {
   const userAgent = typeof navigator === 'undefined' ? 'unknown' : navigator.userAgent;
   let screen = 'unknown';
   try {
-    screen = sessionStorage.getItem('zichan.activeScreen') ?? 'unknown';
+    screen = accountSessionStorage.getItem('zichan.activeScreen') ?? 'unknown';
   } catch {
     // Session storage can be unavailable in hardened browser contexts.
   }
@@ -42,7 +43,7 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorSt
 
   private returnToDashboard = () => {
     try {
-      sessionStorage.setItem('zichan.activeScreen', 'dashboard');
+      accountSessionStorage.setItem('zichan.activeScreen', 'dashboard');
     } catch {
       // Session storage can be unavailable in hardened browser contexts.
     }
@@ -53,8 +54,8 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorSt
 
   private retryCurrentPage = () => {
     try {
-      const screen = sessionStorage.getItem('zichan.activeScreen');
-      if (screen) sessionStorage.setItem('zichan.retryScreen', screen);
+      const screen = accountSessionStorage.getItem('zichan.activeScreen');
+      if (screen) accountSessionStorage.setItem('zichan.retryScreen', screen);
     } catch {
       // Session storage can be unavailable in hardened browser contexts.
     }

@@ -1,3 +1,4 @@
+import { accountSessionStorage } from './account-storage.js';
 import { isTauriRuntime, tauriInvoke } from './tauri.js';
 import {
   loadSessionCredentials,
@@ -28,10 +29,16 @@ export interface CredentialVaultState {
 }
 
 let runtimeCredentials: Record<string, ServerCredential> = isTauriRuntime() ? {} : loadSessionCredentials();
+let credentialEpoch = 0;
+const credentialVersions = new Map<string, number>();
+
+export function credentialRevision(profileId: string): string {
+  return `${credentialEpoch}:${credentialVersions.get(profileId) ?? 0}`;
+}
 let snapshotPath = '';
 let vaultState: CredentialVaultState = isTauriRuntime()
   ? { kind: 'native-stronghold', unlocked: false, initialized: false, platform: 'native', mobile: false, message: '安全密码库尚未解锁' }
-  : { kind: 'browser-session', unlocked: true, initialized: true, platform: 'web', mobile: false, message: '密码仅保存在当前浏览器标签页' };
+  : { kind: 'browser-session', unlocked: true, initialized: true, platform: 'web', mobile: false, message: '账号密码不写入浏览器存储；同站登录使用安全会话 Cookie' };
 
 function emit(name: string): void {
   globalThis.dispatchEvent?.(new CustomEvent(name));
@@ -51,14 +58,18 @@ function decodeCredential(bytes: number[] | null): ServerCredential | null {
   if (!bytes?.length) return null;
   const parsed = JSON.parse(new TextDecoder().decode(new Uint8Array(bytes))) as Partial<ServerCredential>;
   return {
-    password: typeof parsed.password === 'string' ? parsed.password : '',
-    inviteCode: typeof parsed.inviteCode === 'string' ? parsed.inviteCode : '',
+    password: '',
+    inviteCode: '',
+    refreshToken: typeof parsed.refreshToken === 'string' ? parsed.refreshToken : undefined,
+    sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : undefined,
+    sessionTransport: 'token',
   };
 }
 
 async function invalidateNativeVault(message: string): Promise<void> {
   if (snapshotPath) await requiredInvoke('plugin:stronghold|destroy', { snapshotPath }).catch(() => undefined);
   runtimeCredentials = {};
+  credentialEpoch += 1;
   vaultState = { ...vaultState, unlocked: false, message };
   emit(VAULT_STATE_CHANGED_EVENT);
   emit(CREDENTIALS_CHANGED_EVENT);
@@ -78,6 +89,9 @@ export function runtimeCredential(profileId: string): ServerCredential | undefin
 }
 
 export function setRuntimeCredential(profileId: string, value: ServerCredential, notify = true): void {
+  if (JSON.stringify(runtimeCredentials[profileId]) !== JSON.stringify(value)) {
+    credentialVersions.set(profileId, (credentialVersions.get(profileId) ?? 0) + 1);
+  }
   runtimeCredentials = { ...runtimeCredentials, [profileId]: { ...value } };
   if (!isTauriRuntime()) saveSessionCredentials(runtimeCredentials);
   if (notify) emit(CREDENTIALS_CHANGED_EVENT);
@@ -88,6 +102,7 @@ export function removeRuntimeCredential(profileId: string): void {
   const next = { ...runtimeCredentials };
   delete next[profileId];
   runtimeCredentials = next;
+  credentialVersions.set(profileId, (credentialVersions.get(profileId) ?? 0) + 1);
   if (!isTauriRuntime()) saveSessionCredentials(runtimeCredentials);
   emit(CREDENTIALS_CHANGED_EVENT);
 }
@@ -103,7 +118,7 @@ export async function refreshCredentialVaultState(): Promise<CredentialVaultStat
     platform: status.platform,
     mobile: status.mobile,
     message: vaultState.unlocked
-      ? '同步密码由 Stronghold 加密保存'
+      ? '登录会话由 Stronghold 加密保存，不保存账号密码'
       : status.strongholdExists ? '请输入本机密码解锁 Stronghold' : '请设置本机密码创建 Stronghold',
   };
   emit(VAULT_STATE_CHANGED_EVENT);
@@ -139,20 +154,21 @@ export async function unlockCredentialVault(password: string, profileIds: string
         loaded[profileId] = {
           ...value,
           accessToken: runtime?.accessToken,
-          refreshToken: runtime?.refreshToken,
+          refreshToken: runtime?.refreshToken ?? value.refreshToken,
           accessExpiresAt: runtime?.accessExpiresAt,
-          sessionId: runtime?.sessionId,
+          sessionId: runtime?.sessionId ?? value.sessionId,
         };
       }
     }
     runtimeCredentials = loaded;
+    credentialEpoch += 1;
     vaultState = {
       kind: 'native-stronghold',
       unlocked: true,
       initialized: true,
       platform: status.platform,
       mobile: status.mobile,
-      message: '同步密码由 Stronghold 加密保存',
+      message: '登录会话由 Stronghold 加密保存，不保存账号密码',
     };
     emit(VAULT_STATE_CHANGED_EVENT);
     emit(CREDENTIALS_CHANGED_EVENT);
@@ -161,6 +177,7 @@ export async function unlockCredentialVault(password: string, profileIds: string
     if (strongholdLoaded) {
       await requiredInvoke('plugin:stronghold|destroy', { snapshotPath }).catch(() => undefined);
       runtimeCredentials = {};
+      credentialEpoch += 1;
       vaultState = {
         kind: 'native-stronghold',
         unlocked: false,
@@ -177,25 +194,31 @@ export async function unlockCredentialVault(password: string, profileIds: string
 }
 
 export async function persistCredential(profileId: string, credential: ServerCredential): Promise<void> {
+  const session = { ...credential, password: '', inviteCode: '' };
   if (!isTauriRuntime()) {
-    setRuntimeCredential(profileId, credential);
+    setRuntimeCredential(profileId, session);
     return;
   }
   if (!vaultState.unlocked || !snapshotPath) throw new Error('请先解锁 Stronghold 安全密码库');
-  const contents = JSON.stringify({ password: credential.password, inviteCode: credential.inviteCode });
+  const revision = credentialRevision(profileId);
+  const path = snapshotPath;
+  const stillCurrent = () => vaultState.unlocked && snapshotPath === path && revision === credentialRevision(profileId);
+  const contents = JSON.stringify({ refreshToken: credential.refreshToken, sessionId: credential.sessionId });
   try {
     await requiredInvoke('plugin:stronghold|save_store_record', {
-      snapshotPath,
+      snapshotPath: path,
       client: CLIENT_ID,
       key: recordKey(profileId),
       value: [...new TextEncoder().encode(contents)],
     });
-    await requiredInvoke('plugin:stronghold|save', { snapshotPath });
+    if (!stillCurrent()) throw new Error('登录会话已改变，已忽略旧凭据保存结果');
+    await requiredInvoke('plugin:stronghold|save', { snapshotPath: path });
+    if (!stillCurrent()) throw new Error('登录会话已改变，已忽略旧凭据保存结果');
   } catch (error) {
-    await invalidateNativeVault('Stronghold 保存失败，已锁定，请重新解锁后重试');
+    if (stillCurrent()) await invalidateNativeVault('Stronghold 保存失败，已锁定，请重新解锁后重试');
     throw error;
   }
-  setRuntimeCredential(profileId, credential);
+  setRuntimeCredential(profileId, session);
 }
 
 export async function readCredentialVaultRecord(key: string): Promise<number[] | null> {
@@ -249,6 +272,7 @@ export async function lockCredentialVault(): Promise<void> {
   if (isTauriRuntime() && snapshotPath && vaultState.unlocked) {
     await requiredInvoke('plugin:stronghold|destroy', { snapshotPath });
     runtimeCredentials = {};
+    credentialEpoch += 1;
     vaultState = { ...vaultState, unlocked: false, message: 'Stronghold 已锁定' };
     emit(CREDENTIALS_CHANGED_EVENT);
     emit(VAULT_STATE_CHANGED_EVENT);
@@ -262,6 +286,7 @@ export async function resetCredentialVault(): Promise<void> {
   }
   await requiredInvoke('native_reset_security_vault');
   runtimeCredentials = {};
+  credentialEpoch += 1;
   snapshotPath = '';
   vaultState = {
     ...vaultState,
@@ -276,7 +301,8 @@ export async function resetCredentialVault(): Promise<void> {
 /** Clear cached browser credentials after a full local-data reset. */
 export function clearCredentialVaultRuntimeState(): void {
   runtimeCredentials = {};
-  globalThis.sessionStorage?.removeItem(SESSION_CREDENTIALS_KEY);
+  credentialEpoch += 1;
+  accountSessionStorage?.removeItem(SESSION_CREDENTIALS_KEY);
   if (!isTauriRuntime()) {
     snapshotPath = '';
     vaultState = {
@@ -285,7 +311,7 @@ export function clearCredentialVaultRuntimeState(): void {
       initialized: true,
       platform: 'web',
       mobile: false,
-      message: '密码仅保存在当前浏览器标签页',
+      message: '账号密码不写入浏览器存储；同站登录使用安全会话 Cookie',
     };
   }
   emit(CREDENTIALS_CHANGED_EVENT);

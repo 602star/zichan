@@ -145,14 +145,13 @@ export async function rebuildConversionDerivedInTransaction(store: SqlLedgerStor
   const chains = (await store.conversionChains.list())
     .filter((chain) => chain.recordState !== 'voided')
     .sort(conversionOrder);
-  const aggregates: ChainWithSteps[] = [];
-  for (const chain of chains) {
-    const aggregate = await store.getChainWithSteps(chain.id);
-    if (aggregate) aggregates.push(aggregate);
-  }
+  const stepsByChain = await store.listStepsByChains(chains.map((chain) => chain.id));
+  const aggregates: ChainWithSteps[] = chains.map((chain) => ({ chain, steps: stepsByChain.get(chain.id) ?? [] }));
 
   const oldLots = await store.lots.list({ includeDeleted: true });
   const oldConsumptions = await store.lotConsumptions.list({ includeDeleted: true });
+  const oldLotsById = new Map(oldLots.map((row) => [row.id, row]));
+  const oldConsumptionsById = new Map(oldConsumptions.map((row) => [row.id, row]));
   const lotBySource = new Map<string, Lot>();
   for (const lot of oldLots.filter((row) => row.sourceChainId).sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
     if (!lotBySource.has(lot.sourceChainId!)) lotBySource.set(lot.sourceChainId!, lot);
@@ -251,21 +250,21 @@ export async function rebuildConversionDerivedInTransaction(store: SqlLedgerStor
     if (!conversionBusinessEqual(aggregate.chain, next, CHAIN_CACHE_KEYS)) await store.conversionChains.put(next);
   }
   for (const desired of desiredLots.values()) {
-    const current = oldLots.find((row) => row.id === desired.id);
+    const current = oldLotsById.get(desired.id);
     if (!current || !conversionBusinessEqual(current, desired, LOT_KEYS)) await store.lots.put(desired);
   }
   for (const old of oldLots.filter((row) => !row.isDeleted && !desiredLots.has(row.id))) await store.lots.remove(old.id, old.version);
   for (const desired of desiredConsumptions.values()) {
-    const current = oldConsumptions.find((row) => row.id === desired.id);
+    const current = oldConsumptionsById.get(desired.id);
     if (!current || !conversionBusinessEqual(current, desired, CONSUMPTION_KEYS)) await store.lotConsumptions.put(desired);
   }
   for (const old of oldConsumptions.filter((row) => !row.isDeleted && !desiredConsumptions.has(row.id))) await store.lotConsumptions.remove(old.id, old.version);
 
-  const activeIds = new Set(chains.map((chain) => chain.id));
+  const chainsById = new Map(chains.map((chain) => [chain.id, chain]));
   for (const execution of await store.dcaExecutions.list({ includeDeleted: true })) {
     if (!execution.chainId) continue;
-    const chain = chains.find((row) => row.id === execution.chainId);
-    if (!chain || !activeIds.has(execution.chainId)) {
+    const chain = chainsById.get(execution.chainId);
+    if (!chain) {
       if (!execution.isDeleted) await store.dcaExecutions.remove(execution.id, execution.version);
       continue;
     }

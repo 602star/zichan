@@ -51,8 +51,8 @@ const FORBIDDEN_SUFFIXES = [
 ];
 const LEGACY_ADMIN_TOKEN_PATTERN = /\b(?:ADMIN_TOKEN|PERSIST_ADMIN_TOKEN|X-Admin-Token)\b|admin-token\.txt/i;
 const LEGACY_SYNC_CONFIGURATION_PATTERN = /zichan\.sync\.(?:serverProfiles|sessionCredentials)\.v3|\bSyncServerProfile\b|\bopaquePublicKey\b/;
-const LEGACY_ADMIN_ROUTE_PATTERN = /(?:^|[^A-Za-z0-9/])\/admin(?:\/|['"`])/m;
-const INVITE_REGISTRATION_DEFAULT_PATTERN = /REGISTRATION_MODE\s*(?:\|\|=|\?\?=|[:=])\s*['"]invite['"]|registrationMode\s*\?\?\s*['"]invite['"]/;
+const LEGACY_ADMIN_ROUTE_PATTERN = /(?:^|[^A-Za-z0-9/])\/admin\/(?:status|users|logs|devices|invites|registration|quotas|database)(?:[/?]|['"`])/m;
+const OPEN_REGISTRATION_DEFAULT_PATTERN = /REGISTRATION_MODE\s*(?:\|\|=|\?\?=|[:=])\s*['"]open['"]|registrationMode\s*\?\?\s*['"]open['"]/;
 
 async function exists(path) {
   try {
@@ -124,8 +124,8 @@ async function rejectLegacySyncSource(path, label) {
   if (LEGACY_ADMIN_ROUTE_PATTERN.test(source)) {
     throw new Error(`${label} still contains the removed /admin management route: ${path}`);
   }
-  if (INVITE_REGISTRATION_DEFAULT_PATTERN.test(source)) {
-    throw new Error(`${label} still defaults registration to invite instead of open: ${path}`);
+  if (OPEN_REGISTRATION_DEFAULT_PATTERN.test(source)) {
+    throw new Error(`${label} still defaults registration to open instead of invite: ${path}`);
   }
 }
 

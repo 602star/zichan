@@ -1,25 +1,31 @@
 import {
-  loginAccount,
   refreshAccountSession,
   type SyncAuthSession,
 } from '@zichan/db';
-import { runtimeCredential, setRuntimeCredential } from './credential-vault.js';
-import { getDeviceId } from './db/cloud.js';
-import { buildSyncBaseUrl, type ServerCredential, type SyncConnection } from './sync-config.js';
+import { credentialRevision, credentialVaultState, persistCredential, runtimeCredential, setRuntimeCredential } from './credential-vault.js';
+import { buildSyncBaseUrl, isUnauthorizedSyncError, patchSavedSyncConnection, type ServerCredential, type SyncConnection } from './sync-config.js';
 import { fingerprintServerPublicKey } from './connection-link.js';
+import { isTauriRuntime } from './tauri.js';
 
 const EXPIRY_MARGIN_MS = 30_000;
 const authenticationInFlight = new Map<string, Promise<string>>();
+const refreshInFlight = new Map<string, Promise<string>>();
 
-function deviceName(): string {
-  const navigator = globalThis.navigator;
-  const platform = navigator?.platform?.trim();
-  return (platform ? `Zichan · ${platform}` : 'Zichan client').slice(0, 120);
+export function preferredSessionTransport(baseUrl: string): 'cookie' | 'token' {
+  return !isTauriRuntime() && globalThis.location?.origin === new URL(baseUrl).origin ? 'cookie' : 'token';
+}
+
+export function hasAccountSession(credential: ServerCredential | undefined): boolean {
+  return Boolean(credential && (credential.accessToken || credential.refreshToken
+    || credential.sessionTransport === 'cookie' && credential.sessionId));
 }
 
 function sessionCredential(current: ServerCredential, session: SyncAuthSession): ServerCredential {
   return {
     ...current,
+    password: '',
+    inviteCode: '',
+    sessionTransport: session.sessionTransport ?? 'token',
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
     accessExpiresAt: session.accessExpiresAt,
@@ -49,48 +55,69 @@ export async function assertSyncServerIdentity(profile: SyncConnection): Promise
 
 async function authenticateSyncProfileNow(
   profile: SyncConnection,
-  forceLogin = false,
+  forceRefresh = false,
 ): Promise<string> {
   let credential = runtimeCredential(profile.id);
-  if (!profile.username.trim() || !credential?.password) throw new Error('缺少用户名或已解锁的同步密码');
-  await assertSyncServerIdentity(profile);
-  if (!forceLogin && accessTokenIsFresh(credential)) return credential.accessToken!;
-
-  if (!forceLogin && credential.refreshToken) {
-    try {
-      const refreshed = await refreshAccountSession(buildSyncBaseUrl(profile), credential.refreshToken);
-      credential = sessionCredential(credential, refreshed);
-      setRuntimeCredential(profile.id, credential, false);
-      return refreshed.accessToken;
-    } catch {
-      // A revoked, expired, or already-rotated refresh token falls back to a fresh challenge login.
-    }
+  if (!profile.username.trim() || !credential || !hasAccountSession(credential)) throw new Error('认证失败：请先登录账号');
+  const revision = credentialRevision(profile.id);
+  const assertCurrent = () => {
+    if (revision !== credentialRevision(profile.id)) throw new Error('登录会话已改变，已忽略旧请求结果');
+  };
+  if (credential.sessionTransport === 'cookie' && preferredSessionTransport(buildSyncBaseUrl(profile)) !== 'cookie') {
+    throw new Error('同站登录会话不能用于其他网站地址，请重新登录');
   }
+  await assertSyncServerIdentity(profile);
+  assertCurrent();
+  const refreshKey = `${profile.id}\n${revision}`;
+  const refreshing = refreshInFlight.get(refreshKey);
+  if (refreshing) return refreshing;
+  if (!forceRefresh && accessTokenIsFresh(credential)) return credential.accessToken!;
 
-  const session = await loginAccount(
-    buildSyncBaseUrl(profile),
-    profile.username.trim(),
-    credential.password,
-    {
-      deviceId: getDeviceId(),
-      deviceName: deviceName(),
-      expectedServerId: profile.serverId,
-      expectedServerPublicKey: profile.serverPublicKey,
-    },
-  );
-  credential = sessionCredential(credential, session);
-  setRuntimeCredential(profile.id, credential, false);
-  return session.accessToken;
+  if (!credential.refreshToken && credential.sessionTransport !== 'cookie') throw new Error('认证失败：登录已过期，请重新登录');
+  const pending = (async () => {
+    try {
+      const transport = credential.sessionTransport ?? 'token';
+      const refresh = () => refreshAccountSession(buildSyncBaseUrl(profile), credential!.refreshToken ?? '', transport);
+      // Cookies are shared by tabs; serialize refresh rotation across the origin.
+      const refreshed = transport === 'cookie' && globalThis.navigator?.locks
+        ? await navigator.locks.request(`zichan:session-refresh:${buildSyncBaseUrl(profile)}`, refresh)
+        : await refresh();
+      assertCurrent();
+      if (refreshed.session.username !== profile.username.trim().normalize('NFKC').toLowerCase()
+        || profile.accountId && refreshed.accountId !== profile.accountId) {
+        throw new Error('认证失败：当前网站已切换账号，请重新登录');
+      }
+      credential = sessionCredential(credential, refreshed);
+      if (isTauriRuntime() && credentialVaultState().unlocked) await persistCredential(profile.id, credential);
+      else setRuntimeCredential(profile.id, credential);
+      return refreshed.accessToken;
+    } catch (error) {
+      assertCurrent();
+      if (isUnauthorizedSyncError(error)) {
+        setRuntimeCredential(profile.id, { password: '', inviteCode: '' });
+        patchSavedSyncConnection(profile.id, { status: 'login_required', lastError: '登录已失效，请重新登录；本机数据仍保留' });
+      }
+      // Offline/5xx is retryable. Revoked/expired credentials require explicit
+      // user login. Neither case may fall back to a remembered password.
+      throw error;
+    }
+  })();
+  refreshInFlight.set(refreshKey, pending);
+  try {
+    return await pending;
+  } finally {
+    if (refreshInFlight.get(refreshKey) === pending) refreshInFlight.delete(refreshKey);
+  }
 }
 
 export async function authenticateSyncProfile(
   profile: SyncConnection,
-  forceLogin = false,
+  forceRefresh = false,
 ): Promise<string> {
-  const authenticationKey = `${profile.id}\n${buildSyncBaseUrl(profile)}\n${forceLogin ? 'force' : 'reuse'}`;
+  const authenticationKey = `${profile.id}\n${buildSyncBaseUrl(profile)}\n${profile.serverId}\n${profile.username}\n${credentialRevision(profile.id)}`;
   const existing = authenticationInFlight.get(authenticationKey);
   if (existing) return existing;
-  const pending = authenticateSyncProfileNow(profile, forceLogin);
+  const pending = authenticateSyncProfileNow(profile, forceRefresh);
   authenticationInFlight.set(authenticationKey, pending);
   try {
     return await pending;

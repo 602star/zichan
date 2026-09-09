@@ -151,6 +151,10 @@ export function assertConversionShape(chain: ConversionChain, steps: ConversionS
       }
     }
     if (!D(conversionStepAmounts(step).targetCredit).gt(0)) throw new Error(`步骤 ${index + 1} 的目标净入金额必须大于 0`);
+    if (index > 0 && !D(conversionStepAmounts(ordered[index - 1]!).targetCredit)
+      .eq(conversionStepAmounts(step).sourceDebit)) {
+      throw new Error(`步骤 ${index} 的目标净入金额必须等于步骤 ${index + 1} 的来源实扣金额；剩余或补入资产请拆分记录`);
+    }
   }
   const trace = traceChain({ chain, steps: ordered });
   if ((chain.type === 'buy' || chain.type === 'dca') && !D(trace.totalBaseCost).gt(0)) {

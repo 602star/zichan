@@ -65,6 +65,18 @@ test('reports workspace, tag, notes, and schema documentation drift together', a
   }
 });
 
+test('accepts the separate admin UI and invite-only registration default', async () => {
+  const root = await fixture();
+  try {
+    const path = join(root, 'apps/desktop/scripts/current.mjs');
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, "process.env.REGISTRATION_MODE ||= 'invite'; const route = '/admin/';");
+    await checkReleaseConsistency(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('rejects non-portable bundling, automatic WebView installation, early window creation, and an incomplete runtime lock', async () => {
   const root = await fixture();
   try {
@@ -124,11 +136,11 @@ test('rejects removed manual management credentials in desktop release documenta
   }
 });
 
-test('rejects removed sync profiles, old management routes, and invite defaults in production sources', async () => {
+test('rejects removed sync profiles, old management routes, and open defaults in production sources', async () => {
   const cases = [
     ['apps/web/src/legacy.ts', `const key = '${['zichan.sync.server', 'Profiles.v3'].join('')}';`, /removed sync configuration/],
     ['apps/sync-server/src/legacy.ts', "const route = '/admin/status';", /removed \/admin route/],
-    ['apps/desktop/scripts/legacy.mjs', "process.env.REGISTRATION_MODE ||= 'invite';", /defaults registration to invite/],
+    ['apps/desktop/scripts/legacy.mjs', "process.env.REGISTRATION_MODE ||= 'open';", /defaults registration to open/],
   ];
   for (const [relativePath, source, expected] of cases) {
     const root = await fixture();

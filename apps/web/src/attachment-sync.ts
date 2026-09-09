@@ -29,7 +29,7 @@ import {
 } from './sync-config.js';
 import { runtimeCredential } from './credential-vault.js';
 import { requireLedgerCryptoSession } from './ledger-key-vault.js';
-import { authenticateSyncProfile } from './sync-auth.js';
+import { authenticateSyncProfile, hasAccountSession } from './sync-auth.js';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const STATUS_BATCH_SIZE = 500;
@@ -434,7 +434,7 @@ async function downloadReference(store: SqlLedgerStore, runtime: TargetRuntime, 
 
 async function createRuntime(target: AttachmentSyncTarget, refs: AttachmentBlobReference[]): Promise<TargetRuntime> {
   const credential = runtimeCredential(target.profile.id);
-  if (!credential?.password) throw new Error('服务器账号密码尚未解锁');
+  if (!hasAccountSession(credential)) throw new Error('认证失败：请先登录服务器账号');
   if (target.identity.ledgerId !== target.profile.ledgerId && target.profile.ledgerId) throw new Error('服务器账本身份与本机配置不一致');
   const context = await deriveAttachmentCryptoContext(requireLedgerCryptoSession(target.identity.ledgerId), {
     serverId: target.identity.serverId,
@@ -611,7 +611,7 @@ export async function ensureAttachmentBlobAvailable(
     if (status === 'trash' && await restoreAttachmentBlobFromTrash(store, descriptor)) return;
     const ref: AttachmentBlobReference = { ...descriptor, kind: 'content', attachmentIds: [] };
     const candidates = loadSyncConnections()
-      .filter((profile) => profile.enabled && profile.serverId && profile.ledgerId === ledgerId && profile.username.trim() && runtimeCredential(profile.id)?.password)
+      .filter((profile) => profile.enabled && profile.serverId && profile.ledgerId === ledgerId && profile.username.trim() && hasAccountSession(runtimeCredential(profile.id)))
       .sort((left, right) => (left.lastLatencyMs ?? Number.MAX_SAFE_INTEGER) - (right.lastLatencyMs ?? Number.MAX_SAFE_INTEGER));
     const errors: string[] = [];
     for (const profile of candidates) {

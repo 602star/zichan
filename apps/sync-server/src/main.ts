@@ -22,7 +22,7 @@ const listEnv = (name: string): string[] | undefined => {
   return values?.length ? values : undefined;
 };
 const modeEnv = process.env.REGISTRATION_MODE;
-const registrationMode: RegistrationMode = modeEnv === 'invite' || modeEnv === 'closed' || modeEnv === 'open' ? modeEnv : 'open';
+const registrationMode: RegistrationMode = modeEnv === 'invite' || modeEnv === 'closed' || modeEnv === 'open' ? modeEnv : 'invite';
 const webDir = process.env.WEB_DIST;
 const enableWeb = boolEnv('ENABLE_WEB', Boolean(webDir));
 const enableSync = boolEnv('ENABLE_SYNC', true);
@@ -53,6 +53,7 @@ server.listen(port, host, () => {
   console.log(`zichan server -> http://${bind}  (data directory: ${dataDir})`);
   console.log(`serverId=${serverId} sync=${enableSync ? 'on' : 'off'} web=${enableWeb && webDir ? 'on' : 'off'} registration=${registrationMode} basePath=${basePath || '/'}`);
   console.log(`account-admin=owner-session${webDir ? ` webDir=${webDir}` : ''}`);
+  console.log(`First use: open ${basePath || ''}/admin/ and set your administrator username and password.`);
   console.log(`transport=${boolEnv('ALLOW_INSECURE_HTTP', false) ? 'explicit HTTP allowed' : 'HTTPS required outside loopback'} trustedProxies=${listEnv('TRUSTED_PROXIES')?.join(',') || 'none'}`);
   console.log('E2E sync stores encrypted commits and attachment chunks only; the server cannot read ledger contents.');
 });

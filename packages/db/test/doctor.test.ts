@@ -174,7 +174,7 @@ describe('doctor', () => {
     const { chain: sold } = await recordSell(store, {
       chain: c,
       steps: [
-        step(c.id, 1, 'BTC', '0.005', 'USDT', '489', { assetId: 'USDT', amount: '0.8', base: '0.64' }),
+        step(c.id, 1, 'BTC', '0.005', 'USDT', '488', { assetId: 'USDT', amount: '0.8', base: '0.64' }),
         step(c.id, 2, 'USDT', '488', 'GBP', '387.90', { assetId: 'GBP', amount: '1.30' }),
       ],
       method: 'fifo',
@@ -197,7 +197,7 @@ describe('doctor', () => {
     const { chain: sold } = await recordSell(store, {
       chain: c,
       steps: [
-        step(c.id, 1, 'BTC', '0.005', 'USDT', '489', { assetId: 'USDT', amount: '0.8', base: '0.64' }),
+        step(c.id, 1, 'BTC', '0.005', 'USDT', '488', { assetId: 'USDT', amount: '0.8', base: '0.64' }),
         step(c.id, 2, 'USDT', '488', 'GBP', '387.90', { assetId: 'GBP', amount: '1.30' }),
       ],
       method: 'fifo',

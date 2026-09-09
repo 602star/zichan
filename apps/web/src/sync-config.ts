@@ -1,9 +1,10 @@
+import { accountLocalStorage, accountSessionStorage } from './account-storage.js';
 import { prefixedId } from '@zichan/core';
 import { assertSecureSyncUrl, isLocalNetworkSyncUrl } from '@zichan/db';
 
 export type SyncProtocol = 'http' | 'https';
 export type SyncConnectionStatus = 'unchecked' | 'online' | 'offline' | 'identity_changed' | 'login_required';
-export type SyncConnectionRole = 'admin' | 'member';
+export type SyncConnectionRole = 'owner' | 'admin' | 'member';
 export type SyncAddressPreset = 'current' | 'local' | 'lan' | 'public';
 
 /** Server identity and public endpoints that may be shared with another device. */
@@ -17,6 +18,7 @@ export interface SharedSyncServer {
 
 /** Device-local account, endpoints, replica identity and operational state. */
 export interface DeviceSyncConnection {
+  accountId?: string;
   serverRef: string;
   activeUrl: string;
   deviceUrls: string[];
@@ -56,6 +58,7 @@ export interface SyncUrlParts {
 }
 
 export interface ServerCredential {
+  sessionTransport?: 'cookie' | 'token';
   password: string;
   inviteCode: string;
   accessToken?: string;
@@ -241,7 +244,7 @@ function parseStatus(value: unknown): SyncConnectionStatus {
 }
 
 function parseRole(value: unknown): SyncConnectionRole | undefined {
-  return value === 'admin' || value === 'member' ? value : undefined;
+  return value === 'owner' || value === 'admin' || value === 'member' ? value : undefined;
 }
 
 function resolveDocument(document: SyncConnectionDocument): SyncConnection[] {
@@ -265,6 +268,7 @@ function resolveDocument(document: SyncConnectionDocument): SyncConnection[] {
       sharedUrls,
       deviceUrls,
       username: typeof row.username === 'string' ? row.username : '',
+      accountId: typeof row.accountId === 'string' ? row.accountId : undefined,
       enabled: row.enabled === true,
       role: parseRole(row.role),
       serverId: typeof server.serverId === 'string' && server.serverId ? server.serverId : undefined,
@@ -288,7 +292,7 @@ function resolveDocument(document: SyncConnectionDocument): SyncConnection[] {
 
 export function loadSyncConnections(): SyncConnection[] {
   try {
-    const raw = globalThis.localStorage?.getItem(SYNC_CONNECTIONS_KEY);
+    const raw = accountLocalStorage?.getItem(SYNC_CONNECTIONS_KEY);
     if (!raw) return [newSyncConnection()];
     const parsed = JSON.parse(raw) as Partial<SyncConnectionDocument>;
     if (parsed.version !== 1 || !Array.isArray(parsed.servers) || !Array.isArray(parsed.connections)) {
@@ -303,7 +307,7 @@ export function loadSyncConnections(): SyncConnection[] {
 
 export function hasSavedSyncConnection(): boolean {
   try {
-    const raw = globalThis.localStorage?.getItem(SYNC_CONNECTIONS_KEY);
+    const raw = accountLocalStorage?.getItem(SYNC_CONNECTIONS_KEY);
     if (!raw) return false;
     const parsed = JSON.parse(raw) as Partial<SyncConnectionDocument>;
     if (parsed.version !== 1 || !Array.isArray(parsed.servers) || !Array.isArray(parsed.connections)) return false;
@@ -348,6 +352,7 @@ function toDocument(connections: SyncConnection[]): SyncConnectionDocument {
       activeUrl: baseUrl,
       deviceUrls,
       username: connection.username.trim(),
+      accountId: connection.accountId,
       enabled: connection.enabled,
       role: connection.role,
       ledgerId: connection.ledgerId,
@@ -367,8 +372,8 @@ function toDocument(connections: SyncConnection[]): SyncConnectionDocument {
 
 export function saveSyncConnections(connections: SyncConnection[]): void {
   const serialized = JSON.stringify(toDocument(connections));
-  if (globalThis.localStorage?.getItem(SYNC_CONNECTIONS_KEY) === serialized) return;
-  globalThis.localStorage?.setItem(SYNC_CONNECTIONS_KEY, serialized);
+  if (accountLocalStorage?.getItem(SYNC_CONNECTIONS_KEY) === serialized) return;
+  accountLocalStorage?.setItem(SYNC_CONNECTIONS_KEY, serialized);
   globalThis.dispatchEvent?.(new CustomEvent(SYNC_CONFIG_CHANGED_EVENT, { detail: { kind: 'connections' } }));
 }
 
@@ -387,12 +392,13 @@ export function isUnauthorizedSyncError(error: unknown): boolean {
 
 export function loadSessionCredentials(): Record<string, ServerCredential> {
   try {
-    const parsed = JSON.parse(globalThis.sessionStorage?.getItem(SESSION_CREDENTIALS_KEY) ?? '{}') as Record<string, Partial<ServerCredential>>;
+    const parsed = JSON.parse(accountSessionStorage?.getItem(SESSION_CREDENTIALS_KEY) ?? '{}') as Record<string, Partial<ServerCredential>>;
     return Object.fromEntries(Object.entries(parsed).map(([id, value]) => [id, {
-      password: typeof value.password === 'string' ? value.password : '',
-      inviteCode: typeof value.inviteCode === 'string' ? value.inviteCode : '',
-      accessToken: typeof value.accessToken === 'string' ? value.accessToken : undefined,
-      refreshToken: typeof value.refreshToken === 'string' ? value.refreshToken : undefined,
+      password: '',
+      inviteCode: '',
+      sessionTransport: value.sessionTransport === 'cookie' ? 'cookie' : 'token',
+      accessToken: value.sessionTransport !== 'cookie' && typeof value.accessToken === 'string' ? value.accessToken : undefined,
+      refreshToken: value.sessionTransport !== 'cookie' && typeof value.refreshToken === 'string' ? value.refreshToken : undefined,
       accessExpiresAt: typeof value.accessExpiresAt === 'string' ? value.accessExpiresAt : undefined,
       sessionId: typeof value.sessionId === 'string' ? value.sessionId : undefined,
     }]));
@@ -402,12 +408,18 @@ export function loadSessionCredentials(): Record<string, ServerCredential> {
 }
 
 export function saveSessionCredentials(credentials: Record<string, ServerCredential>): void {
-  globalThis.sessionStorage?.setItem(SESSION_CREDENTIALS_KEY, JSON.stringify(credentials));
+  const safe = Object.fromEntries(Object.entries(credentials).map(([id, value]) => [id, {
+    sessionTransport: value.sessionTransport ?? 'token',
+    ...(value.sessionTransport !== 'cookie' ? { accessToken: value.accessToken, refreshToken: value.refreshToken } : {}),
+    accessExpiresAt: value.accessExpiresAt,
+    sessionId: value.sessionId,
+  }]));
+  accountSessionStorage?.setItem(SESSION_CREDENTIALS_KEY, JSON.stringify(safe));
 }
 
 export function loadAutoSync(): AutoSyncConfig {
   try {
-    const parsed = JSON.parse(globalThis.localStorage?.getItem(AUTO_SYNC_KEY) ?? '{}') as { enabled?: unknown; minutes?: unknown };
+    const parsed = JSON.parse(accountLocalStorage?.getItem(AUTO_SYNC_KEY) ?? '{}') as { enabled?: unknown; minutes?: unknown };
     return { enabled: parsed.enabled === true, minutes: [1, 5, 15, 30, 60].includes(Number(parsed.minutes)) ? Number(parsed.minutes) : 5 };
   } catch {
     return { enabled: false, minutes: 5 };
@@ -416,15 +428,15 @@ export function loadAutoSync(): AutoSyncConfig {
 
 export function saveAutoSync(config: AutoSyncConfig): void {
   const serialized = JSON.stringify(config);
-  if (globalThis.localStorage?.getItem(AUTO_SYNC_KEY) === serialized) return;
-  globalThis.localStorage?.setItem(AUTO_SYNC_KEY, serialized);
+  if (accountLocalStorage?.getItem(AUTO_SYNC_KEY) === serialized) return;
+  accountLocalStorage?.setItem(AUTO_SYNC_KEY, serialized);
   globalThis.dispatchEvent?.(new CustomEvent(SYNC_CONFIG_CHANGED_EVENT, { detail: { kind: 'auto' } }));
 }
 
 /** Clear all ledger-bound synchronization settings and ephemeral sessions. */
 export function clearSyncConfiguration(): void {
-  globalThis.localStorage?.removeItem(SYNC_CONNECTIONS_KEY);
-  globalThis.localStorage?.removeItem(AUTO_SYNC_KEY);
-  globalThis.sessionStorage?.removeItem(SESSION_CREDENTIALS_KEY);
+  accountLocalStorage?.removeItem(SYNC_CONNECTIONS_KEY);
+  accountLocalStorage?.removeItem(AUTO_SYNC_KEY);
+  accountSessionStorage?.removeItem(SESSION_CREDENTIALS_KEY);
   globalThis.dispatchEvent?.(new CustomEvent(SYNC_CONFIG_CHANGED_EVENT, { detail: { kind: 'reset' } }));
 }

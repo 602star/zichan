@@ -7,7 +7,8 @@ const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const transactions = readFileSync(new URL('../src/screens/Transactions.tsx', import.meta.url), 'utf8');
 const reports = readFileSync(new URL('../src/screens/Reports.tsx', import.meta.url), 'utf8');
 const reportInsights = readFileSync(new URL('../src/ui/TransactionReportInsights.tsx', import.meta.url), 'utf8');
-const serverAdmin = readFileSync(new URL('../src/screens/ServerAdmin.tsx', import.meta.url), 'utf8');
+const serverAdmin = readFileSync(new URL('../src/admin/AdminConsole.tsx', import.meta.url), 'utf8');
+const ledgerEntry = readFileSync(new URL('../src/LedgerApp.tsx', import.meta.url), 'utf8');
 const dialogShell = readFileSync(new URL('../src/ui/DialogShell.tsx', import.meta.url), 'utf8');
 const errorBoundary = readFileSync(new URL('../src/ui/AppErrorBoundary.tsx', import.meta.url), 'utf8');
 const store = readFileSync(new URL('../src/db/store.tsx', import.meta.url), 'utf8');
@@ -50,7 +51,9 @@ describe('responsive shell contract', () => {
     expect(store).toContain('复制诊断信息');
     expect(store).toContain("userSelect: 'text'");
     expect(store).toContain('aria-live="polite"');
-    expect(main.indexOf('<AppErrorBoundary>')).toBeLessThan(main.indexOf('<StoreProvider>'));
+    expect(main.indexOf('<AppErrorBoundary>')).toBeLessThan(main.indexOf('<LedgerApp />'));
+    expect(ledgerEntry).toContain('<StoreProvider>');
+    expect(main).not.toContain('<StoreProvider>');
   });
 
   it('keeps backup export actions observable instead of silently ignoring a click', () => {
@@ -75,8 +78,8 @@ describe('responsive shell contract', () => {
     expect(transactions).toContain('zc-account-filter-grid');
     expect(transactions).toContain('zc-transaction-timeline-entry');
     expect(transactions).toContain('zc-budget-grid');
-    expect(serverAdmin).toContain('zc-server-admin-connection');
-    expect(serverAdmin).toContain('zc-server-admin-kpi-grid');
+    expect(serverAdmin).toContain("overflowX: 'auto'");
+    expect(serverAdmin).toContain('repeat(auto-fit, minmax(170px, 1fr))');
     expect(reports).toContain('zc-report-chart-grid');
     expect(reportInsights).toContain('zc-report-insight-grid');
     expect(css).toContain('.zc-report-insight-grid');

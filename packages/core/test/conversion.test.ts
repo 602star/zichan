@@ -56,6 +56,20 @@ const buyChain: ChainWithSteps = {
 };
 
 describe('traceChain', () => {
+  it('validates net-credit to actual-debit continuity including source fees', () => {
+    expect(() => assertConversionShape(buyChain.chain, buyChain.steps)).not.toThrow();
+    for (const fromAmount of ['311.49', '311.51']) {
+      expect(() => assertConversionShape(buyChain.chain, [buyChain.steps[0]!, { ...buyChain.steps[1]!, fromAmount }]))
+        .toThrow('来源实扣金额');
+    }
+  });
+
+  it('uses net output after a target fee, not gross output', () => {
+    const first = { ...buyChain.steps[0]!, fees: [fee('target', 'USDT', '0.1', 'target_deducted', '0.08')] };
+    expect(() => assertConversionShape(buyChain.chain, [first, buyChain.steps[1]!])).toThrow('来源实扣金额');
+    expect(() => assertConversionShape(buyChain.chain, [first, { ...buyChain.steps[1]!, fromAmount: '311.4' }])).not.toThrow();
+  });
+
   it('requires book-currency values for non-base fees and ignores base-currency overrides', () => {
     const invalid = {
       ...buyChain,

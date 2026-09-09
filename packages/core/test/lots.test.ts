@@ -110,6 +110,16 @@ describe('matchSell — realized P&L', () => {
     expect(round(remainingCostBasis(lots, 'BTC'), 2)).toBe('440.00');
   });
 
+  it('requires a currency selection for mixed remaining costs', () => {
+    const mixed = [lots[0]!, { ...lots[1]!, baseCurrencyAssetId: 'USD' }];
+    expect(() => remainingCostBasis(mixed, 'BTC')).toThrow('必须指定成本币种');
+    expect(remainingCostBasis(mixed, 'BTC', 'GBP')).toBe('180');
+    expect(remainingCostBasis(mixed, 'BTC', 'USD')).toBe('260');
+    expect(remainingCostBasis(mixed, 'BTC', 'EUR')).toBe('0');
+    expect(remainingCostBasis([mixed[0]!, { ...mixed[1]!, isDeleted: true }], 'BTC')).toBe('180');
+    expect(remainingCostBasis([mixed[0]!, { ...mixed[1]!, remainingAmount: '0' }], 'BTC')).toBe('180');
+  });
+
   it('rejects lots whose cost currency differs from the sale proceeds currency', () => {
     expect(() => matchSell([{ ...lots[0]!, baseCurrencyAssetId: 'USD' }], {
       sellChainId: 'sell-mixed', assetId: 'BTC', baseCurrencyAssetId: 'GBP', amount: '0.001', proceedsBase: '70', method: 'fifo',

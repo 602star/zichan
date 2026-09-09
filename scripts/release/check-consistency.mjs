@@ -18,8 +18,8 @@ const REMOVED_SYNC_CONFIGURATION_MARKERS = [
   ['Sync', 'Server', 'Profile'].join(''),
   ['opaque', 'PublicKey'].join(''),
 ];
-const REMOVED_ADMIN_ROUTE = /(?:^|[^A-Za-z0-9/])\/admin(?:\/|['"`])/m;
-const INVITE_REGISTRATION_DEFAULT = /REGISTRATION_MODE\s*(?:\|\|=|\?\?=|[:=])\s*['"]invite['"]|registrationMode\s*\?\?\s*['"]invite['"]/;
+const REMOVED_ADMIN_ROUTE = /(?:^|[^A-Za-z0-9/])\/admin\/(?:status|users|logs|devices|invites|registration|quotas|database)(?:[/?]|['"`])/m;
+const OPEN_REGISTRATION_DEFAULT = /REGISTRATION_MODE\s*(?:\|\|=|\?\?=|[:=])\s*['"]open['"]|registrationMode\s*\?\?\s*['"]open['"]/;
 
 async function json(path) {
   return JSON.parse(await readFile(path, 'utf8'));
@@ -116,8 +116,8 @@ async function findRemovedSyncImplementations(root) {
       findings.push(`${path.slice(root.length + 1)} still exposes the removed /admin route`);
       continue;
     }
-    if (INVITE_REGISTRATION_DEFAULT.test(source)) {
-      findings.push(`${path.slice(root.length + 1)} still defaults registration to invite instead of open`);
+    if (OPEN_REGISTRATION_DEFAULT.test(source)) {
+      findings.push(`${path.slice(root.length + 1)} still defaults registration to open instead of invite`);
     }
   }
   return findings;

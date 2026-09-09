@@ -1,7 +1,8 @@
-import { useMemo, useState, type CSSProperties } from 'react';
-import { fetchAuthMe, loginAccount, registerAccount } from '@zichan/db';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { fetchAuthMe, loginAccount, registerAccount, type SyncAuthSession } from '@zichan/db';
 import { getDeviceId } from '../db/cloud.js';
-import { setRuntimeCredential } from '../credential-vault.js';
+import { PasswordRecovery } from './PasswordRecovery.js';
+import { applySyncAuthSession, preferredSessionTransport } from '../sync-auth.js';
 import {
   buildSyncUrlFromParts,
   isDeviceLocalSyncUrl,
@@ -13,6 +14,7 @@ import {
   syncAddressPresetUrl,
   type SyncAddressPreset,
   type SyncUrlParts,
+  type SyncConnection,
 } from '../sync-config.js';
 import {
   clearConnectionLinkHash,
@@ -52,7 +54,7 @@ const PRESETS: { id: SyncAddressPreset; label: string }[] = [
 ];
 
 async function readHealth(baseUrl: string): Promise<ServerHealth> {
-  const response = await fetch(`${baseUrl}/api/health`, { redirect: 'error' });
+  const response = await fetch(`${baseUrl}/api/health`, { redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(8000) });
   if (!response.ok) throw new Error(`服务器检查失败：HTTP ${response.status}`);
   const body = await response.json() as Partial<ServerHealth>;
   if (!body.serverId || !body.serverPublicKey || !body.registrationMode) throw new Error('服务器身份或注册策略响应不完整');
@@ -70,8 +72,8 @@ async function readHealth(baseUrl: string): Promise<ServerHealth> {
   };
 }
 
-export function FirstServerConnectionGate({ onReady, onCancel }: { onReady: () => Promise<void>; onCancel: () => void }) {
-  const initialConnectionLink = useMemo(() => connectionLinkFromLocation(), []);
+export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = false, onAuthenticated }: { onReady: () => Promise<void>; onCancel: () => void; accountOnly?: boolean; onAuthenticated?: (connection: SyncConnection, session: SyncAuthSession) => Promise<void> }) {
+  const initialConnectionLink = useMemo(() => accountOnly ? null : connectionLinkFromLocation(), [accountOnly]);
   const initialUrl = useMemo(() => initialConnectionLink?.url ?? syncAddressPresetUrl('current'), [initialConnectionLink]);
   const [expectedLink, setExpectedLink] = useState<SyncConnectionLinkPayload | null>(initialConnectionLink ?? null);
   const [preset, setPreset] = useState<SyncAddressPreset>('current');
@@ -80,11 +82,25 @@ export function FirstServerConnectionGate({ onReady, onCancel }: { onReady: () =
   const [advanced, setAdvanced] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
   const [inviteCode, setInviteCode] = useState('');
+  const [registering, setRegistering] = useState(false);
   const [health, setHealth] = useState<ServerHealth | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  useEffect(() => {
+    if (!accountOnly) return;
+    let active = true;
+    setBusy(true);
+    void readHealth(initialUrl).then((checked) => {
+      if (!active) return;
+      setHealth(checked);
+      setMessage(checked.claimed ? '服务器在线，请登录账号。' : '服务器尚未初始化，请先进入管理后台设置管理员用户名和密码。');
+    }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); })
+      .finally(() => { if (active) setBusy(false); });
+    return () => { active = false; };
+  }, [accountOnly, initialUrl]);
 
   function setAddressDraft(value: string) {
     setAddress(value);
@@ -137,7 +153,7 @@ export function FirstServerConnectionGate({ onReady, onCancel }: { onReady: () =
     setHealth(checked);
     setMessage(checked.claimed
       ? `服务器在线 · 注册策略：${checked.registrationMode === 'open' ? '开放' : checked.registrationMode === 'invite' ? '邀请码' : '关闭'}`
-      : '服务器在线且尚未认领；第一个完成注册的账号将成为管理员。');
+      : '服务器尚未初始化，请先进入管理后台设置管理员用户名和密码。');
     return { baseUrl, health: checked };
   }
 
@@ -156,6 +172,8 @@ export function FirstServerConnectionGate({ onReady, onCancel }: { onReady: () =
   }
 
   async function authenticate(action: 'login' | 'register') {
+    if (busy) return;
+    if (action === 'register' && password !== confirmation) { setError('两次输入的账号密码不一致'); return; }
     if (!username.trim() || password.length < 8) {
       setError('请输入用户名和至少 8 个字符的服务器账号密码');
       return;
@@ -166,15 +184,19 @@ export function FirstServerConnectionGate({ onReady, onCancel }: { onReady: () =
     try {
       const checked = await checkServer();
       if (action === 'register') {
-        if (checked.health.registrationMode === 'closed') throw new Error('该服务器已关闭注册，请使用已有账号登录');
-        if (checked.health.registrationMode === 'invite' && !inviteCode.trim()) throw new Error('该服务器要求邀请码');
+        if (checked.health.claimed && checked.health.registrationMode === 'closed') throw new Error('该服务器已关闭注册，请使用已有账号登录');
+        if (!checked.health.claimed) throw new Error('请先进入管理后台初始化服务器，再注册个人账号');
+        if (checked.health.claimed && checked.health.registrationMode === 'invite' && !inviteCode.trim()) throw new Error('该服务器要求邀请码');
         await registerAccount(checked.baseUrl, username.trim(), password, {
           inviteCode: inviteCode.trim() || undefined,
           expectedServerId: checked.health.serverId,
           expectedServerPublicKey: checked.health.serverPublicKey,
         });
+        setRegistering(false);
+        setMessage('注册成功，正在登录；若登录失败，请直接使用新账号登录。');
       }
       const session = await loginAccount(checked.baseUrl, username.trim(), password, {
+        sessionTransport: preferredSessionTransport(checked.baseUrl),
         deviceId: getDeviceId(),
         deviceName: 'Zichan · 首次连接',
         expectedServerPublicKey: checked.health.serverPublicKey,
@@ -187,6 +209,7 @@ export function FirstServerConnectionGate({ onReady, onCancel }: { onReady: () =
         serverId: checked.health.serverId,
         serverPublicKey: checked.health.serverPublicKey,
         username: account.username,
+        accountId: account.accountId,
         role: account.role,
         ledgerId: account.ledgerId,
         replicaId: account.replicaId,
@@ -195,19 +218,19 @@ export function FirstServerConnectionGate({ onReady, onCancel }: { onReady: () =
         status: 'online' as const,
         sharedUrls: isDeviceLocalSyncUrl(checked.baseUrl) ? [] : [checked.baseUrl],
         deviceUrls: isDeviceLocalSyncUrl(checked.baseUrl) ? [checked.baseUrl] : [],
-        lastError: account.role === 'admin' ? '管理员登录成功' : '登录成功',
+        lastError: account.role !== 'member' ? '管理员登录成功' : '登录成功',
         expectedServerPublicKeyFingerprint: expectedLink?.serverPublicKeyFingerprint,
       };
+      if (onAuthenticated) {
+        setPassword(''); setConfirmation(''); setInviteCode('');
+        await onAuthenticated(connection, session);
+        return;
+      }
       saveSyncConnections([connection]);
       saveAutoSync({ enabled: true, minutes: 5 });
-      setRuntimeCredential(connection.id, {
-        password,
-        inviteCode,
-        accessToken: session.accessToken,
-        refreshToken: session.refreshToken,
-        accessExpiresAt: session.accessExpiresAt,
-        sessionId: session.session.id,
-      });
+      applySyncAuthSession(connection.id, { password: '', inviteCode: '' }, session);
+      setPassword('');
+      setInviteCode('');
       setMessage(action === 'register' ? '注册并登录成功，正在创建本机加密存储…' : '登录成功，正在创建本机加密存储…');
       clearConnectionLinkHash();
       await onReady();
@@ -221,12 +244,12 @@ export function FirstServerConnectionGate({ onReady, onCancel }: { onReady: () =
   return (
     <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(20px, 5vw, 64px)', boxSizing: 'border-box', background: '#f0e9dc', color: '#4e473f', fontFamily: 'system-ui, sans-serif' }}>
       <section style={{ width: 'min(780px, 100%)', margin: '0 auto' }}>
-        <button type="button" onClick={onCancel} disabled={busy} style={{ ...button, minHeight: 34, padding: '0 11px' }}>返回模式选择</button>
-        <h1 style={{ margin: '18px 0 6px', color: '#672f20', fontSize: 'clamp(26px, 5vw, 40px)' }}>连接同步服务器</h1>
-        <p style={{ margin: '0 0 22px', color: '#756b60', lineHeight: 1.7 }}>先验证服务器身份并登录。服务器地址可以来自当前网站、本机、局域网或公网。</p>
+        {!accountOnly && <button type="button" onClick={onCancel} disabled={busy} style={{ ...button, minHeight: 34, padding: '0 11px' }}>返回模式选择</button>}
+        <h1 style={{ margin: '18px 0 6px', color: '#672f20', fontSize: 'clamp(26px, 5vw, 40px)' }}>{accountOnly ? registering ? '注册账号' : '账号登录' : '连接同步服务器'}</h1>
+        <p style={{ margin: '0 0 22px', color: '#756b60', lineHeight: 1.7 }}>{accountOnly ? '使用本站用户名和密码登录。记录加密同步到服务器，本机保留离线缓存；账本解密与账号登录相互独立。' : '先验证服务器身份并登录。服务器地址可以来自当前网站、本机、局域网或公网。'}</p>
 
         <div style={{ padding: 20, border: '1px solid #d6ccbd', borderRadius: 14, background: '#fffaf2' }}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+          {!accountOnly && <><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
             {PRESETS.map((item) => <button key={item.id} type="button" disabled={busy} onClick={() => selectPreset(item.id)} style={{ ...button, background: preset === item.id ? '#ead8c4' : '#fffdf9' }}>{item.label}</button>)}
           </div>
           <label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>完整服务器地址</label>
@@ -246,17 +269,24 @@ export function FirstServerConnectionGate({ onReady, onCancel }: { onReady: () =
             </div>
           )}
 
+          </>}
+          <form onSubmit={(event) => { event.preventDefault(); void authenticate(registering ? 'register' : 'login'); }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 18 }}>
             <div><label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>用户名</label><input aria-label="服务器用户名" value={username} onChange={(event) => { setUsername(event.target.value); setError(''); }} disabled={busy} autoComplete="username" style={{ ...input, marginTop: 6 }} /></div>
-            <div><label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>服务器账号密码</label><input aria-label="服务器账号密码" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} disabled={busy} autoComplete="current-password" style={{ ...input, marginTop: 6 }} /></div>
-            {health?.registrationMode === 'invite' && <div><label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>邀请码</label><input aria-label="邀请码" value={inviteCode} onChange={(event) => { setInviteCode(event.target.value); setError(''); }} disabled={busy} style={{ ...input, marginTop: 6 }} /></div>}
+            <div><label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>账号密码</label><input aria-label="服务器账号密码" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} disabled={busy} autoComplete={registering ? 'new-password' : 'current-password'} required minLength={8} style={{ ...input, marginTop: 6 }} /></div>
+            {registering && <div><label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>确认账号密码</label><input aria-label="确认账号密码" type="password" required minLength={8} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy} autoComplete="new-password" style={{ ...input, marginTop: 6 }} /></div>}
+            {health?.registrationMode === 'invite' && (!accountOnly || registering) && <div><label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>邀请码</label><input aria-label="邀请码" value={inviteCode} onChange={(event) => { setInviteCode(event.target.value); setError(''); }} disabled={busy} style={{ ...input, marginTop: 6 }} /></div>}
           </div>
 
+          {health && !health.claimed && <p>本站尚未开放，请联系部署者完成服务器初始化。</p>}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 18 }}>
-            <button type="button" onClick={() => void inspectServer()} disabled={busy} style={button}>检查服务器</button>
-            <button type="button" onClick={() => void authenticate('login')} disabled={busy} style={primary}>{busy ? '处理中…' : '登录已有账号'}</button>
-            <button type="button" onClick={() => void authenticate('register')} disabled={busy || health?.registrationMode === 'closed'} style={button}>注册并登录</button>
+            <button type="button" onClick={() => void inspectServer()} disabled={busy} style={button}>{accountOnly ? '重试连接' : '检查服务器'}</button>
+            <button type="submit" disabled={busy || health?.claimed === false} style={primary}>{busy ? '处理中…' : registering ? '注册并登录' : '登录已有账号'}</button>
+            <button type="button" onClick={() => setRegistering((value) => !value)} disabled={busy || !registering && (health?.claimed === false || health?.registrationMode === 'closed')} style={button}>{registering ? '返回登录' : '注册新账号'}</button>
           </div>
+          </form>
+          {accountOnly && <section aria-label="账号登录权限说明" style={{ marginTop: 18, fontSize: 12, lineHeight: 1.7 }}><strong>登录会使用什么权限？</strong><p>仅验证本站账号并建立 HttpOnly 会话 Cookie，不保存账号密码。登录后在本浏览器保存该账号的加密离线缓存，不申请任意磁盘访问权限；不要求授予浏览器持久存储保护。账号登录不会自动获得账本解密密钥。</p></section>}
+          {health?.claimed && <PasswordRecovery baseUrl={address} onComplete={(value) => { setUsername(value); setRegistering(false); }} />}
           {message && <div role="status" style={{ marginTop: 12, color: '#397044', fontSize: 12, fontWeight: 800 }}>{message}</div>}
           {error && <div role="alert" style={{ marginTop: 12, color: '#9a3a31', fontSize: 12, fontWeight: 800 }}>{error}</div>}
         </div>

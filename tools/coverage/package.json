@@ -1,0 +1,13 @@
+{
+  "name": "@zichan/coverage-tools",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --config vitest.config.mjs --coverage"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "2.1.9",
+    "vitest": "2.1.9"
+  }
+}

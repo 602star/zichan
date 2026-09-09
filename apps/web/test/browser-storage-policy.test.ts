@@ -7,6 +7,8 @@ import {
   loadFirstUseMode,
   prepareBrowserStorageForMode,
   saveFirstUseMode,
+  loadBestEffortConsent,
+  acceptBestEffortStorage,
 } from '../src/browser-storage-policy.js';
 
 function installBrowserPrimitives(options: {
@@ -37,6 +39,11 @@ describe('browser local storage policy', () => {
       removeItem: (key: string) => values.delete(key),
     });
     expect(loadFirstUseMode()).toBeNull();
+    expect(loadBestEffortConsent()).toBe(false);
+    acceptBestEffortStorage();
+    expect(loadBestEffortConsent()).toBe(true);
+    clearFirstUseMode();
+    expect(loadBestEffortConsent()).toBe(false);
     saveFirstUseMode('local');
     expect(loadFirstUseMode()).toBe('local');
     localStorage.setItem('zichan.firstUse.mode.v1', 'legacy');
@@ -47,6 +54,21 @@ describe('browser local storage policy', () => {
     vi.stubGlobal('indexedDB', { open: vi.fn() });
     vi.stubGlobal('navigator', { storage: { persisted: async () => true, persist: async () => true } });
     expect(browserLocalCapability().missing).toContain('Web Locks');
+  });
+
+  it('allows missing persistence APIs without claiming a protection grant', async () => {
+    installBrowserPrimitives({ persist: async () => false, persisted: async () => false });
+    vi.stubGlobal('navigator', { locks: { request: vi.fn() } });
+    expect(browserLocalCapability().supported).toBe(true);
+    await expect(browserPersistenceStatus(true)).resolves.toMatchObject({ supported: true, persisted: false });
+  });
+
+  it('requires explicit consent for unprotected storage and never bypasses missing capabilities', () => {
+    const input = { mode: 'local' as const, persistenceChecked: true, persisted: false, hasExistingLocalData: true };
+    expect(browserStorageDisposition(input)).toBe('recovery');
+    expect(browserStorageDisposition({ ...input, bestEffortAccepted: true })).toBe('writable');
+    expect(browserStorageDisposition({ ...input, bestEffortAccepted: true, localSupported: false })).toBe('blocked');
+    expect(browserStorageDisposition({ ...input, bestEffortAccepted: true, persistenceChecked: false })).toBe('pending');
   });
 
   it('does not treat a denied persistence request as durable storage', async () => {

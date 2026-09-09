@@ -1,3 +1,4 @@
+import { accountLocalStorage } from './account-storage.js';
 import { isTauriRuntime, tauriInvoke } from './tauri.js';
 
 const DEVICE_PREFS_KEY = 'zichan.device.preferences.v1';
@@ -52,7 +53,7 @@ function invokeRequired<T>(command: string, args?: Record<string, unknown>): Pro
 
 export function readDevicePreferences(): DevicePreferences {
   try {
-    const parsed = JSON.parse(localStorage.getItem(DEVICE_PREFS_KEY) ?? '{}') as Partial<DevicePreferences>;
+    const parsed = JSON.parse(accountLocalStorage.getItem(DEVICE_PREFS_KEY) ?? '{}') as Partial<DevicePreferences>;
     return { biometricLock: parsed.biometricLock === true, syncNotifications: parsed.syncNotifications === true };
   } catch {
     return { biometricLock: false, syncNotifications: false };
@@ -61,7 +62,7 @@ export function readDevicePreferences(): DevicePreferences {
 
 export function writeDevicePreferences(patch: Partial<DevicePreferences>): DevicePreferences {
   const next = { ...readDevicePreferences(), ...patch };
-  localStorage.setItem(DEVICE_PREFS_KEY, JSON.stringify(next));
+  accountLocalStorage.setItem(DEVICE_PREFS_KEY, JSON.stringify(next));
   globalThis.dispatchEvent?.(new CustomEvent('zichan:device-preferences-changed'));
   return next;
 }

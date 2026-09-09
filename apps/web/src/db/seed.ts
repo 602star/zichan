@@ -302,7 +302,7 @@ export async function seedDemoLedger(store: SqlLedgerStore): Promise<void> {
   await recordSell(store, {
     chain: c2,
     steps: [
-      step(c2.id, 1, btc.id, '0.005', usdt.id, '489.40', { assetId: usdt.id, amount: '0.80', base: '0.64' }, '98000'),
+      step(c2.id, 1, btc.id, '0.005', usdt.id, '488.60', { assetId: usdt.id, amount: '0.80', base: '0.64' }, '98000'),
       step(c2.id, 2, usdt.id, '488.60', gbp.id, '387.90', { assetId: gbp.id, amount: '1.30' }, '0.796'),
     ],
     method: 'fifo',

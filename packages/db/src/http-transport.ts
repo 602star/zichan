@@ -15,7 +15,7 @@ import type { SyncReplicaIdentity } from './sync-types.js';
 
 declare const fetch: (
   url: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: string; redirect?: 'error' },
+  init?: { method?: string; headers?: Record<string, string>; body?: string; redirect?: 'error'; credentials?: 'same-origin' | 'omit' },
 ) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
 export interface HttpTransportOptions {
@@ -30,16 +30,21 @@ export interface HttpTransportOptions {
 }
 
 export interface RegisterAccountOptions {
+  passwordResetCode?: string;
+  initializeOwner?: boolean;
+  ownerSetupToken?: string;
   inviteCode?: string;
   expectedServerId?: string;
   expectedServerPublicKey?: string;
 }
 
 export interface RegisterAccountResult {
-  role: 'admin' | 'member';
+  role: 'owner' | 'admin' | 'member';
 }
 
 export interface LoginAccountOptions {
+  sessionContext?: 'admin';
+  sessionTransport?: 'cookie' | 'token';
   deviceId?: string;
   deviceName?: string;
   expectedServerPublicKey?: string;
@@ -47,6 +52,8 @@ export interface LoginAccountOptions {
 }
 
 export interface SyncAuthSession {
+  accountId?: string;
+  sessionTransport?: 'cookie' | 'token';
   accessToken: string;
   refreshToken: string;
   accessExpiresAt: string;
@@ -63,13 +70,14 @@ export interface SyncAuthSession {
     revokedAt: string | null;
     active: boolean;
   };
-  role?: 'admin' | 'member';
+  role?: 'owner' | 'admin' | 'member';
   ledgerId?: string;
 }
 
 export interface SyncAuthMe {
+  accountId?: string;
   username: string;
-  role: 'admin' | 'member';
+  role: 'owner' | 'admin' | 'member';
   disabled: boolean;
   session: SyncAuthSession['session'];
   ledgerId?: string;
@@ -302,13 +310,18 @@ export async function registerAccount(baseUrl: string, username: string, passwor
   if (!normalized || !password) throw new Error('同步用户名和密码不能为空');
   await opaque.ready;
   const start = opaque.client.startRegistration({ password });
-  const startResponse = await fetch(`${baseUrl}/api/auth/register/start`, {
+  const operation = opts.passwordResetCode ? 'password-reset' : 'register';
+  const registrationHeaders = { 'Content-Type': 'application/json', ...(opts.initializeOwner ? { 'X-Zichan-Session': 'admin-cookie' } : {}) };
+  const startResponse = await fetch(`${baseUrl}/api/auth/${operation}/start`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: registrationHeaders,
     body: JSON.stringify({
       username: normalized,
       registrationRequest: start.registrationRequest,
       inviteCode: opts.inviteCode || undefined,
+      ownerSetupToken: opts.ownerSetupToken || undefined,
+      initializeOwner: opts.initializeOwner || undefined,
+      passwordResetCode: opts.passwordResetCode || undefined,
     }),
     redirect: 'error',
   });
@@ -338,9 +351,9 @@ export async function registerAccount(baseUrl: string, username: string, passwor
   if (finish.serverStaticPublicKey !== startBody.serverPublicKey) {
     throw new Error('同步服务器 OPAQUE 公钥校验失败');
   }
-  const finishResponse = await fetch(`${baseUrl}/api/auth/register/finish`, {
+  const finishResponse = await fetch(`${baseUrl}/api/auth/${operation}/finish`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: registrationHeaders,
     body: JSON.stringify({
       registrationToken: startBody.registrationToken,
       registrationRecord: finish.registrationRecord,
@@ -348,8 +361,8 @@ export async function registerAccount(baseUrl: string, username: string, passwor
     redirect: 'error',
   });
   if (!finishResponse.ok) throw await errorMessage('register finish failed', finishResponse);
-  const result = await finishResponse.json() as { role?: 'admin' | 'member' };
-  if (result.role !== 'admin' && result.role !== 'member') throw new Error('register finish returned an invalid account role');
+  const result = await finishResponse.json() as { role?: 'owner' | 'admin' | 'member' };
+  if (result.role !== 'owner' && result.role !== 'admin' && result.role !== 'member') throw new Error('register finish returned an invalid account role');
   return { role: result.role };
 }
 
@@ -404,7 +417,8 @@ export async function loginAccount(
   }
   const loginResponse = await fetch(`${baseUrl}/api/auth/login/finish`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(options.sessionTransport === 'cookie' ? { 'X-Zichan-Session': options.sessionContext === 'admin' ? 'admin-cookie' : 'cookie' } : {}) },
+    credentials: options.sessionTransport === 'cookie' ? 'same-origin' : 'omit',
     body: JSON.stringify({
       loginId: startBody.loginId,
       finishLoginRequest: finish.finishLoginRequest,
@@ -414,19 +428,29 @@ export async function loginAccount(
     redirect: 'error',
   });
   if (!loginResponse.ok) throw await errorMessage('login failed', loginResponse);
-  return loginResponse.json() as Promise<SyncAuthSession>;
+  return readAuthSession(loginResponse, options.sessionTransport ?? 'token');
 }
 
-export async function refreshAccountSession(baseUrl: string, refreshToken: string): Promise<SyncAuthSession> {
+async function readAuthSession(response: { json(): Promise<unknown> }, transport: 'cookie' | 'token'): Promise<SyncAuthSession> {
+  const body = await response.json() as SyncAuthSession;
+  if (!body.accessToken || !body.accessExpiresAt || !body.session?.id || !body.session.expiresAt
+    || (transport === 'cookie' ? body.sessionTransport !== 'cookie' || body.refreshToken !== undefined : !body.refreshToken)) {
+    throw new Error('authentication returned an incomplete or mismatched session');
+  }
+  return { ...body, sessionTransport: transport, refreshToken: transport === 'cookie' ? '' : body.refreshToken };
+}
+
+export async function refreshAccountSession(baseUrl: string, refreshToken: string, transport: 'cookie' | 'token' = 'token', context?: 'admin'): Promise<SyncAuthSession> {
   assertSecureSyncUrl(baseUrl);
   const response = await fetch(`${baseUrl}/api/auth/refresh`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refreshToken }),
+    headers: { 'Content-Type': 'application/json', ...(transport === 'cookie' ? { 'X-Zichan-Session': context === 'admin' ? 'admin-cookie' : 'cookie' } : {}) },
+    credentials: transport === 'cookie' ? 'same-origin' : 'omit',
+    body: JSON.stringify(transport === 'cookie' ? {} : { refreshToken }),
     redirect: 'error',
   });
   if (!response.ok) throw await errorMessage('session refresh failed', response);
-  return response.json() as Promise<SyncAuthSession>;
+  return readAuthSession(response, transport);
 }
 
 export async function fetchAuthMe(baseUrl: string, accessToken: string): Promise<SyncAuthMe> {
@@ -437,7 +461,7 @@ export async function fetchAuthMe(baseUrl: string, accessToken: string): Promise
   });
   if (!response.ok) throw await errorMessage('account lookup failed', response);
   const body = await response.json() as SyncAuthMe;
-  if (!body.username || (body.role !== 'admin' && body.role !== 'member') || !body.session?.id) {
+  if (!body.username || (body.role !== 'owner' && body.role !== 'admin' && body.role !== 'member') || !body.session?.id) {
     throw new Error('account lookup returned an incomplete response');
   }
   return body;

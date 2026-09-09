@@ -22,10 +22,18 @@ jobs:
         run: npm run release:check
       - name: Test release gates
         run: npm run test:release
+      - name: Build server and Web before integration tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ci-artifacts | Out-Null
+          npm run build:server 2>&1 | Tee-Object ci-artifacts/sync-server-build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test managed launchers and isolated server lifecycle
+        run: npm run test:scripts
       - name: Install isolated quality tools
         run: |
-          npm install --prefix tools/eslint
-          npm install --prefix tools/coverage
+          npm ci --prefix tools/eslint
+          npm ci --prefix tools/coverage
       - run: npm run lint
       - run: npm run typecheck
       - name: Verify Node SQLite schema/query contract
@@ -33,13 +41,6 @@ jobs:
       - name: Verify sql.js and Tauri bridge contracts
         run: npm test --workspace @zichan/web -- test/sqljs-driver.test.ts test/tauri-sql-driver.test.ts
       - run: npm run test:coverage
-      - run: npm run build:web
-      - name: Build sync server production bundle
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force ci-artifacts | Out-Null
-          npm run build --workspace @zichan/sync-server 2>&1 | Tee-Object ci-artifacts/sync-server-build.log
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4
@@ -166,9 +167,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm install --prefix tools/e2e
+      - run: npm ci --prefix tools/e2e
       - run: npm run install:chromium --prefix tools/e2e
       - run: npm run test:e2e
+      - run: npm run test:e2e:account
       - name: Upload Playwright diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

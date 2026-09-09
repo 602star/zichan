@@ -1,4 +1,6 @@
-import { useEffect, useId, useMemo, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { accountSessionStorage } from '../account-storage.js';
+import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { QueryGeneration } from '../query-generation.js';
 import {
   D, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, newId,
   type BudgetCategory, type Category, type Payee, type ReconciliationSession,
@@ -173,8 +175,8 @@ type Tab = 'records' | 'accounts' | 'budget' | 'bills';
 
 function initialTransactionTab(): Tab {
   try {
-    const requested = sessionStorage.getItem('zichan.transactions.tab');
-    sessionStorage.removeItem('zichan.transactions.tab');
+    const requested = accountSessionStorage.getItem('zichan.transactions.tab');
+    accountSessionStorage.removeItem('zichan.transactions.tab');
     return requested === 'accounts' || requested === 'budget' || requested === 'bills' ? requested : 'records';
   } catch {
     return 'records';
@@ -231,9 +233,9 @@ export function Transactions() {
   const usesAccounts = ledgerMode !== 'spending';
 
   useEffect(() => {
-    const raw = sessionStorage.getItem('zichan.transactions.filterPreset');
+    const raw = accountSessionStorage.getItem('zichan.transactions.filterPreset');
     if (!raw) return;
-    sessionStorage.removeItem('zichan.transactions.filterPreset');
+    accountSessionStorage.removeItem('zichan.transactions.filterPreset');
     try {
       const preset = JSON.parse(raw) as Partial<TransactionFilters>;
       setFilters((cur) => {
@@ -269,12 +271,12 @@ export function Transactions() {
       }
     };
     try {
-      if (sessionStorage.getItem('zichan.quickTransaction') === '1') {
-        sessionStorage.removeItem('zichan.quickTransaction');
+      if (accountSessionStorage.getItem('zichan.quickTransaction') === '1') {
+        accountSessionStorage.removeItem('zichan.quickTransaction');
         openQuickTransaction();
       }
-      if (sessionStorage.getItem('zichan.postFirstRun') === 'quick-expense') {
-        sessionStorage.removeItem('zichan.postFirstRun');
+      if (accountSessionStorage.getItem('zichan.postFirstRun') === 'quick-expense') {
+        accountSessionStorage.removeItem('zichan.postFirstRun');
         openQuickTransaction();
       }
     } catch {
@@ -296,6 +298,8 @@ export function Transactions() {
     };
   }, [filters, usesAccounts]);
   const queryAsOf = snap?.setting?.asOfDate ?? todayDate();
+  const transactionQuery = useRef(new QueryGeneration());
+  const accountQuery = useRef(new QueryGeneration());
   const queryDateRange = transactionDateRange(queryAsOf, viewFilters);
   const browseInput = useMemo<TransactionBrowseInput>(() => ({
     from: queryDateRange.from,
@@ -321,6 +325,9 @@ export function Transactions() {
   }), [queryDateRange.from, queryDateRange.to, usesAccounts, viewFilters]);
   useEffect(() => {
     if (!snap) return;
+    const gate = transactionQuery.current;
+    gate.reset();
+    const token = gate.start()!;
     let cancelled = false;
     const month = queryAsOf.slice(0, 7);
     const summaryRange = sixMonthRange(month);
@@ -347,10 +354,12 @@ export function Transactions() {
         setTransactionReadError(error instanceof Error ? error.message : String(error));
       }
     }).finally(() => {
+      gate.finish(token);
       if (!cancelled) setTransactionPageBusy(false);
     });
     return () => {
       cancelled = true;
+      gate.reset();
     };
   }, [browseInput, queryAsOf, rev, snap, store]);
   useEffect(() => {
@@ -426,7 +435,10 @@ export function Transactions() {
   const selectedAccountForRead = accountId || accountBalanceRows[0]?.accountId || snap?.accounts[0]?.id || '';
   const selectedAssetForRead = assetId === 'all' ? undefined : assetId;
   useEffect(() => {
+    const gate = accountQuery.current;
+    gate.reset();
     if (activeTab !== 'accounts' || !selectedAccountForRead) return;
+    const token = gate.start()!;
     let cancelled = false;
     setAccountLedgerBusy(true);
     void store.accountLedgerPage({
@@ -440,10 +452,12 @@ export function Transactions() {
     }).catch((error) => {
       if (!cancelled) setTransactionReadError(error instanceof Error ? error.message : String(error));
     }).finally(() => {
+      gate.finish(token);
       if (!cancelled) setAccountLedgerBusy(false);
     });
     return () => {
       cancelled = true;
+      gate.reset();
     };
   }, [
     activeTab,
@@ -559,22 +573,29 @@ export function Transactions() {
   async function loadMoreTransactions() {
     const cursor = readyTransactionRead.page.nextCursor;
     if (!cursor || !readyTransactionRead.page.hasMore || transactionPageBusy) return;
+    const gate = transactionQuery.current;
+    const token = gate.start();
+    if (!token) return;
     setTransactionPageBusy(true);
     setTransactionReadError('');
     try {
       const page = await store.transactionBrowsePage({ ...browseInput, cursor, limit: 100 });
-      setTransactionRead((current) => current
+      setTransactionRead((current) => gate.current(token) && current
         ? { ...current, page: mergeBrowsePage(current.page, page) }
         : current);
     } catch (error) {
-      setTransactionReadError(error instanceof Error ? error.message : String(error));
+      if (gate.current(token)) setTransactionReadError(error instanceof Error ? error.message : String(error));
     } finally {
-      setTransactionPageBusy(false);
+      if (gate.current(token)) setTransactionPageBusy(false);
+      gate.finish(token);
     }
   }
 
   async function loadMoreAccountLedger() {
     if (!accountLedgerPage?.hasMore || !accountLedgerPage.nextCursor || accountLedgerBusy || !selectedAccountId) return;
+    const gate = accountQuery.current;
+    const token = gate.start();
+    if (!token) return;
     setAccountLedgerBusy(true);
     setTransactionReadError('');
     try {
@@ -587,11 +608,12 @@ export function Transactions() {
         startingBalances: accountLedgerPage.nextStartingBalances,
         limit: 100,
       });
-      setAccountLedgerPage((current) => current ? mergeAccountLedgerPage(current, page) : page);
+      setAccountLedgerPage((current) => gate.current(token) && current ? mergeAccountLedgerPage(current, page) : current);
     } catch (error) {
-      setTransactionReadError(error instanceof Error ? error.message : String(error));
+      if (gate.current(token)) setTransactionReadError(error instanceof Error ? error.message : String(error));
     } finally {
-      setAccountLedgerBusy(false);
+      if (gate.current(token)) setAccountLedgerBusy(false);
+      gate.finish(token);
     }
   }
 

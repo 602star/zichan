@@ -1,3 +1,4 @@
+import { accountSessionStorage } from '../account-storage.js';
 import { useEffect, useMemo, useState } from 'react';
 import { useDashboardTransactionReadModel } from '../db/dashboard-read-model.js';
 import { useSnapshot } from '../db/snapshot.js';
@@ -69,7 +70,7 @@ export function Dashboard() {
       return;
     }
     if (task.action === 'open_bills') {
-      try { sessionStorage.setItem('zichan.transactions.tab', 'bills'); } catch { /* hardened browser */ }
+      try { accountSessionStorage.setItem('zichan.transactions.tab', 'bills'); } catch { /* hardened browser */ }
     }
     const screen = task.action === 'open_bills' ? 'transactions'
       : task.action === 'open_fixed' ? 'fixed'

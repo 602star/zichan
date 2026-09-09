@@ -3,7 +3,6 @@ import {
   D,
   conversionStepAmounts,
   newId,
-  nextUnhandledDcaOccurrence,
   normalizeConversionAmounts,
   type ConversionChain,
   type ConversionFee,
@@ -12,11 +11,10 @@ import {
   type ConversionStep,
   type ConversionTargetAmountMode,
   type ConversionType,
-  type DcaExecution,
   type ChainWithSteps,
   type LotMethod,
 } from '@zichan/core';
-import { previewConversionImpact, recordConversion, recordSell, updateConversion, voidConversion } from '@zichan/db';
+import { previewConversionImpact, saveConversionAggregate, updateConversion, voidConversion } from '@zichan/db';
 import { useStore } from '../db/store.js';
 import { useSnapshot } from '../db/snapshot.js';
 import { amount as fmtAmount } from '../format.js';
@@ -377,57 +375,11 @@ export function AddConversionModal({
     setSaving(true);
     setErr(null);
     try {
-      const label = initial ? '更新资产转换及定投记录' : '保存资产转换及定投记录';
-      const result = await store.runInAuditBatch(label, async (transactionStore) => {
-        const chainExecutions = initial
-          ? await transactionStore.dcaExecutions.list({ where: { chainId: initial.chain.id } })
-          : [];
-        if (chainExecutions.length > 1) throw new Error('该转换关联了多条定投执行记录，请先运行数据自检');
-        const currentExecution = chainExecutions[0];
-        const conversionResult = initial
-          ? await updateConversion(transactionStore, { ...prepared, expectedVersion: initial.chain.version })
-          : prepared.chain.type === 'sell'
-            ? await recordSell(transactionStore, { chain: prepared.chain, steps: prepared.steps, method, selectedLotIds: method === 'manual' ? selectedLotIds : undefined })
-            : await recordConversion(transactionStore, prepared);
-        const savedChain = conversionResult.chain;
-        if (prepared.chain.type === 'dca' && dcaPlanId) {
-          const plan = await transactionStore.dcaPlans.get(dcaPlanId);
-          if (!plan || plan.isDeleted || (plan.status !== 'active' && plan.id !== currentExecution?.planId)) {
-            throw new Error('关联的定投计划不存在或已经停用');
-          }
-          const planExecutions = (await transactionStore.dcaExecutions.list({ where: { planId: plan.id } }))
-            .filter((row) => row.id !== currentExecution?.id);
-          const occurrence = currentExecution
-            ? { index: currentExecution.occurrenceIndex, date: currentExecution.scheduledDate }
-            : plan.frequency === 'manual'
-              ? {
-                index: Math.max(-1, ...planExecutions.map((row) => row.occurrenceIndex)) + 1,
-                date: savedChain.date,
-              }
-              : nextUnhandledDcaOccurrence(plan, planExecutions);
-          if (!occurrence) throw new Error('该定投计划没有可执行的下一期');
-          await transactionStore.dcaExecutions.put({
-            id: currentExecution?.id ?? newId(),
-            createdAt: currentExecution?.createdAt ?? '',
-            updatedAt: currentExecution?.updatedAt ?? '',
-            version: currentExecution?.version ?? 1,
-            isDeleted: false,
-            planId: dcaPlanId,
-            occurrenceIndex: occurrence.index,
-            scheduledDate: occurrence.date,
-            date: savedChain.date,
-            plannedAmount: plan?.plannedAmount ?? savedChain.totalBaseCost ?? '0',
-            actualBaseCost: savedChain.totalBaseCost ?? '0',
-            baseCurrencyAssetId: savedChain.baseCurrencyAssetId,
-            finalAssetId: savedChain.finalAssetId ?? prepared.steps.at(-1)!.toAssetId,
-            finalAmount: savedChain.finalAmount ?? conversionStepAmounts(prepared.steps.at(-1)!).targetCredit,
-            totalFeeInBase: savedChain.totalFeesInBase ?? '0',
-            chainId: savedChain.id,
-          } as DcaExecution);
-        } else if (currentExecution) {
-          await transactionStore.dcaExecutions.remove(currentExecution.id, currentExecution.version);
-        }
-        return conversionResult;
+      const result = await saveConversionAggregate(store, {
+        ...prepared,
+        editing: !!initial,
+        expectedVersion: initial?.chain.version,
+        dcaPlanId: dcaPlanId || undefined,
       });
       const savedChain = result.chain;
       bump();
@@ -443,7 +395,12 @@ export function AddConversionModal({
               expectedVersion: current.version,
             });
             const currentExecution = (await transactionStore.dcaExecutions.list({ includeDeleted: true })).find((row) => row.chainId === before.chain.id);
-            if (existingDcaExecution) await transactionStore.dcaExecutions.put({ ...existingDcaExecution, isDeleted: false });
+            if (existingDcaExecution) await transactionStore.dcaExecutions.put({
+              ...existingDcaExecution,
+              version: currentExecution?.version ?? existingDcaExecution.version,
+              updatedAt: currentExecution?.updatedAt ?? existingDcaExecution.updatedAt,
+              isDeleted: false,
+            });
             else if (currentExecution && !currentExecution.isDeleted) await transactionStore.dcaExecutions.remove(currentExecution.id, currentExecution.version);
           });
           bump();

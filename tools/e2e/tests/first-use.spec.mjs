@@ -1,78 +1,53 @@
-import { test, expect } from '@playwright/test';
-import { DEVICE_PASSWORD, openLedger } from './helpers.mjs';
+import { test, expect } from './fixtures.mjs';
+import { openLedger } from './helpers.mjs';
 
 test.setTimeout(90_000);
 
-async function controlPersistence(page, mode) {
-  await page.addInitScript((initialMode) => {
-    const granted = () => {
-      try {
-        const override = globalThis.localStorage?.getItem('zichan.e2e.persistence');
-        return (override ?? initialMode) === 'granted';
-      } catch {
-        return initialMode === 'granted';
-      }
-    };
-    const storage = globalThis.navigator?.storage;
-    if (!storage) return;
-    Object.defineProperties(storage, {
-      persist: {
-        configurable: true,
-        value: async () => granted(),
-      },
-      persisted: {
-        configurable: true,
-        value: async () => granted(),
-      },
-    });
-  }, mode);
-}
-
-test('blocks a new browser-only ledger when persistent storage is denied', async ({ page }) => {
-  await controlPersistence(page, 'denied');
-  const apiRequests = [];
-  page.on('request', (request) => {
-    if (new URL(request.url()).pathname.startsWith('/api/')) apiRequests.push(request.url());
+test('ignores old local mode and key envelopes and always starts at account login', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('zichan.firstUse.mode.v1', 'local');
+    localStorage.setItem('zichan.device.storageEnvelope.v1', 'legacy-envelope-not-to-read');
   });
-
-  await page.goto('/');
-  await page.getByRole('button', { name: /^纯本地使用/ }).click();
-
-  await expect(page.getByRole('alert')).toContainText('浏览器拒绝了持久存储授权');
-  await expect(page.getByRole('button', { name: '创建并打开' })).toHaveCount(0);
-  expect(apiRequests).toEqual([]);
+  await page.goto('/app/');
+  await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^纯本地使用/ })).toHaveCount(0);
+  await expect(page.getByLabel('完整服务器地址')).toHaveCount(0);
+  await expect(page.getByLabel('本机数据密码', { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => indexedDB.databases())).toEqual([]);
+  await openLedger(page);
+  expect(await page.evaluate(() => localStorage.getItem('zichan.device.storageEnvelope.v1'))).toBe('legacy-envelope-not-to-read');
 });
 
-test('opens server onboarding without requesting browser persistence', async ({ page }) => {
-  await controlPersistence(page, 'denied');
-  await page.goto('/');
-  await page.getByRole('button', { name: /^连接同步服务器/ }).click();
-
-  await expect(page.getByRole('heading', { name: '连接同步服务器' })).toBeVisible();
-  await expect(page.getByLabel('完整服务器地址')).toHaveValue('http://127.0.0.1:5173');
-  await page.getByRole('button', { name: '高级设置' }).click();
-  await expect(page.getByLabel('协议')).toHaveValue('http');
-  await expect(page.getByLabel('主机或域名')).toHaveValue('127.0.0.1');
-  await expect(page.getByLabel('端口')).toHaveValue('5173');
-});
-
-test('opens existing browser data in read-only recovery after persistence is lost', async ({ page }) => {
-  await controlPersistence(page, 'granted');
+test('does not require persistent storage permission for an authenticated account cache', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperties(navigator.storage, {
+    persisted: { configurable: true, value: async () => false },
+    persist: { configurable: true, value: async () => false },
+  }));
   await openLedger(page, { grantPersistentStorage: false });
-  await page.evaluate(() => { localStorage.setItem('zichan.e2e.persistence', 'denied'); });
+  await expect(page.getByRole('button', { name: '确认风险，继续本地使用' })).toHaveCount(0);
   await page.reload();
+  await openLedger(page, { grantPersistentStorage: false });
+  await expect(page.locator('.zc-app-shell')).toBeVisible();
+});
 
-  const recovery = page.getByRole('heading', { name: '浏览器不再保证本地数据持久保存' });
-  const unlock = page.getByRole('button', { name: '解锁', exact: true });
-  await expect(recovery.or(unlock)).toBeVisible({ timeout: 30_000 });
-  if (await unlock.isVisible().catch(() => false)) {
-    await page.getByLabel('本机数据密码').fill(DEVICE_PASSWORD);
-    await unlock.click();
-  }
+test('does not open a cached ledger after the account session is revoked', async ({ page, context }) => {
+  await openLedger(page);
+  await context.clearCookies();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
+  await expect(page.getByLabel('本机数据密码', { exact: true })).toHaveCount(0);
+  await expect(page.locator('.zc-app-shell')).toHaveCount(0);
+});
 
-  await expect(recovery).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText('只读恢复模式', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '导出加密 .zcbak' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '改为连接服务器' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /^\+ 记(?:账|支出)$/ })).toHaveCount(0);
+test('contains no server management or connection editing entry in the Web ledger', async ({ page }) => {
+  await openLedger(page);
+  await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
+  await page.getByLabel('在侧边栏显示同步').click();
+  await expect(page.getByLabel('在侧边栏显示同步')).toBeChecked();
+  await page.locator('.zc-sidebar').getByRole('button', { name: /同步$/ }).click();
+  await expect(page.getByRole('heading', { name: '当前账号' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /管理后台|新增服务器/ })).toHaveCount(0);
+  await expect(page.getByLabel('服务器账号密码', { exact: true })).toHaveCount(0);
+  await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
+  await expect(page.getByRole('button', { name: /启动.*服务器|停止.*服务器/ })).toHaveCount(0);
 });

@@ -21,10 +21,12 @@ mobile shells.
 |---|---|
 | `consoleSink(out?)` | human-readable dev output |
 | `jsonSink(write)` | one JSON object per line — files / log shippers |
-| `memorySink(store?)` | collect records in memory — tests, in-app log viewers |
+| `memorySink(store?, capacity = 1000)` | retain the newest records, discarding older entries at capacity |
 | `nullSink()` | drop everything — the **default for libraries** so they're silent unless wired |
 
 ## 约定
+
+日志 sink 抛出的同步异常会被隔离，不会阻止其他 sink 或中断账本事务。需要持久化可靠性的业务审计仍写入数据库，不依赖诊断日志。内存 sink 容量必须是正整数。
 
 - **Libraries default to `nullSink`.** `@zichan/db` logs nothing until an app passes a
   logger — no surprise console spam. Apps decide sinks + level.
@@ -56,5 +58,5 @@ Two different "logs", intentionally:
 
 ## 测试
 
-`npm test -w @zichan/logger` — 5 tests: level filtering, scope/field composition, shared
-level box across children, error serialization, and JSON sink output.
+`npm test -w @zichan/logger` covers level filtering, scope/field composition, shared
+level updates, error serialization, JSON output, sink failure isolation and bounded retention.

@@ -6,7 +6,7 @@ import {
   type BackupArchiveInput,
   type BackupArchiveSource,
 } from './db/backup-archive.js';
-import { authenticateSyncProfile } from './sync-auth.js';
+import { authenticateSyncProfile, hasAccountSession } from './sync-auth.js';
 import { runtimeCredential } from './credential-vault.js';
 import {
   buildSyncBaseUrl,
@@ -267,7 +267,7 @@ export async function saveEncryptedBackupToSyncServers(
       if (!profile.serverId) throw new Error('尚未识别服务器 ID，请先在同步页测试连接');
       if (profile.ledgerId !== header.ledgerId) throw new Error('服务器尚未绑定当前账本');
       if (!profile.username.trim()) throw new Error('尚未填写同步用户名');
-      if (!runtimeCredential(profile.id)?.password) throw new Error('同步密码尚未解锁');
+      if (!hasAccountSession(runtimeCredential(profile.id))) throw new Error('账号登录已失效，请重新登录后备份');
       const client = new RemoteBackupClient(profile);
       await client.upload(header, archive);
       const backups = await client.list();

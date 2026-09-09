@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { seasonSummary, seasonDays, round, type GameRecord, type GameSeason } from '../src/index.js';
+import { seasonSummary, seasonActivitySummary, seasonDays, round, type GameRecord, type GameSeason } from '../src/index.js';
 
 // Prototype season S2 · 灰烬余烬 (see 资产记账系统.dc.html SEASONS.s2).
 const s2: GameSeason = {
@@ -62,5 +62,27 @@ describe('seasonSummary — matches prototype S2 numbers', () => {
   });
   it('reference balance = 2,200 初火 (buy + produce − sell), may go negative elsewhere', () => {
     expect(round(sum.referenceBalance, 0)).toBe('2200');
+  });
+
+  it('rejects implicit mixed currencies and selects settlement and fees independently', () => {
+    const mixed = [{ ...rec('sell_currency', '100', '初火', '10'), feeAssetId: 'USD', feeAmount: '2' }];
+    expect(() => seasonSummary(mixed, s2)).toThrow('多个币种');
+    const gbp = seasonSummary(mixed, s2, { baseAssetId: 'GBP' });
+    const usd = seasonSummary(mixed, s2, { baseAssetId: 'USD' });
+    expect(gbp.incomeBase).toBe('100');
+    expect(gbp.expenseBase).toBe('0');
+    expect(usd.incomeBase).toBe('0');
+    expect(usd.expenseBase).toBe('2');
+    expect(usd.feeBase).toBe('2');
+    expect(gbp.referenceBalance).toBe('-10');
+    expect(usd.referenceBalance).toBe('-10');
+    expect(seasonActivitySummary(mixed, s2).referenceBalance).toBe('-10');
+  });
+
+  it('rejects financial amounts without a currency and ignores deleted records', () => {
+    const invalid = { ...rec('sell_currency', '100'), settlementAssetId: undefined };
+    expect(() => seasonSummary([invalid], s2)).toThrow('缺少资产币种');
+    expect(seasonSummary([{ ...invalid, isDeleted: true }], s2).incomeBase).toBe('0');
+    expect(() => seasonSummary([{ ...rec('produce', '0'), feeAmount: '1' }], s2)).toThrow('缺少资产币种');
   });
 });

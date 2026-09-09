@@ -114,7 +114,7 @@ describe('real-use workflow smoke', () => {
     await recordSell(store, {
       chain: sell,
       steps: [
-        step(sell.id, 1, btc.id, '0.001', usdt.id, '96.00', usdt.id, '0.10', '0.08'),
+        step(sell.id, 1, btc.id, '0.001', usdt.id, '95.90', usdt.id, '0.10', '0.08'),
         step(sell.id, 2, usdt.id, '95.90', gbp.id, '76.00', gbp.id, '0.50'),
       ],
       method: 'fifo',

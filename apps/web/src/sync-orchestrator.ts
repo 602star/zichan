@@ -60,10 +60,10 @@ function authenticatedTransport(profile: SyncConnection): MeteredTransport {
   let activeIndex = 0;
   let measuredMs = 0;
 
-  const create = async (index: number, forceLogin = false): Promise<CommitTransport> => {
+  const create = async (index: number, forceRefresh = false): Promise<CommitTransport> => {
     const baseUrl = urls[index]!;
     const candidate = { ...profile, baseUrl, activeUrl: baseUrl };
-    const accessToken = await authenticateSyncProfile(candidate, forceLogin);
+    const accessToken = await authenticateSyncProfile(candidate, forceRefresh);
     const keyEnvelope = storedLedgerKeyEnvelope();
     if (!keyEnvelope) throw new Error('本机没有账本密钥包，请先在同步页创建或获取');
     return httpCommitTransport({
@@ -77,16 +77,16 @@ function authenticatedTransport(profile: SyncConnection): MeteredTransport {
   const executeAt = async <T>(
     index: number,
     operation: (transport: CommitTransport) => Promise<T>,
-    forceLogin = false,
+    forceRefresh = false,
   ): Promise<T> => {
-    let candidate = await create(index, forceLogin);
+    let candidate = await create(index, forceRefresh);
     try {
       const result = await operation(candidate);
       inner = candidate;
       activeIndex = index;
       return result;
     } catch (error) {
-      if (forceLogin || !isUnauthorizedSyncError(error)) throw error;
+      if (forceRefresh || !isUnauthorizedSyncError(error)) throw error;
       candidate = await create(index, true);
       const result = await operation(candidate);
       inner = candidate;

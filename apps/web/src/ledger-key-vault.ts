@@ -1,3 +1,4 @@
+import { accountLocalStorage } from './account-storage.js';
 import {
   changeLedgerPassphrase,
   createLedgerKeyEnvelope,
@@ -36,7 +37,7 @@ function validEnvelope(value: unknown): value is LedgerKeyEnvelope {
 
 export function storedLedgerKeyEnvelope(): LedgerKeyEnvelope | undefined {
   try {
-    const raw = globalThis.localStorage?.getItem(LEDGER_KEY_ENVELOPE_KEY);
+    const raw = accountLocalStorage?.getItem(LEDGER_KEY_ENVELOPE_KEY);
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as unknown;
     return validEnvelope(parsed) ? parsed : undefined;
@@ -46,7 +47,7 @@ export function storedLedgerKeyEnvelope(): LedgerKeyEnvelope | undefined {
 }
 
 function persist(envelope: LedgerKeyEnvelope): void {
-  globalThis.localStorage?.setItem(LEDGER_KEY_ENVELOPE_KEY, JSON.stringify(envelope));
+  accountLocalStorage?.setItem(LEDGER_KEY_ENVELOPE_KEY, JSON.stringify(envelope));
 }
 
 export function ledgerKeyState(): LedgerKeyState {
@@ -96,7 +97,7 @@ export function lockLedgerKey(): void {
 /** Forget every local reference to the current ledger key after a full data reset. */
 export function clearLedgerKey(): void {
   session = undefined;
-  globalThis.localStorage?.removeItem(LEDGER_KEY_ENVELOPE_KEY);
+  accountLocalStorage?.removeItem(LEDGER_KEY_ENVELOPE_KEY);
   emit();
 }
 

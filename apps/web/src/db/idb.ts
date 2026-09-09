@@ -1,3 +1,4 @@
+import { accountDatabaseName } from '../account-storage.js';
 import {
   decryptBackupChunk,
   encryptBackupChunk,
@@ -9,7 +10,7 @@ import {
 } from '../device-storage-error.js';
 
 /** Minimal IndexedDB store for the encrypted sql.js database and attachment objects. */
-const DB_NAME = 'zichan-web';
+
 const STORE = 'kv';
 const KEY = 'ledger.sqlite';
 
@@ -22,9 +23,9 @@ export interface EncryptedDatabaseSnapshot {
   ciphertext: Uint8Array;
 }
 
-function openIdb(): Promise<IDBDatabase> {
+function openIdb(databaseName = accountDatabaseName()): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
+    const req = indexedDB.open(databaseName, 1);
     req.onupgradeneeded = () => req.result.createObjectStore(STORE);
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -32,11 +33,11 @@ function openIdb(): Promise<IDBDatabase> {
 }
 
 /** Delete ledger-bound WebView/browser KV data such as form drafts and browser archives. */
-export function deleteWebDatabase(): Promise<void> {
+export function deleteWebDatabase(databaseName = accountDatabaseName()): Promise<void> {
   const factory = globalThis.indexedDB;
   if (!factory) return Promise.resolve();
   return new Promise((resolve, reject) => {
-    const request = factory.deleteDatabase(DB_NAME);
+    const request = factory.deleteDatabase(databaseName);
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
     request.onblocked = () => reject(new Error('浏览器存储仍被占用，请关闭其他本应用页面后重试'));
@@ -116,8 +117,8 @@ export async function saveDbBytes(bytes: Uint8Array, session: LedgerCryptoSessio
   await saveKv(KEY, await encryptDatabaseSnapshot(session, bytes));
 }
 
-export async function loadKv<T>(key: string): Promise<T | null> {
-  const db = await openIdb();
+export async function loadKv<T>(key: string, databaseName = accountDatabaseName()): Promise<T | null> {
+  const db = await openIdb(databaseName);
   try {
     return await new Promise<T | null>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readonly');
@@ -130,36 +131,38 @@ export async function loadKv<T>(key: string): Promise<T | null> {
   }
 }
 
-export async function saveKv<T>(key: string, value: T): Promise<void> {
-  const db = await openIdb();
+export async function saveKv<T>(key: string, value: T, databaseName = accountDatabaseName()): Promise<void> {
+  const db = await openIdb(databaseName);
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
       tx.objectStore(STORE).put(value, key);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new Error('IndexedDB write aborted'));
     });
   } finally {
     db.close();
   }
 }
 
-export async function deleteKv(key: string): Promise<void> {
-  const db = await openIdb();
+export async function deleteKv(key: string, databaseName = accountDatabaseName()): Promise<void> {
+  const db = await openIdb(databaseName);
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');
       tx.objectStore(STORE).delete(key);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new Error('IndexedDB delete aborted'));
     });
   } finally {
     db.close();
   }
 }
 
-export async function hasKv(key: string): Promise<boolean> {
-  const db = await openIdb();
+export async function hasKv(key: string, databaseName = accountDatabaseName()): Promise<boolean> {
+  const db = await openIdb(databaseName);
   try {
     return await new Promise<boolean>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readonly');
@@ -173,8 +176,8 @@ export async function hasKv(key: string): Promise<boolean> {
 }
 
 /** Move a value inside one IndexedDB transaction. Existing immutable targets win. */
-export async function moveKv(sourceKey: string, targetKey: string): Promise<boolean> {
-  const db = await openIdb();
+export async function moveKv(sourceKey: string, targetKey: string, databaseName = accountDatabaseName()): Promise<boolean> {
+  const db = await openIdb(databaseName);
   try {
     return await new Promise<boolean>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite');

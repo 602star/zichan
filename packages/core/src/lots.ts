@@ -215,10 +215,15 @@ function makeConsumption(
 }
 
 /** Remaining cost basis of all open lots for an asset (for unrealized P&L). */
-export function remainingCostBasis(lots: Lot[], assetId: string): string {
+export function remainingCostBasis(lots: Lot[], assetId: string, baseCurrencyAssetId?: string): string {
+  const active = lots.filter((lot) => lot.assetId === assetId && !lot.isDeleted
+    && D(lot.remainingAmount).gt(0)
+    && (baseCurrencyAssetId === undefined || lot.baseCurrencyAssetId === baseCurrencyAssetId));
+  if (new Set(active.map((lot) => lot.baseCurrencyAssetId)).size > 1) {
+    throw new Error('持仓成本包含多个本位币，必须指定成本币种分别汇总');
+  }
   return sum(
-    lots
-      .filter((l) => l.assetId === assetId && !l.isDeleted && D(l.remainingAmount).isPositive())
+    active
       .map((l) => D(l.baseCost).times(safeDiv(l.remainingAmount, l.originalAmount))),
   ).toString();
 }

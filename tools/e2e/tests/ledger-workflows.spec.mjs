@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures.mjs';
 import { openLedger, openTransactions } from './helpers.mjs';
 
 test.setTimeout(90_000);

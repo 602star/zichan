@@ -1,3 +1,4 @@
+import { accountSessionStorage } from '../account-storage.js';
 import { useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
 import type { LedgerMode, Setting } from '@zichan/core';
 import type { SqlLedgerStore } from '@zichan/db';
@@ -45,7 +46,7 @@ export function releaseFirstRunFlight(flight: FirstRunFlight): void {
 
 function rememberQuickExpenseStart(): void {
   try {
-    window.sessionStorage.setItem('zichan.postFirstRun', 'quick-expense');
+    accountSessionStorage.setItem('zichan.postFirstRun', 'quick-expense');
   } catch {
     // Session storage is only a navigation hint; ledger creation must still succeed without it.
   }

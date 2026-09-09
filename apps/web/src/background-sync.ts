@@ -9,6 +9,7 @@ import {
 } from './sync-config.js';
 import { syncConfiguredServers } from './sync-orchestrator.js';
 import { runtimeLedgerCryptoSession } from './ledger-key-vault.js';
+import { hasAccountSession } from './sync-auth.js';
 
 export type SyncLifecycleReason = 'startup' | 'interval' | 'online' | 'foreground' | 'credentials' | 'write';
 
@@ -37,7 +38,7 @@ export function runLifecycleSync(store: SqlLedgerStore, reason: SyncLifecycleRea
   const now = Date.now();
   if (inFlight) return inFlight;
   if (reason !== 'interval' && reason !== 'credentials' && reason !== 'write' && now - lastAttemptAt < 5_000) return Promise.resolve(null);
-  const profiles = loadSyncConnections().filter((profile) => profile.enabled && profile.username.trim() && runtimeCredential(profile.id)?.password);
+  const profiles = loadSyncConnections().filter((profile) => profile.enabled && profile.username.trim() && hasAccountSession(runtimeCredential(profile.id)));
   if (profiles.length === 0) return Promise.resolve(null);
   lastAttemptAt = now;
   inFlight = (async () => {
@@ -80,9 +81,15 @@ export function installSyncLifecycle(
   let timer = 0;
   let credentialTimer = 0;
   let writeTimer = 0;
+  let disposed = false;
+  let running = false;
+  let pendingWrite = false;
   const run = (reason: SyncLifecycleReason) => {
+    if (disposed) return;
+    if (running) { if (reason === 'write') pendingWrite = true; return; }
+    running = true;
     void runner(store, reason).then((result) => {
-      if (result?.applied) onApplied();
+      if (!disposed && result?.applied) onApplied();
     }).catch((error) => {
       const result: LifecycleSyncResult = {
         reason,
@@ -97,7 +104,10 @@ export function installSyncLifecycle(
         errors: [error instanceof Error ? error.message : String(error)],
         finishedAt: new Date().toISOString(),
       };
-      window.dispatchEvent(new CustomEvent(SYNC_LIFECYCLE_RESULT_EVENT, { detail: result }));
+      if (!disposed) window.dispatchEvent(new CustomEvent(SYNC_LIFECYCLE_RESULT_EVENT, { detail: result }));
+    }).finally(() => {
+      running = false;
+      if (pendingWrite && !disposed) { pendingWrite = false; run('write'); }
     });
   };
   const configureTimer = () => {
@@ -115,6 +125,7 @@ export function installSyncLifecycle(
   };
   const unsubscribeWrites = typeof store.subscribe === 'function'
     ? store.subscribe(() => {
+      if (running) { pendingWrite = true; return; }
       window.clearTimeout(writeTimer);
       writeTimer = window.setTimeout(() => run('write'), 1_500);
     })
@@ -130,6 +141,8 @@ export function installSyncLifecycle(
   window.addEventListener(CREDENTIALS_CHANGED_EVENT, onCredentials);
   window.addEventListener(SYNC_CONFIG_CHANGED_EVENT, onConfig);
   return () => {
+    disposed = true;
+    pendingWrite = false;
     window.clearInterval(timer);
     window.clearTimeout(credentialTimer);
     window.clearTimeout(writeTimer);

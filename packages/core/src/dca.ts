@@ -29,7 +29,13 @@ export function buildDcaReport(executions: DcaExecution[]): DcaReport {
   const rows: DcaReportRow[] = [];
   const sorted = [...executions]
     .filter((e) => !e.isDeleted)
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  const first = sorted[0];
+  if (first && sorted.some((execution) => execution.planId !== first.planId
+    || execution.baseCurrencyAssetId !== first.baseCurrencyAssetId
+    || execution.finalAssetId !== first.finalAssetId)) {
+    throw new Error('定投报表必须按计划、本位币和目标资产分别汇总');
+  }
 
   let cumAmount = D(0);
   let cumCost = D(0);

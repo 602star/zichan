@@ -50,7 +50,7 @@ export async function acquireBrowserLedgerLock(
     rejectAcquired = reject;
   });
   const requestFlight = Promise.resolve().then(() => manager.request(
-    BROWSER_LEDGER_LOCK_NAME,
+    accountStorageKey(BROWSER_LEDGER_LOCK_NAME),
     { mode: 'exclusive', ifAvailable: true },
     async (lock) => {
       if (!lock) {
@@ -96,3 +96,4 @@ export async function acquireBrowserLedgerLock(
     if (requestError) throw requestError;
   };
 }
+import { accountStorageKey } from '../account-storage.js';

@@ -164,7 +164,7 @@ test('rejects bundled server or Web resources containing removed sync contracts'
   const cases = [
     ['web/app.js', `const key = '${['zichan.sync.server', 'Profiles.v3'].join('')}';`, /removed sync configuration contract/],
     ['server.mjs', "const route = '/admin/status';", /removed \/admin management route/],
-    ['server.mjs', "process.env.REGISTRATION_MODE ||= 'invite';", /defaults registration to invite/],
+    ['server.mjs', "process.env.REGISTRATION_MODE ||= 'open';", /defaults registration to open/],
   ];
   for (const [relativePath, source, expected] of cases) {
     const value = await fixture();

@@ -86,7 +86,11 @@ class LoggerImpl implements Logger {
     if (this.scope) record.scope = this.scope;
     if (merged && Object.keys(merged).length) record.fields = merged;
     if (err) record.err = serializeError(err);
-    for (const sink of this.sinks) sink(record);
+    for (const sink of this.sinks) {
+      try { sink(record); } catch {
+        // Logging must not abort a ledger transaction or suppress other sinks.
+      }
+    }
   }
 
   trace(msg: string, fields?: Record<string, unknown>): void {
@@ -170,9 +174,12 @@ export function jsonSink(write: (line: string) => void): Sink {
 }
 
 /** Collects records in memory — handy for tests and in-app log viewers. */
-export function memorySink(store: LogRecord[] = []): Sink & { records: LogRecord[] } {
+export function memorySink(store: LogRecord[] = [], capacity = 1000): Sink & { records: LogRecord[] } {
+  if (!Number.isSafeInteger(capacity) || capacity < 1) throw new Error('Log capacity must be a positive integer');
+  if (store.length > capacity) store.splice(0, store.length - capacity);
   const sink = ((r: LogRecord) => {
     store.push(r);
+    if (store.length > capacity) store.splice(0, store.length - capacity);
   }) as Sink & { records: LogRecord[] };
   sink.records = store;
   return sink;

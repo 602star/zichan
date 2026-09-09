@@ -15,7 +15,6 @@ import {
 } from '../db/cloud.js';
 import { card, th as thStyle, td as tdStyle } from '../ui/styles.js';
 import { categoryLabel, TYPE_LABEL } from '../transactionMeta.js';
-import { ServerAdmin } from './ServerAdmin.js';
 import { DateRangeBar, dateRangeValue, localDateOfInstant, type DateRangeValue } from '../ui/DateRangeBar.js';
 import {
   buildSyncBaseUrl as buildBaseUrl,
@@ -81,6 +80,7 @@ import {
   parseSyncConnectionLink,
 } from '../connection-link.js';
 import { copyTextToClipboard } from '../ui/diagnostics.js';
+import { authenticateSyncProfile, hasAccountSession, preferredSessionTransport } from '../sync-auth.js';
 
 const REQUEST_TIMEOUT_MS = 5_000;
 type WizardMode = SyncAddressPreset;
@@ -106,6 +106,7 @@ function sameCredentialMaps(
       && a.inviteCode === b.inviteCode
       && a.accessToken === b.accessToken
       && a.refreshToken === b.refreshToken
+      && a.sessionTransport === b.sessionTransport
       && a.accessExpiresAt === b.accessExpiresAt
       && a.sessionId === b.sessionId;
   });
@@ -374,7 +375,6 @@ const inputGrid = { display: 'grid', gridTemplateColumns: '1fr 120px 1fr 100px',
 export function Sync() {
   const { store, bump } = useStore();
   const snap = useSnapshot('sync');
-  const [tab, setTab] = useState<'account' | 'admin'>('account');
   const [profiles, setProfiles] = useState<SyncConnection[]>(loadSyncConnections);
   const [selectedId, setSelectedId] = useState(profiles[0]?.id ?? '');
   const [credentials, setCredentials] = useState<Record<string, ServerCredential>>(runtimeCredentialMap);
@@ -387,6 +387,8 @@ export function Sync() {
   const [vaultPasswordConfirm, setVaultPasswordConfirm] = useState('');
   const [vaultBusy, setVaultBusy] = useState(false);
   const [vaultError, setVaultError] = useState('');
+  const [ownerSetupToken, setOwnerSetupToken] = useState('');
+  useEffect(() => { setOwnerSetupToken(''); }, [selectedId]);
   const [ledgerKey, setLedgerKey] = useState<LedgerKeyState>(ledgerKeyState);
   const [ledgerPassword, setLedgerPassword] = useState('');
   const [ledgerPasswordConfirm, setLedgerPasswordConfirm] = useState('');
@@ -436,6 +438,7 @@ export function Sync() {
   }, [profiles]);
 
   useEffect(() => {
+    if (!isTauriRuntime()) return;
     const payload = connectionLinkFromLocation();
     if (payload) importConnectionLink(globalThis.location.href);
     // Importing the initial hash is intentionally a mount-only action; the handler clears it.
@@ -443,6 +446,7 @@ export function Sync() {
   }, []);
 
   useEffect(() => {
+    if (!isTauriRuntime()) return;
     let cancelled = false;
     void loadSharedSyncDirectory(store).then((servers) => {
       if (cancelled) return;
@@ -506,10 +510,10 @@ export function Sync() {
     const timer = window.setTimeout(() => {
       for (const profile of profiles) {
         const credential = credentials[profile.id];
-        if (credential?.password || credential?.inviteCode) {
-          void persistCredential(profile.id, credential).catch((error) => setVaultError(`保存 ${profile.alias} 的密码失败：${msg(error)}`));
-        } else if (credential) {
-          void deleteCredential(profile.id).catch((error) => setVaultError(`删除 ${profile.alias} 的密码失败：${msg(error)}`));
+        if (credential?.refreshToken) {
+          void persistCredential(profile.id, credential).catch((error) => setVaultError(`保存 ${profile.alias} 的会话失败：${msg(error)}`));
+        } else if (credential && !credential.password && !credential.inviteCode) {
+          void deleteCredential(profile.id).catch((error) => setVaultError(`删除 ${profile.alias} 的会话失败：${msg(error)}`));
         }
       }
     }, 500);
@@ -535,6 +539,9 @@ export function Sync() {
   }, [store]);
 
   function patchProfile(id: string, patch: Partial<SyncConnection>) {
+    if (patch.username !== undefined && profiles.find((row) => row.id === id)?.username !== patch.username) {
+      patchCredential(id, { password: '', inviteCode: '', accessToken: undefined, refreshToken: undefined, accessExpiresAt: undefined, sessionId: undefined, sessionTransport: undefined });
+    }
     setProfiles((rows) => rows.map((row) => row.id === id ? { ...row, ...patch } : row));
   }
 
@@ -615,7 +622,7 @@ export function Sync() {
       setVault(credentialVaultState());
       setVaultPassword('');
       setVaultPasswordConfirm('');
-      setSyncNotice(vault.initialized ? 'Stronghold 已解锁，自动同步可以使用已保存密码。' : 'Stronghold 已创建，后续同步密码会加密保存。');
+      setSyncNotice(vault.initialized ? 'Stronghold 已解锁，自动同步可以使用已保存会话。' : 'Stronghold 已创建，后续登录会话会加密保存，不保存账号密码。');
     } catch (error) {
       setVaultError(`解锁失败：${msg(error)}`);
     } finally {
@@ -914,6 +921,7 @@ export function Sync() {
       if (mode === 'auth' && profile.username.trim() && cred?.password) {
         try {
           const session = await withTimeout(loginAccount(baseUrl, profile.username.trim(), cred.password, {
+            sessionTransport: preferredSessionTransport(baseUrl),
             deviceId,
             deviceName: 'Zichan · 同步设置',
             expectedServerPublicKey: serverPublicKey,
@@ -929,6 +937,7 @@ export function Sync() {
           const used = usageBody.usage?.usedBytes ?? 0;
           const quota = usageBody.usage?.quotaBytes ?? 0;
           patchCredential(profile.id, {
+            password: '', inviteCode: '', sessionTransport: session.sessionTransport,
             accessToken: session.accessToken,
             refreshToken: session.refreshToken,
             accessExpiresAt: session.accessExpiresAt,
@@ -938,6 +947,7 @@ export function Sync() {
             serverId: body.serverId,
             serverPublicKey,
             role: account.role,
+            accountId: account.accountId,
             status: 'online',
             lastLatencyMs: latencyMs,
             lastTestAt: new Date().toISOString(),
@@ -998,19 +1008,23 @@ export function Sync() {
     if (!profile.username.trim() || !cred?.password) throw new Error('请先填写用户名和密码');
     const identity = await inspectConnectionIdentity(profile);
     const registered = await registerAccount(buildBaseUrl(profile), profile.username.trim(), cred.password, {
+      ownerSetupToken: identity.claimed ? undefined : ownerSetupToken.trim(),
       inviteCode: cred.inviteCode.trim() || undefined,
       expectedServerId: identity.serverId,
       expectedServerPublicKey: identity.serverPublicKey,
     });
+    setOwnerSetupToken('');
     await loginProfile({ ...profile, ...identity, role: registered.role });
-    patchProfile(profile.id, { role: registered.role, lastError: registered.role === 'admin' ? '注册并登录成功；你是此服务器管理员' : '注册并登录成功', status: 'online' });
+    patchProfile(profile.id, { role: registered.role, lastError: registered.role !== 'member' ? '注册并登录成功；你是此服务器管理员' : '注册并登录成功', status: 'online' });
   }
 
   async function loginProfile(profile: SyncConnection): Promise<string> {
     const cred = credentials[profile.id];
+    if (!cred?.password && hasAccountSession(cred)) return authenticateSyncProfile(profile);
     if (!profile.username.trim() || !cred?.password) throw new Error('请先填写用户名和密码');
     const identity = await inspectConnectionIdentity(profile);
     const session = await loginAccount(buildBaseUrl(profile), profile.username.trim(), cred.password, {
+      sessionTransport: preferredSessionTransport(buildBaseUrl(profile)),
       deviceId,
       deviceName: 'Zichan · 当前设备',
       expectedServerPublicKey: identity.serverPublicKey,
@@ -1018,6 +1032,7 @@ export function Sync() {
     });
     const account = await fetchAuthMe(buildBaseUrl(profile), session.accessToken);
     patchCredential(profile.id, {
+      password: '', inviteCode: '', sessionTransport: session.sessionTransport,
       accessToken: session.accessToken,
       refreshToken: session.refreshToken,
       accessExpiresAt: session.accessExpiresAt,
@@ -1026,10 +1041,11 @@ export function Sync() {
     patchProfile(profile.id, {
       status: 'online',
       role: account.role,
+      accountId: account.accountId,
       ledgerId: account.ledgerId ?? profile.ledgerId,
       replicaId: account.replicaId ?? profile.replicaId,
       streamEpoch: account.streamEpoch ?? profile.streamEpoch,
-      lastError: account.role === 'admin' ? '管理员登录成功' : '登录成功',
+      lastError: account.role !== 'member' ? '管理员登录成功' : '登录成功',
     });
     return session.accessToken;
   }
@@ -1154,9 +1170,9 @@ export function Sync() {
       setAutoSyncStatus('未启用');
       return;
     }
-    const ready = ledgerKey.unlocked && profiles.some((profile) => profile.enabled && profile.username.trim() && credentials[profile.id]?.password);
+    const ready = ledgerKey.unlocked && profiles.some((profile) => profile.enabled && profile.username.trim() && hasAccountSession(credentials[profile.id]));
     if (!ready) {
-      setAutoSyncStatus(!ledgerKey.unlocked ? '等待解锁账本密钥' : vault.kind === 'native-stronghold' && !vault.unlocked ? '等待解锁 Stronghold' : '等待启用服务器和账号密码');
+      setAutoSyncStatus(!ledgerKey.unlocked ? '等待解锁账本密钥' : vault.kind === 'native-stronghold' && !vault.unlocked ? '等待解锁 Stronghold' : '等待启用服务器并登录账号');
     } else {
       setAutoSyncStatus(`每 ${autoSyncMinutes} 分钟；启动、回前台和联网恢复时同步`);
     }
@@ -1311,7 +1327,7 @@ export function Sync() {
   const selectedHealth = selected ? healthByConnection[selected.id] : undefined;
   const enabledProfiles = profiles.filter((p) => p.enabled);
   const onlineProfiles = profiles.filter((p) => p.status === 'online');
-  const syncReadyCount = enabledProfiles.filter((p) => credentials[p.id]?.password).length;
+  const syncReadyCount = enabledProfiles.filter((p) => hasAccountSession(credentials[p.id])).length;
   const filteredConflicts = conflicts.filter((conflict) => isDateInRange(localDateOfInstant(conflict.at), conflictRange));
   const selectedRemoteLedgerId = ledgerMismatchId(selected?.lastError);
   const exportInvalidCommits = () => {
@@ -1325,13 +1341,7 @@ export function Sync() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: tab === 'admin' ? 980 : 980 }}>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={() => setTab('account')} style={tabBtn(tab === 'account')}>同步中心</button>
-        <button onClick={() => setTab('admin')} style={tabBtn(tab === 'admin')}>管理后台</button>
-      </div>
-
-      {tab === 'admin' ? <ServerAdmin connection={selected} accessToken={selected ? credentials[selected.id]?.accessToken : undefined} /> : (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 980 }}>
         <>
           <div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginBottom: 14 }}>
@@ -1343,13 +1353,12 @@ export function Sync() {
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 <button onClick={() => void doSync()} disabled={busy || !ledgerKey.unlocked || enabledProfiles.length === 0} style={primary}>{busy ? '同步中…' : '同步全部启用服务器'}</button>
-                <button onClick={() => setTab('admin')} style={outline}>打开管理后台</button>
               </div>
             </div>
             <div className="zc-sync-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10 }}>
               <SyncTile label="启用服务器" value={`${enabledProfiles.length} / ${profiles.length}`} tone={enabledProfiles.length ? 'var(--positive)' : 'var(--negative)'} />
               <SyncTile label="在线服务器" value={`${onlineProfiles.length}`} tone={onlineProfiles.length ? 'var(--positive)' : 'var(--fg-subtle)'} />
-              <SyncTile label="有账号密码" value={`${syncReadyCount}`} tone={syncReadyCount ? 'var(--positive)' : 'var(--fg-subtle)'} />
+              <SyncTile label="已登录账号" value={`${syncReadyCount}`} tone={syncReadyCount ? 'var(--positive)' : 'var(--fg-subtle)'} />
               <SyncTile label="待处理冲突" value={`${conflicts.length}`} tone={conflicts.length ? 'var(--negative)' : 'var(--positive)'} />
               <SyncTile label="隔离提交" value={`${invalidCommits.length}`} tone={invalidCommits.length ? 'var(--negative)' : 'var(--positive)'} />
             </div>
@@ -1387,7 +1396,7 @@ export function Sync() {
                 <div style={{ minWidth: 230, flex: '1 1 260px' }}><label className="zc-label">账本加密密码</label><input aria-label="账本加密密码" className="zc-input" type="password" autoComplete="off" value={ledgerPassword} onChange={(event) => setLedgerPassword(event.target.value)} /></div>
                 {!ledgerKey.initialized && <div style={{ minWidth: 230, flex: '1 1 260px' }}><label className="zc-label">确认账本加密密码</label><input aria-label="确认账本加密密码" className="zc-input" type="password" autoComplete="off" value={ledgerPasswordConfirm} onChange={(event) => setLedgerPasswordConfirm(event.target.value)} /></div>}
                 <button type="button" onClick={() => void createOrUnlockLedgerKey()} disabled={ledgerKeyBusy || ledgerPassword.length < 8 || (!ledgerKey.initialized && ledgerPassword !== ledgerPasswordConfirm)} style={primary}>{ledgerKeyBusy ? '处理中…' : ledgerKey.initialized ? '解锁' : '创建密钥包'}</button>
-                {selected && <button type="button" onClick={() => void fetchRemoteLedgerKey(selected)} disabled={ledgerKeyBusy || !selected.username.trim() || !credentials[selected.id]?.password} style={outline}>从当前服务器获取</button>}
+                {selected && <button type="button" onClick={() => void fetchRemoteLedgerKey(selected)} disabled={ledgerKeyBusy || !selected.username.trim() || !hasAccountSession(credentials[selected.id])} style={outline}>从当前服务器获取</button>}
               </div>
             ) : (
               <div style={{ display: 'flex', alignItems: 'end', gap: 10, flexWrap: 'wrap' }}>
@@ -1429,7 +1438,7 @@ export function Sync() {
             </div>
           )}
 
-          <div style={card}>
+          {isTauriRuntime() && <div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
               <div>
                 <div style={{ fontSize: 15, fontWeight: 800 }}>服务器配置</div>
@@ -1613,16 +1622,17 @@ export function Sync() {
                 <div className="zc-sync-input-grid" style={inputGrid}>
                   <div><label className="zc-label">中文别名</label><input aria-label="中文别名" className="zc-input" value={selected.alias} onChange={(e) => patchProfile(selected.id, { alias: e.target.value })} /></div>
                   <div><label className="zc-label">用户名</label><input aria-label="用户名" className="zc-input" value={selected.username} onChange={(e) => patchProfile(selected.id, { username: e.target.value })} /></div>
-                  <div><label className="zc-label">服务器账号密码{vault.kind === 'browser-session' ? '（当前标签页）' : '（Stronghold）'}</label><input aria-label="服务器账号密码" className="zc-input" type="password" value={cred.password} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { password: e.target.value, accessToken: undefined, refreshToken: undefined, accessExpiresAt: undefined, sessionId: undefined })} /></div>
+                  <div><label className="zc-label">服务器账号密码（仅本次登录使用，不保存密码）</label><input aria-label="服务器账号密码" className="zc-input" type="password" value={cred.password} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { password: e.target.value, accessToken: undefined, refreshToken: undefined, accessExpiresAt: undefined, sessionId: undefined, sessionTransport: undefined })} /></div>
                   {selectedHealth?.registrationMode === 'invite' && <div><label className="zc-label">邀请码</label><input aria-label="邀请码" className="zc-input" value={cred.inviteCode} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { inviteCode: e.target.value })} /></div>}
                 </div>
                 {selectedHealth && (
                   <div style={{ margin: '-2px 0 10px', fontSize: 11, color: !selectedHealth.claimed ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: !selectedHealth.claimed ? 800 : 500 }}>
                     {!selectedHealth.claimed
-                      ? '这是一台尚未认领的空服务器：第一个完成注册的账号将原子成为管理员。'
-                      : `注册策略：${selectedHealth.registrationMode === 'open' ? '开放注册' : selectedHealth.registrationMode === 'invite' ? '仅邀请码' : '已关闭'}${selected.role ? ` · 当前账号：${selected.role === 'admin' ? '管理员' : '成员'}` : ''}`}
+                      ? '尚未初始化：仅部署者可以使用服务器数据目录中的 owner-setup.secret 创建管理员。'
+                      : `注册策略：${selectedHealth.registrationMode === 'open' ? '开放注册' : selectedHealth.registrationMode === 'invite' ? '仅邀请码' : '已关闭'}${selected.role ? ` · 当前账号：${selected.role === 'owner' ? '所有者' : selected.role === 'admin' ? '管理员' : '成员'}` : ''}`}
                   </div>
                 )}
+                {selectedHealth && !selectedHealth.claimed && <label className="zc-label">管理员初始化密钥（仅本次初始化使用）<input className="zc-input" type="password" autoComplete="off" value={ownerSetupToken} onChange={(event) => setOwnerSetupToken(event.target.value)} /></label>}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button onClick={() => void testProfile(selected, 'auth')} disabled={busy || testingId === selected.id} style={outline}>{testingId === selected.id ? '验证中…' : '验证账号密码'}</button>
                   <button onClick={() => void registerProfile(selected).catch((e) => patchProfile(selected.id, { status: 'offline', lastError: msg(e) }))} disabled={busy} style={outline}>注册</button>
@@ -1659,8 +1669,9 @@ export function Sync() {
                 )}
               </div>
             )}
-          </div>
+          </div>}
 
+          {!isTauriRuntime() && <div style={card}><h3>当前账号</h3><p>{selected?.username} · {selected?.accountId}</p><p>本站账号已在进入账本前验证。切换账号请到设置退出后重新登录；不同账号的缓存独立保存。</p></div>}
           <div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
@@ -1820,7 +1831,6 @@ export function Sync() {
             </div>
           )}
         </>
-      )}
     </div>
   );
 }
@@ -1846,3 +1856,4 @@ function SyncTile({ label, value, tone }: { label: string; value: string; tone: 
     </div>
   );
 }
+import { isTauriRuntime } from '../tauri.js';

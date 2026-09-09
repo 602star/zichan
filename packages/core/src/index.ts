@@ -151,6 +151,7 @@ export {
   type SeasonSummary,
   type SeasonSummaryOptions,
   seasonSummary,
+  seasonActivitySummary,
   seasonDays,
 } from './game.js';
 

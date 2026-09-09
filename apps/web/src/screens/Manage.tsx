@@ -1,3 +1,4 @@
+import { accountSessionStorage } from '../account-storage.js';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { isDateInRange, nextUnhandledScheduleOccurrence, type Attachment, type Category, type FixedAssetCategory } from '@zichan/core';
 import {
@@ -49,7 +50,7 @@ const MANAGE_TARGET_KEY = 'zichan.manage.target';
 
 function readManageTarget(): ManageTarget {
   try {
-    const raw = sessionStorage.getItem(MANAGE_TARGET_KEY);
+    const raw = accountSessionStorage.getItem(MANAGE_TARGET_KEY);
     return raw ? JSON.parse(raw) as ManageTarget : {};
   } catch {
     return {};
@@ -67,7 +68,7 @@ export function Manage() {
   const [categoryPackError, setCategoryPackError] = useState('');
   useEffect(() => {
     try {
-      sessionStorage.removeItem(MANAGE_TARGET_KEY);
+      accountSessionStorage.removeItem(MANAGE_TARGET_KEY);
     } catch {
       // Session storage can be unavailable in hardened browser profiles.
     }

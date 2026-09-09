@@ -1,6 +1,6 @@
 /** Game-season view-model — pure selector over a Snapshot (unit-tested). */
 import {
-  D, daysBetween, isDateInRange, safeDiv, seasonSummary, sum, gameRecordReportingPostings,
+  D, daysBetween, isDateInRange, safeDiv, seasonActivitySummary, sum, gameRecordReportingPostings,
   type DateRange,
   type Decimal, type GameRecord, type GameRecordType, type GameSeason,
 } from '@zichan/core';
@@ -74,7 +74,7 @@ export function buildGameSeason(snap: Snapshot, gameId: string | null, selectedI
     .filter((r) => !filters.accountId || r.gameAccountId === filters.accountId)
     .filter((r) => !filters.recordType || filters.recordType === 'all' || r.recordType === filters.recordType)
     .sort((a, b) => a.date.localeCompare(b.date));
-  const summary = seasonSummary(records, season, { asOf: snap.setting?.asOfDate ?? new Date().toLocaleDateString('en-CA') });
+  const summary = seasonActivitySummary(records, season, snap.setting?.asOfDate ?? new Date().toLocaleDateString('en-CA'));
   const filtered = Boolean(dateRange.from || dateRange.to || filters.accountId || (filters.recordType && filters.recordType !== 'all'));
   const filteredDays = dateRange.from && dateRange.to ? Math.max(1, daysBetween(dateRange.from, dateRange.to) + 1) : summary.days;
 

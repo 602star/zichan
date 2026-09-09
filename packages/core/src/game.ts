@@ -45,7 +45,7 @@ export interface SeasonSummary {
 }
 
 export interface SeasonSummaryOptions {
-  /** Settlement asset to sum over; when omitted, all settlement amounts are summed. */
+  /** Asset to sum over; omission is allowed only for a single financial asset. */
   baseAssetId?: string;
   /** Override "today" for day counting (defaults to now). */
   asOf?: string;
@@ -56,19 +56,30 @@ export function seasonSummary(
   season: GameSeason | undefined,
   opts: SeasonSummaryOptions = {},
 ): SeasonSummary {
-  const active = records.filter(
-    (r) =>
-      !r.isDeleted &&
-      (!opts.baseAssetId || !r.settlementAssetId || r.settlementAssetId === opts.baseAssetId),
-  );
+  const active = records.filter((r) => !r.isDeleted);
+  const assets = new Set<string>();
+  for (const record of active) {
+    if ((INCOME_TYPES.has(record.recordType) || EXPENSE_TYPES.has(record.recordType))
+      && !D(record.settlementAmount ?? 0).isZero()) {
+      if (!record.settlementAssetId) throw new Error('结算金额缺少资产币种');
+      assets.add(record.settlementAssetId);
+    }
+    if (record.recordType !== 'fee' && !D(record.feeAmount ?? 0).isZero()) {
+      if (!record.feeAssetId) throw new Error('手续费金额缺少资产币种');
+      assets.add(record.feeAssetId);
+    }
+  }
+  if (opts.baseAssetId === undefined && assets.size > 1) {
+    throw new Error('赛季金额包含多个币种，必须指定币种分别汇总');
+  }
+  const baseAssetId = opts.baseAssetId ?? [...assets][0];
 
   let income = D(0);
   let expense = D(0);
   let fee = D(0);
-  let refBalance = D(0);
 
   for (const r of active) {
-    const settle = D(r.settlementAmount ?? 0).abs();
+    const settle = r.settlementAssetId === baseAssetId ? D(r.settlementAmount ?? 0).abs() : D(0);
     if (INCOME_TYPES.has(r.recordType)) income = income.plus(settle);
     else if (EXPENSE_TYPES.has(r.recordType)) expense = expense.plus(settle);
 
@@ -77,20 +88,18 @@ export function seasonSummary(
     // `expense` above, so only add the attached fee here. A standalone 'fee'
     // record must not also carry feeAmount — that would double-count the fee.
     if (r.recordType === 'fee') fee = fee.plus(settle);
-    else if (r.feeAmount && !D(r.feeAmount).isZero()) {
+    else if (r.feeAssetId === baseAssetId && r.feeAmount && !D(r.feeAmount).isZero()) {
       const f = D(r.feeAmount).abs();
       fee = fee.plus(f);
       expense = expense.plus(f);
     }
 
-    const qty = D(r.gameCurrencyAmount ?? 0).abs();
-    if (REF_ADD.has(r.recordType)) refBalance = refBalance.plus(qty);
-    else if (REF_SUB.has(r.recordType)) refBalance = refBalance.minus(qty);
   }
 
   const net = income.minus(expense);
-  const days = seasonDays(season, opts.asOf);
-  const hours = D(season?.hours ?? 0);
+  const activity = seasonActivitySummary(active, season, opts.asOf);
+  const { days } = activity;
+  const hours = D(activity.hours);
 
   return {
     incomeBase: income.toString(),
@@ -101,8 +110,22 @@ export function seasonSummary(
     hours: hours.toString(),
     perHour: safeDiv(net, hours).toString(),
     perDay: safeDiv(net, D(days)).toString(),
-    referenceBalance: refBalance.toString(),
+    referenceBalance: activity.referenceBalance,
   };
+}
+
+/** Non-financial activity, independent of settlement/fee currency selection. */
+export function seasonActivitySummary(
+  records: GameRecord[], season: GameSeason | undefined, asOf?: string,
+): Pick<SeasonSummary, 'days' | 'hours' | 'referenceBalance'> {
+  let balance = D(0);
+  for (const record of records) {
+    if (record.isDeleted) continue;
+    const quantity = D(record.gameCurrencyAmount ?? 0).abs();
+    if (REF_ADD.has(record.recordType)) balance = balance.plus(quantity);
+    else if (REF_SUB.has(record.recordType)) balance = balance.minus(quantity);
+  }
+  return { days: seasonDays(season, asOf), hours: D(season?.hours ?? 0).toString(), referenceBalance: balance.toString() };
 }
 
 /** Season length in days (inclusive of the start day, min 1). */

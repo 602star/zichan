@@ -165,7 +165,7 @@ describe('configured sync orchestrator', () => {
     expect(httpCommitTransport).not.toHaveBeenCalled();
   });
 
-  it('re-authenticates once when a cached token is rejected', async () => {
+  it('refreshes once without a password login when a cached token is rejected', async () => {
     const localStorage = new MemoryStorage();
     const sessionStorage = new MemoryStorage();
     const profile = {
@@ -180,6 +180,7 @@ describe('configured sync orchestrator', () => {
         password: 'sync-password',
         inviteCode: '',
         accessToken: 'expired-token',
+        refreshToken: 'old-refresh-token',
         accessExpiresAt: '2099-01-01T00:00:00.000Z',
       },
     }));
@@ -191,13 +192,13 @@ describe('configured sync orchestrator', () => {
       serverPublicKey: 'opaque-public-key-home',
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
-    const loginAccount = vi.fn().mockResolvedValue({
+    const loginAccount = vi.fn();
+    const refreshAccountSession = vi.fn().mockResolvedValue({
       accessToken: 'fresh-token',
       refreshToken: 'fresh-refresh-token',
       accessExpiresAt: '2099-01-01T00:00:00.000Z',
-      session: { id: 'session-home' },
+      session: { id: 'session-home', username: 'owner' },
     });
-    const refreshAccountSession = vi.fn();
     const httpCommitTransport = vi.fn((options: { token: string }) => ({
       async connect(ledgerId: string) {
         if (options.token === 'expired-token') throw new Error('replica lookup failed: HTTP 401 unauthorized');
@@ -227,7 +228,8 @@ describe('configured sync orchestrator', () => {
     await initializeLedgerKey('ledger-000000001', 'ledger-passphrase');
     const { syncConfiguredServers } = await import('../src/sync-orchestrator.js');
     const result = await syncConfiguredServers({} as never, [profile]);
-    expect(loginAccount).toHaveBeenCalledTimes(1);
+    expect(loginAccount).not.toHaveBeenCalled();
+    expect(refreshAccountSession).toHaveBeenCalledTimes(1);
     expect(fetchHealth).toHaveBeenCalledTimes(2);
     expect(fetchHealth).toHaveBeenCalledWith('https://ledger.example.com/api/health', { redirect: 'error' });
     expect(httpCommitTransport).toHaveBeenCalledTimes(2);
@@ -248,7 +250,7 @@ describe('configured sync orchestrator', () => {
       serverId: 'server-home', serverPublicKey: 'opaque-public-key-home',
     };
     sessionStorage.setItem('zichan.sync.connectionCredentials.v1', JSON.stringify({
-      home: { password: 'sync-password', inviteCode: '' },
+      home: { refreshToken: 'old-refresh-token' },
     }));
     Object.defineProperty(globalThis, 'window', { configurable: true, value: undefined });
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: localStorage });
@@ -262,10 +264,10 @@ describe('configured sync orchestrator', () => {
       accessToken: string;
       refreshToken: string;
       accessExpiresAt: string;
-      session: { id: string };
+      session: { id: string; username: string };
     }) => void;
-    const loginAccount = vi.fn(() => new Promise((resolve) => { finishLogin = resolve; }));
-    const refreshAccountSession = vi.fn();
+    const loginAccount = vi.fn();
+    const refreshAccountSession = vi.fn(() => new Promise((resolve) => { finishLogin = resolve; }));
     vi.doMock('@zichan/db', () => ({
       assertSecureSyncUrl: vi.fn(),
       isLocalNetworkSyncUrl: vi.fn(() => false),
@@ -276,15 +278,16 @@ describe('configured sync orchestrator', () => {
     const { authenticateSyncProfile } = await import('../src/sync-auth.js');
     const first = authenticateSyncProfile(profile, true);
     const second = authenticateSyncProfile(profile, true);
-    await vi.waitFor(() => expect(loginAccount).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(refreshAccountSession).toHaveBeenCalledTimes(1));
     finishLogin({
       accessToken: 'fresh-token',
       refreshToken: 'fresh-refresh-token',
       accessExpiresAt: '2099-01-01T00:00:00.000Z',
-      session: { id: 'session-home' },
+      session: { id: 'session-home', username: 'owner' },
     });
     await expect(Promise.all([first, second])).resolves.toEqual(['fresh-token', 'fresh-token']);
-    expect(loginAccount).toHaveBeenCalledTimes(1);
+    expect(loginAccount).not.toHaveBeenCalled();
+    expect(refreshAccountSession).toHaveBeenCalledTimes(1);
   });
 
   it('checks each alternate URL independently during concurrent authentication', async () => {
@@ -299,7 +302,7 @@ describe('configured sync orchestrator', () => {
     };
     const alternate = { ...primary, baseUrl: 'https://backup.example.com', activeUrl: 'https://backup.example.com' };
     sessionStorage.setItem('zichan.sync.connectionCredentials.v1', JSON.stringify({
-      home: { password: 'sync-password', inviteCode: '' },
+      home: { refreshToken: 'old-refresh-token' },
     }));
     Object.defineProperty(globalThis, 'window', { configurable: true, value: undefined });
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: localStorage });
@@ -308,17 +311,18 @@ describe('configured sync orchestrator', () => {
       serverId: 'server-home',
       serverPublicKey: 'opaque-public-key-home',
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
-    const loginAccount = vi.fn(async (baseUrl: string) => ({
+    const loginAccount = vi.fn();
+    const refreshAccountSession = vi.fn(async (baseUrl: string) => ({
       accessToken: `token:${baseUrl}`,
       refreshToken: `refresh:${baseUrl}`,
       accessExpiresAt: '2099-01-01T00:00:00.000Z',
-      session: { id: `session:${baseUrl}` },
+      session: { id: `session:${baseUrl}`, username: 'owner' },
     }));
     vi.doMock('@zichan/db', () => ({
       assertSecureSyncUrl: vi.fn(),
       isLocalNetworkSyncUrl: vi.fn(() => false),
       loginAccount,
-      refreshAccountSession: vi.fn(),
+      refreshAccountSession,
     }));
 
     const { authenticateSyncProfile } = await import('../src/sync-auth.js');
@@ -327,12 +331,13 @@ describe('configured sync orchestrator', () => {
       authenticateSyncProfile(alternate, true),
     ])).resolves.toEqual([
       'token:https://primary.example.com',
-      'token:https://backup.example.com',
+      'token:https://primary.example.com',
     ]);
     expect(fetchHealth).toHaveBeenCalledTimes(2);
     expect(fetchHealth).toHaveBeenCalledWith('https://primary.example.com/api/health', { redirect: 'error' });
     expect(fetchHealth).toHaveBeenCalledWith('https://backup.example.com/api/health', { redirect: 'error' });
-    expect(loginAccount).toHaveBeenCalledTimes(2);
+    expect(loginAccount).not.toHaveBeenCalled();
+    expect(refreshAccountSession).toHaveBeenCalledTimes(1);
   });
 
   it('blocks every credential before contacting a server whose pinned identity changed', async () => {

@@ -1,13 +1,14 @@
 import { Buffer } from 'node:buffer';
-import { randomBytes, randomInt } from 'node:crypto';
+import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { NodeSqliteDriver } from '@zichan/db/node';
 
 export type RegistrationMode = 'open' | 'invite' | 'closed';
-export type AccountRole = 'admin' | 'member';
+export type AccountRole = 'owner' | 'admin' | 'member';
 export type ServerLogLevel = 'info' | 'warn' | 'error';
 export type JsonRecord = Record<string, unknown>;
 
 export interface SyncUser {
+  accountId: string;
   username: string;
   opaqueRegistrationRecord: string;
   disabled: boolean;
@@ -66,7 +67,19 @@ export interface Invite {
   usedBy?: string;
   usedAt?: string;
   disabled: boolean;
+  expiresAt?: string;
 }
+
+export type AdminMutation =
+  | { action: 'password-reset-issue'; accountId: string; codeHash: string; expiresAt: string }
+  | { action: 'role'; accountId: string; role: 'admin' | 'member' }
+  | { action: 'state'; accountId: string; disabled: boolean }
+  | { action: 'commit-quota'; accountId: string; bytes: number | null }
+  | { action: 'blob-quota'; accountId: string; bytes: number | null }
+  | { action: 'revoke-session'; sessionId: string }
+  | { action: 'registration'; mode: RegistrationMode }
+  | { action: 'invite-create'; code: string; expiresAt: string }
+  | { action: 'invite-state'; code: string; disabled: boolean };
 
 export interface ServerLog {
   id: string;
@@ -113,8 +126,14 @@ export class ServerStoreError extends Error {
   }
 }
 
-export const CURRENT_SERVER_SCHEMA = 6;
-export const CURRENT_SERVER_SCHEMA_NAME = 'server_account_owner_v6';
+export const CURRENT_SERVER_SCHEMA = 9;
+export const CURRENT_SERVER_SCHEMA_NAME = 'server_password_recovery_v9';
+export function supportedServerSchema(version: number, name: string): boolean {
+  return version === CURRENT_SERVER_SCHEMA && name === CURRENT_SERVER_SCHEMA_NAME
+    || version === 8 && name === 'server_management_v8'
+    || version === 7 && name === 'server_account_identity_v7'
+    || version === 6 && name === 'server_account_owner_v6';
+}
 const DEFAULT_COMMIT_QUOTA_BYTES = 512 * 1024 * 1024;
 const LOG_RETENTION = 5_000;
 
@@ -138,6 +157,7 @@ function jsonObject(value: unknown): JsonRecord {
 
 function userFromRow(row: Record<string, unknown>): SyncUser {
   return {
+    accountId: String(row['account_id']),
     username: String(row['username']),
     opaqueRegistrationRecord: String(row['opaque_registration_record']),
     disabled: bool(row['disabled']),
@@ -192,6 +212,7 @@ function inviteFromRow(row: Record<string, unknown>): Invite {
     code: String(row['code']),
     createdAt: String(row['created_at']),
     disabled: bool(row['disabled']),
+    ...(row['expires_at'] == null ? {} : { expiresAt: String(row['expires_at']) }),
     ...(row['used_by'] == null ? {} : { usedBy: String(row['used_by']) }),
     ...(row['used_at'] == null ? {} : { usedAt: String(row['used_at']) }),
   };
@@ -266,6 +287,33 @@ CREATE TABLE IF NOT EXISTS server_ownership (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
   username TEXT NOT NULL COLLATE NOCASE UNIQUE REFERENCES sync_users(username) ON DELETE RESTRICT,
   created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sync_account_identities (
+  username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
+  account_id TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS server_administrators (
+  username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
+  granted_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS server_admin_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  actor_account_id TEXT NOT NULL,
+  target_account_id TEXT,
+  action TEXT NOT NULL,
+  before_json TEXT NOT NULL,
+  after_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS registration_invite_policy (
+  code TEXT PRIMARY KEY REFERENCES registration_invites(code) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_password_resets (
+  account_id TEXT PRIMARY KEY REFERENCES sync_account_identities(account_id),
+  code_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL,
+  issued_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sync_opaque_login_states (
   login_id TEXT PRIMARY KEY,
@@ -373,10 +421,24 @@ CREATE TABLE IF NOT EXISTS sync_backup_archives (
 CREATE INDEX IF NOT EXISTS idx_backup_archives_created
   ON sync_backup_archives (username, ledger_id, deleted_at, created_at DESC);`);
     const migrations = await this.driver.all<{ version: number; name: string }>('SELECT version, name FROM server_schema_migrations ORDER BY version');
-    if (!migrations.length) {
-      await this.driver.run('INSERT INTO server_schema_migrations (version, name, applied_at) VALUES (?, ?, ?)', [CURRENT_SERVER_SCHEMA, CURRENT_SERVER_SCHEMA_NAME, nowIso()]);
+    const previous = migrations.length === 1 && (
+      Number(migrations[0]?.version) === 6 && migrations[0]?.name === 'server_account_owner_v6'
+      || Number(migrations[0]?.version) === 7 && migrations[0]?.name === 'server_account_identity_v7'
+      || Number(migrations[0]?.version) === 8 && migrations[0]?.name === 'server_management_v8'
+    );
+    if (!migrations.length || previous) {
+      // This additive identity upgrade does not touch ledger bytes, credentials,
+      // owner assignment or replica bindings. No historical schema reset.
+      await this.driver.transaction(async (driver) => {
+        const users = await driver.all<{ username: string }>('SELECT username FROM sync_users');
+        for (const user of users) {
+          await driver.run('INSERT OR IGNORE INTO sync_account_identities (username, account_id) VALUES (?, ?)', [user.username, `account-${randomBytes(16).toString('hex')}`]);
+        }
+        await driver.run('DELETE FROM server_schema_migrations');
+        await driver.run('INSERT INTO server_schema_migrations (version, name, applied_at) VALUES (?, ?, ?)', [CURRENT_SERVER_SCHEMA, CURRENT_SERVER_SCHEMA_NAME, nowIso()]);
+      });
     } else if (migrations.length !== 1 || Number(migrations[0]?.version) !== CURRENT_SERVER_SCHEMA || migrations[0]?.name !== CURRENT_SERVER_SCHEMA_NAME) {
-      throw new Error('同步服务器数据库不是当前开发版结构，请重置服务器开发数据');
+      throw new Error('同步服务器数据库结构不受支持，已停止启动；请先保护现有数据，不会自动重置');
     }
     const at = nowIso();
     const persistedServer = await this.driver.get<{ value: string }>('SELECT value FROM server_meta WHERE key = ?', ['server_id']);
@@ -388,7 +450,7 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
   async registrationMode(): Promise<RegistrationMode> {
     await this.ready;
     const owner = await this.driver.get<{ singleton: number }>('SELECT singleton FROM server_ownership WHERE singleton = 1');
-    if (!owner) return 'open';
+    if (!owner) return 'closed';
     const row = await this.driver.get<{ value: string }>('SELECT value FROM server_meta WHERE key = ?', ['registration_mode']);
     return row?.value === 'invite' || row?.value === 'closed' ? row.value : 'open';
   }
@@ -398,8 +460,14 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     await this.driver.run('INSERT OR REPLACE INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)', ['registration_mode', mode, nowIso()]);
   }
 
-  async assertRegistrationAllowed(inviteCode?: string): Promise<void> {
+  async assertRegistrationAllowed(inviteCode?: string, claimOwner = false): Promise<void> {
     await this.ready;
+    const owner = await this.ownerUsername();
+    if (claimOwner) {
+      if (owner) throw new ServerStoreError('OWNER_ALREADY_CLAIMED', 409, 'server owner has already been initialized');
+      return;
+    }
+    if (!owner) throw new ServerStoreError('OWNER_SETUP_REQUIRED', 403, 'server operator must initialize the owner with the setup secret');
     const mode = await this.registrationMode();
     if (mode === 'closed') throw new ServerStoreError('REGISTRATION_CLOSED', 403, 'registration closed');
     if (mode !== 'invite') return;
@@ -408,14 +476,15 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
       'SELECT * FROM registration_invites WHERE code = ?',
       [inviteCode],
     );
-    if (!invite || bool(invite['disabled']) || invite['used_by'] != null) {
+    const policy = await this.driver.get<{ expires_at: string }>('SELECT expires_at FROM registration_invite_policy WHERE code = ?', [inviteCode]);
+    if (!invite || bool(invite['disabled']) || invite['used_by'] != null || policy && policy.expires_at <= nowIso()) {
       throw new ServerStoreError('INVALID_INVITE', 403, 'invalid invite');
     }
   }
 
   async getUser(username: string): Promise<SyncUser | undefined> {
     await this.ready;
-    const row = await this.driver.get<Record<string, unknown>>('SELECT * FROM sync_users WHERE username = ?', [username]);
+    const row = await this.driver.get<Record<string, unknown>>('SELECT u.*, i.account_id FROM sync_users u JOIN sync_account_identities i ON i.username = u.username WHERE u.username = ?', [username]);
     return row ? userFromRow(row) : undefined;
   }
 
@@ -433,19 +502,23 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
       'SELECT singleton FROM server_ownership WHERE username = ?',
       [username],
     );
-    return owner ? 'admin' : 'member';
+    if (owner) return 'owner';
+    return await this.driver.get('SELECT username FROM server_administrators WHERE username = ?', [username]) ? 'admin' : 'member';
   }
 
   async register(
     username: string,
     opaqueRegistrationRecord: string,
     inviteCode?: string,
+    claimOwner = false,
   ): Promise<{ role: AccountRole }> {
     await this.ready;
     return this.driver.transaction(async (driver) => {
       const existingOwner = await driver.get<{ singleton: number }>('SELECT singleton FROM server_ownership WHERE singleton = 1');
+      if (claimOwner && existingOwner) throw new ServerStoreError('OWNER_ALREADY_CLAIMED', 409, 'server owner has already been initialized');
+      if (!claimOwner && !existingOwner) throw new ServerStoreError('OWNER_SETUP_REQUIRED', 403, 'server operator must initialize the owner with the setup secret');
       const modeRow = await driver.get<{ value: string }>('SELECT value FROM server_meta WHERE key = ?', ['registration_mode']);
-      const mode = !existingOwner
+      const mode = claimOwner
         ? 'open'
         : modeRow?.value === 'invite' || modeRow?.value === 'closed' ? modeRow.value : 'open';
       if (mode === 'closed') throw new ServerStoreError('REGISTRATION_CLOSED', 403, 'registration closed');
@@ -453,7 +526,8 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
       if (mode === 'invite') {
         if (!inviteCode) throw new ServerStoreError('INVITE_REQUIRED', 403, 'invite required');
         invite = await driver.get<Record<string, unknown>>('SELECT * FROM registration_invites WHERE code = ?', [inviteCode]);
-        if (!invite || bool(invite['disabled']) || invite['used_by'] != null) throw new ServerStoreError('INVALID_INVITE', 403, 'invalid invite');
+        const policy = await driver.get<{ expires_at: string }>('SELECT expires_at FROM registration_invite_policy WHERE code = ?', [inviteCode]);
+        if (!invite || bool(invite['disabled']) || invite['used_by'] != null || policy && policy.expires_at <= nowIso()) throw new ServerStoreError('INVALID_INVITE', 403, 'invalid invite');
       }
       if (await driver.get('SELECT username FROM sync_users WHERE username = ?', [username])) throw new ServerStoreError('USER_EXISTS', 409, 'user exists');
       const at = nowIso();
@@ -461,15 +535,16 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
         'INSERT INTO sync_users (username, opaque_registration_record, disabled, created_at, updated_at) VALUES (?, ?, 0, ?, ?)',
         [username, opaqueRegistrationRecord, at, at],
       );
-      await driver.run(
-        'INSERT OR IGNORE INTO server_ownership (singleton, username, created_at) VALUES (1, ?, ?)',
+      await driver.run('INSERT INTO sync_account_identities (username, account_id) VALUES (?, ?)', [username, `account-${randomBytes(16).toString('hex')}`]);
+      if (claimOwner) await driver.run(
+        'INSERT INTO server_ownership (singleton, username, created_at) VALUES (1, ?, ?)',
         [username, at],
       );
       if (inviteCode) await driver.run('UPDATE registration_invites SET used_by = ?, used_at = ? WHERE code = ?', [username, at, inviteCode]);
       const assignedOwner = await driver.get<{ username: string }>(
         'SELECT username FROM server_ownership WHERE singleton = 1',
       );
-      return { role: assignedOwner?.username === username ? 'admin' : 'member' };
+      return { role: assignedOwner?.username === username ? 'owner' : 'member' };
     });
   }
 
@@ -536,6 +611,7 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
   }
 
   async createSession(input: {
+    expectedRegistrationRecord?: string;
     id: string;
     username: string;
     deviceId: string;
@@ -559,6 +635,10 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
       ...(input.ip ? { lastIp: input.ip } : {}),
     };
     await this.driver.transaction(async (driver) => {
+      if (input.expectedRegistrationRecord !== undefined) {
+        const user = await driver.get<{ opaque_registration_record: string; disabled: number }>('SELECT opaque_registration_record, disabled FROM sync_users WHERE username = ?', [input.username]);
+        if (!user || user.disabled || user.opaque_registration_record !== input.expectedRegistrationRecord) throw new ServerStoreError('CREDENTIALS_CHANGED', 401, '账号凭据已变化，请重新登录');
+      }
       await driver.run(
         `UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ?
          WHERE username = ? AND device_id = ? AND revoked_at IS NULL`,
@@ -660,30 +740,35 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     });
   }
 
-  async listUsers(after = '', limit = 100): Promise<{ users: JsonRecord[]; nextCursor?: string }> {
+  async listUsers(after = '', limit = 100, filters: { search?: string; role?: string; state?: string } = {}): Promise<{ users: JsonRecord[]; nextCursor?: string }> {
     await this.ready;
     const rows = await this.driver.all<Record<string, unknown>>(
-      `SELECT u.username, u.disabled, u.created_at, u.updated_at, u.last_login_at,
-              CASE WHEN o.username IS NULL THEN 'member' ELSE 'admin' END AS role,
+      `SELECT u.username, i.account_id, u.disabled, u.created_at, u.updated_at, u.last_login_at,
+              CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END AS role,
               r.ledger_id, r.replica_id, COALESCE(r.head_seq, 0) AS commit_count,
               COALESCE(SUM(c.cipher_bytes), 0) AS commit_bytes,
               COALESCE(q.commit_quota_bytes, ?) AS commit_quota_bytes,
               (SELECT COUNT(*) FROM sync_sessions s
                WHERE s.username = u.username AND s.revoked_at IS NULL AND s.expires_at > ?) AS active_device_count
        FROM sync_users u
+       JOIN sync_account_identities i ON i.username = u.username
+       LEFT JOIN server_administrators a ON a.username = u.username
        LEFT JOIN server_ownership o ON o.username = u.username
        LEFT JOIN sync_replicas r ON r.username = u.username
        LEFT JOIN sync_server_commits c ON c.username = u.username
        LEFT JOIN sync_user_quotas q ON q.username = u.username
        WHERE u.username > ? COLLATE NOCASE
+         AND (? = '' OR instr(lower(u.username), lower(?)) > 0 OR i.account_id = ?)
+         AND (? = '' OR CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END = ?)
+         AND (? = '' OR u.disabled = ?)
        GROUP BY u.username
        ORDER BY u.username COLLATE NOCASE
        LIMIT ?`,
-      [this.defaultCommitQuotaBytes, nowIso(), after, limit + 1],
+      [this.defaultCommitQuotaBytes, nowIso(), after, filters.search ?? '', filters.search ?? '', filters.search ?? '', filters.role ?? '', filters.role ?? '', filters.state ?? '', filters.state === 'disabled' ? 1 : 0, limit + 1],
     );
     const page = rows.slice(0, limit).map((row) => ({
-      username: String(row['username']), disabled: bool(row['disabled']),
-      role: row['role'] === 'admin' ? 'admin' : 'member',
+      accountId: String(row['account_id']), username: String(row['username']), disabled: bool(row['disabled']),
+      role: row['role'] === 'owner' ? 'owner' : row['role'] === 'admin' ? 'admin' : 'member',
       createdAt: String(row['created_at']), updatedAt: String(row['updated_at']),
       lastLoginAt: row['last_login_at'] ?? null, ledgerId: row['ledger_id'] ?? null,
       replicaId: row['replica_id'] ?? null, commitCount: Number(row['commit_count'] ?? 0),
@@ -709,6 +794,132 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
       if (disabled) await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE username = ?', [at, at, username]);
     });
     return this.getUser(username);
+  }
+
+  async userByAccountId(accountId: string): Promise<SyncUser | undefined> {
+    await this.ready;
+    const row = await this.driver.get<{ username: string }>('SELECT username FROM sync_account_identities WHERE account_id = ?', [accountId]);
+    return row ? this.getUser(row.username) : undefined;
+  }
+
+  /** Authorization, mutation, session invalidation and durable audit share one transaction. */
+  async mutateAdmin(actorSessionId: string, mutation: AdminMutation): Promise<void> {
+    await this.ready;
+    await this.driver.transaction(async (driver) => {
+      const at = nowIso();
+      const roleSql = `SELECT u.username, u.disabled, i.account_id,
+        CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END AS role
+        FROM sync_users u JOIN sync_account_identities i ON i.username = u.username
+        LEFT JOIN server_ownership o ON o.username = u.username
+        LEFT JOIN server_administrators a ON a.username = u.username`;
+      const session = await driver.get<{ username: string; created_at: string }>(
+        'SELECT username, created_at FROM sync_sessions WHERE session_id = ? AND revoked_at IS NULL AND expires_at > ?', [actorSessionId, at]);
+      const actor = session ? await driver.get<{ username: string; disabled: number; account_id: string; role: AccountRole }>(`${roleSql} WHERE u.username = ?`, [session.username]) : undefined;
+      if (!actor || actor.disabled || actor.role === 'member') throw new ServerStoreError('ADMIN_REQUIRED', 403, 'administrator session required');
+      let targetId = 'accountId' in mutation ? mutation.accountId : undefined;
+      let targetSession: Record<string, unknown> | undefined;
+      if (mutation.action === 'revoke-session') {
+        targetSession = await driver.get<Record<string, unknown>>('SELECT s.*, i.account_id FROM sync_sessions s JOIN sync_account_identities i ON i.username = s.username WHERE s.session_id = ?', [mutation.sessionId]);
+        if (!targetSession) throw new ServerStoreError('NOT_FOUND', 404, 'session not found');
+        targetId = String(targetSession['account_id']);
+      }
+      const target = targetId ? await driver.get<{ username: string; disabled: number; account_id: string; role: AccountRole }>(`${roleSql} WHERE i.account_id = ?`, [targetId]) : undefined;
+      if (targetId && !target) throw new ServerStoreError('NOT_FOUND', 404, 'account not found');
+      const quotaMutation = mutation.action === 'commit-quota' || mutation.action === 'blob-quota';
+      if (target && ((!quotaMutation && target.role === 'owner') || actor.role === 'admin' && target.role !== 'member')) {
+        throw new ServerStoreError('PROTECTED_ACCOUNT', 403, 'cannot manage this privileged account');
+      }
+      if ((mutation.action === 'role' || mutation.action === 'registration') && actor.role !== 'owner') {
+        throw new ServerStoreError('OWNER_REQUIRED', 403, 'server owner required');
+      }
+      if ((mutation.action === 'role' || mutation.action === 'password-reset-issue') && Date.now() - Date.parse(session!.created_at) > 5 * 60_000) {
+        throw new ServerStoreError('RECENT_LOGIN_REQUIRED', 403, '此敏感操作需要最近 5 分钟内的登录，请退出管理后台并重新登录');
+      }
+      let before: unknown = null;
+      let after: unknown = null;
+      if (mutation.action === 'password-reset-issue') {
+        if (target!.disabled) throw new ServerStoreError('ACCOUNT_DISABLED', 409, 'enable the account before issuing a reset');
+        if (!/^[a-f0-9]{64}$/.test(mutation.codeHash) || !Number.isFinite(Date.parse(mutation.expiresAt)) || mutation.expiresAt <= at || Date.parse(mutation.expiresAt) > Date.now() + 16 * 60_000) throw new ServerStoreError('INVALID_RESET', 400, 'invalid reset policy');
+        await driver.run('INSERT OR REPLACE INTO account_password_resets (account_id, code_hash, expires_at, issued_at) VALUES (?, ?, ?, ?)', [target!.account_id, mutation.codeHash, mutation.expiresAt, at]);
+        after = { expiresAt: mutation.expiresAt };
+      } else if (mutation.action === 'role') {
+        if (mutation.role !== 'member' && mutation.role !== 'admin') throw new ServerStoreError('INVALID_ROLE', 400, 'invalid role');
+        if (target!.disabled) throw new ServerStoreError('ACCOUNT_DISABLED', 409, 'enable the account before changing its role');
+        before = { role: target!.role }; after = { role: mutation.role };
+        if (mutation.role === 'admin') await driver.run('INSERT OR IGNORE INTO server_administrators (username, granted_at) VALUES (?, ?)', [target!.username, at]);
+        else await driver.run('DELETE FROM server_administrators WHERE username = ?', [target!.username]);
+        await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE username = ?', [at, at, target!.username]);
+      } else if (mutation.action === 'state') {
+        before = { disabled: bool(target!.disabled) }; after = { disabled: mutation.disabled };
+        await driver.run('UPDATE sync_users SET disabled = ?, updated_at = ? WHERE username = ?', [mutation.disabled ? 1 : 0, at, target!.username]);
+        if (mutation.disabled) await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE username = ?', [at, at, target!.username]);
+      } else if (mutation.action === 'commit-quota') {
+        if (mutation.bytes !== null && (!Number.isSafeInteger(mutation.bytes) || mutation.bytes < 1024 ** 2 || mutation.bytes > 1024 ** 4)) throw new ServerStoreError('INVALID_QUOTA', 400, 'invalid quota');
+        before = await driver.get('SELECT commit_quota_bytes FROM sync_user_quotas WHERE username = ?', [target!.username]) ?? null;
+        after = { bytes: mutation.bytes };
+        if (mutation.bytes === null) await driver.run('DELETE FROM sync_user_quotas WHERE username = ?', [target!.username]);
+        else await driver.run('INSERT OR REPLACE INTO sync_user_quotas (username, commit_quota_bytes, updated_at) VALUES (?, ?, ?)', [target!.username, mutation.bytes, at]);
+      } else if (mutation.action === 'blob-quota') {
+        if (mutation.bytes !== null && (!Number.isSafeInteger(mutation.bytes) || mutation.bytes < 1024 ** 2 || mutation.bytes > 1024 ** 4)) throw new ServerStoreError('INVALID_QUOTA', 400, 'invalid quota');
+        // Blob metadata shares server.sqlite; mutate through this transaction, not the second connection.
+        before = await driver.get('SELECT quota_bytes FROM blob_user_quotas WHERE username = ?', [target!.username]) ?? null;
+        after = { bytes: mutation.bytes };
+        if (mutation.bytes === null) await driver.run('DELETE FROM blob_user_quotas WHERE username = ?', [target!.username]);
+        else await driver.run('INSERT OR REPLACE INTO blob_user_quotas (username, quota_bytes, updated_at) VALUES (?, ?, ?)', [target!.username, mutation.bytes, at]);
+      } else if (mutation.action === 'revoke-session') {
+        before = { sessionId: mutation.sessionId, revokedAt: targetSession!['revoked_at'] }; after = { sessionId: mutation.sessionId, revokedAt: at };
+        await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE session_id = ?', [at, at, mutation.sessionId]);
+      } else if (mutation.action === 'registration') {
+        if (!['open', 'invite', 'closed'].includes(mutation.mode)) throw new ServerStoreError('INVALID_MODE', 400, 'invalid registration mode');
+        before = await driver.get('SELECT value FROM server_meta WHERE key = ?', ['registration_mode']) ?? null;
+        after = { mode: mutation.mode };
+        await driver.run('INSERT OR REPLACE INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)', ['registration_mode', mutation.mode, at]);
+      } else if (mutation.action === 'invite-create') {
+        if (!/^[A-Za-z0-9_-]{8,128}$/.test(mutation.code) || !Number.isFinite(Date.parse(mutation.expiresAt)) || mutation.expiresAt <= at) throw new ServerStoreError('INVALID_INVITE', 400, 'invalid invite or expiry');
+        if (await driver.get('SELECT code FROM registration_invites WHERE code = ?', [mutation.code])) throw new ServerStoreError('INVITE_EXISTS', 409, 'invite exists');
+        await driver.run('INSERT INTO registration_invites (code, created_at, disabled) VALUES (?, ?, 0)', [mutation.code, at]);
+        await driver.run('INSERT INTO registration_invite_policy (code, expires_at) VALUES (?, ?)', [mutation.code, mutation.expiresAt]);
+        after = { expiresAt: mutation.expiresAt, inviteFingerprint: createHash('sha256').update(mutation.code).digest('hex') }; // Never put usable invitation secrets in audit logs.
+      } else if (mutation.action === 'invite-state') {
+        const invite = await driver.get<{ disabled: number; used_by: string | null }>('SELECT disabled, used_by FROM registration_invites WHERE code = ?', [mutation.code]);
+        if (!invite) throw new ServerStoreError('NOT_FOUND', 404, 'invite not found');
+        if (invite.used_by) throw new ServerStoreError('INVITE_USED', 409, 'used invite cannot be changed');
+        before = { disabled: bool(invite.disabled) }; after = { disabled: mutation.disabled, inviteFingerprint: createHash('sha256').update(mutation.code).digest('hex') };
+        await driver.run('UPDATE registration_invites SET disabled = ? WHERE code = ?', [mutation.disabled ? 1 : 0, mutation.code]);
+      }
+      if (target && (mutation.action === 'role' || mutation.action === 'state')) await driver.run('DELETE FROM account_password_resets WHERE account_id = ?', [target.account_id]);
+      await driver.run('INSERT INTO server_admin_audit (at, actor_account_id, target_account_id, action, before_json, after_json) VALUES (?, ?, ?, ?, ?, ?)',
+        [at, actor.account_id, targetId ?? null, mutation.action, JSON.stringify(before), JSON.stringify(after)]);
+    });
+  }
+
+  async listAdminAudit(before = Number.MAX_SAFE_INTEGER, limit = 50, search = ''): Promise<{ entries: JsonRecord[]; nextCursor?: string }> {
+    await this.ready;
+    const rows = await this.driver.all<Record<string, unknown>>(
+      "SELECT * FROM server_admin_audit WHERE id < ? AND (? = '' OR instr(lower(action || ' ' || actor_account_id || ' ' || COALESCE(target_account_id, '')), lower(?)) > 0) ORDER BY id DESC LIMIT ?",
+      [before, search, search, limit + 1]);
+    return { entries: rows.slice(0, limit).map((row) => ({ id: row['id'], at: row['at'], actorAccountId: row['actor_account_id'], targetAccountId: row['target_account_id'], action: row['action'], before: JSON.parse(String(row['before_json'])), after: JSON.parse(String(row['after_json'])) })),
+      ...(rows.length > limit ? { nextCursor: String(rows[limit - 1]!['id']) } : {}) };
+  }
+
+  async assertPasswordReset(username: string, codeHash: string): Promise<void> {
+    await this.ready;
+    const row = await this.driver.get('SELECT r.account_id FROM account_password_resets r JOIN sync_account_identities i ON i.account_id = r.account_id JOIN sync_users u ON u.username = i.username WHERE i.username = ? AND r.code_hash = ? AND r.expires_at > ? AND u.disabled = 0', [username, codeHash, nowIso()]);
+    if (!row) throw new ServerStoreError('INVALID_PASSWORD_RESET', 403, '重置码无效、已使用或已过期，请联系管理员重新审核');
+  }
+
+  async completePasswordReset(username: string, codeHash: string, registrationRecord: string): Promise<void> {
+    await this.ready;
+    await this.driver.transaction(async (driver) => {
+      const at = nowIso();
+      const row = await driver.get<{ account_id: string }>('SELECT r.account_id FROM account_password_resets r JOIN sync_account_identities i ON i.account_id = r.account_id JOIN sync_users u ON u.username = i.username WHERE i.username = ? AND r.code_hash = ? AND r.expires_at > ? AND u.disabled = 0', [username, codeHash, at]);
+      if (!row) throw new ServerStoreError('INVALID_PASSWORD_RESET', 403, '重置码无效、已使用或已过期，请联系管理员重新审核');
+      await driver.run('UPDATE sync_users SET opaque_registration_record = ?, updated_at = ? WHERE username = ?', [registrationRecord, at, username]);
+      await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE username = ?', [at, at, username]);
+      await driver.run('DELETE FROM sync_opaque_login_states WHERE username = ?', [username]);
+      await driver.run('DELETE FROM account_password_resets WHERE account_id = ?', [row.account_id]);
+      await driver.run('INSERT INTO server_admin_audit (at, actor_account_id, target_account_id, action, before_json, after_json) VALUES (?, ?, ?, ?, ?, ?)', [at, row.account_id, row.account_id, 'password-reset-complete', '{}', '{"sessionsRevoked":true}']);
+    });
   }
 
   async getReplica(username: string): Promise<UserReplica | undefined> {
@@ -928,12 +1139,12 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
 
   async listInvites(): Promise<Invite[]> {
     await this.ready;
-    return (await this.driver.all<Record<string, unknown>>('SELECT * FROM registration_invites ORDER BY created_at DESC')).map(inviteFromRow);
+    return (await this.driver.all<Record<string, unknown>>('SELECT i.*, p.expires_at FROM registration_invites i LEFT JOIN registration_invite_policy p ON p.code = i.code ORDER BY i.created_at DESC')).map(inviteFromRow);
   }
 
   async getInvite(code: string): Promise<Invite | undefined> {
     await this.ready;
-    const row = await this.driver.get<Record<string, unknown>>('SELECT * FROM registration_invites WHERE code = ?', [code]);
+    const row = await this.driver.get<Record<string, unknown>>('SELECT i.*, p.expires_at FROM registration_invites i LEFT JOIN registration_invite_policy p ON p.code = i.code WHERE i.code = ?', [code]);
     return row ? inviteFromRow(row) : undefined;
   }
 

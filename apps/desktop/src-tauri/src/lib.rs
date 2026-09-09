@@ -723,7 +723,7 @@ fn desktop_start_server(
     };
     cmd.env("HOST", "0.0.0.0")
         .env("PORT", "8787")
-        .env("REGISTRATION_MODE", "open")
+        .env("REGISTRATION_MODE", "invite")
         .env("ALLOW_INSECURE_HTTP", "1")
         .env("DATA_DIR", child_process_path(&paths.server))
         .env("CONTROL_STDIN", "1")

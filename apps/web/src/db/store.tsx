@@ -1,5 +1,6 @@
+import { accountLocalStorage, accountSessionStorage, accountStorageKey } from '../account-storage.js';
 import {
-  createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode,
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode,
 } from 'react';
 import type { LedgerKind, Setting } from '@zichan/core';
 import {
@@ -24,7 +25,7 @@ import { isInitializationResetRequiredError } from './initialization-error.js';
 import { initializedLedgerSetting } from './ledger-initialization.js';
 import { exportPortableLedger } from './portable-backup.js';
 import { FirstRunWizard } from '../ui/FirstRunWizard.js';
-import { FirstUseModeGate } from '../ui/FirstUseModeGate.js';
+import { FirstUseModeGate, BrowserStorageConsent } from '../ui/FirstUseModeGate.js';
 import { FirstServerConnectionGate } from '../ui/FirstServerConnectionGate.js';
 import { FirstRemoteLedgerRestoreGate } from '../ui/FirstRemoteLedgerRestoreGate.js';
 import {
@@ -34,10 +35,13 @@ import {
   type DeviceStorageState,
 } from '../device-storage-key.js';
 import { ensureLedgerKeyForStore } from '../ledger-key-lifecycle.js';
-import { ledgerKeyState, unlockLedgerKey } from '../ledger-key-vault.js';
+import { ledgerKeyState, unlockLedgerKey, lockLedgerKey } from '../ledger-key-vault.js';
 import { copyTextToClipboard, formatInitializationDiagnostic } from '../ui/diagnostics.js';
 import {
   browserStorageDisposition,
+  browserLocalCapability,
+  loadBestEffortConsent,
+  acceptBestEffortStorage,
   browserPersistenceStatus,
   clearFirstUseMode,
   loadFirstUseMode,
@@ -46,9 +50,10 @@ import {
   type FirstUseMode,
 } from '../browser-storage-policy.js';
 import { isTauriRuntime } from '../tauri.js';
+import { ACCOUNT_EXIT_KEY, ACCOUNT_LOCK_REQUEST_EVENT, exitBrowserAccount } from '../browser-account-exit.js';
 import { clearSyncConfiguration, hasSavedSyncConnection, loadSyncConnections, saveSyncConnections } from '../sync-config.js';
 import { syncConfiguredServers } from '../sync-orchestrator.js';
-import { persistCredential, runtimeCredentialMap, unlockCredentialVault } from '../credential-vault.js';
+import { clearCredentialVaultRuntimeState, persistCredential, runtimeCredentialMap, unlockCredentialVault } from '../credential-vault.js';
 import { loadSharedSyncDirectory, mergeSharedSyncDirectory, saveSharedSyncDirectory } from '../sync-server-directory.js';
 
 interface StoreCtx {
@@ -61,6 +66,7 @@ interface StoreCtx {
   firstUseMode: FirstUseMode;
   browserStoragePersistent: boolean;
   resetLocalData: () => Promise<void>;
+  exitAccount?: () => Promise<void>;
 }
 
 const Ctx = createContext<StoreCtx | null>(null);
@@ -280,6 +286,7 @@ function BrowserStorageRecoveryGate(props: {
   reason: string;
   onPersistenceRestored: () => void;
   onUseServer: () => void;
+  onContinueLocal: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState<'persist' | 'export' | null>(null);
   const [message, setMessage] = useState('');
@@ -324,6 +331,10 @@ function BrowserStorageRecoveryGate(props: {
           <button type="button" disabled={busy !== null} onClick={() => void exportRecoveryBackup()} style={{ minHeight: 44, padding: '0 16px', border: '1px solid #b9a99a', borderRadius: 8, background: '#fff', color: '#672f20', fontWeight: 850 }}>导出加密 .zcbak</button>
           <button type="button" disabled={busy !== null} onClick={props.onUseServer} style={{ minHeight: 44, padding: '0 16px', border: 0, background: 'transparent', color: '#672f20', fontWeight: 850 }}>改为连接服务器</button>
         </div>
+        <BrowserStorageConsent busy={busy !== null} onContinue={async () => {
+          setBusy('persist');
+          try { await props.onContinueLocal(); } catch (error) { setMessage(String(error)); } finally { setBusy(null); }
+        }} />
         {message && <div role="status" style={{ marginTop: 14, color: message.includes('失败') ? '#9b4037' : '#4f704d', lineHeight: 1.6 }}>{message}</div>}
       </section>
     </main>
@@ -332,7 +343,7 @@ function BrowserStorageRecoveryGate(props: {
 
 function recoveryDeviceId(): string {
   try {
-    return globalThis.localStorage?.getItem(CLOUD_DEVICE_ID_KEY) || 'browser-read-only-recovery';
+    return accountLocalStorage?.getItem(CLOUD_DEVICE_ID_KEY) || 'browser-read-only-recovery';
   } catch {
     return 'browser-read-only-recovery';
   }
@@ -364,12 +375,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [pendingInitialization, setPendingInitialization] = useState<PendingInitialization | null>(null);
   const [ledgerKind, setLedgerKind] = useState<LedgerKind>('personal');
   const [firstUseMode, setFirstUseMode] = useState<FirstUseMode | null>(() => {
+    // WebAccountApp verifies identity before mounting this provider; old mode flags are irrelevant.
+    if (!isTauriRuntime()) return 'server';
     const mode = loadFirstUseMode();
     return mode === 'server' && !hasSavedSyncConnection() ? null : mode;
   });
   const [serverSetupRequested, setServerSetupRequested] = useState(false);
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState('');
+  const [bestEffortAccepted, setBestEffortAccepted] = useState(loadBestEffortConsent);
+  const persistenceCheckGeneration = useRef(0);
   const [browserPersistence, setBrowserPersistence] = useState<{
     checked: boolean;
     persisted: boolean;
@@ -399,24 +414,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (isTauriRuntime() || !firstUseMode) return;
+    if (isTauriRuntime()) return;
     let active = true;
+    const generation = ++persistenceCheckGeneration.current;
     void browserPersistenceStatus(false).then((result) => {
-      if (!active) return;
+      if (!active || generation !== persistenceCheckGeneration.current) return;
       setBrowserPersistence({ checked: true, persisted: result.persisted, reason: result.reason ?? '' });
     });
     return () => { active = false; };
   }, [firstUseMode]);
 
-  async function selectFirstUseMode(mode: FirstUseMode) {
+  async function selectFirstUseMode(mode: FirstUseMode, acceptRisk = false) {
+    persistenceCheckGeneration.current += 1;
     setModeBusy(true);
     setModeError('');
     try {
       if (!isTauriRuntime()) {
         const result = await prepareBrowserStorageForMode(mode);
         setBrowserPersistence({ checked: true, persisted: result.persisted, reason: result.reason ?? '' });
-        if (mode === 'local' && !result.persisted) {
-          throw new Error(result.reason || '浏览器没有授予持久存储权限，不能创建纯本地账本');
+        if (mode === 'local') {
+          if (!result.supported) throw new Error(result.reason || '本地存储能力不可用');
+          if (!result.persisted && !acceptRisk && !bestEffortAccepted) return;
+          if (!result.persisted && acceptRisk) {
+            acceptBestEffortStorage();
+            setBestEffortAccepted(true);
+          }
         }
       }
       if (mode === 'server') {
@@ -433,6 +455,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }
 
   async function finishFirstServerConnection() {
+    accountLocalStorage.removeItem(ACCOUNT_EXIT_KEY);
     saveFirstUseMode('server');
     setFirstUseMode('server');
     setServerSetupRequested(false);
@@ -444,11 +467,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     persisted: browserPersistence.persisted,
     hasExistingLocalData: storageProtection?.initialized === true,
     desktop: isTauriRuntime(),
+    bestEffortAccepted,
+    localSupported: browserLocalCapability().supported,
   });
   const browserLocalRecovery = storageDisposition === 'recovery';
 
   useEffect(() => {
-    if (!storageProtection?.unlocked || storageDisposition === 'pending' || storageDisposition === 'blocked') return;
+    if (!firstUseMode || !storageProtection?.unlocked || storageDisposition === 'pending' || storageDisposition === 'blocked') return;
     let cancelled = false;
     let openedStore: SqlLedgerStore | null = null;
     let published = false;
@@ -468,7 +493,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             persisted: currentPersistence.persisted,
             reason: currentPersistence.reason ?? '',
           });
-          if (!currentPersistence.persisted) return;
+          if (!currentPersistence.supported || (!currentPersistence.persisted && !bestEffortAccepted)) return;
         }
         const platform = await openPlatformDriver();
         if (await closeStoreWhenCancelled(platform.driver, () => cancelled)) return;
@@ -565,7 +590,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       if (published) void closeOpenedStore().catch(() => undefined);
     };
-  }, [storageProtection?.unlocked, initializationAttempt, browserLocalRecovery, firstUseMode, storageDisposition]);
+  }, [storageProtection?.unlocked, initializationAttempt, browserLocalRecovery, firstUseMode, storageDisposition, bestEffortAccepted]);
 
   useEffect(() => {
     if (!store || rev === 0 || browserLocalRecovery) return;
@@ -654,7 +679,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const connectionIds = loadSyncConnections().map((connection) => connection.id);
           await unlockCredentialVault(password, connectionIds);
           for (const [connectionId, credential] of Object.entries(pendingCredentials)) {
-            if (credential.password || credential.inviteCode) await persistCredential(connectionId, credential);
+            if (credential.refreshToken) await persistCredential(connectionId, credential);
           }
         }
         storagePassphrase.current = password;
@@ -696,14 +721,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       await runLedgerMaintenance(pending.store);
       await runDueScheduledTransactions(pending.store);
       if (firstUseMode === 'server') {
-        const connections = mergeSharedSyncDirectory(
-          loadSyncConnections(),
-          await loadSharedSyncDirectory(pending.store),
-        );
+        const connections = isTauriRuntime() ? mergeSharedSyncDirectory(
+          loadSyncConnections(), await loadSharedSyncDirectory(pending.store),
+        ) : loadSyncConnections();
         saveSyncConnections(connections);
         const enabledConnections = connections.filter((connection) => connection.enabled);
         if (!enabledConnections.length) throw new Error('服务器模式没有可用连接，请重新完成服务器登录');
-        await saveSharedSyncDirectory(pending.store, connections);
+        if (isTauriRuntime()) await saveSharedSyncDirectory(pending.store, connections);
         const syncResult = await syncConfiguredServers(pending.store, enabledConnections);
         const failed = syncResult.endpoints.filter((endpoint) => endpoint.error || endpoint.attachments?.error);
         if (failed.length) {
@@ -761,7 +785,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   function switchRecoveryToServerMode() {
     clearFirstUseMode();
     try {
-      sessionStorage.setItem('zichan.retryScreen', 'sync');
+      accountSessionStorage.setItem('zichan.retryScreen', 'sync');
     } catch {
       // Hardened browser contexts can reject session storage; the app still opens safely.
     }
@@ -769,17 +793,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }
 
   function restartFirstUseWithDifferentAccount() {
+    if (!isTauriRuntime()) {
+      void exitBrowserAccount().then(closeForAccountExit).catch((reason) => setError({ message: String(reason), resetRequired: false }));
+      return;
+    }
     clearSyncConfiguration();
     clearFirstUseMode();
     window.location.reload();
   }
 
+  const closeForAccountExit = useCallback(async () => {
+    await closeStoresBeforeStorageLock([store, pendingInitialization?.store], () => {
+      setStore(null); setPendingInitialization(null); storagePassphrase.current = null;
+    }, lockDeviceStorage);
+    lockLedgerKey();
+    window.location.reload();
+  }, [store, pendingInitialization]);
+
+  useEffect(() => {
+    if (isTauriRuntime()) return;
+    const onExit = (event: StorageEvent) => {
+      if (event.key === accountStorageKey(ACCOUNT_EXIT_KEY) && event.newValue === 'pending') {
+        clearCredentialVaultRuntimeState();
+        void closeForAccountExit().catch((reason) => setError({ message: String(reason), resetRequired: false }));
+      }
+    };
+    const lockAccount = () => {
+      clearCredentialVaultRuntimeState();
+      void closeForAccountExit().catch((reason) => setError({ message: String(reason), resetRequired: false }));
+    };
+    window.addEventListener('storage', onExit);
+    window.addEventListener(ACCOUNT_LOCK_REQUEST_EVENT, lockAccount);
+    return () => { window.removeEventListener('storage', onExit); window.removeEventListener(ACCOUNT_LOCK_REQUEST_EVENT, lockAccount); };
+  }, [closeForAccountExit]);
+
   if (!storageProtection) return <Splash label={unlockError || '正在检查本机加密存储…'} />;
   if (!firstUseMode) {
-    if (serverSetupRequested) {
-      return <FirstServerConnectionGate onReady={finishFirstServerConnection} onCancel={() => { setServerSetupRequested(false); setModeError(''); }} />;
+    if (serverSetupRequested || !isTauriRuntime()) {
+      return <FirstServerConnectionGate accountOnly={!isTauriRuntime()} onReady={finishFirstServerConnection} onCancel={() => { setServerSetupRequested(false); setModeError(''); }} />;
     }
-    return <FirstUseModeGate busy={modeBusy} error={modeError} onSelect={selectFirstUseMode} />;
+    return <FirstUseModeGate busy={modeBusy} error={modeError} onSelect={selectFirstUseMode} persistence={browserPersistence} onContinueLocal={() => selectFirstUseMode('local', true)} />;
   }
   if (storageDisposition === 'pending' && firstUseMode === 'local' && !isTauriRuntime()) {
     return <Splash label="正在确认浏览器持久存储…" />;
@@ -790,11 +843,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         busy={modeBusy}
         error={modeError || browserPersistence.reason || '浏览器没有授予持久存储权限'}
         onSelect={selectFirstUseMode}
+        persistence={browserPersistence}
+        onContinueLocal={() => selectFirstUseMode('local', true)}
       />
     );
   }
   if (!storageProtection.unlocked) {
     return (
+      <>
+      {!isTauriRuntime() && <div style={{ padding: 12, background: '#fffaf2', display: 'flex', justifyContent: 'space-between' }}><span>当前账号：{loadSyncConnections()[0]?.username}</span><button disabled={unlockBusy || resetting} onClick={() => void exitBrowserAccount().then(closeForAccountExit).catch((reason) => setUnlockError(String(reason)))}>退出并切换账号</button></div>}
       <DeviceStorageGate
         state={storageProtection}
         busy={unlockBusy || resetting}
@@ -802,6 +859,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         onUnlock={unlockStorage}
         onReset={resetDevelopmentData}
       />
+      </>
     );
   }
   if (error) {
@@ -905,6 +963,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         reason={browserPersistence.reason || '浏览器没有授予持久存储权限'}
         onPersistenceRestored={reloadAfterPersistenceRestore}
         onUseServer={switchRecoveryToServerMode}
+        onContinueLocal={async () => {
+          if (!browserLocalCapability().supported) throw new Error('本地存储能力不可用，不能继续写入');
+          acceptBestEffortStorage();
+          window.location.reload();
+        }}
       />
     );
   }
@@ -919,6 +982,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         firstUseMode,
         browserStoragePersistent: isTauriRuntime() || browserPersistence.persisted,
         resetLocalData: () => resetDevelopmentData(false),
+        exitAccount: !isTauriRuntime() && firstUseMode === 'server' ? async () => {
+          await exitBrowserAccount();
+          await closeForAccountExit();
+        } : undefined,
       }}>
       {ledgerKind === 'demo' && (
         <div
@@ -927,6 +994,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           style={{ position: 'fixed', top: 8, left: '50%', zIndex: 10000, transform: 'translateX(-50%)', border: '1px solid #d8ad75', borderRadius: 999, padding: '4px 10px', background: '#fff4dc', color: '#7b451d', boxShadow: '0 4px 12px rgba(75,61,43,.13)', fontFamily: 'system-ui, sans-serif', fontSize: 12, fontWeight: 900, pointerEvents: 'none' }}
         >
           演示账本
+        </div>
+      )}
+      {!isTauriRuntime() && firstUseMode === 'local' && !browserPersistence.persisted && (
+        <div role="status" style={{ padding: 10, background: '#fff4dc', color: '#672f20', fontSize: 13 }}>
+          普通本地存储：未获得防自动清理保护。请使用“导出”保存浏览器外加密备份；不要清除本站数据或在无痕窗口保存重要账本。
         </div>
       )}
       {children}

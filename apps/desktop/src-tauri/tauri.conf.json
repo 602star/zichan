@@ -8,7 +8,7 @@
     "frontendDist": "../../web/dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "npm run dev --workspace @zichan/web",
-    "beforeBuildCommand": "npm run server:build --workspace @zichan/desktop && npm run prepare:resources --workspace @zichan/desktop"
+    "beforeBuildCommand": "npm run prepare:build --workspace @zichan/desktop"
   },
   "app": {
     "windows": [

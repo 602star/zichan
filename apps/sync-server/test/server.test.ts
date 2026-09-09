@@ -5,10 +5,11 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import * as opaque from '@serenity-kit/opaque';
-import { createSyncServer, type SyncServer } from '../src/server.js';
+import type { SyncServer } from '../src/server.js';
+import { createTestSyncServer as createSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
 import { EncryptedBlobStore } from '../src/blob-store.js';
 import { createServerBackup, restoreServerBackup, verifyServerBackup } from '../src/backup.js';
-import { SyncServerStore } from '../src/store.js';
+import { CURRENT_SERVER_SCHEMA, SyncServerStore } from '../src/store.js';
 import { normalizeSyncUsername } from '@zichan/core';
 import { NodeSqliteDriver } from '@zichan/db/node';
 
@@ -23,14 +24,16 @@ beforeAll(async () => {
 });
 afterAll(() => sv.close());
 
-const post2 = (base: string, p: string, body: unknown) =>
-  fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+const post2 = (base: string, p: string, body: unknown, headers: Record<string, string> = {}) =>
+  fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
-async function registerUser(base: string, username: string, password: string, inviteCode?: string, prefix = ''): Promise<Response> {
+async function registerUser(base: string, username: string, password: string, inviteCode?: string, prefix = '', initializeOwner = true): Promise<Response> {
   const normalized = normalizeSyncUsername(username);
   await opaque.ready;
   const start = opaque.client.startRegistration({ password });
+  const health = await (await fetch(`${base}${prefix}/api/health`)).json() as { claimed: boolean };
   const startResponse = await post2(base, `${prefix}/api/auth/register/start`, {
+    ...(!health.claimed && initializeOwner ? { ownerSetupToken: OWNER_SETUP_TOKEN } : {}),
     username: normalized,
     registrationRequest: start.registrationRequest,
     inviteCode,
@@ -62,6 +65,7 @@ async function loginUser(
   password: string,
   prefix = '',
   deviceId = `device-${normalizeSyncUsername(username)}`,
+  headers: Record<string, string> = {},
 ): Promise<Response> {
   const normalized = normalizeSyncUsername(username);
   await opaque.ready;
@@ -90,7 +94,7 @@ async function loginUser(
     finishLoginRequest: finish?.finishLoginRequest ?? 'invalid-opaque-login-finish',
     deviceId,
     deviceName: `Test ${deviceId}`,
-  });
+  }, headers);
 }
 
 async function accessToken(base: string, username: string, password: string, prefix = '', deviceId?: string): Promise<string> {
@@ -100,17 +104,56 @@ async function accessToken(base: string, username: string, password: string, pre
 }
 
 describe('sync-server endpoints', () => {
-  it('atomically assigns exactly one administrator during concurrent registration', async () => {
+  it('keeps browser refresh secrets in same-origin HttpOnly cookies and rejects mixed or cross-site refresh', async () => {
+    const app = createSyncServer({ basePath: '/ledger' });
+    await new Promise<void>((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+    try {
+      expect((await registerUser(base, 'cookie-user', 'cookie-password', undefined, '/ledger')).status).toBe(200);
+      const headers = { Origin: base, 'X-Zichan-Session': 'cookie' };
+      const loggedIn = await loginUser(base, 'cookie-user', 'cookie-password', '/ledger', 'device-cookie', headers);
+      expect(loggedIn.status).toBe(200);
+      const login = await loggedIn.json() as { accessToken: string; refreshToken?: string; sessionTransport: string };
+      expect(login.refreshToken).toBeUndefined();
+      expect(login.sessionTransport).toBe('cookie');
+      const setCookie = loggedIn.headers.get('set-cookie')!;
+      expect(setCookie).toContain('Path=/ledger/api/auth; HttpOnly; SameSite=Strict');
+      expect(setCookie).not.toContain('Max-Age');
+      const cookie = setCookie.split(';')[0]!;
+      const endpoint = '/ledger/api/auth/refresh';
+      expect((await post2(base, endpoint, {}, { ...headers, Origin: 'https://evil.example', Cookie: cookie })).status).toBe(403);
+      expect((await post2(base, endpoint, {}, { 'X-Zichan-Session': 'cookie', Cookie: cookie })).status).toBe(403);
+      expect((await post2(base, endpoint, { refreshToken: 'body-token' }, { ...headers, Cookie: cookie })).status).toBe(400);
+      expect((await post2(base, endpoint, {}, { Cookie: cookie })).status).toBe(401);
+      const refreshed = await post2(base, endpoint, {}, { ...headers, Cookie: cookie });
+      expect(refreshed.status).toBe(200);
+      const next = await refreshed.json() as { accessToken: string; refreshToken?: string };
+      expect(next.refreshToken).toBeUndefined();
+      const nextCookie = refreshed.headers.get('set-cookie')!.split(';')[0]!;
+      expect(nextCookie).not.toBe(cookie);
+      expect((await post2(base, endpoint, {}, { ...headers, Cookie: cookie })).status).toBe(401);
+      const logout = await post2(base, '/ledger/api/auth/logout', {}, { ...headers, Cookie: nextCookie, Authorization: `Bearer ${next.accessToken}` });
+      expect(logout.status).toBe(200);
+      expect(logout.headers.get('set-cookie')).toContain('Max-Age=0');
+      expect((await post2(base, endpoint, {}, { ...headers, Cookie: nextCookie })).status).toBe(401);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('requires explicit setup and allows exactly one concurrent owner claim', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zichan-owner-race-'));
     const store = new SyncServerStore(join(dir, 'server.sqlite'), 'open', 'srv-owner-race');
     try {
       await store.ready;
-      const registrations = await Promise.all(Array.from({ length: 100 }, (_, index) =>
-        store.register(`race-user-${String(index).padStart(3, '0')}`, `opaque-record-${index}`)));
-      expect(registrations.filter((registration) => registration.role === 'admin')).toHaveLength(1);
+      await expect(store.register('ordinary-visitor', 'opaque-record')).rejects.toMatchObject({ code: 'OWNER_SETUP_REQUIRED' });
+      const registrations = await Promise.allSettled(Array.from({ length: 100 }, (_, index) =>
+        store.register(`race-user-${String(index).padStart(3, '0')}`, `opaque-record-${index}`, undefined, true)));
+      expect(registrations.filter((registration) => registration.status === 'fulfilled')).toHaveLength(1);
+      expect(registrations.filter((registration) => registration.status === 'rejected')).toHaveLength(99);
       const users = await store.listUsers('', 200);
-      expect(users.users).toHaveLength(100);
-      expect(users.users.filter((user) => user['role'] === 'admin')).toHaveLength(1);
+      expect(users.users).toHaveLength(1);
+      expect(users.users.filter((user) => user['role'] === 'owner')).toHaveLength(1);
       expect(await store.ownerUsername()).toBeTruthy();
     } finally {
       await store.close();
@@ -143,7 +186,7 @@ describe('sync-server endpoints', () => {
 
     const registration = await registerUser(url, 'alice', 'pw');
     expect(registration.status).toBe(200);
-    expect(await registration.json()).toMatchObject({ role: 'admin' });
+    expect(await registration.json()).toMatchObject({ role: 'owner' });
     expect(await (await fetch(url + '/api/health')).json()).toMatchObject({ claimed: true });
     expect((await registerUser(url, 'alice', 'pw')).status).toBe(409); // dup
 
@@ -165,7 +208,7 @@ describe('sync-server endpoints', () => {
     expect(replica.streamEpoch).toBeTruthy();
     expect(await (await fetch(url + '/api/auth/me', { headers })).json()).toMatchObject({
       username: 'alice',
-      role: 'admin',
+      role: 'owner',
       disabled: false,
       ledgerId,
       replicaId: replica.replicaId,
@@ -521,19 +564,26 @@ describe('sync-server endpoints', () => {
     }
   });
 
-  it('uses the first account as administrator and protects management with account sessions', async () => {
+  it('requires the deployment secret for the owner and protects management with account sessions', async () => {
     const s = createSyncServer({ registrationMode: 'invite' });
     await new Promise<void>((r) => s.server.listen(0, r));
     const u = `http://localhost:${(s.server.address() as AddressInfo).port}`;
     try {
+      const ordinary = await registerUser(u, 'visitor-user', 'visitor-password', undefined, '', false);
+      expect(ordinary.status).toBe(403);
+      expect(await ordinary.json()).toMatchObject({ code: 'OWNER_SETUP_REQUIRED' });
+      const rejected = await post2(u, '/api/auth/register/start', { username: 'visitor-user', registrationRequest: 'not-an-opaque-request', ownerSetupToken: 'wrong-secret' });
+      expect(await rejected.json()).toMatchObject({ code: 'INVALID_OWNER_SETUP' });
       const ownerRegistration = await registerUser(u, 'owner-user', 'owner-password');
       expect(ownerRegistration.status).toBe(200);
-      expect(await ownerRegistration.json()).toMatchObject({ role: 'admin' });
+      expect(await ownerRegistration.json()).toMatchObject({ role: 'owner' });
+      const reused = await post2(u, '/api/auth/register/start', { username: 'another-owner', registrationRequest: 'not-an-opaque-request', ownerSetupToken: OWNER_SETUP_TOKEN });
+      expect(await reused.json()).toMatchObject({ code: 'OWNER_ALREADY_CLAIMED' });
       const ownerToken = await accessToken(u, 'owner-user', 'owner-password');
       const adminHeaders = { 'Content-Type': 'application/json', Authorization: `Bearer ${ownerToken}` };
       expect(await (await fetch(u + '/api/auth/me', { headers: adminHeaders })).json()).toMatchObject({
         username: 'owner-user',
-        role: 'admin',
+        role: 'owner',
         disabled: false,
         session: { username: 'owner-user', active: true },
       });
@@ -563,7 +613,7 @@ describe('sync-server endpoints', () => {
       expect(JSON.stringify(usersBody)).not.toContain('opaqueRegistrationRecord');
       expect((usersBody as { users: { username: string; role: string; commitCount: number }[] }).users).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ username: 'owner-user', role: 'admin', commitCount: 0 }),
+          expect.objectContaining({ username: 'owner-user', role: 'owner', commitCount: 0 }),
           expect.objectContaining({ username: 'invite-user', role: 'member', commitCount: 0 }),
         ]),
       );
@@ -586,7 +636,7 @@ describe('sync-server endpoints', () => {
         users: expect.arrayContaining([expect.objectContaining({ username: 'invite-user', commitQuotaBytes: 8 * 1024 * 1024 })]),
       });
       expect(await (await fetch(u + '/api/admin/database/verify', { headers: adminHeaders })).json()).toMatchObject({
-        verification: { ok: true, result: 'ok', journalMode: 'wal', schemaVersion: 6 },
+        verification: { ok: true, result: 'ok', journalMode: 'wal', schemaVersion: CURRENT_SERVER_SCHEMA },
       });
 
       const login = await loginUser(u, 'invite-user', 'pw');
@@ -659,7 +709,7 @@ describe('sync-server endpoints', () => {
   it('serves a web directory independently from the sync API', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zichan-web-'));
     writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Zichan Web</title><div id="root"></div>');
-    const s = createSyncServer({ webDir: dir, enableWeb: true, enableSync: false });
+    const s = createSyncServer({ webDir: dir, enableWeb: true, enableSync: false, basePath: '/ledger' });
     await new Promise<void>((r) => s.server.listen(0, r));
     const u = `http://localhost:${(s.server.address() as AddressInfo).port}`;
     try {
@@ -670,7 +720,11 @@ describe('sync-server endpoints', () => {
       expect(csp).toContain("connect-src 'self' https:");
       expect(csp).not.toContain("script-src 'self' 'unsafe-eval'");
       expect(await page.text()).toContain('Zichan Web');
-      expect((await post2(u, '/api/auth/login/start', { username: 'offline-user' })).status).toBe(503);
+      expect((await post2(u, '/ledger/api/auth/login/start', { username: 'offline-user' })).status).toBe(503);
+      const account = await fetch(u + '/ledger/api/auth/me');
+      expect(account.status).toBe(503);
+      expect(account.headers.get('content-type')).toContain('application/json');
+      expect((await fetch(u + '/ledger/app/')).status).toBe(200);
     } finally {
       await s.close();
       rmSync(dir, { recursive: true, force: true });
@@ -719,7 +773,7 @@ describe('sync-server endpoints', () => {
       expect((await registerUser(firstUrl, 'persisted', 'pw')).status).toBe(200);
       const ownerAccessToken = await accessToken(firstUrl, 'persisted', 'pw');
       const status = await fetch(firstUrl + '/api/admin/status', { headers: { Authorization: `Bearer ${ownerAccessToken}` } });
-      expect(await status.json()).toMatchObject({ journalMode: 'wal', tempStore: 'memory', schemaVersion: 6, userCount: 1, claimed: true });
+      expect(await status.json()).toMatchObject({ journalMode: 'wal', tempStore: 'memory', schemaVersion: CURRENT_SERVER_SCHEMA, userCount: 1, claimed: true });
       await first.close();
       first = null;
       expect(existsSync(join(dataDir, 'server.sqlite'))).toBe(true);
@@ -870,14 +924,17 @@ describe('sync-server endpoints', () => {
       await driver.run('UPDATE server_schema_migrations SET version = 99, name = ?', ['retired']);
       await driver.close();
       const s = createSyncServer({ dataDir: dir });
-      await expect(s.ready).rejects.toThrow(/不是当前开发版结构/);
-      await s.close();
+      try {
+        await expect(s.ready).rejects.toThrow(/结构不受支持.*不会自动重置/);
+      } finally {
+        await s.close();
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('creates, verifies, and restores an atomic server backup', async () => {
+  it.each([7, 8, CURRENT_SERVER_SCHEMA])('creates, verifies, and restores a schema %i server backup', async (version) => {
     const root = mkdtempSync(join(tmpdir(), 'zichan-backup-'));
     const dataDir = join(root, 'source');
     const backupDir = join(root, 'backup-1');
@@ -892,6 +949,11 @@ describe('sync-server endpoints', () => {
       await source.close();
     }
     try {
+      if (version === 7 || version === 8) {
+        const previous = new NodeSqliteDriver(join(dataDir, 'server.sqlite'));
+        try { await previous.run('UPDATE server_schema_migrations SET version = ?, name = ?', [version, version === 7 ? 'server_account_identity_v7' : 'server_management_v8']); }
+        finally { await previous.close(); }
+      }
       const manifest = await createServerBackup(dataDir, backupDir);
       expect(manifest.files.some((file) => file.path === 'server.sqlite')).toBe(true);
       expect(await verifyServerBackup(backupDir)).toMatchObject({ ok: true, databaseResult: 'ok' });

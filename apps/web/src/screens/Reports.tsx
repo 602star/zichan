@@ -1,3 +1,4 @@
+import { accountSessionStorage } from '../account-storage.js';
 import { useEffect, useMemo, useState } from 'react';
 import { fixedAssetCost, isDateInRange, gameRecordReportingPostings, traceChain, D, localToday, type DateRange, type QueryCursor } from '@zichan/core';
 import { useSnapshot, type Snapshot } from '../db/snapshot.js';
@@ -505,7 +506,7 @@ function TransactionDetailTable(props: {
 }) {
   const { rows, range, selectedCategory, loadedCount, hasMore, busy, error, onLoadMore } = props;
   const openInTransactions = () => {
-    sessionStorage.setItem('zichan.transactions.filterPreset', JSON.stringify({ range: range.preset, dateFrom: range.from, dateTo: range.to, category: selectedCategory || 'all' }));
+    accountSessionStorage.setItem('zichan.transactions.filterPreset', JSON.stringify({ range: range.preset, dateFrom: range.from, dateTo: range.to, category: selectedCategory || 'all' }));
     window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'transactions' } }));
   };
   return (

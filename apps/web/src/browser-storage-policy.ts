@@ -1,8 +1,18 @@
+import { accountLocalStorage } from './account-storage.js';
 import { isTauriRuntime } from './tauri.js';
 
 export type FirstUseMode = 'local' | 'server';
 
 export const FIRST_USE_MODE_KEY = 'zichan.firstUse.mode.v1';
+const BEST_EFFORT_KEY = 'zichan.storage.bestEffortConsent.v1';
+
+export function loadBestEffortConsent(): boolean {
+  try { return accountLocalStorage?.getItem(BEST_EFFORT_KEY) === 'accepted'; } catch { return false; }
+}
+
+export function acceptBestEffortStorage(): void {
+  accountLocalStorage.setItem(BEST_EFFORT_KEY, 'accepted');
+}
 
 export interface BrowserLocalCapability {
   supported: boolean;
@@ -23,11 +33,13 @@ export interface BrowserStorageDispositionInput {
   persisted: boolean;
   hasExistingLocalData: boolean;
   desktop?: boolean;
+  bestEffortAccepted?: boolean;
+  localSupported?: boolean;
 }
 
 export function loadFirstUseMode(): FirstUseMode | null {
   try {
-    const value = globalThis.localStorage?.getItem(FIRST_USE_MODE_KEY);
+    const value = accountLocalStorage?.getItem(FIRST_USE_MODE_KEY);
     return value === 'local' || value === 'server' ? value : null;
   } catch {
     return null;
@@ -35,11 +47,12 @@ export function loadFirstUseMode(): FirstUseMode | null {
 }
 
 export function saveFirstUseMode(mode: FirstUseMode): void {
-  globalThis.localStorage?.setItem(FIRST_USE_MODE_KEY, mode);
+  accountLocalStorage?.setItem(FIRST_USE_MODE_KEY, mode);
 }
 
 export function clearFirstUseMode(): void {
-  globalThis.localStorage?.removeItem(FIRST_USE_MODE_KEY);
+  accountLocalStorage?.removeItem(FIRST_USE_MODE_KEY);
+  accountLocalStorage?.removeItem(BEST_EFFORT_KEY);
 }
 
 export function browserLocalCapability(): BrowserLocalCapability {
@@ -49,8 +62,6 @@ export function browserLocalCapability(): BrowserLocalCapability {
   if (!globalThis.crypto?.subtle) missing.push('WebCrypto');
   if (typeof globalThis.WebAssembly?.compile !== 'function') missing.push('WebAssembly');
   if (typeof globalThis.navigator?.locks?.request !== 'function') missing.push('Web Locks');
-  const storage = globalThis.navigator?.storage;
-  if (typeof storage?.persist !== 'function' || typeof storage.persisted !== 'function') missing.push('持久存储授权');
   return { supported: missing.length === 0, missing };
 }
 
@@ -63,7 +74,8 @@ export function browserStorageDisposition(input: BrowserStorageDispositionInput)
   if (!input.mode) return 'pending';
   if (input.mode === 'server') return 'writable';
   if (!input.persistenceChecked) return 'pending';
-  if (input.persisted) return 'writable';
+  if (input.localSupported === false) return 'blocked';
+  if (input.persisted || input.bestEffortAccepted) return 'writable';
   return input.hasExistingLocalData ? 'recovery' : 'blocked';
 }
 
@@ -79,15 +91,18 @@ export async function browserPersistenceStatus(request = false): Promise<Browser
   }
   try {
     const storage = globalThis.navigator.storage;
+    if (typeof storage?.persist !== 'function' || typeof storage.persisted !== 'function') {
+      return { supported: true, persisted: false, reason: '浏览器未提供持久存储保护接口；仍可选择普通本地存储' };
+    }
     const already = await storage.persisted();
     if (already) return { supported: true, persisted: true };
     if (!request) return { supported: true, persisted: false, reason: '浏览器尚未授予持久存储权限' };
     const granted = await storage.persist();
-    if (!granted) return { supported: true, persisted: false, reason: '浏览器拒绝了持久存储授权' };
+    if (!granted) return { supported: true, persisted: false, reason: '浏览器未授予防自动清理保护（不代表你拒绝了授权）' };
     const persisted = await storage.persisted();
     return persisted
       ? { supported: true, persisted: true }
-      : { supported: true, persisted: false, reason: '浏览器没有确认持久存储授权，不能创建纯本地账本' };
+      : { supported: true, persisted: false, reason: '浏览器没有确认持久存储保护；可确认风险后使用普通本地存储' };
   } catch (error) {
     return {
       supported: true,
