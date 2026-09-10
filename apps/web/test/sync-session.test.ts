@@ -1,3 +1,4 @@
+import { requestJson, HttpRequestError } from '../../../packages/db/src/http-request.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 class MemoryStorage {
@@ -22,6 +23,7 @@ async function setup(transport: 'token' | 'cookie' = 'token') {
   const refresh = vi.fn();
   const login = vi.fn();
   vi.doMock('@zichan/db', () => ({
+    requestJson, HttpRequestError,
     assertSecureSyncUrl: vi.fn(), isLocalNetworkSyncUrl: vi.fn(() => false),
     refreshAccountSession: refresh, loginAccount: login,
   }));

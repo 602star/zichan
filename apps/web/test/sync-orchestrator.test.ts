@@ -1,3 +1,4 @@
+import { requestJson, HttpRequestError } from '../../../packages/db/src/http-request.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 class MemoryStorage implements Storage {
@@ -74,6 +75,7 @@ describe('configured sync orchestrator', () => {
       };
     });
     vi.doMock('@zichan/db', () => ({
+    requestJson, HttpRequestError,
       assertSecureSyncUrl: vi.fn(),
       isLocalNetworkSyncUrl: vi.fn(() => false),
       httpCommitTransport,
@@ -89,8 +91,8 @@ describe('configured sync orchestrator', () => {
     const { syncConfiguredServers } = await import('../src/sync-orchestrator.js');
     const result = await syncConfiguredServers({} as never, [profile]);
 
-    expect(fetchHealth).toHaveBeenCalledWith(`${primaryUrl}/api/health`, { redirect: 'error' });
-    expect(fetchHealth).toHaveBeenCalledWith(`${alternateUrl}/api/health`, { redirect: 'error' });
+    expect(fetchHealth).toHaveBeenCalledWith(`${primaryUrl}/api/health`, { redirect: 'error', signal: expect.any(AbortSignal) });
+    expect(fetchHealth).toHaveBeenCalledWith(`${alternateUrl}/api/health`, { redirect: 'error', signal: expect.any(AbortSignal) });
     expect(httpCommitTransport).toHaveBeenCalledTimes(1);
     expect(httpCommitTransport.mock.calls[0]?.[0]).toMatchObject({ baseUrl: alternateUrl, token: 'fresh-token' });
     expect(result.endpoints[0]?.url).toBe(alternateUrl);
@@ -146,6 +148,7 @@ describe('configured sync orchestrator', () => {
       };
     });
     vi.doMock('@zichan/db', () => ({
+    requestJson, HttpRequestError,
       assertSecureSyncUrl: vi.fn(),
       isLocalNetworkSyncUrl: vi.fn(() => false),
       httpCommitTransport,
@@ -161,7 +164,7 @@ describe('configured sync orchestrator', () => {
 
     expect(result.endpoints[0]?.error).toContain('同步服务器身份已变化');
     expect(fetchHealth).toHaveBeenCalledTimes(1);
-    expect(fetchHealth).toHaveBeenCalledWith(`${primaryUrl}/api/health`, { redirect: 'error' });
+    expect(fetchHealth).toHaveBeenCalledWith(`${primaryUrl}/api/health`, { redirect: 'error', signal: expect.any(AbortSignal) });
     expect(httpCommitTransport).not.toHaveBeenCalled();
   });
 
@@ -216,6 +219,7 @@ describe('configured sync orchestrator', () => {
       };
     });
     vi.doMock('@zichan/db', () => ({
+    requestJson, HttpRequestError,
       assertSecureSyncUrl: vi.fn(),
       isLocalNetworkSyncUrl: vi.fn(() => false),
       httpCommitTransport,
@@ -231,7 +235,7 @@ describe('configured sync orchestrator', () => {
     expect(loginAccount).not.toHaveBeenCalled();
     expect(refreshAccountSession).toHaveBeenCalledTimes(1);
     expect(fetchHealth).toHaveBeenCalledTimes(2);
-    expect(fetchHealth).toHaveBeenCalledWith('https://ledger.example.com/api/health', { redirect: 'error' });
+    expect(fetchHealth).toHaveBeenCalledWith('https://ledger.example.com/api/health', { redirect: 'error', signal: expect.any(AbortSignal) });
     expect(httpCommitTransport).toHaveBeenCalledTimes(2);
     expect(result.converged).toBe(true);
     expect(result.endpoints[0]?.alias).toBe('家里电脑');
@@ -269,6 +273,7 @@ describe('configured sync orchestrator', () => {
     const loginAccount = vi.fn();
     const refreshAccountSession = vi.fn(() => new Promise((resolve) => { finishLogin = resolve; }));
     vi.doMock('@zichan/db', () => ({
+    requestJson, HttpRequestError,
       assertSecureSyncUrl: vi.fn(),
       isLocalNetworkSyncUrl: vi.fn(() => false),
       loginAccount,
@@ -319,6 +324,7 @@ describe('configured sync orchestrator', () => {
       session: { id: `session:${baseUrl}`, username: 'owner' },
     }));
     vi.doMock('@zichan/db', () => ({
+    requestJson, HttpRequestError,
       assertSecureSyncUrl: vi.fn(),
       isLocalNetworkSyncUrl: vi.fn(() => false),
       loginAccount,
@@ -334,8 +340,8 @@ describe('configured sync orchestrator', () => {
       'token:https://primary.example.com',
     ]);
     expect(fetchHealth).toHaveBeenCalledTimes(2);
-    expect(fetchHealth).toHaveBeenCalledWith('https://primary.example.com/api/health', { redirect: 'error' });
-    expect(fetchHealth).toHaveBeenCalledWith('https://backup.example.com/api/health', { redirect: 'error' });
+    expect(fetchHealth).toHaveBeenCalledWith('https://primary.example.com/api/health', { redirect: 'error', signal: expect.any(AbortSignal) });
+    expect(fetchHealth).toHaveBeenCalledWith('https://backup.example.com/api/health', { redirect: 'error', signal: expect.any(AbortSignal) });
     expect(loginAccount).not.toHaveBeenCalled();
     expect(refreshAccountSession).toHaveBeenCalledTimes(1);
   });
@@ -369,6 +375,7 @@ describe('configured sync orchestrator', () => {
     const loginAccount = vi.fn();
     const refreshAccountSession = vi.fn();
     vi.doMock('@zichan/db', () => ({
+    requestJson, HttpRequestError,
       assertSecureSyncUrl: vi.fn(),
       isLocalNetworkSyncUrl: vi.fn(() => false),
       loginAccount,
@@ -377,7 +384,7 @@ describe('configured sync orchestrator', () => {
 
     const { authenticateSyncProfile } = await import('../src/sync-auth.js');
     await expect(authenticateSyncProfile(profile)).rejects.toThrow('同步服务器身份已变化');
-    expect(fetchHealth).toHaveBeenCalledWith('https://ledger.example.com/api/health', { redirect: 'error' });
+    expect(fetchHealth).toHaveBeenCalledWith('https://ledger.example.com/api/health', { redirect: 'error', signal: expect.any(AbortSignal) });
     expect(loginAccount).not.toHaveBeenCalled();
     expect(refreshAccountSession).not.toHaveBeenCalled();
   });
@@ -415,6 +422,7 @@ describe('configured sync orchestrator', () => {
       })),
     }));
     vi.doMock('@zichan/db', () => ({
+    requestJson, HttpRequestError,
       assertSecureSyncUrl: vi.fn(),
       isLocalNetworkSyncUrl: vi.fn(() => false),
       httpCommitTransport: vi.fn(),

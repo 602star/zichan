@@ -21,6 +21,8 @@
 .zc-admin-root small { display: block; margin-top: 5px; font-size: 12px; color: var(--fg-muted); }
 .zc-admin-root td small { font-family: ui-monospace, monospace; font-size: 11px; }
 .zc-admin-root table { min-width: 760px; font-size: 13px; }
+.zc-admin-root textarea { display: block; box-sizing: border-box; width: 100%; max-width: 520px; min-height: 80px; padding: 10px; font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.zc-admin-root pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .zc-admin-root tbody tr:hover { background: var(--surface-2); }
 @media (max-width: 767px) {
   .zc-admin-root button, .zc-admin-root input, .zc-admin-root select { min-height: 44px; }

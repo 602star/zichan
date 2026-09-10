@@ -564,9 +564,11 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
       const limit = Number(params.get('limit') ?? 100);
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) return send(res, 400, { error: 'limit must be between 1 and 500' });
-      const { users, nextCursor } = await store.listUsers(params.get('cursor') ?? '', limit, auth.role === 'admin' ? { role: 'member' } : {});
+      const search = params.get('search') ?? '';
+      if (search.length > 128) return send(res, 400, { error: 'search must not exceed 128 characters' });
+      const { users, nextCursor } = await store.listUsers(params.get('cursor') ?? '', limit, { search, ...(auth.role === 'admin' ? { role: 'member' } : {}) });
       const devices = (await Promise.all(users.filter((user) => auth.role === 'owner' || user['role'] === 'member').map(async (user) =>
-        (await store.listSessions(String(user['username']))).map((session) => publicSession(session))))).flat();
+        (await store.listSessions(String(user['username']))).map((session) => ({ ...publicSession(session), accountId: user['accountId'], role: user['role'] }))))).flat();
       return send(res, 200, { devices, nextCursor, paginationUnit: 'account' });
     }
     if (req.method === 'GET' && parts[0] === 'users' && parts[2] === 'devices') {
@@ -612,7 +614,19 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         },
       });
     }
-    if (req.method === 'GET' && suffix === '/invites') return send(res, 200, { invites: await store.listInvites() });
+    if (req.method === 'GET' && suffix === '/invites') {
+      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      const cursor = params.get('cursor') ?? '';
+      const limit = Number(params.get('limit') ?? 25);
+      const state = params.get('state') ?? '';
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100
+        || cursor !== '' && (!/^[1-9]\d*$/.test(cursor) || !Number.isSafeInteger(Number(cursor)))
+        || !['', 'available', 'used', 'revoked', 'expired'].includes(state)) {
+        return send(res, 400, { error: 'invalid invitation pagination or filter' });
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      return send(res, 200, await store.listInvitesPage(Number(cursor), limit, state));
+    }
     if (req.method === 'POST' && suffix === '/invites') {
       const body = await readBody(req, ADMIN_BODY_BYTES);
       const code = typeof body.code === 'string' && body.code.trim() ? body.code.trim() : randomBytes(12).toString('base64url');

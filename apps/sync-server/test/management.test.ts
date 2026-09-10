@@ -29,6 +29,56 @@ async function fixture() {
 }
 
 describe('server management authorization', () => {
+  it('paginates invitations newest first and applies exclusive state filters before pagination', async () => {
+    const f = await fixture();
+    const db = new NodeSqliteDriver(join(f.server.dataDir, 'server.sqlite'));
+    try {
+      const codes: string[] = [];
+      for (let i = 0; i < 4; i++) {
+        const response = await f.api(f.owner.accessToken, '/invites', { days: 7 });
+        expect(response.status).toBe(200);
+        codes.push((await response.json()).invite.code);
+      }
+      await f.api(f.owner.accessToken, `/invites/${codes[1]}/disable`, { disabled: true });
+      await db.run('UPDATE registration_invite_policy SET expires_at = ? WHERE code = ?', ['2000-01-01T00:00:00.000Z', codes[2]!]);
+      await db.run('UPDATE registration_invites SET used_by = ?, disabled = 1 WHERE code = ?', ['member', codes[3]!]);
+      const firstResponse = await f.api(f.owner.accessToken, '/invites?limit=2');
+      expect(firstResponse.headers.get('cache-control')).toBe('no-store');
+      const first = await firstResponse.json();
+      expect(first.invites.map((invite: { code: string }) => invite.code)).toEqual([codes[3], codes[2]]);
+      expect(first.nextCursor).toMatch(/^\d+$/);
+      const second = await (await f.api(f.owner.accessToken, `/invites?limit=2&cursor=${first.nextCursor}`)).json();
+      expect(second.invites.map((invite: { code: string }) => invite.code)).toEqual([codes[1], codes[0]]);
+      expect(second.nextCursor).toBeUndefined();
+      for (const [i, state] of ['available', 'revoked', 'expired', 'used'].entries()) {
+        const filtered = await (await f.api(f.owner.accessToken, `/invites?limit=1&state=${state}`)).json();
+        expect(filtered.invites.map((invite: { code: string }) => invite.code)).toEqual([codes[i]]);
+        expect(filtered.nextCursor).toBeUndefined();
+      }
+      for (const query of ['limit=0', 'limit=101', 'limit=1.5', 'cursor=-1', 'cursor=secret', 'cursor=9007199254740992', 'state=unknown']) {
+        expect((await f.api(f.owner.accessToken, `/invites?${query}`)).status).toBe(400);
+      }
+      expect((await f.api(f.member.accessToken, '/invites')).status).toBe(403);
+    } finally { await db.close(); await f.server.close(); }
+  });
+
+  it('identifies session owners and filters devices without exposing privileged accounts to administrators', async () => {
+    const f = await fixture();
+    try {
+      const ownerDevices = await (await f.api(f.owner.accessToken, '/devices?search=owner')).json();
+      expect(ownerDevices.devices).toHaveLength(1);
+      expect(ownerDevices.devices[0]).toMatchObject({ id: f.owner.session.id, accountId: f.owner.accountId, role: 'owner', username: 'owner' });
+      expect(ownerDevices.devices[0]).not.toHaveProperty('refreshHash');
+      await f.api(f.owner.accessToken, `/accounts/${f.manager.accountId}/role`, { role: 'admin' });
+      const manager = await loginAccount(f.url, 'manager', password);
+      const devices = await (await f.api(manager.accessToken, '/devices')).json();
+      expect(devices.devices).toHaveLength(1);
+      expect(devices.devices[0]).toMatchObject({ accountId: f.member.accountId, role: 'member' });
+      expect((await (await f.api(manager.accessToken, '/devices?search=owner')).json()).devices).toEqual([]);
+      expect((await f.api(manager.accessToken, `/sessions/${f.owner.session.id}/revoke`, {})).status).toBe(403);
+      expect((await f.api(manager.accessToken, `/devices?search=${'x'.repeat(129)}`)).status).toBe(400);
+    } finally { await f.server.close(); }
+  });
   it('exposes continuation cursors for aggregate quota and device reads', async () => {
     const f = await fixture();
     try {

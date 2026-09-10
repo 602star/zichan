@@ -1,4 +1,5 @@
 /** HTTP transport for protocol-v3 relay APIs carrying commit-DAG v2 envelopes. */
+import { requestJson as fetch, HttpRequestError, type HttpRequestOptions } from './http-request.js';
 import * as opaque from '@serenity-kit/opaque';
 import {
   decryptJson,
@@ -13,10 +14,6 @@ import {
 import type { CommitTransport, ReplicaConnection } from './event-sync.js';
 import type { SyncReplicaIdentity } from './sync-types.js';
 
-declare const fetch: (
-  url: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: string; redirect?: 'error'; credentials?: 'same-origin' | 'omit' },
-) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
 export interface HttpTransportOptions {
   baseUrl: string;
@@ -29,7 +26,7 @@ export interface HttpTransportOptions {
   requireExistingReplica?: boolean;
 }
 
-export interface RegisterAccountOptions {
+export interface RegisterAccountOptions extends HttpRequestOptions {
   passwordResetCode?: string;
   initializeOwner?: boolean;
   ownerSetupToken?: string;
@@ -42,7 +39,7 @@ export interface RegisterAccountResult {
   role: 'owner' | 'admin' | 'member';
 }
 
-export interface LoginAccountOptions {
+export interface LoginAccountOptions extends HttpRequestOptions {
   sessionContext?: 'admin';
   sessionTransport?: 'cookie' | 'token';
   deviceId?: string;
@@ -92,9 +89,9 @@ function context(ledgerId: string, commitId: string, contentHash: string) {
 async function errorMessage(prefix: string, response: { status: number; json(): Promise<unknown> }): Promise<Error> {
   try {
     const body = await response.json() as { error?: string; code?: string };
-    return new Error(`${prefix}: HTTP ${response.status}${body.code ? ` ${body.code}` : ''}${body.error ? ` ${body.error}` : ''}`);
+    return new HttpRequestError('http', `${prefix}: HTTP ${response.status}${body?.code ? ` ${body.code}` : ''}${body?.error ? ` ${body.error}` : ''}`, response.status);
   } catch {
-    return new Error(`${prefix}: HTTP ${response.status}`);
+    return new HttpRequestError('http', `${prefix}: HTTP ${response.status}`, response.status);
   }
 }
 
@@ -324,7 +321,7 @@ export async function registerAccount(baseUrl: string, username: string, passwor
       passwordResetCode: opts.passwordResetCode || undefined,
     }),
     redirect: 'error',
-  });
+  }, opts);
   if (!startResponse.ok) throw await errorMessage('register start failed', startResponse);
   const startBody = await startResponse.json() as {
     registrationResponse?: string;
@@ -359,7 +356,7 @@ export async function registerAccount(baseUrl: string, username: string, passwor
       registrationRecord: finish.registrationRecord,
     }),
     redirect: 'error',
-  });
+  }, opts);
   if (!finishResponse.ok) throw await errorMessage('register finish failed', finishResponse);
   const result = await finishResponse.json() as { role?: 'owner' | 'admin' | 'member' };
   if (result.role !== 'owner' && result.role !== 'admin' && result.role !== 'member') throw new Error('register finish returned an invalid account role');
@@ -387,7 +384,7 @@ export async function loginAccount(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: normalized, startLoginRequest: start.startLoginRequest }),
     redirect: 'error',
-  });
+  }, options);
   if (!startResponse.ok) throw await errorMessage('login start failed', startResponse);
   const startBody = await startResponse.json() as {
     loginId?: string;
@@ -426,7 +423,7 @@ export async function loginAccount(
       deviceName: options.deviceName?.trim() || 'Zichan client',
     }),
     redirect: 'error',
-  });
+  }, options);
   if (!loginResponse.ok) throw await errorMessage('login failed', loginResponse);
   return readAuthSession(loginResponse, options.sessionTransport ?? 'token');
 }
@@ -440,7 +437,7 @@ async function readAuthSession(response: { json(): Promise<unknown> }, transport
   return { ...body, sessionTransport: transport, refreshToken: transport === 'cookie' ? '' : body.refreshToken };
 }
 
-export async function refreshAccountSession(baseUrl: string, refreshToken: string, transport: 'cookie' | 'token' = 'token', context?: 'admin'): Promise<SyncAuthSession> {
+export async function refreshAccountSession(baseUrl: string, refreshToken: string, transport: 'cookie' | 'token' = 'token', context?: 'admin', options: HttpRequestOptions = {}): Promise<SyncAuthSession> {
   assertSecureSyncUrl(baseUrl);
   const response = await fetch(`${baseUrl}/api/auth/refresh`, {
     method: 'POST',
@@ -448,17 +445,17 @@ export async function refreshAccountSession(baseUrl: string, refreshToken: strin
     credentials: transport === 'cookie' ? 'same-origin' : 'omit',
     body: JSON.stringify(transport === 'cookie' ? {} : { refreshToken }),
     redirect: 'error',
-  });
+  }, options);
   if (!response.ok) throw await errorMessage('session refresh failed', response);
   return readAuthSession(response, transport);
 }
 
-export async function fetchAuthMe(baseUrl: string, accessToken: string): Promise<SyncAuthMe> {
+export async function fetchAuthMe(baseUrl: string, accessToken: string, options: HttpRequestOptions = {}): Promise<SyncAuthMe> {
   assertSecureSyncUrl(baseUrl);
   const response = await fetch(`${baseUrl}/api/auth/me`, {
     headers: { Authorization: `Bearer ${accessToken}` },
     redirect: 'error',
-  });
+  }, options);
   if (!response.ok) throw await errorMessage('account lookup failed', response);
   const body = await response.json() as SyncAuthMe;
   if (!body.username || (body.role !== 'owner' && body.role !== 'admin' && body.role !== 'member') || !body.session?.id) {

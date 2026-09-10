@@ -13,6 +13,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(true);
+  const [attempt, setAttempt] = useState(0);
   const [message, setMessage] = useState('正在检查服务器与管理会话…');
   useEffect(() => {
     let active = true;
@@ -20,6 +21,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
     for (const [name, value] of Object.entries(THEMES.terracotta!)) document.documentElement.style.setProperty(name, value);
     const client = new AdminClient(baseUrl, (note) => { if (active) { setAccount(undefined); setPassword(''); setMessage(note); } });
     clientRef.current = client;
+    setBusy(true); setHealth(undefined); setMessage('正在检查服务器与管理会话…');
     void (async () => {
       try {
         const server = await client.health();
@@ -37,19 +39,19 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
         else document.documentElement.style.removeProperty(name);
       }
     };
-  }, [baseUrl]);
+  }, [baseUrl, attempt]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     const client = clientRef.current;
-    if (!client || !health) return;
+    if (!client || !health || busy) return;
     setBusy(true); setMessage('');
     try {
       const user = await client.login(username.trim(), password, !health.claimed, () => {
         setHealth((value) => value ? { ...value, claimed: true } : value);
         setMessage('管理员已创建，正在登录；若登录失败，可使用刚设置的账号重试。');
       });
-      setAccount(user); setHealth((value) => value ? { ...value, claimed: true } : value);
+      setAccount(user); setHealth((value) => value ? { ...value, claimed: true } : value); setMessage('');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
       // Registration may have committed even if its response was lost.
@@ -74,7 +76,8 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
       {message && <p role="alert" style={{ padding: 14, background: 'var(--surface)', border: '1px solid var(--negative)', borderRadius: 10 }}>{message}</p>}
       {account && clientRef.current ? <AdminConsole key={`${account.accountId}:${account.session.id}`} client={clientRef.current} account={account} /> : <section style={{ maxWidth: 580, margin: '24px auto', padding: 24, borderRadius: 16, background: 'var(--surface)', border: '1px solid var(--border)' }}>
         <h2>{!health ? '尚未连接管理服务器' : !health.claimed ? '初始化服务器所有者' : '管理员登录'}</h2>
-        {!health && !busy && <p>请确认后端服务已启动，并刷新页面重试。仅启动 5173 前端页面不能创建服务器账号。</p>}
+        {!health && !busy && <p>请确认后端服务已启动。仅启动 5173 前端页面不能创建服务器账号。</p>}
+        {!busy && message && <button onClick={() => { setPassword(''); setAttempt((value) => value + 1); }}>重新连接服务器</button>}
         <form onSubmit={(event) => void submit(event)} style={{ display: 'grid', gap: 16 }}>
           <label>用户名<input className="zc-input" aria-label="管理账号用户名" autoComplete="username" required minLength={3} value={username} disabled={busy} onChange={(event) => setUsername(event.target.value)} /></label>
           <label>账号密码<input className="zc-input" aria-label="管理账号密码" type="password" autoComplete={health?.claimed ? 'current-password' : 'new-password'} required minLength={8} value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} /></label>

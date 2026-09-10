@@ -101,7 +101,7 @@ const ISSUE_LABELS: Record<string, string> = {
 function BrowserAccountExit({ onExit }: { onExit: () => Promise<void> }) {
   const [confirm, setConfirm] = useState(false);
   return <section style={card} aria-label="账号与会话"><h2>账号与会话</h2>
-    <p>退出会锁定本机账本并撤销本站记账会话，不影响管理后台登录，不删除加密缓存和未同步记录。重新登录后可继续同步。</p>
+    <p>退出会锁定本机账本，清除此标签页的同步凭据，并尝试撤销本站和附加服务器会话；未确认撤销会明确提示。不影响管理后台登录，不删除加密缓存和未同步记录。</p>
     <button onClick={() => setConfirm(true)}>退出记账账号</button>
     {confirm && <ConfirmDialog title="退出记账账号" confirmLabel="确认退出" onCancel={() => setConfirm(false)} onConfirm={onExit}><p>退出前请确认重要记录已同步，或已导出加密备份。未同步数据会保留在本机；不要清除网站数据。</p></ConfirmDialog>}
   </section>;
@@ -567,6 +567,7 @@ export function Settings() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 980 }}>
       {exitAccount && <BrowserAccountExit onExit={exitAccount} />}
+      <section style={card} aria-label="同步服务器连接"><h2>同步服务器</h2><p>添加或编辑本机、局域网与公网服务器，分别登录后同步当前账本。这里配置的是用户同步连接，不是服务器管理后台。</p><button onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'sync' } }))}>管理同步服务器</button></section>
       <div style={card}>
         <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 14 }}>结算与偏好</div>
         <div className="zc-settings-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>

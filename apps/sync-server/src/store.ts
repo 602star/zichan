@@ -1230,6 +1230,25 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     };
   }
 
+  async listInvitesPage(before = 0, limit = 25, state = ''): Promise<{ invites: Invite[]; nextCursor?: string }> {
+    await this.ready;
+    // A numeric cursor avoids placing the invitation credential in pagination URLs.
+    const rows = await this.driver.all<Record<string, unknown>>(
+      `SELECT i.*, i.rowid AS cursor_id, p.expires_at FROM registration_invites i
+       LEFT JOIN registration_invite_policy p ON p.code = i.code
+       WHERE (? = 0 OR i.rowid < ?)
+         AND (? = '' OR CASE WHEN i.used_by IS NOT NULL THEN 'used'
+           WHEN i.disabled = 1 THEN 'revoked'
+           WHEN p.expires_at <= ? THEN 'expired' ELSE 'available' END = ?)
+       ORDER BY i.rowid DESC LIMIT ?`,
+      [before, before, state, nowIso(), state, limit + 1],
+    );
+    return {
+      invites: rows.slice(0, limit).map(inviteFromRow),
+      ...(rows.length > limit ? { nextCursor: String(rows[limit - 1]!['cursor_id']) } : {}),
+    };
+  }
+
   async verify(): Promise<{ ok: boolean; result: string; journalMode: string; tempStore: string; schemaVersion: number }> {
     await this.ready;
     const check = await this.driver.get<Record<string, unknown>>('PRAGMA quick_check');

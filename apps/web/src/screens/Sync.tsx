@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  aggregateKey, registerAccount, loginAccount, fetchAuthMe, fetchLedgerKeyEnvelope, checkConsistency, recomputeCaches, resolveConflictGroup,
+  requestJson, aggregateKey, registerAccount, loginAccount, fetchAuthMe, fetchLedgerKeyEnvelope, checkConsistency, recomputeCaches, resolveConflictGroup,
   type StoredSyncCommit, type SyncConflictBranchRow, type SyncConflictGroupRow,
 } from '@zichan/db';
+import { ProfileOperations, type ProfileOperation } from '../profile-operation.js';
+import { revokeConnectionSession } from '../revoke-connection-session.js';
+import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { isDateInRange } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { useSnapshot, type Snapshot } from '../db/snapshot.js';
@@ -39,7 +42,7 @@ import {
 import {
   CREDENTIALS_CHANGED_EVENT,
   VAULT_STATE_CHANGED_EVENT,
-  credentialVaultState,
+  credentialRevision, runtimeCredential, credentialVaultState,
   deleteCredential,
   persistCredential,
   refreshCredentialVaultState,
@@ -81,6 +84,7 @@ import {
 } from '../connection-link.js';
 import { copyTextToClipboard } from '../ui/diagnostics.js';
 import { authenticateSyncProfile, hasAccountSession, preferredSessionTransport } from '../sync-auth.js';
+import { isPrimaryWebConnection } from '../web-sync-connections.js';
 
 const REQUEST_TIMEOUT_MS = 5_000;
 type WizardMode = SyncAddressPreset;
@@ -323,40 +327,8 @@ function wizardPatch(mode: WizardMode, host: string, path: string): Partial<Sync
   };
 }
 
-function timeoutMessage(label: string): string {
-  return `${label}超时（${REQUEST_TIMEOUT_MS / 1000} 秒）`;
-}
-
-function formatBytes(value: number): string {
-  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`;
-  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
-  if (value >= 1024) return `${Math.round(value / 1024)} KB`;
-  return `${value} B`;
-}
-
-async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(timeoutMessage(label))), REQUEST_TIMEOUT_MS);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-async function fetchHealth(baseUrl: string): Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    return await fetch(`${baseUrl}/api/health`, { signal: controller.signal, redirect: 'error' });
-  } catch (e) {
-    if (e instanceof DOMException && e.name === 'AbortError') throw new Error(timeoutMessage('连通性测试'));
-    throw e;
-  } finally {
-    clearTimeout(timer);
-  }
+function fetchHealth(baseUrl: string, signal?: AbortSignal) {
+  return requestJson(`${baseUrl}/api/health`, { redirect: 'error', cache: 'no-store' }, { signal, timeoutMs: REQUEST_TIMEOUT_MS });
 }
 
 const statusText: Record<SyncConnectionStatus, string> = {
@@ -387,8 +359,6 @@ export function Sync() {
   const [vaultPasswordConfirm, setVaultPasswordConfirm] = useState('');
   const [vaultBusy, setVaultBusy] = useState(false);
   const [vaultError, setVaultError] = useState('');
-  const [ownerSetupToken, setOwnerSetupToken] = useState('');
-  useEffect(() => { setOwnerSetupToken(''); }, [selectedId]);
   const [ledgerKey, setLedgerKey] = useState<LedgerKeyState>(ledgerKeyState);
   const [ledgerPassword, setLedgerPassword] = useState('');
   const [ledgerPasswordConfirm, setLedgerPasswordConfirm] = useState('');
@@ -404,12 +374,21 @@ export function Sync() {
   const [fieldChoices, setFieldChoices] = useState<Record<string, Record<string, Record<string, string>>>>({});
   const [busy, setBusy] = useState(false);
   const [testingId, setTestingId] = useState('');
+  const operations = useRef(new ProfileOperations());
+  const activeOperation = useRef<ProfileOperation>();
+  const loginFeedbackGeneration = useRef(0);
+  const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [removeTarget, setRemoveTarget] = useState<string>();
+  const [removeWarning, setRemoveWarning] = useState('');
+  useEffect(() => () => { loginFeedbackGeneration.current++; operations.current.cancelAll(); }, []);
   const [lastSyncAt, setLastSyncAt] = useState('');
   const [syncNotice, setSyncNotice] = useState('');
   const [mergeNotice, setMergeNotice] = useState('');
   const [endpointRows, setEndpointRows] = useState<ConfiguredSyncEndpoint[]>([]);
   const [healthByConnection, setHealthByConnection] = useState<Record<string, SyncHealthInfo>>({});
   const [sharedDirectoryReady, setSharedDirectoryReady] = useState(false);
+  const [directoryError, setDirectoryError] = useState('');
+  const [directoryRetry, setDirectoryRetry] = useState(0);
   const [connectionLinkDraft, setConnectionLinkDraft] = useState('');
   const [connectionShare, setConnectionShare] = useState<{ link: string; qrDataUrl: string } | null>(null);
   const [wizardMode, setWizardMode] = useState<WizardMode>('local');
@@ -424,6 +403,8 @@ export function Sync() {
 
   const selected = useMemo(() => profiles.find((p) => p.id === selectedId) ?? profiles[0], [profiles, selectedId]);
   const selectedConnectionId = selected?.id;
+  const primaryConnection = profiles.find(isPrimaryWebConnection);
+  const selectedIsPrimary = Boolean(selected && isPrimaryWebConnection(selected));
   const selectedBaseUrl = selected?.baseUrl;
   const sharedDirectorySignature = useMemo(() => JSON.stringify(sharedDirectoryFromConnections(profiles)), [profiles]);
   const latestProfiles = useRef(profiles);
@@ -438,7 +419,6 @@ export function Sync() {
   }, [profiles]);
 
   useEffect(() => {
-    if (!isTauriRuntime()) return;
     const payload = connectionLinkFromLocation();
     if (payload) importConnectionLink(globalThis.location.href);
     // Importing the initial hash is intentionally a mount-only action; the handler clears it.
@@ -446,30 +426,45 @@ export function Sync() {
   }, []);
 
   useEffect(() => {
-    if (!isTauriRuntime()) return;
     let cancelled = false;
+    setSharedDirectoryReady(false);
+    setDirectoryError('');
     void loadSharedSyncDirectory(store).then((servers) => {
       if (cancelled) return;
       setProfiles((current) => mergeSharedSyncDirectory(current, servers));
       setSharedDirectoryReady(true);
     }).catch((error) => {
       if (!cancelled) {
-        setSharedDirectoryReady(true);
-        setSyncNotice(`共享服务器目录读取失败：${msg(error)}`);
+        setSharedDirectoryReady(false);
+        setDirectoryError(`共享服务器目录读取失败，已暂停自动写回：${msg(error)}`);
       }
     });
     return () => { cancelled = true; };
-  }, [store]);
+  }, [store, directoryRetry]);
 
   useEffect(() => {
     if (!sharedDirectoryReady) return;
     const timer = window.setTimeout(() => {
       void saveSharedSyncDirectory(store, latestProfiles.current).catch((error) => {
-        setSyncNotice(`共享服务器目录保存失败：${msg(error)}`);
+        setSharedDirectoryReady(false);
+        setDirectoryError(`共享服务器目录保存失败，已暂停自动写回：${msg(error)}`);
       });
     }, 500);
     return () => window.clearTimeout(timer);
   }, [sharedDirectoryReady, sharedDirectorySignature, store]);
+
+  useEffect(() => {
+    setPasswordConfirm('');
+    const pending = operations.current;
+    const feedback = loginFeedbackGeneration;
+    return () => {
+      if (!selectedConnectionId) return;
+      feedback.current++;
+      pending.cancel(selectedConnectionId);
+      const current = runtimeCredential(selectedConnectionId);
+      if (current?.password || current?.inviteCode) setRuntimeCredential(selectedConnectionId, { ...current, password: '', inviteCode: '' });
+    };
+  }, [selectedConnectionId]);
 
   useEffect(() => {
     if (!selectedBaseUrl) return;
@@ -484,6 +479,7 @@ export function Sync() {
 
   useEffect(() => {
     const refreshCredentials = () => {
+      operations.current.cancelStale();
       const next = runtimeCredentialMap();
       setCredentials((current) => sameCredentialMaps(current, next) ? current : next);
     };
@@ -539,13 +535,31 @@ export function Sync() {
   }, [store]);
 
   function patchProfile(id: string, patch: Partial<SyncConnection>) {
-    if (patch.username !== undefined && profiles.find((row) => row.id === id)?.username !== patch.username) {
+    if (isPrimaryWebConnection({ id })) {
+      // Editing a sync target must not change the account owning this Web cache.
+      const { username: _username, baseUrl: _baseUrl, activeUrl: _activeUrl, enabled: _enabled, ...safe } = patch;
+      patch = safe;
+    }
+    if (patch.username !== undefined && latestProfiles.current.find((row) => row.id === id)?.username !== patch.username) {
+      patch = { ...patch, accountId: undefined, role: undefined, ledgerId: undefined, replicaId: undefined, streamEpoch: undefined, status: 'login_required' };
       patchCredential(id, { password: '', inviteCode: '', accessToken: undefined, refreshToken: undefined, accessExpiresAt: undefined, sessionId: undefined, sessionTransport: undefined });
     }
-    setProfiles((rows) => rows.map((row) => row.id === id ? { ...row, ...patch } : row));
+    const previous = latestProfiles.current.find((row) => row.id === id);
+    if (previous && (patch.username !== undefined && patch.username !== previous.username
+      || patch.baseUrl !== undefined && patch.baseUrl !== previous.baseUrl
+      || patch.activeUrl !== undefined && patch.activeUrl !== previous.activeUrl
+      || patch.expectedServerPublicKeyFingerprint !== undefined && patch.expectedServerPublicKeyFingerprint !== previous.expectedServerPublicKeyFingerprint)) {
+      loginFeedbackGeneration.current++;
+      operations.current.cancel(id);
+    }
+    const next = latestProfiles.current.map((row) => row.id === id ? { ...row, ...patch } : row);
+    latestProfiles.current = next;
+    setProfiles(next);
   }
 
   function editAddressDraft(value: string) {
+    loginFeedbackGeneration.current++;
+    if (selected) operations.current.cancel(selected.id);
     setAddressDraft(value);
     try {
       setAddressParts(parseSyncBaseUrl(value));
@@ -556,6 +570,8 @@ export function Sync() {
   }
 
   function editAddressPart(patch: Partial<SyncUrlParts>) {
+    loginFeedbackGeneration.current++;
+    if (selected) operations.current.cancel(selected.id);
     const next = { ...addressParts, ...patch };
     setAddressParts(next);
     try {
@@ -567,11 +583,11 @@ export function Sync() {
   }
 
   function saveAddress() {
-    if (!selected) return;
+    if (!selected || selectedIsPrimary) return;
     try {
       const baseUrl = normalizeSyncBaseUrl(addressDraft);
       const local = isDeviceLocalSyncUrl(baseUrl);
-      const previousUrls = [selected.baseUrl, ...selected.alternateUrls];
+      const previousUrls = selected.serverId ? [selected.baseUrl, ...selected.alternateUrls] : [];
       const alternateUrls = [...new Set(previousUrls.filter((url) => url !== baseUrl))];
       patchProfile(selected.id, {
         baseUrl,
@@ -604,7 +620,9 @@ export function Sync() {
   }
 
   function patchCredential(id: string, patch: Partial<ServerCredential>) {
-    const next = { password: '', inviteCode: '', ...(credentials[id] ?? {}), ...patch };
+    if (patch.password !== undefined || patch.inviteCode !== undefined) loginFeedbackGeneration.current++;
+    if (patch.password !== undefined) setPasswordConfirm('');
+    const next = { password: '', inviteCode: '', ...runtimeCredential(id), ...patch };
     setCredentials((current) => ({ ...current, [id]: next }));
     setRuntimeCredential(id, next);
   }
@@ -719,6 +737,7 @@ export function Sync() {
       const payload = parseSyncConnectionLink(input);
       const existing = profiles.find((profile) => profile.serverId === payload.serverId);
       if (existing) {
+        if (isPrimaryWebConnection(existing)) throw new Error('这是本站登录服务器；登录地址保持不变，请为其他服务器添加连接。');
         const local = isDeviceLocalSyncUrl(payload.url);
         patchProfile(existing.id, {
           baseUrl: payload.url,
@@ -773,10 +792,17 @@ export function Sync() {
     }
   }
 
-  async function removeProfile(id: string) {
-    if (profiles.length <= 1) return;
+  async function removeProfile(id: string, localOnly = false) {
+    if (profiles.length <= 1 || isPrimaryWebConnection({ id })) return;
+    operations.current.cancel(id);
+    setBusy(true);
     try {
-      const profile = profiles.find((row) => row.id === id);
+      const profile = latestProfiles.current.find((row) => row.id === id);
+      if (!profile) { setRemoveTarget(undefined); return; }
+      if (!localOnly && !await revokeConnectionSession(profile, runtimeCredential(id))) {
+        setRemoveWarning('服务器会话撤销未确认（可能离线、登录已过期或服务器身份变化）。你可以取消并稍后重试，或仅删除本机连接；远端会话可能仍有效，请在目标服务器的设备管理中撤销。');
+        return;
+      }
       if (profile?.serverId && profile.replicaId && profile.streamEpoch && profile.ledgerId) {
         await store.retireReplica({
           serverId: profile.serverId,
@@ -787,7 +813,10 @@ export function Sync() {
       }
       await deleteCredential(id);
       await store.attachmentState.removeReplicaBlobs(id);
-      setProfiles((rows) => rows.filter((row) => row.id !== id));
+      latestProfiles.current = latestProfiles.current.filter((row) => row.id !== id);
+      setProfiles(latestProfiles.current);
+      setRemoveTarget(undefined);
+      setSyncNotice(localOnly ? '已仅删除本机连接和凭据；服务器会话撤销未确认，服务器账本未删除。' : '已删除本机连接并完成会话清理；服务器账本未删除。');
       setSelectedId((cur) => cur === id ? profiles.find((row) => row.id !== id)?.id ?? '' : cur);
       setCredentials((current) => {
         const next = { ...current };
@@ -795,8 +824,8 @@ export function Sync() {
         return next;
       });
     } catch (error) {
-      setVaultError(`删除服务器前清理同步凭据失败：${msg(error)}`);
-    }
+      throw new Error(`删除服务器前清理同步凭据失败：${msg(error)}`);
+    } finally { setBusy(false); }
   }
 
   function chooseWizardMode(mode: WizardMode) {
@@ -806,7 +835,7 @@ export function Sync() {
   }
 
   function applyWizard(): SyncConnection | undefined {
-    if (!selected) return undefined;
+    if (!selected || selectedIsPrimary) return undefined;
     const next = { ...selected, ...wizardPatch(wizardMode, wizardHost, wizardBasePath) };
     patchProfile(selected.id, next);
     setAddressDraft(next.baseUrl);
@@ -821,13 +850,33 @@ export function Sync() {
     if (next) await testProfile(next, 'health');
   }
 
+  function startOperation(profile: SyncConnection) {
+    setTestingId(profile.id);
+    const operation = operations.current.start(profile.id, () => {
+      const row = latestProfiles.current.find((item) => item.id === profile.id);
+      return JSON.stringify([row?.id, row?.username, row?.baseUrl, row?.activeUrl, credentialRevision(profile.id)]);
+    });
+    activeOperation.current = operation;
+    return operation;
+  }
+
+  function finishOperation(profile: SyncConnection, operation: ProfileOperation) {
+    operations.current.finish(profile.id, operation);
+    if (activeOperation.current === operation) {
+      activeOperation.current = undefined;
+      setTestingId('');
+    }
+  }
+
   async function testProfile(profile: SyncConnection, mode: 'health' | 'auth' = 'auth') {
+    const operation = startOperation(profile);
     const baseUrl = buildBaseUrl(profile);
     const started = performance.now();
     setTestingId(profile.id);
     patchProfile(profile.id, { lastError: mode === 'health' ? '正在测试连通性…' : '正在验证账号密码…' });
     try {
-      const health = await fetchHealth(baseUrl);
+      const health = await fetchHealth(baseUrl, operation.signal);
+      operation.assertCurrent();
       const latencyMs = Math.round(performance.now() - started);
       if (!health.ok) throw new Error(`health HTTP ${health.status}`);
       const body = (await health.json()) as {
@@ -846,6 +895,7 @@ export function Sync() {
         throw new Error('服务器身份或注册策略响应不完整');
       }
       const serverPublicKeyFingerprint = await fingerprintServerPublicKey(serverPublicKey);
+      operation.assertCurrent();
       if (profile.expectedServerPublicKeyFingerprint
         && profile.expectedServerPublicKeyFingerprint !== serverPublicKeyFingerprint) {
         patchProfile(profile.id, {
@@ -889,11 +939,7 @@ export function Sync() {
             deviceUrls,
             lastError: `已把 ${profile.baseUrl} 合并为同一服务器的备用地址`,
           } : row));
-        const incomingCredential = credentials[profile.id];
-        const existingCredential = credentials[duplicate.id];
-        if (incomingCredential?.password && !existingCredential?.password) {
-          patchCredential(duplicate.id, incomingCredential);
-        }
+        // Merging addresses never copies credentials between account profiles.
         void deleteCredential(profile.id).catch((error) => setVaultError(`删除重复服务器凭据失败：${msg(error)}`));
         setSelectedId(duplicate.id);
         setHealthByConnection((current) => ({
@@ -917,59 +963,24 @@ export function Sync() {
           registrationMode: body.registrationMode!,
         },
       }));
-      const cred = credentials[profile.id];
-      if (mode === 'auth' && profile.username.trim() && cred?.password) {
-        try {
-          const session = await withTimeout(loginAccount(baseUrl, profile.username.trim(), cred.password, {
-            sessionTransport: preferredSessionTransport(baseUrl),
-            deviceId,
-            deviceName: 'Zichan · 同步设置',
-            expectedServerPublicKey: serverPublicKey,
-            expectedServerId: body.serverId,
-          }), '账号密码验证');
-          const account = await withTimeout(fetchAuthMe(baseUrl, session.accessToken), '账号状态验证');
-          const usageResponse = await withTimeout(fetch(`${baseUrl}/api/v3/blobs/usage`, {
-            headers: { Authorization: `Bearer ${session.accessToken}` },
-            redirect: 'error',
-          }), '附件能力测试');
-          if (!usageResponse.ok) throw new Error(`附件能力 HTTP ${usageResponse.status}`);
-          const usageBody = (await usageResponse.json()) as { usage?: { usedBytes?: number; quotaBytes?: number } };
-          const used = usageBody.usage?.usedBytes ?? 0;
-          const quota = usageBody.usage?.quotaBytes ?? 0;
-          patchCredential(profile.id, {
-            password: '', inviteCode: '', sessionTransport: session.sessionTransport,
-            accessToken: session.accessToken,
-            refreshToken: session.refreshToken,
-            accessExpiresAt: session.accessExpiresAt,
-            sessionId: session.session.id,
-          });
-          patchProfile(profile.id, {
-            serverId: body.serverId,
-            serverPublicKey,
-            role: account.role,
-            accountId: account.accountId,
-            status: 'online',
-            lastLatencyMs: latencyMs,
-            lastTestAt: new Date().toISOString(),
-            lastError: `账号、密码和附件能力验证通过 · ${formatBytes(used)} / ${formatBytes(quota)}`,
-          });
-        } catch (e) {
-          patchProfile(profile.id, { serverId: body.serverId, status: 'login_required', lastLatencyMs: latencyMs, lastTestAt: new Date().toISOString(), lastError: msg(e) });
-        }
+      const cred = runtimeCredential(profile.id);
+      if (mode === 'auth' && !isPrimaryWebConnection(profile) && profile.username.trim() && cred?.password) {
+        await loginProfileNow({ ...profile, serverId: body.serverId, serverPublicKey }, operation, true);
       } else {
-        const lastError = mode === 'auth' ? '未填写用户名或密码，仅完成连通性测试' : '连通性正常';
+        const lastError = isPrimaryWebConnection(profile) ? '本站登录连接身份校验通过' : mode === 'auth' ? '未填写用户名或密码，仅完成连通性测试' : '连通性正常';
         patchProfile(profile.id, { serverId: body.serverId, serverPublicKey, status: 'online', lastLatencyMs: latencyMs, lastTestAt: new Date().toISOString(), lastError });
       }
     } catch (e) {
-      patchProfile(profile.id, { status: 'offline', lastLatencyMs: Math.round(performance.now() - started), lastTestAt: new Date().toISOString(), lastError: msg(e) });
+      if (operation.current()) patchProfile(profile.id, { status: 'offline', lastLatencyMs: Math.round(performance.now() - started), lastTestAt: new Date().toISOString(), lastError: msg(e) });
     } finally {
-      setTestingId('');
+      finishOperation(profile, operation);
     }
   }
 
-  async function inspectConnectionIdentity(profile: SyncConnection): Promise<SyncHealthInfo> {
+  async function inspectConnectionIdentity(profile: SyncConnection, operation: ProfileOperation): Promise<SyncHealthInfo> {
     const baseUrl = buildBaseUrl(profile);
-    const response = await fetchHealth(baseUrl);
+    const response = await fetchHealth(baseUrl, operation.signal);
+    operation.assertCurrent();
     if (!response.ok) throw new Error(`health HTTP ${response.status}`);
     const body = await response.json() as {
       serverId?: string;
@@ -989,6 +1000,7 @@ export function Sync() {
     if (profile.serverId && profile.serverId !== body.serverId) throw new Error('服务器 ID 与已信任记录不一致');
     if (profile.serverPublicKey && profile.serverPublicKey !== serverPublicKey) throw new Error('服务器 OPAQUE 公钥与已信任记录不一致');
     const fingerprint = await fingerprintServerPublicKey(serverPublicKey);
+    operation.assertCurrent();
     if (profile.expectedServerPublicKeyFingerprint && profile.expectedServerPublicKeyFingerprint !== fingerprint) {
       throw new Error('服务器 OPAQUE 公钥指纹与连接链接不一致');
     }
@@ -1004,49 +1016,98 @@ export function Sync() {
   }
 
   async function registerProfile(profile: SyncConnection) {
-    const cred = credentials[profile.id];
-    if (!profile.username.trim() || !cred?.password) throw new Error('请先填写用户名和密码');
-    const identity = await inspectConnectionIdentity(profile);
-    const registered = await registerAccount(buildBaseUrl(profile), profile.username.trim(), cred.password, {
-      ownerSetupToken: identity.claimed ? undefined : ownerSetupToken.trim(),
-      inviteCode: cred.inviteCode.trim() || undefined,
-      expectedServerId: identity.serverId,
-      expectedServerPublicKey: identity.serverPublicKey,
-    });
-    setOwnerSetupToken('');
-    await loginProfile({ ...profile, ...identity, role: registered.role });
-    patchProfile(profile.id, { role: registered.role, lastError: registered.role !== 'member' ? '注册并登录成功；你是此服务器管理员' : '注册并登录成功', status: 'online' });
+    const operation = startOperation(profile);
+    let registered = false;
+    try {
+      if (isPrimaryWebConnection(profile)) throw new Error('本站账号请在退出后使用登录注册入口。');
+      const cred = runtimeCredential(profile.id);
+      if (!profile.username.trim() || !cred?.password) throw new Error('请先填写用户名和密码');
+      if (cred.password !== passwordConfirm) throw new Error('两次输入的服务器账号密码不一致');
+      const identity = await inspectConnectionIdentity(profile, operation);
+      operation.assertCurrent();
+      if (!identity.claimed) throw new Error('服务器尚未初始化，请联系部署者先完成独立管理后台设置。');
+      await registerAccount(buildBaseUrl(profile), profile.username.trim(), cred.password, {
+        signal: operation.signal, inviteCode: cred.inviteCode.trim() || undefined,
+        expectedServerId: identity.serverId, expectedServerPublicKey: identity.serverPublicKey,
+      });
+      registered = true;
+      operation.assertCurrent();
+      await loginProfileNow({ ...profile, ...identity }, operation);
+      setPasswordConfirm('');
+    } catch (error) {
+      if (operation.current()) patchProfile(profile.id, { status: 'login_required', lastError: registered
+        ? `账号已注册，但自动登录未完成；请直接登录，不要重复注册。原因：${msg(error)}` : msg(error) });
+    } finally { finishOperation(profile, operation); }
   }
 
   async function loginProfile(profile: SyncConnection): Promise<string> {
-    const cred = credentials[profile.id];
-    if (!cred?.password && hasAccountSession(cred)) return authenticateSyncProfile(profile);
+    const credential = runtimeCredential(profile.id);
+    if (isPrimaryWebConnection(profile) || !credential?.password && hasAccountSession(credential)) return authenticateSyncProfile(profile);
+    const operation = startOperation(profile);
+    try { return await loginProfileNow(profile, operation); }
+    catch (error) {
+      if (operation.current()) patchProfile(profile.id, { status: 'login_required', lastError: msg(error) });
+      throw error;
+    } finally { finishOperation(profile, operation); }
+  }
+
+  async function submitLogin(profile: SyncConnection): Promise<void> {
+    const generation = ++loginFeedbackGeneration.current;
+    setSyncNotice('');
+    try {
+      await loginProfile(profile);
+    } catch (error) {
+      // Session refresh can legitimately rotate or clear credentials. Report its
+      // error independently of the credential fence, but never after a form edit.
+      if (generation === loginFeedbackGeneration.current) {
+        setSyncNotice(`${profile.alias}（${profile.username}）登录未完成：${msg(error)}`);
+      }
+    }
+  }
+
+  async function loginProfileNow(profile: SyncConnection, operation: ProfileOperation, verifyAttachments = false): Promise<string> {
+    operation.assertCurrent();
+    const cred = runtimeCredential(profile.id);
+    if (isPrimaryWebConnection(profile) || !cred?.password && hasAccountSession(cred)) {
+      const token = await authenticateSyncProfile(profile);
+      operation.assertCurrent();
+      return token;
+    }
     if (!profile.username.trim() || !cred?.password) throw new Error('请先填写用户名和密码');
-    const identity = await inspectConnectionIdentity(profile);
+    const identity = await inspectConnectionIdentity(profile, operation);
+    operation.assertCurrent();
     const session = await loginAccount(buildBaseUrl(profile), profile.username.trim(), cred.password, {
-      sessionTransport: preferredSessionTransport(buildBaseUrl(profile)),
-      deviceId,
-      deviceName: 'Zichan · 当前设备',
-      expectedServerPublicKey: identity.serverPublicKey,
-      expectedServerId: identity.serverId,
+      signal: operation.signal,
+      sessionTransport: isTauriRuntime() ? preferredSessionTransport(buildBaseUrl(profile)) : 'token',
+      deviceId, deviceName: 'Zichan · 当前设备',
+      expectedServerPublicKey: identity.serverPublicKey, expectedServerId: identity.serverId,
     });
-    const account = await fetchAuthMe(buildBaseUrl(profile), session.accessToken);
+    operation.assertCurrent();
+    const account = await fetchAuthMe(buildBaseUrl(profile), session.accessToken, { signal: operation.signal });
+    operation.assertCurrent();
+    if (account.username !== profile.username.trim().normalize('NFKC').toLowerCase()
+      || account.session.id !== session.session.id || account.accountId !== session.accountId) {
+      throw new Error('账号或会话身份不匹配，已阻止保存');
+    }
+    if (verifyAttachments) {
+      const usage = await requestJson(`${buildBaseUrl(profile)}/api/v3/blobs/usage`, {
+        headers: { Authorization: `Bearer ${session.accessToken}` }, redirect: 'error',
+      }, { signal: operation.signal, timeoutMs: REQUEST_TIMEOUT_MS });
+      operation.assertCurrent();
+      if (!usage.ok) throw new Error(`附件能力验证失败：HTTP ${usage.status}`);
+    }
+    patchProfile(profile.id, {
+      status: 'online', role: account.role, accountId: account.accountId,
+      ledgerId: account.ledgerId, replicaId: account.replicaId, streamEpoch: account.streamEpoch,
+      lastError: verifyAttachments ? '账号、密码和附件能力验证通过' : '登录成功',
+    });
+    // Commit credentials last: changing their revision invalidates the operation.
     patchCredential(profile.id, {
       password: '', inviteCode: '', sessionTransport: session.sessionTransport,
-      accessToken: session.accessToken,
-      refreshToken: session.refreshToken,
-      accessExpiresAt: session.accessExpiresAt,
-      sessionId: session.session.id,
+      accessToken: session.accessToken, refreshToken: session.refreshToken,
+      accessExpiresAt: session.accessExpiresAt, sessionId: session.session.id,
     });
-    patchProfile(profile.id, {
-      status: 'online',
-      role: account.role,
-      accountId: account.accountId,
-      ledgerId: account.ledgerId ?? profile.ledgerId,
-      replicaId: account.replicaId ?? profile.replicaId,
-      streamEpoch: account.streamEpoch ?? profile.streamEpoch,
-      lastError: account.role !== 'member' ? '管理员登录成功' : '登录成功',
-    });
+    setPasswordConfirm('');
     return session.accessToken;
   }
 
@@ -1438,12 +1499,13 @@ export function Sync() {
             </div>
           )}
 
-          {isTauriRuntime() && <div style={card}>
+          {<div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
               <div>
                 <div style={{ fontSize: 15, fontWeight: 800 }}>服务器配置</div>
                 <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4 }}>
                   每台服务器可使用不同账号密码和服务路径；这些凭据与上方账本加密密码相互独立。{vault.message}。
+                  {!isTauriRuntime() && '本站账号负责登录与缓存隔离，附加服务器独立使用令牌会话，保存在此标签页的 sessionStorage；关闭标签页后需重新登录，不覆盖本站 Cookie。'}
                 </div>
               </div>
               <button onClick={addProfile} style={primary}>新增服务器</button>
@@ -1498,7 +1560,7 @@ export function Sync() {
               <div style={{ color: 'var(--negative)', fontSize: 12, fontWeight: 700, marginBottom: 12 }}>{vaultError}</div>
             )}
 
-            {selected && (
+            {selected && !selectedIsPrimary && (
               <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--surface-2)', marginBottom: 14 }}>
                 <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 10 }}>
                   <div>
@@ -1565,8 +1627,8 @@ export function Sync() {
                 <tbody>
                   {profiles.map((p) => (
                     <tr key={p.id} onClick={() => setSelectedId(p.id)} style={{ cursor: 'pointer', background: selected?.id === p.id ? 'var(--accent-soft)' : 'transparent' }}>
-                      <td style={tdStyle}><input aria-label={`启用 ${p.alias}`} type="checkbox" checked={p.enabled} onChange={(e) => patchProfile(p.id, { enabled: e.target.checked })} onClick={(e) => e.stopPropagation()} /></td>
-                      <td style={tdStyle}>{p.alias}</td>
+                      <td style={tdStyle}><input aria-label={`启用 ${p.alias}`} type="checkbox" checked={p.enabled} disabled={isPrimaryWebConnection(p)} onChange={(e) => patchProfile(p.id, { enabled: e.target.checked })} onClick={(e) => e.stopPropagation()} /></td>
+                      <td style={tdStyle}>{p.alias}{isPrimaryWebConnection(p) && ' · 本站登录'}</td>
                       <td style={{ ...tdStyle, color: 'var(--fg-muted)' }}>{buildBaseUrl(p)}</td>
                       <td style={tdStyle}>{p.username || '—'}</td>
                       <td style={{ ...tdStyle, color: p.status === 'online' ? 'var(--positive)' : p.status === 'offline' || p.status === 'identity_changed' ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 700 }}>{statusText[p.status]}</td>
@@ -1588,6 +1650,7 @@ export function Sync() {
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     <input
                       aria-label="完整服务器地址"
+                      disabled={selectedIsPrimary}
                       className="zc-input"
                       style={{ flex: '1 1 420px' }}
                       value={addressDraft}
@@ -1596,7 +1659,7 @@ export function Sync() {
                       spellCheck={false}
                     />
                     <button type="button" onClick={() => setAdvancedAddress((value) => !value)} style={outline}>{advancedAddress ? '收起高级设置' : '高级设置'}</button>
-                    <button type="button" onClick={saveAddress} disabled={Boolean(addressError) || addressDraft === selected.baseUrl} style={primary}>保存地址</button>
+                    <button type="button" onClick={saveAddress} disabled={selectedIsPrimary || Boolean(addressError) || addressDraft === selected.baseUrl} style={primary}>保存地址</button>
                   </div>
                   <div style={{ marginTop: 5, fontSize: 11, color: addressError ? 'var(--negative)' : 'var(--fg-subtle)', fontWeight: addressError ? 700 : 500 }}>
                     {addressError || '完整 URL 是唯一保存值；高级字段只是同一地址的编辑视图。公网必须使用 HTTPS。'}
@@ -1605,7 +1668,8 @@ export function Sync() {
                     HTTPS 网站中的浏览器可能阻止普通 HTTP 局域网地址；可改用可信 HTTPS、服务器自带 Web，或 Windows 便携版。
                   </div>
                 </div>
-                {advancedAddress && (
+                {selectedIsPrimary && <p>此连接属于本站登录账号，地址和用户名不可在同步设置中替换。切换账号请先退出；其他服务器使用“新增服务器”配置。</p>}
+                {advancedAddress && !selectedIsPrimary && (
                   <>
                     <div className="zc-sync-input-grid" style={inputGrid}>
                       <div><label className="zc-label">协议</label><select aria-label="协议" className="zc-select" value={addressParts.protocol} onChange={(e) => editAddressPart({ protocol: e.target.value as Protocol })}><option value="http">http</option><option value="https">https</option></select></div>
@@ -1621,27 +1685,27 @@ export function Sync() {
                 )}
                 <div className="zc-sync-input-grid" style={inputGrid}>
                   <div><label className="zc-label">中文别名</label><input aria-label="中文别名" className="zc-input" value={selected.alias} onChange={(e) => patchProfile(selected.id, { alias: e.target.value })} /></div>
-                  <div><label className="zc-label">用户名</label><input aria-label="用户名" className="zc-input" value={selected.username} onChange={(e) => patchProfile(selected.id, { username: e.target.value })} /></div>
-                  <div><label className="zc-label">服务器账号密码（仅本次登录使用，不保存密码）</label><input aria-label="服务器账号密码" className="zc-input" type="password" value={cred.password} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { password: e.target.value, accessToken: undefined, refreshToken: undefined, accessExpiresAt: undefined, sessionId: undefined, sessionTransport: undefined })} /></div>
+                  <div><label className="zc-label">用户名</label><input aria-label="用户名" disabled={selectedIsPrimary} className="zc-input" value={selected.username} onChange={(e) => patchProfile(selected.id, { username: e.target.value })} /></div>
+                  {!selectedIsPrimary && <div><label className="zc-label">服务器账号密码（仅本次登录使用，不保存密码）</label><input aria-label="服务器账号密码" className="zc-input" type="password" value={cred.password} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { password: e.target.value, accessToken: undefined, refreshToken: undefined, accessExpiresAt: undefined, sessionId: undefined, sessionTransport: undefined })} /></div>}
+                  {!selectedIsPrimary && <div><label className="zc-label">确认服务器账号密码（仅注册需要）</label><input aria-label="确认服务器账号密码" className="zc-input" type="password" value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} /></div>}
                   {selectedHealth?.registrationMode === 'invite' && <div><label className="zc-label">邀请码</label><input aria-label="邀请码" className="zc-input" value={cred.inviteCode} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { inviteCode: e.target.value })} /></div>}
                 </div>
                 {selectedHealth && (
                   <div style={{ margin: '-2px 0 10px', fontSize: 11, color: !selectedHealth.claimed ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: !selectedHealth.claimed ? 800 : 500 }}>
                     {!selectedHealth.claimed
-                      ? '尚未初始化：仅部署者可以使用服务器数据目录中的 owner-setup.secret 创建管理员。'
+                      ? '尚未初始化：请联系部署者先完成独立管理后台设置。用户端不创建管理员。'
                       : `注册策略：${selectedHealth.registrationMode === 'open' ? '开放注册' : selectedHealth.registrationMode === 'invite' ? '仅邀请码' : '已关闭'}${selected.role ? ` · 当前账号：${selected.role === 'owner' ? '所有者' : selected.role === 'admin' ? '管理员' : '成员'}` : ''}`}
                   </div>
                 )}
-                {selectedHealth && !selectedHealth.claimed && <label className="zc-label">管理员初始化密钥（仅本次初始化使用）<input className="zc-input" type="password" autoComplete="off" value={ownerSetupToken} onChange={(event) => setOwnerSetupToken(event.target.value)} /></label>}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button onClick={() => void testProfile(selected, 'auth')} disabled={busy || testingId === selected.id} style={outline}>{testingId === selected.id ? '验证中…' : '验证账号密码'}</button>
-                  <button onClick={() => void registerProfile(selected).catch((e) => patchProfile(selected.id, { status: 'offline', lastError: msg(e) }))} disabled={busy} style={outline}>注册</button>
-                  <button onClick={() => void loginProfile(selected).catch((e) => patchProfile(selected.id, { status: 'login_required', lastError: msg(e) }))} disabled={busy} style={outline}>登录</button>
+                  <button onClick={() => void registerProfile(selected)} disabled={selectedIsPrimary || busy || Boolean(testingId) || selectedHealth?.claimed === false || selectedHealth?.registrationMode === 'closed'} style={outline}>注册</button>
+                  <button onClick={() => void submitLogin(selected)} disabled={selectedIsPrimary || busy || Boolean(testingId)} style={outline}>登录</button>
                   <button onClick={() => void doSync(selected)} disabled={busy || !ledgerKey.unlocked} style={primary}>{busy ? '同步中…' : '同步此服务器'}</button>
                   <button type="button" onClick={() => void createConnectionShare(selected)} disabled={busy || !selected.serverId || !selected.serverPublicKey} style={outline}>连接链接 / 二维码</button>
                   <button
-                    onClick={() => void removeProfile(selected.id)}
-                    disabled={profiles.length <= 1 || busy || (vault.kind === 'native-stronghold' && vault.initialized && !vault.unlocked)}
+                    onClick={() => { operations.current.cancel(selected.id); setRemoveWarning(''); setRemoveTarget(selected.id); }}
+                    disabled={selectedIsPrimary || profiles.length <= 1 || busy || (vault.kind === 'native-stronghold' && vault.initialized && !vault.unlocked)}
                     title={vault.kind === 'native-stronghold' && vault.initialized && !vault.unlocked ? '请先解锁 Stronghold，确保同步凭据一并删除' : '删除服务器'}
                     style={danger}
                   >删除</button>
@@ -1671,7 +1735,7 @@ export function Sync() {
             )}
           </div>}
 
-          {!isTauriRuntime() && <div style={card}><h3>当前账号</h3><p>{selected?.username} · {selected?.accountId}</p><p>本站账号已在进入账本前验证。切换账号请到设置退出后重新登录；不同账号的缓存独立保存。</p></div>}
+          {!isTauriRuntime() && <div style={card}><h3>本站登录账号</h3><p>{primaryConnection?.username} · {primaryConnection?.accountId}</p><p>切换上方同步服务器不会切换本站账号。切换账号请到设置退出后重新登录；不同账号的缓存独立保存。</p></div>}
           <div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
@@ -1690,6 +1754,15 @@ export function Sync() {
                 当前没有启用服务器；“同步全部启用服务器”不会自动使用本地演示云。
               </div>
             )}
+            {removeTarget && <ConfirmDialog title="删除服务器连接" tone="danger" busy={busy}
+              cancelLabel="取消"
+              confirmLabel={removeWarning ? '仅删除本机连接' : '撤销会话并删除连接'}
+              onCancel={() => setRemoveTarget(undefined)}
+              onConfirm={() => removeProfile(removeTarget, Boolean(removeWarning))}>
+              <p>将移除“{profiles.find((row) => row.id === removeTarget)?.alias}”的本机连接和登录凭据，不删除本机账本，也不删除服务器上的账号或账本。</p>
+              {removeWarning && <p role="alert">{removeWarning}</p>}
+            </ConfirmDialog>}
+            {directoryError && <div role="alert">{directoryError}<button onClick={() => setDirectoryRetry((value) => value + 1)}>重新读取共享目录</button></div>}
             {syncNotice && (
               <div style={{ fontSize: 12, color: syncNotice.includes('没有启用') ? 'var(--negative)' : 'var(--fg-muted)', marginTop: 10, fontWeight: 800 }}>
                 {syncNotice}

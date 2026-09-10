@@ -83,6 +83,13 @@ export function runtimeCredentialMap(): Record<string, ServerCredential> {
   return Object.fromEntries(Object.entries(runtimeCredentials).map(([id, value]) => [id, { ...value }]));
 }
 
+/** The Web bootstrap imports this module before the account namespace is activated. */
+export function restoreBrowserCredentialRuntimeState(): void {
+  if (isTauriRuntime()) return;
+  runtimeCredentials = loadSessionCredentials();
+  credentialEpoch += 1;
+}
+
 export function runtimeCredential(profileId: string): ServerCredential | undefined {
   const value = runtimeCredentials[profileId];
   return value ? { ...value } : undefined;

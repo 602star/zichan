@@ -60,19 +60,35 @@ export function sharedDirectoryFromConnections(connections: SyncConnection[]): S
 
 export async function loadSharedSyncDirectory(store: SettingsStore): Promise<SharedSyncServer[]> {
   const setting = (await store.settings.list({ limit: 1 }))[0];
-  if (!setting?.syncServersJson) return [];
+  return parseSharedSyncDirectory(setting?.syncServersJson);
+}
+
+export function parseSharedSyncDirectory(raw?: string | null): SharedSyncServer[] {
+  if (raw === undefined || raw === null || raw === '') return [];
   try {
-    const parsed = JSON.parse(setting.syncServersJson) as Partial<SharedSyncDirectoryDocument>;
-    if (parsed.version !== 1 || !Array.isArray(parsed.servers)) return [];
-    return parsed.servers.map(normalizeServer).filter((server): server is SharedSyncServer => Boolean(server));
+    const parsed = JSON.parse(raw) as Partial<SharedSyncDirectoryDocument>;
+    if (parsed?.version !== 1 || !Array.isArray(parsed.servers)) throw new Error('版本或结构不支持');
+    const ids = new Set<string>();
+    const serverIds = new Set<string>();
+    return parsed.servers.map((value) => {
+      if (!value || !Array.isArray(value.sharedUrls) || value.sharedUrls.some((url) => typeof url !== 'string')) throw new Error('地址结构无效');
+      // Do not silently discard a damaged entry or endpoint and later overwrite the original.
+      for (const url of value.sharedUrls) normalizeSyncBaseUrl(url);
+      const server = normalizeServer(value);
+      if (!server?.serverId || ids.has(server.id) || serverIds.has(server.serverId)) throw new Error('服务器条目无效或重复');
+      ids.add(server.id);
+      serverIds.add(server.serverId);
+      return server;
+    });
   } catch {
-    return [];
+    throw new Error('共享服务器目录损坏或版本不支持；原始目录已保留，请恢复有效目录后重试');
   }
 }
 
 export async function saveSharedSyncDirectory(store: SettingsStore, connections: SyncConnection[]): Promise<boolean> {
   const setting = (await store.settings.list({ limit: 1 }))[0];
   if (!setting) return false;
+  parseSharedSyncDirectory(setting.syncServersJson);
   const document: SharedSyncDirectoryDocument = { version: 1, servers: sharedDirectoryFromConnections(connections) };
   const serialized = JSON.stringify(document);
   if (setting.syncServersJson === serialized) return false;

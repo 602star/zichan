@@ -18,6 +18,26 @@ async function readAdminJson<T>(res: Response): Promise<T> {
   }
 }
 
+async function timedRequest<T>(url: string, init: RequestInit, read: (response: Response) => Promise<T>, timeout = 30_000): Promise<T> {
+  const controller = new AbortController();
+  const cancel = () => controller.abort(init.signal?.reason);
+  init.signal?.addEventListener('abort', cancel, { once: true });
+  if (init.signal?.aborted) cancel();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeout);
+  try {
+    return await read(await fetch(url, { ...init, signal: controller.signal }));
+  } catch (error) {
+    if (timedOut) throw new AdminError(0, 'REQUEST_TIMEOUT', init.method === 'POST'
+      ? '请求超时，服务器可能已完成操作。请先刷新核实结果，再决定是否重试；未自动重复提交。'
+      : '读取超时，请检查服务器连接后重试。');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    init.signal?.removeEventListener('abort', cancel);
+  }
+}
+
 export function adminBaseUrl(location: Pick<Location, 'origin' | 'pathname'>): string | undefined {
   const match = /^(.*)\/admin(?:\/.*)?$/.exec(location.pathname);
   return match ? `${location.origin}${match[1]}` : undefined;
@@ -55,9 +75,10 @@ export class AdminClient {
 
   async health(): Promise<AdminHealth> {
     const generation = this.generation;
-    const res = await fetch(`${this.baseUrl}/api/health`, { cache: 'no-store', redirect: 'error', signal: this.controller.signal });
-    if (!res.ok) throw new AdminError(res.status, '', `无法连接管理 API（HTTP ${res.status}）。请确认服务器已启动；开发模式使用 npm run start:all，启动后刷新页面重试。`);
-    const body = await readAdminJson<AdminHealth>(res);
+    const body = await timedRequest(`${this.baseUrl}/api/health`, { cache: 'no-store', redirect: 'error', signal: this.controller.signal }, async (res) => {
+      if (!res.ok) throw new AdminError(res.status, '', `无法连接管理 API（HTTP ${res.status}）。请确认服务器已启动；开发模式使用 npm run start:all，启动后刷新页面重试。`);
+      return readAdminJson<AdminHealth>(res);
+    });
     this.current(generation);
     if (!body.serverId || !body.serverPublicKey || !body.capabilities?.includes('server-management-v1')) throw new Error('服务器尚未升级到独立管理后台版本');
     if (this.identity && (body.serverId !== this.identity.serverId || body.serverPublicKey !== this.identity.serverPublicKey)) throw new Error('服务器身份已变化，请核实部署后重新打开管理后台');
@@ -71,11 +92,11 @@ export class AdminClient {
     const health = await this.health();
     if (initializeOwner) {
       if (health.claimed) throw new Error('管理员已设置，请使用已有账号登录。');
-      await registerAccount(this.baseUrl, username, password, { initializeOwner: true, expectedServerId: health.serverId, expectedServerPublicKey: health.serverPublicKey });
+      await registerAccount(this.baseUrl, username, password, { signal: this.controller.signal, initializeOwner: true, expectedServerId: health.serverId, expectedServerPublicKey: health.serverPublicKey });
       this.current(generation);
       onInitialized?.();
     }
-    const session = await loginAccount(this.baseUrl, username, password, { sessionTransport: 'cookie', sessionContext: 'admin', deviceName: 'Zichan · 服务器管理后台', expectedServerId: health.serverId, expectedServerPublicKey: health.serverPublicKey });
+    const session = await loginAccount(this.baseUrl, username, password, { signal: this.controller.signal, sessionTransport: 'cookie', sessionContext: 'admin', deviceName: 'Zichan · 服务器管理后台', expectedServerId: health.serverId, expectedServerPublicKey: health.serverPublicKey });
     this.current(generation);
     this.session = session;
     const account = await this.me();
@@ -107,7 +128,7 @@ export class AdminClient {
       await this.health();
       const run = async () => {
         this.current(generation);
-        const session = await refreshAccountSession(this.baseUrl, '', 'cookie', 'admin');
+        const session = await refreshAccountSession(this.baseUrl, '', 'cookie', 'admin', { signal: this.controller.signal });
         this.current(generation);
         if (expected && session.accountId !== expected) throw new AdminError(401, 'ACCOUNT_CHANGED', '管理账号已改变，请重新登录');
         this.session = session;
@@ -121,7 +142,7 @@ export class AdminClient {
 
   async me(): Promise<SyncAuthMe> {
     const generation = this.generation;
-    const result = await fetchAuthMe(this.baseUrl, this.session?.accessToken ?? '');
+    const result = await fetchAuthMe(this.baseUrl, this.session?.accessToken ?? '', { signal: this.controller.signal });
     this.current(generation);
     return result;
   }
@@ -131,15 +152,16 @@ export class AdminClient {
     try {
       if (!this.session || Date.parse(this.session.accessExpiresAt) < Date.now() + 30_000) await this.refresh();
       this.current(generation);
-      const res = await fetch(`${this.baseUrl}/api/admin${path}`, {
+      return await timedRequest(`${this.baseUrl}/api/admin${path}`, {
         method: body === undefined ? 'GET' : 'POST', cache: 'no-store', redirect: 'error', signal: this.controller.signal,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.session!.accessToken}` },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      });
-      const result = await readAdminJson<{ code?: string; error?: string }>(res);
-      this.current(generation);
-      if (!res.ok) throw new AdminError(res.status, result.code ?? '', result.error ?? `HTTP ${res.status}`);
-      return result as T;
+      }, async (res) => {
+        const result = await readAdminJson<{ code?: string; error?: string }>(res);
+        this.current(generation);
+        if (!res.ok) throw new AdminError(res.status, result.code ?? '', result.error ?? `HTTP ${res.status}`);
+        return result as T;
+      }, path.endsWith('/verify') ? 120_000 : 30_000);
     } catch (error) {
       this.current(generation);
       if (error instanceof AdminError && (error.status === 401 || error.code === 'ADMIN_REQUIRED')
@@ -155,10 +177,11 @@ export class AdminClient {
     this.clear();
     this.channel?.postMessage('session-changed');
     // Local data is cleared immediately even if revocation fails while offline.
-    const res = await fetch(`${this.baseUrl}/api/auth/logout`, {
+    await timedRequest(`${this.baseUrl}/api/auth/logout`, {
       method: 'POST', credentials: 'same-origin', redirect: 'error', cache: 'no-store',
       headers: { 'X-Zichan-Session': 'admin-cookie', Authorization: `Bearer ${token ?? ''}` },
+    }, async (res) => {
+      if (!res.ok && res.status !== 401) throw new Error('本页已退出，但服务器会话撤销未确认；请联网后重试退出。');
     });
-    if (!res.ok && res.status !== 401) throw new Error('本页已退出，但服务器会话撤销未确认；请联网后重试退出。');
   }
 }

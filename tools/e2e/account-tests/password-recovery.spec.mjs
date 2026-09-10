@@ -16,6 +16,7 @@ test('administrator reviews and issues a code, user resets only account credenti
     await registerAccount(url, 'reviewer', 'reviewer-test-password', { ownerSetupToken: setup });
     await registerAccount(url, 'recover-user', 'old-user-test-password');
     const original = await loginAccount(url, 'recover-user', 'old-user-test-password');
+    await page.clock.install();
     await page.goto(`${url}/admin/`);
     await page.getByLabel('管理账号用户名').fill('reviewer');
     await page.getByLabel('管理账号密码').fill('reviewer-test-password');
@@ -44,5 +45,8 @@ test('administrator reviews and issues a code, user resets only account credenti
     await user.getByLabel('服务器账号密码').fill('new-user-test-password');
     await user.getByRole('button', { name: '登录已有账号' }).click();
     await expect(user.getByLabel('本机数据密码', { exact: true })).toBeVisible();
+    await page.clock.fastForward(16 * 60_000);
+    await expect(page.getByLabel('本次重置码')).toHaveCount(0);
+    await expect(page.getByText('重置码已到期并自动隐藏。如仍需恢复，请重新核实身份后发放。')).toBeVisible();
   } finally { await recipient?.close(); server.server.closeAllConnections(); await server.close(); }
 });

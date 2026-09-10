@@ -1,11 +1,13 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { fetchAuthMe, refreshAccountSession, type SyncAuthSession } from '@zichan/db';
+import { fetchAuthMe, refreshAccountSession, requestJson, HttpRequestError, type SyncAuthSession } from '@zichan/db';
+import { canOfferOfflineCache } from './account-restore-error.js';
 import { activateWebAccount, accountLocalStorage } from './account-storage.js';
 import { FirstServerConnectionGate } from './ui/FirstServerConnectionGate.js';
 import { applySyncAuthSession } from './sync-auth.js';
-import { setRuntimeCredential } from './credential-vault.js';
+import { restoreBrowserCredentialRuntimeState, setRuntimeCredential } from './credential-vault.js';
 import { ACCOUNT_EXIT_KEY, ACCOUNT_LOCK_REQUEST_EVENT } from './browser-account-exit.js';
-import { saveAutoSync, saveSyncConnections, syncAddressPresetUrl, type SyncConnection } from './sync-config.js';
+import { syncAddressPresetUrl, type SyncConnection } from './sync-config.js';
+import { restoreWebSyncConnections } from './web-sync-connections.js';
 
 const LedgerApp = lazy(() => import('./LedgerApp.js').then((module) => ({ default: module.LedgerApp })));
 const BINDING_KEY = 'zichan.web-account.v2.binding';
@@ -32,8 +34,8 @@ export function WebAccountApp() {
   async function enter(connection: WebBinding, session?: SyncAuthSession) {
     activateWebAccount(connection.serverId!, connection.accountId!);
     // These settings, key envelopes and the entire IndexedDB now belong to this account.
-    saveSyncConnections([connection]);
-    saveAutoSync({ enabled: true, minutes: 5 });
+    connection = { ...connection, ...restoreWebSyncConnections(connection) };
+    restoreBrowserCredentialRuntimeState();
     accountLocalStorage.setItem('zichan.firstUse.mode.v1', 'server');
     if (session) {
       accountLocalStorage.removeItem(ACCOUNT_EXIT_KEY);
@@ -59,9 +61,9 @@ export function WebAccountApp() {
       const exit = localStorage.getItem(`${prefix}${ACCOUNT_EXIT_KEY}`);
       if (exit) { if (active) { setNotice(exit === 'confirmed' ? '已退出账号，服务器会话已撤销。可以登录其他账号，本机缓存分别保存。' : '已退出账号，服务器会话撤销尚未确认，请联网后登录。'); setChecking(false); } return; }
       if (!restoreFlight.current) restoreFlight.current = (async () => {
-        const health = await fetch(`${binding.baseUrl}/api/health`, { cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(8000) });
-        if (!health.ok) throw new Error('服务器暂不可用，请稍后重试。');
-        const identity = await health.json();
+        const health = await requestJson(`${binding.baseUrl}/api/health`, { cache: 'no-store', redirect: 'error' }, { timeoutMs: 8000 });
+        if (!health.ok) throw new HttpRequestError('http', `服务器暂不可用（HTTP ${health.status}），请稍后重试。`, health.status);
+        const identity = await health.json() as { serverId?: string; serverPublicKey?: string };
         if (identity.serverId !== binding.serverId || identity.serverPublicKey !== binding.serverPublicKey) throw new Error('服务器身份已变化，请联系部署者。');
         const refresh = () => refreshAccountSession(binding.baseUrl, '', 'cookie');
         const session = navigator.locks ? await navigator.locks.request(`zichan:session-refresh:${binding.baseUrl}`, refresh) : await refresh();
@@ -73,8 +75,13 @@ export function WebAccountApp() {
         const account = await fetchAuthMe(binding.baseUrl, session.accessToken);
         if (account.accountId !== binding.accountId) throw new Error('账号身份不匹配，请重新登录。');
         if (active) await enter({ ...binding, role: account.role, ledgerId: account.ledgerId, replicaId: account.replicaId, streamEpoch: account.streamEpoch }, session);
-      } catch {
-        if (active) { setNotice(navigator.onLine ? '请登录账号后继续。' : '当前离线，可解锁此账号之前保存的加密缓存。'); setOffline(!navigator.onLine); }
+      } catch (error) {
+        if (active) {
+          const available = canOfferOfflineCache(error);
+          setNotice(available ? '暂时无法连接账号服务器。可用账本密码解锁已有加密缓存；联网后继续验证账号并同步。'
+            : `${error instanceof Error ? error.message : '账号验证失败'} 请重新登录或联系部署者。`);
+          setOffline(available);
+        }
       } finally { if (active) setChecking(false); }
     }
     void restore();

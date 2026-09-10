@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { newSyncConnection, type SharedSyncServer, type SyncConnection } from '../src/sync-config.js';
-import { mergeSharedSyncDirectory, sharedDirectoryFromConnections } from '../src/sync-server-directory.js';
+import { loadSharedSyncDirectory, saveSharedSyncDirectory, mergeSharedSyncDirectory, sharedDirectoryFromConnections } from '../src/sync-server-directory.js';
 
 function trustedConnection(baseUrl = 'https://one.example.com/zichan'): SyncConnection {
   return {
@@ -15,6 +15,29 @@ function trustedConnection(baseUrl = 'https://one.example.com/zichan'): SyncConn
 }
 
 describe('shared sync server directory', () => {
+  it.each(['{broken', '{"version":2,"servers":[]}', '{"version":1,"servers":[null]}', '{"version":1,"servers":[{"id":"damaged"}]}'])('preserves an unreadable directory: %s', async (raw) => {
+    const setting = { id: 'settings', syncServersJson: raw };
+    const put = vi.fn();
+    const store = { settings: { list: vi.fn(async () => [setting]), put } } as unknown as Parameters<typeof loadSharedSyncDirectory>[0];
+    await expect(loadSharedSyncDirectory(store)).rejects.toThrow('原始目录已保留');
+    await expect(saveSharedSyncDirectory(store, [trustedConnection()])).rejects.toThrow('原始目录已保留');
+    expect(put).not.toHaveBeenCalled();
+    expect(setting.syncServersJson).toBe(raw);
+  });
+
+  it('blocks writes after read failure and supports a subsequent successful retry', async () => {
+    const put = vi.fn();
+    const list = vi.fn().mockRejectedValue(new Error('storage unavailable'));
+    const store = { settings: { list, put } } as unknown as Parameters<typeof loadSharedSyncDirectory>[0];
+    await expect(loadSharedSyncDirectory(store)).rejects.toThrow('unavailable');
+    await expect(saveSharedSyncDirectory(store, [])).rejects.toThrow('unavailable');
+    expect(put).not.toHaveBeenCalled();
+    list.mockResolvedValue([{ id: 'settings' }]);
+    expect(await loadSharedSyncDirectory(store)).toEqual([]);
+    expect(await saveSharedSyncDirectory(store, [trustedConnection()])).toBe(true);
+    expect(put).toHaveBeenCalledTimes(1);
+  });
+
   it('shares trusted public endpoints but keeps device-local addresses private by default', () => {
     const publicConnection = trustedConnection();
     const localConnection = {

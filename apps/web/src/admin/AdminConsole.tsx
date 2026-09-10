@@ -11,7 +11,7 @@ interface User {
   activeDeviceCount: number; commitBytes: number; commitQuotaBytes: number;
   createdAt: string; lastLoginAt?: string;
 }
-interface Device { id: string; deviceName: string; active: boolean; lastSeenAt: string; lastIp?: string; expiresAt: string }
+interface Device { id: string; deviceName: string; active: boolean; lastSeenAt: string; lastIp?: string; expiresAt: string; username?: string; accountId?: string; role?: Role }
 interface Invite { code: string; disabled: boolean; usedBy?: string; expiresAt?: string }
 interface Status {
   serverId: string; userCount: number; disabledUserCount: number; activeSessionCount: number;
@@ -29,7 +29,7 @@ const panel = { padding: 20, borderRadius: 12, background: 'var(--surface)', bor
 function message(error: unknown): string {
   if (error instanceof AdminError) {
     const labels: Record<string, string> = { RECENT_LOGIN_REQUIRED: '敏感操作需要最近 5 分钟内的登录。请退出管理后台并重新登录，再执行此操作。', PROTECTED_ACCOUNT: '此账号受保护，你无权修改。', OWNER_REQUIRED: '仅服务器所有者可以执行此操作。', ACCOUNT_DISABLED: '请先启用该账号。', INVITE_USED: '邀请码已使用，不能再改变状态。' };
-    return labels[error.code] ?? `操作未完成（HTTP ${error.status}）：${error.message}`;
+    return labels[error.code] ?? (error.code === 'REQUEST_TIMEOUT' ? error.message : `操作未完成（HTTP ${error.status}）：${error.message}`);
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -131,9 +131,11 @@ function UserDetail({ client, revision, confirm, user, onClose }: PaneProps & { 
   const [quotaError, setQuotaError] = useState('');
   useEffect(() => { if (usage.data) setBlobMiB(String(usage.data.quotaBytes / 1024 ** 2)); }, [usage.data]);
   function resetQuota(kind: 'commits' | 'blobs') {
+    if (kind === 'blobs' && !usage.data) return;
     confirm(`恢复 ${user.username} 的默认配额`, '恢复服务器默认上限，不删除已有数据。', () => client.request(`/accounts/${user.accountId}/${kind}`, kind === 'commits' ? { commitQuotaBytes: null } : { quotaBytes: null }));
   }
   function quota(kind: 'commits' | 'blobs', value: string) {
+    if (kind === 'blobs' && !usage.data) return;
     const amount = Number(value) * 1024 ** 2;
     if (!value.trim() || !Number.isSafeInteger(amount) || amount < 1024 ** 2 || amount > 1024 ** 4) { setQuotaError('配额必须在 1 至 1048576 MiB 之间，且换算后为整数 Byte。'); return; }
     setQuotaError('');
@@ -142,42 +144,63 @@ function UserDetail({ client, revision, confirm, user, onClose }: PaneProps & { 
   return <section style={panel} aria-label={`${user.username} 的设备与配额`}><button onClick={onClose} style={{ float: 'right' }}>关闭详情</button><h3>{user.username} · 设备与配额</h3><p>{user.accountId}</p>
     {quotaError && <p role="alert">{quotaError}</p>}
     {user.role !== 'owner' && !user.disabled && <PasswordResetIssuer client={client} accountId={user.accountId} username={user.username} />}
-    <button onClick={() => resetQuota('commits')}>恢复默认提交配额</button><button onClick={() => resetQuota('blobs')}>恢复默认附件配额</button>
+    <p>提交已用 {bytes(user.commitBytes)} / {bytes(user.commitQuotaBytes)}。恢复默认仅改变上限，不会清理数据；超过配额后会限制新上传。</p>
+    <button onClick={() => resetQuota('commits')}>恢复默认提交配额</button><button disabled={!usage.data} onClick={() => resetQuota('blobs')}>恢复默认附件配额</button>
     <form onSubmit={(event) => { event.preventDefault(); quota('commits', commitMiB); }}><label>提交配额（MiB）<input aria-label="提交配额 MiB" type="number" min="1" max="1048576" step="1" required value={commitMiB} onChange={(event) => setCommitMiB(event.target.value)} /></label><button>保存提交配额</button></form>
     <Result error={usage.error} loading={!usage.data}>{usage.data && <p>附件已用 {bytes(usage.data.usedBytes)} / {bytes(usage.data.quotaBytes)}；回收区 {bytes(usage.data.trashBytes)}；上传暂存 {bytes(usage.data.stagingBytes)}</p>}</Result>
-    <form onSubmit={(event) => { event.preventDefault(); quota('blobs', blobMiB); }}><label>附件配额（MiB）<input aria-label="附件配额 MiB" type="number" min="1" max="1048576" step="1" required value={blobMiB} onChange={(event) => setBlobMiB(event.target.value)} /></label><button>保存附件配额</button></form>
+    <form onSubmit={(event) => { event.preventDefault(); quota('blobs', blobMiB); }}><label>附件配额（MiB）<input aria-label="附件配额 MiB" disabled={!usage.data} type="number" min="1" max="1048576" step="1" required value={blobMiB} onChange={(event) => setBlobMiB(event.target.value)} /></label><button disabled={!usage.data}>保存附件配额</button></form>
+    {usage.error && <p>附件配额尚未读取成功，已暂停修改；请点击顶部“刷新”重试。</p>}
     <Result error={error} loading={!data}><DeviceTable devices={data?.devices ?? []} revoke={user.role === 'owner' ? undefined : (device) => confirm(`撤销设备 ${device.deviceName}`, `立即使 ${user.username} 的此设备会话失效。保留本机及服务器账本。`, () => client.request(`/sessions/${device.id}/revoke`, {}))} /></Result>
   </section>;
 }
 
 function DeviceTable({ devices, revoke }: { devices: Device[]; revoke?: (device: Device) => void }) {
-  return <Table headers={['设备', '状态', '最后活动', '来源 IP', '到期', '操作']}>{devices.map((device) => <tr key={device.id}><Cell>{device.deviceName}</Cell><Cell>{device.active ? '有效' : '已过期或撤销'}</Cell><Cell>{date(device.lastSeenAt)}</Cell><Cell>{device.lastIp ?? '—'}</Cell><Cell>{date(device.expiresAt)}</Cell><Cell>{revoke && <button disabled={!device.active} onClick={() => revoke(device)}>撤销会话</button>}</Cell></tr>)}</Table>;
+  return <><Table headers={['设备 / 所属账号', '状态', '最后活动', '来源 IP', '到期', '操作']}>{devices.map((device) => <tr key={device.id}><Cell>{device.deviceName}{device.username && <small>{device.username}{device.role ? ` · ${roleName(device.role)}` : ''}</small>}</Cell><Cell>{device.active ? '有效' : '已过期或撤销'}</Cell><Cell>{date(device.lastSeenAt)}</Cell><Cell>{device.lastIp ?? '—'}</Cell><Cell>{date(device.expiresAt)}</Cell><Cell>{revoke && device.role !== 'owner' && <button disabled={!device.active} onClick={() => revoke(device)}>撤销会话</button>}{device.role === 'owner' && '所有者会话受保护'}</Cell></tr>)}</Table>{devices.length === 0 && <p>本页没有设备会话；如有下一页，可继续查看其他账号。</p>}</>;
 }
 
 function Invites({ client, revision, account, confirm }: PaneProps) {
-  const { data, error } = useData<{ invites: Invite[] }>(client, '/invites', revision);
+  const [state, setState] = useState('');
+  const [cursors, setCursors] = useState(['']);
+  const cursor = cursors[cursors.length - 1]!;
+  const { data, error } = useData<{ invites: Invite[]; nextCursor?: string }>(client, `/invites?limit=25&state=${state}&cursor=${encodeURIComponent(cursor)}`, revision);
   const status = useData<{ mode: Mode }>(client, '/registration', revision);
   const [mode, setMode] = useState<Mode>('invite');
+  useEffect(() => { if (status.data) setMode(status.data.mode); }, [status.data]);
   const [days, setDays] = useState('7');
   return <><h2>注册与邀请</h2><Result error={status.error} loading={!status.data}><p>当前策略：{status.data?.mode === 'open' ? '开放注册' : status.data?.mode === 'closed' ? '关闭注册' : '仅邀请注册'}</p></Result>
-    {account.role === 'owner' ? <div><select aria-label="新注册策略" value={mode} onChange={(event) => setMode(event.target.value as Mode)}><option value="invite">仅邀请注册</option><option value="closed">关闭注册</option><option value="open">开放注册</option></select><button onClick={() => confirm('修改注册策略', mode === 'open' ? '任何访客均可注册普通账号。已有账号及管理员权限不变。' : '只影响后续注册，不禁用已有账号。', () => client.request('/registration', { mode }))}>保存注册策略</button></div> : <p>只有所有者可以改变注册策略。</p>}
-    <form onSubmit={(event) => { event.preventDefault(); confirm('创建单次邀请码', `有效期 ${days} 天；只可注册一个普通用户，不授予管理权限。`, () => client.request('/invites', { days: Number(days) })); }} style={{ margin: '18px 0' }}><label>有效期（天）<input aria-label="邀请有效期" type="number" min="1" max="30" required value={days} onChange={(event) => setDays(event.target.value)} /></label><button>生成邀请码</button></form>
+    {account.role === 'owner' ? <div><select aria-label="新注册策略" disabled={!status.data} value={mode} onChange={(event) => setMode(event.target.value as Mode)}><option value="invite">仅邀请注册</option><option value="closed">关闭注册</option><option value="open">开放注册</option></select><button disabled={!status.data || mode === status.data.mode} onClick={() => confirm('修改注册策略', mode === 'open' ? '任何访客均可注册普通账号。已有账号及管理员权限不变。' : '只影响后续注册，不禁用已有账号。', () => client.request('/registration', { mode }))}>保存注册策略</button></div> : <p>只有所有者可以改变注册策略。</p>}
+    <form onSubmit={(event) => { event.preventDefault(); confirm('创建单次邀请码', `有效期 ${days} 天；只可注册一个普通用户，不授予管理权限。`, async () => { await client.request('/invites', { days: Number(days) }); setState(''); setCursors(['']); }); }} style={{ margin: '18px 0' }}><label>有效期（天）<input aria-label="邀请有效期" type="number" min="1" max="30" required value={days} onChange={(event) => setDays(event.target.value)} /></label><button>生成邀请码</button></form>
+    {status.data?.mode === 'closed' && <p>当前关闭注册，即使有可用邀请码也不能注册。已有邀请码仍保留原有效期。</p>}
+    <label>邀请状态<select aria-label="邀请状态筛选" value={state} onChange={(event) => { setState(event.target.value); setCursors(['']); }}><option value="">全部</option><option value="available">可用</option><option value="used">已使用</option><option value="revoked">已撤销</option><option value="expired">已过期</option></select></label>
     <Result error={error} loading={!data}><Table headers={['邀请码', '状态', '使用者', '有效期至', '操作']}>{data?.invites.map((invite) => {
       const expired = Boolean(invite.expiresAt && invite.expiresAt <= new Date().toISOString());
       return <tr key={invite.code}><Cell><code>{invite.code}</code></Cell><Cell>{invite.usedBy ? '已使用' : invite.disabled ? '已撤销' : expired ? '已过期' : '可用'}</Cell><Cell>{invite.usedBy ?? '—'}</Cell><Cell>{invite.expiresAt ? date(invite.expiresAt) : '旧邀请码：未设置期限'}</Cell><Cell><button disabled={Boolean(invite.usedBy) || expired} onClick={() => confirm('修改邀请码状态', invite.disabled ? '重新启用此邀请码，不延长有效期。' : '撤销后，此邀请码不能再注册账号。', () => client.request(`/invites/${encodeURIComponent(invite.code)}/disable`, { disabled: !invite.disabled }))}>{invite.disabled ? '启用' : '撤销'}</button></Cell></tr>;
-    })}</Table></Result><p>邀请码是注册凭据，仅分享给预期用户；不会写入审计日志正文。</p></>;
+    })}</Table>{data?.invites.length === 0 && <p>没有匹配的邀请码。</p>}</Result>
+    <div style={{ display: 'flex', gap: 12, marginTop: 16 }}><button disabled={cursors.length === 1 || !data} onClick={() => setCursors((rows) => rows.slice(0, -1))}>上一页</button><span>第 {cursors.length} 页</span><button disabled={!data?.nextCursor} onClick={() => setCursors((rows) => [...rows, data!.nextCursor!])}>下一页</button></div>
+    <p>邀请码是注册凭据，仅分享给预期用户；不会写入审计日志正文。</p></>;
 }
 
-function Security({ account }: PaneProps) {
-  return <><h2>设备与安全</h2><p>当前管理账号：{account.username}（{roleName(account.role)}）</p><p>本次登录：{date(account.session.createdAt)}；会话到期：{date(account.session.expiresAt)}</p><p>访问“用户管理 → 设备与配额”可撤销受管理用户的设备会话；所有者及管理员之间的操作受服务端权限限制。</p><p>退出管理后台会撤销本次管理会话，并通知其他管理标签页清空界面，不影响独立的记账登录。</p><p>后台不保存账本解密密钥。统一修改账号密码、找回密码和所有权转移尚未开放，不能通过管理后台重置密码来恢复加密账本。</p></>;
+function Security({ account, client, revision, confirm }: PaneProps) {
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('');
+  const [cursors, setCursors] = useState(['']);
+  const cursor = cursors[cursors.length - 1]!;
+  const { data, error } = useData<{ devices: Device[]; nextCursor?: string }>(client, `/devices?limit=25&search=${encodeURIComponent(filter)}&cursor=${encodeURIComponent(cursor)}`, revision);
+  return <><h2>设备与安全</h2><p>当前管理账号：{account.username}（{roleName(account.role)}）</p><p>本次登录：{date(account.session.createdAt)}；会话到期：{date(account.session.expiresAt)}</p>
+    <p>{account.role === 'owner' ? '显示全部账号的会话；所有者会话受保护，请使用顶部退出按钮结束自己的管理登录。' : '仅显示你有权管理的普通用户会话。'}按账号分页，每页最多 25 个账号；有效会话不代表设备当前在线。</p>
+    <form onSubmit={(event) => { event.preventDefault(); setFilter(search.trim()); setCursors(['']); }}><input aria-label="搜索设备所属账号" maxLength={128} placeholder="用户名或完整 accountId" value={search} onChange={(event) => setSearch(event.target.value)} /><button>查询设备</button></form>
+    <Result error={error} loading={!data}><DeviceTable devices={data?.devices ?? []} revoke={(device) => confirm(`撤销设备 ${device.deviceName}`, `立即使 ${device.username} 的此会话失效。保留本机及服务器账本。`, () => client.request(`/sessions/${device.id}/revoke`, {}))} /></Result>
+    <div style={{ display: 'flex', gap: 12, marginTop: 16 }}><button disabled={cursors.length === 1 || !data} onClick={() => setCursors((rows) => rows.slice(0, -1))}>上一页</button><span>第 {cursors.length} 页</span><button disabled={!data?.nextCursor} onClick={() => setCursors((rows) => [...rows, data!.nextCursor!])}>下一页</button></div>
+    <p>退出管理后台会撤销本次管理会话，并通知其他管理标签页清空界面，不影响独立的记账登录。</p><p>已支持管理员核实身份后发放一次性密码重置码，入口在“用户管理 → 设备与配额”。重置账号密码不恢复账本解密密钥。所有者密码恢复和所有权转移未开放。</p></>;
 }
 
 function Storage({ client, confirm }: PaneProps) {
   const [result, setResult] = useState('');
+  const [issues, setIssues] = useState<unknown[]>([]);
   return <><h2>存储维护</h2><p>仅检查服务器数据库和加密文件完整性，不读取明文账本。大型校验可能耗时，不提供一键清库。</p><div style={{ display: 'flex', gap: 12 }}>
-    <button onClick={() => confirm('校验服务器数据库', '执行 SQLite 完整性检查，不修改账本。', async () => { const response = await client.request<{ verification: { ok: boolean; result: string } }>('/database/verify'); setResult(response.verification.ok ? '数据库校验通过。' : `数据库校验异常：${response.verification.result}`); })}>校验数据库</button>
-    <button onClick={() => confirm('校验加密附件', '遍历服务器附件分块；不会删除或修复数据。', async () => { const response = await client.request<{ verification: { checkedObjects: number; issues: unknown[] } }>('/quotas/blobs/verify', {}); setResult(`已检查 ${response.verification.checkedObjects} 个对象，发现 ${response.verification.issues.length} 个问题。`); })}>校验附件分块</button>
-  </div>{result && <p role="status">{result}</p>}<p>用户配额可在“用户管理 → 设备与配额”中调整。</p></>;
+    <button onClick={() => confirm('校验服务器数据库', '执行 SQLite 完整性检查，不修改账本。', async () => { setResult(''); setIssues([]); const response = await client.request<{ verification: { ok: boolean; result: string } }>('/database/verify'); setResult(response.verification.ok ? '数据库校验通过。' : `数据库校验异常：${response.verification.result}`); })}>校验数据库</button>
+    <button onClick={() => confirm('校验加密附件', '遍历服务器附件分块；不会删除或修复数据。', async () => { setResult(''); setIssues([]); const response = await client.request<{ verification: { checkedObjects: number; checkedChunks: number; issues: unknown[] } }>('/quotas/blobs/verify', {}); setResult(`已检查 ${response.verification.checkedObjects} 个对象、${response.verification.checkedChunks} 个分块，发现 ${response.verification.issues.length} 个问题。`); setIssues(response.verification.issues); })}>校验附件分块</button>
+  </div>{result && <p role="status">{result}</p>}{issues.length > 0 && <details><summary>查看问题详情（{issues.length} 项）</summary><pre>{JSON.stringify(issues, null, 2)}</pre></details>}<p>用户配额可在“用户管理 → 设备与配额”中调整。</p></>;
 }
 
 function AuditLog({ client, revision }: PaneProps) {

@@ -4,6 +4,7 @@
  * separately: `@zichan/db/node` for node:sqlite, or supply your own SqlDriver
  * (wa-sqlite on web, a dedicated Rust SQL bridge on native).
  */
+export { requestJson, HttpRequestError, type HttpRequestOptions } from './http-request.js';
 export { SerialTaskQueue, type SqlDriver, type SqlParam, type SqlRunResult } from './driver.js';
 export { schemaStatements } from './schema.js';
 export {

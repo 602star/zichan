@@ -20,9 +20,33 @@ beforeEach(() => {
   vi.mocked(fetchAuthMe).mockResolvedValue({ ...auth(), username: 'operator', role: 'owner' } as never);
   client = new AdminClient('http://localhost:8787/ledger', lost);
 });
-afterEach(() => { client.dispose(); vi.unstubAllGlobals(); });
+afterEach(() => { client.dispose(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('independent management session lifecycle', () => {
+  it('bounds health reads and lets the user retry after a connection timeout', async () => {
+    vi.useFakeTimers();
+    fetcher.mockImplementationOnce((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    }));
+    const rejected = expect(client.health()).rejects.toMatchObject({ code: 'REQUEST_TIMEOUT' });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await rejected;
+    expect(await client.health()).toEqual(health);
+    expect(lost).not.toHaveBeenCalled();
+  });
+
+  it('bounds response body reads without automatically repeating a mutation', async () => {
+    await client.login('operator', 'password');
+    vi.useFakeTimers();
+    fetcher.mockImplementationOnce((_url: string, init: RequestInit) => Promise.resolve({ ok: true, status: 200, json: () => new Promise((_resolve, reject) => {
+      init.signal!.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    }) }));
+    const rejected = expect(client.request('/registration', { mode: 'closed' })).rejects.toMatchObject({ code: 'REQUEST_TIMEOUT', message: expect.stringContaining('未自动重复提交') });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await rejected;
+    expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/registration'))).toHaveLength(1);
+    expect(lost).not.toHaveBeenCalled();
+  });
   it('reports committed initialization before a subsequent login failure', async () => {
     fetcher.mockResolvedValue(reply({ ...health, claimed: false }));
     vi.mocked(loginAccount).mockRejectedValue(new Error('offline'));
@@ -69,7 +93,7 @@ describe('independent management session lifecycle', () => {
     await client.login('operator', 'password');
     await Promise.all([client.request('/status'), client.request('/users')]);
     expect(refreshAccountSession).toHaveBeenCalledTimes(1);
-    expect(refreshAccountSession).toHaveBeenCalledWith('http://localhost:8787/ledger', '', 'cookie', 'admin');
+    expect(refreshAccountSession).toHaveBeenCalledWith('http://localhost:8787/ledger', '', 'cookie', 'admin', { signal: expect.any(AbortSignal) });
   });
 
   it('rejects late responses after logout instead of repopulating management data', async () => {

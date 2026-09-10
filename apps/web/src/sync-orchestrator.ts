@@ -1,4 +1,5 @@
 import {
+  HttpRequestError,
   httpCommitTransport,
   syncReplicas,
   type CommitTransport,
@@ -45,6 +46,7 @@ function elapsedSince(started: number): number {
 }
 
 function endpointUnavailable(error: unknown): boolean {
+  if (error instanceof HttpRequestError && (error.kind === 'network' || error.kind === 'timeout')) return true;
   const message = error instanceof Error ? error.message : String(error);
   return /failed to fetch|fetch failed|network(?: error)?|econn(?:refused|reset|aborted)|enotfound|eai_again|timed? ?out|timeout|HTTP (?:404|408|5\d\d)\b/i.test(message);
 }

@@ -48,7 +48,7 @@ test('manages the server independently of ledger initialization, with isolated c
   const { invite } = await (await inviteResponse).json();
   await registerAccount(baseUrl, 'managed-user', 'member-test-password', { inviteCode: invite.code });
   await page.getByRole('button', { name: '用户管理', exact: true }).click();
-  const ownerRow = page.getByRole('row').filter({ has: page.getByText('operator', { exact: true }) });
+  const ownerRow = page.getByRole('table').first().getByRole('row').filter({ has: page.getByText('operator', { exact: true }) });
   await ownerRow.getByRole('button', { name: '设备与配额' }).click();
   await page.getByLabel('提交配额 MiB').fill('128');
   await page.getByRole('button', { name: '保存提交配额' }).click();
@@ -59,7 +59,7 @@ test('manages the server independently of ledger initialization, with isolated c
   await expect(ownerRow).not.toContainText('128.0 MiB');
   await expect(ownerRow.getByRole('button', { name: '禁用', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: '关闭详情' }).click();
-  const row = page.getByRole('row').filter({ has: page.getByText('managed-user', { exact: true }) });
+  const row = page.getByRole('table').first().getByRole('row').filter({ has: page.getByText('managed-user', { exact: true }) });
   await expect(row).toContainText('普通用户');
   await row.getByRole('button', { name: '授予管理员' }).click();
   await page.getByRole('button', { name: '确认执行' }).click();

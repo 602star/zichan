@@ -1,5 +1,5 @@
 import {
-  refreshAccountSession,
+  refreshAccountSession, requestJson,
   type SyncAuthSession,
 } from '@zichan/db';
 import { credentialRevision, credentialVaultState, persistCredential, runtimeCredential, setRuntimeCredential } from './credential-vault.js';
@@ -41,7 +41,7 @@ function accessTokenIsFresh(credential: ServerCredential): boolean {
 
 export async function assertSyncServerIdentity(profile: SyncConnection): Promise<void> {
   if (!profile.serverId || !profile.serverPublicKey) throw new Error('同步服务器身份尚未固定，请先测试连通性');
-  const response = await fetch(`${buildSyncBaseUrl(profile)}/api/health`, { redirect: 'error' });
+  const response = await requestJson(`${buildSyncBaseUrl(profile)}/api/health`, { redirect: 'error' });
   if (!response.ok) throw new Error(`同步服务器身份检查失败：HTTP ${response.status}`);
   const body = await response.json() as { serverId?: string; serverPublicKey?: string };
   if (body.serverId !== profile.serverId || body.serverPublicKey !== profile.serverPublicKey) {
