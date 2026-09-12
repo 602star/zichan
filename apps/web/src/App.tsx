@@ -99,10 +99,7 @@ function formatAsOfDate(date?: string): string {
   return [y, m, d].filter(Boolean).join(' · ');
 }
 
-const ghostBtn: CSSProperties = {
-  padding: '8px 14px', borderRadius: 99, border: '1px solid var(--border)',
-  background: 'var(--surface)', color: 'var(--fg-muted)', fontSize: 13, fontWeight: 700, cursor: 'pointer',
-};
+const ghostBtn = btnGhost;
 
 type ImportDialog =
   | { kind: 'password'; file: File }
@@ -441,7 +438,7 @@ export function App() {
   const rootStyle: CSSProperties = {
     ...(THEMES[theme] as CSSProperties),
     background: 'var(--bg)',
-    color: 'var(--fg)',
+    color: 'var(--text-primary)',
     fontFamily: FONT_FAMILY,
     fontVariantNumeric: 'tabular-nums',
   };
@@ -463,8 +460,8 @@ export function App() {
           position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 5,
         }}>
           <div className="zc-header-title">
-            <div style={{ fontSize: 22, fontWeight: 800 }}>{title}</div>
-            <div className="zc-header-subtitle" style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 3 }}>{sub}</div>
+            <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{title}</div>
+            <div className="zc-header-subtitle" style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginTop: 3 }}>{sub}</div>
           </div>
           <div className="zc-header-meta" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <div className="zc-header-actions" style={{ display: 'flex', gap: 8 }}>
@@ -474,14 +471,14 @@ export function App() {
             </div>
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface)',
-              border: '1px solid var(--border)', borderRadius: 99, padding: '8px 15px',
-              fontSize: 13, fontWeight: 700,
+              border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '8px 15px',
+              fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)',
             }}>
-              <span style={{ color: 'var(--fg-subtle)', fontWeight: 500 }}>报表币种</span>
+              <span style={{ color: 'var(--text-tertiary)', fontWeight: 'var(--fw-regular)' }}>报表币种</span>
               {base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}
             </div>
-            <div style={{ fontSize: 12, color: 'var(--fg-subtle)', fontWeight: 700, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.25 }}>
-              <span style={{ fontSize: 10, fontWeight: 600 }}>报表基准日</span>
+            <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.25 }}>
+              <span style={{ fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' }}>报表基准日</span>
               <span>{formatAsOfDate(asOfDate)}</span>
             </div>
           </div>
@@ -489,15 +486,15 @@ export function App() {
 
         <div className="zc-page-content">
           {safety.length > 0 && screen !== 'settings' && (
-            <div className="zc-safety-banner" style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
+            <div className="zc-safety-banner" style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '12px 14px', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 900, color: safety.some((w) => w.tone === 'danger') ? 'var(--negative)' : 'var(--accent)' }}>数据安全提醒</div>
-                <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginTop: 4 }}>{safety.slice(0, 3).map((w) => w.message).join('；')}</div>
+                <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color: safety.some((w) => w.tone === 'danger') ? 'var(--negative)' : 'var(--accent)' }}>数据安全提醒</div>
+                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', marginTop: 4 }}>{safety.slice(0, 3).map((w) => w.message).join('；')}</div>
               </div>
               <button onClick={() => setScreen('settings')} style={ghostBtn}>去处理</button>
             </div>
           )}
-          <Suspense fallback={<div role="status" style={{ minHeight: 240, padding: 24, color: 'var(--fg-subtle)' }}>正在载入…</div>}>
+          <Suspense fallback={<div role="status" style={{ minHeight: 240, padding: 24, color: 'var(--text-tertiary)' }}>正在载入…</div>}>
             {screen === 'dashboard' && <Dashboard />}
             {screen === 'convert' && <Convert />}
             {screen === 'transactions' && <Transactions />}
@@ -557,7 +554,7 @@ export function App() {
             onKeyDown={(event) => { if (event.key === 'Enter' && importPassphrase.length >= 8) void unlockImportedBackup(); }}
             placeholder="创建备份时的账本加密密码"
           />
-          {importUnlockError && <div style={{ color: 'var(--negative)', fontSize: 12, fontWeight: 700, marginTop: 8 }}>{importUnlockError}</div>}
+          {importUnlockError && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginTop: 8 }}>{importUnlockError}</div>}
         </ConfirmDialog>
       )}
       {importDialog?.kind === 'confirm' && (
@@ -571,7 +568,7 @@ export function App() {
         >
           <div>导入预检通过：{importDialog.summary}</div>
           <div style={{ marginTop: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>恢复方式</div>
+            <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginBottom: 6 }}>恢复方式</div>
             <div role="group" aria-label="备份恢复方式" style={{ display: 'flex', gap: 0, width: '100%' }}>
               {(['merge', 'replace'] as const).map((mode) => (
                 <button
@@ -583,11 +580,11 @@ export function App() {
                     flex: 1,
                     height: 36,
                     border: '1px solid var(--border)',
-                    borderRadius: mode === 'merge' ? '7px 0 0 7px' : '0 7px 7px 0',
+                    borderRadius: mode === 'merge' ? 'var(--r-sm) 0 0 var(--r-sm)' : '0 var(--r-sm) var(--r-sm) 0',
                     background: importDialog.mode === mode ? 'var(--accent)' : 'var(--surface)',
                     color: importDialog.mode === mode ? '#fff' : 'var(--fg-muted)',
-                    fontSize: 12,
-                    fontWeight: 800,
+                    fontSize: 'var(--fs-caption)',
+                    fontWeight: 'var(--fw-bold)',
                     cursor: 'pointer',
                   }}
                 >
@@ -595,7 +592,7 @@ export function App() {
                 </button>
               ))}
             </div>
-            <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 6 }}>
+            <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 6 }}>
               {importDialog.mode === 'merge'
                 ? '保留当前独有数据和当前密钥，仅合并备份中的账本内容。'
                 : !accountProtection() && importDialog.opened.payload.kind === 'device'
@@ -611,7 +608,7 @@ export function App() {
           {importDialog.diff.byType.length > 0 && (
             <div style={{ marginTop: 10, maxHeight: 160, overflow: 'auto', borderTop: '1px solid var(--border)', paddingTop: 8 }}>
               {importDialog.diff.byType.map((row) => (
-                <div className="zc-import-diff-row" key={row.label} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 70px 70px', gap: 8, fontSize: 12, padding: '3px 0' }}>
+                <div className="zc-import-diff-row" key={row.label} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 70px 70px', gap: 8, fontSize: 'var(--fs-caption)', padding: '3px 0' }}>
                   <span>{row.label}</span>
                   <span>新增 {row.added}</span>
                   <span>更新 {row.updated}</span>
@@ -622,9 +619,9 @@ export function App() {
           )}
           {importDialog.diff.examples.length > 0 && (
             <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 900, color: 'var(--fg-muted)', marginBottom: 5 }}>业务字段变化示例</div>
+              <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)', marginBottom: 5 }}>业务字段变化示例</div>
               {importDialog.diff.examples.map((row, idx) => (
-                <div key={`${row.label}-${row.name}-${idx}`} style={{ fontSize: 12, color: 'var(--fg-muted)', lineHeight: 1.55 }}>
+                <div key={`${row.label}-${row.name}-${idx}`} style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', lineHeight: 1.55 }}>
                   {row.label} · {row.name}：{row.fields.slice(0, 6).join('、')}
                 </div>
               ))}
@@ -659,9 +656,9 @@ export function App() {
 
 function ImportStat({ label, value }: { label: string; value: number }) {
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 8, background: 'var(--surface-2)' }}>
-      <div style={{ fontSize: 11, color: 'var(--fg-subtle)', fontWeight: 800 }}>{label}</div>
-      <div style={{ fontSize: 18, color: 'var(--fg)', fontWeight: 900, marginTop: 2 }}>{value}</div>
+    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 8, background: 'var(--surface-2)' }}>
+      <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>{label}</div>
+      <div style={{ fontSize: 'var(--fs-heading)', color: 'var(--text-primary)', fontWeight: 'var(--fw-bold)', marginTop: 2 }}>{value}</div>
     </div>
   );
 }
@@ -684,12 +681,12 @@ function Sidebar(props: {
     }}>
       <div className="zc-sidebar-brand" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px 20px' }}>
         <div style={{
-          width: 36, height: 36, borderRadius: 11, background: 'var(--accent)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: 17,
+          width: 36, height: 36, borderRadius: 'var(--r-sm)', background: 'var(--accent)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-title)',
         }}>资</div>
         <div className="zc-sidebar-brand-copy">
-          <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: 0 }}>资产生命周期</div>
-          <div style={{ fontSize: 10, color: 'var(--fg-subtle)', letterSpacing: 0, fontWeight: 600 }}>
+          <div style={{ fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-title)', letterSpacing: 0 }}>资产生命周期</div>
+          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', letterSpacing: 0, fontWeight: 'var(--fw-medium)' }}>
             LIFECYCLE LEDGER
           </div>
         </div>
@@ -704,7 +701,7 @@ function Sidebar(props: {
             <div
               key={id}
               style={{
-                display: 'flex', alignItems: 'center', borderRadius: 10, overflow: 'hidden',
+                display: 'flex', alignItems: 'center', borderRadius: 'var(--r-sm)', overflow: 'hidden',
                 background: active ? 'var(--accent-soft)' : 'transparent',
                 color: active ? 'var(--accent)' : 'var(--fg-muted)',
               }}
@@ -714,14 +711,14 @@ function Sidebar(props: {
                 className="zc-sidebar-nav-item"
                 onClick={() => setScreen(id)}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 10,
-                  border: 'none', cursor: 'pointer', flex: 1, minWidth: 0, textAlign: 'left', fontSize: 14,
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 'var(--r-sm)',
+                  border: 'none', cursor: 'pointer', flex: 1, minWidth: 0, textAlign: 'left', fontSize: 'var(--fs-body)',
                   background: 'transparent',
                   color: 'inherit',
-                  fontWeight: active ? 700 : 600,
+                  fontWeight: active ? 'var(--fw-bold)' : 'var(--fw-medium)',
                 }}
               >
-                <span style={{ width: 20, textAlign: 'center', fontSize: 15 }}>{icon}</span>
+                <span style={{ width: 20, textAlign: 'center', fontSize: 'var(--fs-title)' }}>{icon}</span>
                 <span className="zc-sidebar-nav-label" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
               </button>
               {withQuick && (
@@ -735,13 +732,13 @@ function Sidebar(props: {
                     width: 34,
                     height: 34,
                     marginRight: 5,
-                    borderRadius: 999,
+                    borderRadius: 'var(--r-pill)',
                     border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
                     background: active ? 'var(--accent)' : 'var(--surface-2)',
                     color: active ? '#fff' : 'var(--accent)',
-                    fontSize: 20,
+                    fontSize: 'var(--fs-heading)',
                     lineHeight: 1,
-                    fontWeight: 900,
+                    fontWeight: 'var(--fw-bold)',
                     cursor: 'pointer',
                     flex: '0 0 auto',
                   }}
@@ -773,7 +770,7 @@ function Sidebar(props: {
       <div style={{ flex: 1 }} />
 
       <div className="zc-sidebar-theme" style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 11 }}>
-        <div style={{ fontSize: 10, color: 'var(--fg-subtle)', fontWeight: 700, letterSpacing: 0, padding: '0 8px' }}>
+        <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)', letterSpacing: 0, padding: '0 8px' }}>
           视觉方案对比
         </div>
         <div style={{ display: 'flex', gap: 8, padding: '0 6px' }}>
@@ -783,16 +780,16 @@ function Sidebar(props: {
               onClick={() => setTheme(id)}
               title={THEME_NAMES[id]}
               style={{
-                flex: 1, height: 40, borderRadius: 11, cursor: 'pointer', display: 'flex',
+                flex: 1, height: 40, borderRadius: 'var(--r-sm)', cursor: 'pointer', display: 'flex',
                 alignItems: 'center', justifyContent: 'center', background: 'var(--surface-2)',
                 border: theme === id ? '2px solid var(--accent)' : '1px solid var(--border)',
               }}
             >
-              <span style={{ width: 18, height: 18, borderRadius: '50%', background: ACCENTS[id] }} />
+              <span style={{ width: 18, height: 18, borderRadius: 'var(--r-round)', background: ACCENTS[id] }} />
             </button>
           ))}
         </div>
-        <div style={{ fontSize: 12, color: 'var(--fg-muted)', padding: '0 8px', fontWeight: 600 }}>
+        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '0 8px', fontWeight: 'var(--fw-medium)' }}>
           {THEME_NAMES[theme]}
         </div>
       </div>
@@ -919,3 +916,5 @@ function MobileNavigation(props: {
     </>
   );
 }
+
+import { btnGhost } from './ui/styles.js';

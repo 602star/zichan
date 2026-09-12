@@ -73,7 +73,7 @@ export function VaultUnlockPrompt() {
       onCancel={() => setDismissed(true)}
       onConfirm={unlock}
     >
-      <div style={{ fontSize: 12, color: 'var(--fg-muted)', marginBottom: 10 }}>自动同步已启用。输入本机密码后会读取 Stronghold，并继续本次启动同步。</div>
+      <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', marginBottom: 10 }}>自动同步已启用。输入本机密码后会读取 Stronghold，并继续本次启动同步。</div>
       <input
         autoFocus
         aria-label="启动时解锁 Stronghold"
@@ -86,7 +86,7 @@ export function VaultUnlockPrompt() {
         onKeyDown={(event) => { if (event.key === 'Enter' && password.length >= 8) void unlock(); }}
         placeholder="Stronghold 本机密码"
       />
-      {error && <div style={{ color: 'var(--negative)', fontSize: 12, fontWeight: 700, marginTop: 8, overflowWrap: 'anywhere' }}>{error}</div>}
+      {error && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginTop: 8, overflowWrap: 'anywhere' }}>{error}</div>}
     </ConfirmDialog>
   );
 }

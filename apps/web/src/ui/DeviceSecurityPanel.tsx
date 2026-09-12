@@ -17,9 +17,9 @@ import {
   VAULT_STATE_CHANGED_EVENT,
   type CredentialVaultState,
 } from '../credential-vault.js';
-import { card } from './styles.js';
+import { btnOutline, card } from './styles.js';
 
-const outline = { padding: '7px 13px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg-muted)', fontWeight: 700, fontSize: 12, cursor: 'pointer' } as const;
+const outline = btnOutline;
 
 function statusText(status: BiometricStatus | null): string {
   if (!status) return '检测中…';
@@ -129,8 +129,8 @@ export function DeviceSecurityPanel() {
     <div style={card}>
       <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14, marginBottom: 12 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 800 }}>设备安全与权限</div>
-          <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4 }}>
+          <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>设备安全与权限</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
             {vault.kind === 'native-stronghold'
               ? `${vault.platform} 原生端 · Stronghold 保护数据库密钥、附件密钥和同步凭据`
               : 'Web 浏览器 · 数据库与附件加密保存，账号解锁与离线授权分开管理'}
@@ -157,27 +157,27 @@ export function DeviceSecurityPanel() {
           disabled={notificationPermission === 'unsupported' || busy === 'notification'}
           onChange={(checked) => void toggleNotifications(checked)}
         />
-        <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 11, background: 'var(--surface-2)' }}>
-          <div style={{ fontSize: 12, fontWeight: 900 }}>设备能力测试</div>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 11, background: 'var(--surface-2)' }}>
+          <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>设备能力测试</div>
           <div style={{ display: 'flex', gap: 7, marginTop: 9, flexWrap: 'wrap' }}>
             <button type="button" onClick={() => void testLocation()} disabled={!!busy} style={outline}>{busy === 'location' ? '定位中…' : '测试定位'}</button>
             <button type="button" onClick={() => void testNotification()} disabled={!!busy || notificationPermission === 'unsupported'} style={outline}>测试通知</button>
           </div>
         </div>
       </div>
-      {notice && <div style={{ marginTop: 10, color: /失败|未开启|不可用|未授权/.test(notice) ? 'var(--negative)' : 'var(--positive)', fontSize: 12, fontWeight: 700, overflowWrap: 'anywhere' }}>{notice}</div>}
+      {notice && <div style={{ marginTop: 10, color: /失败|未开启|不可用|未授权/.test(notice) ? 'var(--negative)' : 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', overflowWrap: 'anywhere' }}>{notice}</div>}
     </div>
   );
 }
 
 function DeviceControl(props: { label: string; value: string; checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 11, background: 'var(--surface-2)' }}>
-      <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 12, fontWeight: 900 }}>
+    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 11, background: 'var(--surface-2)' }}>
+      <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
         {props.label}
         <input type="checkbox" checked={props.checked} disabled={props.disabled} onChange={(event) => props.onChange(event.target.checked)} />
       </label>
-      <div style={{ marginTop: 8, color: 'var(--fg-subtle)', fontSize: 11, lineHeight: 1.45, overflowWrap: 'anywhere' }}>{props.value}</div>
+      <div style={{ marginTop: 8, color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', lineHeight: 1.45, overflowWrap: 'anywhere' }}>{props.value}</div>
     </div>
   );
 }

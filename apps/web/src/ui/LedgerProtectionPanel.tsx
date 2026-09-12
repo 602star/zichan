@@ -27,8 +27,8 @@ export function LedgerProtectionPanel({ store }: { store: SqlLedgerStore }) {
     finally { setBusy(false); }
   }
   const managed = state.info.mode === 'managed';
-  return <section className="zc-protection" style={{ padding: 20, border: '1px solid var(--border)', borderRadius: 12, marginBottom: 16 }} aria-label="账本保护">
-    <h2 style={{ fontSize: 17 }}>账本保护 · {managed ? '云端托管' : '私密模式'}</h2>
+  return <section className="zc-protection" style={{ padding: 20, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', marginBottom: 16 }} aria-label="账本保护">
+    <h2 style={{ fontSize: 'var(--fs-title)' }}>账本保护 · {managed ? '云端托管' : '私密模式'}</h2>
     <p>{managed ? '主服务器托管密钥，可以解密账本。登录新设备或找回账号密码后，可以恢复账本。附加服务器默认只保存密文。' : '恢复码由你保管，服务器只保存密文。账号密码找回不会恢复解密能力；过去曾被托管的历史数据不具有追溯保密性。'}</p>
     <button disabled={busy} onClick={() => setShowRecovery(!showRecovery)}>{showRecovery ? '隐藏恢复码' : '查看备份恢复码'}</button>
     {showRecovery && <><p>保存在本设备以外，可在服务器不可用时解锁导出的加密备份。此恢复码能解密账本，请妥善保存。</p><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{state.secret}</pre></>}

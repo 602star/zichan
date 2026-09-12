@@ -35,8 +35,8 @@ export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> 
     const result = await api('devices');
     setDevices(result.devices); setCurrent(result.currentSessionId);
   }
-  return <section className="zc-protection" aria-label="账号安全" style={{ padding: 20, border: '1px solid var(--border)', borderRadius: 12, marginBottom: 16 }}>
-    <h2 style={{ fontSize: 17 }}>账号安全 · {profile.username}</h2>
+  return <section className="zc-protection" aria-label="账号安全" style={{ padding: 20, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', marginBottom: 16 }}>
+    <h2 style={{ fontSize: 'var(--fs-title)' }}>账号安全 · {profile.username}</h2>
     <details><summary>修改账号密码</summary>
       <p>修改后所有设备都需要重新登录。账本、恢复码和保护方式保持不变；未同步数据保留在本机。</p>
       <form onSubmit={(event) => {

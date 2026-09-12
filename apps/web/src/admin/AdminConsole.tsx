@@ -24,7 +24,7 @@ interface PaneProps { client: AdminClient; revision: number; account: SyncAuthMe
 const roleName = (role: Role) => role === 'owner' ? '所有者' : role === 'admin' ? '管理员' : '普通用户';
 const bytes = (value: number) => `${(value / 1024 ** 2).toFixed(1)} MiB`;
 const date = (value?: string) => value ? new Date(value).toLocaleString() : '—';
-const panel = { padding: 20, borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', marginTop: 16 };
+const panel = { padding: 20, borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', marginTop: 16 };
 
 function message(error: unknown): string {
   if (error instanceof AdminError) {
@@ -65,7 +65,7 @@ export function AdminConsole({ client, account }: { client: AdminClient; account
   const confirm: Confirm = (title, description, action) => setPending({ title, description, action });
   const props = { client, account, revision, confirm };
   return <>
-    <nav aria-label="服务器管理导航" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{tabs.map((name) => <button key={name} aria-pressed={tab === name} onClick={() => { setTab(name); setNotice(''); }} style={{ padding: '10px 16px', borderRadius: 8, border: '1px solid var(--border)', background: tab === name ? 'var(--accent)' : 'var(--surface)', color: tab === name ? '#fff' : 'var(--fg)' }}>{name}</button>)}<button onClick={() => setRevision((value) => value + 1)}>刷新</button></nav>
+    <nav aria-label="服务器管理导航" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{tabs.map((name) => <button key={name} aria-pressed={tab === name} onClick={() => { setTab(name); setNotice(''); }} style={{ padding: '10px 16px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: tab === name ? 'var(--accent)' : 'var(--surface)', color: tab === name ? '#fff' : 'var(--fg)' }}>{name}</button>)}<button onClick={() => setRevision((value) => value + 1)}>刷新</button></nav>
     {notice && <p role="status">{notice}</p>}
     <section style={panel}>
       {tab === '概览' && <Overview {...props} />}
@@ -87,7 +87,7 @@ function Overview({ client, revision }: PaneProps) {
   return <><h2>服务器概览</h2><Result error={error} loading={!data}>{data && <>
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 14 }}>{[
       ['账号总数', data.userCount], ['已禁用账号', data.disabledUserCount], ['有效会话', data.activeSessionCount], ['加密提交用量', bytes(data.commitBytes)], ['数据库版本', data.schemaVersion], ['存储模式', data.journalMode],
-    ].map(([label, value]) => <div key={label} style={panel}><div>{label}</div><strong style={{ fontSize: 24 }}>{value}</strong></div>)}</div>
+    ].map(([label, value]) => <div key={label} style={panel}><div>{label}</div><strong style={{ fontSize: 'var(--fs-display)' }}>{value}</strong></div>)}</div>
     <p>服务器 ID：{data.serverId}</p><p>“有效会话”指尚未撤销且未过期的登录，不等于此刻在线人数。服务器管理不会解密用户账本。</p>
   </>}</Result></>;
 }

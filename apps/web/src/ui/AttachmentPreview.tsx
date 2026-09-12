@@ -65,7 +65,7 @@ export function AttachmentPreview({ attachment, alt, className, style }: {
   }, [attachment.contentBlob, attachment.mimeType, attachment.sha256, attachment.sizeBytes, attachment.thumbnailBlob, attachment.thumbnailMimeType, attachment.thumbnailSha256, attachment.thumbnailSizeBytes, isImage, store]);
 
   if (!src || !isImage) {
-    return <div className={className} title={error || undefined} style={{ ...style, display: 'grid', placeItems: 'center', background: 'var(--surface-2)', color: error ? 'var(--negative)' : 'var(--fg-subtle)', fontSize: 11 }}>{error ? '不可用' : '文件'}</div>;
+    return <div className={className} title={error || undefined} style={{ ...style, display: 'grid', placeItems: 'center', background: 'var(--surface-2)', color: error ? 'var(--negative)' : 'var(--fg-subtle)', fontSize: 'var(--fs-meta)' }}>{error ? '不可用' : '文件'}</div>;
   }
   return <img className={className} src={src} alt={alt ?? attachment.fileName} style={style} />;
 }

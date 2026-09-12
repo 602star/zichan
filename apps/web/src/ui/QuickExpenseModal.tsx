@@ -48,11 +48,11 @@ const field: CSSProperties = {
   width: '100%',
   boxSizing: 'border-box',
   border: '1px solid var(--border)',
-  borderRadius: 12,
+  borderRadius: 'var(--r-md)',
   background: 'var(--surface)',
-  color: 'var(--fg)',
+  color: 'var(--text-primary)',
   padding: '11px 13px',
-  fontSize: 14,
+  fontSize: 'var(--fs-body)',
 };
 
 const QUICK_EXPENSE_DRAFT_KEY = formDraftKey('quick-expense');
@@ -420,32 +420,32 @@ export function QuickExpenseModal({
       <div style={{ padding: 22 }}>
         <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', gap: 16 }}>
           <div>
-            <h2 id={titleId} style={{ margin: 0, fontSize: 20 }}>记一笔支出</h2>
-            <div style={{ marginTop: 5, color: 'var(--fg-subtle)', fontSize: 12 }}>只填金额即可保存，其他内容均有默认值。</div>
+            <h2 id={titleId} style={{ margin: 0, fontSize: 'var(--fs-heading)' }}>记一笔支出</h2>
+            <div style={{ marginTop: 5, color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>只填金额即可保存，其他内容均有默认值。</div>
           </div>
-          <button type="button" aria-label="关闭快速记账" onClick={requestClose} disabled={busy} style={{ border: 0, background: 'transparent', color: 'var(--fg-muted)', fontSize: 22, cursor: 'pointer' }}>×</button>
+          <button type="button" aria-label="关闭快速记账" onClick={requestClose} disabled={busy} style={{ border: 0, background: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--fs-heading)', cursor: 'pointer' }}>×</button>
         </div>
 
         {!initialTemplate && recommendation.category && (
-          <div data-testid="quick-expense-recommendation" aria-live="polite" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 14, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 10, background: 'var(--accent-soft)', color: 'var(--fg-muted)', fontSize: 12 }}>
+          <div data-testid="quick-expense-recommendation" aria-live="polite" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 14, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--accent-soft)', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>
             <span>
               <b style={{ color: 'var(--accent)' }}>{category === recommendation.category && description === (recommendation.description ?? '') ? '已推荐' : '推荐'}：{recommendation.label}</b>
               <span style={{ marginLeft: 7 }}>{recommendation.reason}</span>
             </span>
             {(category !== recommendation.category || description !== (recommendation.description ?? '')) && (
-              <button type="button" onClick={applyRecommendation} style={{ flex: '0 0 auto', border: '1px solid var(--accent)', borderRadius: 999, background: 'var(--surface)', color: 'var(--accent)', padding: '5px 9px', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}>使用推荐</button>
+              <button type="button" onClick={applyRecommendation} style={{ flex: '0 0 auto', border: '1px solid var(--accent)', borderRadius: 'var(--r-pill)', background: 'var(--surface)', color: 'var(--accent)', padding: '5px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>使用推荐</button>
             )}
           </div>
         )}
 
         {draftRestoredAt && (
-          <div role="status" style={{ marginTop: 14, padding: '8px 10px', border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--fg-muted)', fontSize: 12 }}>
+          <div role="status" style={{ marginTop: 14, padding: '8px 10px', border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>
             已恢复 {new Date(draftRestoredAt).toLocaleString()} 自动保存的支出草稿。
           </div>
         )}
 
         <label style={{ display: 'block', marginTop: 22 }}>
-          <span style={{ display: 'block', marginBottom: 7, fontSize: 12, fontWeight: 800 }}>支出金额</span>
+          <span style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>支出金额</span>
           <input
             ref={amountRef}
             data-dialog-initial-focus
@@ -455,13 +455,13 @@ export function QuickExpenseModal({
             onChange={(event) => { touched.current = true; setAmount(event.target.value); }}
             onKeyDown={(event) => { if (event.key === 'Enter') void submit(); }}
             placeholder="0.00"
-            style={{ ...field, fontSize: 32, fontWeight: 850, padding: '14px 16px' }}
+            style={{ ...field, fontSize: 'var(--fs-hero)', fontWeight: 'var(--fw-bold)', padding: '14px 16px' }}
           />
         </label>
 
         {expenseTemplates.length > 0 && (
           <div role="group" aria-label="常用支出" style={{ marginTop: 18 }}>
-            <div style={{ marginBottom: 8, fontSize: 12, fontWeight: 800 }}>常用支出</div>
+            <div style={{ marginBottom: 8, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>常用支出</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {expenseTemplates.map((template) => (
                 <button
@@ -471,12 +471,12 @@ export function QuickExpenseModal({
                   aria-pressed={category === template.category && description === (template.description ?? template.name)}
                   style={{
                     border: '1px solid var(--border)',
-                    borderRadius: 999,
+                    borderRadius: 'var(--r-pill)',
                     background: category === template.category && description === (template.description ?? template.name) ? 'var(--accent-soft)' : 'var(--surface)',
                     color: category === template.category && description === (template.description ?? template.name) ? 'var(--accent)' : 'var(--fg-muted)',
                     padding: '8px 12px',
-                    fontSize: 12,
-                    fontWeight: 750,
+                    fontSize: 'var(--fs-caption)',
+                    fontWeight: 'var(--fw-bold)',
                     cursor: 'pointer',
                   }}
                 >
@@ -489,7 +489,7 @@ export function QuickExpenseModal({
 
         <div className="zc-quick-expense-main" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginTop: 18 }}>
           <div>
-            <label htmlFor="quick-expense-category" style={{ display: 'block', marginBottom: 7, fontSize: 12, fontWeight: 800 }}>分类</label>
+            <label htmlFor="quick-expense-category" style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>分类</label>
             <CategoryPicker
               fieldId="quick-expense-category"
               name="category"
@@ -503,25 +503,25 @@ export function QuickExpenseModal({
             />
           </div>
           <label>
-            <span style={{ display: 'block', marginBottom: 7, fontSize: 12, fontWeight: 800 }}>备注（可选）</span>
+            <span style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>备注（可选）</span>
             <input aria-label="支出备注" value={description} onChange={(event) => { touched.current = true; setDescription(event.target.value); }} placeholder="例如：午餐" style={field} />
           </label>
         </div>
 
-        <details style={{ marginTop: 16, color: 'var(--fg-muted)' }}>
-          <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 750 }}>更多信息</summary>
+        <details style={{ marginTop: 16, color: 'var(--text-secondary)' }}>
+          <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>更多信息</summary>
           <div className="zc-quick-expense-split" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 12 }}>
-            <label><span style={{ display: 'block', marginBottom: 6, fontSize: 11 }}>日期</span><input aria-label="支出日期" type="date" value={date} onChange={(event) => { touched.current = true; setDate(event.target.value); }} style={field} /></label>
-            <label><span style={{ display: 'block', marginBottom: 6, fontSize: 11 }}>时间</span><input aria-label="支出时间" type="time" value={time} onChange={(event) => { touched.current = true; setTime(event.target.value); }} style={field} /></label>
-            <label style={{ gridColumn: '1 / -1' }}><span style={{ display: 'block', marginBottom: 6, fontSize: 11 }}>币种</span><select aria-label="支出币种" value={assetId} onChange={(event) => { touched.current = true; setAssetId(event.target.value); }} style={field}>{activeAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.code}</option>)}</select></label>
+            <label><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>日期</span><input aria-label="支出日期" type="date" value={date} onChange={(event) => { touched.current = true; setDate(event.target.value); }} style={field} /></label>
+            <label><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>时间</span><input aria-label="支出时间" type="time" value={time} onChange={(event) => { touched.current = true; setTime(event.target.value); }} style={field} /></label>
+            <label style={{ gridColumn: '1 / -1' }}><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>币种</span><select aria-label="支出币种" value={assetId} onChange={(event) => { touched.current = true; setAssetId(event.target.value); }} style={field}>{activeAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.code}</option>)}</select></label>
           </div>
         </details>
 
-        {error && <div role="alert" style={{ marginTop: 14, color: 'var(--negative)', fontSize: 12, fontWeight: 750 }}>{error}</div>}
+        {error && <div role="alert" style={{ marginTop: 14, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>{error}</div>}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
-          <button type="button" onClick={requestClose} disabled={busy} style={{ border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface)', color: 'var(--fg-muted)', padding: '10px 16px', fontWeight: 750, cursor: 'pointer' }}>取消</button>
-          <button type="button" onClick={() => void submit()} disabled={busy} style={{ border: '1px solid var(--accent)', borderRadius: 10, background: 'var(--accent)', color: '#fff', padding: '10px 20px', fontWeight: 850, cursor: busy ? 'wait' : 'pointer' }}>{busy ? '保存中…' : '保存支出'}</button>
+          <button type="button" onClick={requestClose} disabled={busy} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', color: 'var(--text-secondary)', padding: '10px 16px', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>取消</button>
+          <button type="button" onClick={() => void submit()} disabled={busy} style={{ border: '1px solid var(--accent)', borderRadius: 'var(--r-sm)', background: 'var(--accent)', color: '#fff', padding: '10px 20px', fontWeight: 'var(--fw-bold)', cursor: busy ? 'wait' : 'pointer' }}>{busy ? '保存中…' : '保存支出'}</button>
         </div>
         {closeOpen && (
           <ConfirmDialog

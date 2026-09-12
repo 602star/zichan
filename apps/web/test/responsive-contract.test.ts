@@ -97,7 +97,10 @@ describe('responsive shell contract', () => {
     const coarse = coarseBlocks.join('\n');
 
     expect(coarse).toMatch(/min-height:\s*44px/);
-    expect(coarse).toMatch(/font-size:\s*16px\s*!important/);
+    // The threshold is a token now, but it must still resolve to 16px: below it
+    // Safari and Chrome on iOS zoom the whole page when a field takes focus.
+    expect(coarse).toMatch(/font-size:\s*var\(--fs-input\)\s*!important/);
+    expect(css).toMatch(/--fs-input:\s*16px;/);
     expect(coarse).toContain('select');
     expect(coarse).toContain('summary');
     // Checkboxes are only 13-18px; their tappable box is the wrapper.

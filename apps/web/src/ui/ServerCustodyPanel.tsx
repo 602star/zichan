@@ -29,7 +29,7 @@ export function ServerCustodyPanel({ profile }: { profile: SyncConnection }) {
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   }
-  return <section className="zc-protection" style={{ padding: 16, border: '1px solid var(--border)', borderRadius: 10, marginBottom: 16 }} aria-label="服务器保护方式">
+  return <section className="zc-protection" style={{ padding: 16, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', marginBottom: 16 }} aria-label="服务器保护方式">
     <strong>此服务器的保护方式</strong><p>新增连接默认仅同步密文，无需另设密钥。托管需要此服务器支持，并明确授权。</p>
     <button disabled={busy} onClick={() => void inspect()}>检查保护方式</button>
     {info && <><p>{info.mode === 'managed' ? '此服务器已获授权，可以解密账本。' : '此服务器仅保存密文，没有托管解密凭据。'}</p>

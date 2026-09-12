@@ -29,6 +29,7 @@ import {
   ensureAssetPreset,
   type AssetPresetCode,
 } from '../assetPresets.js';
+import { btnOutline, btnPrimary, btnSmall, iconBtn, linkDanger } from '../ui/styles.js';
 
 type FeeSide = 'source' | 'target' | 'third';
 
@@ -457,10 +458,10 @@ export function AddConversionModal({
       onDismiss={onClose}
       dismissDisabled={saving}
       panelClassName="zc-conversion-modal"
-      panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 24, width: 980, maxHeight: '92vh', overflow: 'auto' }}
+      panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 24, width: 980, maxHeight: '92vh', overflow: 'auto' }}
     >
         <div className="zc-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
-          <div id={titleId} style={{ fontSize: 18, fontWeight: 850 }}>{initial ? '编辑资产转换' : '新增资产转换'}</div>
+          <div id={titleId} style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{initial ? '编辑资产转换' : '新增资产转换'}</div>
           <button type="button" data-dialog-initial-focus aria-label="关闭" title="关闭" onClick={onClose} disabled={saving} style={iconButton}>×</button>
         </div>
 
@@ -485,11 +486,11 @@ export function AddConversionModal({
           ) : <div />}
           <Field label="时区"><input aria-label="时区" className="zc-input" value={timezone} readOnly /></Field>
         </div>
-        {presetNotice && <div style={{ color: presetNotice.includes('回退') ? 'var(--warning)' : 'var(--fg-muted)', fontSize: 12, fontWeight: 700, marginBottom: 14 }}>{presetNotice}</div>}
+        {presetNotice && <div style={{ color: presetNotice.includes('回退') ? 'var(--warning)' : 'var(--fg-muted)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginBottom: 14 }}>{presetNotice}</div>}
 
         {!initial && (
           <div style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', padding: 12, marginBottom: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 850, color: 'var(--fg-muted)', marginBottom: 8 }}>常用目标资产</div>
+            <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)', marginBottom: 8 }}>常用目标资产</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {ASSET_PRESETS.map((row) => {
                 const existing = activeAssetByCode(assets, row.code);
@@ -513,7 +514,7 @@ export function AddConversionModal({
                 );
               })}
             </div>
-            <div style={{ marginTop: 8, fontSize: 11, color: 'var(--fg-subtle)' }}>选择后只会补充可选资产，不会自动生成持仓、余额或交易。</div>
+            <div style={{ marginTop: 8, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>选择后只会补充可选资产，不会自动生成持仓、余额或交易。</div>
           </div>
         )}
 
@@ -526,12 +527,12 @@ export function AddConversionModal({
                   <option value="average">平均成本</option><option value="manual">手动选择批次</option>
                 </select>
               </Field>
-              <div style={{ fontSize: 12, color: 'var(--fg-subtle)', paddingBottom: 10 }}>来源资产手续费会一并消耗持仓批次。</div>
+              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', paddingBottom: 10 }}>来源资产手续费会一并消耗持仓批次。</div>
             </div>
             {method === 'manual' && (
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
                 {sellLots.map((lot) => <label key={lot.id} style={lotChip(selectedLotIds.includes(lot.id))}><input type="checkbox" checked={selectedLotIds.includes(lot.id)} onChange={() => toggleLot(lot.id)} />{lot.acquiredDate} · 剩 {fmtAmount(lot.remainingAmount, 8)}</label>)}
-                {sellLots.length === 0 && <span style={{ fontSize: 12, color: 'var(--fg-subtle)' }}>暂无可用批次</span>}
+                {sellLots.length === 0 && <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>暂无可用批次</span>}
               </div>
             )}
           </div>
@@ -542,7 +543,7 @@ export function AddConversionModal({
           return (
             <div key={stepIndex} style={{ border: '1px solid var(--border)', marginBottom: 14, background: 'var(--surface-2)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 14px', borderBottom: '1px solid var(--border)' }}>
-                <b style={{ fontSize: 13 }}>步骤 {stepIndex + 1}</b>
+                <b style={{ fontSize: 'var(--fs-body)' }}>步骤 {stepIndex + 1}</b>
                 {drafts.length > 1 && <button onClick={() => setSteps(drafts.filter((_, index) => index !== stepIndex))} style={dangerLink}>删除步骤</button>}
               </div>
               <div style={{ padding: 14 }}>
@@ -572,7 +573,7 @@ export function AddConversionModal({
 
                 <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: step.fees.length ? 8 : 0 }}>
-                    <b style={{ fontSize: 12, color: 'var(--fg-muted)' }}>手续费</b>
+                    <b style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>手续费</b>
                     <button onClick={() => addFee(stepIndex)} style={smallButton}>+ 添加手续费</button>
                   </div>
                   {step.fees.map((fee) => {
@@ -605,7 +606,7 @@ export function AddConversionModal({
         })}
 
         <button onClick={() => setSteps([...drafts, emptyStep(effectiveBookCurrencyId, drafts.at(-1)?.toAssetId || effectiveBookCurrencyId)])} style={{ ...smallButton, width: '100%', padding: 10, borderStyle: 'dashed', marginBottom: 16 }}>+ 添加转换步骤</button>
-        {err && <div style={{ color: 'var(--negative)', fontSize: 12, fontWeight: 700, marginBottom: 12 }}>{err}</div>}
+        {err && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>{err}</div>}
         <div className="zc-modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <button onClick={onClose} disabled={saving} style={secondaryButton}>取消</button>
           <button onClick={() => void save()} disabled={saving} style={{ ...primaryButton, opacity: saving ? 0.6 : 1 }}>{saving ? '处理中…' : initial ? '预览影响' : '保存转换'}</button>
@@ -632,13 +633,13 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function Metric({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
-  return <div style={{ background: 'var(--surface)', padding: '9px 10px', minWidth: 0 }}><div style={{ fontSize: 10, color: 'var(--fg-subtle)' }}>{label}</div><div style={{ fontSize: 12, fontWeight: strong ? 900 : 700, color: strong ? 'var(--accent)' : 'var(--fg)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div></div>;
+  return <div style={{ background: 'var(--surface)', padding: '9px 10px', minWidth: 0 }}><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{label}</div><div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: strong ? 'var(--accent)' : 'var(--fg)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div></div>;
 }
 
-const iconButton = { width: 32, height: 32, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg-muted)', cursor: 'pointer', fontSize: 18 } as const;
-const smallButton = { border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--accent)', padding: '6px 10px', fontSize: 12, fontWeight: 800, cursor: 'pointer' } as const;
-const dangerLink = { border: 'none', background: 'transparent', color: 'var(--negative)', padding: 0, fontSize: 12, fontWeight: 800, cursor: 'pointer' } as const;
-const secondaryButton = { padding: '9px 18px', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg-muted)', fontWeight: 750, cursor: 'pointer' } as const;
-const primaryButton = { padding: '9px 18px', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 850, cursor: 'pointer' } as const;
-const subSelect = { marginTop: 5, height: 30, paddingTop: 3, paddingBottom: 3, fontSize: 11 } as const;
-const lotChip = (active: boolean) => ({ display: 'inline-flex', gap: 6, alignItems: 'center', border: '1px solid var(--border)', background: active ? 'var(--accent-soft)' : 'var(--surface)', color: active ? 'var(--accent)' : 'var(--fg-muted)', padding: '6px 9px', fontSize: 11, fontWeight: 750, cursor: 'pointer' } as const);
+const iconButton = iconBtn;
+const smallButton = btnSmall;
+const dangerLink = linkDanger;
+const secondaryButton = btnOutline;
+const primaryButton = btnPrimary;
+const subSelect = { marginTop: 5, height: 30, paddingTop: 3, paddingBottom: 3, fontSize: 'var(--fs-meta)' } as const;
+const lotChip = (active: boolean) => ({ display: 'inline-flex', gap: 6, alignItems: 'center', border: '1px solid var(--border)', background: active ? 'var(--accent-soft)' : 'var(--surface)', color: active ? 'var(--accent)' : 'var(--fg-muted)', padding: '6px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' } as const);

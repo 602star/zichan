@@ -19,7 +19,7 @@ import {
   listDevices,
   registerSync,
 } from '../db/cloud.js';
-import { card, th as thStyle, td as tdStyle } from '../ui/styles.js';
+import { btnDanger, btnOutline, btnPrimary, card, td as tdStyle, th as thStyle } from '../ui/styles.js';
 import { categoryLabel, TYPE_LABEL } from '../transactionMeta.js';
 import { DateRangeBar, dateRangeValue, localDateOfInstant, type DateRangeValue } from '../ui/DateRangeBar.js';
 import {
@@ -342,9 +342,9 @@ const statusText: Record<SyncConnectionStatus, string> = {
   identity_changed: '身份已变化',
 };
 
-const outline = { padding: '7px 13px', borderRadius: 9, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg-muted)', fontWeight: 700, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' } as const;
-const primary = { ...outline, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff' } as const;
-const danger = { ...outline, border: '1px solid var(--negative)', color: 'var(--negative)' } as const;
+const outline = btnOutline;
+const primary = btnPrimary;
+const danger = btnDanger;
 const inputGrid = { display: 'grid', gridTemplateColumns: '1fr 120px 1fr 100px', gap: 10, marginBottom: 10 } as const;
 
 export function Sync() {
@@ -1410,8 +1410,8 @@ export function Sync() {
           <div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginBottom: 14 }}>
               <div>
-                <div style={{ fontSize: 16, fontWeight: 900 }}>同步中心</div>
-                <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4 }}>
+                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>同步中心</div>
+                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
                   解锁账本密钥并验证服务器账号后，同步全部启用服务器；冲突会进入下方冲突箱。
                 </div>
               </div>
@@ -1427,17 +1427,17 @@ export function Sync() {
               <SyncTile label="隔离提交" value={`${invalidCommits.length}`} tone={invalidCommits.length ? 'var(--negative)' : 'var(--positive)'} />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12, fontWeight: 850, color: 'var(--fg-muted)' }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>
                 <input type="checkbox" checked={autoSyncEnabled} onChange={(event) => setAutoSyncEnabled(event.target.checked)} />
                 自动同步
               </label>
               <select aria-label="自动同步间隔" className="zc-select" value={autoSyncMinutes} onChange={(event) => setAutoSyncMinutes(Number(event.target.value))} disabled={!autoSyncEnabled} style={{ width: 120 }}>
                 {[1, 5, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分钟</option>)}
               </select>
-              <span style={{ fontSize: 12, color: 'var(--fg-subtle)' }}>{autoSyncStatus}</span>
+              <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>{autoSyncStatus}</span>
             </div>
             {enabledProfiles.length === 0 && (
-              <div style={{ marginTop: 12, fontSize: 12, color: 'var(--negative)', fontWeight: 800 }}>
+              <div style={{ marginTop: 12, fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>
                 当前没有启用服务器。勾选服务器后，“同步全部启用服务器”才会运行正式远程同步。
               </div>
             )}
@@ -1448,12 +1448,12 @@ export function Sync() {
           <div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 800 }}>本地账本加密</div>
-                <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4 }}>
+                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>本地账本加密</div>
+                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
                   服务器账号密码只用于登录；此处密码解锁账本数据密钥。密钥正文只保留在当前会话内存中。
                 </div>
               </div>
-              <span style={{ fontSize: 12, fontWeight: 850, color: ledgerKey.unlocked ? 'var(--positive)' : 'var(--fg-subtle)' }}>
+              <span style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: ledgerKey.unlocked ? 'var(--positive)' : 'var(--fg-subtle)' }}>
                 {ledgerKey.unlocked ? `已解锁 · 第 ${ledgerKey.generation} 代` : ledgerKey.initialized ? '已初始化 · 已锁定' : '未初始化'}
               </span>
             </div>
@@ -1473,8 +1473,8 @@ export function Sync() {
                 <button type="button" onClick={() => lockLedgerKey()} disabled={ledgerKeyBusy} style={outline}>锁定</button>
               </div>
             )}
-            {ledgerKeyError && <div style={{ marginTop: 10, color: 'var(--negative)', fontSize: 12, fontWeight: 750 }}>{ledgerKeyError}</div>}
-            {ledgerKey.keyringId && <div style={{ marginTop: 10, color: 'var(--fg-subtle)', fontSize: 11 }}>密钥包 {ledgerKey.keyringId} · 账本 {ledgerKey.ledgerId}</div>}
+            {ledgerKeyError && <div style={{ marginTop: 10, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>{ledgerKeyError}</div>}
+            {ledgerKey.keyringId && <div style={{ marginTop: 10, color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' }}>密钥包 {ledgerKey.keyringId} · 账本 {ledgerKey.ledgerId}</div>}
           </div>
           )}
 
@@ -1482,8 +1482,8 @@ export function Sync() {
             <div style={{ ...card, border: '1px solid var(--negative)' }}>
               <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 8 }}>
                 <div>
-                  <div style={{ fontSize: 15, fontWeight: 850 }}>隔离提交 <span style={{ color: 'var(--negative)', fontSize: 12 }}>{invalidCommits.length}</span></div>
-                  <div style={{ color: 'var(--fg-subtle)', fontSize: 12, marginTop: 4 }}>这些提交未写入账本。修复来源设备的数据后再同步，或导出诊断信息排查。</div>
+                  <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>隔离提交 <span style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)' }}>{invalidCommits.length}</span></div>
+                  <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4 }}>这些提交未写入账本。修复来源设备的数据后再同步，或导出诊断信息排查。</div>
                 </div>
                 <button type="button" onClick={exportInvalidCommits} style={outline}>导出诊断 JSON</button>
               </div>
@@ -1508,8 +1508,8 @@ export function Sync() {
           {<div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 800 }}>服务器配置</div>
-                <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4 }}>
+                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>服务器配置</div>
+                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
                   每台服务器可使用不同账号密码和服务路径；这些凭据与上方账本加密密码相互独立。{vault.message}。
                   {!isTauriRuntime() && '本站账号负责登录与缓存隔离，附加服务器独立使用令牌会话，保存在此标签页的 sessionStorage；关闭标签页后需重新登录，不覆盖本站 Cookie。'}
                 </div>
@@ -1556,22 +1556,22 @@ export function Sync() {
                 <button type="button" onClick={() => void unlockVault()} disabled={vault.unlocked || vaultBusy || vaultPassword.length < 8 || (!vault.initialized && vaultPassword !== vaultPasswordConfirm)} style={vault.unlocked ? outline : primary}>
                   {vault.unlocked ? '已解锁' : vaultBusy ? '解锁中…' : vault.initialized ? '解锁' : '创建并解锁'}
                 </button>
-                <div style={{ flex: '1 1 240px', fontSize: 12, color: vaultError ? 'var(--negative)' : vault.unlocked ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: 700 }}>
+                <div style={{ flex: '1 1 240px', fontSize: 'var(--fs-caption)', color: vaultError ? 'var(--negative)' : vault.unlocked ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: 'var(--fw-bold)' }}>
                   {vaultError || (vault.unlocked ? `Stronghold 已解锁 · ${vault.platform}` : '解锁后才能读取、保存和自动使用服务器账号密码')}
                 </div>
               </div>
             )}
 
             {vault.kind === 'browser-session' && vaultError && (
-              <div style={{ color: 'var(--negative)', fontSize: 12, fontWeight: 700, marginBottom: 12 }}>{vaultError}</div>
+              <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>{vaultError}</div>
             )}
 
             {selected && !selectedIsPrimary && (
-              <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: 'var(--surface-2)', marginBottom: 14 }}>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 12, background: 'var(--surface-2)', marginBottom: 14 }}>
                 <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 10 }}>
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 900 }}>首次配置向导</div>
-                    <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 3 }}>选择服务器位置，先把地址和端口套到当前服务器，再填写账号密码。</div>
+                    <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>首次配置向导</div>
+                    <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3 }}>选择服务器位置，先把地址和端口套到当前服务器，再填写账号密码。</div>
                   </div>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                     {WIZARD_MODES.map((item) => (
@@ -1596,14 +1596,14 @@ export function Sync() {
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button onClick={applyWizard} style={outline}>套用到当前服务器</button>
                   <button onClick={() => void applyWizardAndTest()} disabled={testingId === selected.id} style={outline}>{testingId === selected.id ? '测试中…' : '套用并测试连通性'}</button>
-                  <span style={{ fontSize: 12, color: 'var(--fg-subtle)', fontWeight: 700 }}>
+                  <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>
                     {buildBaseUrl({ ...selected, ...wizardPatch(wizardMode, wizardHost, wizardBasePath) })}
                   </span>
                 </div>
                 {selectedRemoteLedgerId && (
                   <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--negative)' }}>
-                    <div style={{ color: 'var(--negative)', fontSize: 12, fontWeight: 900 }}>此账号已绑定另一个账本</div>
-                    <div style={{ color: 'var(--fg-subtle)', fontSize: 11, marginTop: 4 }}>
+                    <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>此账号已绑定另一个账本</div>
+                    <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', marginTop: 4 }}>
                       远端账本 {selectedRemoteLedgerId}。系统会先只读验证远端密码、提交和账本一致性，再保存本机保护备份并原子替换；任何一步失败都会保留本机账本。
                     </div>
                     {joinTarget?.profileId !== selected.id ? (
@@ -1635,9 +1635,9 @@ export function Sync() {
                     <tr key={p.id} onClick={() => setSelectedId(p.id)} style={{ cursor: 'pointer', background: selected?.id === p.id ? 'var(--accent-soft)' : 'transparent' }}>
                       <td style={tdStyle}><span className="zc-check-target" onClick={(e) => e.stopPropagation()}><input aria-label={`启用 ${p.alias}`} type="checkbox" checked={p.enabled} disabled={isPrimaryWebConnection(p)} onChange={(e) => patchProfile(p.id, { enabled: e.target.checked })} onClick={(e) => e.stopPropagation()} /></span></td>
                       <td style={tdStyle}>{p.alias}{isPrimaryWebConnection(p) && ' · 本站登录'}</td>
-                      <td style={{ ...tdStyle, color: 'var(--fg-muted)' }}>{buildBaseUrl(p)}</td>
+                      <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{buildBaseUrl(p)}</td>
                       <td style={tdStyle}>{p.username || '—'}</td>
-                      <td style={{ ...tdStyle, color: p.status === 'online' ? 'var(--positive)' : p.status === 'offline' || p.status === 'identity_changed' ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 700 }}>{statusText[p.status]}</td>
+                      <td style={{ ...tdStyle, color: p.status === 'online' ? 'var(--positive)' : p.status === 'offline' || p.status === 'identity_changed' ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 'var(--fw-bold)' }}>{statusText[p.status]}</td>
                       <td style={tdStyle}>{p.lastLatencyMs !== undefined ? `${p.lastLatencyMs}ms` : '—'}</td>
                       <td style={{ ...tdStyle, textAlign: 'right' }}>
                         <button onClick={(e) => { e.stopPropagation(); void testProfile(p, 'health'); }} disabled={testingId === p.id} style={outline}>{testingId === p.id ? '测试中…' : '测试连通性'}</button>
@@ -1649,8 +1649,8 @@ export function Sync() {
             </div>
 
             {selected && (
-              <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 14, background: 'var(--surface-2)' }}>
-                <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>编辑服务器 · {selected.alias}</div>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 14, background: 'var(--surface-2)' }}>
+                <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', marginBottom: 10 }}>编辑服务器 · {selected.alias}</div>
                 <div style={{ marginBottom: 10 }}>
                   <label className="zc-label">完整服务器地址</label>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1667,10 +1667,10 @@ export function Sync() {
                     <button type="button" onClick={() => setAdvancedAddress((value) => !value)} style={outline}>{advancedAddress ? '收起高级设置' : '高级设置'}</button>
                     <button type="button" onClick={saveAddress} disabled={selectedIsPrimary || Boolean(addressError) || addressDraft === selected.baseUrl} style={primary}>保存地址</button>
                   </div>
-                  <div style={{ marginTop: 5, fontSize: 11, color: addressError ? 'var(--negative)' : 'var(--fg-subtle)', fontWeight: addressError ? 700 : 500 }}>
+                  <div style={{ marginTop: 5, fontSize: 'var(--fs-meta)', color: addressError ? 'var(--negative)' : 'var(--fg-subtle)', fontWeight: addressError ? 'var(--fw-bold)' : 'var(--fw-regular)' }}>
                     {addressError || '完整 URL 是唯一保存值；高级字段只是同一地址的编辑视图。公网必须使用 HTTPS。'}
                   </div>
-                  <div style={{ marginTop: 4, fontSize: 11, color: 'var(--fg-subtle)', lineHeight: 1.5 }}>
+                  <div style={{ marginTop: 4, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
                     HTTPS 网站中的浏览器可能阻止普通 HTTP 局域网地址；可改用可信 HTTPS、服务器自带 Web，或 Windows 便携版。
                   </div>
                 </div>
@@ -1683,7 +1683,7 @@ export function Sync() {
                       <div><label className="zc-label">端口</label><input aria-label="端口" className="zc-input" value={addressParts.port} onChange={(e) => editAddressPart({ port: e.target.value })} placeholder="443" /></div>
                       <div><label className="zc-label">服务路径</label><input aria-label="服务路径" className="zc-input" value={addressParts.path} onChange={(e) => editAddressPart({ path: e.target.value })} placeholder="/zichan" /></div>
                     </div>
-                    <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', margin: '-2px 0 12px', fontSize: 11, color: 'var(--fg-subtle)', lineHeight: 1.5 }}>
+                    <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', margin: '-2px 0 12px', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
                       <input type="checkbox" checked={selected.sharedUrls.includes(selected.baseUrl)} onChange={(event) => setActiveAddressShared(event.target.checked)} />
                       将此地址写入账本的加密服务器目录，供其他设备发现。公网 HTTPS 默认开启；localhost 或局域网地址默认仅当前设备，手动共享前请确认其他设备也能访问该地址。
                     </label>
@@ -1697,7 +1697,7 @@ export function Sync() {
                   {selectedHealth?.registrationMode === 'invite' && <div><label className="zc-label">邀请码</label><input aria-label="邀请码" className="zc-input" value={cred.inviteCode} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { inviteCode: e.target.value })} /></div>}
                 </div>
                 {selectedHealth && (
-                  <div style={{ margin: '-2px 0 10px', fontSize: 11, color: !selectedHealth.claimed ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: !selectedHealth.claimed ? 800 : 500 }}>
+                  <div style={{ margin: '-2px 0 10px', fontSize: 'var(--fs-meta)', color: !selectedHealth.claimed ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: !selectedHealth.claimed ? 'var(--fw-bold)' : 'var(--fw-regular)' }}>
                     {!selectedHealth.claimed
                       ? '尚未初始化：请联系部署者先完成独立管理后台设置。用户端不创建管理员。'
                       : `注册策略：${selectedHealth.registrationMode === 'open' ? '开放注册' : selectedHealth.registrationMode === 'invite' ? '仅邀请码' : '已关闭'}${selected.role ? ` · 当前账号：${selected.role === 'owner' ? '所有者' : selected.role === 'admin' ? '管理员' : '成员'}` : ''}`}
@@ -1715,7 +1715,7 @@ export function Sync() {
                     title={vault.kind === 'native-stronghold' && vault.initialized && !vault.unlocked ? '请先解锁 Stronghold，确保同步凭据一并删除' : '删除服务器'}
                     style={danger}
                   >删除</button>
-                  <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>
+                  <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>
                     {selected.serverId ? `服务器 ID：${selected.serverId}` : '尚未识别服务器 ID'}
                     {selected.replicaId ? ` · 副本 ID：${selected.replicaId}` : ''}
                     {selected.streamEpoch ? ` · 流世代：${selected.streamEpoch}` : ''}
@@ -1724,12 +1724,12 @@ export function Sync() {
                   </span>
                 </div>
                 {connectionShare && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, alignItems: 'center', marginTop: 14, padding: 12, border: '1px solid var(--border)', borderRadius: 10, background: 'var(--surface)' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, alignItems: 'center', marginTop: 14, padding: 12, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface)' }}>
                     <img src={connectionShare.qrDataUrl} alt="服务器连接二维码" width={260} height={260} style={{ display: 'block', width: '100%', maxWidth: 260, height: 'auto', imageRendering: 'pixelated' }} />
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 900 }}>无秘密连接信息</div>
-                      <div style={{ marginTop: 5, fontSize: 11, color: 'var(--fg-subtle)', lineHeight: 1.6 }}>只包含应用入口、服务器完整 URL、serverId 和 OPAQUE 公钥指纹；扫码或导入后仍必须单独登录。</div>
-                      <textarea readOnly value={connectionShare.link} aria-label="无秘密连接链接" onFocus={(event) => event.currentTarget.select()} style={{ boxSizing: 'border-box', width: '100%', minHeight: 92, marginTop: 9, padding: 9, resize: 'vertical', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-2)', color: 'var(--fg-muted)', fontSize: 11, userSelect: 'text', WebkitUserSelect: 'text' }} />
+                      <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>无秘密连接信息</div>
+                      <div style={{ marginTop: 5, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', lineHeight: 1.6 }}>只包含应用入口、服务器完整 URL、serverId 和 OPAQUE 公钥指纹；扫码或导入后仍必须单独登录。</div>
+                      <textarea readOnly value={connectionShare.link} aria-label="无秘密连接链接" onFocus={(event) => event.currentTarget.select()} style={{ boxSizing: 'border-box', width: '100%', minHeight: 92, marginTop: 9, padding: 9, resize: 'vertical', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', color: 'var(--text-secondary)', fontSize: 'var(--fs-meta)', userSelect: 'text', WebkitUserSelect: 'text' }} />
                       <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
                         <button type="button" onClick={() => void copyTextToClipboard(connectionShare.link).then(() => setSyncNotice('连接链接已复制。')).catch((error) => setSyncNotice(`复制失败：${msg(error)}`))} style={outline}>复制链接</button>
                         <button type="button" onClick={() => setConnectionShare(null)} style={outline}>关闭</button>
@@ -1745,18 +1745,18 @@ export function Sync() {
           <div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 800 }}>同步结果</div>
-                <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4 }}>
-                  本机设备 · <span style={{ fontWeight: 700, color: 'var(--fg-muted)' }}>{deviceId}</span>
+                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>同步结果</div>
+                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
+                  本机设备 · <span style={{ fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>{deviceId}</span>
                   {lastSyncAt && <> · 上次同步 {lastSyncAt}</>}
                 </div>
               </div>
-              <button onClick={() => void doSync()} disabled={busy || !ledgerKey.unlocked || enabledProfiles.length === 0} style={{ ...primary, padding: '10px 18px', fontSize: 13 }}>
+              <button onClick={() => void doSync()} disabled={busy || !ledgerKey.unlocked || enabledProfiles.length === 0} style={{ ...primary, padding: '10px 18px', fontSize: 'var(--fs-body)' }}>
                 {busy ? '同步中…' : '同步全部启用服务器'}
               </button>
             </div>
             {enabledProfiles.length === 0 && (
-              <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 12 }}>
+              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 12 }}>
                 当前没有启用服务器；“同步全部启用服务器”不会自动使用本地演示云。
               </div>
             )}
@@ -1770,34 +1770,34 @@ export function Sync() {
             </ConfirmDialog>}
             {directoryError && <div role="alert">{directoryError}<button onClick={() => setDirectoryRetry((value) => value + 1)}>重新读取共享目录</button></div>}
             {syncNotice && (
-              <div style={{ fontSize: 12, color: syncNotice.includes('没有启用') ? 'var(--negative)' : 'var(--fg-muted)', marginTop: 10, fontWeight: 800 }}>
+              <div style={{ fontSize: 'var(--fs-caption)', color: syncNotice.includes('没有启用') ? 'var(--negative)' : 'var(--fg-muted)', marginTop: 10, fontWeight: 'var(--fw-bold)' }}>
                 {syncNotice}
               </div>
             )}
             {mergeNotice && (
-              <div style={{ fontSize: 12, color: mergeNotice.includes('发现') ? 'var(--negative)' : 'var(--positive)', marginTop: 10, fontWeight: 800 }}>
+              <div style={{ fontSize: 'var(--fs-caption)', color: mergeNotice.includes('发现') ? 'var(--negative)' : 'var(--positive)', marginTop: 10, fontWeight: 'var(--fw-bold)' }}>
                 {mergeNotice}
               </div>
             )}
             {result && (
               <>
-                <div style={{ fontSize: 13, color: 'var(--fg-muted)', marginTop: 12 }}>
-                  本次同步：拉取 <b style={{ color: 'var(--fg)' }}>{result.pulled}</b> 个提交，推送 <b style={{ color: 'var(--fg)' }}>{result.pushed}</b> 个提交，应用 <b style={{ color: 'var(--fg)' }}>{result.applied}</b> 个聚合
+                <div style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginTop: 12 }}>
+                  本次同步：拉取 <b style={{ color: 'var(--text-primary)' }}>{result.pulled}</b> 个提交，推送 <b style={{ color: 'var(--text-primary)' }}>{result.pushed}</b> 个提交，应用 <b style={{ color: 'var(--text-primary)' }}>{result.applied}</b> 个聚合
                   {result.conflicts > 0 && <>，新增 <b style={{ color: 'var(--negative)' }}>{result.conflicts}</b> 个冲突提交</>}
                   {result.conflicts === 0 && <>，无新增冲突</>}；共 {result.rounds} 轮，
                   <b style={{ color: result.converged ? 'var(--positive)' : 'var(--negative)' }}>{result.converged ? '已收敛' : '未完全收敛'}</b>
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 6 }}>
+                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 6 }}>
                   附件对象 {result.attachmentSync.references} 个 · 本机可用 {result.attachmentSync.localReady} 个 · 按需下载 {result.attachmentSync.localMissing} 个 · 本轮上传 {result.attachmentSync.endpoints.reduce((sum, row) => sum + row.uploaded, 0)} 个
                 </div>
                 {endpointRows.length > 0 && (
-                  <div className="zc-sync-result-grid" style={{ display: 'grid', gridTemplateColumns: '110px 1fr 140px 60px 60px 90px 120px 70px', gap: 8, marginTop: 12, fontSize: 12 }}>
+                  <div className="zc-sync-result-grid" style={{ display: 'grid', gridTemplateColumns: '110px 1fr 140px 60px 60px 90px 120px 70px', gap: 8, marginTop: 12, fontSize: 'var(--fs-caption)' }}>
                     <div className="zc-sync-result-head" style={gridHead}>别名</div><div className="zc-sync-result-head" style={gridHead}>端点</div><div className="zc-sync-result-head" style={gridHead}>副本 ID</div><div className="zc-sync-result-head" style={gridHead}>拉取</div><div className="zc-sync-result-head" style={gridHead}>推送</div><div className="zc-sync-result-head" style={gridHead}>游标 / Head</div><div className="zc-sync-result-head" style={gridHead}>附件</div><div className="zc-sync-result-head" style={gridHead}>延迟</div>
                     {endpointRows.map((row) => (
                       <div key={row.id} className="zc-sync-result-row">
-                        <div data-label="别名" style={{ color: row.error ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 700 }}>{row.alias}</div>
+                        <div data-label="别名" style={{ color: row.error ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 'var(--fw-bold)' }}>{row.alias}</div>
                         <div data-label="端点" style={{ color: row.error || row.attachments?.error ? 'var(--negative)' : 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.url}{row.error ? ` · ${row.error}` : row.attachments?.error ? ` · ${row.attachments.error}` : ''}</div>
-                        <div data-label="副本 ID" style={{ color: 'var(--fg-muted)' }}>{row.identity?.replicaId ?? '—'}</div>
+                        <div data-label="副本 ID" style={{ color: 'var(--text-secondary)' }}>{row.identity?.replicaId ?? '—'}</div>
                         <div data-label="拉取">{row.pulled}</div><div data-label="推送">{row.pushed}</div><div data-label="游标 / Head">{row.cursor} / {row.headSeq}</div><div data-label="附件">{row.attachments ? `${row.attachments.available}/${result.attachmentSync.references} · ↑${row.attachments.uploaded}` : '—'}</div><div data-label="延迟">{row.latencyMs}ms</div>
                       </div>
                     ))}
@@ -1808,7 +1808,7 @@ export function Sync() {
           </div>
 
           <div style={card}>
-            <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 12 }}>设备</div>
+            <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>设备</div>
             <div className="zc-scroll-x"><table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead><tr><th style={thStyle}>设备 ID</th><th style={thStyle}>上次同步</th><th style={thStyle}>上次应用</th></tr></thead>
               <tbody>
@@ -1819,7 +1819,7 @@ export function Sync() {
                     <td style={tdStyle}>{d.applied} 条</td>
                   </tr>
                 ))}
-                {devices.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={3}>还没有设备同步过，点上方同步后这里会出现本机</td></tr>}
+                {devices.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={3}>还没有设备同步过，点上方同步后这里会出现本机</td></tr>}
               </tbody>
             </table></div>
           </div>
@@ -1827,10 +1827,10 @@ export function Sync() {
           {conflicts.length > 0 && (
             <div style={{ ...card, border: '1px solid var(--negative)' }}>
               <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
-                <div style={{ fontSize: 15, fontWeight: 800 }}>冲突箱 <span style={{ fontSize: 12, color: 'var(--negative)', fontWeight: 700 }}>{filteredConflicts.length}/{conflicts.length}</span></div>
+                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>冲突箱 <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{filteredConflicts.length}/{conflicts.length}</span></div>
                 <button onClick={exportConflicts} style={outline}>导出冲突 JSON</button>
               </div>
-              <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginBottom: 12 }}>
+              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginBottom: 12 }}>
                 冲突按原子提交分组，所有设备分支都会保留。可整项选择版本，也可逐字段组合，确认后会生成一条可继续同步的合并提交。
               </div>
               <div style={{ marginBottom: 12 }}><DateRangeBar value={conflictRange} onChange={setConflictRange} compact /></div>
@@ -1839,8 +1839,8 @@ export function Sync() {
                   <section key={c.id} style={{ borderTop: '1px solid var(--border)', padding: '16px 0' }}>
                     <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 12, marginBottom: 12 }}>
                       <div>
-                        <div style={{ fontSize: 13, fontWeight: 900 }}>冲突组 {c.id.slice(0, 8)} · {conflictAggregates(c).length} 个聚合 · {c.remoteCommitIds.length} 个远端提交</div>
-                        <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 4 }}>
+                        <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>冲突组 {c.id.slice(0, 8)} · {conflictAggregates(c).length} 个聚合 · {c.remoteCommitIds.length} 个远端提交</div>
+                        <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 4 }}>
                           {new Date(c.at).toLocaleString()} · {c.changedPaths.map((path) => path.split('.').map(fieldLabel).join(' / ')).join('，') || '因果分支冲突'}
                         </div>
                       </div>
@@ -1859,8 +1859,8 @@ export function Sync() {
                       return (
                         <div key={aggregate.key} style={{ padding: '12px 0', borderTop: '1px solid var(--border)' }}>
                           <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-                            <div style={{ fontSize: 12, fontWeight: 900 }}>{aggregateTitle(aggregate.type, aggregate.id, selectedPayload, snap)}</div>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: 'var(--fg-subtle)', fontWeight: 800 }}>
+                            <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>{aggregateTitle(aggregate.type, aggregate.id, selectedPayload, snap)}</div>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>
                               整项采用
                               <select className="zc-select" value={selectedId} onChange={(event) => chooseBranch(c.id, aggregate.key, event.target.value)} style={{ height: 32, minWidth: 190 }}>
                                 {aggregate.branches.map((branch, index) => <option key={branch.revisionId} value={branch.revisionId}>{branchLabel(branch, index)}</option>)}
@@ -1868,7 +1868,7 @@ export function Sync() {
                             </label>
                           </div>
                           <div style={{ overflowX: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-caption)' }}>
                               <thead><tr>
                                 <th style={thStyle}>字段</th>
                                 {aggregate.branches.map((branch, index) => <th key={branch.revisionId} style={thStyle}>{branchLabel(branch, index)}</th>)}
@@ -1890,12 +1890,12 @@ export function Sync() {
                             </table>
                           </div>
                           <details style={{ marginTop: 8 }}>
-                            <summary style={{ cursor: 'pointer', color: 'var(--fg-subtle)', fontSize: 11, fontWeight: 700 }}>查看各分支原始 JSON</summary>
+                            <summary style={{ cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)' }}>查看各分支原始 JSON</summary>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10, marginTop: 8 }}>
                               {aggregate.branches.map((branch, index) => (
                                 <div key={branch.revisionId}>
-                                  <div style={{ fontSize: 10, color: 'var(--fg-subtle)', marginBottom: 4 }}>{branchLabel(branch, index)} · {branch.commitId.slice(0, 8)}</div>
-                                  <code style={{ display: 'block', color: 'var(--fg-muted)', wordBreak: 'break-all', fontSize: 11 }}>{biz(branch.payload)}</code>
+                                  <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginBottom: 4 }}>{branchLabel(branch, index)} · {branch.commitId.slice(0, 8)}</div>
+                                  <code style={{ display: 'block', color: 'var(--text-secondary)', wordBreak: 'break-all', fontSize: 'var(--fs-meta)' }}>{biz(branch.payload)}</code>
                                 </div>
                               ))}
                             </div>
@@ -1905,7 +1905,7 @@ export function Sync() {
                     })}
                   </section>
                 ))}
-                {filteredConflicts.length === 0 && <div style={{ color: 'var(--fg-subtle)', fontSize: 12 }}>该时间范围内没有待处理冲突。</div>}
+                {filteredConflicts.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>该时间范围内没有待处理冲突。</div>}
               </div>
             </div>
           )}
@@ -1916,22 +1916,22 @@ export function Sync() {
 
 const tabBtn = (active: boolean) => ({
   padding: '9px 16px',
-  borderRadius: 10,
-  fontSize: 13,
-  fontWeight: 800,
+  borderRadius: 'var(--r-sm)',
+  fontSize: 'var(--fs-body)',
+  fontWeight: 'var(--fw-bold)',
   cursor: 'pointer',
   background: active ? 'var(--accent-soft)' : 'var(--surface)',
   color: active ? 'var(--accent)' : 'var(--fg-muted)',
   border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
 }) as const;
 
-const gridHead = { color: 'var(--fg-subtle)', fontWeight: 800 } as const;
+const gridHead = { color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' } as const;
 
 function SyncTile({ label, value, tone }: { label: string; value: string; tone: string }) {
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 11, background: 'var(--surface-2)' }}>
-      <div style={{ fontSize: 11, color: 'var(--fg-subtle)', fontWeight: 800 }}>{label}</div>
-      <div style={{ fontSize: 20, color: tone, fontWeight: 900, marginTop: 4 }}>{value}</div>
+    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 11, background: 'var(--surface-2)' }}>
+      <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>{label}</div>
+      <div style={{ fontSize: 'var(--fs-heading)', color: tone, fontWeight: 'var(--fw-bold)', marginTop: 4 }}>{value}</div>
     </div>
   );
 }

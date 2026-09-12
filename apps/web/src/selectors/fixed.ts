@@ -176,7 +176,7 @@ export function buildFixed(snap: Snapshot, asOf = new Date().toLocaleDateString(
           label: '安装耗材',
           detail: joinDetail(item.name, CASHFLOW_LABEL[item.cashflowMode], link ? undefined : item.cashflowMode === 'record_only' ? undefined : '资金关联缺失'),
           amount: item.amountBase !== '0' ? cash(item.amountBase) : undefined,
-          color: 'var(--fg-subtle)',
+          color: 'var(--text-tertiary)',
           kind: 'consumable',
           raw: item,
         }];

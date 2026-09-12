@@ -358,40 +358,40 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
       onDismiss={requestClose}
       dismissDisabled={busy}
       panelClassName="zc-entity-modal"
-      panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, padding: 26, width: `min(${spec.modalWidth ?? 560}px, 100%)`, maxHeight: '90vh', overflow: 'auto' }}
+      panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 26, width: `min(${spec.modalWidth ?? 560}px, 100%)`, maxHeight: '90vh', overflow: 'auto' }}
     >
         <div className="zc-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
-          <div id={titleId} style={{ fontSize: 17, fontWeight: 800 }}>{creating ? '新增' : '编辑'} · {spec.title}</div>
+          <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{creating ? '新增' : '编辑'} · {spec.title}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {moreFields.length > 0 && onOptionalFieldKeysChange && (
               <button
                 onClick={() => setFieldPickerOpen((v) => !v)}
-                style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--fg-muted)', borderRadius: 9, padding: '7px 10px', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}
+                style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-secondary)', borderRadius: 'var(--r-sm)', padding: '7px 10px', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}
               >
                 字段显示
               </button>
             )}
-            <button type="button" data-dialog-initial-focus aria-label="关闭" onClick={requestClose} disabled={busy} style={{ border: 'none', background: 'transparent', fontSize: 20, cursor: busy ? 'not-allowed' : 'pointer', color: 'var(--fg-subtle)', opacity: busy ? 0.6 : 1 }}>×</button>
+            <button type="button" data-dialog-initial-focus aria-label="关闭" onClick={requestClose} disabled={busy} style={{ border: 'none', background: 'transparent', fontSize: 'var(--fs-heading)', cursor: busy ? 'not-allowed' : 'pointer', color: 'var(--text-tertiary)', opacity: busy ? 0.6 : 1 }}>×</button>
           </div>
         </div>
 
         {draftRestoredAt && (
-          <div role="status" style={{ marginBottom: 12, padding: '8px 10px', border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--fg-muted)', fontSize: 12 }}>
+          <div role="status" style={{ marginBottom: 12, padding: '8px 10px', border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>
             已恢复 {new Date(draftRestoredAt).toLocaleString()} 自动保存的草稿。
           </div>
         )}
 
         {fieldPickerOpen && (
-          <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, marginBottom: 14, background: 'var(--surface-2)' }}>
+          <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 12, marginBottom: 14, background: 'var(--surface-2)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 900, color: 'var(--fg-muted)' }}>更多信息字段</div>
+              <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>更多信息字段</div>
               {optionalFieldPresets && (
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {optionalFieldPresets.map((preset) => (
                     <button
                       key={preset.label}
                       onClick={() => void onOptionalFieldKeysChange?.(preset.keys)}
-                      style={{ border: '1px solid var(--border)', borderRadius: 999, background: 'var(--surface)', color: 'var(--fg-muted)', padding: '5px 9px', fontSize: 11, fontWeight: 800, cursor: 'pointer' }}
+                      style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', background: 'var(--surface)', color: 'var(--text-secondary)', padding: '5px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}
                     >
                       {preset.label}
                     </button>
@@ -401,7 +401,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {allMoreFields.map((f) => (
-                <label key={f.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', borderRadius: 999, padding: '6px 10px', background: 'var(--surface)', fontSize: 12, fontWeight: 800, color: 'var(--fg-muted)' }}>
+                <label key={f.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '6px 10px', background: 'var(--surface)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>
                   <input type="checkbox" checked={f.lockedVisible || visibleOptional.has(f.key)} disabled={f.lockedVisible || busy} onChange={() => void toggleOptionalField(f.key)} />
                   {f.label}
                 </label>
@@ -440,9 +440,9 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
 
         {moreFields.length > 0 && (
           <details open={visibleMoreFields.length > 0} style={{ marginTop: 16 }}>
-            <summary style={{ cursor: 'pointer', color: 'var(--fg-muted)', fontSize: 13, fontWeight: 900 }}>更多信息</summary>
+            <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>更多信息</summary>
             {visibleMoreFields.length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 10 }}>可在“字段显示”里选择要显示的附加字段。</div>
+              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 10 }}>可在“字段显示”里选择要显示的附加字段。</div>
             ) : (
               <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
                 {visibleMoreFields.map((f) => {
@@ -475,17 +475,17 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
           </details>
         )}
 
-        {err && <div style={{ color: 'var(--negative)', fontSize: 12, marginTop: 12 }}>{err}</div>}
+        {err && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', marginTop: 12 }}>{err}</div>}
 
         <div className="zc-modal-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 20 }}>
           <div>
             {initial && onDelete && (
-              <button onClick={() => setDeleteOpen(true)} disabled={busy} style={{ padding: '9px 16px', borderRadius: 10, border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', fontWeight: 700, cursor: 'pointer' }}>{deleteLabel}</button>
+              <button onClick={() => setDeleteOpen(true)} disabled={busy} style={{ padding: '9px 16px', borderRadius: 'var(--r-sm)', border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>{deleteLabel}</button>
             )}
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={requestClose} disabled={busy} style={{ padding: '9px 18px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg-muted)', fontWeight: 700, cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>取消</button>
-            <button onClick={save} disabled={busy} style={{ padding: '9px 18px', borderRadius: 10, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 800, cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+            <button onClick={requestClose} disabled={busy} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>取消</button>
+            <button onClick={save} disabled={busy} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
               {busy ? '保存中…' : '保存'}
             </button>
           </div>
@@ -575,7 +575,7 @@ function FormField(props: {
           onChange={(next) => set(f.key, next)}
         />
       ) : f.type === 'checkbox' ? (
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--fg)', paddingTop: 4 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-body)', color: 'var(--text-primary)', paddingTop: 4 }}>
           <input id={fieldId} name={f.key} type="checkbox" checked={value === 'true'} onChange={(e) => set(f.key, e.target.checked ? 'true' : 'false')} />
           启用
         </label>
@@ -607,19 +607,19 @@ function FormField(props: {
             {f.capture && (
               <>
                 <input id={`${fieldId}-camera`} type="file" accept="image/*" capture={f.capture} onChange={(e) => void readFiles(f.key, e.currentTarget.files)} style={{ display: 'none' }} />
-                <label className="zc-device-action" htmlFor={`${fieldId}-camera`} title="使用相机拍照" style={{ flex: '0 0 auto', height: 38, display: 'inline-flex', alignItems: 'center', padding: '0 12px', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--fg-muted)', background: 'var(--surface-2)', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>拍照</label>
+                <label className="zc-device-action" htmlFor={`${fieldId}-camera`} title="使用相机拍照" style={{ flex: '0 0 auto', height: 38, display: 'inline-flex', alignItems: 'center', padding: '0 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--text-secondary)', background: 'var(--surface-2)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>拍照</label>
               </>
             )}
           </div>
           {fileRows.length > 0 && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {fileRows.map((row, idx) => (
-                <div key={`${row.fileName}:${idx}`} style={{ width: 82, fontSize: 10, color: 'var(--fg-subtle)', position: 'relative' }}>
-                  <AttachmentPreview attachment={row} alt={row.fileName} style={{ width: 74, height: 54, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
+                <div key={`${row.fileName}:${idx}`} style={{ width: 82, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', position: 'relative' }}>
+                  <AttachmentPreview attachment={row} alt={row.fileName} style={{ width: 74, height: 54, objectFit: 'cover', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)' }} />
                   <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 3 }}>{row.fileName}</div>
                   {row.sizeBytes && <div>{row.sizeBytes > 1024 * 1024 ? `${(row.sizeBytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(row.sizeBytes / 1024))} KB`}</div>}
                   <AttachmentSaveButton attachment={row} />
-                  <button type="button" title="移除附件" aria-label={`移除 ${row.fileName}`} onClick={() => setFileRows(f.key, fileRows.filter((_, rowIndex) => rowIndex !== idx))} style={{ position: 'absolute', top: -5, right: 2, width: 20, height: 20, borderRadius: '50%', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--negative)', cursor: 'pointer', lineHeight: 1 }}>×</button>
+                  <button type="button" title="移除附件" aria-label={`移除 ${row.fileName}`} onClick={() => setFileRows(f.key, fileRows.filter((_, rowIndex) => rowIndex !== idx))} style={{ position: 'absolute', top: -5, right: 2, width: 20, height: 20, borderRadius: 'var(--r-round)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--negative)', cursor: 'pointer', lineHeight: 1 }}>×</button>
                 </div>
               ))}
             </div>
@@ -640,13 +640,13 @@ function FormField(props: {
             style={{ flex: 1, minWidth: 0 }}
           />
           {f.deviceAction && (f.deviceAction !== 'scan-barcode' || barcodeScannerAvailable()) && (
-            <button type="button" title={f.deviceAction === 'scan-barcode' ? '扫描条形码或二维码' : '读取当前位置'} disabled={deviceBusy} onClick={() => void runDeviceAction(f)} style={{ flex: '0 0 auto', height: 38, padding: '0 12px', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--fg-muted)', background: 'var(--surface-2)', fontSize: 12, fontWeight: 800, cursor: deviceBusy ? 'wait' : 'pointer' }}>
+            <button type="button" title={f.deviceAction === 'scan-barcode' ? '扫描条形码或二维码' : '读取当前位置'} disabled={deviceBusy} onClick={() => void runDeviceAction(f)} style={{ flex: '0 0 auto', height: 38, padding: '0 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--text-secondary)', background: 'var(--surface-2)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', cursor: deviceBusy ? 'wait' : 'pointer' }}>
               {deviceBusy ? '读取中…' : f.deviceAction === 'scan-barcode' ? '扫码' : '定位'}
             </button>
           )}
         </div>
       )}
-      {error && <div style={{ color: 'var(--negative)', fontSize: 11, fontWeight: 700, marginTop: 4 }}>{error}</div>}
+      {error && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)', marginTop: 4 }}>{error}</div>}
     </div>
   );
 }
@@ -670,11 +670,11 @@ function AllocationEditor(props: {
     else delete next[key];
     props.onChange(JSON.stringify(next));
   };
-  if (!props.options.length) return <div style={{ color: 'var(--fg-subtle)', fontSize: 12 }}>先选择原支出</div>;
+  if (!props.options.length) return <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>先选择原支出</div>;
   return (
     <div id={props.fieldId} style={{ border: '1px solid var(--border)', maxHeight: 210, overflowY: 'auto', background: 'var(--surface)' }}>
       {props.options.map((option) => (
-        <label key={option.value} className="zc-refund-option-row" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 150px', gap: 10, alignItems: 'center', padding: '8px 10px', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+        <label key={option.value} className="zc-refund-option-row" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 150px', gap: 10, alignItems: 'center', padding: '8px 10px', borderBottom: '1px solid var(--border)', fontSize: 'var(--fs-caption)' }}>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{option.label}</span>
           <input className="zc-input" inputMode="decimal" value={values[option.value] ?? ''} onChange={(event) => update(option.value, event.target.value)} placeholder="退款金额" />
         </label>
@@ -719,7 +719,7 @@ function AttachmentSaveButton({ attachment }: { attachment: AttachmentDraftData 
       title={error || `保存 ${attachment.fileName}`}
       onClick={() => void save()}
       disabled={busy}
-      style={{ marginTop: 3, border: 0, padding: 0, background: 'transparent', color: error ? 'var(--negative)' : 'var(--accent)', fontSize: 10, fontWeight: 800, cursor: busy ? 'wait' : 'pointer' }}
+      style={{ marginTop: 3, border: 0, padding: 0, background: 'transparent', color: error ? 'var(--negative)' : 'var(--accent)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'wait' : 'pointer' }}
     >
       {busy ? '取回中…' : error ? '重试' : '保存'}
     </button>
@@ -786,13 +786,13 @@ export function CategoryPicker(props: {
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {selected ? (
             <>
-              <span style={{ color: 'var(--fg-subtle)' }}>{selectedParts?.parent}</span>
-              <span style={{ color: 'var(--fg-subtle)', margin: '0 6px' }}>›</span>
+              <span style={{ color: 'var(--text-tertiary)' }}>{selectedParts?.parent}</span>
+              <span style={{ color: 'var(--text-tertiary)', margin: '0 6px' }}>›</span>
               <b>{selectedParts?.child}</b>
             </>
           ) : '选择分类'}
         </span>
-        <span style={{ color: 'var(--fg-subtle)', fontSize: 12 }}>{open ? '▲' : '▼'}</span>
+        <span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>{open ? '▲' : '▼'}</span>
       </button>
 
       {open && (
@@ -805,7 +805,7 @@ export function CategoryPicker(props: {
             right: 0,
             zIndex: 80,
             border: '1px solid var(--border)',
-            borderRadius: 12,
+            borderRadius: 'var(--r-md)',
             background: 'var(--surface)',
             boxShadow: '0 16px 46px rgba(0,0,0,.18)',
           }}
@@ -826,7 +826,7 @@ export function CategoryPicker(props: {
                 onClick={() => {
                   setShowHidden((current) => !current);
                 }}
-                style={{ border: '1px solid var(--border)', borderRadius: 9, padding: '0 11px', background: showHidden ? 'var(--accent-soft)' : 'var(--surface)', color: showHidden ? 'var(--accent)' : 'var(--fg-muted)', fontSize: 12, fontWeight: 850, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '0 11px', background: showHidden ? 'var(--accent-soft)' : 'var(--surface)', color: showHidden ? 'var(--accent)' : 'var(--fg-muted)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', whiteSpace: 'nowrap' }}
               >
                 {showHidden ? '只看高频' : `显示隐藏 (${hiddenCount})`}
               </button>
@@ -857,7 +857,7 @@ export function CategoryPicker(props: {
                 </button>
               ))}
               {groups.length === 0 && (
-                <div style={{ padding: 14, fontSize: 12, color: 'var(--fg-subtle)' }}>没有匹配分类</div>
+                <div style={{ padding: 14, fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>没有匹配分类</div>
               )}
             </div>
             <div className="zc-category-picker-list" style={{ background: 'var(--surface)' }}>
@@ -895,15 +895,15 @@ function categoryDot(index: number) {
   return {
     width: 24,
     height: 24,
-    borderRadius: 8,
+    borderRadius: 'var(--r-sm)',
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
     flex: '0 0 auto',
     color: '#fff',
     background: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
-    fontSize: 12,
-    fontWeight: 900,
+    fontSize: 'var(--fs-caption)',
+    fontWeight: 'var(--fw-bold)',
   } as const;
 }
 
@@ -919,8 +919,8 @@ function categoryParentButton(active: boolean) {
     padding: '0 12px',
     background: active ? 'var(--accent-soft)' : 'transparent',
     color: active ? 'var(--accent)' : 'var(--fg-muted)',
-    fontSize: 13,
-    fontWeight: 850,
+    fontSize: 'var(--fs-body)',
+    fontWeight: 'var(--fw-bold)',
     cursor: 'pointer',
     textAlign: 'left',
   } as const;
@@ -929,12 +929,12 @@ function categoryParentButton(active: boolean) {
 function categoryHiddenBadge() {
   return {
     border: '1px solid var(--border)',
-    borderRadius: 999,
+    borderRadius: 'var(--r-pill)',
     padding: '2px 6px',
-    color: 'var(--fg-subtle)',
+    color: 'var(--text-tertiary)',
     background: 'var(--surface-2)',
-    fontSize: 10,
-    fontWeight: 900,
+    fontSize: 'var(--fs-meta)',
+    fontWeight: 'var(--fw-bold)',
     flex: '0 0 auto',
   } as const;
 }
@@ -951,8 +951,8 @@ function categoryChildButton(active: boolean) {
     padding: '0 14px',
     background: active ? 'var(--accent-soft)' : 'transparent',
     color: active ? 'var(--accent)' : 'var(--fg)',
-    fontSize: 13,
-    fontWeight: active ? 900 : 750,
+    fontSize: 'var(--fs-body)',
+    fontWeight: 'var(--fw-bold)',
     cursor: 'pointer',
     textAlign: 'left',
   } as const;

@@ -56,7 +56,7 @@ import {
 } from '../forms.js';
 import { buildFixed, type FixedCardVM, type FixedTimelineVM } from '../selectors/fixed.js';
 import { amount as fmtAmount, money } from '../format.js';
-import { card, pillBtn } from '../ui/styles.js';
+import { btnPrimary, card, linkAccent, metaText, pillBtn } from '../ui/styles.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
@@ -289,7 +289,7 @@ export function Fixed() {
             <select aria-label="物品状态" className="zc-select" value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="all">全部状态</option><option value="active">在用 / 闲置</option><option value="terminal">已售 / 报废 / 清退</option></select>
             <input aria-label="搜索物品" className="zc-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、品牌、型号或条形码" />
             <select aria-label="物品分类" className="zc-select" value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="all">全部分类</option>{parents.map((parent) => <optgroup key={parent.id} label={parent.name}>{snap.fixedAssetCategories.filter((child) => child.parentId === parent.id && child.isActive).map((child) => <option key={child.id} value={child.id}>{child.name}</option>)}</optgroup>)}</select>
-            <div style={{ alignSelf: 'center', textAlign: 'right', color: 'var(--fg-subtle)', fontSize: 12 }}>找到 {cards.length} 件</div>
+            <div style={{ alignSelf: 'center', textAlign: 'right', color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>找到 {cards.length} 件</div>
           </div>
           <Overview cards={cards} onEdit={setAssetModal} onEvent={(assetId) => setEventModal({ assetId })} onMetric={(assetId, metric) => setMetricModal({ assetId, metric })} onUsage={(metric) => setUsageModal({ metric })} onConsumable={(assetId) => setConsumableModal({ assetId })} onGoal={(assetId, goal) => setGoalModal({ assetId, goal })} onTimeline={openTimeline} />
         </>
@@ -303,11 +303,11 @@ export function Fixed() {
           dateOf={(row) => row.entry.date}
           keyOf={(row) => `${row.item.id}:${row.entry.kind}:${row.entry.id}`}
           renderCompact={(row) => <>{row.entry.date.slice(8)} · <b>{row.item.name}</b> · {row.entry.label}</>}
-          renderEntry={(row) => <div className="zc-fixed-timeline-entry" style={timelineRow}><span style={{ width: 9, height: 9, background: row.entry.color, borderRadius: '50%' }} /><b style={{ width: 140, textAlign: 'left' }}>{row.item.name}</b><b>{row.entry.label}</b><span style={{ flex: 1, textAlign: 'left' }}>{row.entry.detail}</span>{row.entry.amount && <b>{row.entry.amount}</b>}</div>}
+          renderEntry={(row) => <div className="zc-fixed-timeline-entry" style={timelineRow}><span style={{ width: 9, height: 9, background: row.entry.color, borderRadius: 'var(--r-round)' }} /><b style={{ width: 140, textAlign: 'left' }}>{row.item.name}</b><b>{row.entry.label}</b><span style={{ flex: 1, textAlign: 'left' }}>{row.entry.detail}</span>{row.entry.amount && <b>{row.entry.amount}</b>}</div>}
           renderSummary={(rows) => {
             const events = rows.filter((row) => row.entry.kind === 'event').length;
             const usage = rows.filter((row) => row.entry.kind === 'usage').length;
-            return <span style={{ fontSize: 10, color: 'var(--fg-subtle)' }}>事件 {events} · 用量 {usage}</span>;
+            return <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>事件 {events} · 用量 {usage}</span>;
           }}
           onOpen={(row) => openTimeline(row.item, row.entry)}
           emptyText="该时间范围内没有物品购买、使用或清退记录。"
@@ -411,8 +411,8 @@ function FixedEmptyState({
 }) {
   return (
     <section style={{ ...card, padding: 22 }}>
-      <div style={{ fontSize: 17, fontWeight: 900 }}>记录第一件真实物品</div>
-      <div style={{ marginTop: 7, color: 'var(--fg-muted)', fontSize: 13, lineHeight: 1.7 }}>
+      <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>记录第一件真实物品</div>
+      <div style={{ marginTop: 7, color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.7 }}>
         选择常用类型可直接打开现有新增表单并预选分类。你仍需填写真实名称，取消表单不会留下任何物品或资金记录。
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginTop: 16 }}>
@@ -425,11 +425,11 @@ function FixedEmptyState({
               aria-label={`新增${preset.label}物品`}
               disabled={!categoryId}
               onClick={() => categoryId && onSelect(categoryId)}
-              style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--fg)', padding: '15px 14px', textAlign: 'left', cursor: categoryId ? 'pointer' : 'not-allowed', opacity: categoryId ? 1 : 0.55 }}
+              style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-primary)', padding: '15px 14px', textAlign: 'left', cursor: categoryId ? 'pointer' : 'not-allowed', opacity: categoryId ? 1 : 0.55 }}
             >
-              <div style={{ fontSize: 16, fontWeight: 900 }}>{preset.label}</div>
-              <div style={{ marginTop: 5, fontSize: 11, color: 'var(--fg-muted)', lineHeight: 1.5 }}>{categoryId ? preset.hint : '该分类已被归档'}</div>
-              <div style={{ marginTop: 9, fontSize: 10, color: 'var(--accent)', fontWeight: 850 }}>预选分类 · 填写名称</div>
+              <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{preset.label}</div>
+              <div style={{ marginTop: 5, fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)', lineHeight: 1.5 }}>{categoryId ? preset.hint : '该分类已被归档'}</div>
+              <div style={{ marginTop: 9, fontSize: 'var(--fs-meta)', color: 'var(--accent)', fontWeight: 'var(--fw-bold)' }}>预选分类 · 填写名称</div>
             </button>
           );
         })}
@@ -450,8 +450,8 @@ function Overview(props: {
 }) {
   const groups = new Map<string, FixedCardVM[]>();
   for (const item of props.cards) groups.set(item.categoryParent, [...(groups.get(item.categoryParent) ?? []), item]);
-  if (!props.cards.length) return <div style={{ ...card, color: 'var(--fg-subtle)', fontSize: 13 }}>该筛选下暂无物品资产</div>;
-  return <>{[...groups.entries()].map(([group, items]) => <section key={group} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}><div style={{ fontSize: 13, fontWeight: 900, color: 'var(--fg-muted)' }}>{group}<span style={{ marginLeft: 8, color: 'var(--fg-subtle)' }}>{items.length}</span></div><div className="zc-fixed-card-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>{items.map((item) => <ItemCard key={item.id} item={item} {...props} />)}</div></section>)}</>;
+  if (!props.cards.length) return <div style={{ ...card, color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>该筛选下暂无物品资产</div>;
+  return <>{[...groups.entries()].map(([group, items]) => <section key={group} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}><div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>{group}<span style={{ marginLeft: 8, color: 'var(--text-tertiary)' }}>{items.length}</span></div><div className="zc-fixed-card-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>{items.map((item) => <ItemCard key={item.id} item={item} {...props} />)}</div></section>)}</>;
 }
 
 function ItemCard({ item, onEdit, onEvent, onMetric, onUsage, onConsumable, onGoal, onTimeline }: Omit<Parameters<typeof Overview>[0], 'cards'> & { item: FixedCardVM }) {
@@ -460,31 +460,31 @@ function ItemCard({ item, onEdit, onEvent, onMetric, onUsage, onConsumable, onGo
     <div className={`zc-fixed-card-header${item.imageAttachment ? ' has-image' : ''}`} style={{ display: 'grid', gridTemplateColumns: item.imageAttachment ? '92px 1fr auto' : '1fr auto', gap: 14, alignItems: 'start' }}>
       {item.imageAttachment && <AttachmentPreview className="zc-fixed-card-image" attachment={item.imageAttachment} alt={item.name} style={{ width: 92, height: 92, objectFit: 'cover', border: '1px solid var(--border)' }} />}
       <div style={{ minWidth: 0 }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><b style={{ fontSize: 17 }}>{item.name}</b><span style={statusBadge(item.sold)}>{item.status}</span></div>
-        <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 5 }}>{item.categoryParent} / {item.category}{item.raw.brand ? ` · ${item.raw.brand}` : ''}{item.raw.model ? ` ${item.raw.model}` : ''}</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><b style={{ fontSize: 'var(--fs-title)' }}>{item.name}</b><span style={statusBadge(item.sold)}>{item.status}</span></div>
+        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 5 }}>{item.categoryParent} / {item.category}{item.raw.brand ? ` · ${item.raw.brand}` : ''}{item.raw.model ? ` ${item.raw.model}` : ''}</div>
         <div style={{ display: 'flex', gap: 7, marginTop: 9, flexWrap: 'wrap' }}><span style={infoBadge(item.warrantyTone)}>{item.warrantyLabel}</span>{item.invoiceCount > 0 && <span style={infoBadge('muted')}>发票 {item.invoiceCount}</span>}{item.attachmentCount > 0 && <span style={infoBadge('muted')}>附件 {item.attachmentCount}</span>}</div>
       </div>
       <button onClick={() => onEdit(item.raw)} style={linkButton}>编辑</button>
     </div>
     <div className="zc-fixed-card-metrics" style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr 1fr', gap: 18, marginTop: 16, padding: '14px 0', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
-      <div><div style={smallLabel}>净使用成本</div><div style={{ fontSize: 25, fontWeight: 900, marginTop: 4 }}>{cash(item.net)}</div><div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 3 }}>累计投入 {cash(item.invested)} · 残值 {cash(item.residual)}</div></div>
-      <div><div style={smallLabel}>按天成本</div><div style={{ fontSize: 20, fontWeight: 850, marginTop: 7 }}>{cash(item.perDay)}<small style={{ fontSize: 11, color: 'var(--fg-subtle)' }}> / 天</small></div><div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 5 }}>{item.days} 天</div></div>
-      <div><div style={smallLabel}>主使用指标</div>{item.metrics.length ? <><div style={{ fontSize: 20, fontWeight: 850, marginTop: 7 }}>{fmtAmount(item.metrics.find((row) => row.raw.isPrimary)?.total ?? item.metrics[0]!.total, 2)}<small style={{ fontSize: 11, color: 'var(--fg-subtle)' }}> {item.metrics.find((row) => row.raw.isPrimary)?.unitLabel ?? item.metrics[0]!.unitLabel}</small></div><div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 5 }}>{cash(item.metrics.find((row) => row.raw.isPrimary)?.perUnit ?? item.metrics[0]!.perUnit)} / 单位</div></> : <button onClick={() => onMetric(item.id)} style={{ ...linkButton, marginTop: 12 }}>添加指标</button>}</div>
+      <div><div style={smallLabel}>净使用成本</div><div style={{ fontSize: 'var(--fs-display)', fontWeight: 'var(--fw-bold)', marginTop: 4 }}>{cash(item.net)}</div><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>累计投入 {cash(item.invested)} · 残值 {cash(item.residual)}</div></div>
+      <div><div style={smallLabel}>按天成本</div><div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)', marginTop: 7 }}>{cash(item.perDay)}<small style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}> / 天</small></div><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 5 }}>{item.days} 天</div></div>
+      <div><div style={smallLabel}>主使用指标</div>{item.metrics.length ? <><div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)', marginTop: 7 }}>{fmtAmount(item.metrics.find((row) => row.raw.isPrimary)?.total ?? item.metrics[0]!.total, 2)}<small style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}> {item.metrics.find((row) => row.raw.isPrimary)?.unitLabel ?? item.metrics[0]!.unitLabel}</small></div><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 5 }}>{cash(item.metrics.find((row) => row.raw.isPrimary)?.perUnit ?? item.metrics[0]!.perUnit)} / 单位</div></> : <button onClick={() => onMetric(item.id)} style={{ ...linkButton, marginTop: 12 }}>添加指标</button>}</div>
     </div>
-    {item.metrics.length > 0 && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>{item.metrics.map((metric) => <div key={metric.raw.id} style={{ display: 'flex', alignItems: 'stretch' }}><button onClick={() => onUsage(metric.raw)} style={metricButton}><b>{metric.raw.name}</b><span>{fmtAmount(metric.total, 2)} {metric.unitLabel}</span><small>{cash(metric.perUnit)} / {metric.unitLabel}</small></button><button title="编辑使用指标" aria-label={`编辑 ${metric.raw.name}`} onClick={() => onMetric(item.id, metric.raw)} style={{ border: '1px solid var(--border)', borderLeft: 'none', background: 'var(--surface)', color: 'var(--fg-subtle)', cursor: 'pointer', width: 30 }}>⋮</button></div>)}</div>}
-    {item.goals.length > 0 && <div style={{ marginTop: 14 }}>{item.goals.map((goal) => <div key={goal.raw.id} style={{ marginTop: 9 }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11 }}><button onClick={() => onGoal(item.id, goal.raw)} style={{ ...linkButton, color: 'var(--fg)' }}>{goal.raw.name}</button><span>{fmtAmount(goal.currentUsage, 1)} / {fmtAmount(goal.targetUsage, 1)} {goal.unitLabel} · 当前 {cash(goal.currentUnitCost)} / {goal.unitLabel}</span></div><div style={{ height: 7, background: 'var(--surface-2)', border: '1px solid var(--border)', marginTop: 5 }}><div style={{ width: `${Math.max(0, Math.min(100, goal.progress * 100))}%`, height: '100%', background: goal.achieved ? 'var(--positive)' : 'var(--accent)' }} /></div></div>)}</div>}
-    {item.consumables.some((row) => row.raw.status === 'active') && <div style={{ marginTop: 13, fontSize: 11, color: 'var(--fg-muted)' }}>在用耗材：{item.consumables.filter((row) => row.raw.status === 'active').map((row) => `${row.raw.name}${row.remaining !== undefined ? `（剩 ${fmtAmount(row.remaining, 1)} ${row.unitLabel ?? ''}）` : ''}`).join(' · ')}</div>}
+    {item.metrics.length > 0 && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>{item.metrics.map((metric) => <div key={metric.raw.id} style={{ display: 'flex', alignItems: 'stretch' }}><button onClick={() => onUsage(metric.raw)} style={metricButton}><b>{metric.raw.name}</b><span>{fmtAmount(metric.total, 2)} {metric.unitLabel}</span><small>{cash(metric.perUnit)} / {metric.unitLabel}</small></button><button title="编辑使用指标" aria-label={`编辑 ${metric.raw.name}`} onClick={() => onMetric(item.id, metric.raw)} style={{ border: '1px solid var(--border)', borderLeft: 'none', background: 'var(--surface)', color: 'var(--text-tertiary)', cursor: 'pointer', width: 30 }}>⋮</button></div>)}</div>}
+    {item.goals.length > 0 && <div style={{ marginTop: 14 }}>{item.goals.map((goal) => <div key={goal.raw.id} style={{ marginTop: 9 }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 'var(--fs-meta)' }}><button onClick={() => onGoal(item.id, goal.raw)} style={{ ...linkButton, color: 'var(--text-primary)' }}>{goal.raw.name}</button><span>{fmtAmount(goal.currentUsage, 1)} / {fmtAmount(goal.targetUsage, 1)} {goal.unitLabel} · 当前 {cash(goal.currentUnitCost)} / {goal.unitLabel}</span></div><div style={{ height: 7, background: 'var(--surface-2)', border: '1px solid var(--border)', marginTop: 5 }}><div style={{ width: `${Math.max(0, Math.min(100, goal.progress * 100))}%`, height: '100%', background: goal.achieved ? 'var(--positive)' : 'var(--accent)' }} /></div></div>)}</div>}
+    {item.consumables.some((row) => row.raw.status === 'active') && <div style={{ marginTop: 13, fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)' }}>在用耗材：{item.consumables.filter((row) => row.raw.status === 'active').map((row) => `${row.raw.name}${row.remaining !== undefined ? `（剩 ${fmtAmount(row.remaining, 1)} ${row.unitLabel ?? ''}）` : ''}`).join(' · ')}</div>}
     <div style={{ display: 'flex', gap: 14, marginTop: 14, flexWrap: 'wrap' }}><button onClick={() => onEvent(item.id)} style={linkButton}>+ 生命周期事件</button><button onClick={() => onMetric(item.id)} style={linkButton}>+ 使用指标</button><button onClick={() => onConsumable(item.id)} style={linkButton}>+ 耗材</button><button onClick={() => onGoal(item.id)} style={linkButton}>+ 成本目标</button></div>
-    <details style={{ marginTop: 13 }}><summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 850, color: 'var(--fg-muted)' }}>完整时间线 ({item.timeline.length})</summary><div style={{ marginTop: 8 }}>{item.timeline.slice(0, 20).map((entry) => <button className="zc-fixed-timeline-entry" key={`${entry.kind}:${entry.id}`} onClick={() => onTimeline(item, entry)} style={timelineRow}><span style={{ width: 8, height: 8, background: entry.color, borderRadius: '50%' }} /><b>{entry.label}</b><span>{entry.date}</span><span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.detail}</span>{entry.amount && <b>{entry.amount}</b>}</button>)}</div></details>
+    <details style={{ marginTop: 13 }}><summary style={{ cursor: 'pointer', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>完整时间线 ({item.timeline.length})</summary><div style={{ marginTop: 8 }}>{item.timeline.slice(0, 20).map((entry) => <button className="zc-fixed-timeline-entry" key={`${entry.kind}:${entry.id}`} onClick={() => onTimeline(item, entry)} style={timelineRow}><span style={{ width: 8, height: 8, background: entry.color, borderRadius: 'var(--r-round)' }} /><b>{entry.label}</b><span>{entry.date}</span><span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.detail}</span>{entry.amount && <b>{entry.amount}</b>}</button>)}</div></details>
   </article>;
 }
 
-function Kpi({ label, value, tone = 'var(--fg)' }: { label: string; value: string; tone?: string }) { return <div style={card}><div style={smallLabel}>{label}</div><div style={{ marginTop: 7, fontSize: 24, fontWeight: 900, color: tone }}>{value}</div></div>; }
+function Kpi({ label, value, tone = 'var(--fg)' }: { label: string; value: string; tone?: string }) { return <div style={card}><div style={smallLabel}>{label}</div><div style={{ marginTop: 7, fontSize: 'var(--fs-display)', fontWeight: 'var(--fw-bold)', color: tone }}>{value}</div></div>; }
 
-const primaryButton = { padding: '9px 15px', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 850, cursor: 'pointer' } as const;
-const linkButton = { border: 'none', background: 'transparent', color: 'var(--accent)', fontSize: 12, fontWeight: 850, cursor: 'pointer', padding: 0 } as const;
-const smallLabel = { fontSize: 11, color: 'var(--fg-subtle)', fontWeight: 750 } as const;
-const metricButton = { minWidth: 130, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--fg)', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start', cursor: 'pointer', fontSize: 11 } as const;
-const timelineRow = { width: '100%', border: 'none', borderBottom: '1px solid var(--border)', background: 'transparent', color: 'var(--fg-muted)', display: 'flex', alignItems: 'center', gap: 9, padding: '8px 0', fontSize: 11, cursor: 'pointer' } as const;
-const statusBadge = (terminal: boolean) => ({ padding: '3px 7px', border: '1px solid var(--border)', background: terminal ? 'var(--surface-2)' : 'rgba(63,143,107,.12)', color: terminal ? 'var(--fg-subtle)' : 'var(--positive)', fontSize: 10, fontWeight: 850 } as const);
-const infoBadge = (tone: FixedCardVM['warrantyTone']) => ({ padding: '3px 7px', border: '1px solid var(--border)', background: tone === 'positive' ? 'rgba(63,143,107,.12)' : tone === 'warning' ? 'rgba(194,96,74,.12)' : 'var(--surface-2)', color: tone === 'positive' ? 'var(--positive)' : tone === 'warning' ? 'var(--negative)' : 'var(--fg-subtle)', fontSize: 10, fontWeight: 800 } as const);
+const primaryButton = btnPrimary;
+const linkButton = linkAccent;
+const smallLabel = metaText;
+const metricButton = { minWidth: 130, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-primary)', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start', cursor: 'pointer', fontSize: 'var(--fs-meta)' } as const;
+const timelineRow = { width: '100%', border: 'none', borderBottom: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 9, padding: '8px 0', fontSize: 'var(--fs-meta)', cursor: 'pointer' } as const;
+const statusBadge = (terminal: boolean) => ({ padding: '3px 7px', border: '1px solid var(--border)', background: terminal ? 'var(--surface-2)' : 'rgba(63,143,107,.12)', color: terminal ? 'var(--fg-subtle)' : 'var(--positive)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)' } as const);
+const infoBadge = (tone: FixedCardVM['warrantyTone']) => ({ padding: '3px 7px', border: '1px solid var(--border)', background: tone === 'positive' ? 'rgba(63,143,107,.12)' : tone === 'warning' ? 'rgba(194,96,74,.12)' : 'var(--surface-2)', color: tone === 'positive' ? 'var(--positive)' : tone === 'warning' ? 'var(--negative)' : 'var(--fg-subtle)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)' } as const);

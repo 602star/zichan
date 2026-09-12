@@ -1,26 +1,18 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { DialogShell } from './DialogShell.js';
+import { btnOutline } from './styles.js';
 
 const panel = {
   background: 'var(--surface)',
   border: '1px solid var(--border)',
-  borderRadius: 8,
+  borderRadius: 'var(--r-sm)',
   padding: 22,
   width: 460,
   maxWidth: 'calc(100vw - 32px)',
   boxShadow: '0 22px 70px rgba(15, 23, 42, .24)',
 } as const;
 
-const button = {
-  padding: '9px 16px',
-  borderRadius: 10,
-  border: '1px solid var(--border)',
-  background: 'var(--surface)',
-  color: 'var(--fg-muted)',
-  fontWeight: 800,
-  fontSize: 13,
-  cursor: 'pointer',
-} as const;
+const button = btnOutline;
 
 export function confirmDialogErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message;
@@ -92,10 +84,10 @@ export function ConfirmDialog(props: {
       panelClassName="zc-confirm-panel"
       panelStyle={panel}
     >
-        <div id={titleId} style={{ fontSize: 17, fontWeight: 900, marginBottom: 10 }}>{props.title}</div>
-        <div id={descriptionId} style={{ fontSize: 13, color: 'var(--fg-muted)', lineHeight: 1.65 }}>{props.children}</div>
+        <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 10 }}>{props.title}</div>
+        <div id={descriptionId} style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', lineHeight: 1.65 }}>{props.children}</div>
         {actionError && (
-          <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 12, fontWeight: 750, lineHeight: 1.55, overflowWrap: 'anywhere' }}>
+          <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', lineHeight: 1.55, overflowWrap: 'anywhere' }}>
             操作失败：{actionError}
           </div>
         )}

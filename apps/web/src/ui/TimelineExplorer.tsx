@@ -1,6 +1,6 @@
 import { addDays, addMonths, localToday } from '@zichan/core';
 import type { CSSProperties, ReactNode } from 'react';
-import { card } from './styles.js';
+import { card, iconBtn } from './styles.js';
 import type { TimelineViewMode } from './DateRangeBar.js';
 
 export function TimelineExplorer<T>(props: {
@@ -102,11 +102,11 @@ export function TimelineExplorer<T>(props: {
     <div style={stack}>
       {[...groups.entries()].map(([date, rows]) => (
         <section key={date}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}><b style={{ fontSize: 12, color: 'var(--fg-muted)' }}>{date}</b>{renderSummary && <span>{renderSummary(rows)}</span>}</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}><b style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>{date}</b>{renderSummary && <span>{renderSummary(rows)}</span>}</div>
           <EntryList rows={rows} keyOf={keyOf} renderEntry={renderEntry} onOpen={onOpen} emptyText={emptyText} />
         </section>
       ))}
-      {groups.size === 0 && <div style={{ ...card, color: 'var(--fg-subtle)', fontSize: 12 }}>{emptyText}</div>}
+      {groups.size === 0 && <div style={{ ...card, color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>{emptyText}</div>}
     </div>
   );
 }
@@ -114,7 +114,7 @@ export function TimelineExplorer<T>(props: {
 function Navigator(props: { label: string; onPrevious: () => void; onNext: () => void; children: ReactNode }) {
   return (
     <div className="zc-timeline-navigator" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <span style={{ color: 'var(--fg-subtle)', fontSize: 11, fontWeight: 800 }}>{props.label}</span>
+      <span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)' }}>{props.label}</span>
       <button type="button" aria-label={`上一${props.label}`} title={`上一${props.label}`} onClick={props.onPrevious} style={iconButton}>‹</button>
       {props.children}
       <button type="button" aria-label={`下一${props.label}`} title={`下一${props.label}`} onClick={props.onNext} style={iconButton}>›</button>
@@ -123,7 +123,7 @@ function Navigator(props: { label: string; onPrevious: () => void; onNext: () =>
 }
 
 function EntryList<T>(props: { rows: T[]; keyOf: (item: T) => string; renderEntry: (item: T) => ReactNode; onOpen?: (item: T) => void; emptyText: string }) {
-  if (!props.rows.length) return <div style={{ ...card, color: 'var(--fg-subtle)', fontSize: 12 }}>{props.emptyText}</div>;
+  if (!props.rows.length) return <div style={{ ...card, color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>{props.emptyText}</div>;
   return (
     <div style={{ ...card, paddingTop: 4, paddingBottom: 4 }}>
       {props.rows.map((item) => (
@@ -143,13 +143,13 @@ function EntryList<T>(props: { rows: T[]; keyOf: (item: T) => string; renderEntr
 }
 
 const stack: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12 };
-const iconButton: CSSProperties = { width: 34, height: 34, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg-muted)', fontSize: 20, lineHeight: 1, cursor: 'pointer' };
-const periodCard: CSSProperties = { ...card, minHeight: 156, textAlign: 'left', color: 'var(--fg)', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 7 };
-const periodHead: CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 8, color: 'var(--fg-subtle)', fontSize: 11 };
+const iconButton = iconBtn;
+const periodCard: CSSProperties = { ...card, minHeight: 156, textAlign: 'left', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 7 };
+const periodHead: CSSProperties = { display: 'flex', justifyContent: 'space-between', gap: 8, color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' };
 const summarySlot: CSSProperties = { display: 'block', minHeight: 18 };
 const compactList: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 };
-const compactRow: CSSProperties = { display: 'block', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 10, color: 'var(--fg-muted)' };
-const emptySmall: CSSProperties = { fontSize: 10, color: 'var(--fg-subtle)' };
-const weekday: CSSProperties = { padding: 8, textAlign: 'center', color: 'var(--fg-subtle)', fontSize: 11, borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' };
+const compactRow: CSSProperties = { display: 'block', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)' };
+const emptySmall: CSSProperties = { fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' };
+const weekday: CSSProperties = { padding: 8, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' };
 const calendarCell: CSSProperties = { minHeight: 118, border: 'none', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', padding: 8, background: 'var(--surface)' };
-const countText: CSSProperties = { color: 'var(--fg-subtle)', fontSize: 12, fontWeight: 750 };
+const countText: CSSProperties = { color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' };

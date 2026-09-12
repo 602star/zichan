@@ -165,7 +165,7 @@ function transactionTable(snap: Snapshot, options: TransactionReportOptions = {}
       { v: categoryLabel(category ?? 'other_expense', snap.categories), bold: true, data: { category: category ?? 'other_expense', type: row.type } },
       { v: amountText, color: row.type === 'income' ? 'var(--positive)' : 'var(--negative)', data: { reportAmount: total.toString() } },
       { v: String(row.count) },
-      { v: weight ? `${num(weight, 1)}%` : '—', color: 'var(--fg-muted)' },
+      { v: weight ? `${num(weight, 1)}%` : '—', color: 'var(--text-secondary)' },
     ];
     return { total, cells };
   }).sort((a, b) => b.total.comparedTo(a.total));
@@ -225,7 +225,7 @@ export function transactionTableFromAggregates(
       { v: categoryLabel(category ?? 'other_expense', snap.categories), bold: true, data: { category: category ?? 'other_expense', type: row.type } },
       { v: amountText, color: row.type === 'income' ? 'var(--positive)' : 'var(--negative)', data: { reportAmount: row.total.toString() } },
       { v: String(row.count) },
-      { v: weight ? `${num(weight, 1)}%` : '—', color: 'var(--fg-muted)' },
+      { v: weight ? `${num(weight, 1)}%` : '—', color: 'var(--text-secondary)' },
     ];
     return { total: row.total, cells };
   }).sort((left, right) => right.total.comparedTo(left.total));
@@ -350,8 +350,8 @@ function chainTable(snap: Snapshot, options: ReportOptions): Table {
       return [
         { v: c.chain.title ?? c.chain.type, bold: true },
         { v: report.formatNative(firstAmounts.sourceDebit, first.fromAssetId) },
-        { v: path, color: 'var(--fg-muted)' },
-        { v: rates, color: 'var(--fg-muted)' },
+        { v: path, color: 'var(--text-secondary)' },
+        { v: rates, color: 'var(--text-secondary)' },
         { v: report.formatNative(t.totalFeesInBase, c.chain.baseCurrencyAssetId), color: 'var(--negative)' },
         { v: isSell ? report.formatNative(t.totalBaseProceeds, c.chain.baseCurrencyAssetId) : report.formatNative(t.finalAmount, t.finalAssetId), bold: true },
         { v: bookSummary },
@@ -409,13 +409,13 @@ function seasonTable(snap: Snapshot, options: ReportOptions): Table {
     const game = snap.games.find((row) => row.id === s.gameId);
     rows.push([
       { v: s.name, bold: true },
-      { v: game?.name ?? '—', color: 'var(--fg-muted)' },
+      { v: game?.name ?? '—', color: 'var(--text-secondary)' },
       { v: report.formatReport(buy) },
       { v: report.formatReport(sell) },
       { v: report.formatReport(topup) },
       { v: report.formatReport(fees), color: 'var(--negative)' },
       { v: report.formatSignedReport(net), color: net.isNegative() ? 'var(--negative)' : 'var(--positive)', bold: true, data: { reportAmount: net.abs().toString() } },
-      { v: `${hours.toString()} h`, color: 'var(--fg-muted)' },
+      { v: `${hours.toString()} h`, color: 'var(--text-secondary)' },
       { v: report.formatSignedReport(perHour) },
     ]);
   }
@@ -441,16 +441,16 @@ function fixedTable(snap: Snapshot, options: ReportOptions): Table {
       const convertedUnit = report.toReport(primaryUsage.perUnit, f.baseCurrencyAssetId);
       return [
         { v: f.name, bold: true },
-        { v: snap.assets.find((asset) => asset.id === f.baseCurrencyAssetId)?.code ?? '—', color: 'var(--fg-muted)' },
+        { v: snap.assets.find((asset) => asset.id === f.baseCurrencyAssetId)?.code ?? '—', color: 'var(--text-secondary)' },
         { v: report.formatNative(c.purchase, f.baseCurrencyAssetId) },
-        { v: report.formatNative(c.repair, f.baseCurrencyAssetId), color: 'var(--fg-muted)' },
-        { v: report.formatNative(c.consumable, f.baseCurrencyAssetId), color: 'var(--fg-muted)' },
+        { v: report.formatNative(c.repair, f.baseCurrencyAssetId), color: 'var(--text-secondary)' },
+        { v: report.formatNative(c.consumable, f.baseCurrencyAssetId), color: 'var(--text-secondary)' },
         { v: report.formatNative(residual ?? '0', f.baseCurrencyAssetId) },
         { v: report.formatNative(c.netCost, f.baseCurrencyAssetId), bold: true },
         { v: convertedNet ? report.formatReport(convertedNet) : '未折算', data: { reportAmount: convertedNet?.toString() ?? '' } },
-        { v: `${c.heldDays} 天`, color: 'var(--fg-muted)' },
+        { v: `${c.heldDays} 天`, color: 'var(--text-secondary)' },
         { v: convertedUnit ? `${report.formatReport(convertedUnit)} / ${primaryUsage.unitLabel}` : '未折算', color: 'var(--accent)', bold: true },
-        { v: statusLabel[f.status], color: 'var(--fg-muted)' },
+        { v: statusLabel[f.status], color: 'var(--text-secondary)' },
       ];
     });
   return reportTable(report, [

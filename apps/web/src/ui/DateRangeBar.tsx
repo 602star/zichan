@@ -6,6 +6,7 @@ import {
   type DateRangePreset,
 } from '@zichan/core';
 import type { CSSProperties } from 'react';
+import { linkDanger } from './styles.js';
 
 export type TimelineViewMode = 'list' | 'year' | 'month' | 'day';
 
@@ -101,8 +102,8 @@ export function DateRangeBar(props: {
   );
 }
 
-const dateLabel: CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--fg-subtle)', fontSize: 12, fontWeight: 750 };
-const clearButton: CSSProperties = { height: 38, border: 'none', background: 'transparent', color: 'var(--accent)', fontWeight: 800, fontSize: 12, cursor: 'pointer', padding: '0 6px' };
+const dateLabel: CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' };
+const clearButton = linkDanger;
 
 function viewButton(active: boolean): CSSProperties {
   return {
@@ -112,8 +113,8 @@ function viewButton(active: boolean): CSSProperties {
     background: active ? 'var(--accent)' : 'var(--surface)',
     color: active ? '#fff' : 'var(--fg-muted)',
     padding: '0 11px',
-    fontSize: 12,
-    fontWeight: 850,
+    fontSize: 'var(--fs-caption)',
+    fontWeight: 'var(--fw-bold)',
     cursor: 'pointer',
   };
 }

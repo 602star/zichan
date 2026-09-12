@@ -125,8 +125,8 @@ export function Manage() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       <div>
-        <div style={{ fontSize: 20, fontWeight: 900 }}>分类与资料中心</div>
-        <div style={{ color: 'var(--fg-subtle)', fontSize: 12, marginTop: 4 }}>分类的结构、快速显示和排序统一在这里维护。</div>
+        <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>分类与资料中心</div>
+        <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4 }}>分类的结构、快速显示和排序统一在这里维护。</div>
       </div>
 
       <div role="tablist" aria-label="分类与资料中心" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', overflowX: 'auto' }}>
@@ -151,8 +151,8 @@ export function Manage() {
             : (
               <>
                 <div style={card}>
-                  <div style={{ fontSize: 15, fontWeight: 850 }}>按需分类包</div>
-                  <div style={{ marginTop: 4, color: 'var(--fg-subtle)', fontSize: 12 }}>
+                  <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>按需分类包</div>
+                  <div style={{ marginTop: 4, color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>
                     启用后分类会出现在新增记账中；停用后不再可选，但不会删除历史分类或改动已有流水。
                   </div>
                   <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 8 }}>
@@ -162,12 +162,12 @@ export function Manage() {
                       ).length;
                       const busy = categoryPackBusy === pack.id;
                       return (
-                        <div key={pack.id} data-testid={`category-pack-${pack.id}`} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 11, display: 'grid', gap: 8 }}>
+                        <div key={pack.id} data-testid={`category-pack-${pack.id}`} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 11, display: 'grid', gap: 8 }}>
                           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                            <b style={{ fontSize: 13 }}>{pack.name}</b>
-                            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--fg-subtle)' }}>已启用 {enabled}/{pack.categoryIds.length}</span>
+                            <b style={{ fontSize: 'var(--fs-body)' }}>{pack.name}</b>
+                            <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>已启用 {enabled}/{pack.categoryIds.length}</span>
                           </div>
-                          <div style={{ color: 'var(--fg-muted)', fontSize: 11, minHeight: 30 }}>{pack.description}</div>
+                          <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-meta)', minHeight: 30 }}>{pack.description}</div>
                           <div style={{ display: 'flex', gap: 7 }}>
                             <button type="button" aria-label={`启用${pack.name}分类包`} disabled={busy || enabled === pack.categoryIds.length} onClick={() => void enableCategoryPack(pack.id, pack.categoryIds)} style={packButton(true)}>
                               {busy ? '处理中…' : enabled === pack.categoryIds.length ? '已启用' : enabled > 0 ? '补齐并启用' : '启用'}
@@ -180,8 +180,8 @@ export function Manage() {
                       );
                     })}
                   </div>
-                  {categoryPackNotice && <div style={{ marginTop: 10, color: 'var(--positive)', fontSize: 12, fontWeight: 750 }}>{categoryPackNotice}</div>}
-                  {categoryPackError && <div role="alert" style={{ marginTop: 10, color: 'var(--negative)', fontSize: 12, fontWeight: 750 }}>分类包操作失败：{categoryPackError}</div>}
+                  {categoryPackNotice && <div style={{ marginTop: 10, color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>{categoryPackNotice}</div>}
+                  {categoryPackError && <div role="alert" style={{ marginTop: 10, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>分类包操作失败：{categoryPackError}</div>}
                 </div>
                 <div style={card}><QuickCategorySettings categories={snap.categories} onSave={saveCategoryPreferences} /></div>
               </>
@@ -311,8 +311,8 @@ function manageTabButton(active: boolean) {
     background: active ? 'var(--accent-soft)' : 'transparent',
     color: active ? 'var(--accent)' : 'var(--fg-muted)',
     padding: '10px 16px',
-    fontSize: 13,
-    fontWeight: 850,
+    fontSize: 'var(--fs-body)',
+    fontWeight: 'var(--fw-bold)',
     cursor: 'pointer',
     whiteSpace: 'nowrap',
   } as const;
@@ -398,14 +398,14 @@ function CategorySection({ snap, store, bump }: {
     <div style={card}>
       <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 800 }}>
+          <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>
             收支分类
-            <span style={{ fontSize: 12, color: 'var(--fg-subtle)', marginLeft: 8, fontWeight: 600 }}>{categories.length}</span>
+            <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginLeft: 8, fontWeight: 'var(--fw-medium)' }}>{categories.length}</span>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 4 }}>按一级分类折叠管理；隐藏分类仍可通过搜索找到。</div>
-          {duplicateCount > 0 && <div style={{ fontSize: 11, color: 'var(--negative)', marginTop: 3 }}>发现 {duplicateCount} 组可能重复分类。</div>}
+          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 4 }}>按一级分类折叠管理；隐藏分类仍可通过搜索找到。</div>
+          {duplicateCount > 0 && <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--negative)', marginTop: 3 }}>发现 {duplicateCount} 组可能重复分类。</div>}
         </div>
-        <button onClick={() => setEditing('new')} style={{ padding: '8px 14px', borderRadius: 9, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ 新增分类</button>
+        <button onClick={() => setEditing('new')} style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ 新增分类</button>
       </div>
 
       <div className="zc-category-manage-toolbar">
@@ -428,7 +428,7 @@ function CategorySection({ snap, store, bump }: {
       </div>
 
       <div className="zc-responsive-action-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, margin: '10px 0 4px' }}>
-        <div style={{ fontSize: 12, color: 'var(--fg-subtle)' }}>找到 {groups.reduce((sum, group) => sum + group.visibleChildren.length, 0)} 个二级分类，分布在 {groups.length} 个一级分类中</div>
+        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>找到 {groups.reduce((sum, group) => sum + group.visibleChildren.length, 0)} 个二级分类，分布在 {groups.length} 个一级分类中</div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button
             onClick={() => setShowDuplicates((value) => !value)}
@@ -459,10 +459,10 @@ function CategorySection({ snap, store, bump }: {
               style={{ borderTop: '1px solid var(--border)' }}
             >
               <summary className="zc-category-group-summary">
-                <span style={{ width: 10, height: 10, borderRadius: 3, background: parent.color ?? 'var(--fg-subtle)', flex: '0 0 auto' }} />
-                <span style={{ fontWeight: 850, color: 'var(--fg)' }}>{parent.name}</span>
+                <span style={{ width: 10, height: 10, borderRadius: 'var(--r-sm)', background: parent.color ?? 'var(--fg-subtle)', flex: '0 0 auto' }} />
+                <span style={{ fontWeight: 'var(--fw-bold)', color: 'var(--text-primary)' }}>{parent.name}</span>
                 <span style={typeBadge(parent.type)}>{parent.type === 'income' ? '收入' : '支出'}</span>
-                <span style={{ fontSize: 11, color: 'var(--fg-subtle)' }}>{visibleChildren.length}/{children.length} 项</span>
+                <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{visibleChildren.length}/{children.length} 项</span>
                 {hiddenCount > 0 && <span style={stateBadge('hidden')}>隐藏 {hiddenCount}</span>}
                 {inactiveCount > 0 && <span style={stateBadge('inactive')}>停用 {inactiveCount}</span>}
                 <span style={{ flex: '1 1 auto' }} />
@@ -477,11 +477,11 @@ function CategorySection({ snap, store, bump }: {
                       <tr key={category.id}>
                         <td style={tdStyle}>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ width: 9, height: 9, borderRadius: 3, background: category.color ?? parent.color ?? 'var(--fg-subtle)' }} />
-                            <span style={{ fontWeight: 750 }}>{category.name}</span>
+                            <span style={{ width: 9, height: 9, borderRadius: 'var(--r-sm)', background: category.color ?? parent.color ?? 'var(--fg-subtle)' }} />
+                            <span style={{ fontWeight: 'var(--fw-bold)' }}>{category.name}</span>
                             {isDuplicate(category) && <span style={stateBadge('duplicate')}>重复</span>}
                           </span>
-                          <div style={{ fontSize: 10, color: 'var(--fg-subtle)', marginTop: 2 }}>{category.id}</div>
+                          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 2 }}>{category.id}</div>
                         </td>
                         <td style={tdStyle}>
                           {category.isActive === false
@@ -501,22 +501,22 @@ function CategorySection({ snap, store, bump }: {
                         </td>
                       </tr>
                     ))}
-                    {visibleChildren.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={5}>该一级分类下没有匹配的二级分类</td></tr>}
+                    {visibleChildren.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={5}>该一级分类下没有匹配的二级分类</td></tr>}
                   </tbody>
                 </table>
               </div>
             </details>
           );
         })}
-        {groups.length === 0 && <div style={{ borderTop: '1px solid var(--border)', padding: '22px 8px', color: 'var(--fg-subtle)', fontSize: 13 }}>没有匹配的分类，请调整搜索或筛选条件。</div>}
+        {groups.length === 0 && <div style={{ borderTop: '1px solid var(--border)', padding: '22px 8px', color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>没有匹配的分类，请调整搜索或筛选条件。</div>}
         {visibleOrphanRows.length > 0 && (
           <details open={forceOpen} style={{ borderTop: '1px solid var(--border)' }}>
             <summary className="zc-category-group-summary" style={{ color: 'var(--negative)' }}>父级缺失 · {visibleOrphanRows.length} 项</summary>
             <div style={{ padding: '0 8px 10px' }}>
               {visibleOrphanRows.map((category) => (
                 <div key={category.id} style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 40, borderTop: '1px solid var(--border)' }}>
-                  <span style={{ fontWeight: 750 }}>{category.name}</span>
-                  <span style={{ color: 'var(--fg-subtle)', fontSize: 11 }}>{category.id} · 父级 {category.parentId}</span>
+                  <span style={{ fontWeight: 'var(--fw-bold)' }}>{category.name}</span>
+                  <span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' }}>{category.id} · 父级 {category.parentId}</span>
                   <span style={{ flex: '1 1 auto' }} />
                   <button type="button" onClick={() => setEditing(category)} style={editLinkButton}>修正</button>
                 </div>
@@ -592,10 +592,10 @@ function FixedCategorySection({ snap, store, bump }: {
     <div style={card}>
       <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 800 }}>物品资产分类<span style={{ fontSize: 12, color: 'var(--fg-subtle)', marginLeft: 8 }}>{categories.length}</span></div>
-          <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 4 }}>一级分类稳定，二级分类可搜索、隐藏和排序；新建物品必须选择二级分类。</div>
+          <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>物品资产分类<span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginLeft: 8 }}>{categories.length}</span></div>
+          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 4 }}>一级分类稳定，二级分类可搜索、隐藏和排序；新建物品必须选择二级分类。</div>
         </div>
-        <button onClick={() => setEditing('new')} style={{ padding: '8px 14px', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 800, fontSize: 13, cursor: 'pointer' }}>+ 新增物品分类</button>
+        <button onClick={() => setEditing('new')} style={{ padding: '8px 14px', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer' }}>+ 新增物品分类</button>
       </div>
       <div className="zc-manage-toolbar" style={{ display: 'grid', gridTemplateColumns: '1fr 180px auto', gap: 10, marginBottom: 10 }}>
         <input aria-label="搜索物品资产分类" className="zc-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索一级或二级分类" />
@@ -617,26 +617,26 @@ function FixedCategorySection({ snap, store, bump }: {
               });
             }} style={{ borderTop: '1px solid var(--border)' }}>
               <summary className="zc-category-group-summary">
-                <span style={{ width: 10, height: 10, borderRadius: 3, background: parent.color ?? 'var(--accent)' }} />
-                <b>{parent.name}</b><span style={{ fontSize: 11, color: 'var(--fg-subtle)' }}>{shown.length}/{children.length} 项</span>
+                <span style={{ width: 10, height: 10, borderRadius: 'var(--r-sm)', background: parent.color ?? 'var(--accent)' }} />
+                <b>{parent.name}</b><span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{shown.length}/{children.length} 项</span>
                 <span style={{ flex: 1 }} /><button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setLifecycle(parent); }} style={editLinkButton}>归档/合并</button><button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setEditing(parent); }} style={{ ...editLinkButton, marginLeft: 12 }}>编辑一级分类</button>
               </summary>
               <div className="zc-scroll-x"><table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr><th style={thStyle}>二级分类</th><th style={thStyle}>显示</th><th style={thStyle}>排序</th><th style={{ ...thStyle, textAlign: 'right' }}>操作</th></tr></thead>
                 <tbody>
                   {shown.map((category) => <tr key={category.id}>
-                    <td style={tdStyle}><b>{category.name}</b><div style={{ fontSize: 10, color: 'var(--fg-subtle)' }}>{category.id}</div></td>
+                    <td style={tdStyle}><b>{category.name}</b><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{category.id}</div></td>
                     <td style={tdStyle}>{!category.isActive ? <span style={stateBadge('inactive')}>停用</span> : category.isHidden ? <span style={stateBadge('hidden')}>隐藏</span> : <span style={stateBadge('frequent')}>高频</span>}</td>
                     <td style={tdStyle}>{category.sortOrder ?? 100}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}><button onClick={() => void toggleHidden(category)} style={editLinkButton}>{category.isHidden ? '设为高频' : '设为隐藏'}</button><button onClick={() => setLifecycle(category)} style={{ ...editLinkButton, marginLeft: 12 }}>归档/合并</button><button onClick={() => setEditing(category)} style={{ ...editLinkButton, marginLeft: 12 }}>编辑</button></td>
                   </tr>)}
-                  {shown.length === 0 && <tr><td colSpan={4} style={{ ...tdStyle, color: 'var(--fg-subtle)' }}>没有匹配的二级分类</td></tr>}
+                  {shown.length === 0 && <tr><td colSpan={4} style={{ ...tdStyle, color: 'var(--text-tertiary)' }}>没有匹配的二级分类</td></tr>}
                 </tbody>
               </table></div>
             </details>
           );
         })}
-        {groups.length === 0 && <div style={{ borderTop: '1px solid var(--border)', padding: 20, color: 'var(--fg-subtle)', fontSize: 12 }}>没有匹配的物品分类</div>}
+        {groups.length === 0 && <div style={{ borderTop: '1px solid var(--border)', padding: 20, color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>没有匹配的物品分类</div>}
       </div>
       {editing !== null && <EntityFormModal
         spec={fixedAssetCategoryForm(snap)}
@@ -728,8 +728,8 @@ function MasterDataLifecycleDialog(props: {
             {Object.entries(impact.references).filter(([, value]) => value > 0).map(([key, value]) => <div key={key}>{key}: {value}</div>)}
           </> : '正在检查引用…'}
         </div>
-        {impact?.blockedReasons.map((reason) => <div key={reason} style={{ color: 'var(--negative)', fontWeight: 750 }}>{reason}</div>)}
-        {error && <div style={{ color: 'var(--negative)', fontWeight: 750 }}>{error}</div>}
+        {impact?.blockedReasons.map((reason) => <div key={reason} style={{ color: 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{reason}</div>)}
+        {error && <div style={{ color: 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{error}</div>}
       </div>
     </ConfirmDialog>
   );
@@ -738,12 +738,12 @@ function MasterDataLifecycleDialog(props: {
 function manageFilterButton(active: boolean, enabled: boolean) {
   return {
     padding: '6px 10px',
-    borderRadius: 8,
+    borderRadius: 'var(--r-sm)',
     border: '1px solid var(--border)',
     background: active ? 'var(--accent-soft)' : 'var(--surface)',
     color: active ? 'var(--accent)' : 'var(--fg-muted)',
-    fontWeight: 750,
-    fontSize: 12,
+    fontWeight: 'var(--fw-bold)',
+    fontSize: 'var(--fs-caption)',
     cursor: enabled ? 'pointer' : 'not-allowed',
     opacity: enabled ? 1 : 0.5,
   } as const;
@@ -753,12 +753,12 @@ function packButton(primary: boolean) {
   return {
     minHeight: 32,
     padding: '5px 9px',
-    borderRadius: 7,
+    borderRadius: 'var(--r-sm)',
     border: `1px solid ${primary ? 'var(--accent)' : 'var(--border)'}`,
     background: primary ? 'var(--accent)' : 'var(--surface)',
     color: primary ? '#fff' : 'var(--fg-muted)',
-    fontSize: 11,
-    fontWeight: 800,
+    fontSize: 'var(--fs-meta)',
+    fontWeight: 'var(--fw-bold)',
     cursor: 'pointer',
   } as const;
 }
@@ -768,19 +768,19 @@ const editLinkButton = {
   background: 'transparent',
   color: 'var(--accent)',
   padding: 0,
-  fontSize: 12,
-  fontWeight: 800,
+  fontSize: 'var(--fs-caption)',
+  fontWeight: 'var(--fw-bold)',
   cursor: 'pointer',
 } as const;
 
 function typeBadge(type: Category['type']) {
   return {
-    borderRadius: 999,
+    borderRadius: 'var(--r-pill)',
     padding: '2px 7px',
     color: type === 'income' ? 'var(--positive)' : 'var(--negative)',
     background: type === 'income' ? 'rgba(63,143,107,.13)' : 'rgba(194,96,74,.13)',
-    fontSize: 10,
-    fontWeight: 850,
+    fontSize: 'var(--fs-meta)',
+    fontWeight: 'var(--fw-bold)',
   } as const;
 }
 
@@ -789,14 +789,14 @@ function stateBadge(kind: 'frequent' | 'hidden' | 'inactive' | 'duplicate') {
     ? { color: 'var(--positive)', background: 'rgba(63,143,107,.13)' }
     : kind === 'duplicate'
       ? { color: 'var(--negative)', background: 'rgba(194,96,74,.13)' }
-      : { color: 'var(--fg-subtle)', background: 'var(--surface-2)' };
+      : { color: 'var(--text-tertiary)', background: 'var(--surface-2)' };
   return {
     border: '1px solid var(--border)',
-    borderRadius: 999,
+    borderRadius: 'var(--r-pill)',
     padding: '2px 7px',
     ...colors,
-    fontSize: 10,
-    fontWeight: 850,
+    fontSize: 'var(--fs-meta)',
+    fontWeight: 'var(--fw-bold)',
     whiteSpace: 'nowrap',
   } as const;
 }
@@ -841,18 +841,18 @@ function Section<T extends { id: string; version: number }>(props: {
     <div style={card}>
       <div className="zc-manage-toolbar" style={{ display: 'grid', gridTemplateColumns: '1fr minmax(180px, 280px) auto auto', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 800 }}>{title}<span style={{ fontSize: 12, color: 'var(--fg-subtle)', marginLeft: 8, fontWeight: 600 }}>{items.length}</span></div>
-          {duplicateCount > 0 && <div style={{ fontSize: 11, color: 'var(--negative)', marginTop: 3 }}>发现 {duplicateCount} 组可能重复记录，可筛出后编辑合并或停用。</div>}
+          <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{title}<span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginLeft: 8, fontWeight: 'var(--fw-medium)' }}>{items.length}</span></div>
+          {duplicateCount > 0 && <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--negative)', marginTop: 3 }}>发现 {duplicateCount} 组可能重复记录，可筛出后编辑合并或停用。</div>}
         </div>
         <input aria-label={`搜索${title}`} className="zc-input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`搜索${title}`} />
         <button
           onClick={() => setShowDuplicates((v) => !v)}
           disabled={duplicateCount === 0}
-          style={{ padding: '7px 12px', borderRadius: 9, border: '1px solid var(--border)', background: showDuplicates ? 'var(--accent-soft)' : 'var(--surface)', color: showDuplicates ? 'var(--accent)' : 'var(--fg-muted)', fontWeight: 700, fontSize: 13, cursor: duplicateCount ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap', opacity: duplicateCount ? 1 : 0.5 }}
+          style={{ padding: '7px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: showDuplicates ? 'var(--accent-soft)' : 'var(--surface)', color: showDuplicates ? 'var(--accent)' : 'var(--fg-muted)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: duplicateCount ? 'pointer' : 'not-allowed', whiteSpace: 'nowrap', opacity: duplicateCount ? 1 : 0.5 }}
         >
           {showDuplicates ? '显示全部' : '只看重复'}
         </button>
-        <button onClick={() => setEditing('new')} style={{ padding: '7px 14px', borderRadius: 9, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ 新增{title}</button>
+        <button onClick={() => setEditing('new')} style={{ padding: '7px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ 新增{title}</button>
       </div>
       {dateOf && <div style={{ marginBottom: 12 }}><DateRangeBar value={dateRange} onChange={setDateRange} compact /></div>}
       <div style={{ overflowX: 'auto' }}>
@@ -862,13 +862,13 @@ function Section<T extends { id: string; version: number }>(props: {
             {filteredItems.map((t) => (
               <tr key={t.id} onClick={() => setEditing(t)} style={{ cursor: 'pointer' }}>
                 {row(t).map((c, i) => <td key={i} style={tdStyle}>{c}</td>)}
-                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--fg-subtle)', whiteSpace: 'nowrap' }}>
+                <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
                   {masterKind && <button type="button" onClick={(event) => { event.stopPropagation(); setLifecycle(t); }} style={{ ...editLinkButton, marginRight: 12 }}>归档/合并</button>}
                   编辑 ›
                 </td>
               </tr>
             ))}
-            {filteredItems.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={headers.length + 1}>{items.length === 0 ? '暂无数据' : '没有匹配的记录'}</td></tr>}
+            {filteredItems.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={headers.length + 1}>{items.length === 0 ? '暂无数据' : '没有匹配的记录'}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -957,12 +957,12 @@ function AttachmentSection({ items, onDelete }: { items: Attachment[]; onDelete:
     <div style={card}>
       <div className="zc-manage-toolbar" style={{ display: 'grid', gridTemplateColumns: '1fr minmax(180px, 280px)', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 800 }}>附件<span style={{ fontSize: 12, color: 'var(--fg-subtle)', marginLeft: 8, fontWeight: 600 }}>{items.length}</span></div>
-          <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 3 }}>正文保存在平台文件存储中，此处只管理元数据。</div>
+          <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>附件<span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginLeft: 8, fontWeight: 'var(--fw-medium)' }}>{items.length}</span></div>
+          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>正文保存在平台文件存储中，此处只管理元数据。</div>
         </div>
         <input aria-label="搜索附件" className="zc-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索文件、关联对象或校验和" />
       </div>
-      {message && <div style={{ marginBottom: 10, fontSize: 12, fontWeight: 700, color: message.startsWith('取回失败') ? 'var(--negative)' : 'var(--positive)' }}>{message}</div>}
+      {message && <div style={{ marginBottom: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: message.startsWith('取回失败') ? 'var(--negative)' : 'var(--positive)' }}>{message}</div>}
       <div className="zc-scroll-x">
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr><th style={thStyle}>文件</th><th style={thStyle}>关联</th><th style={thStyle}>大小</th><th style={thStyle}>本机</th><th style={thStyle}>服务器副本</th><th style={thStyle}>SHA-256</th><th style={thStyle}></th></tr></thead>
@@ -971,21 +971,21 @@ function AttachmentSection({ items, onDelete }: { items: Attachment[]; onDelete:
               const local = localStates[attachment.sha256] ?? 'missing';
               const remote = replicas.filter((row) => row.sha256 === attachment.sha256);
               return <tr key={attachment.id}>
-                <td style={tdStyle}><b>{attachment.fileName}</b><div style={{ fontSize: 10, color: 'var(--fg-subtle)', marginTop: 3 }}>{attachment.mimeType ?? '未知类型'} · 内容寻址对象</div></td>
+                <td style={tdStyle}><b>{attachment.fileName}</b><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>{attachment.mimeType ?? '未知类型'} · 内容寻址对象</div></td>
                 <td style={tdStyle}>{attachment.entityType} · {attachment.entityId.slice(0, 8)}</td>
                 <td style={tdStyle}>{attachment.sizeBytes > 1024 * 1024 ? `${(attachment.sizeBytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB`}</td>
-                <td style={{ ...tdStyle, color: local === 'ready' ? 'var(--positive)' : local === 'trash' ? 'var(--accent)' : 'var(--negative)', fontWeight: 700 }}>{local === 'ready' ? '可用' : local === 'trash' ? '回收区' : '按需下载'}</td>
-                <td style={{ ...tdStyle, fontSize: 11, color: 'var(--fg-muted)', maxWidth: 220 }}>
+                <td style={{ ...tdStyle, color: local === 'ready' ? 'var(--positive)' : local === 'trash' ? 'var(--accent)' : 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{local === 'ready' ? '可用' : local === 'trash' ? '回收区' : '按需下载'}</td>
+                <td style={{ ...tdStyle, fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)', maxWidth: 220 }}>
                   {remote.length ? remote.map((row) => `${profileNames[row.profileId] ?? row.profileId.slice(0, 8)}：${replicaStateLabel(row.state)}`).join(' · ') : '尚未同步'}
                 </td>
-                <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 10 }}>{attachment.sha256.slice(0, 16)}...</td>
+                <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 'var(--fs-meta)' }}>{attachment.sha256.slice(0, 16)}...</td>
                 <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                  {local !== 'ready' && <button type="button" disabled={fetching === attachment.id} onClick={() => void fetchBody(attachment)} style={{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--fg-muted)', minHeight: 34, padding: '6px 10px', cursor: 'pointer', marginRight: 6 }}>{fetching === attachment.id ? '取回中…' : '取回正文'}</button>}
+                  {local !== 'ready' && <button type="button" disabled={fetching === attachment.id} onClick={() => void fetchBody(attachment)} style={{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', minHeight: 34, padding: '6px 10px', cursor: 'pointer', marginRight: 6 }}>{fetching === attachment.id ? '取回中…' : '取回正文'}</button>}
                   <button type="button" onClick={() => setDeleting(attachment)} style={{ border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', minHeight: 34, padding: '6px 10px', cursor: 'pointer' }}>删除</button>
                 </td>
               </tr>
             })}
-            {visible.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={7}>没有匹配的附件</td></tr>}
+            {visible.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={7}>没有匹配的附件</td></tr>}
           </tbody>
         </table>
       </div>

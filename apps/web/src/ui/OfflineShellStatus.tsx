@@ -18,5 +18,5 @@ export function OfflineShellStatus() {
     }).catch(() => { if (active) setNotice('离线启动资源尚未准备好，请联网后重新打开此页。'); });
     return () => { active = false; };
   }, []);
-  return notice ? <div role="status" style={{ padding: '10px 16px', background: 'var(--surface-2)', color: 'var(--fg)', fontSize: 13 }}>{notice}</div> : null;
+  return notice ? <div role="status" style={{ padding: '10px 16px', background: 'var(--surface-2)', color: 'var(--text-primary)', fontSize: 'var(--fs-body)' }}>{notice}</div> : null;
 }

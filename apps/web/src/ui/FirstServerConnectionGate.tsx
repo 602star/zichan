@@ -32,19 +32,10 @@ interface ServerHealth {
   capabilities?: string[];
 }
 
-const button: CSSProperties = {
-  minHeight: 42,
-  padding: '0 16px',
-  border: '1px solid #bda98f',
-  borderRadius: 9,
-  background: '#fffdf9',
-  color: '#672f20',
-  fontWeight: 800,
-  cursor: 'pointer',
-};
+const button = btnOutline;
 
-const primary: CSSProperties = { ...button, borderColor: '#985734', background: '#985734', color: '#fff' };
-const input: CSSProperties = { boxSizing: 'border-box', width: '100%', minHeight: 42, padding: '0 11px', border: '1px solid #cfc1af', borderRadius: 8, background: '#fffdf9', color: '#4e473f' };
+const primary = btnPrimary;
+const input: CSSProperties = { boxSizing: 'border-box', width: '100%', minHeight: 42, padding: '0 11px', border: '1px solid #cfc1af', borderRadius: 'var(--r-sm)', background: '#fffdf9', color: '#4e473f' };
 
 const PRESETS: { id: SyncAddressPreset; label: string }[] = [
   { id: 'current', label: '当前网站' },
@@ -247,19 +238,19 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
     <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(20px, 5vw, 64px)', boxSizing: 'border-box', background: '#f0e9dc', color: '#4e473f', fontFamily: 'system-ui, sans-serif' }}>
       <section style={{ width: 'min(780px, 100%)', margin: '0 auto' }}>
         {!accountOnly && <button type="button" onClick={onCancel} disabled={busy} style={{ ...button, minHeight: 34, padding: '0 11px' }}>返回模式选择</button>}
-        <h1 style={{ margin: '18px 0 6px', color: '#672f20', fontSize: 'clamp(26px, 5vw, 40px)' }}>{accountOnly ? registering ? '注册账号' : '账号登录' : '连接同步服务器'}</h1>
+        <h1 style={{ margin: '18px 0 6px', color: '#672f20', fontSize: 'var(--fs-hero)' }}>{accountOnly ? registering ? '注册账号' : '账号登录' : '连接同步服务器'}</h1>
         <p style={{ margin: '0 0 22px', color: '#756b60', lineHeight: 1.7 }}>{accountOnly ? '使用账号登录并自动同步。支持托管的服务器默认代管账本密钥，登录即可记账；也可创建由恢复码保护的私密账本。' : '先验证服务器身份并登录。服务器地址可以来自当前网站、本机、局域网或公网。'}</p>
 
-        <div style={{ padding: 20, border: '1px solid #d6ccbd', borderRadius: 14, background: '#fffaf2' }}>
+        <div style={{ padding: 20, border: '1px solid #d6ccbd', borderRadius: 'var(--r-md)', background: '#fffaf2' }}>
           {!accountOnly && <><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
             {PRESETS.map((item) => <button key={item.id} type="button" disabled={busy} onClick={() => selectPreset(item.id)} style={{ ...button, background: preset === item.id ? '#ead8c4' : '#fffdf9' }}>{item.label}</button>)}
           </div>
-          <label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>完整服务器地址</label>
+          <label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>完整服务器地址</label>
           <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
             <input aria-label="完整服务器地址" value={address} onChange={(event) => setAddressDraft(event.target.value)} disabled={busy} spellCheck={false} style={{ ...input, flex: '1 1 420px' }} />
             <button type="button" onClick={() => setAdvanced((value) => !value)} disabled={busy} style={button}>{advanced ? '收起高级设置' : '高级设置'}</button>
           </div>
-          <div style={{ marginTop: 6, color: '#756b60', fontSize: 11, lineHeight: 1.55 }}>
+          <div style={{ marginTop: 6, color: '#756b60', fontSize: 'var(--fs-meta)', lineHeight: 1.55 }}>
             HTTPS 网站中的浏览器可能阻止普通 HTTP 局域网地址（混合内容或私有网络限制）；遇到此情况请使用可信 HTTPS、服务器自带 Web，或 Windows 便携版。
           </div>
           {advanced && (
@@ -275,10 +266,10 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
           <form onSubmit={(event) => { event.preventDefault(); void authenticate(registering ? 'register' : 'login'); }}>
           {registering && <details style={{ marginTop: 12 }}><summary>高级：账本保护方式</summary><label><input type="checkbox" checked={privateMode} disabled={busy} onChange={(e) => setPrivateMode(e.target.checked)} />创建私密账本，自己保存恢复码</label><p>默认云端托管允许此服务器解密和恢复账本。私密模式不托管密钥，遗失恢复码后账号密码找回无法恢复账本。</p></details>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 18 }}>
-            <div><label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>用户名</label><input aria-label="服务器用户名" value={username} onChange={(event) => { setUsername(event.target.value); setError(''); }} disabled={busy} autoComplete="username" style={{ ...input, marginTop: 6 }} /></div>
-            <div><label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>账号密码</label><input aria-label="服务器账号密码" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} disabled={busy} autoComplete={registering ? 'new-password' : 'current-password'} required minLength={8} style={{ ...input, marginTop: 6 }} /></div>
-            {registering && <div><label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>确认账号密码</label><input aria-label="确认账号密码" type="password" required minLength={8} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy} autoComplete="new-password" style={{ ...input, marginTop: 6 }} /></div>}
-            {health?.registrationMode === 'invite' && (!accountOnly || registering) && <div><label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>邀请码</label><input aria-label="邀请码" value={inviteCode} onChange={(event) => { setInviteCode(event.target.value); setError(''); }} disabled={busy} style={{ ...input, marginTop: 6 }} /></div>}
+            <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>用户名</label><input aria-label="服务器用户名" value={username} onChange={(event) => { setUsername(event.target.value); setError(''); }} disabled={busy} autoComplete="username" style={{ ...input, marginTop: 6 }} /></div>
+            <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>账号密码</label><input aria-label="服务器账号密码" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} disabled={busy} autoComplete={registering ? 'new-password' : 'current-password'} required minLength={8} style={{ ...input, marginTop: 6 }} /></div>
+            {registering && <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>确认账号密码</label><input aria-label="确认账号密码" type="password" required minLength={8} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy} autoComplete="new-password" style={{ ...input, marginTop: 6 }} /></div>}
+            {health?.registrationMode === 'invite' && (!accountOnly || registering) && <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>邀请码</label><input aria-label="邀请码" value={inviteCode} onChange={(event) => { setInviteCode(event.target.value); setError(''); }} disabled={busy} style={{ ...input, marginTop: 6 }} /></div>}
           </div>
 
           {health && !health.claimed && <p>本站尚未开放，请联系部署者完成服务器初始化。</p>}
@@ -288,12 +279,14 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
             <button type="button" onClick={() => setRegistering((value) => !value)} disabled={busy || !registering && (health?.claimed === false || health?.registrationMode === 'closed')} style={button}>{registering ? '返回登录' : '注册新账号'}</button>
           </div>
           </form>
-          {accountOnly && <section aria-label="账号登录权限说明" style={{ marginTop: 18, fontSize: 12, lineHeight: 1.7 }}><strong>登录会使用什么权限？</strong><p>仅验证本站账号并建立 HttpOnly 会话 Cookie，不保存账号密码。登录后在本浏览器保存该账号的加密离线缓存，不申请任意磁盘访问权限；不要求授予浏览器持久存储保护。托管账本登录后自动解锁；私密账本需要恢复码或此设备已有授权。</p></section>}
+          {accountOnly && <section aria-label="账号登录权限说明" style={{ marginTop: 18, fontSize: 'var(--fs-caption)', lineHeight: 1.7 }}><strong>登录会使用什么权限？</strong><p>仅验证本站账号并建立 HttpOnly 会话 Cookie，不保存账号密码。登录后在本浏览器保存该账号的加密离线缓存，不申请任意磁盘访问权限；不要求授予浏览器持久存储保护。托管账本登录后自动解锁；私密账本需要恢复码或此设备已有授权。</p></section>}
           {health?.claimed && <PasswordRecovery baseUrl={address} onComplete={(value) => { setUsername(value); setRegistering(false); }} />}
-          {message && <div role="status" style={{ marginTop: 12, color: '#397044', fontSize: 12, fontWeight: 800 }}>{message}</div>}
-          {error && <div role="alert" style={{ marginTop: 12, color: '#9a3a31', fontSize: 12, fontWeight: 800 }}>{error}</div>}
+          {message && <div role="status" style={{ marginTop: 12, color: '#397044', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>{message}</div>}
+          {error && <div role="alert" style={{ marginTop: 12, color: '#9a3a31', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>{error}</div>}
         </div>
       </section>
     </main>
   );
 }
+
+import { btnOutline, btnPrimary } from './styles.js';

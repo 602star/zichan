@@ -20,7 +20,7 @@ import { EntityFormModal } from '../ui/EntityFormModal.js';
 import { gameRecordForm, gameSeasonForm, type GameRecordFormValue } from '../forms.js';
 import { buildGameSeason } from '../selectors/game.js';
 import { money, signedMoney, num } from '../format.js';
-import { card, tag as tagStyle, amountColor, pillBtn } from '../ui/styles.js';
+import { amountColor, btnOutline, btnPrimary, card, pillBtn, tag as tagStyle } from '../ui/styles.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
@@ -32,10 +32,10 @@ const REC_LABEL: Record<GameRecordType, string> = {
 };
 
 function recBadge(type: GameRecordType) {
-  const base = { padding: '3px 9px', borderRadius: 7, fontSize: 11, fontWeight: 700, flexShrink: 0, whiteSpace: 'nowrap' } as const;
+  const base = { padding: '3px 9px', borderRadius: 'var(--r-sm)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)', flexShrink: 0, whiteSpace: 'nowrap' } as const;
   if (type === 'buy_currency' || type === 'topup') return { ...base, background: 'var(--accent-soft)', color: 'var(--accent)' };
   if (type === 'fee') return { ...base, background: 'rgba(194,96,74,.13)', color: 'var(--negative)' };
-  if (type === 'produce' || type === 'consume') return { ...base, background: 'var(--surface-2)', color: 'var(--fg-subtle)' };
+  if (type === 'produce' || type === 'consume') return { ...base, background: 'var(--surface-2)', color: 'var(--text-tertiary)' };
   return { ...base, background: 'rgba(63,143,107,.13)', color: 'var(--positive)' };
 }
 
@@ -175,16 +175,16 @@ export function Game() {
   if (!vm) {
     return (
       <div style={{ ...card, maxWidth: 620, margin: '8vh auto 0', padding: 28 }}>
-        <div style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 800 }}>首次使用</div>
-        <h2 style={{ margin: '8px 0 0', fontSize: 24 }}>{selectedGame ? '创建当前赛季' : '开始记录游戏'}</h2>
-        <p style={{ margin: '10px 0 20px', color: 'var(--fg-muted)', fontSize: 13, lineHeight: 1.65 }}>
+        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--accent)', fontWeight: 'var(--fw-bold)' }}>首次使用</div>
+        <h2 style={{ margin: '8px 0 0', fontSize: 'var(--fs-display)' }}>{selectedGame ? '创建当前赛季' : '开始记录游戏'}</h2>
+        <p style={{ margin: '10px 0 20px', color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.65 }}>
           {selectedGame
             ? `“${selectedGame.name}”还没有赛季。创建后即可直接添加记录，游戏账号仍可留空。`
             : '只需填写游戏名称。系统会同时创建一个从今天开始的“当前赛季”，游戏账号以后需要时再添加。'}
         </p>
         <form onSubmit={(event) => { event.preventDefault(); void startFirstGame(); }}>
           {!selectedGame && (
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>
+            <label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
               游戏名称
               <input
                 autoFocus
@@ -196,7 +196,7 @@ export function Game() {
               />
             </label>
           )}
-          {createGameError && <div role="alert" style={{ marginTop: 10, color: 'var(--negative)', fontSize: 12 }}>{createGameError}</div>}
+          {createGameError && <div role="alert" style={{ marginTop: 10, color: 'var(--negative)', fontSize: 'var(--fs-caption)' }}>{createGameError}</div>}
           <button
             type="submit"
             disabled={creatingGame || (!selectedGame && !newGameName.trim())}
@@ -215,7 +215,7 @@ export function Game() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}>
       {vm.missingRateAssetCodes.length > 0 && (
-        <div style={{ ...card, padding: '12px 14px', borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 13, fontWeight: 700 }}>
+        <div style={{ ...card, padding: '12px 14px', borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
           缺少 {vm.missingRateAssetCodes.join('、')} → {vm.reportCurrencyCode} 的价格标记；相关游戏记录未计入赛季汇总。
         </div>
       )}
@@ -225,27 +225,27 @@ export function Game() {
             className="zc-select"
             value={selectedGameId}
             onChange={(e) => { setGameId(e.target.value); setSeasonId(null); setAccountFilter(''); }}
-            style={{ width: 180, fontWeight: 800, fontSize: 15 }}
+            style={{ width: 180, fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-title)' }}
           >
             {activeGames.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
         ) : (
-          <div style={{ fontSize: 15, fontWeight: 800 }}>{vm.gameName}</div>
+          <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{vm.gameName}</div>
         )}
         <span style={tagStyle}>{vm.gameTags}</span>
-        <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>账号 · {vm.accountNames}</span>
+        <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>账号 · {vm.accountNames}</span>
         <div style={{ flex: 1 }} />
         <div className="zc-game-season-tabs" style={{ display: 'flex', gap: 8 }}>
           {vm.tabs.map((t) => {
             const active = t.id === vm.activeId;
             return (
               <button key={t.id} onClick={() => setSeasonId(t.id)} style={{
-                padding: '9px 15px', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                padding: '9px 15px', borderRadius: 'var(--r-sm)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', cursor: 'pointer',
                 background: active ? 'var(--accent-soft)' : 'var(--surface)',
                 color: active ? 'var(--accent)' : 'var(--fg-muted)',
                 border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
               }}>
-                {t.name}<span style={{ fontSize: 11, opacity: 0.7, marginLeft: 7 }}>{t.status}</span>
+                {t.name}<span style={{ fontSize: 'var(--fs-meta)', opacity: 0.7, marginLeft: 7 }}>{t.status}</span>
               </button>
             );
           })}
@@ -264,11 +264,11 @@ export function Game() {
 
       {view === 'overview' ? <><div className="zc-game-overview-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: 18, minWidth: 0 }}>
         <div style={card}>
-          <div style={{ fontSize: 12, color: 'var(--fg-muted)', fontWeight: 700 }}>{vm.season.name} · 赛季净收益（{vm.reportCurrencyCode}）</div>
-          <div style={{ fontSize: 40, fontWeight: 800, marginTop: 8, letterSpacing: 0, color: vm.net >= 0 ? 'var(--positive)' : 'var(--negative)' }}>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>{vm.season.name} · 赛季净收益（{vm.reportCurrencyCode}）</div>
+          <div style={{ fontSize: 'var(--fs-hero)', fontWeight: 'var(--fw-bold)', marginTop: 8, letterSpacing: 0, color: vm.net >= 0 ? 'var(--positive)' : 'var(--negative)' }}>
             {signedMoney(vm.net)}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4, fontWeight: 500 }}>{vm.range}</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4, fontWeight: 'var(--fw-regular)' }}>{vm.range}</div>
           <div className="zc-game-kpi-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 20 }}>
             {[
               ['赛季收入', money(vm.income), 'var(--positive)'],
@@ -276,34 +276,34 @@ export function Game() {
               ['每小时收益', vm.filtered ? '—' : money(vm.perHour), 'var(--fg)'],
               ['每日收益', money(vm.perDay), 'var(--fg)'],
             ].map(([l, v, c]) => (
-              <div key={l} style={{ background: 'var(--surface-2)', borderRadius: 12, padding: 14 }}>
-                <div style={{ fontSize: 11, color: 'var(--fg-muted)', fontWeight: 600 }}>{l}</div>
-                <div style={{ fontSize: 18, fontWeight: 800, marginTop: 4, color: c }}>{v}</div>
+              <div key={l} style={{ background: 'var(--surface-2)', borderRadius: 'var(--r-md)', padding: 14 }}>
+                <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>{l}</div>
+                <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)', marginTop: 4, color: c }}>{v}</div>
               </div>
             ))}
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16, paddingTop: 14, borderTop: '1px dashed var(--border)' }}>
-            <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>游戏时长 · {vm.hours} h</span>
-            <span style={{ fontSize: 12, color: 'var(--fg-muted)' }}>记录余额（参考） · {num(vm.refBalance, 2)} {vm.refCurrencyLabel}</span>
+            <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>游戏时长 · {vm.hours} h</span>
+            <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>记录余额（参考） · {num(vm.refBalance, 2)} {vm.refCurrencyLabel}</span>
           </div>
         </div>
 
         <div style={{ ...card, padding: '22px 24px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-            <div style={{ fontSize: 15, fontWeight: 800 }}>赛季记录流</div>
-            <div style={{ fontSize: 11, color: 'var(--fg-subtle)', fontWeight: 600 }}>不强制库存 · 允许卖出 &gt; 买入</div>
+            <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>赛季记录流</div>
+            <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>不强制库存 · 允许卖出 &gt; 买入</div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {vm.records.map((r, i) => (
               <div key={i} onClick={() => setEditRec(r.raw)} title="点击编辑" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
-                <div style={{ fontSize: 11, color: 'var(--fg-subtle)', fontWeight: 700, width: 38, flexShrink: 0 }}>{r.date.slice(5)}</div>
+                <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)', width: 38, flexShrink: 0 }}>{r.date.slice(5)}</div>
                 <span style={recBadge(r.type)}>{REC_LABEL[r.type]}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.item || REC_LABEL[r.type]}</div>
-                  <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 2 }}>{r.nativeAmount}</div>
+                  <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-medium)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.item || REC_LABEL[r.type]}</div>
+                  <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 2 }}>{r.nativeAmount}</div>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--fg-subtle)', width: 64, textAlign: 'right', flexShrink: 0 }}>{r.acc}</div>
-                <div style={{ fontSize: 13, width: 74, textAlign: 'right', ...amountColor(r.amt) }}>
+                <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', width: 64, textAlign: 'right', flexShrink: 0 }}>{r.acc}</div>
+                <div style={{ fontSize: 'var(--fs-body)', width: 74, textAlign: 'right', ...amountColor(r.amt) }}>
                   {r.amt === 0 ? money(0) : signedMoney(r.amt)}
                 </div>
               </div>
@@ -325,11 +325,11 @@ export function Game() {
           dateOf={(record) => record.date}
           keyOf={(record) => record.raw.id}
           renderCompact={(record) => <>{record.date.slice(8)} · <b>{REC_LABEL[record.type]}</b> · {record.item || record.nativeAmount}</>}
-          renderEntry={(record) => <div className="zc-game-timeline-entry" style={{ display: 'grid', gridTemplateColumns: '100px 130px minmax(0, 1fr) 100px 130px', gap: 12, alignItems: 'center' }}><span style={{ color: 'var(--fg-subtle)', fontSize: 11 }}>{record.date}</span><span style={recBadge(record.type)}>{REC_LABEL[record.type]}</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{record.item || REC_LABEL[record.type]}</span><span style={{ color: 'var(--fg-subtle)', textAlign: 'right' }}>{record.acc}</span><b style={{ textAlign: 'right', ...amountColor(record.amt) }}>{record.amt === 0 ? money(0) : signedMoney(record.amt)}</b></div>}
+          renderEntry={(record) => <div className="zc-game-timeline-entry" style={{ display: 'grid', gridTemplateColumns: '100px 130px minmax(0, 1fr) 100px 130px', gap: 12, alignItems: 'center' }}><span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' }}>{record.date}</span><span style={recBadge(record.type)}>{REC_LABEL[record.type]}</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{record.item || REC_LABEL[record.type]}</span><span style={{ color: 'var(--text-tertiary)', textAlign: 'right' }}>{record.acc}</span><b style={{ textAlign: 'right', ...amountColor(record.amt) }}>{record.amt === 0 ? money(0) : signedMoney(record.amt)}</b></div>}
           renderSummary={(rows) => {
             const income = rows.filter((row) => row.amt > 0).reduce((total, row) => total + row.amt, 0);
             const expense = Math.abs(rows.filter((row) => row.amt < 0).reduce((total, row) => total + row.amt, 0));
-            return <span style={{ fontSize: 10, color: 'var(--fg-subtle)' }}>收 {money(income)} · 支 {money(expense)}</span>;
+            return <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>收 {money(income)} · 支 {money(expense)}</span>;
           }}
           onOpen={(record) => setEditRec(record.raw)}
           emptyText="该时间范围内没有游戏记录。"
@@ -385,8 +385,8 @@ export function Game() {
   );
 }
 
-const outlineBtn = { padding: '9px 15px', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer', background: 'var(--surface)', color: 'var(--fg-muted)', border: '1px solid var(--border)' } as const;
-const primaryBtn = { padding: '9px 15px', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer', background: 'var(--accent)', color: '#fff', border: '1px solid var(--accent)' } as const;
+const outlineBtn = btnOutline;
+const primaryBtn = btnPrimary;
 
 function EfficiencyPanel(props: {
   title: string;
@@ -395,23 +395,23 @@ function EfficiencyPanel(props: {
   const max = Math.max(...props.rows.map((r) => Math.abs(r.net)), 1);
   return (
     <div style={card}>
-      <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 12 }}>{props.title}</div>
+      <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>{props.title}</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {props.rows.map((r) => (
           <div key={r.id}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 5 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.label}</span>
-              <span style={{ fontSize: 13, fontWeight: 800, ...amountColor(r.net) }}>{signedMoney(r.net)}</span>
+              <span style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.label}</span>
+              <span style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', ...amountColor(r.net) }}>{signedMoney(r.net)}</span>
             </div>
-            <div style={{ height: 7, background: 'var(--surface-2)', borderRadius: 99, overflow: 'hidden' }}>
-              <div style={{ height: 7, width: `${Math.abs(r.net) / max * 100}%`, background: r.net >= 0 ? 'var(--positive)' : 'var(--negative)', borderRadius: 99 }} />
+            <div style={{ height: 7, background: 'var(--surface-2)', borderRadius: 'var(--r-pill)', overflow: 'hidden' }}>
+              <div style={{ height: 7, width: `${Math.abs(r.net) / max * 100}%`, background: r.net >= 0 ? 'var(--positive)' : 'var(--negative)', borderRadius: 'var(--r-pill)' }} />
             </div>
-            <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 4 }}>
+            <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 4 }}>
               收入 {money(r.income)} · 支出 {money(r.expense)} · {r.records} 条
             </div>
           </div>
         ))}
-        {props.rows.length === 0 && <div style={{ fontSize: 12, color: 'var(--fg-subtle)' }}>暂无记录</div>}
+        {props.rows.length === 0 && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>暂无记录</div>}
       </div>
     </div>
   );

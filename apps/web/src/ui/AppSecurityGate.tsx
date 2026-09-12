@@ -119,14 +119,14 @@ export function AppSecurityGate() {
       background: 'var(--bg, #f3eee7)', color: 'var(--fg, #302e2b)', padding: 24,
     }}>
       <div style={{ width: 'min(380px, 100%)', textAlign: 'center' }}>
-        <div style={{ fontSize: 22, fontWeight: 900 }}>资产生命周期</div>
-        <div style={{ marginTop: 10, color: 'var(--fg-muted, #6f6961)', fontSize: 13 }}>
+        <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>资产生命周期</div>
+        <div style={{ marginTop: 10, color: 'var(--fg-muted, #6f6961)', fontSize: 'var(--fs-body)' }}>
           {busy ? '正在等待设备验证…' : '应用已锁定'}
         </div>
-        {error && <div style={{ marginTop: 12, color: 'var(--negative, #b4483d)', fontSize: 12, overflowWrap: 'anywhere' }}>{error}</div>}
+        {error && <div style={{ marginTop: 12, color: 'var(--negative, #b4483d)', fontSize: 'var(--fs-caption)', overflowWrap: 'anywhere' }}>{error}</div>}
         <button type="button" onClick={() => void unlock()} disabled={busy} style={{
-          marginTop: 18, height: 40, padding: '0 18px', border: 0, borderRadius: 8,
-          background: 'var(--accent, #b56345)', color: '#fff', fontWeight: 800, cursor: busy ? 'wait' : 'pointer',
+          marginTop: 18, height: 40, padding: '0 18px', border: 0, borderRadius: 'var(--r-sm)',
+          background: 'var(--accent, #b56345)', color: '#fff', fontWeight: 'var(--fw-bold)', cursor: busy ? 'wait' : 'pointer',
         }}>
           {busy ? '验证中…' : '使用生物识别或设备密码解锁'}
         </button>

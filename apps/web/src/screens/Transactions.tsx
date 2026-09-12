@@ -38,7 +38,7 @@ import {
   transactionForm, transactionSplitForm, type AttachmentDraft, type TransactionFormValue,
 } from '../forms.js';
 import { money, signedMoney } from '../format.js';
-import { card, cardTight, tag as tagStyle, amountColor, th as thStyle, td as tdStyle } from '../ui/styles.js';
+import { amountColor, btnOutline, btnPrimary, card, cardTight, selectBase, tag as tagStyle, td as tdStyle, th as thStyle } from '../ui/styles.js';
 import { categoryLabel, categoryOptions, categoryType as metaCategoryType, TYPE_LABEL } from '../transactionMeta.js';
 import {
   buildBudgetMonth,
@@ -147,29 +147,10 @@ function mergeAccountLedgerPage(current: AccountLedgerPage, page: AccountLedgerP
   return { ...page, rows: [...current.rows, ...page.rows] };
 }
 
-const selectStyle = {
-  height: 38,
-  borderRadius: 10,
-  border: '1px solid var(--border)',
-  background: 'var(--surface)',
-  color: 'var(--fg)',
-  padding: '0 12px',
-  fontWeight: 700,
-  fontSize: 13,
-} as const;
+const selectStyle = selectBase;
 
-const button = {
-  padding: '8px 14px',
-  borderRadius: 9,
-  border: '1px solid var(--border)',
-  background: 'var(--surface)',
-  color: 'var(--fg-muted)',
-  fontWeight: 700,
-  fontSize: 13,
-  cursor: 'pointer',
-  whiteSpace: 'nowrap',
-} as const;
-const primary = { ...button, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff' } as const;
+const button = btnOutline;
+const primary = btnPrimary;
 
 type Tab = 'records' | 'accounts' | 'budget' | 'bills';
 
@@ -1025,7 +1006,7 @@ export function Transactions() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       {vm.missingRateAssetCodes.length > 0 && (
-        <div style={{ ...cardTight, borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 13, fontWeight: 700 }}>
+        <div style={{ ...cardTight, borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
           缺少 {vm.missingRateAssetCodes.join('、')} → {vm.reportCurrencyCode} 的价格标记；相关流水不会静默当作 0，汇总和预算会标记为未完整折算。
         </div>
       )}
@@ -1041,8 +1022,8 @@ export function Transactions() {
           <div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 800 }}>{usesAccounts ? '日常流水' : '日常支出'}</div>
-                <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 3 }}>
+                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{usesAccounts ? '日常流水' : '日常支出'}</div>
+                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3 }}>
                   {usesAccounts ? '收入、支出、转账、退款和拆分交易' : '完整记录支出详情；侧栏或移动端“快记”可只填金额'}
                 </div>
               </div>
@@ -1077,19 +1058,19 @@ export function Transactions() {
             {usesAccounts && <AdvancedQueryBuilder snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} />}
             {showVoided && (
               <div style={{ borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
-                <div style={{ padding: '10px 0', fontSize: 12, fontWeight: 900 }}>已作废流水</div>
+                <div style={{ padding: '10px 0', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>已作废流水</div>
                 {(voidedPage?.transactions ?? [])
                   .sort((a, b) => b.date.localeCompare(a.date) || (b.time ?? '').localeCompare(a.time ?? ''))
                   .map((row) => (
                     <div key={row.id} className="zc-voided-row" style={{ display: 'grid', gridTemplateColumns: '130px 90px minmax(0, 1fr) 130px 72px', gap: 10, alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--border)' }}>
-                      <span style={{ fontSize: 11, color: 'var(--fg-subtle)' }}>{row.date}{row.time ? ` ${row.time}` : ''}</span>
+                      <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{row.date}{row.time ? ` ${row.time}` : ''}</span>
                       <span style={{ ...tagStyle, width: 'fit-content' }}>{TYPE_LABEL[row.type]}</span>
                       <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.description ?? row.merchant ?? categoryLabel(row.category, readySnap.categories)}</span>
                       <b style={{ textAlign: 'right' }}>{row.amount} {readySnap.assets.find((asset) => asset.id === row.assetId)?.code ?? row.assetId}</b>
                       <button onClick={() => void restoreTx(row)} style={{ ...button, padding: '6px 10px' }}>恢复</button>
                     </div>
                   ))}
-                {(voidedPage?.transactions.length ?? 0) === 0 && <div style={{ padding: '12px 0', fontSize: 12, color: 'var(--fg-subtle)' }}>当前时间范围没有已作废流水。</div>}
+                {(voidedPage?.transactions.length ?? 0) === 0 && <div style={{ padding: '12px 0', fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>当前时间范围没有已作废流水。</div>}
               </div>
             )}
             {activeTemplates.length > 0 && (
@@ -1103,7 +1084,7 @@ export function Transactions() {
             )}
             {selectedIds.length > 0 && (
               <div className="zc-responsive-action-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderTop: '1px solid var(--border)' }}>
-                <span style={{ fontSize: 12, color: 'var(--fg-muted)', fontWeight: 800 }}>已选择 {selectedIds.length} 条流水</span>
+                <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>已选择 {selectedIds.length} 条流水</span>
                 <span style={{ display: 'flex', gap: 8 }}>
                   <button onClick={() => setBatchOpen(true)} style={primary}>批量修改</button>
                   <button onClick={() => setSelectedIds([])} style={button}>清空选择</button>
@@ -1135,8 +1116,8 @@ export function Transactions() {
                 renderCompact={(item) => <>{item.tx.date.slice(8)} · <b>{item.categoryLabel}</b> · {item.tx.description ?? item.payeeName}</>}
                 renderEntry={(item) => (
                   <div className="zc-transaction-timeline-entry" style={{ display: 'grid', gridTemplateColumns: '90px 120px minmax(0, 1fr) 130px', gap: 12, alignItems: 'center' }}>
-                    <span style={{ fontSize: 11, color: 'var(--fg-subtle)' }}>{item.tx.date}{item.tx.time ? ` ${item.tx.time}` : ''}</span>
-                    <b style={{ fontSize: 12 }}>{item.categoryLabel}</b>
+                    <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{item.tx.date}{item.tx.time ? ` ${item.tx.time}` : ''}</span>
+                    <b style={{ fontSize: 'var(--fs-caption)' }}>{item.categoryLabel}</b>
                     <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.tx.description ?? item.payeeName}</span>
                     <b style={{ justifySelf: 'end', ...amountColor(item.signedAmount) }}>{item.tx.type === 'income' || item.tx.type === 'refund' ? '+' : item.tx.type === 'expense' ? '-' : ''}{item.tx.amount} {item.assetCode}</b>
                   </div>
@@ -1144,7 +1125,7 @@ export function Transactions() {
                 renderSummary={(rows) => {
                   const income = rows.reduce((total, row) => total.plus(row.incomeBase), D(0));
                   const expense = rows.reduce((total, row) => total.plus(row.expenseBase), D(0));
-                  return <span style={{ fontSize: 10, color: 'var(--fg-subtle)' }}>收 {money(income)} · 支 {money(expense)}</span>;
+                  return <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>收 {money(income)} · 支 {money(expense)}</span>;
                 }}
                 onOpen={(item) => openTransaction(item.tx)}
                 emptyText="该时间范围内没有日常流水。"
@@ -1157,10 +1138,10 @@ export function Transactions() {
                     {transactionPageBusy ? '加载中…' : '继续加载 100 笔'}
                   </button>
                 )}
-                <span style={{ fontSize: 11, color: 'var(--fg-subtle)' }}>
+                <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
                   已加载 {readyTransactionRead.page.transactions.length} / {readyTransactionRead.page.totalCount} 笔
                 </span>
-                {transactionReadError && <span role="alert" style={{ color: 'var(--negative)', fontSize: 12 }}>{transactionReadError}</span>}
+                {transactionReadError && <span role="alert" style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)' }}>{transactionReadError}</span>}
               </div>
             )}
           </div>
@@ -1172,8 +1153,8 @@ export function Transactions() {
         <div style={card}>
           <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'end', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
             <div>
-              <div style={{ fontSize: 15, fontWeight: 800 }}>账户流水与对账</div>
-              <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4 }}>输入银行期末余额，逐笔核对账单中已经清算的账户流水。</div>
+              <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>账户流水与对账</div>
+              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>输入银行期末余额，逐笔核对账单中已经清算的账户流水。</div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setEditingReconcile('new')} style={primary}>开始对账</button>
@@ -1207,19 +1188,19 @@ export function Transactions() {
                 <td style={tdStyle}>{r.balance} {r.assetCode}</td>
               </tr>
             ))}
-            {ledger.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={6}>暂无账户流水</td></tr>}
+            {ledger.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={6}>暂无账户流水</td></tr>}
           </Table>
           {accountLedgerPage?.hasMore && (
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 10 }}>
               <button type="button" onClick={() => void loadMoreAccountLedger()} disabled={accountLedgerBusy} style={button}>
                 {accountLedgerBusy ? '加载中…' : '继续加载 100 笔'}
               </button>
-              <span style={{ fontSize: 11, color: 'var(--fg-subtle)' }}>
+              <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
                 已加载 {accountLedgerPage.rows.length} / {accountLedgerPage.totalCount} 条账户分录
               </span>
             </div>
           )}
-          <div style={{ marginTop: 18, fontSize: 13, fontWeight: 800 }}>对账记录</div>
+          <div style={{ marginTop: 18, fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>对账记录</div>
           <Table headers={['账单日', '账户', '币种', '账单余额', '差额', '状态']}>
             {reconciliationRows.map((r) => (
               <tr key={r.id} onClick={() => setEditingReconcile(r)} style={{ cursor: 'pointer' }}>
@@ -1231,7 +1212,7 @@ export function Transactions() {
                 <td style={tdStyle}>{r.status === 'closed' ? '已完成' : '进行中'}</td>
               </tr>
             ))}
-            {reconciliationRows.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={6}>该时间范围内暂无对账记录</td></tr>}
+            {reconciliationRows.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={6}>该时间范围内暂无对账记录</td></tr>}
           </Table>
         </div>
       )}
@@ -1240,8 +1221,8 @@ export function Transactions() {
         <div style={card}>
           <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, marginBottom: 14 }}>
             <div>
-              <div style={{ fontSize: 15, fontWeight: 800 }}>{budgetView === 'year' ? `${budgetMonth.slice(0, 4)} 年度预算` : `${budgetMonth} 分类预算`}</div>
-              <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4 }}>预算冻结创建时币种，统一折算为 {vm.reportCurrencyCode}；拆分交易进入对应二级分类。</div>
+              <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{budgetView === 'year' ? `${budgetMonth.slice(0, 4)} 年度预算` : `${budgetMonth} 分类预算`}</div>
+              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>预算冻结创建时币种，统一折算为 {vm.reportCurrencyCode}；拆分交易进入对应二级分类。</div>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               <button onClick={() => setBudgetView('year')} style={budgetView === 'year' ? primary : button}>年度</button>
@@ -1256,9 +1237,9 @@ export function Transactions() {
             <div className="zc-budget-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
               {budgetYearRows.map((row) => (
                 <button key={row.month} onClick={() => { setBudgetMonth(row.month); setBudgetView('month'); }} style={{ ...cardTight, minHeight: 112, textAlign: 'left', cursor: 'pointer' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><b>{Number(row.month.slice(5))} 月</b><span style={{ color: 'var(--fg-subtle)', fontSize: 11 }}>{row.rows.length} 项</span></div>
-                  <div style={{ marginTop: 14, fontSize: 12, color: 'var(--fg-muted)' }}>预算 {money(row.planned)}</div>
-                  <div style={{ marginTop: 5, fontSize: 14, fontWeight: 850, color: row.actual.gt(row.planned) ? 'var(--negative)' : 'var(--fg)' }}>实际 {money(row.actual)}</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><b>{Number(row.month.slice(5))} 月</b><span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' }}>{row.rows.length} 项</span></div>
+                  <div style={{ marginTop: 14, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>预算 {money(row.planned)}</div>
+                  <div style={{ marginTop: 5, fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color: row.actual.gt(row.planned) ? 'var(--negative)' : 'var(--fg)' }}>实际 {money(row.actual)}</div>
                 </button>
               ))}
             </div>
@@ -1266,19 +1247,19 @@ export function Transactions() {
             <div className="zc-budget-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
               {budgetRows.map((b) => (
                 <button key={b.id ?? b.category} onClick={() => setEditingBudget(snap.budgetCategories.find((x) => x.id === b.id) ?? 'new')} style={{ ...cardTight, textAlign: 'left', cursor: 'pointer' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 13, fontWeight: 800 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
                     <span>{b.label}</span>
                     <span style={{ color: b.over ? 'var(--negative)' : b.conversionKnown ? 'var(--fg)' : 'var(--warning)' }}>{b.conversionKnown ? money(b.remaining) : '未折算'}</span>
                   </div>
-                  <div style={{ height: 8, background: 'var(--surface-2)', borderRadius: 99, overflow: 'hidden', margin: '10px 0' }}>
-                    <div style={{ height: 8, width: `${Math.min(100, Math.max(3, b.usedRatio * 100))}%`, background: b.over ? 'var(--negative)' : 'var(--accent)', borderRadius: 99 }} />
+                  <div style={{ height: 8, background: 'var(--surface-2)', borderRadius: 'var(--r-pill)', overflow: 'hidden', margin: '10px 0' }}>
+                    <div style={{ height: 8, width: `${Math.min(100, Math.max(3, b.usedRatio * 100))}%`, background: b.over ? 'var(--negative)' : 'var(--accent)', borderRadius: 'var(--r-pill)' }} />
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--fg-subtle)', fontWeight: 700 }}>
+                  <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>
                     {b.conversionKnown ? `已用 ${money(b.actual)} / 可用 ${money(b.available)} · 上月结转 ${money(b.carryIn)} · 下月 ${money(b.carryOut)}` : '缺少流水或预算币种汇率'} · 原预算 {b.plannedNative}
                   </div>
                 </button>
               ))}
-              {budgetRows.length === 0 && <div style={{ color: 'var(--fg-subtle)', fontSize: 13 }}>该月份暂无预算</div>}
+              {budgetRows.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>该月份暂无预算</div>}
             </div>
           )}
         </div>
@@ -1288,8 +1269,8 @@ export function Transactions() {
         <div style={card}>
           <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 14 }}>
             <div>
-              <div style={{ fontSize: 15, fontWeight: 800 }}>定期交易与账单</div>
-              <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4 }}>启用后会在打开应用时自动补齐；关闭应用期间不会在后台执行。</div>
+              <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>定期交易与账单</div>
+              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>启用后会在打开应用时自动补齐；关闭应用期间不会在后台执行。</div>
             </div>
             <button onClick={() => setEditingSchedule('new')} style={primary}>+ 定期交易</button>
           </div>
@@ -1298,11 +1279,11 @@ export function Transactions() {
             display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
             padding: '10px 12px', marginBottom: 14, background: 'var(--surface-2)', border: '1px solid var(--border)',
           }}>
-            <b style={{ fontSize: 12 }}>待补齐 {scheduledBacklog.length} 期</b>
-            <span style={{ fontSize: 11, color: 'var(--fg-subtle)' }}>
+            <b style={{ fontSize: 'var(--fs-caption)' }}>待补齐 {scheduledBacklog.length} 期</b>
+            <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
               其中失败 {scheduledBacklog.filter((row) => row.status === 'failed').length} 期
             </span>
-            {scheduledBacklog[0] && <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>最早：{scheduledBacklog[0].occurrenceDate} · {scheduledBacklog[0].scheduleName}</span>}
+            {scheduledBacklog[0] && <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)' }}>最早：{scheduledBacklog[0].occurrenceDate} · {scheduledBacklog[0].scheduleName}</span>}
           </div>
           {billView === 'list' ? (
             <Table headers={['名称', '类型', '分类', '金额', '下次日期', '状态', '']}>
@@ -1315,7 +1296,7 @@ export function Transactions() {
                     <td style={tdStyle}>{s.categoryLabel}</td>
                     <td style={tdStyle}>{s.amount}</td>
                     <td style={tdStyle}>{s.nextDate}</td>
-                    <td style={{ ...tdStyle, color: s.status === 'overdue' ? 'var(--negative)' : s.status === 'due' ? 'var(--accent)' : 'var(--fg-subtle)', fontWeight: 800 }}>{scheduleLabel(s.status)}</td>
+                    <td style={{ ...tdStyle, color: s.status === 'overdue' ? 'var(--negative)' : s.status === 'due' ? 'var(--accent)' : 'var(--fg-subtle)', fontWeight: 'var(--fw-bold)' }}>{scheduleLabel(s.status)}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
                       <button onClick={() => void materializeSchedule(row)} disabled={row.status !== 'active'} style={button}>生成</button>
                       <button onClick={() => setEditingSchedule(row)} style={{ ...button, marginLeft: 8 }}>编辑</button>
@@ -1323,7 +1304,7 @@ export function Transactions() {
                   </tr>
                 );
               })}
-              {vm.schedules.filter((schedule) => isDateInRange(schedule.nextDate, billRange)).length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={7}>该时间范围内暂无到期交易</td></tr>}
+              {vm.schedules.filter((schedule) => isDateInRange(schedule.nextDate, billRange)).length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={7}>该时间范围内暂无到期交易</td></tr>}
             </Table>
           ) : (
             <TimelineExplorer
@@ -1336,13 +1317,13 @@ export function Transactions() {
               keyOf={(item) => item.id}
               renderCompact={(item) => <>{item.date.slice(8)} · <b>{item.name}</b> · {item.amount}</>}
               renderEntry={(item) => <div className="zc-transaction-timeline-entry" style={{ display: 'grid', gridTemplateColumns: '100px 120px minmax(0, 1fr) 130px', gap: 12 }}><span>{item.date}</span><b>{item.typeLabel}</b><span>{item.name} · {item.categoryLabel}</span><b style={{ textAlign: 'right' }}>{item.amount}</b></div>}
-              renderSummary={(rows) => <span style={{ fontSize: 10, color: 'var(--fg-subtle)' }}>{rows.length} 笔待办</span>}
+              renderSummary={(rows) => <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{rows.length} 笔待办</span>}
               onOpen={(item) => setEditingSchedule(item.schedule)}
               emptyText="该时间范围内没有定期交易待办。"
             />
           )}
           <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-            <div style={{ fontSize: 13, fontWeight: 850, marginBottom: 10 }}>执行历史</div>
+            <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', marginBottom: 10 }}>执行历史</div>
             <div className="zc-scroll-x">
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr><th style={thStyle}>计划</th><th style={thStyle}>期次</th><th style={thStyle}>结果</th><th style={thStyle}>尝试时间</th><th style={thStyle}>详情</th><th style={thStyle}></th></tr></thead>
@@ -1354,12 +1335,12 @@ export function Transactions() {
                       <td style={{
                         ...tdStyle,
                         color: execution.status === 'created' ? 'var(--positive)' : execution.status === 'failed' ? 'var(--negative)' : 'var(--fg-subtle)',
-                        fontWeight: 800,
+                        fontWeight: 'var(--fw-bold)',
                       }}>{execution.status === 'created' ? '已生成' : execution.status === 'failed' ? '失败' : '已跳过'}</td>
                       <td style={tdStyle}>{execution.attemptedAt ? new Date(execution.attemptedAt).toLocaleString() : '—'}</td>
                       <td style={{ ...tdStyle, maxWidth: 320 }}>
                         {execution.lastError ?? (execution.status === 'failed' ? '未知错误' : execution.transactionId ? `流水 ${execution.transactionId.slice(0, 8)}` : '按补齐策略跳过')}
-                        {execution.status === 'failed' && <div style={{ fontSize: 10, color: 'var(--fg-subtle)', marginTop: 2 }}>已重试 {execution.retryCount ?? 0} 次{execution.nextRetryAt ? ` · 下次 ${new Date(execution.nextRetryAt).toLocaleString()}` : ''}</div>}
+                        {execution.status === 'failed' && <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 2 }}>已重试 {execution.retryCount ?? 0} 次{execution.nextRetryAt ? ` · 下次 ${new Date(execution.nextRetryAt).toLocaleString()}` : ''}</div>}
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right' }}>
                         {execution.status === 'failed' && (
@@ -1373,7 +1354,7 @@ export function Transactions() {
                       </td>
                     </tr>
                   ))}
-                  {executionHistory.length === 0 && <tr><td colSpan={6} style={{ ...tdStyle, color: 'var(--fg-subtle)' }}>还没有执行记录</td></tr>}
+                  {executionHistory.length === 0 && <tr><td colSpan={6} style={{ ...tdStyle, color: 'var(--text-tertiary)' }}>还没有执行记录</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -1665,7 +1646,7 @@ function SavedViews(props: {
   const [editingId, setEditingId] = useState('');
   const [editingName, setEditingName] = useState('');
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 10, marginBottom: 14, background: 'var(--surface-2)' }}>
+    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 10, marginBottom: 14, background: 'var(--surface-2)' }}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <input
           className="zc-input"
@@ -1675,17 +1656,17 @@ function SavedViews(props: {
           style={{ width: 180, height: 36 }}
         />
         <button onClick={props.onSave} style={primary}>保存当前筛选</button>
-        {props.error && <span style={{ fontSize: 12, color: 'var(--negative)', fontWeight: 800 }}>{props.error}</span>}
+        {props.error && <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{props.error}</span>}
       </div>
       {props.views.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
           {props.views.map((view) => {
             const editing = editingId === view.id;
             return (
-              <span key={view.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: '1px solid var(--border)', borderRadius: 999, padding: 3, background: 'var(--surface)' }}>
+              <span key={view.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: 3, background: 'var(--surface)' }}>
                 {editing ? (
                   <>
-                    <input className="zc-input" value={editingName} onChange={(e) => setEditingName(e.target.value)} style={{ width: 130, height: 32, borderRadius: 999 }} />
+                    <input className="zc-input" value={editingName} onChange={(e) => setEditingName(e.target.value)} style={{ width: 130, height: 32, borderRadius: 'var(--r-pill)' }} />
                     <button
                       onClick={() => {
                         props.onRename(view, editingName);
@@ -1782,13 +1763,13 @@ function AdvancedQueryBuilder(props: { snap: Snapshot; filters: TransactionFilte
             <button onClick={() => applyPreset('food')} style={button}>本月餐饮</button>
           </div>
           {queryPreview && (
-            <div style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10, background: 'var(--surface-2)', fontSize: 12, color: 'var(--fg-muted)', fontWeight: 800 }}>
+            <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 10, background: 'var(--surface-2)', fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>
               当前查询：{queryPreview}
             </div>
           )}
           {query.groups.map((group, groupIndex) => (
-            <div key={group.id} style={{ border: '1px solid var(--border)', borderRadius: 10, padding: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 8, fontSize: 12, color: 'var(--fg-muted)', fontWeight: 800 }}>
+            <div key={group.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 8, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>
                 <span>{groupIndex === 0 ? '满足以下全部条件' : '或者满足以下全部条件'}</span>
                 <button onClick={() => addCondition(group.id)} style={button}>+ 条件</button>
               </div>
@@ -1853,7 +1834,7 @@ function AdvancedConditionRow(props: {
       <select aria-label="高级查询条件" style={selectStyle} value={condition.op} onChange={(e) => onChange({ op: e.target.value as AdvancedQueryOperator })}>
         {ADVANCED_OPERATOR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
-      {noValue ? <span style={{ fontSize: 12, color: 'var(--fg-subtle)' }}>无需输入值</span> : (
+      {noValue ? <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>无需输入值</span> : (
         <ConditionValueInput field={condition.field} value={condition.value ?? ''} options={options} onChange={(value) => onChange({ value })} />
       )}
       {condition.op === 'between'
@@ -1940,11 +1921,11 @@ function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof b
         <div style={cardTight}><Kpi label={`${vm.month} 本月支出`} value={money(vm.expense)} tone="var(--negative)" sub="自动汇总全部支出" /></div>
         <div style={cardTight}><Kpi label="当前范围" value={`${vm.count} 笔`} tone="var(--accent)" sub={`合计支出 ${money(vm.filteredExpense)}`} /></div>
         <div style={cardTight}>
-          <div style={{ fontSize: 12, color: 'var(--fg-muted)', fontWeight: 700 }}>常用支出分类</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>常用支出分类</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 11 }}>
-            {vm.topExpenseCategories.length === 0 && <div style={{ fontSize: 12, color: 'var(--fg-subtle)' }}>记下第一笔支出后会自动汇总</div>}
+            {vm.topExpenseCategories.length === 0 && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>记下第一笔支出后会自动汇总</div>}
             {vm.topExpenseCategories.slice(0, 3).map((category) => (
-              <div key={category.category} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12, fontWeight: 700 }}>
+              <div key={category.category} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
                 <span>{category.label}</span><span>{money(category.amount)}</span>
               </div>
             ))}
@@ -1960,16 +1941,16 @@ function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof b
       <div style={cardTight}><Kpi label="本月结余" value={signedMoney(vm.net)} tone={Number(vm.net) >= 0 ? 'var(--positive)' : 'var(--negative)'} sub="收入 - 支出" /></div>
       <div style={cardTight}><Kpi label="当前筛选" value={`${vm.count} 条`} tone="var(--accent)" sub={`收 ${money(vm.filteredIncome)} · 支 ${money(vm.filteredExpense)} · ${signedMoney(vm.filteredNet)}`} /></div>
       <div style={cardTight}>
-        <div style={{ fontSize: 12, color: 'var(--fg-muted)', fontWeight: 700 }}>Top 支出分类</div>
+        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>Top 支出分类</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 11 }}>
-          {vm.topExpenseCategories.length === 0 && <div style={{ fontSize: 12, color: 'var(--fg-subtle)' }}>本月暂无支出</div>}
+          {vm.topExpenseCategories.length === 0 && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>本月暂无支出</div>}
           {vm.topExpenseCategories.map((c) => (
             <div key={c.category}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12, fontWeight: 700 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
                 <span>{c.label}</span><span>{money(c.amount)}</span>
               </div>
-              <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 99, overflow: 'hidden', marginTop: 5 }}>
-                <div style={{ height: 6, width: `${Math.max(4, c.weight * 100)}%`, background: 'var(--negative)', borderRadius: 99 }} />
+              <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 'var(--r-pill)', overflow: 'hidden', marginTop: 5 }}>
+                <div style={{ height: 6, width: `${Math.max(4, c.weight * 100)}%`, background: 'var(--negative)', borderRadius: 'var(--r-pill)' }} />
               </div>
             </div>
           ))}
@@ -1995,10 +1976,10 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, usesAccounts, 
   const toggle = (id: string) => setSelectedIds?.((ids) => ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-      {vm.groups.length === 0 && <div style={{ color: 'var(--fg-subtle)', fontSize: 13, padding: '20px 0' }}>暂无流水</div>}
+      {vm.groups.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)', padding: '20px 0' }}>暂无流水</div>}
       {vm.groups.map((g) => (
         <div key={g.key}>
-          <div style={{ fontSize: 12, color: 'var(--fg-subtle)', fontWeight: 800, marginBottom: 8 }}>{g.label}</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)', marginBottom: 8 }}>{g.label}</div>
           <div style={{ borderTop: '1px solid var(--border)' }}>
             {g.items.map((item) => {
               const tx = item.tx;
@@ -2035,7 +2016,7 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, usesAccounts, 
                   style={{
                     width: '100%', display: 'grid', gridTemplateColumns: `${setSelectedIds ? '34px ' : ''}${usesAccounts ? '88px 112px 1fr 150px 110px 72px' : '88px 112px 1fr 110px 72px'}`,
                     alignItems: 'center', gap: 12, border: 'none', borderBottom: '1px solid var(--border)',
-                    background: 'transparent', color: 'var(--fg)', padding: '13px 0', textAlign: 'left', cursor: 'pointer',
+                    background: 'transparent', color: 'var(--text-primary)', padding: '13px 0', textAlign: 'left', cursor: 'pointer',
                   }}
                 >
                   {setSelectedIds && (
@@ -2051,18 +2032,18 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, usesAccounts, 
                       />
                     </span>
                   )}
-                  <span style={{ fontSize: 12, color: 'var(--fg-subtle)', fontWeight: 700 }}>{tx.date}{tx.time ? <><br />{tx.time}</> : null}</span>
+                  <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>{tx.date}{tx.time ? <><br />{tx.time}</> : null}</span>
                   <span style={{ ...tagStyle, width: 'fit-content', color: tx.type === 'income' || tx.type === 'refund' ? 'var(--positive)' : tx.type === 'expense' ? 'var(--negative)' : 'var(--accent)' }}>
                     {item.categoryLabel}
                   </span>
                   <span style={{ minWidth: 0 }}>
-                    <span style={{ display: 'block', fontSize: 13, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
-                    <span style={{ display: 'block', fontSize: 11, color: 'var(--fg-subtle)', marginTop: 2 }}>
+                    <span style={{ display: 'block', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
+                    <span style={{ display: 'block', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 2 }}>
                       {details}
                     </span>
                   </span>
-                  {usesAccounts && <span style={{ fontSize: 11, color: 'var(--fg-subtle)', fontWeight: 800 }}>{item.statusLabel}</span>}
-                  <span style={{ justifySelf: 'end', fontSize: 14, ...amountColor(item.signedAmount) }}>
+                  {usesAccounts && <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>{item.statusLabel}</span>}
+                  <span style={{ justifySelf: 'end', fontSize: 'var(--fs-body)', ...amountColor(item.signedAmount) }}>
                     {tx.type === 'transfer' ? '' : tx.type === 'income' || tx.type === 'refund' || (tx.type === 'adjustment' && tx.adjustmentDirection === 'increase') ? '+' : '-'}{tx.amount} {item.assetCode}
                   </span>
                   <span style={{ justifySelf: 'end' }}>
@@ -2152,12 +2133,12 @@ function BatchEditModal(props: {
       dismissDisabled={busy}
       backdropStyle={{ background: 'rgba(0,0,0,.34)' }}
       panelClassName="zc-entity-modal zc-batch-modal"
-      panelStyle={{ width: 'min(760px, 100%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 18, boxShadow: '0 18px 60px rgba(0,0,0,.2)' }}
+      panelStyle={{ width: 'min(760px, 100%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 18, boxShadow: '0 18px 60px rgba(0,0,0,.2)' }}
     >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <div>
-            <div id={titleId} style={{ fontSize: 16, fontWeight: 900 }}>批量修改流水</div>
-            <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 3 }}>将修改应用到 {count} 条流水，金额不会被批量改动。</div>
+            <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>批量修改流水</div>
+            <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3 }}>将修改应用到 {count} 条流水，金额不会被批量改动。</div>
           </div>
           <button type="button" data-dialog-initial-focus disabled={busy} onClick={onClose} style={button}>关闭</button>
         </div>
@@ -2188,29 +2169,29 @@ function BatchEditModal(props: {
           </select>
         </div>
         <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 10 }}>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: 'var(--fg-muted)', fontWeight: 800 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>
             追加标签
             <select multiple style={{ ...selectStyle, height: 118, padding: 8 }} value={addTagIds} onChange={(e) => { markDirty(); setAddTagIds(readMulti(e)); }}>
               {snap.transactionTags.filter((t) => !t.isDeleted).map((t) => <option key={t.id} value={t.id}>{t.groupName ? `${t.groupName} / ${t.name}` : t.name}</option>)}
             </select>
           </label>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: 'var(--fg-muted)', fontWeight: 800 }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>
             移除标签
             <select multiple style={{ ...selectStyle, height: 118, padding: 8 }} value={removeTagIds} onChange={(e) => { markDirty(); setRemoveTagIds(readMulti(e)); }}>
               {snap.transactionTags.filter((t) => !t.isDeleted).map((t) => <option key={t.id} value={t.id}>{t.groupName ? `${t.groupName} / ${t.name}` : t.name}</option>)}
             </select>
           </label>
         </div>
-        <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, background: review ? 'var(--accent-soft)' : 'var(--surface-2)', marginTop: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 900, color: 'var(--fg-muted)' }}>修改预览</div>
-          <div style={{ fontSize: 13, fontWeight: 800, marginTop: 5 }}>{hasPatch ? previewSummary : '尚未选择要修改的字段'}</div>
-          <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 8 }}>将影响 {count} 条流水，先展示前 {Math.min(5, transactions.length)} 条：</div>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 12, background: review ? 'var(--accent-soft)' : 'var(--surface-2)', marginTop: 12 }}>
+          <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>修改预览</div>
+          <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', marginTop: 5 }}>{hasPatch ? previewSummary : '尚未选择要修改的字段'}</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 8 }}>将影响 {count} 条流水，先展示前 {Math.min(5, transactions.length)} 条：</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8 }}>
             {previewRows.map(({ tx, before, after, error }) => (
-              <div className="zc-batch-preview-row" key={tx.id} style={{ display: 'grid', gridTemplateColumns: '96px 1fr 100px', gap: 8, fontSize: 12, color: 'var(--fg-muted)' }}>
+              <div className="zc-batch-preview-row" key={tx.id} style={{ display: 'grid', gridTemplateColumns: '96px 1fr 100px', gap: 8, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>
                 <span>{tx.date}</span>
                 <span>
-                  <b style={{ color: 'var(--fg-subtle)' }}>改前</b> {before}
+                  <b style={{ color: 'var(--text-tertiary)' }}>改前</b> {before}
                   <br />
                   <b style={{ color: error ? 'var(--negative)' : 'var(--fg-subtle)' }}>改后</b> {error || after}
                 </span>
@@ -2219,7 +2200,7 @@ function BatchEditModal(props: {
             ))}
           </div>
         </div>
-        {error && <div style={{ color: 'var(--negative)', fontSize: 12, fontWeight: 800, marginTop: 12 }}>{error}</div>}
+        {error && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginTop: 12 }}>{error}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
           <button onClick={onClose} disabled={busy} style={button}>取消</button>
           <button onClick={() => void submit()} disabled={busy} style={primary}>{busy ? '正在应用…' : review ? '确认应用' : '预览修改'}</button>
@@ -2232,7 +2213,7 @@ function Trend({ vm }: { vm: NonNullable<ReturnType<typeof buildTransactions>> }
   const maxTrend = Math.max(1, ...vm.trend.flatMap((m) => [Number(m.income), Number(m.expense)]));
   return (
     <div style={card}>
-      <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 16 }}>近 6 个月趋势</div>
+      <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 16 }}>近 6 个月趋势</div>
       <div className="zc-trend-grid" style={{ display: 'grid', gridTemplateColumns: `repeat(${vm.trend.length}, minmax(80px, 1fr))`, gap: 14, alignItems: 'end', height: 180 }}>
         {vm.trend.map((m) => {
           const incomeH = Math.max(4, Number(m.income) / maxTrend * 130);
@@ -2240,11 +2221,11 @@ function Trend({ vm }: { vm: NonNullable<ReturnType<typeof buildTransactions>> }
           return (
             <div key={m.month} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'end', gap: 6, height: 132 }}>
-                <div title={`收入 ${money(m.income)}`} style={{ width: 18, height: incomeH, borderRadius: '6px 6px 0 0', background: 'var(--positive)' }} />
-                <div title={`支出 ${money(m.expense)}`} style={{ width: 18, height: expenseH, borderRadius: '6px 6px 0 0', background: 'var(--negative)' }} />
+                <div title={`收入 ${money(m.income)}`} style={{ width: 18, height: incomeH, borderRadius: 'var(--r-sm) var(--r-sm) 0 0', background: 'var(--positive)' }} />
+                <div title={`支出 ${money(m.expense)}`} style={{ width: 18, height: expenseH, borderRadius: 'var(--r-sm) var(--r-sm) 0 0', background: 'var(--negative)' }} />
               </div>
-              <div style={{ fontSize: 11, color: 'var(--fg-subtle)', fontWeight: 700 }}>{m.month.slice(5)}</div>
-              <div style={{ fontSize: 11, color: Number(m.net) >= 0 ? 'var(--positive)' : 'var(--negative)', fontWeight: 800 }}>{signedMoney(m.net)}</div>
+              <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>{m.month.slice(5)}</div>
+              <div style={{ fontSize: 'var(--fs-meta)', color: Number(m.net) >= 0 ? 'var(--positive)' : 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{signedMoney(m.net)}</div>
             </div>
           );
         })}
@@ -2267,9 +2248,9 @@ function Table(props: { headers: string[]; children: ReactNode }) {
 function Kpi({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: string }) {
   return (
     <>
-      <div style={{ fontSize: 12, color: 'var(--fg-muted)', fontWeight: 700 }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 800, marginTop: 10, color: tone, whiteSpace: 'nowrap' }}>{value}</div>
-      <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 5, fontWeight: 600 }}>{sub}</div>
+      <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>{label}</div>
+      <div style={{ fontSize: 'var(--fs-display)', fontWeight: 'var(--fw-bold)', marginTop: 10, color: tone, whiteSpace: 'nowrap' }}>{value}</div>
+      <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 5, fontWeight: 'var(--fw-medium)' }}>{sub}</div>
     </>
   );
 }

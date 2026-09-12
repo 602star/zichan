@@ -1,4 +1,75 @@
 /* Mirrors the prototype's base styles (资产记账系统.dc.html <style>). */
+
+/*
+ * Design tokens.
+ *
+ * The palette mirrors `theme.ts`. The theme still wins at runtime because it is
+ * applied as an inline custom-property set on `.zc-app-shell`, and an inline
+ * declaration on an ancestor overrides `:root` for its whole subtree.
+ *
+ * Everything else — type scale, weights, radii, spacing, text roles — lives
+ * here so CSS can express the same intent as the JSX. Before this existed the
+ * scale only existed inside 1300+ inline style objects, so CSS had no way to
+ * take part and the only tool left was `!important` against itself.
+ */
+:root {
+  /* Palette defaults; per-theme values are injected by `theme.ts`. */
+  --bg: #f0e9dc;
+  --surface: #fffcf6;
+  --surface-2: #f6efe2;
+  --fg: #2b2620;
+  --fg-muted: #6b6155;
+  --fg-subtle: #a3988a;
+  --border: #e6dccb;
+  --accent: #bf6b3f;
+  --accent-soft: #f6e4d5;
+  --positive: #3f8f6b;
+  --negative: #c2604a;
+  --warning: #9a681d;
+
+  /* Text roles: three levels a reader can actually tell apart, so supporting
+     copy stops reading as a fog of near-identical greys. */
+  --text-primary: var(--fg);
+  --text-secondary: var(--fg-muted);
+  --text-tertiary: var(--fg-subtle);
+
+  /* Type scale: seven steps, down from 27 ad-hoc sizes. */
+  --fs-meta: 11px;      /* labels, badges, chart axes */
+  --fs-caption: 12px;   /* dense secondary text */
+  --fs-body: 13px;      /* default body */
+  --fs-title: 15px;     /* section titles, row emphasis */
+  --fs-heading: 20px;   /* page and dialog titles */
+  --fs-display: 26px;   /* headline metrics */
+  --fs-hero: clamp(28px, 8vw, 40px);
+  /* Control text stays at the iOS focus-zoom threshold. */
+  --fs-input: 16px;
+
+  /* Weights: three steps, down from nine. Hierarchy comes from size and colour,
+     so not every string has to shout. */
+  --fw-regular: 400;
+  --fw-medium: 600;
+  --fw-bold: 700;
+
+  /* Radii: three steps plus a pill and a full circle. */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+  --r-round: 50%;
+
+  /* Spacing: six steps. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+
+  /* Control metrics. */
+  --control-h: 38px;
+  --control-h-sm: 30px;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -29,8 +100,275 @@ html {
   min-height: 100vh;
   min-height: 100dvh;
 }
+/*
+ * Form controls otherwise inherit the UA default (13.3333px), which showed up
+ * as a stray extra text size in the audit. Give them the named body size; the
+ * coarse-pointer block below raises it to --fs-input for iOS focus zoom.
+ */
+input,
+select,
+textarea,
 button {
   font-family: inherit;
+  font-size: var(--fs-body);
+}
+
+/*
+ * One control height for every button, from CSS rather than from an inline
+ * style, so the coarse-pointer block can raise it to 44px on touch devices.
+ */
+button,
+[role="button"] {
+  min-height: var(--control-h);
+}
+
+/* ---------------------------------------------------------------------------
+ * Component vocabulary.
+ *
+ * These are the shapes a screen is allowed to use, so a page stops inventing
+ * its own button, card and caption. They are the CSS half of the same tokens
+ * `src/ui/styles.ts` exports for JSX.
+ * ------------------------------------------------------------------------ */
+
+/* The single bordered surface. Nothing nests a card inside a card: inner
+   groups use `.zc-section`, which separates with a divider instead. */
+.zc-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--sp-5);
+}
+
+.zc-card.is-tight {
+  padding: var(--sp-4);
+}
+
+/* A table or list needs the border and radius but not the padding. */
+.zc-card.is-flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* A group inside a card: divider-separated, no border of its own. */
+.zc-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.zc-section + .zc-section {
+  border-top: 1px solid var(--border);
+  padding-top: var(--sp-4);
+}
+
+.zc-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+
+.zc-section-title {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: var(--fw-bold);
+  color: var(--text-primary);
+}
+
+/* Supporting copy: one size, one weight, one colour, everywhere. */
+.zc-meta {
+  margin: 0;
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-regular);
+  color: var(--text-tertiary);
+  line-height: 1.6;
+}
+
+.zc-caption {
+  margin: 0;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-regular);
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* Buttons: one shape, four intents. */
+.zc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  min-height: var(--control-h);
+  padding: 0 var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-bold);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.zc-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.zc-btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.zc-btn--primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.zc-btn--primary:hover:not(:disabled) {
+  color: #fff;
+}
+
+.zc-btn--danger {
+  border-color: var(--negative);
+  color: var(--negative);
+}
+
+.zc-btn--danger:hover:not(:disabled) {
+  border-color: var(--negative);
+  color: var(--negative);
+}
+
+.zc-btn--ghost {
+  border-color: transparent;
+  background: transparent;
+}
+
+.zc-btn--quiet {
+  background: var(--surface-2);
+}
+
+.zc-btn--sm {
+  min-height: var(--control-h-sm);
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-caption);
+}
+
+.zc-btn--block {
+  width: 100%;
+}
+
+/* Tabs: one row, one active state. */
+.zc-tabs {
+  display: flex;
+  gap: var(--sp-1);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.zc-tab {
+  flex: 0 0 auto;
+  min-height: var(--control-h);
+  padding: 0 var(--sp-3);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.zc-tab.is-active {
+  border-bottom-color: var(--accent);
+  color: var(--text-primary);
+  font-weight: var(--fw-bold);
+}
+
+/* A labelled control: label above, control below, one gap. */
+.zc-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+/* Summary strip: the handful of numbers a screen leads with. */
+.zc-summary-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.zc-summary-metric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-4);
+  background: var(--surface);
+}
+
+.zc-summary-label {
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-bold);
+  color: var(--text-tertiary);
+}
+
+.zc-summary-value {
+  font-size: var(--fs-display);
+  font-weight: var(--fw-bold);
+  color: var(--text-primary);
+  line-height: 1.15;
+}
+
+/* Overflow menu, so exports stop being a wall of buttons. */
+.zc-menu {
+  position: relative;
+}
+
+.zc-menu-list {
+  position: absolute;
+  inset-inline-end: 0;
+  top: calc(100% + var(--sp-1));
+  z-index: 20;
+  min-width: 190px;
+  padding: var(--sp-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: 0 18px 40px rgba(46, 36, 27, .16);
+}
+
+.zc-menu-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--control-h);
+  padding: 0 var(--sp-3);
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  text-align: start;
+  cursor: pointer;
+}
+
+.zc-menu-item:hover:not(:disabled) {
+  background: var(--surface-2);
 }
 
 .zc-error-boundary {
@@ -48,28 +386,28 @@ button {
   width: min(620px, 100%);
   padding: clamp(24px, 5vw, 44px);
   border: 1px solid #d8cec2;
-  border-radius: 14px;
+  border-radius: var(--r-md);
   background: #fffdf9;
   box-shadow: 0 24px 80px rgba(46, 36, 27, .12);
 }
 
 .zc-error-boundary-kicker {
   color: #a34f36;
-  font-size: 12px;
-  font-weight: 900;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-bold);
   letter-spacing: .08em;
 }
 
 .zc-error-boundary h1 {
   margin: 9px 0 8px;
-  font-size: clamp(24px, 4vw, 34px);
+  font-size: var(--fs-hero);
 }
 
 .zc-error-boundary p,
 .zc-error-boundary details,
 .zc-error-boundary [role="status"] {
   color: #6f6961;
-  font-size: 13px;
+  font-size: var(--fs-body);
   line-height: 1.65;
 }
 
@@ -90,10 +428,10 @@ button {
   min-height: 40px;
   padding: 0 15px;
   border: 1px solid #c9bdb0;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   color: #594f47;
   background: #fffdf9;
-  font-weight: 800;
+  font-weight: var(--fw-bold);
   cursor: pointer;
 }
 
@@ -139,15 +477,15 @@ button {
   margin-top: 10px;
   min-height: 44px;
   border: 1px solid var(--accent);
-  border-radius: 10px;
+  border-radius: var(--r-sm);
   background: var(--accent);
   color: #fff;
-  font-weight: 800;
+  font-weight: var(--fw-bold);
   cursor: pointer;
 }
 
 .zc-sidebar-quick-rail-icon {
-  font-size: 17px;
+  font-size: var(--fs-title);
   line-height: 1;
 }
 
@@ -220,7 +558,7 @@ button {
        `!important` is required because the class-based control styles below
        (`.zc-input`, `.zc-select`, `.zc-protection input`) are equally or more
        specific and would otherwise win on tablets and landscape phones. */
-    font-size: 16px !important;
+    font-size: var(--fs-input) !important;
   }
 
   button,
@@ -275,6 +613,24 @@ button {
     width: 20px;
     height: 20px;
     margin: 0;
+  }
+}
+
+/*
+ * The component classes above set `min-height`/`font-size` at class
+ * specificity, which outranks the bare `button` / `select` touch baseline in
+ * the block above. Re-floor them here so a `.zc-btn` is still a 44px target on
+ * a touch device; `--sm` stays visually smaller but keeps a tappable box.
+ */
+@media (pointer: coarse) {
+  .zc-btn,
+  .zc-tab,
+  .zc-menu-item {
+    min-height: 44px;
+  }
+
+  .zc-btn--sm {
+    min-height: 36px;
   }
 }
 
@@ -353,7 +709,7 @@ input[type="radio"] {
     border: 0 !important;
     white-space: normal !important;
     text-align: left !important;
-    font-size: 13px;
+    font-size: var(--fs-body);
     overflow-wrap: anywhere;
   }
 
@@ -361,16 +717,16 @@ input[type="radio"] {
     content: attr(data-label);
     flex: 0 0 auto;
     max-width: 40%;
-    color: var(--fg-subtle);
-    font-size: 11px;
-    font-weight: 800;
+    color: var(--text-tertiary);
+    font-size: var(--fs-meta);
+    font-weight: var(--fw-bold);
   }
 
   /* The first cell is the card headline, so it keeps no redundant label. */
   .zc-card-table > tbody > tr > td:first-child {
     padding-bottom: 7px !important;
-    font-size: 14px;
-    font-weight: 800;
+    font-size: var(--fs-body);
+    font-weight: var(--fw-bold);
   }
 
   .zc-card-table > tbody > tr > td:first-child::before {
@@ -398,7 +754,7 @@ input[type="radio"] {
 }
 ::-webkit-scrollbar-thumb {
   background: var(--border);
-  border-radius: 99px;
+  border-radius: var(--r-pill);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -419,7 +775,7 @@ input[type="radio"] {
 .zc-quick-expense-dialog {
   box-sizing: border-box;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--r-md);
   background: var(--surface);
   box-shadow: 0 24px 80px rgba(20, 16, 12, 0.28);
   overscroll-behavior: contain;
@@ -461,20 +817,20 @@ input[type="radio"] {
 }
 .zc-protection {
   background: var(--surface);
-  color: var(--fg);
+  color: var(--text-primary);
   line-height: 1.65;
-  font-size: 13px;
+  font-size: var(--fs-body);
 }
 .zc-protection button {
   min-height: 36px;
   padding: 7px 13px;
   margin: 4px 8px 4px 0;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   background: var(--surface-2);
-  color: var(--fg);
+  color: var(--text-primary);
   font: inherit;
-  font-weight: 700;
+  font-weight: var(--fw-bold);
   cursor: pointer;
 }
 .zc-protection button:disabled { opacity: .5; cursor: default; }
@@ -490,14 +846,14 @@ input[type="radio"] {
   margin: 9px 0;
   padding: 9px 11px;
   border: 1px solid var(--border);
-  border-radius: 9px;
-  color: var(--fg);
+  border-radius: var(--r-sm);
+  color: var(--text-primary);
   background: var(--bg);
   font: inherit;
 }
 .zc-protection input[type="checkbox"] { accent-color: var(--accent); margin-right: 8px; }
-.zc-protection summary { cursor: pointer; font-weight: 700; padding: 5px 0; }
-.zc-protection pre { background: var(--surface-2); padding: 16px; border: 1px solid var(--border); border-radius: 9px; }
+.zc-protection summary { cursor: pointer; font-weight: var(--fw-bold); padding: 5px 0; }
+.zc-protection pre { background: var(--surface-2); padding: 16px; border: 1px solid var(--border); border-radius: var(--r-sm); }
 .zc-protection [role="alert"] { color: var(--negative); }
 
 /* The class-qualified rules above outrank the bare `button` touch baseline, so
@@ -511,7 +867,7 @@ input[type="radio"] {
   }
 
   .zc-protection input:not([type="checkbox"]):not([type="radio"]) {
-    font-size: 16px !important;
+    font-size: var(--fs-input) !important;
   }
 }
 
@@ -519,11 +875,11 @@ input[type="radio"] {
 .zc-select {
   width: 100%;
   padding: 9px 11px;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--bg);
-  color: var(--fg);
-  font-size: 13px;
+  color: var(--text-primary);
+  font-size: var(--fs-body);
   font-family: inherit;
   font-variant-numeric: tabular-nums;
 }
@@ -533,9 +889,9 @@ input[type="radio"] {
   border-color: var(--accent);
 }
 .zc-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--fg-muted);
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-bold);
+  color: var(--text-secondary);
   margin-bottom: 5px;
   display: block;
 }
@@ -577,7 +933,7 @@ input[type="radio"] {
   gap: 9px;
   padding: 0 8px;
   cursor: pointer;
-  color: var(--fg-muted);
+  color: var(--text-secondary);
   list-style-position: inside;
 }
 
@@ -631,9 +987,9 @@ input[type="radio"] {
   display: flex;
   align-items: center;
   padding: 0 10px;
-  color: var(--fg-subtle);
-  font-size: 11px;
-  font-weight: 850;
+  color: var(--text-tertiary);
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-bold);
 }
 
 .zc-category-pref-parent {
@@ -665,15 +1021,15 @@ input[type="radio"] {
   border: none;
   background: transparent;
   color: inherit;
-  font-size: 12px;
-  font-weight: 850;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-bold);
   text-align: left;
   cursor: pointer;
 }
 
 .zc-category-drag {
-  color: var(--fg-subtle);
-  font-size: 12px;
+  color: var(--text-tertiary);
+  font-size: var(--fs-caption);
   cursor: grab;
   user-select: none;
 }
@@ -715,27 +1071,27 @@ input[type="radio"] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--fg);
-  font-size: 12px;
-  font-weight: 800;
+  color: var(--text-primary);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-bold);
 }
 
 .zc-category-pref-name small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--fg-subtle);
-  font-size: 9px;
-  font-weight: 600;
+  color: var(--text-tertiary);
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-medium);
 }
 
 .zc-category-pref-toggle {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--fg-muted);
-  font-size: 10px;
-  font-weight: 800;
+  color: var(--text-secondary);
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-bold);
   white-space: nowrap;
 }
 
@@ -752,10 +1108,10 @@ input[type="radio"] {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: var(--surface);
-  color: var(--fg-muted);
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
   cursor: pointer;
 }
 
@@ -768,12 +1124,12 @@ input[type="radio"] {
 
 .zc-category-state {
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 2px 7px;
   background: var(--surface-2);
-  color: var(--fg-subtle);
-  font-size: 10px;
-  font-weight: 850;
+  color: var(--text-tertiary);
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-bold);
   white-space: nowrap;
 }
 
@@ -828,7 +1184,7 @@ input[type="radio"] {
 
   .zc-sidebar nav > div > button:first-child span:first-child {
     width: auto !important;
-    font-size: 18px !important;
+    font-size: var(--fs-heading) !important;
   }
 
   .zc-sidebar-quick-inline {
@@ -938,13 +1294,13 @@ input[type="radio"] {
 
   .zc-sidebar-nav-item > span:first-child {
     width: auto !important;
-    font-size: 18px !important;
+    font-size: var(--fs-heading) !important;
   }
 
   .zc-sidebar-nav-label {
     display: block !important;
     width: 100%;
-    font-size: 10px;
+    font-size: var(--fs-meta);
     line-height: 1.2;
   }
 
@@ -955,7 +1311,7 @@ input[type="radio"] {
 
   .zc-sidebar-quick-rail-label {
     display: block;
-    font-size: 10px;
+    font-size: var(--fs-meta);
   }
 }
 
@@ -975,7 +1331,7 @@ input[type="radio"] {
 /* Phone: one content column, bottom navigation, safe areas, and keyboard-safe sheets. */
 @media (max-width: 767px) {
   input:not([type="checkbox"]):not([type="radio"]), select, textarea {
-    font-size: 16px !important;
+    font-size: var(--fs-input) !important;
   }
 
   html,
@@ -1019,7 +1375,7 @@ input[type="radio"] {
   }
 
   .zc-header-title > div:first-child {
-    font-size: 18px !important;
+    font-size: var(--fs-heading) !important;
   }
 
   .zc-header-subtitle,
@@ -1076,8 +1432,8 @@ input[type="radio"] {
     padding: 3px;
     border: 0;
     background: transparent;
-    color: var(--fg-subtle);
-    font-weight: 800;
+    color: var(--text-tertiary);
+    font-weight: var(--fw-bold);
     cursor: pointer;
   }
 
@@ -1085,12 +1441,12 @@ input[type="radio"] {
     min-height: 22px;
     display: flex;
     align-items: center;
-    font-size: 20px;
+    font-size: var(--fs-heading);
     line-height: 1;
   }
 
   .zc-mobile-bottom-nav > button > small {
-    font-size: 10px;
+    font-size: var(--fs-meta);
   }
 
   .zc-mobile-bottom-nav > button.is-active {
@@ -1103,10 +1459,10 @@ input[type="radio"] {
     justify-content: center;
     margin-top: -18px;
     border: 4px solid var(--bg);
-    border-radius: 50%;
+    border-radius: var(--r-round);
     background: var(--accent);
     color: #fff;
-    font-size: 28px;
+    font-size: var(--fs-display);
     box-sizing: content-box;
   }
 
@@ -1125,7 +1481,7 @@ input[type="radio"] {
     max-height: min(82dvh, 720px);
     overflow-y: auto;
     padding: 8px 16px calc(18px + env(safe-area-inset-bottom));
-    border-radius: 8px 8px 0 0;
+    border-radius: var(--r-sm) var(--r-sm) 0 0;
     background: var(--surface);
     box-shadow: 0 -22px 64px rgba(15, 23, 42, .24);
   }
@@ -1134,7 +1490,7 @@ input[type="radio"] {
     width: 42px;
     height: 4px;
     margin: 0 auto 8px;
-    border-radius: 2px;
+    border-radius: var(--r-sm);
     background: var(--border);
   }
 
@@ -1143,15 +1499,15 @@ input[type="radio"] {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    font-size: 16px;
+    font-size: var(--fs-input);
   }
 
   .zc-mobile-drawer-head button {
     width: 44px;
     border: 0;
     background: transparent;
-    color: var(--fg-muted);
-    font-size: 26px;
+    color: var(--text-secondary);
+    font-size: var(--fs-display);
   }
 
   .zc-mobile-drawer-grid {
@@ -1169,14 +1525,14 @@ input[type="radio"] {
     justify-content: center;
     gap: 6px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     background: var(--surface-2);
-    color: var(--fg-muted);
-    font-size: 11px;
+    color: var(--text-secondary);
+    font-size: var(--fs-meta);
   }
 
   .zc-mobile-drawer-grid button span {
-    font-size: 20px;
+    font-size: var(--fs-heading);
   }
 
   .zc-mobile-drawer-grid button.is-active {
@@ -1188,21 +1544,21 @@ input[type="radio"] {
   .zc-mobile-drawer-section-head {
     margin-top: 16px;
     padding: 0 2px 6px;
-    color: var(--fg-subtle);
-    font-size: 11px;
-    font-weight: 800;
+    color: var(--text-tertiary);
+    font-size: var(--fs-meta);
+    font-weight: var(--fw-bold);
   }
 
   .zc-mobile-drawer-grid-hidden button {
     min-height: 56px;
     border-style: dashed;
-    color: var(--fg-subtle);
+    color: var(--text-tertiary);
   }
 
   .zc-mobile-drawer-grid-hidden button small {
     color: var(--accent);
-    font-size: 10px;
-    font-weight: 800;
+    font-size: var(--fs-meta);
+    font-weight: var(--fw-bold);
   }
 
   .zc-mobile-drawer-status {
@@ -1213,8 +1569,8 @@ input[type="radio"] {
     padding: 12px;
     border: 1px solid var(--border);
     background: var(--surface-2);
-    color: var(--fg-subtle);
-    font-size: 11px;
+    color: var(--text-tertiary);
+    font-size: var(--fs-meta);
   }
 
   .zc-mobile-drawer-status span,
@@ -1239,16 +1595,16 @@ input[type="radio"] {
   .zc-mobile-drawer-actions button {
     flex: 1;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     background: var(--surface);
-    color: var(--fg-muted);
-    font-weight: 800;
+    color: var(--text-secondary);
+    font-weight: var(--fw-bold);
   }
 
   .zc-mobile-theme-row button {
     width: 44px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     background: var(--surface-2);
   }
 
@@ -1260,7 +1616,7 @@ input[type="radio"] {
     width: 18px;
     height: 18px;
     display: inline-block;
-    border-radius: 50%;
+    border-radius: var(--r-round);
   }
 
   .zc-backdrop {
@@ -1291,7 +1647,7 @@ input[type="radio"] {
     max-width: none !important;
     max-height: 84dvh;
     padding: 20px 16px calc(18px + env(safe-area-inset-bottom)) !important;
-    border-radius: 8px 8px 0 0 !important;
+    border-radius: var(--r-sm) var(--r-sm) 0 0 !important;
     overflow-y: auto;
   }
 
@@ -1301,7 +1657,7 @@ input[type="radio"] {
     border-right: 0;
     border-bottom: 0;
     border-left: 0;
-    border-radius: 16px 16px 0 0;
+    border-radius: var(--r-md) var(--r-md) 0 0;
   }
 
   .zc-quick-expense-dialog > div {
@@ -1402,7 +1758,7 @@ input[type="radio"] {
 
   .zc-timeline-weekday {
     padding: 6px 2px !important;
-    font-size: 10px !important;
+    font-size: var(--fs-meta) !important;
   }
 
   .zc-timeline-calendar-cell {
@@ -1863,7 +2219,7 @@ input[type="radio"] {
   .zc-reconciliation-candidate > :nth-child(2) {
     grid-column: 2;
     grid-row: 2;
-    font-size: 11px;
+    font-size: var(--fs-meta);
   }
 
   .zc-reconciliation-candidate > :nth-child(3) {
@@ -1882,7 +2238,7 @@ input[type="radio"] {
     grid-column: 3;
     grid-row: 2;
     text-align: right;
-    font-size: 11px;
+    font-size: var(--fs-meta);
   }
 
   .zc-reconciliation-session-row {
@@ -1930,7 +2286,7 @@ input[type="radio"] {
     margin-top: 10px;
     padding: 10px 12px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     background: var(--surface-2);
   }
 
@@ -1948,9 +2304,9 @@ input[type="radio"] {
     content: attr(data-label);
     flex: 0 0 auto;
     max-width: 40%;
-    color: var(--fg-subtle);
-    font-size: 11px;
-    font-weight: 800;
+    color: var(--text-tertiary);
+    font-size: var(--fs-meta);
+    font-weight: var(--fw-bold);
   }
 
   /* The quick-entry sheet keeps a scrollable body clear of the bottom nav. */
