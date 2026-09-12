@@ -674,7 +674,7 @@ function AllocationEditor(props: {
   return (
     <div id={props.fieldId} style={{ border: '1px solid var(--border)', maxHeight: 210, overflowY: 'auto', background: 'var(--surface)' }}>
       {props.options.map((option) => (
-        <label key={option.value} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 150px', gap: 10, alignItems: 'center', padding: '8px 10px', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+        <label key={option.value} className="zc-refund-option-row" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 150px', gap: 10, alignItems: 'center', padding: '8px 10px', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{option.label}</span>
           <input className="zc-input" inputMode="decimal" value={values[option.value] ?? ''} onChange={(event) => update(option.value, event.target.value)} placeholder="退款金额" />
         </label>

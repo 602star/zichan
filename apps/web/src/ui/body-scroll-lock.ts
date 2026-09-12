@@ -46,6 +46,15 @@ export function acquireBodyScrollLock(target: BodyScrollTarget): () => void {
 export function useBodyScrollLock(active = true): void {
   useEffect(() => {
     if (!active) return undefined;
-    return acquireBodyScrollLock(document.body);
+    // The viewport is the scroller (`html`, not `body`), so locking only <body>
+    // would leave the page scrollable behind a modal. Lock both: on document
+    // scrollers the root element carries the lock, and <body> covers browsers
+    // that still route scrolling through it.
+    const releaseRoot = acquireBodyScrollLock(document.documentElement);
+    const releaseBody = acquireBodyScrollLock(document.body);
+    return () => {
+      releaseRoot();
+      releaseBody();
+    };
   }, [active]);
 }

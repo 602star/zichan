@@ -54,7 +54,7 @@ export function UndoProvider({ children }: { children: ReactNode }) {
     <UndoContext.Provider value={{ offer: publish, clear }}>
       {children}
       {offer && (
-        <div role="status" aria-live="polite" style={{ position: 'fixed', left: '50%', bottom: 'max(24px, env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 1200, width: 'min(520px, calc(100vw - 24px))', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg)', boxShadow: '0 12px 36px rgba(0,0,0,.22)', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div role="status" aria-live="polite" className="zc-undo-toast" style={{ position: 'fixed', left: '50%', transform: 'translateX(-50%)', zIndex: 1200, width: 'min(520px, calc(100vw - 24px))', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg)', boxShadow: '0 12px 36px rgba(0,0,0,.22)', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 750 }}>{error || offer.label}</span>
           {error ? <button type="button" onClick={clear} style={button}>关闭</button> : <button type="button" onClick={() => void run()} disabled={busy} style={button}>{busy ? '撤销中…' : '撤销'}</button>}
         </div>
@@ -88,4 +88,4 @@ export function useUndo(store?: SqlLedgerStore, onPersistentUndo?: () => void): 
   return useMemo(() => ({ offer, clear: value.clear }), [offer, value.clear]);
 }
 
-const button = { minHeight: 36, padding: '0 13px', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 800, cursor: 'pointer' } as const;
+const button = { padding: '0 13px', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 800, cursor: 'pointer' } as const;

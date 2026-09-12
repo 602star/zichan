@@ -43,6 +43,8 @@ import {
   navigationLabel,
   orderedNavigationItems,
   parseNavigationPreferences,
+  serializeNavigationPreferences,
+  setNavigationItemVisible,
   type NavigationPreferences,
   type ScreenId,
 } from './navigationPreferences.js';
@@ -246,6 +248,7 @@ export function App() {
   const [importUnlockError, setImportUnlockError] = useState('');
   const [backups, setBackups] = useState<SavedBackup[]>([]);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const [enablingModule, setEnablingModule] = useState<ScreenId | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const importUnlockFlight = useRef<Promise<void> | null>(null);
   const bumpRef = useRef(bump);
@@ -286,6 +289,29 @@ export function App() {
   }, []);
 
   useEffect(() => installSyncLifecycle(store, () => bumpRef.current()), [store]);
+
+  async function enableModule(id: ScreenId) {
+    const current = snap?.setting;
+    if (!current) return;
+    setEnablingModule(id);
+    try {
+      const next = setNavigationItemVisible(navigation, id, true);
+      await store.runInAuditBatch(
+        '启用侧边栏模块',
+        async (transactionStore) => {
+          const stored = await transactionStore.settings.get(current.id);
+          await transactionStore.settings.put({
+            ...(stored ?? current),
+            navigationLayoutJson: serializeNavigationPreferences(next),
+          });
+        },
+        'system',
+      );
+      bump();
+    } finally {
+      setEnablingModule(null);
+    }
+  }
 
   async function doExport() {
     // The portable desktop cannot reliably download a Blob from WebView2.  Write
@@ -501,6 +527,8 @@ export function App() {
         asOf={formatAsOfDate(asOfDate)}
         ledgerMode={ledgerMode}
         navigation={navigation}
+        enablingModule={enablingModule}
+        onEnableModule={(id) => void enableModule(id)}
       />
       <div id="zc-dialog-portal" />
       {importDialog?.kind === 'password' && (
@@ -683,6 +711,7 @@ function Sidebar(props: {
             >
               <button
                 title={label}
+                className="zc-sidebar-nav-item"
                 onClick={() => setScreen(id)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 10,
@@ -698,6 +727,7 @@ function Sidebar(props: {
               {withQuick && (
                 <button
                   type="button"
+                  className="zc-sidebar-quick-inline"
                   aria-label="快速记账"
                   title="快速记账"
                   onClick={onQuickTransaction}
@@ -723,6 +753,22 @@ function Sidebar(props: {
           );
         })}
       </nav>
+
+      {/*
+       * Wide-rail and compact-rail variants of the same action. Keeping one
+       * element per breakpoint (rather than shrinking a single button to 24px
+       * inside the icon rail) keeps the tap target at 44px on tablets.
+       */}
+      <button
+        type="button"
+        className="zc-sidebar-quick-rail"
+        aria-label="快速记账"
+        title="快速记账"
+        onClick={onQuickTransaction}
+      >
+        <span className="zc-sidebar-quick-rail-icon" aria-hidden="true">＋</span>
+        <span className="zc-sidebar-quick-rail-label">快速记账</span>
+      </button>
 
       <div style={{ flex: 1 }} />
 
@@ -770,6 +816,8 @@ function MobileNavigation(props: {
   asOf: string;
   ledgerMode: LedgerMode;
   navigation: NavigationPreferences;
+  enablingModule: ScreenId | null;
+  onEnableModule: (id: ScreenId) => void;
 }) {
   const { onMoreOpen } = props;
   const drawerTitleId = useId();
@@ -789,6 +837,11 @@ function MobileNavigation(props: {
   const moreIds = new Set(moreItems.map((item) => item.id));
   const beforeQuick = mainItems.slice(0, 1);
   const afterQuick = mainItems.slice(1);
+  const shownIds = new Set(visibleItems.map((item) => item.id));
+  // Modules the user turned off. Surfacing them here means a hidden module does
+  // not require a detour through 设置, and hidden modules are never force-added
+  // to the drawer grid above.
+  const hiddenItems = orderedNavigationItems(props.navigation, true).filter((item) => !shownIds.has(item.id));
   return (
     <>
       <nav
@@ -827,6 +880,24 @@ function MobileNavigation(props: {
                   <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}><span>{icon}</span><b>{navigationLabel(id, props.ledgerMode)}</b></button>
                 ))}
               </div>
+            )}
+            {hiddenItems.length > 0 && (
+              <>
+                <div className="zc-mobile-drawer-section-head">未启用模块</div>
+                <div className="zc-mobile-drawer-grid zc-mobile-drawer-grid-hidden">
+                  {hiddenItems.map(({ id, icon }) => (
+                    <button
+                      key={id}
+                      className="zc-mobile-drawer-add"
+                      disabled={props.enablingModule === id}
+                      onClick={() => props.onEnableModule(id)}
+                    >
+                      <span>{icon}</span><b>{navigationLabel(id, props.ledgerMode)}</b>
+                      <small>{props.enablingModule === id ? '启用中…' : '启用'}</small>
+                    </button>
+                  ))}
+                </div>
+              </>
             )}
             <div className="zc-mobile-drawer-status">
               <span>报表币种 <b>{props.reportCurrency}</b></span>

@@ -3,6 +3,63 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-12 — 手机 Web 端完全适配
+
+**Goal:** 把 `apps/web`（同时被 Tauri 移动壳复用）真正适配到手机上，而不是只在窄屏下不横向溢出。
+
+**审计方法**：真实 Chrome + 真实 `@zichan/sync-server` + `apps/web/dist` 构建产物，粗指针
+（`hasTouch` + `isMobile`）仿真下走真实登录/建账/记流水，再逐屏程序化测量。空账本会掩盖问题，
+所以先经 UI 写入 8 笔流水（含 7 位数金额）再测量。
+
+**复现出的根因（都不是“有没有做响应式”，而是结构性问题）**
+
+1. 44px 触控目标与 16px 表单字号只写在 `@media (max-width: 767px)` 里。宽度一旦 ≥768px
+   （平板竖屏、手机横屏）整套手机规则失效，回落 13px 输入框和 24px 目标 → iOS 聚焦自动放大整页。
+2. `html, body { overflow-x: hidden }` 让 `<body>` 变成滚动容器（一侧 hidden 会把另一侧强制成
+   `auto`）：`documentElement.scrollHeight` 等于视口高、`window.scrollTo` 无效、真实溢出被静默裁掉。
+   总览的大金额就是这样把「截至 日期」顶出屏幕且无人发现的。
+3. 手机适配靠 `styles.css` 里的 `!important` 去压 TSX 内联 `gridTemplateColumns`。**没有 class 的内联网格**
+   （对账弹窗、已作废行、退款金额行等 6 处）天然漏掉，且不报错。
+4. 长表格（历史 696px、报表主表）在手机上退化为横向滑动，关键列要滑才看得到。
+
+**改动**
+
+- 触控基线改绑 `(pointer: coarse)`：44px 最小命中区 + 16px 输入字号，覆盖平板与横屏；行内 checkbox
+  本体保持 18px，44px 命中区由 `.zc-check-target` 包装盒提供。`.zc-protection` 那组 class 限定的
+  `min-height: 36px` / `font: inherit` 特异性更高，单独再兜一层。
+- 滚动模型回归视口：`html { overflow-x: clip }`（含 `@supports not (overflow: clip)` 回退），去掉 body 的
+  `overflow-x`；弹窗滚动锁改为同时锁 `documentElement` 与 `body`。
+- 新增 `.zc-card-table`：桌面保留真实 `<table>` 语义，手机用表头文字作 `data-label` 渲染成标签/值卡片。
+  历史列表、报表主表、报表流水明细已接入。
+- 6 处无 class 的内联网格补上 class 与手机规则（总览任务行、历史冲突事实、退款金额行、存储路径清单、
+  快记字段组、快记时间/币种组）；对账弹窗、已作废行、同步端点汇总也补上手机重排。
+- 平板 `768–1023px` 改 96px 导航轨并在图标下加 10px 文字标签（纯图标轨的 ◈ ⇄ ≋ ◆ ▤ 难以辨认），
+  快记从 24×24 徽标改为整行 44px 行；`1024–1199px` 维持图标轨。
+- 「更多」抽屉新增「未启用模块」区块，可直接启用，不必再绕到设置页。
+- 总览大金额 `clamp(26px, 8.5vw, 46px)` + `flexWrap`，日期不再 `nowrap`；撤销 toast 上移到
+  `calc(78px + env(safe-area-inset-bottom))` 不再压在底部导航下；补 `prefers-reduced-motion`、
+  横向页签 `scroll-snap`、`theme-color` / `apple-mobile-web-app-*` 与内联图标（同时消掉 favicon 404）。
+
+**新增回归护栏**
+
+- `tools/e2e/account-tests/mobile-layout.spec.mjs`：真实数据 + 320/360/390/414/844/768/1024 七种视口 × 10 个页面，
+  断言无横向溢出、无超出视口元素、命中区 ≥44×44（含 label/wrapper 有效命中区）、表单字号 ≥16px、
+  滚动到底后内容不被底部导航遮挡、总览「截至」日期可见。同时把 `<body>` 当滚动容器、视口不可滚动
+  设成硬失败门。
+- `apps/web/test/responsive-contract.test.ts` 从字符串断言升级为：触控基线必须绑 `pointer: coarse`、
+  滚动容器必须是视口、长表格必须走 `data-label` 卡片化、**任何内联固定网格都必须有 class 钩子**
+  （`repeat(auto-fit|auto-fill)` 豁免）。最后一条当场抓出 6 处真实漏网。
+
+**验证**
+
+- `npm test` → 334 通过（58 文件）；`npm run lint`、`npm run typecheck`、`npm run build:web` 干净。
+- 真机视口审计脚本最终 **0 findings**（此前 269 条）；默认 e2e 12 项、账号 e2e 22 项全部通过
+  （含新增 `mobile-layout` spec 与既有 `mobile.spec`）。
+- 总览首屏实测（金额 `¥1,280,246.79`）：320px 时金额右边界 220、日期右边界 134 可见；
+  360px 时日期右边界 134（修复前 483，视口仅 360 → 完全不可见）；768px 起日期回到金额右侧。
+
+---
+
 ## 2026-09-12 — 局域网明文 HTTP 可用性
 
 - 修复非安全上下文（`http://` 私有局域网）无法解锁账本：`crypto.subtle` 与 Web Locks 只在安全上下文存在。新增统一 AEAD/摘要后端 `packages/core/src/crypto-provider.ts`，缺少 `crypto.subtle` 时按调用惰性回退到随包的 `@noble/ciphers` / `@noble/hashes`；AES-GCM（16 字节 tag）、SHA-256、HMAC-SHA256 在两个后端逐字节一致，已有账本、附件与备份双向互读，`crypto.ts`、连接链接指纹与附件散列全部改走该后端。

@@ -91,13 +91,13 @@ export function Dashboard() {
         </div>
       )}
       <div className="zc-dashboard-hero-grid" style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 18 }}>
-        <div style={{ ...card, padding: '26px 28px' }}>
+        <div className="zc-hero-card" style={{ ...card, padding: 'clamp(16px, 4vw, 28px)' }}>
           <div style={{ fontSize: 13, color: 'var(--fg-muted)', fontWeight: 700 }}>{partial('netWorth') ? '已估值净资产' : '净资产总值'} · 折算 {vm.reportCurrencyCode}</div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 14, marginTop: 8 }}>
-            <div style={{ fontSize: 46, fontWeight: 800, letterSpacing: 0, lineHeight: 1 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', flexWrap: 'wrap', gap: '2px 14px', marginTop: 8, minWidth: 0 }}>
+            <div className="zc-hero-amount" style={{ fontSize: 'clamp(26px, 8.5vw, 46px)', fontWeight: 800, letterSpacing: 0, lineHeight: 1.05, minWidth: 0, overflowWrap: 'anywhere' }}>
               {money(vm.netWorth)}
             </div>
-            <div style={{ color: 'var(--fg-subtle)', fontWeight: 600, fontSize: 13, paddingBottom: 5, whiteSpace: 'nowrap' }}>
+            <div className="zc-hero-asof" style={{ color: 'var(--fg-subtle)', fontWeight: 600, fontSize: 13, paddingBottom: 5 }}>
               截至 {vm.asOf}
             </div>
           </div>
@@ -105,7 +105,7 @@ export function Dashboard() {
             汇总金融账户、加密持仓与物品资产现状残值；模块原币仅在存在价格标记时参与折算。
           </div>
         </div>
-        <div style={{ ...card, padding: '22px 24px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2 }}>
+        <div className="zc-hero-snapshot" style={{ ...card, padding: 'clamp(14px, 3.4vw, 24px)', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2 }}>
           <div style={{ fontSize: 12, color: 'var(--fg-subtle)', fontWeight: 700, letterSpacing: 0, marginBottom: 6 }}>资产快照</div>
           {[
             ['所选期间投入', partialText('investedFiat', money(vm.investedFiat)), 'var(--fg)'],
@@ -115,8 +115,8 @@ export function Dashboard() {
             ['报表基准日', vm.asOf, 'var(--fg)'],
           ].map(([l, v, color]) => (
             <div key={l} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
-              <span style={{ fontSize: 13, color: 'var(--fg-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>{l}</span>
-              <span style={{ whiteSpace: 'nowrap', fontSize: 14, fontWeight: 800, color }}>{v}</span>
+              <span style={{ fontSize: 13, color: 'var(--fg-muted)', fontWeight: 500 }}>{l}</span>
+              <span style={{ fontSize: 14, fontWeight: 800, color, textAlign: 'right' }}>{v}</span>
             </div>
           ))}
         </div>
@@ -132,7 +132,7 @@ export function Dashboard() {
         ].map(([label, value, subv, color]) => (
           <div key={label} style={cardTight}>
             <div style={{ fontSize: 12, color: 'var(--fg-muted)', fontWeight: 600 }}>{label}</div>
-            <div style={{ fontSize: 26, fontWeight: 800, marginTop: 10, letterSpacing: 0, whiteSpace: 'nowrap', color }}>{value}</div>
+            <div style={{ fontSize: 'clamp(16px, 5.4vw, 26px)', fontWeight: 800, marginTop: 10, letterSpacing: 0, overflowWrap: 'anywhere', color }}>{value}</div>
             <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 5, fontWeight: 500 }}>{subv}</div>
           </div>
         ))}
@@ -152,7 +152,7 @@ export function Dashboard() {
             {tasks.map((task) => {
               const color = task.severity === 'danger' ? 'var(--negative)' : task.severity === 'warning' ? 'var(--warning)' : 'var(--accent)';
               return (
-                <div key={task.id} style={{ display: 'grid', gridTemplateColumns: '10px minmax(0, 1fr) auto', gap: 10, alignItems: 'center', border: '1px solid var(--border)', background: 'var(--surface-2)', padding: '10px 12px' }}>
+                <div key={task.id} className="zc-task-row" style={{ display: 'grid', gridTemplateColumns: '10px minmax(0, 1fr) auto', gap: 10, alignItems: 'center', border: '1px solid var(--border)', background: 'var(--surface-2)', padding: '10px 12px' }}>
                   <span aria-hidden style={{ width: 8, height: 8, borderRadius: 99, background: color }} />
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 850 }}>{task.title}</div>

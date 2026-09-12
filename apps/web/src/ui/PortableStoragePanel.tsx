@@ -31,7 +31,7 @@ export function PortableStoragePanel() {
             数据库、附件、备份、凭据、同步服务器和界面状态均保存在程序目录的 data 文件夹中。
             移动或备份前必须完全退出应用；整个 data 文件夹都应视为敏感数据。
           </div>
-          <dl style={{ display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)', gap: '6px 12px', margin: '12px 0 0', fontSize: 12 }}>
+          <dl className="zc-storage-facts" style={{ display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)', gap: '6px 12px', margin: '12px 0 0', fontSize: 12 }}>
             <dt style={{ color: 'var(--fg-subtle)' }}>程序目录</dt>
             <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>{status.rootDirectory}</dd>
             <dt style={{ color: 'var(--fg-subtle)' }}>数据目录</dt>

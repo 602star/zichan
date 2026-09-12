@@ -487,7 +487,7 @@ export function QuickExpenseModal({
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginTop: 18 }}>
+        <div className="zc-quick-expense-main" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginTop: 18 }}>
           <div>
             <label htmlFor="quick-expense-category" style={{ display: 'block', marginBottom: 7, fontSize: 12, fontWeight: 800 }}>分类</label>
             <CategoryPicker
@@ -510,7 +510,7 @@ export function QuickExpenseModal({
 
         <details style={{ marginTop: 16, color: 'var(--fg-muted)' }}>
           <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 750 }}>更多信息</summary>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 12 }}>
+          <div className="zc-quick-expense-split" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 12 }}>
             <label><span style={{ display: 'block', marginBottom: 6, fontSize: 11 }}>日期</span><input aria-label="支出日期" type="date" value={date} onChange={(event) => { touched.current = true; setDate(event.target.value); }} style={field} /></label>
             <label><span style={{ display: 'block', marginBottom: 6, fontSize: 11 }}>时间</span><input aria-label="支出时间" type="time" value={time} onChange={(event) => { touched.current = true; setTime(event.target.value); }} style={field} /></label>
             <label style={{ gridColumn: '1 / -1' }}><span style={{ display: 'block', marginBottom: 6, fontSize: 11 }}>币种</span><select aria-label="支出币种" value={assetId} onChange={(event) => { touched.current = true; setAssetId(event.target.value); }} style={field}>{activeAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.code}</option>)}</select></label>

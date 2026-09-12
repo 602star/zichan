@@ -349,7 +349,7 @@ export function Reports() {
       />
       <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <table className="zc-card-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr>{table.headers.map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr>
             </thead>
@@ -371,13 +371,13 @@ export function Reports() {
                   style={{ cursor: clickable ? 'pointer' : undefined, background: selectedCategory && selectedCategory === rowCategory ? 'var(--surface-2)' : undefined }}
                 >
                   {row.map((c, j) => (
-                    <td key={j} style={{ ...tdStyle, color: c.color ?? 'var(--fg)', fontWeight: c.bold ? 700 : 400 }}>{c.v}</td>
+                    <td key={j} data-label={table.headers[j]} style={{ ...tdStyle, color: c.color ?? 'var(--fg)', fontWeight: c.bold ? 700 : 400 }}>{c.v}</td>
                   ))}
                 </tr>
                 );
               })}
               {table.rows.length === 0 && (
-                <tr><td style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={table.headers.length}>暂无数据</td></tr>
+                <tr><td className="zc-card-table-empty" style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={table.headers.length}>暂无数据</td></tr>
               )}
             </tbody>
           </table>
@@ -521,22 +521,22 @@ function TransactionDetailTable(props: {
         <button onClick={openInTransactions} style={pillBtn(false)}>在流水页整理</button>
       </div>
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <table className="zc-card-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr>{['报表归属日', '实际发生时间', '类型', '分类', '商户', '描述', '金额', '折算'].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
           <tbody>
             {rows.map((row) => (
               <tr key={row.id}>
-                <td style={tdStyle}>{row.reportDate}</td>
-                <td style={tdStyle}>{row.cashDate}</td>
-                <td style={tdStyle}>{row.type}</td>
-                <td style={tdStyle}>{row.category}</td>
-                <td style={tdStyle}>{row.payee}</td>
-                <td style={{ ...tdStyle, whiteSpace: 'normal' }}>{row.description || '—'}</td>
-                <td style={tdStyle}>{row.amount}</td>
-                <td style={tdStyle}>{row.baseAmount}</td>
+                <td data-label="报表归属日" style={tdStyle}>{row.reportDate}</td>
+                <td data-label="实际发生时间" style={tdStyle}>{row.cashDate}</td>
+                <td data-label="类型" style={tdStyle}>{row.type}</td>
+                <td data-label="分类" style={tdStyle}>{row.category}</td>
+                <td data-label="商户" style={tdStyle}>{row.payee}</td>
+                <td data-label="描述" style={{ ...tdStyle, whiteSpace: 'normal' }}>{row.description || '—'}</td>
+                <td data-label="金额" style={tdStyle}>{row.amount}</td>
+                <td data-label="折算" style={tdStyle}>{row.baseAmount}</td>
               </tr>
             ))}
-            {rows.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={8}>暂无流水明细</td></tr>}
+            {rows.length === 0 && <tr><td className="zc-card-table-empty" style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={8}>暂无流水明细</td></tr>}
           </tbody>
         </table>
       </div>

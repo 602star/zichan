@@ -6,7 +6,24 @@ html,
 body {
   margin: 0;
   height: 100%;
-  overflow-x: hidden;
+}
+
+/*
+ * `overflow-x: hidden` on <body> turned <body> into its own scroll container
+ * (one clipped axis forces the other to `auto`), which silently swallowed
+ * horizontal overflow and made `window.scrollY` / `window.scrollTo` inert.
+ * `clip` on the root alone keeps the viewport as the scroller: no horizontal
+ * jiggle, but documentElement still scrolls so scroll position can be read,
+ * restored, or reset per screen.
+ */
+html {
+  overflow-x: clip;
+}
+
+@supports not (overflow: clip) {
+  html {
+    overflow-x: hidden;
+  }
 }
 #root {
   min-height: 100vh;
@@ -113,6 +130,27 @@ button {
   overflow-y: auto;
 }
 
+/* Rail-only quick action: hidden while the sidebar shows full labels. */
+.zc-sidebar-quick-rail {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 10px;
+  min-height: 44px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.zc-sidebar-quick-rail-icon {
+  font-size: 17px;
+  line-height: 1;
+}
+
 .zc-app-header {
   min-height: 82px;
   padding: 20px 34px;
@@ -165,6 +203,192 @@ button {
 .zc-touch-row {
   min-height: 44px;
 }
+
+/*
+ * Touch-device baseline. These used to live only inside `max-width: 767px`,
+ * so tablets (768-1199px) and landscape phones fell back to desktop density:
+ * 13px form fields (iOS zooms the whole page on focus) and sub-44px hit areas.
+ * Keying off `pointer: coarse` fixes those widths without densifying desktop.
+ */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea,
+  .zc-input,
+  .zc-select {
+    /* 16px is the Safari/Chrome iOS threshold below which focus triggers zoom.
+       `!important` is required because the class-based control styles below
+       (`.zc-input`, `.zc-select`, `.zc-protection input`) are equally or more
+       specific and would otherwise win on tablets and landscape phones. */
+    font-size: 16px !important;
+  }
+
+  button,
+  summary,
+  [role="button"],
+  select,
+  textarea,
+  input:not([type="checkbox"]):not([type="radio"]),
+  .zc-input,
+  .zc-select,
+  .zc-device-action {
+    min-height: 44px;
+  }
+
+  button {
+    min-width: 44px;
+  }
+
+  /* Touch rows in the report tables are `tr[role=button]`; min-height does not
+     apply to table rows, so grow the cells instead. The cells carry an inline
+     `padding` on desktop/tablet widths and a compact card padding on phones, so
+     this is scoped to the non-phone widths and uses `!important` to win over the
+     inline shorthand. */
+  @media (min-width: 768px) {
+    .zc-card-table > tbody > tr[role="button"] > td {
+      padding-top: 15px !important;
+      padding-bottom: 15px !important;
+    }
+  }
+
+  /*
+   * Inline checkboxes are only 13x13. Give the whole wrapping row a 44px hit
+   * area instead of inflating the control, so both the box and its label stay
+   * tappable.
+   */
+  .zc-check-row,
+  .zc-check-row > label,
+  label:has(> input[type="checkbox"]),
+  label:has(> input[type="radio"]) {
+    min-height: 44px;
+  }
+
+  .zc-check-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .zc-check-row > input[type="checkbox"],
+  .zc-check-row > input[type="radio"] {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+  }
+}
+
+/* Never let an inline checkbox collapse the row it sits in. */
+input[type="checkbox"],
+input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+/* Undo toast: clears the 66px phone bottom navigation instead of hiding behind it. */
+.zc-undo-toast {
+  bottom: max(24px, env(safe-area-inset-bottom));
+}
+
+@media (max-width: 767px) {
+  .zc-undo-toast {
+    bottom: calc(78px + env(safe-area-inset-bottom));
+  }
+}
+
+/*
+ * Checkbox hit target. The control stays visually small, but the wrapper is a
+ * 44px box so the tap does not have to land on an 18px square. The wrapper sits
+ * inside a <label> (or stops propagation itself) so tapping it still toggles.
+ */
+.zc-check-target {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: center;
+  align-self: center;
+  width: 44px;
+  height: 44px;
+  min-width: 0;
+}
+
+.zc-check-target > input[type="checkbox"],
+.zc-check-target > input[type="radio"] {
+  margin: 0;
+}
+
+/*
+ * `.zc-card-table` keeps real table semantics on desktop and turns each row into
+ * a label/value card on phones, using the header text carried in `data-label`.
+ * This replaces the previous "horizontal scroll inside overflow-x: hidden"
+ * treatment, where key columns were only reachable by swiping.
+ */
+@media (max-width: 767px) {
+  .zc-card-table > thead {
+    display: none;
+  }
+
+  .zc-card-table,
+  .zc-card-table > tbody,
+  .zc-card-table > tbody > tr {
+    display: block;
+    width: 100%;
+  }
+
+  .zc-card-table > tbody > tr {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .zc-card-table > tbody > tr > td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    width: auto;
+    min-width: 0 !important;
+    padding: 3px 0 !important;
+    border: 0 !important;
+    white-space: normal !important;
+    text-align: left !important;
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+
+  .zc-card-table > tbody > tr > td[data-label]::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    max-width: 40%;
+    color: var(--fg-subtle);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  /* The first cell is the card headline, so it keeps no redundant label. */
+  .zc-card-table > tbody > tr > td:first-child {
+    padding-bottom: 7px !important;
+    font-size: 14px;
+    font-weight: 800;
+  }
+
+  .zc-card-table > tbody > tr > td:first-child::before {
+    display: none;
+  }
+
+  .zc-card-table > tbody > tr > td.zc-card-table-empty {
+    display: block;
+    padding: 18px 0 !important;
+    text-align: center !important;
+  }
+}
+
+/* Sync endpoint summary: one grid row per endpoint on desktop. */
+.zc-sync-result-row {
+  display: contents;
+}
+
 ::selection {
   background: var(--accent-soft);
 }
@@ -275,6 +499,22 @@ button {
 .zc-protection summary { cursor: pointer; font-weight: 700; padding: 5px 0; }
 .zc-protection pre { background: var(--surface-2); padding: 16px; border: 1px solid var(--border); border-radius: 9px; }
 .zc-protection [role="alert"] { color: var(--negative); }
+
+/* The class-qualified rules above outrank the bare `button` touch baseline, so
+   repeat the 44px floor here at matching specificity. `font: inherit` on these
+   inputs also re-applies the 13px body size, so restore the 16px no-zoom floor. */
+@media (pointer: coarse) {
+  .zc-protection button,
+  .zc-protection input:not([type="checkbox"]):not([type="radio"]),
+  .zc-protection summary {
+    min-height: 44px;
+  }
+
+  .zc-protection input:not([type="checkbox"]):not([type="radio"]) {
+    font-size: 16px !important;
+  }
+}
+
 .zc-input,
 .zc-select {
   width: 100%;
@@ -591,17 +831,16 @@ button {
     font-size: 18px !important;
   }
 
-  .zc-sidebar nav > div > button[aria-label="快速记账"] {
-    position: absolute;
-    right: 1px;
-    width: 24px !important;
-    height: 24px !important;
-    margin: 0 !important;
-    font-size: 16px !important;
+  .zc-sidebar-quick-inline {
+    display: none !important;
   }
 
-  .zc-sidebar nav > div {
-    position: relative;
+  .zc-sidebar-quick-rail {
+    display: flex;
+  }
+
+  .zc-sidebar-quick-rail-label {
+    display: none;
   }
 
   .zc-app-header {
@@ -622,7 +861,7 @@ button {
   }
 
   .zc-conversion-fee-grid {
-    grid-template-columns: 150px repeat(3, minmax(0, 1fr)) 32px !important;
+    grid-template-columns: 150px repeat(3, minmax(0, 1fr)) 44px !important;
   }
 
   .zc-conversion-metrics {
@@ -669,6 +908,67 @@ button {
 
   .zc-account-filter-grid > :last-child {
     grid-column: 1 / -1;
+  }
+}
+
+/*
+ * Tablet portrait (768-1023px). The icon-only rail is hard to learn because the
+ * glyphs are abstract (◈ ⇄ ≋ ◆ ▤ ▦ ◷ ⊞ ⇅ ⚙), and the quick-add badge was only
+ * 24x24. Widen the rail just enough to stack a 10px label under each icon and
+ * give the quick action a full-width 44px row.
+ */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .zc-app-shell {
+    grid-template-columns: 96px minmax(0, 1fr);
+  }
+
+  .zc-sidebar {
+    width: 96px;
+    padding: 18px 10px;
+  }
+
+  .zc-sidebar-nav-item {
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px !important;
+    min-height: 56px;
+    padding: 7px 4px !important;
+    text-align: center !important;
+  }
+
+  .zc-sidebar-nav-item > span:first-child {
+    width: auto !important;
+    font-size: 18px !important;
+  }
+
+  .zc-sidebar-nav-label {
+    display: block !important;
+    width: 100%;
+    font-size: 10px;
+    line-height: 1.2;
+  }
+
+  .zc-sidebar-quick-rail {
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .zc-sidebar-quick-rail-label {
+    display: block;
+    font-size: 10px;
+  }
+}
+
+/* Landscape phones are wide but short: the sidebar is hidden, so reclaim height. */
+@media (max-width: 1023px) and (max-height: 480px) {
+  .zc-app-header {
+    min-height: 0;
+    padding: calc(6px + env(safe-area-inset-top)) 15px 6px;
+  }
+
+  .zc-page-content {
+    gap: 10px;
+    padding-top: 10px;
   }
 }
 
@@ -883,6 +1183,26 @@ button {
     border-color: var(--accent);
     background: var(--accent-soft);
     color: var(--accent);
+  }
+
+  .zc-mobile-drawer-section-head {
+    margin-top: 16px;
+    padding: 0 2px 6px;
+    color: var(--fg-subtle);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .zc-mobile-drawer-grid-hidden button {
+    min-height: 56px;
+    border-style: dashed;
+    color: var(--fg-subtle);
+  }
+
+  .zc-mobile-drawer-grid-hidden button small {
+    color: var(--accent);
+    font-size: 10px;
+    font-weight: 800;
   }
 
   .zc-mobile-drawer-status {
@@ -1506,5 +1826,196 @@ button {
   .zc-category-pref-parents {
     border-right: 0;
     border-bottom: 1px solid var(--border);
+  }
+
+  /* Reconciliation sheet: previously a 4-column grid and a 5-column candidate
+     row with no class, so no phone rule could reach it and the columns were
+     silently clipped by `overflow-x: hidden`. */
+  .zc-reconciliation-modal {
+    width: 100% !important;
+    height: 100dvh;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+  }
+
+  .zc-reconciliation-modal > div:nth-child(2) {
+    padding: 14px !important;
+  }
+
+  .zc-reconciliation-inputs,
+  .zc-reconciliation-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .zc-reconciliation-candidate {
+    grid-template-columns: 32px minmax(0, 1fr) auto !important;
+    gap: 2px 10px !important;
+    align-items: center !important;
+    padding: 8px 0;
+  }
+
+  .zc-reconciliation-candidate > :nth-child(1) {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+
+  .zc-reconciliation-candidate > :nth-child(2) {
+    grid-column: 2;
+    grid-row: 2;
+    font-size: 11px;
+  }
+
+  .zc-reconciliation-candidate > :nth-child(3) {
+    grid-column: 2;
+    grid-row: 1;
+    white-space: normal !important;
+  }
+
+  .zc-reconciliation-candidate > :nth-child(4) {
+    grid-column: 3;
+    grid-row: 1;
+    text-align: right;
+  }
+
+  .zc-reconciliation-candidate > :nth-child(5) {
+    grid-column: 3;
+    grid-row: 2;
+    text-align: right;
+    font-size: 11px;
+  }
+
+  .zc-reconciliation-session-row {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    gap: 2px 10px !important;
+  }
+
+  .zc-reconciliation-session-row > :nth-child(2) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    white-space: normal !important;
+  }
+
+  /* Voided rows (transactions / conversions) had fixed 4-5 column templates. */
+  .zc-voided-row {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    gap: 3px 10px !important;
+  }
+
+  .zc-voided-row > :nth-child(3) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    white-space: normal !important;
+  }
+
+  .zc-voided-row > :last-child {
+    grid-column: 2;
+    grid-row: 2;
+    justify-self: end;
+  }
+
+  /* Sync endpoint summary becomes one card per endpoint. */
+  .zc-sync-result-grid {
+    display: block !important;
+    overflow-x: visible;
+    padding-bottom: 0;
+  }
+
+  .zc-sync-result-head {
+    display: none !important;
+  }
+
+  .zc-sync-result-row {
+    display: block;
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-2);
+  }
+
+  .zc-sync-result-row > div {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 2px 0;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+
+  .zc-sync-result-row > div::before {
+    content: attr(data-label);
+    flex: 0 0 auto;
+    max-width: 40%;
+    color: var(--fg-subtle);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  /* The quick-entry sheet keeps a scrollable body clear of the bottom nav. */
+  .zc-quick-expense-dialog {
+    max-height: calc(100dvh - 8px) !important;
+  }
+
+  /*
+   * Inline grids that previously had no class hook at all. Without these they
+   * kept their desktop columns on phones and were clipped silently.
+   */
+  .zc-task-row {
+    grid-template-columns: 10px minmax(0, 1fr) !important;
+  }
+
+  .zc-task-row > span[aria-hidden] {
+    grid-row: 1 / span 2;
+    align-self: start;
+    margin-top: 5px;
+  }
+
+  .zc-task-row > div {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .zc-task-row > button {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+
+  .zc-history-resolution-facts,
+  .zc-refund-option-row,
+  .zc-storage-facts {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .zc-refund-option-row {
+    gap: 4px !important;
+  }
+}
+
+/* Horizontally scrollable tab strips: momentum scrolling plus snap points so a
+   swipe always lands on a tab instead of mid-label. */
+.zc-report-tabs,
+.zc-date-view-tabs,
+.zc-game-season-tabs {
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+
+.zc-report-tabs > button,
+.zc-date-view-tabs > button,
+.zc-game-season-tabs > button {
+  scroll-snap-align: start;
+}
+
+/* Honour the OS reduced-motion preference across sheets, toasts and charts. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

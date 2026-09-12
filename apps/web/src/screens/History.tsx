@@ -418,21 +418,21 @@ export function History() {
 
         {view === 'list' ? <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table className="zc-card-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr><th style={thStyle}>时间</th><th style={thStyle}>类型</th><th style={thStyle}>对象</th><th style={thStyle}>摘要</th><th style={thStyle}>字段</th></tr>
               </thead>
               <tbody>
                 {filtered.map((event) => (
                   <tr key={event.id} onClick={() => setSelectedId(event.id)} style={{ cursor: 'pointer', background: selected?.id === event.id ? 'var(--surface-2)' : undefined }}>
-                    <td style={tdStyle}>{formatTime(event.at)}</td>
-                    <td style={tdStyle}>{eventKindLabel(event)}</td>
-                    <td style={tdStyle}>{eventObjectLabel(event)}</td>
-                    <td style={{ ...tdStyle, whiteSpace: 'normal', minWidth: 220 }}>{eventSummary(event)}</td>
-                    <td style={tdStyle}>{eventChangedKeys(event).slice(0, 4).map(fieldLabel).join(', ') || '—'}</td>
+                    <td data-label="时间" style={tdStyle}>{formatTime(event.at)}</td>
+                    <td data-label="类型" style={tdStyle}>{eventKindLabel(event)}</td>
+                    <td data-label="对象" style={tdStyle}>{eventObjectLabel(event)}</td>
+                    <td data-label="摘要" style={{ ...tdStyle, whiteSpace: 'normal', minWidth: 220 }}>{eventSummary(event)}</td>
+                    <td data-label="字段" style={tdStyle}>{eventChangedKeys(event).slice(0, 4).map(fieldLabel).join(', ') || '—'}</td>
                   </tr>
                 ))}
-                {filtered.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={5}>暂无匹配的历史记录</td></tr>}
+                {filtered.length === 0 && <tr><td className="zc-card-table-empty" style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={5}>暂无匹配的历史记录</td></tr>}
               </tbody>
             </table>
           </div>
@@ -596,7 +596,7 @@ function ResolutionDetail({ resolution }: { resolution: SyncConflictResolution }
     <div style={card}>
       <DetailHeader title={`冲突解决 · ${resolutionActionLabel(resolution.action)}`} sub={`${formatTime(resolution.resolvedAt)} · ${resolution.resolverDeviceId ?? '未知设备'} · 冲突组 ${resolution.groupId.slice(0, 8)}`} />
       <KeyTags keys={changedPaths} />
-      <div style={{ display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr)', gap: '8px 12px', fontSize: 12 }}>
+      <div className="zc-history-resolution-facts" style={{ display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr)', gap: '8px 12px', fontSize: 12 }}>
         <span style={{ color: 'var(--fg-subtle)' }}>合并提交</span><code>{resolution.resolvedCommitId ?? '仅记录，未生成提交'}</code>
         <span style={{ color: 'var(--fg-subtle)' }}>影响聚合</span><span>{aggregates.map((row) => `${entityLabel(row.type)} ${row.id.slice(0, 8)}`).join('；') || '未记录'}</span>
         {resolution.note && <><span style={{ color: 'var(--fg-subtle)' }}>备注</span><span>{resolution.note}</span></>}

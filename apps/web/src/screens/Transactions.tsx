@@ -1081,7 +1081,7 @@ export function Transactions() {
                 {(voidedPage?.transactions ?? [])
                   .sort((a, b) => b.date.localeCompare(a.date) || (b.time ?? '').localeCompare(a.time ?? ''))
                   .map((row) => (
-                    <div key={row.id} style={{ display: 'grid', gridTemplateColumns: '130px 90px minmax(0, 1fr) 130px 72px', gap: 10, alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--border)' }}>
+                    <div key={row.id} className="zc-voided-row" style={{ display: 'grid', gridTemplateColumns: '130px 90px minmax(0, 1fr) 130px 72px', gap: 10, alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--border)' }}>
                       <span style={{ fontSize: 11, color: 'var(--fg-subtle)' }}>{row.date}{row.time ? ` ${row.time}` : ''}</span>
                       <span style={{ ...tagStyle, width: 'fit-content' }}>{TYPE_LABEL[row.type]}</span>
                       <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.description ?? row.merchant ?? categoryLabel(row.category, readySnap.categories)}</span>
@@ -2039,15 +2039,17 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, usesAccounts, 
                   }}
                 >
                   {setSelectedIds && (
-                    <input
-                      type="checkbox"
-                      checked={selected.has(tx.id)}
-                      disabled={!selectable}
-                      title={selectable ? '选择流水' : '已对账流水需先解除对账'}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={() => { if (selectable) toggle(tx.id); }}
-                      aria-label={`选择 ${title}`}
-                    />
+                    <span className="zc-check-target">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(tx.id)}
+                        disabled={!selectable}
+                        title={selectable ? '选择流水' : '已对账流水需先解除对账'}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={() => { if (selectable) toggle(tx.id); }}
+                        aria-label={`选择 ${title}`}
+                      />
+                    </span>
                   )}
                   <span style={{ fontSize: 12, color: 'var(--fg-subtle)', fontWeight: 700 }}>{tx.date}{tx.time ? <><br />{tx.time}</> : null}</span>
                   <span style={{ ...tagStyle, width: 'fit-content', color: tx.type === 'income' || tx.type === 'refund' ? 'var(--positive)' : tx.type === 'expense' ? 'var(--negative)' : 'var(--accent)' }}>

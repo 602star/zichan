@@ -1633,7 +1633,7 @@ export function Sync() {
                 <tbody>
                   {profiles.map((p) => (
                     <tr key={p.id} onClick={() => setSelectedId(p.id)} style={{ cursor: 'pointer', background: selected?.id === p.id ? 'var(--accent-soft)' : 'transparent' }}>
-                      <td style={tdStyle}><input aria-label={`启用 ${p.alias}`} type="checkbox" checked={p.enabled} disabled={isPrimaryWebConnection(p)} onChange={(e) => patchProfile(p.id, { enabled: e.target.checked })} onClick={(e) => e.stopPropagation()} /></td>
+                      <td style={tdStyle}><span className="zc-check-target" onClick={(e) => e.stopPropagation()}><input aria-label={`启用 ${p.alias}`} type="checkbox" checked={p.enabled} disabled={isPrimaryWebConnection(p)} onChange={(e) => patchProfile(p.id, { enabled: e.target.checked })} onClick={(e) => e.stopPropagation()} /></span></td>
                       <td style={tdStyle}>{p.alias}{isPrimaryWebConnection(p) && ' · 本站登录'}</td>
                       <td style={{ ...tdStyle, color: 'var(--fg-muted)' }}>{buildBaseUrl(p)}</td>
                       <td style={tdStyle}>{p.username || '—'}</td>
@@ -1792,13 +1792,13 @@ export function Sync() {
                 </div>
                 {endpointRows.length > 0 && (
                   <div className="zc-sync-result-grid" style={{ display: 'grid', gridTemplateColumns: '110px 1fr 140px 60px 60px 90px 120px 70px', gap: 8, marginTop: 12, fontSize: 12 }}>
-                    <div style={gridHead}>别名</div><div style={gridHead}>端点</div><div style={gridHead}>副本 ID</div><div style={gridHead}>拉取</div><div style={gridHead}>推送</div><div style={gridHead}>游标 / Head</div><div style={gridHead}>附件</div><div style={gridHead}>延迟</div>
+                    <div className="zc-sync-result-head" style={gridHead}>别名</div><div className="zc-sync-result-head" style={gridHead}>端点</div><div className="zc-sync-result-head" style={gridHead}>副本 ID</div><div className="zc-sync-result-head" style={gridHead}>拉取</div><div className="zc-sync-result-head" style={gridHead}>推送</div><div className="zc-sync-result-head" style={gridHead}>游标 / Head</div><div className="zc-sync-result-head" style={gridHead}>附件</div><div className="zc-sync-result-head" style={gridHead}>延迟</div>
                     {endpointRows.map((row) => (
-                      <div key={row.id} style={{ display: 'contents' }}>
-                        <div style={{ color: row.error ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 700 }}>{row.alias}</div>
-                        <div style={{ color: row.error || row.attachments?.error ? 'var(--negative)' : 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.url}{row.error ? ` · ${row.error}` : row.attachments?.error ? ` · ${row.attachments.error}` : ''}</div>
-                        <div style={{ color: 'var(--fg-muted)' }}>{row.identity?.replicaId ?? '—'}</div>
-                        <div>{row.pulled}</div><div>{row.pushed}</div><div>{row.cursor} / {row.headSeq}</div><div>{row.attachments ? `${row.attachments.available}/${result.attachmentSync.references} · ↑${row.attachments.uploaded}` : '—'}</div><div>{row.latencyMs}ms</div>
+                      <div key={row.id} className="zc-sync-result-row">
+                        <div data-label="别名" style={{ color: row.error ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 700 }}>{row.alias}</div>
+                        <div data-label="端点" style={{ color: row.error || row.attachments?.error ? 'var(--negative)' : 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.url}{row.error ? ` · ${row.error}` : row.attachments?.error ? ` · ${row.attachments.error}` : ''}</div>
+                        <div data-label="副本 ID" style={{ color: 'var(--fg-muted)' }}>{row.identity?.replicaId ?? '—'}</div>
+                        <div data-label="拉取">{row.pulled}</div><div data-label="推送">{row.pushed}</div><div data-label="游标 / Head">{row.cursor} / {row.headSeq}</div><div data-label="附件">{row.attachments ? `${row.attachments.available}/${result.attachmentSync.references} · ↑${row.attachments.uploaded}` : '—'}</div><div data-label="延迟">{row.latencyMs}ms</div>
                       </div>
                     ))}
                   </div>

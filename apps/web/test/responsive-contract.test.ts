@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
@@ -86,5 +86,86 @@ describe('responsive shell contract', () => {
     expect(css).toContain('.zc-report-driver-row');
     expect(css).toContain('.zc-report-chart-grid');
     expect(css).toContain('overscroll-behavior-inline: contain');
+  });
+
+  // The touch baseline must not be tied to a width. Keying it off
+  // `pointer: coarse` is what covers tablets (768-1199px) and landscape phones,
+  // where a width-only rule silently reverted to 13px fields and 24px targets.
+  it('keys the 44px and 16px touch baseline off coarse pointers, not a width', () => {
+    const coarseBlocks = [...css.matchAll(/@media \(pointer: coarse\)[^{]*\{([\s\S]*?)\n\}/g)].map((match) => match[1]);
+    expect(coarseBlocks.length).toBeGreaterThan(0);
+    const coarse = coarseBlocks.join('\n');
+
+    expect(coarse).toMatch(/min-height:\s*44px/);
+    expect(coarse).toMatch(/font-size:\s*16px\s*!important/);
+    expect(coarse).toContain('select');
+    expect(coarse).toContain('summary');
+    // Checkboxes are only 13-18px; their tappable box is the wrapper.
+    expect(coarse).toContain('.zc-check-row');
+    expect(css).toContain('.zc-check-target');
+    // `.zc-protection` sets `min-height: 36px` and `font: inherit` at class
+    // specificity, so it must be re-floored explicitly.
+    expect(coarse).toContain('.zc-protection button');
+  });
+
+  // `overflow-x: hidden` on <body> made <body> the scroll container, which both
+  // hid real overflow and made window scrolling inert.
+  it('keeps the viewport (not body) as the scroll container', () => {
+    expect(css).toMatch(/html\s*\{[^}]*overflow-x:\s*clip/);
+    expect(css).not.toMatch(/html,\s*body\s*\{[^}]*overflow-x:\s*hidden/);
+    expect(css).toContain('@supports not (overflow: clip)');
+  });
+
+  it('locks the real scroller behind a dialog, not just body', () => {
+    const scrollLock = readFileSync(new URL('../src/ui/body-scroll-lock.ts', import.meta.url), 'utf8');
+    expect(scrollLock).toContain('acquireBodyScrollLock(document.documentElement)');
+    expect(scrollLock).toContain('acquireBodyScrollLock(document.body)');
+  });
+
+  it('renders long ledger tables as cards on phones via the shared data-label pattern', () => {
+    expect(css).toContain('.zc-card-table');
+    expect(css).toContain('content: attr(data-label)');
+    for (const file of ['../src/screens/History.tsx', '../src/screens/Reports.tsx']) {
+      const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+      expect(source, `${file} should opt its tables into the card layout`).toContain('className="zc-card-table"');
+      expect(source).toContain('data-label=');
+      expect(source).toContain('zc-card-table-empty');
+    }
+  });
+
+  /*
+   * Every inline `gridTemplateColumns` needs a class on the same element.
+   * Without one there is no hook for a phone rule, so the grid silently keeps
+   * desktop columns and gets clipped by the (previously) hidden overflow.
+   * `repeat(auto-fit|auto-fill, ...)` grids are exempt: they already wrap.
+   */
+  it('never renders an inline fixed grid without a class hook', () => {
+    const offenders: string[] = [];
+    const walk = (relative: string) => {
+      for (const entry of readdirSync(new URL(relative, import.meta.url), { withFileTypes: true })) {
+        const child = `${relative}/${entry.name}`;
+        if (entry.isDirectory()) {
+          walk(child);
+          continue;
+        }
+        if (!entry.name.endsWith('.tsx')) continue;
+        const source = readFileSync(new URL(child, import.meta.url), 'utf8');
+        let index = source.indexOf('gridTemplateColumns');
+        while (index !== -1) {
+          const declaration = source.slice(index, index + 140);
+          if (!/auto-fit|auto-fill/.test(declaration)) {
+            // A generous window keeps spreading style objects (`{...card,
+            // display: 'grid', ...}`) and long attribute lists covered.
+            const before = source.slice(Math.max(0, index - 800), index);
+            if (before.includes('style={{') && !before.includes('className')) {
+              offenders.push(`${child}:${source.slice(0, index).split('\n').length}`);
+            }
+          }
+          index = source.indexOf('gridTemplateColumns', index + 1);
+        }
+      }
+    };
+    walk('../src');
+    expect(offenders.join('\n')).toBe('');
   });
 });

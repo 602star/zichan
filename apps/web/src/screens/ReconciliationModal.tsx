@@ -201,8 +201,8 @@ export function ReconciliationModal(props: Props) {
               </div>
               <div style={{ marginTop: 10, borderTop: '1px solid var(--border)' }}>
                 {visibleCandidates.map(({ transaction, postingAmount }) => (
-                  <label key={transaction.id} style={{ minHeight: 48, display: 'grid', gridTemplateColumns: '28px 100px minmax(0, 1fr) 130px 90px', gap: 10, alignItems: 'center', borderBottom: '1px solid var(--border)', fontSize: 12, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={selectedIds.includes(transaction.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, transaction.id] : current.filter((id) => id !== transaction.id))} />
+                  <label key={transaction.id} className="zc-reconciliation-candidate" style={{ minHeight: 48, display: 'grid', gridTemplateColumns: '28px 100px minmax(0, 1fr) 130px 90px', gap: 10, alignItems: 'center', borderBottom: '1px solid var(--border)', fontSize: 12, cursor: 'pointer' }}>
+                    <span className="zc-check-target"><input type="checkbox" checked={selectedIds.includes(transaction.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, transaction.id] : current.filter((id) => id !== transaction.id))} /></span>
                     <span style={{ color: 'var(--fg-subtle)' }}>{transaction.date}</span>
                     <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{transaction.description ?? transaction.merchant ?? categoryLabel(transaction.category, snap.categories)}</span>
                     <b style={{ textAlign: 'right' }}>{postingAmount}</b>
@@ -218,7 +218,7 @@ export function ReconciliationModal(props: Props) {
             <div style={{ marginTop: 18, borderTop: '1px solid var(--border)' }}>
               {sessionItems.map((item) => {
                 const transaction = sessionTransactions[item.transactionId];
-                return <div key={item.id} style={{ minHeight: 46, display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr) 130px', gap: 12, alignItems: 'center', borderBottom: '1px solid var(--border)', fontSize: 12 }}><span>{transaction?.date ?? '—'}</span><span>{transaction?.description ?? transaction?.merchant ?? transaction?.category ?? item.transactionId}</span><b style={{ textAlign: 'right' }}>{item.postingAmount}</b></div>;
+                return <div key={item.id} className="zc-reconciliation-session-row" style={{ minHeight: 46, display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr) 130px', gap: 12, alignItems: 'center', borderBottom: '1px solid var(--border)', fontSize: 12 }}><span>{transaction?.date ?? '—'}</span><span>{transaction?.description ?? transaction?.merchant ?? transaction?.category ?? item.transactionId}</span><b style={{ textAlign: 'right' }}>{item.postingAmount}</b></div>;
               })}
             </div>
           )}
@@ -230,7 +230,7 @@ export function ReconciliationModal(props: Props) {
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
           {session
             ? <button type="button" disabled={busy} onClick={() => setUndoOpen(true)} style={{ ...button, color: 'var(--negative)', borderColor: 'var(--negative)' }}>{busy ? '处理中…' : '撤销本次对账'}</button>
-            : <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, fontWeight: 800, color: difference.isZero() ? 'var(--fg-subtle)' : 'var(--fg)' }}><input type="checkbox" disabled={difference.isZero()} checked={createAdjustment && !difference.isZero()} onChange={(event) => setCreateAdjustment(event.target.checked)} />创建 {difference.abs().toString()} 的余额调整流水</label>}
+            : <label className="zc-check-row-inline" style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12, fontWeight: 800, color: difference.isZero() ? 'var(--fg-subtle)' : 'var(--fg)' }}><span className="zc-check-target"><input type="checkbox" disabled={difference.isZero()} checked={createAdjustment && !difference.isZero()} onChange={(event) => setCreateAdjustment(event.target.checked)} /></span>创建 {difference.abs().toString()} 的余额调整流水</label>}
           <div style={{ display: 'flex', gap: 8 }}><button type="button" disabled={busy} onClick={props.onClose} style={button}>关闭</button>{!session && <button type="button" disabled={busy || !preview || (!difference.isZero() && !createAdjustment)} onClick={() => void finish()} style={primary}>{busy ? '正在完成…' : '完成对账'}</button>}</div>
         </div>
         {undoOpen && session && (

@@ -102,7 +102,7 @@ export function Convert() {
         <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: '13px 18px', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 850 }}>已作废转换</div>
           {voidedChains.map((row) => (
-            <div key={row.chain.id} style={{ display: 'grid', gridTemplateColumns: '120px 100px minmax(0, 1fr) 90px', alignItems: 'center', gap: 12, padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
+            <div key={row.chain.id} className="zc-voided-row" style={{ display: 'grid', gridTemplateColumns: '120px 100px minmax(0, 1fr) 90px', alignItems: 'center', gap: 12, padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
               <span style={{ fontSize: 12, color: 'var(--fg-subtle)' }}>{row.chain.date}{row.chain.time ? ` ${row.chain.time}` : ''}</span>
               <span style={badgeStyle(row.chain.type)}>{TYPE_LABEL[row.chain.type] ?? row.chain.type}</span>
               <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.chain.title ?? row.steps.map((step) => `${snap.assets.find((asset) => asset.id === step.fromAssetId)?.code ?? '?'} → ${snap.assets.find((asset) => asset.id === step.toAssetId)?.code ?? '?'}`).join(' · ')}</span>
