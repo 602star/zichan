@@ -46,7 +46,12 @@ export async function openPlatformDriver(
     return {
       driver: await SqlJsDriver.open(
         bytes,
-        (next) => saveDbBytes(next, protection.cryptoSession),
+        // Refuse to write a snapshot when another tab took the lease while this
+        // document was backgrounded, instead of silently overwriting newer data.
+        async (next) => {
+          await releaseLock.assertHeld();
+          await saveDbBytes(next, protection.cryptoSession);
+        },
         releaseLock,
       ),
       backend: 'browser-indexeddb',

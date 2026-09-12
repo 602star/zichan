@@ -37,6 +37,14 @@ describe('browser session origin and cookies', () => {
     expect(origin.browserOrigin(request('::1', { host: '[::1]:8787' }))).toBe('http://[::1]:8787');
   });
 
+  it('offers LAN HTTP browser cookies only when insecure transport is explicitly enabled', () => {
+    const lan = request('192.168.1.7', { host: '192.168.1.2:8787' });
+    expect(createRequestOrigin([], true).browserOrigin(lan)).toBe('http://192.168.1.2:8787');
+    expect(createRequestOrigin([]).browserOrigin(lan)).toBeUndefined();
+    // A trusted proxy must still attest the protocol; a missing header stays rejected.
+    expect(createRequestOrigin(['loopback'], true).browserOrigin(request('127.0.0.1', { host: 'ledger.example' }))).toBeUndefined();
+  });
+
   it('rejects duplicate cookies and never implicitly selects cookie authentication', () => {
     const cookies = createBrowserSessionCookies('', () => 'https://ledger.example');
     const token = `session-${'a'.repeat(32)}.${'b'.repeat(43)}`;

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createServer as createTcpServer } from 'node:net';
+import { networkInterfaces } from 'node:os';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -9,6 +10,17 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const modes = ['web', 'sync', 'server', 'desktop', 'all'];
 const delay = (ms) => new Promise((done) => { const timer = setTimeout(done, ms); timer.unref(); });
+
+/** Non-loopback IPv4 addresses, so launcher output names the address other devices must use. */
+function lanAddresses() {
+  const found = [];
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family === 'IPv4' && !entry.internal) found.push(entry.address);
+    }
+  }
+  return [...new Set(found)];
+}
 
 export function npmCli() {
   const candidates = [process.env.npm_execpath, join(dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'), resolve(dirname(process.execPath), '../lib/node_modules/npm/bin/npm-cli.js'), '/usr/share/nodejs/npm/bin/npm-cli.js'];
@@ -26,17 +38,17 @@ export function plan(mode, env = process.env, directory = root) {
   if (mode === 'desktop' && webPort !== 5173) throw new Error('Desktop development requires WEB_PORT=5173 (Tauri devUrl).');
   const base = (env.BASE_PATH || '').trim().replace(/\/+$/, '');
   if (base && (!base.startsWith('/') || /[?#;\r\n]/.test(base))) throw new Error('BASE_PATH must be an absolute URL path without a query or fragment.');
-  const host = env.HOST || '127.0.0.1';
+  const host = env.HOST || '0.0.0.0';
   const clientHost = host === '0.0.0.0' ? '127.0.0.1' : host === '::' ? '[::1]' : host.includes(':') ? `[${host}]` : host;
   const localUrl = `http://${clientHost}:${port}${encodeURI(base)}`;
-  const serverEnv = { ...env, HOST: env.HOST || '127.0.0.1', PORT: String(port), BASE_PATH: base,
+  const serverEnv = { ...env, HOST: env.HOST || '0.0.0.0', PORT: String(port), BASE_PATH: base,
     DATA_DIR: resolve(directory, env.DATA_DIR || '.runtime/sync-server'), WEB_DIST: resolve(directory, env.WEB_DIST || 'apps/web/dist'),
     ENABLE_WEB: mode === 'sync' ? '0' : '1', ENABLE_SYNC: '1', REGISTRATION_MODE: env.REGISTRATION_MODE || 'invite',
-    ALLOW_INSECURE_HTTP: env.ALLOW_INSECURE_HTTP || '0', CONTROL_STDIN: '1' };
+    ALLOW_INSECURE_HTTP: env.ALLOW_INSECURE_HTTP || '1', CONTROL_STDIN: '1' };
   const server = { key: 'server', entry: join(directory, 'apps/desktop/scripts/server.mjs'), args: [], env: serverEnv,
     cwd: directory, port, host: serverEnv.HOST, ready: `${localUrl}/api/health`, graceful: true };
-  const web = { key: 'web', entry: join(directory, 'node_modules/vite/bin/vite.js'), args: ['--host', '127.0.0.1', '--port', String(webPort), '--strictPort'],
-    env: { ...env, ZICHAN_DEV_API_TARGET: env.ZICHAN_DEV_API_TARGET || localUrl }, cwd: join(directory, 'apps/web'), port: webPort, host: '127.0.0.1', ready: `http://127.0.0.1:${webPort}/` };
+  const web = { key: 'web', entry: join(directory, 'node_modules/vite/bin/vite.js'), args: ['--host', '0.0.0.0', '--port', String(webPort), '--strictPort'],
+    env: { ...env, ZICHAN_DEV_API_TARGET: env.ZICHAN_DEV_API_TARGET || localUrl }, cwd: join(directory, 'apps/web'), port: webPort, host: '0.0.0.0', ready: `http://127.0.0.1:${webPort}/` };
   const desktop = { key: 'desktop', entry: join(directory, 'node_modules/@tauri-apps/cli/tauri.js'), args: ['dev'],
     env, cwd: join(directory, 'apps/desktop'), port: 5173, host: '127.0.0.1', ready: null };
   return { mode, directory, units: mode === 'all' ? [server, web] : [mode === 'web' ? web : mode === 'desktop' ? desktop : server],
@@ -135,12 +147,24 @@ export async function start(value, { noBuild = false, check = false } = {}) {
   for (const unit of value.units) await assertPortFree(unit.port, unit.host);
   console.log(`Mode: ${value.mode}`);
   for (const url of value.urls) console.log(`  ${url}`);
+  for (const unit of value.units) {
+    if (unit.host !== '0.0.0.0' && unit.host !== '::') continue;
+    const addresses = lanAddresses();
+    if (!addresses.length) continue;
+    const prefix = unit.key === 'server' ? unit.env.BASE_PATH || '' : '';
+    const paths = unit.key === 'server' ? [`${prefix}/app/`, `${prefix}/admin/`] : [`${prefix}/`];
+    console.log(`LAN (${unit.key}): bound to ${unit.host}, reachable from other devices on this network`);
+    for (const address of addresses) console.log(`  ${paths.map((path) => `http://${address}:${unit.port}${path}`).join('  ')}`);
+  }
   const serverUnit = value.units.find((unit) => unit.key === 'server');
   if (serverUnit) {
     console.log(`Data: ${serverUnit.env.DATA_DIR}`);
     console.log('First use: open /admin/ and set your administrator username and password.');
     console.log(`New database registration default: ${serverUnit.env.REGISTRATION_MODE}; existing database policy is retained.`);
-    console.log('Remote browser/admin access requires trusted HTTPS. LAN HTTP does not grant browser Cookie sessions.');
+    const insecureHttp = serverUnit.env.ALLOW_INSECURE_HTTP === '1';
+    console.log(insecureHttp
+      ? 'Plain HTTP is enabled for LAN clients (ALLOW_INSECURE_HTTP=1): browser and admin Cookie sessions work over HTTP on trusted private networks only.'
+      : 'Remote browser/admin access requires trusted HTTPS. LAN HTTP does not grant browser Cookie sessions.');
   }
   if (check) { console.log('Preflight passed. No build, service, or data directory was created.'); return 0; }
   const stateDir = join(value.directory, '.runtime/launchers');

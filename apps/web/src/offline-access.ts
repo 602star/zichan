@@ -1,4 +1,4 @@
-import { createLedgerKeyEnvelope, encryptJson, decryptJson, newId, unlockLedgerKeyEnvelope, type LedgerKeyEnvelope, type Encrypted } from '@zichan/core';
+import { aesGcmDecrypt, aesGcmEncrypt, createLedgerKeyEnvelope, encryptJson, decryptJson, hasNativeSubtle, newId, secureRandomBytes, unlockLedgerKeyEnvelope, type LedgerKeyEnvelope, type Encrypted } from '@zichan/core';
 import { accountLocalStorage, accountDatabaseName } from './account-storage.js';
 import { accountProtection, unlockAccountProtection, type UnlockedProtection } from './account-protection.js';
 import { unlockDeviceStorage } from './device-storage-key.js';
@@ -7,7 +7,15 @@ import type { SyncConnection } from './sync-config.js';
 const OFFLINE_KEY = 'zichan.offline-access.v1';
 const AAD = 'zichan-offline-access-v1';
 interface OfflineRecord { envelope: LedgerKeyEnvelope; payload: Encrypted }
-interface TrustedRecord { key: CryptoKey; iv: Uint8Array<ArrayBuffer>; ciphertext: ArrayBuffer; expiresAt: number }
+/**
+ * Native records keep a non-extractable CryptoKey that JavaScript can never read
+ * back. Plain HTTP withholds SubtleCrypto, so the fallback must persist raw key
+ * bytes: that is strictly weaker (any script on this origin can read the key) and
+ * is reached only when the deployment explicitly enabled plain-HTTP LAN access.
+ */
+type TrustedRecord =
+  | { key: CryptoKey; iv: Uint8Array<ArrayBuffer>; ciphertext: ArrayBuffer; expiresAt: number }
+  | { kind: 'raw'; key: Uint8Array; iv: Uint8Array; ciphertext: Uint8Array; expiresAt: number };
 
 async function trustedStore<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -39,10 +47,20 @@ export async function enableOfflinePassword(password: string): Promise<void> {
 export async function rememberDevice(): Promise<void> {
   const state = accountProtection();
   if (!state) throw new Error('请先解锁账号账本');
-  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(accountDatabaseName()) }, key, new TextEncoder().encode(JSON.stringify(state)));
-  await trustedStore('readwrite', (store) => store.put({ key, iv, ciphertext, expiresAt: Date.now() + 7 * 86400_000 } satisfies TrustedRecord, 'access'));
+  const aad = new TextEncoder().encode(accountDatabaseName());
+  const plaintext = new TextEncoder().encode(JSON.stringify(state));
+  const expiresAt = Date.now() + 7 * 86400_000;
+  if (hasNativeSubtle()) {
+    const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, key, plaintext);
+    await trustedStore('readwrite', (store) => store.put({ key, iv, ciphertext, expiresAt } satisfies TrustedRecord, 'access'));
+    return;
+  }
+  const key = secureRandomBytes(32);
+  const iv = secureRandomBytes(12);
+  const ciphertext = await aesGcmEncrypt(key, iv, plaintext, aad);
+  await trustedStore('readwrite', (store) => store.put({ kind: 'raw', key, iv, ciphertext, expiresAt } satisfies TrustedRecord, 'access'));
 }
 
 export async function forgetOfflineAccess(): Promise<void> {
@@ -67,7 +85,10 @@ export async function unlockRememberedDevice(profile: SyncConnection): Promise<b
   const record = await trustedStore<TrustedRecord | undefined>('readonly', (store) => store.get('access'));
   if (!record) return false;
   if (record.expiresAt <= Date.now()) { await trustedStore('readwrite', (store) => store.delete('access')); return false; }
-  const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: record.iv, additionalData: new TextEncoder().encode(accountDatabaseName()) }, record.key, record.ciphertext);
+  const aad = new TextEncoder().encode(accountDatabaseName());
+  const plaintext = 'kind' in record
+    ? await aesGcmDecrypt(record.key, record.iv, record.ciphertext, aad)
+    : new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: record.iv, additionalData: aad }, record.key, record.ciphertext));
   await restore(profile, JSON.parse(new TextDecoder().decode(plaintext)) as UnlockedProtection);
   return true;
 }

@@ -3,6 +3,14 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-12 — 局域网明文 HTTP 可用性
+
+- 修复非安全上下文（`http://` 私有局域网）无法解锁账本：`crypto.subtle` 与 Web Locks 只在安全上下文存在。新增统一 AEAD/摘要后端 `packages/core/src/crypto-provider.ts`，缺少 `crypto.subtle` 时按调用惰性回退到随包的 `@noble/ciphers` / `@noble/hashes`；AES-GCM（16 字节 tag）、SHA-256、HMAC-SHA256 在两个后端逐字节一致，已有账本、附件与备份双向互读，`crypto.ts`、连接链接指纹与附件散列全部改走该后端。
+- 跨标签页账本租约在缺少 Web Locks 时改用 IndexedDB 事务租约：读-改-写同一租约记录由 IndexedDB 的读写事务串行化保证互斥，带心跳续租、15 秒 TTL 接管和递增版本号。同一浏览上下文（sessionStorage 身份，刷新后仍保留）可以接管自己上一份文档的租约，但每次保存快照前都校验仍持有该版本，因此被后台化的旧文档不会覆盖较新的快照；既无 Web Locks 又无 IndexedDB 时仍然失败关闭。
+- 明文 HTTP 的授权边界与降级如实落地：只有部署显式设置 `ALLOW_INSECURE_HTTP=1` 才向局域网发放同站 Cookie 会话并放开 `/api/admin/`，其余路径仍要求 HTTPS；“记住设备七天”在该退化路径下无法保存不可导出的原生密钥，改为保存原始密钥字节并在文档中标注保护强度更低；Argon2id 仍由 WebAssembly 提供，缺少时明确拒绝解锁并说明原因。
+- 仓库 dev 启动器、桌面与便携入口默认 `HOST=0.0.0.0` + `ALLOW_INSECURE_HTTP=1`（已有同名环境变量的部署不受影响），并在启动输出中打印其他设备实际应访问的局域网地址。
+- 验证：全 workspace typecheck 与 ESLint 通过；Vitest 覆盖率门禁 **647 项**通过（100 个测试文件）；真实 Chrome Playwright 默认流程 12 项与账号流程 21 项全部通过，含新增的明文 HTTP 局域网验收（真实 `192.168.x.x` 明文源上确认 `isSecureContext=false`、无 `crypto.subtle`、无 `navigator.locks`，完成登录解锁、记支出、IndexedDB 快照仍为密文、整页刷新后数据留存）；发行一致性检查、脚本烟测 7 项、发行契约 22 项通过。
+
 ---
 
 ## 2026-09-12 — 托管账号与发布就绪验收
@@ -210,7 +218,7 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
 - 定投提醒和自动执行共用月末锚点周期引擎，覆盖闰年及 29/30/31 日。缺汇率时只汇总已估值金额并列出未估值币种；总览不再显示精确净资产占比或比例条。
 - `fixed_asset_cashflow_links` 将购买、维修、升级、耗材和出售统一为“仅登记 / 关联已有流水 / 同时创建流水”。链接一对一冻结资金方向、来源金额、记账金额、实际汇率和流水所有权；保存/编辑/删除同事务执行，用户关联流水不被误作废，系统创建流水随来源作废。
 - 同步账号改为 PBKDF2 verifier + 一次性 HMAC nonce challenge；challenge 绑定服务器、用户名、来源 IP 和有效期。登录产生 15 分钟 access token 与轮换 refresh token，设备会话可由用户或管理员查看、撤销，禁用用户会撤销全部会话；客户端串行化同配置认证，避免并发 refresh 竞争。
-- 公网同步强制 HTTPS，客户端拒绝向公网 HTTP 发送 verifier 或 Bearer token；私有局域网 HTTP 必须由服务器显式开启。反向代理头仅接受可信代理，CORS 使用白名单，限流状态落 SQLite；远程管理始终要求 HTTPS。
+- 公网同步强制 HTTPS，客户端拒绝向公网 HTTP 发送 verifier 或 Bearer token；私有局域网 HTTP 必须由服务器显式开启。反向代理头仅接受可信代理，CORS 使用白名单，限流状态落 SQLite；远程管理与浏览器 Cookie 会话默认要求 HTTPS，仅在服务器显式开启 ALLOW_INSECURE_HTTP 时允许私有局域网明文访问。
 - 清除仓库内服务器密钥、身份和旧 JSON 运行数据，补齐 `.gitignore`。历史运行密钥按已泄露处理，部署文档要求轮换 `SYNC_SECRET` 并撤销设备会话。
 - 验证：全 workspace typecheck 通过；`npm test` 共 **277 项**通过（core 63 · db 80 · logger 5 · sync-server 17 · web 112）；共享包、Web、sync-server 生产构建、桌面资源生成、`cargo fmt --check` 和 `cargo check` 均通过。桌面内置服务器从临时数据目录实际启动，`/api/health` 返回协议 3、nonce 认证和设备会话能力，`/api/ready` 确认 SQLite 数据库正常。
 

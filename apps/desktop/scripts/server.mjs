@@ -10,13 +10,13 @@ const dataRoot = process.env.DATA_DIR?.trim()
   : resolve(here, '../../../.runtime/sync-server');
 
 process.env.PORT ||= '8787';
-process.env.HOST ||= '127.0.0.1';
+process.env.HOST ||= '0.0.0.0';
 process.env.DATA_DIR ||= dataRoot;
 process.env.WEB_DIST ||= defaultWebDist;
 process.env.ENABLE_WEB ||= '1';
 process.env.ENABLE_SYNC ||= '1';
 process.env.REGISTRATION_MODE ||= 'invite';
-process.env.ALLOW_INSECURE_HTTP ||= '0';
+process.env.ALLOW_INSECURE_HTTP ||= '1';
 process.env.CONTROL_STDIN ||= '1';
 
 if (!existsSync(syncServerEntry)) {
@@ -36,7 +36,9 @@ console.log(`Bind: ${process.env.HOST}:${process.env.PORT}`);
 console.log(`Base path: ${process.env.BASE_PATH || '/'}`);
 console.log(`Registration default: ${process.env.REGISTRATION_MODE}; existing database policy is retained.`);
 console.log('First use: open /admin/ and set your administrator username and password.');
-console.log('Remote browser and admin access require trusted HTTPS. Bind and transport overrides must be explicit.');
+console.log(process.env.ALLOW_INSECURE_HTTP === '1'
+  ? 'Plain HTTP is allowed for LAN clients (ALLOW_INSECURE_HTTP=1). Use it only on trusted private networks.'
+  : 'Remote browser and admin access require trusted HTTPS. Bind and transport overrides must be explicit.');
 
 mkdirSync(dataRoot, { recursive: true });
 

@@ -1,3 +1,4 @@
+import { sha256Bytes } from '@zichan/core';
 import { normalizeSyncBaseUrl } from './sync-config.js';
 
 export interface SyncConnectionLinkPayload {
@@ -24,9 +25,7 @@ function decodeBase64Url(value: string): string {
 }
 
 export async function fingerprintServerPublicKey(serverPublicKey: string): Promise<string> {
-  const bytes = new TextEncoder().encode(serverPublicKey);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('');
+  return sha256Bytes(new TextEncoder().encode(serverPublicKey));
 }
 
 export function createSyncConnectionLink(

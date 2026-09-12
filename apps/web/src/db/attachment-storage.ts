@@ -1,4 +1,4 @@
-import { newId, type Attachment } from '@zichan/core';
+import { newId, sha256Bytes, type Attachment } from '@zichan/core';
 import type {
   AttachmentBlobRow,
   AttachmentFileOpKind,
@@ -131,8 +131,7 @@ async function ensureStorageCapacity(requiredBytes: number): Promise<void> {
 }
 
 export async function hashAttachmentBlob(blob: Blob): Promise<{ sha256: string; sizeBytes: number }> {
-  const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
-  const sha256 = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  const sha256 = await sha256Bytes(new Uint8Array(await blob.arrayBuffer()));
   return { sha256, sizeBytes: blob.size };
 }
 

@@ -121,8 +121,8 @@ npm run start:server
 - 仓库开发入口显式使用 `.runtime/sync-server`；便携桌面在线启动固定使用 EXE 根目录下的 `data/server`。服务器入口缺少 `DATA_DIR` 时直接失败，不回退 AppData。
   主库固定为 `server.sqlite`；备份与恢复使用 `npm run server:backup` / `server:restore`，不要在服务运行时逐文件复制。
 - 账号管理复用正常 OPAQUE 登录与设备会话；管理员可在独立 `/admin/` 页面管理注册模式、邀请、用户、设备和配额，不存在额外的人工管理凭据。
-- 桌面/脚本启动器显式设置 `ALLOW_INSECURE_HTTP=1`，仅用于固定私有局域网 IP；客户端会拒绝公网 HTTP，
-  公网登录与管理必须使用 HTTPS。本机管理可继续使用 `http://localhost:8787`。
+- 仓库开发启动器、桌面与便携启动器均默认设置 `ALLOW_INSECURE_HTTP=1` 并监听 `0.0.0.0`，固定私有局域网 IP 可用 HTTP 打开 `/app/` 与 `/admin/`
+  （管理 Cookie 不带 Secure，仅在可信内网使用）。已设同名环境变量的部署（如 Tauri 壳与 Docker）不受影响。客户端仍拒绝公网 HTTP，公网登录与管理必须使用 HTTPS。本机管理可继续使用 `http://localhost:8787`。
 
 可拆分命令：
 

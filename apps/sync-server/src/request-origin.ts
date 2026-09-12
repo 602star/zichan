@@ -5,7 +5,7 @@ const normalize = (ip: string) => ip.replace(/^::ffff:/i, '');
 const loopback = (ip: string) => ip === '::1' || /^127\./.test(ip) && isIP(ip) === 4;
 
 /** Compile deployment trust once, never accept a request header as a trust rule. */
-export function createRequestOrigin(trustedProxies: string[]) {
+export function createRequestOrigin(trustedProxies: string[], allowInsecureHttp = false) {
   const allowed = new BlockList();
   function add(rule: string) {
     const [rawAddress, prefix, extra] = rule.split('/');
@@ -45,11 +45,13 @@ export function createRequestOrigin(trustedProxies: string[]) {
       if (protocol !== 'https' && protocol !== 'http') return undefined;
       try {
         const url = new URL(`${protocol}://${host}`);
-        // Never offer non-Secure session cookies over LAN/public HTTP, even if
-        // the native Bearer API has an explicit insecure development override.
-        const hostname = url.hostname.replace(/^\[|\]$/g, '');
-        if (protocol === 'http' && (!loopback(remote) || trusted(remote)
-          || !(hostname === 'localhost' || loopback(hostname)))) return undefined;
+        // Direct loopback HTTP always gets browser cookies. LAN/public HTTP only
+        // qualifies when the deployment explicitly enabled insecure transport,
+        // so a bare HOST=0.0.0.0 binding does not silently hand out sessions.
+        if (protocol === 'http' && !allowInsecureHttp) {
+          const hostname = url.hostname.replace(/^\[|\]$/g, '');
+          if (!loopback(remote) || trusted(remote) || !(hostname === 'localhost' || loopback(hostname))) return undefined;
+        }
         return url.origin;
       } catch {
         return undefined;

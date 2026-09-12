@@ -5,6 +5,7 @@ import { unlockDeviceStorage } from '../device-storage-key.js';
 import type { SyncConnection } from '../sync-config.js';
 import { persistCredential, runtimeCredentialMap } from '../credential-vault.js';
 import { isTauriRuntime } from '../tauri.js';
+import { cryptoContextProblem } from '../browser-storage-policy.js';
 import { resetPlatformData } from '../db/platform-driver.js';
 import { unlockRememberedDevice } from '../offline-access.js';
 
@@ -23,6 +24,8 @@ export function AccountProtectionGate({ connection, children }: { connection: Sy
   const creating = !!info && !info.mode;
 
   async function open(next: ProtectionInfo, recoveryCode?: string) {
+    const problem = cryptoContextProblem();
+    if (problem) throw new Error(problem);
     await unlockAccountProtection(connection, next, recoveryCode);
     const credentials = runtimeCredentialMap();
     await unlockDeviceStorage(accountProtection()!.secret, true);
@@ -60,6 +63,8 @@ export function AccountProtectionGate({ connection, children }: { connection: Sy
     if (!info || busy) return;
     setBusy(true); setError('');
     try {
+      const problem = cryptoContextProblem();
+      if (problem) throw new Error(problem);
       let next = info;
       if (creating) {
         const created = await createLedgerKeyEnvelope(newId(), code.trim());

@@ -7,7 +7,7 @@
 
 ## 入口与初始化
 
-同一服务器提供 `/app/` 记账应用和 `/admin/` 管理后台。设置 `BASE_PATH=/ledger` 后，入口分别为 `/ledger/app/`、`/ledger/admin/`。需要同站 Web + API 部署，远程访问使用可信 HTTPS。
+同一服务器提供 `/app/` 记账应用和 `/admin/` 管理后台。设置 `BASE_PATH=/ledger` 后，入口分别为 `/ledger/app/`、`/ledger/admin/`。需要同站 Web + API 部署，远程访问默认使用可信 HTTPS；显式设置 `ALLOW_INSECURE_HTTP=1` 后可改用私有局域网明文 HTTP。
 
 首次打开 `/admin/`，在 Web 引导中设置管理员用户名和密码即可，不再要求读取或填写初始化密钥。没有内置 admin 用户或默认密码。已有所有者直接登录，不重新初始化；初始化写入为原子操作，只允许一个所有者创建成功。新部署请先完成此设置，再对外开放服务。旧版自动化的密钥接口暂时兼容，但不是 Web 初始化的前置条件。
 

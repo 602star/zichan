@@ -59,10 +59,23 @@ export function browserLocalCapability(): BrowserLocalCapability {
   if (isTauriRuntime()) return { supported: true, missing: [] };
   const missing: string[] = [];
   if (typeof globalThis.indexedDB?.open !== 'function') missing.push('IndexedDB');
-  if (!globalThis.crypto?.subtle) missing.push('WebCrypto');
+  // WebAssembly powers the Argon2id key derivation, which has no fallback.
   if (typeof globalThis.WebAssembly?.compile !== 'function') missing.push('WebAssembly');
-  if (typeof globalThis.navigator?.locks?.request !== 'function') missing.push('Web Locks');
+  // WebCrypto and Web Locks stay optional: AES-GCM, SHA-256 and HMAC fall back to
+  // the bundled library, and the ledger lease falls back to IndexedDB. A plain-HTTP
+  // LAN origin without secure-context APIs therefore stays fully usable.
   return { supported: missing.length === 0, missing };
+}
+
+/**
+ * Argon2id runs through WebAssembly and has no JavaScript fallback, so it is the
+ * one primitive that can genuinely prevent unlocking a ledger.
+ */
+export function cryptoContextProblem(): string | undefined {
+  if (isTauriRuntime()) return undefined;
+  const wasm = globalThis.WebAssembly;
+  if (typeof wasm?.instantiate === 'function' || typeof wasm?.compile === 'function') return undefined;
+  return '当前浏览器不支持 WebAssembly，无法执行 Argon2id 密钥派生，因而无法解锁账本。请升级浏览器或使用桌面版。';
 }
 
 /**

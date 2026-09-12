@@ -356,9 +356,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   const enableWeb = options.enableWeb ?? Boolean(options.webDir);
   const basePath = normalizeBasePath(options.basePath);
   const trustedProxies = options.trustedProxies ?? [];
-  const origin = createRequestOrigin(trustedProxies);
-  const browserSession = createBrowserSessionCookies(basePath, origin.browserOrigin);
   const allowInsecureHttp = options.allowInsecureHttp === true;
+  const origin = createRequestOrigin(trustedProxies, allowInsecureHttp);
+  const browserSession = createBrowserSessionCookies(basePath, origin.browserOrigin);
   const requestedDataDir = options.dataDir ? resolve(options.dataDir) : undefined;
   assertServerIdentityComplete(requestedDataDir);
   const blobStore = new EncryptedBlobStore({
@@ -731,7 +731,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           basePath,
           security: {
             httpsRequired: !allowInsecureHttp,
-            adminHttpsRequired: true,
+            adminHttpsRequired: !allowInsecureHttp,
             accessTokenMinutes: ACCESS_TOKEN_TTL_MS / 60_000,
             sessionDays: SESSION_TTL_MS / 86_400_000,
           },
@@ -749,7 +749,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       if (apiPath !== '/api' && !apiPath.startsWith('/api/')) return send(res, 404, { error: 'not found' });
       if (!enableSync && (apiPath === '/api' || apiPath.startsWith('/api/'))) return send(res, 503, { error: 'sync api disabled' });
       const isAdmin = apiPath === '/api/admin' || apiPath.startsWith('/api/admin/');
-      if (isAdmin && !origin.secureTransport(req, false)) {
+      if (isAdmin && !origin.secureTransport(req, allowInsecureHttp)) {
         return send(res, 426, { code: 'HTTPS_REQUIRED', error: 'HTTPS is required for remote administration' });
       }
       if (!origin.secureTransport(req, allowInsecureHttp)) return send(res, 426, { code: 'HTTPS_REQUIRED', error: 'HTTPS is required for remote synchronization' });

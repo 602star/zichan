@@ -24,6 +24,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
     "decimal.js": "^10.4.3",
     "hash-wasm": "^4.12.0"
   },

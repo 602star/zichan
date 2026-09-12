@@ -4,6 +4,7 @@ import {
   browserPersistenceStatus,
   browserStorageDisposition,
   clearFirstUseMode,
+  cryptoContextProblem,
   loadFirstUseMode,
   prepareBrowserStorageForMode,
   saveFirstUseMode,
@@ -50,10 +51,23 @@ describe('browser local storage policy', () => {
     expect(loadFirstUseMode()).toBeNull();
   });
 
-  it('requires every browser primitive used by encrypted local storage', () => {
+  it('does not block local storage when only secure-context APIs are missing', () => {
     vi.stubGlobal('indexedDB', { open: vi.fn() });
     vi.stubGlobal('navigator', { storage: { persisted: async () => true, persist: async () => true } });
-    expect(browserLocalCapability().missing).toContain('Web Locks');
+    // Plain HTTP withholds SubtleCrypto and Web Locks, but every dependency now has
+    // a fallback, so neither may block encrypted local storage.
+    vi.stubGlobal('crypto', { getRandomValues: vi.fn() });
+    const capability = browserLocalCapability();
+    expect(capability.missing).not.toContain('WebCrypto');
+    expect(capability.missing).not.toContain('Web Locks');
+    expect(capability.supported).toBe(true);
+  });
+
+  it('treats only a missing WebAssembly runtime as an unlock blocker', () => {
+    vi.stubGlobal('WebAssembly', {});
+    expect(cryptoContextProblem()).toContain('WebAssembly');
+    vi.stubGlobal('WebAssembly', { compile: vi.fn() });
+    expect(cryptoContextProblem()).toBeUndefined();
   });
 
   it('allows missing persistence APIs without claiming a protection grant', async () => {

@@ -33,8 +33,8 @@ async function ready(url) {
 test('plans a single all-in-one build with safe defaults and prefixed admin URLs', () => {
   const value = plan('server', { BASE_PATH: '/ledger', PORT: '18888' }, resolve('example'));
   assert.equal(value.build, 'build:server');
-  assert.equal(value.units[0].env.HOST, '127.0.0.1');
-  assert.equal(value.units[0].env.ALLOW_INSECURE_HTTP, '0');
+  assert.equal(value.units[0].env.HOST, '0.0.0.0');
+  assert.equal(value.units[0].env.ALLOW_INSECURE_HTTP, '1');
   assert.equal(value.units[0].env.REGISTRATION_MODE, 'invite');
   assert.ok(value.urls.includes('http://127.0.0.1:18888/ledger/admin/'));
   assert.equal(plan('sync', {}).units[0].env.ENABLE_WEB, '0');

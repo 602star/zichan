@@ -64,7 +64,9 @@ Windows 也可双击 `scripts\windows\start-sync-server.cmd`。该开发入口�
 - `REGISTRATION_MODE`：`open`、`invite` 或 `closed`，新服务器默认 `invite`；仅所有者可在管理页动态修改。已有库的策略不被部署默认值覆盖。
 - `SYNC_SECRET`、`SERVER_ID`：访问令牌签名和服务器身份配置；生产部署必须稳定保存。
 - `TRUSTED_PROXIES`：允许提供 `X-Forwarded-*` 的代理 IP 或 CIDR（IPv4/IPv6），兼容显式的 `loopback/private`；优先限定到实际代理地址，不要在直接暴露 8787 时信任任意来源。代理链从右向左检查，到首个不受信任的地址为止。代理必须覆盖 `X-Forwarded-Proto` 为单一的 `https`；经代理的请求不能依靠 `X-Forwarded-For: 127.0.0.1` 获得本机 HTTP 豁免。
-- `ALLOW_INSECURE_HTTP`：默认 `0`。仅家中私有局域网明确接受风险时设为 `1`；公网账号登录、同步与管理都必须使用 HTTPS。
+- `ALLOW_INSECURE_HTTP`：默认 `0`。设为 `1` 时，私有局域网的明文 HTTP 也可用于账号登录、同步、浏览器 Cookie 会话与管理后台（Cookie 不设置 Secure）；公网部署仍必须使用 HTTPS。仓库开发启动器默认设为 `1`，仅面向可信家庭局域网，切勿在公网暴露时开启。
+
+明文 HTTP 下的能力与边界：浏览器把 `crypto.subtle` 与 Web Locks 限制在安全上下文。本应用在缺少它们时改用随包提供的纯 JavaScript 后端（`@noble/ciphers` / `@noble/hashes`）与 IndexedDB 事务租约，因此局域网 HTTP 可以正常解锁、记账、附件、备份与多标签互斥。AES-GCM（16 字节 tag）、SHA-256 和 HMAC-SHA256 在两个后端逐字节一致，现有账本与新写入可双向互读。Argon2id 仍由 `hash-wasm` 提供，是唯一没有回退的能力，缺少 WebAssembly 时明确拒绝解锁并说明原因。两点必须如实知悉：其一，明文 HTTP 无法保证传输中的页面代码和托管凭据不被截取或篡改，账本静态存储虽仍加密，但请仅在可信内网开启；其二，该退化路径下「记住设备七天」存不了不可导出的原生密钥，只能落原始密钥字节，保护强度低于原生路径，界面不得把它当作同等保护。另外局域网 HTTP 不是安全上下文，Service Worker 不可用，关闭浏览器后完全断网重新打开网页不受保证。
 
 有效对象、回收区和未完成上传都计入配额。上传会话 24 小时过期；服务启动及每小时清理过期暂存和到期回收对象。
 账户 OPAQUE 注册记录、稳定 `accountId`、唯一服务器所有者、单次登录状态、设备会话、持久限流、邀请码、密码重置码摘要、账本密钥封套、提交、配额、备份索引、附件索引和管理日志统一保存在 `server.sqlite`。数据库启用 WAL、`synchronous=FULL`、外键、事务提交、提交 ID 唯一约束。当前结构为 `server_key_custody_v10`（schema 10）；支持 schema 6/7/8/9 的追加升级，保留账号 ID、原用户、所有者、注册策略及账本绑定，不重置业务数据。其他结构停止启动，不自动删除数据。密文提交协议仍为 v3，拉取使用 `after` + `limit` 游标分页，请求体按端点限制大小。
@@ -77,7 +79,7 @@ OPAQUE 注册和登录都由客户端与服务器交换 PAKE 消息，账号密�
 
 登录成功后，访问令牌有效 15 分钟，refresh token 每次使用后立即轮换且旧 token 不能再使用，设备会话最长 7 天。服务器只持久化 refresh token 的 HMAC-SHA-256。禁用用户会同时撤销其全部会话，用户和管理员都可按设备查看最近 IP、最后访问时间并单独撤销。管理 API 复用同一 Bearer 会话并在每次请求时检查数据库角色：无有效会话返回 401，成员访问返回 403。
 
-同站 Web 登录使用 `X-Zichan-Session: cookie`，服务器验证请求 Origin 后，把 refresh token 写入 HttpOnly、SameSite=Strict 的 Cookie；生产 HTTPS 下同时设置 Secure。Cookie 路径限定为部署前缀下的 `/api/auth`，登录与刷新 JSON 不返回 refresh token；刷新不能同时提供 JSON token。Cookie 为会话级；可选的七天设备解锁授权独立于 Cookie，详见账本保护说明。跨域 CORS 不允许这个自定义头，也不开放 credential。代理部署需保留公共 Host 并覆盖单一 `X-Forwarded-Proto: https`；即便设置 `ALLOW_INSECURE_HTTP=1`，局域网 HTTP 也不能使用不安全的 Web Cookie 会话，请改用 HTTPS 或桌面 Bearer 客户端。
+同站 Web 登录使用 `X-Zichan-Session: cookie`，服务器验证请求 Origin 后，把 refresh token 写入 HttpOnly、SameSite=Strict 的 Cookie；生产 HTTPS 下同时设置 Secure。Cookie 路径限定为部署前缀下的 `/api/auth`，登录与刷新 JSON 不返回 refresh token；刷新不能同时提供 JSON token。Cookie 为会话级；可选的七天设备解锁授权独立于 Cookie，详见账本保护说明。跨域 CORS 不允许这个自定义头，也不开放 credential。代理部署需保留公共 Host 并覆盖单一 `X-Forwarded-Proto: https`；当部署显式设置 `ALLOW_INSECURE_HTTP=1` 时，私有局域网明文 HTTP 也可使用同站 Cookie 会话与管理后台，此时 Cookie 不带 Secure，请仅在可信内网开启。
 
 桌面和附加跨站连接使用独立 JSON token 传输；桌面 Stronghold 只保存刷新会话，不保存账号密码。后台同步不进行密码登录：令牌被拒绝时最多受控刷新一次，刷新失效后要求用户明确重新登录；网络错误和 5xx 保留会话用于重试。
 

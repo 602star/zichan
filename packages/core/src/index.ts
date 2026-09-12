@@ -39,6 +39,13 @@ export {
   type EncryptedAttachmentChunk,
 } from './crypto.js';
 export {
+  aesGcmDecrypt,
+  aesGcmEncrypt,
+  hasNativeSubtle,
+  hmacSha256,
+  randomBytes as secureRandomBytes,
+} from './crypto-provider.js';
+export {
   mergeSyncPayloads,
   syncPayload,
   wireSyncCommit,

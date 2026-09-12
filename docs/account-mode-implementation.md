@@ -21,4 +21,4 @@
 
 使用 `npm test`、`npm run typecheck`、`npm run lint`、`npm run build:server` 和 `npm run test:e2e:account` 验证代码。具体结果、原生 Windows 与手机视口覆盖范围见交付记录，不以历史测试数作为当前版本证明。
 
-生产及局域网 Web 使用可信 HTTPS；开发可使用 localhost。HTTPS 部署恢复演练只操作隔离实例，正式服务升级仍需部署者安排。服务器当前 schema 为 `server_key_custody_v10`，备份必须包含托管主密钥 `custody.key`。
+生产及公网部署使用可信 HTTPS；开发、localhost 与显式开启 ALLOW_INSECURE_HTTP 的私有局域网可使用 HTTP。HTTPS 部署恢复演练只操作隔离实例，正式服务升级仍需部署者安排。服务器当前 schema 为 `server_key_custody_v10`，备份必须包含托管主密钥 `custody.key`。

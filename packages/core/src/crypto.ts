@@ -1,23 +1,12 @@
 /** End-to-end encryption primitives shared by sync, attachments and backups. */
 
-interface SubtleLike {
-  importKey(fmt: string, key: Uint8Array, algo: unknown, ext: boolean, usages: string[]): Promise<unknown>;
-  deriveBits(algo: unknown, base: unknown, length: number): Promise<ArrayBuffer>;
-  encrypt(algo: unknown, key: unknown, data: Uint8Array): Promise<ArrayBuffer>;
-  decrypt(algo: unknown, key: unknown, data: Uint8Array): Promise<ArrayBuffer>;
-  digest(algo: string, data: Uint8Array): Promise<ArrayBuffer>;
-  sign(algo: unknown, key: unknown, data: Uint8Array): Promise<ArrayBuffer>;
-}
-interface CryptoLike {
-  subtle: SubtleLike;
-  getRandomValues<T extends Uint8Array>(a: T): T;
-}
+import { aesGcmDecrypt, aesGcmEncrypt, hmacSha256, randomBytes, sha256Bytes as digestSha256 } from './crypto-provider.js';
+
 declare const TextEncoder: { new (): { encode(s: string): Uint8Array } };
 declare const TextDecoder: { new (): { decode(b: ArrayBuffer | Uint8Array): string } };
 declare const btoa: (s: string) => string;
 declare const atob: (s: string) => string;
 
-const wc = (globalThis as unknown as { crypto: CryptoLike }).crypto;
 const te = new TextEncoder();
 const td = new TextDecoder();
 const ARGON_MEMORY_KIB = 32 * 1024;
@@ -81,7 +70,8 @@ export interface AttachmentCryptoRoutingContext {
 
 export interface AttachmentCryptoContext {
   routing: AttachmentCryptoRoutingContext;
-  idKey: unknown;
+  /** Raw HMAC key bytes; the AEAD backend is selected per call. */
+  idKey: Uint8Array;
 }
 
 export interface EncryptedAttachmentChunk {
@@ -120,10 +110,6 @@ function hex(bytes: Uint8Array): string {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function randomBytes(length: number): Uint8Array {
-  return wc.getRandomValues(new Uint8Array(length));
-}
-
 function randomId(prefix: string): string {
   return `${prefix}-${hex(randomBytes(16))}`;
 }
@@ -146,18 +132,14 @@ export function canonicalJson(value: unknown): string {
 }
 
 export async function sha256Json(value: unknown): Promise<string> {
-  return hex(new Uint8Array(await wc.subtle.digest('SHA-256', te.encode(canonicalJson(value)))));
+  return hex(await digestSha256(te.encode(canonicalJson(value))));
 }
 
 export async function sha256Bytes(value: Uint8Array): Promise<string> {
-  return hex(new Uint8Array(await wc.subtle.digest('SHA-256', value)));
+  return hex(await digestSha256(value));
 }
 
-async function aesKey(bytes: Uint8Array, usages: string[] = ['encrypt', 'decrypt']): Promise<unknown> {
-  return wc.subtle.importKey('raw', bytes, { name: 'AES-GCM' }, false, usages);
-}
-
-async function wrappingKey(passphrase: string, envelope: Pick<LedgerKeyEnvelope, 'salt' | 'memoryKiB' | 'iterations' | 'parallelism'>): Promise<unknown> {
+async function wrappingKey(passphrase: string, envelope: Pick<LedgerKeyEnvelope, 'salt' | 'memoryKiB' | 'iterations' | 'parallelism'>): Promise<Uint8Array> {
   if (passphrase.length < 8) throw new Error('账本加密密码至少需要 8 个字符');
   const { argon2id } = await import('hash-wasm');
   const derived = await argon2id({
@@ -169,7 +151,7 @@ async function wrappingKey(passphrase: string, envelope: Pick<LedgerKeyEnvelope,
     hashLength: 32,
     outputType: 'binary',
   });
-  return aesKey(derived);
+  return derived;
 }
 
 function envelopeAad(envelope: Omit<LedgerKeyEnvelope, 'iv' | 'ct'>): Uint8Array {
@@ -265,11 +247,12 @@ export async function wrapLedgerCryptoSession(session: LedgerCryptoSession, pass
     parallelism: ARGON_PARALLELISM,
   };
   const iv = randomBytes(12);
-  const ciphertext = new Uint8Array(await wc.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: envelopeAad(header) },
+  const ciphertext = await aesGcmEncrypt(
     await wrappingKey(passphrase, header),
+    iv,
     te.encode(canonicalJson(serializeSession(session))),
-  ));
+    envelopeAad(header),
+  );
   return { ...header, iv: b64(iv), ct: b64(ciphertext) };
 }
 
@@ -281,10 +264,11 @@ export async function createLedgerKeyEnvelope(ledgerId: string, passphrase: stri
 export async function unlockLedgerKeyEnvelope(passphrase: string, envelope: LedgerKeyEnvelope): Promise<LedgerCryptoSession> {
   assertLedgerKeyEnvelope(envelope);
   const { iv, ct, ...header } = envelope;
-  const plaintext = await wc.subtle.decrypt(
-    { name: 'AES-GCM', iv: unb64(iv), additionalData: envelopeAad(header) },
+  const plaintext = await aesGcmDecrypt(
     await wrappingKey(passphrase, envelope),
+    unb64(iv),
     unb64(ct),
+    envelopeAad(header),
   );
   const session = deserializeSession(JSON.parse(td.decode(plaintext)) as SerializedKeyring);
   if (session.ledgerId !== envelope.ledgerId || session.keyringId !== envelope.keyringId || session.generation !== envelope.generation) {
@@ -331,11 +315,7 @@ export async function encryptJson(session: LedgerCryptoSession, data: unknown, c
   const raw = session.dataKeys.get(session.activeKeyId);
   if (!raw) throw new Error('活动账本密钥不可用');
   const iv = randomBytes(12);
-  const ct = new Uint8Array(await wc.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: te.encode(canonicalJson(context)) },
-    await aesKey(raw),
-    te.encode(canonicalJson(data)),
-  ));
+  const ct = await aesGcmEncrypt(raw, iv, te.encode(canonicalJson(data)), te.encode(canonicalJson(context)));
   return { v: 3, keyId: session.activeKeyId, iv: b64(iv), ct: b64(ct) };
 }
 
@@ -343,11 +323,7 @@ export async function decryptJson<T = unknown>(session: LedgerCryptoSession, enc
   if (encrypted.v !== 3) throw new Error('不支持的加密内容版本');
   const raw = session.dataKeys.get(encrypted.keyId);
   if (!raw) throw new Error(`账本密钥包缺少数据密钥 ${encrypted.keyId}`);
-  const plaintext = await wc.subtle.decrypt(
-    { name: 'AES-GCM', iv: unb64(encrypted.iv), additionalData: te.encode(canonicalJson(context)) },
-    await aesKey(raw),
-    unb64(encrypted.ct),
-  );
+  const plaintext = await aesGcmDecrypt(raw, unb64(encrypted.iv), unb64(encrypted.ct), te.encode(canonicalJson(context)));
   return JSON.parse(td.decode(plaintext)) as T;
 }
 
@@ -360,14 +336,12 @@ export async function deriveAttachmentCryptoContext(
   routing: AttachmentCryptoRoutingContext,
 ): Promise<AttachmentCryptoContext> {
   if (routing.ledgerId !== session.ledgerId) throw new Error('附件所属账本与已解锁密钥不一致');
-  const root = await wc.subtle.importKey('raw', session.attachmentSecret, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const scoped = new Uint8Array(await wc.subtle.sign('HMAC', root, te.encode(canonicalJson({ v: 2, ...routing }))));
-  const idKey = await wc.subtle.importKey('raw', scoped, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  return { routing: { ...routing }, idKey };
+  const scoped = await hmacSha256(session.attachmentSecret, te.encode(canonicalJson({ v: 2, ...routing })));
+  return { routing: { ...routing }, idKey: scoped };
 }
 
 async function attachmentHmac(context: AttachmentCryptoContext, value: string): Promise<Uint8Array> {
-  return new Uint8Array(await wc.subtle.sign('HMAC', context.idKey, te.encode(value)));
+  return hmacSha256(context.idKey, te.encode(value));
 }
 
 export async function attachmentRemoteBlobId(context: AttachmentCryptoContext, plaintextSha256: string): Promise<string> {
@@ -375,8 +349,8 @@ export async function attachmentRemoteBlobId(context: AttachmentCryptoContext, p
   return hex(await attachmentHmac(context, `zichan-blob-id-v2::${plaintextSha256}`));
 }
 
-async function attachmentContentKey(context: AttachmentCryptoContext, plaintextSha256: string): Promise<unknown> {
-  return aesKey(await attachmentHmac(context, `zichan-blob-key-v2::${plaintextSha256}`));
+function attachmentContentKey(context: AttachmentCryptoContext, plaintextSha256: string): Promise<Uint8Array> {
+  return attachmentHmac(context, `zichan-blob-key-v2::${plaintextSha256}`);
 }
 
 async function attachmentChunkIv(context: AttachmentCryptoContext, plaintextSha256: string, index: number): Promise<Uint8Array> {
@@ -405,11 +379,12 @@ export async function encryptAttachmentChunk(
     throw new Error('attachment chunk index is invalid');
   }
   const iv = await attachmentChunkIv(context, plaintextSha256, index);
-  const ciphertext = new Uint8Array(await wc.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: attachmentChunkAad(context, plaintextSha256, index, chunkCount, totalSizeBytes) },
+  const ciphertext = await aesGcmEncrypt(
     await attachmentContentKey(context, plaintextSha256),
+    iv,
     plaintext,
-  ));
+    attachmentChunkAad(context, plaintextSha256, index, chunkCount, totalSizeBytes),
+  );
   return { index, iv: b64(iv), ciphertext, ciphertextSha256: await sha256Bytes(ciphertext) };
 }
 
@@ -421,20 +396,17 @@ export async function decryptAttachmentChunk(
   totalSizeBytes: number,
 ): Promise<Uint8Array> {
   if (await sha256Bytes(encrypted.ciphertext) !== encrypted.ciphertextSha256) throw new Error('encrypted attachment chunk checksum mismatch');
-  return new Uint8Array(await wc.subtle.decrypt(
-    { name: 'AES-GCM', iv: unb64(encrypted.iv), additionalData: attachmentChunkAad(context, plaintextSha256, encrypted.index, chunkCount, totalSizeBytes) },
+  return aesGcmDecrypt(
     await attachmentContentKey(context, plaintextSha256),
+    unb64(encrypted.iv),
     encrypted.ciphertext,
-  ));
+    attachmentChunkAad(context, plaintextSha256, encrypted.index, chunkCount, totalSizeBytes),
+  );
 }
 
 export async function encryptBackupBytes(session: LedgerCryptoSession, plaintext: Uint8Array, context: unknown): Promise<EncryptedBinary> {
   const iv = randomBytes(12);
-  const ciphertext = new Uint8Array(await wc.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: te.encode(canonicalJson(context)) },
-    await aesKey(session.backupSecret),
-    plaintext,
-  ));
+  const ciphertext = await aesGcmEncrypt(session.backupSecret, iv, plaintext, te.encode(canonicalJson(context)));
   return { v: 1, iv: b64(iv), ct: b64(ciphertext) };
 }
 
@@ -445,7 +417,7 @@ export async function decryptBackupBytes(session: LedgerCryptoSession, encrypted
 
 async function decryptWithBackupHistory(session: LedgerCryptoSession, iv: Uint8Array, ciphertext: Uint8Array, context: unknown): Promise<Uint8Array> {
   for (const secret of [session.backupSecret, ...(session.retiredBackupSecrets ?? [])]) {
-    try { return new Uint8Array(await wc.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: te.encode(canonicalJson(context)) }, await aesKey(secret), ciphertext)); }
+    try { return await aesGcmDecrypt(secret, iv, ciphertext, te.encode(canonicalJson(context))); }
     catch { /* Try a retired backup key; authentication is still mandatory. */ }
   }
   throw new Error('备份密钥不匹配或备份已损坏');
@@ -458,11 +430,7 @@ export async function encryptBackupChunk(
   context: unknown,
 ): Promise<EncryptedBackupChunk> {
   const iv = randomBytes(12);
-  const ciphertext = new Uint8Array(await wc.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: te.encode(canonicalJson(context)) },
-    await aesKey(session.backupSecret),
-    plaintext,
-  ));
+  const ciphertext = await aesGcmEncrypt(session.backupSecret, iv, plaintext, te.encode(canonicalJson(context)));
   return { v: 1, iv, ciphertext };
 }
 
