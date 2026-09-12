@@ -9,6 +9,9 @@ import { setBaseSymbol } from '../format.js';
 import { card, th as thStyle, td as tdStyle } from '../ui/styles.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { DeviceSecurityPanel } from '../ui/DeviceSecurityPanel.js';
+import { LedgerProtectionPanel } from '../ui/LedgerProtectionPanel.js';
+import { AccountSecurityPanel } from '../ui/AccountSecurityPanel.js';
+import { accountProtection } from '../account-protection.js';
 import { PortableStoragePanel } from '../ui/PortableStoragePanel.js';
 import { allCategories, categoryIsHidden } from '../transactionMeta.js';
 import {
@@ -457,7 +460,7 @@ export function Settings() {
       const protection = await saveLedgerBackup(store, 'pre-import', '从备份恢复前');
       setSafetyState(writeSafetyState(successfulBackupSafetyPatch(protection)));
       const payload = opened.payload;
-      const restoresDevice = mode === 'replace' && payload.kind === 'device' && payload.deviceState;
+      const restoresDevice = !accountProtection() && mode === 'replace' && payload.kind === 'device' && payload.deviceState;
       requiresDeviceKey = Boolean(restoresDevice);
       const result = await importPortableLedger(store, payload.ledger, mode, {
         deviceState: restoresDevice ? payload.deviceState : undefined,
@@ -740,6 +743,8 @@ export function Settings() {
       </div>
 
       <DeviceSecurityPanel />
+      <LedgerProtectionPanel store={store} />
+      <AccountSecurityPanel onExit={exitAccount} />
 
       <PortableStoragePanel />
 
@@ -848,7 +853,7 @@ export function Settings() {
             <div>
               <div style={{ fontSize: 13, fontWeight: 900 }}>同步服务器备份</div>
               <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 3 }}>
-                服务器只保存加密归档。恢复前会下载、校验分块和归档头，再使用本机账本密钥解密预检。
+                服务器保存加密归档；托管服务器具备解密能力。恢复前会下载、校验分块和归档头，再使用本机账本密钥解密预检。
               </div>
             </div>
             <button

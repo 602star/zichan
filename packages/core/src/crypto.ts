@@ -1,5 +1,4 @@
 /** End-to-end encryption primitives shared by sync, attachments and backups. */
-import { argon2id } from 'hash-wasm';
 
 interface SubtleLike {
   importKey(fmt: string, key: Uint8Array, algo: unknown, ext: boolean, usages: string[]): Promise<unknown>;
@@ -49,6 +48,8 @@ export interface LedgerKeyEnvelope {
 }
 
 export interface LedgerCryptoSession {
+  readonly retiredAttachmentSecrets?: readonly Uint8Array[];
+  readonly retiredBackupSecrets?: readonly Uint8Array[];
   readonly v: 1;
   readonly ledgerId: string;
   readonly keyringId: string;
@@ -60,6 +61,8 @@ export interface LedgerCryptoSession {
 }
 
 interface SerializedKeyring {
+  retiredAttachmentSecrets?: string[];
+  retiredBackupSecrets?: string[];
   v: 1;
   ledgerId: string;
   keyringId: string;
@@ -156,6 +159,7 @@ async function aesKey(bytes: Uint8Array, usages: string[] = ['encrypt', 'decrypt
 
 async function wrappingKey(passphrase: string, envelope: Pick<LedgerKeyEnvelope, 'salt' | 'memoryKiB' | 'iterations' | 'parallelism'>): Promise<unknown> {
   if (passphrase.length < 8) throw new Error('账本加密密码至少需要 8 个字符');
+  const { argon2id } = await import('hash-wasm');
   const derived = await argon2id({
     password: passphrase,
     salt: unb64(envelope.salt),
@@ -202,6 +206,8 @@ function assertLedgerKeyEnvelope(envelope: LedgerKeyEnvelope): void {
 function serializeSession(session: LedgerCryptoSession): SerializedKeyring {
   const now = new Date().toISOString();
   return {
+    ...(session.retiredAttachmentSecrets?.length ? { retiredAttachmentSecrets: session.retiredAttachmentSecrets.map(b64) } : {}),
+    ...(session.retiredBackupSecrets?.length ? { retiredBackupSecrets: session.retiredBackupSecrets.map(b64) } : {}),
     v: 1,
     ledgerId: session.ledgerId,
     keyringId: session.keyringId,
@@ -218,6 +224,8 @@ function deserializeSession(payload: SerializedKeyring): LedgerCryptoSession {
   const dataKeys = new Map(payload.dataKeys.map((row) => [row.id, unb64(row.key)]));
   if (!dataKeys.has(payload.activeKeyId)) throw new Error('账本密钥包缺少活动密钥');
   return {
+    ...(payload.retiredAttachmentSecrets ? { retiredAttachmentSecrets: payload.retiredAttachmentSecrets.map(unb64) } : {}),
+    ...(payload.retiredBackupSecrets ? { retiredBackupSecrets: payload.retiredBackupSecrets.map(unb64) } : {}),
     v: 1,
     ledgerId: payload.ledgerId,
     keyringId: payload.keyringId,
@@ -301,6 +309,19 @@ export async function rotateLedgerDataKey(session: LedgerCryptoSession, passphra
     generation: session.generation + 1,
     activeKeyId,
     dataKeys: new Map([...session.dataKeys, [activeKeyId, randomBytes(32)]]),
+  };
+  return { session: next, envelope: await wrapLedgerCryptoSession(next, passphrase) };
+}
+
+/** Revoke a custodian's future access while retaining read access to past data. */
+export async function rotateLedgerProtection(session: LedgerCryptoSession, passphrase: string): Promise<{ envelope: LedgerKeyEnvelope; session: LedgerCryptoSession }> {
+  const fresh = createLedgerCryptoSession(session.ledgerId);
+  const next: LedgerCryptoSession = {
+    ...session, generation: session.generation + 1,
+    activeKeyId: fresh.activeKeyId, dataKeys: new Map([...session.dataKeys, ...fresh.dataKeys]),
+    attachmentSecret: fresh.attachmentSecret, backupSecret: fresh.backupSecret,
+    retiredAttachmentSecrets: [...(session.retiredAttachmentSecrets ?? []), session.attachmentSecret],
+    retiredBackupSecrets: [...(session.retiredBackupSecrets ?? []), session.backupSecret],
   };
   return { session: next, envelope: await wrapLedgerCryptoSession(next, passphrase) };
 }
@@ -419,11 +440,15 @@ export async function encryptBackupBytes(session: LedgerCryptoSession, plaintext
 
 export async function decryptBackupBytes(session: LedgerCryptoSession, encrypted: EncryptedBinary, context: unknown): Promise<Uint8Array> {
   if (encrypted.v !== 1) throw new Error('不支持的备份加密版本');
-  return new Uint8Array(await wc.subtle.decrypt(
-    { name: 'AES-GCM', iv: unb64(encrypted.iv), additionalData: te.encode(canonicalJson(context)) },
-    await aesKey(session.backupSecret),
-    unb64(encrypted.ct),
-  ));
+  return decryptWithBackupHistory(session, unb64(encrypted.iv), unb64(encrypted.ct), context);
+}
+
+async function decryptWithBackupHistory(session: LedgerCryptoSession, iv: Uint8Array, ciphertext: Uint8Array, context: unknown): Promise<Uint8Array> {
+  for (const secret of [session.backupSecret, ...(session.retiredBackupSecrets ?? [])]) {
+    try { return new Uint8Array(await wc.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: te.encode(canonicalJson(context)) }, await aesKey(secret), ciphertext)); }
+    catch { /* Try a retired backup key; authentication is still mandatory. */ }
+  }
+  throw new Error('备份密钥不匹配或备份已损坏');
 }
 
 /** Raw binary variant used by the framed backup archive. */
@@ -449,9 +474,5 @@ export async function decryptBackupChunk(
   if (encrypted.v !== 1 || encrypted.iv.length !== 12 || encrypted.ciphertext.length < 16) {
     throw new Error('不支持或损坏的备份分块');
   }
-  return new Uint8Array(await wc.subtle.decrypt(
-    { name: 'AES-GCM', iv: encrypted.iv, additionalData: te.encode(canonicalJson(context)) },
-    await aesKey(session.backupSecret),
-    encrypted.ciphertext,
-  ));
+  return decryptWithBackupHistory(session, encrypted.iv, encrypted.ciphertext, context);
 }

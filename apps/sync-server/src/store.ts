@@ -6,6 +6,11 @@ export type RegistrationMode = 'open' | 'invite' | 'closed';
 export type AccountRole = 'owner' | 'admin' | 'member';
 export type ServerLogLevel = 'info' | 'warn' | 'error';
 export type JsonRecord = Record<string, unknown>;
+export interface LedgerProtection {
+  mode: 'managed' | 'private' | 'relay';
+  version: number;
+  sealedSecret: string | null;
+}
 
 export interface SyncUser {
   accountId: string;
@@ -126,10 +131,11 @@ export class ServerStoreError extends Error {
   }
 }
 
-export const CURRENT_SERVER_SCHEMA = 9;
-export const CURRENT_SERVER_SCHEMA_NAME = 'server_password_recovery_v9';
+export const CURRENT_SERVER_SCHEMA = 10;
+export const CURRENT_SERVER_SCHEMA_NAME = 'server_key_custody_v10';
 export function supportedServerSchema(version: number, name: string): boolean {
   return version === CURRENT_SERVER_SCHEMA && name === CURRENT_SERVER_SCHEMA_NAME
+    || version === 9 && name === 'server_password_recovery_v9'
     || version === 8 && name === 'server_management_v8'
     || version === 7 && name === 'server_account_identity_v7'
     || version === 6 && name === 'server_account_owner_v6';
@@ -377,6 +383,13 @@ CREATE TABLE IF NOT EXISTS sync_key_envelopes (
   envelope_json TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sync_key_custody (
+  username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
+  mode TEXT NOT NULL CHECK (mode IN ('managed', 'private', 'relay')),
+  version INTEGER NOT NULL,
+  sealed_secret TEXT,
+  updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS registration_invites (
   code TEXT PRIMARY KEY,
   created_at TEXT NOT NULL,
@@ -425,6 +438,7 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
       Number(migrations[0]?.version) === 6 && migrations[0]?.name === 'server_account_owner_v6'
       || Number(migrations[0]?.version) === 7 && migrations[0]?.name === 'server_account_identity_v7'
       || Number(migrations[0]?.version) === 8 && migrations[0]?.name === 'server_management_v8'
+      || Number(migrations[0]?.version) === 9 && migrations[0]?.name === 'server_password_recovery_v9'
     );
     if (!migrations.length || previous) {
       // This additive identity upgrade does not touch ledger bytes, credentials,
@@ -908,6 +922,22 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     if (!row) throw new ServerStoreError('INVALID_PASSWORD_RESET', 403, '重置码无效、已使用或已过期，请联系管理员重新审核');
   }
 
+  /** Local operator recovery or a recently authenticated user's own password change. */
+  async issueAccountRecovery(codeHash: string, expiresAt: string, actorSessionId?: string): Promise<string> {
+    await this.ready;
+    return this.driver.transaction(async (driver) => {
+      const at = nowIso();
+      if (!/^[a-f0-9]{64}$/.test(codeHash) || expiresAt <= at || !Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) > Date.now() + 16 * 60_000) throw new ServerStoreError('INVALID_RESET', 400, 'invalid reset policy');
+      const actor = actorSessionId
+        ? await driver.get<{ username: string; account_id: string }>(`SELECT u.username, i.account_id FROM sync_sessions s JOIN sync_users u ON u.username = s.username JOIN sync_account_identities i ON i.username = u.username WHERE s.session_id = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND s.created_at > ? AND u.disabled = 0`, [actorSessionId, at, new Date(Date.now() - 5 * 60_000).toISOString()])
+        : await driver.get<{ username: string; account_id: string }>('SELECT o.username, i.account_id FROM server_ownership o JOIN sync_account_identities i ON i.username = o.username WHERE o.singleton = 1');
+      if (!actor) throw new ServerStoreError('RECENT_LOGIN_REQUIRED', 403, actorSessionId ? '请重新验证当前账号密码' : '服务器尚未创建所有者');
+      await driver.run('INSERT OR REPLACE INTO account_password_resets (account_id, code_hash, expires_at, issued_at) VALUES (?, ?, ?, ?)', [actor.account_id, codeHash, expiresAt, at]);
+      await driver.run('INSERT INTO server_admin_audit (at, actor_account_id, target_account_id, action, before_json, after_json) VALUES (?, ?, ?, ?, ?, ?)', [at, actor.account_id, actor.account_id, actorSessionId ? 'password-change-authorize' : 'owner-recovery-local', '{}', JSON.stringify({ expiresAt, localOperator: !actorSessionId })]);
+      return actor.username;
+    });
+  }
+
   async completePasswordReset(username: string, codeHash: string, registrationRecord: string): Promise<void> {
     await this.ready;
     await this.driver.transaction(async (driver) => {
@@ -952,6 +982,45 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     });
   }
 
+  /** Replace only the explicitly confirmed replica, including its initial encrypted data. */
+  async replaceReplica(username: string, sessionId: string, expected: { ledgerId: string; streamEpoch: string }, envelope: JsonRecord, commits: Omit<StoredCommit, 'seq' | 'cipherBytes' | 'createdAt'>[], protection?: Omit<LedgerProtection, 'version'>): Promise<UserReplica> {
+    await this.ready;
+    return this.driver.transaction(async (driver) => {
+      const at = nowIso();
+      const actor = await driver.get('SELECT session_id FROM sync_sessions WHERE username = ? AND session_id = ? AND revoked_at IS NULL AND expires_at > ?', [username, sessionId, at]);
+      if (!actor) throw new ServerStoreError('SESSION_REVOKED', 401, '请重新登录后再替换账本');
+      const row = await driver.get<Record<string, unknown>>('SELECT * FROM sync_replicas WHERE username = ?', [username]);
+      const current = row ? replicaFromRow(row) : undefined;
+      const ledgerId = String(envelope.ledgerId);
+      // A lost response can be retried without deleting any newly synchronized commits.
+      if (current?.ledgerId === ledgerId) {
+        const stored = await driver.get<{ envelope_json: string }>('SELECT envelope_json FROM sync_key_envelopes WHERE username = ?', [username]);
+        if (stored?.envelope_json === JSON.stringify(envelope)) return current;
+      }
+      if (!current || current.ledgerId !== expected.ledgerId || current.streamEpoch !== expected.streamEpoch || ledgerId === current.ledgerId) {
+        throw new ServerStoreError('LEDGER_MISMATCH', 409, '服务器账本已变化，请重新登录并确认要替换的账本');
+      }
+      const quota = await driver.get<{ commit_quota_bytes: number }>('SELECT commit_quota_bytes FROM sync_user_quotas WHERE username = ?', [username]);
+      const bytes = commits.reduce((sum, commit) => sum + Buffer.byteLength(JSON.stringify(commit.encCommit)), 0);
+      if (bytes > Number(quota?.commit_quota_bytes ?? this.defaultCommitQuotaBytes)) throw new ServerStoreError('COMMIT_QUOTA_EXCEEDED', 507, 'encrypted commit quota exceeded');
+      await driver.run('DELETE FROM sync_server_commits WHERE username = ?', [username]);
+      await driver.run('DELETE FROM sync_key_envelopes WHERE username = ?', [username]);
+      const next = { ...current, ledgerId, replicaId: `rep-${randomBytes(12).toString('hex')}`, streamEpoch: `epoch-${randomBytes(12).toString('hex')}`, headSeq: commits.length, updatedAt: at };
+      await driver.run('UPDATE sync_replicas SET ledger_id = ?, replica_id = ?, stream_epoch = ?, head_seq = ?, updated_at = ? WHERE username = ?', [ledgerId, next.replicaId, next.streamEpoch, next.headSeq, at, username]);
+      await driver.run('INSERT INTO sync_key_envelopes (username, ledger_id, keyring_id, generation, envelope_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [username, ledgerId, String(envelope.keyringId), Number(envelope.generation), JSON.stringify(envelope), at]);
+      if (protection) {
+        await driver.run('INSERT INTO sync_key_custody (username, mode, version, sealed_secret, updated_at) VALUES (?, ?, 1, ?, ?) ON CONFLICT(username) DO UPDATE SET mode = excluded.mode, version = sync_key_custody.version + 1, sealed_secret = excluded.sealed_secret, updated_at = excluded.updated_at', [username, protection.mode, protection.sealedSecret, at]);
+      }
+      for (const [index, commit] of commits.entries()) {
+        if (commit.ledgerId !== ledgerId) throw new ServerStoreError('LEDGER_MISMATCH', 409, 'initial commit belongs to another ledger');
+        const encoded = JSON.stringify(commit.encCommit);
+        await driver.run('INSERT INTO sync_server_commits (username, seq, commit_id, ledger_id, content_hash, enc_commit_json, cipher_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [username, index + 1, commit.commitId, ledgerId, commit.contentHash, encoded, Buffer.byteLength(encoded), at]);
+      }
+      await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE username = ? AND session_id <> ?', [at, at, username, sessionId]);
+      return next;
+    });
+  }
+
   async getKeyEnvelope(username: string, ledgerId: string): Promise<JsonRecord | undefined> {
     await this.ready;
     const row = await this.driver.get<{ envelope_json: string }>(
@@ -970,6 +1039,8 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
   ): Promise<void> {
     await this.ready;
     await this.driver.transaction(async (driver) => {
+      const replica = await driver.get<{ ledger_id: string }>('SELECT ledger_id FROM sync_replicas WHERE username = ?', [username]);
+      if (replica?.ledger_id !== ledgerId) throw new ServerStoreError('LEDGER_MISMATCH', 409, 'account is bound to another ledger');
       const current = await driver.get<{ keyring_id: string; generation: number; envelope_json: string }>(
         'SELECT keyring_id, generation, envelope_json FROM sync_key_envelopes WHERE username = ?',
         [username],
@@ -1105,6 +1176,7 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
       let headSeq = replica.headSeq;
       const assigned: { commitId: string; seq: number; contentHash: string }[] = [];
       for (const item of incoming) {
+        if (item.ledgerId !== replica.ledgerId) throw new ServerStoreError('LEDGER_MISMATCH', 409, 'account is bound to another ledger');
         const existing = await driver.get<{ seq: number; content_hash: string }>('SELECT seq, content_hash FROM sync_server_commits WHERE username = ? AND commit_id = ?', [username, item.commitId]);
         if (existing) {
           if (existing.content_hash !== item.contentHash) throw new ServerStoreError('COMMIT_ID_COLLISION', 409, `commit ${item.commitId} has different content`);
@@ -1228,6 +1300,42 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
       tempStore: Number(temp?.temp_store) === 2 ? 'memory' : String(temp?.temp_store ?? ''),
       schemaVersion: CURRENT_SERVER_SCHEMA,
     };
+  }
+
+  async hasCustodySecrets(): Promise<boolean> {
+    await this.ready;
+    return Boolean(await this.driver.get('SELECT username FROM sync_key_custody WHERE sealed_secret IS NOT NULL LIMIT 1'));
+  }
+
+  async getLedgerProtection(username: string): Promise<LedgerProtection | undefined> {
+    await this.ready;
+    const row = await this.driver.get<{ mode: LedgerProtection['mode']; version: number; sealed_secret: string | null }>('SELECT mode, version, sealed_secret FROM sync_key_custody WHERE username = ?', [username]);
+    return row ? { mode: row.mode, version: Number(row.version), sealedSecret: row.sealed_secret } : undefined;
+  }
+
+  /** Compare-and-swap custody and the matching envelope together, under the live session. */
+  async setLedgerProtection(username: string, sessionId: string, expectedVersion: number, next: Omit<LedgerProtection, 'version'>, envelope: JsonRecord): Promise<void> {
+    await this.ready;
+    await this.driver.transaction(async (driver) => {
+      const session = await driver.get<{ revoked_at: string | null; expires_at: string }>('SELECT revoked_at, expires_at FROM sync_sessions WHERE session_id = ? AND username = ?', [sessionId, username]);
+      if (!session || session.revoked_at || session.expires_at <= nowIso()) throw new ServerStoreError('UNAUTHORIZED', 401, 'session expired');
+      const current = await driver.get<{ version: number }>('SELECT version FROM sync_key_custody WHERE username = ?', [username]);
+      if (Number(current?.version ?? 0) !== expectedVersion) throw new ServerStoreError('PROTECTION_CHANGED', 409, '保护设置已变化，请重新读取');
+      const replica = await driver.get<{ ledger_id: string }>('SELECT ledger_id FROM sync_replicas WHERE username = ?', [username]);
+      if (replica && replica.ledger_id !== envelope.ledgerId) throw new ServerStoreError('LEDGER_MISMATCH', 409, 'account is bound to another ledger');
+      const oldEnvelope = await driver.get<{ envelope_json: string; generation: number; keyring_id: string }>('SELECT envelope_json, generation, keyring_id FROM sync_key_envelopes WHERE username = ?', [username]);
+      if (oldEnvelope && (oldEnvelope.keyring_id !== envelope.keyringId || Number(oldEnvelope.generation) > Number(envelope.generation)
+        || Number(oldEnvelope.generation) === Number(envelope.generation) && oldEnvelope.envelope_json !== JSON.stringify(envelope))) {
+        throw new ServerStoreError('KEY_ENVELOPE_COLLISION', 409, '账本密钥已变化，请重新同步');
+      }
+      const at = nowIso();
+      if (!replica) await driver.run('INSERT INTO sync_replicas (username, ledger_id, replica_id, stream_epoch, head_seq, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)', [username, String(envelope.ledgerId), `rep-${randomBytes(12).toString('hex')}`, `epoch-${randomBytes(12).toString('hex')}`, at, at]);
+      await driver.run('INSERT OR REPLACE INTO sync_key_envelopes (username, ledger_id, keyring_id, generation, envelope_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [username, String(envelope.ledgerId), String(envelope.keyringId), Number(envelope.generation), JSON.stringify(envelope), at]);
+      await driver.run('INSERT OR REPLACE INTO sync_key_custody (username, mode, version, sealed_secret, updated_at) VALUES (?, ?, ?, ?, ?)', [username, next.mode, expectedVersion + 1, next.sealedSecret, at]);
+      if (oldEnvelope && Number(envelope.generation) > Number(oldEnvelope.generation)) {
+        await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE username = ? AND session_id <> ?', [at, at, username, sessionId]);
+      }
+    });
   }
 
   async listInvitesPage(before = 0, limit = 25, state = ''): Promise<{ invites: Invite[]; nextCursor?: string }> {

@@ -16,6 +16,7 @@ export {
   unlockLedgerKeyEnvelope,
   changeLedgerPassphrase,
   rotateLedgerDataKey,
+  rotateLedgerProtection,
   normalizeSyncUsername,
   canonicalJson,
   sha256Json,

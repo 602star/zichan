@@ -1,13 +1,16 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { fetchAuthMe, refreshAccountSession, requestJson, HttpRequestError, type SyncAuthSession } from '@zichan/db';
 import { canOfferOfflineCache } from './account-restore-error.js';
-import { activateWebAccount, accountLocalStorage } from './account-storage.js';
+import { activateWebAccount, accountLocalStorage, accountStorageKey } from './account-storage.js';
 import { FirstServerConnectionGate } from './ui/FirstServerConnectionGate.js';
 import { applySyncAuthSession } from './sync-auth.js';
 import { restoreBrowserCredentialRuntimeState, setRuntimeCredential } from './credential-vault.js';
-import { ACCOUNT_EXIT_KEY, ACCOUNT_LOCK_REQUEST_EVENT } from './browser-account-exit.js';
+import { ACCOUNT_EXIT_KEY, ACCOUNT_LOCK_REQUEST_EVENT, hasAccountCloseHandler } from './browser-account-exit.js';
+import { clearAccountProtection } from './account-protection.js';
 import { syncAddressPresetUrl, type SyncConnection } from './sync-config.js';
 import { restoreWebSyncConnections } from './web-sync-connections.js';
+import { AccountProtectionGate } from './ui/AccountProtectionGate.js';
+import { OfflineAccountGate } from './ui/OfflineAccountGate.js';
 
 const LedgerApp = lazy(() => import('./LedgerApp.js').then((module) => ({ default: module.LedgerApp })));
 const BINDING_KEY = 'zichan.web-account.v2.binding';
@@ -28,6 +31,8 @@ export function WebAccountApp() {
   const [ready, setReady] = useState(false);
   const [notice, setNotice] = useState('');
   const [offline, setOffline] = useState(false);
+  const [activeConnection, setActiveConnection] = useState<SyncConnection>();
+  const [offlineEntry, setOfflineEntry] = useState(false);
   const activeAccount = useRef<string>();
   const restoreFlight = useRef<Promise<SyncAuthSession>>();
 
@@ -50,6 +55,8 @@ export function WebAccountApp() {
     sessionStorage.setItem(BINDING_KEY, JSON.stringify(remembered));
     localStorage.setItem(BINDING_KEY, JSON.stringify(remembered));
     activeAccount.current = connection.accountId;
+    setActiveConnection(connection);
+    setOfflineEntry(!session);
     setReady(true);
   }
 
@@ -78,7 +85,7 @@ export function WebAccountApp() {
       } catch (error) {
         if (active) {
           const available = canOfferOfflineCache(error);
-          setNotice(available ? '暂时无法连接账号服务器。可用账本密码解锁已有加密缓存；联网后继续验证账号并同步。'
+          setNotice(available ? '暂时无法连接账号服务器。可用此设备已设置的离线密码或记住设备授权解锁已有缓存；联网后继续验证账号并同步。'
             : `${error instanceof Error ? error.message : '账号验证失败'} 请重新登录或联系部署者。`);
           setOffline(available);
         }
@@ -92,10 +99,20 @@ export function WebAccountApp() {
   useEffect(() => {
     const changed = (event: StorageEvent) => {
       if (!activeAccount.current) return;
+      if (event.key === accountStorageKey(ACCOUNT_EXIT_KEY) && event.newValue === 'pending') {
+        clearAccountProtection();
+        // During key bootstrap no StoreProvider exists yet to process logout.
+        // Mounted providers close their database through their existing listener.
+        if (!hasAccountCloseHandler()) window.location.reload();
+        return;
+      }
       if (event.key !== LOGIN_EVENT_KEY || !event.newValue) return;
       try {
         if (JSON.parse(event.newValue).accountId !== activeAccount.current) {
-          sessionStorage.setItem(REQUIRE_LOGIN_KEY, '1'); window.dispatchEvent(new Event(ACCOUNT_LOCK_REQUEST_EVENT));
+          sessionStorage.setItem(REQUIRE_LOGIN_KEY, '1');
+          clearAccountProtection();
+          if (hasAccountCloseHandler()) window.dispatchEvent(new Event(ACCOUNT_LOCK_REQUEST_EVENT));
+          else window.location.reload();
         }
       } catch { /* Ignore malformed cross-tab notifications. */ }
     };
@@ -104,7 +121,10 @@ export function WebAccountApp() {
   }, []);
 
   if (checking) return <p role="status">正在验证账号会话…</p>;
-  if (ready) return <Suspense fallback={<p role="status">正在加载账号账本…</p>}><LedgerApp /></Suspense>;
+  if (ready && activeConnection) {
+    const app = <Suspense fallback={<p role="status">正在加载账号账本…</p>}><LedgerApp /></Suspense>;
+    return offlineEntry ? <OfflineAccountGate connection={activeConnection}>{app}</OfflineAccountGate> : <AccountProtectionGate connection={activeConnection}>{app}</AccountProtectionGate>;
+  }
   return <>
     {notice && <p role="status">{notice}</p>}
     {offline && binding && <button onClick={() => void enter(binding).catch((error) => setNotice(String(error)))}>离线解锁 {binding.username} 的缓存</button>}

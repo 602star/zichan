@@ -23,6 +23,7 @@ apps/sync-server/*.server-id
 **/owner-setup.secret
 **/server-id
 **/opaque.server-setup
+**/custody.key
 **/admin-token.txt
 **/server.sqlite
 **/server.sqlite-*

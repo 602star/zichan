@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { createServerBackup, restoreServerBackup, verifyServerBackup } from './backup.js';
 import { developmentDataDir } from './runtime-config.js';
+import { issueOwnerRecovery } from './owner-recovery.js';
 
 function option(name: string, fallback?: string): string {
   const index = process.argv.indexOf(`--${name}`);
@@ -13,6 +14,12 @@ function option(name: string, fallback?: string): string {
 async function main(): Promise<void> {
   const command = process.argv[2];
   const dataDir = resolve(option('data-dir', process.env.DATA_DIR?.trim() || developmentDataDir(import.meta.url)));
+  if (command === 'owner-recovery') {
+    const output = resolve(option('output'));
+    const result = await issueOwnerRecovery(dataDir, output);
+    console.log(JSON.stringify({ ok: true, command, output, ...result }, null, 2));
+    return;
+  }
   if (command === 'backup') {
     const output = resolve(option('output'));
     const manifest = await createServerBackup(dataDir, output);
@@ -32,7 +39,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ ok: true, command, dataDir, ...result }, null, 2));
     return;
   }
-  throw new Error('用法：maintenance <backup|verify-backup|restore> [--data-dir PATH] [--output PATH|--backup PATH]');
+  throw new Error('用法：maintenance <backup|verify-backup|restore|owner-recovery> [--data-dir PATH] [--output PATH|--backup PATH]');
 }
 
 main().catch((error) => {

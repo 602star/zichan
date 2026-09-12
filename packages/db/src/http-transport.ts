@@ -1,6 +1,5 @@
 /** HTTP transport for protocol-v3 relay APIs carrying commit-DAG v2 envelopes. */
 import { requestJson as fetch, HttpRequestError, type HttpRequestOptions } from './http-request.js';
-import * as opaque from '@serenity-kit/opaque';
 import {
   decryptJson,
   encryptJson,
@@ -305,6 +304,7 @@ export async function registerAccount(baseUrl: string, username: string, passwor
   assertSecureSyncUrl(baseUrl);
   const normalized = normalizeSyncUsername(username);
   if (!normalized || !password) throw new Error('同步用户名和密码不能为空');
+  const opaque = await import('@serenity-kit/opaque');
   await opaque.ready;
   const start = opaque.client.startRegistration({ password });
   const operation = opts.passwordResetCode ? 'password-reset' : 'register';
@@ -377,6 +377,7 @@ export async function loginAccount(
   assertSecureSyncUrl(baseUrl);
   const normalized = normalizeSyncUsername(username);
   if (!normalized || !password) throw new Error('同步用户名和密码不能为空');
+  const opaque = await import('@serenity-kit/opaque');
   await opaque.ready;
   const start = opaque.client.startLogin({ password });
   const startResponse = await fetch(`${baseUrl}/api/auth/login/start`, {

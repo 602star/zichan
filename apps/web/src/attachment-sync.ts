@@ -104,6 +104,7 @@ interface UploadPlan {
 }
 
 interface TargetRuntime {
+  historical?: Map<string, { context: AttachmentCryptoContext; remoteBlobId: string }>;
   target: AttachmentSyncTarget;
   client: AttachmentBlobClient;
   context: AttachmentCryptoContext;
@@ -391,6 +392,8 @@ function validateManifest(manifest: BlobManifest, remoteBlobId: string): void {
 }
 
 async function downloadReference(store: SqlLedgerStore, runtime: TargetRuntime, ref: AttachmentBlobReference): Promise<void> {
+  const historical = runtime.historical?.get(ref.sha256);
+  if (historical) runtime = { ...runtime, context: historical.context, remoteIds: new Map(runtime.remoteIds).set(ref.sha256, historical.remoteBlobId) };
   const profileId = runtime.target.profile.id;
   const remoteBlobId = runtime.remoteIds.get(ref.sha256)!;
   await store.attachmentState.putReplicaBlob(replicaRow(profileId, ref, remoteBlobId, { state: 'downloading', error: undefined }));
@@ -480,6 +483,24 @@ async function loadRemoteStates(runtime: TargetRuntime, refs: AttachmentBlobRefe
       runtime.result.restored += 1;
     }
     runtime.states.set(ref.sha256, state);
+  }
+  // A protection change uses fresh attachment keys. Old objects remain readable;
+  // new content is always uploaded with the current secret and object IDs.
+  const session = requireLedgerCryptoSession(runtime.target.identity.ledgerId);
+  for (const secret of session.retiredAttachmentSecrets ?? []) {
+    const missing = refs.filter((ref) => runtime.states.get(ref.sha256) !== 'available');
+    if (!missing.length) break;
+    const context = await deriveAttachmentCryptoContext({ ...session, attachmentSecret: secret }, runtime.context.routing);
+    const ids = await Promise.all(missing.map((ref) => attachmentRemoteBlobId(context, ref.sha256)));
+    const old = await runtime.client.status(ids);
+    for (const [index, ref] of missing.entries()) {
+      const id = ids[index]!;
+      if (old.objects[id] !== 'available' && old.objects[id] !== 'trash') continue;
+      if (old.objects[id] === 'trash') await runtime.client.restore(id);
+      runtime.historical ??= new Map();
+      runtime.historical.set(ref.sha256, { context, remoteBlobId: id });
+      runtime.states.set(ref.sha256, 'available');
+    }
   }
 }
 

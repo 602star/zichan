@@ -1,5 +1,8 @@
 # 多资产生命周期记账系统 (Multi-Asset Lifecycle Ledger)
 
+账号默认支持云端托管、登录后自动解锁；高级设置可选择私密恢复码和附加服务器保护方式，详见[账本保护](docs/ledger-protection.md)。
+
+
 Local-first ledger for the full lifecycle of many asset kinds — fiat, stablecoins,
 crypto (with DCA + lot cost basis), game-season economies, and physical items with
 per-day/count/km/hour cost — plus everyday income/expense bookkeeping. Built from the design handoff (`资产记账系统.dc.html`) and the design
@@ -17,7 +20,7 @@ packages/
   db/            @zichan/db — SQLite schema + repository implementing core's storage port  ✓ done
 apps/
   web/           @zichan/web — shared React + Vite UI + platform storage selection         ✓ done
-  sync-server/   @zichan/sync-server — unified Web + E2E sync + admin server               ✓ done
+  sync-server/   @zichan/sync-server — unified Web + encrypted sync + admin server               ✓ done
   desktop/       @zichan/desktop — Tauri 2 desktop/mobile shell + native SQLite            ✓ done
 ```
 
@@ -59,9 +62,9 @@ apps/
   `.zcbak` import/export with preflight + restore rehearsal, automatic local backups, system backup sharing, multi-branch sync conflict box
   with JSON export, tested pure selectors per screen. `npm run dev -w @zichan/web`.
   [docs/web.md](docs/web.md).
-- **`@zichan/sync-server`** — unified server for Web UI, **end-to-end-encrypted** sync, and admin
+- **`@zichan/sync-server`** — unified server for Web UI, encrypted sync with managed or private keys, and admin
   metadata APIs. HTTP v3 carries ciphertext commit-DAG envelopes plus encrypted, resumable attachment chunks;
-  the server cannot read ledger fields, attachment names, plaintext hashes, or file bodies.
+  managed servers hold escrowed credentials and can decrypt ledger content. In private mode, servers receive ciphertext without recovery credentials.
   `npm start -w @zichan/sync-server`.
   [docs/cloud-sync.md](docs/cloud-sync.md).
 - **`@zichan/desktop`** — **Tauri 2** desktop shell wrapping the web build; compiles to a native

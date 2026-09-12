@@ -2,16 +2,23 @@ import { accountLocalStorage } from './account-storage.js';
 import { clearCredentialVaultRuntimeState, runtimeCredentialMap } from './credential-vault.js';
 import { buildSyncBaseUrl, loadSyncConnections } from './sync-config.js';
 import { isPrimaryWebConnection } from './web-sync-connections.js';
+import { clearAccountProtection } from './account-protection.js';
+import { forgetOfflineAccess } from './offline-access.js';
 
 export const ACCOUNT_EXIT_KEY = 'zichan.account.explicit-exit.v1';
 export const ACCOUNT_LOCK_REQUEST_EVENT = 'zichan:lock-account';
+let accountCloseHandlerMounted = false;
+export function setAccountCloseHandlerMounted(value: boolean): void { accountCloseHandlerMounted = value; }
+export function hasAccountCloseHandler(): boolean { return accountCloseHandlerMounted; }
 
 /** Keep profile identity and encrypted data; never treat sign-out as a cache reset. */
 export async function exitBrowserAccount(): Promise<void> {
   accountLocalStorage.setItem(ACCOUNT_EXIT_KEY, 'pending');
+  clearAccountProtection();
   const credentials = runtimeCredentialMap();
   const profiles = loadSyncConnections();
   clearCredentialVaultRuntimeState();
+  await forgetOfflineAccess().catch(() => undefined);
   const targets = profiles.filter((profile) => isPrimaryWebConnection(profile) || credentials[profile.id]?.sessionId);
   const results = await Promise.all(targets.map(async (profile) => {
     const url = buildSyncBaseUrl(profile);

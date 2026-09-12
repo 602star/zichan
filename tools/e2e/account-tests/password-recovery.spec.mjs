@@ -38,13 +38,13 @@ test('administrator reviews and issues a code, user resets only account credenti
     await user.getByLabel('新账号密码', { exact: true }).fill('new-user-test-password');
     await user.getByLabel('确认新账号密码', { exact: true }).fill('new-user-test-password');
     await user.getByRole('button', { name: '重置账号密码', exact: true }).click();
-    await expect(user.getByText('账号密码已重置，旧登录会话已撤销。请使用新密码登录；账本加密密码不变。')).toBeVisible();
+    await expect(user.getByText('账号密码已重置，旧登录会话已撤销。请使用新密码登录；私密账本仍需恢复码。')).toBeVisible();
     expect((await loginAccount(url, 'recover-user', 'new-user-test-password')).accountId).toBe(original.accountId);
     await expect(loginAccount(url, 'recover-user', 'old-user-test-password')).rejects.toThrow();
     expect((await fetch(`${url}/api/auth/me`, { headers: { Authorization: `Bearer ${original.accessToken}` } })).status).toBe(401);
     await user.getByLabel('服务器账号密码').fill('new-user-test-password');
     await user.getByRole('button', { name: '登录已有账号' }).click();
-    await expect(user.getByLabel('本机数据密码', { exact: true })).toBeVisible();
+    await expect(user.getByRole('button', { name: '直接开始记支出', exact: true })).toBeVisible();
     await page.clock.fastForward(16 * 60_000);
     await expect(page.getByLabel('本次重置码')).toHaveCount(0);
     await expect(page.getByText('重置码已到期并自动隐藏。如仍需恢复，请重新核实身份后发放。')).toBeVisible();

@@ -5,6 +5,7 @@ import { AppErrorBoundary } from './ui/AppErrorBoundary.js';
 import { adminBaseUrl } from './admin/client.js';
 import { isTauriRuntime } from './tauri.js';
 import { enableWebAccounts } from './account-storage.js';
+import { OfflineShellStatus } from './ui/OfflineShellStatus.js';
 
 const AdminApp = lazy(() => import('./admin/AdminApp.js').then((module) => ({ default: module.AdminApp })));
 const LedgerApp = lazy(() => import('./LedgerApp.js').then((module) => ({ default: module.LedgerApp })));
@@ -15,6 +16,7 @@ if (managementBase === undefined && !isTauriRuntime()) enableWebAccounts();
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AppErrorBoundary>
+      {managementBase === undefined && <OfflineShellStatus />}
       <Suspense fallback={<p role="status">正在加载…</p>}>
         {managementBase !== undefined ? <AdminApp baseUrl={managementBase} /> : isTauriRuntime() ? <LedgerApp /> : <WebAccountApp />}
       </Suspense>

@@ -235,6 +235,46 @@ button {
   border-top: 1px solid var(--border);
   background: var(--surface);
 }
+.zc-protection {
+  background: var(--surface);
+  color: var(--fg);
+  line-height: 1.65;
+  font-size: 13px;
+}
+.zc-protection button {
+  min-height: 36px;
+  padding: 7px 13px;
+  margin: 4px 8px 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--fg);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.zc-protection button:disabled { opacity: .5; cursor: default; }
+.zc-protection button:focus-visible,
+.zc-protection input:focus-visible,
+.zc-protection summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.zc-protection input:not([type="checkbox"]) {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 480px;
+  min-height: 40px;
+  margin: 9px 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--fg);
+  background: var(--bg);
+  font: inherit;
+}
+.zc-protection input[type="checkbox"] { accent-color: var(--accent); margin-right: 8px; }
+.zc-protection summary { cursor: pointer; font-weight: 700; padding: 5px 0; }
+.zc-protection pre { background: var(--surface-2); padding: 16px; border: 1px solid var(--border); border-radius: 9px; }
+.zc-protection [role="alert"] { color: var(--negative); }
 .zc-input,
 .zc-select {
   width: 100%;
@@ -634,6 +674,10 @@ button {
 
 /* Phone: one content column, bottom navigation, safe areas, and keyboard-safe sheets. */
 @media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea {
+    font-size: 16px !important;
+  }
+
   html,
   body {
     height: 100%;

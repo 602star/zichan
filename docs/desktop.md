@@ -52,6 +52,8 @@ Debug 模式只写仓库内被忽略的 `.runtime/desktop/`；自动化测试可
 - Windows Release 根目录唯一来自 `zichan.exe` 所在位置；缺少/损坏 `portable-mode.json`、路径不可写或处于网络盘时，启动失败且不回退 AppData。
 - 主库：`data/ledger/ledger.sqlite`；附件：`data/attachments/{staging,objects,trash,quarantine}`；加密 `.zcbak`：`data/backups`。
 - Stronghold 位于 `data/security`；WebView 的 localStorage、IndexedDB 和缓存固定在 `data/webview`；一体服务器状态位于 `data/server`。
+
+升级便携版时先正常退出应用和内置服务器，把新 ZIP 解压到新的空目录，再将旧目录的整个 `data/` 复制进去，保留旧目录作为回退副本。不要把新资源直接覆盖到旧程序目录：旧的带哈希 JS 文件可能残留，便携资源清单校验会拒绝启动。移动同一版本时则移动整个便携目录。
 - 打包前运行 `npm run release:check` 和 `npm run test:release`；正式入口统一为 `scripts\windows\build-desktop.cmd`。
 - 发布说明至少写清：新增功能、数据目录、备份建议、同步服务器是否需要重新登录、已知限制。
 - 完整 ZIP 契约、WebView2 准备和 Windows Sandbox 验收见 [desktop-release.md](desktop-release.md)。
@@ -113,12 +115,12 @@ npm run start:server
 
 - `ENABLE_WEB=1`：浏览器可访问 Web UI。
 - `ENABLE_SYNC=1`：其他设备可填该电脑的内网/公网地址同步。
-- `REGISTRATION_MODE=open`：默认开放注册；第一位成功完成注册的账号会原子成为管理员，后续账号为普通成员。
+- `REGISTRATION_MODE=open`：默认开放注册；普通注册为成员；部署者在独立 `/admin/` 页面显式创建唯一 Owner。
 - `BASE_PATH=/xxxxx`：可选，把 Web、同步和后台都挂到端口后的安全路径。
 - `HOST=0.0.0.0`：默认对局域网开放监听；如只想本机访问，可改成 `127.0.0.1`。
 - 仓库开发入口显式使用 `.runtime/sync-server`；便携桌面在线启动固定使用 EXE 根目录下的 `data/server`。服务器入口缺少 `DATA_DIR` 时直接失败，不回退 AppData。
   主库固定为 `server.sqlite`；备份与恢复使用 `npm run server:backup` / `server:restore`，不要在服务运行时逐文件复制。
-- 账号管理复用正常 OPAQUE 登录与设备会话；管理员可在 Web 的「服务器」页管理注册模式、邀请、用户、设备和配额，不存在额外的人工管理凭据。
+- 账号管理复用正常 OPAQUE 登录与设备会话；管理员可在独立 `/admin/` 页面管理注册模式、邀请、用户、设备和配额，不存在额外的人工管理凭据。
 - 桌面/脚本启动器显式设置 `ALLOW_INSECURE_HTTP=1`，仅用于固定私有局域网 IP；客户端会拒绝公网 HTTP，
   公网登录与管理必须使用 HTTPS。本机管理可继续使用 `http://localhost:8787`。
 

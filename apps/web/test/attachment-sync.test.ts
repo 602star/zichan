@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { newId, type LedgerCryptoSession, type LedgerKeyEnvelope } from '@zichan/core';
+import { newId, rotateLedgerProtection, type LedgerCryptoSession, type LedgerKeyEnvelope } from '@zichan/core';
 import { httpCommitTransport, loginAccount, registerAccount } from '@zichan/db';
 import { openLedger } from '@zichan/db/node';
 import type { SyncServer } from '../../sync-server/src/server.js';
@@ -19,7 +19,7 @@ import {
   reconcileAttachmentStorage,
 } from '../src/db/attachment-storage.js';
 import { saveSyncConnections, type SyncConnection } from '../src/sync-config.js';
-import { initializeLedgerKey, requireLedgerCryptoSession, storedLedgerKeyEnvelope } from '../src/ledger-key-vault.js';
+import { initializeLedgerKey, requireLedgerCryptoSession, storedLedgerKeyEnvelope, adoptUnlockedLedgerKeyEnvelope } from '../src/ledger-key-vault.js';
 import { lockDeviceStorage, unlockDeviceStorage } from '../src/device-storage-key.js';
 
 class MemoryStorage implements Storage {
@@ -245,6 +245,11 @@ describe('attachment replica sync', () => {
       const plaintext = Buffer.from('cross-device attachment body');
       expect(filesUnder(firstDataDir).some((path) => readFileSync(path).includes(plaintext))).toBe(false);
       expect(filesUnder(secondDataDir).some((path) => readFileSync(path).includes(plaintext))).toBe(false);
+
+      // Existing remote objects must remain retrievable after revoking a custodian;
+      // relaying to a new server must use the new attachment secret.
+      const rotated = await rotateLedgerProtection(cryptoSession, 'new-private-recovery-code');
+      adoptUnlockedLedgerKeyEnvelope(rotated.envelope, rotated.session, true);
 
       files.delete(`objects:${attachment.sha256}`);
       await reconcileAttachmentStorage(store);

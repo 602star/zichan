@@ -6,6 +6,9 @@ import {
 import { ProfileOperations, type ProfileOperation } from '../profile-operation.js';
 import { revokeConnectionSession } from '../revoke-connection-session.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
+import { accountProtection } from '../account-protection.js';
+import { LedgerProtectionPanel } from '../ui/LedgerProtectionPanel.js';
+import { ServerCustodyPanel } from '../ui/ServerCustodyPanel.js';
 import { isDateInRange } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { useSnapshot, type Snapshot } from '../db/snapshot.js';
@@ -1440,10 +1443,12 @@ export function Sync() {
             )}
           </div>
 
+          {selected && <ServerCustodyPanel key={`${selected.id}:${selected.username}:${selected.baseUrl}`} profile={selected} />}
+          {accountProtection() ? <LedgerProtectionPanel store={store} /> : (
           <div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 800 }}>账本端到端加密</div>
+                <div style={{ fontSize: 15, fontWeight: 800 }}>本地账本加密</div>
                 <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4 }}>
                   服务器账号密码只用于登录；此处密码解锁账本数据密钥。密钥正文只保留在当前会话内存中。
                 </div>
@@ -1471,6 +1476,7 @@ export function Sync() {
             {ledgerKeyError && <div style={{ marginTop: 10, color: 'var(--negative)', fontSize: 12, fontWeight: 750 }}>{ledgerKeyError}</div>}
             {ledgerKey.keyringId && <div style={{ marginTop: 10, color: 'var(--fg-subtle)', fontSize: 11 }}>密钥包 {ledgerKey.keyringId} · 账本 {ledgerKey.ledgerId}</div>}
           </div>
+          )}
 
           {invalidCommits.length > 0 && (
             <div style={{ ...card, border: '1px solid var(--negative)' }}>

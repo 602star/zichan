@@ -72,19 +72,20 @@ async function readHealth(baseUrl: string): Promise<ServerHealth> {
   };
 }
 
-export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = false, onAuthenticated }: { onReady: () => Promise<void>; onCancel: () => void; accountOnly?: boolean; onAuthenticated?: (connection: SyncConnection, session: SyncAuthSession) => Promise<void> }) {
+export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = false, onAuthenticated, initialProfile }: { onReady: () => Promise<void>; onCancel: () => void; accountOnly?: boolean; initialProfile?: SyncConnection; onAuthenticated?: (connection: SyncConnection, session: SyncAuthSession) => Promise<void> }) {
   const initialConnectionLink = useMemo(() => accountOnly ? null : connectionLinkFromLocation(), [accountOnly]);
-  const initialUrl = useMemo(() => initialConnectionLink?.url ?? syncAddressPresetUrl('current'), [initialConnectionLink]);
+  const initialUrl = useMemo(() => initialConnectionLink?.url ?? initialProfile?.baseUrl ?? syncAddressPresetUrl('current'), [initialConnectionLink, initialProfile?.baseUrl]);
   const [expectedLink, setExpectedLink] = useState<SyncConnectionLinkPayload | null>(initialConnectionLink ?? null);
   const [preset, setPreset] = useState<SyncAddressPreset>('current');
   const [address, setAddress] = useState(initialUrl);
   const [parts, setParts] = useState<SyncUrlParts>(() => parseSyncBaseUrl(initialUrl));
   const [advanced, setAdvanced] = useState(false);
-  const [username, setUsername] = useState('');
+  const [username, setUsername] = useState(initialProfile?.username ?? '');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [registering, setRegistering] = useState(false);
+  const [privateMode, setPrivateMode] = useState(false);
   const [health, setHealth] = useState<ServerHealth | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -204,6 +205,7 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
       });
       const account = await fetchAuthMe(checked.baseUrl, session.accessToken);
       const connection = {
+        initialProtectionMode: privateMode ? 'private' as const : undefined,
         ...newSyncConnection(checked.baseUrl),
         alias: expectedLink?.alias ?? (preset === 'current' ? '当前网站' : preset === 'local' ? '本机服务器' : preset === 'lan' ? '局域网服务器' : '公网服务器'),
         serverId: checked.health.serverId,
@@ -246,7 +248,7 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
       <section style={{ width: 'min(780px, 100%)', margin: '0 auto' }}>
         {!accountOnly && <button type="button" onClick={onCancel} disabled={busy} style={{ ...button, minHeight: 34, padding: '0 11px' }}>返回模式选择</button>}
         <h1 style={{ margin: '18px 0 6px', color: '#672f20', fontSize: 'clamp(26px, 5vw, 40px)' }}>{accountOnly ? registering ? '注册账号' : '账号登录' : '连接同步服务器'}</h1>
-        <p style={{ margin: '0 0 22px', color: '#756b60', lineHeight: 1.7 }}>{accountOnly ? '使用本站用户名和密码登录。记录加密同步到服务器，本机保留离线缓存；账本解密与账号登录相互独立。' : '先验证服务器身份并登录。服务器地址可以来自当前网站、本机、局域网或公网。'}</p>
+        <p style={{ margin: '0 0 22px', color: '#756b60', lineHeight: 1.7 }}>{accountOnly ? '使用账号登录并自动同步。支持托管的服务器默认代管账本密钥，登录即可记账；也可创建由恢复码保护的私密账本。' : '先验证服务器身份并登录。服务器地址可以来自当前网站、本机、局域网或公网。'}</p>
 
         <div style={{ padding: 20, border: '1px solid #d6ccbd', borderRadius: 14, background: '#fffaf2' }}>
           {!accountOnly && <><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -271,6 +273,7 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
 
           </>}
           <form onSubmit={(event) => { event.preventDefault(); void authenticate(registering ? 'register' : 'login'); }}>
+          {registering && <details style={{ marginTop: 12 }}><summary>高级：账本保护方式</summary><label><input type="checkbox" checked={privateMode} disabled={busy} onChange={(e) => setPrivateMode(e.target.checked)} />创建私密账本，自己保存恢复码</label><p>默认云端托管允许此服务器解密和恢复账本。私密模式不托管密钥，遗失恢复码后账号密码找回无法恢复账本。</p></details>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 18 }}>
             <div><label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>用户名</label><input aria-label="服务器用户名" value={username} onChange={(event) => { setUsername(event.target.value); setError(''); }} disabled={busy} autoComplete="username" style={{ ...input, marginTop: 6 }} /></div>
             <div><label style={{ display: 'block', fontSize: 12, fontWeight: 800 }}>账号密码</label><input aria-label="服务器账号密码" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} disabled={busy} autoComplete={registering ? 'new-password' : 'current-password'} required minLength={8} style={{ ...input, marginTop: 6 }} /></div>
@@ -285,7 +288,7 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
             <button type="button" onClick={() => setRegistering((value) => !value)} disabled={busy || !registering && (health?.claimed === false || health?.registrationMode === 'closed')} style={button}>{registering ? '返回登录' : '注册新账号'}</button>
           </div>
           </form>
-          {accountOnly && <section aria-label="账号登录权限说明" style={{ marginTop: 18, fontSize: 12, lineHeight: 1.7 }}><strong>登录会使用什么权限？</strong><p>仅验证本站账号并建立 HttpOnly 会话 Cookie，不保存账号密码。登录后在本浏览器保存该账号的加密离线缓存，不申请任意磁盘访问权限；不要求授予浏览器持久存储保护。账号登录不会自动获得账本解密密钥。</p></section>}
+          {accountOnly && <section aria-label="账号登录权限说明" style={{ marginTop: 18, fontSize: 12, lineHeight: 1.7 }}><strong>登录会使用什么权限？</strong><p>仅验证本站账号并建立 HttpOnly 会话 Cookie，不保存账号密码。登录后在本浏览器保存该账号的加密离线缓存，不申请任意磁盘访问权限；不要求授予浏览器持久存储保护。托管账本登录后自动解锁；私密账本需要恢复码或此设备已有授权。</p></section>}
           {health?.claimed && <PasswordRecovery baseUrl={address} onComplete={(value) => { setUsername(value); setRegistering(false); }} />}
           {message && <div role="status" style={{ marginTop: 12, color: '#397044', fontSize: 12, fontWeight: 800 }}>{message}</div>}
           {error && <div role="alert" style={{ marginTop: 12, color: '#9a3a31', fontSize: 12, fontWeight: 800 }}>{error}</div>}

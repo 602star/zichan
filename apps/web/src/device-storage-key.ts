@@ -6,6 +6,7 @@ import {
   encryptAttachmentChunk,
   newId,
   unlockLedgerKeyEnvelope,
+  wrapLedgerCryptoSession,
   type LedgerCryptoSession,
   type LedgerKeyEnvelope,
 } from '@zichan/core';
@@ -20,6 +21,7 @@ import {
 import { loadSyncConnections } from './sync-config.js';
 import { isTauriRuntime } from './tauri.js';
 import { DeviceStorageResetRequiredError } from './device-storage-error.js';
+import { runtimeLedgerCryptoSession } from './ledger-key-vault.js';
 
 export const DEVICE_STORAGE_ENVELOPE_KEY = 'zichan.device.storageEnvelope.v1';
 export const DEVICE_STORAGE_STATE_CHANGED_EVENT = 'zichan:device-storage-state-changed';
@@ -70,6 +72,28 @@ export interface DeviceStorageSession {
 }
 
 let runtimeSession: DeviceStorageSession | undefined;
+let nativePasswordSession: LedgerCryptoSession | undefined;
+const NATIVE_PASSWORD_KEY = 'zichan.native.account-vault.v1';
+const ACCOUNT_DEVICE_RECOVERY_KEY = 'zichan.account.device-recovery.v1';
+
+async function recoverAccountDeviceSession(): Promise<LedgerCryptoSession | undefined> {
+  const ledger = runtimeLedgerCryptoSession();
+  const raw = accountLocalStorage.getItem(ACCOUNT_DEVICE_RECOVERY_KEY);
+  if (!ledger || !raw) return undefined;
+  const record = JSON.parse(raw) as { ledgerId: string; keyringId: string; keyId: string; envelope: LedgerKeyEnvelope };
+  if (record.ledgerId !== ledger.ledgerId || record.keyringId !== ledger.keyringId) throw new Error('本机缓存恢复凭据不属于当前账本');
+  const key = ledger.dataKeys.get(record.keyId);
+  if (!key) throw new Error('当前账本密钥无法恢复此设备缓存');
+  return unlockLedgerKeyEnvelope(hex(key), record.envelope);
+}
+
+async function saveAccountDeviceRecovery(device: LedgerCryptoSession): Promise<void> {
+  const ledger = runtimeLedgerCryptoSession();
+  if (!ledger) return;
+  const key = ledger.dataKeys.get(ledger.activeKeyId);
+  if (!key) throw new Error('当前账本缺少活动密钥');
+  accountLocalStorage.setItem(ACCOUNT_DEVICE_RECOVERY_KEY, JSON.stringify({ ledgerId: ledger.ledgerId, keyringId: ledger.keyringId, keyId: ledger.activeKeyId, envelope: await wrapLedgerCryptoSession(device, hex(key)) }));
+}
 
 function emit(): void {
   globalThis.dispatchEvent?.(new CustomEvent(DEVICE_STORAGE_STATE_CHANGED_EVENT));
@@ -176,10 +200,31 @@ export async function refreshDeviceStorageState(): Promise<DeviceStorageState> {
   };
 }
 
-export async function unlockDeviceStorage(passphrase: string): Promise<DeviceStorageSession> {
+export async function unlockDeviceStorage(passphrase: string, accountMode = false): Promise<DeviceStorageSession> {
   if (passphrase.length < 8) throw new Error('本机数据密码至少需要 8 个字符');
   if (isTauriRuntime()) {
-    await unlockCredentialVault(passphrase, loadSyncConnections().map((profile) => profile.id));
+    let vaultPassword = passphrase;
+    if (accountMode) {
+      const raw = accountLocalStorage.getItem(NATIVE_PASSWORD_KEY);
+      if (raw) {
+        try { nativePasswordSession = await unlockLedgerKeyEnvelope(passphrase, JSON.parse(raw) as LedgerKeyEnvelope); }
+        catch (error) {
+          const pending = accountLocalStorage.getItem(`${NATIVE_PASSWORD_KEY}.pending`);
+          nativePasswordSession = pending ? await unlockLedgerKeyEnvelope(passphrase, JSON.parse(pending) as LedgerKeyEnvelope).catch(() => undefined) : undefined;
+          nativePasswordSession ??= await recoverAccountDeviceSession();
+          if (!nativePasswordSession) throw error;
+          accountLocalStorage.setItem(NATIVE_PASSWORD_KEY, JSON.stringify(await wrapLedgerCryptoSession(nativePasswordSession, passphrase)));
+          accountLocalStorage.removeItem(`${NATIVE_PASSWORD_KEY}.pending`);
+        }
+      } else {
+        const created = await createLedgerKeyEnvelope(newId(), passphrase);
+        nativePasswordSession = created.session;
+        accountLocalStorage.setItem(NATIVE_PASSWORD_KEY, JSON.stringify(created.envelope));
+      }
+      vaultPassword = hex(nativePasswordSession.dataKeys.get(nativePasswordSession.activeKeyId)!);
+      await saveAccountDeviceRecovery(nativePasswordSession);
+    }
+    await unlockCredentialVault(vaultPassword, loadSyncConnections().map((profile) => profile.id));
     const raw = await readCredentialVaultRecord(NATIVE_STORAGE_RECORD);
     let record: NativeStorageRecord;
     if (raw?.length) {
@@ -209,7 +254,7 @@ export async function unlockDeviceStorage(passphrase: string): Promise<DeviceSto
   } else {
     const envelope = storedBrowserEnvelope();
     const unlocked = envelope
-      ? { envelope, session: await unlockLedgerKeyEnvelope(passphrase, envelope) }
+      ? await unlockBrowserEnvelope(passphrase, envelope, accountMode)
       : await createLedgerKeyEnvelope(newId(), passphrase);
     if (!envelope) accountLocalStorage?.setItem(DEVICE_STORAGE_ENVELOPE_KEY, JSON.stringify(unlocked.envelope));
     runtimeSession = {
@@ -223,9 +268,40 @@ export async function unlockDeviceStorage(passphrase: string): Promise<DeviceSto
       },
       cryptoSession: unlocked.session,
     };
+    if (accountMode) await saveAccountDeviceRecovery(unlocked.session);
   }
   emit();
   return runtimeSession;
+}
+
+async function unlockBrowserEnvelope(passphrase: string, envelope: LedgerKeyEnvelope, accountMode: boolean) {
+  try { return { envelope, session: await unlockLedgerKeyEnvelope(passphrase, envelope) }; }
+  catch (error) {
+    const staged = accountLocalStorage.getItem(`${DEVICE_STORAGE_ENVELOPE_KEY}.pending`);
+    let session = staged ? await unlockLedgerKeyEnvelope(passphrase, JSON.parse(staged) as LedgerKeyEnvelope).catch(() => undefined) : undefined;
+    if (!session && accountMode) session = await recoverAccountDeviceSession();
+    if (!session) throw error;
+    const next = await wrapLedgerCryptoSession(session, passphrase);
+    accountLocalStorage.setItem(DEVICE_STORAGE_ENVELOPE_KEY, JSON.stringify(next));
+    accountLocalStorage.removeItem(`${DEVICE_STORAGE_ENVELOPE_KEY}.pending`);
+    return { envelope: next, session };
+  }
+}
+
+export async function stageDeviceStorageRewrap(secret: string): Promise<void> {
+  if (isTauriRuntime()) {
+    if (!nativePasswordSession) throw new Error('请通过服务器账号解锁此设备');
+    accountLocalStorage.setItem(`${NATIVE_PASSWORD_KEY}.pending`, JSON.stringify(await wrapLedgerCryptoSession(nativePasswordSession, secret)));
+    return;
+  }
+  const envelope = await wrapLedgerCryptoSession(requireDeviceStorageSession().cryptoSession, secret);
+  accountLocalStorage.setItem(`${DEVICE_STORAGE_ENVELOPE_KEY}.pending`, JSON.stringify(envelope));
+}
+
+export function commitDeviceStorageRewrap(): void {
+  const key = isTauriRuntime() ? NATIVE_PASSWORD_KEY : DEVICE_STORAGE_ENVELOPE_KEY;
+  const staged = accountLocalStorage.getItem(`${key}.pending`);
+  if (staged) { accountLocalStorage.setItem(key, staged); accountLocalStorage.removeItem(`${key}.pending`); }
 }
 
 export function requireDeviceStorageSession(): DeviceStorageSession {
@@ -235,6 +311,7 @@ export function requireDeviceStorageSession(): DeviceStorageSession {
 
 export async function lockDeviceStorage(): Promise<void> {
   runtimeSession = undefined;
+  nativePasswordSession = undefined;
   if (isTauriRuntime() && credentialVaultState().unlocked) await lockCredentialVault();
   emit();
 }
@@ -243,6 +320,10 @@ export async function lockDeviceStorage(): Promise<void> {
 export function clearDeviceStorageState(): void {
   runtimeSession = undefined;
   accountLocalStorage?.removeItem(DEVICE_STORAGE_ENVELOPE_KEY);
+  accountLocalStorage?.removeItem(`${DEVICE_STORAGE_ENVELOPE_KEY}.pending`);
+  accountLocalStorage?.removeItem(NATIVE_PASSWORD_KEY);
+  accountLocalStorage?.removeItem(`${NATIVE_PASSWORD_KEY}.pending`);
+  accountLocalStorage?.removeItem(ACCOUNT_DEVICE_RECOVERY_KEY);
   emit();
 }
 

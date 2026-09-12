@@ -32,6 +32,38 @@ async function fixture() {
 }
 
 describe('administrator-reviewed password recovery', () => {
+  it('allows a fresh session to change its own password and rejects revoked or stale sessions', async () => {
+    const f = await fixture();
+    try {
+      const authorize = () => fetch(`${f.url}/api/auth/password-change/authorize`, { method: 'POST', headers: { Authorization: `Bearer ${f.member.accessToken}` } });
+      await f.db.run('UPDATE sync_sessions SET created_at = ? WHERE session_id = ?', [new Date(Date.now() - 6 * 60_000).toISOString(), f.member.session.id]);
+      expect((await authorize()).status).toBe(403);
+      await f.db.run('UPDATE sync_sessions SET created_at = ? WHERE session_id = ?', [new Date().toISOString(), f.member.session.id]);
+      const response = await authorize();
+      expect(response.status).toBe(200);
+      const { code } = await response.json() as { code: string };
+      await registerAccount(f.url, 'recover-user', 'changed-password', { passwordResetCode: code });
+      expect((await authorize()).status).toBe(401);
+      await expect(loginAccount(f.url, 'recover-user', 'old-user-password')).rejects.toThrow();
+      expect((await loginAccount(f.url, 'recover-user', 'changed-password')).accountId).toBe(f.member.accountId);
+      await expect(loginAccount(f.url, 'reviewer', 'reviewer-password')).resolves.toBeDefined();
+    } finally { await f.close(); }
+  });
+  it('restores managed ledger custody after an account password reset', async () => {
+    const f = await fixture();
+    try {
+      const response = await fetch(`${f.url}/api/v3/protection/initialize`, { method: 'POST', headers: { Authorization: `Bearer ${f.member.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'managed' }) });
+      expect(response.status).toBe(200);
+      const before = await response.json();
+      const code = await f.issue();
+      await registerAccount(f.url, 'recover-user', 'new-account-password', { passwordResetCode: code.code });
+      const next = await loginAccount(f.url, 'recover-user', 'new-account-password');
+      const after = await (await fetch(`${f.url}/api/v3/protection`, { headers: { Authorization: `Bearer ${next.accessToken}` } })).json();
+      expect(after.secret).toBe(before.secret);
+      expect(after.envelope).toEqual(before.envelope);
+      expect(after.replica.ledgerId).toBe(before.replica.ledgerId);
+    } finally { await f.close(); }
+  });
   it('rejects login begun before reset and session creation with stale credentials', async () => {
     const f = await fixture();
     const store = new SyncServerStore(join(f.server.dataDir, 'server.sqlite'), 'open', f.server.serverId);

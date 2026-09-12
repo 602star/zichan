@@ -1,10 +1,11 @@
-/** End-to-end encrypted sync relay backed by a transactional SQLite WAL store. */
+/** Encrypted sync storage with optional account key custody and transactional SQLite WAL. */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import * as opaque from '@serenity-kit/opaque';
-import { normalizeSyncUsername } from '@zichan/core';
+import { normalizeSyncUsername, createLedgerKeyEnvelope, unlockLedgerKeyEnvelope, newId, type LedgerKeyEnvelope } from '@zichan/core';
+import { loadCustodyKey, sealCustodySecret, openCustodySecret } from './key-custody.js';
 import { EncryptedBlobStore, MAX_ENCRYPTED_CHUNK_BYTES } from './blob-store.js';
 import { createRequestOrigin } from './request-origin.js';
 import { createBrowserSessionCookies } from './browser-session.js';
@@ -54,6 +55,18 @@ function normalizeBasePath(raw?: string): string {
   const value = (raw ?? '').trim();
   if (!value || value === '/') return '';
   return (value.startsWith('/') ? value : `/${value}`).replace(/\/+$/, '');
+}
+
+function initialEncryptedCommits(value: unknown, ledgerId: string): Omit<StoredCommit, 'seq' | 'cipherBytes' | 'createdAt'>[] {
+  if (!Array.isArray(value) || !value.length || value.length > 100) throw new ServerStoreError('INVALID_COMMIT', 400, 'initial encrypted commits required');
+  const ids = new Set<string>();
+  return value.map((row) => {
+    if (!isRecord(row) || typeof row.commitId !== 'string' || !/^[A-Za-z0-9_-]{16,160}$/.test(row.commitId) || row.ledgerId !== ledgerId || typeof row.contentHash !== 'string' || !/^[a-f0-9]{64}$/.test(row.contentHash) || !isRecord(row.encCommit) || row.encCommit.v !== 3 || typeof row.encCommit.keyId !== 'string' || !/^[A-Za-z0-9_-]{16,160}$/.test(row.encCommit.keyId) || typeof row.encCommit.iv !== 'string' || typeof row.encCommit.ct !== 'string' || row.encCommit.iv.length > 256 || row.encCommit.ct.length > MAX_BODY_BYTES || ids.has(row.commitId)) {
+      throw new ServerStoreError('INVALID_COMMIT', 400, 'invalid initial encrypted commit');
+    }
+    ids.add(row.commitId);
+    return { commitId: row.commitId, ledgerId, contentHash: row.contentHash, encCommit: row.encCommit };
+  });
 }
 
 function stripBasePath(path: string, basePath: string): string | null {
@@ -284,7 +297,8 @@ function serveWeb(req: IncomingMessage, res: ServerResponse, path: string, webDi
   if (!webDir || (req.method !== 'GET' && req.method !== 'HEAD')) return false;
   if (path === '/api' || path.startsWith('/api/')) return false;
   const root = resolve(webDir);
-  const staticPath = path === '/app' || path === '/app/' ? '/' : path.startsWith('/app/') ? path.slice(4) : path;
+  const staticPath = path === '/app' || path === '/app/' || path === '/admin' || path === '/admin/' ? '/'
+    : path.startsWith('/app/') ? path.slice(4) : path.startsWith('/admin/') ? path.slice(6) : path;
   const target = safeResolve(root, staticPath);
   if (!target) { res.writeHead(403); res.end('forbidden'); return true; }
   let file = fileIfExists(target);
@@ -292,7 +306,7 @@ function serveWeb(req: IncomingMessage, res: ServerResponse, path: string, webDi
   if (!file) { res.writeHead(404); res.end('not found'); return true; }
   res.writeHead(200, {
     'Content-Type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
-    'Cache-Control': file.endsWith('index.html') ? 'no-cache' : 'public, max-age=31536000, immutable',
+    'Cache-Control': file.endsWith('index.html') || file.endsWith('sw.js') ? 'no-cache' : 'public, max-age=31536000, immutable',
     'Content-Security-Policy': "default-src 'self'; connect-src 'self' https: http://localhost:* http://127.0.0.1:* http://[::1]:*; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
@@ -306,6 +320,10 @@ function pathParts(path: string): string[] {
 }
 
 export interface SyncServerOptions {
+  /** Explicit deployment policy; a same-origin address is not an official-server identity. */
+  accountProtection?: 'managed' | 'private';
+  custodyEnabled?: boolean;
+  custodyKeyPath?: string;
   /** Deployment-only secret. Never include it in health, logs or connection links. */
   ownerSetupToken?: string;
   dataDir?: string;
@@ -364,9 +382,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     options.commitQuotaBytes,
     blobStore.ready,
   );
+  const custodyEnabled = options.custodyEnabled !== false;
+  const defaultProtection = custodyEnabled ? options.accountProtection ?? 'managed' : 'private';
+  let custodyKey: Buffer;
   let opaqueServerSetup = '';
   let opaqueServerPublicKey = '';
-  const ready = Promise.all([blobStore.ready, store.ready, opaque.ready]).then(() => {
+  const ready = Promise.all([blobStore.ready, store.ready, opaque.ready]).then(async () => {
+    custodyKey = loadCustodyKey(options.custodyKeyPath ?? join(dataDir, 'custody.key'), await store.hasCustodySecrets());
     opaqueServerSetup = loadPersistedValue(
       dataDir,
       'opaque.server-setup',
@@ -688,6 +710,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           'encrypted-blobs-v1',
           'encrypted-commits-v3',
           'ledger-key-envelope-v1',
+          'ledger-protection-v1',
+          ...(custodyEnabled ? ['managed-key-custody-v1'] : []),
+          'ledger-replacement-v1',
           'multi-origin-web-v1',
           'opaque-pake-v1',
           'sqlite-wal-v3',
@@ -702,6 +727,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           syncEnabled: enableSync,
           webEnabled: enableWeb && Boolean(options.webDir),
           registrationMode: status.registrationMode,
+          accountProtection: defaultProtection,
           basePath,
           security: {
             httpsRequired: !allowInsecureHttp,
@@ -986,6 +1012,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       }
       if (isAdmin) return await handleAdmin(req, res, apiPath, auth);
 
+      if (req.method === 'POST' && apiPath === '/api/auth/password-change/authorize') {
+        const code = randomBytes(32).toString('base64url');
+        const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
+        await store.issueAccountRecovery(createHash('sha256').update(code).digest('hex'), expiresAt, session.id);
+        return send(res, 200, { code, expiresAt });
+      }
+
       if (req.method === 'GET' && apiPath === '/api/auth/devices') {
         return send(res, 200, { devices: (await store.listSessions(user.username)).map(publicSession), currentSessionId: session.id });
       }
@@ -1005,6 +1038,71 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       }
       const replica = await store.getReplica(user.username);
 
+      const custodyScope = `${serverId}:${user.accountId}`;
+      const protectionResponse = async () => {
+        const protection = await store.getLedgerProtection(user.username);
+        const bound = await store.getReplica(user.username);
+        return {
+          mode: protection?.mode ?? (bound ? 'relay' : null), version: protection?.version ?? 0,
+          defaultMode: defaultProtection, custodyEnabled,
+          secret: protection?.mode === 'managed' && protection.sealedSecret ? openCustodySecret(custodyKey, custodyScope, protection.sealedSecret) : null,
+          envelope: bound ? await store.getKeyEnvelope(user.username, bound.ledgerId) ?? null : null,
+          replica: bound ? { serverId, ...bound } : null,
+        };
+      };
+      if (req.method === 'GET' && apiPath === '/api/v3/protection') return send(res, 200, await protectionResponse());
+      if (req.method === 'POST' && apiPath === '/api/v3/protection/replace') {
+        const body = await readBody(req, 512 * 1024);
+        if (!replica || body.confirmation !== '替换旧账本' || body.expectedLedgerId !== replica.ledgerId || body.expectedStreamEpoch !== replica.streamEpoch) return send(res, 409, { error: '请确认当前旧账本后重试' });
+        const mode = body.mode;
+        if ((mode !== 'managed' && mode !== 'private') || mode === 'managed' && !custodyEnabled) return send(res, 400, { error: '此服务器不支持所选保护方式' });
+        const secretValue = mode === 'managed' ? randomBytes(32).toString('base64url') : null;
+        const envelope = secretValue ? (await createLedgerKeyEnvelope(newId(), secretValue)).envelope : body.envelope;
+        if (!isLedgerKeyEnvelope(envelope) || envelope.ledgerId === replica.ledgerId) return send(res, 400, { error: '新账本密钥包无效' });
+        await store.replaceReplica(user.username, session.id, { ledgerId: replica.ledgerId, streamEpoch: replica.streamEpoch }, envelope as unknown as JsonRecord, [], { mode, sealedSecret: secretValue ? sealCustodySecret(custodyKey, custodyScope, secretValue) : null });
+        await log('info', 'replica_replaced', 'User replaced ledger and custody policy', { ip, username: user.username, detail: { mode } });
+        return send(res, 200, await protectionResponse());
+      }
+      if (req.method === 'POST' && apiPath === '/api/v3/protection/initialize') {
+        const body = await readBody(req, 512 * 1024);
+        if (await store.getLedgerProtection(user.username)) return send(res, 200, await protectionResponse());
+        if (replica) throw new ServerStoreError('ALREADY_BOUND', 409, '已有账本请使用保护设置接口');
+        const mode = body.mode ?? defaultProtection;
+        if (mode !== 'managed' && mode !== 'private' || mode === 'managed' && !custodyEnabled) return send(res, 400, { error: '此服务器不支持所选保护方式' });
+        const secretValue = mode === 'managed' ? randomBytes(32).toString('base64url') : null;
+        const envelope = secretValue ? (await createLedgerKeyEnvelope(newId(), secretValue)).envelope : body.envelope;
+        if (!isLedgerKeyEnvelope(envelope)) return send(res, 400, { error: '私密模式需要恢复码保护的密钥包' });
+        try {
+          await store.setLedgerProtection(user.username, session.id, 0, { mode, sealedSecret: secretValue ? sealCustodySecret(custodyKey, custodyScope, secretValue) : null }, envelope as unknown as JsonRecord);
+        } catch (error) {
+          if (!(error instanceof ServerStoreError) || error.code !== 'PROTECTION_CHANGED') throw error;
+        }
+        return send(res, 200, await protectionResponse());
+      }
+      if (req.method === 'PUT' && apiPath === '/api/v3/protection') {
+        const { mode, version, envelope, secret: secretValue, confirmation } = await readBody(req, 512 * 1024);
+        if (!replica || !isLedgerKeyEnvelope(envelope) || envelope.ledgerId !== replica.ledgerId || !Number.isSafeInteger(version)
+          || (mode !== 'managed' && mode !== 'private' && mode !== 'relay')) return send(res, 400, { error: '保护设置无效' });
+        if (mode === 'managed') {
+          if (!custodyEnabled || confirmation !== '允许此服务器解密账本' || typeof secretValue !== 'string' || secretValue.length < 32 || secretValue.length > 256) return send(res, 400, { error: '请确认托管授权并提供有效密钥' });
+          try { await unlockLedgerKeyEnvelope(secretValue, envelope as unknown as LedgerKeyEnvelope); }
+          catch { return send(res, 400, { error: '托管凭据无法解锁此密钥包' }); }
+        }
+        await store.setLedgerProtection(user.username, session.id, Number(version), { mode, sealedSecret: mode === 'managed' ? sealCustodySecret(custodyKey, custodyScope, secretValue as string) : null }, envelope);
+        await log('info', 'ledger_protection_updated', 'Updated ledger custody policy', { username: user.username, ip, detail: { mode } });
+        return send(res, 200, await protectionResponse());
+      }
+
+      if (req.method === 'POST' && apiPath === '/api/v3/replica/replace') {
+        const { expectedLedgerId, expectedStreamEpoch, confirmation, envelope, commits } = await readBody(req, MAX_BODY_BYTES);
+        if (confirmation !== '替换旧账本' || typeof expectedLedgerId !== 'string' || typeof expectedStreamEpoch !== 'string' || !isLedgerKeyEnvelope(envelope) || envelope.ledgerId === expectedLedgerId) {
+          return send(res, 400, { code: 'INVALID_LEDGER_REPLACEMENT', error: '请明确确认旧账本并提供完整的新账本密钥和初始数据' });
+        }
+        const initial = initialEncryptedCommits(commits, String(envelope.ledgerId));
+        const bound = await store.replaceReplica(user.username, session.id, { ledgerId: expectedLedgerId, streamEpoch: expectedStreamEpoch }, envelope, initial);
+        await log('info', 'replica_replaced', 'User replaced encrypted ledger', { ip, username: user.username, detail: { previousLedgerId: expectedLedgerId, ledgerId: bound.ledgerId } });
+        return send(res, 200, { serverId, ledgerId: bound.ledgerId, replicaId: bound.replicaId, streamEpoch: bound.streamEpoch });
+      }
       if (req.method === 'GET' && apiPath === '/api/v3/replica') return send(res, 200, replica ? { serverId, bound: true, ledgerId: replica.ledgerId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch, headSeq: replica.headSeq } : { serverId, bound: false, headSeq: 0 });
       if (req.method === 'POST' && apiPath === '/api/v3/replica/bind') {
         const { ledgerId } = await readBody(req, AUTH_BODY_BYTES);
@@ -1021,6 +1119,11 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
         const { envelope } = await readBody(req, 512 * 1024);
         if (!isLedgerKeyEnvelope(envelope) || envelope.ledgerId !== replica.ledgerId) return send(res, 400, { code: 'INVALID_KEY_ENVELOPE', error: 'invalid ledger key envelope' });
+        const custody = await store.getLedgerProtection(user.username);
+        if (custody?.mode === 'managed' && custody.sealedSecret) {
+          try { await unlockLedgerKeyEnvelope(openCustodySecret(custodyKey, custodyScope, custody.sealedSecret), envelope as unknown as LedgerKeyEnvelope); }
+          catch { return send(res, 409, { error: '托管凭据不匹配，请通过保护设置更新密钥' }); }
+        }
         await store.putKeyEnvelope(user.username, replica.ledgerId, String(envelope.keyringId), Number(envelope.generation), envelope);
         await log('info', 'key_envelope_updated', 'Updated encrypted ledger key envelope', { ip, username: user.username, detail: { ledgerId: replica.ledgerId, generation: envelope.generation } });
         return send(res, 200, { ok: true, generation: envelope.generation });

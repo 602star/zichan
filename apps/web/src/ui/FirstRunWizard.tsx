@@ -1,4 +1,5 @@
 import { accountSessionStorage } from '../account-storage.js';
+import { accountProtection } from '../account-protection.js';
 import { useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
 import type { LedgerMode, Setting } from '@zichan/core';
 import type { SqlLedgerStore } from '@zichan/db';
@@ -57,7 +58,7 @@ export async function restoreFirstRunBackup(
   openedBackup: ParsedEncryptedBackup,
   initializedAt = new Date().toISOString(),
 ): Promise<Setting> {
-  const deviceRestore = openedBackup.payload.kind === 'device' && openedBackup.payload.deviceState
+  const deviceRestore = !accountProtection() && openedBackup.payload.kind === 'device' && openedBackup.payload.deviceState
     ? openedBackup.payload.deviceState
     : undefined;
   await importPortableLedger(store, openedBackup.payload.ledger, 'replace', {
@@ -67,7 +68,7 @@ export async function restoreFirstRunBackup(
     // required for portable-ledger backups too; otherwise the restored ledger
     // opens but cannot create its first automatic backup.
     onDatabaseCommitted: () => {
-      adoptUnlockedLedgerKeyEnvelope(openedBackup.container.keyEnvelope, openedBackup.session, true);
+      if (!accountProtection()) adoptUnlockedLedgerKeyEnvelope(openedBackup.container.keyEnvelope, openedBackup.session, true);
     },
   });
   const setting = await initializedLedgerSetting(store);

@@ -208,7 +208,10 @@ export async function rebuildConversionDerivedInTransaction(store: SqlLedgerStor
       });
       if (D(match.unmatchedAmount).gt(0)) throw new Error(`卖出“${chain.title ?? chain.date}”超出当时可用持仓 ${match.unmatchedAmount} ${first.fromAssetId}`);
       for (const lot of match.updatedLots) {
-        workingLots.set(lot.id, lot);
+        // Closed lots remain in the output, but never need to be scanned by a
+        // later sell. Keeping them here made long closed histories quadratic.
+        if (D(lot.remainingAmount).gt(0)) workingLots.set(lot.id, lot);
+        else workingLots.delete(lot.id);
         desiredLots.set(lot.id, lot);
       }
       for (const generated of match.consumptions) {

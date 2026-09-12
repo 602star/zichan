@@ -16,9 +16,10 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { NodeSqliteDriver } from '@zichan/db/node';
 import { supportedServerSchema } from './store.js';
+import { loadCustodyKey, openCustodySecret } from './key-custody.js';
 
 const BACKUP_VERSION = 1;
-const SIDE_CARS = ['server.secret', 'server-id', 'opaque.server-setup'] as const;
+const SIDE_CARS = ['server.secret', 'server-id', 'opaque.server-setup', 'custody.key'] as const;
 const REQUIRED_FILES = ['server.sqlite', 'server.secret', 'server-id', 'opaque.server-setup'] as const;
 
 export interface ServerBackupFile {
@@ -132,6 +133,17 @@ async function verifyDatabase(path: string): Promise<string> {
     if (migrations.length !== 1 || !migration || !supportedServerSchema(Number(migration.version), migration.name)) {
       return `schema:${migration?.version ?? 'missing'}:${migration?.name ?? 'missing'}`;
     }
+    const custodyTable = await driver.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sync_key_custody'");
+    if (custodyTable) {
+      const rows = await driver.all<{ account_id: string; sealed_secret: string }>('SELECT i.account_id, c.sealed_secret FROM sync_key_custody c JOIN sync_account_identities i ON i.username = c.username WHERE c.sealed_secret IS NOT NULL');
+      if (rows.length) {
+        try {
+          const key = loadCustodyKey(join(dirname(path), 'custody.key'), true);
+          const identity = await driver.get<{ value: string }>("SELECT value FROM server_meta WHERE key = 'server_id'");
+          for (const row of rows) openCustodySecret(key, `${identity?.value}:${row.account_id}`, row.sealed_secret);
+        } catch { return 'custody-key:missing-or-invalid'; }
+      }
+    }
     return result;
   } finally {
     await driver.close();
@@ -195,7 +207,7 @@ export async function createServerBackup(dataDirValue: string, outputValue: stri
   try {
     await snapshotDatabase(join(dataDir, 'server.sqlite'), join(staging, 'server.sqlite'));
     for (const name of SIDE_CARS) {
-      const source = join(dataDir, name);
+      const source = name === 'custody.key' && process.env.CUSTODY_KEY_PATH?.trim() ? resolve(process.env.CUSTODY_KEY_PATH) : join(dataDir, name);
       if (existsSync(source)) {
         copyFileSync(source, join(staging, name));
         fsyncFile(join(staging, name));

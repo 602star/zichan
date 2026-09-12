@@ -133,7 +133,7 @@ export function DeviceSecurityPanel() {
           <div style={{ fontSize: 12, color: 'var(--fg-subtle)', marginTop: 4 }}>
             {vault.kind === 'native-stronghold'
               ? `${vault.platform} 原生端 · Stronghold 保护数据库密钥、附件密钥和同步凭据`
-              : 'Web 浏览器 · 数据库与附件使用本机密码派生密钥加密'}
+              : 'Web 浏览器 · 数据库与附件加密保存，账号解锁与离线授权分开管理'}
           </div>
         </div>
         {vault.kind === 'native-stronghold' && (

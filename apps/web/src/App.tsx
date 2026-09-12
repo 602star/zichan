@@ -36,6 +36,7 @@ import {
   preflightPortableBackup,
 } from './db/portable-backup.js';
 import { adoptUnlockedLedgerKeyEnvelope, runtimeLedgerCryptoSession } from './ledger-key-vault.js';
+import { accountProtection } from './account-protection.js';
 import { isTauriRuntime } from './tauri.js';
 import {
   NAVIGATION_ITEMS,
@@ -382,10 +383,10 @@ export function App() {
       const result = await store.withAuditContext(
         { batchId: batch.id, source: 'import' },
         (scoped) => importPortableLedger(scoped, opened.payload.ledger, mode, {
-          deviceState: mode === 'replace' && opened.payload.kind === 'device' ? opened.payload.deviceState : undefined,
+          deviceState: !accountProtection() && mode === 'replace' && opened.payload.kind === 'device' ? opened.payload.deviceState : undefined,
         }),
       );
-      if (mode === 'replace' && opened.payload.kind === 'device' && opened.payload.deviceState) {
+      if (!accountProtection() && mode === 'replace' && opened.payload.kind === 'device' && opened.payload.deviceState) {
         adoptUnlockedLedgerKeyEnvelope(opened.container.keyEnvelope, opened.session, true);
       } else {
         await store.finishAuditBatch(batch.id, { entityCount: result.entities + Number(result.removed ?? 0) });
@@ -569,7 +570,7 @@ export function App() {
             <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 6 }}>
               {importDialog.mode === 'merge'
                 ? '保留当前独有数据和当前密钥，仅合并备份中的账本内容。'
-                : importDialog.opened.payload.kind === 'device'
+                : !accountProtection() && importDialog.opened.payload.kind === 'device'
                   ? '恢复账本、审计、同步状态和附件状态，并接管备份内的账本密钥。'
                   : '用可移植账本替换当前业务数据；保留当前设备密钥和同步身份。'}
             </div>

@@ -190,7 +190,7 @@ async function unlockArchive(
   const current = runtimeLedgerCryptoSession();
   if (current?.ledgerId === header.ledgerId
     && current.keyringId === header.keyringId
-    && current.generation === header.keyEnvelope.generation) {
+    && (current.generation === header.keyEnvelope.generation || (current.retiredBackupSecrets?.length ?? 0) > 0)) {
     return { session: current, usedCurrentSession: true };
   }
   if (!passphrase) throw new BackupPassphraseRequiredError();

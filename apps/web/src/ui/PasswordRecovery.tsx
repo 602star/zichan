@@ -9,7 +9,7 @@ export function PasswordRecovery({ baseUrl, onComplete }: { baseUrl: string; onC
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   return <details style={{ marginTop: 20 }}><summary>忘记账号密码</summary>
-    <p>请先联系管理员核实身份，取得一次性重置码。重置账号密码不会修改或找回账本加密密码，也不会删除账本。</p>
+    <p>请先联系管理员核实身份，取得一次性重置码。重置不会删除账本。托管账本可使用新账号密码登录恢复；私密账本仍需要原恢复码。</p>
     <form onSubmit={(event) => {
       event.preventDefault();
       if (busy) return;
@@ -22,7 +22,7 @@ export function PasswordRecovery({ baseUrl, onComplete }: { baseUrl: string; onC
           const health = await response.json();
           if (!health.serverId || !health.serverPublicKey || !health.capabilities?.includes('password-reset-v1')) throw new Error('服务器尚未支持账号密码重置，请联系部署者更新。');
           await registerAccount(baseUrl, username.trim(), password, { passwordResetCode: code.trim(), expectedServerId: health.serverId, expectedServerPublicKey: health.serverPublicKey });
-          setCode(''); setNotice('账号密码已重置，旧登录会话已撤销。请使用新密码登录；账本加密密码不变。');
+          setCode(''); setNotice('账号密码已重置，旧登录会话已撤销。请使用新密码登录；私密账本仍需恢复码。');
           onComplete(username.trim());
         } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); }
         finally { setPassword(''); setConfirmation(''); setBusy(false); }

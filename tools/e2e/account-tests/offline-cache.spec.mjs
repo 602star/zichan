@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
 import { registerAccount } from '../../../packages/db/dist/index.js';
 
-for (const backendFailure of ['disconnected', 'http503']) test(`unlocks an account cache with ${backendFailure} when the app shell is available, then reconnects`, async ({ page }) => {
+for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`unlocks an account cache with ${backendFailure} when the app shell is available, then reconnects`, async ({ page, context }) => {
   const setup = 'test-offline-cache-owner-00000000000';
   const server = createSyncServer({ webDir: resolve(fileURLToPath(new URL('../../../', import.meta.url)), 'apps/web/dist'), enableWeb: true, registrationMode: 'open', ownerSetupToken: setup });
   try {
@@ -17,20 +17,41 @@ for (const backendFailure of ['disconnected', 'http503']) test(`unlocks an accou
     await page.getByLabel('服务器用户名').fill('offline-user');
     await page.getByLabel('服务器账号密码').fill('account-test-password');
     await page.getByRole('button', { name: '登录已有账号' }).click();
-    await page.getByLabel('本机数据密码', { exact: true }).fill('offline-cache-password');
-    await page.getByLabel('再输入一次', { exact: true }).fill('offline-cache-password');
-    await page.getByRole('button', { name: '创建并打开' }).click();
     await page.getByRole('button', { name: '直接开始记支出', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
-    // Deliberately leave document/assets available: this tests the offline data path, not SW cold start.
+    await page.getByRole('button', { name: '关闭快速记账' }).click();
+    await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
+    await page.getByText('此设备的离线访问', { exact: true }).click();
+    await page.getByLabel('设置离线密码').fill('offline-cache-password');
+    await page.getByLabel('确认离线密码').fill('offline-cache-password');
+    await page.getByRole('button', { name: '设置离线密码', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: '离线密码已设置' })).toBeVisible();
+    if (backendFailure === 'cold-start') {
+      await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+      await context.setOffline(true);
+      await page.close();
+      page = await context.newPage();
+      await page.goto(`${url}/app/`);
+      await page.getByRole('button', { name: '离线解锁 offline-user 的缓存' }).click();
+      await page.getByLabel('离线密码', { exact: true }).fill('offline-cache-password');
+      await page.getByRole('button', { name: '解锁缓存', exact: true }).click();
+      await expect(page.locator('.zc-app-shell')).toBeVisible();
+      const cachedUrls = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async (key) => (await (await caches.open(key)).keys()).map((r) => r.url)))).flat());
+      expect(cachedUrls.length).toBeGreaterThan(5);
+      expect(cachedUrls.some((value) => value.includes('/api/'))).toBe(false);
+      await context.setOffline(false);
+      await page.reload();
+      await expect(page.locator('.zc-app-shell')).toBeVisible();
+      return;
+    }
     await page.addInitScript((online) => Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => online }), backendFailure === 'http503');
     await page.route('**/api/**', (route) => backendFailure === 'http503'
       ? route.fulfill({ status: 503, contentType: 'text/html', body: '<html>Server unavailable</html>' })
       : route.abort('internetdisconnected'));
     await page.reload();
     await page.getByRole('button', { name: '离线解锁 offline-user 的缓存' }).click();
-    await page.getByLabel('本机数据密码', { exact: true }).fill('offline-cache-password');
-    await page.getByRole('button', { name: '解锁', exact: true }).click();
+    await page.getByLabel('离线密码', { exact: true }).fill('offline-cache-password');
+    await page.getByRole('button', { name: '解锁缓存', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await page.unroute('**/api/**');
     const refreshed = page.waitForResponse((response) => response.url().endsWith('/api/auth/refresh') && response.status() === 200);
@@ -50,5 +71,5 @@ for (const backendFailure of ['disconnected', 'http503']) test(`unlocks an accou
       await expect(page.getByText(/服务器身份已变化，请联系部署者/)).toBeVisible();
       await expect(page.getByRole('button', { name: '离线解锁 offline-user 的缓存' })).toHaveCount(0);
     }
-  } finally { await page.close(); server.server.closeAllConnections(); await server.close(); }
+  } finally { await page.close(); const closing = server.close(); server.server.closeAllConnections(); await closing; }
 });

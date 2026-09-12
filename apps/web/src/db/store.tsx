@@ -28,6 +28,7 @@ import { FirstRunWizard } from '../ui/FirstRunWizard.js';
 import { FirstUseModeGate, BrowserStorageConsent } from '../ui/FirstUseModeGate.js';
 import { FirstServerConnectionGate } from '../ui/FirstServerConnectionGate.js';
 import { FirstRemoteLedgerRestoreGate } from '../ui/FirstRemoteLedgerRestoreGate.js';
+import { NativeAccountGate } from '../ui/NativeAccountGate.js';
 import {
   lockDeviceStorage,
   refreshDeviceStorageState,
@@ -35,7 +36,9 @@ import {
   type DeviceStorageState,
 } from '../device-storage-key.js';
 import { ensureLedgerKeyForStore } from '../ledger-key-lifecycle.js';
+import { replaceRemoteLedger } from '../replace-remote-ledger.js';
 import { ledgerKeyState, unlockLedgerKey, lockLedgerKey } from '../ledger-key-vault.js';
+import { accountProtection } from '../account-protection.js';
 import { copyTextToClipboard, formatInitializationDiagnostic } from '../ui/diagnostics.js';
 import {
   browserStorageDisposition,
@@ -50,7 +53,7 @@ import {
   type FirstUseMode,
 } from '../browser-storage-policy.js';
 import { isTauriRuntime } from '../tauri.js';
-import { ACCOUNT_EXIT_KEY, ACCOUNT_LOCK_REQUEST_EVENT, exitBrowserAccount } from '../browser-account-exit.js';
+import { ACCOUNT_EXIT_KEY, ACCOUNT_LOCK_REQUEST_EVENT, exitBrowserAccount, setAccountCloseHandlerMounted } from '../browser-account-exit.js';
 import { clearSyncConfiguration, hasSavedSyncConnection, loadSyncConnections, saveSyncConnections } from '../sync-config.js';
 import { syncConfiguredServers } from '../sync-orchestrator.js';
 import { clearCredentialVaultRuntimeState, persistCredential, runtimeCredentialMap, unlockCredentialVault } from '../credential-vault.js';
@@ -393,7 +396,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const unlockStorageFlight = useRef(createVoidSingleFlight()).current;
   const resetStorageFlight = useRef(createVoidSingleFlight()).current;
   const storageLockFlight = useRef(createVoidSingleFlight()).current;
-  const storagePassphrase = useRef<string | null>(null);
+  const storagePassphrase = useRef<string | null>(accountProtection()?.secret ?? null);
   const initializationDiagnostic = useMemo(
     () => error ? formatInitializationDiagnostic(error.message, error.resetRequired) : '',
     [error],
@@ -522,6 +525,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return;
         }
         if (!setting) {
+          const protection = accountProtection();
+          if (protection?.info.replica && protection.info.replica.headSeq === 0) {
+            await s.resetToLedger(protection.info.replica.ledgerId);
+          }
           published = true;
           setStorageBackend(platform.backend);
           setDataLocation(platform.dataLocation);
@@ -824,7 +831,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
     window.addEventListener('storage', onExit);
     window.addEventListener(ACCOUNT_LOCK_REQUEST_EVENT, lockAccount);
-    return () => { window.removeEventListener('storage', onExit); window.removeEventListener(ACCOUNT_LOCK_REQUEST_EVENT, lockAccount); };
+    setAccountCloseHandlerMounted(true);
+    return () => { setAccountCloseHandlerMounted(false); window.removeEventListener('storage', onExit); window.removeEventListener(ACCOUNT_LOCK_REQUEST_EVENT, lockAccount); };
   }, [closeForAccountExit]);
 
   if (!storageProtection) return <Splash label={unlockError || '正在检查本机加密存储…'} />;
@@ -849,6 +857,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     );
   }
   if (!storageProtection.unlocked) {
+    if (isTauriRuntime() && firstUseMode === 'server') return <NativeAccountGate onReady={async () => {
+      storagePassphrase.current = accountProtection()?.secret ?? null;
+      setStorageProtection(await refreshDeviceStorageState());
+    }} onCancel={() => { clearFirstUseMode(); setFirstUseMode(null); }} />;
     return (
       <>
       {!isTauriRuntime() && <div style={{ padding: 12, background: '#fffaf2', display: 'flex', justifyContent: 'space-between' }}><span>当前账号：{loadSyncConnections()[0]?.username}</span><button disabled={unlockBusy || resetting} onClick={() => void exitBrowserAccount().then(closeForAccountExit).catch((reason) => setUnlockError(String(reason)))}>退出并切换账号</button></div>}
@@ -941,7 +953,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }
   if (pendingInitialization) {
     const boundConnection = firstUseMode === 'server'
-      ? loadSyncConnections().find((connection) => Boolean(connection.enabled && connection.ledgerId))
+      ? loadSyncConnections().find((connection) => Boolean(connection.enabled && connection.ledgerId
+        && !(accountProtection()?.profileId === connection.id && accountProtection()?.info.replica?.headSeq === 0)))
       : undefined;
     if (boundConnection) {
       return (
@@ -949,6 +962,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           store={pendingInitialization.store}
           connection={boundConnection}
           onRestored={finishFirstRun}
+          onStartNew={async () => {
+            const passphrase = storagePassphrase.current;
+            if (!passphrase) throw new Error('本机数据密码会话已失效，请返回解锁页重试');
+            const setting = await replaceRemoteLedger(pendingInitialization.store, boundConnection, passphrase);
+            await finishFirstRun(setting);
+          }}
           onUseDifferentAccount={restartFirstUseWithDifferentAccount}
         />
       );

@@ -21,6 +21,8 @@ import {
   type AttachmentSyncResult,
 } from './attachment-sync.js';
 import { requireLedgerCryptoSession, storedLedgerKeyEnvelope } from './ledger-key-vault.js';
+import { accountProtection, protectionRequest } from './account-protection.js';
+import { withSyncLock } from './sync-lock.js';
 
 export interface ConfiguredSyncEndpoint extends ReplicaSyncEndpointResult {
   alias: string;
@@ -68,6 +70,17 @@ function authenticatedTransport(profile: SyncConnection): MeteredTransport {
     const accessToken = await authenticateSyncProfile(candidate, forceRefresh);
     const keyEnvelope = storedLedgerKeyEnvelope();
     if (!keyEnvelope) throw new Error('本机没有账本密钥包，请先在同步页创建或获取');
+    const protection = accountProtection();
+    if (protection && protection.profileId !== profile.id) {
+      const remote = await protectionRequest(candidate);
+      if (remote.mode === 'managed' && remote.envelope?.keyringId === keyEnvelope.keyringId && remote.envelope.generation < keyEnvelope.generation) {
+        // Existing authorization follows managed rewrapping. Private transitions
+        // revoke custody instead; a relay never receives a plaintext key.
+        await protectionRequest(candidate, 'PUT', { version: remote.version, envelope: keyEnvelope,
+          ...(protection.info.mode === 'managed' ? { mode: 'managed', secret: protection.secret, confirmation: '允许此服务器解密账本' } : { mode: 'relay' }),
+        });
+      }
+    }
     return httpCommitTransport({
       baseUrl,
       token: accessToken,
@@ -151,7 +164,11 @@ function authenticatedTransport(profile: SyncConnection): MeteredTransport {
   };
 }
 
-export async function syncConfiguredServers(
+export function syncConfiguredServers(store: SqlLedgerStore, profiles: SyncConnection[]): Promise<ConfiguredSyncResult> {
+  return withSyncLock(() => syncConfiguredServersNow(store, profiles));
+}
+
+async function syncConfiguredServersNow(
   store: SqlLedgerStore,
   profiles: SyncConnection[],
 ): Promise<ConfiguredSyncResult> {

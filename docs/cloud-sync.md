@@ -1,11 +1,14 @@
 # 云同步与统一服务器 `@zichan/sync-server`
 
+> 当前账号保护采用[云端托管与私密模式](ledger-protection.md)：托管账号登录后自动解锁，私密账号使用恢复码。最新验收见[交付记录](release-readiness.md)。
+
+
 独立 `/admin/` 后台、三类账号角色、邀请有效期、密码恢复和管理审计见 [服务器管理后台](server-admin.md)。当前服务端 schema 为 9。
 
-`@zichan/sync-server` 可在一个进程中提供 Web、端到端加密同步和管理员 API，适合云主机、NAS 或家中常开的固定 IP 电脑。`ENABLE_WEB` 与 `ENABLE_SYNC` 可独立开关；`BASE_PATH=/home-ledger` 会把 Web、同步和管理端点统一挂到安全路径下。
+`@zichan/sync-server` 可在一个进程中提供 Web、密文同步和管理员 API，适合云主机、NAS 或家中常开的固定 IP 电脑。`ENABLE_WEB` 与 `ENABLE_SYNC` 可独立开关；`BASE_PATH=/home-ledger` 会把 Web、同步和管理端点统一挂到安全路径下。
 只把 `apps/web/dist` 上传到静态文件托管只能得到浏览器前端，浏览器没有权限启动 Node 同步服务；需要同步时必须另外运行本服务，或直接使用其 Web + API 一体化部署。
 
-与用户和账本相关的服务端持久状态只包含 OPAQUE 注册记录、设备会话的 refresh token HMAC、账本加密密码包装的密钥封套、密文提交、密文附件分块、已加密 `.zcbak` 归档及必要目录元数据，不保存账号密码。服务器自身另外持久化 `server.secret`、`server-id`、`opaque.server-setup` 和首次初始化使用的 `owner-setup.secret`。账本字段、附件文件名、MIME、明文 SHA-256 和正文不会以明文上传；备份归档的创建时间、原因、类型、显示标签、大小和代次属于服务器可见的目录元数据。不同服务器可使用不同用户名和账号密码；这些登录凭据不参与账本加密。附件对象 ID 和分块密钥由会话中的账本附件密钥按服务器、账本和用户名作用域派生。
+与用户和账本相关的服务端持久状态只包含 OPAQUE 注册记录、设备会话的 refresh token HMAC、随机托管凭据或恢复码包装的密钥封套、加密托管凭据、密文提交、密文附件分块、已加密 `.zcbak` 归档及必要目录元数据，不保存账号密码。服务器自身另外持久化 `server.secret`、`custody.key`、`server-id`、`opaque.server-setup` 和首次初始化使用的 `owner-setup.secret`。账本字段、附件文件名、MIME、明文 SHA-256 和正文不会以明文上传；备份归档的创建时间、原因、类型、显示标签、大小和代次属于服务器可见的目录元数据。不同服务器可使用不同用户名和账号密码；这些登录凭据不参与账本加密。附件对象 ID 和分块密钥由会话中的账本附件密钥按服务器、账本和用户名作用域派生。
 
 ## 当前 API
 
@@ -64,7 +67,7 @@ Windows 也可双击 `scripts\windows\start-sync-server.cmd`。该开发入口�
 - `ALLOW_INSECURE_HTTP`：默认 `0`。仅家中私有局域网明确接受风险时设为 `1`；公网账号登录、同步与管理都必须使用 HTTPS。
 
 有效对象、回收区和未完成上传都计入配额。上传会话 24 小时过期；服务启动及每小时清理过期暂存和到期回收对象。
-账户 OPAQUE 注册记录、稳定 `accountId`、唯一服务器所有者、单次登录状态、设备会话、持久限流、邀请码、密码重置码摘要、账本密钥封套、提交、配额、备份索引、附件索引和管理日志统一保存在 `server.sqlite`。数据库启用 WAL、`synchronous=FULL`、外键、事务提交、提交 ID 唯一约束。当前结构为 `server_password_recovery_v9`（schema 9）；支持 schema 6/7/8 的追加升级，保留账号 ID、原用户、所有者、注册策略及账本绑定，不重置业务数据。其他结构停止启动，不自动删除数据。密文提交协议仍为 v3，拉取使用 `after` + `limit` 游标分页，请求体按端点限制大小。
+账户 OPAQUE 注册记录、稳定 `accountId`、唯一服务器所有者、单次登录状态、设备会话、持久限流、邀请码、密码重置码摘要、账本密钥封套、提交、配额、备份索引、附件索引和管理日志统一保存在 `server.sqlite`。数据库启用 WAL、`synchronous=FULL`、外键、事务提交、提交 ID 唯一约束。当前结构为 `server_key_custody_v10`（schema 10）；支持 schema 6/7/8/9 的追加升级，保留账号 ID、原用户、所有者、注册策略及账本绑定，不重置业务数据。其他结构停止启动，不自动删除数据。密文提交协议仍为 v3，拉取使用 `after` + `limit` 游标分页，请求体按端点限制大小。
 
 ## 认证与传输边界
 
@@ -74,9 +77,9 @@ OPAQUE 注册和登录都由客户端与服务器交换 PAKE 消息，账号密�
 
 登录成功后，访问令牌有效 15 分钟，refresh token 每次使用后立即轮换且旧 token 不能再使用，设备会话最长 7 天。服务器只持久化 refresh token 的 HMAC-SHA-256。禁用用户会同时撤销其全部会话，用户和管理员都可按设备查看最近 IP、最后访问时间并单独撤销。管理 API 复用同一 Bearer 会话并在每次请求时检查数据库角色：无有效会话返回 401，成员访问返回 403。
 
-同站 Web 登录使用 `X-Zichan-Session: cookie`，服务器验证请求 Origin 后，把 refresh token 写入 HttpOnly、SameSite=Strict 的 Cookie；生产 HTTPS 下同时设置 Secure。Cookie 路径限定为部署前缀下的 `/api/auth`，登录与刷新 JSON 不返回 refresh token；刷新不能同时提供 JSON token。当前 Cookie 为会话级，尚未开启“可信设备自动解锁”。跨域 CORS 不允许这个自定义头，也不开放 credential。代理部署需保留公共 Host 并覆盖单一 `X-Forwarded-Proto: https`；即便设置 `ALLOW_INSECURE_HTTP=1`，局域网 HTTP 也不能使用不安全的 Web Cookie 会话，请改用 HTTPS 或桌面 Bearer 客户端。
+同站 Web 登录使用 `X-Zichan-Session: cookie`，服务器验证请求 Origin 后，把 refresh token 写入 HttpOnly、SameSite=Strict 的 Cookie；生产 HTTPS 下同时设置 Secure。Cookie 路径限定为部署前缀下的 `/api/auth`，登录与刷新 JSON 不返回 refresh token；刷新不能同时提供 JSON token。Cookie 为会话级；可选的七天设备解锁授权独立于 Cookie，详见账本保护说明。跨域 CORS 不允许这个自定义头，也不开放 credential。代理部署需保留公共 Host 并覆盖单一 `X-Forwarded-Proto: https`；即便设置 `ALLOW_INSECURE_HTTP=1`，局域网 HTTP 也不能使用不安全的 Web Cookie 会话，请改用 HTTPS 或桌面 Bearer 客户端。
 
-桌面和尚未替换的跨站连接使用独立 JSON token 传输；桌面 Stronghold 只保存刷新会话，不保存账号密码。后台同步不进行密码登录：令牌被拒绝时最多受控刷新一次，刷新失效后要求用户明确重新登录；网络错误和 5xx 保留会话用于重试。
+桌面和附加跨站连接使用独立 JSON token 传输；桌面 Stronghold 只保存刷新会话，不保存账号密码。后台同步不进行密码登录：令牌被拒绝时最多受控刷新一次，刷新失效后要求用户明确重新登录；网络错误和 5xx 保留会话用于重试。
 
 公网部署必须由 Caddy 等反向代理终止 HTTPS，且只向代理暴露 8787。客户端会拒绝向公网 HTTP 域名或地址发送认证信息与 Bearer token；本机和 RFC1918/本地 IPv6 地址仍可用于明确配置的家庭局域网 HTTP。同步与管理 API 允许官方 Web 等任意 Origin 发起无 Cookie 的跨域请求；实际访问控制来自 OPAQUE、Bearer 会话、角色检查、设备撤销、限流和配额，响应绝不启用跨域凭据 Cookie。
 
@@ -98,7 +101,7 @@ OPAQUE 注册和登录都由客户端与服务器交换 PAKE 消息，账号密�
 
 桌面端先把 `.zcbak` 原子保存到便携目录 `data/backups`，再以最多 4 MiB 的有界分块把同一份已加密归档
 上传到所有已启用的同步服务器，并登记 `/api/v3/backups` 目录项。服务器只校验密文对象存在和目录元数据，
-不能解密归档；某台服务器失败不会删除本机文件或其他已成功副本。客户端上传后会按小时/日/周清理该服务器上的自动备份目录，
+私密模式服务器不能解密归档，获授权托管的服务器可以解密；某台服务器失败不会删除本机文件或其他已成功副本。客户端上传后会按小时/日/周清理该服务器上的自动备份目录，
 手动和导入前保护备份保持固定。设置页可列出、下载、演练和恢复服务器归档；如果归档属于旧密钥封套代次，
 客户端会要求输入创建该归档时的账本加密密码，并且只在本次内存流程中使用。
 
@@ -120,11 +123,11 @@ SYNC_SECRET=$(openssl rand -hex 32) \
 docker compose up -d
 ```
 
-Compose 将父目录 `/state` 挂载到 `zichan-data`，实际 `DATA_DIR` 为 `/state/server`；这使恢复命令可以原子替换数据子目录。Caddy 负责 HTTPS，且会等待 `/api/ready` 通过。生产环境应固定 `SYNC_SECRET`、域名和 `BASE_PATH`，限制宿主机对数据卷的访问，不要把上游 8787 端口映射到公网。首次部署通过 `/admin/` 和数据目录内的 `owner-setup.secret` 初始化 Owner；普通注册不应被当作取得管理员权限的入口。已有服务器按管理后台提示完成初始化，切勿为了重新初始化而删除账本数据。若密钥、`server.secret`、`server-id`、数据库或旧 JSON 状态曾进入源码目录或版本控制，应按已泄露处理：停止服务、保留加密数据备份，轮换 `SYNC_SECRET`，撤销设备会话后重新登录。
+Compose 将父目录 `/state` 挂载到 `zichan-data`，实际 `DATA_DIR` 为 `/state/server`；这使恢复命令可以原子替换数据子目录。Caddy 负责 HTTPS，且会等待 `/api/ready` 通过。生产环境应固定 `SYNC_SECRET`、域名和 `BASE_PATH`，限制宿主机对数据卷的访问，不要把上游 8787 端口映射到公网。首次部署通过 `/admin/` 显式创建 Owner，再对外开放服务；普通注册不应被当作取得管理员权限的入口。已有服务器按管理后台提示完成初始化，切勿为了重新初始化而删除账本数据。若密钥、`server.secret`、`server-id`、数据库或旧 JSON 状态曾进入源码目录或版本控制，应按已泄露处理：停止服务、保留加密数据备份，轮换 `SYNC_SECRET`，撤销设备会话后重新登录。
 
 ## 备份、迁移与恢复演练
 
-维护命令要求先停止服务器。备份先用 SQLite `VACUUM INTO` 生成一致快照，再复制 `server.secret`、`server-id`、OPAQUE 服务器 setup 和附件目录；账号角色与设备会话都在 SQLite 中，不存在单独的管理密钥文件。每个文件写入 SHA-256 清单，全部校验通过后才原子提升备份目录。`server.sqlite`、`server.secret`、`server-id` 和 `opaque.server-setup` 是恢复必需文件。恢复会先预检到暂存目录，再保留原数据为 `*.before-restore-*` 并原子替换。
+维护命令要求先停止服务器。备份先用 SQLite `VACUUM INTO` 生成一致快照，再复制 `server.secret`、`custody.key`、`server-id`、OPAQUE 服务器 setup 和附件目录；账号角色与设备会话都在 SQLite 中，不存在单独的管理密钥文件。每个文件写入 SHA-256 清单，全部校验通过后才原子提升备份目录。`server.sqlite`、`server.secret`、`server-id` 和 `opaque.server-setup` 是恢复必需文件。恢复会先预检到暂存目录，再保留原数据为 `*.before-restore-*` 并原子替换。
 
 ```bash
 # Windows/本机部署
@@ -140,4 +143,4 @@ docker compose run --rm -v ./backups:/backup sync-server \
   node dist/maintenance.js verify-backup --backup /backup/2026-07-19
 ```
 
-恢复演练应恢复到隔离目录，使用临时端口启动，检查 `/api/ready`，再在管理后台执行数据库和附件校验，并用测试客户端拉取一份带图片的账本。迁移成功后保留恢复前目录，直到所有设备完成一次同步。当前服务器及备份工具接受 schema 9 和可追加升级的 schema 6/7/8；恢复工具撤销旧会话并清除未完成登录及密码重置码，需要重新登录。旧 PBKDF2/固定证明/一次性 challenge 认证、旧 JSON 状态、人工管理 Token 与旧 SQLite 基线都不读取、不转换。
+恢复演练应恢复到隔离目录，使用临时端口启动，检查 `/api/ready`，再在管理后台执行数据库和附件校验，并用测试客户端拉取一份带图片的账本。迁移成功后保留恢复前目录，直到所有设备完成一次同步。当前服务器及备份工具接受 schema 10 和可追加升级的 schema 6/7/8/9；恢复工具撤销旧会话并清除未完成登录及密码重置码，需要重新登录。旧 PBKDF2/固定证明/一次性 challenge 认证、旧 JSON 状态、人工管理 Token 与旧 SQLite 基线都不读取、不转换。

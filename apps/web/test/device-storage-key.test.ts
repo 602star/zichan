@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { createLedgerKeyEnvelope } from '@zichan/core';
+import { describe, expect, it, vi } from 'vitest';
+import { createLedgerKeyEnvelope, rotateLedgerProtection } from '@zichan/core';
+import { adoptUnlockedLedgerKeyEnvelope, clearLedgerKey } from '../src/ledger-key-vault.js';
 import { SchemaResetRequiredError } from '@zichan/db';
 import {
   decryptDeviceAttachmentBlob,
   encryptDeviceAttachmentBlob,
+  unlockDeviceStorage, lockDeviceStorage, stageDeviceStorageRewrap, clearDeviceStorageState,
 } from '../src/device-storage-key.js';
 import {
   DeviceStorageResetRequiredError,
@@ -22,6 +24,38 @@ async function sha256(blob: Blob): Promise<string> {
 }
 
 describe('device storage encryption', () => {
+  it('opens another device cache with the new recovery code after a remote protection change', async () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value), removeItem: (key: string) => values.delete(key) });
+    try {
+      const original = await createLedgerKeyEnvelope('ledger-device-rotation', 'original-managed-secret');
+      adoptUnlockedLedgerKeyEnvelope(original.envelope, original.session, true);
+      const device = await unlockDeviceStorage('original-managed-secret', true);
+      const encrypted = await encryptDatabaseSnapshot(device.cryptoSession, new TextEncoder().encode('local pending transaction'));
+      await lockDeviceStorage();
+      // No staged local rewrap: this key change happened on a different device.
+      const next = await rotateLedgerProtection(original.session, 'new-private-recovery');
+      adoptUnlockedLedgerKeyEnvelope(next.envelope, next.session, true);
+      const restored = await unlockDeviceStorage('new-private-recovery', true);
+      expect(new TextDecoder().decode(await decryptDatabaseSnapshot(restored.cryptoSession, encrypted))).toBe('local pending transaction');
+    } finally { clearDeviceStorageState(); clearLedgerKey(); vi.unstubAllGlobals(); }
+  });
+  it('recovers a staged cache rewrap after an uncertain protection update without changing its data key', async () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value), removeItem: (key: string) => values.delete(key) });
+    try {
+      const original = await unlockDeviceStorage('old-managed-secret');
+      const bytes = new TextEncoder().encode('unsynced local transaction');
+      const encrypted = await encryptDatabaseSnapshot(original.cryptoSession, bytes);
+      await stageDeviceStorageRewrap('new-private-secret');
+      await lockDeviceStorage();
+      const recovered = await unlockDeviceStorage('new-private-secret');
+      expect(await decryptDatabaseSnapshot(recovered.cryptoSession, encrypted)).toEqual(bytes);
+      await lockDeviceStorage();
+      await expect(unlockDeviceStorage('old-managed-secret')).rejects.toThrow();
+      expect([...values.values()].join('')).not.toContain('new-private-secret');
+    } finally { clearDeviceStorageState(); vi.unstubAllGlobals(); }
+  });
   it('encrypts browser database snapshots and rejects another device key', async () => {
     const left = await createLedgerKeyEnvelope('device-storage-left', 'correct horse battery staple');
     const right = await createLedgerKeyEnvelope('device-storage-right', 'correct horse battery staple');

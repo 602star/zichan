@@ -59,6 +59,10 @@ export async function openPlatformDriver(
 }
 
 export async function resetPlatformData(): Promise<void> {
+  const { forgetOfflineAccess } = await import('../offline-access.js');
+  const { clearAccountProtection } = await import('../account-protection.js');
+  clearAccountProtection();
+  await forgetOfflineAccess().catch(() => undefined);
   if (isTauriRuntime()) {
     const databaseUrl = tauriInvoke<string>('native_sql_database_url');
     if (!databaseUrl) throw new Error('原生数据库路径命令不可用');

@@ -28,6 +28,9 @@ const enableWeb = boolEnv('ENABLE_WEB', Boolean(webDir));
 const enableSync = boolEnv('ENABLE_SYNC', true);
 const basePath = process.env.BASE_PATH?.trim() || undefined;
 const service = createSyncServer({
+  accountProtection: process.env.ACCOUNT_PROTECTION === 'private' ? 'private' : 'managed',
+  custodyEnabled: boolEnv('CUSTODY_ENABLED', true),
+  custodyKeyPath: process.env.CUSTODY_KEY_PATH?.trim() || undefined,
   dataDir,
   commitQuotaBytes: positiveNumber('COMMIT_QUOTA_BYTES'),
   attachmentQuotaBytes: positiveNumber('ATTACHMENT_QUOTA_BYTES'),
@@ -55,7 +58,7 @@ server.listen(port, host, () => {
   console.log(`account-admin=owner-session${webDir ? ` webDir=${webDir}` : ''}`);
   console.log(`First use: open ${basePath || ''}/admin/ and set your administrator username and password.`);
   console.log(`transport=${boolEnv('ALLOW_INSECURE_HTTP', false) ? 'explicit HTTP allowed' : 'HTTPS required outside loopback'} trustedProxies=${listEnv('TRUSTED_PROXIES')?.join(',') || 'none'}`);
-  console.log('E2E sync stores encrypted commits and attachment chunks only; the server cannot read ledger contents.');
+  console.log('Ledger payloads are encrypted. Managed accounts authorize server decryption; private accounts retain their recovery keys.');
 });
 
 let shutdownPromise: Promise<void> | undefined;

@@ -29,9 +29,6 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.getByLabel('服务器用户名').fill('home-user');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await page.getByRole('button', { name: '登录已有账号' }).click();
-    await page.getByLabel('本机数据密码', { exact: true }).fill(cachePassword);
-    await page.getByLabel('再输入一次', { exact: true }).fill(cachePassword);
-    await page.getByRole('button', { name: '创建并打开' }).click();
     await page.getByRole('button', { name: '直接开始记支出', exact: true }).click();
     await page.getByRole('button', { name: '关闭快速记账' }).click();
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
@@ -105,14 +102,22 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
       return (await response.json()).users[0].commitCount;
     }).toBeGreaterThan(0);
 
+    const protectionPanel = page.getByRole('region', { name: '服务器保护方式' });
+    await protectionPanel.getByRole('button', { name: '检查保护方式' }).click();
+    await expect(protectionPanel).toContainText('此服务器仅保存密文');
+    await expect(protectionPanel.getByRole('button', { name: '启用此服务器托管' })).toBeDisabled();
+    await protectionPanel.getByRole('checkbox', { name: '允许此服务器解密账本' }).check();
+    await protectionPanel.getByRole('button', { name: '启用此服务器托管' }).click();
+    await expect(protectionPanel).toContainText('此服务器已获授权，可以解密账本');
+    await protectionPanel.getByRole('button', { name: '撤销此服务器托管' }).click();
+    await expect(protectionPanel).toContainText('此服务器仅保存密文');
+
     await page.getByRole('button', { name: '新增服务器' }).click();
     await page.getByLabel('完整服务器地址').fill('https://ledger.example.com/zichan');
     await page.getByRole('button', { name: '保存地址', exact: true }).click();
     await page.getByLabel('中文别名').fill('公网副本');
     await expect(page.getByLabel('启用 公网副本', { exact: true })).not.toBeChecked();
     await page.reload();
-    await page.getByLabel('本机数据密码', { exact: true }).fill(cachePassword);
-    await page.getByRole('button', { name: '解锁', exact: true }).click();
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
     await page.getByRole('button', { name: '管理同步服务器', exact: true }).click();
     await expect(page.getByLabel('启用 本机副本', { exact: true })).toBeChecked();
@@ -132,8 +137,6 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.getByLabel('服务器用户名').fill('home-user');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await page.getByRole('button', { name: '登录已有账号' }).click();
-    await page.getByLabel('本机数据密码', { exact: true }).fill(cachePassword);
-    await page.getByRole('button', { name: '解锁', exact: true }).click();
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
     await page.getByRole('button', { name: '管理同步服务器', exact: true }).click();
     await expect(page.getByLabel('启用 本机副本', { exact: true })).toBeChecked();

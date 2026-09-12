@@ -191,7 +191,7 @@ function Security({ account, client, revision, confirm }: PaneProps) {
     <form onSubmit={(event) => { event.preventDefault(); setFilter(search.trim()); setCursors(['']); }}><input aria-label="搜索设备所属账号" maxLength={128} placeholder="用户名或完整 accountId" value={search} onChange={(event) => setSearch(event.target.value)} /><button>查询设备</button></form>
     <Result error={error} loading={!data}><DeviceTable devices={data?.devices ?? []} revoke={(device) => confirm(`撤销设备 ${device.deviceName}`, `立即使 ${device.username} 的此会话失效。保留本机及服务器账本。`, () => client.request(`/sessions/${device.id}/revoke`, {}))} /></Result>
     <div style={{ display: 'flex', gap: 12, marginTop: 16 }}><button disabled={cursors.length === 1 || !data} onClick={() => setCursors((rows) => rows.slice(0, -1))}>上一页</button><span>第 {cursors.length} 页</span><button disabled={!data?.nextCursor} onClick={() => setCursors((rows) => [...rows, data!.nextCursor!])}>下一页</button></div>
-    <p>退出管理后台会撤销本次管理会话，并通知其他管理标签页清空界面，不影响独立的记账登录。</p><p>已支持管理员核实身份后发放一次性密码重置码，入口在“用户管理 → 设备与配额”。重置账号密码不恢复账本解密密钥。所有者密码恢复和所有权转移未开放。</p></>;
+    <p>退出管理后台会撤销本次管理会话，并通知其他管理标签页清空界面，不影响独立的记账登录。</p><p>已支持管理员核实身份后发放一次性密码重置码，入口在“用户管理 → 设备与配额”。托管账本可在重置账号密码后恢复；私密账本仍需用户的恢复码。所有者密码恢复和所有权转移未开放。</p></>;
 }
 
 function Storage({ client, confirm }: PaneProps) {
