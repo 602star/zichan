@@ -228,7 +228,7 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
               void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode }));
             }}>
               <h2 style={{ margin: 0, fontSize: 'var(--fs-heading)' }}>高级创建</h2>
-              <p style={{ color: '#756b60', fontSize: 'var(--fs-body)', lineHeight: 1.6 }}>仅在需要其他基础币种或账户、资产模式时调整。个人账本仍不会创建业务流水。</p>
+              <p style={{ color: '#756b60', fontSize: 'var(--fs-body)', lineHeight: 1.6 }}>仅在需要其他基础币种，或更深的录入深度时调整。记账模式只决定录入表单的深度与用词（是否出现账户、转账与对账），不决定显示哪些模块——模块可以在创建后到“设置 → 侧边栏与模块”里启用。个人账本仍不会创建业务流水。</p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 14, marginTop: 16 }}>
                 <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
                   基础币种
@@ -237,7 +237,7 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
                   </select>
                 </label>
                 <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
-                  账本模式
+                  记账模式 · 录入深度
                   <select value={ledgerMode} onChange={(event) => setLedgerMode(event.target.value as LedgerMode)} style={field}>
                     <option value="spending">轻量记账</option>
                     <option value="accounts">账户记账</option>

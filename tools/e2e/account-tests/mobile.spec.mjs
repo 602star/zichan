@@ -27,7 +27,10 @@ for (const width of [360, 390]) test(`mobile ${width}px supports login, initiali
     await fits();
     await page.getByRole('button', { name: '关闭快速记账' }).click();
     const nav = page.getByRole('navigation', { name: '移动端主导航' });
-    await nav.getByRole('button', { name: /设置$/ }).click();
+    // 设置 stays a pinned entry, but the three-slot phone bar now spends its
+    // slots on the daily modules, so the entry sits behind 更多.
+    await nav.getByRole('button', { name: /更多$/ }).click();
+    await page.getByRole('dialog', { name: '更多功能' }).getByRole('button', { name: /设置$/ }).click();
     await page.getByRole('tab', { name: '数据与安全' }).click();
     const panel = page.getByRole('region', { name: '账本保护' });
     await expect(panel).toBeVisible();
@@ -41,7 +44,10 @@ for (const width of [360, 390]) test(`mobile ${width}px supports login, initiali
     await page.getByRole('tab', { name: '记账' }).click();
     await page.getByRole('checkbox', { name: /显示同步/ }).click();
     await expect(page.getByRole('checkbox', { name: /显示同步/ })).toBeChecked();
-    await nav.getByRole('button', { name: /同步$/ }).click();
+    // The three-slot phone bar is already spent on the daily modules, so 同步
+    // joins 设置 behind 更多.
+    await nav.getByRole('button', { name: /更多$/ }).click();
+    await page.getByRole('dialog', { name: '更多功能' }).getByRole('button', { name: /同步$/ }).click();
     /* 账本保护 moved into the 高级设置 layer; the summary renders on its own. */
     await expect(page.getByRole('region', { name: '账本保护' })).toHaveCount(0);
     await page.getByRole('button', { name: /^高级设置/ }).click();

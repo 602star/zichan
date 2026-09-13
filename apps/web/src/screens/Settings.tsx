@@ -172,7 +172,7 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
   const setting = readySnap.setting;
   const base = baseAsset(readySnap);
   const ledgerMode = setting?.ledgerMode ?? 'spending';
-  const navigation = parseNavigationPreferences(setting?.navigationLayoutJson, ledgerMode);
+  const navigation = parseNavigationPreferences(setting?.navigationLayoutJson);
 
   async function saveSetting(
     patch: Partial<Setting>,
@@ -645,10 +645,18 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
                 </select>
               </div>
               <div className="zc-field">
-                <label className="zc-label">记账模式</label>
-                <select aria-label="记账模式" className="zc-select" value={setting?.ledgerMode ?? 'spending'} onChange={(e) => saveSetting({ ledgerMode: e.target.value as LedgerMode })}>
+                <label className="zc-label">记账模式 · 录入深度</label>
+                <select aria-label="记账模式 · 录入深度" className="zc-select" value={setting?.ledgerMode ?? 'spending'} onChange={(e) => saveSetting({ ledgerMode: e.target.value as LedgerMode })}>
                   {LEDGER_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
+                {/*
+                 * The mode no longer decides which modules exist. Without this hint
+                 * 「记账模式」 reads as a shell-wide switch, and a user who picks 完整资产账本
+                 * and still sees four sidebar entries concludes the setting did nothing.
+                 */}
+                <p className="zc-meta" style={{ marginTop: 6 }}>
+                  只决定录入表单的深度与用词（是否出现账户、转账与对账），不决定显示哪些模块。模块显隐与顺序在下方“侧边栏与模块”里设置，手机端也可以从“更多 → 未启用模块”直接启用。
+                </p>
               </div>
               <div className="zc-field">
                 <label className="zc-label">报表基准日</label>
@@ -738,10 +746,10 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
               <button
                 type="button"
                 disabled={navigationBusy}
-                onClick={() => void saveNavigation(defaultNavigationPreferences(ledgerMode))}
+                onClick={() => void saveNavigation(defaultNavigationPreferences())}
                 style={btnOutline}
               >
-                恢复当前模式推荐布局
+                恢复推荐布局
               </button>
             </div>
             <div className="zc-navigation-settings-list" style={{ display: 'grid', gap: 8, marginTop: 14 }}>

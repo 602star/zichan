@@ -255,7 +255,7 @@ export function App() {
   // keep the money symbol in sync with the settlement currency
   const base = snap ? baseAsset(snap) : undefined;
   const ledgerMode: LedgerMode = snap?.setting?.ledgerMode ?? 'spending';
-  const navigation = parseNavigationPreferences(snap?.setting?.navigationLayoutJson, ledgerMode);
+  const navigation = parseNavigationPreferences(snap?.setting?.navigationLayoutJson);
   useEffect(() => {
     if (base) setBaseSymbol(base.symbol ?? `${base.code} `);
   }, [base]);

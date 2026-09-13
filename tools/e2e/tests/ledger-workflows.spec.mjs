@@ -108,6 +108,9 @@ test('customizes sidebar modules and keeps their order after reload', async ({ p
   const sidebar = page.locator('.zc-sidebar');
   await sidebar.getByRole('button', { name: /设置$/ }).click();
   await expect(page.getByText('侧边栏与模块', { exact: true })).toBeVisible();
+  // 记账模式 no longer drives module visibility, so the field says what it does.
+  await expect(page.getByLabel('记账模式 · 录入深度')).toBeVisible();
+  await expect(page.getByText('不决定显示哪些模块', { exact: false })).toBeVisible();
   await expect(sidebar.getByRole('button', { name: /管理$/ })).toHaveCount(0);
 
   await page.getByLabel('在侧边栏显示管理').click();
@@ -115,13 +118,14 @@ test('customizes sidebar modules and keeps their order after reload', async ({ p
   await expect(sidebar.getByRole('button', { name: /管理$/ })).toBeVisible();
   await page.getByRole('button', { name: '上移管理', exact: true }).click();
   await page.getByRole('button', { name: '上移管理', exact: true }).click();
+  await page.getByRole('button', { name: '上移管理', exact: true }).click();
 
   const sidebarLabels = async () => page.locator('.zc-sidebar nav > div > button:first-child .zc-sidebar-nav-label').allTextContents();
-  await expect.poll(sidebarLabels).toEqual(['日常支出', '管理', '支出报表', '设置']);
+  await expect.poll(sidebarLabels).toEqual(['总览', '日常支出', '管理', '物品资产', '设置']);
 
   await page.reload();
   await openLedger(page);
-  await expect.poll(sidebarLabels).toEqual(['日常支出', '管理', '支出报表', '设置']);
+  await expect.poll(sidebarLabels).toEqual(['总览', '日常支出', '管理', '物品资产', '设置']);
 
   await page.setViewportSize({ width: 390, height: 844 });
   const mobileNavigation = page.getByRole('navigation', { name: '移动端主导航' });
@@ -177,7 +181,12 @@ test('disables a category pack for new entries and restores it when re-enabled',
 
 test('exports a real PDF report with a valid PDF header', async ({ page }) => {
   await openLedger(page);
-  await page.getByRole('button', { name: /支出报表$/ }).click();
+  // Reports is not part of the recommended starting layout, so enable it first.
+  await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
+  await page.getByLabel('在侧边栏显示支出报表').click();
+  await expect(page.getByLabel('在侧边栏显示支出报表')).toBeChecked();
+  // Scope to the sidebar: the settings rows own 上移/下移支出报表 buttons too.
+  await page.locator('.zc-sidebar').getByRole('button', { name: /支出报表$/ }).click();
   const downloadPromise = page.waitForEvent('download');
   // Exports now sit behind a single menu rather than a row of buttons.
   await page.getByRole('button', { name: '导出报表' }).click();

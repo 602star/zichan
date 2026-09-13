@@ -32,6 +32,18 @@ export const REQUIRED_NAVIGATION_IDS = new Set<ScreenId>(['transactions', 'setti
 const ALL_SCREEN_IDS = NAVIGATION_ITEMS.map((item) => item.id);
 const SCREEN_ID_SET = new Set<ScreenId>(ALL_SCREEN_IDS);
 
+/*
+ * What a brand-new ledger shows. The pinned entries from REQUIRED_NAVIGATION_IDS
+ * are added on top, so a fresh sidebar reads 总览 → 日常收支 → 物品资产 → 设置
+ * and the phone bar keeps its three primary slots for the modules a person
+ * actually opens every day.
+ *
+ * The set is the same for every ledger mode on purpose: switching from 轻量记账
+ * to 账户/资产记账 later must not silently add seven entries, and a module that
+ * starts hidden is still one tap away under 更多 → 未启用模块.
+ */
+const DEFAULT_VISIBLE_SCREEN_IDS: readonly ScreenId[] = ['dashboard', 'transactions', 'fixed'];
+
 function normalizedIds(value: unknown): ScreenId[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<ScreenId>();
@@ -47,21 +59,21 @@ function normalizedIds(value: unknown): ScreenId[] {
   return result;
 }
 
-export function defaultNavigationPreferences(mode: LedgerMode): NavigationPreferences {
+export function defaultNavigationPreferences(): NavigationPreferences {
   return {
     order: [...ALL_SCREEN_IDS],
-    visible: mode === 'spending'
-      ? ['transactions', 'reports', 'settings']
-      : [...ALL_SCREEN_IDS],
+    visible: ALL_SCREEN_IDS.filter(
+      (id) => DEFAULT_VISIBLE_SCREEN_IDS.includes(id) || REQUIRED_NAVIGATION_IDS.has(id),
+    ),
   };
 }
 
-export function parseNavigationPreferences(value: string | undefined, mode: LedgerMode): NavigationPreferences {
-  if (!value) return defaultNavigationPreferences(mode);
+export function parseNavigationPreferences(value: string | undefined): NavigationPreferences {
+  if (!value) return defaultNavigationPreferences();
   try {
     const parsed = JSON.parse(value) as { version?: unknown; order?: unknown; visible?: unknown };
     if (parsed.version !== 1 || !Array.isArray(parsed.order) || !Array.isArray(parsed.visible)) {
-      return defaultNavigationPreferences(mode);
+      return defaultNavigationPreferences();
     }
     const requestedOrder = normalizedIds(parsed.order);
     const requestedVisible = normalizedIds(parsed.visible);
@@ -69,7 +81,7 @@ export function parseNavigationPreferences(value: string | undefined, mode: Ledg
     const visible = order.filter((id) => requestedVisible.includes(id) || REQUIRED_NAVIGATION_IDS.has(id));
     return { order, visible };
   } catch {
-    return defaultNavigationPreferences(mode);
+    return defaultNavigationPreferences();
   }
 }
 

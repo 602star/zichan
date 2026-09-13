@@ -3,6 +3,36 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-13 — 新账本默认启用「总览 / 日常收支 / 物品资产」
+
+**Goal:** 新用户第一次进账本时不再面对 10 个入口，也不需要先理解「记账模式」和模块的关系。
+
+**背景**：`navigationLayoutJson` 为空时由 `defaultNavigationPreferences` 兜底。旧规则是「轻量记账显示日常支出 / 支出报表 / 设置，账户与资产模式显示全部 10 个模块」，于是新建账本要么看不到总览，要么一上来就是 10 个入口；切换记账模式还会让侧栏条目突然增删。
+
+**改动**
+
+- `apps/web/src/navigationPreferences.ts`：新增 `DEFAULT_VISIBLE_SCREEN_IDS = ['dashboard', 'transactions', 'fixed']`，默认可见 = 该集合 ∪ `REQUIRED_NAVIGATION_IDS`（日常收支、设置为固定入口）。新账本的侧栏固定为 总览 → 日常收支 → 物品资产 → 设置；桌面/平板完整显示，手机底栏取前 3 项，设置落在「更多」。
+- 默认布局不再按记账模式分叉：从轻量记账切到账户/资产记账不会静默多出 7 个入口，隐藏模块仍可从「更多 → 未启用模块」或设置页一键启用。
+- 随之移除两个函数上再未使用的 `mode` 参数（`defaultNavigationPreferences`、`parseNavigationPreferences`），设置页按钮文案改为「恢复推荐布局」。
+
+**验证**
+
+- `apps/web/test/navigation-preferences.test.ts`：改为断言新默认集合、6 个默认隐藏模块、启用+排序的持久化往返、固定入口不可隐藏、脏数据回落。`vitest run` 59 个文件 / 346 个用例全绿，`tsc --noEmit` 与 `npm run lint` 干净。
+- 依赖旧默认值的端到端断言同步更新：`tools/e2e/tests/ledger-workflows.spec.mjs`（侧栏顺序断言改为新默认；报表用例改为先在设置里启用——注意设置页的「上移/下移支出报表」按钮会与侧栏同名匹配，所以点击限定在 `.zc-sidebar` 内）、`tools/e2e/account-tests/mobile.spec.mjs`（手机端设置与同步两个入口都改走「更多」抽屉，因为手机底栏 3 个位已被日常模块占满）。
+- 真实 Chrome + 真实 `@zichan/sync-server` + `apps/web/dist` 跑全量 e2e：`tests/` 12 个用例、`account.config.mjs` 22 个用例（含 `mobile-layout` 七种视口 × 10 屏与密度预算）全绿，共 34 个。`mobile-layout` 本来就先逐项勾选所有模块，无需改动。
+
+**收尾：把「记账模式」的定位写清楚**
+
+解耦后记账模式仍然承重，只是不再管导航：`usesAccounts = mode !== 'spending'` 决定录入表单是否出现账户字段（交易/模板/商户默认账户、资产转换来源与目标账户、游戏结算与手续费账户、投资与物品资产付款账户），轻量模式还挖掉「转账」类型、固定 `cleared` 状态、结算选「创建流水」时不强制账户（`allowEmpty: !usesAccounts`）；日常收支页在轻量模式只留「流水」tab 并排除转账/调整分录；`navigationLabel` 与页头标题还负责「日常收支/日常支出」「报表/支出报表」的用词。
+
+问题是解耦留下了一个缺口：用户切到「完整资产账本」后侧栏仍是四项，很容易以为设置没生效。按最小改动堵上（不改结构、不动导航）：
+
+- 设置页该项标签与可访问名改为「记账模式 · 录入深度」，并在下方增加一行说明：只决定录入表单的深度与用词（是否出现账户、转账与对账），不决定显示哪些模块；模块显隐与顺序在「侧边栏与模块」里设置，手机端可从「更多 → 未启用模块」直接启用。
+- 首次引导的同一概念本来叫「账本模式」，同一个 `ledgerMode` 两处不同名。现一并统一为「记账模式 · 录入深度」，并把开头那句「仅在需要其他基础币种或账户、资产模式时调整」改成先说清两个字段各自管什么、再重申模式不决定模块显隐（模块可在创建后到设置里启用）。纯文案，不动标记结构与初始化参数。
+- 未采纳「切模式时弹窗引导启用相关模块」：那会把两个本来正交的设置重新粘起来，而隐藏模块已经有一键启用入口。
+
+**验证**：`tsc --noEmit`、`npm run lint` 干净；`vitest run` 59 文件 / 346 用例全绿；重建 `apps/web/dist` 后重跑 e2e 34 个用例全绿。可访问名虽由「记账模式」改为「记账模式 · 录入深度」，`mobile-layout` 里的 `getByLabel('记账模式')` 仍能命中（Playwright 默认子串匹配），无需改测试；旧名向新名的包含方向也符合 WCAG 2.5.3（可访问名包含可见标签全文）。
+
 ## 2026-09-12 — 手机 Web 端完全适配
 
 **Goal:** 把 `apps/web`（同时被 Tauri 移动壳复用）真正适配到手机上，而不是只在窄屏下不横向溢出。
