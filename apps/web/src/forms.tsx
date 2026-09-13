@@ -529,7 +529,7 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       { key: 'category', label: '二级分类', type: 'category', options: (v) => categoryOptions(snap.categories, expenseOnly ? 'expense' : v.type === 'income' ? 'income' : 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), lockedVisible: true, required: true },
       { key: 'amount', label: '金额', type: 'number', half: true, lockedVisible: true, required: true },
       { key: 'assetId', label: '币种', type: 'select', half: true, options: settlementOpts(snap), lockedVisible: true, required: true },
-      { key: 'description', label: '描述', type: 'text', half: true, placeholder: '午餐 / 工资 / 房租', lockedVisible: true, required: true },
+      { key: 'description', label: '描述', type: 'text', half: true, placeholder: '午餐 / 工资 / 房租（可留空，列表用分类兜底）', lockedVisible: true },
       { key: 'attachmentDrafts', label: '附件 / 图片', type: 'file', accept: 'image/*,.pdf', multiple: true, capture: 'environment', lockedVisible: true },
       { key: 'timezone', label: '交易时区', type: 'text', half: true, defaultValue: currentTimezone(), section: 'more' },
       ...accountFields,

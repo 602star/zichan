@@ -1113,12 +1113,12 @@ export function Transactions() {
                 onViewChange={setRecordView}
                 dateOf={(item) => item.tx.date}
                 keyOf={(item) => item.tx.id}
-                renderCompact={(item) => <>{item.tx.date.slice(8)} · <b>{item.categoryLabel}</b> · {item.tx.description ?? item.payeeName}</>}
+                renderCompact={(item) => <>{item.tx.date.slice(8)} · <b>{item.categoryLabel}</b>{item.tx.description || item.payeeName ? ` · ${item.tx.description ?? item.payeeName}` : ''}</>}
                 renderEntry={(item) => (
                   <div className="zc-transaction-timeline-entry" style={{ display: 'grid', gridTemplateColumns: '90px 120px minmax(0, 1fr) 130px', gap: 12, alignItems: 'center' }}>
                     <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{item.tx.date}{item.tx.time ? ` ${item.tx.time}` : ''}</span>
                     <b style={{ fontSize: 'var(--fs-caption)' }}>{item.categoryLabel}</b>
-                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.tx.description ?? item.payeeName}</span>
+                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.tx.description ?? item.payeeName ?? ''}</span>
                     <b style={{ justifySelf: 'end', ...amountColor(item.signedAmount) }}>{item.tx.type === 'income' || item.tx.type === 'refund' ? '+' : item.tx.type === 'expense' ? '-' : ''}{item.tx.amount} {item.assetCode}</b>
                   </div>
                 )}

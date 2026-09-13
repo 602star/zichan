@@ -13,6 +13,13 @@ import {
   loadFormDraft,
   saveFormDraft,
 } from '../db/form-drafts.js';
+import {
+  emptyOptionHint,
+  isFieldVisible,
+  isMoreFieldVisible,
+  requiredFieldErrors,
+  unreachableErrorKeys,
+} from '../form-validation.js';
 
 export type FieldType = 'text' | 'number' | 'date' | 'time' | 'select' | 'category' | 'multiselect' | 'allocation' | 'checkbox' | 'textarea' | 'file';
 
@@ -73,6 +80,25 @@ function defaults<T>(spec: EntityFormSpec<T>): Record<string, string> {
 
 function fieldOptions(f: FieldDef, values: Record<string, string>): FieldOption[] {
   return typeof f.options === 'function' ? f.options(values) : f.options ?? [];
+}
+
+/** First focusable control inside a rendered form field, used to jump at a blocking field. */
+function focusTarget(fieldId: string): HTMLElement | null {
+  const selector = typeof CSS !== 'undefined' && CSS.escape
+    ? `[data-form-field="${CSS.escape(fieldId)}"] input:not([type="hidden"]), [data-form-field="${CSS.escape(fieldId)}"] select, [data-form-field="${CSS.escape(fieldId)}"] textarea`
+    : '';
+  if (selector) {
+    const found = document.querySelector<HTMLElement>(selector);
+    if (found) return found;
+  }
+  return document.getElementById(fieldId);
+}
+
+/** Domain validation errors carry the rejected field name; map it back when it is a form field. */
+function rejectedFieldKey(error: unknown, fields: FieldDef[]): string | undefined {
+  const field = (error as { field?: unknown } | null | undefined)?.field;
+  if (typeof field !== 'string' || !field) return undefined;
+  return fields.some((f) => f.key === field) ? field : undefined;
 }
 
 const MAX_ATTACHMENT_COUNT = 8;
@@ -169,6 +195,9 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [pendingFocus, setPendingFocus] = useState<string | null>(null);
+  const [moreOpen, setMoreOpen] = useState<boolean | null>(null);
+  const focusAttempts = useRef(0);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [fieldPickerOpen, setFieldPickerOpen] = useState(false);
   const [deviceBusy, setDeviceBusy] = useState('');
@@ -226,17 +255,63 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     if (dirty) setCloseOpen(true);
     else onClose();
   };
-  const available = (field: FieldDef) => !field.hidden && (field.visibleWhen?.(values) ?? true);
   const allMoreFields = spec.fields.filter((f) => f.section === 'more' && !f.hidden);
-  const moreFields = allMoreFields.filter(available);
-  const coreFields = spec.fields.filter((f) => f.section !== 'more' && available(f));
+  const allMoreFieldKeys = allMoreFields.map((f) => f.key);
+  const moreFields = allMoreFields.filter((f) => isFieldVisible(f, values));
+  const coreFields = spec.fields.filter((f) => f.section !== 'more' && isFieldVisible(f, values));
   const visibleOptional = new Set(optionalFieldKeys ?? moreFields.map((f) => f.key));
-  const visibleMoreFields = moreFields.filter((f) => f.lockedVisible || visibleOptional.has(f.key));
+  const visibleMoreFields = moreFields.filter((f) => isMoreFieldVisible(f, values, optionalFieldKeys, allMoreFieldKeys));
+  const moreExpanded = moreOpen ?? visibleMoreFields.length > 0;
   const toggleOptionalField = async (key: string) => {
     const current = new Set(optionalFieldKeys ?? moreFields.map((f) => f.key));
     if (current.has(key)) current.delete(key);
     else current.add(key);
     await onOptionalFieldKeysChange?.([...current]);
+  };
+  /** Bring a blocking field back into view: unfold 更多信息 and switch the picker on. */
+  const revealField = async (key: string) => {
+    const field = spec.fields.find((f) => f.key === key);
+    if (!field || !isFieldVisible(field, values)) return;
+    if (field.section !== 'more') return;
+    setMoreOpen(true);
+    if (isMoreFieldVisible(field, values, optionalFieldKeys, allMoreFieldKeys)) return;
+    const current = new Set(optionalFieldKeys ?? moreFields.map((f) => f.key));
+    current.add(key);
+    await onOptionalFieldKeysChange?.([...current]);
+  };
+  /** Scroll and focus a field once it is on screen; retries across a few renders. */
+  const queueFocus = (key: string) => {
+    focusAttempts.current = 0;
+    setPendingFocus(key);
+  };
+  useEffect(() => {
+    if (!pendingFocus) return;
+    const field = spec.fields.find((f) => f.key === pendingFocus);
+    if (field && !isFieldVisible(field, values)) {
+      setPendingFocus(null);
+      return;
+    }
+    if (field?.section === 'more') setMoreOpen(true);
+    const node = focusTarget(`${formId}-${pendingFocus}`);
+    if (!node) {
+      if (focusAttempts.current < 4) {
+        focusAttempts.current += 1;
+        const timer = window.setTimeout(() => setPendingFocus(pendingFocus), 40);
+        return () => window.clearTimeout(timer);
+      }
+      setPendingFocus(null);
+      return;
+    }
+    node.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    node.focus?.({ preventScroll: true });
+    setPendingFocus(null);
+    return undefined;
+  }, [pendingFocus, formId, spec.fields, values]);
+  /** Required pickers with nothing to pick yet explain themselves up front. */
+  const optionHint = (field: FieldDef, optionCount: number) => {
+    if (field.type !== 'select' && field.type !== 'category' && field.type !== 'multiselect') return undefined;
+    if (!isFieldVisible(field, values)) return undefined;
+    return emptyOptionHint(field, optionCount);
   };
   const selectedValues = (key: string) => (values[key] ?? '').split(',').map((x) => x.trim()).filter(Boolean);
   const fileRows = (key: string): FileRow[] => {
@@ -302,10 +377,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     for (const field of spec.fields) {
       if (field.type === 'text' || field.type === 'textarea') normalized[field.key] = (normalized[field.key] ?? '').trim();
     }
-    const errors: Record<string, string> = {};
-    for (const field of spec.fields) {
-      if (field.required && !(normalized[field.key] ?? '').trim()) errors[field.key] = `请填写${field.label}`;
-    }
+    const errors: Record<string, string> = requiredFieldErrors(spec.fields, normalized);
     let custom: Record<string, string> | string | undefined;
     try {
       custom = spec.validate?.(normalized, initial);
@@ -317,7 +389,9 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     else if (custom) Object.assign(errors, custom);
     if (typeof custom === 'string' || Object.keys(errors).length > 0) {
       setFieldErrors(errors);
-      if (typeof custom !== 'string') setErr('请检查标出的必填项或无效字段。');
+      for (const key of unreachableErrorKeys(spec.fields, normalized, errors, optionalFieldKeys)) await revealField(key);
+      const first = Object.keys(errors)[0];
+      if (first) queueFocus(first);
       return;
     }
     setFieldErrors({});
@@ -332,6 +406,12 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
+      const rejected = rejectedFieldKey(e, spec.fields);
+      if (rejected) {
+        setFieldErrors({ [rejected]: e instanceof Error ? e.message : String(e) });
+        await revealField(rejected);
+        queueFocus(rejected);
+      }
       setBusy(false);
     }
   }
@@ -402,7 +482,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {allMoreFields.map((f) => (
                 <label key={f.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '6px 10px', background: 'var(--surface)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>
-                  <input type="checkbox" checked={f.lockedVisible || visibleOptional.has(f.key)} disabled={f.lockedVisible || busy} onChange={() => void toggleOptionalField(f.key)} />
+                  <input type="checkbox" checked={f.lockedVisible || f.required || visibleOptional.has(f.key)} disabled={f.lockedVisible || f.required || busy} onChange={() => void toggleOptionalField(f.key)} />
                   {f.label}
                 </label>
               ))}
@@ -433,14 +513,21 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                 deviceBusy={deviceBusy === f.key}
                 runDeviceAction={runDeviceAction}
                 error={fieldErrors[f.key]}
+                hint={optionHint(f, options.length)}
               />
             );
           })}
         </div>
 
         {moreFields.length > 0 && (
-          <details open={visibleMoreFields.length > 0} style={{ marginTop: 16 }}>
-            <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>更多信息</summary>
+          <details open={moreExpanded} style={{ marginTop: 16 }}>
+            <summary
+              onClick={(event) => {
+                event.preventDefault();
+                setMoreOpen(!moreExpanded);
+              }}
+              style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}
+            >更多信息</summary>
             {visibleMoreFields.length === 0 ? (
               <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 10 }}>可在“字段显示”里选择要显示的附加字段。</div>
             ) : (
@@ -467,6 +554,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                       deviceBusy={deviceBusy === f.key}
                       runDeviceAction={runDeviceAction}
                       error={fieldErrors[f.key]}
+                      hint={optionHint(f, options.length)}
                     />
                   );
                 })}
@@ -476,6 +564,28 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
         )}
 
         {err && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', marginTop: 12 }}>{err}</div>}
+
+        {Object.keys(fieldErrors).length > 0 && (
+          <div role="alert" style={{ marginTop: 10, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)' }}>
+            <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', marginBottom: 8 }}>还有 {Object.keys(fieldErrors).length} 项需要处理，点标签可直接跳到对应字段：</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {Object.entries(fieldErrors).map(([key, message]) => (
+                <button
+                  key={key}
+                  type="button"
+                  title={message}
+                  onClick={() => void (async () => {
+                    await revealField(key);
+                    queueFocus(key);
+                  })()}
+                  style={{ border: '1px solid var(--negative)', borderRadius: 'var(--r-pill)', background: 'var(--surface)', color: 'var(--negative)', padding: '5px 10px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', cursor: 'pointer' }}
+                >
+                  {spec.fields.find((f) => f.key === key)?.label ?? key}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="zc-modal-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 20 }}>
           <div>
@@ -534,10 +644,11 @@ function FormField(props: {
   deviceBusy: boolean;
   runDeviceAction: (field: FieldDef) => Promise<void>;
   error?: string;
+  hint?: string;
 }) {
-  const { f, fieldId, options, value, selectedValues, fileRows, set, readFiles, setFileRows, deviceBusy, runDeviceAction, error } = props;
+  const { f, fieldId, options, value, selectedValues, fileRows, set, readFiles, setFileRows, deviceBusy, runDeviceAction, error, hint } = props;
   return (
-    <div className="zc-form-field" key={f.key} style={{ gridColumn: f.half ? 'span 1' : 'span 2' }}>
+    <div className="zc-form-field" key={f.key} data-form-field={fieldId} style={{ gridColumn: f.half ? 'span 1' : 'span 2' }}>
       <label className="zc-label" htmlFor={fieldId}>{f.label}{f.required && <span style={{ color: 'var(--negative)', marginLeft: 3 }}>*</span>}</label>
       {f.type === 'select' ? (
         <select id={fieldId} name={f.key} className="zc-select" required={f.required} value={value} onChange={(e) => set(f.key, e.target.value)}>
@@ -647,6 +758,7 @@ function FormField(props: {
         </div>
       )}
       {error && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', marginTop: 4 }}>{error}</div>}
+      {!error && hint && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', marginTop: 4 }}>{hint}</div>}
     </div>
   );
 }

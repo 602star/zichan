@@ -3,6 +3,65 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-13 — 必填项不再藏在看不见的地方，被拦时能直接跳到字段
+
+**Goal:** 用户反馈“填完一堆还是记账不了”“不是必填的字段不该强制填”。查下来这不是一处文案问题，
+而是表单校验的一条硬伤：`required` 完全不看字段是否可见。
+
+**背景：`required` 与 `visibleWhen` 同时存在时会死锁**
+
+`EntityFormModal.save()` 原来是 `for (const field of spec.fields) if (field.required && !value) errors[...] = ...`，
+既不过 `hidden` 也不过 `visibleWhen`，而错误只渲染在字段旁边。于是“显示时才必填”的声明变成了隐形陷阱：
+
+- `accountForm`：`statementDay`/`paymentDueDay` 是 `required: true` + `visibleWhen: kind === 'credit_card'`。
+  账户类型默认 `bank`（选项第一项），两个字段不渲染但照样拦保存 → **新增任何非信用卡账户都存不下来**，
+  提示只说“请检查标出的必填项”，可页面上没有任何红色字段。这一行是 v0.1 基线（`01a4abb`）原样带过来的。
+- `fixedAssetForm`：`cashflowTransactionId`/`cashflowSourceAmount`/`cashflowCategory` 是 `required: true` +
+  `visibleWhen: cashflowMode === 'linked_transaction'`，而默认资金处理是“仅登记物品” → **新增物品资产同样存不下来**。
+- `fixedEventForm` 与 `fixedConsumableForm` 有同一模式；`gameRecordForm` 的结算/手续费账户虽然也有此写法，
+  但默认值恰好被选项首项预填，所以侥幸没炸。
+
+审计方式：不靠肉眼读 `forms.tsx`，而是把每个 spec 真实构造出来，按 `defaults()` 复算“哪些 `required` 字段此刻不可见”。
+行级正则扫描会漏掉跨行的字段定义（`gameRecordForm` 的账户字段就是多行写法），所以直接把规则抽成可测的纯函数。
+
+**改动**
+
+- 新增 `apps/web/src/form-validation.ts`：集中表达两条不变量——①只有可见字段能拦保存；②每个拦保存的字段都必须可达。
+  包含 `isFieldVisible`、`isMoreFieldVisible`、`renderedFieldKeys`、`requiredFieldErrors`、`unreachableErrorKeys`、
+  `emptyOptionHint`。
+- `ui/EntityFormModal.tsx` 接线：
+  - 必填校验改为 `requiredFieldErrors`，`hidden`/`visibleWhen` 为假不再参与；`required` 与 `lockedVisible` 一样
+    被强制留在可见集合内，“字段显示”里对应勾选框置灰不可关（否则用户能亲手关掉一个必填项然后被锁死）。
+  - 提交被拦时自动展开「更多信息」、打开被“字段显示”关掉的字段（`unreachableErrorKeys` + `revealField`），
+    把首个出错字段 `scrollIntoView({ block: 'center' })` 并聚焦；字段容器加 `data-form-field` 作定位锚点。
+  - 底部新增错误条：`role="alert"` + 「还有 N 项需要处理」+ 可点击字段标签直接跳转。
+  - 领域层抛出的 `DomainValidationError` 自带 `field`，现在按同一路径映射回表单字段（此前的 `if (e.field)` 信息被丢弃，
+    只显示一行文字）。服务端字段名不可信，映射前先确认它确实是本表单的 key。
+  - 必填的 select/category 若一个选项都没有（例如账本里还没游戏），就地提示「还没有可选项，请先新增」。
+- `forms.tsx`：`transactionForm` 的「描述」去掉 `required`。领域层（`validateTransactionWrite`）从不要求描述，
+  而列表、账本、总览、报表导出都有 `描述 → 商户 → 一级/二级分类` 的兜底链，快记本身也只要求金额。
+- `screens/Transactions.tsx`：时间线紧凑行原来渲染 `描述 ?? 商户`，空描述会留下悬空分隔符，改为无内容时不渲染该段。
+
+**有意没做**
+
+- 没做“必填下拉无选项时一键新建关联实体”。它需要一套 `字段 → 新建表单` 的注册与弹窗栈协作，
+  收益集中在游戏/账户这类极少为空的场景；当前用就地提示 + 跳转已经能解释清楚，
+  真要做得先定好“新建后是否回填并重新校验”的交互，不宜顺手塞进这次修复。
+- 没动 `accountForm` 账单日/还款日的必填语义：修好可见性判断后它们只在“信用卡”下生效，正是原本的意图。
+
+**验证**
+
+- 新增 `apps/web/test/form-validation.test.ts`（88 个用例）：遍历 24 个表单 × 3 种记账模式 × 单字段全选项探测 ×
+  4 种“字段显示”选择状态，断言“拦保存的字段必定被渲染”；另含银行账户可存、信用卡仍要账单日、仅登记物品资产可存、
+  仅登记游戏记录不需要结算账户、字段选择器关不掉必填项等定点用例。
+- `npm test`：4 个工作区 752 个用例全绿（web 60 文件 / 434 用例）。`npm run typecheck`、`npm run lint` 干净。
+- 新增 `tools/e2e/tests/form-recovery.spec.mjs`（真实 Chrome + 真实 `@zichan/sync-server` + `apps/web/dist`）：
+  ① 空金额保存后被拦时，错误条出现「还有 N 项需要处理」、金额输入框获得焦点、点字段标签能再次聚焦，
+  且只填金额即可保存（描述已可选）；② 新增“仅登记物品”的物品资产能直接保存。
+- 做了对照实验确认因果：临时把 `requiredFieldErrors` 的可见性判断去掉并重建，用例 ② 立刻失败（表单不关闭），
+  恢复后通过——证明这条路径在修复前确实是坏的，不是测试写反。
+- 全量 e2e `tools/e2e`（`tests/` 目录）14 个用例全绿（原 12 个 + 新增 2 个）。
+
 ## 2026-09-13 — 新账本默认启用「总览 / 日常收支 / 物品资产」
 
 **Goal:** 新用户第一次进账本时不再面对 10 个入口，也不需要先理解「记账模式」和模块的关系。
