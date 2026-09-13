@@ -1032,7 +1032,7 @@ export function Transactions() {
                 <button onClick={() => setEditingCategory('new')} style={button}>+ 分类</button>
                 <button onClick={() => setEditingPayee('new')} style={button}>+ 商户</button>
                 <button onClick={() => setEditingSplit('new')} style={button}>+ 拆分</button>
-                <button onClick={openNewTransaction} style={primary}>{usesAccounts ? '+ 记账' : '+ 记支出'}</button>
+                <button onClick={openNewTransaction} className="zc-header-primary" style={primary}>{usesAccounts ? '+ 记账' : '+ 记支出'}</button>
               </div>
             </div>
             <div style={{ marginBottom: 14 }}>

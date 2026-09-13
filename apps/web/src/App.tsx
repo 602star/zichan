@@ -832,9 +832,24 @@ function MobileNavigation(props: {
   const mainItems = visibleItems.slice(0, 3);
   const moreItems = visibleItems.slice(3);
   const moreIds = new Set(moreItems.map((item) => item.id));
-  const beforeQuick = mainItems.slice(0, 1);
-  const afterQuick = mainItems.slice(1);
   const shownIds = new Set(visibleItems.map((item) => item.id));
+  /*
+   * The quick action owns the exact middle column, and 日常收支 sits directly to
+   * its left, so the two most-used targets share the centre of the bar.
+   *
+   * Previously the quick action was the second of five equal columns (20% of the
+   * width) while 日常收支 took the first - the primary action sat off-centre and
+   * the bar read as lopsided. The equal columns themselves are load-bearing for
+   * the centring, so the count stays `items + quick + more`.
+   */
+  const columnCount = mainItems.length + 2;
+  const leftCount = Math.max(0, Math.min(Math.floor(columnCount / 2), mainItems.length));
+  const primary = mainItems.find((item) => item.id === 'transactions');
+  const others = mainItems.filter((item) => item !== primary);
+  const beforeQuick = primary && leftCount > 0
+    ? [...others.slice(0, leftCount - 1), primary]
+    : others.slice(0, leftCount);
+  const afterQuick = mainItems.filter((item) => !beforeQuick.includes(item));
   // Modules the user turned off. Surfacing them here means a hidden module does
   // not require a detour through 设置, and hidden modules are never force-added
   // to the drawer grid above.
@@ -844,7 +859,7 @@ function MobileNavigation(props: {
       <nav
         className="zc-mobile-bottom-nav"
         aria-label="移动端主导航"
-        style={{ gridTemplateColumns: `repeat(${mainItems.length + 2}, minmax(0, 1fr))` }}
+        style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
       >
         {beforeQuick.map(({ id, icon }) => (
           <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>

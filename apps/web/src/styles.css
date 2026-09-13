@@ -1473,7 +1473,10 @@ input[type="radio"] {
     height: 42px;
     justify-content: center;
     margin-top: -18px;
-    border: 4px solid var(--bg);
+    /* The ring is the bar's own colour, not the page background. Against the
+       page tone it read as a grey halo around the button, which is what made a
+       geometrically round control look wrong. */
+    border: 4px solid var(--surface);
     border-radius: var(--r-round);
     background: var(--accent);
     color: #fff;
@@ -2005,11 +2008,28 @@ input[type="radio"] {
   }
 
   .zc-responsive-header > div:last-child {
-    justify-content: stretch !important;
+    justify-content: flex-start !important;
   }
 
+  /*
+   * Content-sized buttons that wrap, instead of five forced equal columns.
+   * Five equal columns at 320px leave 44px each while 「作废记录」needs 53px, so
+   * its label spilled past the button edge; at 360px two labels still did. The
+   * row already wraps, so sizing buttons to their content keeps every label
+   * whole and simply uses a second line on the narrowest phones.
+   */
   .zc-responsive-header > div:last-child > button {
-    flex: 1;
+    flex: 0 1 auto;
+  }
+
+  /*
+   * Five buttons need ~340px but a 390px phone offers ~324px inside the card, so
+   * the row wraps. Lead with the primary action so the first line always holds
+   * it and the maintenance buttons fall to the second. Desktop keeps the DOM
+   * order (primary last, right-aligned).
+   */
+  .zc-header-primary {
+    order: -1;
   }
 
   .zc-report-insight-grid {

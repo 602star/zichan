@@ -262,6 +262,57 @@ test('every screen keeps the phone/tablet layout contract across the device matr
     }
 
     expect(overBudget.join('\n')).toBe('');
+
+    /*
+     * The records header packed five actions into five forced equal columns.
+     * At 320px that left 44px per button while 「作废记录」needs 53px, so its
+     * label spilled past the button edge - the row has to size buttons to their
+     * content and wrap instead. Overlap at exactly the widths people hold.
+     */
+    await clickNav(page, '日常收支');
+    const overflowFailures = [];
+    for (const width of [320, 360, 390, 430]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.waitForTimeout(350);
+      const measured = await page.evaluate(() => {
+        const row = document.querySelector('.zc-responsive-header > div:last-child');
+        if (!row) return null;
+        const buttons = [...row.querySelectorAll('button')].map((button) => ({
+          label: (button.textContent || '').trim(),
+          overflow: button.scrollWidth - button.clientWidth,
+        }));
+        const quick = document.querySelector('.zc-mobile-quick > span');
+        const nav = document.querySelector('.zc-mobile-bottom-nav');
+        const quickRect = quick ? quick.getBoundingClientRect() : null;
+        const navRect = nav ? nav.getBoundingClientRect() : null;
+        return {
+          buttons,
+          quickOffset: quickRect && navRect
+            ? Math.round((quickRect.left + quickRect.right) / 2 - (navRect.left + navRect.right) / 2)
+            : null,
+          quickWidth: quickRect ? Math.round(quickRect.width) : null,
+          quickHeight: quickRect ? Math.round(quickRect.height) : null,
+          quickRadius: quick ? getComputedStyle(quick).borderRadius : null,
+        };
+      });
+      expect(measured, 'the records header must render its action row').not.toBeNull();
+      for (const button of measured.buttons) {
+        // 1px absorbs sub-pixel text measurement; anything more is real clipping.
+        if (button.overflow > 1) overflowFailures.push(`${width}px ${button.label}: ${button.overflow}px past its button`);
+      }
+      // The quick action is the primary target, so it belongs on the centre line,
+      // and it has to read as a circle rather than a rounded rectangle.
+      if (measured.quickOffset !== null && Math.abs(measured.quickOffset) > 2) {
+        overflowFailures.push(`${width}px: quick action sits ${measured.quickOffset}px off centre`);
+      }
+      if (measured.quickRadius !== '50%') {
+        overflowFailures.push(`${width}px: quick action radius is ${measured.quickRadius}, not a circle`);
+      }
+      if (measured.quickWidth !== measured.quickHeight) {
+        overflowFailures.push(`${width}px: quick action is ${measured.quickWidth}x${measured.quickHeight}, not round`);
+      }
+    }
+    expect(overflowFailures.join('\n')).toBe('');
   } finally {
     server.server.closeAllConnections();
     await server.close();
