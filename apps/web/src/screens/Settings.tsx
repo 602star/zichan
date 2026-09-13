@@ -12,6 +12,7 @@ import { DeviceSecurityPanel } from '../ui/DeviceSecurityPanel.js';
 import { LedgerProtectionPanel } from '../ui/LedgerProtectionPanel.js';
 import { AccountSecurityPanel } from '../ui/AccountSecurityPanel.js';
 import { accountProtection } from '../account-protection.js';
+import { ACCENTS, THEME_NAMES, THEMES, type ThemeId } from '../theme.js';
 import { PortableStoragePanel } from '../ui/PortableStoragePanel.js';
 import { allCategories, categoryIsHidden } from '../transactionMeta.js';
 import {
@@ -76,7 +77,7 @@ const LEDGER_MODES: [LedgerMode, string][] = [
   ['accounts', '账户记账 · 收支 + 转账 + 对账'],
   ['assets', '完整资产账本 · 投资/物品资产/游戏资产'],
 ];
-type SettingsTab = 'ledger' | 'account' | 'data';
+type SettingsTab = 'ledger' | 'account' | 'data' | 'appearance';
 /*
  * Settings used to be 13 groups / 95 controls / 7.3 phone screens tall, with
  * one-time maintenance (security, backup, self-check) sitting at the same level
@@ -90,6 +91,7 @@ const SETTINGS_TABS: [SettingsTab, string][] = [
   ['ledger', '记账'],
   ['account', '同步与账号'],
   ['data', '数据与安全'],
+  ['appearance', '外观'],
 ];
 type RemoteBackupRow = { profile: SyncConnection; backup: RemoteBackupArchive };
 type BackupPasswordRequest =
@@ -128,7 +130,7 @@ function BrowserAccountExit({ onExit }: { onExit: () => Promise<void> }) {
   </section>;
 }
 
-export function Settings() {
+export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme: ThemeId) => void }) {
   const { store, bump, storageBackend, dataLocation, firstUseMode, browserStoragePersistent, resetLocalData, exitAccount } = useStore();
   const snap = useSnapshot('settings');
   const [tab, setTab] = useState<SettingsTab>('ledger');
@@ -1121,6 +1123,41 @@ export function Settings() {
             : '重置会关闭当前数据库，并清空本机账本、附件、表单草稿、浏览器内备份、账本密钥和同步配置；外部目录或服务器副本不受影响。'}
           重新打开后需要再次设置本机数据密码，并从“空账本 / 导入备份 / 体验演示”中选择。
         </ConfirmDialog>
+      )}
+
+      {tab === 'appearance' && (
+        <section className="zc-section" aria-label="视觉方案">
+          <h2 className="zc-section-title">视觉方案</h2>
+          <p className="zc-caption">切换配色与强调色。只影响本机显示，不改变账本数据、同步内容或其它设备上的外观。移动端抽屉不再单独提供入口。</p>
+          <div role="radiogroup" aria-label="视觉方案" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
+            {(Object.keys(THEMES) as ThemeId[]).map((id) => (
+              <button
+                key={id}
+                type="button"
+                role="radio"
+                aria-checked={theme === id}
+                onClick={() => setTheme(id)}
+                style={{
+                  flex: '1 1 168px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  minHeight: 'var(--control-h)',
+                  padding: '0 14px',
+                  borderRadius: 'var(--r-sm)',
+                  cursor: 'pointer',
+                  background: 'var(--surface-2)',
+                  border: theme === id ? '2px solid var(--accent)' : '1px solid var(--border)',
+                  color: 'var(--text-primary)',
+                  fontWeight: 'var(--fw-medium)',
+                }}
+              >
+                <span aria-hidden="true" style={{ width: 18, height: 18, borderRadius: 'var(--r-round)', background: ACCENTS[id] }} />
+                {THEME_NAMES[id]}
+              </button>
+            ))}
+          </div>
+        </section>
       )}
     </div>
   );

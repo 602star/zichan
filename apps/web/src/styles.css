@@ -1187,8 +1187,7 @@ input[type="radio"] {
   }
 
   .zc-sidebar-brand-copy,
-  .zc-sidebar-nav-label,
-  .zc-sidebar-theme {
+  .zc-sidebar-nav-label {
     display: none !important;
   }
 
@@ -1603,8 +1602,7 @@ input[type="radio"] {
     grid-column: 1 / -1;
   }
 
-  .zc-mobile-drawer-actions,
-  .zc-mobile-theme-row {
+  .zc-mobile-drawer-actions {
     display: flex;
     gap: 8px;
     margin-top: 12px;
@@ -1617,24 +1615,6 @@ input[type="radio"] {
     background: var(--surface);
     color: var(--text-secondary);
     font-weight: var(--fw-bold);
-  }
-
-  .zc-mobile-theme-row button {
-    width: 44px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    background: var(--surface-2);
-  }
-
-  .zc-mobile-theme-row button.is-active {
-    border: 2px solid var(--accent);
-  }
-
-  .zc-mobile-theme-row span {
-    width: 18px;
-    height: 18px;
-    display: inline-block;
-    border-radius: var(--r-round);
   }
 
   .zc-backdrop {

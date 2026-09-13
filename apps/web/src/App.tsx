@@ -6,7 +6,7 @@ import { useStore } from './db/store.js';
 import { loadSnapshot, useSnapshot, type Snapshot } from './db/snapshot.js';
 import { baseAsset } from './db/derive.js';
 import { setBaseSymbol } from './format.js';
-import { THEMES, ACCENTS, THEME_NAMES, FONT_FAMILY, type ThemeId } from './theme.js';
+import { THEMES, FONT_FAMILY, type ThemeId } from './theme.js';
 import {
   BackupPassphraseRequiredError,
   describePreflight,
@@ -452,7 +452,7 @@ export function App() {
 
   return (
     <div className="zc-app-shell" style={rootStyle}>
-      <Sidebar screen={screen} setScreen={setScreen} theme={theme} setTheme={setTheme} onQuickTransaction={quickTransaction} ledgerMode={ledgerMode} navigation={navigation} />
+      <Sidebar screen={screen} setScreen={setScreen} onQuickTransaction={quickTransaction} ledgerMode={ledgerMode} navigation={navigation} />
       <main className="zc-app-main">
         <header className="zc-app-header" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -504,7 +504,7 @@ export function App() {
             {screen === 'history' && <History />}
             {screen === 'manage' && <Manage />}
             {screen === 'sync' && <Sync />}
-            {screen === 'settings' && <Settings />}
+            {screen === 'settings' && <Settings theme={theme} setTheme={setTheme} />}
           </Suspense>
         </div>
       </main>
@@ -516,8 +516,6 @@ export function App() {
         onQuickTransaction={quickTransaction}
         onExport={() => void doExport()}
         onImport={() => fileRef.current?.click()}
-        theme={theme}
-        setTheme={setTheme}
         storageLabel={storageBackend === 'native-sqlite' ? '原生 SQLite' : '浏览器 IndexedDB'}
         dataLocation={dataLocation}
         reportCurrency={base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}
@@ -666,13 +664,11 @@ function ImportStat({ label, value }: { label: string; value: number }) {
 function Sidebar(props: {
   screen: ScreenId;
   setScreen: (s: ScreenId) => void;
-  theme: ThemeId;
-  setTheme: (t: ThemeId) => void;
   onQuickTransaction: () => void;
   ledgerMode: LedgerMode;
   navigation: NavigationPreferences;
 }) {
-  const { screen, setScreen, theme, setTheme, onQuickTransaction, ledgerMode, navigation } = props;
+  const { screen, setScreen, onQuickTransaction, ledgerMode, navigation } = props;
   const mainNav = orderedNavigationItems(navigation);
   return (
     <aside className="zc-sidebar" style={{
@@ -768,31 +764,6 @@ function Sidebar(props: {
       </button>
 
       <div style={{ flex: 1 }} />
-
-      <div className="zc-sidebar-theme" style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 11 }}>
-        <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', letterSpacing: 0, padding: '0 8px' }}>
-          视觉方案对比
-        </div>
-        <div style={{ display: 'flex', gap: 8, padding: '0 6px' }}>
-          {(Object.keys(THEMES) as ThemeId[]).map((id) => (
-            <button
-              key={id}
-              onClick={() => setTheme(id)}
-              title={THEME_NAMES[id]}
-              style={{
-                flex: 1, height: 40, borderRadius: 'var(--r-sm)', cursor: 'pointer', display: 'flex',
-                alignItems: 'center', justifyContent: 'center', background: 'var(--surface-2)',
-                border: theme === id ? '2px solid var(--accent)' : '1px solid var(--border)',
-              }}
-            >
-              <span style={{ width: 18, height: 18, borderRadius: 'var(--r-round)', background: ACCENTS[id] }} />
-            </button>
-          ))}
-        </div>
-        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '0 8px', fontWeight: 'var(--fw-medium)' }}>
-          {THEME_NAMES[theme]}
-        </div>
-      </div>
     </aside>
   );
 }
@@ -805,8 +776,6 @@ function MobileNavigation(props: {
   onQuickTransaction: () => void;
   onExport: () => void;
   onImport: () => void;
-  theme: ThemeId;
-  setTheme: (theme: ThemeId) => void;
   storageLabel: string;
   dataLocation: string;
   reportCurrency: string;
@@ -920,11 +889,6 @@ function MobileNavigation(props: {
             <div className="zc-mobile-drawer-actions">
               <button onClick={() => { props.onMoreOpen(false); props.onExport(); }}>导出备份</button>
               <button onClick={() => { props.onMoreOpen(false); props.onImport(); }}>导入备份</button>
-            </div>
-            <div className="zc-mobile-theme-row">
-              {(Object.keys(THEMES) as ThemeId[]).map((id) => (
-                <button key={id} aria-label={THEME_NAMES[id]} title={THEME_NAMES[id]} className={props.theme === id ? 'is-active' : ''} onClick={() => props.setTheme(id)}><span style={{ background: ACCENTS[id] }} /></button>
-              ))}
             </div>
         </DialogShell>
       )}
