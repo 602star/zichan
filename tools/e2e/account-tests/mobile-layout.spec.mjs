@@ -352,12 +352,30 @@ test('every screen keeps the phone/tablet layout contract across the device matr
     const desktopQuick = await page.evaluate(() => {
       const rail = document.querySelector('.zc-sidebar-quick-rail');
       const inline = document.querySelector('.zc-sidebar-quick-inline');
+      const inlineRect = inline ? inline.getBoundingClientRect() : null;
       return {
         railVisible: rail ? rail.getBoundingClientRect().width > 0 : false,
         inlineVisible: inline ? getComputedStyle(inline).display !== 'none' : false,
+        inlineWidth: inlineRect ? Math.round(inlineRect.width) : null,
+        inlineHeight: inlineRect ? Math.round(inlineRect.height) : null,
+        inlineRadius: inline ? getComputedStyle(inline).borderRadius : null,
       };
     });
-    expect(desktopQuick).toEqual({ railVisible: false, inlineVisible: true });
+    expect(desktopQuick.railVisible).toBe(false);
+    expect(desktopQuick.inlineVisible).toBe(true);
+    /*
+     * Shape, not just presence. This assertion used to stop at `inlineVisible`,
+     * which is how a 34x38 oval survived here: the global
+     * `button { min-height: var(--control-h) }` baseline outranked the declared
+     * height, and `@media (pointer: coarse) { button { min-width: 44px } }` then
+     * widened it the other way on touch. A circle is only round if the box is
+     * square, so assert the box.
+     */
+    expect(desktopQuick.inlineRadius).toBe('50%');
+    expect({
+      width: desktopQuick.inlineWidth,
+      height: desktopQuick.inlineHeight,
+    }).toEqual({ width: 44, height: 44 });
   } finally {
     server.server.closeAllConnections();
     await server.close();

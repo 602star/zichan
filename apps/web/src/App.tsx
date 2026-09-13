@@ -725,18 +725,11 @@ function Sidebar(props: {
                   title="快速记账"
                   onClick={onQuickTransaction}
                   style={{
-                    width: 34,
-                    height: 34,
-                    marginRight: 5,
-                    borderRadius: 'var(--r-pill)',
+                    /* Geometry lives in `.zc-sidebar-quick-inline` so the box
+                       stays square; only the active tint is dynamic. */
                     border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
                     background: active ? 'var(--accent)' : 'var(--surface-2)',
                     color: active ? '#fff' : 'var(--accent)',
-                    fontSize: 'var(--fs-heading)',
-                    lineHeight: 1,
-                    fontWeight: 'var(--fw-bold)',
-                    cursor: 'pointer',
-                    flex: '0 0 auto',
                   }}
                 >
                   +

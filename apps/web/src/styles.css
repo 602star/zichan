@@ -527,6 +527,52 @@ button,
   display: none;
 }
 
+/*
+ * Round quick action inside the 日常收支 nav row of the full desktop sidebar.
+ *
+ * Every axis is sized from `--control-h` - width, height, and both floors - so
+ * the box can only ever be square, because a square is the only box that renders
+ * as a true circle. Sizing it with a plain width/height pair is not enough: the
+ * global `button { min-height: var(--control-h) }` baseline outranks a `height`
+ * declaration and stretched it into a 34x38 oval, and
+ * `@media (pointer: coarse) { button { min-width: 44px } }` then widened it to
+ * 44x34 on touch. Both left a control that was meant to be a circle looking
+ * like an egg.
+ */
+.zc-sidebar-quick-inline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--control-h);
+  height: var(--control-h);
+  min-width: var(--control-h);
+  min-height: var(--control-h);
+  padding: 0;
+  margin-right: 5px;
+  border-radius: var(--r-round);
+  font-size: var(--fs-heading);
+  line-height: 1;
+  font-weight: var(--fw-bold);
+  cursor: pointer;
+}
+
+/*
+ * Hold the circle at the 44px touch baseline on a coarse pointer. The base rule
+ * above sizes every axis from `--control-h`, which is 38px, so without this the
+ * control would sit under the touch target the rest of the shell guarantees.
+ * Width and height move together, because widening one axis alone is exactly what
+ * turned this control into an oval.
+ */
+@media (pointer: coarse) {
+  .zc-sidebar-quick-inline {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
 .zc-app-header {
   min-height: 82px;
   padding: 20px 34px;
