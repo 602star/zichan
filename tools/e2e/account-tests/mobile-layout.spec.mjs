@@ -313,6 +313,51 @@ test('every screen keeps the phone/tablet layout contract across the device matr
       }
     }
     expect(overflowFailures.join('\n')).toBe('');
+
+    /*
+     * Same quick action, tablet rail. It used to be an 8px rounded rectangle
+     * stretched to the rail width, so the control that is a circle on the phone
+     * bar read as a different object here. Assert the circle survives the rail
+     * too, and that the desktop sidebar still uses its own full-width variant
+     * instead of leaving a stray circle behind.
+     */
+    const railFailures = [];
+    for (const width of [768, 900, 1024, 1100, 1199]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.waitForTimeout(350);
+      const rail = await page.evaluate(() => {
+        const button = document.querySelector('.zc-sidebar-quick-rail');
+        const sidebar = document.querySelector('.zc-sidebar');
+        if (!button || !sidebar) return null;
+        const rect = button.getBoundingClientRect();
+        return {
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          radius: getComputedStyle(button).borderRadius,
+          offset: Math.round((rect.left + rect.right) / 2
+            - (sidebar.getBoundingClientRect().left + sidebar.getBoundingClientRect().right) / 2),
+        };
+      });
+      expect(rail, 'the tablet rail must render its quick action').not.toBeNull();
+      if (rail.radius !== '50%') railFailures.push(`${width}px: rail quick action radius is ${rail.radius}, not a circle`);
+      if (rail.width !== rail.height) railFailures.push(`${width}px: rail quick action is ${rail.width}x${rail.height}, not round`);
+      // 44px is the minimum touch target the rail is built around.
+      if (rail.height < 44) railFailures.push(`${width}px: rail quick action is only ${rail.height}px tall`);
+      if (Math.abs(rail.offset) > 2) railFailures.push(`${width}px: rail quick action sits ${rail.offset}px off centre`);
+    }
+    expect(railFailures.join('\n')).toBe('');
+
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.waitForTimeout(350);
+    const desktopQuick = await page.evaluate(() => {
+      const rail = document.querySelector('.zc-sidebar-quick-rail');
+      const inline = document.querySelector('.zc-sidebar-quick-inline');
+      return {
+        railVisible: rail ? rail.getBoundingClientRect().width > 0 : false,
+        inlineVisible: inline ? getComputedStyle(inline).display !== 'none' : false,
+      };
+    });
+    expect(desktopQuick).toEqual({ railVisible: false, inlineVisible: true });
   } finally {
     server.server.closeAllConnections();
     await server.close();

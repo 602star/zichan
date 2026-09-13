@@ -483,16 +483,34 @@ button,
   overflow-y: auto;
 }
 
-/* Rail-only quick action: hidden while the sidebar shows full labels. */
-.zc-sidebar-quick-rail {
+/*
+ * Rail-only quick action: hidden while the sidebar shows its full-width variant.
+ * The circle itself lives on the button below so the wrapper can stack the
+ * tablet-portrait caption underneath it.
+ */
+.zc-sidebar-quick {
   display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+/*
+ * A circle at every breakpoint, matching the phone bar. This used to be an 8px
+ * rounded rectangle stretched to the rail width, so one control read as a
+ * different object on tablet and on phone.
+ */
+.zc-sidebar-quick-rail {
+  display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  margin-top: 10px;
-  min-height: 44px;
-  border: 1px solid var(--accent);
-  border-radius: var(--r-sm);
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-round);
   background: var(--accent);
   color: #fff;
   font-weight: var(--fw-bold);
@@ -500,8 +518,13 @@ button,
 }
 
 .zc-sidebar-quick-rail-icon {
-  font-size: var(--fs-title);
+  font-size: var(--fs-display);
   line-height: 1;
+}
+
+/* Off unless the surrounding rail labels its own items; see the markup note. */
+.zc-sidebar-quick-rail-label {
+  display: none;
 }
 
 .zc-app-header {
@@ -1205,12 +1228,8 @@ input[type="radio"] {
     display: none !important;
   }
 
-  .zc-sidebar-quick-rail {
+  .zc-sidebar-quick {
     display: flex;
-  }
-
-  .zc-sidebar-quick-rail-label {
-    display: none;
   }
 
   .zc-app-header {
@@ -1318,14 +1337,11 @@ input[type="radio"] {
     line-height: 1.2;
   }
 
-  .zc-sidebar-quick-rail {
-    flex-direction: column;
-    gap: 2px;
-  }
-
   .zc-sidebar-quick-rail-label {
     display: block;
     font-size: var(--fs-meta);
+    line-height: 1.2;
+    text-align: center;
   }
 }
 

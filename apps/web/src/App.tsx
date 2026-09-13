@@ -752,16 +752,25 @@ function Sidebar(props: {
        * element per breakpoint (rather than shrinking a single button to 24px
        * inside the icon rail) keeps the tap target at 44px on tablets.
        */}
-      <button
-        type="button"
-        className="zc-sidebar-quick-rail"
-        aria-label="快速记账"
-        title="快速记账"
-        onClick={onQuickTransaction}
-      >
-        <span className="zc-sidebar-quick-rail-icon" aria-hidden="true">＋</span>
-        <span className="zc-sidebar-quick-rail-label">快速记账</span>
-      </button>
+      <div className="zc-sidebar-quick">
+        <button
+          type="button"
+          className="zc-sidebar-quick-rail"
+          aria-label="快速记账"
+          title="快速记账"
+          onClick={onQuickTransaction}
+        >
+          <span className="zc-sidebar-quick-rail-icon" aria-hidden="true">＋</span>
+        </button>
+        {/*
+         * A caption, not a second accessible name - the button above already
+         * carries 快速记账. It is shown only where the rail also labels its nav
+         * items, so the quick action does not become the one unlabelled control
+         * on an otherwise labelled rail. Inside the circle it could not exist at
+         * all, which is why it moved out here.
+         */}
+        <span className="zc-sidebar-quick-rail-label" aria-hidden="true">快速记账</span>
+      </div>
 
       <div style={{ flex: 1 }} />
     </aside>
