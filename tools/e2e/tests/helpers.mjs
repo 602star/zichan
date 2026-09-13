@@ -41,12 +41,12 @@ export async function openLedger(page, options = {}) {
   }
 
   if (await create.isVisible().catch(() => false)) {
-    await page.getByLabel('本机数据密码').fill(DEVICE_PASSWORD);
+    await page.getByLabel('账本密码', { exact: true }).fill(DEVICE_PASSWORD);
     await page.getByLabel('再输入一次').fill(DEVICE_PASSWORD);
     await create.click();
   } else {
     if (await unlock.isVisible().catch(() => false)) {
-      await page.getByLabel('本机数据密码').fill(DEVICE_PASSWORD);
+      await page.getByLabel('账本密码', { exact: true }).fill(DEVICE_PASSWORD);
       await unlock.click();
     }
   }

@@ -34,6 +34,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
     await page.getByRole('tab', { name: '同步与账号' }).click();
     await page.getByRole('button', { name: '管理同步服务器', exact: true }).click();
+    await page.getByRole('button', { name: /^同步设置/ }).click();
     await expect(page.getByRole('button', { name: '新增服务器' })).toBeVisible();
     await expect(page.getByLabel('完整服务器地址')).toBeDisabled();
     await expect(page.getByLabel('用户名', { exact: true })).toBeDisabled();
@@ -122,6 +123,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
     await page.getByRole('tab', { name: '同步与账号' }).click();
     await page.getByRole('button', { name: '管理同步服务器', exact: true }).click();
+    await page.getByRole('button', { name: /^同步设置/ }).click();
     await expect(page.getByLabel('启用 本机副本', { exact: true })).toBeChecked();
     await expect(page.getByLabel('启用 公网副本', { exact: true })).not.toBeChecked();
     const storage = await page.evaluate(() => ({ local: JSON.stringify({ ...localStorage }), session: JSON.stringify({ ...sessionStorage }) }));
@@ -143,6 +145,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
     await page.getByRole('tab', { name: '同步与账号' }).click();
     await page.getByRole('button', { name: '管理同步服务器', exact: true }).click();
+    await page.getByRole('button', { name: /^同步设置/ }).click();
     await expect(page.getByLabel('启用 本机副本', { exact: true })).toBeChecked();
     await expect(page.getByLabel('启用 公网副本', { exact: true })).not.toBeChecked();
     expect(await page.evaluate(() => JSON.stringify({ ...sessionStorage }))).not.toContain(remoteSession.refreshToken);

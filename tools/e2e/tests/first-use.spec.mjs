@@ -12,7 +12,7 @@ test('ignores old local mode and key envelopes and always starts at account logi
   await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
   await expect(page.getByRole('button', { name: /^纯本地使用/ })).toHaveCount(0);
   await expect(page.getByLabel('完整服务器地址')).toHaveCount(0);
-  await expect(page.getByLabel('本机数据密码', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('账本密码', { exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => indexedDB.databases())).toEqual([]);
   await openLedger(page);
   expect(await page.evaluate(() => localStorage.getItem('zichan.device.storageEnvelope.v1'))).toBe('legacy-envelope-not-to-read');
@@ -35,7 +35,7 @@ test('does not open a cached ledger after the account session is revoked', async
   await context.clearCookies();
   await page.reload();
   await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
-  await expect(page.getByLabel('本机数据密码', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('账本密码', { exact: true })).toHaveCount(0);
   await expect(page.locator('.zc-app-shell')).toHaveCount(0);
 });
 
@@ -45,6 +45,13 @@ test('keeps administration separate while allowing additional sync servers', asy
   await page.getByLabel('在侧边栏显示同步').click();
   await expect(page.getByLabel('在侧边栏显示同步')).toBeChecked();
   await page.locator('.zc-sidebar').getByRole('button', { name: /同步$/ }).click();
+  /*
+   * The screen opens on the summary alone. Servers, keys and diagnostics live in
+   * the two layers below it, so the server table must NOT be reachable yet.
+   */
+  await expect(page.getByRole('button', { name: '新增服务器', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: /^同步设置/ }).click();
+  await expect(page.getByRole('button', { name: '新增服务器', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '新增服务器', exact: true })).toBeVisible();
   await expect(page.getByLabel('完整服务器地址')).toBeDisabled();
   await expect(page.getByLabel('用户名', { exact: true })).toBeDisabled();

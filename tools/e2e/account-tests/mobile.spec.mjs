@@ -42,6 +42,9 @@ for (const width of [360, 390]) test(`mobile ${width}px supports login, initiali
     await page.getByRole('checkbox', { name: /显示同步/ }).click();
     await expect(page.getByRole('checkbox', { name: /显示同步/ })).toBeChecked();
     await nav.getByRole('button', { name: /同步$/ }).click();
+    /* 账本保护 moved into the 高级设置 layer; the summary renders on its own. */
+    await expect(page.getByRole('region', { name: '账本保护' })).toHaveCount(0);
+    await page.getByRole('button', { name: /^高级设置/ }).click();
     await expect(page.getByRole('region', { name: '账本保护' })).toBeVisible();
     await fits();
     await page.screenshot({ path: testInfo.outputPath('mobile-sync.png') });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   requestJson, aggregateKey, registerAccount, loginAccount, fetchAuthMe, fetchLedgerKeyEnvelope, checkConsistency, recomputeCaches, resolveConflictGroup,
   type StoredSyncCommit, type SyncConflictBranchRow, type SyncConflictGroupRow,
@@ -416,6 +416,20 @@ export function Sync() {
   const [addressParts, setAddressParts] = useState<SyncUrlParts>(() => parseSyncBaseUrl(selected?.baseUrl ?? syncAddressPresetUrl('current')));
   const [addressError, setAddressError] = useState('');
   const [advancedAddress, setAdvancedAddress] = useState(false);
+  /*
+   * Progressive disclosure for this screen. Both layers start closed: the first
+   * thing someone opening 同步 needs is the state of their data, not a server
+   * console. A beginner with one device and one server never opens either.
+   */
+  const [showSettings, setShowSettings] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  /*
+   * The conflict box carries a full per-field merge editor. It is already gated
+   * on `conflicts.length > 0`, but when it does render it is taller than the
+   * rest of the page put together, so keep it behind an alert row that states
+   * the count first and let the reader choose when to descend into it.
+   */
+  const [showConflicts, setShowConflicts] = useState(false);
 
   useEffect(() => {
     saveSyncConnections(profiles);
@@ -653,7 +667,7 @@ export function Sync() {
 
   async function createOrUnlockLedgerKey() {
     if (ledgerPassword !== ledgerPasswordConfirm && !ledgerKey.initialized) {
-      setLedgerKeyError('两次输入的账本加密密码不一致');
+      setLedgerKeyError('两次输入的账本密码不一致');
       return;
     }
     setLedgerKeyBusy(true);
@@ -673,7 +687,7 @@ export function Sync() {
 
   async function changeLedgerKeyPassword() {
     if (newLedgerPassword !== newLedgerPasswordConfirm) {
-      setLedgerKeyError('两次输入的新账本密码不一致');
+      setLedgerKeyError('两次输入的账本密码不一致');
       return;
     }
     setLedgerKeyBusy(true);
@@ -692,7 +706,7 @@ export function Sync() {
 
   async function rotateLedgerDataKeyNow() {
     if (newLedgerPassword.length < 8) {
-      setLedgerKeyError('轮换时请输入当前要继续使用的账本加密密码');
+      setLedgerKeyError('轮换时请输入当前要继续使用的账本密码');
       return;
     }
     setLedgerKeyBusy(true);
@@ -717,7 +731,7 @@ export function Sync() {
       const envelope = await fetchLedgerKeyEnvelope(buildBaseUrl(profile), token);
       if (!envelope) throw new Error('该服务器尚未保存账本密钥包，请先从已有设备同步一次');
       adoptLedgerKeyEnvelope(envelope);
-      setSyncNotice(`已从“${profile.alias}”取得加密密钥包，请输入账本加密密码解锁。`);
+      setSyncNotice(`已从“${profile.alias}”取得加密密钥包，请输入账本密码解锁。`);
     } catch (error) {
       setLedgerKeyError(`获取失败：${msg(error)}`);
     } finally {
@@ -1390,8 +1404,13 @@ export function Sync() {
   const cred = selected ? credentials[selected.id] ?? { password: '', inviteCode: '' } : { password: '', inviteCode: '' };
   const selectedHealth = selected ? healthByConnection[selected.id] : undefined;
   const enabledProfiles = profiles.filter((p) => p.enabled);
-  const onlineProfiles = profiles.filter((p) => p.status === 'online');
-  const syncReadyCount = enabledProfiles.filter((p) => hasAccountSession(credentials[p.id])).length;
+  /*
+   * Only servers known to be unreachable are worth naming to the user. An
+   * `unchecked` server is not something anyone can act on, which is why the old
+   * summary tiles ("在线服务器 1", "已登录账号 1") read as noise for a healthy
+   * account: they only ever restated what the user had just configured.
+   */
+  const unreachableProfiles = enabledProfiles.filter((p) => p.status === 'offline' || p.status === 'identity_changed');
   const filteredConflicts = conflicts.filter((conflict) => isDateInRange(localDateOfInstant(conflict.at), conflictRange));
   const selectedRemoteLedgerId = ledgerMismatchId(selected?.lastError);
   const exportInvalidCommits = () => {
@@ -1404,92 +1423,123 @@ export function Sync() {
     URL.revokeObjectURL(url);
   };
 
+  const needsAttention = conflicts.length + invalidCommits.length;
+  const unreachableNote = unreachableProfiles.length
+    ? ` · ${unreachableProfiles.length} 台服务器暂时连不上`
+    : '';
+  const syncStatus = enabledProfiles.length === 0
+    ? {
+      label: '尚未配置同步',
+      tone: 'var(--text-secondary)',
+      detail: '目前数据只保存在这台设备上。配置一台服务器后即可在多台设备之间同步；服务器只保存密文，读不到你的账目。',
+    }
+    : needsAttention > 0
+      ? {
+        label: `有 ${needsAttention} 项需要处理`,
+        tone: 'var(--negative)',
+        detail: '下面列出的内容需要你确认后才能继续同步；在此之前，其他设备看不到这些改动。',
+      }
+      : lastSyncAt
+        ? {
+          label: '已同步',
+          tone: 'var(--positive)',
+          detail: `数据已加密并保存在 ${enabledProfiles.length} 台服务器上 · 上次同步 ${lastSyncAt}${unreachableNote}`,
+        }
+        : {
+          label: '等待首次同步',
+          tone: unreachableProfiles.length ? 'var(--negative)' : 'var(--text-secondary)',
+          detail: `已配置 ${enabledProfiles.length} 台服务器。点“同步全部启用服务器”开始，之后会自动同步。${unreachableNote}`,
+        };
+
+  const settingsSummary = enabledProfiles.length
+    ? `${enabledProfiles.length} 台服务器 · ${autoSyncEnabled ? `每 ${autoSyncMinutes} 分钟自动同步` : '未开启自动同步'}`
+    : '还没有服务器';
+
+  /*
+   * The ledger-key card is rendered in two different layers: as a blocking first
+   * step while the key is locked (nothing can sync without it), and as key
+   * management under 高级设置 once it is unlocked. Rendered from one definition
+   * so the same password fields can never appear twice at once.
+   */
+  const ledgerKeyCard = (
+    <div style={card}>
+      <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>账本密码</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4, lineHeight: 1.6 }}>
+            这里要填的就是创建账本时设置的“账本密码”，它用于解锁账本数据密钥。服务器账号密码是另一个，填在“同步设置”里。密钥正文只保留在当前会话内存中。
+          </div>
+        </div>
+        <span style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: ledgerKey.unlocked ? 'var(--positive)' : 'var(--fg-subtle)' }}>
+          {ledgerKey.unlocked ? `已解锁 · 第 ${ledgerKey.generation} 代` : ledgerKey.initialized ? '已初始化 · 已锁定' : '未初始化'}
+        </span>
+      </div>
+      {!ledgerKey.unlocked ? (
+        <div style={{ display: 'flex', alignItems: 'end', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 230, flex: '1 1 260px' }}><label className="zc-label">账本密码</label><input aria-label="账本密码" className="zc-input" type="password" autoComplete="off" value={ledgerPassword} onChange={(event) => setLedgerPassword(event.target.value)} /></div>
+          {!ledgerKey.initialized && <div style={{ minWidth: 230, flex: '1 1 260px' }}><label className="zc-label">确认账本密码</label><input aria-label="确认账本密码" className="zc-input" type="password" autoComplete="off" value={ledgerPasswordConfirm} onChange={(event) => setLedgerPasswordConfirm(event.target.value)} /></div>}
+          <button type="button" onClick={() => void createOrUnlockLedgerKey()} disabled={ledgerKeyBusy || ledgerPassword.length < 8 || (!ledgerKey.initialized && ledgerPassword !== ledgerPasswordConfirm)} style={primary}>{ledgerKeyBusy ? '处理中…' : ledgerKey.initialized ? '解锁' : '创建密钥包'}</button>
+          {selected && <button type="button" onClick={() => void fetchRemoteLedgerKey(selected)} disabled={ledgerKeyBusy || !selected.username.trim() || !hasAccountSession(credentials[selected.id])} style={outline}>从当前服务器获取</button>}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'end', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 220, flex: '1 1 240px' }}><label className="zc-label">新的账本密码</label><input aria-label="新的账本密码" className="zc-input" type="password" autoComplete="new-password" value={newLedgerPassword} onChange={(event) => setNewLedgerPassword(event.target.value)} /></div>
+          <div style={{ minWidth: 220, flex: '1 1 240px' }}><label className="zc-label">确认新的账本密码</label><input aria-label="确认新的账本密码" className="zc-input" type="password" autoComplete="new-password" value={newLedgerPasswordConfirm} onChange={(event) => setNewLedgerPasswordConfirm(event.target.value)} /></div>
+          <button type="button" onClick={() => void changeLedgerKeyPassword()} disabled={ledgerKeyBusy || newLedgerPassword.length < 8 || newLedgerPassword !== newLedgerPasswordConfirm} style={outline}>修改账本密码</button>
+          <button type="button" onClick={() => void rotateLedgerDataKeyNow()} disabled={ledgerKeyBusy || newLedgerPassword.length < 8} style={outline}>轮换数据密钥</button>
+          <button type="button" onClick={() => lockLedgerKey()} disabled={ledgerKeyBusy} style={outline}>锁定</button>
+        </div>
+      )}
+      {ledgerKeyError && <div style={{ marginTop: 10, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{ledgerKeyError}</div>}
+      {/*
+        * Keyring and ledger identifiers are for support and diagnostics, so they
+        * belong with key management rather than next to the unlock field a
+        * beginner is trying to fill in.
+        */}
+      {ledgerKey.unlocked && ledgerKey.keyringId && <div style={{ marginTop: 10, color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' }}>密钥包 {ledgerKey.keyringId} · 账本 {ledgerKey.ledgerId}</div>}
+    </div>
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 980 }}>
         <>
           <div style={card}>
-            <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginBottom: 14 }}>
+            <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
               <div>
-                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>同步中心</div>
-                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
-                  解锁账本密钥并验证服务器账号后，同步全部启用服务器；冲突会进入下方冲突箱。
-                </div>
+                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>同步状态</div>
+                <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)', color: syncStatus.tone, marginTop: 6 }}>{syncStatus.label}</div>
+                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4, lineHeight: 1.6 }}>{syncStatus.detail}</div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 <button onClick={() => void doSync()} disabled={busy || !ledgerKey.unlocked || enabledProfiles.length === 0} style={primary}>{busy ? '同步中…' : '同步全部启用服务器'}</button>
               </div>
             </div>
-            <div className="zc-sync-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10 }}>
-              <SyncTile label="启用服务器" value={`${enabledProfiles.length} / ${profiles.length}`} tone={enabledProfiles.length ? 'var(--positive)' : 'var(--negative)'} />
-              <SyncTile label="在线服务器" value={`${onlineProfiles.length}`} tone={onlineProfiles.length ? 'var(--positive)' : 'var(--fg-subtle)'} />
-              <SyncTile label="已登录账号" value={`${syncReadyCount}`} tone={syncReadyCount ? 'var(--positive)' : 'var(--fg-subtle)'} />
-              <SyncTile label="待处理冲突" value={`${conflicts.length}`} tone={conflicts.length ? 'var(--negative)' : 'var(--positive)'} />
-              <SyncTile label="隔离提交" value={`${invalidCommits.length}`} tone={invalidCommits.length ? 'var(--negative)' : 'var(--positive)'} />
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>
-                <input type="checkbox" checked={autoSyncEnabled} onChange={(event) => setAutoSyncEnabled(event.target.checked)} />
-                自动同步
-              </label>
-              <select aria-label="自动同步间隔" className="zc-select" value={autoSyncMinutes} onChange={(event) => setAutoSyncMinutes(Number(event.target.value))} disabled={!autoSyncEnabled} style={{ width: 120 }}>
-                {[1, 5, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分钟</option>)}
-              </select>
-              <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>{autoSyncStatus}</span>
-            </div>
             {enabledProfiles.length === 0 && (
-              <div style={{ marginTop: 12, fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-medium)' }}>
-                当前没有启用服务器。勾选服务器后，“同步全部启用服务器”才会运行正式远程同步。
+              <div style={{ marginTop: 14 }}>
+                <button type="button" onClick={() => setShowSettings(true)} style={outline}>配置同步服务器</button>
               </div>
             )}
           </div>
 
-          {selected && <ServerCustodyPanel key={`${selected.id}:${selected.username}:${selected.baseUrl}`} profile={selected} />}
-          {accountProtection() ? <LedgerProtectionPanel store={store} /> : (
-          <div style={card}>
-            <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
-              <div>
-                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>本地账本加密</div>
-                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
-                  服务器账号密码只用于登录；此处密码解锁账本数据密钥。密钥正文只保留在当前会话内存中。
-                </div>
-              </div>
-              <span style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: ledgerKey.unlocked ? 'var(--positive)' : 'var(--fg-subtle)' }}>
-                {ledgerKey.unlocked ? `已解锁 · 第 ${ledgerKey.generation} 代` : ledgerKey.initialized ? '已初始化 · 已锁定' : '未初始化'}
-              </span>
-            </div>
-            {!ledgerKey.unlocked ? (
-              <div style={{ display: 'flex', alignItems: 'end', gap: 10, flexWrap: 'wrap' }}>
-                <div style={{ minWidth: 230, flex: '1 1 260px' }}><label className="zc-label">账本加密密码</label><input aria-label="账本加密密码" className="zc-input" type="password" autoComplete="off" value={ledgerPassword} onChange={(event) => setLedgerPassword(event.target.value)} /></div>
-                {!ledgerKey.initialized && <div style={{ minWidth: 230, flex: '1 1 260px' }}><label className="zc-label">确认账本加密密码</label><input aria-label="确认账本加密密码" className="zc-input" type="password" autoComplete="off" value={ledgerPasswordConfirm} onChange={(event) => setLedgerPasswordConfirm(event.target.value)} /></div>}
-                <button type="button" onClick={() => void createOrUnlockLedgerKey()} disabled={ledgerKeyBusy || ledgerPassword.length < 8 || (!ledgerKey.initialized && ledgerPassword !== ledgerPasswordConfirm)} style={primary}>{ledgerKeyBusy ? '处理中…' : ledgerKey.initialized ? '解锁' : '创建密钥包'}</button>
-                {selected && <button type="button" onClick={() => void fetchRemoteLedgerKey(selected)} disabled={ledgerKeyBusy || !selected.username.trim() || !hasAccountSession(credentials[selected.id])} style={outline}>从当前服务器获取</button>}
-              </div>
-            ) : (
-              <div style={{ display: 'flex', alignItems: 'end', gap: 10, flexWrap: 'wrap' }}>
-                <div style={{ minWidth: 220, flex: '1 1 240px' }}><label className="zc-label">新的或继续使用的账本密码</label><input aria-label="新的账本密码" className="zc-input" type="password" autoComplete="new-password" value={newLedgerPassword} onChange={(event) => setNewLedgerPassword(event.target.value)} /></div>
-                <div style={{ minWidth: 220, flex: '1 1 240px' }}><label className="zc-label">确认新密码</label><input aria-label="确认新的账本密码" className="zc-input" type="password" autoComplete="new-password" value={newLedgerPasswordConfirm} onChange={(event) => setNewLedgerPasswordConfirm(event.target.value)} /></div>
-                <button type="button" onClick={() => void changeLedgerKeyPassword()} disabled={ledgerKeyBusy || newLedgerPassword.length < 8 || newLedgerPassword !== newLedgerPasswordConfirm} style={outline}>修改密码</button>
-                <button type="button" onClick={() => void rotateLedgerDataKeyNow()} disabled={ledgerKeyBusy || newLedgerPassword.length < 8} style={outline}>轮换数据密钥</button>
-                <button type="button" onClick={() => lockLedgerKey()} disabled={ledgerKeyBusy} style={outline}>锁定</button>
-              </div>
-            )}
-            {ledgerKeyError && <div style={{ marginTop: 10, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{ledgerKeyError}</div>}
-            {ledgerKey.keyringId && <div style={{ marginTop: 10, color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' }}>密钥包 {ledgerKey.keyringId} · 账本 {ledgerKey.ledgerId}</div>}
-          </div>
-          )}
+          {/*
+            * locked ledger disables the sync button above, so the field that
+            * unlocks it has to be reachable without opening a collapsed section.
+            * Once unlocked this same card moves under 高级设置 as key management.
+            */}
+          {!accountProtection() && !ledgerKey.unlocked && ledgerKeyCard}
 
           {invalidCommits.length > 0 && (
             <div style={{ ...card, border: '1px solid var(--negative)' }}>
               <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 8 }}>
                 <div>
-                  <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>隔离提交 <span style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)' }}>{invalidCommits.length}</span></div>
-                  <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4 }}>这些提交未写入账本。修复来源设备的数据后再同步，或导出诊断信息排查。</div>
+                  <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>有 {invalidCommits.length} 条记录没能同步</div>
+                  <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4, lineHeight: 1.6 }}>这些记录没有写进账本，通常是来源设备的数据有问题。修好来源设备后再同步，或导出诊断信息排查。</div>
                 </div>
                 <button type="button" onClick={exportInvalidCommits} style={outline}>导出诊断 JSON</button>
               </div>
               <div className="zc-scroll-x">
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr><th style={thStyle}>提交</th><th style={thStyle}>来源设备</th><th style={thStyle}>时间</th><th style={thStyle}>失败原因</th></tr></thead>
+                  <thead><tr><th style={thStyle}>记录</th><th style={thStyle}>来源设备</th><th style={thStyle}>时间</th><th style={thStyle}>原因</th></tr></thead>
                   <tbody>
                     {invalidCommits.map((commit) => (
                       <tr key={commit.commitId}>
@@ -1505,12 +1555,134 @@ export function Sync() {
             </div>
           )}
 
+          {/*
+            * Conflicts are a problem, so the alert belongs in layer 1. The merge
+            * editor behind it is the most advanced thing on this screen and is
+            * taller than everything else combined, so it opens on demand instead
+            * of pushing the everyday status off screen.
+            */}
+          {conflicts.length > 0 && (
+            <div style={{ ...card, border: '1px solid var(--negative)' }}>
+              <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>冲突 <span style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)' }}>{filteredConflicts.length}/{conflicts.length}</span></div>
+                  <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4, lineHeight: 1.6 }}>
+                    有两台设备改动了同一条记录。两份都会保留，等你选出要用的那一份；选好后会自动生成一条新记录继续同步。
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <button type="button" onClick={exportConflicts} style={outline}>导出 JSON</button>
+                  <button type="button" onClick={() => setShowConflicts((value) => !value)} style={showConflicts ? outline : primary}>{showConflicts ? '收起' : '去处理'}</button>
+                </div>
+              </div>
+              {showConflicts && (
+                <>
+                  <div style={{ marginTop: 12, marginBottom: 12 }}><DateRangeBar value={conflictRange} onChange={setConflictRange} compact /></div>
+                  <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginBottom: 12 }}>
+                    冲突按原子提交分组，所有设备分支都会保留。可整项选择版本，也可逐字段组合，确认后会生成一条可继续同步的合并提交。
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    {filteredConflicts.map((c) => (
+                      <section key={c.id} style={{ borderTop: '1px solid var(--border)', padding: '16px 0' }}>
+                        <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 12, marginBottom: 12 }}>
+                          <div>
+                            <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>冲突组 {c.id.slice(0, 8)} · {conflictAggregates(c).length} 个聚合 · {c.remoteCommitIds.length} 个远端提交</div>
+                            <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 4 }}>
+                              {new Date(c.at).toLocaleString()} · {c.changedPaths.map((path) => path.split('.').map(fieldLabel).join(' / ')).join('，') || '因果分支冲突'}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                            <button disabled={busy} onClick={() => void keepLocal(c)} style={outline}>全部保留本机</button>
+                            <button disabled={busy} onClick={() => void keepSelected(c)} style={outline}>采用所选分支</button>
+                            <button disabled={busy} onClick={() => void mergeByFields(c)} style={primary}>按字段合并</button>
+                          </div>
+                        </div>
+                        {conflictAggregates(c).map((aggregate) => {
+                          const fields = conflictFields(aggregate.branches);
+                          const selectedId = selectedRevision(c, aggregate);
+                          const selectedPayload = aggregate.branches.find((branch) => branch.revisionId === selectedId)?.payload
+                            ?? aggregate.branches[0]?.payload
+                            ?? null;
+                          return (
+                            <div key={aggregate.key} style={{ padding: '12px 0', borderTop: '1px solid var(--border)' }}>
+                              <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                                <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{aggregateTitle(aggregate.type, aggregate.id, selectedPayload, snap)}</div>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>
+                                  整项采用
+                                  <select className="zc-select" value={selectedId} onChange={(event) => chooseBranch(c.id, aggregate.key, event.target.value)} style={{ height: 32, minWidth: 190 }}>
+                                    {aggregate.branches.map((branch, index) => <option key={branch.revisionId} value={branch.revisionId}>{branchLabel(branch, index)}</option>)}
+                                  </select>
+                                </label>
+                              </div>
+                              <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-caption)' }}>
+                                  <thead><tr>
+                                    <th style={thStyle}>字段</th>
+                                    {aggregate.branches.map((branch, index) => <th key={branch.revisionId} style={thStyle}>{branchLabel(branch, index)}</th>)}
+                                    <th style={thStyle}>字段采用</th>
+                                  </tr></thead>
+                                  <tbody>
+                                    {fields.map((field) => (
+                                      <tr key={field}>
+                                        <td style={tdStyle}>{fieldLabel(field)}</td>
+                                        {aggregate.branches.map((branch) => <td key={branch.revisionId} style={{ ...tdStyle, whiteSpace: 'normal', minWidth: 150 }}>{formatValue(field, branch.payload?.[field], snap)}</td>)}
+                                        <td style={tdStyle}>
+                                          <select aria-label={`冲突字段 ${fieldLabel(field)} 采用`} className="zc-select" value={selectedFieldRevision(c, aggregate, field)} onChange={(event) => chooseField(c.id, aggregate.key, field, event.target.value)} style={{ height: 32, minWidth: 160 }}>
+                                            {aggregate.branches.map((branch, index) => <option key={branch.revisionId} value={branch.revisionId}>{branchLabel(branch, index)}</option>)}
+                                          </select>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              <details style={{ marginTop: 8 }}>
+                                <summary style={{ cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' }}>查看各分支原始 JSON</summary>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10, marginTop: 8 }}>
+                                  {aggregate.branches.map((branch, index) => (
+                                    <div key={branch.revisionId}>
+                                      <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginBottom: 4 }}>{branchLabel(branch, index)} · {branch.commitId.slice(0, 8)}</div>
+                                      <code style={{ display: 'block', color: 'var(--text-secondary)', wordBreak: 'break-all', fontSize: 'var(--fs-meta)' }}>{biz(branch.payload)}</code>
+                                    </div>
+                                  ))}
+                                </div>
+                              </details>
+                            </div>
+                          );
+                        })}
+                      </section>
+                    ))}
+                    {filteredConflicts.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>该时间范围内没有待处理冲突。</div>}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ===== 第 2 层：同步设置 ===== */}
+          <SyncSection
+            title="同步设置"
+            summary={settingsSummary}
+            open={showSettings}
+            onToggle={() => setShowSettings((value) => !value)}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>
+                <input type="checkbox" checked={autoSyncEnabled} onChange={(event) => setAutoSyncEnabled(event.target.checked)} />
+                自动同步
+              </label>
+              <select aria-label="自动同步间隔" className="zc-select" value={autoSyncMinutes} onChange={(event) => setAutoSyncMinutes(Number(event.target.value))} disabled={!autoSyncEnabled} style={{ width: 120 }}>
+                {[1, 5, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分钟</option>)}
+              </select>
+              <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>{autoSyncStatus}</span>
+            </div>
+            {selected && <ServerCustodyPanel key={`${selected.id}:${selected.username}:${selected.baseUrl}`} profile={selected} />}
           {<div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
               <div>
                 <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>服务器配置</div>
                 <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
-                  每台服务器可使用不同账号密码和服务路径；这些凭据与上方账本加密密码相互独立。{vault.message}。
+                  每台服务器可以使用各自的账号密码和服务路径，和“账本密码”是两回事，互不影响。{vault.message}。
                   {!isTauriRuntime() && '本站账号负责登录与缓存隔离，附加服务器独立使用令牌会话，保存在此标签页的 sessionStorage；关闭标签页后需重新登录，不覆盖本站 Cookie。'}
                 </div>
               </div>
@@ -1615,8 +1787,8 @@ export function Sync() {
                           <input aria-label="确认替换本机账本" className="zc-input" value={joinConfirmation} onChange={(event) => setJoinConfirmation(event.target.value)} autoComplete="off" />
                         </div>
                         <div style={{ minWidth: 240 }}>
-                          <label className="zc-label">远端账本加密密码</label>
-                          <input aria-label="远端账本加密密码" className="zc-input" type="password" value={joinLedgerPassword} onChange={(event) => setJoinLedgerPassword(event.target.value)} autoComplete="off" />
+                          <label className="zc-label">远端账本密码</label>
+                          <input aria-label="远端账本密码" className="zc-input" type="password" value={joinLedgerPassword} onChange={(event) => setJoinLedgerPassword(event.target.value)} autoComplete="off" />
                         </div>
                         <button type="button" disabled={busy || joinConfirmation !== '替换本机' || joinLedgerPassword.length < 8} onClick={() => void joinRemoteLedger(selected, selectedRemoteLedgerId)} style={danger}>验证、备份并加入</button>
                         <button type="button" disabled={busy} onClick={() => { setJoinTarget(null); setJoinConfirmation(''); setJoinLedgerPassword(''); }} style={outline}>取消</button>
@@ -1664,7 +1836,7 @@ export function Sync() {
                       placeholder="https://ledger.example.com/zichan"
                       spellCheck={false}
                     />
-                    <button type="button" onClick={() => setAdvancedAddress((value) => !value)} style={outline}>{advancedAddress ? '收起高级设置' : '高级设置'}</button>
+                    <button type="button" onClick={() => setAdvancedAddress((value) => !value)} style={outline}>{advancedAddress ? '收起字段填写' : '按字段填写'}</button>
                     <button type="button" onClick={saveAddress} disabled={selectedIsPrimary || Boolean(addressError) || addressDraft === selected.baseUrl} style={primary}>保存地址</button>
                   </div>
                   <div style={{ marginTop: 5, fontSize: 'var(--fs-meta)', color: addressError ? 'var(--negative)' : 'var(--fg-subtle)', fontWeight: addressError ? 'var(--fw-bold)' : 'var(--fw-regular)' }}>
@@ -1741,7 +1913,6 @@ export function Sync() {
             )}
           </div>}
 
-          {!isTauriRuntime() && <div style={card}><h3>本站登录账号</h3><p>{primaryConnection?.username} · {primaryConnection?.accountId}</p><p>切换上方同步服务器不会切换本站账号。切换账号请到设置退出后重新登录；不同账号的缓存独立保存。</p></div>}
           <div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
@@ -1824,91 +1995,24 @@ export function Sync() {
             </table></div>
           </div>
 
-          {conflicts.length > 0 && (
-            <div style={{ ...card, border: '1px solid var(--negative)' }}>
-              <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
-                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>冲突箱 <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-medium)' }}>{filteredConflicts.length}/{conflicts.length}</span></div>
-                <button onClick={exportConflicts} style={outline}>导出冲突 JSON</button>
+          </SyncSection>
+
+          {/* ===== 第 3 层：高级设置 ===== */}
+          <SyncSection
+            title="高级设置"
+            summary="账本密码、登录账号与密钥诊断"
+            open={showAdvanced}
+            onToggle={() => setShowAdvanced((value) => !value)}
+          >
+            {accountProtection() ? <LedgerProtectionPanel store={store} /> : (ledgerKey.unlocked ? ledgerKeyCard : null)}
+            {!isTauriRuntime() && (
+              <div style={card}>
+                <h3 style={{ fontSize: 'var(--fs-title)', margin: 0 }}>本站登录账号</h3>
+                <p>{primaryConnection?.username} · {primaryConnection?.accountId}</p>
+                <p style={{ marginBottom: 0 }}>切换同步服务器不会切换本站账号。切换账号请到设置退出后重新登录；不同账号的缓存独立保存。</p>
               </div>
-              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginBottom: 12 }}>
-                冲突按原子提交分组，所有设备分支都会保留。可整项选择版本，也可逐字段组合，确认后会生成一条可继续同步的合并提交。
-              </div>
-              <div style={{ marginBottom: 12 }}><DateRangeBar value={conflictRange} onChange={setConflictRange} compact /></div>
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
-                {filteredConflicts.map((c) => (
-                  <section key={c.id} style={{ borderTop: '1px solid var(--border)', padding: '16px 0' }}>
-                    <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 12, marginBottom: 12 }}>
-                      <div>
-                        <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>冲突组 {c.id.slice(0, 8)} · {conflictAggregates(c).length} 个聚合 · {c.remoteCommitIds.length} 个远端提交</div>
-                        <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 4 }}>
-                          {new Date(c.at).toLocaleString()} · {c.changedPaths.map((path) => path.split('.').map(fieldLabel).join(' / ')).join('，') || '因果分支冲突'}
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                        <button disabled={busy} onClick={() => void keepLocal(c)} style={outline}>全部保留本机</button>
-                        <button disabled={busy} onClick={() => void keepSelected(c)} style={outline}>采用所选分支</button>
-                        <button disabled={busy} onClick={() => void mergeByFields(c)} style={primary}>按字段合并</button>
-                      </div>
-                    </div>
-                    {conflictAggregates(c).map((aggregate) => {
-                      const fields = conflictFields(aggregate.branches);
-                      const selectedId = selectedRevision(c, aggregate);
-                      const selectedPayload = aggregate.branches.find((branch) => branch.revisionId === selectedId)?.payload
-                        ?? aggregate.branches[0]?.payload
-                        ?? null;
-                      return (
-                        <div key={aggregate.key} style={{ padding: '12px 0', borderTop: '1px solid var(--border)' }}>
-                          <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-                            <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{aggregateTitle(aggregate.type, aggregate.id, selectedPayload, snap)}</div>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>
-                              整项采用
-                              <select className="zc-select" value={selectedId} onChange={(event) => chooseBranch(c.id, aggregate.key, event.target.value)} style={{ height: 32, minWidth: 190 }}>
-                                {aggregate.branches.map((branch, index) => <option key={branch.revisionId} value={branch.revisionId}>{branchLabel(branch, index)}</option>)}
-                              </select>
-                            </label>
-                          </div>
-                          <div style={{ overflowX: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-caption)' }}>
-                              <thead><tr>
-                                <th style={thStyle}>字段</th>
-                                {aggregate.branches.map((branch, index) => <th key={branch.revisionId} style={thStyle}>{branchLabel(branch, index)}</th>)}
-                                <th style={thStyle}>字段采用</th>
-                              </tr></thead>
-                              <tbody>
-                                {fields.map((field) => (
-                                  <tr key={field}>
-                                    <td style={tdStyle}>{fieldLabel(field)}</td>
-                                    {aggregate.branches.map((branch) => <td key={branch.revisionId} style={{ ...tdStyle, whiteSpace: 'normal', minWidth: 150 }}>{formatValue(field, branch.payload?.[field], snap)}</td>)}
-                                    <td style={tdStyle}>
-                                      <select aria-label={`冲突字段 ${fieldLabel(field)} 采用`} className="zc-select" value={selectedFieldRevision(c, aggregate, field)} onChange={(event) => chooseField(c.id, aggregate.key, field, event.target.value)} style={{ height: 32, minWidth: 160 }}>
-                                        {aggregate.branches.map((branch, index) => <option key={branch.revisionId} value={branch.revisionId}>{branchLabel(branch, index)}</option>)}
-                                      </select>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                          <details style={{ marginTop: 8 }}>
-                            <summary style={{ cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' }}>查看各分支原始 JSON</summary>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10, marginTop: 8 }}>
-                              {aggregate.branches.map((branch, index) => (
-                                <div key={branch.revisionId}>
-                                  <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginBottom: 4 }}>{branchLabel(branch, index)} · {branch.commitId.slice(0, 8)}</div>
-                                  <code style={{ display: 'block', color: 'var(--text-secondary)', wordBreak: 'break-all', fontSize: 'var(--fs-meta)' }}>{biz(branch.payload)}</code>
-                                </div>
-                              ))}
-                            </div>
-                          </details>
-                        </div>
-                      );
-                    })}
-                  </section>
-                ))}
-                {filteredConflicts.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>该时间范围内没有待处理冲突。</div>}
-              </div>
-            </div>
-          )}
+            )}
+          </SyncSection>
         </>
     </div>
   );
@@ -1927,12 +2031,42 @@ const tabBtn = (active: boolean) => ({
 
 const gridHead = { color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' } as const;
 
-function SyncTile({ label, value, tone }: { label: string; value: string; tone: string }) {
+/**
+ * A folded layer of the sync screen.
+ *
+ * This screen covers three different jobs - "is my data safe", "which servers do
+ * I use" and "manage my encryption keys" - and used to present all three at once,
+ * eight panels deep, to someone who owns one device and one server. Everything
+ * below the summary is folded behind one of these, so the everyday answer stays
+ * at the top and the controls are one click away.
+ *
+ * The toggle is a real button carrying `aria-expanded`, and it spells out
+ * 展开 / 收起 instead of relying on a chevron, so the state is both announced and
+ * visible.
+ */
+function SyncSection({ title, summary, open, onToggle, children }: {
+  title: string;
+  summary: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 11, background: 'var(--surface-2)' }}>
-      <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{label}</div>
-      <div style={{ fontSize: 'var(--fs-heading)', color: tone, fontWeight: 'var(--fw-bold)', marginTop: 4 }}>{value}</div>
-    </div>
+    <section style={card}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: 0, border: 0, background: 'transparent', textAlign: 'left', font: 'inherit', color: 'inherit', cursor: 'pointer' }}
+      >
+        <span style={{ minWidth: 0 }}>
+          <span style={{ display: 'block', fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{title}</span>
+          <span style={{ display: 'block', fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>{summary}</span>
+        </span>
+        <span aria-hidden="true" style={{ flex: '0 0 auto', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--accent)' }}>{open ? '收起' : '展开'}</span>
+      </button>
+      {open && <div style={{ marginTop: 16 }}>{children}</div>}
+    </section>
   );
 }
 import { isTauriRuntime } from '../tauri.js';

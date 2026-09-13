@@ -57,7 +57,7 @@ export function FirstRemoteLedgerRestoreGate(props: {
     const ledgerId = props.connection.ledgerId;
     if (!ledgerId) return;
     if (passphrase.length < 8) {
-      setMessage('请输入至少 8 个字符的账本加密密码');
+      setMessage('请输入至少 8 个字符的账本密码');
       return;
     }
     setBusy(true);
@@ -110,9 +110,9 @@ export function FirstRemoteLedgerRestoreGate(props: {
         <h1 style={{ margin: '10px 0 8px', color: '#672f20', fontSize: 'var(--fs-hero)' }}>从 {props.connection.alias} 恢复</h1>
         <p style={{ color: '#756b60', lineHeight: 1.7 }}>账号 {props.connection.username} 已绑定账本 {props.connection.ledgerId}。系统会先在隔离数据库验证密钥、提交 DAG 与账本一致性，成功后才写入本机。</p>
         {!automaticSecret && <label style={{ display: 'block', marginTop: 20, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
-          账本加密密码
+          账本密码
           <input
-            aria-label="远端账本加密密码"
+            aria-label="远端账本密码"
             type="password"
             autoComplete="current-password"
             value={passphrase}

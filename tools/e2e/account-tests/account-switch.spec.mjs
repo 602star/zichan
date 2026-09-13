@@ -58,6 +58,6 @@ test('registers distinct accounts and keeps their database, keys and caches isol
     await context.clearCookies();
     await page.reload();
     await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
-    await expect(page.getByLabel('本机数据密码', { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel('账本密码', { exact: true })).toHaveCount(0);
   } finally { server.server.closeAllConnections(); await server.close(); }
 });

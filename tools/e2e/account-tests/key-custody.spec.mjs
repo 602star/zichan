@@ -35,13 +35,13 @@ test('managed account opens without a key prompt, restores a new device, and swi
     await login(page, f.url, 'managed-user');
     await page.getByRole('button', { name: '直接开始记支出', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
-    await expect(page.getByLabel('本机数据密码', { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel('账本密码', { exact: true })).toHaveCount(0);
     await openSettings(page);
     await expect(page.getByRole('region', { name: '账本保护' })).toContainText('云端托管');
     const other = await second.newPage();
     await login(other, f.url, 'managed-user');
     await expect(other.locator('.zc-app-shell')).toBeVisible();
-    await expect(other.getByLabel('远端账本加密密码')).toHaveCount(0);
+    await expect(other.getByLabel('远端账本密码')).toHaveCount(0);
     await other.close();
     const panel = page.getByRole('region', { name: '账本保护' });
     await panel.getByText('高级：更改保护方式', { exact: true }).click();

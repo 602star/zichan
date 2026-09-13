@@ -1054,11 +1054,11 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
           onConfirm={submitBackupPassphrase}
         >
           <div>
-            这份备份使用的密钥代次与当前会话不同。请输入创建该备份时使用的账本加密密码；这里只解锁归档，不会修改当前账本密码。
+            这份备份使用的密钥代次与当前会话不同。请输入创建该备份时使用的账本密码；这里只解锁归档，不会修改当前账本密码。
           </div>
           <input
             autoFocus
-            aria-label="旧备份账本加密密码"
+            aria-label="旧备份账本密码"
             className="zc-input"
             type="password"
             autoComplete="off"
@@ -1121,7 +1121,7 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
           {storageBackend === 'native-sqlite'
             ? '重置会关闭当前数据库，并清空本机账本、附件、表单草稿、账本密钥、Stronghold 凭据和同步配置。便携 data/backups 中的旧归档会保留，恢复时需要创建归档时的原密码；服务器副本不受影响。'
             : '重置会关闭当前数据库，并清空本机账本、附件、表单草稿、浏览器内备份、账本密钥和同步配置；外部目录或服务器副本不受影响。'}
-          重新打开后需要再次设置本机数据密码，并从“空账本 / 导入备份 / 体验演示”中选择。
+          重新打开后需要再次设置账本密码，并从“空账本 / 导入备份 / 体验演示”中选择。
         </ConfirmDialog>
       )}
 

@@ -234,10 +234,11 @@ function DeviceStorageGate(props: {
         <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{creating ? '保护本机账本' : '解锁本机账本'}</div>
         <div style={{ marginTop: 7, color: '#756b60', fontSize: 'var(--fs-body)', lineHeight: 1.55 }}>{props.state.message}</div>
         <div style={{ marginTop: 5, color: '#8c8175', fontSize: 'var(--fs-meta)', lineHeight: 1.5 }}>
-          新账本会使用同一密码保护加密备份与端到端同步密钥；密码不会写入磁盘。
+          新账本使用同一个“账本密码”保护加密备份与端到端同步密钥；密码不会写入磁盘。
+          配置同步时会再次要求输入这个密码，名称相同，不是另一个密码。
         </div>
         <label style={{ display: 'block', marginTop: 20, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
-          本机数据密码
+          账本密码
           <input
             autoFocus
             autoComplete={creating ? 'new-password' : 'current-password'}
@@ -722,7 +723,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!pending) throw new Error('首次初始化上下文已经失效，请重新打开账本');
     try {
       const passphrase = storagePassphrase.current;
-      if (!passphrase) throw new Error('本机数据密码会话已经失效，请返回解锁页后重试');
+      if (!passphrase) throw new Error('账本密码会话已经失效，请返回解锁页后重试');
       await ensureLedgerKeyForStore(pending.store, passphrase);
       await recoverAttachmentStorage(pending.store);
       await runLedgerMaintenance(pending.store);
@@ -964,7 +965,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           onRestored={finishFirstRun}
           onStartNew={async () => {
             const passphrase = storagePassphrase.current;
-            if (!passphrase) throw new Error('本机数据密码会话已失效，请返回解锁页重试');
+            if (!passphrase) throw new Error('账本密码会话已失效，请返回解锁页重试');
             const setting = await replaceRemoteLedger(pendingInitialization.store, boundConnection, passphrase);
             await finishFirstRun(setting);
           }}

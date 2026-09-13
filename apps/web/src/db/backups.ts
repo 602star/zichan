@@ -87,7 +87,7 @@ export class BackupPassphraseRequiredError extends Error {
   readonly code = 'BACKUP_PASSPHRASE_REQUIRED';
 
   constructor() {
-    super('请输入创建该备份时使用的账本加密密码');
+    super('请输入创建该备份时使用的账本密码');
     this.name = 'BackupPassphraseRequiredError';
   }
 }
