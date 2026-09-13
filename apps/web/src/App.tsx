@@ -7,6 +7,7 @@ import { loadSnapshot, useSnapshot, type Snapshot } from './db/snapshot.js';
 import { baseAsset } from './db/derive.js';
 import { setBaseSymbol } from './format.js';
 import { THEMES, FONT_FAMILY, type ThemeId } from './theme.js';
+import { PlusIcon } from './ui/PlusIcon.js';
 import {
   BackupPassphraseRequiredError,
   describePreflight,
@@ -732,7 +733,7 @@ function Sidebar(props: {
                     color: active ? '#fff' : 'var(--accent)',
                   }}
                 >
-                  +
+                  <PlusIcon size={20} />
                 </button>
               )}
             </div>
@@ -753,7 +754,7 @@ function Sidebar(props: {
           title="快速记账"
           onClick={onQuickTransaction}
         >
-          <span className="zc-sidebar-quick-rail-icon" aria-hidden="true">＋</span>
+          <PlusIcon size={21} />
         </button>
         {/*
          * A caption, not a second accessible name - the button above already
@@ -837,7 +838,7 @@ function MobileNavigation(props: {
             <span>{icon}</span><small>{navigationLabel(id, props.ledgerMode)}</small>
           </button>
         ))}
-        <button className="zc-mobile-quick" aria-label="快速记账" onClick={props.onQuickTransaction}><span>+</span><small>快记</small></button>
+        <button className="zc-mobile-quick" aria-label="快速记账" onClick={props.onQuickTransaction}><span><PlusIcon size={24} /></span><small>快记</small></button>
         {afterQuick.map(({ id, icon }) => (
           <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
             <span>{icon}</span><small>{navigationLabel(id, props.ledgerMode)}</small>

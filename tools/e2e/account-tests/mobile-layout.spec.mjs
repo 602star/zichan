@@ -353,12 +353,19 @@ test('every screen keeps the phone/tablet layout contract across the device matr
       const rail = document.querySelector('.zc-sidebar-quick-rail');
       const inline = document.querySelector('.zc-sidebar-quick-inline');
       const inlineRect = inline ? inline.getBoundingClientRect() : null;
+      const mark = inline ? inline.querySelector('svg') : null;
+      const markRect = mark ? mark.getBoundingClientRect() : null;
+      const centre = (r) => ({ x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 });
+      const boxCentre = inlineRect ? centre(inlineRect) : null;
+      const markCentre = markRect ? centre(markRect) : null;
       return {
         railVisible: rail ? rail.getBoundingClientRect().width > 0 : false,
         inlineVisible: inline ? getComputedStyle(inline).display !== 'none' : false,
         inlineWidth: inlineRect ? Math.round(inlineRect.width) : null,
         inlineHeight: inlineRect ? Math.round(inlineRect.height) : null,
         inlineRadius: inline ? getComputedStyle(inline).borderRadius : null,
+        markOffsetX: boxCentre && markCentre ? Math.abs(markCentre.x - boxCentre.x) : null,
+        markOffsetY: boxCentre && markCentre ? Math.abs(markCentre.y - boxCentre.y) : null,
       };
     });
     expect(desktopQuick.railVisible).toBe(false);
@@ -376,6 +383,15 @@ test('every screen keeps the phone/tablet layout contract across the device matr
       width: desktopQuick.inlineWidth,
       height: desktopQuick.inlineHeight,
     }).toEqual({ width: 44, height: 44 });
+    /*
+     * And the mark has to sit on the centre, not merely exist inside the box.
+     * A text glyph lands where the font's baseline and math axis put it, which
+     * left it ~2px low in every variant, so the mark is drawn as two symmetric
+     * SVG strokes instead. Measure the mark against the box so a regression to a
+     * glyph - or a stray line-height - cannot quietly reintroduce the drift.
+     */
+    expect(desktopQuick.markOffsetX).toBeLessThanOrEqual(0.5);
+    expect(desktopQuick.markOffsetY).toBeLessThanOrEqual(0.5);
   } finally {
     server.server.closeAllConnections();
     await server.close();

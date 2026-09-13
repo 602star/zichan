@@ -517,11 +517,6 @@ button,
   cursor: pointer;
 }
 
-.zc-sidebar-quick-rail-icon {
-  font-size: var(--fs-display);
-  line-height: 1;
-}
-
 /* Off unless the surrounding rail labels its own items; see the markup note. */
 .zc-sidebar-quick-rail-label {
   display: none;
@@ -538,6 +533,9 @@ button,
  * `@media (pointer: coarse) { button { min-width: 44px } }` then widened it to
  * 44x34 on touch. Both left a control that was meant to be a circle looking
  * like an egg.
+ *
+ * No font declarations: the mark is an SVG now, not a text glyph (see
+ * PlusIcon), so text metrics no longer have a say in where it lands.
  */
 .zc-sidebar-quick-inline {
   display: inline-flex;
@@ -551,9 +549,6 @@ button,
   padding: 0;
   margin-right: 5px;
   border-radius: var(--r-round);
-  font-size: var(--fs-heading);
-  line-height: 1;
-  font-weight: var(--fw-bold);
   cursor: pointer;
 }
 
@@ -1541,7 +1536,6 @@ input[type="radio"] {
     border-radius: var(--r-round);
     background: var(--accent);
     color: #fff;
-    font-size: var(--fs-display);
     box-sizing: content-box;
   }
 
