@@ -2759,11 +2759,18 @@ async function validateGameRecordReferences(store: SqlLedgerStore, record: GameR
   }
   for (const role of ['settlement', 'fee'] as const) {
     const source = gameCashflowSource(record, role);
-    if (!!source.assetId !== !!source.amount) validation(`${role === 'settlement' ? '结算' : '手续费'}币种和金额必须同时填写`);
+    // Point at whichever half is missing so the form can jump to it: an error the
+    // user cannot locate reads as an unexplainable refusal.
+    if (!!source.assetId !== !!source.amount) {
+      validation(
+        `${role === 'settlement' ? '结算' : '手续费'}币种和金额必须同时填写`,
+        source.assetId ? `${role}Amount` : `${role}AssetId`,
+      );
+    }
     if (!source.assetId || !source.amount) continue;
     const asset = await requireAsset(store, source.assetId, role === 'settlement' ? 'settlementAssetId' : 'feeAssetId');
-    if (!D(source.amount).gt(0)) validation(`${role === 'settlement' ? '结算' : '手续费'}金额必须大于 0`);
-    if (amountPrecision(source.amount) > asset.decimals) validation(`${asset.code} 最多支持 ${asset.decimals} 位小数`);
+    if (!D(source.amount).gt(0)) validation(`${role === 'settlement' ? '结算' : '手续费'}金额必须大于 0`, `${role}Amount`);
+    if (amountPrecision(source.amount) > asset.decimals) validation(`${asset.code} 最多支持 ${asset.decimals} 位小数`, `${role}Amount`);
   }
 }
 

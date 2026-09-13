@@ -251,6 +251,36 @@ describe('P2 business compensation commands', () => {
     }
   });
 
+  /*
+   * The both-or-neither rule has to name the half that is missing: an error with
+   * no field cannot be located, and the form shows nothing to jump to.
+   */
+  it('names the missing half of a game cashflow pair', async () => {
+    const store = await openLedger();
+    try {
+      const { asset } = await seedDailyLedger(store);
+      const game = await store.games.put({ ...base(), name: '缺字段游戏', enableSeason: false, isActive: true });
+      const attempt = (record: Record<string, unknown>) => saveGameRecordAggregate(store, {
+        record: { ...base(), date: '2026-08-31', gameId: game.id, ...record } as never,
+        settlement: { mode: 'record_only' },
+        fee: { mode: 'record_only' },
+      });
+
+      await expect(attempt({ recordType: 'sell_currency', settlementAssetId: asset.id }))
+        .rejects.toMatchObject({ field: 'settlementAmount' });
+      await expect(attempt({ recordType: 'sell_currency', settlementAmount: '30' }))
+        .rejects.toMatchObject({ field: 'settlementAssetId' });
+      await expect(attempt({ recordType: 'fee', feeAssetId: asset.id }))
+        .rejects.toMatchObject({ field: 'feeAmount' });
+
+      // Neither half filled stays a valid pure-record entry.
+      const saved = await attempt({ recordType: 'produce' });
+      expect(saved.record.settlementAssetId).toBeFalsy();
+    } finally {
+      await store.close();
+    }
+  });
+
   it('restores operational deletes and state changes only from their exact CAS point', async () => {
     const store = await openLedger();
     try {

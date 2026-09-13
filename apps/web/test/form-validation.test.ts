@@ -161,6 +161,24 @@ describe('required means "required when shown"', () => {
     expect(renderedFieldKeys(spec.fields, values)).not.toContain('settlementAccountId');
   });
 
+  /*
+   * 结算币种 used to be a select with no empty option, so a record with no cash
+   * flow (游戏产出/消耗) could never be saved: the currency was forced and the
+   * domain rejects a currency without an amount.
+   */
+  it('lets a game record with no cash flow be saved and stay clearable', () => {
+    const snap = makeSnapshot();
+    const spec = forms.gameRecordForm(snap) as unknown as { fields: Field[]; validate?: (v: Record<string, string>) => unknown };
+    const currency = spec.fields.find((field) => field.key === 'settlementAssetId')!;
+    expect(currency.allowEmpty).toBe(true);
+    expect(optionsOf(currency, defaultsOf(spec.fields)).length).toBeGreaterThan(0);
+
+    const values = defaultsOf(spec.fields);
+    expect(values.settlementAssetId).toBe('');
+    expect(requiredFieldErrors(spec.fields, values)).toEqual({});
+    expect(spec.validate?.(values)).toBeUndefined();
+  });
+
   it('never lets the field picker hide a required field', () => {
     const fields: Field[] = [
       { key: 'name', label: '名称', type: 'text', section: 'more', required: true },

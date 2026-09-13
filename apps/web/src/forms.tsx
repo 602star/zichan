@@ -887,7 +887,7 @@ export function gameRecordForm(snap: Snapshot): EntityFormSpec<GameRecordFormVal
       { key: 'gameAccountId', label: '账号（可选）', type: 'select', half: true, options: (v) => gameAccountOpts(snap, v.gameId), allowEmpty: true },
       { key: 'gameCurrencyName', label: '游戏货币', type: 'text', half: true, placeholder: '初火' },
       { key: 'gameCurrencyAmount', label: '货币数量', type: 'number', half: true },
-      { key: 'settlementAssetId', label: '结算币种', type: 'select', half: true, options: settlementOpts(snap, moduleCurrencyId(snap.setting, 'game')) },
+      { key: 'settlementAssetId', label: '结算币种', type: 'select', half: true, allowEmpty: true, options: settlementOpts(snap, moduleCurrencyId(snap.setting, 'game')) },
       { key: 'settlementAmount', label: '结算金额', type: 'number', half: true },
       { key: 'settlementCashflowMode', label: '结算资金处理', type: 'select', half: true, options: GAME_CASHFLOW_MODES, defaultValue: 'create_transaction' },
       {
