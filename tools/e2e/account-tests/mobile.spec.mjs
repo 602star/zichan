@@ -28,6 +28,7 @@ for (const width of [360, 390]) test(`mobile ${width}px supports login, initiali
     await page.getByRole('button', { name: '关闭快速记账' }).click();
     const nav = page.getByRole('navigation', { name: '移动端主导航' });
     await nav.getByRole('button', { name: /设置$/ }).click();
+    await page.getByRole('tab', { name: '数据与安全' }).click();
     const panel = page.getByRole('region', { name: '账本保护' });
     await expect(panel).toBeVisible();
     await panel.getByText('此设备的离线访问', { exact: true }).click();
@@ -37,6 +38,7 @@ for (const width of [360, 390]) test(`mobile ${width}px supports login, initiali
     await expect(panel).toContainText('离线密码已设置');
     await fits();
     await panel.screenshot({ path: testInfo.outputPath('mobile-protection.png') });
+    await page.getByRole('tab', { name: '记账' }).click();
     await page.getByRole('checkbox', { name: /显示同步/ }).click();
     await expect(page.getByRole('checkbox', { name: /显示同步/ })).toBeChecked();
     await nav.getByRole('button', { name: /同步$/ }).click();

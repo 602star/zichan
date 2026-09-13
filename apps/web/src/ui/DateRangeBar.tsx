@@ -102,7 +102,7 @@ export function DateRangeBar(props: {
   );
 }
 
-const dateLabel: CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' };
+const dateLabel: CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' };
 const clearButton = linkDanger;
 
 function viewButton(active: boolean): CSSProperties {
@@ -114,7 +114,7 @@ function viewButton(active: boolean): CSSProperties {
     color: active ? '#fff' : 'var(--fg-muted)',
     padding: '0 11px',
     fontSize: 'var(--fs-caption)',
-    fontWeight: 'var(--fw-bold)',
+    fontWeight: 'var(--fw-medium)',
     cursor: 'pointer',
   };
 }

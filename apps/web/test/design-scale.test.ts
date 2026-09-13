@@ -145,8 +145,39 @@ describe('design scale contract', () => {
 
   it('keeps the !important budget from growing', () => {
     const count = (css.match(/!important/g) ?? []).length;
-    // Down from 148 before the token pass. The remainder are the coarse-pointer
-    // control floor and phone-only table cell padding.
-    expect(count).toBeLessThanOrEqual(155);
+    /*
+     * The token pass did not reduce this: almost every remaining declaration
+     * overrides an inline `gridTemplateColumns`, `width`, `white-space` or
+     * `padding` that a phone-only rule has to beat, plus `display: none` and
+     * the reduced-motion reset. Clearing them means moving that layout out of
+     * inline styles and into classes, which is tracked separately - so for now
+     * the budget only has to hold.
+     */
+    expect(count).toBeLessThanOrEqual(151);
+  });
+
+  /*
+   * This is the invariant that actually restores hierarchy, and the reason the
+   * audit found 62% of text bold: small auxiliary text was shouting as loudly
+   * as the numbers it described. Size and colour carry emphasis now, so a
+   * label, chip or caption must never be bold.
+   */
+  it('never bolds small auxiliary text', () => {
+    const offenders: string[] = [];
+    for (const file of sources) {
+      for (const match of file.text.matchAll(/\{[^{}]*\}/g)) {
+        const block = match[0];
+        const small = /fontSize:\s*'var\(--fs-(meta|caption)\)'/.test(block);
+        if (small && /fontWeight:\s*'var\(--fw-bold\)'/.test(block)) {
+          offenders.push(`${file.path}: ${block.slice(0, 90)}`);
+        }
+      }
+    }
+    expect(offenders.join('\n'), 'meta and caption text uses --fw-medium at most').toBe('');
+  });
+
+  it('declares every heading on the scale instead of falling back to the UA size', () => {
+    // `<h3>` defaulted to 18.72px, a size belonging to no scale step.
+    expect(css).toMatch(/h1,\s*\n?h2,\s*\n?h3,\s*\n?h4\s*\{[\s\S]*?font-size:\s*var\(--fs-title\)/);
   });
 });

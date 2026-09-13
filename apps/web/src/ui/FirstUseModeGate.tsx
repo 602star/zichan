@@ -36,7 +36,7 @@ export function FirstUseModeGate({ busy, error = '', onSelect, persistence, onCo
   return (
     <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(24px, 6vw, 72px)', boxSizing: 'border-box', background: '#f0e9dc', color: '#4e473f', fontFamily: 'system-ui, sans-serif' }}>
       <section style={{ width: 'min(860px, 100%)', margin: '0 auto' }}>
-        <div style={{ color: '#985734', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', letterSpacing: '.12em' }}>ZICHAN · 首次使用</div>
+        <div style={{ color: '#985734', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.12em' }}>ZICHAN · 首次使用</div>
         <h1 style={{ margin: '10px 0 6px', color: '#672f20', fontSize: 'var(--fs-hero)' }}>选择数据保存方式</h1>
         <p style={{ margin: 0, color: '#756b60', lineHeight: 1.7 }}>之后仍可把纯本地账本连接到一台或多台同步服务器。</p>
         <section aria-label="存储能力与权限状态" style={{ marginTop: 20, padding: 16, background: '#fffdf9', borderRadius: 'var(--r-md)', lineHeight: 1.8 }}>

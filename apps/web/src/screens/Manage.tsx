@@ -180,8 +180,8 @@ export function Manage() {
                       );
                     })}
                   </div>
-                  {categoryPackNotice && <div style={{ marginTop: 10, color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>{categoryPackNotice}</div>}
-                  {categoryPackError && <div role="alert" style={{ marginTop: 10, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>分类包操作失败：{categoryPackError}</div>}
+                  {categoryPackNotice && <div style={{ marginTop: 10, color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{categoryPackNotice}</div>}
+                  {categoryPackError && <div role="alert" style={{ marginTop: 10, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>分类包操作失败：{categoryPackError}</div>}
                 </div>
                 <div style={card}><QuickCategorySettings categories={snap.categories} onSave={saveCategoryPreferences} /></div>
               </>
@@ -742,7 +742,7 @@ function manageFilterButton(active: boolean, enabled: boolean) {
     border: '1px solid var(--border)',
     background: active ? 'var(--accent-soft)' : 'var(--surface)',
     color: active ? 'var(--accent)' : 'var(--fg-muted)',
-    fontWeight: 'var(--fw-bold)',
+    fontWeight: 'var(--fw-medium)',
     fontSize: 'var(--fs-caption)',
     cursor: enabled ? 'pointer' : 'not-allowed',
     opacity: enabled ? 1 : 0.5,
@@ -769,7 +769,7 @@ const editLinkButton = {
   color: 'var(--accent)',
   padding: 0,
   fontSize: 'var(--fs-caption)',
-  fontWeight: 'var(--fw-bold)',
+  fontWeight: 'var(--fw-medium)',
   cursor: 'pointer',
 } as const;
 
@@ -780,7 +780,7 @@ function typeBadge(type: Category['type']) {
     color: type === 'income' ? 'var(--positive)' : 'var(--negative)',
     background: type === 'income' ? 'rgba(63,143,107,.13)' : 'rgba(194,96,74,.13)',
     fontSize: 'var(--fs-meta)',
-    fontWeight: 'var(--fw-bold)',
+    fontWeight: 'var(--fw-medium)',
   } as const;
 }
 
@@ -796,7 +796,7 @@ function stateBadge(kind: 'frequent' | 'hidden' | 'inactive' | 'duplicate') {
     padding: '2px 7px',
     ...colors,
     fontSize: 'var(--fs-meta)',
-    fontWeight: 'var(--fw-bold)',
+    fontWeight: 'var(--fw-medium)',
     whiteSpace: 'nowrap',
   } as const;
 }
@@ -962,7 +962,7 @@ function AttachmentSection({ items, onDelete }: { items: Attachment[]; onDelete:
         </div>
         <input aria-label="搜索附件" className="zc-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索文件、关联对象或校验和" />
       </div>
-      {message && <div style={{ marginBottom: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: message.startsWith('取回失败') ? 'var(--negative)' : 'var(--positive)' }}>{message}</div>}
+      {message && <div style={{ marginBottom: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: message.startsWith('取回失败') ? 'var(--negative)' : 'var(--positive)' }}>{message}</div>}
       <div className="zc-scroll-x">
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr><th style={thStyle}>文件</th><th style={thStyle}>关联</th><th style={thStyle}>大小</th><th style={thStyle}>本机</th><th style={thStyle}>服务器副本</th><th style={thStyle}>SHA-256</th><th style={thStyle}></th></tr></thead>

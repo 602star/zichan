@@ -1427,7 +1427,7 @@ export function Sync() {
               <SyncTile label="隔离提交" value={`${invalidCommits.length}`} tone={invalidCommits.length ? 'var(--negative)' : 'var(--positive)'} />
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>
                 <input type="checkbox" checked={autoSyncEnabled} onChange={(event) => setAutoSyncEnabled(event.target.checked)} />
                 自动同步
               </label>
@@ -1437,7 +1437,7 @@ export function Sync() {
               <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>{autoSyncStatus}</span>
             </div>
             {enabledProfiles.length === 0 && (
-              <div style={{ marginTop: 12, fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>
+              <div style={{ marginTop: 12, fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-medium)' }}>
                 当前没有启用服务器。勾选服务器后，“同步全部启用服务器”才会运行正式远程同步。
               </div>
             )}
@@ -1453,7 +1453,7 @@ export function Sync() {
                   服务器账号密码只用于登录；此处密码解锁账本数据密钥。密钥正文只保留在当前会话内存中。
                 </div>
               </div>
-              <span style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: ledgerKey.unlocked ? 'var(--positive)' : 'var(--fg-subtle)' }}>
+              <span style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: ledgerKey.unlocked ? 'var(--positive)' : 'var(--fg-subtle)' }}>
                 {ledgerKey.unlocked ? `已解锁 · 第 ${ledgerKey.generation} 代` : ledgerKey.initialized ? '已初始化 · 已锁定' : '未初始化'}
               </span>
             </div>
@@ -1473,7 +1473,7 @@ export function Sync() {
                 <button type="button" onClick={() => lockLedgerKey()} disabled={ledgerKeyBusy} style={outline}>锁定</button>
               </div>
             )}
-            {ledgerKeyError && <div style={{ marginTop: 10, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>{ledgerKeyError}</div>}
+            {ledgerKeyError && <div style={{ marginTop: 10, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{ledgerKeyError}</div>}
             {ledgerKey.keyringId && <div style={{ marginTop: 10, color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' }}>密钥包 {ledgerKey.keyringId} · 账本 {ledgerKey.ledgerId}</div>}
           </div>
           )}
@@ -1556,14 +1556,14 @@ export function Sync() {
                 <button type="button" onClick={() => void unlockVault()} disabled={vault.unlocked || vaultBusy || vaultPassword.length < 8 || (!vault.initialized && vaultPassword !== vaultPasswordConfirm)} style={vault.unlocked ? outline : primary}>
                   {vault.unlocked ? '已解锁' : vaultBusy ? '解锁中…' : vault.initialized ? '解锁' : '创建并解锁'}
                 </button>
-                <div style={{ flex: '1 1 240px', fontSize: 'var(--fs-caption)', color: vaultError ? 'var(--negative)' : vault.unlocked ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: 'var(--fw-bold)' }}>
+                <div style={{ flex: '1 1 240px', fontSize: 'var(--fs-caption)', color: vaultError ? 'var(--negative)' : vault.unlocked ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: 'var(--fw-medium)' }}>
                   {vaultError || (vault.unlocked ? `Stronghold 已解锁 · ${vault.platform}` : '解锁后才能读取、保存和自动使用服务器账号密码')}
                 </div>
               </div>
             )}
 
             {vault.kind === 'browser-session' && vaultError && (
-              <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>{vaultError}</div>
+              <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>{vaultError}</div>
             )}
 
             {selected && !selectedIsPrimary && (
@@ -1596,13 +1596,13 @@ export function Sync() {
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <button onClick={applyWizard} style={outline}>套用到当前服务器</button>
                   <button onClick={() => void applyWizardAndTest()} disabled={testingId === selected.id} style={outline}>{testingId === selected.id ? '测试中…' : '套用并测试连通性'}</button>
-                  <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>
+                  <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>
                     {buildBaseUrl({ ...selected, ...wizardPatch(wizardMode, wizardHost, wizardBasePath) })}
                   </span>
                 </div>
                 {selectedRemoteLedgerId && (
                   <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--negative)' }}>
-                    <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>此账号已绑定另一个账本</div>
+                    <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>此账号已绑定另一个账本</div>
                     <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', marginTop: 4 }}>
                       远端账本 {selectedRemoteLedgerId}。系统会先只读验证远端密码、提交和账本一致性，再保存本机保护备份并原子替换；任何一步失败都会保留本机账本。
                     </div>
@@ -1727,7 +1727,7 @@ export function Sync() {
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, alignItems: 'center', marginTop: 14, padding: 12, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface)' }}>
                     <img src={connectionShare.qrDataUrl} alt="服务器连接二维码" width={260} height={260} style={{ display: 'block', width: '100%', maxWidth: 260, height: 'auto', imageRendering: 'pixelated' }} />
                     <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>无秘密连接信息</div>
+                      <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>无秘密连接信息</div>
                       <div style={{ marginTop: 5, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', lineHeight: 1.6 }}>只包含应用入口、服务器完整 URL、serverId 和 OPAQUE 公钥指纹；扫码或导入后仍必须单独登录。</div>
                       <textarea readOnly value={connectionShare.link} aria-label="无秘密连接链接" onFocus={(event) => event.currentTarget.select()} style={{ boxSizing: 'border-box', width: '100%', minHeight: 92, marginTop: 9, padding: 9, resize: 'vertical', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', color: 'var(--text-secondary)', fontSize: 'var(--fs-meta)', userSelect: 'text', WebkitUserSelect: 'text' }} />
                       <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
@@ -1770,12 +1770,12 @@ export function Sync() {
             </ConfirmDialog>}
             {directoryError && <div role="alert">{directoryError}<button onClick={() => setDirectoryRetry((value) => value + 1)}>重新读取共享目录</button></div>}
             {syncNotice && (
-              <div style={{ fontSize: 'var(--fs-caption)', color: syncNotice.includes('没有启用') ? 'var(--negative)' : 'var(--fg-muted)', marginTop: 10, fontWeight: 'var(--fw-bold)' }}>
+              <div style={{ fontSize: 'var(--fs-caption)', color: syncNotice.includes('没有启用') ? 'var(--negative)' : 'var(--fg-muted)', marginTop: 10, fontWeight: 'var(--fw-medium)' }}>
                 {syncNotice}
               </div>
             )}
             {mergeNotice && (
-              <div style={{ fontSize: 'var(--fs-caption)', color: mergeNotice.includes('发现') ? 'var(--negative)' : 'var(--positive)', marginTop: 10, fontWeight: 'var(--fw-bold)' }}>
+              <div style={{ fontSize: 'var(--fs-caption)', color: mergeNotice.includes('发现') ? 'var(--negative)' : 'var(--positive)', marginTop: 10, fontWeight: 'var(--fw-medium)' }}>
                 {mergeNotice}
               </div>
             )}
@@ -1827,7 +1827,7 @@ export function Sync() {
           {conflicts.length > 0 && (
             <div style={{ ...card, border: '1px solid var(--negative)' }}>
               <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
-                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>冲突箱 <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{filteredConflicts.length}/{conflicts.length}</span></div>
+                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>冲突箱 <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-medium)' }}>{filteredConflicts.length}/{conflicts.length}</span></div>
                 <button onClick={exportConflicts} style={outline}>导出冲突 JSON</button>
               </div>
               <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginBottom: 12 }}>
@@ -1859,8 +1859,8 @@ export function Sync() {
                       return (
                         <div key={aggregate.key} style={{ padding: '12px 0', borderTop: '1px solid var(--border)' }}>
                           <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-                            <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>{aggregateTitle(aggregate.type, aggregate.id, selectedPayload, snap)}</div>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>
+                            <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{aggregateTitle(aggregate.type, aggregate.id, selectedPayload, snap)}</div>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>
                               整项采用
                               <select className="zc-select" value={selectedId} onChange={(event) => chooseBranch(c.id, aggregate.key, event.target.value)} style={{ height: 32, minWidth: 190 }}>
                                 {aggregate.branches.map((branch, index) => <option key={branch.revisionId} value={branch.revisionId}>{branchLabel(branch, index)}</option>)}
@@ -1890,7 +1890,7 @@ export function Sync() {
                             </table>
                           </div>
                           <details style={{ marginTop: 8 }}>
-                            <summary style={{ cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)' }}>查看各分支原始 JSON</summary>
+                            <summary style={{ cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' }}>查看各分支原始 JSON</summary>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10, marginTop: 8 }}>
                               {aggregate.branches.map((branch, index) => (
                                 <div key={branch.revisionId}>
@@ -1930,7 +1930,7 @@ const gridHead = { color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }
 function SyncTile({ label, value, tone }: { label: string; value: string; tone: string }) {
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 11, background: 'var(--surface-2)' }}>
-      <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>{label}</div>
+      <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{label}</div>
       <div style={{ fontSize: 'var(--fs-heading)', color: tone, fontWeight: 'var(--fw-bold)', marginTop: 4 }}>{value}</div>
     </div>
   );

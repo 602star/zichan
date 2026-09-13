@@ -21,6 +21,7 @@ test('changes account password and revokes only a selected own device', async ({
     await page.getByRole('button', { name: '直接开始记支出', exact: true }).click();
     await page.getByRole('button', { name: '关闭快速记账' }).click();
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
+    await page.getByRole('tab', { name: '数据与安全' }).click();
     const panel = page.getByRole('region', { name: '账号安全', exact: true });
     await panel.getByText('登录设备', { exact: true }).click();
     await panel.getByRole('button', { name: '刷新登录设备' }).click();

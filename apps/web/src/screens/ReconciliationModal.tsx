@@ -167,15 +167,15 @@ export function ReconciliationModal(props: Props) {
 
         <div style={{ overflowY: 'auto', padding: 24 }}>
           <div className="zc-reconciliation-inputs" style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 1fr', gap: 12 }}>
-            <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>账户<select disabled={!!session} value={accountId} onChange={(event) => {
+            <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>账户<select disabled={!!session} value={accountId} onChange={(event) => {
               const nextId = event.target.value;
               setAccountId(nextId);
               setStatementDate(latestStatementDate(snap.accounts.find((account) => account.id === nextId)?.statementDay));
               setSelectedIds([]);
             }} style={{ ...inputStyle, marginTop: 6 }}>{snap.accounts.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
-            <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>币种<select disabled={!!session} value={assetId} onChange={(event) => { setAssetId(event.target.value); setSelectedIds([]); }} style={{ ...inputStyle, marginTop: 6 }}>{snap.assets.map((row) => <option key={row.id} value={row.id}>{row.code} · {row.name}</option>)}</select></label>
-            <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>账单截止日<input disabled={!!session} type="date" value={statementDate} onChange={(event) => { setStatementDate(event.target.value); setSelectedIds([]); }} style={{ ...inputStyle, marginTop: 6 }} /></label>
-            <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>银行期末余额<input disabled={!!session} inputMode="decimal" value={statementBalance} onChange={(event) => setStatementBalance(event.target.value)} style={{ ...inputStyle, marginTop: 6 }} /></label>
+            <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>币种<select disabled={!!session} value={assetId} onChange={(event) => { setAssetId(event.target.value); setSelectedIds([]); }} style={{ ...inputStyle, marginTop: 6 }}>{snap.assets.map((row) => <option key={row.id} value={row.id}>{row.code} · {row.name}</option>)}</select></label>
+            <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>账单截止日<input disabled={!!session} type="date" value={statementDate} onChange={(event) => { setStatementDate(event.target.value); setSelectedIds([]); }} style={{ ...inputStyle, marginTop: 6 }} /></label>
+            <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>银行期末余额<input disabled={!!session} inputMode="decimal" value={statementBalance} onChange={(event) => setStatementBalance(event.target.value)} style={{ ...inputStyle, marginTop: 6 }} /></label>
           </div>
 
           <div className="zc-reconciliation-summary" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', marginTop: 18, borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
@@ -184,7 +184,7 @@ export function ReconciliationModal(props: Props) {
               ['本次勾选', session?.selectedTotal ?? preview?.selectedTotal ?? '0'],
               ['核对后余额', session?.clearedBalance ?? preview?.clearedBalance ?? '0'],
               ['差额', session?.difference ?? preview?.difference ?? '0'],
-            ].map(([label, value]) => <div key={label} style={{ padding: '14px 12px' }}><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>{label}</div><div style={{ marginTop: 5, fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)', color: label === '差额' && !D(value).isZero() ? 'var(--negative)' : 'var(--fg)' }}>{value}</div></div>)}
+            ].map(([label, value]) => <div key={label} style={{ padding: '14px 12px' }}><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{label}</div><div style={{ marginTop: 5, fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)', color: label === '差额' && !D(value).isZero() ? 'var(--negative)' : 'var(--fg)' }}>{value}</div></div>)}
           </div>
 
           {!session && (
@@ -218,14 +218,14 @@ export function ReconciliationModal(props: Props) {
             </div>
           )}
 
-          <label style={{ display: 'block', marginTop: 16, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>备注<textarea disabled={!!session} value={note} onChange={(event) => setNote(event.target.value)} style={{ ...inputStyle, minHeight: 70, padding: 10, marginTop: 6, resize: 'vertical' }} /></label>
-          {error && <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>{error}</div>}
+          <label style={{ display: 'block', marginTop: 16, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>备注<textarea disabled={!!session} value={note} onChange={(event) => setNote(event.target.value)} style={{ ...inputStyle, minHeight: 70, padding: 10, marginTop: 6, resize: 'vertical' }} /></label>
+          {error && <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{error}</div>}
         </div>
 
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
           {session
             ? <button type="button" disabled={busy} onClick={() => setUndoOpen(true)} style={{ ...button, color: 'var(--negative)', borderColor: 'var(--negative)' }}>{busy ? '处理中…' : '撤销本次对账'}</button>
-            : <label className="zc-check-row-inline" style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: difference.isZero() ? 'var(--fg-subtle)' : 'var(--fg)' }}><span className="zc-check-target"><input type="checkbox" disabled={difference.isZero()} checked={createAdjustment && !difference.isZero()} onChange={(event) => setCreateAdjustment(event.target.checked)} /></span>创建 {difference.abs().toString()} 的余额调整流水</label>}
+            : <label className="zc-check-row-inline" style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: difference.isZero() ? 'var(--fg-subtle)' : 'var(--fg)' }}><span className="zc-check-target"><input type="checkbox" disabled={difference.isZero()} checked={createAdjustment && !difference.isZero()} onChange={(event) => setCreateAdjustment(event.target.checked)} /></span>创建 {difference.abs().toString()} 的余额调整流水</label>}
           <div style={{ display: 'flex', gap: 8 }}><button type="button" disabled={busy} onClick={props.onClose} style={button}>关闭</button>{!session && <button type="button" disabled={busy || !preview || (!difference.isZero() && !createAdjustment)} onClick={() => void finish()} style={primary}>{busy ? '正在完成…' : '完成对账'}</button>}</div>
         </div>
         {undoOpen && session && (

@@ -32,6 +32,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.getByRole('button', { name: '直接开始记支出', exact: true }).click();
     await page.getByRole('button', { name: '关闭快速记账' }).click();
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
+    await page.getByRole('tab', { name: '同步与账号' }).click();
     await page.getByRole('button', { name: '管理同步服务器', exact: true }).click();
     await expect(page.getByRole('button', { name: '新增服务器' })).toBeVisible();
     await expect(page.getByLabel('完整服务器地址')).toBeDisabled();
@@ -119,6 +120,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await expect(page.getByLabel('启用 公网副本', { exact: true })).not.toBeChecked();
     await page.reload();
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
+    await page.getByRole('tab', { name: '同步与账号' }).click();
     await page.getByRole('button', { name: '管理同步服务器', exact: true }).click();
     await expect(page.getByLabel('启用 本机副本', { exact: true })).toBeChecked();
     await expect(page.getByLabel('启用 公网副本', { exact: true })).not.toBeChecked();
@@ -130,6 +132,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.getByLabel('启用 公网副本', { exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: test.info().outputPath('web-multi-server.png') });
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
+    await page.getByRole('tab', { name: '同步与账号' }).click();
     await page.getByRole('button', { name: '退出记账账号', exact: true }).click();
     await page.getByRole('button', { name: '确认退出', exact: true }).click();
     await expect(page.getByRole('heading', { name: '账号登录', exact: true })).toBeVisible();
@@ -138,6 +141,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await page.getByRole('button', { name: '登录已有账号' }).click();
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
+    await page.getByRole('tab', { name: '同步与账号' }).click();
     await page.getByRole('button', { name: '管理同步服务器', exact: true }).click();
     await expect(page.getByLabel('启用 本机副本', { exact: true })).toBeChecked();
     await expect(page.getByLabel('启用 公网副本', { exact: true })).not.toBeChecked();

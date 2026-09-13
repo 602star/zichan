@@ -106,7 +106,7 @@ export function Dashboard() {
           </div>
         </div>
         <div className="zc-hero-snapshot" style={{ ...card, padding: 'clamp(14px, 3.4vw, 24px)', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2 }}>
-          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)', letterSpacing: 0, marginBottom: 6 }}>资产快照</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', letterSpacing: 0, marginBottom: 6 }}>资产快照</div>
           {[
             ['所选期间投入', partialText('investedFiat', money(vm.investedFiat)), 'var(--fg)'],
             ['未实现盈亏', partialText('unrealized', signedMoney(vm.unrealized)), vm.unrealized.isNegative() ? 'var(--negative)' : 'var(--positive)'],
@@ -158,7 +158,7 @@ export function Dashboard() {
                     <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{task.title}</div>
                     <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3, overflowWrap: 'anywhere' }}>{task.detail}</div>
                   </div>
-                  <button type="button" onClick={() => openTask(task)} style={{ border: '1px solid var(--border)', background: 'var(--surface)', color, padding: '6px 10px', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', whiteSpace: 'nowrap' }}>{task.actionLabel}</button>
+                  <button type="button" onClick={() => openTask(task)} style={{ border: '1px solid var(--border)', background: 'var(--surface)', color, padding: '6px 10px', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', cursor: 'pointer', whiteSpace: 'nowrap' }}>{task.actionLabel}</button>
                 </div>
               );
             })}
@@ -197,7 +197,7 @@ export function Dashboard() {
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {vm.activity.map((ev, i) => (
               <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 0', borderBottom: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)', width: 38, flexShrink: 0 }}>{fmtDate(ev.date)}</div>
+                <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', width: 38, flexShrink: 0 }}>{fmtDate(ev.date)}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{ev.desc}</div>
                   <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 1 }}>{ev.type} · {ev.detail}</div>

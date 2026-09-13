@@ -433,7 +433,7 @@ export function QuickExpenseModal({
               <span style={{ marginLeft: 7 }}>{recommendation.reason}</span>
             </span>
             {(category !== recommendation.category || description !== (recommendation.description ?? '')) && (
-              <button type="button" onClick={applyRecommendation} style={{ flex: '0 0 auto', border: '1px solid var(--accent)', borderRadius: 'var(--r-pill)', background: 'var(--surface)', color: 'var(--accent)', padding: '5px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>使用推荐</button>
+              <button type="button" onClick={applyRecommendation} style={{ flex: '0 0 auto', border: '1px solid var(--accent)', borderRadius: 'var(--r-pill)', background: 'var(--surface)', color: 'var(--accent)', padding: '5px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', cursor: 'pointer' }}>使用推荐</button>
             )}
           </div>
         )}
@@ -445,7 +445,7 @@ export function QuickExpenseModal({
         )}
 
         <label style={{ display: 'block', marginTop: 22 }}>
-          <span style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>支出金额</span>
+          <span style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>支出金额</span>
           <input
             ref={amountRef}
             data-dialog-initial-focus
@@ -461,7 +461,7 @@ export function QuickExpenseModal({
 
         {expenseTemplates.length > 0 && (
           <div role="group" aria-label="常用支出" style={{ marginTop: 18 }}>
-            <div style={{ marginBottom: 8, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>常用支出</div>
+            <div style={{ marginBottom: 8, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>常用支出</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {expenseTemplates.map((template) => (
                 <button
@@ -476,7 +476,7 @@ export function QuickExpenseModal({
                     color: category === template.category && description === (template.description ?? template.name) ? 'var(--accent)' : 'var(--fg-muted)',
                     padding: '8px 12px',
                     fontSize: 'var(--fs-caption)',
-                    fontWeight: 'var(--fw-bold)',
+                    fontWeight: 'var(--fw-medium)',
                     cursor: 'pointer',
                   }}
                 >
@@ -489,7 +489,7 @@ export function QuickExpenseModal({
 
         <div className="zc-quick-expense-main" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginTop: 18 }}>
           <div>
-            <label htmlFor="quick-expense-category" style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>分类</label>
+            <label htmlFor="quick-expense-category" style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>分类</label>
             <CategoryPicker
               fieldId="quick-expense-category"
               name="category"
@@ -503,13 +503,13 @@ export function QuickExpenseModal({
             />
           </div>
           <label>
-            <span style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>备注（可选）</span>
+            <span style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>备注（可选）</span>
             <input aria-label="支出备注" value={description} onChange={(event) => { touched.current = true; setDescription(event.target.value); }} placeholder="例如：午餐" style={field} />
           </label>
         </div>
 
         <details style={{ marginTop: 16, color: 'var(--text-secondary)' }}>
-          <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>更多信息</summary>
+          <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>更多信息</summary>
           <div className="zc-quick-expense-split" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 12 }}>
             <label><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>日期</span><input aria-label="支出日期" type="date" value={date} onChange={(event) => { touched.current = true; setDate(event.target.value); }} style={field} /></label>
             <label><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>时间</span><input aria-label="支出时间" type="time" value={time} onChange={(event) => { touched.current = true; setTime(event.target.value); }} style={field} /></label>
@@ -517,7 +517,7 @@ export function QuickExpenseModal({
           </div>
         </details>
 
-        {error && <div role="alert" style={{ marginTop: 14, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>{error}</div>}
+        {error && <div role="alert" style={{ marginTop: 14, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{error}</div>}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
           <button type="button" onClick={requestClose} disabled={busy} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', color: 'var(--text-secondary)', padding: '10px 16px', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>取消</button>

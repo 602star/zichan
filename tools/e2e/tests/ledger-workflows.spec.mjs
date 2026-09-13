@@ -179,6 +179,8 @@ test('exports a real PDF report with a valid PDF header', async ({ page }) => {
   await openLedger(page);
   await page.getByRole('button', { name: /支出报表$/ }).click();
   const downloadPromise = page.waitForEvent('download');
+  // Exports now sit behind a single menu rather than a row of buttons.
+  await page.getByRole('button', { name: '导出报表' }).click();
   await page.getByRole('button', { name: '导出 PDF' }).click();
   const download = await downloadPromise;
   const path = await download.path();

@@ -114,6 +114,19 @@ button {
 }
 
 /*
+ * Headings used to fall through to the UA defaults, so a stray 18.72px
+ * (`<h3>` at 1.17em) appeared as a text size that belonged to no scale step.
+ * Pin the element defaults to the scale; class-based headings still override.
+ */
+h1,
+h2,
+h3,
+h4 {
+  font-size: var(--fs-title);
+  font-weight: var(--fw-bold);
+}
+
+/*
  * One control height for every button, from CSS rather than from an inline
  * style, so the coarse-pointer block can raise it to 44px on touch devices.
  */
@@ -206,7 +219,9 @@ button,
   color: var(--text-secondary);
   font-family: inherit;
   font-size: var(--fs-body);
-  font-weight: var(--fw-bold);
+  /* Buttons match the tabs and menu items: an action is identified by its shape
+     and colour, so it does not also need to out-shout the data. */
+  font-weight: var(--fw-medium);
   white-space: nowrap;
   cursor: pointer;
 }
@@ -321,7 +336,7 @@ button,
 
 .zc-summary-label {
   font-size: var(--fs-meta);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-medium);
   color: var(--text-tertiary);
 }
 
@@ -394,7 +409,7 @@ button,
 .zc-error-boundary-kicker {
   color: #a34f36;
   font-size: var(--fs-caption);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-medium);
   letter-spacing: .08em;
 }
 
@@ -719,7 +734,7 @@ input[type="radio"] {
     max-width: 40%;
     color: var(--text-tertiary);
     font-size: var(--fs-meta);
-    font-weight: var(--fw-bold);
+    font-weight: var(--fw-medium);
   }
 
   /* The first cell is the card headline, so it keeps no redundant label. */
@@ -890,7 +905,7 @@ input[type="radio"] {
 }
 .zc-label {
   font-size: var(--fs-meta);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-medium);
   color: var(--text-secondary);
   margin-bottom: 5px;
   display: block;
@@ -989,7 +1004,7 @@ input[type="radio"] {
   padding: 0 10px;
   color: var(--text-tertiary);
   font-size: var(--fs-meta);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-medium);
 }
 
 .zc-category-pref-parent {
@@ -1022,7 +1037,7 @@ input[type="radio"] {
   background: transparent;
   color: inherit;
   font-size: var(--fs-caption);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-medium);
   text-align: left;
   cursor: pointer;
 }
@@ -1073,7 +1088,7 @@ input[type="radio"] {
   white-space: nowrap;
   color: var(--text-primary);
   font-size: var(--fs-caption);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-medium);
 }
 
 .zc-category-pref-name small {
@@ -1091,7 +1106,7 @@ input[type="radio"] {
   gap: 5px;
   color: var(--text-secondary);
   font-size: var(--fs-meta);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-medium);
   white-space: nowrap;
 }
 
@@ -1129,7 +1144,7 @@ input[type="radio"] {
   background: var(--surface-2);
   color: var(--text-tertiary);
   font-size: var(--fs-meta);
-  font-weight: var(--fw-bold);
+  font-weight: var(--fw-medium);
   white-space: nowrap;
 }
 
@@ -1433,7 +1448,7 @@ input[type="radio"] {
     border: 0;
     background: transparent;
     color: var(--text-tertiary);
-    font-weight: var(--fw-bold);
+    font-weight: var(--fw-medium);
     cursor: pointer;
   }
 
@@ -1546,7 +1561,7 @@ input[type="radio"] {
     padding: 0 2px 6px;
     color: var(--text-tertiary);
     font-size: var(--fs-meta);
-    font-weight: var(--fw-bold);
+    font-weight: var(--fw-medium);
   }
 
   .zc-mobile-drawer-grid-hidden button {
@@ -1558,7 +1573,7 @@ input[type="radio"] {
   .zc-mobile-drawer-grid-hidden button small {
     color: var(--accent);
     font-size: var(--fs-meta);
-    font-weight: var(--fw-bold);
+    font-weight: var(--fw-medium);
   }
 
   .zc-mobile-drawer-status {
@@ -2306,7 +2321,7 @@ input[type="radio"] {
     max-width: 40%;
     color: var(--text-tertiary);
     font-size: var(--fs-meta);
-    font-weight: var(--fw-bold);
+    font-weight: var(--fw-medium);
   }
 
   /* The quick-entry sheet keeps a scrollable body clear of the bottom nav. */

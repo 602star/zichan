@@ -72,6 +72,7 @@ test('uses real same-origin browser cookies without storing account passwords or
   await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
   const other = await context.newPage();
   await other.goto(`${baseUrl}/ledger/app/`);
+  await page.getByRole('tab', { name: '同步与账号' }).click();
   await page.getByRole('button', { name: '退出记账账号', exact: true }).click();
   await page.getByRole('button', { name: '确认退出', exact: true }).click();
   await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();

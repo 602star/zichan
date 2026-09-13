@@ -87,7 +87,7 @@ export function ConfirmDialog(props: {
         <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 10 }}>{props.title}</div>
         <div id={descriptionId} style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', lineHeight: 1.65 }}>{props.children}</div>
         {actionError && (
-          <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', lineHeight: 1.55, overflowWrap: 'anywhere' }}>
+          <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', lineHeight: 1.55, overflowWrap: 'anywhere' }}>
             操作失败：{actionError}
           </div>
         )}

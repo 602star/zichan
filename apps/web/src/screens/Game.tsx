@@ -32,7 +32,7 @@ const REC_LABEL: Record<GameRecordType, string> = {
 };
 
 function recBadge(type: GameRecordType) {
-  const base = { padding: '3px 9px', borderRadius: 'var(--r-sm)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)', flexShrink: 0, whiteSpace: 'nowrap' } as const;
+  const base = { padding: '3px 9px', borderRadius: 'var(--r-sm)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', flexShrink: 0, whiteSpace: 'nowrap' } as const;
   if (type === 'buy_currency' || type === 'topup') return { ...base, background: 'var(--accent-soft)', color: 'var(--accent)' };
   if (type === 'fee') return { ...base, background: 'rgba(194,96,74,.13)', color: 'var(--negative)' };
   if (type === 'produce' || type === 'consume') return { ...base, background: 'var(--surface-2)', color: 'var(--text-tertiary)' };
@@ -175,7 +175,7 @@ export function Game() {
   if (!vm) {
     return (
       <div style={{ ...card, maxWidth: 620, margin: '8vh auto 0', padding: 28 }}>
-        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--accent)', fontWeight: 'var(--fw-bold)' }}>首次使用</div>
+        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--accent)', fontWeight: 'var(--fw-medium)' }}>首次使用</div>
         <h2 style={{ margin: '8px 0 0', fontSize: 'var(--fs-display)' }}>{selectedGame ? '创建当前赛季' : '开始记录游戏'}</h2>
         <p style={{ margin: '10px 0 20px', color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.65 }}>
           {selectedGame
@@ -184,7 +184,7 @@ export function Game() {
         </p>
         <form onSubmit={(event) => { event.preventDefault(); void startFirstGame(); }}>
           {!selectedGame && (
-            <label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
+            <label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
               游戏名称
               <input
                 autoFocus
@@ -264,7 +264,7 @@ export function Game() {
 
       {view === 'overview' ? <><div className="zc-game-overview-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: 18, minWidth: 0 }}>
         <div style={card}>
-          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>{vm.season.name} · 赛季净收益（{vm.reportCurrencyCode}）</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>{vm.season.name} · 赛季净收益（{vm.reportCurrencyCode}）</div>
           <div style={{ fontSize: 'var(--fs-hero)', fontWeight: 'var(--fw-bold)', marginTop: 8, letterSpacing: 0, color: vm.net >= 0 ? 'var(--positive)' : 'var(--negative)' }}>
             {signedMoney(vm.net)}
           </div>
@@ -296,7 +296,7 @@ export function Game() {
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {vm.records.map((r, i) => (
               <div key={i} onClick={() => setEditRec(r.raw)} title="点击编辑" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
-                <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)', width: 38, flexShrink: 0 }}>{r.date.slice(5)}</div>
+                <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', width: 38, flexShrink: 0 }}>{r.date.slice(5)}</div>
                 <span style={recBadge(r.type)}>{REC_LABEL[r.type]}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-medium)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.item || REC_LABEL[r.type]}</div>

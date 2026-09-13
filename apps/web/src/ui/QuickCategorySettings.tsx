@@ -9,6 +9,7 @@ import {
   sortCategorySiblings,
 } from '../categoryPreferences.js';
 import { allCategories, categoryIsHidden } from '../transactionMeta.js';
+import { btnOutline, btnPrimary, btnSmall } from './styles.js';
 
 interface QuickCategorySettingsProps {
   categories: Category[];
@@ -190,14 +191,14 @@ export function QuickCategorySettings({ categories, onSave }: QuickCategorySetti
     <div data-testid="quick-category-settings">
       <div className="zc-category-pref-head">
         <div>
-          <div style={{ fontSize: 15, fontWeight: 850 }}>快速记账分类</div>
+          <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>快速记账分类</div>
           <div style={{ display: 'flex', gap: 7, marginTop: 9 }}>
             <button type="button" onClick={() => selectType('expense')} style={segmentButton(type === 'expense')}>支出</button>
             <button type="button" onClick={() => selectType('income')} style={segmentButton(type === 'income')}>收入</button>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {dirty && <span style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 850 }}>未保存 {updates.length} 项</span>}
+          {dirty && <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--accent)', fontWeight: 'var(--fw-medium)' }}>未保存 {updates.length} 项</span>}
           <button type="button" onClick={resetAll} style={outlineButton}>恢复全部默认</button>
           <button type="button" onClick={cancel} disabled={!dirty || busy} style={outlineButton}>取消修改</button>
           <button type="button" onClick={() => void save()} disabled={!dirty || busy} style={primaryButton}>{busy ? '保存中…' : '保存分类设置'}</button>
@@ -232,9 +233,9 @@ export function QuickCategorySettings({ categories, onSave }: QuickCategorySetti
               >
                 <span className="zc-category-drag" title="拖动排序">⋮⋮</span>
                 <button type="button" onClick={() => chooseParent(parent.id)} className="zc-category-pref-parent-main">
-                  <span style={{ width: 9, height: 9, borderRadius: 3, background: parent.color ?? 'var(--fg-subtle)', flex: '0 0 auto' }} />
+                  <span style={{ width: 9, height: 9, borderRadius: 'var(--r-sm)', background: parent.color ?? 'var(--fg-subtle)', flex: '0 0 auto' }} />
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{parent.name}</span>
-                  <span style={{ marginLeft: 'auto', color: 'var(--fg-subtle)', fontSize: 10 }}>{visibleCount}/{rows.length}</span>
+                  <span style={{ marginLeft: 'auto', color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' }}>{visibleCount}/{rows.length}</span>
                 </button>
                 <OrderButtons
                   name={parent.name}
@@ -249,7 +250,7 @@ export function QuickCategorySettings({ categories, onSave }: QuickCategorySetti
 
         <div className="zc-category-pref-children">
           <div className="zc-category-pref-batch">
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--fg-muted)', fontWeight: 800 }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>
               <input
                 type="checkbox"
                 aria-label="全选当前分类"
@@ -315,7 +316,7 @@ export function QuickCategorySettings({ categories, onSave }: QuickCategorySetti
           )}
         </div>
       </div>
-      {notice && <div style={{ marginTop: 10, fontSize: 12, color: 'var(--positive)', fontWeight: 800 }}>{notice}</div>}
+      {notice && <div style={{ marginTop: 10, fontSize: 'var(--fs-caption)', color: 'var(--positive)', fontWeight: 'var(--fw-medium)' }}>{notice}</div>}
     </div>
   );
 }
@@ -345,7 +346,7 @@ function CategoryGroup(props: {
         >
           <input aria-label={`选择 ${category.name}`} type="checkbox" checked={props.selectedIds.has(category.id)} onChange={() => props.onSelect(category.id)} />
           <span className="zc-category-drag" title="拖动排序">⋮⋮</span>
-          <span style={{ width: 9, height: 9, borderRadius: 3, background: category.color ?? 'var(--fg-subtle)', flex: '0 0 auto' }} />
+          <span style={{ width: 9, height: 9, borderRadius: 'var(--r-sm)', background: category.color ?? 'var(--fg-subtle)', flex: '0 0 auto' }} />
           <span className="zc-category-pref-name">{category.name}<small>{category.id}</small></span>
           <label className="zc-category-pref-toggle">
             <input aria-label={`快速显示 ${category.name}`} type="checkbox" checked={!categoryIsHidden(category)} onChange={() => props.onToggle(category)} />
@@ -371,7 +372,7 @@ function SearchCategoryRow(props: {
   return (
     <div className="zc-category-pref-row is-search-result">
       <input aria-label={`选择 ${props.category.name}`} type="checkbox" checked={props.selected} onChange={props.onSelect} />
-      <span style={{ width: 9, height: 9, borderRadius: 3, background: props.category.color ?? 'var(--fg-subtle)' }} />
+      <span style={{ width: 9, height: 9, borderRadius: 'var(--r-sm)', background: props.category.color ?? 'var(--fg-subtle)' }} />
       <span className="zc-category-pref-name">{props.parentName} / {props.category.name}<small>{props.category.id}</small></span>
       <span className={`zc-category-state${hidden ? '' : ' is-frequent'}`}>
         {isCatalogOnly(props.category) ? '未启用' : hidden ? '隐藏' : '高频'}
@@ -400,7 +401,7 @@ function OrderButtons({ name, index, total, onMove }: {
 }
 
 function EmptyRow({ text }: { text: string }) {
-  return <div style={{ padding: '16px 10px', color: 'var(--fg-subtle)', fontSize: 12 }}>{text}</div>;
+  return <div style={{ padding: '16px 10px', color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>{text}</div>;
 }
 
 function segmentButton(active: boolean) {
@@ -408,15 +409,15 @@ function segmentButton(active: boolean) {
     minWidth: 70,
     height: 32,
     border: '1px solid var(--border)',
-    borderRadius: 8,
+    borderRadius: 'var(--r-sm)',
     background: active ? 'var(--accent)' : 'var(--surface)',
     color: active ? '#fff' : 'var(--fg-muted)',
-    fontSize: 12,
-    fontWeight: 850,
+    fontSize: 'var(--fs-caption)',
+    fontWeight: 'var(--fw-medium)',
     cursor: 'pointer',
   } as const;
 }
 
-const outlineButton = { padding: '7px 11px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg-muted)', fontWeight: 750, fontSize: 12, cursor: 'pointer' } as const;
-const primaryButton = { padding: '7px 12px', borderRadius: 8, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 800, fontSize: 12, cursor: 'pointer' } as const;
-const smallButton = { padding: '5px 8px', borderRadius: 7, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--fg-muted)', fontWeight: 750, fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap' } as const;
+const outlineButton = btnOutline;
+const primaryButton = btnPrimary;
+const smallButton = btnSmall;

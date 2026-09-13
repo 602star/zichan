@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { addDays, isDateInRange, localToday, type AuditBatch, type OperationLogEntry, type OperationType, type SyncConflictResolution, type Transaction } from '@zichan/core';
 import {
   restoreConversion,
@@ -509,7 +509,7 @@ function OperationDetail({ log, snap, actionBusy, actionMessage, onReverse }: { 
     <div style={card}>
       <DetailHeader title={`${OP_LABEL[log.op]} ${entityLabel(log.entityType)}`} sub={`${formatTime(log.at)} · ${log.deviceId ?? '未知设备'} · ${SOURCE_LABEL[log.source ?? 'local'] ?? log.source ?? '本地'}`} />
       {reversible && <button type="button" disabled={actionBusy} onClick={() => void onReverse(log)} style={{ ...button, borderColor: 'var(--accent)', color: 'var(--accent)', marginBottom: 12 }}>{actionBusy ? '处理中…' : '撤销此操作'}</button>}
-      {actionMessage && <div style={{ color: actionMessage === '已完成反向操作。' ? 'var(--positive)' : 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>{actionMessage}</div>}
+      {actionMessage && <div style={{ color: actionMessage === '已完成反向操作。' ? 'var(--positive)' : 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>{actionMessage}</div>}
       <KeyTags keys={log.changedKeys ?? Object.keys(diff)} />
       <DiffTable diff={diff} snap={snap} />
       <JsonBlock title="操作后快照" value={log.afterPayload ?? log.payload} />
@@ -545,20 +545,20 @@ function BatchDetail({
           {actionBusy ? '撤销中…' : `撤销整个批次（${compensation.affectedEntities.length} 项）`}
         </button>
       )}
-      {compensation?.status === 'applied' && <div style={{ color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>该批次已完整撤销</div>}
-      {compensation?.status === 'blocked' && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>不可撤销：{compensation.error ?? '相关对象后来发生了变化'}</div>}
-      {compensation?.status === 'pending' && compensation.error && <div style={{ color: 'var(--warning)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>上次尝试未完成，可重试：{compensation.error}</div>}
+      {compensation?.status === 'applied' && <div style={{ color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>该批次已完整撤销</div>}
+      {compensation?.status === 'blocked' && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>不可撤销：{compensation.error ?? '相关对象后来发生了变化'}</div>}
+      {compensation?.status === 'pending' && compensation.error && <div style={{ color: 'var(--warning)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>上次尝试未完成，可重试：{compensation.error}</div>}
       {actionMessage && <div style={{ color: actionMessage === '已完整撤销该批次。'
         ? 'var(--positive)'
         : actionMessage.includes('已经提交')
           ? 'var(--warning)'
-          : 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>{actionMessage}</div>}
+          : 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>{actionMessage}</div>}
       {event.batch.summary && <div style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginBottom: 12 }}>{event.batch.summary}</div>}
       {compensation && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginBottom: 12 }}>影响范围：{affectedEntitySummary(compensation)}</div>}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {event.logs.map((log) => (
           <div key={log.id} style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
               <span>{OP_LABEL[log.op]} {entityLabel(log.entityType)} · {objectName(log)}</span>
               <span style={{ color: 'var(--text-tertiary)' }}>{(log.changedKeys ?? []).map(fieldLabel).join(', ') || '—'}</span>
             </div>
@@ -631,7 +631,7 @@ function JsonBlock({ title, value }: { title: string; value?: string }) {
   if (!value) return null;
   return (
     <details style={{ marginTop: 12 }}>
-      <summary style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>{title}</summary>
+      <summary style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)', cursor: 'pointer' }}>{title}</summary>
       <pre style={{ margin: '8px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)', background: 'var(--surface-2)', borderRadius: 'var(--r-sm)', padding: 10 }}>
         {prettyJson(value)}
       </pre>

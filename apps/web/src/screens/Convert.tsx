@@ -25,7 +25,7 @@ const TYPE_OPTS: [ConversionType, string][] = [
 ];
 
 function badgeStyle(type: string) {
-  const base = { padding: '5px 11px', borderRadius: 'var(--r-sm)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', flexShrink: 0 } as const;
+  const base = { padding: '5px 11px', borderRadius: 'var(--r-sm)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', flexShrink: 0 } as const;
   if (type === 'dca' || type === 'buy') return { ...base, background: 'var(--accent-soft)', color: 'var(--accent)' };
   if (type === 'sell') return { ...base, background: 'rgba(63,143,107,.14)', color: 'var(--positive)' };
   return { ...base, background: 'var(--surface-2)', color: 'var(--text-secondary)' };
@@ -153,7 +153,7 @@ export function Convert() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                           {c.chips.map((chip, i) => (
                             <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <span style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '3px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)' }}>{chip}</span>
+                              <span style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '3px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' }}>{chip}</span>
                               {i < c.chips.length - 1 && <span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>→</span>}
                             </span>
                           ))}
@@ -164,7 +164,7 @@ export function Convert() {
                           <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 2 }}>{c.chain.date}</div>
                         </div>
                         <div style={{ textAlign: 'right', minWidth: 92 }}>
-                          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>{c.deltaLabel}</div>
+                          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{c.deltaLabel}</div>
                           <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', marginTop: 2, color: c.deltaColor }}>{c.delta}</div>
                         </div>
                         <span style={{ fontSize: 'var(--fs-body)', color: 'var(--text-tertiary)', transition: 'transform .2s', transform: `rotate(${co ? 180 : 0}deg)` }}>▾</span>
@@ -172,11 +172,11 @@ export function Convert() {
                       {co && (
                         <div className="zc-convert-detail-grid" style={{ padding: '4px 22px 20px', background: 'var(--surface-2)', display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 24 }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                            <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)', letterSpacing: 0 }}>换算步骤</div>
+                            <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', letterSpacing: 0 }}>换算步骤</div>
                             {c.steps.map((s) => (
                               <div key={s.n} style={{ ...card, padding: '14px 16px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                  <span style={{ width: 22, height: 22, borderRadius: 'var(--r-round)', background: 'var(--accent)', color: '#fff', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{s.n}</span>
+                                  <span style={{ width: 22, height: 22, borderRadius: 'var(--r-round)', background: 'var(--accent)', color: '#fff', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{s.n}</span>
                                   <span style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{s.from}</span>
                                   <span style={{ color: 'var(--text-tertiary)' }}>→</span>
                                   <span style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{s.to}</span>
@@ -189,7 +189,7 @@ export function Convert() {
                             ))}
                           </div>
                           <div style={{ ...card, padding: '16px 18px', alignSelf: 'start' }}>
-                            <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)', letterSpacing: 0, marginBottom: 6 }}>成本追溯</div>
+                            <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', letterSpacing: 0, marginBottom: 6 }}>成本追溯</div>
                             {c.calc.map((r) => (
                               <div key={r.l} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
                                 <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>{r.l}</span>
@@ -197,8 +197,8 @@ export function Convert() {
                               </div>
                             ))}
                             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 10 }}>
-                              <button onClick={() => setEditing(snap.chains.find((row) => row.chain.id === c.chain.id) ?? null)} style={{ padding: '6px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-caption)', cursor: 'pointer', marginRight: 8 }}>编辑</button>
-                              <button onClick={() => setDeletingChainId(c.chain.id)} style={{ padding: '6px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-caption)', cursor: 'pointer' }}>作废</button>
+                              <button onClick={() => setEditing(snap.chains.find((row) => row.chain.id === c.chain.id) ?? null)} style={{ padding: '6px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', fontWeight: 'var(--fw-medium)', fontSize: 'var(--fs-caption)', cursor: 'pointer', marginRight: 8 }}>编辑</button>
+                              <button onClick={() => setDeletingChainId(c.chain.id)} style={{ padding: '6px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', fontWeight: 'var(--fw-medium)', fontSize: 'var(--fs-caption)', cursor: 'pointer' }}>作废</button>
                             </div>
                           </div>
                         </div>
@@ -276,7 +276,7 @@ function ConvertEmptyState({
             >
               <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{preset.code}</div>
               <div style={{ marginTop: 4, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>{preset.name}</div>
-              <div style={{ marginTop: 8, fontSize: 'var(--fs-meta)', color: existing ? 'var(--positive)' : 'var(--accent)', fontWeight: 'var(--fw-bold)' }}>
+              <div style={{ marginTop: 8, fontSize: 'var(--fs-meta)', color: existing ? 'var(--positive)' : 'var(--accent)', fontWeight: 'var(--fw-medium)' }}>
                 {existing ? '已有定义 · 直接填写' : '选择时添加'}
               </div>
             </button>

@@ -33,7 +33,9 @@ export const btnBase: CSSProperties = {
   background: 'var(--surface)',
   color: 'var(--text-secondary)',
   fontSize: 'var(--fs-body)',
-  fontWeight: 'var(--fw-bold)',
+  /* An action is identified by its shape and colour, so it does not also need
+     to out-shout the data it sits next to. */
+  fontWeight: 'var(--fw-medium)',
   whiteSpace: 'nowrap',
   cursor: 'pointer',
 };
@@ -79,7 +81,7 @@ export const linkAccent: CSSProperties = {
   color: 'var(--accent)',
   padding: 0,
   fontSize: 'var(--fs-caption)',
-  fontWeight: 'var(--fw-bold)',
+  fontWeight: 'var(--fw-medium)',
   cursor: 'pointer',
 };
 
@@ -90,7 +92,7 @@ export const linkDanger: CSSProperties = {
   color: 'var(--negative)',
   padding: 0,
   fontSize: 'var(--fs-caption)',
-  fontWeight: 'var(--fw-bold)',
+  fontWeight: 'var(--fw-medium)',
   cursor: 'pointer',
 };
 
@@ -112,7 +114,7 @@ export const selectBase: CSSProperties = {
 export const th: CSSProperties = {
   textAlign: 'left',
   fontSize: 'var(--fs-meta)',
-  fontWeight: 'var(--fw-bold)',
+  fontWeight: 'var(--fw-medium)',
   color: 'var(--text-tertiary)',
   letterSpacing: 0,
   padding: '14px 16px',

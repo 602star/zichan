@@ -177,7 +177,7 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
   return (
     <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(22px, 5vw, 64px)', boxSizing: 'border-box', background: '#f0e9dc', color: '#4e473f', fontFamily: 'system-ui, sans-serif' }}>
       <section style={{ width: 'min(920px, 100%)', margin: '0 auto' }}>
-        <div style={{ color: '#985734', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', letterSpacing: '.12em' }}>ZICHAN · 首次设置</div>
+        <div style={{ color: '#985734', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.12em' }}>ZICHAN · 首次设置</div>
         <h1 style={{ margin: '10px 0 4px', fontSize: 'var(--fs-hero)', color: '#672f20' }}>开始你的账本</h1>
         <p style={{ margin: 0, color: '#756b60', lineHeight: 1.7 }}>默认账本只用于记录日常支出，无需配置账户、币种或账本模式。</p>
 
@@ -199,7 +199,7 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
         </section>
 
         <div style={{ marginTop: 22 }}>
-          <div style={{ color: '#756b60', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>其他方式</div>
+          <div style={{ color: '#756b60', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>其他方式</div>
           <div aria-label="其他账本初始化方式" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 10 }}>
             {([
               ['import', '导入备份'],
@@ -230,13 +230,13 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
               <h2 style={{ margin: 0, fontSize: 'var(--fs-heading)' }}>高级创建</h2>
               <p style={{ color: '#756b60', fontSize: 'var(--fs-body)', lineHeight: 1.6 }}>仅在需要其他基础币种或账户、资产模式时调整。个人账本仍不会创建业务流水。</p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 14, marginTop: 16 }}>
-                <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
+                <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
                   基础币种
                   <select value={baseCurrencyCode} onChange={(event) => setBaseCurrencyCode(event.target.value as BaseCurrencyChoice['code'])} style={field}>
                     {BASE_CURRENCY_CHOICES.map((currency) => <option key={currency.code} value={currency.code}>{currency.name}（{currency.code}）</option>)}
                   </select>
                 </label>
-                <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
+                <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
                   账本模式
                   <select value={ledgerMode} onChange={(event) => setLedgerMode(event.target.value as LedgerMode)} style={field}>
                     <option value="spending">轻量记账</option>
@@ -259,7 +259,7 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
               </label>
               {lockedFile && (
                 <form onSubmit={(event) => { event.preventDefault(); void openBackup(lockedFile, passphrase); }} style={{ marginTop: 16 }}>
-                  <label style={{ display: 'block', maxWidth: 420, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
+                  <label style={{ display: 'block', maxWidth: 420, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
                     备份加密密码
                     <input autoFocus type="password" autoComplete="current-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} style={field} />
                   </label>

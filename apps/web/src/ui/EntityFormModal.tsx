@@ -366,7 +366,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
             {moreFields.length > 0 && onOptionalFieldKeysChange && (
               <button
                 onClick={() => setFieldPickerOpen((v) => !v)}
-                style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-secondary)', borderRadius: 'var(--r-sm)', padding: '7px 10px', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}
+                style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-secondary)', borderRadius: 'var(--r-sm)', padding: '7px 10px', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', cursor: 'pointer' }}
               >
                 字段显示
               </button>
@@ -384,14 +384,14 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
         {fieldPickerOpen && (
           <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 12, marginBottom: 14, background: 'var(--surface-2)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-              <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>更多信息字段</div>
+              <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>更多信息字段</div>
               {optionalFieldPresets && (
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {optionalFieldPresets.map((preset) => (
                     <button
                       key={preset.label}
                       onClick={() => void onOptionalFieldKeysChange?.(preset.keys)}
-                      style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', background: 'var(--surface)', color: 'var(--text-secondary)', padding: '5px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}
+                      style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', background: 'var(--surface)', color: 'var(--text-secondary)', padding: '5px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', cursor: 'pointer' }}
                     >
                       {preset.label}
                     </button>
@@ -401,7 +401,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {allMoreFields.map((f) => (
-                <label key={f.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '6px 10px', background: 'var(--surface)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>
+                <label key={f.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '6px 10px', background: 'var(--surface)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>
                   <input type="checkbox" checked={f.lockedVisible || visibleOptional.has(f.key)} disabled={f.lockedVisible || busy} onChange={() => void toggleOptionalField(f.key)} />
                   {f.label}
                 </label>
@@ -607,7 +607,7 @@ function FormField(props: {
             {f.capture && (
               <>
                 <input id={`${fieldId}-camera`} type="file" accept="image/*" capture={f.capture} onChange={(e) => void readFiles(f.key, e.currentTarget.files)} style={{ display: 'none' }} />
-                <label className="zc-device-action" htmlFor={`${fieldId}-camera`} title="使用相机拍照" style={{ flex: '0 0 auto', height: 38, display: 'inline-flex', alignItems: 'center', padding: '0 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--text-secondary)', background: 'var(--surface-2)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>拍照</label>
+                <label className="zc-device-action" htmlFor={`${fieldId}-camera`} title="使用相机拍照" style={{ flex: '0 0 auto', height: 38, display: 'inline-flex', alignItems: 'center', padding: '0 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--text-secondary)', background: 'var(--surface-2)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', cursor: 'pointer' }}>拍照</label>
               </>
             )}
           </div>
@@ -640,13 +640,13 @@ function FormField(props: {
             style={{ flex: 1, minWidth: 0 }}
           />
           {f.deviceAction && (f.deviceAction !== 'scan-barcode' || barcodeScannerAvailable()) && (
-            <button type="button" title={f.deviceAction === 'scan-barcode' ? '扫描条形码或二维码' : '读取当前位置'} disabled={deviceBusy} onClick={() => void runDeviceAction(f)} style={{ flex: '0 0 auto', height: 38, padding: '0 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--text-secondary)', background: 'var(--surface-2)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', cursor: deviceBusy ? 'wait' : 'pointer' }}>
+            <button type="button" title={f.deviceAction === 'scan-barcode' ? '扫描条形码或二维码' : '读取当前位置'} disabled={deviceBusy} onClick={() => void runDeviceAction(f)} style={{ flex: '0 0 auto', height: 38, padding: '0 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--text-secondary)', background: 'var(--surface-2)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', cursor: deviceBusy ? 'wait' : 'pointer' }}>
               {deviceBusy ? '读取中…' : f.deviceAction === 'scan-barcode' ? '扫码' : '定位'}
             </button>
           )}
         </div>
       )}
-      {error && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)', marginTop: 4 }}>{error}</div>}
+      {error && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', marginTop: 4 }}>{error}</div>}
     </div>
   );
 }
@@ -719,7 +719,7 @@ function AttachmentSaveButton({ attachment }: { attachment: AttachmentDraftData 
       title={error || `保存 ${attachment.fileName}`}
       onClick={() => void save()}
       disabled={busy}
-      style={{ marginTop: 3, border: 0, padding: 0, background: 'transparent', color: error ? 'var(--negative)' : 'var(--accent)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'wait' : 'pointer' }}
+      style={{ marginTop: 3, border: 0, padding: 0, background: 'transparent', color: error ? 'var(--negative)' : 'var(--accent)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', cursor: busy ? 'wait' : 'pointer' }}
     >
       {busy ? '取回中…' : error ? '重试' : '保存'}
     </button>
@@ -826,7 +826,7 @@ export function CategoryPicker(props: {
                 onClick={() => {
                   setShowHidden((current) => !current);
                 }}
-                style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '0 11px', background: showHidden ? 'var(--accent-soft)' : 'var(--surface)', color: showHidden ? 'var(--accent)' : 'var(--fg-muted)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '0 11px', background: showHidden ? 'var(--accent-soft)' : 'var(--surface)', color: showHidden ? 'var(--accent)' : 'var(--fg-muted)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', cursor: 'pointer', whiteSpace: 'nowrap' }}
               >
                 {showHidden ? '只看高频' : `显示隐藏 (${hiddenCount})`}
               </button>
@@ -903,7 +903,7 @@ function categoryDot(index: number) {
     color: '#fff',
     background: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
     fontSize: 'var(--fs-caption)',
-    fontWeight: 'var(--fw-bold)',
+    fontWeight: 'var(--fw-medium)',
   } as const;
 }
 
@@ -934,7 +934,7 @@ function categoryHiddenBadge() {
     color: 'var(--text-tertiary)',
     background: 'var(--surface-2)',
     fontSize: 'var(--fs-meta)',
-    fontWeight: 'var(--fw-bold)',
+    fontWeight: 'var(--fw-medium)',
     flex: '0 0 auto',
   } as const;
 }

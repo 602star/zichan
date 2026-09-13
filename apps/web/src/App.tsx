@@ -477,7 +477,7 @@ export function App() {
               <span style={{ color: 'var(--text-tertiary)', fontWeight: 'var(--fw-regular)' }}>报表币种</span>
               {base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}
             </div>
-            <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.25 }}>
+            <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.25 }}>
               <span style={{ fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' }}>报表基准日</span>
               <span>{formatAsOfDate(asOfDate)}</span>
             </div>
@@ -554,7 +554,7 @@ export function App() {
             onKeyDown={(event) => { if (event.key === 'Enter' && importPassphrase.length >= 8) void unlockImportedBackup(); }}
             placeholder="创建备份时的账本加密密码"
           />
-          {importUnlockError && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginTop: 8 }}>{importUnlockError}</div>}
+          {importUnlockError && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginTop: 8 }}>{importUnlockError}</div>}
         </ConfirmDialog>
       )}
       {importDialog?.kind === 'confirm' && (
@@ -568,7 +568,7 @@ export function App() {
         >
           <div>导入预检通过：{importDialog.summary}</div>
           <div style={{ marginTop: 10 }}>
-            <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginBottom: 6 }}>恢复方式</div>
+            <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 6 }}>恢复方式</div>
             <div role="group" aria-label="备份恢复方式" style={{ display: 'flex', gap: 0, width: '100%' }}>
               {(['merge', 'replace'] as const).map((mode) => (
                 <button
@@ -584,7 +584,7 @@ export function App() {
                     background: importDialog.mode === mode ? 'var(--accent)' : 'var(--surface)',
                     color: importDialog.mode === mode ? '#fff' : 'var(--fg-muted)',
                     fontSize: 'var(--fs-caption)',
-                    fontWeight: 'var(--fw-bold)',
+                    fontWeight: 'var(--fw-medium)',
                     cursor: 'pointer',
                   }}
                 >
@@ -619,7 +619,7 @@ export function App() {
           )}
           {importDialog.diff.examples.length > 0 && (
             <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
-              <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)', marginBottom: 5 }}>业务字段变化示例</div>
+              <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)', marginBottom: 5 }}>业务字段变化示例</div>
               {importDialog.diff.examples.map((row, idx) => (
                 <div key={`${row.label}-${row.name}-${idx}`} style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', lineHeight: 1.55 }}>
                   {row.label} · {row.name}：{row.fields.slice(0, 6).join('、')}
@@ -657,7 +657,7 @@ export function App() {
 function ImportStat({ label, value }: { label: string; value: number }) {
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 8, background: 'var(--surface-2)' }}>
-      <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>{label}</div>
+      <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{label}</div>
       <div style={{ fontSize: 'var(--fs-heading)', color: 'var(--text-primary)', fontWeight: 'var(--fw-bold)', marginTop: 2 }}>{value}</div>
     </div>
   );
@@ -770,7 +770,7 @@ function Sidebar(props: {
       <div style={{ flex: 1 }} />
 
       <div className="zc-sidebar-theme" style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 11 }}>
-        <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)', letterSpacing: 0, padding: '0 8px' }}>
+        <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', letterSpacing: 0, padding: '0 8px' }}>
           视觉方案对比
         </div>
         <div style={{ display: 'flex', gap: 8, padding: '0 6px' }}>

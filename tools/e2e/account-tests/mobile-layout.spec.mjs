@@ -188,6 +188,80 @@ test('every screen keeps the phone/tablet layout contract across the device matr
     }
 
     expect(failures.join('\n')).toBe('');
+
+    // Density budget. The complaint this addresses was not a broken layout but
+    // the sheer amount of it. Measured on the phone viewport, before -> after:
+    //   settings: 7.3 -> 3.9 screens, 95 -> 62 controls, 65% -> 17% bold text
+    //   reports:  4.8 -> 4.2 screens
+    // The ceilings sit just above the current values so the next feature cannot
+    // quietly spend the gain, while still being far below the pre-change state.
+    const DENSITY_BUDGET = {
+      settings: { screens: 4.5, controls: 70, surfaces: 16, boldShare: 0.3 },
+      // Reports is a figures-first screen: its headline metrics are the content,
+      // so they stay bold and its ceiling is the measured 32% rather than the
+      // 17% Settings now reaches. Recorded here so the difference is deliberate.
+      reports: { screens: 4.5, controls: 24, surfaces: 14, boldShare: 0.35 },
+    };
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const overBudget = [];
+    for (const [screen, budget] of Object.entries(DENSITY_BUDGET)) {
+      await clickNav(page, SCREENS.find((row) => row.id === screen).label);
+      await page.evaluate(() => { document.scrollingElement.scrollTop = 0; });
+      await page.waitForTimeout(300);
+
+      const measured = await page.evaluate(() => {
+        const scroller = document.scrollingElement;
+        const visible = (el) => {
+          const style = getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+          const rect = el.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        };
+
+        // A "surface" is a panel: bordered on all four sides and large enough
+        // that it reads as a container rather than a chip or an input. A card
+        // inside a card is what made the page feel like a form.
+        const surfaces = [...document.querySelectorAll('section, div, aside')]
+          .filter(visible)
+          .filter((el) => {
+            const style = getComputedStyle(el);
+            const bordered = ['Top', 'Right', 'Bottom', 'Left']
+              .every((side) => parseFloat(style[`border${side}Width`]) > 0);
+            const rect = el.getBoundingClientRect();
+            return bordered && rect.width * rect.height >= 10000;
+          }).length;
+
+        const controls = [...document.querySelectorAll('button, select, input, textarea')]
+          .filter(visible).length;
+
+        // Emphasis share: how much of the visible text is shouting.
+        const textBlocks = [...document.querySelectorAll('body *')].filter((el) => {
+          if (!visible(el)) return false;
+          const own = [...el.childNodes]
+            .some((node) => node.nodeType === 3 && (node.textContent ?? '').trim());
+          return own;
+        });
+        const bold = textBlocks
+          .filter((el) => Number(getComputedStyle(el).fontWeight) >= 700).length;
+
+        return {
+          screens: scroller.scrollHeight / window.innerHeight,
+          controls,
+          surfaces,
+          boldShare: textBlocks.length ? bold / textBlocks.length : 0,
+        };
+      });
+
+      const round = (value) => Math.round(value * 100) / 100;
+      if (measured.screens > budget.screens) overBudget.push(`${screen}: ${round(measured.screens)} screens > ${budget.screens}`);
+      if (measured.controls > budget.controls) overBudget.push(`${screen}: ${measured.controls} controls > ${budget.controls}`);
+      if (measured.surfaces > budget.surfaces) overBudget.push(`${screen}: ${measured.surfaces} bordered surfaces > ${budget.surfaces}`);
+      if (measured.boldShare > budget.boldShare) overBudget.push(`${screen}: ${round(measured.boldShare * 100)}% of text bold > ${budget.boldShare * 100}%`);
+      console.log(`density ${screen}: ${JSON.stringify(measured)}`);
+    }
+
+    expect(overBudget.join('\n')).toBe('');
   } finally {
     server.server.closeAllConnections();
     await server.close();

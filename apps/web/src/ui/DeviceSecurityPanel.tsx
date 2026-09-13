@@ -158,14 +158,14 @@ export function DeviceSecurityPanel() {
           onChange={(checked) => void toggleNotifications(checked)}
         />
         <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 11, background: 'var(--surface-2)' }}>
-          <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>设备能力测试</div>
+          <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>设备能力测试</div>
           <div style={{ display: 'flex', gap: 7, marginTop: 9, flexWrap: 'wrap' }}>
             <button type="button" onClick={() => void testLocation()} disabled={!!busy} style={outline}>{busy === 'location' ? '定位中…' : '测试定位'}</button>
             <button type="button" onClick={() => void testNotification()} disabled={!!busy || notificationPermission === 'unsupported'} style={outline}>测试通知</button>
           </div>
         </div>
       </div>
-      {notice && <div style={{ marginTop: 10, color: /失败|未开启|不可用|未授权/.test(notice) ? 'var(--negative)' : 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', overflowWrap: 'anywhere' }}>{notice}</div>}
+      {notice && <div style={{ marginTop: 10, color: /失败|未开启|不可用|未授权/.test(notice) ? 'var(--negative)' : 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', overflowWrap: 'anywhere' }}>{notice}</div>}
     </div>
   );
 }
@@ -173,7 +173,7 @@ export function DeviceSecurityPanel() {
 function DeviceControl(props: { label: string; value: string; checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 11, background: 'var(--surface-2)' }}>
-      <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
+      <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
         {props.label}
         <input type="checkbox" checked={props.checked} disabled={props.disabled} onChange={(event) => props.onChange(event.target.checked)} />
       </label>

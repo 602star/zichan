@@ -245,7 +245,7 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
           {!accountOnly && <><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
             {PRESETS.map((item) => <button key={item.id} type="button" disabled={busy} onClick={() => selectPreset(item.id)} style={{ ...button, background: preset === item.id ? '#ead8c4' : '#fffdf9' }}>{item.label}</button>)}
           </div>
-          <label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>完整服务器地址</label>
+          <label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>完整服务器地址</label>
           <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
             <input aria-label="完整服务器地址" value={address} onChange={(event) => setAddressDraft(event.target.value)} disabled={busy} spellCheck={false} style={{ ...input, flex: '1 1 420px' }} />
             <button type="button" onClick={() => setAdvanced((value) => !value)} disabled={busy} style={button}>{advanced ? '收起高级设置' : '高级设置'}</button>
@@ -266,10 +266,10 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
           <form onSubmit={(event) => { event.preventDefault(); void authenticate(registering ? 'register' : 'login'); }}>
           {registering && <details style={{ marginTop: 12 }}><summary>高级：账本保护方式</summary><label><input type="checkbox" checked={privateMode} disabled={busy} onChange={(e) => setPrivateMode(e.target.checked)} />创建私密账本，自己保存恢复码</label><p>默认云端托管允许此服务器解密和恢复账本。私密模式不托管密钥，遗失恢复码后账号密码找回无法恢复账本。</p></details>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 18 }}>
-            <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>用户名</label><input aria-label="服务器用户名" value={username} onChange={(event) => { setUsername(event.target.value); setError(''); }} disabled={busy} autoComplete="username" style={{ ...input, marginTop: 6 }} /></div>
-            <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>账号密码</label><input aria-label="服务器账号密码" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} disabled={busy} autoComplete={registering ? 'new-password' : 'current-password'} required minLength={8} style={{ ...input, marginTop: 6 }} /></div>
-            {registering && <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>确认账号密码</label><input aria-label="确认账号密码" type="password" required minLength={8} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy} autoComplete="new-password" style={{ ...input, marginTop: 6 }} /></div>}
-            {health?.registrationMode === 'invite' && (!accountOnly || registering) && <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>邀请码</label><input aria-label="邀请码" value={inviteCode} onChange={(event) => { setInviteCode(event.target.value); setError(''); }} disabled={busy} style={{ ...input, marginTop: 6 }} /></div>}
+            <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>用户名</label><input aria-label="服务器用户名" value={username} onChange={(event) => { setUsername(event.target.value); setError(''); }} disabled={busy} autoComplete="username" style={{ ...input, marginTop: 6 }} /></div>
+            <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>账号密码</label><input aria-label="服务器账号密码" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} disabled={busy} autoComplete={registering ? 'new-password' : 'current-password'} required minLength={8} style={{ ...input, marginTop: 6 }} /></div>
+            {registering && <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>确认账号密码</label><input aria-label="确认账号密码" type="password" required minLength={8} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy} autoComplete="new-password" style={{ ...input, marginTop: 6 }} /></div>}
+            {health?.registrationMode === 'invite' && (!accountOnly || registering) && <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>邀请码</label><input aria-label="邀请码" value={inviteCode} onChange={(event) => { setInviteCode(event.target.value); setError(''); }} disabled={busy} style={{ ...input, marginTop: 6 }} /></div>}
           </div>
 
           {health && !health.claimed && <p>本站尚未开放，请联系部署者完成服务器初始化。</p>}
@@ -281,8 +281,8 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
           </form>
           {accountOnly && <section aria-label="账号登录权限说明" style={{ marginTop: 18, fontSize: 'var(--fs-caption)', lineHeight: 1.7 }}><strong>登录会使用什么权限？</strong><p>仅验证本站账号并建立 HttpOnly 会话 Cookie，不保存账号密码。登录后在本浏览器保存该账号的加密离线缓存，不申请任意磁盘访问权限；不要求授予浏览器持久存储保护。托管账本登录后自动解锁；私密账本需要恢复码或此设备已有授权。</p></section>}
           {health?.claimed && <PasswordRecovery baseUrl={address} onComplete={(value) => { setUsername(value); setRegistering(false); }} />}
-          {message && <div role="status" style={{ marginTop: 12, color: '#397044', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>{message}</div>}
-          {error && <div role="alert" style={{ marginTop: 12, color: '#9a3a31', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>{error}</div>}
+          {message && <div role="status" style={{ marginTop: 12, color: '#397044', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{message}</div>}
+          {error && <div role="alert" style={{ marginTop: 12, color: '#9a3a31', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{error}</div>}
         </div>
       </section>
     </main>

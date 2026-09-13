@@ -486,11 +486,11 @@ export function AddConversionModal({
           ) : <div />}
           <Field label="时区"><input aria-label="时区" className="zc-input" value={timezone} readOnly /></Field>
         </div>
-        {presetNotice && <div style={{ color: presetNotice.includes('回退') ? 'var(--warning)' : 'var(--fg-muted)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginBottom: 14 }}>{presetNotice}</div>}
+        {presetNotice && <div style={{ color: presetNotice.includes('回退') ? 'var(--warning)' : 'var(--fg-muted)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 14 }}>{presetNotice}</div>}
 
         {!initial && (
           <div style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', padding: 12, marginBottom: 14 }}>
-            <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)', marginBottom: 8 }}>常用目标资产</div>
+            <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)', marginBottom: 8 }}>常用目标资产</div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {ASSET_PRESETS.map((row) => {
                 const existing = activeAssetByCode(assets, row.code);
@@ -606,7 +606,7 @@ export function AddConversionModal({
         })}
 
         <button onClick={() => setSteps([...drafts, emptyStep(effectiveBookCurrencyId, drafts.at(-1)?.toAssetId || effectiveBookCurrencyId)])} style={{ ...smallButton, width: '100%', padding: 10, borderStyle: 'dashed', marginBottom: 16 }}>+ 添加转换步骤</button>
-        {err && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>{err}</div>}
+        {err && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>{err}</div>}
         <div className="zc-modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <button onClick={onClose} disabled={saving} style={secondaryButton}>取消</button>
           <button onClick={() => void save()} disabled={saving} style={{ ...primaryButton, opacity: saving ? 0.6 : 1 }}>{saving ? '处理中…' : initial ? '预览影响' : '保存转换'}</button>
@@ -633,7 +633,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function Metric({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
-  return <div style={{ background: 'var(--surface)', padding: '9px 10px', minWidth: 0 }}><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{label}</div><div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: strong ? 'var(--accent)' : 'var(--fg)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div></div>;
+  return <div style={{ background: 'var(--surface)', padding: '9px 10px', minWidth: 0 }}><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{label}</div><div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: strong ? 'var(--accent)' : 'var(--fg)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div></div>;
 }
 
 const iconButton = iconBtn;
@@ -642,4 +642,4 @@ const dangerLink = linkDanger;
 const secondaryButton = btnOutline;
 const primaryButton = btnPrimary;
 const subSelect = { marginTop: 5, height: 30, paddingTop: 3, paddingBottom: 3, fontSize: 'var(--fs-meta)' } as const;
-const lotChip = (active: boolean) => ({ display: 'inline-flex', gap: 6, alignItems: 'center', border: '1px solid var(--border)', background: active ? 'var(--accent-soft)' : 'var(--surface)', color: active ? 'var(--accent)' : 'var(--fg-muted)', padding: '6px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' } as const);
+const lotChip = (active: boolean) => ({ display: 'inline-flex', gap: 6, alignItems: 'center', border: '1px solid var(--border)', background: active ? 'var(--accent-soft)' : 'var(--surface)', color: active ? 'var(--accent)' : 'var(--fg-muted)', padding: '6px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', cursor: 'pointer' } as const);

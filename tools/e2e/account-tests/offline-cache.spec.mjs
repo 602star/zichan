@@ -21,6 +21,7 @@ for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`un
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await page.getByRole('button', { name: '关闭快速记账' }).click();
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
+    await page.getByRole('tab', { name: '数据与安全' }).click();
     await page.getByText('此设备的离线访问', { exact: true }).click();
     await page.getByLabel('设置离线密码').fill('offline-cache-password');
     await page.getByLabel('确认离线密码').fill('offline-cache-password');

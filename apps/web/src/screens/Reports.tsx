@@ -1,5 +1,5 @@
 import { accountSessionStorage } from '../account-storage.js';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { fixedAssetCost, isDateInRange, gameRecordReportingPostings, traceChain, D, localToday, type DateRange, type QueryCursor } from '@zichan/core';
 import { useSnapshot, type Snapshot } from '../db/snapshot.js';
 import { useStore } from '../db/store.js';
@@ -27,13 +27,24 @@ import {
   effectiveReportRange,
   reportComparisonRanges,
 } from '../selectors/report-analysis.js';
-import { TransactionReportInsights } from '../ui/TransactionReportInsights.js';
+import { ReportSummaryStrip, TransactionReportInsights } from '../ui/TransactionReportInsights.js';
 
 const TABS: [TabId, string][] = [['transactions', '日常收支'], ['dca', '定投'], ['chain', '资产转换'], ['season', '游戏赛季'], ['fixed', '物品资产']];
+
+/*
+ * Granularity only re-buckets the trend chart, so it is rendered by the chart
+ * itself (`TimeTrendChart`) instead of sitting next to the date range, where it
+ * read as a third, interchangeable filter.
+ */
+const GRANULARITIES: readonly (readonly ['day' | 'month' | 'year', string])[] = [['day', '按日'], ['month', '按月'], ['year', '按年']];
+
 export function Reports() {
   const baseSnap = useSnapshot('reports');
   const { store } = useStore();
   const [tab, setTab] = useState<TabId>('transactions');
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const exportTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [ranges, setRanges] = useState<Record<TabId, DateRangeValue>>(() => ({
     transactions: dateRangeValue('this_month'),
     dca: dateRangeValue('all'),
@@ -162,6 +173,25 @@ export function Reports() {
       cancelled = true;
     };
   }, [effectiveTransactionDetailRange.from, effectiveTransactionDetailRange.to, selectedCategory, store, tab, transactionRevision]);
+  /* The export menu is a disclosure, so it must close like one: outside click or
+   * Escape, with focus handed back to the trigger. */
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!exportMenuRef.current?.contains(event.target as Node)) setExportMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setExportMenuOpen(false);
+      exportTriggerRef.current?.focus();
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [exportMenuOpen]);
   const snap = useMemo(() => {
     if (!baseSnap) return null;
     if (tab !== 'transactions') return baseSnap;
@@ -194,7 +224,7 @@ export function Reports() {
       : { planned: '0', actual: '0', variance: '0', overCount: 0, complete: true, rows: [] }
   ), [comparisonRanges, effectiveTransactionRange, snap, tab, transactionAggregates]);
   if (!snap) return null;
-  if (!table) return <div role="status" style={{ color: 'var(--fg-subtle)', fontSize: 13 }}>{transactionAggregateBusy ? '正在计算报表…' : '报表暂不可用'}</div>;
+  if (!table) return <div role="status" style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>{transactionAggregateBusy ? '正在计算报表…' : '报表暂不可用'}</div>;
   const reportTable = table;
   const tabLabel = TABS.find(([id]) => id === tab)?.[1] ?? '报表';
   const reportCurrency = createReportCurrency(snap, effectiveRange.to);
@@ -204,6 +234,18 @@ export function Reports() {
     setSelectedCategory(category);
     setTransactionDetailRange({ preset: 'custom', from: effective.from, to: effective.to });
     requestAnimationFrame(() => document.getElementById('transaction-report-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  }
+
+  function exportReportCsv() {
+    downloadText(`zichan-${tab}-${rangeFilePart(effectiveRange)}.csv`, tableToCsv(reportTable), 'text/csv;charset=utf-8');
+  }
+
+  function exportReportMarkdown() {
+    downloadText(`zichan-${tab}-${rangeFilePart(effectiveRange)}.md`, tableToMarkdown(reportTable), 'text/markdown;charset=utf-8');
+  }
+
+  function exportReportMermaid() {
+    downloadText(`zichan-${tab}-${rangeFilePart(effectiveRange)}.mmd`, tableToMermaid(reportTable, tabLabel), 'text/plain;charset=utf-8');
   }
 
   async function exportPdf() {
@@ -289,56 +331,136 @@ export function Reports() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div className="zc-report-tabs" style={{ display: 'flex', gap: 8 }}>
         {TABS.map(([id, label]) => (
-          <button key={id} onClick={() => setTab(id)} style={pillBtn(tab === id)}>{label}</button>
+          <button key={id} onClick={() => { setTab(id); setExportMenuOpen(false); }} style={pillBtn(tab === id)}>{label}</button>
         ))}
       </div>
+      {/* Filtering semantics, separated: the range stays in `DateRangeBar`, and
+          the drill-down is a removable chip on the same row. */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
         <DateRangeBar value={dateRange} anchor={asOfDate} onChange={(next) => {
           setRanges((current) => ({ ...current, [tab]: next }));
           setSelectedCategory('');
           if (tab === 'transactions') setTransactionDetailRange(next);
         }} />
-        <div role="tablist" aria-label="报表时间粒度" style={{ display: 'flex', gap: 6 }}>
-          {([['day', '按日'], ['month', '按月'], ['year', '按年']] as const).map(([value, label]) => <button key={value} onClick={() => setGranularity(value)} style={pillBtn(granularity === value)}>{label}</button>)}
-        </div>
-        {tab === 'transactions' && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          {selectedCategory && <button onClick={() => {
-            setSelectedCategory('');
-            setTransactionDetailRange(transactionRange);
-          }} style={pillBtn(false)}>清除分类下钻</button>}
-          <button onClick={() => void exportTransactionDetails()} disabled={detailExportBusy} style={pillBtn(false)}>
-            {detailExportBusy ? `导出中 ${detailExported}` : '导出明细 CSV'}
+        {tab === 'transactions' && selectedCategory && (
+          <button
+            type="button"
+            className="zc-btn zc-btn--sm"
+            onClick={() => {
+              setSelectedCategory('');
+              setTransactionDetailRange(transactionRange);
+            }}
+          >
+            清除分类下钻<span aria-hidden="true"> ×</span>
           </button>
-          </div>
         )}
       </div>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button onClick={() => downloadText(`zichan-${tab}-${rangeFilePart(effectiveRange)}.csv`, tableToCsv(table), 'text/csv;charset=utf-8')} style={pillBtn(false)}>导出 CSV</button>
-        <button onClick={() => void exportPdf()} disabled={pdfBusy} style={pillBtn(false)}>{pdfBusy ? '生成 PDF…' : '导出 PDF'}</button>
-        <button onClick={() => downloadText(`zichan-${tab}-${rangeFilePart(effectiveRange)}.md`, tableToMarkdown(table), 'text/markdown;charset=utf-8')} style={pillBtn(false)}>导出 Markdown</button>
-        <button onClick={() => downloadText(`zichan-${tab}-${rangeFilePart(effectiveRange)}.mmd`, tableToMermaid(table, tabLabel), 'text/plain;charset=utf-8')} style={pillBtn(false)}>导出 Mermaid</button>
+      {tab === 'transactions' && (
+        <ReportSummaryStrip
+          comparison={comparison}
+          formatAmount={(value) => reportCurrency.formatReport(value)}
+          formatSignedAmount={(value) => reportCurrency.formatSignedReport(value)}
+        />
+      )}
+      {/* One export entry. The six old buttons were six parallel ways to ask the
+          same question, which is why the numbers kept sliding below the fold. */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <div className="zc-menu" ref={exportMenuRef}>
+          <button
+            ref={exportTriggerRef}
+            type="button"
+            className="zc-btn zc-btn--outline"
+            /* Distinct from the header's backup export, which is also labelled 导出. */
+            aria-label="导出报表"
+            aria-haspopup="true"
+            aria-expanded={exportMenuOpen}
+            onClick={() => setExportMenuOpen((open) => !open)}
+          >
+            导出
+          </button>
+          {exportMenuOpen && (
+            <div className="zc-menu-list">
+              {tab === 'transactions' && (
+                <button
+                  type="button"
+                  className="zc-menu-item"
+                  aria-label="导出明细 CSV"
+                  disabled={detailExportBusy}
+                  onClick={() => {
+                    setExportMenuOpen(false);
+                    void exportTransactionDetails();
+                  }}
+                >
+                  {detailExportBusy ? `导出明细中 ${detailExported}` : '明细 CSV'}
+                </button>
+              )}
+              <button
+                type="button"
+                className="zc-menu-item"
+                aria-label="导出 CSV"
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  exportReportCsv();
+                }}
+              >
+                CSV
+              </button>
+              <button
+                type="button"
+                className="zc-menu-item"
+                aria-label="导出 PDF"
+                disabled={pdfBusy}
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  void exportPdf();
+                }}
+              >
+                {pdfBusy ? '正在生成 PDF…' : 'PDF'}
+              </button>
+              <button
+                type="button"
+                className="zc-menu-item"
+                aria-label="导出 Markdown"
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  exportReportMarkdown();
+                }}
+              >
+                Markdown
+              </button>
+              <button
+                type="button"
+                className="zc-menu-item"
+                aria-label="导出 Mermaid"
+                onClick={() => {
+                  setExportMenuOpen(false);
+                  exportReportMermaid();
+                }}
+              >
+                Mermaid
+              </button>
+            </div>
+          )}
+        </div>
       </div>
       {!!table.missingRateAssetCodes?.length && (
-        <div style={{ ...card, padding: '12px 14px', borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 13, fontWeight: 700 }}>
+        <div style={{ ...card, padding: '12px 14px', borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-medium)' }}>
           缺少 {table.missingRateAssetCodes.join('、')} → {table.reportCurrencyCode} 的价格标记；相关记录显示为“未折算”，且不参与可比汇总。
         </div>
       )}
       {tab === 'transactions' && transactionAggregateError && (
-        <div role="alert" style={{ ...card, padding: '12px 14px', borderColor: 'var(--negative)', color: 'var(--negative)', fontSize: 12, fontWeight: 750 }}>
+        <div role="alert" style={{ ...card, padding: '12px 14px', borderColor: 'var(--negative)', color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
           对比与汇总读取失败：{transactionAggregateError}
         </div>
       )}
-      {tab === 'transactions' && (
-        <TransactionReportInsights
-          comparison={comparison}
-          budget={budgetVariance}
-          formatAmount={(value) => reportCurrency.formatReport(value)}
-          formatSignedAmount={(value) => reportCurrency.formatSignedReport(value)}
-          onDrill={drillTransactions}
-        />
-      )}
-      <TimeTrendChart snap={snap} tab={tab} dateRange={effectiveRange} granularity={granularity} transactionAggregates={transactionAggregates ?? []} />
+      <TimeTrendChart
+        snap={snap}
+        tab={tab}
+        dateRange={effectiveRange}
+        granularity={granularity}
+        onGranularityChange={setGranularity}
+        transactionAggregates={transactionAggregates ?? []}
+      />
       <ReportChart
         snap={snap}
         tab={tab}
@@ -371,13 +493,13 @@ export function Reports() {
                   style={{ cursor: clickable ? 'pointer' : undefined, background: selectedCategory && selectedCategory === rowCategory ? 'var(--surface-2)' : undefined }}
                 >
                   {row.map((c, j) => (
-                    <td key={j} data-label={table.headers[j]} style={{ ...tdStyle, color: c.color ?? 'var(--fg)', fontWeight: c.bold ? 700 : 400 }}>{c.v}</td>
+                    <td key={j} data-label={table.headers[j]} style={{ ...tdStyle, color: c.color ?? 'var(--fg)', fontWeight: c.bold ? 'var(--fw-bold)' : 'var(--fw-regular)' }}>{c.v}</td>
                   ))}
                 </tr>
                 );
               })}
               {table.rows.length === 0 && (
-                <tr><td className="zc-card-table-empty" style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={table.headers.length}>暂无数据</td></tr>
+                <tr><td className="zc-card-table-empty" style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={table.headers.length}>暂无数据</td></tr>
               )}
             </tbody>
           </table>
@@ -393,6 +515,15 @@ export function Reports() {
           busy={transactionPageBusy}
           error={transactionLoadError}
           onLoadMore={() => void loadMoreTransactionDetails()}
+        />
+      )}
+      {tab === 'transactions' && (
+        <TransactionReportInsights
+          comparison={comparison}
+          budget={budgetVariance}
+          formatAmount={(value) => reportCurrency.formatReport(value)}
+          formatSignedAmount={(value) => reportCurrency.formatSignedReport(value)}
+          onDrill={drillTransactions}
         />
       )}
     </div>
@@ -513,8 +644,8 @@ function TransactionDetailTable(props: {
     <div id="transaction-report-details" style={{ ...card, padding: 0, overflow: 'hidden', scrollMarginTop: 16 }}>
       <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 900 }}>{rangeLabel(range)}流水明细{selectedCategory ? ' · 已按分类下钻' : ''}</div>
-          <div style={{ fontSize: 11, color: 'var(--fg-subtle)', marginTop: 3 }}>
+          <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{rangeLabel(range)}流水明细{selectedCategory ? ' · 已按分类下钻' : ''}</div>
+          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>
             已加载 {loadedCount} 笔原始流水，当前展示 {rows.length} 条分类明细；可回到流水页继续筛选、批量修改或编辑。
           </div>
         </div>
@@ -536,14 +667,14 @@ function TransactionDetailTable(props: {
                 <td data-label="折算" style={tdStyle}>{row.baseAmount}</td>
               </tr>
             ))}
-            {rows.length === 0 && <tr><td className="zc-card-table-empty" style={{ ...tdStyle, color: 'var(--fg-subtle)' }} colSpan={8}>暂无流水明细</td></tr>}
+            {rows.length === 0 && <tr><td className="zc-card-table-empty" style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={8}>暂无流水明细</td></tr>}
           </tbody>
         </table>
       </div>
       {(hasMore || error) && (
         <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
           {hasMore && <button type="button" onClick={onLoadMore} disabled={busy} style={pillBtn(false)}>{busy ? '加载中…' : '继续加载 200 笔'}</button>}
-          {error && <span role="alert" style={{ color: 'var(--negative)', fontSize: 12 }}>{error}</span>}
+          {error && <span role="alert" style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)' }}>{error}</span>}
         </div>
       )}
     </div>
@@ -555,9 +686,10 @@ function TimeTrendChart(props: {
   tab: TabId;
   dateRange: DateRangeValue;
   granularity: 'day' | 'month' | 'year';
+  onGranularityChange: (value: 'day' | 'month' | 'year') => void;
   transactionAggregates: TransactionReportAggregateRow[];
 }) {
-  const { snap, tab, dateRange, granularity, transactionAggregates } = props;
+  const { snap, tab, dateRange, granularity, onGranularityChange, transactionAggregates } = props;
   const report = createReportCurrency(snap, dateRange.to);
   const values = new Map<string, ReturnType<typeof D>>();
   const bucket = (date: string) => date.slice(0, granularity === 'year' ? 4 : granularity === 'month' ? 7 : 10);
@@ -614,10 +746,17 @@ function TimeTrendChart(props: {
   const title = `${TABS.find(([id]) => id === tab)?.[1] ?? '报表'} · ${granularity === 'day' ? '按日' : granularity === 'month' ? '按月' : '按年'}期间变化`;
   return (
     <div style={card}>
-      <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 12 }}>{title}</div>
+      {/* The granularity control lives with the chart it re-buckets, so it can
+          never show up on a tab that has no trend to bucket. */}
+      <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+        <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', minWidth: 0 }}>{title}</div>
+        <div role="tablist" aria-label="报表时间粒度" style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          {GRANULARITIES.map(([value, label]) => <button key={value} onClick={() => onGranularityChange(value)} style={pillBtn(granularity === value)}>{label}</button>)}
+        </div>
+      </div>
       <div className="zc-report-chart-grid" style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(rows.length, 1)}, minmax(42px, 1fr))`, gap: 8, minHeight: 130, alignItems: 'end' }}>
-        {rows.map((row) => <div key={row.label} style={{ minWidth: 0, textAlign: 'center' }}><div style={{ height: 82, background: 'var(--surface-2)', display: 'flex', alignItems: 'end' }}><div style={{ width: '100%', height: `${Math.max(5, row.value.abs().div(max).times(100).toNumber())}%`, background: row.value.isNegative() ? 'var(--negative)' : 'var(--positive)' }} /></div><div style={{ fontSize: 10, color: 'var(--fg-subtle)', marginTop: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.label}</div><div style={{ fontSize: 10, fontWeight: 800, marginTop: 3 }}>{report.formatSignedReport(row.value)}</div></div>)}
-        {rows.length === 0 && <div style={{ color: 'var(--fg-subtle)', fontSize: 12 }}>该时间范围内暂无可绘制数据</div>}
+        {rows.map((row) => <div key={row.label} style={{ minWidth: 0, textAlign: 'center' }}><div style={{ height: 82, background: 'var(--surface-2)', display: 'flex', alignItems: 'end' }}><div style={{ width: '100%', height: `${Math.max(5, row.value.abs().div(max).times(100).toNumber())}%`, background: row.value.isNegative() ? 'var(--negative)' : 'var(--positive)' }} /></div><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.label}</div><div style={{ fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', marginTop: 3 }}>{report.formatSignedReport(row.value)}</div></div>)}
+        {rows.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>该时间范围内暂无可绘制数据</div>}
       </div>
     </div>
   );
@@ -701,7 +840,7 @@ function ReportChart(props: {
   const max = Math.max(...rows.map((r) => r.value), 1);
   return (
     <div style={card}>
-      <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 12 }}>{title}</div>
+      <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>{title}</div>
       <div className="zc-report-chart-grid" style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(rows.length, 1)}, minmax(42px, 1fr))`, gap: 10, alignItems: 'end', minHeight: 130 }}>
         {rows.map((r, i) => (
           <button
@@ -716,19 +855,19 @@ function ReportChart(props: {
               border: r.category && r.category === selectedCategory ? '1px solid var(--accent)' : '1px solid transparent',
               background: 'transparent',
               padding: 0,
-              borderRadius: 9,
+              borderRadius: 'var(--r-sm)',
               color: 'inherit',
               cursor: r.category ? 'pointer' : 'default',
             }}
           >
-            <div style={{ height: 86, display: 'flex', alignItems: 'end', background: 'var(--surface-2)', borderRadius: 8, overflow: 'hidden' }}>
+            <div style={{ height: 86, display: 'flex', alignItems: 'end', background: 'var(--surface-2)', borderRadius: 'var(--r-sm)', overflow: 'hidden' }}>
               <div style={{ width: '100%', height: `${Math.max(6, D(r.value).div(max).times(100).toNumber())}%`, background: r.color }} />
             </div>
-            <div style={{ fontSize: 11, color: 'var(--fg-subtle)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center' }}>{r.label}</div>
-            <div style={{ fontSize: 11, fontWeight: 800, textAlign: 'center', whiteSpace: 'nowrap' }}>{r.text}</div>
+            <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center' }}>{r.label}</div>
+            <div style={{ fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', textAlign: 'center', whiteSpace: 'nowrap' }}>{r.text}</div>
           </button>
         ))}
-        {rows.length === 0 && <div style={{ fontSize: 12, color: 'var(--fg-subtle)' }}>暂无可绘制数据</div>}
+        {rows.length === 0 && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>暂无可绘制数据</div>}
       </div>
     </div>
   );

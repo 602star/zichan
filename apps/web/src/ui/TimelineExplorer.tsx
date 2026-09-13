@@ -114,7 +114,7 @@ export function TimelineExplorer<T>(props: {
 function Navigator(props: { label: string; onPrevious: () => void; onNext: () => void; children: ReactNode }) {
   return (
     <div className="zc-timeline-navigator" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-bold)' }}>{props.label}</span>
+      <span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' }}>{props.label}</span>
       <button type="button" aria-label={`上一${props.label}`} title={`上一${props.label}`} onClick={props.onPrevious} style={iconButton}>‹</button>
       {props.children}
       <button type="button" aria-label={`下一${props.label}`} title={`下一${props.label}`} onClick={props.onNext} style={iconButton}>›</button>
@@ -152,4 +152,4 @@ const compactRow: CSSProperties = { display: 'block', minWidth: 0, overflow: 'hi
 const emptySmall: CSSProperties = { fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' };
 const weekday: CSSProperties = { padding: 8, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' };
 const calendarCell: CSSProperties = { minHeight: 118, border: 'none', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)', padding: 8, background: 'var(--surface)' };
-const countText: CSSProperties = { color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' };
+const countText: CSSProperties = { color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' };

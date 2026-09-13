@@ -236,7 +236,7 @@ function DeviceStorageGate(props: {
         <div style={{ marginTop: 5, color: '#8c8175', fontSize: 'var(--fs-meta)', lineHeight: 1.5 }}>
           新账本会使用同一密码保护加密备份与端到端同步密钥；密码不会写入磁盘。
         </div>
-        <label style={{ display: 'block', marginTop: 20, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
+        <label style={{ display: 'block', marginTop: 20, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
           本机数据密码
           <input
             autoFocus
@@ -248,7 +248,7 @@ function DeviceStorageGate(props: {
           />
         </label>
         {creating && (
-          <label style={{ display: 'block', marginTop: 12, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
+          <label style={{ display: 'block', marginTop: 12, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
             再输入一次
             <input
               autoComplete="new-password"
@@ -325,7 +325,7 @@ function BrowserStorageRecoveryGate(props: {
   return (
     <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(24px, 6vw, 64px)', boxSizing: 'border-box', background: '#f0e9dc', color: '#4e473f', fontFamily: 'system-ui, sans-serif' }}>
       <section style={{ width: 'min(760px, 100%)', margin: '6vh auto 0', padding: 'clamp(20px, 5vw, 34px)', border: '1px solid #d7b1a8', borderRadius: 'var(--r-md)', background: '#fffaf5' }}>
-        <div style={{ color: '#9b4037', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', letterSpacing: '.1em' }}>只读恢复模式</div>
+        <div style={{ color: '#9b4037', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.1em' }}>只读恢复模式</div>
         <h1 style={{ margin: '9px 0 8px', color: '#672f20', fontSize: 'var(--fs-display)' }}>浏览器不再保证本地数据持久保存</h1>
         <p style={{ color: '#756b60', lineHeight: 1.7 }}>{props.reason}</p>
         <p style={{ color: '#756b60', lineHeight: 1.7 }}>账本没有被删除。恢复持久授权前不会运行定期任务、自动备份或普通写入；你可以先导出加密备份，或者改为连接同步服务器。</p>
@@ -1010,7 +1010,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         <div
           role="status"
           aria-label="当前是演示账本"
-          style={{ position: 'fixed', top: 8, left: '50%', zIndex: 10000, transform: 'translateX(-50%)', border: '1px solid #d8ad75', borderRadius: 'var(--r-pill)', padding: '4px 10px', background: '#fff4dc', color: '#7b451d', boxShadow: '0 4px 12px rgba(75,61,43,.13)', fontFamily: 'system-ui, sans-serif', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', pointerEvents: 'none' }}
+          style={{ position: 'fixed', top: 8, left: '50%', zIndex: 10000, transform: 'translateX(-50%)', border: '1px solid #d8ad75', borderRadius: 'var(--r-pill)', padding: '4px 10px', background: '#fff4dc', color: '#7b451d', boxShadow: '0 4px 12px rgba(75,61,43,.13)', fontFamily: 'system-ui, sans-serif', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', pointerEvents: 'none' }}
         >
           演示账本
         </div>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { accountProtection } from '../account-protection.js';
 import { importLedger, type SqlLedgerStore } from '@zichan/db';
 import type { Setting } from '@zichan/core';
@@ -106,10 +106,10 @@ export function FirstRemoteLedgerRestoreGate(props: {
   return (
     <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(22px, 6vw, 70px)', boxSizing: 'border-box', background: '#f0e9dc', color: '#4e473f', fontFamily: 'system-ui, sans-serif' }}>
       <section style={{ width: 'min(720px, 100%)', margin: '3vh auto 0', padding: 'clamp(22px, 5vw, 36px)', border: '1px solid #d6ccbd', borderRadius: 'var(--r-md)', background: '#fffaf2' }}>
-        <div style={{ color: '#985734', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', letterSpacing: '.1em' }}>发现已有远端账本</div>
+        <div style={{ color: '#985734', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.1em' }}>发现已有远端账本</div>
         <h1 style={{ margin: '10px 0 8px', color: '#672f20', fontSize: 'var(--fs-hero)' }}>从 {props.connection.alias} 恢复</h1>
         <p style={{ color: '#756b60', lineHeight: 1.7 }}>账号 {props.connection.username} 已绑定账本 {props.connection.ledgerId}。系统会先在隔离数据库验证密钥、提交 DAG 与账本一致性，成功后才写入本机。</p>
-        {!automaticSecret && <label style={{ display: 'block', marginTop: 20, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
+        {!automaticSecret && <label style={{ display: 'block', marginTop: 20, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
           账本加密密码
           <input
             aria-label="远端账本加密密码"
@@ -134,7 +134,7 @@ export function FirstRemoteLedgerRestoreGate(props: {
           <label>输入“替换旧账本”确认<input aria-label="替换旧账本确认文字" value={confirmation} disabled={busy} onChange={(event) => setConfirmation(event.target.value)} style={{ display: 'block', width: '100%', boxSizing: 'border-box', minHeight: 42, margin: '8px 0' }} /></label>
           <button type="button" disabled={busy || confirmation !== '替换旧账本'} onClick={() => void startNew()} style={primary}>{busy ? '正在创建…' : '确认替换并创建新账本'}</button>
         </section>}
-        {message && <div role="status" style={{ marginTop: 14, color: message.includes('失败') ? '#9a3a31' : '#4f704d', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', lineHeight: 1.6 }}>{message}</div>}
+        {message && <div role="status" style={{ marginTop: 14, color: message.includes('失败') ? '#9a3a31' : '#4f704d', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', lineHeight: 1.6 }}>{message}</div>}
       </section>
     </main>
   );

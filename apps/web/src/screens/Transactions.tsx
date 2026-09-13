@@ -1058,7 +1058,7 @@ export function Transactions() {
             {usesAccounts && <AdvancedQueryBuilder snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} />}
             {showVoided && (
               <div style={{ borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
-                <div style={{ padding: '10px 0', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>已作废流水</div>
+                <div style={{ padding: '10px 0', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>已作废流水</div>
                 {(voidedPage?.transactions ?? [])
                   .sort((a, b) => b.date.localeCompare(a.date) || (b.time ?? '').localeCompare(a.time ?? ''))
                   .map((row) => (
@@ -1084,7 +1084,7 @@ export function Transactions() {
             )}
             {selectedIds.length > 0 && (
               <div className="zc-responsive-action-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderTop: '1px solid var(--border)' }}>
-                <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>已选择 {selectedIds.length} 条流水</span>
+                <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>已选择 {selectedIds.length} 条流水</span>
                 <span style={{ display: 'flex', gap: 8 }}>
                   <button onClick={() => setBatchOpen(true)} style={primary}>批量修改</button>
                   <button onClick={() => setSelectedIds([])} style={button}>清空选择</button>
@@ -1254,7 +1254,7 @@ export function Transactions() {
                   <div style={{ height: 8, background: 'var(--surface-2)', borderRadius: 'var(--r-pill)', overflow: 'hidden', margin: '10px 0' }}>
                     <div style={{ height: 8, width: `${Math.min(100, Math.max(3, b.usedRatio * 100))}%`, background: b.over ? 'var(--negative)' : 'var(--accent)', borderRadius: 'var(--r-pill)' }} />
                   </div>
-                  <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>
+                  <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>
                     {b.conversionKnown ? `已用 ${money(b.actual)} / 可用 ${money(b.available)} · 上月结转 ${money(b.carryIn)} · 下月 ${money(b.carryOut)}` : '缺少流水或预算币种汇率'} · 原预算 {b.plannedNative}
                   </div>
                 </button>
@@ -1656,7 +1656,7 @@ function SavedViews(props: {
           style={{ width: 180, height: 36 }}
         />
         <button onClick={props.onSave} style={primary}>保存当前筛选</button>
-        {props.error && <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{props.error}</span>}
+        {props.error && <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-medium)' }}>{props.error}</span>}
       </div>
       {props.views.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
@@ -1763,13 +1763,13 @@ function AdvancedQueryBuilder(props: { snap: Snapshot; filters: TransactionFilte
             <button onClick={() => applyPreset('food')} style={button}>本月餐饮</button>
           </div>
           {queryPreview && (
-            <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 10, background: 'var(--surface-2)', fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>
+            <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 10, background: 'var(--surface-2)', fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>
               当前查询：{queryPreview}
             </div>
           )}
           {query.groups.map((group, groupIndex) => (
             <div key={group.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 8, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 8, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>
                 <span>{groupIndex === 0 ? '满足以下全部条件' : '或者满足以下全部条件'}</span>
                 <button onClick={() => addCondition(group.id)} style={button}>+ 条件</button>
               </div>
@@ -1921,11 +1921,11 @@ function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof b
         <div style={cardTight}><Kpi label={`${vm.month} 本月支出`} value={money(vm.expense)} tone="var(--negative)" sub="自动汇总全部支出" /></div>
         <div style={cardTight}><Kpi label="当前范围" value={`${vm.count} 笔`} tone="var(--accent)" sub={`合计支出 ${money(vm.filteredExpense)}`} /></div>
         <div style={cardTight}>
-          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>常用支出分类</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>常用支出分类</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 11 }}>
             {vm.topExpenseCategories.length === 0 && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>记下第一笔支出后会自动汇总</div>}
             {vm.topExpenseCategories.slice(0, 3).map((category) => (
-              <div key={category.category} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
+              <div key={category.category} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
                 <span>{category.label}</span><span>{money(category.amount)}</span>
               </div>
             ))}
@@ -1941,12 +1941,12 @@ function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof b
       <div style={cardTight}><Kpi label="本月结余" value={signedMoney(vm.net)} tone={Number(vm.net) >= 0 ? 'var(--positive)' : 'var(--negative)'} sub="收入 - 支出" /></div>
       <div style={cardTight}><Kpi label="当前筛选" value={`${vm.count} 条`} tone="var(--accent)" sub={`收 ${money(vm.filteredIncome)} · 支 ${money(vm.filteredExpense)} · ${signedMoney(vm.filteredNet)}`} /></div>
       <div style={cardTight}>
-        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>Top 支出分类</div>
+        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>Top 支出分类</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 11 }}>
           {vm.topExpenseCategories.length === 0 && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>本月暂无支出</div>}
           {vm.topExpenseCategories.map((c) => (
             <div key={c.category}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
                 <span>{c.label}</span><span>{money(c.amount)}</span>
               </div>
               <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 'var(--r-pill)', overflow: 'hidden', marginTop: 5 }}>
@@ -1979,7 +1979,7 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, usesAccounts, 
       {vm.groups.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)', padding: '20px 0' }}>暂无流水</div>}
       {vm.groups.map((g) => (
         <div key={g.key}>
-          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)', marginBottom: 8 }}>{g.label}</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', marginBottom: 8 }}>{g.label}</div>
           <div style={{ borderTop: '1px solid var(--border)' }}>
             {g.items.map((item) => {
               const tx = item.tx;
@@ -2032,7 +2032,7 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, usesAccounts, 
                       />
                     </span>
                   )}
-                  <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>{tx.date}{tx.time ? <><br />{tx.time}</> : null}</span>
+                  <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{tx.date}{tx.time ? <><br />{tx.time}</> : null}</span>
                   <span style={{ ...tagStyle, width: 'fit-content', color: tx.type === 'income' || tx.type === 'refund' ? 'var(--positive)' : tx.type === 'expense' ? 'var(--negative)' : 'var(--accent)' }}>
                     {item.categoryLabel}
                   </span>
@@ -2042,7 +2042,7 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, usesAccounts, 
                       {details}
                     </span>
                   </span>
-                  {usesAccounts && <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>{item.statusLabel}</span>}
+                  {usesAccounts && <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{item.statusLabel}</span>}
                   <span style={{ justifySelf: 'end', fontSize: 'var(--fs-body)', ...amountColor(item.signedAmount) }}>
                     {tx.type === 'transfer' ? '' : tx.type === 'income' || tx.type === 'refund' || (tx.type === 'adjustment' && tx.adjustmentDirection === 'increase') ? '+' : '-'}{tx.amount} {item.assetCode}
                   </span>
@@ -2169,13 +2169,13 @@ function BatchEditModal(props: {
           </select>
         </div>
         <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 10 }}>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>
             追加标签
             <select multiple style={{ ...selectStyle, height: 118, padding: 8 }} value={addTagIds} onChange={(e) => { markDirty(); setAddTagIds(readMulti(e)); }}>
               {snap.transactionTags.filter((t) => !t.isDeleted).map((t) => <option key={t.id} value={t.id}>{t.groupName ? `${t.groupName} / ${t.name}` : t.name}</option>)}
             </select>
           </label>
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>
             移除标签
             <select multiple style={{ ...selectStyle, height: 118, padding: 8 }} value={removeTagIds} onChange={(e) => { markDirty(); setRemoveTagIds(readMulti(e)); }}>
               {snap.transactionTags.filter((t) => !t.isDeleted).map((t) => <option key={t.id} value={t.id}>{t.groupName ? `${t.groupName} / ${t.name}` : t.name}</option>)}
@@ -2183,7 +2183,7 @@ function BatchEditModal(props: {
           </label>
         </div>
         <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 12, background: review ? 'var(--accent-soft)' : 'var(--surface-2)', marginTop: 12 }}>
-          <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>修改预览</div>
+          <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>修改预览</div>
           <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', marginTop: 5 }}>{hasPatch ? previewSummary : '尚未选择要修改的字段'}</div>
           <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 8 }}>将影响 {count} 条流水，先展示前 {Math.min(5, transactions.length)} 条：</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8 }}>
@@ -2200,7 +2200,7 @@ function BatchEditModal(props: {
             ))}
           </div>
         </div>
-        {error && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-bold)', marginTop: 12 }}>{error}</div>}
+        {error && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginTop: 12 }}>{error}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
           <button onClick={onClose} disabled={busy} style={button}>取消</button>
           <button onClick={() => void submit()} disabled={busy} style={primary}>{busy ? '正在应用…' : review ? '确认应用' : '预览修改'}</button>
@@ -2224,8 +2224,8 @@ function Trend({ vm }: { vm: NonNullable<ReturnType<typeof buildTransactions>> }
                 <div title={`收入 ${money(m.income)}`} style={{ width: 18, height: incomeH, borderRadius: 'var(--r-sm) var(--r-sm) 0 0', background: 'var(--positive)' }} />
                 <div title={`支出 ${money(m.expense)}`} style={{ width: 18, height: expenseH, borderRadius: 'var(--r-sm) var(--r-sm) 0 0', background: 'var(--negative)' }} />
               </div>
-              <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }}>{m.month.slice(5)}</div>
-              <div style={{ fontSize: 'var(--fs-meta)', color: Number(m.net) >= 0 ? 'var(--positive)' : 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{signedMoney(m.net)}</div>
+              <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{m.month.slice(5)}</div>
+              <div style={{ fontSize: 'var(--fs-meta)', color: Number(m.net) >= 0 ? 'var(--positive)' : 'var(--negative)', fontWeight: 'var(--fw-medium)' }}>{signedMoney(m.net)}</div>
             </div>
           );
         })}
@@ -2248,7 +2248,7 @@ function Table(props: { headers: string[]; children: ReactNode }) {
 function Kpi({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: string }) {
   return (
     <>
-      <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)' }}>{label}</div>
+      <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>{label}</div>
       <div style={{ fontSize: 'var(--fs-display)', fontWeight: 'var(--fw-bold)', marginTop: 10, color: tone, whiteSpace: 'nowrap' }}>{value}</div>
       <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 5, fontWeight: 'var(--fw-medium)' }}>{sub}</div>
     </>

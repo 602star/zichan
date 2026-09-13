@@ -24,6 +24,7 @@ async function openSettings(page) {
   const close = page.getByRole('button', { name: '关闭快速记账' });
   await close.click();
   await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
+  await page.getByRole('tab', { name: '数据与安全' }).click();
 }
 
 test('managed account opens without a key prompt, restores a new device, and switches to private recovery', async ({ page, browser }, testInfo) => {
@@ -58,6 +59,7 @@ test('managed account opens without a key prompt, restores a new device, and swi
     await page.getByRole('button', { name: '解锁账本', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
+    await page.getByRole('tab', { name: '数据与安全' }).click();
     const restoredPanel = page.getByRole('region', { name: '账本保护' });
     await restoredPanel.getByText('此设备的离线访问', { exact: true }).click();
     await restoredPanel.getByRole('button', { name: '记住此设备七天' }).click();
@@ -66,6 +68,7 @@ test('managed account opens without a key prompt, restores a new device, and swi
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await expect(page.getByLabel('账本恢复码', { exact: true })).toHaveCount(0);
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
+    await page.getByRole('tab', { name: '数据与安全' }).click();
     await page.getByText('高级：更改保护方式', { exact: true }).click();
     await page.getByRole('button', { name: '准备切换到云端托管' }).click();
     await page.getByRole('checkbox', { name: '允许此服务器解密账本', exact: true }).check();
