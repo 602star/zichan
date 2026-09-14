@@ -25,6 +25,24 @@ describe('sync transport security', () => {
     expect(() => assertSecureSyncUrl('https://owner:secret@ledger.example.com')).toThrow('不能包含用户名或密码');
   });
 
+  it('allows a reviewed host over plain HTTP without treating it as private', () => {
+    expect(() => assertSecureSyncUrl('http://test.ojco.de')).not.toThrow();
+    expect(() => assertSecureSyncUrl('http://test.ojco.de:8787/zichan')).not.toThrow();
+    expect(() => assertSecureSyncUrl('https://test.ojco.de')).not.toThrow();
+    // Classification must not follow the transport exception. This host is on
+    // the public internet, so it must not be stored as device-local or merged
+    // into a device's scope just because it was granted plain-HTTP transport.
+    expect(isLocalNetworkSyncUrl('http://test.ojco.de')).toBe(false);
+  });
+
+  it('keeps the plain-HTTP exception list exact', () => {
+    expect(() => assertSecureSyncUrl('http://ojco.de')).toThrow('公网同步必须使用 HTTPS');
+    expect(() => assertSecureSyncUrl('http://eviltest.ojco.de')).toThrow('公网同步必须使用 HTTPS');
+    expect(() => assertSecureSyncUrl('http://sub.test.ojco.de')).toThrow('公网同步必须使用 HTTPS');
+    expect(() => assertSecureSyncUrl('http://test.ojco.de.evil.example')).toThrow('公网同步必须使用 HTTPS');
+    expect(() => assertSecureSyncUrl('http://ledger.example.com')).toThrow('公网同步必须使用 HTTPS');
+  });
+
   it('never binds an unbound replica during destructive-join preflight', async () => {
     const ledgerId = 'ledger-existing-0001';
     const keys = await createLedgerKeyEnvelope(ledgerId, 'remote-password');
