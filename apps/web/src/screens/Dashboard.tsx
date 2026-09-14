@@ -12,6 +12,7 @@ import { readSafetyState, type SafetyState } from '../db/safety.js';
 import { loadSyncConnections, SYNC_CONFIG_CHANGED_EVENT, type SyncConnection } from '../sync-config.js';
 import { SYNC_LIFECYCLE_RESULT_EVENT, type LifecycleSyncResult } from '../background-sync.js';
 import { buildTaskCenter, type TaskCenterItem } from '../selectors/task-center.js';
+import { LedgerCutoffNotice } from '../ui/LedgerCutoffNotice.js';
 
 function fmtDate(d: string) {
   return d.slice(5); // MM-DD
@@ -85,6 +86,7 @@ export function Dashboard() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <DateRangeBar value={dateRange} onChange={setDateRange} />
+      {snap && <LedgerCutoffNotice snap={snap} />}
       {vm.missingRateAssetCodes.length > 0 && (
         <div style={{ ...cardTight, borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
           缺少 {vm.missingRateAssetCodes.join('、')} → {vm.reportCurrencyCode} 的价格标记；下方相关指标明确显示为“已知部分”，不会把缺价资产按 0 计算。请在“数据管理 → 价格标记”补录。
@@ -112,7 +114,7 @@ export function Dashboard() {
             ['未实现盈亏', partialText('unrealized', signedMoney(vm.unrealized)), vm.unrealized.isNegative() ? 'var(--negative)' : 'var(--positive)'],
             ['持仓资产类别', `${vm.alloc.length} 类`, 'var(--fg)'],
             ['物品资产每日成本', partialText('fixedPerDay', money(vm.fixedPerDay)), 'var(--fg)'],
-            ['报表基准日', vm.asOf, 'var(--fg)'],
+            ['账本日', vm.asOf, 'var(--fg)'],
           ].map(([l, v, color]) => (
             <div key={l} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
               <span style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-regular)' }}>{l}</span>

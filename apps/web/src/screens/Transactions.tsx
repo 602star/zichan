@@ -58,6 +58,7 @@ import {
   type AccountLedgerRowVM,
 } from '../selectors/transactions.js';
 import { optionalTransactionFields, transactionFormPresetKeys } from '../transactionFormPrefs.js';
+import { ledgerAsOfDate } from '../as-of.js';
 import { moduleCurrencyId } from '../currencyPreferences.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
 import {
@@ -278,7 +279,7 @@ export function Transactions() {
       accountId: 'all',
     };
   }, [filters, usesAccounts]);
-  const queryAsOf = snap?.setting?.asOfDate ?? todayDate();
+  const queryAsOf = snap ? ledgerAsOfDate(snap) : todayDate();
   const transactionQuery = useRef(new QueryGeneration());
   const accountQuery = useRef(new QueryGeneration());
   const queryDateRange = transactionDateRange(queryAsOf, viewFilters);
@@ -482,7 +483,7 @@ export function Transactions() {
   const readySnap = pageSnap;
   const readyVm = vm;
 
-  const asOf = readySnap.setting?.asOfDate ?? new Date().toISOString().slice(0, 10);
+  const asOf = ledgerAsOfDate(readySnap);
   const activeDateRange = transactionDateRange(asOf, viewFilters);
   const activeDateValue: DateRangeValue = { preset: viewFilters.range, from: activeDateRange.from, to: activeDateRange.to };
   const selectedAccountId = selectedAccountForRead;

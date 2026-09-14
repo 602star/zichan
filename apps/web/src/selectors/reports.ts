@@ -11,6 +11,7 @@ import { assetById } from '../db/derive.js';
 import { amount as fmtAmount, num } from '../format.js';
 import { categoryLabel, TYPE_LABEL } from '../transactionMeta.js';
 import { createReportCurrency, type ReportCurrency } from '../reportCurrency.js';
+import { ledgerAsOfDate } from '../as-of.js';
 import { reportingEffect } from './transaction-effect.js';
 
 export type TabId = 'transactions' | 'dca' | 'chain' | 'season' | 'fixed';
@@ -38,8 +39,6 @@ export interface Table {
   missingRateAssetCodes?: string[];
   valuationComplete?: boolean;
 }
-
-const defaultAsOf = () => new Date().toLocaleDateString('en-CA');
 
 export function buildReport(snap: Snapshot, tab: TabId, options: ReportOptions = {}): Table {
   if (tab === 'transactions') return transactionTable(snap, options);
@@ -128,7 +127,7 @@ export function transactionDetails(snap: Snapshot, options: TransactionReportOpt
 
 function transactionTable(snap: Snapshot, options: TransactionReportOptions = {}): Table {
   const report = createReportCurrency(snap);
-  const asOf = snap.setting?.asOfDate ?? defaultAsOf();
+  const asOf = ledgerAsOfDate(snap);
   const range = reportDateRange(options);
   const rows = filteredTransactions(snap, options);
   const byCategory = new Map<string, { type: 'income' | 'expense'; amounts: string[]; count: number; missing: number }>();
@@ -182,7 +181,7 @@ export function transactionTableFromAggregates(
   options: TransactionReportOptions = {},
 ): Table {
   const report = createReportCurrency(snap);
-  const asOf = snap.setting?.asOfDate ?? defaultAsOf();
+  const asOf = ledgerAsOfDate(snap);
   const range = reportDateRange(options);
   const byCategory = new Map<string, {
     type: 'income' | 'expense';
@@ -424,7 +423,7 @@ function seasonTable(snap: Snapshot, options: ReportOptions): Table {
 
 function fixedTable(snap: Snapshot, options: ReportOptions): Table {
   const range = reportDateRange(options);
-  const asOf = range.to ?? snap.setting?.asOfDate ?? defaultAsOf();
+  const asOf = range.to ?? ledgerAsOfDate(snap);
   const report = createReportCurrency(snap, asOf);
   const statusLabel = { active: '使用中', stored: '收纳中', sold: '已售出', scrapped: '已报废', retired: '已清退', gifted: '已赠出' } as const;
   const rows = snap.fixedAssets.filter((f) => {

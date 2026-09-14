@@ -1,13 +1,15 @@
 import { accountSessionStorage } from '../account-storage.js';
 import { useEffect, useState, type CSSProperties } from 'react';
 import { checkConsistency, recomputeCaches, purgeTombstones, type ConsistencyIssue } from '@zichan/db';
-import { newId, type LedgerMode, type LotMethod, type Setting } from '@zichan/core';
+import { type AsOfMode, type LedgerMode, type LotMethod, type Setting } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { useSnapshot } from '../db/snapshot.js';
 import { baseAsset } from '../db/derive.js';
 import { setBaseSymbol } from '../format.js';
 import { btnDanger, btnOutline, btnPrimary, iconBtn, td as tdStyle, th as thStyle } from '../ui/styles.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
+import { AS_OF_MODE_LABELS, asOfSummary, earliestRecordedDay, ledgerAsOf, needsAsOfAttention } from '../as-of.js';
+import { draftSetting, saveLedgerSetting } from '../db/ledger-settings.js';
 import { DeviceSecurityPanel } from '../ui/DeviceSecurityPanel.js';
 import { LedgerProtectionPanel } from '../ui/LedgerProtectionPanel.js';
 import { AccountSecurityPanel } from '../ui/AccountSecurityPanel.js';
@@ -156,6 +158,7 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
   const [resetOpen, setResetOpen] = useState(false);
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [navigationBusy, setNavigationBusy] = useState(false);
+  const [pendingAsOf, setPendingAsOf] = useState<{ date: string; warning: string } | null>(null);
   const [safetyState, setSafetyState] = useState(readSafetyState);
   const storedSafetyStateJson = snap?.setting?.dataSafetyStateJson;
   useEffect(() => {
@@ -173,26 +176,41 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
   const base = baseAsset(readySnap);
   const ledgerMode = setting?.ledgerMode ?? 'spending';
   const navigation = parseNavigationPreferences(setting?.navigationLayoutJson);
+  const cutoffState = ledgerAsOf(readySnap);
 
   async function saveSetting(
     patch: Partial<Setting>,
     options: { label?: string; undoable?: boolean } = {},
   ) {
-    const cur: Setting = setting ?? {
-      id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false,
-      baseCurrencyAssetId: base?.id ?? readySnap.assets[0]?.id ?? '', defaultLotMethod: 'fifo',
-      ledgerMode: 'spending', asOfDate: todayDate(), categoryPickerDefaultScope: 'frequent', refundAttributionMode: 'original_date',
-    };
-    await store.runInAuditBatch(
+    await saveLedgerSetting(
+      store,
+      setting,
+      draftSetting(base?.id ?? readySnap.assets[0]?.id ?? '', todayDate()),
+      patch,
       options.label ?? '保存应用设置',
-      async (transactionStore) => {
-        const current = await transactionStore.settings.get(cur.id);
-        await transactionStore.settings.put({ ...(current ?? cur), ...patch });
-      },
-      'system',
       { undoable: options.undoable },
     );
     bump();
+  }
+
+  /**
+   * The cut-off drives every report total, so the two values that quietly make
+   * reports wrong — a future day, or a day before the earliest record — ask for
+   * confirmation instead of applying straight away.
+   */
+  function changeAsOf(next: string) {
+    if (!next || next === setting?.asOfDate) return;
+    const earliest = earliestRecordedDay(readySnap);
+    const warning = next > todayDate()
+      ? `设为 ${next} 会把报表上限推到未来，报表将包含预记账的日期。`
+      : earliest && next < earliest
+        ? `设为 ${next} 会让 ${earliest} 及之后的流水全部退出报表，报表看起来会接近空白。`
+        : '';
+    if (warning) {
+      setPendingAsOf({ date: next, warning });
+      return;
+    }
+    void saveSetting({ asOfDate: next }, { label: '更新账本日' });
   }
 
   async function saveFormFields(keys: string[]) {
@@ -659,8 +677,41 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
                 </p>
               </div>
               <div className="zc-field">
-                <label className="zc-label">报表基准日</label>
-                <input aria-label="报表基准日" className="zc-input" type="date" value={setting?.asOfDate ?? todayDate()} onChange={(e) => saveSetting({ asOfDate: e.target.value })} />
+                <label className="zc-label">账本日 · 报表算到哪一天</label>
+                <input
+                  aria-label="账本日"
+                  className="zc-input"
+                  type="date"
+                  value={setting?.asOfDate ?? todayDate()}
+                  onChange={(e) => changeAsOf(e.target.value)}
+                />
+                <select
+                  aria-label="账本日维护方式"
+                  className="zc-select"
+                  value={setting?.asOfMode ?? 'manual'}
+                  onChange={(e) => void saveSetting({ asOfMode: e.target.value as AsOfMode }, { label: '调整账本日维护方式' })}
+                  style={{ marginTop: 8 }}
+                >
+                  {AS_OF_MODE_LABELS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+                {/*
+                 * 「报表基准日」was a bare financial term with no explanation, and
+                 * nothing on screen said it never advances on its own — so the ledger
+                 * froze at sign-up and later records silently left every report.
+                 */}
+                <p className="zc-meta" style={{ marginTop: 6 }}>
+                  报表、净资产估值、物品摊销和新建记录的默认日期都算到这一天为止。它不会自动变成今天——月结与对账需要固定截止日，所以只有在你确认时才会推进。
+                </p>
+                {cutoffState.mode !== 'manual' && (
+                  <p className="zc-meta" style={{ marginTop: 4 }}>
+                    {cutoffState.mode === 'auto_today'
+                      ? '当前维护方式下，上面的日期已不再生效。'
+                      : '当前维护方式下，上面的日期只在没有任何流水时作为兜底。'}
+                  </p>
+                )}
+                <p className="zc-meta" style={{ marginTop: 4, color: needsAsOfAttention(cutoffState) ? 'var(--warning)' : undefined }}>
+                  当前生效：{cutoffState.asOf} · {asOfSummary(cutoffState)}
+                </p>
               </div>
               <div className="zc-field">
                 <label className="zc-label">退款统计归属</label>
@@ -670,6 +721,21 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
                 </select>
               </div>
             </div>
+            {pendingAsOf && (
+              <ConfirmDialog
+                title="确认账本日"
+                confirmLabel="仍然设置"
+                cancelLabel="取消"
+                tone="danger"
+                onCancel={() => setPendingAsOf(null)}
+                onConfirm={async () => {
+                  await saveSetting({ asOfDate: pendingAsOf.date }, { label: '更新账本日' });
+                  setPendingAsOf(null);
+                }}
+              >
+                <p>{pendingAsOf.warning}</p>
+              </ConfirmDialog>
+            )}
             <p className="zc-meta" style={{ marginTop: 10 }}>
               模块币种只预填新记录，不改写历史币种或金额；新预算默认使用日常记账币种并在保存后冻结。轻量记账隐藏账户、转账和对账；退款默认回冲原消费与原预算，也可改为按退款到账日期统计。
             </p>

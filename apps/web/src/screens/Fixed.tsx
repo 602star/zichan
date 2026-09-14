@@ -55,6 +55,7 @@ import {
   type FixedAssetFormValue,
 } from '../forms.js';
 import { buildFixed, type FixedCardVM, type FixedTimelineVM } from '../selectors/fixed.js';
+import { ledgerAsOfDate } from '../as-of.js';
 import { amount as fmtAmount, money } from '../format.js';
 import { btnPrimary, card, linkAccent, metaText, pillBtn } from '../ui/styles.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
@@ -118,7 +119,7 @@ export function Fixed() {
   const [goalModal, setGoalModal] = useState<GoalModal>(null);
   const [focusDate, setFocusDate] = useState(todayDate);
   const [dateRange, setDateRange] = useState<DateRangeValue>(() => dateRangeValue('all'));
-  const vm = useMemo(() => snap ? buildFixed(snap, snap.setting?.asOfDate ?? todayDate()) : [], [snap]);
+  const vm = useMemo(() => snap ? buildFixed(snap, ledgerAsOfDate(snap)) : [], [snap]);
   if (!snap) return null;
   const readySnap = snap;
 

@@ -82,6 +82,14 @@ export interface Account extends BaseEntity {
 export type LedgerMode = 'spending' | 'accounts' | 'assets';
 export type LedgerKind = 'personal' | 'demo';
 
+/**
+ * How the ledger's reporting cut-off day is maintained over time.
+ * `manual` keeps the stored day until the user moves it, which is what
+ * reproducible month-end statements require; the automatic modes trade that
+ * reproducibility for never going stale.
+ */
+export type AsOfMode = 'manual' | 'auto_today' | 'auto_on_record';
+
 /** Global config. There is one active Setting row. */
 export interface Setting extends BaseEntity {
   /** Global reporting currency. Existing records are never rewritten when it changes. */
@@ -101,6 +109,8 @@ export interface Setting extends BaseEntity {
   defaultLotMethod: LotMethod;
   /** As-of date used by valuation, holding period, and season calculations. */
   asOfDate?: string;
+  /** How `asOfDate` is maintained; absent means manual, i.e. it never auto-advances. */
+  asOfMode?: AsOfMode;
   /** Comma-separated optional fields shown in the daily transaction form. */
   transactionFormOptionalFields?: string;
   /** Default category picker scope; users can still toggle it for the current picker session. */

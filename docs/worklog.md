@@ -3,6 +3,58 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-14 — 账本日：从「看不懂的旧日期」变成有解释、有告警、可一键跟进
+
+**背景**：用户问「报表基准日是什么，按哪天算？没有这个会不会影响什么？新用户能看懂吗」。核查后确认三件事：
+（a）全仓只有一个字段 `Setting.asOfDate`，**没有任何自动推进逻辑**——写入点只有建账初始化、seed 和设置页三次，
+所以它建账后就永久冻结；（b）它影响的不止报表，共 6 个面（报表截断、取价日、摊销/保修、日期预设锚点、
+表单默认日期、流水分组）；（c）设置页只有 label + date input，零解释，而隔壁「记账模式」是有说明的。
+于是分五层修复。
+
+### 1. 术语与解释（L0）
+
+统一到代码里已有的说法「**账本日**」（`selectors/transactions.ts` 的流水分组本来就叫这个，只是没推广到全站）：
+
+- 设置页 label：`报表基准日` → `账本日 · 报表算到哪一天`，并补一句 `zc-meta`：
+  「报表、净资产估值、物品摊销和新建记录的默认日期都算到这一天为止。**它不会自动变成今天**……」，
+  下方另有一行「当前生效：…… · ……」实时回显解析结果。
+- 顶栏与总览快照里的 `报表基准日` 一并改名。
+- 改名安全性已核：`报表基准日` 只出现在 UI 与文档，`tools/e2e` 与单测都没有引用该 aria-label。
+
+### 2. 计算收口到单一入口
+
+`asOfDate` 原先在 **9 处**各读各的，其中 2 处（`Reports.tsx` 的图表分支、`selectors/game.ts`）
+**完全绕过了截断**。现在全部走 `apps/web/src/as-of.ts` 的 `ledgerAsOfDate/ledgerAsOf`；
+核心规则 `resolveAsOfDate/asOfState` 放在 `@zichan/core` 的 `as-of.ts`（纯函数，不依赖快照）。
+
+### 3. 不再静默冻结（L1/L2）
+
+- 新增 `asOfMode`：`manual`（默认；月结/对账需要固定截止日）/ `auto_today` / `auto_on_record`。
+  `auto_on_record` 取最新未作废流水的日期，并**封顶到今天**，预记账的未来流水不会把窗口推出去。
+- 新增总览与报表页共用的 `LedgerCutoffNotice`：手动模式落后于今天时出现，带「更新到今天」按钮，
+  并附带「以后自动跟到今天」。顶栏日期同步转 `--warning` 且可点进设置。
+- 性能：只有 `auto_on_record` 需要扫全表，`manual` 与 `auto_today` 路径保持 O(1)。
+
+### 4. 边界校验（L3）
+
+日期设成未来 → 提示报表会包含预记账日期；设成早于最早流水 → 提示报表会接近空白。两种都先二次确认。
+
+### 5. 兜底口径统一（L5，真 bug）
+
+`asOfDate` 缺失时的兜底混用了两套标准：多数页面用本地日期，而 `screens/Transactions.tsx`、
+`selectors/transactions.ts` 与 `db/maintenance.ts` 用 `new Date().toISOString().slice(0, 10)`（UTC）。
+在 UTC+8 的 00:00–08:00 两者会差一天。现已统一到 `localToday()` / 解析器；`core/game.ts` 的
+`seasonDays` 兜底同样修正。
+
+### Verified
+
+- `npm run typecheck`：5 个 workspace 全过。
+- `npm test`：**766 个测试全过**（core 104 / db 148 / logger 7 / sync-server 66 / web 441）；
+  新增 `packages/core/test/as-of.test.ts`（6）与 `apps/web/test/as-of.test.ts`（6）。
+- `npm run build:web` 通过；`npm run lint` 无告警。
+- 中途被 `test/design-scale.test.ts` 拦下一次：顶栏告警文本原本用 `--fw-bold` 配 `--fs-caption`，
+  违反「小号辅助文字不加粗」的既定契约，已改为 `--fw-medium`、由颜色承担强调。
+
 ## 2026-09-14 — 三个缺口：视口扩展、资产转换、视觉基线
 
 **背景**：上一轮记录下三个未覆盖项（横屏/平板未跑表单扫描；截图基线未建；资产转换校验未纳入）。本轮逐个处理，其中两个各揭出一个真 bug。

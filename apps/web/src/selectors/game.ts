@@ -6,6 +6,7 @@ import {
 } from '@zichan/core';
 import type { Snapshot } from '../db/snapshot.js';
 import { createReportCurrency } from '../reportCurrency.js';
+import { ledgerAsOfDate } from '../as-of.js';
 
 const STATUS: Record<string, string> = { active: '进行中', ended: '已结束', upcoming: '未开始' };
 
@@ -74,7 +75,7 @@ export function buildGameSeason(snap: Snapshot, gameId: string | null, selectedI
     .filter((r) => !filters.accountId || r.gameAccountId === filters.accountId)
     .filter((r) => !filters.recordType || filters.recordType === 'all' || r.recordType === filters.recordType)
     .sort((a, b) => a.date.localeCompare(b.date));
-  const summary = seasonActivitySummary(records, season, snap.setting?.asOfDate ?? new Date().toLocaleDateString('en-CA'));
+  const summary = seasonActivitySummary(records, season, ledgerAsOfDate(snap));
   const filtered = Boolean(dateRange.from || dateRange.to || filters.accountId || (filters.recordType && filters.recordType !== 'all'));
   const filteredDays = dateRange.from && dateRange.to ? Math.max(1, daysBetween(dateRange.from, dateRange.to) + 1) : summary.days;
 

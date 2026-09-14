@@ -76,6 +76,14 @@ export {
   type DateRangePreset,
 } from './dates.js';
 
+export {
+  normalizeAsOfMode,
+  resolveAsOfDate,
+  asOfState,
+  type AsOfResolutionInput,
+  type AsOfState,
+} from './as-of.js';
+
 export { normalizeOccurrence, type OccurrenceInput, type NormalizedOccurrence } from './time.js';
 export { money, sumMoney, groupMoney, type Money } from './money.js';
 

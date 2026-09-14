@@ -4,7 +4,7 @@
  * informational only.
  */
 import { D, safeDiv } from './decimal.js';
-import { daysBetween } from './dates.js';
+import { daysBetween, localToday } from './dates.js';
 import type { GameRecord, GameRecordType, GameSeason } from './types.js';
 
 const INCOME_TYPES = new Set<GameRecordType>([
@@ -131,6 +131,6 @@ export function seasonActivitySummary(
 /** Season length in days (inclusive of the start day, min 1). */
 export function seasonDays(season: GameSeason | undefined, asOf?: string): number {
   if (!season?.startDate) return 0;
-  const end = season.endDate ?? (asOf ?? new Date().toISOString().slice(0, 10));
+  const end = season.endDate ?? asOf ?? localToday();
   return Math.max(1, daysBetween(season.startDate, end) + 1);
 }

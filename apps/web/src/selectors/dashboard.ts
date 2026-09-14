@@ -4,10 +4,12 @@ import {
   nextUnhandledDcaOccurrence,
   isTransactionActive,
   isLotTrackedAssetType,
+  localToday,
   type DateRange,
 } from '@zichan/core';
 import type { Snapshot } from '../db/snapshot.js';
 import type { DashboardTransactionReadModel } from '@zichan/db';
+import { ledgerAsOfDate } from '../as-of.js';
 import { balanceOfAsset, isZeroish } from '../db/derive.js';
 import { categoryLabel } from '../transactionMeta.js';
 import { createReportCurrency } from '../reportCurrency.js';
@@ -48,8 +50,6 @@ const TYPE_LABEL: Record<string, string> = {
   dca: '定投执行', buy: '买入', sell: '卖出', exchange: '换汇', deposit: '入金', withdraw: '提现',
 };
 
-const defaultAsOf = () => new Date().toLocaleDateString('en-CA');
-
 function daysBetween(a: string, b: string): number {
   const [ay, am, ad] = a.split('-').map(Number);
   const [by, bm, bd] = b.split('-').map(Number);
@@ -60,9 +60,9 @@ export function buildDashboard(
   snap: Snapshot,
   selectedRange?: DateRange,
   transactionReadModel?: DashboardTransactionReadModel,
-  today = defaultAsOf(),
+  today = localToday(),
 ): DashboardVM {
-  const asOf = snap.setting?.asOfDate ?? defaultAsOf();
+  const asOf = ledgerAsOfDate(snap, today);
   const codeOf = (id: string) => snap.assets.find((a) => a.id === id)?.code ?? id;
   const report = createReportCurrency(snap, asOf);
   const incompleteMetrics = new Set<string>();

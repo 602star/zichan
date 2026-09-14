@@ -26,6 +26,7 @@ import {
   writeSafetyState,
 } from './db/safety.js';
 import { ConfirmDialog } from './ui/ConfirmDialog.js';
+import { ledgerAsOf } from './as-of.js';
 import { AppSecurityGate } from './ui/AppSecurityGate.js';
 import { runSynchronousFlight, VaultUnlockPrompt } from './ui/VaultUnlockPrompt.js';
 import { DialogShell } from './ui/DialogShell.js';
@@ -447,7 +448,10 @@ export function App() {
   const [title, sub] = ledgerMode === 'spending' && screen === 'transactions'
     ? ['日常支出', '只记录真实支出，打开即可记账']
     : META[screen];
-  const asOfDate = snap?.setting?.asOfDate;
+  const asOf = snap ? ledgerAsOf(snap) : null;
+  // A manual cut-off that has fallen behind is a data-correctness problem, not a
+  // preference, so the header flags it instead of showing a neutral date.
+  const staleCutoff = asOf?.stale && asOf.mode === 'manual' ? asOf : null;
   const safetyState = safetyStateFromSetting(snap?.setting);
   const safety = safetyWarnings(backups, safetyState);
 
@@ -479,8 +483,19 @@ export function App() {
               {base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}
             </div>
             <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.25 }}>
-              <span style={{ fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' }}>报表基准日</span>
-              <span>{formatAsOfDate(asOfDate)}</span>
+              <span style={{ fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' }}>账本日</span>
+              {staleCutoff ? (
+                <button
+                  type="button"
+                  onClick={() => setScreen('settings')}
+                  title="账本日已落后，点击去设置更新"
+                  style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', font: 'inherit', fontSize: 'var(--fs-caption)', color: 'var(--warning)', fontWeight: 'var(--fw-medium)' }}
+                >
+                  {formatAsOfDate(asOf?.asOf)} · 早 {staleCutoff.daysBehind} 天
+                </button>
+              ) : (
+                <span>{formatAsOfDate(asOf?.asOf)}</span>
+              )}
             </div>
           </div>
         </header>
@@ -520,7 +535,7 @@ export function App() {
         storageLabel={storageBackend === 'native-sqlite' ? '原生 SQLite' : '浏览器 IndexedDB'}
         dataLocation={dataLocation}
         reportCurrency={base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}
-        asOf={formatAsOfDate(asOfDate)}
+        asOf={formatAsOfDate(asOf?.asOf)}
         ledgerMode={ledgerMode}
         navigation={navigation}
         enablingModule={enablingModule}

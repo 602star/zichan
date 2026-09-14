@@ -1,5 +1,6 @@
 import {
   newId,
+  resolveAsOfDate,
   type BudgetCategory,
   type Category,
   type FixedAssetCategory,
@@ -58,7 +59,10 @@ export async function runLedgerMaintenance(store: SqlLedgerStore): Promise<boole
   const includeDemoDefaults = settings[0]?.ledgerKind === 'demo';
   const transactionAssetId = settings[0]?.transactionDefaultAssetId ?? baseAssetId;
   const defaultAccountId = payees.find((p) => !p.isDeleted && p.defaultAccountId)?.defaultAccountId;
-  const month = (settings[0]?.asOfDate ?? new Date().toISOString().slice(0, 10)).slice(0, 7);
+  const month = resolveAsOfDate({
+    asOfDate: settings[0]?.asOfDate,
+    asOfMode: settings[0]?.asOfMode,
+  }).slice(0, 7);
   const tagByName = byName(tags);
   const locationByName = byName(locations);
   const templateByName = byName(templates);

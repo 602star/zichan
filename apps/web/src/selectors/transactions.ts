@@ -10,6 +10,7 @@ import type { TransactionReportAggregateRow } from '@zichan/db';
 import type { Snapshot } from '../db/snapshot.js';
 import { financialPostings } from '../db/derive.js';
 import { createReportCurrency, type ReportCurrency } from '../reportCurrency.js';
+import { ledgerAsOfDate } from '../as-of.js';
 import {
   categoryLabel,
   categoryType as metaCategoryType,
@@ -771,7 +772,7 @@ function itemForTransaction(snap: Snapshot, tx: Transaction, report: ReportCurre
 
 export function buildFilteredTransactions(snap: Snapshot, filters: TransactionFilters): Transaction[] {
   assertFiniteAmountFilters(filters);
-  const asOf = snap.setting?.asOfDate ?? localDateIso();
+  const asOf = ledgerAsOfDate(snap);
   const range = transactionDateRange(asOf, filters);
   return snap.transactions
     .filter((t) => isTransactionActive(t) && matches(snap, t, filters, range))
@@ -931,7 +932,7 @@ export function buildTransactionsFromReadModel(
   for (const row of [...input.summaryAggregates, ...input.filteredAggregates]) {
     aggregateAmount(report, row);
   }
-  const asOf = baseSnap.setting?.asOfDate ?? localDateIso();
+  const asOf = ledgerAsOfDate(baseSnap);
   const today = localDateIso();
   const month = asOf.slice(0, 7);
   const filtered = [...snap.transactions]
@@ -1018,7 +1019,7 @@ export function buildTransactions(snap: Snapshot, filters: TransactionFilters): 
       transactionEffectDate(snap, transaction),
     );
   }
-  const asOf = snap.setting?.asOfDate ?? localDateIso();
+  const asOf = ledgerAsOfDate(snap);
   const today = localDateIso();
   const month = asOf.slice(0, 7);
   const filtered = buildFilteredTransactions(snap, filters);

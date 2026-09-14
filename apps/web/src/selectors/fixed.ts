@@ -6,6 +6,7 @@ import {
   fixedGoalProgress,
   fixedUsageTotal,
   fixedUsageUnitLabel,
+  localToday,
   type Attachment,
   type FixedAsset,
   type FixedAssetConsumable,
@@ -108,7 +109,7 @@ export interface FixedCardVM {
   timeline: FixedTimelineVM[];
 }
 
-export function buildFixed(snap: Snapshot, asOf = new Date().toLocaleDateString('en-CA')): FixedCardVM[] {
+export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
   const categoryById = new Map(snap.fixedAssetCategories.map((category) => [category.id, category]));
   const assetById = new Map(snap.assets.map((asset) => [asset.id, asset]));
   return snap.fixedAssets.map((asset): FixedCardVM => {

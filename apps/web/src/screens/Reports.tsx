@@ -19,6 +19,7 @@ import {
 import { money } from '../format.js';
 import { card, th as thStyle, td as tdStyle, pillBtn } from '../ui/styles.js';
 import { createReportCurrency } from '../reportCurrency.js';
+import { ledgerAsOfDate } from '../as-of.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue } from '../ui/DateRangeBar.js';
 import { downloadReportPdf } from '../report-pdf.js';
 import {
@@ -28,6 +29,7 @@ import {
   reportComparisonRanges,
 } from '../selectors/report-analysis.js';
 import { ReportSummaryStrip, TransactionReportInsights } from '../ui/TransactionReportInsights.js';
+import { LedgerCutoffNotice } from '../ui/LedgerCutoffNotice.js';
 
 const TABS: [TabId, string][] = [['transactions', '日常收支'], ['dca', '定投'], ['chain', '资产转换'], ['season', '游戏赛季'], ['fixed', '物品资产']];
 
@@ -67,7 +69,7 @@ export function Reports() {
   const [transactionAggregateError, setTransactionAggregateError] = useState('');
   const [transactionPageBusy, setTransactionPageBusy] = useState(false);
   const [transactionLoadError, setTransactionLoadError] = useState('');
-  const asOfDate = baseSnap?.setting?.asOfDate ?? localToday();
+  const asOfDate = baseSnap ? ledgerAsOfDate(baseSnap) : localToday();
   const dateRange = ranges[tab];
   const effectiveRange = useMemo(
     () => effectiveReportRange(dateRange, asOfDate),
@@ -355,6 +357,7 @@ export function Reports() {
           </button>
         )}
       </div>
+      {baseSnap && <LedgerCutoffNotice snap={baseSnap} />}
       {tab === 'transactions' && (
         <ReportSummaryStrip
           comparison={comparison}
@@ -809,7 +812,7 @@ function ReportChart(props: {
     }).filter((row) => row.value > 0 || (!dateRange.from && !dateRange.to));
   } else if (tab === 'fixed') {
     title = `物品资产主要单位成本 · ${report.code}`;
-    const asOf = dateRange.to ?? snap.setting?.asOfDate ?? new Date().toLocaleDateString('en-CA');
+    const asOf = dateRange.to ?? ledgerAsOfDate(snap);
     rows = snap.fixedAssets.filter((asset) => !dateRange.from && !dateRange.to
       || isDateInRange(asset.purchaseDate, dateRange)
       || snap.fixedEvents.some((event) => event.fixedAssetId === asset.id && isDateInRange(event.date, dateRange))
