@@ -26,6 +26,13 @@ export interface CategoryPack {
   id: CategoryPackId;
   name: string;
   description: string;
+  /**
+   * 扩展分类 id（目录里默认未启用的可选分类）。
+   *
+   * 默认启用的分类永远不在此列：它们由账本初始化直接落库，既不需要扩展包
+   * 补齐，也不允许被扩展包停用。一个分类可以同时属于多个扩展包（如 租车 同属
+   * 「车主」与「旅行」），停用时由调用方按引用关系保留。
+   */
   categoryIds: readonly string[];
 }
 
@@ -458,81 +465,84 @@ export const SYSTEM_CATEGORY_CATALOG: BuiltInCategory[] = [
   childCategory('loan_recovered', '收回借款', 'income', 'income_other', '#65a30d', 647, true),
 ];
 
+/**
+ * 扩展包：只收录默认未启用的扩展分类。
+ *
+ * 包内不含任何默认分类。默认分类（一级分类 + 默认可见的二级分类）由账本初始化
+ * 直接创建，例如「加油/充电」「住宿」「教材」都是默认就有的一级/二级分类：把它们
+ * 放进扩展包，会让「停用扩展包」连带关掉用户日常在用的分类，也会让卡片一开始就
+ * 显示「已启用 3/17」这种让人看不懂的状态。
+ */
 export const CATEGORY_PACKS: readonly CategoryPack[] = [
   {
     id: 'vehicle',
     name: '车主',
-    description: '用车、养车、保险、年检和违章',
+    description: '代驾租车、ETC 过路费、洗车维修、保险年检与违章',
     categoryIds: [
-      'fuel', 'parking', 'car_maintenance', 'designated_driver', 'car_rental', 'etc_recharge',
-      'highway_toll', 'car_wash', 'car_repair', 'car_accessories', 'roadside_assistance',
-      'car_insurance', 'vehicle_inspection', 'traffic_fine', 'driving_school', 'license_renewal',
-      'auto_insurance',
+      'designated_driver', 'car_rental', 'etc_recharge', 'highway_toll', 'car_wash', 'car_repair',
+      'car_accessories', 'roadside_assistance', 'car_insurance', 'vehicle_inspection',
+      'traffic_fine', 'driving_school', 'license_renewal', 'auto_insurance',
     ],
   },
   {
     id: 'pet',
     name: '养宠',
     description: '宠物食品、用品、医疗、美容、寄养和保险',
-    categoryIds: ['pet', 'pet_food', 'pet_supplies', 'pet_medical', 'pet_grooming', 'pet_boarding', 'pet_insurance'],
+    categoryIds: ['pet_food', 'pet_supplies', 'pet_medical', 'pet_grooming', 'pet_boarding', 'pet_insurance'],
   },
   {
     id: 'parenting',
     name: '育儿',
-    description: '母婴、儿童医疗、教育、托管和亲子支出',
+    description: '儿童食品、儿科、产检生育、教育托管和亲子支出',
     categoryIds: [
-      'kids_food', 'mother_baby', 'pediatrics', 'maternity', 'children_education', 'childcare',
+      'kids_food', 'pediatrics', 'maternity', 'children_education', 'childcare',
       'after_school_care', 'tutoring_class', 'summer_camp', 'study_trip', 'baby_full_month',
     ],
   },
   {
     id: 'student',
     name: '学生',
-    description: '食堂、教材、考试、打印、网课和校园生活',
+    description: '食堂、学费、网课、论文查重和打印复印',
     categoryIds: [
-      'canteen', 'tuition', 'books', 'exams', 'stationery', 'online_course', 'paper_check',
-      'print_copy', 'learning_device', 'material_subscription',
+      'canteen', 'tuition', 'online_course', 'paper_check', 'print_copy', 'learning_device',
+      'material_subscription',
     ],
   },
   {
     id: 'travel',
     name: '旅行',
-    description: '长途交通、住宿、门票、当地出行和旅行体验',
+    description: '长途客运、轮渡、租车、露营滑雪潜水与旅途购物',
     categoryIds: [
-      'train_flight', 'flight', 'coach', 'ferry', 'car_rental', 'travel', 'hotel', 'tickets',
-      'camping', 'skiing', 'diving', 'travel_shopping', 'souvenirs',
+      'coach', 'ferry', 'car_rental', 'camping', 'skiing', 'diving', 'travel_shopping', 'souvenirs',
     ],
   },
   {
     id: 'investment',
     name: '投资',
-    description: '投资收益、佣金、申赎费用、税费和汇兑',
+    description: '申赎费用、佣金印花税、融资利息、汇兑和各类投资损益',
     categoryIds: [
-      'investment_fee', 'fund_subscription_fee', 'fund_redemption_fee', 'stock_commission',
-      'stamp_tax', 'margin_interest', 'fx_exchange_fee', 'fx_gain_loss', 'interest_income',
-      'investment_income', 'fund_dividend', 'dividend_income', 'asset_sale_gain',
-      'stock_sale_gain', 'fund_sale_gain', 'bond_income', 'gold_income', 'forex_income',
-      'digital_asset_income', 'reits_dividend',
+      'fund_subscription_fee', 'fund_redemption_fee', 'stock_commission', 'stamp_tax',
+      'margin_interest', 'fx_exchange_fee', 'fx_gain_loss', 'stock_sale_gain', 'fund_sale_gain',
+      'bond_income', 'gold_income', 'forex_income', 'digital_asset_income', 'reits_dividend',
     ],
   },
   {
     id: 'renovation',
     name: '装修',
-    description: '建材、软装、家具家电、维修、搬家和保洁',
+    description: '家装建材、软装、厨具、清洁收纳与搬家仓储',
     categoryIds: [
-      'furniture_appliance', 'home_repair', 'renovation_materials', 'soft_decoration',
-      'kitchenware', 'home_goods', 'storage_supplies', 'bedding', 'moving_storage',
+      'renovation_materials', 'soft_decoration', 'kitchenware', 'home_goods', 'storage_supplies',
+      'bedding', 'moving_storage',
     ],
   },
   {
     id: 'freelance',
     name: '自由职业',
-    description: '项目收入、工具订阅、办公、推广和经营成本',
+    description: '劳务咨询、设计开发、店铺运营、自媒体和工具订阅',
     categoryIds: [
-      'sidejob', 'project_income', 'labor_fee', 'consulting_fee_income', 'design_fee_income',
-      'development_fee_income', 'operation_income', 'shop_income', 'media_income',
-      'software_tools', 'ai_tools', 'cloud_service', 'productivity_software', 'office_supplies',
-      'business_expense',
+      'labor_fee', 'consulting_fee_income', 'design_fee_income', 'development_fee_income',
+      'operation_income', 'shop_income', 'media_income', 'ai_tools', 'cloud_service',
+      'productivity_software', 'office_supplies', 'business_expense',
     ],
   },
 ];
@@ -552,6 +562,94 @@ export const DEFAULT_ENABLED_CATEGORY_IDS = new Set(
     .filter((category) => !category.parentId || !category.hidden)
     .map((category) => category.id),
 );
+
+/**
+ * 扩展分类 = 目录里默认未启用的可选分类。扩展包只允许收录这些分类。
+ *
+ * 它们是“默认不存在”的：首次启用扩展包（或首次在记账中引用）时才落库，因此
+ * “启用/停用”对它们而言是一个可逆、可枚举的动作，不会碰到用户已有的默认分类。
+ */
+export const EXTENSION_CATEGORY_IDS = new Set(
+  SYSTEM_CATEGORY_CATALOG
+    .filter((category) => !DEFAULT_ENABLED_CATEGORY_IDS.has(category.id))
+    .map((category) => category.id),
+);
+
+export function categoryPack(packId: CategoryPackId): CategoryPack | undefined {
+  return CATEGORY_PACKS.find((pack) => pack.id === packId);
+}
+
+/** 一个扩展分类可能同时属于多个扩展包（例如 租车 同时在「车主」与「旅行」）。 */
+export function categoryPacksContaining(categoryId: string): readonly CategoryPack[] {
+  return CATEGORY_PACKS.filter((pack) => pack.categoryIds.includes(categoryId));
+}
+
+/** 被两个及以上扩展包引用的分类 id。 */
+export const SHARED_PACK_CATEGORY_IDS = new Set(
+  CATEGORY_PACKS
+    .flatMap((pack) => pack.categoryIds as readonly string[])
+    .filter((categoryId) => categoryPacksContaining(categoryId).length > 1),
+);
+
+/** 扩展包成员在账本里的实际可用状态。 */
+export type CategoryPackMemberState = 'enabled' | 'hidden' | 'disabled' | 'missing';
+
+/**
+ * 单个成员的可用状态。
+ *
+ * `hidden` 与 `disabled` 是两件事：前者是用户自己在「快捷显示与排序」里把它从
+ * 常用列表移出，仍然可选可搜索；后者是扩展包停用，新增记账完全不能再选。
+ */
+export function categoryPackMemberState(
+  categoryId: string,
+  categories: readonly Category[] = [],
+): CategoryPackMemberState {
+  const row = categories.find((category) => category.id === categoryId && !category.isDeleted);
+  if (!row) return 'missing';
+  if (row.isActive === false) return 'disabled';
+  return categoryIsHidden(row) ? 'hidden' : 'enabled';
+}
+
+export interface CategoryPackState {
+  /** 包内成员总数。 */
+  total: number;
+  /** 已可用于新增记账的成员数。 */
+  enabledCount: number;
+  /** 已落库但被停用的成员数。 */
+  disabledCount: number;
+  /** 尚未写入账本的成员，首次启用时才补齐。 */
+  missingIds: string[];
+  status: 'disabled' | 'partial' | 'enabled';
+}
+
+/**
+ * 从账本真实分类推导扩展包状态。
+ *
+ * 包状态不单独存一份：包内只有扩展分类，而扩展分类的存在/启用都只能由扩展包
+ * （或用户在分类中心单独启用）产生，所以成员状态就是包状态的忠实投影，不需要
+ * 在 Setting 里再维护一份可能与数据不一致的快照。
+ */
+export function categoryPackState(
+  pack: CategoryPack,
+  categories: readonly Category[] = [],
+): CategoryPackState {
+  const missingIds: string[] = [];
+  let enabledCount = 0;
+  for (const categoryId of pack.categoryIds) {
+    const state = categoryPackMemberState(categoryId, categories);
+    if (state === 'missing') missingIds.push(categoryId);
+    else if (state === 'enabled' || state === 'hidden') enabledCount += 1;
+  }
+  const total = pack.categoryIds.length;
+  const persisted = total - missingIds.length;
+  return {
+    total,
+    enabledCount,
+    disabledCount: persisted - enabledCount,
+    missingIds,
+    status: enabledCount === 0 ? 'disabled' : enabledCount === total ? 'enabled' : 'partial',
+  };
+}
 
 export const EXPENSE_CATEGORIES: TransactionCategory[] = SYSTEM_CATEGORY_CATALOG
   .filter((c) => c.type === 'expense' && !DEFAULT_PARENT_IDS.has(c.id) && !c.hidden)

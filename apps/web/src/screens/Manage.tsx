@@ -25,7 +25,7 @@ import {
 import { card, th as thStyle, td as tdStyle } from '../ui/styles.js';
 import { QuickCategorySettings } from '../ui/QuickCategorySettings.js';
 import { DateRangeBar, dateRangeValue } from '../ui/DateRangeBar.js';
-import { allCategories, CATEGORY_PACKS, categoryIsHidden, categoryLabel, TYPE_LABEL } from '../transactionMeta.js';
+import { allCategories, CATEGORY_PACKS, categoryIsHidden, categoryLabel, categoryPackMemberState, categoryPackState, TYPE_LABEL, type CategoryPack, type CategoryPackMemberState, type CategoryPackState } from '../transactionMeta.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { attachmentStorageStatus, reconcileAttachmentStorage } from '../db/attachment-storage.js';
 import { ATTACHMENT_SYNC_STATE_EVENT, ensureAttachmentBlobAvailable } from '../attachment-sync.js';
@@ -66,6 +66,8 @@ export function Manage() {
   const [categoryPackBusy, setCategoryPackBusy] = useState('');
   const [categoryPackNotice, setCategoryPackNotice] = useState('');
   const [categoryPackError, setCategoryPackError] = useState('');
+  const [expandedPack, setExpandedPack] = useState('');
+  const undo = useUndo(store, () => bump());
   useEffect(() => {
     try {
       accountSessionStorage.removeItem(MANAGE_TARGET_KEY);
@@ -78,6 +80,9 @@ export function Manage() {
   const codeOf = (id: string) => assetById(snap).get(id)?.code ?? id;
   const gameName = (id: string) => snap.games.find((g) => g.id === id)?.name ?? id;
   const usesAccounts = (snap.setting?.ledgerMode ?? 'spending') !== 'spending';
+  // Captured after the null guard so the hoisted pack helpers below do not have to
+  // re-narrow the snapshot.
+  const packCategories = snap.categories;
 
   async function saveCategoryPreferences(updates: Category[]) {
     await store.runInAuditBatch('调整快速记账分类', async (transactionStore) => {
@@ -89,14 +94,39 @@ export function Manage() {
     bump();
   }
 
-  async function enableCategoryPack(packId: string, categoryIds: readonly string[]) {
-    setCategoryPackBusy(packId);
+  /** 仍被其他「已启用」扩展包引用的共享成员：停用本包时必须保留它们可用。 */
+  function retainedPackMemberIds(pack: CategoryPack): string[] {
+    const others = CATEGORY_PACKS.filter((other) =>
+      other.id !== pack.id && categoryPackState(other, packCategories).status === 'enabled');
+    return pack.categoryIds.filter((id) => others.some((other) => other.categoryIds.includes(id)));
+  }
+
+  async function setCategoryPackEnabled(pack: CategoryPack, enable: boolean) {
+    setCategoryPackBusy(pack.id);
     setCategoryPackNotice('');
     setCategoryPackError('');
     try {
-      await enableSystemCategories(store, categoryIds);
-      bump();
-      setCategoryPackNotice(`已启用 ${categoryIds.length} 个分类；现在可在新增记账中选择。`);
+      if (enable) {
+        const rows = await enableSystemCategories(store, pack.categoryIds);
+        bump();
+        setCategoryPackNotice(`已启用「${pack.name}」扩展包 ${rows.length} 项分类；现在可在新增记账中选择。`);
+        undo.offer(`已启用「${pack.name}」扩展包`, async () => {
+          await disableSystemCategories(store, pack.categoryIds, { retainIds: retainedPackMemberIds(pack) });
+          bump();
+        });
+      } else {
+        const result = await disableSystemCategories(store, pack.categoryIds, { retainIds: retainedPackMemberIds(pack) });
+        bump();
+        setCategoryPackNotice([
+          `已停用「${pack.name}」扩展包 ${result.disabledIds.length} 项分类；新增记账将不再显示`,
+          result.retainedUsedIds.length ? `${result.retainedUsedIds.length} 项仍保留历史引用` : '',
+          result.retainedSharedIds.length ? `${result.retainedSharedIds.length} 项仍由其他扩展包使用，未改动` : '',
+        ].filter(Boolean).join('；'));
+        undo.offer(`已停用「${pack.name}」扩展包`, async () => {
+          await enableSystemCategories(store, result.disabledIds);
+          bump();
+        });
+      }
     } catch (error) {
       setCategoryPackError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -104,17 +134,15 @@ export function Manage() {
     }
   }
 
-  async function disableCategoryPack(packId: string, categoryIds: readonly string[]) {
-    setCategoryPackBusy(packId);
+  /** 单个成员开关：只影响这一项，不改动包内其他分类。 */
+  async function togglePackMember(categoryId: string, enable: boolean) {
+    setCategoryPackBusy(categoryId);
     setCategoryPackNotice('');
     setCategoryPackError('');
     try {
-      const result = await disableSystemCategories(store, categoryIds);
+      if (enable) await enableSystemCategories(store, [categoryId]);
+      else await disableSystemCategories(store, [categoryId]);
       bump();
-      setCategoryPackNotice(
-        `已停用 ${result.disabledIds.length} 个分类；新增记账将不再显示`
-        + (result.retainedUsedIds.length ? `；其中 ${result.retainedUsedIds.length} 个分类仍保留历史引用` : ''),
-      );
     } catch (error) {
       setCategoryPackError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -151,37 +179,55 @@ export function Manage() {
             : (
               <>
                 <div style={card}>
-                  <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>按需分类包</div>
+                  <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>扩展包</div>
                   <div style={{ marginTop: 4, color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>
-                    启用后分类会出现在新增记账中；停用后不再可选，但不会删除历史分类或改动已有流水。
+                    扩展包只补充默认没有的可选分类：启用后可在新增记账中选用，停用后不再可选，不会删除历史分类、改动已有流水，也不会影响默认分类。
+                    点开卡片名称可以查看包内每一项的当前状态，并单独启用或停用。
                   </div>
                   <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 8 }}>
                     {CATEGORY_PACKS.map((pack) => {
-                      const enabled = pack.categoryIds.filter((id) =>
-                        snap.categories.some((category) => category.id === id && !category.isDeleted && category.isActive),
-                      ).length;
+                      const state = categoryPackState(pack, snap.categories);
                       const busy = categoryPackBusy === pack.id;
+                      const expanded = expandedPack === pack.id;
                       return (
-                        <div key={pack.id} data-testid={`category-pack-${pack.id}`} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 11, display: 'grid', gap: 8 }}>
-                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                        <div key={pack.id} data-testid={`category-pack-${pack.id}`} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 11, display: 'grid', gap: 8, alignContent: 'start' }}>
+                          <button type="button" aria-expanded={expanded} aria-label={`查看${pack.name}扩展包成员`} onClick={() => setExpandedPack(expanded ? '' : pack.id)} style={packHeaderButton}>
                             <b style={{ fontSize: 'var(--fs-body)' }}>{pack.name}</b>
-                            <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>已启用 {enabled}/{pack.categoryIds.length}</span>
-                          </div>
+                            <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{packStatusLabel(state)}</span>
+                          </button>
                           <div style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-meta)', minHeight: 30 }}>{pack.description}</div>
                           <div style={{ display: 'flex', gap: 7 }}>
-                            <button type="button" aria-label={`启用${pack.name}分类包`} disabled={busy || enabled === pack.categoryIds.length} onClick={() => void enableCategoryPack(pack.id, pack.categoryIds)} style={packButton(true)}>
-                              {busy ? '处理中…' : enabled === pack.categoryIds.length ? '已启用' : enabled > 0 ? '补齐并启用' : '启用'}
+                            <button type="button" aria-label={`启用${pack.name}扩展包`} disabled={busy || state.status === 'enabled'} onClick={() => void setCategoryPackEnabled(pack, true)} style={packButton(true)}>
+                              {busy ? '处理中…' : state.status === 'enabled' ? '已启用' : state.status === 'disabled' ? '启用' : '补齐并启用'}
                             </button>
-                            <button type="button" aria-label={`停用${pack.name}分类包`} disabled={busy || enabled === 0} onClick={() => void disableCategoryPack(pack.id, pack.categoryIds)} style={packButton(false)}>
+                            <button type="button" aria-label={`停用${pack.name}扩展包`} disabled={busy || state.enabledCount === 0} onClick={() => void setCategoryPackEnabled(pack, false)} style={packButton(false)}>
                               停用
                             </button>
                           </div>
+                          {expanded && (
+                            <div data-testid={`category-pack-members-${pack.id}`} style={{ display: 'grid', gap: 5, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+                              {pack.categoryIds.map((categoryId) => {
+                                const memberState = categoryPackMemberState(categoryId, snap.categories);
+                                const selectable = memberState === 'disabled' || memberState === 'missing';
+                                const label = categoryLabel(categoryId, snap.categories);
+                                return (
+                                  <div key={categoryId} style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                                    <span style={{ flex: 1, minWidth: 0, fontSize: 'var(--fs-meta)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+                                    <span style={{ fontSize: 'var(--fs-meta)', color: memberState === 'enabled' ? 'var(--positive)' : 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>{PACK_MEMBER_LABEL[memberState]}</span>
+                                    <button type="button" aria-label={`${selectable ? '启用' : '停用'}${label}`} disabled={categoryPackBusy === categoryId} onClick={() => void togglePackMember(categoryId, selectable)} style={packMemberButton}>
+                                      {selectable ? '启用' : '停用'}
+                                    </button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
                   </div>
                   {categoryPackNotice && <div style={{ marginTop: 10, color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{categoryPackNotice}</div>}
-                  {categoryPackError && <div role="alert" style={{ marginTop: 10, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>分类包操作失败：{categoryPackError}</div>}
+                  {categoryPackError && <div role="alert" style={{ marginTop: 10, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>扩展包操作失败：{categoryPackError}</div>}
                 </div>
                 <div style={card}><QuickCategorySettings categories={snap.categories} onSave={saveCategoryPreferences} /></div>
               </>
@@ -748,6 +794,43 @@ function manageFilterButton(active: boolean, enabled: boolean) {
     opacity: enabled ? 1 : 0.5,
   } as const;
 }
+
+const PACK_MEMBER_LABEL: Record<CategoryPackMemberState, string> = {
+  enabled: '可用',
+  hidden: '已隐藏',
+  disabled: '已停用',
+  missing: '未加入',
+};
+
+function packStatusLabel(state: CategoryPackState): string {
+  if (state.status === 'enabled') return `${state.total} 项全部可用`;
+  if (state.status === 'partial') return `已启用 ${state.enabledCount}/${state.total}`;
+  return `未启用 · 可选 ${state.total} 项`;
+}
+
+const packHeaderButton = {
+  display: 'flex',
+  alignItems: 'baseline',
+  gap: 8,
+  width: '100%',
+  padding: 0,
+  border: 'none',
+  background: 'transparent',
+  color: 'inherit',
+  textAlign: 'left',
+  cursor: 'pointer',
+} as const;
+
+const packMemberButton = {
+  minHeight: 24,
+  padding: '1px 7px',
+  borderRadius: 'var(--r-sm)',
+  border: '1px solid var(--border)',
+  background: 'var(--surface)',
+  color: 'var(--fg-muted)',
+  fontSize: 'var(--fs-meta)',
+  cursor: 'pointer',
+} as const;
 
 function packButton(primary: boolean) {
   return {

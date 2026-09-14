@@ -11,6 +11,7 @@ import {
   listScheduleOccurrences, nextUnhandledScheduleOccurrence, postingsFromTransaction,
   scheduleExecutionId, scheduleOccurrenceDate, scheduleOccurrenceIsDue, scheduledTransactionId, zonedCalendarNow,
   systemCategory,
+  DEFAULT_ENABLED_CATEGORY_IDS,
   type ChainWithSteps, type ConversionChain, type ConversionStep,
   type DcaExecution, type DcaPlan,
   type Lot, type LotConsumption, type LotMethod, type SellMatchResult,
@@ -465,6 +466,8 @@ function amountPrecision(value: string): number {
   }
 }
 
+// 已发布账本里存着这个字面量（`categories.archive_reason`），改名需要迁移旧数据，
+// 因此内部标记保留原值；它不面向用户展示，UI 文案统一叫「扩展包」。
 const SYSTEM_CATEGORY_PACK_DISABLED_REASON = '系统分类包停用';
 
 export async function enableSystemCategory(
@@ -477,19 +480,21 @@ export async function enableSystemCategory(
     if (existing.isDeleted || existing.mergedIntoId) {
       validation(`分类已归档，不能由系统目录自动启用：${id}`, 'category');
     }
-    if (!existing.isActive && (!options.restorePackDisabled || existing.archiveReason !== SYSTEM_CATEGORY_PACK_DISABLED_REASON)) {
+    if (existing.isActive) {
+      // 已启用的分类保留用户自己选的可见性：启用扩展包只负责补齐目录项，
+      // 不应该把用户在「快捷显示与排序」里主动隐藏的分类重新拉回常用列表。
+      return existing;
+    }
+    if (!options.restorePackDisabled || existing.archiveReason !== SYSTEM_CATEGORY_PACK_DISABLED_REASON) {
       validation(`分类已归档，不能由系统目录自动启用：${id}`, 'category');
     }
-    if (!existing.isActive || (options.makeVisible && existing.isHidden)) {
-      return store.categories.put({
-        ...existing,
-        isActive: true,
-        isHidden: options.makeVisible ? false : existing.isHidden,
-        archivedAt: undefined,
-        archiveReason: undefined,
-      });
-    }
-    return existing;
+    return store.categories.put({
+      ...existing,
+      isActive: true,
+      isHidden: options.makeVisible ? false : existing.isHidden,
+      archivedAt: undefined,
+      archiveReason: undefined,
+    });
   }
   const catalog = systemCategory(id, false);
   if (!catalog) validation(`系统分类目录中不存在：${id}`, 'category');
@@ -497,11 +502,12 @@ export async function enableSystemCategory(
   return store.categories.put({ ...catalog, isHidden: options.makeVisible ? false : catalog.isHidden });
 }
 
+/** 启用扩展包：补齐包内扩展分类，并恢复此前被扩展包停用的项。 */
 export async function enableSystemCategories(
   store: SqlLedgerStore,
   ids: readonly string[],
 ): Promise<Category[]> {
-  return store.runInAuditBatch(`启用系统分类 ${ids.length} 项`, async (transactionStore) => {
+  return store.runInAuditBatch(`启用扩展包 ${ids.length} 项`, async (transactionStore) => {
     const rows: Category[] = [];
     for (const id of [...new Set(ids)]) {
       rows.push(await enableSystemCategory(transactionStore, id, { restorePackDisabled: true, makeVisible: true }));
@@ -513,20 +519,49 @@ export async function enableSystemCategories(
 export interface DisabledSystemCategoriesResult {
   disabledIds: string[];
   retainedUsedIds: string[];
+  /** 默认分类不受扩展包控制，被跳过的项（正常情况下不会出现）。 */
+  retainedDefaultIds: string[];
+  /** 仍被其他已启用扩展包引用的共享成员，保留可用。 */
+  retainedSharedIds: string[];
+  /** 账本里根本不存在的成员：不会为了停用而先创建它。 */
+  missingIds: string[];
 }
 
+/**
+ * 停用扩展包。
+ *
+ * 只处理包内的扩展分类，并且：
+ * - 默认分类永远不停用（它们不属于任何扩展包）；
+ * - 仍被其他已启用扩展包引用的共享成员不停用（`options.retainIds`）；
+ * - 未落库的成员直接跳过，不为“停用”写一行幽灵数据。
+ */
 export async function disableSystemCategories(
   store: SqlLedgerStore,
   ids: readonly string[],
+  options: { retainIds?: readonly string[] } = {},
 ): Promise<DisabledSystemCategoriesResult> {
-  return store.runInAuditBatch(`停用系统分类包 ${ids.length} 项`, async (transactionStore) => {
-    const result: DisabledSystemCategoriesResult = { disabledIds: [], retainedUsedIds: [] };
+  const retain = new Set(options.retainIds ?? []);
+  return store.runInAuditBatch(`停用扩展包 ${ids.length} 项`, async (transactionStore) => {
+    const result: DisabledSystemCategoriesResult = {
+      disabledIds: [], retainedUsedIds: [], retainedDefaultIds: [], retainedSharedIds: [], missingIds: [],
+    };
     const archivedAt = new Date().toISOString();
     for (const id of [...new Set(ids)]) {
-      const category = await transactionStore.categories.get(id) ?? await enableSystemCategory(transactionStore, id);
-      if (category.isDeleted || category.mergedIntoId) continue;
+      if (DEFAULT_ENABLED_CATEGORY_IDS.has(id)) {
+        result.retainedDefaultIds.push(id);
+        continue;
+      }
+      const category = await transactionStore.categories.get(id);
+      if (!category || category.isDeleted || category.mergedIntoId) {
+        result.missingIds.push(id);
+        continue;
+      }
       if (!category.isActive) {
         if (category.archiveReason === SYSTEM_CATEGORY_PACK_DISABLED_REASON) result.disabledIds.push(id);
+        continue;
+      }
+      if (retain.has(id)) {
+        result.retainedSharedIds.push(id);
         continue;
       }
       const impact = await previewMasterDataChange(transactionStore, 'category', id);

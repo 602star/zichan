@@ -139,7 +139,7 @@ test('customizes sidebar modules and keeps their order after reload', async ({ p
   await expect(mobileNavigation.getByRole('button', { name: /管理$/ })).toHaveCount(0);
 });
 
-test('disables a category pack for new entries and restores it when re-enabled', async ({ page }) => {
+test('enables and disables an extension pack for new entries and restores it when re-enabled', async ({ page }) => {
   await openLedger(page);
   const sidebar = page.locator('.zc-sidebar');
   await sidebar.getByRole('button', { name: /设置$/ }).click();
@@ -150,12 +150,29 @@ test('disables a category pack for new entries and restores it when re-enabled',
   await page.getByRole('button', { name: '快捷显示与排序', exact: true }).click();
 
   const studentPack = page.getByTestId('category-pack-student');
-  await expect(studentPack.getByText(/已启用 \d+\/10/)).toBeVisible();
-  await studentPack.getByRole('button', { name: '启用学生分类包', exact: true }).click();
-  await expect(studentPack.getByText('已启用 10/10', { exact: true })).toBeVisible();
-  await studentPack.getByRole('button', { name: '停用学生分类包', exact: true }).click();
-  await expect(studentPack.getByText('已启用 0/10', { exact: true })).toBeVisible();
-  await expect(page.getByText(/已停用 10 个分类；新增记账将不再显示/)).toBeVisible();
+  // Extension packs only ship optional categories, so a fresh ledger starts at zero
+  // instead of listing the default categories the pack used to carry.
+  await expect(studentPack.getByText('未启用 · 可选 7 项', { exact: true })).toBeVisible();
+  await studentPack.getByRole('button', { name: '查看学生扩展包成员', exact: true }).click();
+  const members = studentPack.getByTestId('category-pack-members-student');
+  await expect(members.getByText(/食堂/)).toBeVisible();
+  await expect(members.getByText('未加入').first()).toBeVisible();
+  await studentPack.getByRole('button', { name: '查看学生扩展包成员', exact: true }).click();
+  await expect(members).toHaveCount(0);
+
+  await studentPack.getByRole('button', { name: '启用学生扩展包', exact: true }).click();
+  await expect(studentPack.getByText('7 项全部可用', { exact: true })).toBeVisible();
+  await expect(page.getByText(/已启用「学生」扩展包 7 项分类/)).toBeVisible();
+
+  await studentPack.getByRole('button', { name: '停用学生扩展包', exact: true }).click();
+  await expect(studentPack.getByText('未启用 · 可选 7 项', { exact: true })).toBeVisible();
+  await expect(page.getByText(/已停用「学生」扩展包 7 项分类；新增记账将不再显示/)).toBeVisible();
+
+  // The pack toggle is undoable from the toast without leaving the page.
+  await page.getByRole('button', { name: '撤销', exact: true }).click();
+  await expect(studentPack.getByText('7 项全部可用', { exact: true })).toBeVisible();
+  await studentPack.getByRole('button', { name: '停用学生扩展包', exact: true }).click();
+  await expect(studentPack.getByText('未启用 · 可选 7 项', { exact: true })).toBeVisible();
 
   await page.getByText('日常支出', { exact: true }).first().click();
   await page.getByRole('button', { name: '+ 记支出' }).click();
@@ -168,8 +185,8 @@ test('disables a category pack for new entries and restores it when re-enabled',
   await sidebar.getByRole('button', { name: /管理$/ }).click();
   await page.getByRole('button', { name: '快捷显示与排序', exact: true }).click();
   const disabledStudentPack = page.getByTestId('category-pack-student');
-  await disabledStudentPack.getByRole('button', { name: '启用学生分类包', exact: true }).click();
-  await expect(disabledStudentPack.getByText('已启用 10/10', { exact: true })).toBeVisible();
+  await disabledStudentPack.getByRole('button', { name: '启用学生扩展包', exact: true }).click();
+  await expect(disabledStudentPack.getByText('7 项全部可用', { exact: true })).toBeVisible();
 
   await page.getByText('日常支出', { exact: true }).first().click();
   await page.getByRole('button', { name: '+ 记支出' }).click();
