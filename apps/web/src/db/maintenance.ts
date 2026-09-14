@@ -10,7 +10,7 @@ import {
   type TransactionTag,
   type TransactionTemplate,
 } from '@zichan/core';
-import type { SqlLedgerStore } from '@zichan/db';
+import { restoreMisdisabledDefaultCategories, type SqlLedgerStore } from '@zichan/db';
 import { DEFAULT_ENABLED_CATEGORY_IDS, SYSTEM_CATEGORY_CATALOG, storedCategory } from '../transactionMeta.js';
 import { DEFAULT_FIXED_ASSET_CATEGORIES } from '../fixedAssetCategories.js';
 
@@ -40,6 +40,8 @@ function byName<T extends { name: string; isDeleted?: boolean }>(rows: T[]): Map
 }
 
 export async function runLedgerMaintenance(store: SqlLedgerStore): Promise<boolean> {
+  // 先修复历史缺陷，再基于修复后的行判断是否需要补齐默认资料，避免两个批次互相覆盖。
+  await restoreMisdisabledDefaultCategories(store);
   const [
     assets, settings, payees, categories, fixedCategories, tags, locations, templates, budgets, schedules,
   ] = await Promise.all([

@@ -92,6 +92,7 @@ export {
   enableSystemCategory,
   enableSystemCategories,
   disableSystemCategories,
+  restoreMisdisabledDefaultCategories,
   voidTransaction,
   restoreTransaction,
   isTransactionReconciled,

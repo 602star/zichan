@@ -15,7 +15,9 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
 3. 卡片改名「扩展包」，可展开查看包内每一项的名称/一级分类/状态（可用、已隐藏、已停用、未加入）并单独启用或停用；状态文案改为随状态变化的三种，启停接 10 秒撤销（撤销以显式反向操作为兜底，不依赖补偿记录）。
 4. 不为包新增持久化状态：包内只剩扩展分类，成员状态就是包状态的忠实投影，避免给 `Setting` 再加一个需要跨同步与备份维护的 JSON 快照。
 
-**验证**：`npm run build` 与全工作区 typecheck、lint 均通过；单元测试 logger 7 / core 119 / db 154 / sync-server 67 / web 466 全绿（新增 core 包完整性、共享成员与状态推导断言，新增 `packages/db/test/category-packs.test.ts` 四条行为测试）。e2e 17/17 通过（用本机 Chrome，仓库内 chromium 下载不完整）；扩展包用例改为断言 7 项纯扩展成员、未启用时也能展开看到「食堂」、停用后表单搜不到、撤销后回到可用、再启用后恢复可选。
+**验证**：`npm run build` 与全工作区 typecheck、lint 均通过；单元测试 logger 7 / core 119 / db 155 / sync-server 67 / web 466 全绿（新增 core 包完整性、共享成员与状态推导断言，新增 `packages/db/test/category-packs.test.ts` 五条行为测试）。e2e 17/17 通过（用本机 Chrome，仓库内 chromium 下载不完整）；扩展包用例改为断言 7 项纯扩展成员、未启用时也能展开看到「食堂」、停用后表单搜不到、撤销后回到可用、再启用后恢复可选。
+
+**存量账本修复**：旧版逻辑是唯一会写入「分类包停用」归档原因的地方（手动归档写的是「用户归档」），所以新增 `restoreMisdisabledDefaultCategories`，只恢复「默认分类 + 该归档原因」的行，在打开账本时由 `runLedgerMaintenance` 执行，幂等且不影响用户归档与已合并分类。这一步是必需的：被误停用的默认分类既不在新增记账里，也不在「快捷显示与排序」里，用户只能到结构管理逐个找回。
 
 ## 2026-09-14 — 账本日：从「看不懂的旧日期」变成有解释、有告警、可一键跟进
 

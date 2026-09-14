@@ -10,8 +10,8 @@ import {
   normalizeOccurrence, canonicalJson,
   listScheduleOccurrences, nextUnhandledScheduleOccurrence, postingsFromTransaction,
   scheduleExecutionId, scheduleOccurrenceDate, scheduleOccurrenceIsDue, scheduledTransactionId, zonedCalendarNow,
-  systemCategory,
   DEFAULT_ENABLED_CATEGORY_IDS,
+  systemCategory,
   type ChainWithSteps, type ConversionChain, type ConversionStep,
   type DcaExecution, type DcaPlan,
   type Lot, type LotConsumption, type LotMethod, type SellMatchResult,
@@ -576,6 +576,38 @@ export async function disableSystemCategories(
       result.disabledIds.push(id);
     }
     return result;
+  });
+}
+
+/**
+ * 修复历史缺陷：早期版本的分类包把默认分类也当作成员，「停用」会把它们一起停用，
+ * 且没有任何记录说明这件事是分类包做的。默认分类被停用后既不出现在新增记账，也不在
+ * 「快捷显示与排序」里，用户只能到结构管理逐个找回。
+ *
+ * 只恢复「默认分类 + 停用原因正好是分类包停用」的行：用户自己归档（原因是「用户归档」）
+ * 或已合并的分类不受影响，所以重复执行是安全的。
+ */
+export async function restoreMisdisabledDefaultCategories(store: SqlLedgerStore): Promise<string[]> {
+  const rows = await store.categories.list();
+  const damaged = rows.filter((category) =>
+    !category.isDeleted
+    && !category.mergedIntoId
+    && category.isActive === false
+    && category.archiveReason === SYSTEM_CATEGORY_PACK_DISABLED_REASON
+    && DEFAULT_ENABLED_CATEGORY_IDS.has(category.id));
+  if (!damaged.length) return [];
+  return store.runInAuditBatch(`恢复被分类包误停用的默认分类 ${damaged.length} 项`, async (transactionStore) => {
+    for (const category of damaged) {
+      const catalog = systemCategory(category.id, false);
+      await transactionStore.categories.put({
+        ...category,
+        isActive: true,
+        isHidden: catalog ? catalog.isHidden : false,
+        archivedAt: undefined,
+        archiveReason: undefined,
+      });
+    }
+    return damaged.map((category) => category.id);
   });
 }
 

@@ -3,6 +3,7 @@ import { CATEGORY_PACKS, type Category } from '@zichan/core';
 import {
   disableSystemCategories,
   enableSystemCategories,
+  restoreMisdisabledDefaultCategories,
 } from '../src/index.js';
 import { openLedger } from '../src/node.js';
 
@@ -60,6 +61,41 @@ describe('extension packs', () => {
     expect(await store.categories.get('pet_food')).toMatchObject({ isActive: false, isHidden: true });
     await enableSystemCategories(store, ['pet_food']);
     expect(await store.categories.get('pet_food')).toMatchObject({ isActive: true, isHidden: false });
+    await store.close();
+  });
+
+  it('repairs default categories an older pack version disabled, and leaves the rest alone', async () => {
+    const store = await openLedger();
+    const packDisabled = { isActive: false, isHidden: true, archivedAt: '2026-08-01T00:00:00.000Z', archiveReason: '系统分类包停用' } as const;
+
+    // 旧版分类包造成的历史损坏：默认分类与扩展分类被同一个原因停用。
+    await enableSystemCategories(store, ['fuel', 'pet_food', 'parking', 'car_wash']);
+    await store.categories.put({ ...(await store.categories.get('fuel'))!, ...packDisabled } as Category);
+    await store.categories.put({ ...(await store.categories.get('pet_food'))!, ...packDisabled } as Category);
+    // 用户自己归档的默认分类，不能因为是默认分类就擅自恢复。
+    await store.categories.put({
+      ...(await store.categories.get('parking'))!,
+      isActive: false,
+      isHidden: true,
+      archivedAt: '2026-08-02T00:00:00.000Z',
+      archiveReason: '用户归档',
+    } as Category);
+    // 已合并的分类同理，不属于本次修复范围。
+    await store.categories.put({
+      ...(await store.categories.get('car_wash'))!,
+      ...packDisabled,
+      mergedIntoId: 'car_repair',
+    } as Category);
+
+    expect(await restoreMisdisabledDefaultCategories(store)).toEqual(['fuel']);
+    expect(await store.categories.get('fuel')).toMatchObject({ isActive: true, isHidden: false });
+    expect((await store.categories.get('fuel'))?.archiveReason).toBeUndefined();
+    expect(await store.categories.get('pet_food')).toMatchObject({ isActive: false, isHidden: true });
+    expect(await store.categories.get('parking')).toMatchObject({ isActive: false, isHidden: true, archiveReason: '用户归档' });
+    expect(await store.categories.get('car_wash')).toMatchObject({ isActive: false, mergedIntoId: 'car_repair' });
+
+    // 幂等：再开一次账本不会反复写。
+    expect(await restoreMisdisabledDefaultCategories(store)).toEqual([]);
     await store.close();
   });
 });

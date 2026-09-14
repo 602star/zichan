@@ -83,6 +83,19 @@ describe('first-run ledger initialization', () => {
       expect(await store.budgetCategories.count()).toBe(0);
       expect(await store.scheduledTransactions.count()).toBe(0);
 
+      // 旧版分类包可能把默认分类一并停用；打开账本时应当把这一项恢复为可用，
+      // 并且不去动用户自己归档的分类。
+      const seeded = (await store.categories.get('fuel'))!;
+      await store.categories.put({
+        ...seeded,
+        isActive: false,
+        isHidden: true,
+        archivedAt: '2026-08-01T00:00:00.000Z',
+        archiveReason: '系统分类包停用',
+      } as typeof seeded);
+      await runLedgerMaintenance(store);
+      expect(await store.categories.get('fuel')).toMatchObject({ isActive: true, isHidden: false });
+
       await expect(initializeEmptyLedger(store, {
         baseCurrencyCode: 'USD',
         ledgerMode: 'assets',
