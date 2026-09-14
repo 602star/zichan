@@ -22,6 +22,15 @@ test.setTimeout(300_000);
 const VIEWPORTS = [
   { name: '390x844', width: 390, height: 844 },
   { name: '320x568', width: 320, height: 568 },
+  /*
+   * Past 767px the shell goes back to the sidebar, but a coarse pointer still
+   * pulls in the 44px / 16px touch rules - so these are the desktop columns
+   * holding phone-sized controls, not a wider phone. Landscape also squeezes the
+   * panel to 90vh of 390px, the shortest frame any of these forms has to fit in.
+   */
+  { name: '844x390', width: 844, height: 390 },
+  { name: '768x1024', width: 768, height: 1024 },
+  { name: '1024x768', width: 1024, height: 768 },
 ];
 
 const SCREENS = [
@@ -37,12 +46,21 @@ const SCREENS = [
   ['设置', 'settings'],
 ];
 
-/** Navigate through the phone chrome: bottom bar first, then the 更多 drawer. */
+/** Navigate through whichever chrome this viewport uses: bottom bar or sidebar. */
 async function clickNav(page, label) {
   const first = await page.evaluate((target) => {
     const norm = (b) => (b.getAttribute('aria-label') || b.textContent || '').replace(/\s+/g, '');
     const nav = document.querySelector('.zc-mobile-bottom-nav');
-    if (!nav || getComputedStyle(nav).display === 'none') return 'no-nav';
+    if (!nav || getComputedStyle(nav).display === 'none') {
+      // 768px and wider keeps the desktop shell even with a coarse pointer.
+      const sidebar = document.querySelector('.zc-sidebar');
+      if (!sidebar || getComputedStyle(sidebar).display === 'none') return 'no-nav';
+      const items = [...sidebar.querySelectorAll('nav button')];
+      const hit = items.find((b) => norm(b).endsWith(target));
+      if (!hit) return `no-sidebar-item:${items.map(norm).join('|')}`;
+      hit.click();
+      return 'sidebar';
+    }
     const buttons = [...nav.querySelectorAll('button')];
     const direct = buttons.find((b) => norm(b).endsWith(target));
     if (direct) { direct.click(); return 'nav'; }
@@ -63,7 +81,7 @@ async function clickNav(page, label) {
       return 'ok';
     }, label);
     if (second !== 'ok') throw new Error(`drawer navigation failed for ${label}: ${second}`);
-  } else if (first !== 'nav') {
+  } else if (first !== 'nav' && first !== 'sidebar') {
     throw new Error(`navigation failed for ${label}: ${first}`);
   }
   await page.waitForTimeout(450);
@@ -97,6 +115,61 @@ async function enableHiddenModulesFromDrawer(page) {
   return enabled;
 }
 
+/**
+ * Enable every module using whichever control this chrome actually offers: the
+ * drawer below 768px, the Settings checkboxes above it. Both are real user paths
+ * and they are separate code, so neither can stand in for the other.
+ */
+async function enableAllModules(page) {
+  const usesBottomBar = await page.evaluate(() => {
+    const nav = document.querySelector('.zc-mobile-bottom-nav');
+    return !!nav && getComputedStyle(nav).display !== 'none';
+  });
+  if (usesBottomBar) return enableHiddenModulesFromDrawer(page);
+
+  await clickNav(page, '设置');
+  const boxes = page.locator('input[aria-label^="在侧边栏显示"]');
+  await expect(boxes.first()).toBeVisible({ timeout: 15_000 });
+  const total = await boxes.count();
+  const enabled = [];
+  for (let i = 0; i < total; i += 1) {
+    const box = boxes.nth(i);
+    // Fixed entrances (日常收支 / 设置) stay disabled by design.
+    if (!(await box.isEnabled())) continue;
+    if (await box.isChecked()) continue;
+    await box.click();
+    await expect(box).toBeChecked({ timeout: 10_000 });
+    await expect(box).toBeEnabled({ timeout: 10_000 });
+    enabled.push(i);
+  }
+  return enabled;
+}
+
+/**
+ * Once everything is on, all ten modules must be reachable from the chrome this
+ * viewport uses: three slots plus the 更多 drawer on a phone, the whole sidebar
+ * above 768px. A module that is enabled but unreachable is still a lost module.
+ */
+async function assertEveryModuleReachable(page) {
+  const usesBottomBar = await page.evaluate(() => {
+    const nav = document.querySelector('.zc-mobile-bottom-nav');
+    return !!nav && getComputedStyle(nav).display !== 'none';
+  });
+  if (!usesBottomBar) {
+    const labels = await page.locator('.zc-sidebar nav .zc-sidebar-nav-label').allInnerTexts();
+    expect(labels.length, '侧栏应露出全部 10 个模块').toBe(10);
+    return;
+  }
+  await page.locator('.zc-mobile-bottom-nav button', { hasText: '更多' }).click();
+  const drawer = page.getByRole('dialog', { name: '更多功能' });
+  await expect(drawer).toBeVisible();
+  const drawerLabels = await drawer.locator('.zc-mobile-drawer-grid button b').allInnerTexts();
+  await drawer.getByRole('button', { name: '关闭更多菜单' }).click();
+  await expect(drawer).toBeHidden();
+  expect(drawerLabels.length + 3, '底栏与抽屉应合起来露出全部 10 个模块').toBe(10);
+  expect(drawerLabels.join(' '), '未启用模块区应已清空').not.toContain('启用');
+}
+
 /** Open every "+ …" create action in the current view and empty-submit it. */
 async function sweepCurrentView(page, scope, report) {
   const buttons = page.locator('.zc-page-content button');
@@ -125,8 +198,33 @@ async function sweepCurrentView(page, scope, report) {
 async function saveAndCheckRecovery(page, label, dialog) {
   const save = dialog.getByRole('button', { name: '保存', exact: true });
   if (!(await save.isVisible().catch(() => false))) {
+    /*
+     * 资产转换 is the one dialog outside the entity-form contract: its refusals are
+     * plain strings with no field to point at, and the panel is taller than any
+     * phone screen. A refusal still has to be readable where the user just tapped,
+     * so this asserts the message is announced and lands inside the panel.
+     */
+    const conversionSave = dialog.getByRole('button', { name: /保存转换|预览影响/ }).first();
+    if (!(await conversionSave.isVisible().catch(() => false))) {
+      await dismissDialog(page, dialog);
+      return 'not-an-entity-form';
+    }
+    await conversionSave.click();
+    const refused = dialog.getByRole('alert');
+    await expect(refused, `${label}：被拒后没有可朗读的提示`).toBeVisible({ timeout: 15_000 });
+    const seen = await refused.evaluate((node) => {
+      const panel = node.closest('[role="dialog"]');
+      const rect = node.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      return {
+        inside: rect.top >= panelRect.top - 2 && rect.bottom <= panelRect.bottom + 2,
+        text: (node.textContent || '').trim(),
+      };
+    });
+    expect(seen.inside, `${label}：拒绝原因滚出了弹窗可视区`).toBe(true);
+    expect(seen.text.length, `${label}：拒绝原因不能是空提示`).toBeGreaterThan(3);
     await dismissDialog(page, dialog);
-    return 'not-an-entity-form';
+    return 'refused-visibly';
   }
   await save.scrollIntoViewIfNeeded();
   await save.click();
@@ -242,7 +340,7 @@ async function sweepScreen(page, label, report) {
 }
 
 for (const vp of VIEWPORTS) {
-  test(`phone ${vp.name}: with every module on, no create form blocks on a field the thumb cannot reach`, async ({ page }) => {
+  test(`${vp.name}: with every module on, no create form blocks on a field that cannot be reached`, async ({ page }) => {
     const ownerSetupToken = 'test-mobile-sweep-owner-000000000000';
     const server = createSyncServer({
       enableWeb: true,
@@ -271,20 +369,9 @@ for (const vp of VIEWPORTS) {
       await page.getByRole('button', { name: '关闭快速记账' }).click();
       await page.getByRole('dialog', { name: '记一笔支出' }).waitFor({ state: 'hidden' });
 
-      const enabled = await enableHiddenModulesFromDrawer(page);
-      expect(enabled.length, `启用全部模块后应在抽屉里点过若干次“启用”`).toBeGreaterThan(0);
-
-      // The phone chrome has to expose every module too: three slots on the bar,
-      // the rest behind 更多.
-      await page.locator('.zc-mobile-bottom-nav button', { hasText: '更多' }).click();
-      const drawer = page.getByRole('dialog', { name: '更多功能' });
-      await expect(drawer).toBeVisible();
-      const drawerLabels = await drawer.locator('.zc-mobile-drawer-grid button b').allInnerTexts();
-      await drawer.getByRole('button', { name: '关闭更多菜单' }).click();
-      await expect(drawer).toBeHidden();
-      expect(drawerLabels.length + 3, `手机导航应露出全部 10 个模块`).toBe(10);
-      expect(drawerLabels.join(' '), '未启用模块区应已清空')
-        .not.toContain('启用');
+      const enabled = await enableAllModules(page);
+      expect(enabled.length, `启用全部模块后应点过若干次“启用”`).toBeGreaterThan(0);
+      await assertEveryModuleReachable(page);
 
       const report = {};
       for (const [label] of SCREENS) {
@@ -334,7 +421,7 @@ test(`phone 390x844: a record-keeping pass fills and saves at phone size`, async
     await page.getByRole('button', { name: '关闭快速记账' }).click();
     await page.getByRole('dialog', { name: '记一笔支出' }).waitFor({ state: 'hidden' });
 
-    await enableHiddenModulesFromDrawer(page);
+    await enableAllModules(page);
 
     // 1. A daily expense whose only must-type field is the amount.
     await clickNav(page, '日常支出');
@@ -387,6 +474,8 @@ test(`phone 390x844: a record-keeping pass fills and saves at phone size`, async
       await expect(dialog).toBeHidden({ timeout: 15_000 });
     }
     await expect(page.getByText('手机商户', { exact: true })).toBeVisible();
+
+    // 资产转换 is covered by the sweep above, which runs it at every viewport.
   } finally {
     server.server.closeAllConnections();
     await server.close();

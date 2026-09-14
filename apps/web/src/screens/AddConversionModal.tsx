@@ -606,10 +606,21 @@ export function AddConversionModal({
         })}
 
         <button onClick={() => setSteps([...drafts, emptyStep(effectiveBookCurrencyId, drafts.at(-1)?.toAssetId || effectiveBookCurrencyId)])} style={{ ...smallButton, width: '100%', padding: 10, borderStyle: 'dashed', marginBottom: 16 }}>+ 添加转换步骤</button>
-        {err && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>{err}</div>}
-        <div className="zc-modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-          <button onClick={onClose} disabled={saving} style={secondaryButton}>取消</button>
-          <button onClick={() => void save()} disabled={saving} style={{ ...primaryButton, opacity: saving ? 0.6 : 1 }}>{saving ? '处理中…' : initial ? '预览影响' : '保存转换'}</button>
+        {/*
+         * The refusal lives inside the sticky footer on purpose. This form is taller
+         * than the panel on a phone, and the save button is pinned to the bottom, so
+         * an error rendered at the end of the content sat ~750px below the fold: the
+         * tap looked like it did nothing at all. Anchored to the footer it is visible
+         * wherever the panel happens to be scrolled.
+         */}
+        <div className="zc-modal-footer" style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 12 }}>
+          {err && (
+            <div role="alert" style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', lineHeight: 1.6 }}>{err}</div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+            <button onClick={onClose} disabled={saving} style={secondaryButton}>取消</button>
+            <button onClick={() => void save()} disabled={saving} style={{ ...primaryButton, opacity: saving ? 0.6 : 1 }}>{saving ? '处理中…' : initial ? '预览影响' : '保存转换'}</button>
+          </div>
         </div>
       {pending && (
         <ConfirmDialog
