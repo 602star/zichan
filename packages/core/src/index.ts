@@ -5,6 +5,7 @@
  */
 export * from './types.js';
 export * from './category-catalog.js';
+export { PLAIN_HTTP_HOST_ALLOWLIST, isPlainHttpHost } from './transport-policy.js';
 export { D, Decimal, sum, round, roundD, safeDiv, isZero, eq, type Numeric } from './decimal.js';
 export { newId, prefixedId } from './ids.js';
 export {

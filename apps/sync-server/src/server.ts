@@ -4,7 +4,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import * as opaque from '@serenity-kit/opaque';
-import { normalizeSyncUsername, createLedgerKeyEnvelope, unlockLedgerKeyEnvelope, newId, type LedgerKeyEnvelope } from '@zichan/core';
+import { normalizeSyncUsername, createLedgerKeyEnvelope, unlockLedgerKeyEnvelope, newId, PLAIN_HTTP_HOST_ALLOWLIST, type LedgerKeyEnvelope } from '@zichan/core';
 import { loadCustodyKey, sealCustodySecret, openCustodySecret } from './key-custody.js';
 import { EncryptedBlobStore, MAX_ENCRYPTED_CHUNK_BYTES } from './blob-store.js';
 import { createRequestOrigin } from './request-origin.js';
@@ -293,6 +293,43 @@ function safeResolve(root: string, path: string): string | null {
   return target === root || target.startsWith(prefix) ? target : null;
 }
 
+/**
+ * CSP for the hosted web app.
+ *
+ * `connect-src` gates every sync request a second time, in the browser, after
+ * `assertSecureSyncUrl` has already run. Loopback HTTP is listed explicitly
+ * because the LAN path legitimately syncs to a plain-HTTP address over there;
+ * `https:` stays open for public deployments.
+ *
+ * The reviewed plain-HTTP hosts have to be spliced in from the shared list.
+ * Without them the app gate admits an address and the browser then refuses the
+ * fetch, which surfaces as an unexplained connection failure. A port wildcard is
+ * used because the deployment picks its own port and the host is already an
+ * explicit plaintext exception.
+ */
+const CONNECT_SRC = [
+  "'self'",
+  'https:',
+  'http://localhost:*',
+  'http://127.0.0.1:*',
+  'http://[::1]:*',
+  ...PLAIN_HTTP_HOST_ALLOWLIST.map((host) => `http://${host}:*`),
+].join(' ');
+
+const WEB_APP_CSP = [
+  "default-src 'self'",
+  `connect-src ${CONNECT_SRC}`,
+  "img-src 'self' blob: data:",
+  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "font-src 'self' data:",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 function serveWeb(req: IncomingMessage, res: ServerResponse, path: string, webDir?: string): boolean {
   if (!webDir || (req.method !== 'GET' && req.method !== 'HEAD')) return false;
   if (path === '/api' || path.startsWith('/api/')) return false;
@@ -307,7 +344,7 @@ function serveWeb(req: IncomingMessage, res: ServerResponse, path: string, webDi
   res.writeHead(200, {
     'Content-Type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
     'Cache-Control': file.endsWith('index.html') || file.endsWith('sw.js') ? 'no-cache' : 'public, max-age=31536000, immutable',
-    'Content-Security-Policy': "default-src 'self'; connect-src 'self' https: http://localhost:* http://127.0.0.1:* http://[::1]:*; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; font-src 'self' data:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    'Content-Security-Policy': WEB_APP_CSP,
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
   });

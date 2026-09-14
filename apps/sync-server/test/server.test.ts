@@ -10,7 +10,7 @@ import { createTestSyncServer as createSyncServer, OWNER_SETUP_TOKEN } from './s
 import { EncryptedBlobStore } from '../src/blob-store.js';
 import { createServerBackup, restoreServerBackup, verifyServerBackup } from '../src/backup.js';
 import { CURRENT_SERVER_SCHEMA, SyncServerStore } from '../src/store.js';
-import { normalizeSyncUsername } from '@zichan/core';
+import { normalizeSyncUsername, PLAIN_HTTP_HOST_ALLOWLIST } from '@zichan/core';
 import { NodeSqliteDriver } from '@zichan/db/node';
 
 let sv: SyncServer;
@@ -725,6 +725,30 @@ describe('sync-server endpoints', () => {
       expect(account.status).toBe(503);
       expect(account.headers.get('content-type')).toContain('application/json');
       expect((await fetch(u + '/ledger/app/')).status).toBe(200);
+    } finally {
+      await s.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /*
+   * The plain-HTTP exception has to be granted twice: once by the app gate
+   * (`assertSecureSyncUrl`) and once by the browser, through `connect-src`. When
+   * only the first was told, the fetch was blocked with no hint that a header was
+   * responsible. This keeps the two layers on one list.
+   */
+  it('lets the hosted app reach every reviewed plain-HTTP host', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zichan-web-csp-'));
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Zichan Web</title><div id="root"></div>');
+    const s = createSyncServer({ webDir: dir, enableWeb: true, enableSync: false });
+    await new Promise<void>((r) => s.server.listen(0, r));
+    const u = `http://localhost:${(s.server.address() as AddressInfo).port}`;
+    try {
+      const csp = (await fetch(u + '/')).headers.get('content-security-policy') ?? '';
+      const connectSrc = csp.split('; ').find((directive) => directive.startsWith('connect-src')) ?? '';
+      expect(connectSrc).not.toBe('');
+      expect(PLAIN_HTTP_HOST_ALLOWLIST.length).toBeGreaterThan(0);
+      for (const host of PLAIN_HTTP_HOST_ALLOWLIST) expect(connectSrc).toContain(host);
     } finally {
       await s.close();
       rmSync(dir, { recursive: true, force: true });

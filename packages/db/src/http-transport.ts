@@ -3,6 +3,7 @@ import { requestJson as fetch, HttpRequestError, type HttpRequestOptions } from 
 import {
   decryptJson,
   encryptJson,
+  isPlainHttpHost,
   normalizeSyncUsername,
   sha256Json,
   type Encrypted,
@@ -128,34 +129,12 @@ export function isLocalNetworkSyncUrl(baseUrl: string): boolean {
 }
 
 /**
- * Exact hostnames granted plain-HTTP transport without being loopback or a
- * private literal.
- *
- * Kept apart from `localNetworkHostname` on purpose. That function answers "is
- * this host on my private network?", and its answer decides whether a server is
- * stored as device-local or shared (`isDeviceLocalSyncUrl` feeds that scope
- * split in the web app). This list answers a narrower question - "may
- * credentials cross this host in the clear?" - so a public host can be excepted
- * here without silently joining a device's scope.
- *
- * `test.ojco.de` is a staging deployment deliberately served without TLS. Every
- * entry weakens the transport guarantee: on plain HTTP anyone on the path reads
- * the bearer token, and worse, can rewrite the application itself. Drop the
- * entry once the host terminates TLS.
- *
- * Matching is exact and case-insensitive. Subdomains need their own entry so
- * that no wildcard can widen this list by accident.
- */
-const PLAIN_HTTP_HOST_ALLOWLIST: ReadonlySet<string> = new Set(['test.ojco.de']);
-
-function isAllowedPlainHttpHost(hostname: string): boolean {
-  return PLAIN_HTTP_HOST_ALLOWLIST.has(hostname.toLowerCase().replace(/^\[|\]$/g, ''));
-}
-
-/**
  * Prevent credentials and bearer tokens from being sent to public HTTP
  * endpoints. Plain HTTP remains available for loopback, explicit LAN use, and
- * the reviewed hosts in `PLAIN_HTTP_HOST_ALLOWLIST`.
+ * the reviewed hosts in `PLAIN_HTTP_HOST_ALLOWLIST` (@zichan/core).
+ *
+ * The browser enforces the same policy a second time through `connect-src`, so
+ * an exception added to that list must also reach the CSP in @zichan/sync-server.
  */
 export function assertSecureSyncUrl(baseUrl: string): void {
   let url: URL;
@@ -166,7 +145,7 @@ export function assertSecureSyncUrl(baseUrl: string): void {
   }
   if (url.username || url.password) throw new Error('同步服务器地址不能包含用户名或密码');
   if (url.protocol === 'https:') return;
-  if (url.protocol === 'http:' && (isLocalNetworkSyncUrl(url.toString()) || isAllowedPlainHttpHost(url.hostname))) return;
+  if (url.protocol === 'http:' && (isLocalNetworkSyncUrl(url.toString()) || isPlainHttpHost(url.hostname))) return;
   throw new Error('公网同步必须使用 HTTPS；HTTP 仅允许本机、私有局域网或已显式放行的主机');
 }
 

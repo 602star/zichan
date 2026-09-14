@@ -83,7 +83,9 @@ OPAQUE 注册和登录都由客户端与服务器交换 PAKE 消息，账号密�
 
 桌面和附加跨站连接使用独立 JSON token 传输；桌面 Stronghold 只保存刷新会话，不保存账号密码。后台同步不进行密码登录：令牌被拒绝时最多受控刷新一次，刷新失效后要求用户明确重新登录；网络错误和 5xx 保留会话用于重试。
 
-公网部署必须由 Caddy 等反向代理终止 HTTPS，且只向代理暴露 8787。客户端会拒绝向公网 HTTP 域名或地址发送认证信息与 Bearer token；本机和 RFC1918/本地 IPv6 地址仍可用于明确配置的家庭局域网 HTTP。唯一例外是经审查加入客户端放行名单的主机（`packages/db/src/http-transport.ts` 的 `PLAIN_HTTP_HOST_ALLOWLIST`）：它只取得明文传输许可，不会被当作局域网主机，也不参与「设备本地 / 共享」的范围划分；`test.ojco.de` 因是不终止 TLS 的测试部署而在列，该域名启用 HTTPS 后应立即移除。同步与管理 API 允许官方 Web 等任意 Origin 发起无 Cookie 的跨域请求；实际访问控制来自 OPAQUE、Bearer 会话、角色检查、设备撤销、限流和配额，响应绝不启用跨域凭据 Cookie。
+公网部署必须由 Caddy 等反向代理终止 HTTPS，且只向代理暴露 8787。客户端会拒绝向公网 HTTP 域名或地址发送认证信息与 Bearer token；本机和 RFC1918/本地 IPv6 地址仍可用于明确配置的家庭局域网 HTTP。唯一例外是经审查加入放行名单的主机（`packages/core/src/transport-policy.ts` 的 `PLAIN_HTTP_HOST_ALLOWLIST`）：它只取得明文传输许可，不会被当作局域网主机，也不参与「设备本地 / 共享」的范围划分。
+
+放行名单必须同时被两道闸门读取，缺一即不可用：(1) 应用层 `assertSecureSyncUrl`（`@zichan/db`）在构造请求前放行；(2) 托管 Web 的同步服务器把同一名单拼进 `Content-Security-Policy` 的 `connect-src`（`apps/sync-server/src/server.ts`），否则浏览器会在应用层放行之后掐断请求，表现为「连接失败」而看不到任何与响应头有关的线索。服务端的 `ALLOW_INSECURE_HTTP=1` 是第三处独立开关，未开启时返回 `426 HTTPS_REQUIRED`；它按部署全局生效，不区分主机名。`test.ojco.de` 因是不终止 TLS 的测试部署而在名单内，该域名启用 HTTPS 后应立即移除。同步与管理 API 允许官方 Web 等任意 Origin 发起无 Cookie 的跨域请求；实际访问控制来自 OPAQUE、Bearer 会话、角色检查、设备撤销、限流和配额，响应绝不启用跨域凭据 Cookie。
 
 ### 安全加入已绑定的远端账本
 
