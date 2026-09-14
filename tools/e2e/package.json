@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "playwright test",
+    "test:visual": "playwright test --config visual.config.mjs",
+    "test:visual:update": "playwright test --config visual.config.mjs --update-snapshots",
     "install:chromium": "playwright install chromium"
   },
   "devDependencies": {

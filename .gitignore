@@ -8,6 +8,7 @@ tools/coverage/node_modules/
 tools/e2e/node_modules/
 tools/e2e/test-results/
 tools/e2e/playwright-report/
+tools/e2e/visual-baselines/
 tools/e2e/*.log
 dist/
 *.tsbuildinfo
