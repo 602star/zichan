@@ -1,7 +1,7 @@
 import {
   D, addDays as shiftDays, addMonths as shiftMonths, computeBalances, dateRangeForPreset,
   isDateInRange, isTransactionActive, listScheduleOccurrences, nextUnhandledScheduleOccurrence,
-  postingsFromTransaction, sum,
+  postingsFromTransaction, sum, localToday,
   type DateRange, type DateRangePreset,
   type Transaction, type TransactionCategory, type TransactionStatus, type TransactionType,
   type ScheduledTransaction,
@@ -226,10 +226,7 @@ function addMonths(month: string, delta: number): string {
 }
 
 function localDateIso(date = new Date()): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  return localToday(date);
 }
 
 export function transactionDateRange(asOf: string, filters: Pick<TransactionFilters, 'range' | 'dateFrom' | 'dateTo'>): DateRange {

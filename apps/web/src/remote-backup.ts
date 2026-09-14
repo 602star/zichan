@@ -7,6 +7,7 @@ import {
   type BackupArchiveSource,
 } from './db/backup-archive.js';
 import { authenticateSyncProfile, hasAccountSession } from './sync-auth.js';
+import { selectRetained } from './db/retention.js';
 import { runtimeCredential } from './credential-vault.js';
 import {
   buildSyncBaseUrl,
@@ -16,7 +17,6 @@ import {
 
 const REMOTE_CHUNK_BYTES = 4 * 1024 * 1024;
 const MAX_REMOTE_CHUNKS = 512;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 interface RemoteChunk {
   index: number;
@@ -238,19 +238,11 @@ class RemoteBackupClient {
 
 function remoteAutoRetention(backups: RemoteBackupArchive[], now = Date.now()): Set<string> {
   const kept = new Set(backups.filter((backup) => backup.reason !== 'auto').map((backup) => backup.archiveId));
-  const buckets = new Set<string>();
-  let weekly = 0;
-  for (const backup of backups.filter((row) => row.reason === 'auto')
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))) {
-    const age = Math.max(0, now - Date.parse(backup.createdAt));
-    const date = new Date(backup.createdAt);
-    const tier = age < DAY_MS ? 'hourly' : age < 31 * DAY_MS ? 'daily' : 'weekly';
-    const key = tier === 'hourly' ? `${tier}:${backup.createdAt.slice(0, 13)}`
-      : tier === 'daily' ? `${tier}:${backup.createdAt.slice(0, 10)}`
-        : `${tier}:${date.getUTCFullYear()}:${Math.floor((Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) - Date.UTC(date.getUTCFullYear(), 0, 1)) / (7 * DAY_MS))}`;
-    if (buckets.has(key) || (tier === 'weekly' && weekly >= 12)) continue;
-    buckets.add(key);
-    if (tier === 'weekly') weekly += 1;
+  for (const backup of selectRetained(
+    backups.filter((row) => row.reason === 'auto'),
+    (row) => row.createdAt,
+    { now },
+  )) {
     kept.add(backup.archiveId);
   }
   return kept;

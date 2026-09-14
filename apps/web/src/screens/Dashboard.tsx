@@ -1,4 +1,6 @@
 import { accountSessionStorage } from '../account-storage.js';
+import { localToday } from '@zichan/core';
+import { ledgerToday } from '../as-of.js';
 import { useEffect, useMemo, useState } from 'react';
 import { useDashboardTransactionReadModel } from '../db/dashboard-read-model.js';
 import { useSnapshot } from '../db/snapshot.js';
@@ -22,7 +24,7 @@ export function Dashboard() {
   const snap = useSnapshot('dashboard');
   const [dateRange, setDateRange] = useState<DateRangeValue>(() => dateRangeValue('this_month'));
   const [dcaPlanToRecord, setDcaPlanToRecord] = useState<string | null>(null);
-  const today = useMemo(() => new Date().toLocaleDateString('en-CA'), []);
+  const today = useMemo(() => (snap ? ledgerToday(snap) : localToday()), [snap]);
   const [backups, setBackups] = useState<SavedBackup[]>([]);
   const [safetyState, setSafetyState] = useState<SafetyState>(readSafetyState);
   const [syncProfiles, setSyncProfiles] = useState<SyncConnection[]>(loadSyncConnections);

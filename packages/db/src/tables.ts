@@ -71,7 +71,7 @@ export const TABLES = {
     cols: [
       c('baseCurrencyAssetId'), c('transactionDefaultAssetId'), c('investmentCostAssetId'),
       c('fixedAssetDefaultCurrencyAssetId'), c('gameDefaultSettlementAssetId'),
-      c('ledgerMode'), c('ledgerKind'), c('initializedAt'), c('defaultLotMethod'), c('asOfDate'),
+      c('ledgerMode'), c('ledgerKind'), c('initializedAt'), c('defaultLotMethod'), c('asOfDate'), c('timezone'),
       c('transactionFormOptionalFields'), c('categoryPickerDefaultScope'), c('navigationLayoutJson'), c('refundAttributionMode'), c('dataSafetyStateJson'), c('syncServersJson'),
     ],
     indexes: [

@@ -1,7 +1,7 @@
 import { accountSessionStorage } from './account-storage.js';
 import { lazy, Suspense, useEffect, useId, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
 import type { LedgerBackup } from '@zichan/db';
-import type { LedgerMode } from '@zichan/core';
+import { type LedgerMode, localToday } from '@zichan/core';
 import { useStore } from './db/store.js';
 import { loadSnapshot, useSnapshot, type Snapshot } from './db/snapshot.js';
 import { baseAsset } from './db/derive.js';
@@ -94,8 +94,7 @@ const META: Record<ScreenId, [string, string]> = {
 };
 
 function formatAsOfDate(date?: string): string {
-  const now = new Date();
-  const fallback = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const fallback = localToday();
   const value = date || fallback;
   const [y, m, d] = value.split('-');
   return [y, m, d].filter(Boolean).join(' · ');

@@ -67,8 +67,11 @@ export {
   startOfWeek,
   daysBetween,
   heldDays,
-  today,
+  dayOfInstant,
+  hourBucketOfInstant,
+  toInstant,
   localToday,
+  todayIn,
   dateRangeForPreset,
   isDateInRange,
   isDateRangeValid,
@@ -84,7 +87,8 @@ export {
   type AsOfState,
 } from './as-of.js';
 
-export { normalizeOccurrence, type OccurrenceInput, type NormalizedOccurrence } from './time.js';
+export { normalizeOccurrence, systemTimeZone, type OccurrenceInput, type NormalizedOccurrence } from './time.js';
+export { systemClock, fixedClock, type Clock } from './clock.js';
 export { money, sumMoney, groupMoney, type Money } from './money.js';
 
 export {

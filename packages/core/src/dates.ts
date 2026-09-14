@@ -102,14 +102,71 @@ export function heldDays(purchaseDate: string, endDate: string): number {
   return Math.max(1, daysBetween(purchaseDate, endDate) + 1);
 }
 
-/** Today as `YYYY-MM-DD` (UTC). */
-export function today(now: Date = new Date()): string {
-  return now.toISOString().slice(0, 10);
+/** Calendar day for a machine-local `Date`, without UTC date shifting. */
+function localDayOf(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Calendar day *and* hour an instant falls into, as seen in `timezone`.
+ *
+ * An absent or unrecognised zone falls back to the machine calendar, matching
+ * `zonedCalendarNow`, so a bad stored value degrades instead of throwing.
+ */
+function zonedDayAndHour(at: Date, timezone?: string): { day: string; hour: string } {
+  if (timezone) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(at);
+      const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
+      const day = `${value('year')}-${value('month')}-${value('day')}`;
+      // `hourCycle: 'h23'` still reports `24` for midnight in some ICU builds.
+      const hour = value('hour') === '24' ? '00' : value('hour');
+      if (isValidDay(day) && /^\d{2}$/.test(hour)) return { day, hour };
+    } catch {
+      // Unknown zone: fall through to the machine calendar.
+    }
+  }
+  return { day: localDayOf(at), hour: String(at.getHours()).padStart(2, '0') };
+}
+
+export function toInstant(value: string | number | Date): Date {
+  const at = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(at.getTime())) throw new Error(`invalid instant: ${String(value)}`);
+  return at;
+}
+
+/**
+ * The calendar day an instant belongs to, in a given IANA zone.
+ *
+ * This is the only correct way to turn an `Instant` into a `CalendarDay`: the
+ * UTC date of an instant differs from its local date for part of every day
+ * (§0.6). Callers that omit `timezone` get the machine calendar.
+ */
+export function dayOfInstant(value: string | number | Date, timezone?: string): string {
+  return zonedDayAndHour(toInstant(value), timezone).day;
+}
+
+/** Hour bucket (`YYYY-MM-DDTHH`) for an instant, in a given IANA zone. */
+export function hourBucketOfInstant(value: string | number | Date, timezone?: string): string {
+  const { day, hour } = zonedDayAndHour(toInstant(value), timezone);
+  return `${day}T${hour}`;
 }
 
 /** Today in the machine's local calendar, without UTC date shifting. */
 export function localToday(now: Date = new Date()): string {
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return localDayOf(now);
+}
+
+/** Today in a named IANA zone; falls back to the machine calendar. */
+export function todayIn(timezone?: string, now: Date = new Date()): string {
+  return dayOfInstant(now, timezone);
 }
 
 /** Inclusive business-date range for a common preset. */

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNod
 import {
   D,
   conversionStepAmounts,
+  localToday,
   newId,
   normalizeConversionAmounts,
   type ConversionChain,
@@ -63,8 +64,7 @@ const TYPES: [ConversionType, string][] = [
 ];
 
 function todayDate(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return localToday();
 }
 
 function emptyStep(defaultAsset: string, fromAssetId = defaultAsset): StepDraft {

@@ -1,8 +1,8 @@
 import {
   asOfState,
-  localToday,
   normalizeAsOfMode,
   resolveAsOfDate,
+  todayIn,
   type AsOfMode,
   type AsOfResolutionInput,
   type AsOfState,
@@ -48,13 +48,24 @@ export function ledgerAsOfInput(snap: Snapshot): AsOfResolutionInput {
   };
 }
 
+/**
+ * The day "now" falls on in this ledger's zone.
+ *
+ * This is the ledger's single answer to "what is today" (§0.6). Business days
+ * carry no zone, so this is what decides which one current activity belongs to;
+ * reading the device clock instead makes one ledger report two different days.
+ */
+export function ledgerToday(snap: Snapshot, now: Date = new Date()): string {
+  return todayIn(snap.setting?.timezone, now);
+}
+
 /** Effective cut-off day shared by reports, valuation, seasons and entry defaults. */
-export function ledgerAsOfDate(snap: Snapshot, today = localToday()): string {
+export function ledgerAsOfDate(snap: Snapshot, today = ledgerToday(snap)): string {
   return resolveAsOfDate(ledgerAsOfInput(snap), today);
 }
 
 /** Effective cut-off plus how far it lags today, for banners and headers. */
-export function ledgerAsOf(snap: Snapshot, today = localToday()): AsOfState {
+export function ledgerAsOf(snap: Snapshot, today = ledgerToday(snap)): AsOfState {
   return asOfState(ledgerAsOfInput(snap), today);
 }
 

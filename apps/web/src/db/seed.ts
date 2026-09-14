@@ -4,7 +4,7 @@
  * must never call this automatically.
  */
 import {
-  D, addDays, newId,
+  D, addDays, newId, localToday,
   type Asset, type Account, type BudgetCategory, type Category, type ConversionChain, type ConversionStep,
   type DcaExecution, type Game, type GameAccount, type GameSeason, type GameRecord, type FixedAsset,
   type FixedAssetConsumable, type FixedAssetEvent, type FixedAssetCategory, type FixedAssetGoal,
@@ -15,7 +15,7 @@ import { recordConversion, recordSell, saveTransaction, type SqlLedgerStore } fr
 import { DEFAULT_ENABLED_CATEGORY_IDS, SYSTEM_CATEGORY_CATALOG, storedCategory } from '../transactionMeta.js';
 import { DEFAULT_FIXED_ASSET_CATEGORIES } from '../fixedAssetCategories.js';
 
-const localDate = () => new Date().toLocaleDateString('en-CA');
+const localDate = () => localToday();
 function baseFields() {
   return { id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false };
 }

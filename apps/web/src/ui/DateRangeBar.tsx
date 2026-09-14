@@ -1,6 +1,7 @@
 import {
   addDays,
   dateRangeForPreset,
+  dayOfInstant,
   localToday,
   type DateRange,
   type DateRangePreset,
@@ -44,8 +45,7 @@ export function localDateRangeToUtc(value: DateRange): { since?: string; until?:
 }
 
 export function localDateOfInstant(value: string): string {
-  const date = new Date(value);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return dayOfInstant(value);
 }
 
 export function DateRangeBar(props: {

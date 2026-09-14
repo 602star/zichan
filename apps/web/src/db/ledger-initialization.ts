@@ -1,5 +1,7 @@
 import {
   newId,
+  localToday,
+  systemTimeZone,
   type Asset,
   type LedgerKind,
   type LedgerMode,
@@ -119,7 +121,10 @@ export async function initializeEmptyLedger(
       ledgerKind: 'personal',
       initializedAt,
       defaultLotMethod: 'fifo',
-      asOfDate: new Date().toLocaleDateString('en-CA'),
+      asOfDate: localToday(),
+      // Pinned at creation so a later device-zone change cannot reinterpret
+      // stored business days.
+      timezone: systemTimeZone(),
     } as Setting);
 
     for (const category of SYSTEM_CATEGORY_CATALOG.filter((row) => DEFAULT_ENABLED_CATEGORY_IDS.has(row.id))) {

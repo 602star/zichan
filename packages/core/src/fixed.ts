@@ -1,6 +1,6 @@
 /** Physical-item lifecycle cost, usage, goals, and consumable reminders. */
 import { D, safeDiv, sum } from './decimal.js';
-import { heldDays, today } from './dates.js';
+import { heldDays, localToday } from './dates.js';
 import type {
   FixedAsset,
   FixedAssetConsumable,
@@ -82,7 +82,7 @@ export function fixedAssetCost(
   options: string | FixedAssetCostOptions = {},
 ): FixedAssetCost {
   const opts = typeof options === 'string' ? { asOf: options } : options;
-  const asOf = opts.asOf ?? today();
+  const asOf = opts.asOf ?? localToday();
   const evs = events
     .filter((event) => event.fixedAssetId === asset.id && !event.isDeleted && event.date <= asOf)
     .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
@@ -169,7 +169,7 @@ export function fixedGoalProgress(
   events: FixedAssetEvent[],
   metrics: FixedAssetUsageMetric[],
   logs: FixedAssetUsageLog[],
-  asOf: string = today(),
+  asOf: string = localToday(),
 ): FixedGoalProgress {
   const terminal = events
     .filter((event) => event.fixedAssetId === asset.id && TERMINAL_TYPES.has(event.type) && !event.isDeleted && event.date <= asOf)

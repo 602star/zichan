@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { D, type Asset, type Transaction, type TransactionTemplate } from '@zichan/core';
+import { D, localToday, type Asset, type Transaction, type TransactionTemplate } from '@zichan/core';
 import {
   deleteFormDraft,
   formDraftFingerprint,
@@ -69,8 +69,7 @@ function draftValues(draft: QuickExpenseDraft): Record<string, string> {
 }
 
 function localDate(): string {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return localToday();
 }
 
 function localTime(): string {
@@ -126,7 +125,7 @@ function personalizedCategory(
   now: Date,
 ): { category: string; count: number } | null {
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const today = localToday(now);
   const todayNumber = localDayNumber(today)!;
   const weekend = now.getDay() === 0 || now.getDay() === 6;
   const counts = new Map<string, number>();

@@ -4,12 +4,11 @@ import {
   nextUnhandledDcaOccurrence,
   isTransactionActive,
   isLotTrackedAssetType,
-  localToday,
   type DateRange,
 } from '@zichan/core';
 import type { Snapshot } from '../db/snapshot.js';
 import type { DashboardTransactionReadModel } from '@zichan/db';
-import { ledgerAsOfDate } from '../as-of.js';
+import { ledgerAsOfDate, ledgerToday } from '../as-of.js';
 import { balanceOfAsset, isZeroish } from '../db/derive.js';
 import { categoryLabel } from '../transactionMeta.js';
 import { createReportCurrency } from '../reportCurrency.js';
@@ -60,7 +59,7 @@ export function buildDashboard(
   snap: Snapshot,
   selectedRange?: DateRange,
   transactionReadModel?: DashboardTransactionReadModel,
-  today = localToday(),
+  today = ledgerToday(snap),
 ): DashboardVM {
   const asOf = ledgerAsOfDate(snap, today);
   const codeOf = (id: string) => snap.assets.find((a) => a.id === id)?.code ?? id;

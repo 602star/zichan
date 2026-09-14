@@ -109,6 +109,15 @@ export interface Setting extends BaseEntity {
   defaultLotMethod: LotMethod;
   /** As-of date used by valuation, holding period, and season calculations. */
   asOfDate?: string;
+  /**
+   * IANA zone the ledger reads its calendar in (§0.6).
+   *
+   * Business days are stored without a zone, so something has to decide which
+   * day "now" falls on. Defaulting that to the device means the same ledger
+   * opened in two zones reports two different days. Absent means the machine
+   * calendar, which keeps single-device ledgers behaving as before.
+   */
+  timezone?: string;
   /** How `asOfDate` is maintained; absent means manual, i.e. it never auto-advances. */
   asOfMode?: AsOfMode;
   /** Comma-separated optional fields shown in the daily transaction form. */

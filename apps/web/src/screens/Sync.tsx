@@ -9,7 +9,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { accountProtection } from '../account-protection.js';
 import { LedgerProtectionPanel } from '../ui/LedgerProtectionPanel.js';
 import { ServerCustodyPanel } from '../ui/ServerCustodyPanel.js';
-import { isDateInRange } from '@zichan/core';
+import { isDateInRange, localToday } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { useSnapshot, type Snapshot } from '../db/snapshot.js';
 import { reconcileAttachmentStorage } from '../db/attachment-storage.js';
@@ -1396,7 +1396,7 @@ export function Sync() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `zichan-sync-conflicts-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `zichan-sync-conflicts-${localToday()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -1418,7 +1418,7 @@ export function Sync() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `zichan-invalid-sync-commits-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.download = `zichan-invalid-sync-commits-${localToday()}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
   };

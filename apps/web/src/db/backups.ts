@@ -12,6 +12,7 @@ import {
   type SqlLedgerStore,
 } from '@zichan/db';
 import { shareBlobFile } from '../device-capabilities.js';
+import { retentionTier, selectRetained } from './retention.js';
 import {
   requireLedgerCryptoSession,
   runtimeLedgerCryptoSession,
@@ -50,8 +51,6 @@ import { SqlJsDriver } from './sqljs-driver.js';
 const BACKUPS_KEY = 'ledger.encryptedBackups.v3';
 const AUTO_MIN_INTERVAL_MS = 60 * 60_000;
 const EXTERNAL_HANDLE_KEY = 'ledger.external-backup-directory.v1';
-const HOUR_MS = 60 * 60_000;
-const DAY_MS = 24 * HOUR_MS;
 const DESKTOP_TRANSFER_BYTES = 512 * 1024;
 
 interface BackupWindow extends Window {
@@ -428,23 +427,11 @@ function autoRetention(rows: SavedBackup[], now = Date.now()): SavedBackup[] {
   const pinned = rows
     .filter((row) => row.pinned || row.reason !== 'auto')
     .map((row) => ({ ...row, tier: 'pinned' as const, pinned: true }));
-  const auto = rows
-    .filter((row) => row.reason === 'auto' && !row.pinned)
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-  const kept: SavedBackup[] = [];
-  const buckets = new Set<string>();
-  for (const row of auto) {
-    const age = Math.max(0, now - Date.parse(row.createdAt));
-    const date = new Date(row.createdAt);
-    const tier: Exclude<BackupTier, 'pinned'> = age < DAY_MS ? 'hourly' : age < 31 * DAY_MS ? 'daily' : 'weekly';
-    const key = tier === 'hourly' ? `${tier}:${row.createdAt.slice(0, 13)}`
-      : tier === 'daily' ? `${tier}:${row.createdAt.slice(0, 10)}`
-        : `${tier}:${date.getUTCFullYear()}:${Math.floor((Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()) - Date.UTC(date.getUTCFullYear(), 0, 1)) / (7 * DAY_MS))}`;
-    if (buckets.has(key)) continue;
-    if (tier === 'weekly' && kept.filter((item) => item.tier === 'weekly').length >= 12) continue;
-    buckets.add(key);
-    kept.push({ ...row, tier });
-  }
+  const kept = selectRetained(
+    rows.filter((row) => row.reason === 'auto' && !row.pinned),
+    (row) => row.createdAt,
+    { now },
+  ).map((row) => ({ ...row, tier: retentionTier(row.createdAt, now) }));
   return [...pinned, ...kept].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 

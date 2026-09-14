@@ -3,7 +3,7 @@
  * EntityFormModal. Select options that depend on existing data take the snapshot.
  */
 import {
-  D, isValidDay, newId,
+  D, isValidDay, localToday, newId,
   type Asset, type Account, type Attachment, type BudgetCategory, type Category, type DcaPlan,
   type PriceMark, type Game, type GameAccount, type GameSeason, type GameRecord, type GameCashflowMode, type GameCashflowRole, type FixedAsset,
   type FixedAssetCashflowMode, type FixedAssetCategory, type FixedAssetConsumable, type FixedAssetEvent, type FixedAssetGoal,
@@ -143,8 +143,7 @@ function currentTime(): string {
   return new Date().toTimeString().slice(0, 5);
 }
 function currentDate(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return localToday();
 }
 function currentTimezone(): string {
   try {

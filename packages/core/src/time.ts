@@ -28,7 +28,7 @@ interface DateParts {
   second: number;
 }
 
-function systemTimezone(): string {
+export function systemTimeZone(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   } catch {
@@ -107,7 +107,7 @@ function parseTime(value: string, precision: TimePrecision): Pick<DateParts, 'ho
 /** Normalize local calendar semantics and derive the exact UTC instant when one exists. */
 export function normalizeOccurrence(input: OccurrenceInput): NormalizedOccurrence {
   if (!isValidDay(input.date)) throw new Error(`无效日期：${input.date}`);
-  const timezone = input.timezone?.trim() || systemTimezone();
+  const timezone = input.timezone?.trim() || systemTimeZone();
   const canonicalTimezone = formatter(timezone).resolvedOptions().timeZone;
   const inferred: TimePrecision = !input.time ? 'day' : input.time.length === 5 ? 'minute' : 'second';
   const timePrecision = input.timePrecision ?? inferred;

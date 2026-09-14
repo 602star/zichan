@@ -1,7 +1,7 @@
 import { accountSessionStorage } from '../account-storage.js';
 import { useEffect, useState, type CSSProperties } from 'react';
 import { checkConsistency, recomputeCaches, purgeTombstones, type ConsistencyIssue } from '@zichan/db';
-import { type AsOfMode, type LedgerMode, type LotMethod, type Setting } from '@zichan/core';
+import { type AsOfMode, type LedgerMode, type LotMethod, type Setting, localToday } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { useSnapshot } from '../db/snapshot.js';
 import { baseAsset } from '../db/derive.js';
@@ -100,8 +100,7 @@ type BackupPasswordRequest =
   | { kind: 'local'; entry: SavedBackup; action: 'rehearse' | 'merge' | 'replace' }
   | { kind: 'remote'; row: RemoteBackupRow; action: 'rehearse' | 'merge' | 'replace' };
 function todayDate(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return localToday();
 }
 const ISSUE_LABELS: Record<string, string> = {
   lot_remaining_mismatch: '持仓剩余数量不一致',

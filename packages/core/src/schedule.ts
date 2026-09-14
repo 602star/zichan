@@ -1,4 +1,4 @@
-import { addDays, addMonths, endOfMonth, isValidDay, startOfMonth } from './dates.js';
+import { addDays, addMonths, endOfMonth, isValidDay, localToday, startOfMonth } from './dates.js';
 import { D } from './decimal.js';
 import type {
   DcaExecution,
@@ -110,7 +110,7 @@ export function zonedCalendarNow(now: Date, timezone: string): ZonedCalendarNow 
     // Invalid time zones fall back to the machine calendar so execution remains available.
   }
   return {
-    date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
+    date: localToday(now),
     time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
   };
 }
