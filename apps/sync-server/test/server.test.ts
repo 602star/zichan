@@ -746,8 +746,10 @@ describe('sync-server endpoints', () => {
     try {
       const csp = (await fetch(u + '/')).headers.get('content-security-policy') ?? '';
       const connectSrc = csp.split('; ').find((directive) => directive.startsWith('connect-src')) ?? '';
-      expect(connectSrc).not.toBe('');
-      expect(PLAIN_HTTP_HOST_ALLOWLIST.length).toBeGreaterThan(0);
+      // Assert the directive itself, not only the exceptions: an empty allowlist
+      // is a valid state and must not be propped up by a synthetic entry.
+      expect(connectSrc).toContain("'self'");
+      expect(connectSrc).toContain('https:');
       for (const host of PLAIN_HTTP_HOST_ALLOWLIST) expect(connectSrc).toContain(host);
     } finally {
       await s.close();

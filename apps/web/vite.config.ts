@@ -27,6 +27,16 @@ export default defineConfig(({ mode }) => {
   },
   server: {
     host: '0.0.0.0', port: 5173, strictPort: true,
+    // Vite rejects any Host that is not localhost, an IP literal, or listed
+    // here. A tunnel or reverse proxy presents its public hostname, so a
+    // deployment reached that way has to declare it (comma-separated, e.g.
+    // "ledger.example.com").
+    //
+    // Opt-in through the environment on purpose. Allowing a host re-opens the
+    // dev server to the DNS-rebinding requests Vite's default check blocks, and
+    // this server has no authentication of its own - it serves the whole source
+    // tree. Never set this on an untrusted network.
+    allowedHosts: (env.ZICHAN_DEV_ALLOWED_HOSTS ?? '').split(',').map((host) => host.trim()).filter(Boolean),
     proxy: {
       '^/api(?:/|$)': {
         target: target.origin,

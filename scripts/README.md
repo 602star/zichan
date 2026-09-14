@@ -37,6 +37,8 @@ CMD 默认在结束或失败时暂停，以便双击运行时看到诊断信息�
 
 Vite 开发页面（默认 5173）将 `/api/*` 同源代理到后端（默认 8787）。`start:all` 自动传入后端地址；单独运行前端时，可用 `ZICHAN_DEV_API_TARGET=http://127.0.0.1:8787` 指定后端，也可在地址后带后端 `BASE_PATH`。开发页面仍使用根 `/admin/` 和 `/app/`。代理保留 Host/Origin 校验并映射 Cookie 路径，不放宽管理会话的跨域限制。修改代理配置或环境变量后重新启动开发服务；只运行前端不会创建服务器账号。
 
+经隧道或反向代理访问开发页面时，Host 是公网域名，Vite 默认白名单（本机名、IP 字面量）不含它，会在代理生效之前直接返回 `403 Blocked request. This host (...) is not allowed.`。此时需要两个声明：前端在 `apps/web/.env.local` 设置 `ZICHAN_DEV_ALLOWED_HOSTS=<主机名>`（逗号分隔，也可用同名环境变量）；后端设置 `TRUSTED_PROXIES=loopback`，否则回环代理不被信任，`X-Forwarded-Proto: https` 会被忽略，后端按 `http://` 推导来源，同站 Cookie 会话以 `SESSION_ORIGIN_REJECTED` 失败（代理必须覆盖为单一的 `X-Forwarded-Proto: https`，见 cloud-sync 说明）。`TRUSTED_PROXIES=loopback` 期间不要直接访问 `http://127.0.0.1:8787` 的 Cookie 会话：没有代理声明协议时该路径会按设计拒绝。放行主机等于把这个无鉴权、可读取整个源码树的开发服务器暴露给该主机，仅在可信隧道下开启。
+
 `.runtime/launchers/` 存放本次编排的本机控制记录，不应提交或分享。停止使用带随机凭据的本机控制通道，先让服务器正常关闭数据库，超时才结束其子进程。`start:all` 是一个生命周期，停止其中一个会同时停止同组服务。手工启动的 `npm run dev`、旧版启动脚本或其他进程不归此启动器管理，请在原窗口用 `Ctrl+C` 退出。
 
 ## 便携发布流程
