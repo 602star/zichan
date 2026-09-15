@@ -112,6 +112,17 @@ describe('system category catalog', () => {
     expect(categoryLabel('pet_medical', [disabled])).toBe('居家生活 / 宠物医疗');
   });
 
+  it('offers a general-purpose fine that covers non-traffic penalties', () => {
+    const fine = allCategories().find((row) => row.id === 'fine');
+    expect(fine).toMatchObject({ name: '罚款', type: 'expense', parentId: 'expense_misc' });
+
+    // 罚款是跨场景的通用支出（行政/平台/民事处罚），不属于任何场景扩展包，
+    // 因此默认可用。交通违法另在车主扩展包里提供专门的「违章罚款」。
+    expect(DEFAULT_ENABLED_CATEGORY_IDS.has('fine')).toBe(true);
+    expect(CATEGORY_PACKS.some((pack) => pack.categoryIds.includes('fine'))).toBe(false);
+    expect(EXTENSION_CATEGORY_IDS.has('fine')).toBe(false);
+  });
+
   it('offers every extension category that no pack covers through the browse list', () => {
     const covered = new Set(CATEGORY_PACKS.flatMap((pack) => pack.categoryIds as readonly string[]));
     const available = availableExtensionCategories().map((row) => row.id);

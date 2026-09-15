@@ -96,6 +96,13 @@ describe('first-run ledger initialization', () => {
       await runLedgerMaintenance(store);
       expect(await store.categories.get('fuel')).toMatchObject({ isActive: true, isHidden: false });
 
+      // 目录新增的默认分类（如通用「罚款」）会在打开账本时补进已有账本，
+      // 用户不需要重建账本就能用它记账。
+      // 目录里的默认分类（含新增的通用「罚款」）随初始化落库，开箱即可用。
+      expect(await store.categories.get('fine')).toMatchObject({
+        name: '罚款', type: 'expense', parentId: 'expense_misc', isActive: true,
+      });
+
       await expect(initializeEmptyLedger(store, {
         baseCurrencyCode: 'USD',
         ledgerMode: 'assets',
@@ -104,6 +111,32 @@ describe('first-run ledger initialization', () => {
       expect(await store.settings.count()).toBe(1);
     } finally {
       await store.close();
+    }
+  });
+
+  it('backfills a default category the catalog added after the ledger was created', async () => {
+    const source = await openLedger({ deviceId: 'backfill-source' });
+    const target = await openLedger({ deviceId: 'backfill-target' });
+    try {
+      await initializeEmptyLedger(source, { baseCurrencyCode: 'CNY', ledgerMode: 'spending' });
+      const exported = await exportLedger(source);
+      // 模拟升级前的旧账本：当时目录里还没有通用「罚款」这一项。
+      const backup = {
+        ...exported,
+        categories: exported.categories.filter((category) => category.id !== 'fine'),
+      } as LedgerBackup;
+      await importPortableLedger(target, backup, 'replace', {
+        initialize: { initializedAt: new Date().toISOString() },
+      });
+
+      // 用户不需要重建账本：打开时按目录补齐，且补齐的行可直接用于新增记账。
+      await runLedgerMaintenance(target);
+      expect(await target.categories.get('fine')).toMatchObject({
+        name: '罚款', type: 'expense', parentId: 'expense_misc', isActive: true, isDeleted: false,
+      });
+    } finally {
+      await source.close();
+      await target.close();
     }
   });
 

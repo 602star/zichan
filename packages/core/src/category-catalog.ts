@@ -376,6 +376,10 @@ export const SYSTEM_CATEGORY_CATALOG: BuiltInCategory[] = [
   childCategory('account_correction', '账目修正', 'expense', 'expense_misc', '#78716c', 443, true),
   childCategory('bad_debt_loss', '坏账损失', 'expense', 'expense_misc', '#78716c', 444, true),
   childCategory('business_expense', '特殊项目支出', 'expense', 'expense_misc', '#78716c', 445, true),
+  // 通用罚款：行政/平台/民事处罚。交通违法有专门的「违章罚款」（在车主扩展包里），
+  // 这一项覆盖与之无关的场景：乱扔垃圾、违规养犬、平台处罚、法院罚金……
+  // 它是跨场景的通用支出，不属于任何场景扩展包，所以默认可用。
+  childCategory('fine', '罚款', 'expense', 'expense_misc', '#dc2626', 446),
 
   parentCategory('income_work', '工作收入', 'income', '#16a34a', 500),
   childCategory('salary', '工资', 'income', 'income_work', '#16a34a', 501),
