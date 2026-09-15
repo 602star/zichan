@@ -6,6 +6,7 @@ import {
   SHARED_PACK_CATEGORY_IDS,
   SYSTEM_CATEGORY_CATALOG,
   allCategories,
+  availableExtensionCategories,
   categoryLabel,
   categoryOptions,
   categoryPackMemberState,
@@ -109,5 +110,48 @@ describe('system category catalog', () => {
     expect(categoryOptions([disabled], 'expense', { leafOnly: true, includeHidden: true })
       .some((option) => option.value === 'pet_medical')).toBe(false);
     expect(categoryLabel('pet_medical', [disabled])).toBe('居家生活 / 宠物医疗');
+  });
+
+  it('offers every extension category that no pack covers through the browse list', () => {
+    const covered = new Set(CATEGORY_PACKS.flatMap((pack) => pack.categoryIds as readonly string[]));
+    const available = availableExtensionCategories().map((row) => row.id);
+
+    // 扩展包只收录“会被同一类人成组需要”的分类；剩下的细分项靠浏览入口逐项添加。
+    // 两者必须合起来盖完整个目录，否则目录里会存在用户根本无法启用的分类。
+    expect(new Set([...covered, ...available])).toEqual(EXTENSION_CATEGORY_IDS);
+    expect(available.length).toBe(EXTENSION_CATEGORY_IDS.size);
+    for (const id of available) expect(DEFAULT_ENABLED_CATEGORY_IDS.has(id)).toBe(false);
+  });
+
+  it('lets a pack member be added on its own without enabling the whole pack', () => {
+    // 只想要「宠物医疗」而不想开整包 养宠 时，浏览入口应当也能拿到它。
+    const pet = CATEGORY_PACKS.find((pack) => pack.id === 'pet')!;
+    const available = new Set(availableExtensionCategories().map((row) => row.id));
+    for (const id of pet.categoryIds) expect(available.has(id)).toBe(true);
+
+    // 一旦这一项已经落库（无论启用与否），就不再作为“可添加”重复提供。
+    const persisted = pet.categoryIds.map((id) => ({ ...systemCategory(id, false)!, isActive: true, isHidden: false }));
+    const remaining = new Set(availableExtensionCategories(persisted).map((row) => row.id));
+    for (const id of pet.categoryIds) expect(remaining.has(id)).toBe(false);
+    expect(remaining.size).toBe(EXTENSION_CATEGORY_IDS.size - pet.categoryIds.length);
+  });
+
+  it('never offers a category the ledger already holds, archived ones included', () => {
+    const persisted: Category[] = [
+      { ...systemCategory('pet_medical', false)!, isActive: true, isHidden: false },
+      // 已归档的成员要走「归档/恢复」；再把它当成“可添加”会写出一份重复分类。
+      {
+        ...systemCategory('pet_grooming', false)!,
+        isActive: false,
+        isHidden: true,
+        archivedAt: '2026-09-02T00:00:00.000Z',
+        archiveReason: '用户归档',
+      },
+    ];
+    const available = availableExtensionCategories(persisted).map((row) => row.id);
+
+    expect(available).not.toContain('pet_medical');
+    expect(available).not.toContain('pet_grooming');
+    expect(availableExtensionCategories().length - available.length).toBe(2);
   });
 });

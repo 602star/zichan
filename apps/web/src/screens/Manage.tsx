@@ -25,7 +25,7 @@ import {
 import { card, th as thStyle, td as tdStyle } from '../ui/styles.js';
 import { QuickCategorySettings } from '../ui/QuickCategorySettings.js';
 import { DateRangeBar, dateRangeValue } from '../ui/DateRangeBar.js';
-import { allCategories, CATEGORY_PACKS, categoryIsHidden, categoryLabel, categoryPackMemberState, categoryPackState, TYPE_LABEL, type CategoryPack, type CategoryPackMemberState, type CategoryPackState } from '../transactionMeta.js';
+import { allCategories, availableExtensionCategories, CATEGORY_PACKS, categoryIsHidden, categoryLabel, categoryPackMemberState, categoryPackState, categoryPacksContaining, TYPE_LABEL, type CatalogCategory, type CategoryPack, type CategoryPackMemberState, type CategoryPackState } from '../transactionMeta.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { attachmentStorageStatus, reconcileAttachmentStorage } from '../db/attachment-storage.js';
 import { ATTACHMENT_SYNC_STATE_EVENT, ensureAttachmentBlobAvailable } from '../attachment-sync.js';
@@ -374,6 +374,9 @@ function CategorySection({ snap, store, bump }: {
 }) {
   const categories = allCategories(snap.categories, { includeInactive: true });
   const parents = categories.filter((category) => !category.parentId);
+  const undo = useUndo(store, () => bump());
+  const [availableBusy, setAvailableBusy] = useState('');
+  const [availableError, setAvailableError] = useState('');
   const [editing, setEditing] = useState<Category | 'new' | null>(null);
   const [lifecycle, setLifecycle] = useState<Category | null>(null);
   const [query, setQuery] = useState('');
@@ -404,15 +407,38 @@ function CategorySection({ snap, store, bump }: {
     return true;
   };
 
+  /**
+   * 目录里存在、账本里还没有的扩展分类，按一级分类分组。
+   *
+   * 扩展包只收录“会被同一类人成组需要”的分类；剩下的大量细分项（早餐、检查化验、
+   * KTV……）需要一条浏览入口：用户不必先知道名字才能找到它。搜索框同时过滤这张
+   * 清单，所以输入“KTV”会直接把「休闲娱乐」展开到它所在的位置。
+   */
+  const parentNameById = new Map(parents.map((parent) => [parent.id, parent.name]));
+  const availableByParent = new Map<string, CatalogCategory[]>();
+  // 只在没有按显示状态筛选（或只看重复）时列出“可添加”：这些目录项既不是“隐藏”
+  // 也不是“已停用”，在那些筛选视图里冒出来只会打架。
+  const showAvailable = visibilityFilter === 'all' && !showDuplicates;
+  if (showAvailable) {
+    for (const category of availableExtensionCategories(snap.categories)) {
+      if (!category.parentId) continue;
+      if (q && !norm(`${parentNameById.get(category.parentId) ?? ''} ${category.name} ${category.id}`).includes(q)) continue;
+      const rows = availableByParent.get(category.parentId);
+      if (rows) rows.push(category);
+      else availableByParent.set(category.parentId, [category]);
+    }
+  }
+
   const groups = parents.map((parent) => {
     const children = categories.filter((category) => category.parentId === parent.id);
     const visibleChildren = children.filter((category) => categoryMatches(category, parent));
     const parentMatches = categoryMatches(parent, parent);
-    return { parent, children, visibleChildren, parentMatches };
-  }).filter(({ parent, children, visibleChildren, parentMatches }) => (
+    const availableChildren = availableByParent.get(parent.id) ?? [];
+    return { parent, children, visibleChildren, availableChildren, parentMatches };
+  }).filter(({ parent, visibleChildren, availableChildren, children, parentMatches }) => (
     (typeFilter === 'all' || parent.type === typeFilter)
     && (parentFilter === 'all' || parent.id === parentFilter)
-    && (visibleChildren.length > 0 || (children.length === 0 && parentMatches))
+    && (visibleChildren.length > 0 || availableChildren.length > 0 || (children.length === 0 && parentMatches))
   ));
 
   const groupedIds = new Set(parents.map((parent) => parent.id));
@@ -438,6 +464,30 @@ function CategorySection({ snap, store, bump }: {
       (transactionStore) => transactionStore.categories.put({ ...category, isHidden: !categoryIsHidden(category) }),
     );
     bump();
+  };
+
+  /**
+   * 添加目录里的扩展分类。
+   *
+   * 只传「账本里还没有」的 id，所以这批行必定是本次新建的：撤销时按 id 停用
+   * 即可回到添加前的状态，不会误伤用户原有的分类。
+   */
+  const addExtensionCategories = async (ids: readonly string[], label: string) => {
+    if (ids.length === 0) return;
+    setAvailableBusy(ids.length === 1 ? ids[0]! : label);
+    setAvailableError('');
+    try {
+      const rows = await enableSystemCategories(store, ids);
+      bump();
+      undo.offer(`已添加${label}（${rows.length} 项）`, async () => {
+        await disableSystemCategories(store, rows.map((row) => row.id));
+        bump();
+      });
+    } catch (error) {
+      setAvailableError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAvailableBusy('');
+    }
   };
 
   return (
@@ -492,10 +542,12 @@ function CategorySection({ snap, store, bump }: {
         </div>
       </div>
 
+      {availableError && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-medium)', marginBottom: 8 }}>{availableError}</div>}
       <div style={{ borderBottom: '1px solid var(--border)' }}>
-        {groups.map(({ parent, children, visibleChildren }) => {
+        {groups.map(({ parent, children, visibleChildren, availableChildren }) => {
           const hiddenCount = children.filter(categoryIsHidden).length;
           const inactiveCount = children.filter((category) => category.isActive === false).length;
+          const availableLabel = `${parent.name}细分分类`;
           const isOpen = forceOpen || expandedParents.has(parent.id);
           return (
             <details
@@ -511,6 +563,7 @@ function CategorySection({ snap, store, bump }: {
                 <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{visibleChildren.length}/{children.length} 项</span>
                 {hiddenCount > 0 && <span style={stateBadge('hidden')}>隐藏 {hiddenCount}</span>}
                 {inactiveCount > 0 && <span style={stateBadge('inactive')}>停用 {inactiveCount}</span>}
+                {availableChildren.length > 0 && <span style={stateBadge('available')}>可添加 {availableChildren.length}</span>}
                 <span style={{ flex: '1 1 auto' }} />
                 <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setLifecycle(parent); }} style={editLinkButton}>归档/合并</button>
                 <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setEditing(parent); }} style={{ ...editLinkButton, marginLeft: 12 }}>编辑一级分类</button>
@@ -547,10 +600,50 @@ function CategorySection({ snap, store, bump }: {
                         </td>
                       </tr>
                     ))}
-                    {visibleChildren.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={5}>该一级分类下没有匹配的二级分类</td></tr>}
+                    {visibleChildren.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={5}>{availableChildren.length > 0 ? '该一级分类下没有匹配的已有分类' : '该一级分类下没有匹配的二级分类'}</td></tr>}
                   </tbody>
                 </table>
               </div>
+              {availableChildren.length > 0 && (
+                <div style={{ padding: '0 8px 12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
+                    <span>目录里还有 {availableChildren.length} 个细分分类未被使用，点一下即可加入：</span>
+                    <span style={{ flex: '1 1 auto' }} />
+                    <button
+                      type="button"
+                      aria-label={`全部添加${availableLabel}`}
+                      disabled={Boolean(availableBusy)}
+                      onClick={() => void addExtensionCategories(availableChildren.map((row) => row.id), availableLabel)}
+                      style={editLinkButton}
+                    >
+                      {availableBusy === availableLabel ? '添加中…' : `全部添加（${availableChildren.length}）`}
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                    {availableChildren.map((row) => {
+                      // 同一个分类可能既在包里、也可以单独添加（只想要其中一项时不必开整包）。
+                      // 标明归属，避免用户看到两处入口时困惑。
+                      const owners = categoryPacksContaining(row.id);
+                      const hint = owners.length
+                        ? `也能通过「${owners.map((pack) => pack.name).join('、')}」扩展包批量添加`
+                        : '来自目录，尚未写入账本';
+                      return (
+                        <button
+                          key={row.id}
+                          type="button"
+                          aria-label={`添加细分分类 ${row.name}`}
+                          title={`${row.id} · ${hint}`}
+                          disabled={Boolean(availableBusy)}
+                          onClick={() => void addExtensionCategories([row.id], `分类“${row.name}”`)}
+                          style={packButton(false)}
+                        >
+                          {availableBusy === row.id ? '添加中…' : `＋ ${row.name}`}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </details>
           );
         })}
@@ -867,12 +960,14 @@ function typeBadge(type: Category['type']) {
   } as const;
 }
 
-function stateBadge(kind: 'frequent' | 'hidden' | 'inactive' | 'duplicate') {
+function stateBadge(kind: 'frequent' | 'hidden' | 'inactive' | 'duplicate' | 'available') {
   const colors = kind === 'frequent'
     ? { color: 'var(--positive)', background: 'rgba(63,143,107,.13)' }
     : kind === 'duplicate'
       ? { color: 'var(--negative)', background: 'rgba(194,96,74,.13)' }
-      : { color: 'var(--text-tertiary)', background: 'var(--surface-2)' };
+      : kind === 'available'
+        ? { color: 'var(--accent)', background: 'var(--accent-soft)' }
+        : { color: 'var(--text-tertiary)', background: 'var(--surface-2)' };
   return {
     border: '1px solid var(--border)',
     borderRadius: 'var(--r-pill)',

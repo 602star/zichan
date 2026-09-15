@@ -196,6 +196,43 @@ test('enables and disables an extension pack for new entries and restores it whe
   await expect(restoredForm.getByRole('option', { name: /食堂/ })).toBeVisible();
 });
 
+test('adds a catalog sub-category from the structure list without enabling a whole pack', async ({ page }) => {
+  await openLedger(page);
+  const sidebar = page.locator('.zc-sidebar');
+  await sidebar.getByRole('button', { name: /设置$/ }).click();
+  await page.getByLabel('在侧边栏显示管理').click();
+  await expect(page.getByLabel('在侧边栏显示管理')).toBeChecked();
+  await sidebar.getByRole('button', { name: /管理$/ }).click();
+  await expect(page.getByText('分类与资料中心', { exact: true })).toBeVisible();
+
+  // 结构管理默认打开。目录里存在、但账本里还没有的细分分类应当可浏览：
+  // 搜索 KTV 会把它所在的「休闲娱乐」连这一项一起展开。
+  await page.getByLabel('搜索收支分类').fill('KTV');
+  const addKtv = page.getByRole('button', { name: '添加细分分类 KTV', exact: true });
+  await expect(addKtv).toBeVisible();
+  await addKtv.click();
+  await expect(page.getByText(/已添加分类“KTV”（1 项）/)).toBeVisible();
+
+  // 加入后就不再作为“可添加”重复提供。
+  await page.getByLabel('搜索收支分类').fill('');
+  await expect(page.getByRole('button', { name: '添加细分分类 KTV', exact: true })).toHaveCount(0);
+
+  // 并且出现在新增记账的二级分类里。
+  await page.getByText('日常支出', { exact: true }).first().click();
+  await page.getByRole('button', { name: '+ 记支出' }).click();
+  const expenseForm = page.getByRole('dialog', { name: '新增 · 日常支出' });
+  await expenseForm.getByLabel('二级分类').click();
+  await expenseForm.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('KTV');
+  await expect(expenseForm.getByRole('option', { name: /KTV/ })).toBeVisible();
+  await expenseForm.getByRole('button', { name: '关闭', exact: true }).click();
+
+  // 撤销后回到未添加状态：单项添加不会留下“幽灵分类”。
+  await page.getByRole('button', { name: '撤销', exact: true }).click();
+  await sidebar.getByRole('button', { name: /管理$/ }).click();
+  await page.getByLabel('搜索收支分类').fill('KTV');
+  await expect(page.getByRole('button', { name: '添加细分分类 KTV', exact: true })).toBeVisible();
+});
+
 test('exports a real PDF report with a valid PDF header', async ({ page }) => {
   await openLedger(page);
   // Reports is not part of the recommended starting layout, so enable it first.

@@ -20,7 +20,11 @@ export type CategoryPackId =
   | 'travel'
   | 'investment'
   | 'renovation'
-  | 'freelance';
+  | 'freelance'
+  | 'health'
+  | 'insurance_tax'
+  | 'social'
+  | 'leisure';
 
 export interface CategoryPack {
   id: CategoryPackId;
@@ -545,6 +549,52 @@ export const CATEGORY_PACKS: readonly CategoryPack[] = [
       'productivity_software', 'office_supplies', 'business_expense',
     ],
   },
+  {
+    id: 'health',
+    name: '健康管理',
+    description: '体检疫苗、中医理疗、慢病用药、口腔眼科与健身私教',
+    categoryIds: [
+      'lab_tests', 'vaccine', 'traditional_medicine', 'physiotherapy', 'acupuncture',
+      'gynecology', 'dermatology', 'orthodontics', 'glasses_contacts', 'hearing_aid',
+      'chronic_medicine', 'prescription_medicine', 'otc_medicine', 'supplements',
+      'rehab_equipment', 'care_supplies', 'medical_beauty', 'nursing_care', 'ambulance',
+      'personal_training', 'yoga_dance',
+    ],
+  },
+  {
+    id: 'insurance_tax',
+    name: '保险与税费',
+    description: '寿险重疾医疗意外财产险、房产税契税、滞纳金与各类手续费',
+    categoryIds: [
+      'life_insurance', 'critical_illness_insurance', 'medical_insurance', 'accident_insurance',
+      'property_insurance', 'property_tax', 'deed_tax', 'vat', 'late_fee', 'penalty_interest',
+      'bank_service_fee', 'payment_fee', 'interbank_fee', 'account_management_fee',
+      'credit_card_interest', 'minimum_payment_interest', 'withdrawal_fee', 'installment_fee',
+      'remittance_fee',
+    ],
+  },
+  {
+    id: 'social',
+    name: '人情往来',
+    description: '孝敬父母、红包压岁钱、婚丧嫁娶、生日乔迁与亲友借款',
+    categoryIds: [
+      'filial_support', 'alimony', 'partner_family', 'birthday_gift', 'school_gift',
+      'housewarming_gift', 'hospital_visit', 'funeral_expense', 'wedding_gift_money',
+      'lucky_money', 'red_packet_transfer', 'family_loan', 'friend_loan', 'family_fund',
+      'aa_settlement', 'family_dinner', 'family_visit_transport', 'festival_filial',
+    ],
+  },
+  {
+    id: 'leisure',
+    name: '休闲社交',
+    description: '影音阅读会员、聚会娱乐、演出展览、打赏与运动旅行',
+    categoryIds: [
+      'music_membership', 'reading_membership', 'ktv', 'bar', 'script_murder', 'escape_room',
+      'board_game', 'chess_card', 'live_tipping', 'short_video_tipping', 'concert',
+      'music_festival', 'exhibition', 'museum', 'amusement_park', 'hot_spring_bath',
+      'ball_sports', 'photography_travel',
+    ],
+  },
 ];
 
 export const CATEGORY_LABEL: Record<string, string> = Object.fromEntries(SYSTEM_CATEGORY_CATALOG.map((c) => [c.id, c.name]));
@@ -574,6 +624,25 @@ export const EXTENSION_CATEGORY_IDS = new Set(
     .filter((category) => !DEFAULT_ENABLED_CATEGORY_IDS.has(category.id))
     .map((category) => category.id),
 );
+
+/**
+ * 目录里存在、但账本里还没有的扩展分类：扩展分类的「浏览 + 逐项添加」入口。
+ *
+ * 扩展包只收录“会被同一类人成组需要”的分类；单一领域内的细分项（早餐、检查化验、
+ * KTV……）数量多且因人而异，逐项挑选比整包开关更合适。这条入口直接读目录，因此
+ * 目录新增分类后自动可达，不需要为它再设计一个扩展包。
+ *
+ * 两重限定都是必需的：
+ * - 限定在扩展分类内：目录虚拟行不区分“默认分类”与“扩展分类”（两者都带
+ *   catalogOnly 标记），只看标记会在账本缺行时把「早餐」这种默认分类当成可添加项。
+ * - 排除已落库的 id（含已归档、已软删除）：归档过的成员要走「归档/恢复」，
+ *   当成“可添加”再创建一份会写出重复分类。
+ */
+export function availableExtensionCategories(categories: readonly Category[] = []): CatalogCategory[] {
+  const persisted = new Set(categories.map((category) => category.id));
+  return allCategories(categories, { includeCatalog: true, includeInactive: true })
+    .filter((category) => EXTENSION_CATEGORY_IDS.has(category.id) && !persisted.has(category.id));
+}
 
 export function categoryPack(packId: CategoryPackId): CategoryPack | undefined {
   return CATEGORY_PACKS.find((pack) => pack.id === packId);
@@ -678,7 +747,7 @@ export function systemCategory(id: string, catalogOnly = true): CatalogCategory 
 }
 
 export function allCategories(
-  categories: Category[] = [],
+  categories: readonly Category[] = [],
   opts: { includeInactive?: boolean; includeCatalog?: boolean } = {},
 ): CatalogCategory[] {
   const map = new Map<string, CatalogCategory>();
