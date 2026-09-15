@@ -720,6 +720,19 @@ function FixedCategorySection({ snap, store, bump }: {
     return { parent, children, shown: children.filter((category) => visible(category, parent)) };
   }).filter((group) => group.shown.length > 0 || (group.children.length === 0 && visible(group.parent, group.parent)));
   const allExpanded = groups.length > 0 && groups.every((group) => expanded.has(group.parent.id));
+  /**
+   * 展开状态必须先从句柄里读出来再交给 updater：`event.currentTarget` 只在事件分发
+   * 期间有效，React 在监听器返回后把它置为 null，而 updater 会在后续渲染阶段才执行，
+   * 那时读它就会抛 TypeError（读 null 的 open）并把整页打进错误边界。
+   */
+  const toggleExpanded = (id: string, nextOpen: boolean) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (nextOpen) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
   const toggleHidden = async (category: FixedAssetCategory) => {
     await store.runInAuditBatch(
       `${category.isHidden ? '显示' : '隐藏'}物品分类“${category.name}”`,
@@ -747,14 +760,7 @@ function FixedCategorySection({ snap, store, bump }: {
         {groups.map(({ parent, children, shown }) => {
           const open = forceOpen || expanded.has(parent.id);
           return (
-            <details key={parent.id} open={open} onToggle={(event) => {
-              if (forceOpen) return;
-              setExpanded((current) => {
-                const next = new Set(current);
-                if (event.currentTarget.open) next.add(parent.id); else next.delete(parent.id);
-                return next;
-              });
-            }} style={{ borderTop: '1px solid var(--border)' }}>
+            <details key={parent.id} open={open} onToggle={(event) => { if (!forceOpen) toggleExpanded(parent.id, event.currentTarget.open); }} style={{ borderTop: '1px solid var(--border)' }}>
               <summary className="zc-category-group-summary">
                 <span style={{ width: 10, height: 10, borderRadius: 'var(--r-sm)', background: parent.color ?? 'var(--accent)' }} />
                 <b>{parent.name}</b><span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{shown.length}/{children.length} 项</span>

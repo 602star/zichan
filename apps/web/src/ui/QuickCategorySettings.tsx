@@ -255,14 +255,18 @@ export function QuickCategorySettings({ categories, onSave }: QuickCategorySetti
                 type="checkbox"
                 aria-label="全选当前分类"
                 checked={allCurrentSelected}
-                onChange={(event) => setSelectedIds((current) => {
-                  const next = new Set(current);
-                  for (const category of currentRows) {
-                    if (event.target.checked) next.add(category.id);
-                    else next.delete(category.id);
-                  }
-                  return next;
-                })}
+                onChange={(event) => {
+                  // 同 Manage 的折叠：句柄里的值先取出来，不要留给 updater 去读事件对象。
+                  const checked = event.target.checked;
+                  setSelectedIds((current) => {
+                    const next = new Set(current);
+                    for (const category of currentRows) {
+                      if (checked) next.add(category.id);
+                      else next.delete(category.id);
+                    }
+                    return next;
+                  });
+                }}
               />
               已选 {selectedInCurrent.length}
             </label>

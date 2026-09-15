@@ -3,6 +3,48 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-15 — 管理页点开「物品分类」一级分类就打进错误边界（事件对象被延迟读取）
+
+**现象（用户报的）**：管理 →「物品分类」→ 点任意一个一级分类，整页变成
+「这个页面暂时无法显示 / 账本数据库没有被重置…」，错误摘要为
+`TypeError: Cannot read properties of null (reading 'open')`。
+
+**定位**：把报错抛点落实到源码——`FixedCategorySection` 的 `<details onToggle>` 把
+`event.currentTarget.open` **读在 `setExpanded` 的 updater 回调里**。React 只在事件分发期间
+保证 `currentTarget` 有效，监听器返回后 `executeDispatch` 会把它置为 `null`；而 updater 是
+在**后续渲染阶段**才执行的，那时读它就是在读 `null.open`。
+
+**为佝不是每次点都崩（重要）**：首次点击通常不崩——`dispatchSetState` 在那次事件里会
+**同步预先求值**一次 updater（此刻 `currentTarget` 还在），渲染阶段直接复用该 eager 结果；
+一旦该 hook 的更新队列发生重基（rebase，例如背景里还有其它 state 更新在同一次渲染里
+被合并），渲染阶段就会**重新调用 updater**，才读到已置空的 `currentTarget`。所以本仓 e2e 里
+第一次展开正常、**第二次（收起）才崩**，而用户那边页面始终有后台更新、一次就崩。
+
+**取证方式**：新增 `tools/e2e/tests/manage-fixed-category-tree.spec.mjs`，用真实 Chrome 走
+用户路径，拿到 `page.on('console')` 里的原始堆栈：
+
+```
+error: TypeError: Cannot read properties of null (reading 'open')
+    at .../assets/Manage-*.js:1:35588   ← 我们的 onToggle updater
+    at Object.useState (...react-*.js)  ← React 在渲染阶段重跑 reducer
+```
+
+**改动**：把读取提回事件分发期间，并抽成与同文件 `CategorySection` 一致的纯函数
+`toggleExpanded(id, nextOpen)`（即 `onToggle={(event) => { if (!forceOpen) toggleExpanded(parent.id, event.currentTarget.open); }}`）。
+顺带收口 `QuickCategorySettings` 里同一类写法（`onChange` 把 `event.target.checked`
+留给 updater）——`target` 不会被置空所以不崩，但同属“把事件对象交给延迟执行的回调”这个
+隐患，一并改成先取值。
+
+**为何一直没被发现**：e2e 套件（包括 8 月以来的所有回归）从未点过「物品分类」的一级分类
+标题，该分支零覆盖。
+
+**测试**：新增用例锁住展开/收起两个方向、相邻分组互不影响、以及「全部展开/全部收起」
+另一条路径，并断言错误边界标题不存在。零覆盖率下的突变验证：回退修复后用例在第二次
+点击处失败、错误边界接管；修复后通过。
+
+**验证**：全工作区 Vitest **821 项 / 108 文件**通过；真实 Chrome Playwright **23/23**
+通过（原 22 + 新增 1）；全工作区 typecheck 与 ESLint 通过；`npm run build:web` 通过。
+
 ## 2026-09-15 — 停用的分类在筛选/查询里找不回来（读/写路径分开）
 
 **现象（用户报的第二个问题）**：停用扩展包后，那些分类下的旧流水在列表里照常显示分类名，但筛选和高级查询里根本没这一项——只能把扩展包重新启用才查得了。实测：`refs/列表行` 显示“食品餐饮 / 食堂”，筛选搜“食堂”命中 **0**。
