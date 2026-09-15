@@ -3,6 +3,18 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-15 — 分类控件统一到流水页的筛选行、高级查询和批量修改
+
+**背景**：上一轮只改了流水页筛选行，用户又问“剩下两处要不要一并统一”。两处都能先取证：高级查询的「二级分类」取值和批量修改的「分类」都是原生 `<select>`，前者与筛选行同一个毛病（上百项翻不动、够不到隐藏分类）。
+
+**改动**：两处都改用 `CategoryPicker`（高级查询只换「二级分类」；「一级分类」和商户/标签/账户/状态这类短列表仍用原生下拉，两级控件对一级分类并不合适）。两处的选项集与筛选行、记账弹窗一致：账本内真实存在的非停用二级分类（含用户隐藏的），`includeCatalog: false` 排除目录里尚未写入账本的项。抽了一个 `categoryValueOptions(snap)` 供三处共用，`valueOptionsForField` 也改走它，保证高级查询预览的标签不丢。空状态分别是「请选择」和「不改分类」（与原占位项一致）。
+
+**勘误（上一轮写错的一句）**：`docs/web.md` 曾写筛选行选项“包括隐藏与已停用”。实测不成立——`categoryOptions` **从不转发 `includeInactive`**（它的 opts 类型里根本没这个字段），所以任何走它的控件都到不了被扩展包停用的分类；`includeInactive: true` 传进去是空操作。已验证：`leafOnly + includeHidden` 下隐藏分类进得来（true）、停用分类进不来（false）、catalogOnly 会跟着 `includeHidden` 一并进来（所以必须显式 `includeCatalog: false`）。文档已改成“非停用”。
+
+**测试**：`ledger-filter-category.spec.mjs` 扩到 3 条，新增高级查询与批量修改两条；两个面板都实测过几何：480px 面板完全在视口内（如左右侧 1104 < 1280）不被裁。
+
+**验证**：typecheck、lint 通过；单测 **819 通过**；e2e **21/21 通过**。
+
 ## 2026-09-15 — 日常流水的分类筛选改用标准分类控件
 
 **背景**：用户报“筛选日常流水中的分类时，那个控件不走默认的分类控件”。先取证：起 Playwright 把账本切到「完整资产账本」（筛选行只在非轻量模式下渲染），dump 出筛选行的实际 DOM——`流水分类` 是一个原生 `<select>`，**97 个平铺选项**；而同页记账弹窗的 `二级分类` 是 `BUTTON`（标准 `CategoryPicker`，两级分栏 + 搜索）。所以“不走默认控件”属实，是控件不一致，不是筛选逻辑错。

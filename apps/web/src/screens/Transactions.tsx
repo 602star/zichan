@@ -1835,18 +1835,20 @@ function AdvancedConditionRow(props: {
         {ADVANCED_OPERATOR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
       {noValue ? <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>无需输入值</span> : (
-        <ConditionValueInput field={condition.field} value={condition.value ?? ''} options={options} onChange={(value) => onChange({ value })} />
+        <ConditionValueInput snap={snap} field={condition.field} value={condition.value ?? ''} options={options} onChange={(value) => onChange({ value })} />
       )}
       {condition.op === 'between'
-        ? <ConditionValueInput field={condition.field} value={condition.value2 ?? ''} options={options} onChange={(value2) => onChange({ value2 })} />
+        ? <ConditionValueInput snap={snap} field={condition.field} value={condition.value2 ?? ''} options={options} onChange={(value2) => onChange({ value2 })} />
         : <span />}
       <button onClick={onRemove} title="删除条件" style={{ ...button, padding: '8px 10px' }}>×</button>
     </div>
   );
 }
 
-function ConditionValueInput(props: { field: AdvancedQueryField; value: string; options: { value: string; label: string }[] | null; onChange: (value: string) => void }) {
-  const { field, value, options, onChange } = props;
+function ConditionValueInput(props: { snap: Snapshot; field: AdvancedQueryField; value: string; options: { value: string; label: string }[] | null; onChange: (value: string) => void }) {
+  const { snap, field, value, options, onChange } = props;
+  // 二级分类单独走分类控件：它有上百项且含隐藏分类，原生下拉既翻不动也够不到。
+  if (field === 'category') return <CategoryConditionValue snap={snap} value={value} onChange={onChange} />;
   if (options) {
     return (
       <select aria-label="高级查询值" style={selectStyle} value={value} onChange={(e) => onChange(e.target.value)}>
@@ -1859,9 +1861,40 @@ function ConditionValueInput(props: { field: AdvancedQueryField; value: string; 
   return <input aria-label="高级查询值" className="zc-input" type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder="条件值" />;
 }
 
+/**
+ * 分类取值选项：账本内真实存在、未停用的二级分类，含被用户隐藏的。
+ *
+ * `includeCatalog: false`：目录里尚未写入账本的分类没有任何流水会引用它，
+ * 选了只会得到空结果。（`includeHidden` 会把 catalogOnly 一并带进来，所以必须显式关掉。）
+ */
+function categoryValueOptions(snap: Snapshot) {
+  return categoryOptions(snap.categories, undefined, { leafOnly: true, includeHidden: true, includeCatalog: false });
+}
+
+/** 高级查询里「二级分类」的取值控件——与记账弹窗同一个分类控件。 */
+function CategoryConditionValue(props: { snap: Snapshot; value: string; onChange: (value: string) => void }) {
+  const fieldId = useId();
+  return (
+    <CategoryPicker
+      fieldId={fieldId}
+      name="advancedCategory"
+      ariaLabel="高级查询值"
+      value={props.value}
+      options={categoryValueOptions(props.snap)}
+      allowEmpty
+      emptyLabel="请选择"
+      placeholder="请选择"
+      defaultShowHidden={props.snap.setting?.categoryPickerDefaultScope === 'all'}
+      minPanelWidth={480}
+      triggerStyle={selectStyle}
+      onChange={props.onChange}
+    />
+  );
+}
+
 function valueOptionsForField(snap: Snapshot, field: AdvancedQueryField): { value: string; label: string }[] | null {
   if (field === 'type') return TYPE_OPTIONS.filter((o) => o.value !== 'all').map((o) => ({ value: o.value, label: o.label }));
-  if (field === 'category') return categoryOptions(snap.categories, undefined, { leafOnly: true }).map((o) => ({ value: o.value, label: o.label }));
+  if (field === 'category') return categoryValueOptions(snap).map((o) => ({ value: o.value, label: o.label }));
   if (field === 'parentCategory') {
     const parentIds = new Set(snap.categories.filter((c) => c.parentId).map((c) => c.parentId!));
     return snap.categories.filter((c) => parentIds.has(c.id)).map((c) => ({ value: c.id, label: c.name }));
@@ -2156,10 +2189,20 @@ function BatchEditModal(props: {
           <button type="button" data-dialog-initial-focus disabled={busy} onClick={onClose} style={button}>关闭</button>
         </div>
         <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-          <select style={selectStyle} value={category} onChange={(e) => { markDirty(); setCategory(e.target.value); }}>
-            <option value="">不改分类</option>
-            {categoryOptions(snap.categories, undefined, { leafOnly: true }).map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-          </select>
+          <CategoryPicker
+            fieldId="batch-category"
+            name="batchCategory"
+            ariaLabel="批量修改分类"
+            value={category}
+            options={categoryValueOptions(snap)}
+            allowEmpty
+            emptyLabel="不改分类"
+            placeholder="不改分类"
+            defaultShowHidden={snap.setting?.categoryPickerDefaultScope === 'all'}
+            minPanelWidth={480}
+            triggerStyle={selectStyle}
+            onChange={(next) => { markDirty(); setCategory(next); }}
+          />
           <select style={selectStyle} value={payeeId} onChange={(e) => { markDirty(); setPayeeId(e.target.value); }}>
             <option value="">不改商户</option>
             {snap.payees.filter((p) => !p.isDeleted).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
