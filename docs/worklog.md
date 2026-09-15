@@ -3,6 +3,33 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-15 — 分类筛选的触发按钮在手机上只有 39px（内联高度压过触控地板）
+
+**现象**：账号模式回归 `mobile-layout.spec.mjs` 在七个视口上都报
+`touch-target<44px: button#transaction-filter-category.zc-select "全部分类▼" is 254x39`。
+桌面不受影响，所以单测与默认 e2e 都看不到。
+
+**定位**：`CategoryPicker` 触发按钮的内联样式里写死了 `minHeight: 38`。触控地板是写在
+`@media (pointer: coarse)` / `@media (max-width: 767px)` 里的 `min-height: 44px`，
+而**内联声明的权重大于样式表**，所以这两个块永远赢不了那个 38——控件被钉在 39px
+（38 + 边框）。
+
+**为什么修法是一行删除**：`styles.css` 自己就有这条准则——
+「One control height for every button, from CSS rather than from an inline style, so the
+coarse-pointer block can raise it to 44px on touch devices」，
+`button, [role="button"] { min-height: var(--control-h) }` 已经给了桌面 38px。
+所以那个内联高度既是多余的，又正好堵住了触控地板：删掉它，桌面由 CSS 的 38px 接管，
+触控由 `.zc-select` 的 44px 接管。同时把这条不变式写进 `triggerStyle` 的文档注释，
+避免下次又有人用内联高度去对齐同行控件。
+
+**验证**：`mobile-layout`（七视口×10 页面）通过；账号模式 e2e **28/28** 通过；
+默认 e2e **23/23** 通过；全工作区 Vitest **821 项 / 108 文件**通过；typecheck、ESLint、
+`npm run build:web` 通过。
+
+**一次假警报，值得记下**：中途默认 e2e 报 `records a detailed expense…` 超时。
+原因是**把 `npm test` 与 e2e 并发跑了**——CPU 争抢把 30s 超时耗光。单独重跑该用例 3/3
+通过、不并跑重跑全量 23/23 通过。教训：这类超时要先排除自身并发负载，再怀疑回归。
+
 ## 2026-09-15 — 管理页点开「物品分类」一级分类就打进错误边界（事件对象被延迟读取）
 
 **现象（用户报的）**：管理 →「物品分类」→ 点任意一个一级分类，整页变成

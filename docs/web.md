@@ -124,6 +124,7 @@ lot 与消耗并运行自检。浏览器和原生端都使用跨启动稳定的 
 - 手机 `<768px`：隐藏左侧栏，底部导航按用户顺序显示前 3 个模块并保留快记与“更多”；其余已启用模块、主题、导入导出与存储状态进入“更多”抽屉，抽屉底部额外列出**未启用模块**并可直接启用，不必再绕到设置页。
 - 平板 `768–1023px`：96px 导航轨，图标下方带 10px 文字标签（纯图标轨难以辨认）；`1024–1199px` 保持 84px 图标轨；桌面 `>=1200px` 使用完整 260px 侧栏。三档都按同一配置渲染。
 - 触控基线与断点解耦：44px 最小命中区与 16px 表单字号绑在 `(pointer: coarse)` 上，而不是只写在 `max-width: 767px` 里。平板竖屏与手机横屏因此同样是 44px 目标、16px 输入框（避免 iOS 聚焦自动放大）。行内 checkbox 本体仍是 18px，真实的 44px 命中区由 `.zc-check-target` 包装盒提供。
+- 控件高度来自 CSS，不写内联：桌面紧凑高度由 `button, [role="button"] { min-height: var(--control-h) }`（38px）提供，触控地板由 `(pointer: coarse)` 与 `max-width: 767px` 两块里的 `min-height: 44px` 提供。**控件上不要写内联 `minHeight`**：内联会压过这两个块，把按钮钉在 40px 以下（曾让分类控件的触发按钮在七个手机视口上都只有 39px）。`CategoryPicker` 的 `triggerStyle` 因此只用于外观，不得传高度。
 - 所有壳层使用 `100dvh`、`viewport-fit=cover` 和安全区 inset。表单弹窗在手机全屏，头尾吸附、正文独立滚动，并声明 `interactive-widget=resizes-content` 适配软键盘。
 - 滚动容器是 `documentElement`，不是 `<body>`：`html { overflow-x: clip }` 只裁掉横向溢出，不会把 body 变成嵌套滚动容器，因此 `window.scrollY`／滚动位置读写仍然有效。弹窗打开时按引用计数同时锁定 `documentElement` 与 `body`。
 - 日期范围、月历、流水、报表表格、同步配置、分类双栏和物品时间线均有手机重排或受控滚动。长表格（历史列表、报表主表、报表流水明细）在手机上走 `.zc-card-table` 卡片化：桌面保留真实 `<table>` 语义，手机用表头文字作为 `data-label` 渲染成标签／值两列卡片，而不是要求横向滑动。

@@ -893,6 +893,11 @@ export function CategoryPicker(props: {
   minPanelWidth?: number;
   /**
    * 让触发按钮的外观与同行的原生 select 对齐（筛选行里混用两种控件）。
+   *
+   * 不要在这里传 `minHeight`：内联高度会压过粗指针/手机块里的 44px 触控地板。
+   * 桌面紧凑高度由 `button { min-height: var(--control-h) }`（38px）提供，
+   * 触控高度由 `.zc-select` 的 44px 地板提供。见 styles.css
+   * 「One control height for every button」。
    */
   triggerStyle?: CSSProperties;
 }) {
@@ -924,7 +929,7 @@ export function CategoryPicker(props: {
         aria-expanded={open}
         {...(ariaLabel ? { 'aria-label': ariaLabel } : {})}
         onClick={() => setOpen((v) => !v)}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, textAlign: 'left', cursor: 'pointer', minHeight: 38, ...triggerStyle }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, textAlign: 'left', cursor: 'pointer', ...triggerStyle }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {selected ? (
