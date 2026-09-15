@@ -6,6 +6,7 @@ import { useStore } from '../db/store.js';
 import type { TransactionReportAggregateRow, TransactionReportPage } from '@zichan/db';
 import {
   buildReport,
+  expenseCompositionFromTable,
   gameNetInReport,
   tableToCsv,
   tableToMarkdown,
@@ -17,7 +18,8 @@ import {
   type TransactionDetailRow,
 } from '../selectors/reports.js';
 import { money } from '../format.js';
-import { card, th as thStyle, td as tdStyle, pillBtn } from '../ui/styles.js';
+import { card, th as thStyle, td as tdStyle, pillBtn, selectBase } from '../ui/styles.js';
+import { CompositionDonut, RankBars, type ChartSlice } from '../ui/charts.js';
 import { createReportCurrency } from '../reportCurrency.js';
 import { ledgerAsOfDate } from '../as-of.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue } from '../ui/DateRangeBar.js';
@@ -30,6 +32,7 @@ import {
 } from '../selectors/report-analysis.js';
 import { ReportSummaryStrip, TransactionReportInsights } from '../ui/TransactionReportInsights.js';
 import { LedgerCutoffNotice } from '../ui/LedgerCutoffNotice.js';
+import { CATEGORY_COLORS, OTHER_CATEGORY_COLOR } from '../theme.js';
 
 const TABS: [TabId, string][] = [['transactions', '日常收支'], ['dca', '定投'], ['chain', '资产转换'], ['season', '游戏赛季'], ['fixed', '物品资产']];
 
@@ -753,9 +756,20 @@ function TimeTrendChart(props: {
           never show up on a tab that has no trend to bucket. */}
       <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', minWidth: 0 }}>{title}</div>
-        <div role="tablist" aria-label="报表时间粒度" style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-          {GRANULARITIES.map(([value, label]) => <button key={value} onClick={() => onGranularityChange(value)} style={pillBtn(granularity === value)}>{label}</button>)}
-        </div>
+        {/*
+          * Granularity re-buckets this chart and nothing else, so it sits with
+          * the chart. It used to be three pills, which read as a third filter
+          * peer to the date range and the tabs while costing three controls;
+          * one select says the same thing with one.
+          */}
+        <select
+          aria-label="报表时间粒度"
+          value={granularity}
+          onChange={(event) => onGranularityChange(event.target.value as 'day' | 'month' | 'year')}
+          style={{ ...selectBase, width: 'auto', flexShrink: 0 }}
+        >
+          {GRANULARITIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
       </div>
       <div className="zc-report-chart-grid" style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(rows.length, 1)}, minmax(42px, 1fr))`, gap: 8, minHeight: 130, alignItems: 'end' }}>
         {rows.map((row) => <div key={row.label} style={{ minWidth: 0, textAlign: 'center' }}><div style={{ height: 82, background: 'var(--surface-2)', display: 'flex', alignItems: 'end' }}><div style={{ width: '100%', height: `${Math.max(5, row.value.abs().div(max).times(100).toNumber())}%`, background: row.value.isNegative() ? 'var(--negative)' : 'var(--positive)' }} /></div><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.label}</div><div style={{ fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', marginTop: 3 }}>{report.formatSignedReport(row.value)}</div></div>)}
@@ -775,6 +789,17 @@ function ReportChart(props: {
 }) {
   const { snap, tab, dateRange, selectedCategory, onSelectCategory, transactionTable } = props;
   const report = createReportCurrency(snap, dateRange.to);
+  /*
+   * 日常收支的分类图有两种读法，都是对的：环形回答「钱花在哪里」，
+   * 条形回答「谁比谁多」。趋势画饼是错读法，所以这个开关只出现在这一个页签。
+   */
+  const [shape, setShape] = useState<'donut' | 'bar'>('donut');
+  const composition = useMemo(
+    () => (tab === 'transactions'
+      ? expenseCompositionFromTable(transactionTable ?? buildReport(snap, 'transactions', { dateRange }))
+      : { slices: [], others: { amount: '0', count: 0, weight: 0 }, total: '0' }),
+    [dateRange, snap, tab, transactionTable],
+  );
   let title = '';
   let rows: { label: string; value: number; text: string; color: string; category?: string }[] = [];
   if (tab === 'transactions') {
@@ -841,37 +866,65 @@ function ReportChart(props: {
     });
   }
   const max = Math.max(...rows.map((r) => r.value), 1);
+  const isComposition = tab === 'transactions';
+  /*
+   * One category, one colour, whichever shape is on: a slice and its bar must
+   * match, otherwise switching shape looks like new data rather than a new view
+   * of the same rows. (语义红只属于「支出」，不兼职分类——见 theme.ts.)
+   */
+  const colorAt = (index: number) => CATEGORY_COLORS[index % CATEGORY_COLORS.length] ?? OTHER_CATEGORY_COLOR;
+  const slices: ChartSlice[] = [
+    ...composition.slices.map((slice, index) => ({
+      key: slice.category,
+      label: slice.label,
+      amountText: report.formatReport(D(slice.amount)),
+      weight: slice.weight,
+      color: colorAt(index),
+      onSelect: () => onSelectCategory(slice.category),
+    })),
+    ...(composition.others.count > 0
+      ? [{
+        key: '__other__',
+        label: `其他 ${composition.others.count} 类`,
+        amountText: report.formatReport(D(composition.others.amount)),
+        weight: composition.others.weight,
+        color: OTHER_CATEGORY_COLOR,
+      }]
+      : []),
+  ];
   return (
     <div style={card}>
-      <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>{title}</div>
-      <div className="zc-report-chart-grid" style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(rows.length, 1)}, minmax(42px, 1fr))`, gap: 10, alignItems: 'end', minHeight: 130 }}>
-        {rows.map((r, i) => (
-          <button
-            key={`${r.label}-${i}`}
-            onClick={() => { if (r.category) onSelectCategory(r.category); }}
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'stretch',
-              gap: 7,
-              minWidth: 0,
-              border: r.category && r.category === selectedCategory ? '1px solid var(--accent)' : '1px solid transparent',
-              background: 'transparent',
-              padding: 0,
-              borderRadius: 'var(--r-sm)',
-              color: 'inherit',
-              cursor: r.category ? 'pointer' : 'default',
-            }}
-          >
-            <div style={{ height: 86, display: 'flex', alignItems: 'end', background: 'var(--surface-2)', borderRadius: 'var(--r-sm)', overflow: 'hidden' }}>
-              <div style={{ width: '100%', height: `${Math.max(6, D(r.value).div(max).times(100).toNumber())}%`, background: r.color }} />
-            </div>
-            <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textAlign: 'center' }}>{r.label}</div>
-            <div style={{ fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', textAlign: 'center', whiteSpace: 'nowrap' }}>{r.text}</div>
-          </button>
-        ))}
-        {rows.length === 0 && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>暂无可绘制数据</div>}
+      <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+        <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', minWidth: 0 }}>{title}</div>
+        {isComposition && (
+          <div role="group" aria-label="分类图形态" style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+            <button type="button" aria-pressed={shape === 'donut'} onClick={() => setShape('donut')} style={pillBtn(shape === 'donut')}>环形</button>
+            <button type="button" aria-pressed={shape === 'bar'} onClick={() => setShape('bar')} style={pillBtn(shape === 'bar')}>条形</button>
+          </div>
+        )}
       </div>
+      {isComposition && shape === 'donut' ? (
+        <CompositionDonut
+          ariaLabel={`${rangeLabel(dateRange)}分类支出构成`}
+          totalText={report.formatReport(D(composition.total))}
+          totalCaption="分类支出合计"
+          selectedKey={selectedCategory || undefined}
+          slices={slices}
+        />
+      ) : (
+        <RankBars
+          ariaLabel={`${title}排名`}
+          rows={rows.map((r, index) => ({
+            key: `${r.label}-${index}`,
+            label: r.label,
+            heightRatio: r.value / max,
+            text: r.text,
+            color: isComposition ? colorAt(index) : r.color,
+            selected: Boolean(r.category) && r.category === selectedCategory,
+            onSelect: r.category ? () => onSelectCategory(r.category as string) : undefined,
+          }))}
+        />
+      )}
     </div>
   );
 }

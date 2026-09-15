@@ -11,6 +11,7 @@ import {
   buildTransactionsFromReadModel,
   historicalCategoryValueOptions,
   transactionReconciliationCoverage,
+  type TransactionFilters,
 } from '../src/selectors/transactions.js';
 import { categoryOptions } from '../src/transactionMeta.js';
 import { COMMON_TRANSACTION_FORM_FIELDS, optionalTransactionFields } from '../src/transactionFormPrefs.js';
@@ -619,5 +620,115 @@ describe('ledger mode forms', () => {
         settlementCategoryId: 'income-leaf',
       })).toMatchObject({ settlementAccountId: '请选择结算账户' });
     }
+  });
+});
+
+/*
+ * 本月支出构成：环图的数据源。它必须与 KPI 卡的 Top3 同源、各段占比相加为 1，
+ * 并且把长尾折进「其他」——否则环里会出现几个 2% 的切片，既点不中也没人读。
+ */
+describe('expense composition', () => {
+  const monthFilters = (overrides: Partial<TransactionFilters> = {}): TransactionFilters => ({
+    range: 'this_month', type: 'all', category: 'all', accountId: 'all', search: '', ...overrides,
+  });
+
+  /** Seven expense categories, biggest first: c1=70 … c7=10. */
+  function sevenCategories() {
+    const s = makeSnapshot();
+    for (let index = 1; index <= 7; index += 1) {
+      s.categories.push({ ...s.categories[0]!, id: `c${index}`, name: `分类 ${index}`, parentId: undefined, sortOrder: 100 + index });
+    }
+    s.transactions = Array.from({ length: 7 }, (_, index) => makeTransaction({
+      id: `tx-${index + 1}`, date: '2026-03-03', type: 'expense', category: `c${index + 1}`,
+      amount: String(70 - index * 10), assetId: s.ids.gbp,
+    }));
+    return s;
+  }
+
+  it('folds every category past the fifth into 其他', () => {
+    const vm = buildTransactions(sevenCategories(), monthFilters());
+    expect(vm.expenseComposition.slices.map((row) => row.category)).toEqual(['c1', 'c2', 'c3', 'c4', 'c5']);
+    // Removing the fold would leave this at 0 and the ring short of a full circle.
+    expect(vm.expenseComposition.others).toMatchObject({ amount: '30', count: 2 });
+    expect(vm.expenseComposition.total).toBe('280');
+    expect(vm.expenseComposition.slices.length + vm.expenseComposition.others.count).toBe(7);
+    const painted = vm.expenseComposition.slices.reduce((total, row) => total + row.weight, 0) + vm.expenseComposition.others.weight;
+    expect(painted).toBeCloseTo(1, 10);
+    // The KPI card slices the same list, so the two can never disagree.
+    expect(vm.topExpenseCategories.map((row) => row.category)).toEqual(['c1', 'c2', 'c3']);
+  });
+
+  it('builds the same composition from the aggregate rows the KPI card reads', () => {
+    const s = sevenCategories();
+    s.transactions = [];
+    const aggregates = Array.from({ length: 7 }, (_, index) => ({
+      reportDate: '2026-03-03',
+      reportAssetId: s.ids.gbp,
+      direction: 'expense' as const,
+      category: `c${index + 1}`,
+      amounts: [String(70 - index * 10)],
+      count: 1,
+    }));
+    const page = { ...s, transactions: [], transactionSplits: [], refundAllocations: [], attachments: [], reconciliationItems: [], reconciliationSessions: [] };
+    const vm = buildTransactionsFromReadModel(s, monthFilters(), {
+      page, summaryAggregates: aggregates, filteredAggregates: aggregates, filteredCount: 7,
+    });
+    expect(vm.expenseComposition.slices.map((row) => row.category)).toEqual(['c1', 'c2', 'c3', 'c4', 'c5']);
+    expect(vm.expenseComposition.others).toMatchObject({ amount: '30', count: 2 });
+    expect(vm.topExpenseCategories.map((row) => row.category)).toEqual(['c1', 'c2', 'c3']);
+  });
+
+  it('has no 其他 bucket when the month fits in the ring', () => {
+    const s = makeSnapshot();
+    s.transactions = [makeTransaction({ id: 'only', date: '2026-03-03', category: 'food', amount: '30', assetId: s.ids.gbp })];
+    const vm = buildTransactions(s, monthFilters());
+    expect(vm.expenseComposition.slices.map((row) => row.category)).toEqual(['food']);
+    expect(vm.expenseComposition.slices[0]?.weight).toBe(1);
+    expect(vm.expenseComposition.others).toEqual({ amount: '0', count: 0, weight: 0 });
+    expect(vm.expenseComposition.total).toBe('30');
+  });
+
+  it('stays empty rather than inventing a slice for an empty month', () => {
+    const vm = buildTransactions(makeSnapshot(), monthFilters());
+    expect(vm.expenseComposition).toEqual({ slices: [], others: { amount: '0', count: 0, weight: 0 }, total: '0' });
+  });
+
+  it('leaves unconvertible spending out of both the slices and the total', () => {
+    const s = makeSnapshot();
+    const jpy = { ...s.assets[0]!, id: 'asset-jpy', code: 'JPY', name: '日元', symbol: '¥', decimals: 0 };
+    s.assets.push(jpy);
+    s.priceMarks.push({ ...s.priceMarks[0]!, id: 'mark-jpy', assetId: s.ids.gbp, quoteAssetId: jpy.id, price: '200' });
+    s.transactions = [
+      makeTransaction({ id: 'gbp-food', date: '2026-03-03', category: 'food', amount: '60', assetId: s.ids.gbp }),
+      makeTransaction({ id: 'jpy-food', date: '2026-03-03', category: 'food', amount: '20000', assetId: jpy.id }),
+    ];
+    expect(buildTransactions(s, monthFilters()).expenseComposition.total).toBe('160');
+
+    s.priceMarks = s.priceMarks.filter((row) => row.id !== 'mark-jpy');
+    const missing = buildTransactions(s, monthFilters());
+    expect(missing.missingRateAssetCodes).toEqual(['JPY']);
+    // 60 is the whole of it: the rate-less row is neither counted as 0 nor painted.
+    expect(missing.expenseComposition.total).toBe('60');
+    expect(missing.expenseComposition.slices[0]?.weight).toBe(1);
+  });
+
+  it('widens the trend window without touching the month KPIs', () => {
+    const s = makeSnapshot();
+    s.transactions = [
+      makeTransaction({ id: 'old', date: '2025-06-10', category: 'food', amount: '5', assetId: s.ids.gbp }),
+      makeTransaction({ id: 'recent', date: '2026-03-03', category: 'food', amount: '7', assetId: s.ids.gbp }),
+    ];
+    const six = buildTransactions(s, monthFilters());
+    expect(six.trend).toHaveLength(6);
+    expect(six.trend.some((row) => row.month === '2025-06')).toBe(false);
+
+    const twelve = buildTransactions(s, monthFilters(), 12);
+    expect(twelve.trend).toHaveLength(12);
+    expect(twelve.trend[0]?.month).toBe('2025-04');
+    expect(twelve.trend.at(-1)?.month).toBe('2026-03');
+    expect(round(twelve.trend.find((row) => row.month === '2025-06')?.expense ?? '0', 2)).toBe('5.00');
+    // The current-month figures come from the same read, so widening it is not a filter.
+    expect(twelve.expense).toBe(six.expense);
+    expect(twelve.income).toBe(six.income);
   });
 });

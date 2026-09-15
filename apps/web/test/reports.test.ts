@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildReport,
+  expenseCompositionFromTable,
   tableToCsv,
   tableToMarkdown,
   tableToMermaid,
   transactionDetails,
   transactionTableFromAggregates,
+  type Table,
 } from '../src/selectors/reports.js';
 import { effectiveReportRange } from '../src/selectors/report-analysis.js';
 import { makeSnapshot, makeTransaction } from './fixtures.js';
@@ -217,5 +219,54 @@ describe('buildReport', () => {
     expect(tableToCsv(missing)).toContain('估值完整性,部分');
     expect(tableToMarkdown(missing)).toContain('> 估值不完整');
     expect(tableToMermaid(missing, '分类支出')).toContain('%% 估值不完整');
+  });
+});
+
+/*
+ * 报表页构成图的数据：从已经算好的分类表里折出来，不再查一次。
+ * 折法与支出页环图相同（前 5 + 其他），所以两页的环形图不会长得不一样。
+ */
+describe('expenseCompositionFromTable', () => {
+  function tableOf(entries: { label: string; category: string; amount: string }[]): Table {
+    return {
+      headers: ['类型', '分类', '金额', '笔数', '支出占比'],
+      rows: entries.map((entry) => [
+        { v: '支出' },
+        { v: entry.label, data: { category: entry.category } },
+        { v: `£${entry.amount}`, data: { reportAmount: entry.amount } },
+        { v: '1' },
+      ]),
+    };
+  }
+
+  it('slices the five biggest categories and folds the tail into 其他', () => {
+    const composition = expenseCompositionFromTable(tableOf(
+      [70, 60, 50, 40, 30, 20, 10].map((amount, index) => ({ label: `分类 ${index + 1}`, category: `c${index + 1}`, amount: String(amount) })),
+    ));
+    expect(composition.slices.map((row) => row.category)).toEqual(['c1', 'c2', 'c3', 'c4', 'c5']);
+    expect(composition.slices[0]?.weight).toBeCloseTo(0.25, 10);
+    expect(composition.others).toMatchObject({ amount: '30', count: 2 });
+    expect(composition.total).toBe('280');
+    const painted = composition.slices.reduce((total, row) => total + row.weight, 0) + composition.others.weight;
+    expect(painted).toBeCloseTo(1, 10);
+  });
+
+  it('ignores income rows and rows that net back to zero', () => {
+    const table = tableOf([{ label: '餐饮', category: 'food', amount: '40' }]);
+    table.rows.push(
+      [{ v: '收入' }, { v: '工资', data: { category: 'salary' } }, { v: '£3,000.00', data: { reportAmount: '3000' } }],
+      // A category whose month nets back to nothing is not a slice at all.
+      [{ v: '支出' }, { v: '退款', data: { category: 'refunded' } }, { v: '£0.00', data: { reportAmount: '0' } }],
+    );
+    const composition = expenseCompositionFromTable(table);
+    expect(composition.slices.map((row) => row.category)).toEqual(['food']);
+    expect(composition.total).toBe('40');
+    expect(composition.others.count).toBe(0);
+  });
+
+  it('returns an empty composition instead of a zero-valued slice', () => {
+    expect(expenseCompositionFromTable({ headers: [], rows: [] })).toEqual({
+      slices: [], others: { amount: '0', count: 0, weight: 0 }, total: '0',
+    });
   });
 });

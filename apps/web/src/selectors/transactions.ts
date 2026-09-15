@@ -115,6 +115,23 @@ export interface TransactionCategoryVM {
   weight: number;
 }
 
+/**
+ * 本月支出构成：喂给饼图/环图的已算好数据。
+ *
+ * `weight` 的分母是**所有正向分类金额之和**（`total`），所以各段的 `weight`
+ * 相加为 1；若某分类内退款多于消费（净额为负），它不会出现在 `slices` 里，
+ * 因此 `total` 可能小于同月的「本月支出」总额——这是退款冲减的真实差额，
+ * 不是舍入。
+ */
+export interface TransactionCompositionVM {
+  /** 金额最大的几个分类，降序；超过的部分全部折进 `others`。 */
+  slices: TransactionCategoryVM[];
+  /** 剩余分类之和；`count` 是它盖住了几个分类（0 则调用方不产出「其他」）。 */
+  others: { amount: string; count: number; weight: number };
+  /** 100% 基准：所有正向分类金额之和。 */
+  total: string;
+}
+
 export interface TransactionTrendVM {
   month: string;
   income: string;
@@ -200,6 +217,7 @@ export interface TransactionsVM {
   items: TransactionItemVM[];
   groups: TransactionGroupVM[];
   topExpenseCategories: TransactionCategoryVM[];
+  expenseComposition: TransactionCompositionVM;
   filteredTopExpenseCategories: TransactionCategoryVM[];
   trend: TransactionTrendVM[];
   calendarMonth: string;
@@ -270,7 +288,7 @@ function transactionReportValues(snap: Snapshot, report: ReportCurrency, transac
   };
 }
 
-function expenseCategories(snap: Snapshot, rows: Transaction[], report: ReportCurrency): TransactionCategoryVM[] {
+function groupedExpenseCategoriesFromTransactions(snap: Snapshot, rows: Transaction[], report: ReportCurrency): TransactionCategoryVM[] {
   const byExpense = new Map<TransactionCategory, { amount: string[]; count: number }>();
   for (const transaction of rows) {
     const effect = reportingEffect(snap, transaction);
@@ -299,8 +317,15 @@ function expenseCategories(snap: Snapshot, rows: Transaction[], report: ReportCu
   const totalExpense = sum(positive.map((row) => row.amount));
   return positive
     .map((row) => ({ ...row, weight: totalExpense.isZero() ? 0 : D(row.amount).div(totalExpense).toNumber() }))
-    .sort((a, b) => D(b.amount).minus(a.amount).toNumber())
-    .slice(0, 3);
+    .sort((a, b) => D(b.amount).minus(a.amount).toNumber());
+}
+
+function expenseCategories(snap: Snapshot, rows: Transaction[], report: ReportCurrency, topN = 3): TransactionCategoryVM[] {
+  return groupedExpenseCategoriesFromTransactions(snap, rows, report).slice(0, topN);
+}
+
+function expenseCompositionFromTransactions(snap: Snapshot, rows: Transaction[], report: ReportCurrency): TransactionCompositionVM {
+  return composeExpenseCategories(groupedExpenseCategoriesFromTransactions(snap, rows, report));
 }
 
 function splitRows(snap: Snapshot, t: Transaction): { category: string; amount: string }[] {
@@ -844,8 +869,14 @@ function buildCalendarDays(snap: Snapshot, filters: TransactionFilters, calendar
 export interface TransactionReadModelInput {
   /** Current SQL-filtered page with only its child rows attached. */
   page: Snapshot;
-  /** Unfiltered rows covering at least the six-month trend and current month. */
+  /**
+   * Unfiltered rows covering the trend window and the current month. The window
+   * is chosen by the screen (3 / 6 / 12 months), so the caller must widen this
+   * read to match `trendMonths`; this builder only buckets what it is given.
+   */
   summaryAggregates: TransactionReportAggregateRow[];
+  /** Length of the trend, in months, ending with the current one. */
+  trendMonths?: number;
   /** Aggregate rows using the same filters as the current page. */
   filteredAggregates: TransactionReportAggregateRow[];
   filteredCount: number;
@@ -875,11 +906,15 @@ function aggregateTotals(
   return { income, expense };
 }
 
-function aggregateExpenseCategories(
-  snap: Snapshot,
-  report: ReportCurrency,
-  rows: TransactionReportAggregateRow[],
-): TransactionCategoryVM[] {
+/*
+ * 所有正向分类的支出金额，降序。`weight` 的分母是正金额之和，各段相加为 1。
+ *
+ * 构成环只画最大的 `COMPOSITION_SLICES` 个分类，其余折进「其他」——
+ * 切片多到看不出差别时，画出来也没人能读、能点。
+ */
+const COMPOSITION_SLICES = 5;
+
+function groupedExpenseCategories(snap: Snapshot, report: ReportCurrency, rows: TransactionReportAggregateRow[]): TransactionCategoryVM[] {
   const grouped = new Map<string, { amount: ReturnType<typeof D>; count: number }>();
   for (const row of rows.filter((aggregate) => aggregate.direction === 'expense')) {
     const converted = aggregateAmount(report, row);
@@ -899,8 +934,39 @@ function aggregateExpenseCategories(
       count: row.count,
       weight: total.isZero() ? 0 : row.amount.div(total).toNumber(),
     }))
-    .sort((left, right) => D(right.amount).minus(left.amount).toNumber())
-    .slice(0, 3);
+    .sort((left, right) => D(right.amount).minus(left.amount).toNumber());
+}
+
+function aggregateExpenseCategories(
+  snap: Snapshot,
+  report: ReportCurrency,
+  rows: TransactionReportAggregateRow[],
+  topN = 3,
+): TransactionCategoryVM[] {
+  return groupedExpenseCategories(snap, report, rows).slice(0, topN);
+}
+
+/**
+ * 本月支出构成。与 `aggregateExpenseCategories` 共用同一趟分组，
+ * 所以环图的数字与 KPI 卡里的 Top3 必然同源——多出来的只是「其他」那一档。
+ */
+function expenseComposition(snap: Snapshot, report: ReportCurrency, rows: TransactionReportAggregateRow[]): TransactionCompositionVM {
+  return composeExpenseCategories(groupedExpenseCategories(snap, report, rows));
+}
+
+/** 把完整分类列表折成「前 N + 其他」两档，环图与条形图共用。 */
+function composeExpenseCategories(all: TransactionCategoryVM[]): TransactionCompositionVM {
+  const slices = all.slice(0, COMPOSITION_SLICES);
+  const rest = all.slice(COMPOSITION_SLICES);
+  return {
+    slices,
+    others: {
+      amount: sum(rest.map((row) => row.amount)).toString(),
+      count: rest.length,
+      weight: sum(rest.map((row) => row.weight)).toNumber(),
+    },
+    total: sum(all.map((row) => row.amount)).toString(),
+  };
 }
 
 function aggregateCalendarDays(
@@ -970,7 +1036,8 @@ export function buildTransactionsFromReadModel(
   const monthTotals = aggregateTotals(report, monthAggregates);
   const filteredTotals = aggregateTotals(report, input.filteredAggregates);
   const trend: TransactionTrendVM[] = [];
-  for (let index = 5; index >= 0; index -= 1) {
+  const trendMonths = input.trendMonths ?? 6;
+  for (let index = trendMonths - 1; index >= 0; index -= 1) {
     const trendMonth = addMonths(month, -index);
     const totals = aggregateTotals(
       report,
@@ -984,6 +1051,11 @@ export function buildTransactionsFromReadModel(
     });
   }
   const calendarMonth = calendarMonthForRange(asOf, filters.range);
+  /*
+   * 构成与 KPI 卡的 Top3 共用同一趟分组：先取前 5 分类，KPI 卡再从里面切 3。
+   * 分开算两次会让同一屏出现两个「同一月份、同一口径」却可能微差的分类数字。
+   */
+  const composition = expenseComposition(baseSnap, report, monthAggregates);
   return {
     month,
     income: monthTotals.income.toString(),
@@ -995,7 +1067,8 @@ export function buildTransactionsFromReadModel(
     count: input.filteredCount,
     items,
     groups: [...groups.values()],
-    topExpenseCategories: aggregateExpenseCategories(baseSnap, report, monthAggregates),
+    topExpenseCategories: composition.slices.slice(0, 3),
+    expenseComposition: composition,
     filteredTopExpenseCategories: aggregateExpenseCategories(baseSnap, report, input.filteredAggregates),
     trend,
     calendarMonth,
@@ -1031,7 +1104,7 @@ export function buildScheduleOccurrences(snap: Snapshot, range: DateRange, maxRo
   return rows.sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
 }
 
-export function buildTransactions(snap: Snapshot, filters: TransactionFilters): TransactionsVM {
+export function buildTransactions(snap: Snapshot, filters: TransactionFilters, trendMonths = 6): TransactionsVM {
   const report = createReportCurrency(snap);
   for (const transaction of snap.transactions.filter((row) => isTransactionActive(row) && row.type !== 'transfer')) {
     report.toReportAt(
@@ -1065,9 +1138,10 @@ export function buildTransactions(snap: Snapshot, filters: TransactionFilters): 
 
   const topExpenseCategories = expenseCategories(snap, monthRows, report);
   const filteredTopExpenseCategories = expenseCategories(snap, filteredRows, report);
+  const expenseComposition = expenseCompositionFromTransactions(snap, monthRows, report);
 
   const trend: TransactionTrendVM[] = [];
-  for (let i = 5; i >= 0; i--) {
+  for (let i = trendMonths - 1; i >= 0; i--) {
     const m = addMonths(month, -i);
     const rows = snap.transactions.filter((t) => isTransactionActive(t) && t.type !== 'transfer' && transactionEffectDate(snap, t).slice(0, 7) === m);
     const values = rows.map((transaction) => transactionReportValues(snap, report, transaction));
@@ -1089,6 +1163,7 @@ export function buildTransactions(snap: Snapshot, filters: TransactionFilters): 
     items,
     groups: [...groups.values()],
     topExpenseCategories,
+    expenseComposition,
     filteredTopExpenseCategories,
     trend,
     calendarMonth: calendarMonthForRange(asOf, filters.range),

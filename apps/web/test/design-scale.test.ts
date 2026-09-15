@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { THEMES } from '../src/theme.js';
 
 /*
  * Batch 0 of the visual-density plan: the scale must exist in CSS, and every
@@ -114,6 +115,27 @@ describe('design scale contract', () => {
     expect(coarse).toContain('.zc-btn');
     expect(coarse).toContain('.zc-tab');
     expect(coarse).toMatch(/\.zc-btn--sm\s*\{[^}]*min-height:\s*36px/);
+    // The donut legend rows are compact under a mouse, so they must be put back
+    // on the touch floor for a finger.
+    expect(coarse).toContain('.zc-donut-legend-row');
+  });
+
+  /*
+   * Composition charts paint a category per slice. Those colours cannot be the
+   * semantic ones - `--negative` already means 「支出」 on the same screens - so
+   * the slots are real tokens, and every theme needs them: a theme that skips
+   * one leaves a slice transparent.
+   */
+  it('gives every theme values for the categorical slots', () => {
+    const slots = ['--cat-1', '--cat-2', '--cat-3', '--cat-4', '--cat-5', '--cat-6', '--cat-other'];
+    for (const slot of slots) {
+      expect(css, `${slot} must be declared on :root`).toContain(`${slot}:`);
+    }
+    for (const [id, theme] of Object.entries(THEMES)) {
+      for (const slot of slots) {
+        expect(theme[slot], `${id} is missing ${slot}`).toMatch(/^#[0-9a-f]{6}$/i);
+      }
+    }
   });
 
   /*

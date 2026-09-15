@@ -40,6 +40,8 @@ import {
 } from '../forms.js';
 import { money, signedMoney } from '../format.js';
 import { amountColor, btnOutline, btnPrimary, card, cardTight, selectBase, tag as tagStyle, td as tdStyle, th as thStyle } from '../ui/styles.js';
+import { ChartLegend, CompositionDonut, TrendBars, type ChartSlice } from '../ui/charts.js';
+import { CATEGORY_COLORS, OTHER_CATEGORY_COLOR } from '../theme.js';
 import { categoryLabel, categoryOptions, categoryType as metaCategoryType, TYPE_LABEL } from '../transactionMeta.js';
 import {
   buildBudgetMonth,
@@ -119,12 +121,12 @@ function shiftMonth(month: string, delta: number): string {
   return new Date(Date.UTC(year || 1970, (monthNumber || 1) - 1 + delta, 1)).toISOString().slice(0, 7);
 }
 
-function sixMonthRange(month: string): { from: string; to: string } {
+function trendRange(month: string, months: number): { from: string; to: string } {
   const nextMonth = shiftMonth(month, 1);
   const lastDay = new Date(`${nextMonth}-01T00:00:00.000Z`);
   lastDay.setUTCDate(0);
   return {
-    from: `${shiftMonth(month, -5)}-01`,
+    from: `${shiftMonth(month, -(months - 1))}-01`,
     to: lastDay.toISOString().slice(0, 10),
   };
 }
@@ -189,6 +191,13 @@ export function Transactions() {
   const [batchOpen, setBatchOpen] = useState(false);
   const [showVoided, setShowVoided] = useState(false);
   const [recordView, setRecordView] = useState<TimelineViewMode>('list');
+  /*
+   * Trend window. It is a view of the same unfiltered read the month KPIs come
+   * from, so it lives here rather than in `filters`: widening it must not look
+   * like narrowing the list.
+   */
+  const [trendMonths, setTrendMonths] = useState<3 | 6 | 12>(6);
+  const [trendFocus, setTrendFocus] = useState('');
   const [recordFocusDate, setRecordFocusDate] = useState(localToday);
   const [budgetView, setBudgetView] = useState<'year' | 'month'>('month');
   const [budgetMonth, setBudgetMonth] = useState(() => localToday().slice(0, 7));
@@ -317,7 +326,7 @@ export function Transactions() {
     const token = gate.start()!;
     let cancelled = false;
     const month = queryAsOf.slice(0, 7);
-    const summaryRange = sixMonthRange(month);
+    const summaryRange = trendRange(month, trendMonths);
     setTransactionPageBusy(true);
     setTransactionReadError('');
     void Promise.all([
@@ -348,7 +357,7 @@ export function Transactions() {
       cancelled = true;
       gate.reset();
     };
-  }, [browseInput, queryAsOf, rev, snap, store]);
+  }, [browseInput, queryAsOf, rev, snap, store, trendMonths]);
   useEffect(() => {
     if (!showVoided) {
       setVoidedPage(null);
@@ -475,12 +484,13 @@ export function Transactions() {
       ? buildTransactionsFromReadModel(snap, viewFilters, {
         page: pageSnap,
         summaryAggregates: transactionRead.summaryAggregates,
+        trendMonths,
         filteredAggregates: transactionRead.filteredAggregates,
         filteredCount: transactionRead.page.totalCount,
         accountBalances: accountBalanceRows,
       })
       : null
-  ), [accountBalanceRows, pageSnap, snap, transactionRead, viewFilters]);
+  ), [accountBalanceRows, pageSnap, snap, transactionRead, trendMonths, viewFilters]);
   if (!snap || !transactionRead || !vm || !pageSnap) return transactionReadError
     ? <div role="alert" style={{ ...cardTight, color: 'var(--negative)' }}>流水读取失败：{transactionReadError}</div>
     : null;
@@ -1043,6 +1053,25 @@ export function Transactions() {
     bump();
   }
 
+  /*
+   * 从构成环下钻到一个分类。分类与时间范围一起收窄到「本月 × 该分类」——
+   * 环画的就是本月这一块，所以点完看到的必须就是那一块，否则「点一下看到的是
+   * 全部时间里的所有该分类」会与刚才那个数字对不上。
+   */
+  function drillToCategory(category: string) {
+    const monthRange = dateRangeValue('this_month');
+    setFilters((current) => ({
+      ...current,
+      category,
+      range: monthRange.preset,
+      dateFrom: monthRange.from,
+      dateTo: monthRange.to,
+    }));
+    setRecordView('list');
+    setTrendFocus('');
+    window.requestAnimationFrame(() => document.getElementById('transaction-records')?.scrollIntoView({ block: 'start' }));
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       {vm.missingRateAssetCodes.length > 0 && (
@@ -1059,7 +1088,7 @@ export function Transactions() {
       {activeTab === 'records' && (
         <>
           <SummaryGrid vm={vm} usesAccounts={usesAccounts} />
-          <div style={card}>
+          <div id="transaction-records" style={{ ...card, scrollMarginTop: 16 }}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
               <div>
                 <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{usesAccounts ? '日常流水' : '日常支出'}</div>
@@ -1072,6 +1101,8 @@ export function Transactions() {
                 <button onClick={() => setEditingCategory('new')} style={button}>+ 分类</button>
                 <button onClick={() => setEditingPayee('new')} style={button}>+ 商户</button>
                 <button onClick={() => setEditingSplit('new')} style={button}>+ 拆分</button>
+                {/* 图区在列表下方（手机上可能好几屏），所以留一个直接下去的锚点。 */}
+                <button onClick={() => document.getElementById('transaction-charts')?.scrollIntoView({ block: 'start' })} style={button}>趋势与构成 ↓</button>
                 <button onClick={openNewTransaction} className="zc-header-primary" style={primary}>{usesAccounts ? '+ 记账' : '+ 记支出'}</button>
               </div>
             </div>
@@ -1188,7 +1219,20 @@ export function Transactions() {
               </div>
             )}
           </div>
-          <Trend vm={vm} />
+          <div id="transaction-charts" className="zc-chart-pair" style={{ scrollMarginTop: 16 }}>
+            <Trend
+              vm={vm}
+              months={trendMonths}
+              onMonthsChange={setTrendMonths}
+              focus={trendFocus}
+              onFocusChange={setTrendFocus}
+            />
+            <ExpenseCompositionCard
+              vm={vm}
+              selectedCategory={viewFilters.category === 'all' ? '' : viewFilters.category}
+              onSelectCategory={drillToCategory}
+            />
+          </div>
         </>
       )}
 
@@ -2456,27 +2500,120 @@ function BatchEditModal(props: {
   );
 }
 
-function Trend({ vm }: { vm: NonNullable<ReturnType<typeof buildTransactions>> }) {
-  const maxTrend = Math.max(1, ...vm.trend.flatMap((m) => [Number(m.income), Number(m.expense)]));
+const TREND_WINDOWS: readonly (readonly [3 | 6 | 12, string])[] = [[3, '近 3 个月'], [6, '近 6 个月'], [12, '近 12 个月']];
+
+/**
+ * 全部流水趋势。
+ *
+ * 口径写进标题而不是留在代码里：趋势读的是**无筛选**汇总（与「本月支出」
+ * KPI 同一个读），所以用户设了筛选、发现柱子不动时必须一眼看出是设计而非 bug。
+ * 旧版本只写「近 6 个月趋势」，没任何地方说它不跟筛选。
+ */
+function Trend(props: {
+  vm: NonNullable<ReturnType<typeof buildTransactions>>;
+  months: 3 | 6 | 12;
+  onMonthsChange: (value: 3 | 6 | 12) => void;
+  focus: string;
+  onFocusChange: (key: string) => void;
+}) {
+  const { vm, months, onMonthsChange, focus, onFocusChange } = props;
+  const buckets = vm.trend.map((row) => ({
+    key: row.month,
+    /* 12 个月时留「年-月」，否则只留月份：两者都是为了隔月也能认出来。 */
+    label: months > 6 ? row.month.slice(2) : row.month.slice(5),
+    detail: `${row.month} · 收入 ${money(row.income)} · 支出 ${money(row.expense)} · 净 ${signedMoney(row.net)}`,
+    bars: [
+      { label: '收入', value: Number(row.income), text: money(row.income), color: 'var(--positive)' },
+      { label: '支出', value: Number(row.expense), text: money(row.expense), color: 'var(--negative)' },
+    ],
+  }));
+  /* 默认停在最近一个月：它就是用户刚记完账要看的那一格。 */
+  const focused = buckets.find((bucket) => bucket.key === focus) ?? buckets[buckets.length - 1];
+  const tallest = buckets.flatMap((bucket) => bucket.bars.map((bar) => ({ ...bar, month: bucket.key })))
+    .reduce<{ label: string; text: string; month: string; value: number } | null>(
+      (top, bar) => (top === null || bar.value > top.value ? bar : top),
+      null,
+    );
   return (
     <div style={card}>
-      <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 16 }}>近 6 个月趋势</div>
-      <div className="zc-trend-grid" style={{ display: 'grid', gridTemplateColumns: `repeat(${vm.trend.length}, minmax(80px, 1fr))`, gap: 14, alignItems: 'end', height: 180 }}>
-        {vm.trend.map((m) => {
-          const incomeH = Math.max(4, Number(m.income) / maxTrend * 130);
-          const expenseH = Math.max(4, Number(m.expense) / maxTrend * 130);
-          return (
-            <div key={m.month} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'end', gap: 6, height: 132 }}>
-                <div title={`收入 ${money(m.income)}`} style={{ width: 18, height: incomeH, borderRadius: 'var(--r-sm) var(--r-sm) 0 0', background: 'var(--positive)' }} />
-                <div title={`支出 ${money(m.expense)}`} style={{ width: 18, height: expenseH, borderRadius: 'var(--r-sm) var(--r-sm) 0 0', background: 'var(--negative)' }} />
-              </div>
-              <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{m.month.slice(5)}</div>
-              <div style={{ fontSize: 'var(--fs-meta)', color: Number(m.net) >= 0 ? 'var(--positive)' : 'var(--negative)', fontWeight: 'var(--fw-medium)' }}>{signedMoney(m.net)}</div>
-            </div>
-          );
-        })}
+      <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
+        <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', minWidth: 0 }}>全部流水趋势 · 近 {months} 个月</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+          <ChartLegend items={[{ label: '收入', color: 'var(--positive)' }, { label: '支出', color: 'var(--negative)' }]} />
+          <select
+            aria-label="趋势时间跨度"
+            value={months}
+            onChange={(event) => onMonthsChange(Number(event.target.value) as 3 | 6 | 12)}
+            style={{ ...selectBase, width: 'auto' }}
+          >
+            {TREND_WINDOWS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </div>
       </div>
+      <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginBottom: 14 }}>
+        全部流水口径，不随上方筛选变化{tallest ? ` · 峰值 ${tallest.text}（${tallest.month} ${tallest.label}）` : ''}
+      </div>
+      <TrendBars
+        ariaLabel={`全部流水趋势，近 ${months} 个月`}
+        buckets={buckets}
+        selectedKey={focused?.key}
+        onSelect={onFocusChange}
+      />
+      {focused && (
+        <div aria-live="polite" style={{ marginTop: 10, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>
+          {focused.detail}　<span style={{ color: 'var(--text-tertiary)' }}>点柱查看其他月份</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 本月支出构成。
+ *
+ * 口径是**本月、不跟筛选**：构成图跨分类聚合，如果跟着分类筛选，
+ * 用户筛一个分类之后环里就只剩一段（100%），「钱花在哪里」就自我矛盾了。
+ * 数据与上方 KPI 卡的 Top3 同一个 selector（`vm.expenseComposition`）。
+ */
+function ExpenseCompositionCard(props: {
+  vm: NonNullable<ReturnType<typeof buildTransactions>>;
+  selectedCategory: string;
+  onSelectCategory: (category: string) => void;
+}) {
+  const { vm, selectedCategory, onSelectCategory } = props;
+  const composition = vm.expenseComposition;
+  const slices: ChartSlice[] = [
+    ...composition.slices.map((slice, index) => ({
+      key: slice.category,
+      label: slice.label,
+      amountText: money(slice.amount),
+      weight: slice.weight,
+      color: CATEGORY_COLORS[index % CATEGORY_COLORS.length] ?? OTHER_CATEGORY_COLOR,
+      onSelect: () => onSelectCategory(slice.category),
+    })),
+    ...(composition.others.count > 0
+      ? [{
+        key: '__other__',
+        label: `其他 ${composition.others.count} 类`,
+        amountText: money(composition.others.amount),
+        weight: composition.others.weight,
+        color: OTHER_CATEGORY_COLOR,
+      }]
+      : []),
+  ];
+  return (
+    <div style={card}>
+      <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>本月支出构成</div>
+      <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3, marginBottom: 14 }}>
+        {composition.slices.length > 0 ? '点一段：流水只显示该分类的本月支出；不随上方筛选变化' : '不随上方筛选变化'}
+      </div>
+      <CompositionDonut
+        ariaLabel={`${vm.month} 本月支出构成`}
+        totalText={money(composition.total)}
+        totalCaption="本月支出"
+        selectedKey={selectedCategory || undefined}
+        slices={slices}
+      />
     </div>
   );
 }

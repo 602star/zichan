@@ -68,6 +68,29 @@
   /* Control metrics. */
   --control-h: 38px;
   --control-h-sm: 30px;
+
+  /*
+   * Categorical palette for composition charts (the donut).
+   *
+   * The semantic colours cannot carry a category: `--negative` already means
+   * 「支出」, so painting 食堂 red would claim two different things at once. These
+   * six slots are ordered, not semantic: slot 1 always follows the theme accent,
+   * and the rest keep the same hue so a legend stays recognisable when the theme
+   * changes. `--cat-other` is the 「其他」 bucket: it must read as a leftover
+   * rather than as a category, so it is the only desaturated slot.
+   *
+   * Colour alone never distinguishes a slice - every slice also carries a text
+   * label, a fixed order and a different lightness (see `CompositionDonut`).
+   * `theme.ts` repeats these for all three themes; `design-scale.test.ts` fails
+   * if one theme is left without them.
+   */
+  --cat-1: #bf6b3f;
+  --cat-2: #3f7d92;
+  --cat-3: #6b8f3f;
+  --cat-4: #b8862f;
+  --cat-5: #a04a72;
+  --cat-6: #5b5f9e;
+  --cat-other: #9c948a;
 }
 
 * {
@@ -605,6 +628,211 @@ button,
   flex: 0 0 auto;
 }
 
+/*
+ * Chart vocabulary.
+ *
+ * 报表 and 日常支出 answer the same three questions - what is the trend, what
+ * makes up this month, and which categories rank highest - so all three charts
+ * are drawn from one set of classes instead of from two look-alikes that drift.
+ *
+ * No class here sizes a hit target: the coarse-pointer block re-floors the row
+ * classes it needs (see `.zc-donut-legend-row`), because a class-based
+ * `min-height` outranks the global `button` baseline exactly the way
+ * `.zc-protection` regressed before.
+ */
+.zc-chart-pair {
+  display: grid;
+  /*
+   * Stacked by default. Two charts side by side only work on a desktop: at
+   * tablet widths the shell already gives away 96px to the icon rail, which
+   * leaves ~290px per column - narrower than a donut plus its legend, so a
+   * seven-figure amount would push the row out of the card. `min-width: 1200px`
+   * is the breakpoint this app already calls desktop.
+   */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  min-width: 0;
+}
+
+.zc-chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.zc-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-meta);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.zc-swatch {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-pill);
+}
+
+/* Trend: one column per month, itself the tap target for that month. */
+.zc-trend-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.zc-trend-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 132px;
+}
+
+.zc-trend-bar {
+  display: block;
+  width: 18px;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+}
+
+.zc-trend-cell-label {
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-medium);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.zc-trend-cell.is-selected .zc-trend-cell-label {
+  color: var(--text-primary);
+}
+
+/* Rank: one bar per category, used by every reports tab but 日常收支. */
+.zc-rank-track {
+  display: flex;
+  align-items: flex-end;
+  height: 86px;
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.zc-rank-fill {
+  display: block;
+  width: 100%;
+}
+
+.zc-rank-label {
+  font-size: var(--fs-meta);
+  color: var(--text-tertiary);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zc-rank-value {
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-medium);
+  text-align: center;
+  white-space: nowrap;
+}
+
+/*
+ * Composition donut: ring plus legend. The legend rows are the accessible drill
+ * path (and the only focusable part), so they are real buttons when the slice is
+ * a category to drill into, and plain rows for the aggregated 「其他」 bucket,
+ * which is not.
+ */
+.zc-donut {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  min-width: 0;
+}
+
+.zc-donut-ring {
+  position: relative;
+  flex: 0 0 auto;
+  width: 148px;
+  height: 148px;
+  border-radius: var(--r-round);
+}
+
+.zc-donut-hole {
+  position: absolute;
+  inset: 26%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--r-round);
+  background: var(--surface);
+  text-align: center;
+}
+
+.zc-donut-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.zc-donut-legend-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 0;
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.zc-donut-legend-row.is-drillable {
+  cursor: pointer;
+}
+
+.zc-donut-legend-row.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.zc-donut-legend-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zc-donut-legend-amount,
+.zc-donut-legend-share {
+  font-size: var(--fs-meta);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.zc-donut-legend-share {
+  color: var(--text-tertiary);
+}
+
 .zc-game-season-tabs {
   min-width: 0;
   max-width: 100%;
@@ -980,6 +1208,16 @@ input[type="radio"] {
   .zc-protection input:not([type="checkbox"]):not([type="radio"]) {
     font-size: var(--fs-input) !important;
   }
+
+  /*
+   * The donut legend keeps its rows compact under a mouse and only pays for the
+   * 44px touch target where a finger is doing the tapping, the same trade the
+   * table's secondary buttons make. Rows stay aligned because the plain 「其他」
+   * row shares the class.
+   */
+  .zc-donut-legend-row {
+    min-height: 44px;
+  }
 }
 
 .zc-input,
@@ -1257,6 +1495,12 @@ input[type="radio"] {
 
   .zc-sidebar {
     display: flex;
+  }
+
+  /* Desktop only: the trend and the composition sit side by side, trend wider
+     because a 12-month axis needs the room the donut does not. */
+  .zc-chart-pair {
+    grid-template-columns: 1.1fr 1fr;
   }
 
   .zc-mobile-bottom-nav,
@@ -1890,6 +2134,18 @@ input[type="radio"] {
   .zc-advanced-condition-row,
   .zc-convert-detail-grid {
     grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  /*
+   * Stacked, not squeezed: a donut and its legend need ~330px together, which
+   * a phone does not have. No override flag needed here, unlike the grids
+   * above: `.zc-donut` is declared in CSS rather than inline, so source order
+   * alone decides - and this block is later. (That also keeps the override
+   * budget where it was.)
+   */
+  .zc-donut {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
   }
 
   .zc-dashboard-kpi-grid,

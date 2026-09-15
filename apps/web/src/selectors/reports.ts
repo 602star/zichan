@@ -235,6 +235,63 @@ export function transactionTableFromAggregates(
   );
 }
 
+/** 构成图的一段：一个可下钻的分类。 */
+export interface ReportCompositionSlice {
+  category: string;
+  label: string;
+  /** 报表币种下的十进制字符串，与表格那一格同源。 */
+  amount: string;
+  /** 占 `total` 的比例，0..1。 */
+  weight: number;
+}
+
+/** 「前 N 个分类 + 其他」；与支出页的 `expenseComposition` 同一个折法。 */
+export interface ReportComposition {
+  slices: ReportCompositionSlice[];
+  others: { amount: string; count: number; weight: number };
+  /** 100% 基准：所有正金额分类之和。 */
+  total: string;
+}
+
+/**
+ * 从已经算好的分类表里折出构成图的数据——不新增查询。
+ *
+ * 正金额分类才是可画、可点的一段；净额为负的分类（当月退款多于消费）
+ * 不进分子也不进分母，所以各段 `weight` 相加恒为 1。
+ *
+ * 用 `gt(0)` 而不是 `isPositive()`：decimal.js 的 `isPositive()` 对 ±0 为真，
+ * 会把一个净额归零的分类画成一段 0° 的切片并出现在图例里。
+ */
+export function expenseCompositionFromTable(table: Table, topN = 5): ReportComposition {
+  const rows = table.rows
+    .filter((row) => row[0]?.v === '支出')
+    .map((row) => ({
+      category: String(row[1]?.data?.category ?? 'other_expense'),
+      label: row[1]?.v ?? '未分类',
+      amount: D(row[2]?.data?.reportAmount ?? 0),
+    }))
+    .filter((row) => row.amount.gt(0))
+    .sort((left, right) => right.amount.comparedTo(left.amount));
+  const total = sum(rows.map((row) => row.amount));
+  const weighted: ReportCompositionSlice[] = rows.map((row) => ({
+    category: row.category,
+    label: row.label,
+    amount: row.amount.toString(),
+    weight: total.isZero() ? 0 : row.amount.div(total).toNumber(),
+  }));
+  const slices = weighted.slice(0, topN);
+  const rest = weighted.slice(topN);
+  return {
+    slices,
+    others: {
+      amount: sum(rest.map((row) => row.amount)).toString(),
+      count: rest.length,
+      weight: sum(rest.map((row) => row.weight)).toNumber(),
+    },
+    total: total.toString(),
+  };
+}
+
 function plainCell(cell: Cell): string {
   return cell.v.replace(/\s+/g, ' ').trim();
 }

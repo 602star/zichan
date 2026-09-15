@@ -6,6 +6,7 @@ const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const transactions = readFileSync(new URL('../src/screens/Transactions.tsx', import.meta.url), 'utf8');
 const reports = readFileSync(new URL('../src/screens/Reports.tsx', import.meta.url), 'utf8');
+const charts = readFileSync(new URL('../src/ui/charts.tsx', import.meta.url), 'utf8');
 const reportInsights = readFileSync(new URL('../src/ui/TransactionReportInsights.tsx', import.meta.url), 'utf8');
 const serverAdmin = readFileSync(new URL('../src/admin/AdminConsole.tsx', import.meta.url), 'utf8');
 const ledgerEntry = readFileSync(new URL('../src/LedgerApp.tsx', import.meta.url), 'utf8');
@@ -81,6 +82,12 @@ describe('responsive shell contract', () => {
     expect(serverAdmin).toContain("overflowX: 'auto'");
     expect(serverAdmin).toContain('repeat(auto-fit, minmax(170px, 1fr))');
     expect(reports).toContain('zc-report-chart-grid');
+    // The chart markup moved to `ui/charts.tsx` so both screens draw the same
+    // shapes; the scroll container has to move with it.
+    expect(charts).toContain('zc-report-chart-grid');
+    expect(charts).toContain('zc-trend-grid');
+    expect(css).toContain('.zc-chart-pair');
+    expect(css).toContain('.zc-donut');
     expect(reportInsights).toContain('zc-report-insight-grid');
     expect(css).toContain('.zc-report-insight-grid');
     expect(css).toContain('.zc-report-driver-row');
