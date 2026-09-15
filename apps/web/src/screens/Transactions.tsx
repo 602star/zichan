@@ -56,6 +56,7 @@ import {
   transactionDateRange,
   type AccountBalanceVM,
   type AccountLedgerRowVM,
+  historicalCategoryValueOptions,
 } from '../selectors/transactions.js';
 import { optionalTransactionFields, transactionFormPresetKeys } from '../transactionFormPrefs.js';
 import { ledgerAsOfDate } from '../as-of.js';
@@ -1880,7 +1881,7 @@ function CategoryConditionValue(props: { snap: Snapshot; value: string; onChange
       name="advancedCategory"
       ariaLabel="高级查询值"
       value={props.value}
-      options={categoryValueOptions(props.snap)}
+      options={historicalCategoryValueOptions(props.snap)}
       allowEmpty
       emptyLabel="请选择"
       placeholder="请选择"
@@ -1894,7 +1895,7 @@ function CategoryConditionValue(props: { snap: Snapshot; value: string; onChange
 
 function valueOptionsForField(snap: Snapshot, field: AdvancedQueryField): { value: string; label: string }[] | null {
   if (field === 'type') return TYPE_OPTIONS.filter((o) => o.value !== 'all').map((o) => ({ value: o.value, label: o.label }));
-  if (field === 'category') return categoryValueOptions(snap).map((o) => ({ value: o.value, label: o.label }));
+  if (field === 'category') return historicalCategoryValueOptions(snap).map((o) => ({ value: o.value, label: o.label }));
   if (field === 'parentCategory') {
     const parentIds = new Set(snap.categories.filter((c) => c.parentId).map((c) => c.parentId!));
     return snap.categories.filter((c) => parentIds.has(c.id)).map((c) => ({ value: c.id, label: c.name }));
@@ -1922,10 +1923,10 @@ function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilter
         name="category"
         ariaLabel="流水分类"
         value={filters.category === 'all' ? '' : filters.category}
-        // 选项集限定在账本内真实存在的分类（含隐藏/已停用）：它们仍出现在历史
-        // 流水里，筛选时也要能按它们过滤。目录里尚未落库的分类不能出现——
+        // 读路径：含隐藏与被停用的分类（后者带「已停用」徒标，搜索或开「显示隐藏」能找到），
+        // 否则那些分类下的旧流水就筛不着了。目录里尚未落库的分类不出现——
         // 没有任何流水会引用它们，选了只会得到空结果。
-        options={categoryOptions(snap.categories, undefined, { leafOnly: true, includeHidden: true, includeCatalog: false })}
+        options={historicalCategoryValueOptions(snap)}
         allowEmpty
         emptyLabel="全部分类"
         placeholder="全部分类"

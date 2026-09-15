@@ -787,14 +787,25 @@ export interface CategoryOption {
   label: string;
   hidden?: boolean;
   catalogOnly?: boolean;
+  /**
+   * 已停用（如所属扩展包被停用），但账本里可能仍留有引用。
+   *
+   * 注意与 `hidden` 的区别：隐藏的分类仍在选项池里，开关一下就看得见；
+   * 停用的分类被 `allCategories` 直接丢弃，必须显式传 `includeInactive` 才拿得到。
+   * 写路径（记账、批量修改）不应把它当作可选目标，读路径（筛选、查询）才需要。
+   */
+  inactive?: boolean;
 }
 
 export function categoryOptions(
   categories: Category[] = [],
   type?: TransactionCategoryType,
-  opts: { leafOnly?: boolean; parentsOnly?: boolean; includeHidden?: boolean; includeCatalog?: boolean } = {},
+  opts: { leafOnly?: boolean; parentsOnly?: boolean; includeHidden?: boolean; includeCatalog?: boolean; includeInactive?: boolean } = {},
 ): CategoryOption[] {
-  const cats = allCategories(categories, { includeCatalog: opts.includeCatalog ?? opts.includeHidden });
+  const cats = allCategories(categories, {
+    includeCatalog: opts.includeCatalog ?? opts.includeHidden,
+    includeInactive: opts.includeInactive,
+  });
   const byId = new Map(cats.map((c) => [c.id, c]));
   const parentIds = new Set(cats.map((c) => c.parentId).filter(Boolean));
   return cats
@@ -818,5 +829,6 @@ export function categoryOptions(
       label: categoryLabel(c.id, categories),
       hidden: categoryIsHidden(c) || undefined,
       catalogOnly: c.catalogOnly || undefined,
+      inactive: c.isActive === false || undefined,
     }));
 }

@@ -13,6 +13,7 @@ import { createReportCurrency, type ReportCurrency } from '../reportCurrency.js'
 import { ledgerAsOfDate } from '../as-of.js';
 import {
   categoryLabel,
+  categoryOptions,
   categoryType as metaCategoryType,
   TYPE_LABEL,
 } from '../transactionMeta.js';
@@ -307,6 +308,29 @@ function splitRows(snap: Snapshot, t: Transaction): { category: string; amount: 
     category: row.categoryId,
     amount: row.amount,
   }));
+}
+
+/**
+ * 读路径（流水筛选、高级查询）的分类选项：在普通选项集基础上，额外把“已停用”的
+ * 分类也带进来。
+ *
+ * 停用扩展包会把成员分类写成 isActive:false + isHidden:true，而 `allCategories`
+ * 默认就把停用行整个丢掉，于是那些分类下的旧流水变成“看得见、筛不着”：
+ * 列表里照常显示分类名，筛选和高级查询里却根本没这一项，只能把扩展包重新启用才查得了。
+ *
+ * 页面上的快照不持有全部流水（大账本按页从 SQL 取），所以没法在这里判断
+ * “哪些停用分类真有流水”。交给 CategoryPicker 后它们跟“隐藏”同一套行为：
+ * 不搜索时不占地方，搜索或开“显示隐藏”就能找到，并用「已停用」徒标区分。
+ *
+ * 写路径（记账弹窗、批量修改）不用它：不给已停用的分类制造新引用。
+ */
+export function historicalCategoryValueOptions(snap: Snapshot) {
+  return categoryOptions(snap.categories, undefined, {
+    leafOnly: true,
+    includeHidden: true,
+    includeCatalog: false,
+    includeInactive: true,
+  });
 }
 
 function payeeName(snap: Snapshot, t: Transaction): string {

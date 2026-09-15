@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { round } from '@zichan/core';
+import { round, systemCategory, type Category } from '@zichan/core';
 import { budgetCategoryForm, categoryForm, gameRecordForm, payeeForm, scheduledTransactionForm, transactionForm, transactionSplitForm, transactionTemplateForm } from '../src/forms.js';
 import {
   buildAccountLedger,
@@ -9,6 +9,7 @@ import {
   buildScheduleOccurrences,
   buildTransactions,
   buildTransactionsFromReadModel,
+  historicalCategoryValueOptions,
   transactionReconciliationCoverage,
 } from '../src/selectors/transactions.js';
 import { categoryOptions } from '../src/transactionMeta.js';
@@ -470,6 +471,59 @@ describe('ledger mode forms', () => {
 
     s.setting!.categoryPickerDefaultScope = 'all';
     expect(categoryScopes()).toEqual([true, true, true, true, true, true]);
+  });
+
+  it('keeps categories a disabled extension pack left behind queryable', () => {
+    const s = makeSnapshot();
+    // 停用扩展包会同时写 isActive:false 与 isHidden:true；这里补一个目录里的扩展分类。
+    const disabled = {
+      ...systemCategory('pet_medical', false)!,
+      isActive: false,
+      isHidden: true,
+      archivedAt: '2026-09-01T00:00:00.000Z',
+      archiveReason: '系统分类包停用',
+    } as Category;
+    // 从未用过的停用成员：同样进读路径选项池（页面快照不持有全部流水，无法区分
+    // 用没用过），但它们带 hidden，默认列表里不占位置。
+    const unusedDisabled = {
+      ...systemCategory('pet_supplies', false)!,
+      isActive: false,
+      isHidden: true,
+      archivedAt: '2026-09-01T00:00:00.000Z',
+      archiveReason: '系统分类包停用',
+    } as Category;
+    s.categories = [...s.categories, disabled, unusedDisabled];
+
+    const pet = makeTransaction({ id: 'tx-pet', date: '2026-03-04', category: 'pet_medical', amount: '50', assetId: s.ids.gbp });
+    const split = makeTransaction({ id: 'tx-split', date: '2026-03-05', category: 'food', amount: '40', assetId: s.ids.gbp });
+    const deleted = makeTransaction({ id: 'tx-deleted', date: '2026-03-06', category: 'pet_medical', amount: '70', assetId: s.ids.gbp, isDeleted: true });
+    s.transactions = [pet, split, deleted];
+    s.transactionSplits = [
+      { id: 'sp-pet', transactionId: split.id, category: 'pet_medical', amount: '40', createdAt: '', updatedAt: '', version: 1, isDeleted: false },
+    ];
+
+    // 读路径：停用的分类也要进选项池，否则旧流水就筛不着了。
+    const values = historicalCategoryValueOptions(s).map((o) => o.value);
+    expect(values).toContain('pet_medical');
+    // 从未用过的停用分类同样进池（页面快照不持有全部流水，无法区分）；
+    // 它们跟“隐藏”一样要先搜索或开“显示隐藏”才出现，不占默认列表。
+    expect(values).toContain('pet_supplies');
+    expect(historicalCategoryValueOptions(s).find((o) => o.value === 'pet_medical'))
+      .toMatchObject({ inactive: true, hidden: true });
+
+    // 目录里尚未写入账本的分类依旧不得出现（选了必然空结果）。
+    expect(values).not.toContain('ktv');
+
+    // 写路径（记账表单）仍然选不到停用分类。
+    const entryOptions = optionsOf(transactionForm(s).fields.find((f) => f.key === 'category')!, { type: 'expense' });
+    expect(entryOptions.some((o) => o.value === 'pet_medical')).toBe(false);
+
+    // 选中的停用分类仍能筛出它自己的流水。
+    s.transactionSplits = [];
+    const filtered = buildFilteredTransactions(s, {
+      range: 'all', type: 'all', category: 'pet_medical', accountId: 'all', search: '',
+    });
+    expect(filtered.map((t) => t.id)).toEqual([pet.id]);
   });
 
   it('keeps account ledger fields available in account mode', () => {

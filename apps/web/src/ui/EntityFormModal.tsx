@@ -29,6 +29,11 @@ export interface FieldOption {
   hidden?: boolean;
   /** Present in the immutable system catalog but not enabled in this ledger yet. */
   catalogOnly?: boolean;
+  /**
+   * 已停用（如扩展包被停用）。与 hidden 不同：停用的分类默认根本不进选项池，
+   * 只有读路径（筛选 / 查询）会显式把它带进来，并靠这个标记显示徒标。
+   */
+  inactive?: boolean;
 }
 
 export interface FieldDef {
@@ -1016,7 +1021,11 @@ export function CategoryPicker(props: {
                     <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: '1 1 auto' }}>{parsed.child}</span>
                     {option.catalogOnly
                       ? <span style={categoryHiddenBadge()}>未启用</span>
-                      : option.hidden && <span style={categoryHiddenBadge()}>隐藏</span>}
+                      : option.inactive
+                        // 停用的分类总是同时被写成 hidden，所以“已停用”要优先于“隐藏”，
+                        // 否则用户只看到“隐藏”，会以为开关一下就能找回来。
+                        ? <span style={categoryHiddenBadge('inactive')}>已停用</span>
+                        : option.hidden && <span style={categoryHiddenBadge()}>隐藏</span>}
                   </button>
                 );
               })}
@@ -1065,16 +1074,18 @@ function categoryParentButton(active: boolean) {
   } as const;
 }
 
-function categoryHiddenBadge() {
+function categoryHiddenBadge(tone: 'muted' | 'inactive' = 'muted') {
+  const inactive = tone === 'inactive';
   return {
-    border: '1px solid var(--border)',
+    border: `1px solid ${inactive ? 'var(--border-strong, var(--border))' : 'var(--border)'}`,
     borderRadius: 'var(--r-pill)',
     padding: '2px 6px',
-    color: 'var(--text-tertiary)',
+    color: inactive ? 'var(--text-secondary)' : 'var(--text-tertiary)',
     background: 'var(--surface-2)',
     fontSize: 'var(--fs-meta)',
     fontWeight: 'var(--fw-medium)',
     flex: '0 0 auto',
+    whiteSpace: 'nowrap',
   } as const;
 }
 

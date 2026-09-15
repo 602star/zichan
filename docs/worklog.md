@@ -3,6 +3,20 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-15 — 停用的分类在筛选/查询里找不回来（读/写路径分开）
+
+**现象（用户报的第二个问题）**：停用扩展包后，那些分类下的旧流水在列表里照常显示分类名，但筛选和高级查询里根本没这一项——只能把扩展包重新启用才查得了。实测：`refs/列表行` 显示“食品餐饮 / 食堂”，筛选搜“食堂”命中 **0**。
+
+**原因**：`categoryLabel`（渲染列表标签）走 `allCategories({includeInactive: true})`，而 `categoryOptions` **从不转发 `includeInactive`**（其 opts 类型里没这个字段）。停用行被 `allCategories` 直接丢弃，根本没进选项池，搜索只是在池子里过滤。关键：**搜索找不到不存在的东西**，所以“输入可搜索隐藏分类”那句提示帮不了忙——隐藏（`isHidden`）在池子里，停用（`isActive:false`）不在。
+
+**实施中途发现的架构约束（计划的拐点）**：原本设想“只放停用 **且** 仍有流水”的分类，但页面快照 `snap.transactions` 是**空的**（实测 `txCount=0`）——大账本按页从 SQL 取流水（`transactionBrowsePage` + 读模型），快照只持主数据。所以“哪些停用分类真有流水”在渲染时拿不到（要么新增一个 DISTINCT 查询 + 整条 prop 链，要么用每分类 count）。改成用“隐藏”同一套语义：停用分类也进选项池但带 `hidden`，**不搜索时不占地方，搜索或开“显示隐藏”就能找到**，并带「已停用」徒标。这正好对应用户的期待（“还是能被搜出来吧”），而且零新查询、零新 plumbing；缺点只是可能列出几个选后为空的项。
+
+**改动**：core 的 `categoryOptions` 补上 `includeInactive` 透传与 `CategoryOption.inactive` 标记（之前该字段被静默丢掉，传 `includeInactive: true` 是空操作）；`CategoryPicker` 加第三枚徒标「已停用」（优先于「隐藏」，因为停用行同时是 hidden，否则用户会以为开关一下就能找回），并把读路径选项集集中到 `historicalCategoryValueOptions(snap)`；三处读路径（筛选行、高级查询取值、高级查询预览标签）用它，写路径（记账、批量修改）仍用 `categoryValueOptions(snap)`。
+
+**测试**：core 单测验证 `includeInactive` 才拿得到、且有 `inactive` 标记，其它调用方行为不变；web 单测验证读路径含停用项、写路径不含、选中后能筛出流水；e2e 完整跑一遍用户路径（启用包 → 记账 → 停用包 → 切换模式 → 筛选/高级查询能查到、记账/批量修改仍搜不到）。两处都做了突变验证：去掉 `includeInactive` 后单测报 `expected [...] to include 'pet_medical'`、e2e 直接失败。
+
+**验证**：typecheck、lint 通过；单测 **821 通过**（108 个测试文件）；e2e **22/22 通过**。
+
 ## 2026-09-15 — 分类控件统一到流水页的筛选行、高级查询和批量修改
 
 **背景**：上一轮只改了流水页筛选行，用户又问“剩下两处要不要一并统一”。两处都能先取证：高级查询的「二级分类」取值和批量修改的「分类」都是原生 `<select>`，前者与筛选行同一个毛病（上百项翻不动、够不到隐藏分类）。

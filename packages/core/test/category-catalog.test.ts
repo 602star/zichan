@@ -112,6 +112,34 @@ describe('system category catalog', () => {
     expect(categoryLabel('pet_medical', [disabled])).toBe('居家生活 / 宠物医疗');
   });
 
+  it('returns disabled categories only when asked, flagged as inactive', () => {
+    const disabled = {
+      ...systemCategory('pet_medical', false)!,
+      isActive: false,
+      isHidden: true,
+      archivedAt: '2026-09-01T00:00:00.000Z',
+      archiveReason: '系统分类包停用',
+    };
+    const readPath = { leafOnly: true, includeHidden: true, includeCatalog: false, includeInactive: true } as const;
+
+    // 读路径（筛选 / 高级查询）拿得到，并且带得上徒标，而不是伪装成普通选项。
+    const option = categoryOptions([disabled], 'expense', readPath).find((o) => o.value === 'pet_medical');
+    expect(option).toMatchObject({ label: '居家生活 / 宠物医疗', inactive: true });
+
+    // 没有 includeInactive 的调用方（记账、模板、预算）行为不变：只能看到标签，选不到。
+    for (const opts of [
+      { leafOnly: true, includeHidden: true },
+      { leafOnly: true, includeHidden: true, includeCatalog: false },
+      { leafOnly: true, includeHidden: true, includeCatalog: false, includeInactive: false },
+    ]) {
+      expect(categoryOptions([disabled], 'expense', opts).some((o) => o.value === 'pet_medical')).toBe(false);
+    }
+
+    // 活跃分类不会被误标成停用。
+    const active = allCategories().find((c) => c.id === 'food')!;
+    expect(categoryOptions([active], 'expense', readPath).find((o) => o.value === 'food')?.inactive).toBeUndefined();
+  });
+
   it('offers a general-purpose fine that covers non-traffic penalties', () => {
     const fine = allCategories().find((row) => row.id === 'fine');
     expect(fine).toMatchObject({ name: '罚款', type: 'expense', parentId: 'expense_misc' });
