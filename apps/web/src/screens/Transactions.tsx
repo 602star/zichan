@@ -32,7 +32,7 @@ import {
 } from '@zichan/db';
 import { useStore } from '../db/store.js';
 import { useSnapshot, type Snapshot } from '../db/snapshot.js';
-import { EntityFormModal } from '../ui/EntityFormModal.js';
+import { CategoryPicker, EntityFormModal } from '../ui/EntityFormModal.js';
 import {
   budgetCategoryForm, categoryForm, payeeForm, scheduledTransactionForm,
   transactionForm, transactionSplitForm, type AttachmentDraft, type TransactionFormValue,
@@ -1884,10 +1884,23 @@ function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilter
       <select aria-label="流水类型" style={selectStyle} value={filters.type} onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value as TransactionFilters['type'] }))}>
         {typeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
-      <select aria-label="流水分类" style={selectStyle} value={filters.category} onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value as TransactionFilters['category'] }))}>
-        <option value="all">全部分类</option>
-        {categoryOptions(snap.categories, undefined, { leafOnly: true }).map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-      </select>
+      <CategoryPicker
+        fieldId="transaction-filter-category"
+        name="category"
+        ariaLabel="流水分类"
+        value={filters.category === 'all' ? '' : filters.category}
+        // 选项集限定在账本内真实存在的分类（含隐藏/已停用）：它们仍出现在历史
+        // 流水里，筛选时也要能按它们过滤。目录里尚未落库的分类不能出现——
+        // 没有任何流水会引用它们，选了只会得到空结果。
+        options={categoryOptions(snap.categories, undefined, { leafOnly: true, includeHidden: true, includeCatalog: false })}
+        allowEmpty
+        emptyLabel="全部分类"
+        placeholder="全部分类"
+        defaultShowHidden={snap.setting?.categoryPickerDefaultScope === 'all'}
+        minPanelWidth={480}
+        triggerStyle={selectStyle}
+        onChange={(next) => setFilters((f) => ({ ...f, category: (next || 'all') as TransactionFilters['category'] }))}
+      />
       {usesAccounts && (
         <select aria-label="流水账户" style={selectStyle} value={filters.accountId} onChange={(e) => setFilters((f) => ({ ...f, accountId: e.target.value }))}>
           <option value="all">全部账户</option>

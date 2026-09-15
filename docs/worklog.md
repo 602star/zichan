@@ -3,6 +3,19 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-15 — 日常流水的分类筛选改用标准分类控件
+
+**背景**：用户报“筛选日常流水中的分类时，那个控件不走默认的分类控件”。先取证：起 Playwright 把账本切到「完整资产账本」（筛选行只在非轻量模式下渲染），dump 出筛选行的实际 DOM——`流水分类` 是一个原生 `<select>`，**97 个平铺选项**；而同页记账弹窗的 `二级分类` 是 `BUTTON`（标准 `CategoryPicker`，两级分栏 + 搜索）。所以“不走默认控件”属实，是控件不一致，不是筛选逻辑错。
+
+**改动**：
+1. `CategoryPicker` 新增三个可选 prop：`placeholder`（未选择时触发按钮的文案，默认仍为“选择分类”）、`emptyLabel`（空选项文案，默认仍为“不选择”）、`minPanelWidth`（面板最小宽度）。触发按钮另加可选 `ariaLabel`（筛选行没有可见 `<label>`）与 `triggerStyle`（与同行原生 select 对齐）。
+2. 流水页筛选行改用 `CategoryPicker`：空状态即「全部分类」，默认显示隐藏的开关沿用 `categoryPickerDefaultScope`，面板给 480px 最小宽度——筛选单元格只有 120px 左右，不放开宽度会被面板上的 `overflow:hidden` 把两栏剪掉（实测：482px 面板，右边界 1027 < 视口 1280）。
+3. 选项集定为“账本内真实存在的分类”：`includeHidden: true`（隐藏与已停用分类仍出现在历史流水里，要能按它们筛选）+ `includeCatalog: false`（目录里尚未写入账本的分类没有任何流水会引用，选了只会得到空结果）。
+
+**测试**：新增 e2e `ledger-filter-category.spec.mjs`——切换账本模式后验证筛选控件是 `button[aria-haspopup=listbox]`、一级分类分栏存在、搜索“加油”并选中后触发按钮显示“加油 / 充电”、选「全部分类」回到空状态、目录里未落库的「违章」搜不到。此前非轻量模式（日常流水 + 整行筛选器）在 e2e 里**零覆盖**。
+
+**验证**：typecheck、lint 通过；单测 **819 通过**（未受影响）；e2e **19/19 通过**（新增 1 条）。
+
 ## 2026-09-15 — 补上通用「罚款」分类
 
 **背景**：用户问“目前好像没有罚款这个支出项目？”。查证属实：目录里只有「违章罚款」（交通出行下，**在车主扩展包里**，默认不启用）、金融的「滞纳金」与「罚息」（在「保险与税费」包里），没有任何通用罚款。非车主场景（乱扔垃圾、违规养犬、平台处罚、法院罚金）无处可记；即使启用车主包，“违章罚款”对它们也不合适。

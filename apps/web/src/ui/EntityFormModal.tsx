@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { DialogShell } from './DialogShell.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
@@ -868,8 +868,33 @@ export function CategoryPicker(props: {
   allowEmpty?: boolean;
   defaultShowHidden?: boolean;
   onChange: (value: string) => void;
+  /**
+   * 空选项的文案。表单里是“不选择”，筛选场景里是“全部分类”。
+   */
+  emptyLabel?: string;
+  /**
+   * 未选择时触发按钮上的文案。没有可见 <label> 的场景（筛选行）用它与空选项保持一致。
+   */
+  placeholder?: string;
+  /**
+   * 触发按钮的无障碍名称。表单用 <label htmlFor> 关联，筛选行没有可见标签，
+   * 需要显式给一个。
+   */
+  ariaLabel?: string;
+  /**
+   * 下拉面板的最小宽度。筛选行里的单元格只有 120px 左右，面板必须能超出触发
+   * 按钮的宽度，否则两栏（一级/二级）会被 overflow:hidden 剪掉。
+   */
+  minPanelWidth?: number;
+  /**
+   * 让触发按钮的外观与同行的原生 select 对齐（筛选行里混用两种控件）。
+   */
+  triggerStyle?: CSSProperties;
 }) {
-  const { fieldId, name, value, options, allowEmpty, defaultShowHidden = false, onChange } = props;
+  const {
+    fieldId, name, value, options, allowEmpty, defaultShowHidden = false, onChange,
+    emptyLabel = '不选择', placeholder = '选择分类', ariaLabel, minPanelWidth, triggerStyle,
+  } = props;
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [activeParent, setActiveParent] = useState('');
@@ -892,8 +917,9 @@ export function CategoryPicker(props: {
         className="zc-select"
         aria-haspopup="listbox"
         aria-expanded={open}
+        {...(ariaLabel ? { 'aria-label': ariaLabel } : {})}
         onClick={() => setOpen((v) => !v)}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, textAlign: 'left', cursor: 'pointer', minHeight: 38 }}
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, textAlign: 'left', cursor: 'pointer', minHeight: 38, ...triggerStyle }}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {selected ? (
@@ -902,7 +928,7 @@ export function CategoryPicker(props: {
               <span style={{ color: 'var(--text-tertiary)', margin: '0 6px' }}>›</span>
               <b>{selectedParts?.child}</b>
             </>
-          ) : '选择分类'}
+          ) : placeholder}
         </span>
         <span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>{open ? '▲' : '▼'}</span>
       </button>
@@ -914,7 +940,8 @@ export function CategoryPicker(props: {
             position: 'absolute',
             top: 'calc(100% + 6px)',
             left: 0,
-            right: 0,
+            right: minPanelWidth ? 'auto' : 0,
+            ...(minPanelWidth ? { minWidth: minPanelWidth, maxWidth: 'min(96vw, 760px)' } : {}),
             zIndex: 80,
             border: '1px solid var(--border)',
             borderRadius: 'var(--r-md)',
@@ -953,7 +980,7 @@ export function CategoryPicker(props: {
                   style={categoryParentButton(!value)}
                 >
                   <span style={categoryDot(0)}>无</span>
-                  <span>不选择</span>
+                  <span>{emptyLabel}</span>
                 </button>
               )}
               {groups.map((group, idx) => (
