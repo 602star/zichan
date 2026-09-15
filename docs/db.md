@@ -204,8 +204,12 @@ or fixed-asset report.
   重建全部 lot、卖出消耗和链路缓存；历史持仓不足会让整笔操作回滚。转换没有硬删除产品路径。
 - **`saveTransactionAggregate` / `voidTransaction` / `restoreTransaction`** —— 原子保存流水、精确拆分和退款分配；
   分类必须是对应收支类型的启用叶子，拆分合计必须精确相等，账户/转账/币种/时间快照必须有效。退款创建时冻结原日期、
-  原金额、分类路径和分配比例，后续编辑原支出不会改写历史退款报表。更新使用 `version` CAS；对账状态只由关闭的
+  原金额、分类路径和分配比例，后续编辑原支出不会改写历史退款报表。退款的到账币种（`asset_id`）与原支出币种相同时，
+  `refund_applied_amount` 必须等于 `amount`：中间没有汇率，两个数分开就只能是填错，静默接受会把原支出冲过头。
+  更新使用 `version` CAS；对账状态只由关闭的
   `reconciliation_sessions` 和 `reconciliation_items` 推导，持久化状态仅允许 `pending/cleared`。
+- **`transactionBrowseAggregate` 的类型范围** —— 行列表保持严格的 `type` 条件（“支出”页不列退款行），但聚合必须沿同一轴放宽：退款是负支出而不是第三种方向，用 `type = 'expense'` 筛聚合会把退款整段丢掉，使筛选后的“合计支出”与同月的“本月支出”相差一个退款额。因此 `expense` 范围下聚合base同时纳入 `refund`，而 `income` 范围不掺入（退款不是收入）；无类型范围与原来一致。
+- **`transactionBrowsePage.refundsByOriginal`** —— 与 `refundAppliedAmounts` 一同返回的退款行摘要（id/日期/到账额/到账币种/冲减额），因为退款行不在支出页里，界面要能看到并作废某笔支出的退款就需这个载荷。
 - **`previewMasterDataChange` / `archiveMasterData` / `mergeMasterData`** —— 预览引用影响，归档主数据，或在一个审计事务中迁移引用并合并；
   已关闭对账账户、跨收支类型分类、一级/二级分类错层等危险合并会被拒绝。
 - **`saveFixedAssetAcquisition` / `saveFixedAssetEvent` / `saveFixedAssetConsumable`** —— 购买、维修、升级、出售和耗材统一使用

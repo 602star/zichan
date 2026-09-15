@@ -26,6 +26,7 @@ import {
   type SqlLedgerStore,
   type TransactionBrowseInput,
   type TransactionBrowsePage,
+  type RefundRowSummary,
   type TransactionReportAggregateRow,
   type AccountBalanceAggregateRow,
   type AccountLedgerPage,
@@ -74,6 +75,7 @@ import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
 import { ReconciliationModal } from './ReconciliationModal.js';
 import { DialogShell } from '../ui/DialogShell.js';
+import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { QuickExpenseModal, type QuickExpenseDraft } from '../ui/QuickExpenseModal.js';
 
 const TYPE_OPTIONS: { value: 'all' | TransactionType; label: string }[] = [
@@ -141,6 +143,7 @@ function mergeBrowsePage(current: TransactionBrowsePage, page: TransactionBrowse
         !current.reconciliationSessions.some((currentRow) => currentRow.id === row.id)),
     ],
     refundAppliedAmounts: { ...current.refundAppliedAmounts, ...page.refundAppliedAmounts },
+    refundsByOriginal: { ...current.refundsByOriginal, ...page.refundsByOriginal },
   };
 }
 
@@ -172,6 +175,8 @@ export function Transactions() {
   const [tab, setTab] = useState<Tab>(initialTransactionTab);
   const [editingTx, setEditingTx] = useState<Transaction | 'new' | null>(null);
   const [refundDraft, setRefundDraft] = useState<Transaction | null>(null);
+  /** The expense whose refunds the user asked to inspect. */
+  const [refundHistoryFor, setRefundHistoryFor] = useState<Transaction | null>(null);
   const [templateDraft, setTemplateDraft] = useState<Transaction | null>(null);
   const [quickExpenseOpen, setQuickExpenseOpen] = useState(false);
   const [quickTemplate, setQuickTemplate] = useState<TransactionTemplate | null>(null);
@@ -610,11 +615,45 @@ export function Transactions() {
     setEditingTx(transaction);
   }
 
-  function remainingRefundAmount(original: Transaction): string {
+  /** The refund rows of one expense, newest first. Available even on a 支出-scoped page. */
+  function refundsOf(original: Transaction): RefundRowSummary[] {
+    return readyTransactionRead.page.refundsByOriginal[original.id] ?? [];
+  }
+
+  function assetCodeOf(assetId: string): string {
+    return readySnap.assets.find((asset) => asset.id === assetId)?.code ?? assetId;
+  }
+
+  /**
+   * Refund rows are filtered out of a 支出-scoped page, so the refund being edited
+   * is fetched on demand rather than read out of the snapshot.
+   */
+  async function openRefundEditor(refundId: string) {
+    const refund = await store.transactions.get(refundId);
+    setRefundHistoryFor(null);
+    if (refund) setEditingTx(refund);
+  }
+
+  /**
+   * What is still refundable. `excludeRefundId` answers the same question from the
+   * point of view of one refund being edited, which must not count itself.
+   */
+  function remainingRefundAmount(original: Transaction, excludeRefundId?: string): string {
     if (original.type !== 'expense' || !isTransactionActive(original)) return '0';
-    const refunded = sumStrings(readyTransactionRead.page.refundAppliedAmounts[original.id] ?? []);
+    const refunded = refundsOf(original)
+      .filter((refund) => refund.id !== excludeRefundId)
+      .reduce((total, refund) => total.plus(refund.appliedAmount), D(0));
     const remaining = D(original.amount).minus(refunded);
     return (remaining.gt(0) ? remaining : D(0)).toString();
+  }
+
+  /** Remaining refundable amount for the refund form currently open, if any. */
+  function refundFormRemaining(): string | undefined {
+    const editing = editingTx === 'new' ? refundDraft : editingTx;
+    if (!editing || editing.type !== 'refund' || !editing.refundForId) return undefined;
+    const original = readySnap.transactions.find((row) => row.id === editing.refundForId);
+    if (!original) return undefined;
+    return remainingRefundAmount(original, editingTx === 'new' ? undefined : editing.id);
   }
 
   function startRefund(original: Transaction) {
@@ -918,7 +957,7 @@ export function Transactions() {
     });
   }
 
-  async function voidTx(entity: Transaction) {
+  async function voidTx(entity: { id: string }) {
     const saved = await voidTransaction(store, entity.id);
     bump();
     undo.offer('流水已作废', async () => {
@@ -1103,6 +1142,9 @@ export function Transactions() {
                 selectedIds={selectedIds}
                 setSelectedIds={setSelectedIds}
                 refundRemaining={remainingRefundAmount}
+                refundsFor={refundsOf}
+                onManageRefunds={setRefundHistoryFor}
+                assetCode={assetCodeOf}
                 onRefund={startRefund}
               />
             ) : (
@@ -1384,6 +1426,7 @@ export function Transactions() {
             usesAccounts,
             refundMode: editingTx === 'new' ? !!refundDraft : editingTx.type === 'refund',
             expenseOnly: !usesAccounts && !(editingTx === 'new' ? refundDraft : editingTx.type === 'refund'),
+            refundRemaining: refundFormRemaining(),
           })}
           initial={editingTx === 'new' ? refundDraft ?? templateDraft ?? undefined : editingTx}
           isNew={editingTx === 'new'}
@@ -1398,6 +1441,19 @@ export function Transactions() {
           onDelete={editingTx !== 'new' ? async () => voidTx(editingTx) : undefined}
           deleteLabel="作废"
           onClose={() => { setEditingTx(null); setRefundDraft(null); setTemplateDraft(null); }}
+        />
+      )}
+      {refundHistoryFor && (
+        <RefundHistoryDialog
+          original={refundHistoryFor}
+          refunds={refundsOf(refundHistoryFor)}
+          remaining={remainingRefundAmount(refundHistoryFor)}
+          assetCode={assetCodeOf}
+          categories={readySnap.categories}
+          onEditRefund={openRefundEditor}
+          onVoidRefund={async (refundId) => { await voidTx({ id: refundId }); }}
+          onNewRefund={(original) => { setRefundHistoryFor(null); startRefund(original); }}
+          onClose={() => setRefundHistoryFor(null)}
         />
       )}
       {editingSplit && (
@@ -2007,11 +2063,14 @@ function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof b
   );
 }
 
-function TransactionList({ vm, onEdit, onRefund, refundRemaining, usesAccounts, tagName, locationName, attachmentCount, selectedIds, setSelectedIds }: {
+function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, onManageRefunds, assetCode, usesAccounts, tagName, locationName, attachmentCount, selectedIds, setSelectedIds }: {
   vm: NonNullable<ReturnType<typeof buildTransactions>>;
   onEdit: (tx: Transaction) => void;
   onRefund: (tx: Transaction) => void;
   refundRemaining: (tx: Transaction) => string;
+  refundsFor: (tx: Transaction) => RefundRowSummary[];
+  onManageRefunds: (tx: Transaction) => void;
+  assetCode: (assetId: string) => string;
   usesAccounts: boolean;
   tagName: (id: string) => string;
   locationName: (tx: Transaction) => string | undefined;
@@ -2041,6 +2100,25 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, usesAccounts, 
                 : undefined;
               const files = attachmentCount(tx);
               const remaining = refundRemaining(tx);
+              const refunds = tx.type === 'expense' ? refundsFor(tx) : [];
+              const refunded = refunds.reduce((total, refund) => total.plus(refund.appliedAmount), D(0));
+              // Speak the row's own units (amount + asset), not the report currency.
+              const refundedLabel = refunds.length
+                ? `${refunded.toString()} / ${tx.amount} ${assetCode(tx.assetId)}`
+                : '';
+              // An expense that came back in full is no longer still "spent". It stays
+              // in the list (the history is the point) but has to read as settled, and it
+              // must keep a way into its refunds: the refund row itself is filtered out
+              // of a 支出-scoped list, so the badge is the only handle left.
+              const settled = refunds.length > 0 && !D(remaining).gt(0);
+              const refundChip = refunds.length > 0
+                ? {
+                  label: settled ? `已退 ${refundedLabel}` : `部分退款 · 已退 ${refundedLabel}`,
+                  title: settled
+                    ? `${refunds.length} 笔退款已全额退回，点开可查看或作废`
+                    : `${refunds.length} 笔退款，剩余可退 ${remaining}，点开可查看或作废`,
+                }
+                : undefined;
               const selectable = tx.type !== 'adjustment' && item.statusLabel !== '已对账';
               const details = [
                 item.typeLabel,
@@ -2084,13 +2162,23 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, usesAccounts, 
                     {item.categoryLabel}
                   </span>
                   <span style={{ minWidth: 0 }}>
-                    <span style={{ display: 'block', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
-                    <span style={{ display: 'block', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 2 }}>
-                      {details}
+                    <span style={{ display: 'block', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...(settled ? { textDecoration: 'line-through', color: 'var(--text-tertiary)' } : {}) }}>{title}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
+                      <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
+                        {details}
+                      </span>
+                      {refundChip && (
+                        <button
+                          type="button"
+                          className="zc-refund-chip"
+                          title={refundChip.title}
+                          onClick={(event) => { event.stopPropagation(); onManageRefunds(tx); }}
+                        >{refundChip.label}</button>
+                      )}
                     </span>
                   </span>
                   {usesAccounts && <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{item.statusLabel}</span>}
-                  <span style={{ justifySelf: 'end', fontSize: 'var(--fs-body)', ...amountColor(item.signedAmount) }}>
+                  <span style={{ justifySelf: 'end', fontSize: 'var(--fs-body)', ...(settled ? { textDecoration: 'line-through', color: 'var(--text-tertiary)' } : amountColor(item.signedAmount)) }}>
                     {tx.type === 'transfer' ? '' : tx.type === 'income' || tx.type === 'refund' || (tx.type === 'adjustment' && tx.adjustmentDirection === 'increase') ? '+' : '-'}{tx.amount} {item.assetCode}
                   </span>
                   <span style={{ justifySelf: 'end' }}>
@@ -2110,6 +2198,108 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, usesAccounts, 
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * The refunds behind one expense, and the only handle on them once the original is
+ * fully refunded. Refund rows are not listed as their own entries when the ledger
+ * is scoped to 支出, so without this screen a full refund would leave the user with
+ * an expense they can neither void ("先作废关联退款") nor even open.
+ */
+function RefundHistoryDialog(props: {
+  original: Transaction;
+  refunds: RefundRowSummary[];
+  remaining: string;
+  assetCode: (assetId: string) => string;
+  categories: Category[];
+  onEditRefund: (refundId: string) => Promise<void>;
+  onVoidRefund: (refundId: string) => Promise<void>;
+  onNewRefund: (original: Transaction) => void;
+  onClose: () => void;
+}) {
+  const { original, refunds, remaining, assetCode, categories, onEditRefund, onVoidRefund, onNewRefund, onClose } = props;
+  const titleId = useId();
+  const [pendingVoid, setPendingVoid] = useState<RefundRowSummary | null>(null);
+  const refunded = refunds.reduce((total, refund) => total.plus(refund.appliedAmount), D(0)).toString();
+  const originalCode = assetCode(original.assetId);
+  const title = original.description ?? original.merchant ?? categoryLabel(original.category, categories);
+  const canRefundAgain = D(remaining).gt(0);
+
+  return (
+    <DialogShell
+      labelledBy={titleId}
+      onDismiss={onClose}
+      backdropStyle={{ background: 'rgba(0,0,0,.34)' }}
+      panelClassName="zc-entity-modal zc-refund-history"
+      panelStyle={{ width: 'min(560px, 100%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 18, boxShadow: '0 18px 60px rgba(0,0,0,.2)', maxHeight: '86vh', overflow: 'auto' }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+        <div style={{ minWidth: 0 }}>
+          <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>退款记录</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
+            {original.date} · {title} · 原支出 {original.amount} {originalCode}
+          </div>
+        </div>
+        <button type="button" data-dialog-initial-focus onClick={onClose} style={button}>关闭</button>
+      </div>
+
+      <div style={{ display: 'flex', gap: 16, marginTop: 14, fontSize: 'var(--fs-meta)' }}>
+        <span>已退 <strong style={{ color: 'var(--positive)' }}>{refunded} {originalCode}</strong></span>
+        <span style={{ color: 'var(--text-tertiary)' }}>剩余可退 {remaining} {originalCode}</span>
+      </div>
+
+      <div style={{ marginTop: 14, borderTop: '1px solid var(--border)' }}>
+        {refunds.map((refund) => {
+          const refundCode = assetCode(refund.assetId);
+          const crossCurrency = refund.assetId !== original.assetId;
+          return (
+            <div key={refund.id} className="zc-refund-row">
+              <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>{refund.date}</span>
+              <span style={{ minWidth: 0 }}>
+                <span style={{ display: 'block', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-medium)' }}>
+                  到账 {refund.amount} {refundCode}
+                </span>
+                <span style={{ display: 'block', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 2 }}>
+                  {`冲减原支出 ${refund.appliedAmount} ${originalCode}${crossCurrency ? '（与到账币种不同）' : ''}`}
+                </span>
+              </span>
+              <span style={{ display: 'flex', gap: 6, justifySelf: 'end' }}>
+                <button type="button" onClick={() => void onEditRefund(refund.id)} style={{ ...button, padding: '6px 10px' }}>编辑</button>
+                <button type="button" onClick={() => setPendingVoid(refund)} style={{ ...button, padding: '6px 10px' }}>作废</button>
+              </span>
+            </div>
+          );
+        })}
+        {refunds.length === 0 && (
+          <div style={{ padding: '16px 0', fontSize: 'var(--fs-body)', color: 'var(--text-tertiary)' }}>这笔支出还没有退款。</div>
+        )}
+      </div>
+
+      {canRefundAgain && (
+        <div style={{ marginTop: 16 }}>
+          <button type="button" onClick={() => onNewRefund(original)} style={primary}>再记一笔退款</button>
+          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 6 }}>
+            金额可改小，即部分退款；剩余可退 {remaining} {originalCode}。
+          </div>
+        </div>
+      )}
+
+      {pendingVoid && (
+        <ConfirmDialog
+          title="作废退款"
+          confirmLabel="作废"
+          tone="danger"
+          onCancel={() => setPendingVoid(null)}
+          onConfirm={async () => {
+            await onVoidRefund(pendingVoid.id);
+            setPendingVoid(null);
+          }}
+        >
+          <p>作废后这笔退款不再冲减原支出，{pendingVoid.amount} {assetCode(pendingVoid.assetId)} 的到账也不再计入余额。记录会写入操作历史并可以恢复。确定继续？</p>
+        </ConfirmDialog>
+      )}
+    </DialogShell>
   );
 }
 
@@ -2310,10 +2500,6 @@ function Kpi({ label, value, sub, tone }: { label: string; value: string; sub: s
       <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 5, fontWeight: 'var(--fw-medium)' }}>{sub}</div>
     </>
   );
-}
-
-function sumStrings(values: string[]): string {
-  return values.reduce((acc, v) => acc.plus(v || 0), D(0)).toString();
 }
 
 function scheduleLabel(status: 'overdue' | 'due' | 'future' | 'paused'): string {

@@ -429,6 +429,42 @@ describe('ledger mode forms', () => {
     expect(optionalTransactionFields(s.setting, false)).toEqual([]);
   });
 
+  it('asks for a refund offset only when the refund settles in another asset', () => {
+    const s = makeSnapshot();
+    s.setting!.ledgerMode = 'accounts';
+    const original = makeTransaction({ id: 'orig', date: '2026-03-03', type: 'expense', category: 'food', amount: '100', assetId: s.ids.gbp });
+    s.transactions = [original];
+    const spec = transactionForm(s, { refundMode: true, refundRemaining: '100' });
+    const field = spec.fields.find((f) => f.key === 'refundAppliedAmount')!;
+
+    // 同币种：到账金额就是冲减金额，字段不出现，也不会把第二个数写进实体。
+    expect(field.visibleWhen!({ refundForId: original.id, assetId: s.ids.gbp })).toBe(false);
+    expect(spec.fromValues({
+      date: '2026-03-04', type: 'refund', category: 'food', amount: '30',
+      assetId: s.ids.gbp, refundForId: original.id, refundAppliedAmount: '100',
+    }).refundAppliedAmount).toBeUndefined();
+
+    // 换币种后必须显式给出按原支出币种计量的冲减额。
+    expect(field.visibleWhen!({ refundForId: original.id, assetId: s.ids.btc })).toBe(true);
+    expect(field.required).toBe(true);
+    expect(spec.fromValues({
+      date: '2026-03-04', type: 'refund', category: 'food', amount: '0.001',
+      assetId: s.ids.btc, refundForId: original.id, refundAppliedAmount: '70',
+    }).refundAppliedAmount).toBe('70');
+
+    // 没关联原支出（例如普通流水）时同样不出现。
+    expect(field.visibleWhen!({ assetId: s.ids.gbp })).toBe(false);
+  });
+
+  it('tells the refund form how much is still refundable', () => {
+    const s = makeSnapshot();
+    const withRemaining = transactionForm(s, { refundMode: true, refundRemaining: '42' });
+    const withoutRemaining = transactionForm(s, { refundMode: true });
+    expect(withRemaining.fields.find((f) => f.key === 'amount')!.hint).toContain('剩余可退 42');
+    // 非退款表单不该拿到退款提示。
+    expect(withoutRemaining.fields.find((f) => f.key === 'amount')!.hint).toBeUndefined();
+  });
+
   it('uses leaf categories and exposes template tags and locations', () => {
     const s = makeSnapshot();
     s.categories.push({ id: 'daily', name: '日常消费', type: 'expense', createdAt: '', updatedAt: '', version: 1, isDeleted: false, isActive: true, sortOrder: 1 });

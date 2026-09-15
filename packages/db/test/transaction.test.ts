@@ -88,6 +88,82 @@ describe('transactions persistence', () => {
     await store.close();
   });
 
+  it('refuses a same-asset refund whose amount and offset disagree', async () => {
+    const store = await openTransactionLedger();
+    await store.settings.put({ ...base(), baseCurrencyAssetId: 'GBP', defaultLotMethod: 'fifo', refundAttributionMode: 'original_date' });
+    const expense = await saveTransaction(store, tx({ date: '2026-03-08', amount: '100', category: 'food' }));
+
+    // In the same asset there is no rate between the cash that came back and the
+    // amount taken off the expense, so two different numbers can only be a
+    // mistake: it is what let a 30 到账 quietly offset the full 100.
+    await expect(saveTransaction(store, tx({
+      date: '2026-03-09', type: 'refund', amount: '30', category: 'food',
+      refundForId: expense.id, refundAppliedAmount: '100',
+    }))).rejects.toThrow('退款金额与冲减金额必须一致');
+
+    const refund = await saveTransaction(store, tx({
+      date: '2026-03-09', type: 'refund', amount: '30', category: 'food',
+      refundForId: expense.id,
+    }));
+    expect(refund.refundAppliedAmount).toBe('30');
+    await store.close();
+  });
+
+  it('still lets a refund settling in another asset carry its own offset', async () => {
+    const store = await openTransactionLedger();
+    await store.settings.put({ ...base(), baseCurrencyAssetId: 'GBP', defaultLotMethod: 'fifo', refundAttributionMode: 'original_date' });
+    await store.assets.put({ ...base(), id: 'JPY', code: 'JPY', name: 'Yen', type: 'fiat', decimals: 0, isActive: true } as never);
+    const expense = await saveTransaction(store, tx({ date: '2026-03-08', amount: '100', category: 'food' }));
+
+    const refund = await saveTransaction(store, tx({
+      date: '2026-03-09', type: 'refund', amount: '4000', assetId: 'JPY', category: 'food',
+      refundForId: expense.id, refundAppliedAmount: '20',
+    }));
+    expect(refund.amount).toBe('4000');
+    expect(refund.refundAppliedAmount).toBe('20');
+    expect(refund.refundAppliedAssetId).toBe('GBP');
+    await store.close();
+  });
+
+  it('nets refunds off a 支出-scoped total and returns the refund rows with the page', async () => {
+    const store = await openTransactionLedger();
+    await store.settings.put({ ...base(), baseCurrencyAssetId: 'GBP', defaultLotMethod: 'fifo', refundAttributionMode: 'original_date' });
+    const expense = await saveTransaction(store, tx({ date: '2026-03-08', amount: '100', category: 'food' }));
+    const refund = await saveTransaction(store, tx({
+      date: '2026-03-09', type: 'refund', amount: '30', category: 'food',
+      refundForId: expense.id,
+    }));
+
+    // Refunds are negative expense, not a third direction: scoping the list to 支出
+    // must not drop them from the total, or the same month reads 100 in one card and
+    // 70 in the next.
+    const expenseTotal = (rows: Awaited<ReturnType<typeof store.transactionBrowseAggregate>>) => round(
+      rows.filter((row) => row.direction === 'expense')
+        .flatMap((row) => row.amounts)
+        .reduce((sum, amount) => sum.plus(amount), D(0)),
+      2,
+    );
+    const scoped = await store.transactionBrowseAggregate({ type: 'expense', from: '2026-03-01', to: '2026-03-31' });
+    const unscoped = await store.transactionBrowseAggregate({ from: '2026-03-01', to: '2026-03-31' });
+    expect(expenseTotal(scoped)).toBe('70.00');
+    expect(expenseTotal(scoped)).toBe(expenseTotal(unscoped));
+    expect(round((await monthlyTransactionSummary(store, '2026-03', 'GBP')).expense, 2)).toBe('70.00');
+
+    // An income-scoped total is unaffected: a refund is not income.
+    const incomeScoped = await store.transactionBrowseAggregate({ type: 'income', from: '2026-03-01', to: '2026-03-31' });
+    expect(incomeScoped).toHaveLength(0);
+
+    // The refund row itself is filtered out of the page, so the page has to hand back
+    // the refunds of the expenses it does return.
+    const page = await store.transactionBrowsePage({ type: 'expense' });
+    expect(page.transactions.map((row) => row.id)).toEqual([expense.id]);
+    expect(page.refundsByOriginal[expense.id]).toEqual([{
+      id: refund.id, date: '2026-03-09', amount: '30', assetId: 'GBP', appliedAmount: '30',
+    }]);
+    expect(page.refundAppliedAmounts[expense.id]).toEqual(['30']);
+    await store.close();
+  });
+
   it('pages report rows by frozen report date and loads only page child records', async () => {
     const store = await openTransactionLedger();
     await store.settings.put({ ...base(), baseCurrencyAssetId: 'GBP', defaultLotMethod: 'fifo', refundAttributionMode: 'original_date' });

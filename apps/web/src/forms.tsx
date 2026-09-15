@@ -134,6 +134,12 @@ interface LedgerFormOptions {
   usesAccounts?: boolean;
   refundMode?: boolean;
   expenseOnly?: boolean;
+  /**
+   * What is still refundable on the original expense being refunded, in that
+   * expense's own asset. The refund row is filtered out of a 支出-scoped page,
+   * so the form cannot derive this from its snapshot alone.
+   */
+  refundRemaining?: string;
 }
 
 function defaultSettlementAssetId(snap: Snapshot): string {
@@ -503,8 +509,22 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
     { key: 'status', label: '状态', type: 'select', half: true, options: TX_STATUS, section: 'more' },
   ] : [];
   const refundableExpenses = snap.transactions.filter((t) => !t.isDeleted && t.recordState !== 'voided' && t.type === 'expense');
+  /** The valid original expense a refund is attached to, if one is selected. */
+  const refundOriginal = (values: Record<string, string>) =>
+    snap.transactions.find((transaction) => transaction.id === values.refundForId && transaction.type === 'expense');
+  /**
+   * A refund settles in the asset that actually came back, but it offsets the
+   * original expense in *that* expense's asset. When both are the same there is
+   * no rate between them, so the single number the user typed is both; asking for
+   * it twice is what let a 30 到账 silently offset 100.
+   */
+  const refundNeedsSeparateOffset = (values: Record<string, string>) => {
+    const original = refundOriginal(values);
+    if (!original) return false;
+    return (values.assetId || defaultAssetId) !== original.assetId;
+  };
   const refundAllocationOptions = (values: Record<string, string>) => {
-    const original = snap.transactions.find((transaction) => transaction.id === values.refundForId && transaction.type === 'expense');
+    const original = refundOriginal(values);
     if (!original) return [];
     const splits = snap.transactionSplits.filter((split) => !split.isDeleted && split.transactionId === original.id);
     return splits.length
@@ -526,14 +546,14 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
         required: true,
       },
       { key: 'category', label: '二级分类', type: 'category', options: (v) => categoryOptions(snap.categories, expenseOnly ? 'expense' : v.type === 'income' ? 'income' : 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), lockedVisible: true, required: true },
-      { key: 'amount', label: '金额', type: 'number', half: true, lockedVisible: true, required: true },
+      { key: 'amount', label: '金额', type: 'number', half: true, lockedVisible: true, required: true, hint: refundMode && options.refundRemaining ? `本次到账金额；剩余可退 ${options.refundRemaining}。改小即为部分退款。` : undefined },
       { key: 'assetId', label: '币种', type: 'select', half: true, options: settlementOpts(snap), lockedVisible: true, required: true },
       { key: 'description', label: '描述', type: 'text', half: true, placeholder: '午餐 / 工资 / 房租（可留空，列表用分类兜底）', lockedVisible: true },
       { key: 'attachmentDrafts', label: '附件 / 图片', type: 'file', accept: 'image/*,.pdf', multiple: true, capture: 'environment', lockedVisible: true },
       { key: 'timezone', label: '交易时区', type: 'text', half: true, defaultValue: currentTimezone(), section: 'more' },
       ...accountFields,
       { key: 'refundForId', label: '退款关联原支出', type: 'select', options: refundableExpenses.map((t) => ({ value: t.id, label: `${t.date} · ${t.description ?? t.merchant ?? t.category} · ${t.amount} ${snap.assets.find((a) => a.id === t.assetId)?.code ?? ''}` })), allowEmpty: !refundMode, section: refundMode ? undefined : 'more', lockedVisible: refundMode, required: refundMode, hidden: expenseOnly },
-      { key: 'refundAppliedAmount', label: '冲减原消费金额', type: 'number', half: true, placeholder: '与到账币种不同时必填', section: refundMode ? undefined : 'more', lockedVisible: refundMode, hidden: expenseOnly },
+      { key: 'refundAppliedAmount', label: '冲减原消费金额', type: 'number', half: true, placeholder: '按原支出币种填写', section: refundMode ? undefined : 'more', lockedVisible: refundMode, hidden: expenseOnly, required: true, visibleWhen: refundNeedsSeparateOffset },
       { key: 'refundAllocationMode', label: '退款分配方式', type: 'select', half: true, options: [{ value: 'proportional', label: '按原单剩余比例' }, { value: 'specified', label: '指定退款项目' }], defaultValue: 'proportional', section: refundMode ? undefined : 'more', lockedVisible: refundMode, hidden: expenseOnly },
       { key: 'refundAllocationDrafts', label: '指定退款项目金额', type: 'allocation', options: refundAllocationOptions, section: refundMode ? undefined : 'more', lockedVisible: refundMode, hidden: expenseOnly },
       { key: 'payeeId', label: '已有商户', type: 'select', half: true, options: payeeOpts(snap), allowEmpty: true, section: 'more' },
@@ -600,7 +620,9 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       reportingTreatment: e?.reportingTreatment,
       payeeId: S(v.payeeId),
       refundForId: S(v.refundForId),
-      refundAppliedAmount: S(v.refundAppliedAmount),
+      // Same asset: the amount is the offset, so never carry a second number into
+      // the store — a stale 冲减 value here is what over-offset the original.
+      refundAppliedAmount: refundNeedsSeparateOffset(v) ? S(v.refundAppliedAmount) : undefined,
       refundAppliedAssetId: e?.refundAppliedAssetId,
       refundAllocationMode: (v.refundAllocationMode as Transaction['refundAllocationMode']) || 'proportional',
       refundAllocationDrafts: (() => {

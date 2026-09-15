@@ -1071,7 +1071,23 @@ export interface TransactionBrowsePage extends TransactionReportPage {
   reconciliationItems: import('@zichan/core').ReconciliationItem[];
   reconciliationSessions: import('@zichan/core').ReconciliationSession[];
   refundAppliedAmounts: Record<string, string[]>;
+  /**
+   * The refund rows behind `refundAppliedAmounts`, keyed by the original expense
+   * id. Refund rows are filtered out of a 支出-scoped page, so an expense whose
+   * full amount came back would otherwise have no handle at all. Newest first.
+   */
+  refundsByOriginal: Record<string, RefundRowSummary[]>;
   totalCount: number;
+}
+
+export interface RefundRowSummary {
+  id: string;
+  date: string;
+  /** Cash that actually arrived (the refund's own amount and asset). */
+  amount: string;
+  assetId: string;
+  /** Portion offsetting the original expense, in the original's asset. */
+  appliedAmount: string;
 }
 
 export interface AccountBalanceAggregateRow {
@@ -2341,12 +2357,21 @@ export class SqlLedgerStore implements LedgerStore {
         rowToEntity<import('@zichan/core').ReconciliationSession>(TABLES.reconciliationSessions, row)));
     }
     const refundAppliedAmounts: Record<string, string[]> = {};
+    const refundsByOriginal: Record<string, RefundRowSummary[]> = {};
     for (let offset = 0; offset < ids.length; offset += 500) {
       const batch = ids.slice(offset, offset + 500);
       if (!batch.length) continue;
-      const refundRows = await this.driver.all<{ refund_for_id: string; amounts_json: string }>(
+      // One JSON object per refund row, so the fields of a row can never drift
+      // apart the way parallel json_group_array columns could.
+      const refundRows = await this.driver.all<{ refund_for_id: string; refunds_json: string }>(
         `SELECT refund_for_id,
-                json_group_array(COALESCE(refund_applied_amount, amount)) AS amounts_json
+                json_group_array(json_object(
+                  'id', id,
+                  'date', date,
+                  'amount', amount,
+                  'assetId', asset_id,
+                  'appliedAmount', COALESCE(refund_applied_amount, amount)
+                )) AS refunds_json
          FROM transactions
          WHERE is_deleted = 0 AND COALESCE(record_state, 'active') = 'active'
            AND type = 'refund'
@@ -2355,7 +2380,18 @@ export class SqlLedgerStore implements LedgerStore {
         batch,
       );
       for (const row of refundRows) {
-        refundAppliedAmounts[row.refund_for_id] = JSON.parse(row.amounts_json) as string[];
+        const parsed = JSON.parse(row.refunds_json) as Record<string, unknown>[];
+        const refunds: RefundRowSummary[] = parsed
+          .map((entry) => ({
+            id: String(entry['id']),
+            date: String(entry['date']),
+            amount: String(entry['amount']),
+            assetId: String(entry['assetId']),
+            appliedAmount: String(entry['appliedAmount']),
+          }))
+          .sort((left, right) => right.date.localeCompare(left.date) || right.id.localeCompare(left.id));
+        refundsByOriginal[row.refund_for_id] = refunds;
+        refundAppliedAmounts[row.refund_for_id] = refunds.map((refund) => refund.appliedAmount);
       }
     }
     const last = transactions.at(-1);
@@ -2370,6 +2406,7 @@ export class SqlLedgerStore implements LedgerStore {
       reconciliationItems,
       reconciliationSessions,
       refundAppliedAmounts,
+      refundsByOriginal,
       totalCount: Number(countRow?.count ?? 0),
       hasMore,
       ...(hasMore && last && lastDate ? { nextCursor: { value: lastDate, id: last.id } } : {}),
@@ -2395,7 +2432,18 @@ export class SqlLedgerStore implements LedgerStore {
   async transactionBrowseAggregate(
     input: Omit<TransactionBrowseInput, 'cursor' | 'limit'> = {},
   ): Promise<TransactionReportAggregateRow[]> {
-    const filter = transactionBrowseFilter(input, false);
+    // A 支出-scoped total must still net refunds off, because a refund is negative
+    // expense rather than a third direction. Building the base from the strict
+    // `type = 'expense'` clause dropped the refund rows, so a filtered 合计支出
+    // disagreed with the same month's unfiltered total. The row list keeps the
+    // strict clause; only this aggregate widens it, and only along the axis the
+    // requested scope already covers.
+    const filter = transactionBrowseFilter({ ...input, type: undefined }, false);
+    const scope = input.type === 'expense' ? "IN ('expense', 'refund')"
+      : input.type === 'income' ? "IN ('income')"
+      : input.type === 'refund' ? "IN ('refund')"
+      : undefined;
+    const clauses = scope ? [...filter.clauses, `t.type ${scope}`] : filter.clauses;
     const rows = await this.driver.all<Record<string, unknown>>(
       `WITH base AS (
          SELECT t.*, ${TRANSACTION_REPORT_DATE_SQL} AS report_date,
@@ -2403,7 +2451,7 @@ export class SqlLedgerStore implements LedgerStore {
                   THEN COALESCE(t.refund_applied_asset_id, t.asset_id)
                   ELSE t.asset_id END AS report_asset_id
          FROM transactions t
-         WHERE ${filter.clauses.join(' AND ')}
+         WHERE ${clauses.join(' AND ')}
            AND t.type IN ('income', 'expense', 'refund')
            AND COALESCE(t.reporting_treatment, 'ordinary') <> 'balance_only'
        ),

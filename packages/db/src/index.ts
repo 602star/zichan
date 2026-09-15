@@ -47,6 +47,7 @@ export {
   type TransactionBrowseCondition,
   type TransactionBrowseInput,
   type TransactionBrowsePage,
+  type RefundRowSummary,
   type AccountBalanceAggregateRow,
   type DashboardTransactionBalanceAggregateRow,
   type DashboardTransactionReadModel,

@@ -3,6 +3,62 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-15 — 退款在轻量模式下“看不到、管不了、还会填错”
+
+用户提的四个疑问（退款后账单还在 / 看不到收入 / 没有部分退款 / 跟作废重复）都真实存在，
+而且同一个根因：**轻量模式把筛选强制为 `type: 'expense'`，退款行整段消失，
+而原支出行不携带任何“已退”状态** —— 退款变成一笔只写不读的记录。
+
+实测（新建 42 / 100 两笔支出，把 100 那笔全额退掉）：原支出行仍是 `-100 CNY`，
+`text-decoration: none`、`opacity: 1`，无划线无角标；轻量模式又没有收入卡片、账户可空，
+所以钱回来了界面上零表示。
+
+### 三个具体缺陷
+
+1. **同一屏两个数字矛盾**：`本月支出 ¥0.00` 与 `合计支出 ¥100.00`。根因是两者读了不同聚合：
+   卡 1 走 `transactionReportAggregate`（含退款、按 allocation 负向冲减），卡 2 走
+   `transactionBrowseAggregate`（被 `type:'expense'` 把退款行滤掉）。
+2. **部分退款会静默多冲**：表单两个金额字段（实际到账 / 冲减原消费）默认都等于剩余可退，
+   把“金额”改成 30 后“冲减”仍停在 100，**无任何提示**，账上把 100 全冲掉、实际只收回 30。
+3. **成了死胡同**：全额退款后连“退款”按钮都消失（剩余可退 = 0），行看起来与普通支出一样；
+   而退款行不可见 → 打不开；原支出因“该支出已有退款，请先作废关联退款” → 也作废不了；
+   “操作历史”模块默认未启用。**唯一退路是保存后 10 秒的撤销 toast** —— 这就是“感觉和作废重复”的真相：
+   不是功能重复，是两个撤销入口都够不着。
+
+### 修法（P0 + P2，用户选定范围）
+
+- **聚合口径**（`packages/db/src/repository.ts`）：数据层把类型条件从 base 里拿出来，
+  按“请求范围已覆盖的方向”重新施加 —— `expense` 范围纳入 `refund`，`income` 范围不纳入，
+  无范围时与原来一致。行列表仍保留严格类型条件（支出页不列退款行），只有聚合放宽。
+- **退款行摘要**（`TransactionBrowsePage.refundsByOriginal`）：与 `refundAppliedAmounts` 一起返回
+  `{id, date, amount, assetId, appliedAmount}`。用 `json_object` 每行一个对象再 `json_group_array`，
+  避免并行 `json_group_array` 列之间顺序可能漂移。
+- **行状态**（`Transactions.tsx`）：部分退款显示 `部分退款 · 已退 30 / 100 CNY`，
+  全额则 `已退 100 / 100 CNY` 且标题与金额划线转灰。角标是按钮，同时就是**退款记录入口**（P0.2）。
+  注意 phone 布局用 `.zc-transaction-row > :nth-child(N)` 定位，所以**没有增删栅格子元素**，
+  只在第 3 个子元素内部重排。
+- **退款记录弹窗**：列出每笔退款的到账/冲减/归属，可编辑（按需 `store.transactions.get`，
+  因为退款行不在快照里）或作废（复用 `ConfirmDialog` + `voidTx` 的 undo）。
+- **表单防错**（`forms.tsx`）：新增 `refundNeedsSeparateOffset(values)` —— 币种与原支出相同时
+  `refundAppliedAmount` 既不显示也不写入实体（`fromValues` 直接置 `undefined`，由服务端回落到 `amount`）；
+  币种不同才显示并设为必填。另给 `FieldDef` 加 `hint`，金额字段显示“剩余可退 X。改小即为部分退款”。
+- **数据库护栏**（`services.ts`）：同币种下 `applied != amount` 直接拒绝。UI 层已经保证不会产生，
+  这条是给导入/历史数据/其他调用方兜底。
+
+### 验证
+
+- 新增数据库用例 3 个：同币种分叉被拒、跨币种仍可单独填冲减、支出范围聚合净退款 +
+  页面回传退款行。全工作区 **824 项 / 108 文件**通过。
+- 新增表单单测 2 个（可见性/映射、hint），`transactions.test.ts` 24 项通过。
+- 新增 e2e `ledger-refund-visibility.spec.mjs` 3 个（同币种不出现第二个字段且两卡一致 / 全额退款划线且无退款入口 / 全额退款仍能进退款记录并作废后复位）。
+  默认套件 **26/26**，账号模式套件 **通过**（`.last-run.json: status=passed`）。
+- **突变验证（关键，证明用例不是空跑）**：
+  1. 把聚合的 `expense` 范围退回 `IN ('expense')` → 新用例报 `expected '100.00' to be '70.00'`，
+     正是用户看到的矛盾数字；
+  2. 去掉金额的划线 → e2e 报 `Expected substring: "line-through", Received string: "none"`。
+- 教训（跨会话）：**退款这类“状态型”业务不要只看保存是否成功**。只写不读的记录看起来一切正常，
+  单测与默认 e2e 全绿；只有把“钱回来后界面怎么读”当成需求去验证，才能发现两个口径的矛盾。
+
 ## 2026-09-15 — 分类筛选的触发按钮在手机上只有 39px（内联高度压过触控地板）
 
 **现象**：账号模式回归 `mobile-layout.spec.mjs` 在七个视口上都报

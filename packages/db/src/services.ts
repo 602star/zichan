@@ -912,6 +912,17 @@ export async function saveTransactionAggregate(
       if (!original || !isTransactionActive(original) || original.type !== 'expense') validation('退款只能关联有效的原支出', 'refundForId');
       const applied = D(next.refundAppliedAmount ?? next.amount).abs();
       if (!applied.gt(0)) validation('退款冲减金额必须大于 0', 'refundAppliedAmount');
+      // Same asset means the cash that arrived and the amount taken off the
+      // original expense are the same number: with no exchange rate between them
+      // the two fields can only diverge by mistake, and silently keeping them
+      // apart over-offsets the original spending. Only a refund settling in a
+      // different asset needs its own 冲减 figure.
+      if (next.assetId === original.assetId && !applied.eq(D(next.amount).abs())) {
+        validation(
+          `退款金额与冲减金额必须一致：两者同为原支出币种时只能填一个数（当前 ${D(next.amount).abs().toString()} 对 ${applied.toString()}）`,
+          'refundAppliedAmount',
+        );
+      }
       const already = activeRefunds(all, original.id, next.id).reduce((total, row) => total.plus(refundAppliedAmount(row)), D(0));
       if (already.plus(applied).gt(original.amount)) {
         validation(`退款冲减超过原支出，最多还可冲减 ${D(original.amount).minus(already).toString()}`, 'refundAppliedAmount');

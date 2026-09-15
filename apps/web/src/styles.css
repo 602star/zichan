@@ -869,6 +869,38 @@ input[type="radio"] {
   overscroll-behavior: contain;
 }
 
+/*
+ * Refund state on a transaction row. A fully refunded expense keeps its place in
+ * the list but must not read as money that is still gone, so the amount is struck
+ * through; the chip is the only way back into the refunds of a 支出-scoped list.
+ */
+.zc-refund-chip {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.zc-refund-chip:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.zc-refund-row {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
 .zc-conversion-modal {
   max-width: calc(100vw - 48px);
 }

@@ -47,6 +47,8 @@ export interface FieldDef {
   capture?: 'environment' | 'user';
   deviceAction?: 'scan-barcode' | 'current-location';
   placeholder?: string;
+  /** Always-visible helper line under the control, for rules the label cannot carry. */
+  hint?: string;
   defaultValue?: string;
   half?: boolean; // render at half width (two-column grid)
   section?: 'core' | 'more';
@@ -518,7 +520,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                 deviceBusy={deviceBusy === f.key}
                 runDeviceAction={runDeviceAction}
                 error={fieldErrors[f.key]}
-                hint={optionHint(f, options.length)}
+                hint={f.hint ?? optionHint(f, options.length)}
               />
             );
           })}
@@ -559,7 +561,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                       deviceBusy={deviceBusy === f.key}
                       runDeviceAction={runDeviceAction}
                       error={fieldErrors[f.key]}
-                      hint={optionHint(f, options.length)}
+                      hint={f.hint ?? optionHint(f, options.length)}
                     />
                   );
                 })}
