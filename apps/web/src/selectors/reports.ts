@@ -2,6 +2,7 @@
 import {
   traceChain, conversionStepAmounts, fixedAssetCost, isDateInRange, gameRecordReportingPostings, D, safeDiv, sum,
   isTransactionActive,
+  type Category,
   type DateRange,
   type GameRecord, type GameRecordType, type Transaction,
 } from '@zichan/core';
@@ -9,7 +10,7 @@ import type { TransactionReportAggregateRow } from '@zichan/db';
 import type { Snapshot } from '../db/snapshot.js';
 import { assetById } from '../db/derive.js';
 import { amount as fmtAmount, num } from '../format.js';
-import { categoryLabel, TYPE_LABEL } from '../transactionMeta.js';
+import { categoryLabel, categoryLevelIndex, TYPE_LABEL } from '../transactionMeta.js';
 import { createReportCurrency, type ReportCurrency } from '../reportCurrency.js';
 import { ledgerAsOfDate } from '../as-of.js';
 import { reportingEffect } from './transaction-effect.js';
@@ -17,7 +18,13 @@ import { reportingEffect } from './transaction-effect.js';
 export type TabId = 'transactions' | 'dca' | 'chain' | 'season' | 'fixed';
 export interface ReportOptions {
   dateRange?: DateRange;
+  /** 只留这个二级分类。 */
   transactionCategory?: string;
+  /**
+   * 只留这个一级分类下的全部二级。与 `transactionCategory` 同时给就是
+   * 「板块 + 细分」两级下钻；两个都是精确匹配，所以不会互相覆盖。
+   */
+  transactionParentCategory?: string;
 }
 export type TransactionReportOptions = ReportOptions;
 export interface TransactionDetailRow {
@@ -79,10 +86,14 @@ export function reportDateRange(options: ReportOptions = {}): DateRange & { labe
 
 function filteredTransactions(snap: Snapshot, options: TransactionReportOptions = {}): Transaction[] {
   const range = reportDateRange(options);
+  const { rootOf } = categoryLevelIndex(snap.categories);
+  const inParent = (category: string) => !options.transactionParentCategory || rootOf(category) === options.transactionParentCategory;
   return snap.transactions.filter((t) => {
     if (!isTransactionActive(t) || t.type === 'transfer' || t.type === 'adjustment') return false;
     if (!isDateInRange(reportingEffect(snap, t).reportDate, range)) return false;
-    if (options.transactionCategory && !txCategoryRows(snap, t).some((row) => row.category === options.transactionCategory)) return false;
+    const rows = txCategoryRows(snap, t);
+    if (options.transactionCategory && !rows.some((row) => row.category === options.transactionCategory)) return false;
+    if (!rows.some((row) => inParent(row.category))) return false;
     return true;
   });
 }
@@ -190,9 +201,11 @@ export function transactionTableFromAggregates(
     missing: number;
   }>();
   let totalExpense = D(0);
+  const { rootOf } = categoryLevelIndex(snap.categories);
   for (const aggregate of aggregates) {
     if (!isDateInRange(aggregate.reportDate, range)) continue;
     if (options.transactionCategory && aggregate.category !== options.transactionCategory) continue;
+    if (options.transactionParentCategory && rootOf(aggregate.category) !== options.transactionParentCategory) continue;
     const native = sum(aggregate.amounts);
     const converted = report.toReportAt(native, aggregate.reportAssetId, aggregate.reportDate);
     const key = `${aggregate.direction}:${aggregate.category}`;
@@ -253,32 +266,57 @@ export interface ReportComposition {
   total: string;
 }
 
+/** 构成图的粒度：一级分类（板块）还是二级分类（细分）。 */
+export type CompositionLevel = 'parent' | 'leaf';
+
+export interface CompositionOptions {
+  /** 用来把叶子归到板块上；缺省时 `parent` 层退化为叶子自身。 */
+  categories?: Category[];
+  /** `parent`（缺省）按一级分类聚合，`leaf` 保留二级。 */
+  level?: CompositionLevel;
+  /**
+   * 只看这个一级分类下的二级。画“选中那一段的构成”时用它：
+   * 与左环同源、同口径（同一批行、同一分母规则），只是多一道归属过滤。
+   */
+  underParent?: string;
+  topN?: number;
+}
+
 /**
- * 从已经算好的分类表里折出构成图的数据——不新增查询。
+ * 把「叶子分类金额」折成一张构成图的数据。两级共用这一个折法：
+ * `level: 'parent'` 得到一级环，`level: 'leaf' + underParent` 得到它的二级环。
  *
  * 正金额分类才是可画、可点的一段；净额为负的分类（当月退款多于消费）
  * 不进分子也不进分母，所以各段 `weight` 相加恒为 1。
  *
  * 用 `gt(0)` 而不是 `isPositive()`：decimal.js 的 `isPositive()` 对 ±0 为真，
  * 会把一个净额归零的分类画成一段 0° 的切片并出现在图例里。
+ *
+ * 标签取分类自己的名字（不带「父级 / 子级」前缀）：环本身已经是嵌套读法。
  */
-export function expenseCompositionFromTable(table: Table, topN = 5): ReportComposition {
-  const rows = table.rows
-    .filter((row) => row[0]?.v === '支出')
-    .map((row) => ({
-      category: String(row[1]?.data?.category ?? 'other_expense'),
-      label: row[1]?.v ?? '未分类',
-      amount: D(row[2]?.data?.reportAmount ?? 0),
+export function composeExpenseComposition(
+  rows: { category: string; amount: string }[],
+  options: CompositionOptions = {},
+): ReportComposition {
+  const { categories = [], level = 'parent', underParent, topN = 5 } = options;
+  const { nameOf, rootOf } = categoryLevelIndex(categories);
+  const grouped = new Map<string, ReturnType<typeof D>>();
+  for (const row of rows) {
+    if (underParent && rootOf(row.category) !== underParent) continue;
+    const amount = D(row.amount);
+    if (!amount.gt(0)) continue;
+    const key = level === 'parent' ? rootOf(row.category) : row.category;
+    grouped.set(key, (grouped.get(key) ?? D(0)).plus(amount));
+  }
+  const total = sum([...grouped.values()]);
+  const weighted: ReportCompositionSlice[] = [...grouped.entries()]
+    .map(([category, amount]) => ({
+      category,
+      label: nameOf(category),
+      amount: amount.toString(),
+      weight: total.isZero() ? 0 : amount.div(total).toNumber(),
     }))
-    .filter((row) => row.amount.gt(0))
-    .sort((left, right) => right.amount.comparedTo(left.amount));
-  const total = sum(rows.map((row) => row.amount));
-  const weighted: ReportCompositionSlice[] = rows.map((row) => ({
-    category: row.category,
-    label: row.label,
-    amount: row.amount.toString(),
-    weight: total.isZero() ? 0 : row.amount.div(total).toNumber(),
-  }));
+    .sort((left, right) => D(right.amount).comparedTo(D(left.amount)));
   const slices = weighted.slice(0, topN);
   const rest = weighted.slice(topN);
   return {
@@ -290,6 +328,25 @@ export function expenseCompositionFromTable(table: Table, topN = 5): ReportCompo
     },
     total: total.toString(),
   };
+}
+
+/**
+ * 从已经算好的分类表里折出构成图的数据——不新增查询。
+ *
+ * 表里每行是一个**二级**分类（表格自己需要那个粒度），所以这里先把叶子行交给
+ * `composeExpenseComposition` 再按层聚合：环与它旁边的表格必然是同一批行的
+ * 两种读法，不会出现“环上多一笔、表里少一笔”。
+ */
+export function expenseCompositionFromTable(table: Table, options: CompositionOptions = {}): ReportComposition {
+  return composeExpenseComposition(
+    table.rows
+      .filter((row) => row[0]?.v === '支出')
+      .map((row) => ({
+        category: String(row[1]?.data?.category ?? 'other_expense'),
+        amount: String(row[2]?.data?.reportAmount ?? '0'),
+      })),
+    options,
+  );
 }
 
 function plainCell(cell: Cell): string {

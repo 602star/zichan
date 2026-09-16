@@ -1053,6 +1053,11 @@ export interface TransactionBrowseInput {
   type?: import('@zichan/core').TransactionType;
   excludeTypes?: import('@zichan/core').TransactionType[];
   category?: string;
+  /**
+   * 一级分类 id。流水只挂在二级上，所以筛一级必须靠父链上溯——与高级查询里的
+   * 「一级分类」同一个值集（`transactionValueSetSql('parentCategory')`）。
+   */
+  parentCategory?: string;
   accountId?: string;
   payeeId?: string;
   tagId?: string;
@@ -1520,6 +1525,11 @@ function transactionBrowseFilter(input: TransactionBrowseInput, includeCursor: b
     clauses.push(`EXISTS (SELECT 1 FROM (${transactionValueSetSql('category')}) cv
       WHERE cv.value = ?)`);
     params.push(input.category);
+  }
+  if (input.parentCategory) {
+    clauses.push(`EXISTS (SELECT 1 FROM (${transactionValueSetSql('parentCategory')}) cv
+      WHERE cv.value = ?)`);
+    params.push(input.parentCategory);
   }
   if (input.accountId) {
     clauses.push('(t.account_id = ? OR t.transfer_account_id = ?)');

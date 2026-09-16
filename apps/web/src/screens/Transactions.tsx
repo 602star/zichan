@@ -42,7 +42,7 @@ import { money, signedMoney } from '../format.js';
 import { amountColor, btnOutline, btnPrimary, card, cardTight, selectBase, tag as tagStyle, td as tdStyle, th as thStyle } from '../ui/styles.js';
 import { ChartLegend, CompositionDonut, TrendBars, type ChartSlice } from '../ui/charts.js';
 import { CATEGORY_COLORS, OTHER_CATEGORY_COLOR } from '../theme.js';
-import { categoryLabel, categoryOptions, categoryType as metaCategoryType, TYPE_LABEL } from '../transactionMeta.js';
+import { categoryLabel, categoryOptions, categoryType as metaCategoryType, rootCategoryId, TYPE_LABEL } from '../transactionMeta.js';
 import {
   buildBudgetMonth,
   buildBudgetMonthFromAggregates,
@@ -99,13 +99,19 @@ const STATUS_OPTIONS = [
 
 const defaultTransactionRange = dateRangeValue('this_month');
 type DrillRange = Pick<TransactionFilters, 'range' | 'dateFrom' | 'dateTo'>;
-/*
- * 构成环下钻时顺手把日期区间也收窄到本月（见 `drillToCategory`），所以一次下钻
- * 改写了两样东西。两边都留一份，是为了「清除分类下钻」能把区间**原样**放回去，
- * 而不是只清掉一半、把人留在自己没选过的本月里。
+/**
+ * 构成环的两级下钻状态。`child` 为空表示只下钻到板块（一级）。
+ *
+ * 一次下钻会改写两样东西：分类条件（`parentCategory` + `category`）和时间区间，所以
+ * `before`/`after` 各留一份，退出来时区间能**原样**放回，而不是只清掉一半、把人留在
+ * 自己没选过的本月里。
+ *
+ * 环本身不随筛选变化（画的就是本月全景），所以“当前在看哪一层”只能靠屏上的面包屑与
+ * 高亮那一段表达。
  */
 type CategoryDrill = {
-  category: string;
+  parent: string;
+  child: string;
   before: DrillRange;
   after: DrillRange;
 };
@@ -253,6 +259,22 @@ export function Transactions() {
         }
         return { ...cur, ...preset };
       });
+      /*
+       * 报表页“在流水页整理”带过来的分类条件也要有归属：没有 `categoryDrill` 就没有
+       * 面包屑，用户会看到一个没有出口的分类筛选——那正是这次要修的那个 bug。
+       * 区间按预设放，所以这里把 before/after 都设成同一个值，退出时不会被改。
+       */
+      const parent = preset.parentCategory && preset.parentCategory !== 'all' ? preset.parentCategory : '';
+      const child = preset.category && preset.category !== 'all' ? preset.category : '';
+      if (parent || child) {
+        const rangeFields = {
+          range: preset.range ?? DEFAULT_FILTERS.range,
+          dateFrom: preset.dateFrom,
+          dateTo: preset.dateTo,
+        };
+        /* 一级缺了就留空，渲染时按二级的归属补上（旧格式的预设只有 `category`）。 */
+        setCategoryDrill({ parent, child, before: rangeFields, after: rangeFields });
+      }
     } catch {
       // Ignore stale navigation payloads.
     }
@@ -315,6 +337,7 @@ export function Transactions() {
     type: viewFilters.type === 'all' ? undefined : viewFilters.type,
     excludeTypes: usesAccounts ? undefined : ['transfer', 'adjustment'],
     category: viewFilters.category === 'all' ? undefined : viewFilters.category,
+    parentCategory: !viewFilters.parentCategory || viewFilters.parentCategory === 'all' ? undefined : viewFilters.parentCategory,
     accountId: viewFilters.accountId === 'all' ? undefined : viewFilters.accountId,
     payeeId: !viewFilters.payeeId || viewFilters.payeeId === 'all' ? undefined : viewFilters.payeeId,
     tagId: !viewFilters.tagId || viewFilters.tagId === 'all' ? undefined : viewFilters.tagId,
@@ -509,6 +532,14 @@ export function Transactions() {
   const readyTransactionRead = transactionRead;
   const readySnap = pageSnap;
   const readyVm = vm;
+  /*
+   * 渲染用的下钻视图：一级优先取状态里的值，缺了就按二级的归属补上——报表页
+   * “在流水页整理”带过来的旧格式预设只有 `category`。补在渲染层而不是状态里，
+   * 是因为分类目录要等快照到位才拿得到。
+   */
+  const drillView: CategoryDrill | null = categoryDrill
+    ? { ...categoryDrill, parent: categoryDrill.parent || (categoryDrill.child ? rootCategoryId(categoryDrill.child, readySnap.categories) : '') }
+    : null;
 
   const asOf = ledgerAsOfDate(readySnap);
   const activeDateRange = transactionDateRange(asOf, viewFilters);
@@ -732,6 +763,9 @@ export function Transactions() {
     try {
       const parsed = JSON.parse(view.queryJson) as Partial<TransactionFilters>;
       setFilters({ ...DEFAULT_FILTERS, ...parsed });
+      /* 保存的查询自带它自己的分类条件，所以环的下钻状态不再成立——留着的话
+       * 面包屑会指着一个已经不在生效的筛选。 */
+      setCategoryDrill(null);
       setSelectedIds([]);
     } catch {
       setSavedViewError('保存的筛选条件无法解析，请删除后重新保存。');
@@ -1066,26 +1100,30 @@ export function Transactions() {
   }
 
   /*
-   * 从构成环下钻到一个分类。分类与时间范围一起收窄到「本月 × 该分类」——
-   * 环画的就是本月这一块，所以点完看到的必须就是那一块，否则「点一下看到的是
-   * 全部时间里的所有该分类」会与刚才那个数字对不上。
+   * 从构成环下钻。环是「一级板块 → 二级细分」两级，左环画全部板块，右环画选中那一个
+   * 板块的细分；所以一次下钻同时决定 `parentCategory`（一级）与 `category`（二级，可空）。
    *
-   * 轻量模式不渲染筛选行（`Filters` 只在资产模式下出现），所以环必须是**可撤销**
-   * 的：否则点一下分类就等于把账本锁进一个看不见的筛选里，只能刷新页面才回得去。
+   * 第一次下钻时区间一起收窄到本月——环画的就是本月这一块，不然「点一下看到的是
+   * 全部时间里的所有该分类」会与刚才那个数字对不上。但已经在两级之间走的时候不再动
+   * 区间，否则用户自己改过的范围会被悄悄改回本月。
+   *
+   * 轻量模式不渲染筛选行（`Filters` 只在资产模式下出现），所以下钻必须是**可撤销**、
+   * 且当前层级必须写在屏幕上（面包屑）：否则点一下就把账本锁进一个看不见的筛选里。
    */
-  function drillToCategory(category: string) {
+  function drillTo(parent: string, child: string) {
+    const started = categoryDrill;
     const monthRange = dateRangeValue('this_month');
     setCategoryDrill({
-      category,
-      before: { range: filters.range, dateFrom: filters.dateFrom, dateTo: filters.dateTo },
-      after: { range: monthRange.preset, dateFrom: monthRange.from, dateTo: monthRange.to },
+      parent,
+      child,
+      before: started?.before ?? { range: filters.range, dateFrom: filters.dateFrom, dateTo: filters.dateTo },
+      after: started?.after ?? { range: monthRange.preset, dateFrom: monthRange.from, dateTo: monthRange.to },
     });
     setFilters((current) => ({
       ...current,
-      category,
-      range: monthRange.preset,
-      dateFrom: monthRange.from,
-      dateTo: monthRange.to,
+      parentCategory: parent,
+      category: child || 'all',
+      ...(started ? {} : { range: monthRange.preset, dateFrom: monthRange.from, dateTo: monthRange.to }),
     }));
     setRecordView('list');
     setTrendFocus('');
@@ -1093,7 +1131,7 @@ export function Transactions() {
   }
 
   /*
-   * 撤销一次下钻。区间只在它还是下钻当时设的那个值时才能放回原样——下钻之后用户
+   * 全清。区间只在它还是下钻当时设的那个值时才能放回原样——下钻之后用户
    * 自己改过区间，那就以用户为准，只清分类。
    */
   function clearCategoryDrill() {
@@ -1102,14 +1140,32 @@ export function Transactions() {
       && filters.range === drill.after.range
       && filters.dateFrom === drill.after.dateFrom
       && filters.dateTo === drill.after.dateTo;
-    setFilters((current) => ({ ...current, category: 'all', ...(drill && restoreRange ? drill.before : {}) }));
+    setFilters((current) => ({
+      ...current,
+      parentCategory: 'all',
+      category: 'all',
+      ...(drill && restoreRange ? drill.before : {}),
+    }));
     setCategoryDrill(null);
   }
 
-  /* 再点同一段环就是取消：那一段高亮的正是「现在正在看的筛选」，点它才符合直觉。 */
-  function toggleCategoryDrill(category: string) {
-    if (categoryDrill?.category === category && filters.category === category) clearCategoryDrill();
-    else drillToCategory(category);
+  /** 退一层：从细分退回它所属的板块（区间不动）。 */
+  function stepBackToParent() {
+    if (!categoryDrill) return;
+    setCategoryDrill({ ...categoryDrill, child: '' });
+    setFilters((current) => ({ ...current, category: 'all' }));
+  }
+
+  /* 点环上高亮的那一段就是「退回上一层」：细分 → 板块 → 全部。 */
+  function toggleParentDrill(parent: string) {
+    if (categoryDrill?.parent !== parent) drillTo(parent, '');
+    else if (categoryDrill.child) stepBackToParent();
+    else clearCategoryDrill();
+  }
+
+  function toggleChildDrill(parent: string, child: string) {
+    if (categoryDrill?.parent === parent && categoryDrill.child === child) stepBackToParent();
+    else drillTo(parent, child);
   }
 
   return (
@@ -1153,12 +1209,29 @@ export function Transactions() {
                 view={recordView}
                 onViewChange={setRecordView}
               />
-              {/* 下钻是环写进筛选的，所以在环能到的地方必须能清掉：轻量模式没有
-                  筛选行，这个 chip 是那条分类筛选唯一的出口。 */}
-              {categoryDrill && filters.category === categoryDrill.category && (
-                <button type="button" style={button} onClick={clearCategoryDrill}>
-                  清除分类下钻：{categoryLabel(filters.category, readySnap.categories)}<span aria-hidden="true"> ×</span>
-                </button>
+              {/* 下钻是环写进筛选的，所以在环能到的地方必须能退出去：轻量模式没有
+                  筛选行，这条面包屑是那两级筛选唯一的出口，也顺便把「现在在看哪一层」
+                  写在屏上——图表本身不随筛选变化，不说清楚就只能靠猜。 */}
+              {categoryDrill && (
+                <nav className="zc-drill-crumbs" aria-label="分类下钻">
+                  <button type="button" className="zc-drill-crumb" aria-label="退回到全部支出" onClick={clearCategoryDrill}>
+                    全部支出
+                  </button>
+                  <span aria-hidden="true">›</span>
+                  {categoryDrill.child ? (
+                    <button type="button" className="zc-drill-crumb" aria-label={`退回一级：${categoryLabel(drillView?.parent ?? '', readySnap.categories)}`} onClick={stepBackToParent}>
+                      {categoryLabel(drillView?.parent ?? '', readySnap.categories)}
+                    </button>
+                  ) : (
+                    <b className="zc-drill-crumb is-current">{categoryLabel(drillView?.parent ?? '', readySnap.categories)}</b>
+                  )}
+                  {categoryDrill.child && (
+                    <>
+                      <span aria-hidden="true">›</span>
+                      <b className="zc-drill-crumb is-current">{categoryLabel(categoryDrill.child, readySnap.categories)}</b>
+                    </>
+                  )}
+                </nav>
               )}
             </div>
             {usesAccounts && <Filters snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} />}
@@ -1276,8 +1349,10 @@ export function Transactions() {
             />
             <ExpenseCompositionCard
               vm={vm}
-              selectedCategory={viewFilters.category === 'all' ? '' : viewFilters.category}
-              onSelectCategory={toggleCategoryDrill}
+              drill={drillView}
+              parentLabel={categoryLabel(drillView?.parent ?? '', readySnap.categories)}
+              onSelectParent={toggleParentDrill}
+              onSelectChild={toggleChildDrill}
             />
           </div>
         </>
@@ -2060,6 +2135,9 @@ function valueOptionsForField(snap: Snapshot, field: AdvancedQueryField): { valu
 function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilters: Dispatch<SetStateAction<TransactionFilters>>; usesAccounts: boolean }) {
   const { snap, filters, setFilters, usesAccounts } = props;
   const typeOptions = usesAccounts ? TYPE_OPTIONS : BASIC_TYPE_OPTIONS;
+  /* 环下钻到板块时（`parentCategory`）分类控件本身没有这一项可选，但它确实在筛。 */
+  const parentDrill = filters.parentCategory && filters.parentCategory !== 'all' ? filters.parentCategory : '';
+  const parentDrillLabel = parentDrill ? categoryLabel(parentDrill, snap.categories) : '';
   return (
     <div className="zc-transaction-filters" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(120px, 1fr))', gap: 10, marginBottom: 16 }}>
       <select aria-label="流水类型" style={selectStyle} value={filters.type} onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value as TransactionFilters['type'] }))}>
@@ -2075,12 +2153,16 @@ function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilter
         // 没有任何流水会引用它们，选了只会得到空结果。
         options={historicalCategoryValueOptions(snap)}
         allowEmpty
-        emptyLabel="全部分类"
-        placeholder="全部分类"
+        /* 环下钻到板块时，这条筛选确实在生效（只是值是一级），所以空选项必须
+           说清楚它跟的是哪个板块——否则控件写着「全部分类」、列表却少了一大半。*/
+        emptyLabel={parentDrillLabel ? `${parentDrillLabel} · 全部` : '全部分类'}
+        placeholder={parentDrillLabel ? `${parentDrillLabel} · 全部` : '全部分类'}
         defaultShowHidden={snap.setting?.categoryPickerDefaultScope === 'all'}
         minPanelWidth={480}
         triggerStyle={selectStyle}
-        onChange={(next) => setFilters((f) => ({ ...f, category: (next || 'all') as TransactionFilters['category'] }))}
+        onChange={(next) => setFilters((f) => next
+          ? { ...f, category: next, parentCategory: rootCategoryId(next, snap.categories) }
+          : { ...f, category: 'all' })}
       />
       {usesAccounts && (
         <select aria-label="流水账户" style={selectStyle} value={filters.accountId} onChange={(e) => setFilters((f) => ({ ...f, accountId: e.target.value }))}>
@@ -2616,51 +2698,81 @@ function Trend(props: {
 }
 
 /**
- * 本月支出构成。
+ * 本月支出构成：左环是全部一级板块，选中一段后右环画出那一个板块的二级细分。
  *
  * 口径是**本月、不跟筛选**：构成图跨分类聚合，如果跟着分类筛选，
  * 用户筛一个分类之后环里就只剩一段（100%），「钱花在哪里」就自我矛盾了。
- * 数据与上方 KPI 卡的 Top3 同一个 selector（`vm.expenseComposition`）。
+ * 所以下钻不重画左环，只是把当前层级写在面包屑上、并给右环一个主题。
+ *
+ * 右环不是另算一遍：两项都来自同一个 selector（`vm.expenseComposition` 与
+ * `vm.expenseChildren`），所以右环各段之和恒等于左环高亮那一段的金额，
+ * 两个环不会各自说一套数。
  */
 function ExpenseCompositionCard(props: {
   vm: NonNullable<ReturnType<typeof buildTransactions>>;
-  selectedCategory: string;
-  onSelectCategory: (category: string) => void;
+  drill: CategoryDrill | null;
+  /** 选中板块的显示名，由调用方给（它手里有分类目录）。 */
+  parentLabel: string;
+  onSelectParent: (parent: string) => void;
+  onSelectChild: (parent: string, child: string) => void;
 }) {
-  const { vm, selectedCategory, onSelectCategory } = props;
+  const { vm, drill, parentLabel, onSelectParent, onSelectChild } = props;
   const composition = vm.expenseComposition;
-  const slices: ChartSlice[] = [
-    ...composition.slices.map((slice, index) => ({
+  /* 两个环共用这个装箱函数：分类色按**排名**取（主题里的 --cat-N），标签、金额、份额
+     都照搬 selector 给的值——图表不自己算钱。 */
+  const chartSlices = (rows: typeof composition.slices, others: typeof composition.others, onSelect?: (category: string) => void): ChartSlice[] => [
+    ...rows.map((slice, index) => ({
       key: slice.category,
       label: slice.label,
       amountText: money(slice.amount),
       weight: slice.weight,
       color: CATEGORY_COLORS[index % CATEGORY_COLORS.length] ?? OTHER_CATEGORY_COLOR,
-      onSelect: () => onSelectCategory(slice.category),
+      onSelect: onSelect ? () => onSelect(slice.category) : undefined,
     })),
-    ...(composition.others.count > 0
+    ...(others.count > 0
       ? [{
         key: '__other__',
-        label: `其他 ${composition.others.count} 类`,
-        amountText: money(composition.others.amount),
-        weight: composition.others.weight,
+        label: `其他 ${others.count} 类`,
+        amountText: money(others.amount),
+        weight: others.weight,
         color: OTHER_CATEGORY_COLOR,
       }]
       : []),
   ];
+  const parent = drill?.parent ?? '';
+  const child = drill?.child ?? '';
+  const children = parent ? vm.expenseChildren[parent] : undefined;
   return (
     <div style={card}>
       <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>本月支出构成</div>
       <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3, marginBottom: 14 }}>
-        {composition.slices.length > 0 ? '点一段：流水只显示该分类的本月支出，再点一段取消；不随上方筛选变化' : '不随上方筛选变化'}
+        {composition.slices.length === 0
+          ? '不随上方筛选变化'
+          : parent
+            ? `左环是本月全部板块；右环是「${parentLabel}」的细分。点细分只看那一项，再点退回上一层`
+            : '点一段：看这个板块的细分，流水只显示它本月的支出；再点同一段取消'}
       </div>
-      <CompositionDonut
-        ariaLabel={`${vm.month} 本月支出构成`}
-        totalText={money(composition.total)}
-        totalCaption="本月支出"
-        selectedKey={selectedCategory || undefined}
-        slices={slices}
-      />
+      <div className="zc-chart-pair">
+        <CompositionDonut
+          ariaLabel={`${vm.month} 本月支出构成（一级分类）`}
+          totalText={money(composition.total)}
+          totalCaption="本月支出"
+          selectedKey={parent || undefined}
+          testId="composition-parent"
+          slices={chartSlices(composition.slices, composition.others, onSelectParent)}
+        />
+        {parent && children && (
+          <CompositionDonut
+            ariaLabel={`${parentLabel} 的二级构成`}
+            totalText={money(children.total)}
+            totalCaption={parentLabel}
+            selectedKey={child || undefined}
+            emptyText="这个板块本月还没有可归类的支出"
+            testId="composition-children"
+            slices={chartSlices(children.slices, children.others, (category) => onSelectChild(parent, category))}
+          />
+        )}
+      </div>
     </div>
   );
 }

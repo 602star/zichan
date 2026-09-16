@@ -20,6 +20,7 @@ import {
 import { money } from '../format.js';
 import { card, th as thStyle, td as tdStyle, pillBtn, selectBase } from '../ui/styles.js';
 import { CompositionDonut, RankBars, type ChartSlice } from '../ui/charts.js';
+import { categoryLabel, categoryName, rootCategoryId } from '../transactionMeta.js';
 import { createReportCurrency } from '../reportCurrency.js';
 import { ledgerAsOfDate } from '../as-of.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue } from '../ui/DateRangeBar.js';
@@ -33,6 +34,11 @@ import {
 import { ReportSummaryStrip, TransactionReportInsights } from '../ui/TransactionReportInsights.js';
 import { LedgerCutoffNotice } from '../ui/LedgerCutoffNotice.js';
 import { CATEGORY_COLORS, OTHER_CATEGORY_COLOR } from '../theme.js';
+
+/** 空构成：非日常收支页签也要给图一个合法形状，免得再写一遍内联字面量。 */
+function emptyComposition() {
+  return { slices: [], others: { amount: '0', count: 0, weight: 0 }, total: '0' };
+}
 
 const TABS: [TabId, string][] = [['transactions', '日常收支'], ['dca', '定投'], ['chain', '资产转换'], ['season', '游戏赛季'], ['fixed', '物品资产']];
 
@@ -57,7 +63,8 @@ export function Reports() {
     season: dateRangeValue('all'),
     fixed: dateRangeValue('all'),
   }));
-  const [selectedCategory, setSelectedCategory] = useState('');
+  const [selectedParent, setSelectedParent] = useState('');
+  const [selectedChild, setSelectedChild] = useState('');
   const [granularity, setGranularity] = useState<'day' | 'month' | 'year'>('month');
   const [pdfBusy, setPdfBusy] = useState(false);
   const [detailExportBusy, setDetailExportBusy] = useState(false);
@@ -154,7 +161,8 @@ export function Reports() {
     void store.transactionBrowsePage({
       from: effectiveTransactionDetailRange.from,
       to: effectiveTransactionDetailRange.to,
-      category: selectedCategory || undefined,
+      parentCategory: selectedParent || undefined,
+      category: selectedChild || undefined,
       excludeTypes: ['transfer', 'adjustment'],
       limit: 200,
     }).then((page) => {
@@ -177,7 +185,7 @@ export function Reports() {
     return () => {
       cancelled = true;
     };
-  }, [effectiveTransactionDetailRange.from, effectiveTransactionDetailRange.to, selectedCategory, store, tab, transactionRevision]);
+  }, [effectiveTransactionDetailRange.from, effectiveTransactionDetailRange.to, selectedParent, selectedChild, store, tab, transactionRevision]);
   /* The export menu is a disclosure, so it must close like one: outside click or
    * Escape, with focus handed back to the trigger. */
   useEffect(() => {
@@ -215,8 +223,14 @@ export function Reports() {
     return buildReport(snap, tab, { dateRange: effectiveRange });
   }, [effectiveRange, snap, tab, transactionAggregates]);
   const details = useMemo(
-    () => (snap && tab === 'transactions' ? transactionDetails(snap, { dateRange: effectiveTransactionDetailRange, transactionCategory: selectedCategory || undefined }) : []),
-    [effectiveTransactionDetailRange, selectedCategory, snap, tab],
+    () => (snap && tab === 'transactions'
+      ? transactionDetails(snap, {
+        dateRange: effectiveTransactionDetailRange,
+        transactionParentCategory: selectedParent || undefined,
+        transactionCategory: selectedChild || undefined,
+      })
+      : []),
+    [effectiveTransactionDetailRange, selectedParent, selectedChild, snap, tab],
   );
   const comparison = useMemo(() => (
     snap && tab === 'transactions' && transactionAggregates && comparisonRanges
@@ -234,11 +248,38 @@ export function Reports() {
   const tabLabel = TABS.find(([id]) => id === tab)?.[1] ?? '报表';
   const reportCurrency = createReportCurrency(snap, effectiveRange.to);
 
-  function drillTransactions(category: string, range: DateRange) {
+  /*
+   * 分类下钻是两级：一级板块（环上的段）+ 二级细分。表头那一行直接点某一行则是
+   * 二级下钻（它自带归属），所以两个值总是一起设，不会出现“板块是 A、细分属于 B”。
+   */
+  function drillTransactions(parent: string, child: string, range: DateRange) {
     const effective = effectiveReportRange(range, asOfDate);
-    setSelectedCategory(category);
+    setSelectedParent(parent);
+    setSelectedChild(child);
     setTransactionDetailRange({ preset: 'custom', from: effective.from, to: effective.to });
     requestAnimationFrame(() => document.getElementById('transaction-report-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  }
+
+  function clearCategoryDrill() {
+    setSelectedParent('');
+    setSelectedChild('');
+  }
+
+  /** 退一层：从细分退回它所属的板块。 */
+  function stepBackToParent() {
+    setSelectedChild('');
+  }
+
+  /* 点环上高亮的那一段 = 退回上一层，与支出页同一套手感。 */
+  function toggleParentDrill(parent: string, range: DateRange) {
+    if (selectedParent !== parent) drillTransactions(parent, '', range);
+    else if (selectedChild) stepBackToParent();
+    else clearCategoryDrill();
+  }
+
+  function toggleChildDrill(parent: string, child: string, range: DateRange) {
+    if (selectedParent === parent && selectedChild === child) stepBackToParent();
+    else drillTransactions(parent, child, range);
   }
 
   function exportReportCsv() {
@@ -275,7 +316,8 @@ export function Reports() {
       const page = await store.transactionBrowsePage({
         from: effectiveTransactionDetailRange.from,
         to: effectiveTransactionDetailRange.to,
-        category: selectedCategory || undefined,
+        parentCategory: selectedParent || undefined,
+        category: selectedChild || undefined,
         excludeTypes: ['transfer', 'adjustment'],
         cursor: transactionCursor,
         limit: 200,
@@ -301,7 +343,8 @@ export function Reports() {
         for await (const page of store.iterateTransactionBrowse({
           from: effectiveTransactionDetailRange.from,
           to: effectiveTransactionDetailRange.to,
-          category: selectedCategory || undefined,
+          parentCategory: selectedParent || undefined,
+          category: selectedChild || undefined,
           excludeTypes: ['transfer', 'adjustment'],
           pageSize: 500,
         })) {
@@ -313,7 +356,8 @@ export function Reports() {
           };
           const rows = transactionDetails(pageSnap, {
             dateRange: effectiveTransactionDetailRange,
-            transactionCategory: selectedCategory || undefined,
+            transactionParentCategory: selectedParent || undefined,
+            transactionCategory: selectedChild || undefined,
           });
           if (rows.length) yield `${detailRowsToCsv(rows)}\n`;
           exported += rows.length;
@@ -340,24 +384,42 @@ export function Reports() {
         ))}
       </div>
       {/* Filtering semantics, separated: the range stays in `DateRangeBar`, and
-          the drill-down is a removable chip on the same row. */}
+          the drill-down is a breadcrumb on the same row — it names the level that
+          is actually filtering, not just an × to undo it. */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
         <DateRangeBar value={dateRange} anchor={asOfDate} onChange={(next) => {
           setRanges((current) => ({ ...current, [tab]: next }));
-          setSelectedCategory('');
+          clearCategoryDrill();
           if (tab === 'transactions') setTransactionDetailRange(next);
         }} />
-        {tab === 'transactions' && selectedCategory && (
-          <button
-            type="button"
-            className="zc-btn zc-btn--sm"
-            onClick={() => {
-              setSelectedCategory('');
-              setTransactionDetailRange(transactionRange);
-            }}
-          >
-            清除分类下钻<span aria-hidden="true"> ×</span>
-          </button>
+        {tab === 'transactions' && (selectedParent || selectedChild) && (
+          <nav className="zc-drill-crumbs" aria-label="分类下钻">
+            <button
+              type="button"
+              className="zc-drill-crumb"
+              aria-label="退回到全部支出"
+              onClick={() => {
+                clearCategoryDrill();
+                setTransactionDetailRange(transactionRange);
+              }}
+            >
+              全部支出
+            </button>
+            <span aria-hidden="true">›</span>
+            {selectedChild ? (
+              <button type="button" className="zc-drill-crumb" aria-label={`退回一级：${categoryLabel(selectedParent, snap.categories)}`} onClick={stepBackToParent}>
+                {categoryLabel(selectedParent, snap.categories)}
+              </button>
+            ) : (
+              <b className="zc-drill-crumb is-current">{categoryLabel(selectedParent, snap.categories)}</b>
+            )}
+            {selectedChild && (
+              <>
+                <span aria-hidden="true">›</span>
+                <b className="zc-drill-crumb is-current">{categoryLabel(selectedChild, snap.categories)}</b>
+              </>
+            )}
+          </nav>
         )}
       </div>
       {baseSnap && <LedgerCutoffNotice snap={baseSnap} />}
@@ -471,8 +533,10 @@ export function Reports() {
         snap={snap}
         tab={tab}
         dateRange={effectiveRange}
-        selectedCategory={selectedCategory}
-        onSelectCategory={(category) => drillTransactions(category, effectiveRange)}
+        selectedParent={selectedParent}
+        selectedChild={selectedChild}
+        onSelectParent={(parent) => toggleParentDrill(parent, effectiveRange)}
+        onSelectChild={(parent, child) => toggleChildDrill(parent, child, effectiveRange)}
         transactionTable={tab === 'transactions' ? table : undefined}
       />
       <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
@@ -485,18 +549,22 @@ export function Reports() {
               {table.rows.map((row, i) => {
                 const rowCategory = row[1]?.data?.category ?? '';
                 const clickable = tab === 'transactions' && !!rowCategory;
+                /* 表格行是二级行，所以点它也自带归属：板块与细分一起设，保持两级一致。 */
+                const highlight = selectedChild
+                  ? selectedChild === rowCategory
+                  : Boolean(selectedParent) && rootCategoryId(rowCategory, snap.categories) === selectedParent;
                 return (
                 <tr
                   key={i}
                   role={clickable ? 'button' : undefined}
                   tabIndex={clickable ? 0 : undefined}
-                  onClick={() => { if (clickable) drillTransactions(rowCategory, effectiveRange); }}
+                  onClick={() => { if (clickable) drillTransactions(rootCategoryId(rowCategory, snap.categories), rowCategory, effectiveRange); }}
                   onKeyDown={(event) => {
                     if (!clickable || (event.key !== 'Enter' && event.key !== ' ')) return;
                     event.preventDefault();
-                    drillTransactions(rowCategory, effectiveRange);
+                    drillTransactions(rootCategoryId(rowCategory, snap.categories), rowCategory, effectiveRange);
                   }}
-                  style={{ cursor: clickable ? 'pointer' : undefined, background: selectedCategory && selectedCategory === rowCategory ? 'var(--surface-2)' : undefined }}
+                  style={{ cursor: clickable ? 'pointer' : undefined, background: highlight ? 'var(--surface-2)' : undefined }}
                 >
                   {row.map((c, j) => (
                     <td key={j} data-label={table.headers[j]} style={{ ...tdStyle, color: c.color ?? 'var(--fg)', fontWeight: c.bold ? 'var(--fw-bold)' : 'var(--fw-regular)' }}>{c.v}</td>
@@ -515,7 +583,13 @@ export function Reports() {
         <TransactionDetailTable
           rows={details}
           range={effectiveTransactionDetailRange}
-          selectedCategory={selectedCategory}
+          selectedParent={selectedParent}
+          selectedChild={selectedChild}
+          drillLabel={
+            selectedChild
+              ? ` · 已按分类下钻：${categoryLabel(selectedParent, snap.categories)} / ${categoryLabel(selectedChild, snap.categories)}`
+              : selectedParent ? ` · 已按分类下钻：${categoryLabel(selectedParent, snap.categories)} 全部` : ''
+          }
           loadedCount={transactionSlice?.transactions.length ?? 0}
           hasMore={transactionHasMore}
           busy={transactionPageBusy}
@@ -529,7 +603,7 @@ export function Reports() {
           budget={budgetVariance}
           formatAmount={(value) => reportCurrency.formatReport(value)}
           formatSignedAmount={(value) => reportCurrency.formatSignedReport(value)}
-          onDrill={drillTransactions}
+          onDrill={(category, range) => drillTransactions(rootCategoryId(category, snap.categories), category, range)}
         />
       )}
     </div>
@@ -634,23 +708,33 @@ function rangeFilePart(range: DateRangeValue): string {
 function TransactionDetailTable(props: {
   rows: TransactionDetailRow[];
   range: DateRangeValue;
-  selectedCategory: string;
+  selectedParent: string;
+  selectedChild: string;
+  /** 下钻的层级说明（“已按分类下钻”），由调用方算好；没有下钻时为空。 */
+  drillLabel: string;
   loadedCount: number;
   hasMore: boolean;
   busy: boolean;
   error: string;
   onLoadMore: () => void;
 }) {
-  const { rows, range, selectedCategory, loadedCount, hasMore, busy, error, onLoadMore } = props;
+  const { rows, range, selectedParent, selectedChild, drillLabel, loadedCount, hasMore, busy, error, onLoadMore } = props;
   const openInTransactions = () => {
-    accountSessionStorage.setItem('zichan.transactions.filterPreset', JSON.stringify({ range: range.preset, dateFrom: range.from, dateTo: range.to, category: selectedCategory || 'all' }));
+    /* 把两级都带过去：只带二级的话，回到流水页后面包屑会缺一层归属。 */
+    accountSessionStorage.setItem('zichan.transactions.filterPreset', JSON.stringify({
+      range: range.preset,
+      dateFrom: range.from,
+      dateTo: range.to,
+      category: selectedChild || 'all',
+      parentCategory: selectedParent || 'all',
+    }));
     window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'transactions' } }));
   };
   return (
     <div id="transaction-report-details" style={{ ...card, padding: 0, overflow: 'hidden', scrollMarginTop: 16 }}>
       <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
         <div>
-          <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{rangeLabel(range)}流水明细{selectedCategory ? ' · 已按分类下钻' : ''}</div>
+          <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{rangeLabel(range)}流水明细{drillLabel}</div>
           <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>
             已加载 {loadedCount} 笔原始流水，当前展示 {rows.length} 条分类明细；可回到流水页继续筛选、批量修改或编辑。
           </div>
@@ -783,34 +867,52 @@ function ReportChart(props: {
   snap: Snapshot;
   tab: TabId;
   dateRange: DateRangeValue;
-  selectedCategory: string;
-  onSelectCategory: (category: string) => void;
+  selectedParent: string;
+  selectedChild: string;
+  onSelectParent: (parent: string) => void;
+  onSelectChild: (parent: string, child: string) => void;
   transactionTable?: Table;
 }) {
-  const { snap, tab, dateRange, selectedCategory, onSelectCategory, transactionTable } = props;
+  const { snap, tab, dateRange, selectedParent, selectedChild, onSelectParent, onSelectChild, transactionTable } = props;
   const report = createReportCurrency(snap, dateRange.to);
   /*
    * 日常收支的分类图有两种读法，都是对的：环形回答「钱花在哪里」，
    * 条形回答「谁比谁多」。趋势画饼是错读法，所以这个开关只出现在这一个页签。
    */
   const [shape, setShape] = useState<'donut' | 'bar'>('donut');
-  const composition = useMemo(
-    () => (tab === 'transactions'
-      ? expenseCompositionFromTable(transactionTable ?? buildReport(snap, 'transactions', { dateRange }))
-      : { slices: [], others: { amount: '0', count: 0, weight: 0 }, total: '0' }),
+  const table = useMemo(
+    () => (tab === 'transactions' ? transactionTable ?? buildReport(snap, 'transactions', { dateRange }) : undefined),
     [dateRange, snap, tab, transactionTable],
   );
+  /* 左环按一级板块聚合：流水只挂二级，直接画二级会让当月最大的板块被拆散而不入环。 */
+  const composition = useMemo(
+    () => (table ? expenseCompositionFromTable(table, { categories: snap.categories }) : emptyComposition()),
+    [snap.categories, table],
+  );
+  /* 右环只多一道归属过滤，同一张表的同一批行，所以两环之和必然对得上。 */
+  const children = useMemo(
+    () => (table && selectedParent
+      ? expenseCompositionFromTable(table, { categories: snap.categories, level: 'leaf', underParent: selectedParent })
+      : undefined),
+    [selectedParent, snap.categories, table],
+  );
+  const parentLabel = selectedParent ? categoryLabel(selectedParent, snap.categories) : '';
   let title = '';
   let rows: { label: string; value: number; text: string; color: string; category?: string }[] = [];
   if (tab === 'transactions') {
-    title = `${rangeLabel(dateRange)}分类支出`;
-    rows = (transactionTable ?? buildReport(snap, 'transactions', { dateRange })).rows
+    /*
+     * 已选板块时条形也只排那一个板块的二级：图上高亮了一段、下面却又列全部分类的话，
+     * 两种形态就变成两道题了。点击仍然按二级下钻（条形的长处就是能列得比环多）。
+     */
+    const leafRows = (table?.rows ?? [])
       .filter((row) => row[0]?.v === '支出')
-      .slice(0, 8)
-      .map((row) => {
-        const value = Number(row[2]?.data?.reportAmount ?? '0');
-        return { label: row[1]?.v ?? '未分类', value, text: row[2]?.v ?? money(0), color: 'var(--negative)', category: row[1]?.data?.category };
-      });
+      .filter((row) => !selectedParent || rootCategoryId(String(row[1]?.data?.category ?? ''), snap.categories) === selectedParent)
+      .slice(0, 8);
+    title = `${rangeLabel(dateRange)}${parentLabel ? `${parentLabel} ` : ''}分类支出`;
+    rows = leafRows.map((row) => {
+      const value = Number(row[2]?.data?.reportAmount ?? '0');
+      return { label: categoryName(String(row[1]?.data?.category ?? ''), snap.categories), value, text: row[2]?.v ?? money(0), color: 'var(--negative)', category: row[1]?.data?.category };
+    });
   } else if (tab === 'dca') {
     title = `定投累计成本 · ${report.code}`;
     let cumulative = D(0);
@@ -873,25 +975,27 @@ function ReportChart(props: {
    * of the same rows. (语义红只属于「支出」，不兼职分类——见 theme.ts.)
    */
   const colorAt = (index: number) => CATEGORY_COLORS[index % CATEGORY_COLORS.length] ?? OTHER_CATEGORY_COLOR;
-  const slices: ChartSlice[] = [
-    ...composition.slices.map((slice, index) => ({
+  const chartSlices = (data: typeof composition, onSelect: (category: string) => void): ChartSlice[] => [
+    ...data.slices.map((slice, index) => ({
       key: slice.category,
       label: slice.label,
       amountText: report.formatReport(D(slice.amount)),
       weight: slice.weight,
       color: colorAt(index),
-      onSelect: () => onSelectCategory(slice.category),
+      onSelect: () => onSelect(slice.category),
     })),
-    ...(composition.others.count > 0
+    ...(data.others.count > 0
       ? [{
         key: '__other__',
-        label: `其他 ${composition.others.count} 类`,
-        amountText: report.formatReport(D(composition.others.amount)),
-        weight: composition.others.weight,
+        label: `其他 ${data.others.count} 类`,
+        amountText: report.formatReport(D(data.others.amount)),
+        weight: data.others.weight,
         color: OTHER_CATEGORY_COLOR,
       }]
       : []),
   ];
+  const slices = chartSlices(composition, onSelectParent);
+  const childSlices = children ? chartSlices(children, (category) => onSelectChild(selectedParent, category)) : [];
   return (
     <div style={card}>
       <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
@@ -904,13 +1008,27 @@ function ReportChart(props: {
         )}
       </div>
       {isComposition && shape === 'donut' ? (
-        <CompositionDonut
-          ariaLabel={`${rangeLabel(dateRange)}分类支出构成`}
-          totalText={report.formatReport(D(composition.total))}
-          totalCaption="分类支出合计"
-          selectedKey={selectedCategory || undefined}
-          slices={slices}
-        />
+        <div className="zc-chart-pair">
+          <CompositionDonut
+            ariaLabel={`${rangeLabel(dateRange)}分类支出构成（一级分类）`}
+            totalText={report.formatReport(D(composition.total))}
+            totalCaption="分类支出合计"
+            selectedKey={selectedParent || undefined}
+            testId="composition-parent"
+            slices={slices}
+          />
+          {children && (
+            <CompositionDonut
+              ariaLabel={`${parentLabel} 的二级构成`}
+              totalText={report.formatReport(D(children.total))}
+              totalCaption={parentLabel}
+              selectedKey={selectedChild || undefined}
+              emptyText="这个板块在该范围内没有可归类的支出"
+              testId="composition-children"
+              slices={childSlices}
+            />
+          )}
+        </div>
       ) : (
         <RankBars
           ariaLabel={`${title}排名`}
@@ -920,8 +1038,10 @@ function ReportChart(props: {
             heightRatio: r.value / max,
             text: r.text,
             color: isComposition ? colorAt(index) : r.color,
-            selected: Boolean(r.category) && r.category === selectedCategory,
-            onSelect: r.category ? () => onSelectCategory(r.category as string) : undefined,
+            selected: Boolean(r.category) && r.category === selectedChild,
+            /* 条形列的是二级，所以点它也自带归属——板块跟着这条二级上溯，
+               与表格行、左环两条路同一个规则。 */
+            onSelect: r.category ? () => onSelectChild(rootCategoryId(r.category as string, snap.categories), r.category as string) : undefined,
           }))}
         />
       )}

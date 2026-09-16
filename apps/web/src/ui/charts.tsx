@@ -55,8 +55,15 @@ export function CompositionDonut(props: {
   totalCaption: string;
   /** Marks the slice the rest of the screen is currently drilled into. */
   selectedKey?: string;
+  /**
+   * 空状态文案。报表页画的是「所选区间」而不是本月，支出页的二级环又是“这一段里
+   * 没有可归类的支出”，所以不能写死成一句话。
+   */
+  emptyText?: string;
+  /** 同一屏上有两个环时（板块环 + 选中板块的二级环）用它区分。 */
+  testId?: string;
 }) {
-  const { ariaLabel, slices, totalText, totalCaption, selectedKey } = props;
+  const { ariaLabel, slices, totalText, totalCaption, selectedKey, emptyText = '本月还没有可归类的支出', testId } = props;
   const total = slices.reduce((sum, slice) => sum + Math.max(0, slice.weight), 0);
 
   const arcs: string[] = [];
@@ -100,7 +107,7 @@ export function CompositionDonut(props: {
   };
 
   return (
-    <div className="zc-donut">
+    <div className="zc-donut" data-testid={testId}>
       <div
         className="zc-donut-ring"
         role="img"
@@ -115,7 +122,7 @@ export function CompositionDonut(props: {
       </div>
       <div className="zc-donut-legend">
         {slices.length === 0 && (
-          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>本月还没有可归类的支出</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>{emptyText}</div>
         )}
         {slices.map((slice) => {
           const share = shareText(normalised(slice.weight));

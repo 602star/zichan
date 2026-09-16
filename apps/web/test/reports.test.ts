@@ -224,7 +224,8 @@ describe('buildReport', () => {
 
 /*
  * 报表页构成图的数据：从已经算好的分类表里折出来，不再查一次。
- * 折法与支出页环图相同（前 5 + 其他），所以两页的环形图不会长得不一样。
+ * 与支出页环图同一个折法（前 5 + 其他、按一级聚合），所以两页的环形图不会长得不一样。
+ * 表里每行仍是二级（表格自己需要那个粒度）。
  */
 describe('expenseCompositionFromTable', () => {
   function tableOf(entries: { label: string; category: string; amount: string }[]): Table {
@@ -259,9 +260,39 @@ describe('expenseCompositionFromTable', () => {
       [{ v: '支出' }, { v: '退款', data: { category: 'refunded' } }, { v: '£0.00', data: { reportAmount: '0' } }],
     );
     const composition = expenseCompositionFromTable(table);
-    expect(composition.slices.map((row) => row.category)).toEqual(['food']);
+    // 二级 `food` 归属目录里的一级 `expense_food`——环上画的是板块，不是叶子。
+    expect(composition.slices.map((row) => row.category)).toEqual(['expense_food']);
+    expect(composition.slices[0]?.label).toBe('食品餐饮');
     expect(composition.total).toBe('40');
     expect(composition.others.count).toBe(0);
+  });
+
+  it('folds several children of one 板块 into a single slice', () => {
+    const composition = expenseCompositionFromTable(
+      tableOf([
+        { label: '食品餐饮 / 堂食餐饮', category: 'food', amount: '40' },
+        { label: '食品餐饮 / 外卖', category: 'takeaway', amount: '60' },
+        { label: '医疗健康 / 挂号诊疗', category: 'healthcare', amount: '90' },
+      ]),
+      { categories: [] },
+    );
+    expect(composition.slices.map((row) => row.category)).toEqual(['expense_food', 'expense_health']);
+    expect(composition.slices[0]).toMatchObject({ label: '食品餐饮', amount: '100' });
+    expect(composition.slices[0]?.weight).toBeCloseTo(100 / 190, 10);
+  });
+
+  it('keeps 二级 when asked, restricted to one 板块', () => {
+    const table = tableOf([
+      { label: '食品餐饮 / 堂食餐饮', category: 'food', amount: '40' },
+      { label: '食品餐饮 / 外卖', category: 'takeaway', amount: '60' },
+      { label: '医疗健康 / 牙科', category: 'dental', amount: '90' },
+    ]);
+    const children = expenseCompositionFromTable(table, { level: 'leaf', underParent: 'expense_food' });
+    expect(children.slices.map((row) => row.category)).toEqual(['takeaway', 'food']);
+    // 分母只是这个板块（100），不是整张表（190）——右环是左环那一段的放大。
+    expect(children.total).toBe('100');
+    expect(children.slices[0]).toMatchObject({ label: '外卖', weight: 0.6 });
+    expect(children.slices.reduce((sum, row) => sum + row.weight, 0)).toBeCloseTo(1, 10);
   });
 
   it('returns an empty composition instead of a zero-valued slice', () => {

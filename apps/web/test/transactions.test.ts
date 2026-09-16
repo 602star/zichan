@@ -40,7 +40,7 @@ describe('buildTransactions', () => {
     expect(round(vm.filteredExpense, 2)).toBe('28.00');
     expect(round(vm.filteredNet, 2)).toBe('2972.00');
     expect(vm.groups[0]?.label).toBe('账本日 2026-03-04');
-    expect(vm.topExpenseCategories.map((x) => x.category)).toEqual(['food', 'transport']);
+    expect(vm.topExpenseCategories.map((x) => x.category)).toEqual(['food_parent', 'transport']);
     expect(vm.trend.at(-1)?.month).toBe('2026-03');
     expect(vm.calendarDays.find((d) => d.date === '2026-03-03')).toMatchObject({ count: 1, expense: '20' });
   });
@@ -70,7 +70,8 @@ describe('buildTransactions', () => {
     expect(vm.income).toBe('3000');
     expect(vm.expense).toBe('28');
     expect(vm.filteredNet).toBe('2972');
-    expect(vm.topExpenseCategories.map((row) => row.category)).toEqual(['food', 'transport']);
+    // 环与 KPI 都按一级聚合（`food` 归属 `food_parent`），所以两处都是板块名。
+    expect(vm.topExpenseCategories.map((row) => row.category)).toEqual(['food_parent', 'transport']);
   });
 
   it('treats refunds as positive cash that reduces original spending and ignores voided rows', () => {
@@ -97,7 +98,7 @@ describe('buildTransactions', () => {
     const vm = buildTransactions(s, { range: 'this_month', type: 'all', category: 'all', accountId: 'all', search: '' });
     expect(round(vm.expense, 2)).toBe('70.00');
     expect(vm.budgets[0]).toMatchObject({ actual: '70', remaining: '50' });
-    expect(vm.topExpenseCategories[0]).toMatchObject({ category: 'food', amount: '70' });
+    expect(vm.topExpenseCategories[0]).toMatchObject({ category: 'food_parent', amount: '70' });
     expect(vm.calendarDays.find((day) => day.date === original.date)).toMatchObject({ count: 2, expense: '70' });
     const ledger = buildAccountLedger(s, s.ids.bank, s.ids.gbp);
     expect(ledger.map((row) => row.amount)).toEqual(['30', '-100']);
@@ -210,7 +211,7 @@ describe('buildTransactions', () => {
 
     const vm = buildTransactions(s, { range: 'this_month', type: 'all', category: 'all', accountId: 'all', search: '' });
     expect(round(vm.expense, 2)).toBe('50.00');
-    expect(vm.topExpenseCategories.map((x) => x.category)).toEqual(['food', 'shopping']);
+    expect(vm.topExpenseCategories.map((x) => x.category)).toEqual(['food_parent', 'shopping']);
     expect(vm.budgets[0]).toMatchObject({ category: 'food', actual: '30', remaining: '70' });
 
     const ledger = buildAccountLedger(s, s.ids.bank, s.ids.gbp);
@@ -682,15 +683,112 @@ describe('expense composition', () => {
     const s = makeSnapshot();
     s.transactions = [makeTransaction({ id: 'only', date: '2026-03-03', category: 'food', amount: '30', assetId: s.ids.gbp })];
     const vm = buildTransactions(s, monthFilters());
-    expect(vm.expenseComposition.slices.map((row) => row.category)).toEqual(['food']);
+    expect(vm.expenseComposition.slices.map((row) => row.category)).toEqual(['food_parent']);
     expect(vm.expenseComposition.slices[0]?.weight).toBe(1);
     expect(vm.expenseComposition.others).toEqual({ amount: '0', count: 0, weight: 0 });
     expect(vm.expenseComposition.total).toBe('30');
+    // 一个板块只画一段，且它自己的名字不带「父 / 子」前缀——环已经是嵌套读法。
+    expect(vm.expenseComposition.slices[0]?.label).toBe('餐饮');
+  });
+
+  it('filters by 板块 with parentCategory, on top of any 二级 filter', () => {
+    const s = makeSnapshot();
+    s.transactions = [
+      makeTransaction({ id: 'lunch', date: '2026-03-03', category: 'food', amount: '20', assetId: s.ids.gbp }),
+      makeTransaction({ id: 'metro', date: '2026-03-03', category: 'transport', amount: '8', assetId: s.ids.gbp }),
+      makeTransaction({ id: 'shop', date: '2026-03-03', category: 'shopping', amount: '100', assetId: s.ids.gbp }),
+    ];
+
+    // 只按板块：板块下所有二级都进来（这里 `food` 是 `food_parent` 的子级）。
+    const byParent = buildTransactions(s, monthFilters({ parentCategory: 'food_parent' }));
+    expect(byParent.items.map((row) => row.tx.id)).toEqual(['lunch']);
+
+    // 板块 + 细分：两个条件同时生效。
+    const byBoth = buildTransactions(s, monthFilters({ parentCategory: 'food_parent', category: 'food' }));
+    expect(byBoth.items.map((row) => row.tx.id)).toEqual(['lunch']);
+
+    // 板块对、细分不属于它：空结果，而不是“忽略其中一个条件”。
+    const mismatched = buildTransactions(s, monthFilters({ parentCategory: 'food_parent', category: 'transport' }));
+    expect(mismatched.items).toEqual([]);
   });
 
   it('stays empty rather than inventing a slice for an empty month', () => {
     const vm = buildTransactions(makeSnapshot(), monthFilters());
     expect(vm.expenseComposition).toEqual({ slices: [], others: { amount: '0', count: 0, weight: 0 }, total: '0' });
+    expect(vm.expenseChildren).toEqual({});
+  });
+
+  /*
+   * 为什么要按一级聚合：把一个板块的钱拆成几段小钱后，每一段都输给别的板块里的
+   * 单个大项，于是「当月最大的板块」可能一段都不在环上——环就答不了它该答的问题。
+   */
+  it('keeps the biggest 板块 in the ring even when its money sits in many small children', () => {
+    const s = makeSnapshot();
+    s.categories.push(
+      { id: 'health_parent', name: '医疗', type: 'expense', isActive: true, sortOrder: 40, createdAt: '', updatedAt: '', version: 1, isDeleted: false } as never,
+      { id: 'med', name: '就医', type: 'expense', parentId: 'health_parent', isActive: true, sortOrder: 41, createdAt: '', updatedAt: '', version: 1, isDeleted: false } as never,
+    );
+    s.transactions = [
+      // 餐饮：六笔小额，归属同一板块，合计 300（当月最大）。
+      ...['groceries', 'takeaway', 'coffee_drinks', 'snacks_fruit', 'dining_out', 'other_food'].map((id, index) =>
+        makeTransaction({ id: `food-${index}`, date: '2026-03-03', category: 'food', amount: '50', assetId: s.ids.gbp })),
+      makeTransaction({ id: 'med', date: '2026-03-03', category: 'med', amount: '200', assetId: s.ids.gbp }),
+      makeTransaction({ id: 'shop', date: '2026-03-03', category: 'shopping', amount: '100', assetId: s.ids.gbp }),
+    ];
+
+    const vm = buildTransactions(s, monthFilters());
+    expect(vm.expenseComposition.slices.map((row) => row.category)).toEqual(['food_parent', 'health_parent', 'shopping']);
+    expect(vm.expenseComposition.slices[0]).toMatchObject({ amount: '300', label: '餐饮' });
+    expect(vm.expenseComposition.slices[0]?.weight).toBeCloseTo(0.5, 10);
+    // 按二级画的话，最大的一段只有 200，排在别的板块的小项后面——这就是要避免的。
+    expect(vm.expenseComposition.total).toBe('600');
+  });
+
+  it('gives every 板块 its own children, summing back to its slice', () => {
+    const s = makeSnapshot();
+    s.categories.push(
+      { id: 'health_parent', name: '医疗', type: 'expense', isActive: true, sortOrder: 40, createdAt: '', updatedAt: '', version: 1, isDeleted: false } as never,
+      { id: 'med', name: '就医', type: 'expense', parentId: 'health_parent', isActive: true, sortOrder: 41, createdAt: '', updatedAt: '', version: 1, isDeleted: false } as never,
+    );
+    s.transactions = [
+      makeTransaction({ id: 'lunch', date: '2026-03-03', category: 'food', amount: '70', assetId: s.ids.gbp }),
+      makeTransaction({ id: 'med', date: '2026-03-03', category: 'med', amount: '200', assetId: s.ids.gbp }),
+      makeTransaction({ id: 'shop', date: '2026-03-03', category: 'shopping', amount: '100', assetId: s.ids.gbp }),
+    ];
+
+    const vm = buildTransactions(s, monthFilters());
+    const parent = vm.expenseChildren.health_parent!;
+    expect(parent.slices.map((row) => row.category)).toEqual(['med']);
+    expect(parent.total).toBe('200');
+    // 右环的分母只是它自己那个板块，所以这一段占满整圈——不是全月的 200/370。
+    expect(parent.slices[0]?.weight).toBe(1);
+    expect(vm.expenseChildren.food_parent?.total).toBe('70');
+    expect(vm.expenseChildren.shopping?.total).toBe('100');
+    // 两个环必然对得上：各板块的二级构成之和 = 左环那一段的金额。
+    for (const slice of vm.expenseComposition.slices) {
+      expect(vm.expenseChildren[slice.category]?.total).toBe(slice.amount);
+    }
+  });
+
+  it('filters by 板块 with parentCategory, on top of any 二级 filter', () => {
+    const s = makeSnapshot();
+    s.transactions = [
+      makeTransaction({ id: 'lunch', date: '2026-03-03', category: 'food', amount: '20', assetId: s.ids.gbp }),
+      makeTransaction({ id: 'metro', date: '2026-03-03', category: 'transport', amount: '8', assetId: s.ids.gbp }),
+      makeTransaction({ id: 'shop', date: '2026-03-03', category: 'shopping', amount: '100', assetId: s.ids.gbp }),
+    ];
+
+    // 只按板块：板块下所有二级都进来（这里 `food` 是 `food_parent` 的子级）。
+    const byParent = buildTransactions(s, monthFilters({ parentCategory: 'food_parent' }));
+    expect(byParent.items.map((row) => row.tx.id)).toEqual(['lunch']);
+
+    // 板块 + 细分：两个条件同时生效。
+    const byBoth = buildTransactions(s, monthFilters({ parentCategory: 'food_parent', category: 'food' }));
+    expect(byBoth.items.map((row) => row.tx.id)).toEqual(['lunch']);
+
+    // 板块对、细分不属于它：空结果，而不是“忽略其中一个条件”。
+    const mismatched = buildTransactions(s, monthFilters({ parentCategory: 'food_parent', category: 'transport' }));
+    expect(mismatched.items).toEqual([]);
   });
 
   it('leaves unconvertible spending out of both the slices and the total', () => {

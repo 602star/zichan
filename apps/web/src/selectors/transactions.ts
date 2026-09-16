@@ -13,6 +13,7 @@ import { createReportCurrency, type ReportCurrency } from '../reportCurrency.js'
 import { ledgerAsOfDate } from '../as-of.js';
 import {
   categoryLabel,
+  categoryLevelIndex,
   categoryOptions,
   categoryType as metaCategoryType,
   TYPE_LABEL,
@@ -76,6 +77,11 @@ export interface TransactionFilters {
   dateTo?: string;
   type: 'all' | TransactionType;
   category: 'all' | TransactionCategory;
+  /**
+   * 一级分类（板块）下钻。与 `category` 组合就是「板块 + 细分」两级：
+   * 流水只挂在二级上，所以筛一级必须靠父链上溯。
+   */
+  parentCategory?: 'all' | string;
   accountId: 'all' | string;
   payeeId?: 'all' | string;
   tagId?: 'all' | string;
@@ -218,6 +224,13 @@ export interface TransactionsVM {
   groups: TransactionGroupVM[];
   topExpenseCategories: TransactionCategoryVM[];
   expenseComposition: TransactionCompositionVM;
+  /**
+   * 每个一级分类各自的二级构成，键是一级分类 id。
+   *
+   * 与 `expenseComposition` 同一批叶子行，只是归了桶：点左环哪一段，右环就取哪一项，
+   * 不再查一遍库，也不会出现两个环各自算一套而微差。
+   */
+  expenseChildren: Record<string, TransactionCompositionVM>;
   filteredTopExpenseCategories: TransactionCategoryVM[];
   trend: TransactionTrendVM[];
   calendarMonth: string;
@@ -322,10 +335,6 @@ function groupedExpenseCategoriesFromTransactions(snap: Snapshot, rows: Transact
 
 function expenseCategories(snap: Snapshot, rows: Transaction[], report: ReportCurrency, topN = 3): TransactionCategoryVM[] {
   return groupedExpenseCategoriesFromTransactions(snap, rows, report).slice(0, topN);
-}
-
-function expenseCompositionFromTransactions(snap: Snapshot, rows: Transaction[], report: ReportCurrency): TransactionCompositionVM {
-  return composeExpenseCategories(groupedExpenseCategoriesFromTransactions(snap, rows, report));
 }
 
 function splitRows(snap: Snapshot, t: Transaction): { category: string; amount: string }[] {
@@ -592,6 +601,11 @@ function matches(snap: Snapshot, t: Transaction, filters: TransactionFilters, ra
   if (filters.category !== 'all') {
     const cats = splitRows(snap, t).map((s) => s.category);
     if (t.category !== filters.category && !cats.includes(filters.category)) return false;
+  }
+  if (filters.parentCategory && filters.parentCategory !== 'all') {
+    const { rootOf } = categoryLevelIndex(snap.categories);
+    const leaves = [t.category, ...splitRows(snap, t).map((s) => s.category)];
+    if (!leaves.some((leaf) => rootOf(leaf) === filters.parentCategory)) return false;
   }
   if (filters.accountId !== 'all' && t.accountId !== filters.accountId && t.transferAccountId !== filters.accountId) return false;
   const q = filters.search.trim().toLowerCase();
@@ -947,25 +961,81 @@ function aggregateExpenseCategories(
 }
 
 /**
- * 本月支出构成。与 `aggregateExpenseCategories` 共用同一趟分组，
- * 所以环图的数字与 KPI 卡里的 Top3 必然同源——多出来的只是「其他」那一档。
+ * 把叶子金额行折成一级（板块）金额行。
+ *
+ * 环图画一级而不是二级：流水只挂二级，直接把二级当成段来画的话，一个板块的钱会被
+ * 拆成几段小钱，每一段都输给别的板块里的单个大项——于是当月真正的最大板块可能一段
+ * 都不在环上，环就答不了它该答的那个问题。
  */
-function expenseComposition(snap: Snapshot, report: ReportCurrency, rows: TransactionReportAggregateRow[]): TransactionCompositionVM {
-  return composeExpenseCategories(groupedExpenseCategories(snap, report, rows));
+function foldExpenseToParent(leafRows: TransactionCategoryVM[], snap: Snapshot): TransactionCategoryVM[] {
+  const { nameOf, rootOf } = categoryLevelIndex(snap.categories);
+  const buckets = new Map<string, { amount: ReturnType<typeof D>; count: number }>();
+  for (const row of leafRows) {
+    const key = rootOf(row.category);
+    const current = buckets.get(key) ?? { amount: D(0), count: 0 };
+    current.amount = current.amount.plus(row.amount);
+    current.count += row.count;
+    buckets.set(key, current);
+  }
+  const total = sum([...buckets.values()].map((bucket) => bucket.amount));
+  return [...buckets.entries()]
+    .map(([category, bucket]) => ({
+      category,
+      label: nameOf(category),
+      amount: bucket.amount.toString(),
+      count: bucket.count,
+      weight: total.isZero() ? 0 : bucket.amount.div(total).toNumber(),
+    }))
+    .sort((left, right) => D(right.amount).minus(left.amount).toNumber());
 }
 
-/** 把完整分类列表折成「前 N + 其他」两档，环图与条形图共用。 */
+/**
+ * 每个一级分类下的二级构成，供「选中板块的构成」直接取用。
+ *
+ * 与左环同一批叶子行，只是按归属分了桶再各自归一化，所以右环各段相加等于左环那一段
+ * 的金额（净额为负的二级除外——它两边都不入分子也不入分母，见 `composeExpenseCategories`）。
+ */
+function expenseChildrenByParent(leafRows: TransactionCategoryVM[], snap: Snapshot): Record<string, TransactionCompositionVM> {
+  const { nameOf, rootOf } = categoryLevelIndex(snap.categories);
+  const byParent = new Map<string, TransactionCategoryVM[]>();
+  for (const row of leafRows) {
+    const key = rootOf(row.category);
+    // 叶子行的标签是「父级 / 子级」（表格里需要那个上下文），但右环已经嵌在
+    // 那个父级下面，再写一遍父级就是重复。与报表页的同一道题保持同一个读法。
+    byParent.set(key, [...(byParent.get(key) ?? []), { ...row, label: nameOf(row.category) }]);
+  }
+  const result: Record<string, TransactionCompositionVM> = {};
+  for (const [parent, children] of byParent) result[parent] = composeExpenseCategories(children);
+  return result;
+}
+
+/**
+ * 本月支出构成（一级）。与 `topExpenseCategories` 共用同一趟分组，
+ * 所以环图的数字与 KPI 卡的 Top3 必然同源——多出来的只是「其他」那一档。
+ */
+function expenseComposition(snap: Snapshot, report: ReportCurrency, rows: TransactionReportAggregateRow[]): TransactionCompositionVM {
+  return composeExpenseCategories(foldExpenseToParent(groupedExpenseCategories(snap, report, rows), snap));
+}
+
+/**
+ * 把完整分类列表折成「前 N + 其他」两档，环图与条形图共用。
+ *
+ * 份额在这里按传入行重新归一化，而不是沿用上游算的 `weight`：同一批行既要当
+ * 「全部支出」的构成，也要当「某个板块内部」的构成，后者的分母只是那个板块。
+ */
 function composeExpenseCategories(all: TransactionCategoryVM[]): TransactionCompositionVM {
-  const slices = all.slice(0, COMPOSITION_SLICES);
+  const total = sum(all.map((row) => row.amount));
+  const share = (amount: string) => (total.isZero() ? 0 : D(amount).div(total).toNumber());
+  const slices = all.slice(0, COMPOSITION_SLICES).map((row) => ({ ...row, weight: share(row.amount) }));
   const rest = all.slice(COMPOSITION_SLICES);
   return {
     slices,
     others: {
       amount: sum(rest.map((row) => row.amount)).toString(),
       count: rest.length,
-      weight: sum(rest.map((row) => row.weight)).toNumber(),
+      weight: sum(rest.map((row) => share(row.amount))).toNumber(),
     },
-    total: sum(all.map((row) => row.amount)).toString(),
+    total: total.toString(),
   };
 }
 
@@ -1052,10 +1122,12 @@ export function buildTransactionsFromReadModel(
   }
   const calendarMonth = calendarMonthForRange(asOf, filters.range);
   /*
-   * 构成与 KPI 卡的 Top3 共用同一趟分组：先取前 5 分类，KPI 卡再从里面切 3。
-   * 分开算两次会让同一屏出现两个「同一月份、同一口径」却可能微差的分类数字。
+   * 构成与 KPI 卡的 Top3 共用同一趟分组：先取前 5 个**一级**分类，KPI 卡再从里面切 3。
+   * 分开算两次会让同一屏出现两个「同一月份、同一口径」却可能微差的分类数字，
+   * 而两级各算一次还会让 KPI 与环说两套粒度的话。
    */
   const composition = expenseComposition(baseSnap, report, monthAggregates);
+  const monthLeafCategories = groupedExpenseCategories(baseSnap, report, monthAggregates);
   return {
     month,
     income: monthTotals.income.toString(),
@@ -1069,6 +1141,7 @@ export function buildTransactionsFromReadModel(
     groups: [...groups.values()],
     topExpenseCategories: composition.slices.slice(0, 3),
     expenseComposition: composition,
+    expenseChildren: expenseChildrenByParent(monthLeafCategories, baseSnap),
     filteredTopExpenseCategories: aggregateExpenseCategories(baseSnap, report, input.filteredAggregates),
     trend,
     calendarMonth,
@@ -1136,9 +1209,12 @@ export function buildTransactions(snap: Snapshot, filters: TransactionFilters, t
   const filteredIncome = sum(filteredValues.map((value) => value.income));
   const filteredExpense = sum(filteredValues.map((value) => value.expense));
 
-  const topExpenseCategories = expenseCategories(snap, monthRows, report);
+  /* 与读模型路径同一套口径：环是**一级**构成，Top3 就是它的前三段；右环从
+   * `expenseChildren` 里取，不再另外分组。 */
+  const monthLeafCategories = groupedExpenseCategoriesFromTransactions(snap, monthRows, report);
+  const expenseComposition = composeExpenseCategories(foldExpenseToParent(monthLeafCategories, snap));
+  const topExpenseCategories = expenseComposition.slices.slice(0, 3);
   const filteredTopExpenseCategories = expenseCategories(snap, filteredRows, report);
-  const expenseComposition = expenseCompositionFromTransactions(snap, monthRows, report);
 
   const trend: TransactionTrendVM[] = [];
   for (let i = trendMonths - 1; i >= 0; i--) {
@@ -1164,6 +1240,7 @@ export function buildTransactions(snap: Snapshot, filters: TransactionFilters, t
     groups: [...groups.values()],
     topExpenseCategories,
     expenseComposition,
+    expenseChildren: expenseChildrenByParent(monthLeafCategories, snap),
     filteredTopExpenseCategories,
     trend,
     calendarMonth: calendarMonthForRange(asOf, filters.range),

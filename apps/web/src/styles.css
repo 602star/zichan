@@ -753,6 +753,45 @@ button,
  * a category to drill into, and plain rows for the aggregated 「其他」 bucket,
  * which is not.
  */
+/*
+ * 分类下钻的面包屑：图表本身不随筛选变化，所以“现在在看哪一层”必须写在屏上。
+ * 已生效的层级是粗体当前项，前面的层级是可点的回退按钮（最后一个不可点）。
+ */
+.zc-drill-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+  font-size: var(--fs-caption);
+  color: var(--text-tertiary);
+}
+
+.zc-drill-crumb {
+  border: none;
+  background: transparent;
+  padding: 3px 6px;
+  border-radius: var(--r-pill);
+  font: inherit;
+  font-weight: var(--fw-medium);
+  color: var(--accent);
+  cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zc-drill-crumb:hover {
+  background: var(--accent-soft);
+}
+
+.zc-drill-crumb.is-current {
+  color: var(--text-primary);
+  font-weight: var(--fw-bold);
+  padding: 3px 6px;
+}
+
 .zc-donut {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -1217,6 +1256,13 @@ input[type="radio"] {
    */
   .zc-donut-legend-row {
     min-height: 44px;
+  }
+
+  /* 面包屑上的回退按钮同理：桌面是小字链接，手指下必须撞上去。 */
+  .zc-drill-crumb {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
   }
 }
 

@@ -23,55 +23,82 @@ async function recordExpense(page, { category, description, amount }) {
 }
 
 /**
- * 构成环是「点一段就按这个分类筛」，而轻量模式根本不渲染筛选行（`Filters` 只在资产
- * 模式出现）。所以环写进去的那条分类筛选必须自带出口：一个「清除分类下钻」按钮，
- * 以及再点同一段直接取消——否则点一下环就把账本锁进一个看不见的筛选里，只能刷新
- * 页面才回得去。
+ * 构成环是两级：左环画一级（板块），点一段**按该板块筛选**并让右环画出它的二级；
+ * 点右环的细分再收窄到那一项。
+ *
+ * 两级都必须能退回去：轻量模式不渲染筛选行（`Filters` 只在资产模式出现），所以
+ * 面包屑是这些筛选唯一的出口——否则点一下环就把账本锁进一个看不见的筛选里。
  */
-test('the composition ring drill can be undone, with the range it overwrote', async ({ page }) => {
+test('the composition rings drill 板块 then 二级, and the breadcrumb steps back', async ({ page }) => {
   await openTransactions(page);
   await recordExpense(page, { category: '堂食餐饮', description: '午餐', amount: '38.50' });
   await recordExpense(page, { category: '公交地铁', description: '通勤', amount: '6' });
 
   const lunch = rows(page).getByText('午餐', { exact: true });
   const commute = rows(page).getByText('通勤', { exact: true });
-  const slice = page.locator('.zc-donut-legend-row.is-drillable', { hasText: '堂食餐饮' });
-  const chip = page.getByRole('button', { name: /清除分类下钻/ });
   const preset = page.getByLabel('快捷时间范围');
+  const crumbs = page.locator('.zc-drill-crumbs');
+  const backToAll = page.getByRole('button', { name: '退回到全部支出' });
+  // 左环画板块：一笔堂食餐饮落到「食品餐饮」这一段。两个环的行都在同一种 class 下，
+  // 所以都要先钉到自己的环上，否则标签里出现父级名就会同时命中两个。
+  const parentRing = page.getByTestId('composition-parent');
+  const foodSlice = parentRing.locator('.zc-donut-legend-row.is-drillable', { hasText: '食品餐饮' });
+  const childRing = page.getByTestId('composition-children');
+  const childSlice = childRing.locator('.zc-donut-legend-row.is-drillable', { hasText: '堂食餐饮' });
 
   await expect(lunch).toBeVisible();
   await expect(commute).toBeVisible();
-  await expect(chip).toBeHidden();
+  await expect(crumbs).toBeHidden();
+  await expect(childRing).toBeHidden();
 
   // 把区间先拨到「全部时间」，这样才看得出下钻顺手改掉的区间有没有还回来。
   await preset.selectOption('all');
-  await slice.click();
+  await foodSlice.click();
+
+  // 一级：列表收窄到板块，右环长出来，区间跟着环收窄到本月。
   await expect(lunch).toBeVisible();
   await expect(commute).toBeHidden();
-  await expect(slice).toHaveClass(/is-selected/);
+  await expect(foodSlice).toHaveClass(/is-selected/);
+  await expect(preset).toHaveValue('this_month');
+  await expect(childRing).toBeVisible();
+  await expect(childSlice).toBeVisible();
+  await expect(crumbs).toContainText('食品餐饮');
+
+  // 二级：同一个板块里再收到一项，面包屑多一层。
+  await childSlice.click();
+  await expect(lunch).toBeVisible();
+  await expect(commute).toBeHidden();
+  await expect(childSlice).toHaveClass(/is-selected/);
+  await expect(crumbs).toContainText('堂食餐饮');
+
+  // 退一层回到板块：细分高亮消失，列表仍按板块筛，区间不动（用户没改过它）。
+  await page.getByRole('button', { name: '退回一级：食品餐饮' }).click();
+  await expect(crumbs).not.toContainText('堂食餐饮');
+  await expect(childSlice).not.toHaveClass(/is-selected/);
+  await expect(commute).toBeHidden();
   await expect(preset).toHaveValue('this_month');
 
-  await expect(chip).toBeVisible();
-  await chip.click();
+  // 全部清掉：两类流水都回来，右环收起，区间还原成下钻前的「全部时间」。
+  await backToAll.click();
   await expect(commute).toBeVisible();
-  await expect(slice).not.toHaveClass(/is-selected/);
-  await expect(chip).toBeHidden();
+  await expect(crumbs).toBeHidden();
+  await expect(childRing).toBeHidden();
+  await expect(foodSlice).not.toHaveClass(/is-selected/);
   await expect(preset).toHaveValue('all');
 
-  // 再点同一段环就是取消，不必先去找按钮。
-  await slice.click();
+  // 再点同一段就是退回一层：一级 → 全部。
+  await foodSlice.click();
   await expect(commute).toBeHidden();
-  await expect(chip).toBeVisible();
-  await slice.click();
+  await foodSlice.click();
   await expect(commute).toBeVisible();
-  await expect(chip).toBeHidden();
+  await expect(crumbs).toBeHidden();
 });
 
 /**
- * 报表页的同一道题：它的下钻自带一个「清除分类下钻」chip（在日期行右侧），这里锁住它
- * 真的能把流水明细放回来——用户报的若是这一页，先要确定它现在是好的。
+ * 报表页的同一道题。它的图有两个形态，这里都走一遍：环形画板块并让右环出二级，
+ * 条形在选中板块后只排那一个板块的二级——两种形态必须是同一道题的两个读法。
  */
-test('the reports composition ring clear chip undoes the drill', async ({ page }) => {
+test('the reports rings drill 板块 then 二级, in both chart shapes', async ({ page }) => {
   await openTransactions(page);
   await recordExpense(page, { category: '堂食餐饮', description: '午餐', amount: '38.50' });
   await recordExpense(page, { category: '公交地铁', description: '通勤', amount: '6' });
@@ -84,22 +111,46 @@ test('the reports composition ring clear chip undoes the drill', async ({ page }
   await reportsNav.press('Space');
   await expect(reportsNav).toBeChecked();
   await page.locator('.zc-sidebar').getByRole('button', { name: /报表$/ }).click();
+
   const details = page.locator('#transaction-report-details');
   const lunch = details.getByText('午餐', { exact: true });
   const commute = details.getByText('通勤', { exact: true });
-  const chip = page.getByRole('button', { name: /清除分类下钻/ });
+  const crumbs = page.locator('.zc-drill-crumbs');
+  const backToAll = page.getByRole('button', { name: '退回到全部支出' });
+  const parentRing = page.getByTestId('composition-parent');
+  const foodSlice = parentRing.locator('.zc-donut-legend-row.is-drillable', { hasText: '食品餐饮' });
+  const childRing = page.getByTestId('composition-children');
 
   await expect(details).toContainText('流水明细');
-  await expect(chip).toBeHidden();
+  await expect(crumbs).toBeHidden();
 
-  await page.locator('.zc-donut-legend-row.is-drillable', { hasText: '堂食餐饮' }).click();
+  await foodSlice.click();
   await expect(details).toContainText('已按分类下钻');
   await expect(lunch).toBeVisible();
   await expect(commute).toBeHidden();
+  await expect(childRing).toBeVisible();
+  await expect(crumbs).toContainText('食品餐饮');
 
-  await expect(chip).toBeVisible();
-  await chip.click();
+  await childRing.locator('.zc-donut-legend-row.is-drillable', { hasText: '堂食餐饮' }).click();
+  await expect(details).toContainText('堂食餐饮');
+  await expect(lunch).toBeVisible();
+  await expect(commute).toBeHidden();
+
+  await expect(backToAll).toBeVisible();
+  await backToAll.click();
   await expect(details).not.toContainText('已按分类下钻');
   await expect(commute).toBeVisible();
-  await expect(chip).toBeHidden();
+  await expect(crumbs).toBeHidden();
+
+  // 条形：同样列二级（整段区间），点一条按那条二级下钻，板块跟着它的归属走；
+  // 选中后条形只剩这个板块的二级，不再列别的板块。
+  await page.getByRole('button', { name: '条形', exact: true }).click();
+  await expect(page.getByRole('group', { name: '分类图形态' })).toBeVisible();
+  const bars = page.getByRole('group', { name: /排名/ });
+  await bars.getByRole('button', { name: /^堂食餐饮 · / }).click();
+  await expect(commute).toBeHidden();
+  await expect(lunch).toBeVisible();
+  await expect(crumbs).toContainText('食品餐饮');
+  await expect(crumbs).toContainText('堂食餐饮');
+  await expect(bars.getByRole('button', { name: /^公交地铁 · / })).toBeHidden();
 });
