@@ -95,6 +95,33 @@ describe('responsive shell contract', () => {
     expect(css).toContain('overscroll-behavior-inline: contain');
   });
 
+  /*
+   * The 日常收支 page stacks its two charts - composition first, trend second -
+   * and never puts them side by side. Half a page is not enough for a ring plus
+   * the legend that is its only reading (the 二级 names came out as ellipses),
+   * so the shape is a contract rather than a preference.
+   */
+  it('stacks the 日常收支 charts, composition above trend, one per row', () => {
+    expect(css).toContain('.zc-chart-stack');
+    expect(css).toMatch(/\.zc-chart-stack\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+    expect(transactions).toContain('className="zc-chart-stack"');
+    expect(transactions).not.toMatch(/id="transaction-charts"[^>]*className="zc-chart-pair"/);
+    const composition = transactions.search(/<ExpenseCompositionCard/);
+    const trend = transactions.search(/<Trend\s/);
+    expect(composition).toBeGreaterThan(-1);
+    expect(trend).toBeGreaterThan(-1);
+    expect(composition, 'the composition must render above the trend').toBeLessThan(trend);
+  });
+
+  /*
+   * A ring pair must also work with only one ring: with no 板块 selected there is
+   * a single donut, and a fixed two-track grid stranded it in the left half of
+   * the card. That is why the pair is `auto-fit` rather than two columns.
+   */
+  it('lets a lone ring take the whole row instead of half a card', () => {
+    expect(css).toMatch(/\.zc-chart-pair\s*\{[^}]*repeat\(auto-fit,/);
+  });
+
   // The touch baseline must not be tied to a width. Keying it off
   // `pointer: coarse` is what covers tablets (768-1199px) and landscape phones,
   // where a width-only rule silently reverted to 13px fields and 24px targets.

@@ -1198,7 +1198,7 @@ export function Transactions() {
                 <button onClick={() => setEditingPayee('new')} style={button}>+ 商户</button>
                 <button onClick={() => setEditingSplit('new')} style={button}>+ 拆分</button>
                 {/* 图区在列表下方（手机上可能好几屏），所以留一个直接下去的锚点。 */}
-                <button onClick={() => document.getElementById('transaction-charts')?.scrollIntoView({ block: 'start' })} style={button}>趋势与构成 ↓</button>
+                <button onClick={() => document.getElementById('transaction-charts')?.scrollIntoView({ block: 'start' })} style={button}>构成与趋势 ↓</button>
                 <button onClick={openNewTransaction} className="zc-header-primary" style={primary}>{usesAccounts ? '+ 记账' : '+ 记支出'}</button>
               </div>
             </div>
@@ -1339,20 +1339,25 @@ export function Transactions() {
               </div>
             )}
           </div>
-          <div id="transaction-charts" className="zc-chart-pair" style={{ scrollMarginTop: 16 }}>
-            <Trend
-              vm={vm}
-              months={trendMonths}
-              onMonthsChange={setTrendMonths}
-              focus={trendFocus}
-              onFocusChange={setTrendFocus}
-            />
+          {/*
+            * 构成在上、趋势在下，各占一行。以前两张图并排：每张只剩半幅，而环的图例
+            * 是它唯一的读法，二级分类名被挤成省略号后就等于没画。顺序也顺着阅读：
+            * 先看「这个月钱花在哪」，再看「几个月下来怎么走」。
+            */}
+          <div id="transaction-charts" className="zc-chart-stack" style={{ scrollMarginTop: 16 }}>
             <ExpenseCompositionCard
               vm={vm}
               drill={drillView}
               parentLabel={categoryLabel(drillView?.parent ?? '', readySnap.categories)}
               onSelectParent={toggleParentDrill}
               onSelectChild={toggleChildDrill}
+            />
+            <Trend
+              vm={vm}
+              months={trendMonths}
+              onMonthsChange={setTrendMonths}
+              focus={trendFocus}
+              onFocusChange={setTrendFocus}
             />
           </div>
         </>

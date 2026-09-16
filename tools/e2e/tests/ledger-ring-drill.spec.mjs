@@ -154,3 +154,53 @@ test('the reports rings drill 板块 then 二级, in both chart shapes', async (
   await expect(crumbs).toContainText('堂食餐饮');
   await expect(bars.getByRole('button', { name: /^公交地铁 · / })).toBeHidden();
 });
+
+/**
+ * 图区是上下两张整幅卡：构成在上、趋势在下，而且环的图例不许出现省略号。
+ *
+ * 以前两张图在宽屏并排，构成卡只拿到半幅，卡里的两个环再分那半幅：实测分类名的
+ * 可用宽度是 0px——名字整段被省略号吃掉，而图例是环唯一的读法。所以这里量几何
+ * （上下关系、等宽、没有被截断的标签），不量审美。
+ */
+test('the 日常收支 charts stack full width, and no legend name is cut off', async ({ page }) => {
+  await openTransactions(page);
+  await recordExpense(page, { category: '堂食餐饮', description: '午餐', amount: '38.50' });
+  await recordExpense(page, { category: '水电燃气', description: '水电', amount: '126.40' });
+
+  /* 布局在卡片外量：卡片的矩形与图例的可用宽度都不受滚动位置影响。 */
+  const chartGeometry = () => page.evaluate(() => {
+    const cards = [...document.querySelector('#transaction-charts').children];
+    return {
+      cards: cards.map((card) => {
+        const rect = card.getBoundingClientRect();
+        return {
+          title: (card.querySelector('div')?.textContent ?? '').slice(0, 12),
+          top: Math.round(rect.top),
+          left: Math.round(rect.left),
+          width: Math.round(rect.width),
+          bottom: Math.round(rect.bottom),
+        };
+      }),
+      cutOff: [...document.querySelectorAll('.zc-donut-legend-label')]
+        .filter((label) => label.scrollWidth > label.clientWidth + 1)
+        .map((label) => label.textContent),
+    };
+  });
+
+  // 未下钻：一个环也要占满整行，名字不能只剩省略号。
+  const plain = await chartGeometry();
+  expect(plain.cards).toHaveLength(2);
+  expect(plain.cards[0].title).toContain('构成');
+  expect(plain.cards[1].title).toContain('趋势');
+  expect(plain.cards[1].top).toBeGreaterThanOrEqual(plain.cards[0].bottom - 1);
+  expect(plain.cards[1].left).toBe(plain.cards[0].left);
+  expect(plain.cards[1].width).toBe(plain.cards[0].width);
+  expect(plain.cutOff).toEqual([]);
+
+  // 下钻后两个环并排，图例变窄——这正是以前文字被吃掉的场景。
+  await page.getByTestId('composition-parent').locator('.zc-donut-legend-row.is-drillable', { hasText: '食品餐饮' }).click();
+  await expect(page.getByTestId('composition-children')).toBeVisible();
+  const drilled = await chartGeometry();
+  expect(drilled.cards[1].top).toBeGreaterThanOrEqual(drilled.cards[0].bottom - 1);
+  expect(drilled.cutOff).toEqual([]);
+});

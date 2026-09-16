@@ -639,16 +639,32 @@ button,
  * classes it needs (see `.zc-donut-legend-row`), because a class-based
  * `min-height` outranks the global `button` baseline exactly the way
  * `.zc-protection` regressed before.
+ *
+ * `.zc-chart-pair` holds the side-by-side case - today that is the 一级 ring
+ * and the 二级 ring it opens. It uses `auto-fit` instead of a breakpoint,
+ * because its two states need different answers at the same viewport width: a
+ * fixed two-track grid left the second track empty while only one ring was on
+ * screen and squeezed the legend into half a card, which is where the 二级
+ * names started coming out as ellipses. With both rings up they share the width
+ * as soon as each track can hold a ring plus a legend that prints a seven-figure
+ * amount in full, and stack below that - 340px is that floor.
  */
 .zc-chart-pair {
   display: grid;
-  /*
-   * Stacked by default. Two charts side by side only work on a desktop: at
-   * tablet widths the shell already gives away 96px to the icon rail, which
-   * leaves ~290px per column - narrower than a donut plus its legend, so a
-   * seven-figure amount would push the row out of the card. `min-width: 1200px`
-   * is the breakpoint this app already calls desktop.
-   */
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  gap: 18px;
+  min-width: 0;
+}
+
+/*
+ * Two charts stacked, one per row - the 日常收支 screen draws its composition
+ * above its trend.
+ *
+ * Never side by side: half a page is not enough for a ring plus the legend that
+ * is its only reading, and a legible composition is worth a longer page.
+ */
+.zc-chart-stack {
+  display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   min-width: 0;
@@ -827,6 +843,13 @@ button,
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  /*
+   * A legend is a list, not a table. Before this cap, a lone ring on a
+   * full-width card stretched its name column to ~600px and pushed the amount a
+   * hand's width away from the name it belongs to. The cap never binds while
+   * two rings share the row.
+   */
+  max-width: 560px;
 }
 
 .zc-donut-legend-row {
@@ -1541,12 +1564,6 @@ input[type="radio"] {
 
   .zc-sidebar {
     display: flex;
-  }
-
-  /* Desktop only: the trend and the composition sit side by side, trend wider
-     because a 12-month axis needs the room the donut does not. */
-  .zc-chart-pair {
-    grid-template-columns: 1.1fr 1fr;
   }
 
   .zc-mobile-bottom-nav,

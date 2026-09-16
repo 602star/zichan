@@ -3,6 +3,61 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-16 — 图区改成上下两张整幅卡（构成在上、趋势在下），图例不再被吃掉
+
+用户反馈：“把这个环形图放在日常收支的下方、流水趋势的上方，不要并列，并列后二级分类看不全
+文字，或者你看看还有什么优化方式？”
+
+### 量出来的问题（改前实测）
+
+宽屏并排时，1280×720 下：趋势卡 489px、构成卡 445px；构成卡里的两个环各 202px / 183px，
+**图例里的分类名可用宽度是 0px**（`clientWidth 0 / scrollWidth 52`，整段被省略号吃掉）。
+1440 与 1200 同样为 0；只有 <1200 时两张卡本来就是上下叠的，文字才完整。
+所以“看不全”不是“挤”，是**根本看不见**——而图例是环唯一的读法。
+
+### 改法（`apps/web/src/styles.css` + `screens/Transactions.tsx` + `ui/charts.tsx`）
+
+- 新增 `.zc-chart-stack`（恒定单列）：日常收支页的图区改用它，构成卡在上、趋势卡在下，
+  两张都占满整幅——不再并排。
+- `.zc-chart-pair`（同卡内并排）从固定两列（宽屏 `1.1fr 1fr`）改成
+  `repeat(auto-fit, minmax(min(340px, 100%), 1fr))`：**只有一个环时它占满整行**（旧的固定两列
+  把第二个轨道空着、把图例挤到半幅），两个环时够宽才并排、不够就上下叠。
+- `.zc-donut-legend` 加 `max-width: 560px`：一个环占满整幅时，名字列本来会被拉到 ~600px，
+  金额离它所属的名字太远；两个环并排时这个上限不生效。
+- 图例标签加 `title`：真被截断时鼠标下仍能看到全名（键盘/读屏走 `aria-label`）。
+- 锚点按钮「趋势与构成 ↓」→「构成与趋势 ↓」。
+
+### Verified
+
+- 改后实测（1280）：构成卡与趋势卡同左同宽（952px）、上下相接；未下钻与下钻两种状态下
+  **没有任何图例标签被截断**（未下钻名字列 444–455px，下钻后两环并排 126–257px）。
+- 新增 e2e 用例（`tools/e2e/tests/ledger-ring-drill.spec.mjs`）量卡片矩形（上下关系、等宽）
+  与标签截断；在旧代码上跑**必红**（`Expected substring: "构成" / Received: "全部流水趋势 · 近 6"`），
+  改后跑绿（3 条全过）。
+- 新增 2 条单测（`apps/web/test/responsive-contract.test.ts`）锁住：图区用 `.zc-chart-stack`、
+  构成渲染在趋势之前、`.zc-chart-pair` 是 auto-fit。单测 **488 通过**（63 文件）。
+- `npm run typecheck` 绿；e2e 全量套件 **27 绿 / 2 红**，两条红（`ledger-filter-category.spec.mjs`、
+  `ledger-disabled-pack-category.spec.mjs`）**与本次改动无关**：把本次的 src 改动 stash 掉重建后
+  它们照样红（同一处 `locator.click` 超时），根因见下。
+
+### 顺带查出的旧问题（未修，等确认）
+
+那两条用例都卡在 `panel.getByRole('button', { name: '全部分类' })`。根因是上一个提交（两级环）在
+`Transactions.tsx` 的筛选控件 `onChange` 里给挑选二级也写了 `parentCategory: rootCategoryId(...)`：
+一旦选过任何分类，控件的空选项就从「全部分类」变成「交通出行 · 全部」，于是
+
+1. 用例里那个「全部分类」按钮不再存在（红的就是这一步）；
+2. 更麻烦的是，选空选项只把 `category` 置回 `all`、**`parentCategory` 留着**，控件于是永远停在
+   「交通出行 · 全部」，用这个控件回不到「全部分类」——筛选还在生效，但界面上没有出口。
+
+两个可能的修法（行为不同，需用户拍板）：清空时同时清 `parentCategory`；或选择器根本不再写
+`parentCategory`（二级值已隐含一级，只有环下钻需要显式的一级筛选）。
+
+### 有意没做
+
+- 报表页的两张卡本来就是上下排的（趋势在上、构成在下），并排的只有卡内的两个环，
+  所以这次只动日常收支页的相对顺序；要不要报表页也改成“构成在上”，等确认。
+
 ## 2026-09-16 — 构成环改成两级：左环画一级，右环画选中那一段的二级
 
 用户问“环形图需要直接显示二级分类吗？二级太多了环会很乱”，然后拍板：**环画一级**（点一段按该

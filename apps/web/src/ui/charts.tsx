@@ -130,7 +130,9 @@ export function CompositionDonut(props: {
           const body = (
             <>
               <span className="zc-swatch" style={{ background: slice.color }} aria-hidden="true" />
-              <span className="zc-donut-legend-label">{slice.label}</span>
+              {/* 环的图例是它唯一的读法，所以标签宁可用省略号也不换行撑高行；
+                  真被截断时，title 是鼠标下唯一能看到全名的地方（键盘与读屏走 aria-label）。 */}
+              <span className="zc-donut-legend-label" title={slice.label}>{slice.label}</span>
               <span className="zc-donut-legend-amount">{slice.amountText}</span>
               <span className="zc-donut-legend-share">{share}</span>
             </>
