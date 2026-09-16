@@ -3,6 +3,41 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-16 — 构成环点完无法清除筛选（轻量模式没有筛选行）
+
+用户报“点完环形分类后无法清除筛选”。实测确认：日常支出页的构成环点一段会把分类写进
+筛选、并把区间收窄到本月，而**轻量模式根本不渲染筛选行**（`Filters` / `SavedViews` /
+`AdvancedQueryBuilder` 全是 `usesAccounts &&`）。于是那条分类筛选在界面上没有任何出口，
+只能刷新页面——这正是用户说的“无法清除”。（报表页没有这个问题：它下钻后有一个
+「清除分类下钻」chip。）
+
+改法（`apps/web/src/screens/Transactions.tsx`）：
+
+- 下钻时把被改写的东西存进 `categoryDrill`（`before` 是下钻前的区间，`after` 是环设的
+  「本月」），日期行右侧在筛选生效期间出现**「清除分类下钻：<分类> ×」**按钮。
+- 清除时把区间放回 `before`——但只在区间还是环设的那个值时。下钻之后用户自己改过区间，
+  就以用户为准，只清分类。
+- 环的图例/扇区**再点一次 = 取消**（`toggleCategoryDrill`）：高亮的那一段就是“当前正在
+  看的筛选”，点它取消比先去找按钮更符合直觉。说明文案补了“再点一段取消”。
+- 两种模式都渲染这个 chip（资产模式里它与筛选行的分类控件显示同一个值，不冲突）；
+  它只在筛选生效时出现，所以常驻的密度预算不变。
+
+### Verified
+
+- 新增 e2e `tools/e2e/tests/ledger-ring-drill.spec.mjs`（两条）：
+  1. 轻量模式下记两笔不同分类的支出 → 区间先拨到「全部时间」→ 点环下一钻（列表只剩一类、
+     环那一段 `is-selected`、区间变本月）→ 点 chip 清除（两类都回来、区间回到「全部时间」、
+     高亮消失）→ 再点同一段取消。
+  2. 报表页同题：下钻后明细出现「已按分类下钻」、对照流水被排除，chip 再清回来。
+     用户没说是哪一页，所以两边都实测——报表页本来就是好的，现在也锁住了。
+  在改动前的代码上第 1 条**失败**（`expect(chip).toBeVisible()` 等不到那个按钮），
+  即旧版确实无法清除筛选。
+  - 跑法：`cd tools/e2e; npx playwright test ledger-ring-drill.spec.mjs`。本机 Playwright 自带的
+    chromium / chromium headless shell 只有半截（只有 manifest + chrome.dll），用系统 Chrome：
+    `$env:PLAYWRIGHT_EXECUTABLE_PATH='C:\Program Files\Google\Chrome\Application\chrome.exe'`；
+    报表默认不在侧边栏，用例先在设置里用空格键启用它的入口。
+- `npm run typecheck`、`npm run lint`、单测 **480 通过**（63 文件）均绿。
+
 ## 2026-09-15 — 图表：支出页的趋势/构成与报表页的环形/条形
 
 用户问“报表要不要支持多图表？饼图更好还是放支出页？”。先出方案（`docs/web-chart-plan.md`），

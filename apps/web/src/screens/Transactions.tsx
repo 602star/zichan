@@ -98,6 +98,17 @@ const STATUS_OPTIONS = [
 ] as const;
 
 const defaultTransactionRange = dateRangeValue('this_month');
+type DrillRange = Pick<TransactionFilters, 'range' | 'dateFrom' | 'dateTo'>;
+/*
+ * 构成环下钻时顺手把日期区间也收窄到本月（见 `drillToCategory`），所以一次下钻
+ * 改写了两样东西。两边都留一份，是为了「清除分类下钻」能把区间**原样**放回去，
+ * 而不是只清掉一半、把人留在自己没选过的本月里。
+ */
+type CategoryDrill = {
+  category: string;
+  before: DrillRange;
+  after: DrillRange;
+};
 const DEFAULT_FILTERS: TransactionFilters = {
   range: defaultTransactionRange.preset,
   dateFrom: defaultTransactionRange.from,
@@ -208,6 +219,7 @@ export function Transactions() {
   const [accountId, setAccountId] = useState('');
   const [assetId, setAssetId] = useState('all');
   const [filters, setFilters] = useState<TransactionFilters>(DEFAULT_FILTERS);
+  const [categoryDrill, setCategoryDrill] = useState<CategoryDrill | null>(null);
   const [savedViewName, setSavedViewName] = useState('本月常用查询');
   const [savedViewError, setSavedViewError] = useState('');
   const [scheduledBacklog, setScheduledBacklog] = useState<ScheduledBacklogItem[]>([]);
@@ -1057,9 +1069,17 @@ export function Transactions() {
    * 从构成环下钻到一个分类。分类与时间范围一起收窄到「本月 × 该分类」——
    * 环画的就是本月这一块，所以点完看到的必须就是那一块，否则「点一下看到的是
    * 全部时间里的所有该分类」会与刚才那个数字对不上。
+   *
+   * 轻量模式不渲染筛选行（`Filters` 只在资产模式下出现），所以环必须是**可撤销**
+   * 的：否则点一下分类就等于把账本锁进一个看不见的筛选里，只能刷新页面才回得去。
    */
   function drillToCategory(category: string) {
     const monthRange = dateRangeValue('this_month');
+    setCategoryDrill({
+      category,
+      before: { range: filters.range, dateFrom: filters.dateFrom, dateTo: filters.dateTo },
+      after: { range: monthRange.preset, dateFrom: monthRange.from, dateTo: monthRange.to },
+    });
     setFilters((current) => ({
       ...current,
       category,
@@ -1070,6 +1090,26 @@ export function Transactions() {
     setRecordView('list');
     setTrendFocus('');
     window.requestAnimationFrame(() => document.getElementById('transaction-records')?.scrollIntoView({ block: 'start' }));
+  }
+
+  /*
+   * 撤销一次下钻。区间只在它还是下钻当时设的那个值时才能放回原样——下钻之后用户
+   * 自己改过区间，那就以用户为准，只清分类。
+   */
+  function clearCategoryDrill() {
+    const drill = categoryDrill;
+    const restoreRange = drill !== null
+      && filters.range === drill.after.range
+      && filters.dateFrom === drill.after.dateFrom
+      && filters.dateTo === drill.after.dateTo;
+    setFilters((current) => ({ ...current, category: 'all', ...(drill && restoreRange ? drill.before : {}) }));
+    setCategoryDrill(null);
+  }
+
+  /* 再点同一段环就是取消：那一段高亮的正是「现在正在看的筛选」，点它才符合直觉。 */
+  function toggleCategoryDrill(category: string) {
+    if (categoryDrill?.category === category && filters.category === category) clearCategoryDrill();
+    else drillToCategory(category);
   }
 
   return (
@@ -1106,13 +1146,20 @@ export function Transactions() {
                 <button onClick={openNewTransaction} className="zc-header-primary" style={primary}>{usesAccounts ? '+ 记账' : '+ 记支出'}</button>
               </div>
             </div>
-            <div style={{ marginBottom: 14 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
               <DateRangeBar
                 value={activeDateValue}
                 onChange={(next) => setFilters((current) => ({ ...current, range: next.preset, dateFrom: next.from, dateTo: next.to }))}
                 view={recordView}
                 onViewChange={setRecordView}
               />
+              {/* 下钻是环写进筛选的，所以在环能到的地方必须能清掉：轻量模式没有
+                  筛选行，这个 chip 是那条分类筛选唯一的出口。 */}
+              {categoryDrill && filters.category === categoryDrill.category && (
+                <button type="button" style={button} onClick={clearCategoryDrill}>
+                  清除分类下钻：{categoryLabel(filters.category, readySnap.categories)}<span aria-hidden="true"> ×</span>
+                </button>
+              )}
             </div>
             {usesAccounts && <Filters snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} />}
             {usesAccounts && <SavedViews
@@ -1230,7 +1277,7 @@ export function Transactions() {
             <ExpenseCompositionCard
               vm={vm}
               selectedCategory={viewFilters.category === 'all' ? '' : viewFilters.category}
-              onSelectCategory={drillToCategory}
+              onSelectCategory={toggleCategoryDrill}
             />
           </div>
         </>
@@ -2605,7 +2652,7 @@ function ExpenseCompositionCard(props: {
     <div style={card}>
       <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>本月支出构成</div>
       <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3, marginBottom: 14 }}>
-        {composition.slices.length > 0 ? '点一段：流水只显示该分类的本月支出；不随上方筛选变化' : '不随上方筛选变化'}
+        {composition.slices.length > 0 ? '点一段：流水只显示该分类的本月支出，再点一段取消；不随上方筛选变化' : '不随上方筛选变化'}
       </div>
       <CompositionDonut
         ariaLabel={`${vm.month} 本月支出构成`}
