@@ -772,6 +772,31 @@ export function Transactions() {
     }
   }
 
+  /*
+   * 筛选行里手动改分类。两件事都要做，缺一个就会留下一个「点了等于没点」的筛选：
+   *
+   * - **清空时连一级一起清。** 之前只把 `category` 置回 all，`parentCategory` 留着，
+   *   于是控件写着「全部分类」而列表仍按那个板块筛——界面上既没生效提示，也没有出口。
+   *   选了二级时仍然记下它的一级：那时一级只是归属，写上是为了防止与别处的一级筛选
+   *   打架（下钻到 A 后再从控件里挑 B 的二级，两个条件同时生效会得到空列表）。
+   * - **环的下钻不再成立。** 下钻是它写进筛选的，用户自己改了分类后就该让位（与
+   *   `applySavedView` 同一条规矩），否则面包屑会指着一个已经不在生效的筛选。但新值
+   *   仍落在下钻那一层里时（下钻到板块后又选了它的二级）下钻继续有效，面包屑和它记着
+   *   的区间都不该丢。
+   */
+  function changeCategoryFilter(next: string) {
+    setCategoryDrill((drill) => {
+      if (!drill) return null;
+      const parent = drill.parent || (drill.child ? rootCategoryId(drill.child, readySnap.categories) : '');
+      const nextParent = next ? rootCategoryId(next, readySnap.categories) : '';
+      const stillInside = next !== '' && parent === nextParent && (!drill.child || drill.child === next);
+      return stillInside ? drill : null;
+    });
+    setFilters((current) => (next
+      ? { ...current, category: next, parentCategory: rootCategoryId(next, readySnap.categories) }
+      : { ...current, category: 'all', parentCategory: 'all' }));
+  }
+
   async function removeSavedView(view: TransactionSavedView) {
     const compensation = await deleteTransactionSavedView(store, view.id, view.version);
     bump();
@@ -1234,7 +1259,7 @@ export function Transactions() {
                 </nav>
               )}
             </div>
-            {usesAccounts && <Filters snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} />}
+            {usesAccounts && <Filters snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} onCategoryChange={changeCategoryFilter} />}
             {usesAccounts && <SavedViews
               views={savedViews}
               name={savedViewName}
@@ -2137,12 +2162,18 @@ function valueOptionsForField(snap: Snapshot, field: AdvancedQueryField): { valu
   return null;
 }
 
-function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilters: Dispatch<SetStateAction<TransactionFilters>>; usesAccounts: boolean }) {
-  const { snap, filters, setFilters, usesAccounts } = props;
+function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilters: Dispatch<SetStateAction<TransactionFilters>>; usesAccounts: boolean; onCategoryChange: (next: string) => void }) {
+  const { snap, filters, setFilters, usesAccounts, onCategoryChange } = props;
   const typeOptions = usesAccounts ? TYPE_OPTIONS : BASIC_TYPE_OPTIONS;
   /* 环下钻到板块时（`parentCategory`）分类控件本身没有这一项可选，但它确实在筛。 */
   const parentDrill = filters.parentCategory && filters.parentCategory !== 'all' ? filters.parentCategory : '';
-  const parentDrillLabel = parentDrill ? categoryLabel(parentDrill, snap.categories) : '';
+  /*
+   * 控件说「X · 全部」只在筛选确实停在一级上时（值里没有二级）。选了二级的话一级只是
+   * 它的归属（见 `changeCategoryFilter`），该说的是「全部分类」——否则空选项就被一级的
+   * 名字占着，用户再也回不到「全部分类」（当初这两处 e2e 红的就是这一步）。
+   */
+  const boardOnly = filters.category === 'all' ? parentDrill : '';
+  const boardOnlyLabel = boardOnly ? categoryLabel(boardOnly, snap.categories) : '';
   return (
     <div className="zc-transaction-filters" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(120px, 1fr))', gap: 10, marginBottom: 16 }}>
       <select aria-label="流水类型" style={selectStyle} value={filters.type} onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value as TransactionFilters['type'] }))}>
@@ -2160,14 +2191,12 @@ function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilter
         allowEmpty
         /* 环下钻到板块时，这条筛选确实在生效（只是值是一级），所以空选项必须
            说清楚它跟的是哪个板块——否则控件写着「全部分类」、列表却少了一大半。*/
-        emptyLabel={parentDrillLabel ? `${parentDrillLabel} · 全部` : '全部分类'}
-        placeholder={parentDrillLabel ? `${parentDrillLabel} · 全部` : '全部分类'}
+        emptyLabel={boardOnlyLabel ? `${boardOnlyLabel} · 全部` : '全部分类'}
+        placeholder={boardOnlyLabel ? `${boardOnlyLabel} · 全部` : '全部分类'}
         defaultShowHidden={snap.setting?.categoryPickerDefaultScope === 'all'}
         minPanelWidth={480}
         triggerStyle={selectStyle}
-        onChange={(next) => setFilters((f) => next
-          ? { ...f, category: next, parentCategory: rootCategoryId(next, snap.categories) }
-          : { ...f, category: 'all' })}
+        onChange={(next) => onCategoryChange(next)}
       />
       {usesAccounts && (
         <select aria-label="流水账户" style={selectStyle} value={filters.accountId} onChange={(e) => setFilters((f) => ({ ...f, accountId: e.target.value }))}>

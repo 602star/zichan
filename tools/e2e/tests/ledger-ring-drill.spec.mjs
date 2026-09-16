@@ -184,6 +184,19 @@ test('the 日常收支 charts stack full width, and no legend name is cut off', 
       cutOff: [...document.querySelectorAll('.zc-donut-legend-label')]
         .filter((label) => label.scrollWidth > label.clientWidth + 1)
         .map((label) => label.textContent),
+      /*
+       * 每个图例行里「名字的右边缘」到「金额的左边缘」的距离。名字列曾经是
+       * `1fr`：在宽卡片上名字盒 444px 而名字本身只有 52px，金额被推到右手
+       * 边——一行读起来像两列。这里把它量成数字，免得以后再漂回去。
+       */
+      nameToAmountGaps: [...document.querySelectorAll('.zc-donut-legend-row')].map((row) => {
+        const label = row.querySelector('.zc-donut-legend-label');
+        const amount = row.querySelector('.zc-donut-legend-amount');
+        const range = document.createRange();
+        range.selectNodeContents(label);
+        const nameWidth = Math.min(range.getBoundingClientRect().width, label.clientWidth);
+        return Math.round(amount.getBoundingClientRect().left - label.getBoundingClientRect().left - nameWidth);
+      }),
     };
   });
 
@@ -196,6 +209,9 @@ test('the 日常收支 charts stack full width, and no legend name is cut off', 
   expect(plain.cards[1].left).toBe(plain.cards[0].left);
   expect(plain.cards[1].width).toBe(plain.cards[0].width);
   expect(plain.cutOff).toEqual([]);
+  // 一行一个读法：名字与它自己的金额相邻（行内对齐间距是 8px）。
+  expect(plain.nameToAmountGaps.length).toBeGreaterThan(0);
+  for (const gap of plain.nameToAmountGaps) expect(gap).toBeLessThanOrEqual(24);
 
   // 下钻后两个环并排，图例变窄——这正是以前文字被吃掉的场景。
   await page.getByTestId('composition-parent').locator('.zc-donut-legend-row.is-drillable', { hasText: '食品餐饮' }).click();
@@ -203,4 +219,63 @@ test('the 日常收支 charts stack full width, and no legend name is cut off', 
   const drilled = await chartGeometry();
   expect(drilled.cards[1].top).toBeGreaterThanOrEqual(drilled.cards[0].bottom - 1);
   expect(drilled.cutOff).toEqual([]);
+  for (const gap of drilled.nameToAmountGaps) expect(gap).toBeLessThanOrEqual(24);
+});
+
+/** 完整账本模式才渲染整行筛选器（轻量模式只有面包屑）。 */
+async function switchToAssetsMode(page) {
+  const sidebar = page.locator('.zc-sidebar');
+  await sidebar.getByRole('button', { name: /设置$/ }).click();
+  await page.getByLabel('记账模式 · 录入深度').selectOption('assets');
+  await sidebar.getByRole('button', { name: /日常收支$/ }).click();
+  await expect(page.getByText('日常流水', { exact: true }).first()).toBeVisible();
+}
+
+/**
+ * 筛选行里的分类控件与环下钻是同一套筛选的两个入口，所以它们不能各说一套：
+ *
+ * - 控件说「X · 全部」只在筛选确实停在一级上时。选了二级后一级只是它的归属，控件必须
+ *   回到「全部分类」——否则空选项被一级的名字占着，用户再也选不到「全部分类」，
+ *   而那个选项以前还只清二级、留下一级继续筛（写着全部分类、列表却还是少的）。
+ * - 用户自己改了分类，环的下钻就不再成立，面包屑不能继续指着一个没在生效的筛选；
+ *   但新值仍落在下钻那一层里时（下钻到板块后又选了它的二级）下钻要继续有效。
+ */
+test('the filter row and the ring drill agree on what is filtering', async ({ page }) => {
+  await openTransactions(page);
+  await recordExpense(page, { category: '堂食餐饮', description: '午餐', amount: '38.50' });
+  await recordExpense(page, { category: '公交地铁', description: '通勤', amount: '6' });
+  await switchToAssetsMode(page);
+
+  const filter = page.getByLabel('流水分类');
+  const panel = page.locator('.zc-category-picker-panel');
+  const crumbs = page.locator('.zc-drill-crumbs');
+  const search = () => panel.getByPlaceholder('查找分类，输入可搜索隐藏分类');
+  await expect(filter).toContainText('全部分类');
+
+  // 环下钻到一级：筛选真的停在一级上，控件就这么说。
+  await page.getByTestId('composition-parent').locator('.zc-donut-legend-row.is-drillable', { hasText: '食品餐饮' }).click();
+  await expect(crumbs).toBeVisible();
+  await expect(filter).toContainText('食品餐饮 · 全部');
+
+  // 在同一个板块里挑二级：下钻继续有效，但控件回到「全部分类」。
+  await filter.click();
+  await search().fill('堂食餐饮');
+  await panel.getByRole('option', { name: /堂食餐饮/ }).first().click();
+  await expect(crumbs).toContainText('食品餐饮');
+  await expect(filter).toContainText('堂食餐饮');
+  await filter.click();
+  await expect(panel.getByRole('button', { name: '全部分类' })).toBeVisible();
+
+  // 挑另一个板块的二级：旧的下钻不再成立，面包屑得撤掉。
+  await search().fill('公交地铁');
+  await panel.getByRole('option', { name: /公交地铁/ }).first().click();
+  await expect(crumbs).toBeHidden();
+  await expect(rows(page).getByText('通勤', { exact: true })).toBeVisible();
+  await expect(rows(page).getByText('午餐', { exact: true })).toHaveCount(0);
+
+  // 「全部分类」连一级一起清：以前只清二级，控件写着全部分类而列表还是少的。
+  await filter.click();
+  await panel.getByRole('button', { name: '全部分类' }).click();
+  await expect(filter).toContainText('全部分类');
+  await expect(rows(page).getByText('午餐', { exact: true })).toBeVisible();
 });

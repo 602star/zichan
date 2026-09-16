@@ -843,18 +843,23 @@ button,
   flex-direction: column;
   gap: 2px;
   min-width: 0;
-  /*
-   * A legend is a list, not a table. Before this cap, a lone ring on a
-   * full-width card stretched its name column to ~600px and pushed the amount a
-   * hand's width away from the name it belongs to. The cap never binds while
-   * two rings share the row.
-   */
-  max-width: 560px;
 }
 
+/*
+ * One row is one reading: swatch, name, amount, share, packed left.
+ *
+ * The name column is sized to its own text (`max-content`) rather than to the
+ * leftover (`1fr`). With `1fr` on a wide card the name box was 444px while the
+ * name itself was 56px, so the amount that belongs to 「居家生活」 sat a hand's
+ * width away from it - the row read as two columns instead of one line. The row
+ * still spans the full legend width, so the click target is unchanged; the
+ * slack now stays at the right end of the row instead of inside it. A name too
+ * long for the row still ellipsises: `minmax(0, ...)` can shrink to nothing.
+ */
 .zc-donut-legend-row {
   display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) auto auto;
+  grid-template-columns: 10px minmax(0, max-content) auto auto;
+  justify-content: start;
   align-items: center;
   gap: 8px;
   width: 100%;

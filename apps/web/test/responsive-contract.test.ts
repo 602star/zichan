@@ -122,6 +122,15 @@ describe('responsive shell contract', () => {
     expect(css).toMatch(/\.zc-chart-pair\s*\{[^}]*repeat\(auto-fit,/);
   });
 
+  /*
+   * 图例行里名字列按自己的文字宽度取，而不是占满剩下的空间。占满时名字盒 444px、
+   * 名字 52px，金额被推到行尾，「分类和金额隔开太远」。
+   */
+  it('sizes the donut legend name to its text so the amount stays next to it', () => {
+    expect(css).toMatch(/\.zc-donut-legend-row\s*\{[^}]*grid-template-columns:\s*10px minmax\(0, max-content\) auto auto/);
+    expect(css).toMatch(/\.zc-donut-legend-row\s*\{[^}]*justify-content:\s*start/);
+  });
+
   // The touch baseline must not be tied to a width. Keying it off
   // `pointer: coarse` is what covers tablets (768-1199px) and landscape phones,
   // where a width-only rule silently reverted to 13px fields and 24px targets.
