@@ -732,6 +732,13 @@ export const INCOME_CATEGORIES: TransactionCategory[] = SYSTEM_CATEGORY_CATALOG
   .filter((c) => c.type === 'income' && !DEFAULT_PARENT_IDS.has(c.id) && !c.hidden)
   .map((c) => c.id as TransactionCategory);
 
+/*
+ * 扁平的「叶子名」候选表（`CATEGORY_LABEL` 里存的就是不带父级的名字）。
+ *
+ * 只能给不明白层级的消费方用（历史上这是给原生下拉用的）。要喂分类选择器请改走
+ * `categoryOptions()`：那个会同时给出 `name` / `parentName`，这里没有——而「打车/网约车」
+ * 这种自带斜杠的名字一旦被选择器拿 `label` 反解，就会被切成两级。
+ */
 export const CATEGORY_OPTIONS = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES].map((value) => ({
   value,
   label: CATEGORY_LABEL[value],
@@ -785,6 +792,16 @@ export function categoryType(category: string, categories: Category[] = []): Tra
 export interface CategoryOption {
   value: string;
   label: string;
+  /**
+   * 分类自己的名字，不含父级前缀。
+   *
+   * `label` 是给人看的字符串（一级和二级用「空格 斜杠 空格」拼起来），而分类名是
+   * 用户可编辑的自由文本——叶子名本身就可能带斜杠（目录里的「打车/网约车」）。
+   * 想在面板里分左右两栏显示的读侧必须用这两个字段，不要拿 `label` 反解。
+   */
+  name?: string;
+  /** 父级名；没有父级时缺省，而不是空串。 */
+  parentName?: string;
   hidden?: boolean;
   catalogOnly?: boolean;
   /**
@@ -807,6 +824,14 @@ export function categoryOptions(
     includeInactive: opts.includeInactive,
   });
   const byId = new Map(cats.map((c) => [c.id, c]));
+  /*
+   * 结构化字段与 `label` 必须描述同一条路径，所以两者都按 `categoryLabel` 的口径从
+   * 整份目录里取（含停用与未启用项）：只按上面那份 `cats` 取，会在父级被选项过滤
+   * 条件剔掉时和 label 分叉，而 label 是别处一直在用的旧格式，不能悄悄改。
+   */
+  const named = new Map(
+    allCategories(categories, { includeCatalog: true, includeInactive: true }).map((c) => [c.id, c]),
+  );
   const parentIds = new Set(cats.map((c) => c.parentId).filter(Boolean));
   return cats
     .filter((c) => !type || c.type === type)
@@ -824,11 +849,16 @@ export function categoryOptions(
       const hiddenOrder = Number(categoryIsHidden(a)) - Number(categoryIsHidden(b));
       return hiddenOrder || (a.sortOrder ?? 9999) - (b.sortOrder ?? 9999) || a.name.localeCompare(b.name);
     })
-    .map((c) => ({
-      value: c.id as TransactionCategory,
-      label: categoryLabel(c.id, categories),
-      hidden: categoryIsHidden(c) || undefined,
-      catalogOnly: c.catalogOnly || undefined,
-      inactive: c.isActive === false || undefined,
-    }));
+    .map((c) => {
+      const parent = c.parentId ? named.get(c.parentId) : undefined;
+      return {
+        value: c.id as TransactionCategory,
+        label: parent ? `${parent.name} / ${c.name}` : c.name,
+        name: c.name,
+        parentName: parent?.name,
+        hidden: categoryIsHidden(c) || undefined,
+        catalogOnly: c.catalogOnly || undefined,
+        inactive: c.isActive === false || undefined,
+      };
+    });
 }

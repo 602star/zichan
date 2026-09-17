@@ -16,12 +16,8 @@ async function recordExpense(page, { category, amount, description }) {
   await form.getByLabel('二级分类').click();
   const panel = form.locator('.zc-category-picker-panel');
   await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill(category);
-  /*
-   * 选择器把标签按 `/` 拆开再拼回，所以叶子名自带的斜杠在面板里会带上空格
-   * （「打车/网约车」显示成「打车 / 网约车」），正则要容忍这个空格。
-   */
-  const optionName = new RegExp(category.split('/').map((part) => part.trim()).join('\\s*/\\s*'));
-  await panel.getByRole('option', { name: optionName }).first().click();
+  // 面板右栏写的是叶子名本身，自带的斜杠原样保留，所以按名字直接找得到。
+  await panel.getByRole('option', { name: category }).first().click();
   if (description) await form.getByLabel('描述').fill(description);
   await page.getByRole('textbox', { name: /^金额/ }).fill(amount);
   await page.getByRole('button', { name: '保存', exact: true }).click();
@@ -76,4 +72,32 @@ test('a long 「一级 / 二级」 chip stays inside its own column and is not e
   const chipBox = await chip.boundingBox();
   const summaryBox = await summary.boundingBox();
   expect(chipBox.x + chipBox.width).toBeLessThanOrEqual(summaryBox.x + 0.5);
+});
+
+/*
+ * 面板右栏和触发按钮上写的是二级名本身。过去这里拿「一级 / 二级」拼出来的标签按 `/`
+ * 反解再拼回，叶子名自带的斜杠被当成了层级边界，于是显示成「打车 / 网约车」——
+ * 一个字符都没多、一个都没少，只是凭空多了两个空格，不盯真实 DOM 就看不见。
+ *
+ * 断言只能用锚定正则：`toContainText` 会先把期望串 `trim()` 再当子串找（见
+ * `ExpectedTextMatcher.normalize`），`' / '` 会被裁成 `'/'`，于是只要文本里有斜杠就命中，
+ * 写不出「没有空格」这件事。正则不参与归一化，锚定的 `^…$` 连同空格一起管住。
+ */
+test('the picker spells a subcategory name with a slash verbatim', async ({ page }) => {
+  await openTransactions(page);
+  await page.getByRole('button', { name: '+ 记支出' }).click();
+  const form = page.getByRole('dialog', { name: '新增 · 日常支出' });
+  await expect(form).toBeVisible();
+  await form.getByLabel('二级分类').click();
+  const panel = form.locator('.zc-category-picker-panel');
+  await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('打车/网约车');
+
+  // 右栏：首字色块 + 叶子名，中间只允许空白，不允许「 / 」。
+  const option = panel.getByRole('option').filter({ hasText: '打车' });
+  await expect(option).toHaveCount(1);
+  await expect(option).toHaveText(/^打\s*打车\/网约车$/);
+
+  // 选完后，触发按钮上的两栏读法也不许被改写。
+  await option.click();
+  await expect(form.getByLabel('二级分类')).toHaveText(/^交通出行\s*›\s*打车\/网约车\s*[▲▼]$/);
 });

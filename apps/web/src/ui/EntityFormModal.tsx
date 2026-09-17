@@ -26,6 +26,14 @@ export type FieldType = 'text' | 'number' | 'date' | 'time' | 'select' | 'catego
 export interface FieldOption {
   value: string;
   label: string;
+  /**
+   * 分类选项自带的结构：自己的名字与父级名（见 `@zichan/core` 的 `CategoryOption`）。
+   *
+   * 面板要分左右两栏，就直接用它们；`label` 是「一级 / 二级」拼出来的字符串，
+   * 而分类名是自由文本，反解会切坏（叶子名里本来就可能带斜杠）。
+   */
+  name?: string;
+  parentName?: string;
   hidden?: boolean;
   /** Present in the immutable system catalog but not enabled in this ledger yet. */
   catalogOnly?: boolean;
@@ -845,7 +853,17 @@ function AttachmentSaveButton({ attachment }: { attachment: AttachmentDraftData 
   );
 }
 
-function splitCategoryLabel(option: FieldOption): { parent: string; child: string } {
+/*
+ * 把选项拆成面板要的两栏。
+ *
+ * 选项自带结构（`name` / `parentName`）时直接用。退回解析 `label` 只是为了兼容
+ * 手搓选项的调用点：`label` 的两段是拼出来的，而分类名是用户可编辑的自由文本，
+ * 叶子名本身就可能带斜杠（目录里的「打车/网约车」）。按 `/` 反解会把它切成两级，
+ * 重拼时再各补一个空格，面板里就变成了「打车 / 网约车」；父级名带斜杠时更糟，
+ * 会凭空造出一个一级分组（「学习/培训」变成一级「学习」、二级「培训 / 教材」）。
+ */
+export function splitCategoryLabel(option: FieldOption): { parent: string; child: string } {
+  if (option.name !== undefined) return { parent: option.parentName ?? '其他', child: option.name };
   const parts = option.label.split('/').map((part) => part.trim()).filter(Boolean);
   if (parts.length >= 2) return { parent: parts[0]!, child: parts.slice(1).join(' / ') };
   return { parent: '其他', child: option.label };

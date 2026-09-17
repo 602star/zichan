@@ -194,3 +194,90 @@ describe('system category catalog', () => {
     expect(availableExtensionCategories().length - available.length).toBe(2);
   });
 });
+
+/*
+ * 选项过去只给一个拼好的 `label`（「一级 / 二级」）。谁想在面板里把两级分开显示
+ * （左栏选一级、右栏列二级），就只能拿 `label` 反解——而分类名是自由文本，
+ * 叶子名本身可能带斜杠（目录里的「打车/网约车」），按分隔符反解必然切错。
+ * 所以两级名字必须各自给出来，别让读侧去猜。
+ */
+describe('category option structure', () => {
+  const custom = (over: Partial<Category> & Pick<Category, 'id' | 'name'>): Category => ({
+    createdAt: '2026-09-01T00:00:00.000Z',
+    updatedAt: '2026-09-01T00:00:00.000Z',
+    version: 1,
+    isDeleted: false,
+    type: 'expense',
+    isActive: true,
+    ...over,
+  });
+
+  it('carries the parent and leaf names as separate fields', () => {
+    const options = categoryOptions([], undefined, { includeHidden: true, includeCatalog: true });
+    const taxi = options.find((row) => row.value === 'taxi_ride');
+    expect(taxi).toMatchObject({
+      label: '交通出行 / 打车/网约车',
+      name: '打车/网约车',
+      parentName: '交通出行',
+    });
+
+    // 没有父级时不写空串：调用方要能区分「没有父级」和「父级叫空名字」。
+    const top = categoryOptions([], 'expense', { parentsOnly: true }).find((row) => row.value === 'expense_transport');
+    expect(top).toMatchObject({ name: '交通出行', label: '交通出行' });
+    expect(top?.parentName).toBeUndefined();
+  });
+
+  it('keeps every built-in option described the same way as its label', () => {
+    const options = categoryOptions([], undefined, { includeHidden: true, includeCatalog: true });
+    const catalog = allCategories([], { includeCatalog: true });
+    const byId = new Map(catalog.map((row) => [row.id, row]));
+    expect(options.length).toBeGreaterThan(0);
+
+    for (const option of options) {
+      const row = byId.get(option.value)!;
+      const parent = row.parentId ? byId.get(row.parentId) : undefined;
+      expect(option.name).toBe(row.name);
+      expect(option.parentName).toBe(parent?.name);
+      expect(option.label).toBe(parent ? `${parent.name} / ${row.name}` : row.name);
+    }
+
+    // 目录里确实有带斜杠的叶子名，否则这条测试只是个空循环。
+    expect(options.filter((option) => option.name?.includes('/')).map((option) => option.value))
+      .toEqual(expect.arrayContaining(['taxi_ride']));
+  });
+
+  it('keeps a self-made parent name that contains a slash in one piece', () => {
+    const parent = custom({ id: 'c_learn', name: '学习/培训' });
+    const child = custom({ id: 'c_book', name: '教材', parentId: 'c_learn' });
+    const option = categoryOptions([parent, child], 'expense', { leafOnly: true, includeHidden: true })
+      .find((row) => row.value === 'c_book');
+
+    expect(option).toMatchObject({ name: '教材', parentName: '学习/培训', label: '学习/培训 / 教材' });
+  });
+
+  it('keeps each option label identical to what categoryLabel returns on its own', () => {
+    const disabled = {
+      ...systemCategory('pet_medical', false)!,
+      isActive: false,
+      isHidden: true,
+    } as Category;
+    const rows: Category[] = [
+      disabled,
+      custom({ id: 'c_learn', name: '学习/培训', sortOrder: 900 }),
+      custom({ id: 'c_book', name: '教材', parentId: 'c_learn', sortOrder: 901 }),
+    ];
+
+    for (const opts of [
+      {},
+      { leafOnly: true, includeHidden: true },
+      { leafOnly: true, includeHidden: true, includeCatalog: false },
+      { parentsOnly: true, includeHidden: true },
+      { includeHidden: true, includeCatalog: true, includeInactive: true },
+    ]) {
+      const options = categoryOptions(rows, undefined, opts);
+      expect(options.length).toBeGreaterThan(0);
+      // 结构字段和 label 必须描述同一条路径，否则面板左栏和标签会各说各话。
+      for (const option of options) expect(option.label).toBe(categoryLabel(option.value, rows));
+    }
+  });
+});

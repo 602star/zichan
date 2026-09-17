@@ -124,4 +124,20 @@ describe('quick expense defaults', () => {
       { value: 'transport', label: '交通出行 / 公交地铁' },
     ], new Date(2026, 7, 31, 12, 0))).toMatchObject({ category: 'food', source: 'time' });
   });
+
+  /*
+   * 推荐胶囊上写的是二级名，过去按 ' / ' 反解标签取末段。目录里「打车/网约车」这种
+   * 紧贴的斜杠反解侥幸没事，但叶子名里真出现「空格 斜杠 空格」时就会只剩末段。
+   */
+  it('keeps a subcategory name that contains a slash intact on the recommendation chip', () => {
+    const rows = [transaction({ date: '2026-08-30', time: '12:05', category: 'c_meal' })];
+    expect(recommendQuickExpense(rows, [
+      { value: 'c_meal', label: '食品餐饮 / 午餐 / 工作餐', name: '午餐 / 工作餐', parentName: '食品餐饮' },
+      { value: 'groceries', label: '食品餐饮 / 买菜食材', name: '买菜食材', parentName: '食品餐饮' },
+    ], new Date(2026, 7, 31, 12, 0))).toMatchObject({
+      category: 'c_meal',
+      label: '午餐 / 工作餐',
+      source: 'recent',
+    });
+  });
 });

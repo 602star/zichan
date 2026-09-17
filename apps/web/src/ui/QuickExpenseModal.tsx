@@ -116,7 +116,8 @@ function mealPeriod(minutes: number): MealPeriod | null {
 }
 
 function shortCategoryLabel(category: QuickExpenseCategoryOption | undefined): string {
-  return category?.label.split(' / ').at(-1) ?? '待分类';
+  // 选项自带二级名时直接用：`label` 里那个「 / 」分隔符，名字本身也可能含有。
+  return category?.name ?? category?.label.split(' / ').at(-1) ?? '待分类';
 }
 
 function personalizedCategory(

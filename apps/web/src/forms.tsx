@@ -68,11 +68,18 @@ const fixedCategoryOpts = (s: Snapshot, parentsOnly = false) => {
   const parentById = new Map(active.filter((category) => !category.parentId).map((category) => [category.id, category]));
   return active
     .filter((category) => parentsOnly ? !category.parentId : !!category.parentId)
-    .map((category) => ({
-      value: category.id,
-      label: category.parentId ? `${parentById.get(category.parentId)?.name ?? '父级缺失'} / ${category.name}` : category.name,
-      hidden: category.isHidden,
-    }));
+    .map((category) => {
+      const parentName = category.parentId ? parentById.get(category.parentId)?.name : undefined;
+      return {
+        value: category.id,
+        label: category.parentId ? `${parentName ?? '父级缺失'} / ${category.name}` : category.name,
+        // 选择器分栏用结构字段；这里跟着 label 一起带上「父级缺失」占位符，
+        // 两处口径才不会分叉。
+        name: category.name,
+        parentName: category.parentId ? parentName ?? '父级缺失' : undefined,
+        hidden: category.isHidden,
+      };
+    });
 };
 
 const ASSET_TYPES = [

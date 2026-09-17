@@ -30,7 +30,12 @@ test('filters daily transactions with the same category control as the record di
 
   await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('加油');
   await panel.getByRole('option').first().click();
-  await expect(filter).toContainText('加油 / 充电');
+  /*
+   * 触发按钮上的两级读法：一级在前、二级在后，叶子名自带的斜杠原样保留。
+   * 用锤定正则而不是 `toContainText`：后者会先把期望串 `trim()` 再当子串找，
+   * 「周围没有空格」这种事只能靠 `^…$` 管住。
+   */
+  await expect(filter).toHaveText(/^交通出行\s*›\s*加油\/充电\s*[▲▼]$/);
 
   // 「全部分类」= 清空筛选，恢复默认状态。
   await filter.click();
@@ -61,10 +66,10 @@ test('picks an advanced-query category value with the searchable category contro
   await expect(panel).toBeVisible();
   await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('加油');
   await panel.getByRole('option').first().click();
-  await expect(value).toContainText('加油 / 充电');
+  await expect(value).toHaveText(/^交通出行\s*›\s*加油\/充电\s*[▲▼]$/);
 
   // 查询预览用的还是同一套标签，说明选项集没有换掉。
-  await expect(page.getByText(/当前查询：.*加油\s*\/\s*充电/)).toBeVisible();
+  await expect(page.getByText(/当前查询：.*加油\/充电/)).toBeVisible();
 });
 
 test('picks a batch-modify category with the searchable category control', async ({ page }) => {

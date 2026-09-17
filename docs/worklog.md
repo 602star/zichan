@@ -3,6 +3,70 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-17 — 分类选择器把叶子名里的斜杠当成了层级（「打车/网约车」显示成「打车 / 网约车」）
+
+用户顺手发现的小毛病：面板里显示成带空格的样子，影响 4 个内置分类，并提醒「动它要牵连自建
+分类的解析」。要求先确认是否确实、再说怎么修。
+
+### 一、确认：标签是拼出来的字符串，读侧按分隔符反解
+
+`categoryLabel()`（`packages/core/src/category-catalog.ts`）用**字符串**拼结构：
+`` `${parent.name} / ${found.name}` ``。而选项只带这一个拼好的 `label` —— `CategoryOption` 是
+`{value, label, hidden, ...}`，`categoryOptions()` 明明手里就有 `parentId` 却没用上。于是
+分类选择器只能反解，全仓库只有两处这么干：
+
+    option.label.split('/')        // 认的是任意斜杠，不管两边有没有空格
+    parts.slice(1).join(' / ')     // 拼回时给每个片段两边各补一个空格
+
+`交通出行 / 打车/网约车` 被切成三段 → 一级 `交通出行`、二级 `打车 / 网约车`。**那两个空格就是
+从这儿来的**（`EntityFormModal.splitCategoryLabel()`；另一处 `QuickExpenseModal.shortCategoryLabel()`
+取末段）。
+
+目录里带斜杠的叶子名一共 4 个，与用户说的相符：`午餐/工作餐`、`打车/网约车`、`加油/充电`、
+`满月/百日`（后两个与第一个的可见性：`打车/网约车`、`加油/充电` 默认可见，另两个在隐藏池）。
+
+比内置那 4 个更严重的是**父级名**带斜杠：`学习/培训 / 教材` 会凭空造出一级「学习」、二级
+「培训 / 教材」。内置分类的父级名恰好都不含斜杠，所以只表现成「多了两个空格」。问题不在分隔符
+选得好不好——分类名是用户可编辑的自由文本，任何分隔符都可能出现在名字里。
+
+### 二、改法：结构传下去，解析只留作兜底（不再靠 `label` 反解）
+
+- `CategoryOption` 增 `name` / `parentName`（叶子自己的名字、父级名；无父级时缺省而不是空串），
+  `categoryOptions()` 填上。顺带把 `label` 改为按同一份目录自算：原来每个选项都要重跑一遍
+  `categoryLabel()`（内部又建一份整目录 Map，O(n²)），而结构字段与 `label` 必须描述同一条路径，
+  两者都从 `allCategories(..., {includeCatalog:true, includeInactive:true})` 取就不会分叉。
+- web 的 `FieldOption` 透传同名字段；`splitCategoryLabel()` **结构优先**，拿不到才退回解析
+  `label`（模板、筛选、生命周期候选这些手搓选项的调用点行为不变）。
+- `QuickExpenseModal.shortCategoryLabel()` 同样 `name` 优先。它的失效条件更窄：叶子名里得有
+  「空格 斜杠 空格」才会取错末段，目录里的 `打车/网约车` 其实侥幸没事——所以测试用的是自建名
+  「午餐 / 工作餐」这一种才抓得到。
+- 同类问题的另一处一并带上：`forms.tsx` 的 `fixedCategoryOpts()`（物品资产分类）也给
+  `name`/`parentName`，它喂的是同一个选择器。
+- 顺带在无消费方的 `CATEGORY_OPTIONS`（扁平叶子名表）上写清不变量：它没有结构字段，
+  要喂选择器必须改走 `categoryOptions()`。现在只被 barrel 转发，没有活 bug，但这个表里
+  `打车/网约车` 这种名字很容易被下一个人拿去喂选择器。
+
+### 三、验证
+
+- 先写测试跑红：core 4 条（结构字段 / 标签口径一致 / 自建父级带斜杠），web 5 条（面板两栏 /
+  目录里每个叶子名逐字一致 / 自建父级 / 无父级 / 纯文案兜底）。
+- e2e 盯真实 DOM 加一条，并把 `recordExpense()` 里「容忍空格」的旧正则换成按名字直接选。
+  证据链闭合：把结构分支临时关掉重建 → 面板实测 `"打打车 / 网约车"`（复现用户看到的现象）；
+  恢复后 → `"打 打车/网约车"`（首字色块 + 叶子名）。
+- **断言坑，记下来**：`toContainText` 会先把期望串 `trim()` 再当子串找
+  （`ExpectedTextMatcher.normalize` → `normalizeWhiteSpace` 里带 `.trim()`），于是
+  `not.toContainText(' / ')` 的期望串被裁成 `'/'`——只要文本里有斜杠就「命中」，写不出
+  「没有空格」。要管住空格只能用锚定正则（正则不参与归一化）。
+- 顺带发现两条 e2e 断言是把**旧 bug 的样子**写进了预期（`toContainText('加油 / 充电')`），
+  已改成锚定正则，这两条从此也是这个 bug 的回归测试。
+
+### 四、结果
+
+`packages/core` 128 条 + `apps/web` 498 条全绿；`npm run typecheck`（core / web）、
+`npm run lint` 干净；e2e 全量 33 条通过。
+
+---
+
 ## 2026-09-17 — 不写描述时的那个横杠，以及分类标签压到描述上
 
 用户反馈两件事：“优化一下在记账不写描述默认为一个横杠的方式？要不要如果不写描述，描述默认
