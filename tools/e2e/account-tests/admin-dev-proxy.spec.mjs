@@ -45,7 +45,7 @@ test('development proxy supports owner creation, cookie restore and rejects fore
     await expect(page.getByRole('button', { name: '创建所有者并进入后台' })).toHaveCount(0);
     await page.getByLabel('管理账号密码').fill('dev-owner-test-password');
     await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
-    await expect(page.getByRole('heading', { name: '服务器概览' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
     const repeated = await context.request.post(`${origin}/api/auth/register/start`, {
       headers: { Origin: origin, 'X-Zichan-Session': 'admin-cookie' },
       data: { username: 'another-owner', registrationRequest: 'test', initializeOwner: true },
@@ -54,7 +54,7 @@ test('development proxy supports owner creation, cookie restore and rejects fore
     expect((await repeated.json()).code).toBe('OWNER_ALREADY_CLAIMED');
     expect((await context.cookies()).find((cookie) => cookie.name === 'zichan_admin_session')).toMatchObject({ httpOnly: true, path: '/api/auth', sameSite: 'Strict' });
     await page.reload();
-    await expect(page.getByRole('heading', { name: '服务器概览' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
     const denied = await context.request.post(`${origin}/api/auth/refresh`, {
       headers: { Origin: 'http://foreign.invalid', 'X-Zichan-Session': 'admin-cookie' }, data: {},
     });

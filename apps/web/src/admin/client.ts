@@ -8,7 +8,7 @@ export interface AdminHealth {
 }
 
 export class AdminError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) { super(message); }
+  constructor(readonly status: number, readonly code: string, message: string, readonly requestId?: string) { super(message); }
 }
 
 async function readAdminJson<T>(res: Response): Promise<T> {
@@ -140,6 +140,9 @@ export class AdminClient {
     try { await pending; } finally { if (this.refreshing === pending) this.refreshing = undefined; }
   }
 
+  /** The session this tab is using: it ends through logout, never through a revoke button. */
+  currentSessionId(): string | undefined { return this.session?.session.id; }
+
   async me(): Promise<SyncAuthMe> {
     const generation = this.generation;
     const result = await fetchAuthMe(this.baseUrl, this.session?.accessToken ?? '', { signal: this.controller.signal });
@@ -147,21 +150,29 @@ export class AdminClient {
     return result;
   }
 
-  async request<T>(path: string, body?: unknown): Promise<T> {
+  /**
+   * `idempotencyKey` makes a retried write safe: the server replays the first result
+   * for the same key and parameters instead of creating the work twice.
+   */
+  async request<T>(path: string, body?: unknown, options: { idempotencyKey?: string; timeoutMs?: number } = {}): Promise<T> {
     const generation = this.generation;
     try {
       if (!this.session || Date.parse(this.session.accessExpiresAt) < Date.now() + 30_000) await this.refresh();
       this.current(generation);
       return await timedRequest(`${this.baseUrl}/api/admin${path}`, {
         method: body === undefined ? 'GET' : 'POST', cache: 'no-store', redirect: 'error', signal: this.controller.signal,
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.session!.accessToken}` },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.session!.accessToken}`,
+          ...(options.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}),
+        },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       }, async (res) => {
-        const result = await readAdminJson<{ code?: string; error?: string }>(res);
+        const result = await readAdminJson<{ code?: string; error?: string; requestId?: string }>(res);
         this.current(generation);
-        if (!res.ok) throw new AdminError(res.status, result.code ?? '', result.error ?? `HTTP ${res.status}`);
+        if (!res.ok) throw new AdminError(res.status, result.code ?? '', result.error ?? `HTTP ${res.status}`, result.requestId ?? res.headers?.get?.('x-request-id') ?? undefined);
         return result as T;
-      }, path.endsWith('/verify') ? 120_000 : 30_000);
+      }, options.timeoutMs ?? (path.endsWith('/verify') ? 120_000 : 30_000));
     } catch (error) {
       this.current(generation);
       if (error instanceof AdminError && (error.status === 401 || error.code === 'ADMIN_REQUIRED')
@@ -170,6 +181,20 @@ export class AdminClient {
       }
       throw error;
     }
+  }
+
+  /** Controlled export: the server decides which fields are safe to leave the console. */
+  async download(path: string): Promise<string> {
+    const generation = this.generation;
+    if (!this.session || Date.parse(this.session.accessExpiresAt) < Date.now() + 30_000) await this.refresh();
+    this.current(generation);
+    const response = await fetch(`${this.baseUrl}/api/admin${path}`, {
+      cache: 'no-store', redirect: 'error', signal: this.controller.signal,
+      headers: { Authorization: `Bearer ${this.session!.accessToken}` },
+    });
+    this.current(generation);
+    if (!response.ok) throw new AdminError(response.status, '', `导出失败（HTTP ${response.status}）`);
+    return response.text();
   }
 
   async logout(): Promise<void> {

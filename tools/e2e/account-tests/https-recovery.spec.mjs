@@ -73,7 +73,7 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
     await page.getByLabel('管理账号用户名').fill('owner');
     await page.getByLabel('管理账号密码').fill('owner-test-password');
     await page.getByRole('button', { name: '创建所有者并进入后台' }).click();
-    await expect(page.getByRole('heading', { name: '服务器概览' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
     await page.goto(`${url}/app/`);
     await page.getByRole('button', { name: '注册新账号', exact: true }).click();
     await page.getByLabel('服务器用户名').fill('deployment-user');

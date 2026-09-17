@@ -30,7 +30,7 @@ test('uses real same-origin browser cookies without storing account passwords or
   await page.getByLabel('管理账号用户名').fill('browser-owner');
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '创建所有者并进入后台' }).click();
-  await expect(page.getByRole('heading', { name: '服务器概览' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
   await page.getByRole('link', { name: '打开记账应用' }).click();
   await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
   await page.getByLabel('服务器用户名').fill('browser-owner');

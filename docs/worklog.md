@@ -3,6 +3,65 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-17 — 服务器管理后台一期（A–D）落地：前端拆分、维护任务与运行管理
+
+**Goal:** 用户要求“按照记录开始做，全部完成”——按 `docs/server-admin-plan.md` 把一期的 A–D 阶段做完，
+并把交付与验证写回文档。前一段已完成服务端（阶段 A–D 服务端部分，提交 `eb4e39c`）；本轮完成前端页面拆分、
+补齐管理面缺口、修复 E2E 与实现不一致处，并完成整体验收。
+
+### 交付
+
+- **前端按页面拆分**（`apps/web/src/admin/`）：`AdminConsole.tsx`（单页 tab，217 行删除）换成带真实 URL 的
+  多页面：`overview`、`users`、`users/:accountId`、`sessions`、`sync`、`invites`、`storage`、`jobs`、
+  `logs`、`audit`、`settings`，另有 `router.ts`（path 路由）、`ui.tsx`（表格/分页/加载态/错误映射）、
+  `types.ts`、`idempotency.ts`。筛选条件写进 URL query，刷新与分享链接保留视图；服务端已有的
+  无扩展名回退 `index.html` 使这一步不需要改服务端、也不需要引入前端路由依赖。
+- **用户管理围绕单个用户**：列表只保留“详情”与“快捷处理”（就地展开 `AccountActions`，复用与详情页同一组件）；
+  详情页集中账号信息、容量/配额、会话、同步、审计与相关任务，写操作带 `expectedVersion`，冲突返回 `STALE_WRITE`。
+- **会话按会话分页**：撤销单会话、批量撤销当前页可撤销项并逐项报告成功/失败/无权限；当前会话不允许从列表撤销。
+- **审计服务端筛选与受控导出**：关键字、动作、操作者、目标、时间范围都下推到服务端（翻页沿同一筛选条件），
+  动作候选项由服务端返回（`/audit` 带 `actions`），导出 JSON/CSV 遵循当前筛选且不含邀请码/重置码/令牌。
+- **任务中心与结果详情**：创建预定义任务（返回 202）、状态/类型筛选、详情页显示阶段、参数、结果与执行记录，
+  运行中每 5 秒刷新，可取消或重新执行；概览页“待处理事项”可直接跳到相关用户、请求或任务。
+
+### 修掉的实际缺陷（都由 E2E 或代码走查发现）
+
+1. **幂等键格式**：`AccountActions` 用请求路径拼幂等键（`/blobs-...`），而服务端只接受
+   `[A-Za-z0-9._:-]{8,128}`，于是所有配额/状态/角色写入都以 `INVALID_IDEMPOTENCY_KEY` 失败。
+   统一改走 `admin/idempotency.ts` 的 `adminIdempotencyKey()`（清洗 + 限长 + 断言），并覆盖会话撤销、
+   邀请、任务、设置、告警确认、密码重置等全部写入口。
+2. **状态写入路径**：`确认禁用/启用` 提交到 `/accounts/<accountId>`（缺少 `/state` 段），落进 404
+   `not found`。改为 `/accounts/<accountId>/state`。
+3. **所有者会话自管**：原先“撤销账号全部会话”先执行 UPDATE、再写审计，而审计对 owner 目标抛
+   `PROTECTED_ACCOUNT`，结果是会话确实被撤销却返回 403；且所有者无法撤销自己的其他会话。
+   现在撤销与审计在同一事务内完成，本人可撤销自己账号的其他会话（要求最近 5 分钟内登录），
+   当前会话返回 `CURRENT_SESSION` 并提示用退出结束。
+4. **审计可读句子动作名不匹配**：`describeAudit` 里的 `session-revoke-all`、`settings-update` 与实际写入的
+   `sessions-revoke-all`、`settings-save` 不一致，导致这些记录退化成默认句子；同时新增
+   `password-reset-revoke`（撤销未使用重置码现在也写审计）。
+5. **前端遗留**：`PasswordResetIssuer` 的撤销失败被吞掉（现在提示且不假装成功）、`InvitesPage` 分页缺少
+   “第 N 页”信息（改用共享 `Pager`）、删除与实际页面重复且行为不同的 `PasswordResetPanel` 死代码。
+6. **预置测试基线**：`docs/db.md` 的 schema 版本已在前一段修正，`npm run release:check` 恢复通过。
+
+### E2E 与实现的偏差（规格修正，不改实现）
+
+- 幂等键与状态路径修好后，旧规格里“成员登录后台被拒”这一步因为前一个用例把该成员提升成了管理员而失效：
+  改为在 `beforeAll` 注册专用成员，且断言用独立浏览器上下文（同上下文里新标签会自动恢复所有者会话）。
+- “管理后台不创建记账会话”：`/api/auth/me` 从期望 200 改为期望 401（这才是“不创建记账会话”的含义）。
+- 跨标签清理：改为“在第二个标签退出后，第一个标签显示‘其他标签页已改变管理会话’”，与实现一致。
+- 任务中心：原规格用 `**/api/admin/jobs` 拦截，Playwright 的 glob 中 `**` 不跨路径段，未拦到
+  `/api/admin/jobs/<id>`；改为正则路由，并按新页面流程先“查看”再断言结果与执行记录。
+- 审计用例按行定位（可读句子与“原因”列都含同一段文字，`getByRole('cell', ...)` 会命中多个元素）。
+
+### Verified
+
+- `npm test`：core 17、db 17、logger 1、sync-server 12、web 65 个测试文件全部通过（sync-server 88 项、
+  web 502 项，含新增 `admin-operations` 14 项、`maintenance-jobs` 7 项、`admin-idempotency` 4 项）。
+- `npm run typecheck`、`npm run lint`（0 error / 0 warning）、`npm run release:check` 通过。
+- `npm run test:e2e:account` 通过（Chrome，账号与管理后台 31 例），`npm run test:e2e` 通过（记账主流程）。
+- 本机 E2E 需要 `PLAYWRIGHT_EXECUTABLE_PATH` 指向已安装的 Chrome；全量账号用例约 20 分钟。
+
+
 ## 2026-09-17 — 服务器管理后台完善方案（只交付方案，不改代码）
 
 **Goal:** 用户要求完善管理员后台，本轮**只交付方案**，不改任何代码。用户自带完整初稿（页面结构、运行概览、

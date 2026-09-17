@@ -2,9 +2,32 @@ import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 
 import type { SyncAuthMe } from '@zichan/db';
 import { THEMES } from '../theme.js';
 import { AdminClient, type AdminHealth } from './client.js';
-import { AdminConsole } from './AdminConsole.js';
+import { adminHref, navigate as navigateRoute, useRoute } from './router.js';
+import { AuditPage, LogsPage } from './LogsPage.js';
+import { InvitesPage } from './InvitesPage.js';
+import { JobsPage } from './JobsPage.js';
+import { OverviewPage } from './OverviewPage.js';
+import { SessionsPage } from './SessionsPage.js';
+import { SettingsPage } from './SettingsPage.js';
+import { StoragePage } from './StoragePage.js';
+import { SyncPage } from './SyncPage.js';
+import { UserDetailPage } from './UserDetailPage.js';
+import { UsersPage } from './UsersPage.js';
 import './admin.css';
 import { PasswordRecovery } from '../ui/PasswordRecovery.js';
+
+const NAVIGATION: { path: string; label: string; ownerOnly?: boolean }[] = [
+  { path: '/overview', label: '运行概览' },
+  { path: '/users', label: '用户管理' },
+  { path: '/sessions', label: '设备与会话' },
+  { path: '/sync', label: '同步诊断' },
+  { path: '/invites', label: '注册与邀请', ownerOnly: true },
+  { path: '/storage', label: '存储与备份' },
+  { path: '/jobs', label: '任务中心' },
+  { path: '/logs', label: '运行日志' },
+  { path: '/audit', label: '管理审计' },
+  { path: '/settings', label: '系统设置' },
+];
 
 export function AdminApp({ baseUrl }: { baseUrl: string }) {
   const clientRef = useRef<AdminClient>();
@@ -67,31 +90,107 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
     finally { setBusy(false); }
   }
 
-  return <main className="zc-admin-root" style={{ ...THEMES.terracotta, height: '100dvh', overflowY: 'auto', background: 'var(--bg)', color: 'var(--text-primary)', padding: 'clamp(16px, 4vw, 48px)', boxSizing: 'border-box', fontFamily: 'system-ui, sans-serif' } as CSSProperties}>
-    <div style={{ maxWidth: 1180, margin: '0 auto' }}>
-      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
-        <div><div style={{ color: 'var(--accent)', fontWeight: 'var(--fw-bold)' }}>ZICHAN · SERVER ADMIN</div><h1>服务器管理后台</h1><p style={{ overflowWrap: 'anywhere' }}>{baseUrl}</p></div>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}><a href={`${baseUrl}/app/`}>打开记账应用</a>{account && <><span>{account.username} · {account.role === 'owner' ? '所有者' : '管理员'}</span><button onClick={() => void logout()}>退出管理后台</button></>}</div>
+  return <main className="zc-admin-root" style={{ ...THEMES.terracotta, minHeight: '100dvh', background: 'var(--bg)', color: 'var(--text-primary)', padding: 'clamp(12px, 3vw, 32px)', boxSizing: 'border-box', fontFamily: 'system-ui, sans-serif' } as CSSProperties}>
+    <div style={{ maxWidth: 1220, margin: '0 auto' }}>
+      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
+        <div>
+          <div style={{ color: 'var(--accent)', fontWeight: 'var(--fw-bold)' }}>ZICHAN · SERVER ADMIN</div>
+          <h1 style={{ margin: '4px 0' }}>服务器管理后台</h1>
+          <p style={{ margin: 0, overflowWrap: 'anywhere' }}>{baseUrl}</p>
+        </div>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          {health ? (
+            <span title={`服务器 ${health.serverId}`}>
+              {health.claimed ? '已初始化' : '未初始化'} · 能力 {health.capabilities.length} 项
+            </span>
+          ) : null}
+          <a href={`${baseUrl}/app/`}>打开记账应用</a>
+          {account ? (
+            <>
+              <span>{account.username} · {account.role === 'owner' ? '所有者' : '管理员'}</span>
+              <button onClick={() => void logout()}>退出管理后台</button>
+            </>
+          ) : null}
+        </div>
       </header>
       {message && <p role="alert" style={{ padding: 14, background: 'var(--surface)', border: '1px solid var(--negative)', borderRadius: 'var(--r-sm)' }}>{message}</p>}
-      {account && clientRef.current ? <AdminConsole key={`${account.accountId}:${account.session.id}`} client={clientRef.current} account={account} /> : <section style={{ maxWidth: 580, margin: '24px auto', padding: 24, borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
-        <h2>{!health ? '尚未连接管理服务器' : !health.claimed ? '初始化服务器所有者' : '管理员登录'}</h2>
-        {!health && !busy && <p>请确认后端服务已启动。仅启动 5173 前端页面不能创建服务器账号。</p>}
-        {!busy && message && <button onClick={() => { setPassword(''); setAttempt((value) => value + 1); }}>重新连接服务器</button>}
-        <form onSubmit={(event) => void submit(event)} style={{ display: 'grid', gap: 16 }}>
-          <label>用户名<input className="zc-input" aria-label="管理账号用户名" autoComplete="username" required minLength={3} value={username} disabled={busy} onChange={(event) => setUsername(event.target.value)} /></label>
-          <label>账号密码<input className="zc-input" aria-label="管理账号密码" type="password" autoComplete={health?.claimed ? 'current-password' : 'new-password'} required minLength={8} value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} /></label>
-          {health && !health.claimed && <p>首次使用：设置管理员用户名和密码即可。创建成功后，此页面将只提供登录，不会创建个人账本。</p>}
-          <button disabled={busy || !health} type="submit">{busy ? '处理中…' : !health ? '等待服务器连接' : health.claimed ? '登录管理后台' : '创建所有者并进入后台'}</button>
-        </form>
-        {health?.claimed && <PasswordRecovery baseUrl={baseUrl} onComplete={setUsername} />}
-        <section aria-label="管理后台权限与存储说明" style={{ marginTop: 24, lineHeight: 1.8 }}>
-          <strong>登录会使用什么权限？</strong>
-          <p>仅验证服务器管理身份，不创建或解锁个人账本，不申请账本持久存储或磁盘文件访问权限。</p>
-          <p>使用独立的 HttpOnly 管理会话 Cookie，不与记账登录互相覆盖。账号密码不写入应用存储，访问令牌仅在内存中；此后台不提供“记住设备”。</p>
-          <p>管理角色可管理账号、设备和容量。托管账本由服务器保管解密凭据；私密账本的恢复码由用户保管，管理后台不提供查看密钥的入口。</p>
-        </section>
-      </section>}
+      {account && clientRef.current
+        ? <AdminShell client={clientRef.current} account={account} baseUrl={baseUrl} />
+        : <section style={{ maxWidth: 580, margin: '24px auto', padding: 24, borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+          <h2>{!health ? '尚未连接管理服务器' : !health.claimed ? '初始化服务器所有者' : '管理员登录'}</h2>
+          {!health && !busy && <p>请确认后端服务已启动。仅启动 5173 前端页面不能创建服务器账号。</p>}
+          {!busy && message && <button onClick={() => { setPassword(''); setAttempt((value) => value + 1); }}>重新连接服务器</button>}
+          <form onSubmit={(event) => void submit(event)} style={{ display: 'grid', gap: 16 }}>
+            <label>用户名<input className="zc-input" aria-label="管理账号用户名" autoComplete="username" required minLength={3} value={username} disabled={busy} onChange={(event) => setUsername(event.target.value)} /></label>
+            <label>账号密码<input className="zc-input" aria-label="管理账号密码" type="password" autoComplete={health?.claimed ? 'current-password' : 'new-password'} required minLength={8} value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} /></label>
+            {health && !health.claimed && <p>首次使用：设置管理员用户名和密码即可。创建成功后，此页面将只提供登录，不会创建个人账本。</p>}
+            <button disabled={busy || !health} type="submit">{busy ? '处理中…' : !health ? '等待服务器连接' : health.claimed ? '登录管理后台' : '创建所有者并进入后台'}</button>
+          </form>
+          {health?.claimed && <PasswordRecovery baseUrl={baseUrl} onComplete={setUsername} />}
+          <section aria-label="管理后台权限与存储说明" style={{ marginTop: 24, lineHeight: 1.8 }}>
+            <strong>登录会使用什么权限？</strong>
+            <p>仅验证服务器管理身份，不创建或解锁个人账本，不申请账本持久存储或磁盘文件访问权限。</p>
+            <p>使用独立的 HttpOnly 管理会话 Cookie，不与记账登录互相覆盖。账号密码不写入应用存储，访问令牌仅在内存中；此后台不提供“记住设备”。</p>
+            <p>管理角色可管理账号、设备和容量。托管账本由服务器保管解密凭据；私密账本的恢复码由用户保管，管理后台不提供查看密钥的入口。</p>
+          </section>
+        </section>}
     </div>
   </main>;
+}
+
+/** Sidebar navigation plus the routed page. Every page has its own URL. */
+function AdminShell({ client, account, baseUrl }: { client: AdminClient; account: SyncAuthMe; baseUrl: string }) {
+  const route = useRoute();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const basePath = baseUrl.replace(/^https?:\/\/[^/]+/, '');
+  const go = (to: string) => { navigateRoute(adminHref(basePath, to)); setMenuOpen(false); };
+  const role = account.role;
+  const items = NAVIGATION.filter((item) => !item.ownerOnly || role === 'owner');
+  const current = items.find((item) => route.path === item.path || route.path.startsWith(`${item.path}/`)) ?? items[0]!;
+
+  useEffect(() => { setMenuOpen(false); }, [route.path]);
+  // `/admin/` itself is not a page: canonicalise it to the overview URL so refresh and
+  // sharing always land on a real location.
+  useEffect(() => {
+    if (/\/admin\/?$/.test(window.location.pathname)) navigateRoute(adminHref(basePath, '/overview'), { replace: true });
+  }, [basePath]);
+
+  const page = (() => {
+    const [first, second] = route.segments;
+    switch (first) {
+      case 'users':
+        return second
+          ? <UserDetailPage client={client} accountId={second} role={role} navigate={go} onChanged={() => undefined} selfAccountId={account.accountId ?? ''} />
+          : <UsersPage client={client} query={route.query} navigate={go} role={role} />;
+      case 'sessions': return <SessionsPage client={client} query={route.query} navigate={go} selfAccountId={account.accountId ?? ''} />;
+      case 'sync': return <SyncPage client={client} query={route.query} navigate={go} />;
+      case 'invites': return <InvitesPage client={client} role={role} query={route.query} navigate={go} />;
+      case 'storage': return <StoragePage client={client} role={role} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
+      case 'jobs': return <JobsPage client={client} query={route.query} navigate={go} role={role} />;
+      case 'logs': return <LogsPage client={client} query={route.query} navigate={go} />;
+      case 'audit': return <AuditPage client={client} query={route.query} navigate={go} />;
+      case 'settings': return <SettingsPage client={client} role={role} />;
+      default: return <OverviewPage client={client} navigate={go} accountName={account.username} />;
+    }
+  })();
+
+  return (
+    <div className="zc-admin-shell">
+      <button className="zc-admin-menu-toggle" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}>
+        {menuOpen ? '收起菜单' : `菜单 · ${current.label}`}
+      </button>
+      <nav className="zc-admin-nav" aria-label="管理后台导航" data-open={menuOpen ? 'true' : undefined}>
+        {items.map((item) => (
+          <a
+            key={item.path}
+            href={adminHref(basePath, item.path)}
+            aria-current={item === current ? 'page' : undefined}
+            data-active={item === current ? 'true' : undefined}
+            onClick={(event) => { event.preventDefault(); go(item.path); }}
+          >{item.label}</a>
+        ))}
+      </nav>
+      <section className="zc-admin-content">{page}</section>
+    </div>
+  );
 }

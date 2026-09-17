@@ -24,6 +24,22 @@
 .zc-admin-root textarea { display: block; box-sizing: border-box; width: 100%; max-width: 520px; min-height: 80px; padding: 10px; font: inherit; color: var(--text-primary); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); }
 .zc-admin-root pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .zc-admin-root tbody tr:hover { background: var(--surface-2); }
+.zc-admin-shell { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 20px; align-items: start; }
+.zc-admin-nav { display: grid; gap: 4px; position: sticky; top: 16px; padding: 10px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); }
+.zc-admin-nav a { display: block; padding: 8px 10px; border-radius: var(--r-sm); text-decoration: none; color: var(--text-primary); }
+.zc-admin-nav a:hover { background: var(--surface-2); }
+.zc-admin-nav a[data-active="true"] { background: var(--surface-2); font-weight: var(--fw-bold); border-left: 3px solid var(--accent); }
+.zc-admin-content { min-width: 0; }
+.zc-admin-menu-toggle { display: none; }
+@media (max-width: 767px) {
+  .zc-admin-shell { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .zc-admin-menu-toggle { display: block; text-align: left; }
+  .zc-admin-nav { position: static; display: none; }
+  .zc-admin-nav[data-open="true"] { display: grid; }
+  /* Secondary columns stay out of the way instead of forcing a wide horizontal scroll. */
+  .zc-admin-secondary { display: none; }
+  .zc-admin-root table { min-width: 0; }
+}
 @media (max-width: 767px) {
   .zc-admin-root button, .zc-admin-root input, .zc-admin-root select { min-height: 44px; }
   .zc-admin-root input, .zc-admin-root select { font-size: var(--fs-input); }

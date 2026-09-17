@@ -21,8 +21,8 @@ test('administrator reviews and issues a code, user resets only account credenti
     await page.getByLabel('管理账号用户名').fill('reviewer');
     await page.getByLabel('管理账号密码').fill('reviewer-test-password');
     await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
-    await page.getByRole('button', { name: '用户管理', exact: true }).click();
-    await page.getByRole('row').filter({ has: page.getByText('recover-user', { exact: true }) }).getByRole('button', { name: '设备与配额' }).click();
+    await page.getByRole('link', { name: '用户管理' }).click();
+    await page.getByRole('row').filter({ has: page.getByText('recover-user', { exact: true }) }).getByRole('button', { name: '详情' }).click();
     await expect(page.getByRole('button', { name: '发放一次性重置码', exact: true })).toBeDisabled();
     await page.getByLabel('我已通过可信渠道核实 recover-user 的身份和恢复请求').check();
     await page.getByRole('button', { name: '发放一次性重置码', exact: true }).click();
