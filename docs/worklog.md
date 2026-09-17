@@ -3,6 +3,62 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-17 — 服务器管理后台完善方案（只交付方案，不改代码）
+
+**Goal:** 用户要求完善管理员后台，本轮**只交付方案**，不改任何代码。用户自带完整初稿（页面结构、运行概览、
+用户管理、设备与会话、同步诊断、任务中心、存储与备份、日志审计告警、接口与数据工程、性能与部署专项、
+实施顺序），目标定为「适合个人及小团队长期使用、能发现异常、定位问题、处理问题并保留记录的服务器管理后台」。
+交付物：新增 `docs/server-admin-plan.md`；本记录与 `memory/2026-09-17.md` 各追加一节。
+
+### 只读核对（不改代码，结论都带行号）
+
+初稿引用的 6 处代码锚点，逐条核实**全部属实**：
+
+- `apps/web/src/admin/AdminConsole.tsx:85` 概览 = 6 个统计卡片（数据来自 `/api/admin/status`）。
+- `apps/sync-server/src/server.ts:622` 设备列表按账号分页（`paginationUnit: 'account'`，先 `listUsers` 再展开会话）。
+- `apps/sync-server/src/blob-store.ts:526` `verify()` 在请求内 `readFileSync` + `sha256` 逐分块。
+- `apps/sync-server/src/blob-store.ts:203` 清理定时器 `catch(() => undefined)`，失败静默。
+- `apps/sync-server/src/backup.ts:198` `createServerBackup` 首行 `assertServerStopped`（依据 `server.pid`）。
+- `apps/sync-server/docker-compose.yml:17` `REGISTRATION_MODE=${REGISTRATION_MODE:-open}`，而 `Dockerfile:14`
+  与 `apps/sync-server/src/main.ts:24` 都是 `invite` → 新部署默认开放注册，与 `docs/server-admin.md`
+  「新服务器默认仅邀请注册，Docker 一并」的说法相矛盾。
+
+核对中另有 12 条初稿未写、但影响方案的事实，落在方案 §0.2（F1–F12）。最要紧的三条：
+
+1. **Compose 的 healthcheck 打的就是 `/api/ready`，`interval: 30s`** → 现在每 30 秒跑一次
+   `PRAGMA quick_check`（`store.ts:1360`）；而深度 `integrity_check` 目前**并不存在**，后台「校验数据库」
+   按钮走的是同一条 quick_check。初稿「完整性校验转入维护任务」实际是新增能力，不是迁移。
+2. **`/api/health` 每次请求做 5 个 `COUNT(*)` + 1 个 `SUM(cipher_bytes)`**（`server.ts:736` → `store.ts:1277`），
+   是 O(表) 聚合而不是「读取全量账号会话」；后台每次打开都会先打它（`AdminApp.tsx:27`）。
+3. **发布门禁抓不到那个 compose 默认值**：`scripts/release/check-consistency.mjs:22` 的
+   `OPEN_REGISTRATION_DEFAULT` 正则要求 `open` 带引号，`${REGISTRATION_MODE:-open}` 不匹配 →
+   只改配置会再回归，必须同时收紧门禁。
+
+其余：失败的管理操作不留痕（审计与变更同事务，回滚即消失）→ 失败记录要独立事务；前端**没有路由**
+（`AdminConsole.tsx:60` 是 tab state，`apps/web/package.json` 无 router 依赖），但服务端 `serveWeb` 已对
+**无扩展名**路径回退 `index.html` → 独立 URL 不需要改服务端、也不该用 hash 路由；错误响应体只有
+`{code, error}`、没有 `requestId`，但已有 `capabilities` 能力协商；备份其实已覆盖数据库 + 密钥 sidecar +
+`blobs/{objects,trash,staging}` 并有 manifest 逐文件 sha256（在线备份缺的是**写协调**，不是补附件）；
+`maintenance.ts` 已有 `backup|verify-backup|restore|owner-recovery` 四个部署侧命令，后台只该登记与展示。
+
+### 意外发现：HEAD 上 `npm run release:check` 本来就是红的
+
+`docs/db.md:61` 仍写 `version 116 / current_schema_2026_09_01_navigation_layout`，代码基线已是 117
+`current_schema_2026_09_14_ledger_timezone`，门禁报两条失败。**不是本轮引入**，但直接影响「验收命令全绿」
+的说法，已作为阶段 A 的开工前置写进方案。留待下次处理（补 `docs/db.md` 或明确豁免）。
+
+### 交付物
+
+- `docs/server-admin-plan.md`：§0 核对（6 条锚点 + F1–F12 + R1–R10 修订清单）、一–十一（沿用初稿结构，
+  逐节并入核对结果）、十二（边界与不做的事）、十三（验收方式与证据，区分本机可执行与仅 CI/目标机可执行）。
+- 相对初稿的 10 处修订集中在方案 §0.3，多为措辞与事实对齐（R1–R4、R6–R10），外加新增条件 R5。
+
+### Verified
+
+- 只读核对：`Get-Content` / `Select-String` 定位后逐段阅读；未改动任何源码、未动 schema、未启动服务。
+- 实跑 `npm run release:check` 一次，确认红灯与失败原因。
+- 未跑测试：本轮无代码改动，跑测试不产生新证据。
+
 ## 2026-09-17 — 分类选择器把叶子名里的斜杠当成了层级（「打车/网约车」显示成「打车 / 网约车」）
 
 用户顺手发现的小毛病：面板里显示成带空格的样子，影响 4 个内置分类，并提醒「动它要牵连自建
