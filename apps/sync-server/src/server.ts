@@ -19,7 +19,6 @@ import {
   errorStatus,
   headerValue,
   isRecord,
-  pathParts,
   syncEventCategory,
   readBinaryBody,
   readBody,

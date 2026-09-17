@@ -81,6 +81,7 @@ export interface Invite {
 
 export type AdminMutation =
   | { action: 'password-reset-issue'; accountId: string; codeHash: string; expiresAt: string }
+  | { action: 'password-reset-revoke'; accountId: string }
   | { action: 'role'; accountId: string; role: 'admin' | 'member' }
   | { action: 'state'; accountId: string; disabled: boolean }
   | { action: 'commit-quota'; accountId: string; bytes: number | null }
@@ -89,7 +90,7 @@ export type AdminMutation =
   | { action: 'registration'; mode: RegistrationMode }
   /** Records an allow-listed settings change; carries no target account. */
   | { action: 'settings-save'; keys: string[] }
-  | { action: 'sessions-revoke-all'; accountId: string; revoked: number }
+  | { action: 'sessions-revoke-all'; accountId: string; keepSessionId?: string }
   | { action: 'invite-create'; code: string; expiresAt: string }
   | { action: 'invite-state'; code: string; disabled: boolean };
 
@@ -1133,8 +1134,10 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     actorSessionId: string,
     mutation: AdminMutation,
     options: { reason?: string; requestId?: string; expectedVersion?: number } = {},
-  ): Promise<void> {
+  ): Promise<{ revoked: boolean; revokedSessions: number }> {
     await this.ready;
+    let revoked = false;
+    let revokedSessions = 0;
     await this.driver.transaction(async (driver) => {
       const at = nowIso();
       const roleSql = `SELECT u.username, u.disabled, i.account_id,
@@ -1156,7 +1159,12 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
       const target = targetId ? await driver.get<{ username: string; disabled: number; account_id: string; role: AccountRole }>(`${roleSql} WHERE i.account_id = ?`, [targetId]) : undefined;
       if (targetId && !target) throw new ServerStoreError('NOT_FOUND', 404, 'account not found');
       const quotaMutation = mutation.action === 'commit-quota' || mutation.action === 'blob-quota';
-      if (target && ((!quotaMutation && target.role === 'owner') || actor.role === 'admin' && target.role !== 'member')) {
+      // Everyone keeps control of their own devices: an owner (or administrator) may revoke
+      // their own other sessions after re-authenticating, while other privileged accounts
+      // stay protected. The current session ends through logout instead.
+      const selfSessions = Boolean(target && target.account_id === actor.account_id
+        && (mutation.action === 'revoke-session' || mutation.action === 'sessions-revoke-all'));
+      if (target && !selfSessions && ((!quotaMutation && target.role === 'owner') || actor.role === 'admin' && target.role !== 'member')) {
         throw new ServerStoreError('PROTECTED_ACCOUNT', 403, 'cannot manage this privileged account');
       }
       if ((mutation.action === 'role' || mutation.action === 'registration' || mutation.action === 'settings-save') && actor.role !== 'owner') {
@@ -1169,8 +1177,12 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
           throw new ServerStoreError('STALE_WRITE', 409, '账号数据已被其他管理员修改，请刷新后重试');
         }
       }
-      if ((mutation.action === 'role' || mutation.action === 'password-reset-issue') && Date.now() - Date.parse(session!.created_at) > 5 * 60_000) {
+      // Self-service session revocation still has to be a deliberate, freshly authenticated act.
+      if ((mutation.action === 'role' || mutation.action === 'password-reset-issue' || selfSessions) && Date.now() - Date.parse(session!.created_at) > 5 * 60_000) {
         throw new ServerStoreError('RECENT_LOGIN_REQUIRED', 403, '此敏感操作需要最近 5 分钟内的登录，请退出管理后台并重新登录');
+      }
+      if (selfSessions && mutation.action === 'revoke-session' && mutation.sessionId === actorSessionId) {
+        throw new ServerStoreError('CURRENT_SESSION', 409, '不能撤销当前正在使用的会话，请使用退出结束它');
       }
       let before: unknown = null;
       let after: unknown = null;
@@ -1179,6 +1191,13 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
         if (!/^[a-f0-9]{64}$/.test(mutation.codeHash) || !Number.isFinite(Date.parse(mutation.expiresAt)) || mutation.expiresAt <= at || Date.parse(mutation.expiresAt) > Date.now() + 16 * 60_000) throw new ServerStoreError('INVALID_RESET', 400, 'invalid reset policy');
         await driver.run('INSERT OR REPLACE INTO account_password_resets (account_id, code_hash, expires_at, issued_at) VALUES (?, ?, ?, ?)', [target!.account_id, mutation.codeHash, mutation.expiresAt, at]);
         after = { expiresAt: mutation.expiresAt };
+      } else if (mutation.action === 'password-reset-revoke') {
+        // Revoking a pending code is a management change, so it is audited like issuing one.
+        const pending = await driver.get<{ account_id: string }>('SELECT account_id FROM account_password_resets WHERE account_id = ?', [target!.account_id]);
+        revoked = Boolean(pending);
+        before = { hadPendingCode: revoked };
+        after = { hadPendingCode: false };
+        await driver.run('DELETE FROM account_password_resets WHERE account_id = ?', [target!.account_id]);
       } else if (mutation.action === 'role') {
         if (mutation.role !== 'member' && mutation.role !== 'admin') throw new ServerStoreError('INVALID_ROLE', 400, 'invalid role');
         if (target!.disabled) throw new ServerStoreError('ACCOUNT_DISABLED', 409, 'enable the account before changing its role');
@@ -1223,8 +1242,18 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
         }
         after = { keys: mutation.keys };
       } else if (mutation.action === 'sessions-revoke-all') {
+        // The mutation and its audit record stay in one transaction: a rejected call must not
+        // leave sessions revoked without a trace.
         before = { accountId: mutation.accountId };
-        after = { revoked: mutation.revoked };
+        const result = await driver.run(
+          `UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ?
+           WHERE revoked_at IS NULL AND username = ?${mutation.keepSessionId ? ' AND session_id <> ?' : ''}`,
+          mutation.keepSessionId
+            ? [at, at, target!.username, mutation.keepSessionId]
+            : [at, at, target!.username],
+        );
+        revokedSessions = Number(result.changes ?? 0);
+        after = { revoked: revokedSessions, keptCurrentSession: Boolean(mutation.keepSessionId) };
       } else if (mutation.action === 'invite-state') {
         const invite = await driver.get<{ disabled: number; used_by: string | null }>('SELECT disabled, used_by FROM registration_invites WHERE code = ?', [mutation.code]);
         if (!invite) throw new ServerStoreError('NOT_FOUND', 404, 'invite not found');
@@ -1237,6 +1266,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
       await driver.run('INSERT INTO server_admin_audit (at, actor_account_id, target_account_id, action, before_json, after_json, reason, request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         [at, actor.account_id, targetId ?? null, mutation.action, JSON.stringify(before), JSON.stringify(after), options.reason ?? null, options.requestId ?? null]);
     });
+    return { revoked, revokedSessions };
   }
 
   async listAdminAudit(options: {
@@ -2165,17 +2195,6 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     return Number(row?.value ?? 0);
   }
 
-  async revokeAccountSessions(accountId: string): Promise<number> {
-    await this.ready;
-    const at = nowIso();
-    const result = await this.driver.run(
-      `UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ?
-       WHERE revoked_at IS NULL AND username = (SELECT username FROM sync_account_identities WHERE account_id = ?)`,
-      [at, at, accountId],
-    );
-    return Number(result.changes ?? 0);
-  }
-
   private mapJob(row: Record<string, unknown>): AdminJob {
     const status = String(row['status']);
     return {
@@ -2477,13 +2496,6 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     );
     const row = await this.driver.get<Record<string, unknown>>('SELECT * FROM admin_alerts WHERE alert_key = ?', [key]);
     return row ? this.mapAlert(row) : undefined;
-  }
-
-  /** Drops an unused reset code so a stale one cannot be used later. */
-  async revokePasswordReset(accountId: string): Promise<boolean> {
-    await this.ready;
-    const result = await this.driver.run('DELETE FROM account_password_resets WHERE account_id = ?', [accountId]);
-    return Number(result.changes ?? 0) > 0;
   }
 
   /** Failed attempts live outside the rolled-back transaction that produced them. */

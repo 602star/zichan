@@ -5,7 +5,7 @@
  * value coming from the environment is shown as such instead of being silently
  * overridden by, or overriding, the stored one.
  */
-import { ServerStoreError, type JsonRecord, type SyncServerStore } from './store.js';
+import { ServerStoreError, type SyncServerStore } from './store.js';
 
 export interface SettingField {
   name: string;

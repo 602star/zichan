@@ -50,12 +50,10 @@ interface AdminAuth {
   role: AccountRole;
 }
 
-type AdminLog = AdminRouterDeps['log'];
-
 const AUDIT_ACTIONS = [
   'role', 'state', 'commit-quota', 'blob-quota', 'registration', 'revoke-session',
-  'invite-create', 'invite-state', 'password-reset-issue', 'password-reset-complete',
-  'password-change-authorize', 'owner-recovery-local', 'settings-update', 'session-revoke-all', 'alert-acknowledge',
+  'invite-create', 'invite-state', 'password-reset-issue', 'password-reset-revoke', 'password-reset-complete',
+  'password-change-authorize', 'owner-recovery-local', 'settings-save', 'settings-update', 'sessions-revoke-all', 'alert-acknowledge',
 ];
 
 const SYNC_EVENT_CATEGORIES = ['session-invalid', 'quota-exceeded', 'protocol-incompatible', 'ledger-mismatch', 'server-storage-error', 'other'];
@@ -100,8 +98,8 @@ export function describeAudit(
       return `${prefix}的附件配额调整为 ${after['bytes'] === null ? '服务器默认值' : bytes(Number(after['bytes']))}。${reason}`;
     case 'revoke-session':
       return `${prefix}的一个设备会话被撤销。${reason}`;
-    case 'session-revoke-all':
-      return `${prefix}的全部可管理会话被撤销。${reason}`;
+    case 'sessions-revoke-all':
+      return `${prefix}的全部可管理会话被撤销（${String(after['revoked'] ?? 0)} 个）。${reason}`;
     case 'registration':
       return `管理员 ${actor} 将注册策略从 ${String(before['value'] ?? before['mode'] ?? '未知')} 改为 ${String(after['mode'])}。${reason}`;
     case 'invite-create':
@@ -110,12 +108,15 @@ export function describeAudit(
       return `管理员 ${actor} 将一个邀请码${after['disabled'] ? '撤销' : '重新启用'}。${reason}`;
     case 'password-reset-issue':
       return `${prefix}发放了一次性密码重置码（有效期至 ${after['expiresAt'] ? dateOnly(String(after['expiresAt'])) : '未记录'}）。${reason}`;
+    case 'password-reset-revoke':
+      return `${prefix}撤销了未使用的密码重置码。${reason}`;
     case 'password-reset-complete':
       return `${target || actor} 完成了账号密码重置，旧会话已撤销。${reason}`;
     case 'password-change-authorize':
       return `${actor} 授权了本人账号的密码变更。${reason}`;
     case 'owner-recovery-local':
       return `部署侧为本机所有者发放了恢复凭据。${reason}`;
+    case 'settings-save':
     case 'settings-update':
       return `管理员 ${actor} 修改了系统设置：${Object.keys(after).join('、') || '无变化'}。${reason}`;
     case 'alert-acknowledge':
@@ -220,9 +221,11 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     if (req.method === 'POST' && parts[0] === 'accounts' && parts[2] === 'password-reset' && parts[3] === 'revoke') {
       const target = await store.userByAccountId(parts[1]!);
       if (!target) return send(res, 404, { error: 'account not found' });
-      const removed = await store.revokePasswordReset(target.accountId);
+      const body = await readBody(req, ADMIN_BODY_BYTES);
+      const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
+      const { revoked } = await store.mutateAdmin(auth.session.id, { action: 'password-reset-revoke', accountId: target.accountId }, { reason, requestId });
       await log('info', 'password_reset_revoked', 'Revoked an unused password reset code', { username: target.username, detail: { changedBy: auth.user.username } });
-      return send(res, 200, { ok: true, revoked: removed });
+      return send(res, 200, { ok: true, revoked });
     }
 
     if (req.method === 'GET' && suffix === '/overview') {
@@ -322,17 +325,20 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     if (req.method === 'POST' && parts[0] === 'accounts' && parts[2] === 'sessions' && parts[3] === 'revoke') {
       const target = await store.userByAccountId(parts[1]!);
       if (!target) return send(res, 404, { error: 'account not found' });
-      if (auth.role !== 'owner' && await store.roleForUser(target.username) !== 'member') {
-        return send(res, 403, { code: 'PROTECTED_ACCOUNT', error: 'cannot manage this privileged account' });
-      }
       const body = await readBody(req, ADMIN_BODY_BYTES);
-      const revoked = await store.revokeAccountSessions(target.accountId);
-      await store.mutateAdmin(auth.session.id, { action: 'sessions-revoke-all', accountId: target.accountId, revoked }, { requestId });
+      // Revoking the actor's own sessions keeps the current one: it ends through logout, so the
+      // operator never lands in an unclear state halfway through the request.
+      const isSelf = target.accountId === auth.user.accountId;
+      const { revokedSessions } = await store.mutateAdmin(
+        auth.session.id,
+        { action: 'sessions-revoke-all', accountId: target.accountId, ...(isSelf ? { keepSessionId: auth.session.id } : {}) },
+        { requestId },
+      );
       await log('info', 'sessions_revoked', 'Revoked every manageable session of an account', {
         username: target.username,
-        detail: { revoked, changedBy: auth.user.username, note: typeof body.note === 'string' ? body.note.slice(0, 200) : undefined },
+        detail: { revoked: revokedSessions, changedBy: auth.user.username, note: typeof body.note === 'string' ? body.note.slice(0, 200) : undefined },
       });
-      return send(res, 200, { ok: true, revoked });
+      return send(res, 200, { ok: true, revoked: revokedSessions });
     }
 
     if (req.method === 'GET' && suffix === '/sync-events') {
@@ -382,6 +388,9 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '该任务需要所有者权限' });
       }
       const accountId = typeof body.accountId === 'string' ? body.accountId : undefined;
+      // Validate the closed parameter set first so a malformed value is a client error,
+      // not an account lookup miss.
+      const params = jobParamsFor(type, body);
       let targetAccount: Awaited<ReturnType<typeof store.userByAccountId>>;
       if (accountId) {
         targetAccount = await store.userByAccountId(accountId);
@@ -391,7 +400,6 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         }
       }
       return void await withIdempotency(req, res, `jobs:${type}:${accountId ?? ''}`, body, async () => {
-        const params = jobParamsFor(type, body);
         const job = await store.createJob({
           type,
           params: { ...params, ...(accountId ? { accountId } : {}) },
@@ -547,7 +555,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
           summary: describeAudit({ action: String(entry['action']), before: entry['before'], after: entry['after'], reason: entry['reason'] as string | null }, actor, target),
         };
       }));
-      return send(res, 200, { entries, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) });
+      return send(res, 200, { entries, actions: AUDIT_ACTIONS, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) });
     }
 
     if (req.method === 'GET' && suffix === '/audit/export') {
@@ -555,6 +563,8 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if (format !== 'json' && format !== 'csv') return send(res, 400, { error: 'format must be json or csv' });
       const action = search.get('action') ?? '';
       if (action && !AUDIT_ACTIONS.includes(action)) return send(res, 400, { error: 'invalid action' });
+      const term = search.get('search')?.trim() ?? '';
+      if (term.length > 128) return send(res, 400, { error: 'search must not exceed 128 characters' });
       const from = optionalIso(search.get('from'), 'from');
       const until = optionalIso(search.get('until'), 'until');
       const cache = new Map<string, string>();
@@ -565,6 +575,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
           before: cursor,
           limit: 200,
           ...(action ? { action } : {}),
+          ...(term ? { search: term } : {}),
           ...(search.get('actor') ? { actorAccountId: search.get('actor')! } : {}),
           ...(search.get('target') ? { targetAccountId: search.get('target')! } : {}),
           ...(from ? { from } : {}),

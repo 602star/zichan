@@ -12,6 +12,9 @@ WORKDIR /app
 COPY --from=build /repo/apps/sync-server/dist ./dist
 COPY --from=build /repo/apps/web/dist ./web-dist
 ENV HOST=0.0.0.0 PORT=8787 DATA_DIR=/state/server WEB_DIST=/app/web-dist ENABLE_WEB=1 ENABLE_SYNC=1 REGISTRATION_MODE=invite BASE_PATH= TRUSTED_PROXIES=private ALLOW_INSECURE_HTTP=0
+# Run unprivileged: the state volume is the only writable location the server needs.
+RUN mkdir -p /state/server && chown -R node:node /state /app
 VOLUME /state
 EXPOSE 8787
+USER node
 CMD ["node", "dist/server.mjs"]

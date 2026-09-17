@@ -124,7 +124,10 @@ jobs:
           trap cleanup EXIT
           docker build --file apps/sync-server/Dockerfile --tag "zichan-sync-ci:${GITHUB_SHA}" . 2>&1 | tee ci-artifacts/docker-build.log
           sync_secret="$(openssl rand -hex 32)"
+          # The image defaults to an unprivileged user; CI matches the runner uid so the
+          # bind-mounted state directory stays writable without granting root.
           docker run --detach --name "$container" \
+            --user "$(id -u):$(id -g)" \
             --publish 127.0.0.1:18787:8787 \
             --env HOST=0.0.0.0 \
             --env DATA_DIR=/state/server \
@@ -148,7 +151,14 @@ jobs:
           test -s ci-artifacts/health.json
           curl --fail --silent --show-error http://127.0.0.1:18787/api/ready --output ci-artifacts/ready.json
           jq --exit-status '.ok == true' ci-artifacts/health.json >/dev/null
-          jq --exit-status '.ok == true and .database.ok == true' ci-artifacts/ready.json >/dev/null
+          # Readiness is a lightweight probe now: it must not run a whole-database check,
+          # because the container healthcheck calls it every 30 seconds.
+          jq --exit-status '.ok == true and .mode == "light" and .database.ok == true and .database.result == "ok"' ci-artifacts/ready.json >/dev/null
+          # The container must not run as root.
+          test "$(docker inspect --format '{{.Config.User}}' "$container")" = node
+          test "$(docker exec "$container" id -u)" != 0
+          # State volume is writable by the unprivileged user.
+          docker exec "$container" sh -c 'test -w /state/server'
       - name: Upload container failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
