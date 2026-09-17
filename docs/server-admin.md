@@ -100,6 +100,8 @@
 
 命令：`npm test`、`npm run typecheck`、`npm run lint`、`npm run build:web`、`npm run build -w @zichan/sync-server`、`npm run test:e2e`、`npm run test:e2e:account`。本机用 `PLAYWRIGHT_EXECUTABLE_PATH` 指向 Chrome/Edge；默认 Playwright 浏览器未安装时，应指定已安装浏览器或先安装测试运行时。测试使用临时服务器和隔离浏览器资料。
 
+本机没有 Docker 与真实 PostgreSQL/Redis，容器相关改动（镜像以非 root 运行、Compose 健康检查指向 `/api/ready`、CI 容器 job 对 `/state/server` 的写权限断言）本轮只做代码与配置核对，未实跑镜像；这些由 CI 的容器 job 覆盖，迁移类脚本用 fixture + CI service job 覆盖，不在本机声称已对真实库验证。
+
 容器与运行维护：镜像以非 root 用户运行，只把数据卷 `/state` 视为可写；Compose 的健康检查打 `/api/ready`（轻量），注册策略默认 `invite`。备份、校验、恢复与所有者恢复仍由部署侧维护程序执行（`npm run server:backup`、`server:verify-backup`、`server:restore`），后台只登记与展示结果；后台不提供清库、删除账号、远程停服或数据库替换。
 
 早期原记账 E2E 曾在用例通过后发生 Windows 测试服务退出等待，核对测试 PID 与启动时间后仅停止该测试进程。新版已改为每例独立的进程内服务器 fixture，不复用用户服务，也不依赖外部进程树清理。

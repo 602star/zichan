@@ -58,8 +58,10 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
 - `npm test`：core 17、db 17、logger 1、sync-server 12、web 65 个测试文件全部通过（sync-server 88 项、
   web 502 项，含新增 `admin-operations` 14 项、`maintenance-jobs` 7 项、`admin-idempotency` 4 项）。
 - `npm run typecheck`、`npm run lint`（0 error / 0 warning）、`npm run release:check` 通过。
-- `npm run test:e2e:account` 通过（Chrome，账号与管理后台 31 例），`npm run test:e2e` 通过（记账主流程）。
-- 本机 E2E 需要 `PLAYWRIGHT_EXECUTABLE_PATH` 指向已安装的 Chrome；全量账号用例约 20 分钟。
+- `npm run test:e2e:account` 通过（Chrome，账号与管理后台 31 例），`npm run test:e2e` 通过（记账主流程 33 例）。
+- 本机 E2E 需要 `PLAYWRIGHT_EXECUTABLE_PATH` 指向已安装的 Chrome；全量账号用例约 10–20 分钟。
+- 本机没有 Docker：容器改动（非 root 运行、`/api/ready` 健康检查、CI 容器 job 的写权限断言）只做代码与
+  配置核对，未实跑镜像，证据由 CI 的容器 job 承担；这一点同时写进 `docs/server-admin.md`。
 
 
 ## 2026-09-17 — 服务器管理后台完善方案（只交付方案，不改代码）
