@@ -428,6 +428,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         limit,
         ...(status ? { status } : {}),
         ...(search.get('type') ? { type: search.get('type')! } : {}),
+        ...(search.get('accountId') ? { accountId: search.get('accountId')! } : {}),
         ...(search.get('cursor') ? { cursor: search.get('cursor')! } : {}),
       });
       return send(res, 200, { ...page, jobs: page.jobs.map(withOutcome) });
@@ -808,14 +809,22 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     if (req.method === 'GET' && suffix === '/logs') {
       const limit = Math.min(Math.max(Number(search.get('limit') ?? 100), 1), 5_000);
       if (!Number.isSafeInteger(limit)) return send(res, 400, { error: 'invalid limit' });
-      return send(res, 200, await store.listLogs({
+      const from = optionalIso(search.get('from'), 'from');
+      const until = optionalIso(search.get('until'), 'until');
+      const username = (search.get('username') ?? '').trim();
+      if (username.length > 64) return send(res, 400, { error: 'username must not exceed 64 characters' });
+      const page = await store.listLogs({
         limit,
         ...(search.get('level') ? { level: search.get('level')! } : {}),
-        ...(search.get('from') ? { from: search.get('from')! } : {}),
-        ...(search.get('until') ? { until: search.get('until')! } : {}),
+        ...(from ? { from } : {}),
+        ...(until ? { until } : {}),
         ...(search.get('cursor') ? { cursor: search.get('cursor')! } : {}),
         ...(search.get('requestId') ? { requestId: search.get('requestId')! } : {}),
-      }));
+        ...(username ? { username } : {}),
+        ...(search.get('action') ? { action: search.get('action')! } : {}),
+      });
+      // The action list comes from the table, so the filter stays correct as actions are added.
+      return send(res, 200, { ...page, actions: await store.listLogActions() });
     }
 
     if (req.method === 'GET' && suffix === '/users') {

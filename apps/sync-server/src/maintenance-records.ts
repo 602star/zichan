@@ -24,6 +24,8 @@ export interface MaintenanceRecordInput {
   verifiedAt?: string;
   verification?: Record<string, unknown>;
   drill?: Record<string, unknown>;
+  /** Retention outcome for the backup location this run looked at. */
+  retention?: Record<string, unknown>;
   errorMessage?: string;
   note?: string;
 }
@@ -72,6 +74,7 @@ export function readMaintenanceRecords(dataDir: string): MaintenanceRecordInput[
         ...(value.verifiedAt ? { verifiedAt: value.verifiedAt } : {}),
         ...(value.verification ? { verification: value.verification } : {}),
         ...(value.drill ? { drill: value.drill } : {}),
+        ...(value.retention ? { retention: value.retention } : {}),
         ...(value.errorMessage ? { errorMessage: value.errorMessage } : {}),
         ...(value.note ? { note: value.note } : {}),
       });
@@ -88,9 +91,17 @@ export async function importMaintenanceRecords(store: SyncServerStore, dataDir: 
   for (const record of readMaintenanceRecords(dataDir)) {
     const existing = await store.getBackupRecord(record.recordId);
     if (existing?.verification && !record.verification) {
-      await store.upsertBackupRecord({ ...record, verification: existing.verification, ...(existing.drill ? { drill: existing.drill } : {}) });
+      await store.upsertBackupRecord({
+        ...record,
+        verification: existing.verification,
+        ...(existing.drill ? { drill: existing.drill } : {}),
+        ...(existing.retention ? { retention: existing.retention } : {}),
+      });
     } else if (existing?.drill && !record.drill) {
-      await store.upsertBackupRecord({ ...record, drill: existing.drill });
+      await store.upsertBackupRecord({ ...record, drill: existing.drill, ...(existing.retention ? { retention: existing.retention } : {}) });
+    } else if (existing?.retention && !record.retention) {
+      // A console-side retention record must not be wiped by a deployment-side rewrite.
+      await store.upsertBackupRecord({ ...record, retention: existing.retention });
     } else {
       await store.upsertBackupRecord(record);
     }

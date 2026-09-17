@@ -249,7 +249,17 @@ async function unsilence(client: AdminClient, alert: Alert, reload: () => void):
 }
 
 function NextStep({ alert, navigate }: { alert: Alert; navigate: (to: string) => void }) {
-  if (alert.rule === 'capacity') return <Button onClick={() => navigate('/users?quota=over')}>进入用户管理</Button>;
+  // Capacity alerts name one account, so the next step is that account's page, not a filtered
+  // list the operator would have to pick from by hand.
+  if (alert.rule === 'capacity') {
+    // The key itself is `capacity:<scope>:<accountId>`, so the fallback works even for a
+    // record written before the detail carried the accountId.
+    const fromDetail = typeof alert.detail?.['accountId'] === 'string' ? alert.detail['accountId'] : '';
+    const accountId = fromDetail || (alert.key.split(':')[2] ?? '');
+    return accountId
+      ? <Button onClick={() => navigate(`/users/${encodeURIComponent(accountId)}`)}>进入该用户详情</Button>
+      : <Button onClick={() => navigate('/users?quota=over')}>进入用户管理</Button>;
+  }
   if (alert.rule.startsWith('backup')) return <Button onClick={() => navigate('/storage')}>查看备份</Button>;
   if (alert.rule === 'verification-issue') return <Button onClick={() => navigate('/jobs')}>查看校验任务</Button>;
   if (alert.rule === 'cleanup-failure') return <Button onClick={() => navigate('/storage')}>查看清理状态</Button>;

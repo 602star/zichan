@@ -3,6 +3,55 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-17 — 以用户为中心的关联排障 + 维护计划与备份保留
+
+**Goal:** 接上一批留待清单的下一段：把「从异常追到用户」做成可点的路径（账号与时间筛选、跨页跳转），
+并把 §七 要求的维护计划展示与备份保留策略落成（保留策略真正跑得起来，且不会删掉最后一个可用备份）。
+
+### 交付
+
+1. **账号选择器**（`apps/web/src/admin/filters.tsx`）：按用户名或完整 accountId 搜索（复用 `/users` 接口，
+   不下载全部账号），URL 里只存 accountId、用户名仅作标签，所以改名后链接仍有效。同步诊断、运行日志两个
+   页面接上它；任务中心支持 `accountId` 筛选并把该账号预填进创建表单（从用户页点过来就能直接为该账号发任务）。
+2. **时间范围控件 + 纯函数转换**（`apps/web/src/admin/time.ts`）：`datetime-local`（本地时间）与 ISO（UTC）
+   的双向转换、近 1h/24h/7d/30d 快捷区间（左开区间，之后的新记录会继续出现）、起始晚于结束直接提示。
+   纯函数单独测试，不需要 DOM。
+3. **用户详情的「关联排障」入口**：一次串起该账号的同步诊断、运行日志、会话、审计与维护任务；同步记录与
+   审计记录里的请求 ID 都可点进运行日志（带筛选）。容量告警的下一步也改为直接进入该账号详情。
+4. **运行日志按账号与动作筛选**（`store.listLogs` 新增 `username`/`action`）：两列本来就有索引，这次只是
+   把它接进接口与页面。动作下拉的选项由 `SELECT DISTINCT action` 生成（`store.listLogActions`），
+   避免页面里写死一份迟早会过期的动作清单；`from`/`until` 现在按 ISO 校验，非法值返回 400 而不是被忽略。
+5. **维护计划**（`settings.ts`）：新增 `backupAutoEnabled`（select，默认 `off`）、`backupDirectory`、
+   `backupWindow`、`backupRetentionCount`（默认 3）。为此文本字段增加显式格式：`textFormat: 'url' | 'free'`
+   ——Webhook 仍必须是 http(s) 地址，备份位置（路径）与维护窗口（标签）是自由文本。跨字段规则
+   `assertMaintenancePlan` 在保存时和每次加载时都执行：**缺备份位置或缺维护窗口就不能启用自动备份**，
+   环境变量覆盖同样受检（启动时直接失败，而不是悄悄用一份跑不起来的计划）。
+6. **备份保留**（`backup-retention.ts` + `maintenance prune-backups`）：先逐个 `verifyServerBackup` 再决定
+   删除——只删校验成功的，未通过校验的一律保留并逐项列出原因；份数非法（0、非整数）直接拒绝，而不是
+   理解成「全删」；即使份数比实际数量小也**始终保留最近一个有效备份**；`--dry-run` 不删任何文件。
+   每次运行写一条维护记录（保留份数、删除项与大小、保留项、未通过校验项），后台读该记录展示
+   （新增追加式可空列 `server_backup_records.retention_json`）。
+7. **存储页「维护计划」区**：显示计划各项、计划是否完整（已启用但缺少位置/窗口会标红）、最近一次校验
+   通过的备份、最近一次保留清理的结果，以及还没有清理记录时的命令提示。
+
+### Verified
+
+- 新增 `apps/sync-server/test/admin-troubleshooting.test.ts`（3 项，含「两个账号的日志不互相混入」
+  「任务按账号筛选且无目标账号的任务不出现」「非法时间边界与超长用户名被拒绝」）、
+  `apps/sync-server/test/backup-retention.test.ts`（4 项，含「未通过校验的备份永不删除」「份数非法被拒绝」
+  「dry-run 不删文件」「非备份目录跳过」）、`apps/sync-server/test/maintenance-plan.test.ts`（4 项）、
+  `apps/web/test/admin-time.test.ts`（6 项）。
+- 保留策略除单测外还实际跑过一遍命令：两份真实备份 → `prune-backups --keep 1 --dry-run`（删除 0、保留 2）
+  → `prune-backups --keep 1`（删除 1、保留最新、释放 340854 字节，维护记录含删除项与大小）。
+- `apps/sync-server` 115 项、web 512 项通过；`npm run typecheck`、`npm run lint`、`npm run release:check`、
+  `npm run test:scripts` 通过；`npm run test:e2e:account` 31 例通过（Chrome，10.0 分钟）。
+
+### 留待下一批
+
+只读运维角色与高风险操作的重新验证身份、管理员 MFA、重型任务隔离与容量压测；邮件等专门通知渠道、
+告警历史趋势与「维护中」服务状态未做；§十 的性能专项仍只完成「执行器异常退出不卡队列」一项。
+
+
 ## 2026-09-17 — 后台运行概览趋势图 + 告警处理闭环（确认 / 静默 / 外部通知）
 
 **Goal:** 接"后台可靠性批次"留待下一批的清单，先做运行概览与告警这两块：趋势图、告警确认进入审计、

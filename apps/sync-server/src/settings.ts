@@ -18,6 +18,11 @@ export interface SettingField {
   max?: number;
   /** Upper bound for text fields, e.g. a URL that must not be unbounded. */
   maxLength?: number;
+  /**
+   * Only for `kind: 'text'`. `url` requires an http(s) address; `free` accepts any
+   * trimmed string up to `maxLength` (a path or a window label is not a URL).
+   */
+  textFormat?: 'url' | 'free';
   options?: string[];
   unit?: string;
   /** Settings that shape alerts rather than requests. */
@@ -26,12 +31,52 @@ export interface SettingField {
 
 export const SETTING_FIELDS: SettingField[] = [
   {
+    name: 'backupAutoEnabled',
+    label: '自动备份',
+    kind: 'select',
+    envVar: 'ADMIN_BACKUP_AUTO',
+    default: 'off',
+    options: ['off', 'on'],
+    description: '默认关闭。必须同时配置备份位置与维护窗口才能启用；实际备份仍由部署侧在其维护窗口内执行。',
+  },
+  {
+    name: 'backupDirectory',
+    label: '备份位置（部署侧实际路径）',
+    kind: 'text',
+    textFormat: 'free',
+    envVar: 'ADMIN_BACKUP_DIRECTORY',
+    default: '',
+    maxLength: 300,
+    description: '声明备份写到哪里，用于计划展示与启用前检查；后台不会读写这个目录。',
+  },
+  {
+    name: 'backupWindow',
+    label: '维护窗口（如 周日 03:00-04:00）',
+    kind: 'text',
+    textFormat: 'free',
+    envVar: 'ADMIN_BACKUP_WINDOW',
+    default: '',
+    maxLength: 64,
+    description: '停服备份与恢复演练只允许在该窗口内进行；没有窗口就视为没有计划，不能启用自动备份。',
+  },
+  {
+    name: 'backupRetentionCount',
+    label: '保留的成功备份份数',
+    kind: 'number',
+    envVar: 'ADMIN_BACKUP_RETENTION',
+    default: 3,
+    min: 1,
+    max: 100,
+    description: '备份保留只清理已经校验成功的历史备份，并始终保留最近一个有效备份。',
+  },
+  {
     name: 'alertWebhookUrl',
     label: '告警外部通知地址（Webhook）',
     kind: 'text',
     envVar: 'ADMIN_ALERT_WEBHOOK_URL',
     default: '',
     maxLength: 500,
+    textFormat: 'url',
     description: '告警转为活动或恢复时向该地址 POST 一条 JSON；留空表示只在本页展示，不对外通知。',
   },
   {
@@ -113,6 +158,7 @@ export interface EffectiveSetting {
   maximum?: number;
   options?: string[];
   maxLength?: number;
+  textFormat?: SettingField['textFormat'];
   editable: boolean;
 }
 
@@ -123,7 +169,7 @@ function coerce(field: SettingField, value: unknown): number | string | undefine
     // An empty value is a real choice ("no external channel"), not an invalid one.
     if (!trimmed) return '';
     if (trimmed.length > (field.maxLength ?? 500)) return undefined;
-    if (!/^https?:\/\/[^\s]+$/i.test(trimmed)) return undefined;
+    if ((field.textFormat ?? 'url') === 'url' && !/^https?:\/\/[^\s]+$/i.test(trimmed)) return undefined;
     return trimmed;
   }
   if (field.kind === 'select') {
@@ -144,7 +190,9 @@ export function parseSettingValue(field: SettingField, value: unknown): number |
       ? `（${String(field.min)}–${String(field.max)}）`
       : field.kind === 'select'
         ? `（${(field.options ?? []).join('、')}）`
-        : `（需为 http(s) 地址，留空表示不通知；最多 ${String(field.maxLength ?? 500)} 个字符）`;
+        : (field.textFormat ?? 'url') === 'url'
+          ? `（需为 http(s) 地址，留空表示不通知；最多 ${String(field.maxLength ?? 500)} 个字符）`
+          : `（最多 ${String(field.maxLength ?? 500)} 个字符，留空表示未配置）`;
     throw new ServerStoreError('INVALID_SETTING', 400, `${field.label} 取值无效${bounds}`);
   }
   return coerced;
@@ -157,9 +205,39 @@ export interface SettingsReader {
   save(updates: Record<string, unknown>): Promise<EffectiveSetting[]>;
 }
 
+/**
+ * Rules that span fields. Enabling automatic backup without a declared location and window
+ * describes a schedule nobody can keep, so it is refused instead of stored.
+ */
+export function assertMaintenancePlan(next: Record<string, number | string>): void {
+  if (next['backupAutoEnabled'] !== 'on') return;
+  const missing = (next['backupDirectory'] ? '' : '备份位置') + (next['backupWindow'] ? '' : '、维护窗口');
+  if (missing === '') return;
+  throw new ServerStoreError('INVALID_SETTING', 400, `启用自动备份前必须先配置${missing}`);
+}
+
 export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = process.env) {
   let cache: Record<string, number | string> | undefined;
   let cachedAt = 0;
+  /**
+   * Effective values including environment overrides. The cross-field rules have to see what
+   * the service will actually run with, not only what is stored.
+   */
+  const effectiveFrom = (stored: Record<string, number | string>): Record<string, number | string> => {
+    const values: Record<string, number | string> = {};
+    for (const field of SETTING_FIELDS) {
+      const fromEnv = env[field.envVar];
+      if (fromEnv !== undefined && fromEnv !== '') {
+        const parsed = coerce(field, fromEnv);
+        if (parsed === undefined) throw new Error(`环境变量 ${field.envVar} 取值无效：${fromEnv}（${field.label}）；请修正或删除该变量，不会静默回退默认值`);
+        values[field.name] = parsed;
+        continue;
+      }
+      values[field.name] = stored[field.name] ?? field.default;
+    }
+    return values;
+  };
+
 
   const load = async (): Promise<Record<string, number | string>> => {
     if (cache && Date.now() - cachedAt < 5_000) return cache;
@@ -171,12 +249,14 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
         if (parsed !== undefined) loaded[field.name] = parsed;
       }
     }
+    assertMaintenancePlan(effectiveFrom(loaded));
     cache = loaded;
     cachedAt = Date.now();
     return loaded;
   };
 
   const resolve = (field: SettingField, stored: Record<string, number | string>): EffectiveSetting => {
+
     const fromEnv = env[field.envVar];
     const storedValue = stored[field.name] ?? null;
     let value: number | string = field.default;
@@ -204,6 +284,7 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
       ...(field.max === undefined ? {} : { maximum: field.max }),
       ...(field.options ? { options: field.options } : {}),
       ...(field.maxLength === undefined ? {} : { maxLength: field.maxLength }),
+      ...(field.textFormat === undefined ? {} : { textFormat: field.textFormat }),
       editable: source !== 'env',
     };
   };
@@ -223,6 +304,9 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
         if (!field) throw new ServerStoreError('UNKNOWN_SETTING', 400, `不支持的设置项：${name}`);
         validated.push([field, parseSettingValue(field, value)]);
       }
+      const next = { ...(cache ?? await load()) };
+      for (const [field, value] of validated) next[field.name] = value;
+      assertMaintenancePlan(next);
       for (const [field, value] of validated) {
         await store.setMaintenanceState(`${SETTING_PREFIX}${field.name}`, { value });
       }

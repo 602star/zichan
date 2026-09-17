@@ -116,6 +116,11 @@ export interface BackupRecord {
   recordId: string; kind: string; status: string; createdAt: string; finishedAt?: string;
   outputPath?: string; serverId?: string; fileCount?: number; totalBytes?: number;
   verifiedAt?: string; verification?: Record<string, unknown>; drill?: Record<string, unknown>;
+  /** Deployment-side retention outcome: what it removed and what it refused to touch. */
+  retention?: {
+    keep?: number; dryRun?: boolean; removed?: { path: string; totalBytes?: number }[]; freedBytes?: number;
+    retained?: string[]; unverified?: { path: string; reason: string }[]; unverifiedCount?: number;
+  };
   errorMessage?: string; note?: string;
 }
 

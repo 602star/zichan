@@ -1,22 +1,24 @@
 /** Sync diagnostics: every server-visible failure with a reason and a next step. */
+import { AccountFilter, TimeRangeFilter } from './filters.js';
 import type { AdminClient } from './client.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, TextInput, muted, row, useCursorPager, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, muted, row, useCursorPager, useResource, when } from './ui.js';
 import { SYNC_CATEGORIES, type SyncEvent } from './types.js';
-import { useState } from 'react';
 
 export function SyncPage({ client, query, navigate }: { client: AdminClient; query: URLSearchParams; navigate: (to: string) => void }) {
   const category = query.get('category') ?? '';
   const outcome = query.get('outcome') ?? '';
   const from = query.get('from') ?? '';
   const until = query.get('until') ?? '';
-  const [fromDraft, setFromDraft] = useState(from);
-  const [untilDraft, setUntilDraft] = useState(until);
+  // The account filter is carried twice on purpose: the accountId is the query, the username
+  // is only a label, so a link stays correct when the readable name changes.
+  const accountId = query.get('accountId') ?? '';
+  const username = query.get('username') ?? '';
   const pager = useCursorPager({ query, path: '/sync', navigate });
   const cursor = pager.cursor;
 
   const list = useResource(() => client.request<{ events: SyncEvent[]; nextCursor?: string; coverage: string }>(
-    `/sync-events?limit=50${category ? `&category=${category}` : ''}${outcome ? `&outcome=${outcome}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${from ? `&from=${encodeURIComponent(from)}` : ''}${until ? `&until=${encodeURIComponent(until)}` : ''}`,
-  ), [category, outcome, cursor, from, until]);
+    `/sync-events?limit=50${category ? `&category=${category}` : ''}${outcome ? `&outcome=${outcome}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${from ? `&from=${encodeURIComponent(from)}` : ''}${until ? `&until=${encodeURIComponent(until)}` : ''}${accountId ? `&accountId=${encodeURIComponent(accountId)}` : ''}`,
+  ), [category, outcome, cursor, from, until, accountId]);
 
   const update = pager.apply;
 
@@ -38,8 +40,9 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
         <Button onClick={() => update({ outcome: 'error' })}>只看失败</Button>
       </Panel>
 
-      <Panel title="筛选">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
+      <Panel title="筛选" note="从用户详情页进来时会带着该账号的时间范围无关筛选，可直接看到这个用户的同步结果。">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+          <AccountFilter client={client} accountId={accountId} username={username} onApply={(next) => update({ accountId: next.accountId, username: next.username })} />
           <Field label="错误分类">
             <Select value={category} onChange={(event) => update({ category: event.target.value })}>
               <option value="">全部</option>
@@ -51,12 +54,10 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
               <option value="">全部</option><option value="ok">成功</option><option value="error">失败</option>
             </Select>
           </Field>
-          <Field label="起始时间（ISO）"><TextInput value={fromDraft} onChange={(event) => setFromDraft(event.target.value)} placeholder="2026-01-01T00:00:00Z" /></Field>
-          <Field label="结束时间（ISO）"><TextInput value={untilDraft} onChange={(event) => setUntilDraft(event.target.value)} placeholder="2026-01-02T00:00:00Z" /></Field>
         </div>
+        <TimeRangeFilter from={from} until={until} onApply={(range) => update({ from: range.from, until: range.until })} />
         <div style={{ ...row, marginTop: 10 }}>
-          <Button onClick={() => update({ from: fromDraft, until: untilDraft })}>应用时间范围</Button>
-          <Button onClick={() => { setFromDraft(''); setUntilDraft(''); update({ from: undefined, until: undefined, category: undefined, outcome: undefined }); }}>清除筛选</Button>
+          <Button onClick={() => update({ category: undefined, outcome: undefined, from: undefined, until: undefined, accountId: undefined, username: undefined })}>清除筛选</Button>
           <Button onClick={list.reload}>刷新</Button>
         </div>
       </Panel>
@@ -64,10 +65,22 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
       <Panel title="诊断记录">
         <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
         <Notice>{list.data?.coverage ?? '覆盖范围：仅服务端可见的同步结果。'}</Notice>
+        {accountId ? <Notice>当前只显示账号 {username || accountId} 的记录。</Notice> : null}
         <DataTable
           columns={[
             { key: 'at', header: '服务端接收时间', render: (event) => when(event.at) },
-            { key: 'account', header: '账号', render: (event) => event.username ?? '暂无数据' },
+            {
+              key: 'account', header: '账号', render: (event) => {
+                // Empty rather than '—': '—' is a sentinel that short-circuits every fallback.
+                if (!event.username) return '暂无数据';
+                return (
+                  <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}
+                    onClick={() => navigate(`/users/${encodeURIComponent(event.accountId ?? '')}${event.accountId ? '' : `?search=${encodeURIComponent(event.username ?? '')}`}`)}>
+                    {event.username}
+                  </button>
+                );
+              },
+            },
             { key: 'device', header: '设备', secondary: true, render: (event) => event.deviceName ?? '暂无数据' },
             { key: 'operation', header: '操作类型', render: (event) => event.operation },
             { key: 'commits', header: '提交数量', secondary: true, render: (event) => event.commitCount === undefined ? '暂无数据' : String(event.commitCount) },
@@ -83,7 +96,7 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
           ]}
           rows={list.data?.events ?? []}
           rowKey={(event) => event.id}
-          empty="没有符合条件的诊断记录。"
+          empty={accountId ? '该账号在这个范围内没有服务端可见的同步记录：可能当前离线或没有新操作，这不等于故障。' : '没有符合条件的诊断记录。'}
         />
         <div style={{ ...row, marginTop: 10, justifyContent: 'flex-end' }}>
           <span style={muted}>第 {pager.page} 页</span>

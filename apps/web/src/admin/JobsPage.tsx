@@ -67,16 +67,19 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
   const status = query.get('status') ?? '';
   const type = query.get('type') ?? '';
   const jobId = query.get('job') ?? '';
+  // A deep link from the user detail page filters the list to one account; the same value
+  // seeds the create form so "run a task for this account" needs no retyping.
+  const accountFilter = query.get('accountId') ?? '';
   const pager = useCursorPager({ query, path: '/jobs', navigate });
   const cursor = pager.cursor;
   const [jobType, setJobType] = useState('blobs.verify');
-  const [accountId, setAccountId] = useState('');
+  const [accountId, setAccountId] = useState(accountFilter);
   const [recordId, setRecordId] = useState('');
   const [error, setError] = useState('');
 
   const list = useResource(() => client.request<{ jobs: Job[]; nextCursor?: string }>(
-    `/jobs?limit=25${status ? `&status=${status}` : ''}${type ? `&type=${type}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
-  ), [status, type, cursor]);
+    `/jobs?limit=25${status ? `&status=${status}` : ''}${type ? `&type=${type}` : ''}${accountFilter ? `&accountId=${encodeURIComponent(accountFilter)}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+  ), [status, type, accountFilter, cursor]);
   const detail = useResource(
     () => jobId ? client.request<{ job: Job; events: JobEvent[] }>(`/jobs/${jobId}`) : Promise.resolve(undefined),
     [jobId],
@@ -142,6 +145,12 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
             </Select>
           </Field>
         </div>
+        {accountFilter ? (
+          <p style={row}>
+            <Notice>当前只显示目标账号为 <code>{accountFilter}</code> 的任务。</Notice>
+            <Button onClick={() => update({ accountId: undefined })}>取消该账号筛选</Button>
+          </p>
+        ) : null}
         <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
         <DataTable
           columns={[

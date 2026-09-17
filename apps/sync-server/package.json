@@ -19,7 +19,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build:app": "tsc -p tsconfig.json && esbuild src/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/server.mjs",
-    "start:built": "node dist/server.mjs"
+    "start:built": "node dist/server.mjs",
+    "prune-backups": "npm run maintenance -- prune-backups"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

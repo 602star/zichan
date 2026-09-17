@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { createServerBackup, restoreServerBackup, verifyServerBackup } from './backup.js';
+import { applyBackupRetention } from './backup-retention.js';
 import { developmentDataDir } from './runtime-config.js';
 import { issueOwnerRecovery } from './owner-recovery.js';
 import { writeMaintenanceRecord } from './maintenance-records.js';
@@ -10,6 +11,10 @@ function option(name: string, fallback?: string): string {
   if (value && !value.startsWith('--')) return value;
   if (fallback) return fallback;
   throw new Error(`缺少 --${name}`);
+}
+
+function flag(name: string): boolean {
+  return process.argv.includes(`--${name}`);
 }
 
 function stamp(): string {
@@ -67,6 +72,38 @@ async function main(): Promise<void> {
     if (!result.ok) process.exitCode = 2;
     return;
   }
+  if (command === 'prune-backups') {
+    const backupRoot = resolve(option('backup-dir'));
+    const keep = Number(option('keep', '3'));
+    const dryRun = flag('dry-run');
+    const result = await applyBackupRetention(backupRoot, keep, { dryRun });
+    // The console shows the outcome; it never runs retention itself, because deleting backups
+    // is a deployment-side decision about files the service does not own.
+    writeMaintenanceRecord(dataDir, {
+      recordId: `prune-${stamp()}`,
+      kind: 'manual',
+      status: 'completed',
+      createdAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      outputPath: backupRoot,
+      note: dryRun
+        ? `备份保留预演（未删除）：保留 ${String(keep)} 份，可清理 ${String(result.removable.length)} 份。`
+        : `备份保留：保留 ${String(keep)} 份，已清理 ${String(result.removed.length)} 份，释放 ${String(result.freedBytes)} 字节。`,
+      retention: {
+        keep,
+        dryRun,
+        removed: result.removed,
+        freedBytes: result.freedBytes,
+        retained: result.retained.map((entry) => entry.recordId),
+        unverified: result.unverified,
+        skipped: result.skipped,
+        // Reported explicitly: these are the backups a retention run refused to touch.
+        unverifiedCount: result.unverified.length,
+      },
+    });
+    console.log(JSON.stringify({ ok: true, command, backupRoot, keep, dryRun, removed: result.removed.length, freedBytes: result.freedBytes, unverified: result.unverified.length }, null, 2));
+    return;
+  }
   if (command === 'restore') {
     const backup = resolve(option('backup'));
     const result = await restoreServerBackup(backup, dataDir);
@@ -82,7 +119,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ ok: true, command, dataDir, ...result }, null, 2));
     return;
   }
-  throw new Error('用法：maintenance <backup|verify-backup|restore|owner-recovery> [--data-dir PATH] [--output PATH|--backup PATH] [--record-id ID]');
+  throw new Error('用法：maintenance <backup|verify-backup|prune-backups|restore|owner-recovery> [--data-dir PATH] [--output PATH|--backup PATH] [--backup-dir PATH --keep N [--dry-run]] [--record-id ID]');
 }
 
 main().catch((error) => {

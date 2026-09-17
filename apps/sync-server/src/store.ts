@@ -252,6 +252,8 @@ export interface ServerBackupRecord {
   verifiedAt?: string;
   verification?: JsonRecord;
   drill?: JsonRecord;
+  /** Result of a retention run over the backup location this record lives in. */
+  retention?: JsonRecord;
   errorMessage?: string;
   note?: string;
   createdBy?: string;
@@ -741,6 +743,8 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     // Idempotency records are claimed before the work runs and carry the requesting operator.
     await this.ensureColumn('admin_idempotency', 'actor_account_id', 'TEXT');
     await this.ensureColumn('admin_idempotency', 'state', "TEXT NOT NULL DEFAULT 'complete'");
+    // Retention runs are recorded next to the backups they kept or removed.
+    await this.ensureColumn('server_backup_records', 'retention_json', 'TEXT');
     const migrations = await this.driver.all<{ version: number; name: string }>('SELECT version, name FROM server_schema_migrations ORDER BY version');
     const previous = migrations.length === 1 && (
       Number(migrations[0]?.version) === 6 && migrations[0]?.name === 'server_account_owner_v6'
@@ -1700,11 +1704,23 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     }
   }
 
-  async listLogs(options: { limit: number; level?: string; from?: string; until?: string; cursor?: string; requestId?: string }): Promise<{ logs: ServerLog[]; nextCursor?: string }> {
+  async listLogs(options: {
+    limit: number;
+    level?: string;
+    from?: string;
+    until?: string;
+    cursor?: string;
+    requestId?: string;
+    /** Exact account name, as recorded on the log line. */
+    username?: string;
+    action?: string;
+  }): Promise<{ logs: ServerLog[]; nextCursor?: string }> {
     await this.ready;
     const clauses: string[] = [];
     const params: (string | number | null)[] = [];
     if (options.level) { clauses.push('level = ?'); params.push(options.level); }
+    if (options.username) { clauses.push('username = ?'); params.push(options.username); }
+    if (options.action) { clauses.push('action = ?'); params.push(options.action); }
     if (options.from) { clauses.push('at >= ?'); params.push(options.from); }
     if (options.until) { clauses.push('at < ?'); params.push(options.until); }
     if (options.cursor) { const [cursorAt, cursorId] = options.cursor.split('|'); clauses.push('(at < ? OR (at = ? AND id < ?))'); params.push(cursorAt ?? '', cursorAt ?? '', cursorId ?? ''); }
@@ -1725,6 +1741,14 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     }));
     const last = page.at(-1);
     return { logs: page, ...(rows.length > options.limit && last ? { nextCursor: `${last.at}|${last.id}` } : {}) };
+  }
+
+
+  /** Distinct actions seen in the retained log, for the console filter. */
+  async listLogActions(limit = 200): Promise<string[]> {
+    await this.ready;
+    const rows = await this.driver.all<{ action: string }>('SELECT DISTINCT action FROM server_logs ORDER BY action LIMIT ?', [Math.max(1, Math.min(500, limit))]);
+    return rows.map((row) => String(row.action));
   }
 
   async status(): Promise<ServerStatus> {
@@ -2310,12 +2334,15 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     return row ? this.mapJob(row) : undefined;
   }
 
-  async listJobs(options: { limit: number; status?: string; type?: string; cursor?: string }): Promise<{ jobs: AdminJob[]; nextCursor?: string }> {
+  async listJobs(options: { limit: number; status?: string; type?: string; cursor?: string; accountId?: string }): Promise<{ jobs: AdminJob[]; nextCursor?: string }> {
     await this.ready;
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     if (options.status) { clauses.push('status = ?'); params.push(options.status); }
     if (options.type) { clauses.push('type = ?'); params.push(options.type); }
+    // Targeted account: the field is only ever set for account-scoped task types, so this
+    // filter is exactly "tasks that name this account".
+    if (options.accountId) { clauses.push('target_account_id = ?'); params.push(options.accountId); }
     if (options.cursor) {
       const [cursorAt, cursorId] = options.cursor.split('|');
       clauses.push('(created_at < ? OR (created_at = ? AND job_id < ?))');
@@ -2703,13 +2730,15 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     await this.driver.run(
       `INSERT INTO server_backup_records
        (record_id, kind, status, created_at, finished_at, output_path, server_id, file_count, total_bytes,
-        verified_at, verification_json, drill_json, error_message, note, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        verified_at, verification_json, drill_json, error_message, note, created_by,
+        retention_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(record_id) DO UPDATE SET
          kind = excluded.kind, status = excluded.status, finished_at = excluded.finished_at,
          output_path = excluded.output_path, server_id = excluded.server_id, file_count = excluded.file_count,
          total_bytes = excluded.total_bytes, verified_at = excluded.verified_at,
          verification_json = excluded.verification_json, drill_json = excluded.drill_json,
+         retention_json = excluded.retention_json,
          error_message = excluded.error_message, note = excluded.note`,
       [
         record.recordId, record.kind, record.status, record.createdAt, record.finishedAt ?? null,
@@ -2718,6 +2747,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
         record.verification === undefined ? null : JSON.stringify(record.verification),
         record.drill === undefined ? null : JSON.stringify(record.drill),
         record.errorMessage ?? null, record.note ?? null, record.createdBy ?? null,
+        record.retention === undefined ? null : JSON.stringify(record.retention),
       ],
     );
   }
@@ -2752,6 +2782,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
       ...(row['verified_at'] == null ? {} : { verifiedAt: String(row['verified_at']) }),
       ...(row['verification_json'] == null ? {} : { verification: jsonObject(row['verification_json']) }),
       ...(row['drill_json'] == null ? {} : { drill: jsonObject(row['drill_json']) }),
+      ...(row['retention_json'] == null ? {} : { retention: jsonObject(row['retention_json']) }),
       ...(row['error_message'] == null ? {} : { errorMessage: String(row['error_message']) }),
       ...(row['note'] == null ? {} : { note: String(row['note']) }),
       ...(row['created_by'] == null ? {} : { createdBy: String(row['created_by']) }),

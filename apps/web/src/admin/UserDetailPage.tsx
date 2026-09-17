@@ -55,6 +55,21 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
       </div>
       <Loading loading={detail.loading} error={detail.error} stale={detail.stale} loadedAt={detail.loadedAt} />
 
+      {/*
+        Troubleshooting starts from the account, so every related view is one click away and
+        already filtered. The accountId travels as the query and the username only as a label:
+        a link stays correct even if the readable name later changes.
+      */}
+      <Panel title="关联排障" note="从异常追到用户后，用这些入口查这个人相关的同步、日志、会话、审计与任务；筛选会带到目标页并写进 URL，可以直接分享。">
+        <div style={row}>
+          <Button onClick={() => navigate(`/sync?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的同步诊断</Button>
+          <Button onClick={() => navigate(`/logs?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的运行日志</Button>
+          <Button onClick={() => navigate(`/sessions?search=${encodeURIComponent(account.username)}`)}>该账号的会话</Button>
+          <Button onClick={() => navigate(`/audit?target=${encodeURIComponent(account.accountId)}`)}>以该账号为目标的管理审计</Button>
+          <Button onClick={() => navigate(`/jobs?accountId=${encodeURIComponent(account.accountId)}`)}>该账号的维护任务</Button>
+        </div>
+      </Panel>
+
       <Panel title="账号信息">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
           <Stat label="accountId" value={<code style={{ fontSize: 'var(--fs-sm)' }}>{account.accountId}</code>} />
@@ -119,7 +134,12 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
             { key: 'outcome', header: '结果', render: (event) => event.outcome === 'ok' ? <Badge tone="ok">成功</Badge> : <Badge tone="bad">{event.resultCode ?? '失败'}</Badge> },
             { key: 'category', header: '原因', render: (event) => SYNC_CATEGORIES.find((entry) => entry.value === event.category)?.label ?? '暂无数据' },
             { key: 'next', header: '下一步', secondary: true, render: (event) => SYNC_CATEGORIES.find((entry) => entry.value === event.category)?.next ?? '暂无数据' },
-            { key: 'request', header: '请求 ID', secondary: true, render: (event) => event.requestId ?? '暂无数据' },
+            {
+              key: 'request', header: '请求 ID', secondary: true, render: (event) => event.requestId ? (
+                <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}
+                  onClick={() => navigate(`/logs?requestId=${encodeURIComponent(event.requestId ?? '')}`)}>{event.requestId}</button>
+              ) : '暂无数据',
+            },
           ]}
           rows={sync.recent}
           rowKey={(event) => event.id}
@@ -134,7 +154,12 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
             {audit.map((entry) => (
               <li key={entry.id} style={{ marginBottom: 6 }}>
                 {when(entry.at)} · {entry.action}{entry.reason ? `（原因：${entry.reason}）` : ''}
-                {entry.requestId ? <span style={muted}> · 请求 {entry.requestId}</span> : null}
+                {entry.requestId ? (
+                  <span style={muted}> · 请求{' '}
+                    <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}
+                      onClick={() => navigate(`/logs?requestId=${encodeURIComponent(entry.requestId ?? '')}`)}>{entry.requestId}</button>
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -143,7 +168,13 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
           <>
             <strong style={{ display: 'block', marginTop: 10 }}>相关维护任务</strong>
             <ul style={{ margin: 0, paddingLeft: 18 }}>
-              {jobs.map((job) => <li key={job.jobId}>{job.type} · {job.status} · {when(job.createdAt)}</li>)}
+              {jobs.map((job) => (
+                <li key={job.jobId}>
+                  <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}
+                    onClick={() => navigate(`/jobs?job=${encodeURIComponent(job.jobId)}`)}>{job.type}</button>
+                  {' '}· {job.status} · {when(job.createdAt)}
+                </li>
+              ))}
             </ul>
           </>
         ) : null}

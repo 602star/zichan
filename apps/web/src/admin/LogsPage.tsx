@@ -1,24 +1,25 @@
 /** Run log and management audit: different purposes, retention and failure handling. */
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
+import { AccountFilter, TimeRangeFilter } from './filters.js';
 import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, muted, row, useResource, when } from './ui.js';
 import type { AuditEntry, LogEntry } from './types.js';
 
 export function LogsPage({ client, query, navigate }: { client: AdminClient; query: URLSearchParams; navigate: (to: string) => void }) {
   const level = query.get('level') ?? '';
   const requestId = query.get('requestId') ?? '';
-  const search = query.get('search') ?? '';
+  const action = query.get('action') ?? '';
+  const accountId = query.get('accountId') ?? '';
+  const username = query.get('username') ?? '';
   const from = query.get('from') ?? '';
   const until = query.get('until') ?? '';
   const [requestDraft, setRequestDraft] = useState(requestId);
-  const [fromDraft, setFromDraft] = useState(from);
-  const [untilDraft, setUntilDraft] = useState(until);
   const [cursor, setCursor] = useState('');
   const [stack, setStack] = useState<string[]>(['']);
 
-  const list = useResource(() => client.request<{ logs: LogEntry[]; nextCursor?: string }>(
-    `/logs?limit=100${level ? `&level=${level}` : ''}${requestId ? `&requestId=${encodeURIComponent(requestId)}` : ''}${from ? `&from=${encodeURIComponent(from)}` : ''}${until ? `&until=${encodeURIComponent(until)}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
-  ), [level, requestId, from, until, cursor]);
+  const list = useResource(() => client.request<{ logs: LogEntry[]; nextCursor?: string; actions?: string[] }>(
+    `/logs?limit=100${level ? `&level=${level}` : ''}${requestId ? `&requestId=${encodeURIComponent(requestId)}` : ''}${action ? `&action=${encodeURIComponent(action)}` : ''}${username ? `&username=${encodeURIComponent(username)}` : ''}${from ? `&from=${encodeURIComponent(from)}` : ''}${until ? `&until=${encodeURIComponent(until)}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+  ), [level, requestId, action, username, from, until, cursor]);
 
   const update = (patch: Record<string, string | undefined>): void => {
     const next = new URLSearchParams(query);
@@ -32,27 +33,31 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
     <>
       <h2>运行日志</h2>
       <Panel title="用途" note="运行日志用于排查错误与性能问题；它按时间和大小限制裁剪，且写入失败时会降级输出，避免日志故障放大业务故障。">
-        <Button onClick={() => update({ search: undefined })}>清空关键字</Button>
-        {search ? <span style={muted}> 当前关键字：{search}</span> : null}
+        {requestId ? <p><Notice>正在按请求 {requestId} 关联日志。从用户详情页进来时会同时带上账号筛选。</Notice></p> : null}
       </Panel>
 
-      <Panel title="筛选">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
+      <Panel title="筛选" note="按账号查日志需要该账号名同时出现在日志行上（登录、同步、管理操作都带账号名）；纯系统事件没有账号。">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+          <AccountFilter client={client} accountId={accountId} username={username} onApply={(next) => update({ accountId: next.accountId, username: next.username })} />
           <Field label="级别">
             <Select value={level} onChange={(event) => update({ level: event.target.value })}>
               <option value="">全部</option><option value="info">info</option><option value="warn">warn</option><option value="error">error</option>
             </Select>
           </Field>
           <Field label="请求 ID"><TextInput value={requestDraft} onChange={(event) => setRequestDraft(event.target.value)} placeholder="req-..." /></Field>
-          <Field label="起始时间（ISO）"><TextInput value={fromDraft} onChange={(event) => setFromDraft(event.target.value)} /></Field>
-          <Field label="结束时间（ISO）"><TextInput value={untilDraft} onChange={(event) => setUntilDraft(event.target.value)} /></Field>
+          <Field label="动作">
+            <Select value={action} onChange={(event) => update({ action: event.target.value })}>
+              <option value="">全部</option>
+              {(list.data?.actions ?? [action].filter(Boolean)).map((value) => <option key={value} value={value}>{value}</option>)}
+            </Select>
+          </Field>
         </div>
+        <TimeRangeFilter from={from} until={until} onApply={(range) => update({ from: range.from, until: range.until })} />
         <div style={{ ...row, marginTop: 10 }}>
-          <Button onClick={() => update({ requestId: requestDraft, from: fromDraft, until: untilDraft })}>应用</Button>
-          <Button onClick={() => { setRequestDraft(''); setFromDraft(''); setUntilDraft(''); update({ requestId: undefined, from: undefined, until: undefined, level: undefined }); }}>清除筛选</Button>
+          <Button onClick={() => update({ requestId: requestDraft })}>按请求 ID 筛选</Button>
+          <Button onClick={() => { setRequestDraft(''); update({ requestId: undefined, from: undefined, until: undefined, level: undefined, action: undefined, accountId: undefined, username: undefined }); }}>清除筛选</Button>
           <Button onClick={list.reload}>刷新</Button>
         </div>
-        {search ? <Notice>来自其他页面的关键字：{search}（运行日志按请求 ID 关联，如需按内容检索请使用请求 ID）。</Notice> : null}
       </Panel>
 
       <Panel title="日志">

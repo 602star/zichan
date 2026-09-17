@@ -98,7 +98,10 @@ export function SessionsPage({ client, query, navigate, selfAccountId }: {
         <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
         <DataTable
           columns={[
-            { key: 'user', header: '用户', render: (session) => session.username },
+            { key: 'user', header: '用户', render: (session) => (
+              <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}
+                onClick={() => navigate(`/users/${encodeURIComponent(session.accountId ?? '')}${session.accountId ? '' : `?search=${encodeURIComponent(session.username)}`}`)}>{session.username}</button>
+            ) },
             { key: 'device', header: '设备名称', render: (session) => session.deviceName },
             { key: 'kind', header: '会话类型', render: (session) => session.kind === 'admin' ? '管理后台' : '记账' },
             { key: 'role', header: '角色', secondary: true, render: (session) => session.role === 'owner' ? '所有者' : session.role === 'admin' ? '管理员' : '普通用户' },
