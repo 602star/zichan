@@ -3,6 +3,52 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-17 — 只读运维角色 + 任务执行前权限复验
+
+**Goal:** 接上一批留待清单的下一段（$十一 阶段 E 的第一项）：把“只读运维角色”和“高风险操作重新验证身份”
+落成，并把权限统一到**页面、接口、任务执行**三处都不打架。仍不升 schema（只加一个默认 0 的追加列）。
+
+### 交付
+
+1. **只读运维角色（viewer）**：`AccountRole` 扩为 `owner | admin | viewer | member`；管理员授权表
+   `server_administrators` 追加 `read_only` 列（默认 0，已有管理员不受影响）。角色解析收敛成**一个** SQL
+   表达式 `ROLE_SQL`（`export const ROLE_SQL`），所有列表/详情/会话/任务查询都插值它，`roleForUser`
+   与它口径一致——这正是以前“同一个账号在不同页面显示不同角色”的根源。
+2. **只读 = 全部读、零写**：`mutateAdmin` 在授权链最前面拒绝观众（403 `READ_ONLY_ROLE`）；任务创建、
+   重试、取消共用的 `assertJobAuthorized` 同样先拒绝。所有者专属路径（设置、注册策略、备份任务）仍先
+   报 `OWNER_REQUIRED`，因为对观众来说“你不是所有者”也是事实。观众被视为**特权账号**：管理员不能改
+   它的角色或状态，只有所有者可以——与“管理员不能管理其他管理员”一致。
+3. **页面不吃亏也不撒谎**：后台顶部对观众显示角色说明（`role="status"`），账号、会话、邀请、任务、存储、
+   设置、告警的写操作控件一律禁用；`canWrite(role)` 是唯一判断处，`READ_ONLY_ROLE` 也有可读文案，
+   服务端仍然独立复核（页面只是提前说明，不是安全边界）。
+4. **任务执行前复验发起人权限**：任务执行器在开始干活前调用 `store.jobCreatorCanRun(createdBy)`——
+   账号被删除、禁用或降权（member/viewer）时，任务标为**已取消**并在任务记录与事件里写明原因
+   （`ACTOR_NOT_PERMITTED`、"发起人的权限已被变更或撤销，任务不再执行"），而不是替一个已无权的人继续跑。
+   `abandonJob` 与 `finishJob` 分开，避免把“因权限放弃”混进“执行失败”。
+5. **高风险操作重新验证身份**：需要最近 5 分钟登录的操作从「改角色 / 发重置码 / 撤销自己的其他会话」
+   扩展到「启用或禁用账号 / 撤销其他账号的全部会话」。窗口不因刷新访问令牌而延长。
+6. **客户端角色类型同步**（`packages/db/http-transport.ts`、`apps/web/src/sync-config.ts`、管理端
+   `types.ts`）：角色联合类型与解析函数都接受 `viewer`。**修掉一个真实缺陷**：`/api/auth/me` 的响应
+   校验只承认 `owner|admin|member`，导致只读运维登录时客户端报“account lookup returned an incomplete
+   response”而进不去后台——这个错误由端到端用例先暴露出来（服务端测试看不到它）。
+
+### Verified
+
+- 新增 `apps/sync-server/test/admin-viewer-role.test.ts`（4 项）：只读运维可读概览/用户/日志/审计，9 条
+  管理写路径全部被拒（账号写路径带 `READ_ONLY_ROLE`）；授权后列表与登录都显示 `viewer`；只有所有者能
+  改动只读运维；并用**假 store** 驱动任务执行器验证“发起人无权 → 任务被放弃、处理器一次都没执行”，
+  以及反向对照“发起人有权 → 照常执行”。
+- 端到端新增用例「a read-only operator reaches every page but gets no write control」：所有者通过界面授予
+  只读运维角色 → 另开浏览器上下文以该账号登录 → 顶部角色说明可见、任务/存储/设置的写按钮禁用；
+  `admin.spec.mjs` 5 项通过。
+- `apps/sync-server` 119 项、web 512 项、db 158 项通过；`npm run typecheck`、`npm run lint`（0/0）、
+  `npm run release:check`（schema 117）通过；`npm run test:e2e:account` 全量通过（Chrome）。
+
+### 留待下一批
+
+管理员 MFA；重型任务隔离（哈希放独立工作线程/进程）与容量压测。
+
+
 ## 2026-09-17 — 以用户为中心的关联排障 + 维护计划与备份保留
 
 **Goal:** 接上一批留待清单的下一段：把「从异常追到用户」做成可点的路径（账号与时间筛选、跨页跳转），

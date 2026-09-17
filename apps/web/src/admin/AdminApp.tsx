@@ -107,7 +107,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
           <a href={`${baseUrl}/app/`}>打开记账应用</a>
           {account ? (
             <>
-              <span>{account.username} · {account.role === 'owner' ? '所有者' : '管理员'}</span>
+              <span>{account.username} · {roleLabel(account.role)}</span>
               <button onClick={() => void logout()}>退出管理后台</button>
             </>
           ) : null}
@@ -138,6 +138,11 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
   </main>;
 }
 
+/** One label per role, so the read-only operator is named the same everywhere. */
+export function roleLabel(role: string): string {
+  return role === 'owner' ? '所有者' : role === 'admin' ? '管理员' : role === 'viewer' ? '只读运维' : '普通用户';
+}
+
 /** Sidebar navigation plus the routed page. Every page has its own URL. */
 function AdminShell({ client, account, baseUrl }: { client: AdminClient; account: SyncAuthMe; baseUrl: string }) {
   const route = useRoute();
@@ -162,7 +167,7 @@ function AdminShell({ client, account, baseUrl }: { client: AdminClient; account
         return second
           ? <UserDetailPage client={client} accountId={second} role={role} navigate={go} onChanged={() => undefined} selfAccountId={account.accountId ?? ''} />
           : <UsersPage client={client} query={route.query} navigate={go} role={role} />;
-      case 'sessions': return <SessionsPage client={client} query={route.query} navigate={go} selfAccountId={account.accountId ?? ''} />;
+      case 'sessions': return <SessionsPage client={client} query={route.query} navigate={go} role={role} selfAccountId={account.accountId ?? ''} />;
       case 'sync': return <SyncPage client={client} query={route.query} navigate={go} />;
       case 'invites': return <InvitesPage client={client} role={role} query={route.query} navigate={go} />;
       case 'storage': return <StoragePage client={client} role={role} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
@@ -170,7 +175,7 @@ function AdminShell({ client, account, baseUrl }: { client: AdminClient; account
       case 'logs': return <LogsPage client={client} query={route.query} navigate={go} />;
       case 'audit': return <AuditPage client={client} query={route.query} navigate={go} />;
       case 'settings': return <SettingsPage client={client} role={role} />;
-      default: return <OverviewPage client={client} navigate={go} accountName={account.username} />;
+      default: return <OverviewPage client={client} navigate={go} accountName={account.username} role={role} />;
     }
   })();
 
@@ -190,7 +195,16 @@ function AdminShell({ client, account, baseUrl }: { client: AdminClient; account
           >{item.label}</a>
         ))}
       </nav>
-      <section className="zc-admin-content">{page}</section>
+      <section className="zc-admin-content">
+        {/* The role is stated up front, because a read-only operator sees every page and would
+            otherwise only find out by being refused. */}
+        {role === 'viewer'
+          ? <p role="status" style={{ padding: 12, marginBottom: 12, borderRadius: 'var(--r-sm)', background: 'var(--warn-surface, #fef7e0)', border: '1px solid var(--border)' }}>
+            只读运维角色：可以查看全部页面并导出日志与审计，不能执行任何管理变更（修改账号、会话、注册策略、任务、设置或备份操作都会被服务端拒绝）。
+          </p>
+          : null}
+        {page}
+      </section>
     </div>
   );
 }

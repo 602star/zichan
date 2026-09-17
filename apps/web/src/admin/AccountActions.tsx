@@ -30,7 +30,7 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
   const [reason, setReason] = useState('');
   const [commitGiB, setCommitGiB] = useState(String((target.commitQuotaBytes / 1024 ** 3).toFixed(2)));
   const [blobGiB, setBlobGiB] = useState('');
-  const [role, setRole] = useState<'admin' | 'member'>(target.role === 'admin' ? 'admin' : 'member');
+  const [role, setRole] = useState<'admin' | 'viewer' | 'member'>(target.role === 'admin' || target.role === 'viewer' ? target.role : 'member');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -111,9 +111,10 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
           <strong>修改角色</strong>
           <p style={muted}>需要最近 5 分钟内的登录。完成后会撤销目标账号的现有会话，权限变化立即生效。</p>
           <Field label="角色">
-            <Select value={role} onChange={(event) => setRole(event.target.value as 'admin' | 'member')}>
+            <Select value={role} onChange={(event) => setRole(event.target.value as 'admin' | 'member' | 'viewer')}>
               <option value="member">普通用户</option>
               <option value="admin">管理员</option>
+              <option value="viewer">只读运维（可查看与导出，不能变更）</option>
             </Select>
           </Field>
           <Field label="原因（会写入审计）"><TextInput value={reason} maxLength={200} onChange={(event) => setReason(event.target.value)} /></Field>
@@ -131,5 +132,5 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
 }
 
 export function RoleNote({ role }: { role: AccountRow['role'] }) {
-  return <p style={muted}>{role === 'owner' ? '所有者账号不可禁用或降权。' : role === 'admin' ? '管理员账号仅所有者可管理。' : '普通用户可由管理员管理。'}</p>;
+  return <p style={muted}>{role === 'owner' ? '所有者账号不可禁用或降权。' : role === 'admin' ? '管理员账号仅所有者可管理。' : role === 'viewer' ? '只读运维账号仅所有者可管理；它只能查看与导出，不能执行管理变更。' : '普通用户可由管理员管理。'}</p>;
 }

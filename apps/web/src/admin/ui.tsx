@@ -6,10 +6,20 @@ export const panel: CSSProperties = { padding: 16, borderRadius: 'var(--r-md)', 
 export const row: CSSProperties = { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' };
 export const muted: CSSProperties = { color: 'var(--text-muted)', fontSize: 'var(--fs-sm)' };
 
+/**
+ * Whether this role may change anything. A read-only operator (`viewer`) sees every page; the
+ * controls that would write are disabled here and refused by the server if they are reached
+ * some other way.
+ */
+export const canWrite = (role: string | undefined): boolean => role !== 'viewer';
+
+export const READ_ONLY_NOTE = '只读运维角色：此项不可用。';
+
 export function message(error: unknown): string {
   if (error instanceof AdminError) {
     const labels: Record<string, string> = {
       RECENT_LOGIN_REQUIRED: '敏感操作需要最近 5 分钟内的登录。请退出管理后台并重新登录，再执行此操作。',
+      READ_ONLY_ROLE: '只读运维角色只能查看与导出，不能执行管理变更。',
       PROTECTED_ACCOUNT: '此账号受保护，你无权修改。',
       OWNER_REQUIRED: '仅服务器所有者可以执行此操作。',
       ADMIN_REQUIRED: '需要管理员权限。',

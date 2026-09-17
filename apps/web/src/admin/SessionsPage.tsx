@@ -2,13 +2,14 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, message, muted, row, useCursorPager, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, canWrite, message, muted, row, useCursorPager, useResource, when } from './ui.js';
 import type { SessionRow } from './types.js';
 
-export function SessionsPage({ client, query, navigate, selfAccountId }: {
+export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
   client: AdminClient;
   query: URLSearchParams;
   navigate: (to: string) => void;
+  role: string;
   selfAccountId: string;
 }) {
   const search = query.get('search') ?? '';
@@ -35,6 +36,7 @@ export function SessionsPage({ client, query, navigate, selfAccountId }: {
    * (which the server only accepts within a recent-login window).
    */
   const revocable = (session: SessionRow): boolean => {
+    if (!canWrite(role)) return false;
     if (!session.active || session.id === currentSessionId) return false;
     return session.accountId === selfAccountId || session.role === 'member';
   };

@@ -3,7 +3,14 @@ import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { NodeSqliteDriver } from '@zichan/db/node';
 
 export type RegistrationMode = 'open' | 'invite' | 'closed';
-export type AccountRole = 'owner' | 'admin' | 'member';
+export type AccountRole = 'owner' | 'admin' | 'viewer' | 'member';
+
+/**
+ * One expression decides every role: ownership wins, then an administrator grant — which is
+ * read-only when flagged. Every SQL path and `roleForUser` share it, so the console, the API
+ * and the task runner cannot disagree about what a given account may do.
+ */
+export const ROLE_SQL = "CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN (CASE WHEN a.read_only = 1 THEN 'viewer' ELSE 'admin' END) ELSE 'member' END";
 export type ServerLogLevel = 'info' | 'warn' | 'error';
 export type JsonRecord = Record<string, unknown>;
 export interface LedgerProtection {
@@ -82,7 +89,7 @@ export interface Invite {
 export type AdminMutation =
   | { action: 'password-reset-issue'; accountId: string; codeHash: string; expiresAt: string }
   | { action: 'password-reset-revoke'; accountId: string }
-  | { action: 'role'; accountId: string; role: 'admin' | 'member' }
+  | { action: 'role'; accountId: string; role: 'admin' | 'viewer' | 'member' }
   | { action: 'state'; accountId: string; disabled: boolean }
   | { action: 'commit-quota'; accountId: string; bytes: number | null }
   | { action: 'blob-quota'; accountId: string; bytes: number | null }
@@ -745,6 +752,8 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     await this.ensureColumn('admin_idempotency', 'state', "TEXT NOT NULL DEFAULT 'complete'");
     // Retention runs are recorded next to the backups they kept or removed.
     await this.ensureColumn('server_backup_records', 'retention_json', 'TEXT');
+    // Read-only operators are administrators with this flag set; granting one is a role change.
+    await this.ensureColumn('server_administrators', 'read_only', 'INTEGER NOT NULL DEFAULT 0');
     const migrations = await this.driver.all<{ version: number; name: string }>('SELECT version, name FROM server_schema_migrations ORDER BY version');
     const previous = migrations.length === 1 && (
       Number(migrations[0]?.version) === 6 && migrations[0]?.name === 'server_account_owner_v6'
@@ -837,7 +846,9 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
       [username],
     );
     if (owner) return 'owner';
-    return await this.driver.get('SELECT username FROM server_administrators WHERE username = ?', [username]) ? 'admin' : 'member';
+    const administrator = await this.driver.get<{ read_only: number }>('SELECT read_only FROM server_administrators WHERE username = ?', [username]);
+    if (!administrator) return 'member';
+    return Number(administrator.read_only ?? 0) === 1 ? 'viewer' : 'admin';
   }
 
   async register(
@@ -1088,7 +1099,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     await this.ready;
     const rows = await this.driver.all<Record<string, unknown>>(
       `SELECT u.username, i.account_id, u.disabled, u.created_at, u.updated_at, u.last_login_at,
-              CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END AS role,
+              ${ROLE_SQL} AS role,
               r.ledger_id, r.replica_id, COALESCE(r.head_seq, 0) AS commit_count,
               COALESCE(SUM(c.cipher_bytes), 0) AS commit_bytes,
               COALESCE(q.commit_quota_bytes, ?) AS commit_quota_bytes,
@@ -1106,7 +1117,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
        LEFT JOIN sync_key_custody k ON k.username = u.username
        WHERE u.username > ? COLLATE NOCASE
          AND (? = '' OR instr(lower(u.username), lower(?)) > 0 OR i.account_id = ?)
-         AND (? = '' OR CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END = ?)
+         AND (? = '' OR ${ROLE_SQL} = ?)
          AND (? = '' OR u.disabled = ?)
          AND (? = '' OR COALESCE(k.mode, 'none') = ?)
        GROUP BY u.username
@@ -1131,7 +1142,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     );
     const page = rows.slice(0, limit).map((row) => ({
       accountId: String(row['account_id']), username: String(row['username']), disabled: bool(row['disabled']),
-      role: row['role'] === 'owner' ? 'owner' : row['role'] === 'admin' ? 'admin' : 'member',
+      role: row['role'] === 'owner' ? 'owner' : row['role'] === 'admin' ? 'admin' : row['role'] === 'viewer' ? 'viewer' : 'member',
       createdAt: String(row['created_at']), updatedAt: String(row['updated_at']),
       lastLoginAt: row['last_login_at'] ?? null, ledgerId: row['ledger_id'] ?? null,
       replicaId: row['replica_id'] ?? null, commitCount: Number(row['commit_count'] ?? 0),
@@ -1181,7 +1192,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     await this.driver.transaction(async (driver) => {
       const at = nowIso();
       const roleSql = `SELECT u.username, u.disabled, i.account_id,
-        CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END AS role
+        ${ROLE_SQL} AS role
         FROM sync_users u JOIN sync_account_identities i ON i.username = u.username
         LEFT JOIN server_ownership o ON o.username = u.username
         LEFT JOIN server_administrators a ON a.username = u.username`;
@@ -1189,6 +1200,8 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
         'SELECT username, created_at FROM sync_sessions WHERE session_id = ? AND revoked_at IS NULL AND expires_at > ?', [actorSessionId, at]);
       const actor = session ? await driver.get<{ username: string; disabled: number; account_id: string; role: AccountRole }>(`${roleSql} WHERE u.username = ?`, [session.username]) : undefined;
       if (!actor || actor.disabled || actor.role === 'member') throw new ServerStoreError('ADMIN_REQUIRED', 403, 'administrator session required');
+      // Read-only operators can see everything this console shows, but change nothing.
+      if (actor.role === 'viewer') throw new ServerStoreError('READ_ONLY_ROLE', 403, '只读运维角色不能执行管理变更');
       let targetId = 'accountId' in mutation ? mutation.accountId : undefined;
       let targetSession: Record<string, unknown> | undefined;
       if (mutation.action === 'revoke-session') {
@@ -1217,8 +1230,11 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
           throw new ServerStoreError('STALE_WRITE', 409, '账号数据已被其他管理员修改，请刷新后重试');
         }
       }
-      // Self-service session revocation still has to be a deliberate, freshly authenticated act.
-      if ((mutation.action === 'role' || mutation.action === 'password-reset-issue' || selfSessions) && Date.now() - Date.parse(session!.created_at) > 5 * 60_000) {
+      // High-risk changes need a fresh login: role, password recovery, account state, and revoking
+      // other people's sessions. Everything else is recoverable from the audit trail.
+      if ((mutation.action === 'role' || mutation.action === 'password-reset-issue' || mutation.action === 'state'
+        || mutation.action === 'sessions-revoke-all' || selfSessions)
+        && Date.now() - Date.parse(session!.created_at) > 5 * 60_000) {
         throw new ServerStoreError('RECENT_LOGIN_REQUIRED', 403, '此敏感操作需要最近 5 分钟内的登录，请退出管理后台并重新登录');
       }
       if (selfSessions && mutation.action === 'revoke-session' && mutation.sessionId === actorSessionId) {
@@ -1239,10 +1255,14 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
         after = { hadPendingCode: false };
         await driver.run('DELETE FROM account_password_resets WHERE account_id = ?', [target!.account_id]);
       } else if (mutation.action === 'role') {
-        if (mutation.role !== 'member' && mutation.role !== 'admin') throw new ServerStoreError('INVALID_ROLE', 400, 'invalid role');
+        if (mutation.role !== 'member' && mutation.role !== 'admin' && mutation.role !== 'viewer') throw new ServerStoreError('INVALID_ROLE', 400, 'invalid role');
         if (target!.disabled) throw new ServerStoreError('ACCOUNT_DISABLED', 409, 'enable the account before changing its role');
         before = { role: target!.role }; after = { role: mutation.role };
-        if (mutation.role === 'admin') await driver.run('INSERT OR IGNORE INTO server_administrators (username, granted_at) VALUES (?, ?)', [target!.username, at]);
+        if (mutation.role === 'admin') {
+          await driver.run('INSERT INTO server_administrators (username, granted_at, read_only) VALUES (?, ?, 0) ON CONFLICT(username) DO UPDATE SET read_only = 0', [target!.username, at]);
+        } else if (mutation.role === 'viewer') {
+          await driver.run('INSERT INTO server_administrators (username, granted_at, read_only) VALUES (?, ?, 1) ON CONFLICT(username) DO UPDATE SET read_only = 1', [target!.username, at]);
+        }
         else await driver.run('DELETE FROM server_administrators WHERE username = ?', [target!.username]);
         await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE username = ?', [at, at, target!.username]);
       } else if (mutation.action === 'state') {
@@ -2122,7 +2142,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     if (options.memberOnly) {
-      clauses.push("CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END = 'member'");
+      clauses.push(`${ROLE_SQL} = 'member'`);
     }
     if (options.search) {
       clauses.push('(instr(lower(s.username), lower(?)) > 0 OR i.account_id = ? OR instr(lower(s.device_name), lower(?)) > 0)');
@@ -2138,7 +2158,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
       params.push(cursorSeen ?? '', cursorSeen ?? '', cursorId ?? '');
     }
     let sql = `SELECT s.*, i.account_id,
-        CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END AS role
+        ${ROLE_SQL} AS role
       FROM sync_sessions s
       JOIN sync_account_identities i ON i.username = s.username
       LEFT JOIN server_administrators a ON a.username = s.username
@@ -2151,7 +2171,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
       id: String(row['session_id']),
       username: String(row['username']),
       accountId: String(row['account_id']),
-      role: row['role'] === 'owner' ? 'owner' : row['role'] === 'admin' ? 'admin' : 'member',
+      role: row['role'] === 'owner' ? 'owner' : row['role'] === 'admin' ? 'admin' : row['role'] === 'viewer' ? 'viewer' : 'member',
       deviceId: String(row['device_id']),
       deviceName: String(row['device_name']),
       kind: String(row['kind'] ?? 'ledger'),
@@ -2172,7 +2192,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     const at = nowIso();
     const row = await this.driver.get<Record<string, unknown>>(
       `SELECT u.username, i.account_id, u.disabled, u.created_at, u.updated_at, u.last_login_at, u.revision,
-              CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END AS role,
+              ${ROLE_SQL} AS role,
               r.ledger_id, r.replica_id, COALESCE(r.head_seq, 0) AS commit_count,
               (SELECT COUNT(*) FROM sync_server_commits c WHERE c.username = u.username) AS stored_commits,
               (SELECT COALESCE(SUM(c.cipher_bytes), 0) FROM sync_server_commits c WHERE c.username = u.username) AS commit_bytes,
@@ -2192,7 +2212,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     const username = String(row['username']);
     const sessions = await this.driver.all<Record<string, unknown>>(
       `SELECT s.*, i.account_id,
-              CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END AS role
+              ${ROLE_SQL} AS role
        FROM sync_sessions s
        JOIN sync_account_identities i ON i.username = s.username
        LEFT JOIN server_administrators a ON a.username = s.username
@@ -2214,7 +2234,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
       account: {
         username,
         accountId,
-        role: row['role'] === 'owner' ? 'owner' : row['role'] === 'admin' ? 'admin' : 'member',
+        role: row['role'] === 'owner' ? 'owner' : row['role'] === 'admin' ? 'admin' : row['role'] === 'viewer' ? 'viewer' : 'member',
         disabled: bool(row['disabled']),
         createdAt: String(row['created_at']),
         updatedAt: String(row['updated_at']),
@@ -2412,6 +2432,36 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
         outcome.status, jobId,
       ],
     );
+  }
+
+  /**
+   * Whether the operator who queued a job may still act. The job runner asks this immediately
+   * before the work starts: queued work must not run for someone who has since been demoted,
+   * disabled or removed.
+   */
+  async jobCreatorCanRun(username: string): Promise<boolean> {
+    await this.ready;
+    const row = await this.driver.get<{ disabled: number; role: string }>(
+      `SELECT u.disabled, ${ROLE_SQL} AS role
+       FROM sync_users u
+       LEFT JOIN server_ownership o ON o.username = u.username
+       LEFT JOIN server_administrators a ON a.username = u.username
+       WHERE u.username = ?`,
+      [username],
+    );
+    if (!row) return false;
+    if (bool(row.disabled)) return false;
+    return row.role === 'owner' || row.role === 'admin';
+  }
+
+  /**
+   * Stops a job that must not run, without pretending it succeeded or failed on its own merits.
+   * The reason is recorded on the job and in its event log, so the operator sees why nothing ran.
+   */
+  async abandonJob(jobId: string, reason: string): Promise<void> {
+    await this.ready;
+    await this.finishJob(jobId, { status: 'cancelled', errorCode: 'ACTOR_NOT_PERMITTED', errorMessage: reason });
+    await this.appendJobEvent(jobId, 'warn', reason);
   }
 
   async requestJobCancel(jobId: string): Promise<AdminJob | undefined> {

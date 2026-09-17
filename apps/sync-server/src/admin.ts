@@ -90,7 +90,7 @@ export function describeAudit(
 ): string {
   const before = (entry.before ?? {}) as JsonRecord;
   const after = (entry.after ?? {}) as JsonRecord;
-  const roleName = (role: unknown) => role === 'owner' ? '所有者' : role === 'admin' ? '管理员' : '普通用户';
+  const roleName = (role: unknown) => role === 'owner' ? '所有者' : role === 'admin' ? '管理员' : role === 'viewer' ? '只读运维' : '普通用户';
   const reason = typeof entry.reason === 'string' && entry.reason.trim() ? ` 原因：${entry.reason.trim()}。` : '';
   const prefix = target && target !== actor ? `管理员 ${actor} 将用户 ${target}` : `管理员 ${actor}`;
   switch (entry.action) {
@@ -213,7 +213,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const target = await store.getUser(username);
       if (!target) throw new ServerStoreError('NOT_FOUND', 404, 'account not found');
       const role = await store.roleForUser(target.username);
-      if ((!quota && role === 'owner') || auth.role === 'admin' && role !== 'member') throw new ServerStoreError('PROTECTED_ACCOUNT', 403, 'cannot manage this privileged account');
+      if ((!quota && role === 'owner') || auth.role !== 'owner' && role !== 'member') throw new ServerStoreError('PROTECTED_ACCOUNT', 403, 'cannot manage this privileged account');
       return target;
     };
 
@@ -223,6 +223,8 @@ export function createAdminRouter(deps: AdminRouterDeps) {
      * protection around a privileged target account.
      */
     const assertJobAuthorized = async (type: AdminJobType, accountId?: string) => {
+      // A read-only operator can watch tasks but not change the server through one.
+      if (auth.role === 'viewer') throw new ServerStoreError('READ_ONLY_ROLE', 403, '只读运维角色不能创建、重试或取消任务');
       if (JOB_OWNER_ONLY.includes(type) && auth.role !== 'owner') {
         throw new ServerStoreError('OWNER_REQUIRED', 403, '该任务需要所有者权限');
       }
@@ -254,9 +256,9 @@ export function createAdminRouter(deps: AdminRouterDeps) {
 
       if (req.method === 'POST' && parts[2] === 'role') {
         const body = await readBody(req, ADMIN_BODY_BYTES);
-        if (body.role !== 'admin' && body.role !== 'member') return send(res, 400, { error: 'invalid role' });
+        if (body.role !== 'admin' && body.role !== 'member' && body.role !== 'viewer') return send(res, 400, { error: 'invalid role' });
         return void await withIdempotency(req, res, `role:${target.accountId}`, body, async () => {
-          await store.mutateAdmin(auth.session.id, { action: 'role', accountId: target.accountId, role: body.role as 'admin' | 'member' }, { reason: typeof body.reason === 'string' ? body.reason.slice(0, 200) : undefined, requestId, expectedVersion: Number.isSafeInteger(body.expectedVersion) ? Number(body.expectedVersion) : undefined });
+          await store.mutateAdmin(auth.session.id, { action: 'role', accountId: target.accountId, role: body.role as 'admin' | 'viewer' | 'member' }, { reason: typeof body.reason === 'string' ? body.reason.slice(0, 200) : undefined, requestId, expectedVersion: Number.isSafeInteger(body.expectedVersion) ? Number(body.expectedVersion) : undefined });
           return { status: 200, body: { ok: true } };
         });
       }
@@ -834,7 +836,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const state = search.get('state') ?? '';
       const protection = search.get('protection') ?? '';
       const quota = search.get('quota') ?? '';
-      if (!['', 'owner', 'admin', 'member'].includes(role) || !['', 'enabled', 'disabled'].includes(state)) return send(res, 400, { error: 'invalid filter' });
+      if (!['', 'owner', 'admin', 'viewer', 'member'].includes(role) || !['', 'enabled', 'disabled'].includes(state)) return send(res, 400, { error: 'invalid filter' });
       if (!['', 'managed', 'private', 'relay', 'none'].includes(protection) || !['', 'ok', 'warning', 'over'].includes(quota)) return send(res, 400, { error: 'invalid filter' });
       return send(res, 200, await store.listUsers(search.get('cursor') ?? '', limit, { search: (search.get('search') ?? '').slice(0, 128), role, state, protection, quota }));
     }

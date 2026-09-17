@@ -1,7 +1,7 @@
 /** Storage and backups: physical usage, logical quota, the maintenance plan, records and drills. */
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, message, muted, row, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, message, muted, row, useResource, when, canWrite } from './ui.js';
 import type { BackupRecord, SettingsPayload, Storage } from './types.js';
 
 /** One line of the declared plan: the raw value plus how the page should show it. */
@@ -14,6 +14,7 @@ function planField(settings: SettingsPayload | undefined, name: string): { raw: 
 }
 
 export function StoragePage({ client, role, onJob }: { client: AdminClient; role: string; onJob: (jobId: string) => void }) {
+  const writable = canWrite(role);
   const storage = useResource(() => client.request<Storage>('/storage'), []);
   const backups = useResource(() => client.request<{ backups: BackupRecord[]; note: string }>('/backups'), []);
   const settings = useResource(() => client.request<SettingsPayload>('/settings'), []);
@@ -91,7 +92,7 @@ export function StoragePage({ client, role, onJob }: { client: AdminClient; role
           empty="暂无数据。"
         />
         <div style={{ ...row, marginTop: 10 }}>
-          <Button onClick={() => startJob('storage.cleanup')}>立即清理回收站与暂存上传</Button>
+          <Button disabled={!writable} onClick={() => startJob('storage.cleanup')}>立即清理回收站与暂存上传</Button>
           <Button onClick={storage.reload}>刷新</Button>
         </div>
       </Panel>
@@ -137,8 +138,8 @@ export function StoragePage({ client, role, onJob }: { client: AdminClient; role
             {
               key: 'actions', header: '操作', render: (record) => (
                 <div style={row}>
-                  <Button disabled={role !== 'owner'} onClick={() => startJob('backup.verify', record.recordId)}>校验</Button>
-                  <Button disabled={role !== 'owner'} onClick={() => startJob('restore.drill', record.recordId)}>恢复演练</Button>
+                  <Button disabled={role !== 'owner' || !writable} onClick={() => startJob('backup.verify', record.recordId)}>校验</Button>
+                  <Button disabled={role !== 'owner' || !writable} onClick={() => startJob('restore.drill', record.recordId)}>恢复演练</Button>
                 </div>
               ),
             },

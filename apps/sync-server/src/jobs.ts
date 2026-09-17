@@ -97,6 +97,16 @@ export function createJobRunner(deps: JobRunnerDeps) {
   const kick = (): void => { void drain().catch(() => undefined); };
 
   const execute = async (job: AdminJob): Promise<void> => {
+    // Rights can be revoked while a job waits in the queue; re-checking here is what makes
+    // "queued" not equal "will definitely run". A demoted, disabled or removed operator's
+    // work is abandoned with an explicit reason instead of executing silently.
+    if (!await store.jobCreatorCanRun(job.createdBy)) {
+      await store.abandonJob(job.jobId, '发起人的权限已被变更或撤销，任务不再执行');
+      await log('warn', 'job_abandoned', 'Job abandoned because its creator may no longer run it', {
+        detail: { jobId: job.jobId, createdBy: job.createdBy },
+      });
+      return;
+    }
     const handler = handlers[job.type];
     if (!handler) {
       await store.finishJob(job.jobId, { status: 'failed', errorCode: 'JOB_TYPE_UNAVAILABLE', errorMessage: `未实现的任务类型：${job.type}` });

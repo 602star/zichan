@@ -4,7 +4,8 @@ import { assertSecureSyncUrl, isLocalNetworkSyncUrl } from '@zichan/db';
 
 export type SyncProtocol = 'http' | 'https';
 export type SyncConnectionStatus = 'unchecked' | 'online' | 'offline' | 'identity_changed' | 'login_required';
-export type SyncConnectionRole = 'owner' | 'admin' | 'member';
+/** Role of the signed-in account on a server. A read-only operator sees nothing writable. */
+export type SyncConnectionRole = 'owner' | 'admin' | 'viewer' | 'member';
 export type SyncAddressPreset = 'current' | 'local' | 'lan' | 'public';
 
 /** Server identity and public endpoints that may be shared with another device. */
@@ -245,7 +246,7 @@ function parseStatus(value: unknown): SyncConnectionStatus {
 }
 
 function parseRole(value: unknown): SyncConnectionRole | undefined {
-  return value === 'owner' || value === 'admin' || value === 'member' ? value : undefined;
+  return value === 'owner' || value === 'admin' || value === 'viewer' || value === 'member' ? value : undefined;
 }
 
 function resolveDocument(document: SyncConnectionDocument): SyncConnection[] {

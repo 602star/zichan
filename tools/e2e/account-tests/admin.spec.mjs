@@ -34,6 +34,7 @@ test.beforeAll(async () => {
   // A member no other test touches: the rejection test must not depend on another test's
   // role change or account state.
   await registerAccount(baseUrl, 'member-plain', password);
+  await registerAccount(baseUrl, 'viewer-one', password);
 });
 test.afterAll(async () => { server?.server.closeAllConnections(); await server?.close(); });
 
@@ -148,6 +149,38 @@ test('keeps the management console out of the ledger and rejects non-administrat
     await member.getByRole('button', { name: '登录管理后台', exact: true }).click();
     await expect(member.getByRole('alert')).toContainText('没有服务器管理权限');
   } finally { await memberContext.close(); }
+});
+
+
+test('a read-only operator reaches every page but gets no write control', async ({ page, browser }) => {
+  // The owner grants the read-only role through the same control an administrator uses.
+  await signIn(page, baseUrl);
+  await page.goto(`${baseUrl}/admin/users?search=viewer-one`);
+  await page.getByRole('button', { name: '详情', exact: true }).first().click();
+  await page.getByRole('button', { name: '修改角色' }).click();
+  await page.getByLabel('角色').selectOption('viewer');
+  await page.getByLabel('原因（会写入审计）').fill('只读运维值班');
+  await page.getByRole('button', { name: '保存' }).click();
+  await expect(page.getByText('操作已完成。')).toBeVisible();
+  // The role now shows up in the account header and the note explains what it may do.
+  await expect(page.getByText('只读运维').first()).toBeVisible();
+
+  // A clean context: this one already holds the owner's management cookie.
+  const viewerContext = await browser.newContext();
+  const viewer = await viewerContext.newPage();
+  try {
+    await signIn(viewer, baseUrl, 'viewer-one');
+    // The shell states the role up front instead of letting the first refused click explain it.
+    await expect(viewer.getByRole('status')).toContainText('只读运维角色');
+    // Reads stay available everywhere.
+    await expect(viewer.getByRole('heading', { name: '运行概览' })).toBeVisible();
+    await viewer.getByRole('link', { name: '任务中心' }).click();
+    await expect(viewer.getByRole('button', { name: '创建任务' })).toBeDisabled();
+    await viewer.getByRole('link', { name: '存储与备份' }).click();
+    await expect(viewer.getByRole('button', { name: '立即清理回收站与暂存上传' })).toBeDisabled();
+    await viewer.getByRole('link', { name: '系统设置' }).click();
+    await expect(viewer.getByRole('button', { name: '保存允许在线修改的设置' })).toBeDisabled();
+  } finally { await viewerContext.close(); }
 });
 
 test('clears the management session in other tabs when one tab signs out', async ({ page, context }) => {

@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Pager, Panel, Select, TextInput, message, muted, row, useCursorPager, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Notice, Pager, Panel, Select, TextInput, message, muted, row, useCursorPager, useResource, when, canWrite } from './ui.js';
 import type { Invite } from './types.js';
 
 const stateOf = (invite: Invite): { label: string; tone: 'ok' | 'bad' | 'muted' } => {
@@ -13,6 +13,7 @@ const stateOf = (invite: Invite): { label: string; tone: 'ok' | 'bad' | 'muted' 
 };
 
 export function InvitesPage({ client, role, query, navigate }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (to: string) => void }) {
+  const writable = canWrite(role);
   const state = query.get('state') ?? '';
   const pager = useCursorPager({ query, path: '/invites', navigate });
   const cursor = pager.cursor;
@@ -40,7 +41,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
         <Loading loading={mode.loading} error={mode.error} />
         <div style={{ ...row, alignItems: 'flex-end' }}>
           <Field label="当前策略">
-            <Select disabled={role !== 'owner'} value={mode.data?.mode ?? ''} onChange={(event) => setMode(event.target.value)}>
+            <Select disabled={role !== 'owner' || !writable} value={mode.data?.mode ?? ''} onChange={(event) => setMode(event.target.value)}>
               <option value="invite">仅邀请</option>
               <option value="open">开放注册</option>
               <option value="closed">关闭注册</option>

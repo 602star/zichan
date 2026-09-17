@@ -62,7 +62,7 @@ export interface Metrics {
 }
 
 export interface AccountRow {
-  username: string; accountId: string; role: 'owner' | 'admin' | 'member'; disabled: boolean;
+  username: string; accountId: string; role: 'owner' | 'admin' | 'viewer' | 'member'; disabled: boolean;
   activeDeviceCount: number; commitBytes: number; commitQuotaBytes: number;
   createdAt: string; updatedAt: string; lastLoginAt?: string; revision: number;
   protectionMode: string | null; quotaState: 'ok' | 'warning' | 'over';
@@ -70,7 +70,7 @@ export interface AccountRow {
 
 export interface AccountDetail {
   account: {
-    username: string; accountId: string; role: 'owner' | 'admin' | 'member'; disabled: boolean;
+    username: string; accountId: string; role: 'owner' | 'admin' | 'viewer' | 'member'; disabled: boolean;
     createdAt: string; updatedAt: string; lastLoginAt: string | null; version: number;
     protection: { mode: string; version: number } | null;
   };
@@ -88,7 +88,7 @@ export interface AccountDetail {
 }
 
 export interface SessionRow {
-  id: string; username: string; accountId?: string; role: 'owner' | 'admin' | 'member';
+  id: string; username: string; accountId?: string; role: 'owner' | 'admin' | 'viewer' | 'member';
   deviceId: string; deviceName: string; kind: string;
   createdAt: string; lastSeenAt: string; expiresAt: string; lastIp?: string | null;
   revokedAt?: string | null; active: boolean;

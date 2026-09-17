@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, TextInput, bytes, message, muted, row, useCursorPager, usePolling, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, TextInput, bytes, message, muted, row, useCursorPager, usePolling, useResource, when, canWrite } from './ui.js';
 import { JOB_TYPES, type Job, type JobEvent } from './types.js';
 
 const statusTone = (status: Job['status']) => status === 'succeeded' ? 'ok' as const : status === 'running' || status === 'queued' ? 'warn' as const
@@ -64,6 +64,7 @@ function OutcomeNote({ job }: { job: Job }) {
 }
 
 export function JobsPage({ client, query, navigate, role }: { client: AdminClient; query: URLSearchParams; navigate: (to: string) => void; role: string }) {
+  const writable = canWrite(role);
   const status = query.get('status') ?? '';
   const type = query.get('type') ?? '';
   const jobId = query.get('job') ?? '';
@@ -122,7 +123,7 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
         </div>
         <p style={muted}>{selected.hint}</p>
         <div style={row}>
-          <Button onClick={() => { void submit(); }}>创建任务</Button>
+          <Button disabled={!writable} onClick={() => { void submit(); }}>创建任务</Button>
           <Button onClick={list.reload}>刷新列表</Button>
           <Button onClick={() => navigate('/storage')}>查看备份记录</Button>
         </div>
@@ -165,10 +166,10 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
               key: 'actions', header: '操作', render: (job) => (
                 <div style={row}>
                   <Button onClick={() => update({ job: job.jobId, cursor })}>查看</Button>
-                  <Button disabled={!['queued', 'running'].includes(job.status)} onClick={() => {
+                  <Button disabled={!writable || !['queued', 'running'].includes(job.status)} onClick={() => {
                     void client.request(`/jobs/${job.jobId}/cancel`, {}, { idempotencyKey: adminIdempotencyKey(`cancel-${job.jobId}`) }).then(list.reload).catch((caught) => window.alert(message(caught)));
                   }}>取消</Button>
-                  <Button disabled={['queued', 'running'].includes(job.status)} onClick={() => {
+                  <Button disabled={!writable || ['queued', 'running'].includes(job.status)} onClick={() => {
                     void client.request(`/jobs/${job.jobId}/retry`, {}, { idempotencyKey: adminIdempotencyKey(`retry-${job.jobId}`) }).then(list.reload).catch((caught) => window.alert(message(caught)));
                   }}>重新执行</Button>
                 </div>

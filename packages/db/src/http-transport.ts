@@ -36,7 +36,7 @@ export interface RegisterAccountOptions extends HttpRequestOptions {
 }
 
 export interface RegisterAccountResult {
-  role: 'owner' | 'admin' | 'member';
+  role: 'owner' | 'admin' | 'viewer' | 'member';
 }
 
 export interface LoginAccountOptions extends HttpRequestOptions {
@@ -67,14 +67,14 @@ export interface SyncAuthSession {
     revokedAt: string | null;
     active: boolean;
   };
-  role?: 'owner' | 'admin' | 'member';
+  role?: 'owner' | 'admin' | 'viewer' | 'member';
   ledgerId?: string;
 }
 
 export interface SyncAuthMe {
   accountId?: string;
   username: string;
-  role: 'owner' | 'admin' | 'member';
+  role: 'owner' | 'admin' | 'viewer' | 'member';
   disabled: boolean;
   session: SyncAuthSession['session'];
   ledgerId?: string;
@@ -363,7 +363,7 @@ export async function registerAccount(baseUrl: string, username: string, passwor
     redirect: 'error',
   }, opts);
   if (!finishResponse.ok) throw await errorMessage('register finish failed', finishResponse);
-  const result = await finishResponse.json() as { role?: 'owner' | 'admin' | 'member' };
+  const result = await finishResponse.json() as { role?: 'owner' | 'admin' | 'viewer' | 'member' };
   if (result.role !== 'owner' && result.role !== 'admin' && result.role !== 'member') throw new Error('register finish returned an invalid account role');
   return { role: result.role };
 }
@@ -464,7 +464,8 @@ export async function fetchAuthMe(baseUrl: string, accessToken: string, options:
   }, options);
   if (!response.ok) throw await errorMessage('account lookup failed', response);
   const body = await response.json() as SyncAuthMe;
-  if (!body.username || (body.role !== 'owner' && body.role !== 'admin' && body.role !== 'member') || !body.session?.id) {
+  // The read-only operator is a valid role here: it is an administrator that may only read.
+  if (!body.username || (body.role !== 'owner' && body.role !== 'admin' && body.role !== 'viewer' && body.role !== 'member') || !body.session?.id) {
     throw new Error('account lookup returned an incomplete response');
   }
   return body;

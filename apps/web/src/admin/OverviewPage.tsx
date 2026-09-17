@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, Loading, Notice, Panel, Select, Stat, TextInput, bytes, message, muted, row, usePolling, useResource, when } from './ui.js';
+import { Badge, Button, Loading, Notice, Panel, Select, Stat, TextInput, bytes, canWrite, message, muted, row, usePolling, useResource, when } from './ui.js';
 import { TrendChart } from './chart.js';
 import type { TrendPoint } from './trend.js';
 import type { Alert, Metrics, Overview } from './types.js';
@@ -30,10 +30,11 @@ function seriesValue(bucket: Metrics['buckets'][number], key: SeriesKey): number
 /** Silence windows offered in the console: one shift, one day, one week. */
 const SILENCE_HOURS = [1, 4, 24, 72, 168];
 
-export function OverviewPage({ client, navigate, accountName }: {
+export function OverviewPage({ client, navigate, accountName, role }: {
   client: AdminClient;
   navigate: (to: string) => void;
   accountName: string;
+  role: string;
 }) {
   const [range, setRange] = useState<(typeof RANGES)[number]>('24h');
   const [series, setSeries] = useState<SeriesKey>('requests');
@@ -150,13 +151,13 @@ export function OverviewPage({ client, navigate, accountName }: {
                   {describeAlert(alert)}{' '}
                   <span style={muted}>影响：{alert.scope}；首次 {when(alert.firstSeenAt)}，最近 {when(alert.lastSeenAt)}，共 {alert.occurrences} 次（连续 {alert.consecutive} 次）</span>{' '}
                   <NextStep alert={alert} navigate={navigate} />{' '}
-                  <Button disabled={Boolean(alert.acknowledgedAt)} onClick={() => { void acknowledge(client, alert, overview.reload); }}>
+                  <Button disabled={!canWrite(role) || Boolean(alert.acknowledgedAt)} onClick={() => { void acknowledge(client, alert, overview.reload); }}>
                     {alert.acknowledgedAt ? `已由 ${alert.acknowledgedBy ?? ''} 确认` : '确认'}
                   </Button>{' '}
                   {silenced ? (
                     <span style={muted}>
                       已静默至 {when(alert.silencedUntil ?? '')}{alert.silenceReason ? `（${alert.silenceReason}）` : ''}{' '}
-                      <Button onClick={() => { void unsilence(client, alert, overview.reload); }}>取消静默</Button>
+                      <Button disabled={!canWrite(role)} onClick={() => { void unsilence(client, alert, overview.reload); }}>取消静默</Button>
                     </span>
                   ) : silenceDraft?.key === alert.key ? (
                     <span style={row}>
@@ -172,7 +173,7 @@ export function OverviewPage({ client, navigate, accountName }: {
                       <Button onClick={() => setSilenceDraft(undefined)}>取消</Button>
                     </span>
                   ) : (
-                    <Button onClick={() => setSilenceDraft({ key: alert.key, hours: 24, reason: '' })}>静默…</Button>
+                    <Button disabled={!canWrite(role)} onClick={() => setSilenceDraft({ key: alert.key, hours: 24, reason: '' })}>静默…</Button>
                   )}
                   {alert.notifyState ? (
                     <div style={muted}>

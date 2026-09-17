@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { AccountActions } from './AccountActions.js';
-import { Badge, Button, DataTable, Field, Loading, Panel, Pager, Select, TextInput, bytes, muted, row, useCursorPager, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Panel, Pager, Select, TextInput, bytes, canWrite, muted, row, useCursorPager, useResource, when } from './ui.js';
 import type { AccountRow } from './types.js';
 
 const quotaTone = (state: AccountRow['quotaState']) => state === 'over' ? 'bad' as const : state === 'warning' ? 'warn' as const : 'ok' as const;
@@ -30,10 +30,10 @@ export function UsersPage({ client, query, navigate, role }: {
 
   const update = pager.apply;
 
-  const canManage = (user: AccountRow) => user.role !== 'owner' && (role === 'owner' || user.role === 'member');
+  const canManage = (user: AccountRow) => canWrite(role) && user.role !== 'owner' && (role === 'owner' || user.role === 'member');
   const columns = [
     { key: 'username', header: '用户名', render: (user: AccountRow) => <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => navigate(`/users/${user.accountId}`)}>{user.username}</button> },
-    { key: 'role', header: '角色', render: (user: AccountRow) => user.role === 'owner' ? '所有者' : user.role === 'admin' ? '管理员' : '普通用户' },
+    { key: 'role', header: '角色', render: (user: AccountRow) => user.role === 'owner' ? '所有者' : user.role === 'admin' ? '管理员' : user.role === 'viewer' ? '只读运维' : '普通用户' },
     { key: 'state', header: '启用状态', render: (user: AccountRow) => user.disabled ? <Badge tone="bad">已禁用</Badge> : <Badge tone="ok">正常</Badge> },
     { key: 'protection', header: '保护模式', render: (user: AccountRow) => user.protectionMode === 'managed' ? '云端托管' : user.protectionMode === 'private' ? '私密' : user.protectionMode === 'relay' ? '中继' : '未设置' },
     {
