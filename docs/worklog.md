@@ -3,6 +3,52 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-17 — 后台运行概览趋势图 + 告警处理闭环（确认 / 静默 / 外部通知）
+
+**Goal:** 接"后台可靠性批次"留待下一批的清单，先做运行概览与告警这两块：趋势图、告警确认进入审计、
+静默（带原因与到期时间）、以及可选的外部通知渠道。仍然不改架构，只加一列可空字段与一条设置项。
+
+### 交付
+
+1. **趋势图**（`apps/web/src/admin/trend.ts` + `chart.tsx`，概览页接入）：几何与统计是纯函数
+   （`trendGeometry` / `trendSummary`），SVG 组件只是渲染器。可选四条序列：请求量、错误数、平均耗时
+   （`durationMs / requests` 由前端按桶计算）、失败同步（`syncPushFailed + blobFailed`），沿用已有的
+   1h / 24h / 7d 区间（1h=分钟桶，其余=小时桶）。**没有采集到的桶不画柱**——零流量与"还没采样"是两回事；
+   全零区间的比例尺退化为 1，仍然画基线。图下给出桶数、合计、峰值与峰值时间。
+2. **告警确认进入审计**：`POST /alerts/:key/acknowledge` 改为走 `mutateAdmin({ action: 'alert-acknowledge' })`，
+   与审计记录同一事务（此前只写运行日志）。并发/重放由既有幂等键机制覆盖。
+3. **静默是带到期时间的决定，不是删除**：新增 `POST /alerts/:key/silence`（1–720 小时，必填原因）与
+   `POST /alerts/:key/unsilence`，两者都走 `mutateAdmin`（`alert-silence` / `alert-unsilence`），
+   前后值写入 `server_admin_audit`。`admin_alerts` 追加三列 `silenced_until` / `silenced_by` /
+   `silence_reason`（`ensureColumn`，不升 schema 版本）。规则照常评估、记录照常保留、恢复判断照常——
+   静默只停外部通知。快照把已静默的告警从 `active`/`pending` 里摘出来单独计 `silenced`，
+   概览页也按同一口径展示状态（已静默不再算"降级"）。
+4. **外部通知（可选）**：新增设置项 `alertWebhookUrl`（`ADMIN_ALERT_WEBHOOK_URL`，第三种设置类型
+   `text`：留空表示不通知，否则必须是 http(s) 地址、≤500 字符）。`metrics.ts` 在告警**状态跃迁**时
+   POST 一条 JSON——只在"转为活动"与"恢复"各发一次，首次观测到的历史状态不算新事件；静默期内记
+   `skipped`。投递结果（`sent` / `failed` / `skipped` + 错误）写回告警记录并在概览页显示，
+   同时在运行日志留一条 `alert_notified` / `alert_notify_failed` / `alert_notify_skipped`。
+   投递失败只记录、不抛出——通知渠道不能反过来打断采样。`createMetricsService` 接受注入的 `notify`，
+   测试不需要真开 HTTP 服务。
+5. **设置页支持文本项**（`SettingsPage.tsx`）：此前所有项都按 `Number()` 处理，URL 会被静默丢弃；
+   现在按 `kind` 分流提交，文本项显示为宽输入框并标注长度上限。
+
+### Verified
+
+- 新增 `apps/sync-server/test/admin-alert-lifecycle.test.ts` 4 项：通过管理 API 完成静默 → 撤销静默 →
+  确认；断言审计记录里有原因与到期时间、已静默告警不再计入 `active`、静默期内不发通知且记 `skipped`、
+  跳过第一个采样点后"活动 → 恢复"各通知一次。
+- 新增 `apps/web/test/admin-trend.test.ts` 4 项：柱子不出视图框、最高柱填满高度、未采样的桶不编造高度、
+  空区间不除零、合计/峰值/峰值时间/均值。
+- `apps/sync-server` 104 项、web 506 项通过；`npm run typecheck`、`npm run lint`（0 error / 0 warning）、
+  `npm run release:check`（schema 117）通过。
+
+### 留待下一批
+
+- 用户为中心的关联排障（账号选择器、备份选择器、日期时间控件）；维护计划与备份保留策略；
+  只读运维角色与高风险操作的重新验证身份；管理员 MFA；重型任务隔离与容量压测。
+
+
 ## 2026-09-17 — 后台可靠性批次：任务权限、幂等占用、检查点恢复、备份健康、分页与告警
 
 **Goal:** 接上一轮后台一期落地后的一次只读巡检结论，先修“可信度”类缺陷（报告里的 P1/P2 第一批）：

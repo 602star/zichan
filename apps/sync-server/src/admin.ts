@@ -58,7 +58,8 @@ interface AdminAuth {
 const AUDIT_ACTIONS = [
   'role', 'state', 'commit-quota', 'blob-quota', 'registration', 'revoke-session',
   'invite-create', 'invite-state', 'password-reset-issue', 'password-reset-revoke', 'password-reset-complete',
-  'password-change-authorize', 'owner-recovery-local', 'settings-save', 'settings-update', 'sessions-revoke-all', 'alert-acknowledge',
+  'password-change-authorize', 'owner-recovery-local', 'settings-save', 'settings-update', 'sessions-revoke-all',
+  'alert-acknowledge', 'alert-silence', 'alert-unsilence',
 ];
 
 const SYNC_EVENT_CATEGORIES = ['session-invalid', 'quota-exceeded', 'protocol-incompatible', 'ledger-mismatch', 'server-storage-error', 'other'];
@@ -126,6 +127,10 @@ export function describeAudit(
       return `管理员 ${actor} 修改了系统设置：${Object.keys(after).join('、') || '无变化'}。${reason}`;
     case 'alert-acknowledge':
       return `管理员 ${actor} 确认了告警 ${String(after['key'] ?? '')}。${reason}`;
+    case 'alert-silence':
+      return `管理员 ${actor} 将告警 ${String(after['key'] ?? '')} 静默 ${String(after['hours'] ?? '')} 小时（至 ${after['silencedUntil'] ? dateOnly(String(after['silencedUntil'])) : '未记录'}），期间不发送外部通知。${reason}`;
+    case 'alert-unsilence':
+      return `管理员 ${actor} 取消了对告警 ${String(after['key'] ?? '')} 的静默。${reason}`;
     default:
       return `管理员 ${actor} 执行了 ${entry.action}。${reason}`;
   }
@@ -505,9 +510,39 @@ export function createAdminRouter(deps: AdminRouterDeps) {
 
     if (req.method === 'POST' && parts[0] === 'alerts' && parts[2] === 'acknowledge') {
       const key = parts[1] ?? '';
-      const alert = await store.acknowledgeAlert(key, auth.user.accountId);
+      const body = await readBody(req, ADMIN_BODY_BYTES);
+      const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
+      // Acknowledgement is a management act: it shares the audited transaction.
+      await store.mutateAdmin(auth.session.id, { action: 'alert-acknowledge', key }, { reason, requestId });
+      const alert = await store.getAlert(key);
       if (!alert) return send(res, 404, { error: 'alert not found' });
       await log('info', 'alert_acknowledged', 'Alert acknowledged', { username: auth.user.username, detail: { key } });
+      return send(res, 200, { alert });
+    }
+
+    if (req.method === 'POST' && parts[0] === 'alerts' && parts[2] === 'silence') {
+      const key = parts[1] ?? '';
+      const body = await readBody(req, ADMIN_BODY_BYTES);
+      const hours = body.hours === undefined ? 24 : Number(body.hours);
+      if (!Number.isSafeInteger(hours) || hours < 1 || hours > 720) return send(res, 400, { code: 'INVALID_SILENCE', error: '静默时长必须是 1–720 小时' });
+      const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
+      // Silence is a recorded decision with an end time, not a deleted alert:
+      // the rule keeps evaluating and the history stays visible.
+      await store.mutateAdmin(auth.session.id, { action: 'alert-silence', key, hours }, { reason, requestId });
+      await log('info', 'alert_silenced', 'Alert silenced', { username: auth.user.username, detail: { key, hours } });
+      const alert = await store.getAlert(key);
+      if (!alert) return send(res, 404, { error: 'alert not found' });
+      return send(res, 200, { alert });
+    }
+
+    if (req.method === 'POST' && parts[0] === 'alerts' && parts[2] === 'unsilence') {
+      const key = parts[1] ?? '';
+      const body = await readBody(req, ADMIN_BODY_BYTES);
+      const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
+      await store.mutateAdmin(auth.session.id, { action: 'alert-unsilence', key }, { reason, requestId });
+      await log('info', 'alert_unsilenced', 'Alert silence cleared', { username: auth.user.username, detail: { key } });
+      const alert = await store.getAlert(key);
+      if (!alert) return send(res, 404, { error: 'alert not found' });
       return send(res, 200, { alert });
     }
 

@@ -92,7 +92,11 @@ export type AdminMutation =
   | { action: 'settings-save'; keys: string[] }
   | { action: 'sessions-revoke-all'; accountId: string; keepSessionId?: string }
   | { action: 'invite-create'; code: string; expiresAt: string }
-  | { action: 'invite-state'; code: string; disabled: boolean };
+  | { action: 'invite-state'; code: string; disabled: boolean }
+  /** Alert lifecycle: acknowledgement and silence are audited like any other management act. */
+  | { action: 'alert-acknowledge'; key: string }
+  | { action: 'alert-silence'; key: string; hours: number }
+  | { action: 'alert-unsilence'; key: string };
 
 export interface ServerLog {
   id: string;
@@ -221,6 +225,14 @@ export interface AdminAlert {
   occurrences: number;
   /** Bad samples in a row; only two in a row activate the alert. */
   consecutive: number;
+  /** Silence stops external notifications and lowers priority; the record itself stays. */
+  silencedUntil?: string;
+  silencedBy?: string;
+  silenceReason?: string;
+  /** Last external notification attempt for this alert. */
+  lastNotifiedAt?: string;
+  notifyState?: 'sent' | 'failed' | 'skipped';
+  notifyError?: string;
   detail?: JsonRecord;
   acknowledgedAt?: string;
   acknowledgedBy?: string;
@@ -624,7 +636,13 @@ CREATE TABLE IF NOT EXISTS admin_alerts (
   detail_json TEXT,
   acknowledged_at TEXT,
   acknowledged_by TEXT,
-  resolved_at TEXT
+  resolved_at TEXT,
+  silenced_until TEXT,
+  silenced_by TEXT,
+  silence_reason TEXT,
+  notified_at TEXT,
+  notify_state TEXT,
+  notify_error TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_admin_alerts_state ON admin_alerts (state, last_seen_at DESC);
 CREATE TABLE IF NOT EXISTS admin_audit_failures (
@@ -713,6 +731,13 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     // Alerts keep a consecutive-bad counter apart from the cumulative occurrence count, so
     // "bad → healthy → bad" cannot be reported as two consecutive failures.
     await this.ensureColumn('admin_alerts', 'bad_streak', 'INTEGER NOT NULL DEFAULT 0');
+    // Silence and notification state are additive columns: an existing alert keeps its history.
+    await this.ensureColumn('admin_alerts', 'silenced_until', 'TEXT');
+    await this.ensureColumn('admin_alerts', 'silenced_by', 'TEXT');
+    await this.ensureColumn('admin_alerts', 'silence_reason', 'TEXT');
+    await this.ensureColumn('admin_alerts', 'notified_at', 'TEXT');
+    await this.ensureColumn('admin_alerts', 'notify_state', 'TEXT');
+    await this.ensureColumn('admin_alerts', 'notify_error', 'TEXT');
     // Idempotency records are claimed before the work runs and carry the requesting operator.
     await this.ensureColumn('admin_idempotency', 'actor_account_id', 'TEXT');
     await this.ensureColumn('admin_idempotency', 'state', "TEXT NOT NULL DEFAULT 'complete'");
@@ -1271,6 +1296,26 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
         if (invite.used_by) throw new ServerStoreError('INVITE_USED', 409, 'used invite cannot be changed');
         before = { disabled: bool(invite.disabled) }; after = { disabled: mutation.disabled, inviteFingerprint: createHash('sha256').update(mutation.code).digest('hex') };
         await driver.run('UPDATE registration_invites SET disabled = ? WHERE code = ?', [mutation.disabled ? 1 : 0, mutation.code]);
+      } else if (mutation.action === 'alert-acknowledge' || mutation.action === 'alert-silence' || mutation.action === 'alert-unsilence') {
+        // The alert change and its audit record share this transaction: a rejected request must
+        // not be able to silence an alert without leaving a trace.
+        const alert = await driver.get<Record<string, unknown>>('SELECT * FROM admin_alerts WHERE alert_key = ?', [mutation.key]);
+        if (!alert) throw new ServerStoreError('NOT_FOUND', 404, 'alert not found');
+        before = { acknowledgedAt: alert['acknowledged_at'] ?? null, silencedUntil: alert['silenced_until'] ?? null };
+        if (mutation.action === 'alert-acknowledge') {
+          await driver.run('UPDATE admin_alerts SET acknowledged_at = COALESCE(acknowledged_at, ?), acknowledged_by = COALESCE(acknowledged_by, ?) WHERE alert_key = ?', [at, actor.account_id, mutation.key]);
+          after = { key: mutation.key, acknowledgedAt: at };
+        } else if (mutation.action === 'alert-silence') {
+          if (!Number.isSafeInteger(mutation.hours) || mutation.hours < 1 || mutation.hours > 720) {
+            throw new ServerStoreError('INVALID_SILENCE', 400, 'silence window must be 1-720 hours');
+          }
+          const until = new Date(Date.now() + mutation.hours * 3_600_000).toISOString();
+          await driver.run('UPDATE admin_alerts SET silenced_until = ?, silenced_by = ?, silence_reason = ? WHERE alert_key = ?', [until, actor.account_id, options.reason ?? null, mutation.key]);
+          after = { key: mutation.key, silencedUntil: until, hours: mutation.hours };
+        } else {
+          await driver.run('UPDATE admin_alerts SET silenced_until = NULL, silenced_by = NULL, silence_reason = NULL WHERE alert_key = ?', [mutation.key]);
+          after = { key: mutation.key, silencedUntil: null };
+        }
       }
       if (target && (mutation.action === 'role' || mutation.action === 'state')) await driver.run('DELETE FROM account_password_resets WHERE account_id = ?', [target.account_id]);
       if (target) await driver.run('UPDATE sync_users SET revision = revision + 1 WHERE username = ?', [target.username]);
@@ -2491,6 +2536,12 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
       ...(row['acknowledged_at'] == null ? {} : { acknowledgedAt: String(row['acknowledged_at']) }),
       ...(row['acknowledged_by'] == null ? {} : { acknowledgedBy: String(row['acknowledged_by']) }),
       ...(row['resolved_at'] == null ? {} : { resolvedAt: String(row['resolved_at']) }),
+      ...(row['silenced_until'] == null ? {} : { silencedUntil: String(row['silenced_until']) }),
+      ...(row['silenced_by'] == null ? {} : { silencedBy: String(row['silenced_by']) }),
+      ...(row['silence_reason'] == null ? {} : { silenceReason: String(row['silence_reason']) }),
+      ...(row['notified_at'] == null ? {} : { lastNotifiedAt: String(row['notified_at']) }),
+      ...(row['notify_state'] == null ? {} : { notifyState: String(row['notify_state']) as AdminAlert['notifyState'] }),
+      ...(row['notify_error'] == null ? {} : { notifyError: String(row['notify_error']) }),
     };
   }
 
@@ -2506,6 +2557,22 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     return (await this.driver.all<Record<string, unknown>>(sql, params)).map((row) => this.mapAlert(row));
   }
 
+  async getAlert(key: string): Promise<AdminAlert | undefined> {
+    await this.ready;
+    const row = await this.driver.get<Record<string, unknown>>('SELECT * FROM admin_alerts WHERE alert_key = ?', [key]);
+    return row ? this.mapAlert(row) : undefined;
+  }
+
+  /** Records the last external notification attempt next to the alert it belongs to. */
+  async recordAlertNotification(key: string, result: { state: 'sent' | 'failed' | 'skipped'; error?: string }): Promise<void> {
+    await this.ready;
+    await this.driver.run('UPDATE admin_alerts SET notified_at = ?, notify_state = ?, notify_error = ? WHERE alert_key = ?', [nowIso(), result.state, result.error ?? null, key]);
+  }
+
+  /**
+   * Store-level primitive: the management API writes through `mutateAdmin`, so an
+   * acknowledgement made from the console also lands in the durable audit trail.
+   */
   async acknowledgeAlert(key: string, actorAccountId: string): Promise<AdminAlert | undefined> {
     await this.ready;
     await this.driver.run(

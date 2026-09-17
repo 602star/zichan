@@ -14,6 +14,22 @@ const SAMPLE_INTERVAL_MS = 30_000;
 const HOUSEKEEPING_INTERVAL_MS = 60 * 60 * 1000;
 const SLOW_REQUEST_MS = 1_000;
 
+export interface AlertNotification {
+  key: string;
+  rule: string;
+  scope: string;
+  severity: string;
+  state: 'active' | 'resolved';
+  at: string;
+  detail: JsonRecord;
+}
+
+/**
+ * External notification channel. `skipped` means "no channel is configured", which is not a
+ * failure: the alert stays visible in the console either way.
+ */
+export type AlertNotifier = (notification: AlertNotification) => Promise<{ state: 'sent' | 'failed' | 'skipped'; error?: string }>;
+
 export interface PendingCounters {
   requests: number;
   errors: number;
@@ -67,7 +83,7 @@ export interface ServiceSnapshot {
   storage: Awaited<ReturnType<EncryptedBlobStore['storageComposition']>>;
   cleanup: ReturnType<EncryptedBlobStore['cleanupStatus']>;
   jobs: Record<string, number>;
-  alerts: { active: number; pending: number; items: AdminAlert[] };
+  alerts: { active: number; pending: number; silenced: number; items: AdminAlert[] };
   verification: { database?: JsonRecord; blobs?: JsonRecord };
   backup: BackupSummary | null;
   uptimeSeconds: number;
@@ -82,11 +98,72 @@ export interface MetricsServiceDeps {
   listBackupRecords: () => Promise<BackupRecordSummary[]>;
   startedAt: number;
   intervalMs?: number;
+  /** Injected in tests; the default posts to the configured webhook when one is set. */
+  notify?: AlertNotifier;
 }
 
 export function createMetricsService(deps: MetricsServiceDeps) {
   const { store, blobStore, settings, log, listBackupRecords } = deps;
   const intervalMs = deps.intervalMs ?? SAMPLE_INTERVAL_MS;
+  /** Previous state per alert: notifications fire on transitions, never on every sample. */
+  const lastStates = new Map<string, AdminAlert['state']>();
+  const defaultNotifier: AlertNotifier = async (notification) => {
+    const url = String(settings.effective('alertWebhookUrl') ?? '').trim();
+    if (!url) return { state: 'skipped' };
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(notification),
+      });
+      return response.ok ? { state: 'sent' } : { state: 'failed', error: `HTTP ${String(response.status)}` };
+    } catch (error) {
+      return { state: 'failed', error: error instanceof Error ? error.message : String(error) };
+    }
+  };
+  const notifier = deps.notify ?? defaultNotifier;
+
+  /**
+   * A notification is worth sending exactly twice per incident: when the alert becomes active
+   * and when it recovers. Silenced alerts keep their record but stay out of the channel.
+   */
+  const notifyTransitions = async (alerts: AdminAlert[]): Promise<void> => {
+    const now = Date.now();
+    for (const alert of alerts) {
+      const previous = lastStates.get(alert.key);
+      lastStates.set(alert.key, alert.state);
+      // The first observation of an alert is history, not a new incident.
+      if (previous === undefined || previous === alert.state) continue;
+      const entered = alert.state === 'active' && previous !== 'active';
+      const recovered = alert.state === 'resolved' && previous === 'active';
+      if (!entered && !recovered) continue;
+      if (alert.silencedUntil && Date.parse(alert.silencedUntil) > now) {
+        await store.recordAlertNotification(alert.key, { state: 'skipped', error: 'silenced' });
+        continue;
+      }
+      const notification: AlertNotification = {
+        key: alert.key,
+        rule: alert.rule,
+        scope: alert.scope,
+        severity: alert.severity,
+        state: alert.state === 'active' ? 'active' : 'resolved',
+        at: new Date().toISOString(),
+        detail: alert.detail ?? {},
+      };
+      let result: { state: 'sent' | 'failed' | 'skipped'; error?: string };
+      try {
+        result = await notifier(notification);
+      } catch (error) {
+        result = { state: 'failed', error: error instanceof Error ? error.message : String(error) };
+      }
+      await store.recordAlertNotification(alert.key, result);
+      // A failing notification must never break sampling: it is recorded, not thrown.
+      const action = result.state === 'sent' ? 'alert_notified' : result.state === 'skipped' ? 'alert_notify_skipped' : 'alert_notify_failed';
+      await log(result.state === 'sent' ? 'info' : 'warn', action, `Alert ${notification.state}: ${alert.key}`, {
+        detail: { key: alert.key, state: notification.state, notify: result.state, ...(result.error ? { error: result.error } : {}) },
+      });
+    }
+  };
   let pending = emptyCounters();
   let snapshot: ServiceSnapshot | undefined;
   let snapshotAt = 0;
@@ -240,12 +317,16 @@ export function createMetricsService(deps: MetricsServiceDeps) {
       });
     }
 
-    const alerts = await store.listAlerts({ limit: 100 });
+    const alerts = await store.listAlerts({ limit: 200 });
+    const now = Date.now();
+    const silenced = alerts.filter((alert) => alert.silencedUntil && Date.parse(alert.silencedUntil) > now);
     current.alerts = {
-      active: alerts.filter((alert) => alert.state === 'active').length,
-      pending: alerts.filter((alert) => alert.state === 'pending').length,
+      active: alerts.filter((alert) => alert.state === 'active' && !silenced.includes(alert)).length,
+      pending: alerts.filter((alert) => alert.state === 'pending' && !silenced.includes(alert)).length,
+      silenced: silenced.length,
       items: alerts.filter((alert) => alert.state !== 'resolved').slice(0, 20),
     };
+    await notifyTransitions(alerts);
   };
 
   const sample = async (): Promise<ServiceSnapshot> => {
@@ -286,7 +367,7 @@ export function createMetricsService(deps: MetricsServiceDeps) {
       storage,
       cleanup: blobStore.cleanupStatus(),
       jobs,
-      alerts: { active: 0, pending: 0, items: [] },
+      alerts: { active: 0, pending: 0, silenced: 0, items: [] },
       verification,
       backup,
       uptimeSeconds: Math.max(0, Math.round((Date.now() - deps.startedAt) / 1000)),

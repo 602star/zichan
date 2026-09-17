@@ -18,7 +18,7 @@ export interface Snapshot {
     lastFreedBytes: number; consecutiveFailures: number; runs: number;
   };
   jobs: Record<string, number>;
-  alerts: { active: number; pending: number };
+  alerts: { active: number; pending: number; silenced: number };
   verification: { database?: Record<string, unknown>; blobs?: Record<string, unknown> };
   /** Latest attempt, latest *successful* attempt and latest verified attempt are kept apart. */
   backup: {
@@ -38,6 +38,9 @@ export interface Alert {
   consecutive: number;
   detail?: Record<string, unknown>;
   acknowledgedAt?: string; acknowledgedBy?: string; resolvedAt?: string;
+  /** Silence keeps the record and the rule, and only stops the outbound notification. */
+  silencedUntil?: string; silencedBy?: string; silenceReason?: string;
+  lastNotifiedAt?: string; notifyState?: 'sent' | 'failed' | 'skipped'; notifyError?: string;
 }
 
 export interface Overview {
@@ -134,7 +137,7 @@ export interface AuditEntry {
 }
 
 export interface SettingsField {
-  name: string; label: string; kind: 'number' | 'select'; unit?: string; description: string;
+  name: string; label: string; kind: 'number' | 'select' | 'text'; unit?: string; description: string; maxLength?: number;
   stored: number | string | null; envVar: string; source: 'env' | 'database' | 'default';
   value: number | string; minimum?: number; maximum?: number; options?: string[]; editable: boolean;
 }

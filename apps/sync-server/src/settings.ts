@@ -10,12 +10,14 @@ import { ServerStoreError, type SyncServerStore } from './store.js';
 export interface SettingField {
   name: string;
   label: string;
-  kind: 'number' | 'select';
+  kind: 'number' | 'select' | 'text';
   /** Environment variable that takes precedence over the stored value. */
   envVar: string;
   default: number | string;
   min?: number;
   max?: number;
+  /** Upper bound for text fields, e.g. a URL that must not be unbounded. */
+  maxLength?: number;
   options?: string[];
   unit?: string;
   /** Settings that shape alerts rather than requests. */
@@ -23,6 +25,15 @@ export interface SettingField {
 }
 
 export const SETTING_FIELDS: SettingField[] = [
+  {
+    name: 'alertWebhookUrl',
+    label: '告警外部通知地址（Webhook）',
+    kind: 'text',
+    envVar: 'ADMIN_ALERT_WEBHOOK_URL',
+    default: '',
+    maxLength: 500,
+    description: '告警转为活动或恢复时向该地址 POST 一条 JSON；留空表示只在本页展示，不对外通知。',
+  },
   {
     name: 'quotaWarnRatio',
     label: '容量告警阈值（占配额比例）',
@@ -101,10 +112,20 @@ export interface EffectiveSetting {
   minimum?: number;
   maximum?: number;
   options?: string[];
+  maxLength?: number;
   editable: boolean;
 }
 
 function coerce(field: SettingField, value: unknown): number | string | undefined {
+  if (field.kind === 'text') {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    // An empty value is a real choice ("no external channel"), not an invalid one.
+    if (!trimmed) return '';
+    if (trimmed.length > (field.maxLength ?? 500)) return undefined;
+    if (!/^https?:\/\/[^\s]+$/i.test(trimmed)) return undefined;
+    return trimmed;
+  }
   if (field.kind === 'select') {
     return typeof value === 'string' && field.options?.includes(value) ? value : undefined;
   }
@@ -119,7 +140,11 @@ function coerce(field: SettingField, value: unknown): number | string | undefine
 export function parseSettingValue(field: SettingField, value: unknown): number | string {
   const coerced = coerce(field, value);
   if (coerced === undefined) {
-    const bounds = field.kind === 'number' ? `（${String(field.min)}–${String(field.max)}）` : `（${(field.options ?? []).join('、')}）`;
+    const bounds = field.kind === 'number'
+      ? `（${String(field.min)}–${String(field.max)}）`
+      : field.kind === 'select'
+        ? `（${(field.options ?? []).join('、')}）`
+        : `（需为 http(s) 地址，留空表示不通知；最多 ${String(field.maxLength ?? 500)} 个字符）`;
     throw new ServerStoreError('INVALID_SETTING', 400, `${field.label} 取值无效${bounds}`);
   }
   return coerced;
@@ -178,6 +203,7 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
       ...(field.min === undefined ? {} : { minimum: field.min }),
       ...(field.max === undefined ? {} : { maximum: field.max }),
       ...(field.options ? { options: field.options } : {}),
+      ...(field.maxLength === undefined ? {} : { maxLength: field.maxLength }),
       editable: source !== 'env',
     };
   };

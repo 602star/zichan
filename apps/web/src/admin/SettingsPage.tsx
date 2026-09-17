@@ -22,10 +22,17 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
   const data = payload.data;
   const save = async (): Promise<void> => {
     setNotice(''); setError('');
-    const updates: Record<string, number> = {};
+    // Numbers and text fields travel in one payload, each in its own type: coercing a URL
+    // through Number() would turn every text field into a silent no-op.
+    const updates: Record<string, number | string> = {};
     for (const field of data.settings) {
       if (!field.editable) continue;
-      const value = Number(draft[field.name]);
+      const raw = draft[field.name] ?? '';
+      if (field.kind === 'text') {
+        if (raw !== String(field.value)) updates[field.name] = raw;
+        continue;
+      }
+      const value = Number(raw);
       if (Number.isFinite(value) && value !== field.value) updates[field.name] = value;
     }
     if (!Object.keys(updates).length) { setNotice('没有需要保存的改动。'); return; }
@@ -59,12 +66,14 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
                   value={draft[field.name] ?? String(field.value)}
                   disabled={!field.editable || role !== 'owner'}
                   onChange={(event) => setDraft((current) => ({ ...current, [field.name]: event.target.value }))}
-                  style={{ width: 120 }}
+                  // Secrets are never returned; only allow-listed, non-secret fields reach here.
+                  placeholder={field.kind === 'text' ? '留空表示不通知' : undefined}
+                  style={{ width: field.kind === 'text' ? 260 : 120 }}
                 />
               ),
             },
             { key: 'source', header: '来源', render: (field) => <Badge tone={field.source === 'env' ? 'warn' : field.source === 'database' ? 'ok' : 'muted'}>{field.source === 'env' ? `环境变量 ${field.envVar}` : field.source === 'database' ? '数据库设置' : '默认值'}</Badge> },
-            { key: 'range', header: '允许范围', secondary: true, render: (field) => field.kind === 'number' ? `${field.minimum ?? ''}–${field.maximum ?? ''}` : (field.options ?? []).join('、') },
+            { key: 'range', header: '允许范围', secondary: true, render: (field) => field.kind === 'number' ? `${field.minimum ?? ''}–${field.maximum ?? ''}` : field.kind === 'text' ? `http(s) 地址，最多 ${field.maxLength ?? 500} 字符` : (field.options ?? []).join('、') },
             { key: 'stored', header: '已保存值', secondary: true, render: (field) => field.stored === null ? '未保存' : String(field.stored) },
           ]}
           rows={data.settings}

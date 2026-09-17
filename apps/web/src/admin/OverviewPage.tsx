@@ -2,10 +2,33 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, Loading, Notice, Panel, Stat, bytes, message, muted, row, usePolling, useResource, when } from './ui.js';
+import { Badge, Button, Loading, Notice, Panel, Select, Stat, TextInput, bytes, message, muted, row, usePolling, useResource, when } from './ui.js';
+import { TrendChart } from './chart.js';
+import type { TrendPoint } from './trend.js';
 import type { Alert, Metrics, Overview } from './types.js';
 
 const RANGES = ['1h', '24h', '7d'] as const;
+
+/** Bucket series the trend chart can draw; totals stay in the cards above it. */
+const SERIES = [
+  { key: 'requests', label: '请求量' },
+  { key: 'errors', label: '错误数' },
+  { key: 'averageMs', label: '平均耗时' },
+  { key: 'syncFailed', label: '失败同步' },
+] as const;
+type SeriesKey = (typeof SERIES)[number]['key'];
+
+function seriesValue(bucket: Metrics['buckets'][number], key: SeriesKey): number {
+  switch (key) {
+    case 'errors': return bucket.errors;
+    case 'averageMs': return bucket.requests ? Math.round(bucket.durationMs / bucket.requests) : 0;
+    case 'syncFailed': return bucket.syncPushFailed + bucket.blobFailed;
+    default: return bucket.requests;
+  }
+}
+
+/** Silence windows offered in the console: one shift, one day, one week. */
+const SILENCE_HOURS = [1, 4, 24, 72, 168];
 
 export function OverviewPage({ client, navigate, accountName }: {
   client: AdminClient;
@@ -13,6 +36,9 @@ export function OverviewPage({ client, navigate, accountName }: {
   accountName: string;
 }) {
   const [range, setRange] = useState<(typeof RANGES)[number]>('24h');
+  const [series, setSeries] = useState<SeriesKey>('requests');
+  // Silence is a recorded decision: the duration and the reason travel together.
+  const [silenceDraft, setSilenceDraft] = useState<{ key: string; hours: number; reason: string }>();
   const overview = useResource(() => client.request<Overview>('/overview'), []);
   const metrics = useResource(() => client.request<Metrics>(`/metrics?range=${range}`), [range]);
   // Both views age together: a poll that refreshed only the overview left the counters stale.
@@ -21,7 +47,10 @@ export function OverviewPage({ client, navigate, accountName }: {
   const snapshot = overview.data?.snapshot;
   const backup = snapshot?.backup ?? null;
   const alerts = overview.data?.alerts ?? [];
-  const blocking = alerts.filter((alert) => alert.state === 'active');
+  // A silenced alert is a decision, not an outage: it stays visible but stops colouring
+  // the service status. The server counts the same way, so the two never disagree.
+  const blocking = alerts.filter((alert) => alert.state === 'active' && !isSilenced(alert));
+  const silenced = alerts.filter(isSilenced);
   const degraded = Boolean(blocking.length) || overview.stale;
   const diskFree = snapshot?.storage.diskFreeBytes ?? null;
   const diskTotal = snapshot?.storage.diskTotalBytes ?? null;
@@ -35,7 +64,7 @@ export function OverviewPage({ client, navigate, accountName }: {
       <Panel title="服务状态">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
           <Stat label="状态" value={degraded ? '降级' : '正常'} tone={degraded ? 'warn' : undefined}
-            hint={blocking.length ? `${blocking.length} 条告警处于活动状态` : '没有活动告警'} />
+            hint={blocking.length ? `${blocking.length} 条告警处于活动状态` : silenced.length ? `没有活动告警；${silenced.length} 条已静默` : '没有活动告警'} />
           <Stat label="运行时间" value={snapshot ? formatUptime(snapshot.uptimeSeconds) : '暂无数据'} />
           <Stat label="服务版本" value={overview.data?.version ?? '暂无数据'} hint={`服务器 ID ${overview.data?.serverId ?? ''}`} />
           <Stat label="最后采样" value={snapshot ? new Date(snapshot.sampledAt).toLocaleTimeString() : '暂无数据'}
@@ -61,6 +90,22 @@ export function OverviewPage({ client, navigate, accountName }: {
           <Stat label="提交推送" value={metrics.data ? `${metrics.data.totals.syncPushOk} 成功 / ${metrics.data.totals.syncPushFailed} 失败` : '暂无数据'} />
           <Stat label="附件请求" value={metrics.data ? `${metrics.data.totals.blobOk} 成功 / ${metrics.data.totals.blobFailed} 失败` : '暂无数据'} />
         </div>
+        {metrics.data ? (
+          <>
+            <div style={{ ...row, marginTop: 12 }}>
+              {SERIES.map((entry) => (
+                <Button key={entry.key} disabled={entry.key === series} onClick={() => setSeries(entry.key)}>{entry.label}</Button>
+              ))}
+            </div>
+            <TrendChart
+              points={(metrics.data.buckets ?? []).map((bucket): TrendPoint => ({ at: bucket.bucketAt, value: seriesValue(bucket, series) }))}
+              label={`${SERIES.find((entry) => entry.key === series)?.label ?? ''}趋势（近 ${range}）`}
+              formatValue={(value) => series === 'averageMs' ? `${value} ms` : String(value)}
+              tone={series === 'errors' || series === 'syncFailed' ? 'bad' : series === 'averageMs' ? 'warn' : 'ok'}
+              granularityNote={metrics.data.granularity === 'minute' ? '分钟分桶' : '小时分桶'}
+            />
+          </>
+        ) : null}
         {metrics.data?.observedSince ? <p style={muted}>自 {when(metrics.data.observedSince)} 起有数据。</p> : null}
         {metrics.loadedAt ? <p style={muted}>最后读取：{new Date(metrics.loadedAt).toLocaleTimeString()}（与「服务状态」一起每 30 秒刷新）</p> : null}
       </Panel>
@@ -90,18 +135,54 @@ export function OverviewPage({ client, navigate, accountName }: {
         </p>
       </Panel>
 
-      <Panel title="待处理事项" note="同类告警会被合并；每条都会记录首次发生、最后发生与次数。">
+      <Panel title="待处理事项" note="同类告警会被合并；每条都会记录首次发生、最后发生与次数。静默只停外部通知，规则、记录与恢复判断都不变。">
         {alerts.length === 0 ? <p style={muted}>暂无待处理事项。</p> : (
           <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {alerts.map((alert) => (
-              <li key={alert.key} style={{ marginBottom: 8 }}>
-                <Badge tone={alert.state === 'active' ? 'bad' : 'warn'}>{alert.state === 'active' ? '活动' : '待确认'}</Badge>{' '}
-                {describeAlert(alert)}{' '}
-                <span style={muted}>影响：{alert.scope}；首次 {when(alert.firstSeenAt)}，最近 {when(alert.lastSeenAt)}，共 {alert.occurrences} 次（连续 {alert.consecutive} 次）</span>{' '}
-                <Button onClick={() => { void acknowledge(client, alert, overview.reload); }}>确认</Button>{' '}
-                <NextStep alert={alert} navigate={navigate} />
-              </li>
-            ))}
+            {alerts.map((alert) => {
+              const silenced = isSilenced(alert);
+              return (
+                <li key={alert.key} style={{ marginBottom: 10 }}>
+                  <Badge tone={silenced ? 'muted' : alert.state === 'active' ? 'bad' : 'warn'}>
+                    {silenced ? '已静默' : alert.state === 'active' ? '活动' : '待确认'}
+                  </Badge>{' '}
+                  {alert.state === 'resolved' ? <Badge tone="ok">已恢复</Badge> : null}{' '}
+                  {alert.acknowledgedAt ? <Badge tone="muted">已确认</Badge> : null}{' '}
+                  {describeAlert(alert)}{' '}
+                  <span style={muted}>影响：{alert.scope}；首次 {when(alert.firstSeenAt)}，最近 {when(alert.lastSeenAt)}，共 {alert.occurrences} 次（连续 {alert.consecutive} 次）</span>{' '}
+                  <NextStep alert={alert} navigate={navigate} />{' '}
+                  <Button disabled={Boolean(alert.acknowledgedAt)} onClick={() => { void acknowledge(client, alert, overview.reload); }}>
+                    {alert.acknowledgedAt ? `已由 ${alert.acknowledgedBy ?? ''} 确认` : '确认'}
+                  </Button>{' '}
+                  {silenced ? (
+                    <span style={muted}>
+                      已静默至 {when(alert.silencedUntil ?? '')}{alert.silenceReason ? `（${alert.silenceReason}）` : ''}{' '}
+                      <Button onClick={() => { void unsilence(client, alert, overview.reload); }}>取消静默</Button>
+                    </span>
+                  ) : silenceDraft?.key === alert.key ? (
+                    <span style={row}>
+                      <Select
+                        value={String(silenceDraft.hours)}
+                        onChange={(event) => setSilenceDraft({ ...silenceDraft, hours: Number(event.target.value) })}
+                      >
+                        {SILENCE_HOURS.map((hours) => <option key={hours} value={hours}>{hours >= 24 ? `${hours / 24} 天` : `${hours} 小时`}</option>)}
+                      </Select>
+                      <TextInput placeholder="静默原因（必填，写入审计）" value={silenceDraft.reason}
+                        onChange={(event) => setSilenceDraft({ ...silenceDraft, reason: event.target.value })} />
+                      <Button disabled={!silenceDraft.reason.trim()} onClick={() => { void silence(client, alert, silenceDraft, () => { setSilenceDraft(undefined); overview.reload(); }); }}>确认静默</Button>
+                      <Button onClick={() => setSilenceDraft(undefined)}>取消</Button>
+                    </span>
+                  ) : (
+                    <Button onClick={() => setSilenceDraft({ key: alert.key, hours: 24, reason: '' })}>静默…</Button>
+                  )}
+                  {alert.notifyState ? (
+                    <div style={muted}>
+                      外部通知：{alert.notifyState === 'sent' ? '已发送' : alert.notifyState === 'skipped' ? '已跳过' : '发送失败'}
+                      {alert.lastNotifiedAt ? ` · ${when(alert.lastNotifiedAt)}` : ''}{alert.notifyError ? ` · ${alert.notifyError}` : ''}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         )}
         {overview.data?.recentFailures.length ? (
@@ -131,6 +212,36 @@ export function OverviewPage({ client, navigate, accountName }: {
 async function acknowledge(client: AdminClient, alert: Alert, reload: () => void): Promise<void> {
   try {
     await client.request(`/alerts/${encodeURIComponent(alert.key)}/acknowledge`, {}, { idempotencyKey: adminIdempotencyKey(`ack-${alert.key}`) });
+  } catch (error) {
+    window.alert(message(error));
+  }
+  reload();
+}
+
+/** A silence with an end time in the past no longer applies. */
+function isSilenced(alert: Alert): boolean {
+  return Boolean(alert.silencedUntil) && Date.parse(alert.silencedUntil ?? '') > Date.now();
+}
+
+async function silence(
+  client: AdminClient,
+  alert: Alert,
+  draft: { hours: number; reason: string },
+  done: () => void,
+): Promise<void> {
+  try {
+    // The reason is part of the request: an unexplained silence is not auditable.
+    await client.request(`/alerts/${encodeURIComponent(alert.key)}/silence`, { hours: draft.hours, reason: draft.reason.trim() },
+      { idempotencyKey: adminIdempotencyKey(`silence-${alert.key}`) });
+    done();
+  } catch (error) {
+    window.alert(message(error));
+  }
+}
+
+async function unsilence(client: AdminClient, alert: Alert, reload: () => void): Promise<void> {
+  try {
+    await client.request(`/alerts/${encodeURIComponent(alert.key)}/unsilence`, {}, { idempotencyKey: adminIdempotencyKey(`unsilence-${alert.key}`) });
   } catch (error) {
     window.alert(message(error));
   }
