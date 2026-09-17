@@ -1743,6 +1743,27 @@ input[type="radio"] {
   }
 }
 
+/*
+ * 流水行的分类列宽度。
+ *
+ * 标签写的是完整的「一级 / 二级」，内置分类里最长实测约 139px（其他金融税费），而这一列过去
+ * 固定 112px、行内间距 12px——宽过 124px 的标签就画到旁边的摘要上了。
+ *
+ * 宽屏给它一个 200px 的天花板。注意 `minmax` 两端都是固定值时浏览器不会「按内容」取中间值，
+ * 而是有空间就直接撑到上限（实测分类列恒为 200px）——正好，长短标签的行因此列宽一致，
+ * 不会一行一个样。窄屏（<1024px）让不起这 88px：那里摘要只剩一两百像素，标签改用省略号，
+ * 完整路径留在 hover 的 title 里。
+ */
+.zc-transaction-row {
+  --zc-category-track: 112px;
+}
+
+@media (min-width: 1024px) {
+  .zc-transaction-row {
+    --zc-category-track: minmax(112px, 200px);
+  }
+}
+
 /* Phone: one content column, bottom navigation, safe areas, and keyboard-safe sheets. */
 @media (max-width: 767px) {
   input:not([type="checkbox"]):not([type="radio"]), select, textarea {

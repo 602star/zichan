@@ -42,7 +42,7 @@ import { money, signedMoney } from '../format.js';
 import { amountColor, btnOutline, btnPrimary, card, cardTight, selectBase, tag as tagStyle, td as tdStyle, th as thStyle } from '../ui/styles.js';
 import { ChartLegend, CompositionDonut, TrendBars, type ChartSlice } from '../ui/charts.js';
 import { CATEGORY_COLORS, OTHER_CATEGORY_COLOR } from '../theme.js';
-import { categoryLabel, categoryOptions, categoryType as metaCategoryType, rootCategoryId, TYPE_LABEL } from '../transactionMeta.js';
+import { categoryLabel, categoryName, categoryOptions, categoryType as metaCategoryType, rootCategoryId, transactionSummaryTitle, TYPE_LABEL } from '../transactionMeta.js';
 import {
   buildBudgetMonth,
   buildBudgetMonthFromAggregates,
@@ -548,15 +548,17 @@ export function Transactions() {
   const selectedAssetId = assetId === 'all' ? undefined : assetId;
   const ledger: AccountLedgerRowVM[] = (accountLedgerPage?.rows ?? []).map((row) => {
     const transaction = row.transaction;
-    const payee = transaction.payeeId
-      ? readySnap.payees.find((item) => item.id === transaction.payeeId)?.name
-      : undefined;
+    const specialCategoryLabel = transaction.type === 'transfer'
+      ? '转账'
+      : transaction.type === 'adjustment' ? '对账调整' : undefined;
     return {
       tx: transaction,
-      title: transaction.description ?? payee ?? transaction.merchant ?? categoryLabel(transaction.category, readySnap.categories),
-      categoryLabel: transaction.type === 'transfer'
-        ? '转账'
-        : transaction.type === 'adjustment' ? '对账调整' : categoryLabel(transaction.category, readySnap.categories),
+      title: transactionSummaryTitle(
+        transaction,
+        readySnap.payees,
+        specialCategoryLabel ?? categoryName(transaction.category, readySnap.categories),
+      ),
+      categoryLabel: specialCategoryLabel ?? categoryLabel(transaction.category, readySnap.categories),
       date: transaction.date,
       statusLabel: row.reconciliationStatus === 'reconciled'
         ? '已对账'
@@ -1281,7 +1283,7 @@ export function Transactions() {
                     <div key={row.id} className="zc-voided-row" style={{ display: 'grid', gridTemplateColumns: '130px 90px minmax(0, 1fr) 130px 72px', gap: 10, alignItems: 'center', padding: '10px 0', borderTop: '1px solid var(--border)' }}>
                       <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{row.date}{row.time ? ` ${row.time}` : ''}</span>
                       <span style={{ ...tagStyle, width: 'fit-content' }}>{TYPE_LABEL[row.type]}</span>
-                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.description ?? row.merchant ?? categoryLabel(row.category, readySnap.categories)}</span>
+                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{transactionSummaryTitle(row, readySnap.payees, categoryLabel(row.category, readySnap.categories))}</span>
                       <b style={{ textAlign: 'right' }}>{row.amount} {readySnap.assets.find((asset) => asset.id === row.assetId)?.code ?? row.assetId}</b>
                       <button onClick={() => void restoreTx(row)} style={{ ...button, padding: '6px 10px' }}>恢复</button>
                     </div>
@@ -2296,7 +2298,7 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
           <div style={{ borderTop: '1px solid var(--border)' }}>
             {g.items.map((item) => {
               const tx = item.tx;
-              const title = tx.description ?? item.payeeName ?? tx.merchant ?? item.categoryLabel;
+              const title = item.title;
               const tags = [...(tx.tagIds ?? []).map(tagName)];
               const loc = locationName(tx);
               const latitude = Number(tx.latitude);
@@ -2330,7 +2332,7 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
               const details = [
                 item.typeLabel,
                 usesAccounts ? item.accountName : undefined,
-                item.payeeName !== '—' ? item.payeeName : undefined,
+                item.payeeName,
                 loc ? `地点 ${loc}` : undefined,
                 coordinates,
                 tags.length ? `标签 ${tags.join(' / ')}` : undefined,
@@ -2346,7 +2348,7 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
                   role="button"
                   tabIndex={0}
                   style={{
-                    width: '100%', display: 'grid', gridTemplateColumns: `${setSelectedIds ? '34px ' : ''}${usesAccounts ? '88px 112px 1fr 150px 110px 72px' : '88px 112px 1fr 110px 72px'}`,
+                    width: '100%', display: 'grid', gridTemplateColumns: `${setSelectedIds ? '34px ' : ''}${usesAccounts ? '88px var(--zc-category-track) 1fr 150px 110px 72px' : '88px var(--zc-category-track) 1fr 110px 72px'}`,
                     alignItems: 'center', gap: 12, border: 'none', borderBottom: '1px solid var(--border)',
                     background: 'transparent', color: 'var(--text-primary)', padding: '13px 0', textAlign: 'left', cursor: 'pointer',
                   }}
@@ -2365,7 +2367,15 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
                     </span>
                   )}
                   <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{tx.date}{tx.time ? <><br />{tx.time}</> : null}</span>
-                  <span style={{ ...tagStyle, width: 'fit-content', color: tx.type === 'income' || tx.type === 'refund' ? 'var(--positive)' : tx.type === 'expense' ? 'var(--negative)' : 'var(--accent)' }}>
+                  {/*
+                    分类列宽屏能给到 200px（内置标签最长约 139px，写全了），但自建的超长名仍会
+                    触到天花板，那时在这里省略；完整的「一级 / 二级」留在 hover 的 title 里，
+                    否则省略之后就只剩半截了。
+                  */}
+                  <span
+                    style={{ ...tagStyle, width: 'fit-content', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', color: tx.type === 'income' || tx.type === 'refund' ? 'var(--positive)' : tx.type === 'expense' ? 'var(--negative)' : 'var(--accent)' }}
+                    title={item.categoryLabel}
+                  >
                     {item.categoryLabel}
                   </span>
                   <span style={{ minWidth: 0 }}>

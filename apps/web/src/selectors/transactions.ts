@@ -14,8 +14,10 @@ import { ledgerAsOfDate } from '../as-of.js';
 import {
   categoryLabel,
   categoryLevelIndex,
+  categoryName,
   categoryOptions,
   categoryType as metaCategoryType,
+  transactionSummaryTitle,
   TYPE_LABEL,
 } from '../transactionMeta.js';
 import { reportingEffect } from './transaction-effect.js';
@@ -96,7 +98,10 @@ export interface TransactionItemVM {
   tx: Transaction;
   assetCode: string;
   accountName: string;
-  payeeName: string;
+  /** 商户显示名；没商户时是 `undefined`（不是占位符，见 `payeeName`）。 */
+  payeeName?: string;
+  /** 列表摘要列：描述 → 商户 → 二级分类名。 */
+  title: string;
   categoryLabel: string;
   splitSummary: string;
   typeLabel: string;
@@ -367,8 +372,16 @@ export function historicalCategoryValueOptions(snap: Snapshot) {
   });
 }
 
-function payeeName(snap: Snapshot, t: Transaction): string {
-  return t.payeeId ? snap.payees.find((p) => p.id === t.payeeId)?.name ?? t.merchant ?? '—' : t.merchant ?? '—';
+/*
+ * 商户的显示名：优先目录里的名字，退回手填的商户文本；两样都没有就返回 `undefined`。
+ *
+ * 别在这里返回占位符——旧写法返回 `'—'`，而 `??` 只认 null/undefined：那个横杠卡在
+ * 「描述 → 商户 → 分类」这条链的第二档，把商户与分类一起短路了。表格里确实想要一个
+ * 空格子，由渲染那层自己加。
+ */
+function payeeName(snap: Snapshot, t: Transaction): string | undefined {
+  const name = t.payeeId ? snap.payees.find((p) => p.id === t.payeeId)?.name?.trim() : undefined;
+  return name || t.merchant?.trim() || undefined;
 }
 
 function tagLabels(snap: Snapshot, ids: string[] = []): string[] {
@@ -789,11 +802,16 @@ export function buildAccountLedger(snap: Snapshot, accountId: string, assetId?: 
   for (const e of entries) {
     running = running.plus(e.amount);
     if (!isDateInRange(e.tx.date, range)) continue;
-    const title = e.tx.description ?? payeeName(snap, e.tx) ?? e.tx.merchant ?? categoryLabel(e.tx.category, snap.categories);
+    const specialCategoryLabel = e.tx.type === 'transfer' ? '转账' : e.tx.type === 'adjustment' ? '对账调整' : undefined;
+    const title = transactionSummaryTitle(
+      e.tx,
+      snap.payees,
+      specialCategoryLabel ?? categoryName(e.tx.category, snap.categories),
+    );
     rows.push({
       tx: e.tx,
       title,
-      categoryLabel: e.tx.type === 'transfer' ? '转账' : e.tx.type === 'adjustment' ? '对账调整' : categoryLabel(e.tx.category, snap.categories),
+      categoryLabel: specialCategoryLabel ?? categoryLabel(e.tx.category, snap.categories),
       date: e.tx.date,
       statusLabel: statusLabel(snap, e.tx),
       amount: e.amount,
@@ -807,6 +825,11 @@ export function buildAccountLedger(snap: Snapshot, accountId: string, assetId?: 
 function itemForTransaction(snap: Snapshot, tx: Transaction, report: ReportCurrency): TransactionItemVM {
   const splits = splitRows(snap, tx);
   const reportValues = transactionReportValues(snap, report, tx);
+  /* 分类列：转账与对账调整没有真正的分类，拆分只报项数。 */
+  const specialCategoryLabel = tx.type === 'transfer'
+    ? '转账'
+    : tx.type === 'adjustment' ? '对账调整'
+    : splits.length > 1 ? `拆分 ${splits.length} 项` : undefined;
   return {
     tx,
     assetCode: assetCode(snap, tx.assetId),
@@ -814,10 +837,10 @@ function itemForTransaction(snap: Snapshot, tx: Transaction, report: ReportCurre
       ? `${accountName(snap, tx.accountId)} → ${accountName(snap, tx.transferAccountId)}`
       : accountName(snap, tx.accountId),
     payeeName: payeeName(snap, tx),
-    categoryLabel: tx.type === 'transfer'
-      ? '转账'
-      : tx.type === 'adjustment' ? '对账调整'
-      : splits.length > 1 ? `拆分 ${splits.length} 项` : categoryLabel(tx.category, snap.categories),
+    /* 摘要紧挨着分类列，兜底就别再写一遍完整路径，用二级名；上面那几个特殊标签本身
+     * 已经是最短读法，直接沿用。 */
+    title: transactionSummaryTitle(tx, snap.payees, specialCategoryLabel ?? categoryName(tx.category, snap.categories)),
+    categoryLabel: specialCategoryLabel ?? categoryLabel(tx.category, snap.categories),
     splitSummary: splits.length > 1
       ? splits.map((s) => `${categoryLabel(s.category, snap.categories)} ${s.amount}`).join(' / ')
       : '',

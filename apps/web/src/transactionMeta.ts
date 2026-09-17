@@ -1,4 +1,4 @@
-import { allCategories, CATEGORY_LABEL, type Category } from '@zichan/core';
+import { allCategories, CATEGORY_LABEL, type Category, type Payee, type Transaction } from '@zichan/core';
 
 export {
   TYPE_LABEL,
@@ -91,4 +91,29 @@ export function rootCategoryId(category: string, categories: Category[] = EMPTY_
 /** 分类自己的名字，不带「父级 / 子级」前缀。表格行、条形标签这些窄位置用它。 */
 export function categoryName(category: string, categories: Category[] = EMPTY_CATEGORIES): string {
   return categoryLevelIndex(categories).nameOf(category);
+}
+
+/**
+ * 流水「摘要」那一格的兜底链：描述 → 商户（目录里的名字，退回手填的商户文本）→ 分类。
+ *
+ * 每一档都必须真的能落到下一档，所以这里**不产出任何占位符**。旧写法在没有商户时返回的
+ * 是一个**真的横杠字符**，而 `??` 只认 null/undefined——那个横杠卡在第二档，把后面的商户
+ * 和分类一起短路了，于是不写描述、也没填商户的流水整行标题只剩一个横杠。
+ *
+ * 只是显示层的兜底，结果不写回 `transaction.description`：分类改名或换分类之后，落过盘的
+ * 兜底值会变成假数据，而且再也分不出哪些字是用户自己写的。
+ *
+ * `fallbackCategoryLabel` 由调用方给（列表里旁边就是分类列，传二级名省宽度；作废列表那列
+ * 放的是类型，就传完整路径），这样转账/对账调整/拆分的口径跟同一行的分类列保持一致。
+ */
+export function transactionSummaryTitle(
+  tx: Pick<Transaction, 'description' | 'merchant' | 'payeeId'>,
+  payees: readonly Payee[],
+  fallbackCategoryLabel: string,
+): string {
+  const description = tx.description?.trim();
+  if (description) return description;
+  const payee = tx.payeeId ? payees.find((item) => item.id === tx.payeeId)?.name?.trim() : undefined;
+  const merchant = tx.merchant?.trim();
+  return payee || merchant || fallbackCategoryLabel;
 }

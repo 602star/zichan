@@ -124,6 +124,46 @@ describe('buildTransactions', () => {
     });
   });
 
+  /*
+   * 列表摘要列的兜底链：描述 → 商户 → 二级分类名。
+   *
+   * 旧写法在「没有商户」时返回的是一个**真的横杠字符**，而 `??` 只认 null/undefined，
+   * 于是它在第二档就把后面的商户与分类一起短路了——不写描述的流水整行只剩一个横杠。
+   * 兜底值只用于显示，不能写回 `description`，否则分类改名后那条描述就成了假数据。
+   */
+  it('falls back to the subcategory name instead of a dash when a row has no description', () => {
+    const s = makeSnapshot();
+    s.transactions = [
+      makeTransaction({ id: 'silent', date: '2026-03-04', category: 'food', amount: '20', assetId: s.ids.gbp, accountId: s.ids.bank }),
+      makeTransaction({ id: 'with-payee', date: '2026-03-03', category: 'food', amount: '15', assetId: s.ids.gbp, payeeId: s.ids.cafe }),
+      makeTransaction({ id: 'with-merchant', date: '2026-03-02', category: 'transport', amount: '8', assetId: s.ids.gbp, merchant: 'Metro' }),
+      makeTransaction({ id: 'with-description', date: '2026-03-01', category: 'transport', amount: '6', assetId: s.ids.gbp, merchant: 'Metro', description: '通勤' }),
+    ];
+
+    const vm = buildTransactions(s, { range: 'this_month', type: 'all', category: 'all', accountId: 'all', search: '' });
+    const itemOf = (id: string) => vm.items.find((item) => item.tx.id === id);
+
+    // 二级名，不是「一级 / 二级」：完整的分类路径已经在旁边那一列写着了。
+    expect(itemOf('silent')?.title).toBe('餐饮/正餐');
+    expect(itemOf('with-payee')?.title).toBe('Cafe');
+    expect(itemOf('with-merchant')?.title).toBe('Metro');
+    expect(itemOf('with-description')?.title).toBe('通勤');
+    expect(vm.items.map((item) => item.title)).not.toContain('—');
+    expect(vm.items.every((item) => item.title.trim() !== '')).toBe(true);
+    // 只兜底显示，不落库。
+    expect(itemOf('silent')?.tx.description).toBeUndefined();
+
+    const ledger = buildAccountLedger(s, s.ids.bank, s.ids.gbp);
+    expect(ledger.find((row) => row.tx.id === 'silent')?.title).toBe('餐饮/正餐');
+  });
+
+  it('does not let a missing payee masquerade as text in search', () => {
+    const s = makeSnapshot();
+    s.transactions = [makeTransaction({ id: 'silent', date: '2026-03-04', category: 'food', amount: '20', assetId: s.ids.gbp })];
+    // 没有商户时值集里过去落着那个占位横杠，于是搜「—」会命中每一笔没商户的流水。
+    expect(buildTransactions(s, { range: 'this_month', type: 'all', category: 'all', accountId: 'all', search: '—' }).count).toBe(0);
+  });
+
   it('filters by type, category, account and search', () => {
     const s = makeSnapshot();
     s.transactions = [
