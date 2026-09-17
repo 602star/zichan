@@ -19,7 +19,12 @@ const REMOVED_SYNC_CONFIGURATION_MARKERS = [
   ['opaque', 'PublicKey'].join(''),
 ];
 const REMOVED_ADMIN_ROUTE = /(?:^|[^A-Za-z0-9/])\/admin\/(?:status|users|logs|devices|invites|registration|quotas|database)(?:[/?]|['"`])/m;
-const OPEN_REGISTRATION_DEFAULT = /REGISTRATION_MODE\s*(?:\|\|=|\?\?=|[:=])\s*['"]open['"]|registrationMode\s*\?\?\s*['"]open['"]/;
+const OPEN_REGISTRATION_DEFAULT = new RegExp([
+  // Shell/Node defaults, plus Compose and shell parameter expansion forms such as
+  // `${REGISTRATION_MODE:-open}` that the previous quoted-literal pattern missed.
+  String.raw`REGISTRATION_MODE\s*(?:\|\|=|\?\?=|=|:)\s*-?\s*['"]?open['"]?`,
+  String.raw`registrationMode\s*\?\?\s*['"]open['"]`,
+].join('|'));
 
 async function json(path) {
   return JSON.parse(await readFile(path, 'utf8'));

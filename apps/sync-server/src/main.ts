@@ -4,31 +4,63 @@ import { resolve } from 'node:path';
 import { developmentDataDir } from './runtime-config.js';
 import { watchShutdownInput } from './shutdown-input.js';
 
-const port = Number(process.env.PORT ?? 8787);
+/**
+ * Invalid configuration stops the boot with a named error. Silently substituting a
+ * default is how a deployment ends up running a policy nobody selected.
+ */
+const invalid = (name: string, value: string, expected: string): string =>
+  `${name} 取值无效：${value || '(空)'}；期望 ${expected}。已拒绝启动，不会静默回退默认值`;
+
+const enumEnv = <T extends string>(name: string, allowed: readonly T[], fallback: T): T => {
+  const raw = process.env[name]?.trim();
+  if (raw === undefined || raw === '') return fallback;
+  if (!(allowed as readonly string[]).includes(raw)) throw new Error(invalid(name, raw, allowed.join(' / ')));
+  return raw as T;
+};
+
+const positiveNumber = (name: string): number | undefined => {
+  const raw = process.env[name]?.trim();
+  if (raw === undefined || raw === '') return undefined;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(invalid(name, raw, '正整数'));
+  return value;
+};
+
+const BOOLEAN_VALUES: Record<string, boolean> = {
+  '1': true, '0': false, 'true': true, 'false': false, 'on': true, 'off': false, 'yes': true, 'no': false,
+};
+
+const boolEnv = (name: string, fallback: boolean): boolean => {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (raw === undefined || raw === '') return fallback;
+  const parsed = BOOLEAN_VALUES[raw];
+  if (parsed === undefined) throw new Error(invalid(name, raw, '1/0、true/false、on/off、yes/no'));
+  return parsed;
+};
+
+const portEnv = (): number => {
+  const raw = process.env.PORT?.trim();
+  if (raw === undefined || raw === '') return 8787;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0 || value > 65_535) throw new Error(invalid('PORT', raw, '0–65535'));
+  return value;
+};
+
+const port = portEnv();
 const host = process.env.HOST?.trim() || '0.0.0.0';
 const configuredDataDir = process.env.DATA_DIR?.trim();
 const dataDir = configuredDataDir ? resolve(configuredDataDir) : developmentDataDir(import.meta.url);
-const positiveNumber = (name: string): number | undefined => {
-  const value = Number(process.env[name]);
-  return Number.isSafeInteger(value) && value > 0 ? value : undefined;
-};
-const boolEnv = (name: string, fallback: boolean) => {
-  const v = process.env[name];
-  if (v === undefined || v === '') return fallback;
-  return v !== '0' && v.toLowerCase() !== 'false' && v.toLowerCase() !== 'off';
-};
 const listEnv = (name: string): string[] | undefined => {
   const values = process.env[name]?.split(',').map((value) => value.trim()).filter(Boolean);
   return values?.length ? values : undefined;
 };
-const modeEnv = process.env.REGISTRATION_MODE;
-const registrationMode: RegistrationMode = modeEnv === 'invite' || modeEnv === 'closed' || modeEnv === 'open' ? modeEnv : 'invite';
+const registrationMode: RegistrationMode = enumEnv('REGISTRATION_MODE', ['invite', 'closed', 'open'] as const, 'invite');
 const webDir = process.env.WEB_DIST;
 const enableWeb = boolEnv('ENABLE_WEB', Boolean(webDir));
 const enableSync = boolEnv('ENABLE_SYNC', true);
 const basePath = process.env.BASE_PATH?.trim() || undefined;
 const service = createSyncServer({
-  accountProtection: process.env.ACCOUNT_PROTECTION === 'private' ? 'private' : 'managed',
+  accountProtection: enumEnv('ACCOUNT_PROTECTION', ['managed', 'private'] as const, 'managed'),
   custodyEnabled: boolEnv('CUSTODY_ENABLED', true),
   custodyKeyPath: process.env.CUSTODY_KEY_PATH?.trim() || undefined,
   dataDir,
@@ -36,7 +68,7 @@ const service = createSyncServer({
   attachmentQuotaBytes: positiveNumber('ATTACHMENT_QUOTA_BYTES'),
   attachmentMaxFileBytes: positiveNumber('ATTACHMENT_MAX_FILE_BYTES'),
   attachmentTrashRetentionMs: positiveNumber('ATTACHMENT_TRASH_RETENTION_MS'),
-  secret: process.env.SYNC_SECRET,
+  secret: process.env.SYNC_SECRET?.trim() || undefined,
   serverId: process.env.SERVER_ID,
   registrationMode,
   enableSync,
@@ -48,6 +80,8 @@ const service = createSyncServer({
 });
 const { server, serverId } = service;
 await service.ready;
+// Recovery, deployment-record import and settings validation must succeed before serving.
+await service.started;
 const pidFile = resolve(dataDir, 'server.pid');
 writeFileSync(pidFile, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), dataDir }), 'utf8');
 

@@ -11,6 +11,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  statfsSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -71,6 +72,45 @@ export interface BlobVerificationResult {
   checkedObjects: number;
   checkedChunks: number;
   issues: { username: string; blobId: string; detail: string }[];
+  /** Present on incremental runs so an interrupted scan can resume after its last object. */
+  lastKey?: string;
+  cancelled?: boolean;
+}
+
+export interface VerifyOptions {
+  resumeFrom?: string;
+  /** Restricts the scan to one account so per-account maintenance stays bounded. */
+  username?: string;
+  batchSize?: number;
+  onProgress?: (progress: { processed: number; total: number }) => Promise<void> | void;
+  shouldCancel?: () => Promise<boolean> | boolean;
+}
+
+/** Scheduled maintenance used to fail silently; the last outcome is now readable. */
+export interface CleanupStatus {
+  lastStartedAt?: string;
+  lastFinishedAt?: string;
+  lastOk: boolean | null;
+  lastError?: string;
+  lastRemovedObjects: number;
+  lastRemovedUploads: number;
+  lastFreedBytes: number;
+  consecutiveFailures: number;
+  runs: number;
+}
+
+export interface StorageComposition {
+  databaseBytes: number;
+  walBytes: number;
+  shmBytes: number;
+  objectBytes: number;
+  objectCount: number;
+  trashBytes: number;
+  trashCount: number;
+  stagingBytes: number;
+  stagingCount: number;
+  diskTotalBytes: number | null;
+  diskFreeBytes: number | null;
 }
 
 interface ObjectCatalog {
@@ -85,6 +125,31 @@ interface ObjectCatalog {
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function fileSize(path: string): number {
+  try {
+    const stats = statSync(path);
+    return stats.isFile() ? stats.size : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function directorySize(path: string): number {
+  let total = 0;
+  let entries;
+  try {
+    entries = readdirSync(path, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    const child = join(path, entry.name);
+    if (entry.isDirectory()) total += directorySize(child);
+    else total += fileSize(child);
+  }
+  return total;
 }
 
 function sha256(value: Uint8Array): string {
@@ -188,6 +253,11 @@ export class EncryptedBlobStore {
   private readonly trashRetentionMs: number;
   private uploadLock: Promise<void> = Promise.resolve();
   private cleanupTimer?: ReturnType<typeof setInterval>;
+  private cleanupState: CleanupStatus = {
+    lastOk: null, lastRemovedObjects: 0, lastRemovedUploads: 0, lastFreedBytes: 0, consecutiveFailures: 0, runs: 0,
+  };
+  /** Wired by the server so a failed scheduled cleanup reaches the log instead of vanishing. */
+  onCleanupResult?: (status: CleanupStatus) => void;
 
   constructor(options: BlobStoreOptions = {}) {
     this.ephemeral = !options.dataDir;
@@ -200,7 +270,7 @@ export class EncryptedBlobStore {
     this.trashRetentionMs = options.trashRetentionMs ?? 30 * 24 * 60 * 60 * 1000;
     this.ready = this.initialize();
     void this.ready.then(() => {
-      this.cleanupTimer = setInterval(() => void this.cleanup().catch(() => undefined), 60 * 60 * 1000);
+      this.cleanupTimer = setInterval(() => { void this.runCleanup(); }, 60 * 60 * 1000);
       this.cleanupTimer.unref?.();
     });
   }
@@ -523,13 +593,26 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
     return true;
   }
 
-  async verify(): Promise<BlobVerificationResult> {
+  /**
+   * Verifies stored chunks in batches. Between batches the loop yields and checks
+   * cancellation, so a long scan keeps login and synchronization responsive.
+   */
+  async verify(options: VerifyOptions = {}): Promise<BlobVerificationResult> {
     await this.ready;
-    const result: BlobVerificationResult = { checkedObjects: 0, checkedChunks: 0, issues: [] };
-    const rows = await this.driver.all<Record<string, unknown>>('SELECT * FROM blob_objects ORDER BY username, blob_id');
-    for (const row of rows) {
+    const result: BlobVerificationResult = { checkedObjects: 0, checkedChunks: 0, issues: [], cancelled: false };
+    const clauses = ["(? = '' OR (username || '|' || blob_id) > ?)"];
+    const scanParams: string[] = [options.resumeFrom ?? '', options.resumeFrom ?? ''];
+    if (options.username) { clauses.push('username = ?'); scanParams.push(options.username); }
+    const rows = await this.driver.all<Record<string, unknown>>(
+      `SELECT * FROM blob_objects WHERE ${clauses.join(' AND ')} ORDER BY username, blob_id`,
+      scanParams,
+    );
+    const batchSize = Math.max(1, Math.min(500, Math.trunc(options.batchSize ?? 25)));
+    await options.onProgress?.({ processed: 0, total: rows.length });
+    for (const [position, row] of rows.entries()) {
       const username = String(row['username']);
       const blobId = String(row['blob_id']);
+      result.lastKey = `${username}|${blobId}`;
       try {
         const state = String(row['state']) as 'available' | 'trash';
         const manifest = assertManifest(JSON.parse(String(row['manifest_json'])), this.maxBlobBytes);
@@ -546,12 +629,86 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
       } catch (error) {
         result.issues.push({ username, blobId, detail: error instanceof Error ? error.message : String(error) });
       }
+      if ((position + 1) % batchSize !== 0) continue;
+      await new Promise<void>((resolveYield) => setImmediate(resolveYield));
+      await options.onProgress?.({ processed: position + 1, total: rows.length });
+      if (options.shouldCancel && await options.shouldCancel()) {
+        result.cancelled = true;
+        return result;
+      }
     }
+    await options.onProgress?.({ processed: rows.length, total: rows.length });
     return result;
   }
 
-  async cleanup(now = new Date()): Promise<void> {
+  /** Runs cleanup, records the outcome, and reports failures to the operator. */
+  async runCleanup(now = new Date()): Promise<CleanupStatus> {
+    this.cleanupState.lastStartedAt = now.toISOString();
+    this.cleanupState.runs += 1;
+    try {
+      const summary = await this.cleanup(now);
+      this.cleanupState.lastOk = true;
+      this.cleanupState.lastError = undefined;
+      this.cleanupState.lastRemovedObjects = summary.removedObjects;
+      this.cleanupState.lastRemovedUploads = summary.removedUploads;
+      this.cleanupState.lastFreedBytes = summary.freedBytes;
+      this.cleanupState.consecutiveFailures = 0;
+    } catch (error) {
+      this.cleanupState.lastOk = false;
+      this.cleanupState.lastError = error instanceof Error ? error.message : String(error);
+      this.cleanupState.consecutiveFailures += 1;
+    } finally {
+      this.cleanupState.lastFinishedAt = new Date().toISOString();
+      this.onCleanupResult?.(this.cleanupStatus());
+    }
+    return this.cleanupStatus();
+  }
+
+  cleanupStatus(): CleanupStatus {
+    return { ...this.cleanupState };
+  }
+
+  /** Logical quota usage stays separate from physical disk usage on the storage page. */
+  async storageComposition(): Promise<StorageComposition> {
+    await this.ready;
+    const directories: [keyof StorageComposition, string][] = [
+      ['objectBytes', join(this.dataDir, 'blobs', 'objects')],
+      ['trashBytes', join(this.dataDir, 'blobs', 'trash')],
+      ['stagingBytes', join(this.dataDir, 'blobs', 'staging')],
+    ];
+    const composition: StorageComposition = {
+      databaseBytes: fileSize(join(this.dataDir, 'server.sqlite')),
+      walBytes: fileSize(join(this.dataDir, 'server.sqlite-wal')),
+      shmBytes: fileSize(join(this.dataDir, 'server.sqlite-shm')),
+      objectBytes: 0, objectCount: 0, trashBytes: 0, trashCount: 0, stagingBytes: 0, stagingCount: 0,
+      diskTotalBytes: null, diskFreeBytes: null,
+    };
+    for (const [key, directory] of directories) composition[key] = directorySize(directory);
+    const counts = await this.driver.all<{ state: string; value: number }>(
+      "SELECT state, COUNT(*) AS value FROM blob_objects GROUP BY state",
+    );
+    for (const row of counts) {
+      if (row.state === 'available') composition.objectCount = Number(row.value);
+      else if (row.state === 'trash') composition.trashCount = Number(row.value);
+    }
+    const staging = await this.driver.get<{ value: number }>('SELECT COUNT(*) AS value FROM blob_uploads');
+    composition.stagingCount = Number(staging?.value ?? 0);
+    try {
+      const stats = statfsSync(this.dataDir);
+      composition.diskTotalBytes = Number(stats.blocks) * Number(stats.bsize);
+      composition.diskFreeBytes = Number(stats.bavail) * Number(stats.bsize);
+    } catch {
+      composition.diskTotalBytes = null;
+      composition.diskFreeBytes = null;
+    }
+    return composition;
+  }
+
+  async cleanup(now = new Date()): Promise<{ removedObjects: number; removedUploads: number; freedBytes: number }> {
     const nowValue = now.toISOString();
+    let removedObjects = 0;
+    let removedUploads = 0;
+    let freedBytes = 0;
     for (const completed of await this.driver.all<{ upload_id: string; namespace: string }>(
       `SELECT u.upload_id, u.namespace FROM blob_uploads u
        JOIN blob_objects o ON o.username = u.username AND o.ledger_id = u.ledger_id AND o.blob_id = u.blob_id`,
@@ -559,11 +716,13 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
       rmSync(this.uploadDir(completed.namespace, completed.upload_id), { recursive: true, force: true });
       await this.driver.run('DELETE FROM blob_upload_chunks WHERE upload_id = ?', [completed.upload_id]);
       await this.driver.run('DELETE FROM blob_uploads WHERE upload_id = ?', [completed.upload_id]);
+      removedUploads += 1;
     }
     for (const upload of await this.driver.all<{ upload_id: string; namespace: string }>('SELECT upload_id, namespace FROM blob_uploads WHERE expires_at <= ?', [nowValue])) {
       rmSync(this.uploadDir(upload.namespace, upload.upload_id), { recursive: true, force: true });
       await this.driver.run('DELETE FROM blob_upload_chunks WHERE upload_id = ?', [upload.upload_id]);
       await this.driver.run('DELETE FROM blob_uploads WHERE upload_id = ?', [upload.upload_id]);
+      removedUploads += 1;
     }
     const activeUploads = new Set((await this.driver.all<{ upload_id: string; namespace: string }>('SELECT upload_id, namespace FROM blob_uploads'))
       .map((upload) => `${upload.namespace}/${upload.upload_id}`));
@@ -579,13 +738,18 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
       }
     }
     const cutoff = new Date(now.getTime() - this.trashRetentionMs).toISOString();
-    for (const object of await this.driver.all<{ username: string; ledger_id: string; blob_id: string; namespace: string }>(
-      "SELECT username, ledger_id, blob_id, namespace FROM blob_objects WHERE state = 'trash' AND deleted_at <= ?",
+    for (const object of await this.driver.all<{ username: string; ledger_id: string; blob_id: string; namespace: string; cipher_bytes: number }>(
+      "SELECT username, ledger_id, blob_id, namespace, cipher_bytes FROM blob_objects WHERE state = 'trash' AND deleted_at <= ?",
       [cutoff],
     )) {
+      // Measure before deleting so the report can say how much space came back.
+      const freed = directorySize(this.objectDir('trash', object.namespace, object.blob_id));
       rmSync(this.objectDir('trash', object.namespace, object.blob_id), { recursive: true, force: true });
       await this.driver.run('DELETE FROM blob_objects WHERE username = ? AND ledger_id = ? AND blob_id = ?', [object.username, object.ledger_id, object.blob_id]);
+      removedObjects += 1;
+      freedBytes += freed;
     }
+    return { removedObjects, removedUploads, freedBytes };
   }
 
   async close(): Promise<void> {

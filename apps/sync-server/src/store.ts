@@ -20,6 +20,8 @@ export interface SyncUser {
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
+  /** Bumped on every administrative mutation; used as the optimistic-concurrency token. */
+  revision: number;
 }
 
 export interface OpaqueLoginState {
@@ -44,6 +46,8 @@ export interface SyncSession {
   lastSeenAt: string;
   lastIp?: string;
   revokedAt?: string;
+  /** `admin` for management-console logins, `ledger` for accounting devices. */
+  kind: string;
 }
 
 export interface UserReplica {
@@ -83,6 +87,9 @@ export type AdminMutation =
   | { action: 'blob-quota'; accountId: string; bytes: number | null }
   | { action: 'revoke-session'; sessionId: string }
   | { action: 'registration'; mode: RegistrationMode }
+  /** Records an allow-listed settings change; carries no target account. */
+  | { action: 'settings-save'; keys: string[] }
+  | { action: 'sessions-revoke-all'; accountId: string; revoked: number }
   | { action: 'invite-create'; code: string; expiresAt: string }
   | { action: 'invite-state'; code: string; disabled: boolean };
 
@@ -125,22 +132,150 @@ export interface ServerBackupArchive {
   sourceGeneration?: string;
 }
 
+export type AdminJobType =
+  | 'database.integrity-check'
+  | 'blobs.verify'
+  | 'storage.cleanup'
+  | 'logs.prune'
+  | 'metrics.prune'
+  | 'backup.verify'
+  | 'restore.drill';
+export type AdminJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
+
+export interface AdminJob {
+  jobId: string;
+  type: AdminJobType;
+  params: JsonRecord;
+  status: AdminJobStatus;
+  createdAt: string;
+  createdBy: string;
+  targetAccountId?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  phase?: string;
+  processed: number;
+  total: number;
+  result?: JsonRecord;
+  errorCode?: string;
+  errorMessage?: string;
+  cancelRequested: boolean;
+  retryOf?: string;
+}
+
+export interface AdminJobEvent {
+  id: number;
+  jobId: string;
+  at: string;
+  level: ServerLogLevel;
+  message: string;
+  detail?: JsonRecord;
+}
+
+/** Server-visible sync outcome. Client-side offline failures are out of scope by design. */
+export type SyncEventCategory =
+  | 'session-invalid'
+  | 'quota-exceeded'
+  | 'protocol-incompatible'
+  | 'ledger-mismatch'
+  | 'server-storage-error'
+  | 'other';
+
+export interface SyncEvent {
+  id: string;
+  at: string;
+  username?: string;
+  accountId?: string;
+  deviceName?: string;
+  operation: string;
+  outcome: 'ok' | 'error';
+  resultCode?: string;
+  category?: SyncEventCategory;
+  commitCount?: number;
+  bytes?: number;
+  durationMs?: number;
+  requestId?: string;
+}
+
+export interface MetricBucket {
+  bucketAt: string;
+  requests: number;
+  errors: number;
+  slowRequests: number;
+  durationMs: number;
+  syncPushOk: number;
+  syncPushFailed: number;
+  syncPullOk: number;
+  blobOk: number;
+  blobFailed: number;
+}
+
+export interface AdminAlert {
+  key: string;
+  rule: string;
+  scope: string;
+  severity: 'warning' | 'critical';
+  state: 'pending' | 'active' | 'resolved';
+  firstSeenAt: string;
+  lastSeenAt: string;
+  occurrences: number;
+  detail?: JsonRecord;
+  acknowledgedAt?: string;
+  acknowledgedBy?: string;
+  resolvedAt?: string;
+}
+
+export interface ServerBackupRecord {
+  recordId: string;
+  kind: 'manual' | 'scheduled' | 'drill';
+  status: 'completed' | 'failed' | 'planned';
+  createdAt: string;
+  finishedAt?: string;
+  outputPath?: string;
+  serverId?: string;
+  fileCount?: number;
+  totalBytes?: number;
+  verifiedAt?: string;
+  verification?: JsonRecord;
+  drill?: JsonRecord;
+  errorMessage?: string;
+  note?: string;
+  createdBy?: string;
+}
+
+export interface AccountSessionSummary {
+  id: string;
+  username: string;
+  accountId?: string;
+  role: AccountRole;
+  deviceId: string;
+  deviceName: string;
+  kind: string;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  lastIp?: string;
+  revokedAt?: string;
+  active: boolean;
+}
+
 export class ServerStoreError extends Error {
   constructor(readonly code: string, readonly status: number, message: string) {
     super(message);
   }
 }
 
-export const CURRENT_SERVER_SCHEMA = 10;
-export const CURRENT_SERVER_SCHEMA_NAME = 'server_key_custody_v10';
+export const CURRENT_SERVER_SCHEMA = 11;
+export const CURRENT_SERVER_SCHEMA_NAME = 'server_management_ops_v11';
 export function supportedServerSchema(version: number, name: string): boolean {
   return version === CURRENT_SERVER_SCHEMA && name === CURRENT_SERVER_SCHEMA_NAME
+    || version === 10 && name === 'server_key_custody_v10'
     || version === 9 && name === 'server_password_recovery_v9'
     || version === 8 && name === 'server_management_v8'
     || version === 7 && name === 'server_account_identity_v7'
     || version === 6 && name === 'server_account_owner_v6';
 }
 const DEFAULT_COMMIT_QUOTA_BYTES = 512 * 1024 * 1024;
+const DEFAULT_BLOB_QUOTA_BYTES = 2 * 1024 * 1024 * 1024;
 const LOG_RETENTION = 5_000;
 
 function nowIso(): string {
@@ -170,6 +305,7 @@ function userFromRow(row: Record<string, unknown>): SyncUser {
     createdAt: String(row['created_at']),
     updatedAt: String(row['updated_at']),
     ...(row['last_login_at'] == null ? {} : { lastLoginAt: String(row['last_login_at']) }),
+    revision: Number(row['revision'] ?? 1),
   };
 }
 
@@ -198,6 +334,7 @@ function sessionFromRow(row: Record<string, unknown>): SyncSession {
     lastSeenAt: String(row['last_seen_at']),
     ...(row['last_ip'] == null ? {} : { lastIp: String(row['last_ip']) }),
     ...(row['revoked_at'] == null ? {} : { revokedAt: String(row['revoked_at']) }),
+    kind: String(row['kind'] ?? 'ledger'),
   };
 }
 
@@ -247,6 +384,8 @@ function backupFromRow(row: Record<string, unknown>): ServerBackupArchive {
 export class SyncServerStore {
   readonly ready: Promise<void>;
   private readonly driver: NodeSqliteDriver;
+  private logWrites = 0;
+  private lastLogPruneAt = 0;
 
   constructor(
     readonly databaseFile: string,
@@ -254,6 +393,7 @@ export class SyncServerStore {
     private readonly serverId: string,
     private readonly defaultCommitQuotaBytes = DEFAULT_COMMIT_QUOTA_BYTES,
     initializeAfter?: Promise<unknown>,
+    private readonly defaultBlobQuotaBytes = DEFAULT_BLOB_QUOTA_BYTES,
   ) {
     this.driver = new NodeSqliteDriver(databaseFile);
     this.ready = initializeAfter
@@ -287,7 +427,8 @@ CREATE TABLE IF NOT EXISTS sync_users (
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  last_login_at TEXT
+  last_login_at TEXT,
+  revision INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS server_ownership (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -309,7 +450,9 @@ CREATE TABLE IF NOT EXISTS server_admin_audit (
   target_account_id TEXT,
   action TEXT NOT NULL,
   before_json TEXT NOT NULL,
-  after_json TEXT NOT NULL
+  after_json TEXT NOT NULL,
+  reason TEXT,
+  request_id TEXT
 );
 CREATE TABLE IF NOT EXISTS registration_invite_policy (
   code TEXT PRIMARY KEY REFERENCES registration_invites(code) ON DELETE CASCADE,
@@ -342,7 +485,8 @@ CREATE TABLE IF NOT EXISTS sync_sessions (
   expires_at TEXT NOT NULL,
   last_seen_at TEXT NOT NULL,
   last_ip TEXT,
-  revoked_at TEXT
+  revoked_at TEXT,
+  kind TEXT NOT NULL DEFAULT 'ledger'
 );
 CREATE INDEX IF NOT EXISTS idx_sync_sessions_user ON sync_sessions (username, revoked_at, expires_at);
 CREATE TABLE IF NOT EXISTS server_rate_limits (
@@ -432,13 +576,141 @@ CREATE TABLE IF NOT EXISTS sync_backup_archives (
   UNIQUE (username, ledger_id, blob_id)
 );
 CREATE INDEX IF NOT EXISTS idx_backup_archives_created
-  ON sync_backup_archives (username, ledger_id, deleted_at, created_at DESC);`);
+  ON sync_backup_archives (username, ledger_id, deleted_at, created_at DESC);
+CREATE TABLE IF NOT EXISTS admin_jobs (
+  job_id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  params_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  target_account_id TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  phase TEXT,
+  processed INTEGER NOT NULL DEFAULT 0,
+  total INTEGER NOT NULL DEFAULT 0,
+  result_json TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  cancel_requested INTEGER NOT NULL DEFAULT 0,
+  retry_of TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_admin_jobs_created ON admin_jobs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_jobs_status ON admin_jobs (status, created_at);
+CREATE TABLE IF NOT EXISTS admin_job_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT NOT NULL,
+  at TEXT NOT NULL,
+  level TEXT NOT NULL,
+  message TEXT NOT NULL,
+  detail_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_admin_job_events_job ON admin_job_events (job_id, id);
+CREATE TABLE IF NOT EXISTS admin_alerts (
+  alert_key TEXT PRIMARY KEY,
+  rule TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  state TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  occurrences INTEGER NOT NULL DEFAULT 1,
+  healthy_checks INTEGER NOT NULL DEFAULT 0,
+  detail_json TEXT,
+  acknowledged_at TEXT,
+  acknowledged_by TEXT,
+  resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_admin_alerts_state ON admin_alerts (state, last_seen_at DESC);
+CREATE TABLE IF NOT EXISTS admin_audit_failures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  actor_account_id TEXT,
+  target_account_id TEXT,
+  action TEXT NOT NULL,
+  code TEXT,
+  message TEXT,
+  reason TEXT,
+  request_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_failures_at ON admin_audit_failures (at DESC);
+CREATE TABLE IF NOT EXISTS admin_idempotency (
+  idempotency_key TEXT PRIMARY KEY,
+  fingerprint TEXT NOT NULL,
+  status INTEGER NOT NULL,
+  body_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admin_idempotency_expiry ON admin_idempotency (expires_at);
+CREATE TABLE IF NOT EXISTS server_metric_buckets (
+  granularity TEXT NOT NULL,
+  bucket_at TEXT NOT NULL,
+  requests INTEGER NOT NULL DEFAULT 0,
+  errors INTEGER NOT NULL DEFAULT 0,
+  slow_requests INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  sync_push_ok INTEGER NOT NULL DEFAULT 0,
+  sync_push_failed INTEGER NOT NULL DEFAULT 0,
+  sync_pull_ok INTEGER NOT NULL DEFAULT 0,
+  blob_ok INTEGER NOT NULL DEFAULT 0,
+  blob_failed INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (granularity, bucket_at)
+);
+CREATE TABLE IF NOT EXISTS sync_events (
+  id TEXT PRIMARY KEY,
+  at TEXT NOT NULL,
+  username TEXT COLLATE NOCASE,
+  account_id TEXT,
+  device_name TEXT,
+  operation TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  result_code TEXT,
+  category TEXT,
+  commit_count INTEGER,
+  bytes INTEGER,
+  duration_ms INTEGER,
+  request_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sync_events_at ON sync_events (at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_events_username ON sync_events (username, at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_events_category ON sync_events (category, at DESC);
+CREATE TABLE IF NOT EXISTS server_backup_records (
+  record_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  finished_at TEXT,
+  output_path TEXT,
+  server_id TEXT,
+  file_count INTEGER,
+  total_bytes INTEGER,
+  verified_at TEXT,
+  verification_json TEXT,
+  drill_json TEXT,
+  error_message TEXT,
+  note TEXT,
+  created_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_server_backup_records_created ON server_backup_records (created_at DESC);
+CREATE TABLE IF NOT EXISTS server_maintenance_state (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);`);
+    // Additive column upgrades keep pre-v11 databases readable without a schema reset.
+    await this.ensureColumn('sync_users', 'revision', 'INTEGER NOT NULL DEFAULT 1');
+    await this.ensureColumn('sync_sessions', 'kind', "TEXT NOT NULL DEFAULT 'ledger'");
+    await this.ensureColumn('server_admin_audit', 'reason', 'TEXT');
+    await this.ensureColumn('server_admin_audit', 'request_id', 'TEXT');
     const migrations = await this.driver.all<{ version: number; name: string }>('SELECT version, name FROM server_schema_migrations ORDER BY version');
     const previous = migrations.length === 1 && (
       Number(migrations[0]?.version) === 6 && migrations[0]?.name === 'server_account_owner_v6'
       || Number(migrations[0]?.version) === 7 && migrations[0]?.name === 'server_account_identity_v7'
       || Number(migrations[0]?.version) === 8 && migrations[0]?.name === 'server_management_v8'
       || Number(migrations[0]?.version) === 9 && migrations[0]?.name === 'server_password_recovery_v9'
+      || Number(migrations[0]?.version) === 10 && migrations[0]?.name === 'server_key_custody_v10'
     );
     if (!migrations.length || previous) {
       // This additive identity upgrade does not touch ledger bytes, credentials,
@@ -459,6 +731,13 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     if (persistedServer && persistedServer.value !== this.serverId) throw new Error('server-id 与 SQLite 主库不匹配');
     await this.driver.run('INSERT OR IGNORE INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)', ['server_id', this.serverId, at]);
     await this.driver.run('INSERT OR IGNORE INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)', ['registration_mode', this.defaultRegistrationMode, at]);
+  }
+
+  /** Additive column upgrades keep pre-v11 databases readable without a schema reset. */
+  private async ensureColumn(table: string, column: string, definition: string): Promise<void> {
+    const columns = await this.driver.all<{ name: string }>(`PRAGMA table_info(${table})`);
+    if (columns.some((row) => String(row.name) === column)) return;
+    await this.driver.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
   async registrationMode(): Promise<RegistrationMode> {
@@ -633,6 +912,8 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     refreshHash: string;
     expiresAt: string;
     ip?: string;
+    /** Management-console logins are recorded as `admin` so session lists can separate them. */
+    kind?: string;
   }): Promise<SyncSession> {
     await this.ready;
     const at = nowIso();
@@ -646,6 +927,7 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
       updatedAt: at,
       expiresAt: input.expiresAt,
       lastSeenAt: at,
+      kind: input.kind === 'admin' ? 'admin' : 'ledger',
       ...(input.ip ? { lastIp: input.ip } : {}),
     };
     await this.driver.transaction(async (driver) => {
@@ -660,11 +942,11 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
       );
       await driver.run(
         `INSERT INTO sync_sessions
-         (session_id, username, device_id, device_name, refresh_hash, created_at, updated_at, expires_at, last_seen_at, last_ip)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (session_id, username, device_id, device_name, refresh_hash, created_at, updated_at, expires_at, last_seen_at, last_ip, kind)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           session.id, session.username, session.deviceId, session.deviceName, session.refreshHash,
-          session.createdAt, session.updatedAt, session.expiresAt, session.lastSeenAt, session.lastIp ?? null,
+          session.createdAt, session.updatedAt, session.expiresAt, session.lastSeenAt, session.lastIp ?? null, session.kind,
         ],
       );
     });
@@ -754,7 +1036,14 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     });
   }
 
-  async listUsers(after = '', limit = 100, filters: { search?: string; role?: string; state?: string } = {}): Promise<{ users: JsonRecord[]; nextCursor?: string }> {
+  async listUsers(after = '', limit = 100, filters: {
+    search?: string;
+    role?: string;
+    state?: string;
+    protection?: string;
+    /** Capacity state is derived from the encrypted-commit quota, which is the billed one. */
+    quota?: string;
+  } = {}): Promise<{ users: JsonRecord[]; nextCursor?: string }> {
     await this.ready;
     const rows = await this.driver.all<Record<string, unknown>>(
       `SELECT u.username, i.account_id, u.disabled, u.created_at, u.updated_at, u.last_login_at,
@@ -762,6 +1051,8 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
               r.ledger_id, r.replica_id, COALESCE(r.head_seq, 0) AS commit_count,
               COALESCE(SUM(c.cipher_bytes), 0) AS commit_bytes,
               COALESCE(q.commit_quota_bytes, ?) AS commit_quota_bytes,
+              u.revision,
+              k.mode AS protection_mode,
               (SELECT COUNT(*) FROM sync_sessions s
                WHERE s.username = u.username AND s.revoked_at IS NULL AND s.expires_at > ?) AS active_device_count
        FROM sync_users u
@@ -771,14 +1062,31 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
        LEFT JOIN sync_replicas r ON r.username = u.username
        LEFT JOIN sync_server_commits c ON c.username = u.username
        LEFT JOIN sync_user_quotas q ON q.username = u.username
+       LEFT JOIN sync_key_custody k ON k.username = u.username
        WHERE u.username > ? COLLATE NOCASE
          AND (? = '' OR instr(lower(u.username), lower(?)) > 0 OR i.account_id = ?)
          AND (? = '' OR CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END = ?)
          AND (? = '' OR u.disabled = ?)
+         AND (? = '' OR COALESCE(k.mode, 'none') = ?)
        GROUP BY u.username
+       HAVING (? = ''
+         OR (? = 'over' AND COALESCE(SUM(c.cipher_bytes), 0) >= COALESCE(q.commit_quota_bytes, ?))
+         OR (? = 'warning' AND COALESCE(SUM(c.cipher_bytes), 0) >= COALESCE(q.commit_quota_bytes, ?) * 0.9
+             AND COALESCE(SUM(c.cipher_bytes), 0) < COALESCE(q.commit_quota_bytes, ?))
+         OR (? = 'ok' AND COALESCE(SUM(c.cipher_bytes), 0) < COALESCE(q.commit_quota_bytes, ?) * 0.9))
        ORDER BY u.username COLLATE NOCASE
        LIMIT ?`,
-      [this.defaultCommitQuotaBytes, nowIso(), after, filters.search ?? '', filters.search ?? '', filters.search ?? '', filters.role ?? '', filters.role ?? '', filters.state ?? '', filters.state === 'disabled' ? 1 : 0, limit + 1],
+      [
+        this.defaultCommitQuotaBytes, nowIso(), after,
+        filters.search ?? '', filters.search ?? '', filters.search ?? '',
+        filters.role ?? '', filters.role ?? '',
+        filters.state ?? '', filters.state === 'disabled' ? 1 : 0,
+        filters.protection ?? '', filters.protection ?? '',
+        filters.quota ?? '', filters.quota ?? '', this.defaultCommitQuotaBytes,
+        filters.quota ?? '', this.defaultCommitQuotaBytes, this.defaultCommitQuotaBytes,
+        filters.quota ?? '', this.defaultCommitQuotaBytes,
+        limit + 1,
+      ],
     );
     const page = rows.slice(0, limit).map((row) => ({
       accountId: String(row['account_id']), username: String(row['username']), disabled: bool(row['disabled']),
@@ -788,6 +1096,10 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
       replicaId: row['replica_id'] ?? null, commitCount: Number(row['commit_count'] ?? 0),
       commitBytes: Number(row['commit_bytes'] ?? 0), commitQuotaBytes: Number(row['commit_quota_bytes']),
       activeDeviceCount: Number(row['active_device_count'] ?? 0),
+      revision: Number(row['revision'] ?? 1),
+      protectionMode: row['protection_mode'] == null ? null : String(row['protection_mode']),
+      quotaState: Number(row['commit_bytes'] ?? 0) >= Number(row['commit_quota_bytes']) ? 'over'
+        : Number(row['commit_bytes'] ?? 0) >= Number(row['commit_quota_bytes']) * 0.9 ? 'warning' : 'ok',
     }));
     return { users: page, ...(rows.length > limit ? { nextCursor: String(rows[limit - 1]?.['username'] ?? '') } : {}) };
   }
@@ -817,7 +1129,11 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
   }
 
   /** Authorization, mutation, session invalidation and durable audit share one transaction. */
-  async mutateAdmin(actorSessionId: string, mutation: AdminMutation): Promise<void> {
+  async mutateAdmin(
+    actorSessionId: string,
+    mutation: AdminMutation,
+    options: { reason?: string; requestId?: string; expectedVersion?: number } = {},
+  ): Promise<void> {
     await this.ready;
     await this.driver.transaction(async (driver) => {
       const at = nowIso();
@@ -843,8 +1159,15 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
       if (target && ((!quotaMutation && target.role === 'owner') || actor.role === 'admin' && target.role !== 'member')) {
         throw new ServerStoreError('PROTECTED_ACCOUNT', 403, 'cannot manage this privileged account');
       }
-      if ((mutation.action === 'role' || mutation.action === 'registration') && actor.role !== 'owner') {
+      if ((mutation.action === 'role' || mutation.action === 'registration' || mutation.action === 'settings-save') && actor.role !== 'owner') {
         throw new ServerStoreError('OWNER_REQUIRED', 403, 'server owner required');
+      }
+      // Optimistic concurrency: two administrators editing the same account must not silently overwrite each other.
+      if (options.expectedVersion !== undefined && target) {
+        const current = await driver.get<{ revision: number }>('SELECT revision FROM sync_users WHERE username = ?', [target.username]);
+        if (Number(current?.revision ?? 1) !== options.expectedVersion) {
+          throw new ServerStoreError('STALE_WRITE', 409, '账号数据已被其他管理员修改，请刷新后重试');
+        }
       }
       if ((mutation.action === 'role' || mutation.action === 'password-reset-issue') && Date.now() - Date.parse(session!.created_at) > 5 * 60_000) {
         throw new ServerStoreError('RECENT_LOGIN_REQUIRED', 403, '此敏感操作需要最近 5 分钟内的登录，请退出管理后台并重新登录');
@@ -894,6 +1217,14 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
         await driver.run('INSERT INTO registration_invites (code, created_at, disabled) VALUES (?, ?, 0)', [mutation.code, at]);
         await driver.run('INSERT INTO registration_invite_policy (code, expires_at) VALUES (?, ?)', [mutation.code, mutation.expiresAt]);
         after = { expiresAt: mutation.expiresAt, inviteFingerprint: createHash('sha256').update(mutation.code).digest('hex') }; // Never put usable invitation secrets in audit logs.
+      } else if (mutation.action === 'settings-save') {
+        if (!Array.isArray(mutation.keys) || !mutation.keys.length || mutation.keys.some((key) => typeof key !== 'string')) {
+          throw new ServerStoreError('INVALID_SETTING', 400, 'invalid settings keys');
+        }
+        after = { keys: mutation.keys };
+      } else if (mutation.action === 'sessions-revoke-all') {
+        before = { accountId: mutation.accountId };
+        after = { revoked: mutation.revoked };
       } else if (mutation.action === 'invite-state') {
         const invite = await driver.get<{ disabled: number; used_by: string | null }>('SELECT disabled, used_by FROM registration_invites WHERE code = ?', [mutation.code]);
         if (!invite) throw new ServerStoreError('NOT_FOUND', 404, 'invite not found');
@@ -902,17 +1233,38 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
         await driver.run('UPDATE registration_invites SET disabled = ? WHERE code = ?', [mutation.disabled ? 1 : 0, mutation.code]);
       }
       if (target && (mutation.action === 'role' || mutation.action === 'state')) await driver.run('DELETE FROM account_password_resets WHERE account_id = ?', [target.account_id]);
-      await driver.run('INSERT INTO server_admin_audit (at, actor_account_id, target_account_id, action, before_json, after_json) VALUES (?, ?, ?, ?, ?, ?)',
-        [at, actor.account_id, targetId ?? null, mutation.action, JSON.stringify(before), JSON.stringify(after)]);
+      if (target) await driver.run('UPDATE sync_users SET revision = revision + 1 WHERE username = ?', [target.username]);
+      await driver.run('INSERT INTO server_admin_audit (at, actor_account_id, target_account_id, action, before_json, after_json, reason, request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [at, actor.account_id, targetId ?? null, mutation.action, JSON.stringify(before), JSON.stringify(after), options.reason ?? null, options.requestId ?? null]);
     });
   }
 
-  async listAdminAudit(before = Number.MAX_SAFE_INTEGER, limit = 50, search = ''): Promise<{ entries: JsonRecord[]; nextCursor?: string }> {
+  async listAdminAudit(options: {
+    before?: number;
+    limit?: number;
+    search?: string;
+    action?: string;
+    actorAccountId?: string;
+    targetAccountId?: string;
+    from?: string;
+    until?: string;
+  } = {}): Promise<{ entries: JsonRecord[]; nextCursor?: string }> {
     await this.ready;
+    const limit = Math.max(1, Math.min(200, options.limit ?? 50));
+    const clauses: string[] = ['id < ?'];
+    const params: (string | number)[] = [options.before ?? Number.MAX_SAFE_INTEGER];
+    if (options.search) { clauses.push("instr(lower(action || ' ' || actor_account_id || ' ' || COALESCE(target_account_id, '')), lower(?)) > 0"); params.push(options.search); }
+    if (options.action) { clauses.push('action = ?'); params.push(options.action); }
+    if (options.actorAccountId) { clauses.push('actor_account_id = ?'); params.push(options.actorAccountId); }
+    if (options.targetAccountId) { clauses.push('target_account_id = ?'); params.push(options.targetAccountId); }
+    if (options.from) { clauses.push('at >= ?'); params.push(options.from); }
+    if (options.until) { clauses.push('at < ?'); params.push(options.until); }
+    params.push(limit + 1);
     const rows = await this.driver.all<Record<string, unknown>>(
-      "SELECT * FROM server_admin_audit WHERE id < ? AND (? = '' OR instr(lower(action || ' ' || actor_account_id || ' ' || COALESCE(target_account_id, '')), lower(?)) > 0) ORDER BY id DESC LIMIT ?",
-      [before, search, search, limit + 1]);
-    return { entries: rows.slice(0, limit).map((row) => ({ id: row['id'], at: row['at'], actorAccountId: row['actor_account_id'], targetAccountId: row['target_account_id'], action: row['action'], before: JSON.parse(String(row['before_json'])), after: JSON.parse(String(row['after_json'])) })),
+      `SELECT * FROM server_admin_audit WHERE ${clauses.join(' AND ')} ORDER BY id DESC LIMIT ?`,
+      params,
+    );
+    return { entries: rows.slice(0, limit).map((row) => ({ id: row['id'], at: row['at'], actorAccountId: row['actor_account_id'], targetAccountId: row['target_account_id'], action: row['action'], reason: row['reason'], requestId: row['request_id'], before: JSON.parse(String(row['before_json'])), after: JSON.parse(String(row['after_json'])) })),
       ...(rows.length > limit ? { nextCursor: String(rows[limit - 1]!['id']) } : {}) };
   }
 
@@ -1234,6 +1586,18 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     return this.getInvite(code);
   }
 
+  /** Trimming is batched: one DELETE per log write made every line pay for the whole table. */
+  async pruneLogs(retention = LOG_RETENTION): Promise<{ removed: number }> {
+    await this.ready;
+    const result = await this.driver.run(
+      `DELETE FROM server_logs WHERE id IN (
+         SELECT id FROM server_logs ORDER BY at DESC, id DESC LIMIT -1 OFFSET ?
+       )`,
+      [retention],
+    );
+    return { removed: Number(result.changes ?? 0) };
+  }
+
   async appendLog(log: ServerLog): Promise<void> {
     await this.ready;
     await this.driver.run(
@@ -1241,15 +1605,16 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [log.id, log.at, log.level, log.action, log.message, log.ip ?? null, log.username ?? null, log.status ?? null, log.detail ? JSON.stringify(log.detail) : null],
     );
-    await this.driver.run(
-      `DELETE FROM server_logs WHERE id IN (
-         SELECT id FROM server_logs ORDER BY at DESC, id DESC LIMIT -1 OFFSET ?
-       )`,
-      [LOG_RETENTION],
-    );
+    this.logWrites += 1;
+    const now = Date.now();
+    if (this.logWrites >= 200 || now - this.lastLogPruneAt >= 60_000) {
+      this.logWrites = 0;
+      this.lastLogPruneAt = now;
+      await this.pruneLogs();
+    }
   }
 
-  async listLogs(options: { limit: number; level?: string; from?: string; until?: string; cursor?: string }): Promise<{ logs: ServerLog[]; nextCursor?: string }> {
+  async listLogs(options: { limit: number; level?: string; from?: string; until?: string; cursor?: string; requestId?: string }): Promise<{ logs: ServerLog[]; nextCursor?: string }> {
     await this.ready;
     const clauses: string[] = [];
     const params: (string | number | null)[] = [];
@@ -1257,6 +1622,8 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     if (options.from) { clauses.push('at >= ?'); params.push(options.from); }
     if (options.until) { clauses.push('at < ?'); params.push(options.until); }
     if (options.cursor) { const [cursorAt, cursorId] = options.cursor.split('|'); clauses.push('(at < ? OR (at = ? AND id < ?))'); params.push(cursorAt ?? '', cursorAt ?? '', cursorId ?? ''); }
+    // Lets an operator jump from an error message straight to the request log line.
+    if (options.requestId) { clauses.push("instr(COALESCE(detail_json, ''), ?) > 0"); params.push(options.requestId); }
     let sql = 'SELECT * FROM server_logs';
     if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
     sql += ' ORDER BY at DESC, id DESC LIMIT ?';
@@ -1385,8 +1752,861 @@ CREATE INDEX IF NOT EXISTS idx_backup_archives_created
     await this.driver.exec(`VACUUM INTO ${quoted.value};`);
   }
 
-  async close(): Promise<void> {
-    const initialized = await this.ready.then(() => true, () => false);
+  /** Lightweight readiness probe: constant-time reads instead of a whole-database check. */
+  async probe(): Promise<{ ok: boolean; result: string; journalMode: string; tempStore: string; schemaVersion: number; migrations: number }> {
+    await this.ready;
+    const check = await this.driver.get<Record<string, unknown>>('SELECT 1 AS ok');
+    const migrations = await this.driver.get<{ value: number }>('SELECT COUNT(*) AS value FROM server_schema_migrations');
+    const journal = await this.driver.get<{ journal_mode: string }>('PRAGMA journal_mode');
+    const temp = await this.driver.get<{ temp_store: number }>('PRAGMA temp_store');
+    const migrationCount = Number(migrations?.value ?? 0);
+    const reachable = Number(check?.['ok']) === 1;
+    return {
+      ok: reachable && migrationCount === 1,
+      result: reachable ? (migrationCount === 1 ? 'ok' : 'schema-mismatch') : 'unavailable',
+      journalMode: String(journal?.journal_mode ?? ''),
+      tempStore: Number(temp?.temp_store) === 2 ? 'memory' : String(temp?.temp_store ?? ''),
+      schemaVersion: CURRENT_SERVER_SCHEMA,
+      migrations: migrationCount,
+    };
+  }
+
+  /** Deep check. Deliberately kept out of readiness and HTTP request paths. */
+  async integrityCheck(): Promise<{ ok: boolean; result: string; schemaVersion: number; checkedAt: string }> {
+    await this.ready;
+    const rows = await this.driver.all<Record<string, unknown>>('PRAGMA integrity_check');
+    const result = rows.map((row) => String(Object.values(row)[0] ?? '')).join('; ') || 'unknown';
+    return { ok: result === 'ok', result, schemaVersion: CURRENT_SERVER_SCHEMA, checkedAt: nowIso() };
+  }
+
+  async maintenanceState(key: string): Promise<JsonRecord | undefined> {
+    await this.ready;
+    const row = await this.driver.get<{ value_json: string }>('SELECT value_json FROM server_maintenance_state WHERE key = ?', [key]);
+    return row ? jsonObject(row.value_json) : undefined;
+  }
+
+  async setMaintenanceState(key: string, value: JsonRecord): Promise<void> {
+    await this.ready;
+    await this.driver.run(
+      'INSERT OR REPLACE INTO server_maintenance_state (key, value_json, updated_at) VALUES (?, ?, ?)',
+      [key, JSON.stringify(value), nowIso()],
+    );
+  }
+
+  /** One sample per request is aggregated into a minute and an hour bucket. */
+  async recordServiceSample(sample: Partial<Omit<MetricBucket, 'bucketAt'>>, at = new Date()): Promise<void> {
+    await this.ready;
+    const buckets: [string, string][] = [
+      ['minute', new Date(Math.floor(at.getTime() / 60_000) * 60_000).toISOString()],
+      ['hour', new Date(Math.floor(at.getTime() / 3_600_000) * 3_600_000).toISOString()],
+    ];
+    await this.driver.transaction(async (driver) => {
+      for (const [granularity, bucketAt] of buckets) {
+        await driver.run(
+          `INSERT INTO server_metric_buckets
+           (granularity, bucket_at, requests, errors, slow_requests, duration_ms,
+            sync_push_ok, sync_push_failed, sync_pull_ok, blob_ok, blob_failed)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(granularity, bucket_at) DO UPDATE SET
+             requests = requests + excluded.requests,
+             errors = errors + excluded.errors,
+             slow_requests = slow_requests + excluded.slow_requests,
+             duration_ms = duration_ms + excluded.duration_ms,
+             sync_push_ok = sync_push_ok + excluded.sync_push_ok,
+             sync_push_failed = sync_push_failed + excluded.sync_push_failed,
+             sync_pull_ok = sync_pull_ok + excluded.sync_pull_ok,
+             blob_ok = blob_ok + excluded.blob_ok,
+             blob_failed = blob_failed + excluded.blob_failed`,
+          [
+            granularity, bucketAt,
+            sample.requests ?? 0, sample.errors ?? 0, sample.slowRequests ?? 0, sample.durationMs ?? 0,
+            sample.syncPushOk ?? 0, sample.syncPushFailed ?? 0, sample.syncPullOk ?? 0,
+            sample.blobOk ?? 0, sample.blobFailed ?? 0,
+          ],
+        );
+      }
+    });
+  }
+
+  async listMetricBuckets(granularity: 'minute' | 'hour', from: string, until: string): Promise<MetricBucket[]> {
+    await this.ready;
+    const rows = await this.driver.all<Record<string, unknown>>(
+      'SELECT * FROM server_metric_buckets WHERE granularity = ? AND bucket_at >= ? AND bucket_at < ? ORDER BY bucket_at',
+      [granularity, from, until],
+    );
+    return rows.map((row) => ({
+      bucketAt: String(row['bucket_at']),
+      requests: Number(row['requests'] ?? 0),
+      errors: Number(row['errors'] ?? 0),
+      slowRequests: Number(row['slow_requests'] ?? 0),
+      durationMs: Number(row['duration_ms'] ?? 0),
+      syncPushOk: Number(row['sync_push_ok'] ?? 0),
+      syncPushFailed: Number(row['sync_push_failed'] ?? 0),
+      syncPullOk: Number(row['sync_pull_ok'] ?? 0),
+      blobOk: Number(row['blob_ok'] ?? 0),
+      blobFailed: Number(row['blob_failed'] ?? 0),
+    }));
+  }
+
+  async pruneMetrics(now = new Date()): Promise<{ removed: number }> {
+    await this.ready;
+    const minuteCutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const hourCutoff = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const minutes = await this.driver.run("DELETE FROM server_metric_buckets WHERE granularity = 'minute' AND bucket_at < ?", [minuteCutoff]);
+    const hours = await this.driver.run("DELETE FROM server_metric_buckets WHERE granularity = 'hour' AND bucket_at < ?", [hourCutoff]);
+    return { removed: Number(minutes.changes ?? 0) + Number(hours.changes ?? 0) };
+  }
+
+  /** Diagnostic events get their own retention so log trimming cannot erase them. */
+  async recordSyncEvent(event: Omit<SyncEvent, 'id' | 'at'> & { at?: string }): Promise<void> {
+    await this.ready;
+    const at = event.at ?? nowIso();
+    await this.driver.run(
+      `INSERT OR REPLACE INTO sync_events
+       (id, at, username, account_id, device_name, operation, outcome, result_code, category, commit_count, bytes, duration_ms, request_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        randomBytes(12).toString('hex'), at, event.username ?? null, event.accountId ?? null, event.deviceName ?? null,
+        event.operation, event.outcome, event.resultCode ?? null, event.category ?? null,
+        event.commitCount ?? null, event.bytes ?? null, event.durationMs ?? null, event.requestId ?? null,
+      ],
+    );
+  }
+
+  async listSyncEvents(options: {
+    limit: number;
+    cursor?: string;
+    username?: string;
+    accountId?: string;
+    category?: string;
+    outcome?: string;
+    from?: string;
+    until?: string;
+  }): Promise<{ events: SyncEvent[]; nextCursor?: string }> {
+    await this.ready;
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.username) { clauses.push('username = ?'); params.push(options.username); }
+    if (options.accountId) { clauses.push('account_id = ?'); params.push(options.accountId); }
+    if (options.category) { clauses.push('category = ?'); params.push(options.category); }
+    if (options.outcome) { clauses.push('outcome = ?'); params.push(options.outcome); }
+    if (options.from) { clauses.push('at >= ?'); params.push(options.from); }
+    if (options.until) { clauses.push('at < ?'); params.push(options.until); }
+    if (options.cursor) {
+      const [cursorAt, cursorId] = options.cursor.split('|');
+      clauses.push('(at < ? OR (at = ? AND id < ?))');
+      params.push(cursorAt ?? '', cursorAt ?? '', cursorId ?? '');
+    }
+    let sql = 'SELECT * FROM sync_events';
+    if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
+    sql += ' ORDER BY at DESC, id DESC LIMIT ?';
+    params.push(options.limit + 1);
+    const rows = await this.driver.all<Record<string, unknown>>(sql, params);
+    const events = rows.slice(0, options.limit).map((row): SyncEvent => ({
+      id: String(row['id']),
+      at: String(row['at']),
+      ...(row['username'] == null ? {} : { username: String(row['username']) }),
+      ...(row['account_id'] == null ? {} : { accountId: String(row['account_id']) }),
+      ...(row['device_name'] == null ? {} : { deviceName: String(row['device_name']) }),
+      operation: String(row['operation']),
+      outcome: row['outcome'] === 'ok' ? 'ok' : 'error',
+      ...(row['result_code'] == null ? {} : { resultCode: String(row['result_code']) }),
+      ...(row['category'] == null ? {} : { category: String(row['category']) as SyncEvent['category'] }),
+      ...(row['commit_count'] == null ? {} : { commitCount: Number(row['commit_count']) }),
+      ...(row['bytes'] == null ? {} : { bytes: Number(row['bytes']) }),
+      ...(row['duration_ms'] == null ? {} : { durationMs: Number(row['duration_ms']) }),
+      ...(row['request_id'] == null ? {} : { requestId: String(row['request_id']) }),
+    }));
+    const last = events.at(-1);
+    return { events, ...(rows.length > options.limit && last ? { nextCursor: `${last.at}|${last.id}` } : {}) };
+  }
+
+  async pruneSyncEvents(retention = 20_000): Promise<{ removed: number }> {
+    await this.ready;
+    const result = await this.driver.run(
+      `DELETE FROM sync_events WHERE id IN (
+         SELECT id FROM sync_events ORDER BY at DESC, id DESC LIMIT -1 OFFSET ?
+       )`,
+      [retention],
+    );
+    return { removed: Number(result.changes ?? 0) };
+  }
+
+  /** Accounts at or above a fraction of their quota, used by the capacity alert rule. */
+  async capacityWarnings(ratio: number): Promise<{
+    username: string; accountId: string; scope: 'commit' | 'blobs'; usedBytes: number; quotaBytes: number;
+  }[]> {
+    await this.ready;
+    const hasBlobTables = await this.driver.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'blob_objects'");
+    const blobBytes = hasBlobTables
+      ? '(SELECT username, SUM(cipher_bytes) AS bytes FROM blob_objects WHERE state <> \'trash\' GROUP BY username)'
+      : '(SELECT NULL AS username, 0 AS bytes WHERE 0)'
+    ;
+    const blobQuotas = hasBlobTables ? 'blob_user_quotas' : null;
+    const rows = await this.driver.all<Record<string, unknown>>(
+      `SELECT u.username, i.account_id,
+              COALESCE(c.bytes, 0) AS commit_bytes, COALESCE(q.commit_quota_bytes, ?) AS commit_quota,
+              COALESCE(b.bytes, 0) AS blob_bytes, COALESCE(bq.quota_bytes, ?) AS blob_quota
+       FROM sync_users u
+       JOIN sync_account_identities i ON i.username = u.username
+       LEFT JOIN (SELECT username, SUM(cipher_bytes) AS bytes FROM sync_server_commits GROUP BY username) c ON c.username = u.username
+       LEFT JOIN sync_user_quotas q ON q.username = u.username
+       LEFT JOIN ${blobBytes} b ON b.username = u.username
+       LEFT JOIN ${blobQuotas ? blobQuotas : '(SELECT NULL AS username, 0 AS quota_bytes WHERE 0)'} bq ON bq.username = u.username
+       WHERE u.disabled = 0`,
+      [this.defaultCommitQuotaBytes, this.defaultBlobQuotaBytes],
+    );
+    const warnings: { username: string; accountId: string; scope: 'commit' | 'blobs'; usedBytes: number; quotaBytes: number }[] = [];
+    for (const row of rows) {
+      const username = String(row['username']);
+      const accountId = String(row['account_id']);
+      const commitQuota = Number(row['commit_quota'] ?? 0);
+      const commitUsed = Number(row['commit_bytes'] ?? 0);
+      if (commitQuota > 0 && commitUsed >= commitQuota * ratio) {
+        warnings.push({ username, accountId, scope: 'commit', usedBytes: commitUsed, quotaBytes: commitQuota });
+      }
+      const blobQuota = Number(row['blob_quota'] ?? 0);
+      const blobUsed = Number(row['blob_bytes'] ?? 0);
+      if (blobQuota > 0 && blobUsed >= blobQuota * ratio) {
+        warnings.push({ username, accountId, scope: 'blobs', usedBytes: blobUsed, quotaBytes: blobQuota });
+      }
+    }
+    return warnings;
+  }
+
+  /** Sustained sync failures: only server-visible outcomes, never client offline gaps. */
+  async recentSyncErrorCount(minutes: number): Promise<number> {
+    await this.ready;
+    const row = await this.driver.get<{ value: number }>(
+      "SELECT COUNT(*) AS value FROM sync_events WHERE outcome = 'error' AND at >= ?",
+      [new Date(Date.now() - minutes * 60_000).toISOString()],
+    );
+    return Number(row?.value ?? 0);
+  }
+
+  async countActiveSessions(username?: string): Promise<number> {
+    await this.ready;
+    const row = username
+      ? await this.driver.get<{ value: number }>(
+        'SELECT COUNT(*) AS value FROM sync_sessions WHERE username = ? AND revoked_at IS NULL AND expires_at > ?',
+        [username, nowIso()],
+      )
+      : await this.driver.get<{ value: number }>(
+        'SELECT COUNT(*) AS value FROM sync_sessions WHERE revoked_at IS NULL AND expires_at > ?',
+        [nowIso()],
+      );
+    return Number(row?.value ?? 0);
+  }
+
+  /** Sessions are the management unit; the previous account-page unit is gone. */
+  async listSessionsPage(options: {
+    limit: number;
+    cursor?: string;
+    search?: string;
+    state?: string;
+    kind?: string;
+    memberOnly?: boolean;
+  }): Promise<{ sessions: AccountSessionSummary[]; nextCursor?: string }> {
+    await this.ready;
+    const at = nowIso();
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.memberOnly) {
+      clauses.push("CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END = 'member'");
+    }
+    if (options.search) {
+      clauses.push('(instr(lower(s.username), lower(?)) > 0 OR i.account_id = ? OR instr(lower(s.device_name), lower(?)) > 0)');
+      params.push(options.search, options.search, options.search);
+    }
+    if (options.state === 'active') { clauses.push('s.revoked_at IS NULL AND s.expires_at > ?'); params.push(at); }
+    else if (options.state === 'revoked') clauses.push('s.revoked_at IS NOT NULL');
+    else if (options.state === 'expired') { clauses.push('s.revoked_at IS NULL AND s.expires_at <= ?'); params.push(at); }
+    if (options.kind) { clauses.push('s.kind = ?'); params.push(options.kind); }
+    if (options.cursor) {
+      const [cursorSeen, cursorId] = options.cursor.split('|');
+      clauses.push('(s.last_seen_at < ? OR (s.last_seen_at = ? AND s.session_id < ?))');
+      params.push(cursorSeen ?? '', cursorSeen ?? '', cursorId ?? '');
+    }
+    let sql = `SELECT s.*, i.account_id,
+        CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END AS role
+      FROM sync_sessions s
+      JOIN sync_account_identities i ON i.username = s.username
+      LEFT JOIN server_administrators a ON a.username = s.username
+      LEFT JOIN server_ownership o ON o.username = s.username`;
+    if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
+    sql += ' ORDER BY s.last_seen_at DESC, s.session_id DESC LIMIT ?';
+    params.push(options.limit + 1);
+    const rows = await this.driver.all<Record<string, unknown>>(sql, params);
+    const sessions = rows.slice(0, options.limit).map((row): AccountSessionSummary => ({
+      id: String(row['session_id']),
+      username: String(row['username']),
+      accountId: String(row['account_id']),
+      role: row['role'] === 'owner' ? 'owner' : row['role'] === 'admin' ? 'admin' : 'member',
+      deviceId: String(row['device_id']),
+      deviceName: String(row['device_name']),
+      kind: String(row['kind'] ?? 'ledger'),
+      createdAt: String(row['created_at']),
+      lastSeenAt: String(row['last_seen_at']),
+      expiresAt: String(row['expires_at']),
+      ...(row['last_ip'] == null ? {} : { lastIp: String(row['last_ip']) }),
+      ...(row['revoked_at'] == null ? {} : { revokedAt: String(row['revoked_at']) }),
+      active: row['revoked_at'] == null && String(row['expires_at']) > at,
+    }));
+    const last = sessions.at(-1);
+    return { sessions, ...(rows.length > options.limit && last ? { nextCursor: `${last.lastSeenAt}|${last.id}` } : {}) };
+  }
+
+  /** Every account-scoped read a single detail page needs, without exposing ledger bytes. */
+  async accountDetail(accountId: string): Promise<JsonRecord | undefined> {
+    await this.ready;
+    const at = nowIso();
+    const row = await this.driver.get<Record<string, unknown>>(
+      `SELECT u.username, i.account_id, u.disabled, u.created_at, u.updated_at, u.last_login_at, u.revision,
+              CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END AS role,
+              r.ledger_id, r.replica_id, COALESCE(r.head_seq, 0) AS commit_count,
+              (SELECT COUNT(*) FROM sync_server_commits c WHERE c.username = u.username) AS stored_commits,
+              (SELECT COALESCE(SUM(c.cipher_bytes), 0) FROM sync_server_commits c WHERE c.username = u.username) AS commit_bytes,
+              COALESCE(q.commit_quota_bytes, ?) AS commit_quota_bytes,
+              c2.mode AS protection_mode, c2.version AS protection_version
+       FROM sync_account_identities i
+       JOIN sync_users u ON u.username = i.username
+       LEFT JOIN server_administrators a ON a.username = u.username
+       LEFT JOIN server_ownership o ON o.username = u.username
+       LEFT JOIN sync_replicas r ON r.username = u.username
+       LEFT JOIN sync_user_quotas q ON q.username = u.username
+       LEFT JOIN sync_key_custody c2 ON c2.username = u.username
+       WHERE i.account_id = ?`,
+      [this.defaultCommitQuotaBytes, accountId],
+    );
+    if (!row) return undefined;
+    const username = String(row['username']);
+    const sessions = await this.driver.all<Record<string, unknown>>(
+      `SELECT s.*, i.account_id,
+              CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.username IS NOT NULL THEN 'admin' ELSE 'member' END AS role
+       FROM sync_sessions s
+       JOIN sync_account_identities i ON i.username = s.username
+       LEFT JOIN server_administrators a ON a.username = s.username
+       LEFT JOIN server_ownership o ON o.username = s.username
+       WHERE s.username = ? ORDER BY s.last_seen_at DESC, s.session_id DESC LIMIT 100`,
+      [username],
+    );
+    const events = await this.listSyncEvents({ limit: 20, accountId });
+    const audit = await this.driver.all<Record<string, unknown>>(
+      "SELECT id, at, actor_account_id, target_account_id, action, before_json, after_json, reason, request_id FROM server_admin_audit WHERE target_account_id = ? OR actor_account_id = ? ORDER BY id DESC LIMIT 20",
+      [accountId, accountId],
+    );
+    const jobs = await this.driver.all<Record<string, unknown>>(
+      'SELECT * FROM admin_jobs WHERE target_account_id = ? ORDER BY created_at DESC LIMIT 20',
+      [accountId],
+    );
+    const activeSessions = sessions.filter((session) => session['revoked_at'] == null && String(session['expires_at']) > at).length;
+    return {
+      account: {
+        username,
+        accountId,
+        role: row['role'] === 'owner' ? 'owner' : row['role'] === 'admin' ? 'admin' : 'member',
+        disabled: bool(row['disabled']),
+        createdAt: String(row['created_at']),
+        updatedAt: String(row['updated_at']),
+        lastLoginAt: row['last_login_at'] ?? null,
+        version: Number(row['revision'] ?? 1),
+        protection: row['protection_mode'] == null
+          ? null
+          : { mode: String(row['protection_mode']), version: Number(row['protection_version'] ?? 0) },
+      },
+      capacity: {
+        commitBytes: Number(row['commit_bytes'] ?? 0),
+        commitQuotaBytes: Number(row['commit_quota_bytes']),
+        commitCount: Number(row['stored_commits'] ?? 0),
+        headSeq: Number(row['commit_count'] ?? 0),
+        ledgerId: row['ledger_id'] ?? null,
+        replicaId: row['replica_id'] ?? null,
+      },
+      sessions: sessions.map((session) => ({
+        id: String(session['session_id']),
+        username,
+        accountId,
+        role: session['role'] === 'owner' ? 'owner' : session['role'] === 'admin' ? 'admin' : 'member',
+        deviceId: String(session['device_id']),
+        deviceName: String(session['device_name']),
+        kind: String(session['kind'] ?? 'ledger'),
+        createdAt: String(session['created_at']),
+        lastSeenAt: String(session['last_seen_at']),
+        expiresAt: String(session['expires_at']),
+        lastIp: session['last_ip'] ?? null,
+        revokedAt: session['revoked_at'] ?? null,
+        active: session['revoked_at'] == null && String(session['expires_at']) > at,
+      })),
+      activeSessionCount: activeSessions,
+      sync: { recent: events.events },
+      audit: audit.map((entry) => ({
+        id: Number(entry['id']),
+        at: String(entry['at']),
+        actorAccountId: String(entry['actor_account_id']),
+        targetAccountId: entry['target_account_id'] ?? null,
+        action: String(entry['action']),
+        reason: entry['reason'] ?? null,
+        requestId: entry['request_id'] ?? null,
+        before: JSON.parse(String(entry['before_json'])),
+        after: JSON.parse(String(entry['after_json'])),
+      })),
+      jobs: jobs.map((job) => this.mapJob(job)),
+    };
+  }
+
+  async countActiveSessionsForAccount(accountId: string): Promise<number> {
+    await this.ready;
+    const row = await this.driver.get<{ value: number }>(
+      `SELECT COUNT(*) AS value FROM sync_sessions s
+       JOIN sync_account_identities i ON i.username = s.username
+       WHERE i.account_id = ? AND s.revoked_at IS NULL AND s.expires_at > ?`,
+      [accountId, nowIso()],
+    );
+    return Number(row?.value ?? 0);
+  }
+
+  async revokeAccountSessions(accountId: string): Promise<number> {
+    await this.ready;
+    const at = nowIso();
+    const result = await this.driver.run(
+      `UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ?
+       WHERE revoked_at IS NULL AND username = (SELECT username FROM sync_account_identities WHERE account_id = ?)`,
+      [at, at, accountId],
+    );
+    return Number(result.changes ?? 0);
+  }
+
+  private mapJob(row: Record<string, unknown>): AdminJob {
+    const status = String(row['status']);
+    return {
+      jobId: String(row['job_id']),
+      type: String(row['type']) as AdminJobType,
+      params: jsonObject(row['params_json']),
+      status: (['queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(status) ? status : 'failed') as AdminJobStatus,
+      createdAt: String(row['created_at']),
+      createdBy: String(row['created_by']),
+      ...(row['target_account_id'] == null ? {} : { targetAccountId: String(row['target_account_id']) }),
+      ...(row['started_at'] == null ? {} : { startedAt: String(row['started_at']) }),
+      ...(row['finished_at'] == null ? {} : { finishedAt: String(row['finished_at']) }),
+      ...(row['phase'] == null ? {} : { phase: String(row['phase']) }),
+      processed: Number(row['processed'] ?? 0),
+      total: Number(row['total'] ?? 0),
+      ...(row['result_json'] == null ? {} : { result: jsonObject(row['result_json']) }),
+      ...(row['error_code'] == null ? {} : { errorCode: String(row['error_code']) }),
+      ...(row['error_message'] == null ? {} : { errorMessage: String(row['error_message']) }),
+      cancelRequested: bool(row['cancel_requested']),
+      ...(row['retry_of'] == null ? {} : { retryOf: String(row['retry_of']) }),
+    };
+  }
+
+  async createJob(input: {
+    type: AdminJobType;
+    params?: JsonRecord;
+    createdBy: string;
+    targetAccountId?: string;
+    retryOf?: string;
+  }): Promise<AdminJob> {
+    await this.ready;
+    const job: AdminJob = {
+      jobId: `job-${randomBytes(12).toString('hex')}`,
+      type: input.type,
+      params: input.params ?? {},
+      status: 'queued',
+      createdAt: nowIso(),
+      createdBy: input.createdBy,
+      ...(input.targetAccountId ? { targetAccountId: input.targetAccountId } : {}),
+      processed: 0,
+      total: 0,
+      cancelRequested: false,
+      ...(input.retryOf ? { retryOf: input.retryOf } : {}),
+    };
+    await this.driver.run(
+      `INSERT INTO admin_jobs
+       (job_id, type, params_json, status, created_at, created_by, target_account_id, processed, total, cancel_requested, retry_of)
+       VALUES (?, ?, ?, 'queued', ?, ?, ?, 0, 0, 0, ?)`,
+      [job.jobId, job.type, JSON.stringify(job.params), job.createdAt, job.createdBy, job.targetAccountId ?? null, job.retryOf ?? null],
+    );
+    return job;
+  }
+
+  async getJob(jobId: string): Promise<AdminJob | undefined> {
+    await this.ready;
+    const row = await this.driver.get<Record<string, unknown>>('SELECT * FROM admin_jobs WHERE job_id = ?', [jobId]);
+    return row ? this.mapJob(row) : undefined;
+  }
+
+  async listJobs(options: { limit: number; status?: string; type?: string; cursor?: string }): Promise<{ jobs: AdminJob[]; nextCursor?: string }> {
+    await this.ready;
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.status) { clauses.push('status = ?'); params.push(options.status); }
+    if (options.type) { clauses.push('type = ?'); params.push(options.type); }
+    if (options.cursor) {
+      const [cursorAt, cursorId] = options.cursor.split('|');
+      clauses.push('(created_at < ? OR (created_at = ? AND job_id < ?))');
+      params.push(cursorAt ?? '', cursorAt ?? '', cursorId ?? '');
+    }
+    let sql = 'SELECT * FROM admin_jobs';
+    if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
+    sql += ' ORDER BY created_at DESC, job_id DESC LIMIT ?';
+    params.push(options.limit + 1);
+    const rows = await this.driver.all<Record<string, unknown>>(sql, params);
+    const jobs = rows.slice(0, options.limit).map((row) => this.mapJob(row));
+    const last = jobs.at(-1);
+    return { jobs, ...(rows.length > options.limit && last ? { nextCursor: `${last.createdAt}|${last.jobId}` } : {}) };
+  }
+
+  async countJobsByStatus(): Promise<Record<string, number>> {
+    await this.ready;
+    const rows = await this.driver.all<{ status: string; value: number }>('SELECT status, COUNT(*) AS value FROM admin_jobs GROUP BY status');
+    return Object.fromEntries(rows.map((row) => [String(row.status), Number(row.value)]));
+  }
+
+  /** Claims at most one heavy job: the first phase runs a single maintenance worker. */
+  async claimNextJob(): Promise<AdminJob | undefined> {
+    await this.ready;
+    return this.driver.transaction(async (driver) => {
+      const running = await driver.get<{ job_id: string }>("SELECT job_id FROM admin_jobs WHERE status = 'running' LIMIT 1");
+      if (running) return undefined;
+      const next = await driver.get<Record<string, unknown>>(
+        "SELECT * FROM admin_jobs WHERE status = 'queued' ORDER BY created_at, job_id LIMIT 1",
+      );
+      if (!next) return undefined;
+      const at = nowIso();
+      const claimed = await driver.run(
+        "UPDATE admin_jobs SET status = 'running', started_at = ?, phase = 'starting' WHERE job_id = ? AND status = 'queued'",
+        [at, String(next['job_id'])],
+      );
+      if (Number(claimed.changes ?? 0) !== 1) return undefined;
+      return this.mapJob({ ...next, status: 'running', started_at: at, phase: 'starting' });
+    });
+  }
+
+  async updateJobProgress(jobId: string, patch: { phase?: string; processed?: number; total?: number }): Promise<void> {
+    await this.ready;
+    const assignments: string[] = [];
+    const params: (string | number)[] = [];
+    if (patch.phase !== undefined) { assignments.push('phase = ?'); params.push(patch.phase); }
+    if (patch.processed !== undefined) { assignments.push('processed = ?'); params.push(patch.processed); }
+    if (patch.total !== undefined) { assignments.push('total = ?'); params.push(patch.total); }
+    if (!assignments.length) return;
+    params.push(jobId);
+    await this.driver.run(`UPDATE admin_jobs SET ${assignments.join(', ')} WHERE job_id = ?`, params);
+  }
+
+  async finishJob(jobId: string, outcome: {
+    status: Exclude<AdminJobStatus, 'queued' | 'running'>;
+    result?: JsonRecord;
+    errorCode?: string;
+    errorMessage?: string;
+  }): Promise<void> {
+    await this.ready;
+    await this.driver.run(
+      'UPDATE admin_jobs SET status = ?, finished_at = ?, result_json = ?, error_code = ?, error_message = ?, cancel_requested = CASE WHEN ? = \'cancelled\' THEN 1 ELSE cancel_requested END WHERE job_id = ?',
+      [
+        outcome.status, nowIso(),
+        outcome.result === undefined ? null : JSON.stringify(outcome.result),
+        outcome.errorCode ?? null, outcome.errorMessage ?? null,
+        outcome.status, jobId,
+      ],
+    );
+  }
+
+  async requestJobCancel(jobId: string): Promise<AdminJob | undefined> {
+    await this.ready;
+    const job = await this.getJob(jobId);
+    if (!job) return undefined;
+    if (job.status === 'queued') {
+      await this.driver.run("UPDATE admin_jobs SET cancel_requested = 1, status = 'cancelled', finished_at = ? WHERE job_id = ? AND status = 'queued'", [nowIso(), jobId]);
+    } else if (job.status === 'running') {
+      await this.driver.run('UPDATE admin_jobs SET cancel_requested = 1 WHERE job_id = ? AND status = \'running\'', [jobId]);
+    }
+    return this.getJob(jobId);
+  }
+
+  async jobCancelRequested(jobId: string): Promise<boolean> {
+    await this.ready;
+    const row = await this.driver.get<{ cancel_requested: number }>('SELECT cancel_requested FROM admin_jobs WHERE job_id = ?', [jobId]);
+    return bool(row?.cancel_requested);
+  }
+
+  async appendJobEvent(jobId: string, level: ServerLogLevel, message: string, detail?: JsonRecord): Promise<void> {
+    await this.ready;
+    await this.driver.run(
+      'INSERT INTO admin_job_events (job_id, at, level, message, detail_json) VALUES (?, ?, ?, ?, ?)',
+      [jobId, nowIso(), level, message, detail ? JSON.stringify(detail) : null],
+    );
+  }
+
+  async listJobEvents(jobId: string, limit = 50): Promise<AdminJobEvent[]> {
+    await this.ready;
+    const rows = await this.driver.all<Record<string, unknown>>(
+      'SELECT * FROM admin_job_events WHERE job_id = ? ORDER BY id DESC LIMIT ?',
+      [jobId, Math.max(1, Math.min(200, limit))],
+    );
+    return rows.reverse().map((row) => ({
+      id: Number(row['id']),
+      jobId: String(row['job_id']),
+      at: String(row['at']),
+      level: String(row['level']) as ServerLogLevel,
+      message: String(row['message']),
+      ...(row['detail_json'] == null ? {} : { detail: jsonObject(row['detail_json']) }),
+    }));
+  }
+
+  /**
+   * A restart loses the executor. Only jobs with a checkpoint resume; the rest are
+   * reported as interrupted so a crash is never shown as success.
+   */
+  async markInterruptedJobs(): Promise<{ interrupted: string[]; resumed: string[] }> {
+    await this.ready;
+    const at = nowIso();
+    const running = await this.driver.all<Record<string, unknown>>("SELECT * FROM admin_jobs WHERE status = 'running'");
+    const interrupted: string[] = [];
+    const resumed: string[] = [];
+    for (const row of running) {
+      const job = this.mapJob(row);
+      await this.driver.run(
+        "UPDATE admin_jobs SET status = 'interrupted', finished_at = ?, error_code = 'EXECUTION_INTERRUPTED', error_message = ? WHERE job_id = ? AND status = 'running'",
+        [at, '服务在任务执行期间退出，未完成的部分不会标记为成功', job.jobId],
+      );
+      interrupted.push(job.jobId);
+      // Only blob verification keeps a resumable checkpoint; everything else stays manual.
+      if (job.type === 'blobs.verify' && job.result && typeof job.result['lastKey'] === 'string') {
+        const resumedJob = await this.createJob({
+          type: job.type,
+          params: { ...job.params, resumeFrom: String(job.result['lastKey']) },
+          createdBy: job.createdBy,
+          ...(job.targetAccountId ? { targetAccountId: job.targetAccountId } : {}),
+          retryOf: job.jobId,
+        });
+        resumed.push(resumedJob.jobId);
+        await this.appendJobEvent(resumedJob.jobId, 'info', '已从中断任务的检查点继续执行');
+      }
+    }
+    return { interrupted, resumed };
+  }
+
+  async upsertAlert(input: {
+    key: string;
+    rule: string;
+    scope: string;
+    severity: AdminAlert['severity'];
+    active: boolean;
+    detail?: JsonRecord;
+  }): Promise<AdminAlert> {
+    await this.ready;
+    const at = nowIso();
+    return this.driver.transaction(async (driver) => {
+      const row = await driver.get<Record<string, unknown>>('SELECT * FROM admin_alerts WHERE alert_key = ?', [input.key]);
+      const current = row
+        ? {
+          occurrences: Number(row['occurrences'] ?? 0),
+          healthyChecks: Number(row['healthy_checks'] ?? 0),
+          state: String(row['state']),
+        }
+        : undefined;
+      let occurrences = current?.occurrences ?? 0;
+      let healthyChecks = current?.healthyChecks ?? 0;
+      let state: AdminAlert['state'] = (current?.state as AdminAlert['state']) ?? 'pending';
+      let resolvedAt: string | null = row?.['resolved_at'] == null ? null : String(row['resolved_at']);
+      if (input.active) {
+        occurrences += 1;
+        healthyChecks = 0;
+        // Two consecutive bad samples make an alert active; a single sample stays pending.
+        state = occurrences >= 2 ? 'active' : 'pending';
+        resolvedAt = null;
+      } else if (current && current.state !== 'resolved') {
+        healthyChecks += 1;
+        if (healthyChecks >= 2) { state = 'resolved'; resolvedAt = at; }
+      }
+      await driver.run(
+        `INSERT INTO admin_alerts
+         (alert_key, rule, scope, severity, state, first_seen_at, last_seen_at, occurrences, healthy_checks, detail_json, resolved_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(alert_key) DO UPDATE SET
+           severity = excluded.severity, state = excluded.state, last_seen_at = excluded.last_seen_at,
+           occurrences = excluded.occurrences, healthy_checks = excluded.healthy_checks,
+           detail_json = excluded.detail_json, resolved_at = excluded.resolved_at`,
+        [
+          input.key, input.rule, input.scope, input.severity, state, row?.['first_seen_at'] == null ? at : String(row['first_seen_at']),
+          at, occurrences, healthyChecks, input.detail ? JSON.stringify(input.detail) : null, resolvedAt,
+        ],
+      );
+      const saved = await driver.get<Record<string, unknown>>('SELECT * FROM admin_alerts WHERE alert_key = ?', [input.key]);
+      return this.mapAlert(saved!);
+    });
+  }
+
+  private mapAlert(row: Record<string, unknown>): AdminAlert {
+    const state = String(row['state']);
+    const severity = String(row['severity']);
+    return {
+      key: String(row['alert_key']),
+      rule: String(row['rule']),
+      scope: String(row['scope']),
+      severity: severity === 'critical' ? 'critical' : 'warning',
+      state: (['pending', 'active', 'resolved'].includes(state) ? state : 'pending') as AdminAlert['state'],
+      firstSeenAt: String(row['first_seen_at']),
+      lastSeenAt: String(row['last_seen_at']),
+      occurrences: Number(row['occurrences'] ?? 0),
+      ...(row['detail_json'] == null ? {} : { detail: jsonObject(row['detail_json']) }),
+      ...(row['acknowledged_at'] == null ? {} : { acknowledgedAt: String(row['acknowledged_at']) }),
+      ...(row['acknowledged_by'] == null ? {} : { acknowledgedBy: String(row['acknowledged_by']) }),
+      ...(row['resolved_at'] == null ? {} : { resolvedAt: String(row['resolved_at']) }),
+    };
+  }
+
+  async listAlerts(options: { state?: string; limit?: number } = {}): Promise<AdminAlert[]> {
+    await this.ready;
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.state) { clauses.push('state = ?'); params.push(options.state); }
+    let sql = 'SELECT * FROM admin_alerts';
+    if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
+    sql += ' ORDER BY CASE state WHEN \'active\' THEN 0 WHEN \'pending\' THEN 1 ELSE 2 END, last_seen_at DESC LIMIT ?';
+    params.push(options.limit ?? 100);
+    return (await this.driver.all<Record<string, unknown>>(sql, params)).map((row) => this.mapAlert(row));
+  }
+
+  async acknowledgeAlert(key: string, actorAccountId: string): Promise<AdminAlert | undefined> {
+    await this.ready;
+    await this.driver.run(
+      "UPDATE admin_alerts SET acknowledged_at = ?, acknowledged_by = ? WHERE alert_key = ? AND acknowledged_at IS NULL",
+      [nowIso(), actorAccountId, key],
+    );
+    const row = await this.driver.get<Record<string, unknown>>('SELECT * FROM admin_alerts WHERE alert_key = ?', [key]);
+    return row ? this.mapAlert(row) : undefined;
+  }
+
+  /** Drops an unused reset code so a stale one cannot be used later. */
+  async revokePasswordReset(accountId: string): Promise<boolean> {
+    await this.ready;
+    const result = await this.driver.run('DELETE FROM account_password_resets WHERE account_id = ?', [accountId]);
+    return Number(result.changes ?? 0) > 0;
+  }
+
+  /** Failed attempts live outside the rolled-back transaction that produced them. */
+  async recordAdminFailure(input: {
+    actorAccountId?: string;
+    targetAccountId?: string;
+    action: string;
+    code?: string;
+    message?: string;
+    reason?: string;
+    requestId?: string;
+  }): Promise<void> {
+    try {
+      await this.ready;
+      await this.driver.run(
+        `INSERT INTO admin_audit_failures (at, actor_account_id, target_account_id, action, code, message, reason, request_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          nowIso(), input.actorAccountId ?? null, input.targetAccountId ?? null, input.action,
+          input.code ?? null, input.message ?? null, input.reason ?? null, input.requestId ?? null,
+        ],
+      );
+      await this.driver.run(
+        'DELETE FROM admin_audit_failures WHERE id IN (SELECT id FROM admin_audit_failures ORDER BY id DESC LIMIT -1 OFFSET ?)',
+        [2_000],
+      );
+    } catch {
+      // Diagnostics must never turn a handled management failure into a server error.
+    }
+  }
+
+  async listAdminFailures(limit = 50): Promise<JsonRecord[]> {
+    await this.ready;
+    return (await this.driver.all<Record<string, unknown>>('SELECT * FROM admin_audit_failures ORDER BY id DESC LIMIT ?', [limit]))
+      .map((row) => ({
+        id: Number(row['id']), at: String(row['at']), actorAccountId: row['actor_account_id'] ?? null,
+        targetAccountId: row['target_account_id'] ?? null, action: String(row['action']),
+        code: row['code'] ?? null, message: row['message'] ?? null, reason: row['reason'] ?? null,
+        requestId: row['request_id'] ?? null,
+      }));
+  }
+
+  async idempotentResult(key: string): Promise<{ fingerprint: string; status: number; body: JsonRecord } | undefined> {
+    await this.ready;
+    const row = await this.driver.get<Record<string, unknown>>(
+      'SELECT fingerprint, status, body_json FROM admin_idempotency WHERE idempotency_key = ? AND expires_at > ?',
+      [key, nowIso()],
+    );
+    return row ? { fingerprint: String(row['fingerprint']), status: Number(row['status']), body: jsonObject(row['body_json']) } : undefined;
+  }
+
+  async storeIdempotentResult(key: string, fingerprint: string, status: number, body: JsonRecord, ttlMs = 24 * 60 * 60 * 1000): Promise<void> {
+    await this.ready;
+    const at = new Date();
+    await this.driver.run(
+      `INSERT OR REPLACE INTO admin_idempotency (idempotency_key, fingerprint, status, body_json, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [key, fingerprint, status, JSON.stringify(body), at.toISOString(), new Date(at.getTime() + ttlMs).toISOString()],
+    );
+    await this.driver.run('DELETE FROM admin_idempotency WHERE expires_at <= ?', [at.toISOString()]);
+  }
+
+  async upsertBackupRecord(record: ServerBackupRecord): Promise<void> {
+    await this.ready;
+    await this.driver.run(
+      `INSERT INTO server_backup_records
+       (record_id, kind, status, created_at, finished_at, output_path, server_id, file_count, total_bytes,
+        verified_at, verification_json, drill_json, error_message, note, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(record_id) DO UPDATE SET
+         kind = excluded.kind, status = excluded.status, finished_at = excluded.finished_at,
+         output_path = excluded.output_path, server_id = excluded.server_id, file_count = excluded.file_count,
+         total_bytes = excluded.total_bytes, verified_at = excluded.verified_at,
+         verification_json = excluded.verification_json, drill_json = excluded.drill_json,
+         error_message = excluded.error_message, note = excluded.note`,
+      [
+        record.recordId, record.kind, record.status, record.createdAt, record.finishedAt ?? null,
+        record.outputPath ?? null, record.serverId ?? null, record.fileCount ?? null, record.totalBytes ?? null,
+        record.verifiedAt ?? null,
+        record.verification === undefined ? null : JSON.stringify(record.verification),
+        record.drill === undefined ? null : JSON.stringify(record.drill),
+        record.errorMessage ?? null, record.note ?? null, record.createdBy ?? null,
+      ],
+    );
+  }
+
+  async getBackupRecord(recordId: string): Promise<ServerBackupRecord | undefined> {
+    await this.ready;
+    const row = await this.driver.get<Record<string, unknown>>('SELECT * FROM server_backup_records WHERE record_id = ?', [recordId]);
+    return row ? this.mapBackupRecord(row) : undefined;
+  }
+
+  async listBackupRecords(limit = 50): Promise<ServerBackupRecord[]> {
+    await this.ready;
+    return (await this.driver.all<Record<string, unknown>>(
+      'SELECT * FROM server_backup_records ORDER BY created_at DESC LIMIT ?',
+      [Math.max(1, Math.min(200, limit))],
+    )).map((row) => this.mapBackupRecord(row));
+  }
+
+  private mapBackupRecord(row: Record<string, unknown>): ServerBackupRecord {
+    const kind = String(row['kind']);
+    const status = String(row['status']);
+    return {
+      recordId: String(row['record_id']),
+      kind: (['manual', 'scheduled', 'drill'].includes(kind) ? kind : 'manual') as ServerBackupRecord['kind'],
+      status: (['completed', 'failed', 'planned'].includes(status) ? status : 'failed') as ServerBackupRecord['status'],
+      createdAt: String(row['created_at']),
+      ...(row['finished_at'] == null ? {} : { finishedAt: String(row['finished_at']) }),
+      ...(row['output_path'] == null ? {} : { outputPath: String(row['output_path']) }),
+      ...(row['server_id'] == null ? {} : { serverId: String(row['server_id']) }),
+      ...(row['file_count'] == null ? {} : { fileCount: Number(row['file_count']) }),
+      ...(row['total_bytes'] == null ? {} : { totalBytes: Number(row['total_bytes']) }),
+      ...(row['verified_at'] == null ? {} : { verifiedAt: String(row['verified_at']) }),
+      ...(row['verification_json'] == null ? {} : { verification: jsonObject(row['verification_json']) }),
+      ...(row['drill_json'] == null ? {} : { drill: jsonObject(row['drill_json']) }),
+      ...(row['error_message'] == null ? {} : { errorMessage: String(row['error_message']) }),
+      ...(row['note'] == null ? {} : { note: String(row['note']) }),
+      ...(row['created_by'] == null ? {} : { createdBy: String(row['created_by']) }),
+    };
+  }
+
+  async close(): Promise<void> {    const initialized = await this.ready.then(() => true, () => false);
     if (initialized) await this.checkpoint().catch(() => undefined);
     await this.driver.close();
   }

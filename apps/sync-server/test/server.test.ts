@@ -27,6 +27,18 @@ afterAll(() => sv.close());
 const post2 = (base: string, p: string, body: unknown, headers: Record<string, string> = {}) =>
   fetch(base + p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
 
+/** Maintenance work is asynchronous now: polls one job until it leaves the running states. */
+async function waitForJob(base: string, headers: Record<string, string>, jobId: string) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const response = await fetch(`${base}/api/admin/jobs/${jobId}`, { headers });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { job: { status: string } };
+    if (!['queued', 'running'].includes(body.job.status)) return body as { job: { status: string; result?: Record<string, unknown>; errorCode?: string; errorMessage?: string } };
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`job ${jobId} never finished`);
+}
+
 async function registerUser(base: string, username: string, password: string, inviteCode?: string, prefix = '', initializeOwner = true): Promise<Response> {
   const normalized = normalizeSyncUsername(username);
   await opaque.ready;
@@ -626,17 +638,32 @@ describe('sync-server endpoints', () => {
       expect(await (await fetch(u + '/api/admin/quotas', { headers: adminHeaders })).json()).toMatchObject({
         users: expect.arrayContaining([expect.objectContaining({ username: 'invite-user', quotaBytes: 8 * 1024 * 1024 })]),
       });
-      expect(await (await fetch(u + '/api/admin/quotas/blobs/verify', { method: 'POST', headers: adminHeaders, body: '{}' })).json()).toMatchObject({
-        verification: { checkedObjects: 0, checkedChunks: 0, issues: [] },
-      });
+      // Heavy verification left the request path: the endpoint queues a job and returns 202.
+      const verifyResponse = await fetch(u + '/api/admin/quotas/blobs/verify', { method: 'POST', headers: adminHeaders, body: '{}' });
+      expect(verifyResponse.status).toBe(202);
+      const queued = await verifyResponse.json() as { job: { jobId: string; type: string; status: string } };
+      expect(queued.job).toMatchObject({ type: 'blobs.verify', status: 'queued' });
+      const verifyJob = await waitForJob(u, adminHeaders, queued.job.jobId);
+      expect(verifyJob.job.status).toBe('succeeded');
+      expect(verifyJob.job.result).toMatchObject({ checkedObjects: 0, checkedChunks: 0, issueCount: 0 });
       expect((await fetch(u + '/api/admin/quotas/invite-user/commits', {
         method: 'POST', headers: adminHeaders, body: JSON.stringify({ commitQuotaBytes: 8 * 1024 * 1024 }),
       })).status).toBe(200);
       expect(await (await fetch(u + '/api/admin/users?limit=10', { headers: adminHeaders })).json()).toMatchObject({
         users: expect.arrayContaining([expect.objectContaining({ username: 'invite-user', commitQuotaBytes: 8 * 1024 * 1024 })]),
       });
+      // The deep check is a maintenance job; the legacy GET only reports the recorded result.
       expect(await (await fetch(u + '/api/admin/database/verify', { headers: adminHeaders })).json()).toMatchObject({
-        verification: { ok: true, result: 'ok', journalMode: 'wal', schemaVersion: CURRENT_SERVER_SCHEMA },
+        verification: { ok: null, result: 'not-run' },
+        mode: 'recorded',
+      });
+      const deepResponse = await fetch(u + '/api/admin/database/verify', { method: 'POST', headers: adminHeaders, body: '{}' });
+      expect(deepResponse.status).toBe(202);
+      const deepJob = await waitForJob(u, adminHeaders, ((await deepResponse.json()) as { job: { jobId: string } }).job.jobId);
+      expect(deepJob.job.status).toBe('succeeded');
+      expect(deepJob.job.result).toMatchObject({ ok: true, result: 'ok' });
+      expect(await (await fetch(u + '/api/admin/database/verify', { headers: adminHeaders })).json()).toMatchObject({
+        verification: { ok: true, result: 'ok', schemaVersion: CURRENT_SERVER_SCHEMA },
       });
 
       const login = await loginUser(u, 'invite-user', 'pw');

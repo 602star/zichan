@@ -6,9 +6,31 @@ import { extname, join, resolve, sep } from 'node:path';
 import * as opaque from '@serenity-kit/opaque';
 import { normalizeSyncUsername, createLedgerKeyEnvelope, unlockLedgerKeyEnvelope, newId, PLAIN_HTTP_HOST_ALLOWLIST, type LedgerKeyEnvelope } from '@zichan/core';
 import { loadCustodyKey, sealCustodySecret, openCustodySecret } from './key-custody.js';
-import { EncryptedBlobStore, MAX_ENCRYPTED_CHUNK_BYTES } from './blob-store.js';
+import { EncryptedBlobStore } from './blob-store.js';
+import { createAdminRouter } from './admin.js';
 import { createRequestOrigin } from './request-origin.js';
 import { createBrowserSessionCookies } from './browser-session.js';
+import {
+  ADMIN_BODY_BYTES,
+  AUTH_BODY_BYTES,
+  MAX_BODY_BYTES,
+  bearerToken,
+  errorCode,
+  errorStatus,
+  headerValue,
+  isRecord,
+  pathParts,
+  syncEventCategory,
+  readBinaryBody,
+  readBody,
+  send,
+  sendBinary,
+} from './http-util.js';
+import { createJobHandlers } from './job-handlers.js';
+import { createJobRunner } from './jobs.js';
+import { importMaintenanceRecords } from './maintenance-records.js';
+import { createMetricsService } from './metrics.js';
+import { createSettings } from './settings.js';
 import {
   ServerStoreError,
   SyncServerStore,
@@ -24,18 +46,12 @@ const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const OPAQUE_LOGIN_TTL_MS = 60 * 1000;
 const OPAQUE_REGISTRATION_TTL_MS = 5 * 60 * 1000;
-const MAX_BODY_BYTES = 16 * 1024 * 1024;
-const AUTH_BODY_BYTES = 64 * 1024;
-const ADMIN_BODY_BYTES = 256 * 1024;
-const LOG_RETENTION = 5_000;
+const REQUEST_ID_BYTES = 8;
 
 function nowIso(): string {
   return new Date().toISOString();
 }
 
-function isRecord(value: unknown): value is JsonRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function isLedgerKeyEnvelope(value: unknown): value is JsonRecord {
   if (!isRecord(value)) return false;
@@ -49,6 +65,23 @@ function isLedgerKeyEnvelope(value: unknown): value is JsonRecord {
     && typeof value.salt === 'string' && value.salt.length <= 256
     && typeof value.iv === 'string' && value.iv.length <= 256
     && typeof value.ct === 'string' && value.ct.length <= 256 * 1024;
+}
+
+/** The Web root must never contain the data directory: backups and keys live there. */
+function assertSeparateDirectories(dataDir: string, webDir: string): void {
+  const inside = (parent: string, child: string) => child !== parent && child.startsWith(parent.endsWith(sep) ? parent : `${parent}${sep}`);
+  if (inside(dataDir, webDir) || inside(webDir, dataDir)) {
+    throw new Error('WEB_DIST 与服务器数据目录不能互相包含：备份与认证密钥文件不能通过 Web 静态服务暴露');
+  }
+}
+
+function readServerVersion(): string {
+  try {
+    const value = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version?: string };
+    return typeof value.version === 'string' && value.version ? value.version : 'dev';
+  } catch {
+    return 'dev';
+  }
 }
 
 function normalizeBasePath(raw?: string): string {
@@ -119,80 +152,10 @@ function opaqueHash(secret: string, value: string): string {
   return createHmac('sha256', secret).update(value).digest('base64');
 }
 
-function headerValue(req: IncomingMessage, name: string): string {
-  const value = req.headers[name.toLowerCase()];
-  return Array.isArray(value) ? value[0] ?? '' : value ?? '';
-}
 
-function bearerToken(req: IncomingMessage): string {
-  return headerValue(req, 'authorization').replace(/^Bearer\s+/i, '');
-}
 
-class RequestBodyError extends Error {
-  constructor(readonly status: number, message: string) { super(message); }
-}
 
-function readBody(req: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<JsonRecord> {
-  return new Promise((resolveBody, reject) => {
-    let body = '';
-    let bytes = 0;
-    let tooLarge = false;
-    const declared = Number(headerValue(req, 'content-length'));
-    if (Number.isFinite(declared) && declared > maxBytes) tooLarge = true;
-    req.setEncoding('utf8');
-    req.on('data', (chunk: string) => {
-      bytes += Buffer.byteLength(chunk);
-      if (bytes > maxBytes) tooLarge = true;
-      else if (!tooLarge) body += chunk;
-    });
-    req.on('end', () => {
-      if (tooLarge) return reject(new RequestBodyError(413, 'request body too large'));
-      try {
-        const parsed = body ? JSON.parse(body) as unknown : {};
-        if (!isRecord(parsed)) throw new Error('body must be an object');
-        resolveBody(parsed);
-      } catch {
-        reject(new RequestBodyError(400, 'invalid JSON body'));
-      }
-    });
-    req.on('error', reject);
-  });
-}
 
-function readBinaryBody(req: IncomingMessage, maxBytes = MAX_ENCRYPTED_CHUNK_BYTES): Promise<Uint8Array> {
-  return new Promise((resolveBody, reject) => {
-    const chunks: Buffer[] = [];
-    let bytes = 0;
-    const declared = Number(headerValue(req, 'content-length'));
-    if (!Number.isSafeInteger(declared) || declared < 1 || declared > maxBytes) {
-      reject(new RequestBodyError(declared > maxBytes ? 413 : 400, 'invalid binary content length'));
-      req.resume();
-      return;
-    }
-    req.on('data', (chunk: Buffer) => { bytes += chunk.byteLength; if (bytes <= maxBytes) chunks.push(chunk); });
-    req.on('end', () => {
-      if (bytes > maxBytes) reject(new RequestBodyError(413, 'request body too large'));
-      else if (bytes !== declared) reject(new RequestBodyError(400, 'binary content length mismatch'));
-      else resolveBody(Buffer.concat(chunks));
-    });
-    req.on('error', reject);
-  });
-}
-
-function send(res: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body);
-  res.writeHead(status, {
-    'Content-Type': 'application/json',
-    'Content-Length': String(Buffer.byteLength(payload)),
-    'Cache-Control': 'no-store',
-  });
-  res.end(payload);
-}
-
-function sendBinary(res: ServerResponse, status: number, body: Uint8Array): void {
-  res.writeHead(status, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.byteLength), 'Cache-Control': 'private, max-age=31536000, immutable' });
-  res.end(body);
-}
 
 function applyCors(req: IncomingMessage, res: ServerResponse): void {
   const origin = headerValue(req, 'origin');
@@ -205,20 +168,6 @@ function applyCors(req: IncomingMessage, res: ServerResponse): void {
   res.setHeader('Access-Control-Max-Age', '600');
 }
 
-function errorStatus(error: unknown, blob = false): number {
-  if (error instanceof RequestBodyError || error instanceof ServerStoreError) return error.status;
-  const code = typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code) : '';
-  if (code === 'QUOTA_EXCEEDED') return 507;
-  if (code === 'UPLOAD_NOT_FOUND') return 404;
-  if (code === 'CHUNK_CHECKSUM_MISMATCH') return 422;
-  if (['UPLOAD_INCOMPLETE', 'BLOB_ID_COLLISION', 'UPLOAD_MANIFEST_MISMATCH'].includes(code)) return 409;
-  return blob ? 400 : 500;
-}
-
-function errorCode(error: unknown): string | undefined {
-  if (error instanceof ServerStoreError) return error.code;
-  return typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code) : undefined;
-}
 
 const REQUIRED_IDENTITY_FILES = ['server.secret', 'server-id', 'opaque.server-setup'] as const;
 
@@ -352,9 +301,6 @@ function serveWeb(req: IncomingMessage, res: ServerResponse, path: string, webDi
   return true;
 }
 
-function pathParts(path: string): string[] {
-  return path.split('/').filter(Boolean).map((part) => { try { return decodeURIComponent(part); } catch { return part; } });
-}
 
 export interface SyncServerOptions {
   /** Explicit deployment policy; a same-origin address is not an official-server identity. */
@@ -385,6 +331,8 @@ export interface SyncServer {
   serverId: string;
   dataDir: string;
   ready: Promise<void>;
+  /** Resolves once recovery, record import and sampling have started. */
+  started: Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -405,6 +353,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     trashRetentionMs: options.attachmentTrashRetentionMs,
   });
   const dataDir = blobStore.dataDir;
+  if (enableWeb && options.webDir) assertSeparateDirectories(dataDir, resolve(options.webDir));
+  const startedAt = Date.now();
+  const serverVersion = readServerVersion();
   const secret = loadPersistedValue(dataDir, 'server.secret', options.secret, () => randomBytes(32).toString('hex'));
   const ownerSetupToken = loadPersistedValue(dataDir, 'owner-setup.secret', options.ownerSetupToken, () => randomBytes(32).toString('hex'));
   if (ownerSetupToken.length < 32) throw new Error('owner-setup.secret must contain at least 32 characters');
@@ -439,6 +390,19 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   };
   const allow = (ip: string, bucket: string, limit: number, windowMs: number) =>
     store.takeRateLimit(`${ip}:${bucket}`, limit, windowMs);
+  blobStore.onCleanupResult = (status) => {
+    void log(status.lastOk ? 'info' : 'error', 'blob_cleanup', status.lastOk
+      ? 'Scheduled attachment cleanup completed'
+      : 'Scheduled attachment cleanup failed', {
+      detail: {
+        removedObjects: status.lastRemovedObjects,
+        removedUploads: status.lastRemovedUploads,
+        freedBytes: status.lastFreedBytes,
+        consecutiveFailures: status.consecutiveFailures,
+        error: status.lastError ?? null,
+      },
+    }).catch(() => undefined);
+  };
   const publicSession = (session: Awaited<ReturnType<typeof store.getSession>>) => session ? {
     id: session.id,
     username: session.username,
@@ -470,260 +434,64 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     return { user, session, role: await store.roleForUser(user.username) };
   };
 
-  const handleAdmin = async (
-    req: IncomingMessage,
-    res: ServerResponse,
-    apiPath: string,
-    auth: NonNullable<Awaited<ReturnType<typeof authenticateRequest>>>,
-  ) => {
-    const ip = origin.clientIp(req);
-    if (auth.role === 'member') {
-      await log('warn', 'admin_forbidden', 'Member attempted an administrative request', {
-        ip,
-        username: auth.user.username,
-        status: 403,
-      });
-      return send(res, 403, { code: 'ADMIN_REQUIRED', error: 'administrator role required' });
-    }
-    let suffix = apiPath.slice('/api/admin'.length) || '/';
-    let parts = pathParts(suffix);
-    const assertManageTarget = async (username: string, quota = false) => {
-      const target = await store.getUser(username);
-      if (!target) throw new ServerStoreError('NOT_FOUND', 404, 'account not found');
-      const role = await store.roleForUser(target.username);
-      if ((!quota && role === 'owner') || auth.role === 'admin' && role !== 'member') throw new ServerStoreError('PROTECTED_ACCOUNT', 403, 'cannot manage this privileged account');
-      return target;
-    };
-    // New management URLs use immutable IDs. Legacy URLs below keep the same guards.
-    if (parts[0] === 'accounts' && parts.length === 3) {
-      const target = await store.userByAccountId(parts[1]!);
-      if (!target) return send(res, 404, { error: 'account not found' });
-      if (req.method === 'POST' && parts[2] === 'password-reset') {
-        const code = randomBytes(32).toString('base64url');
-        const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
-        await store.mutateAdmin(auth.session.id, { action: 'password-reset-issue', accountId: target.accountId, codeHash: createHash('sha256').update(code).digest('hex'), expiresAt });
-        res.setHeader('Cache-Control', 'no-store');
-        return send(res, 200, { code, expiresAt, username: target.username });
+  const runtimeSettings = createSettings(store);
+  const settings = runtimeSettings.settings;
+  const jobHandlers = createJobHandlers({ store, blobStore, dataDir, settings, log });
+  const jobs = createJobRunner({ store, log, handlers: jobHandlers });
+  const metrics = createMetricsService({
+    store,
+    blobStore,
+    settings,
+    log,
+    listBackupRecords: async () => (await store.listBackupRecords(20)).map((record) => ({
+      recordId: record.recordId,
+      createdAt: record.createdAt,
+      status: record.status,
+      ...(record.verifiedAt ? { verifiedAt: record.verifiedAt } : {}),
+      ...(record.verification ? { verificationOk: record.verification['ok'] !== false } : {}),
+    })),
+    startedAt,
+  });
+  const admin = createAdminRouter({
+    store,
+    blobStore,
+    settings: runtimeSettings,
+    metrics,
+    jobs,
+    log,
+    dataDir,
+    databaseFile: store.databaseFile,
+    serverId,
+    version: serverVersion,
+    enableSync,
+    enableWeb,
+    basePath,
+    defaultProtection,
+    custodyEnabled,
+    allowInsecureHttp,
+    accessTokenMinutes: ACCESS_TOKEN_TTL_MS / 60_000,
+    sessionDays: SESSION_TTL_MS / 86_400_000,
+  });
+  // Recovery, deployment-record import and sampling all start after the stores are ready.
+  const started = ready.then(async () => {
+    // An unparseable environment override must stop the boot, not be replaced by a default.
+    await runtimeSettings.load();
+    try {
+      const recovery = await jobs.recover();
+      await importMaintenanceRecords(store, dataDir);
+      metrics.start();
+      if (recovery.interrupted.length) {
+        console.log(`jobs: ${recovery.interrupted.length} interrupted task(s) recorded as interrupted, ${recovery.resumed.length} resumed from a checkpoint`);
       }
-      if (req.method === 'POST' && parts[2] === 'role') {
-        const { role } = await readBody(req, ADMIN_BODY_BYTES);
-        if (role !== 'admin' && role !== 'member') return send(res, 400, { error: 'invalid role' });
-        await store.mutateAdmin(auth.session.id, { action: 'role', accountId: target.accountId, role });
-        return send(res, 200, { ok: true });
-      }
-      if (req.method === 'GET' && parts[2] === 'usage') {
-        return send(res, 200, await blobStore.usage(target.username));
-      }
-      const routes: Record<string, string> = { state: 'users', devices: 'users', blobs: 'quotas', commits: 'quotas' };
-      const group = routes[parts[2]!];
-      if (!group) return send(res, 404, { error: 'not found' });
-      suffix = `/${group}/${encodeURIComponent(target.username)}/${parts[2] === 'state' ? 'disable' : parts[2]}`;
-      parts = pathParts(suffix);
+    } catch (error) {
+      await log('warn', 'startup_tasks_failed', 'Startup recovery tasks failed', {
+        detail: { error: error instanceof Error ? error.message : String(error) },
+      }).catch(() => undefined);
     }
-    if (req.method === 'GET' && suffix === '/audit') {
-      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-      const before = Number(params.get('cursor') ?? Number.MAX_SAFE_INTEGER);
-      if (!Number.isSafeInteger(before) || before < 1) return send(res, 400, { error: 'invalid cursor' });
-      const search = params.get('search')?.trim() ?? '';
-      if (search.length > 128) return send(res, 400, { error: 'search must not exceed 128 characters' });
-      return send(res, 200, await store.listAdminAudit(before, 50, search));
-    }
-    if (req.method === 'GET' && suffix === '/status') {
-      return send(res, 200, {
-        ok: true,
-        serverId,
-        syncEnabled: enableSync,
-        webEnabled: enableWeb && Boolean(options.webDir),
-        basePath,
-        dataDir,
-        databaseFile: store.databaseFile,
-        ...await store.status(),
-      });
-    }
-    if (req.method === 'GET' && suffix === '/database/verify') {
-      return send(res, 200, { verification: await store.verify() });
-    }
-    if (req.method === 'GET' && suffix === '/quotas') {
-      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-      const limit = Number(params.get('limit') ?? 100);
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) return send(res, 400, { error: 'limit must be between 1 and 500' });
-      const { users, nextCursor } = await store.listUsers(params.get('cursor') ?? '', limit);
-      return send(res, 200, {
-        users: await Promise.all(users.map(async (user) => ({
-          username: user['username'],
-          ...await blobStore.usage(String(user['username'])),
-        }))),
-        dataDir,
-        nextCursor,
-      });
-    }
-    if (req.method === 'POST' && suffix === '/quotas/blobs/verify') {
-      const verification = await blobStore.verify();
-      await log(verification.issues.length ? 'error' : 'info', 'blob_verification', 'Encrypted attachment verification completed', {
-        ip,
-        username: auth.user.username,
-        detail: { checkedObjects: verification.checkedObjects, checkedChunks: verification.checkedChunks, issues: verification.issues.length },
-      });
-      return send(res, 200, { verification });
-    }
-    if (req.method === 'POST' && parts[0] === 'quotas' && parts[2] === 'blobs') {
-      const username = parts[1] ?? '';
-      const target = await assertManageTarget(username, true);
-      const { quotaBytes } = await readBody(req, ADMIN_BODY_BYTES);
-      if (quotaBytes !== null && (!Number.isSafeInteger(quotaBytes)
-        || Number(quotaBytes) < 1024 * 1024 || Number(quotaBytes) > 1024 ** 4)) {
-        return send(res, 400, { error: 'invalid quotaBytes' });
-      }
-      await store.mutateAdmin(auth.session.id, { action: 'blob-quota', accountId: target.accountId, bytes: quotaBytes === null ? null : Number(quotaBytes) });
-      const usage = await blobStore.usage(username);
-      await log('info', 'blob_quota_changed', 'Attachment quota changed', {
-        ip,
-        username,
-        detail: { quotaBytes: usage.quotaBytes, changedBy: auth.user.username },
-      });
-      return send(res, 200, { username, usage });
-    }
-    if (req.method === 'POST' && parts[0] === 'quotas' && parts[2] === 'commits') {
-      const username = parts[1] ?? '';
-      const target = await assertManageTarget(username, true);
-      const { commitQuotaBytes } = await readBody(req, ADMIN_BODY_BYTES);
-      if (commitQuotaBytes !== null && (!Number.isSafeInteger(commitQuotaBytes)
-        || Number(commitQuotaBytes) < 1024 * 1024 || Number(commitQuotaBytes) > 1024 ** 4)) {
-        return send(res, 400, { error: 'invalid commitQuotaBytes' });
-      }
-      await store.mutateAdmin(auth.session.id, { action: 'commit-quota', accountId: target.accountId, bytes: commitQuotaBytes === null ? null : Number(commitQuotaBytes) });
-      await log('info', 'commit_quota_changed', 'Encrypted commit quota changed', {
-        ip,
-        username,
-        detail: { commitQuotaBytes, changedBy: auth.user.username },
-      });
-      return send(res, 200, { ok: true });
-    }
-    if (req.method === 'GET' && suffix === '/logs') {
-      const requestUrl = new URL(req.url ?? '/', 'http://localhost');
-      const limit = Math.min(Math.max(Number(requestUrl.searchParams.get('limit') ?? 100), 1), LOG_RETENTION);
-      return send(res, 200, await store.listLogs({
-        limit,
-        level: requestUrl.searchParams.get('level') ?? undefined,
-        from: requestUrl.searchParams.get('from') ?? undefined,
-        until: requestUrl.searchParams.get('until') ?? undefined,
-        cursor: requestUrl.searchParams.get('cursor') ?? undefined,
-      }));
-    }
-    if (req.method === 'GET' && suffix === '/users') {
-      const requestUrl = new URL(req.url ?? '/', 'http://localhost');
-      const limit = Math.min(Math.max(Number(requestUrl.searchParams.get('limit') ?? 100), 1), 500);
-      if (!Number.isSafeInteger(limit)) return send(res, 400, { error: 'invalid limit' });
-      const role = requestUrl.searchParams.get('role') ?? '';
-      const state = requestUrl.searchParams.get('state') ?? '';
-      if (!['', 'owner', 'admin', 'member'].includes(role) || !['', 'enabled', 'disabled'].includes(state)) return send(res, 400, { error: 'invalid filter' });
-      return send(res, 200, await store.listUsers(requestUrl.searchParams.get('cursor') ?? '', limit, { search: (requestUrl.searchParams.get('search') ?? '').slice(0, 128), role, state }));
-    }
-    if (req.method === 'GET' && suffix === '/devices') {
-      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-      const limit = Number(params.get('limit') ?? 100);
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) return send(res, 400, { error: 'limit must be between 1 and 500' });
-      const search = params.get('search') ?? '';
-      if (search.length > 128) return send(res, 400, { error: 'search must not exceed 128 characters' });
-      const { users, nextCursor } = await store.listUsers(params.get('cursor') ?? '', limit, { search, ...(auth.role === 'admin' ? { role: 'member' } : {}) });
-      const devices = (await Promise.all(users.filter((user) => auth.role === 'owner' || user['role'] === 'member').map(async (user) =>
-        (await store.listSessions(String(user['username']))).map((session) => ({ ...publicSession(session), accountId: user['accountId'], role: user['role'] }))))).flat();
-      return send(res, 200, { devices, nextCursor, paginationUnit: 'account' });
-    }
-    if (req.method === 'GET' && parts[0] === 'users' && parts[2] === 'devices') {
-      const username = parts[1] ?? '';
-      if (!await store.getUser(username)) return send(res, 404, { error: 'user not found' });
-      if (auth.role !== 'owner') await assertManageTarget(username);
-      return send(res, 200, { devices: (await store.listSessions(username)).map(publicSession) });
-    }
-    if (req.method === 'POST' && parts[0] === 'sessions' && parts[2] === 'revoke') {
-      await store.mutateAdmin(auth.session.id, { action: 'revoke-session', sessionId: parts[1] ?? '' });
-      const targetSession = await store.getSession(parts[1] ?? '');
-      if (!targetSession) return send(res, 404, { error: 'session not found' });
-      await log('info', 'device_revoked', 'Revoked sync device session', {
-        ip,
-        username: targetSession.username,
-        detail: { sessionId: targetSession.id, deviceId: targetSession.deviceId, changedBy: auth.user.username },
-      });
-      return send(res, 200, { device: publicSession(targetSession) });
-    }
-    if (req.method === 'POST' && parts[0] === 'users' && parts[2] === 'disable') {
-      const username = parts[1] ?? '';
-      if (username.toLocaleLowerCase() === auth.user.username.toLocaleLowerCase()) {
-        return send(res, 409, { code: 'OWNER_CANNOT_BE_DISABLED', error: 'administrator cannot disable the current account' });
-      }
-      const body = await readBody(req, ADMIN_BODY_BYTES);
-      if (typeof body.disabled !== 'boolean') return send(res, 400, { error: 'disabled must be a boolean' });
-      const target = await assertManageTarget(username);
-      await store.mutateAdmin(auth.session.id, { action: 'state', accountId: target.accountId, disabled: body.disabled });
-      const targetUser = (await store.getUser(username))!;
-      await log('info', targetUser.disabled ? 'user_disabled' : 'user_enabled', targetUser.disabled ? 'Disabled sync user' : 'Enabled sync user', {
-        ip,
-        username,
-        detail: { changedBy: auth.user.username },
-      });
-      return send(res, 200, {
-        user: {
-          username: targetUser.username,
-          role: await store.roleForUser(targetUser.username),
-          disabled: targetUser.disabled,
-          createdAt: targetUser.createdAt,
-          updatedAt: targetUser.updatedAt,
-          lastLoginAt: targetUser.lastLoginAt ?? null,
-        },
-      });
-    }
-    if (req.method === 'GET' && suffix === '/invites') {
-      const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
-      const cursor = params.get('cursor') ?? '';
-      const limit = Number(params.get('limit') ?? 25);
-      const state = params.get('state') ?? '';
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100
-        || cursor !== '' && (!/^[1-9]\d*$/.test(cursor) || !Number.isSafeInteger(Number(cursor)))
-        || !['', 'available', 'used', 'revoked', 'expired'].includes(state)) {
-        return send(res, 400, { error: 'invalid invitation pagination or filter' });
-      }
-      res.setHeader('Cache-Control', 'no-store');
-      return send(res, 200, await store.listInvitesPage(Number(cursor), limit, state));
-    }
-    if (req.method === 'POST' && suffix === '/invites') {
-      const body = await readBody(req, ADMIN_BODY_BYTES);
-      const code = typeof body.code === 'string' && body.code.trim() ? body.code.trim() : randomBytes(12).toString('base64url');
-      const days = body.days === undefined ? 7 : Number(body.days);
-      if (!Number.isInteger(days) || days < 1 || days > 30) return send(res, 400, { error: 'invite expiry must be 1–30 days' });
-      await store.mutateAdmin(auth.session.id, { action: 'invite-create', code, expiresAt: new Date(Date.now() + days * 86_400_000).toISOString() });
-      const invite = await store.getInvite(code);
-      await log('info', 'invite_created', 'Created registration invite', { ip, username: auth.user.username });
-      return send(res, 200, { invite });
-    }
-    if (req.method === 'POST' && parts[0] === 'invites' && parts[2] === 'disable') {
-      const code = parts[1] ?? '';
-      const body = await readBody(req, ADMIN_BODY_BYTES);
-      if (typeof body.disabled !== 'boolean') return send(res, 400, { error: 'disabled must be a boolean' });
-      await store.mutateAdmin(auth.session.id, { action: 'invite-state', code, disabled: body.disabled });
-      const invite = await store.getInvite(code);
-      if (!invite) return send(res, 404, { error: 'invite not found' });
-      await log('info', invite.disabled ? 'invite_disabled' : 'invite_enabled', invite.disabled ? 'Disabled invite' : 'Enabled invite', {
-        ip,
-        username: auth.user.username,
-      });
-      return send(res, 200, { invite });
-    }
-    if (req.method === 'GET' && suffix === '/registration') return send(res, 200, { mode: await store.registrationMode() });
-    if (req.method === 'POST' && suffix === '/registration') {
-      const { mode } = await readBody(req, ADMIN_BODY_BYTES);
-      if (mode !== 'open' && mode !== 'invite' && mode !== 'closed') return send(res, 400, { error: 'invalid registration mode' });
-      await store.mutateAdmin(auth.session.id, { action: 'registration', mode });
-      await log('info', 'registration_mode_changed', 'Changed registration mode', {
-        ip,
-        username: auth.user.username,
-        detail: { mode },
-      });
-      return send(res, 200, { mode });
-    }
-    return send(res, 404, { error: 'not found' });
-  };
-
+  });
+  // Handled here so a caller that never observes `started` cannot crash the process,
+  // while `service.started` still rejects for the launcher.
+  void started.catch(() => undefined);
   const server = createServer(async (req, res) => {
     applyCors(req, res);
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
@@ -731,10 +499,28 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     const path = decodePathname(url.pathname);
     const routedPath = stripBasePath(path, basePath);
     const ip = origin.clientIp(req);
+    // One id per request binds the response, the log line and any diagnostic record.
+    const requestId = `req-${randomBytes(REQUEST_ID_BYTES).toString('hex')}`;
+    const requestStartedAt = Date.now();
+    res.setHeader('X-Request-Id', requestId);
+    res.once('finish', () => {
+      if (!routedPath || !routedPath.startsWith('/api')) return;
+      metrics.observeRequest({
+        durationMs: Date.now() - requestStartedAt,
+        status: res.statusCode,
+        kind: routedPath.startsWith('/api/admin') ? 'admin'
+          : routedPath.startsWith('/api/v3/blobs') ? 'blob'
+          : routedPath.startsWith('/api/auth') ? 'auth'
+          : routedPath.startsWith('/api/v3/commits') ? 'sync' : 'other',
+        ...(routedPath.startsWith('/api/v3/commits') ? { operation: req.method === 'POST' ? 'push' as const : 'pull' as const } : {}),
+      });
+    });
     try {
       await ready;
       if (routedPath === '/api/health' && req.method === 'GET') {
-        const status = await store.status();
+        // Identity, protocol and policy only. Aggregates belong to /api/admin/overview,
+        // which reads a cached snapshot instead of scanning tables on every handshake.
+        const claimed = await store.ownerUsername() !== undefined;
         const capabilities = [
           'account-roles-v1',
           'account-identity-v1',
@@ -753,17 +539,21 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           'multi-origin-web-v1',
           'opaque-pake-v1',
           'sqlite-wal-v3',
+          'admin-console-v2',
+          'admin-jobs-v1',
+          'admin-metrics-v1',
+          'sync-diagnostics-v1',
         ];
         return send(res, 200, {
           ok: true,
           serverId,
           serverPublicKey: opaqueServerPublicKey,
-          claimed: status.claimed,
+          claimed,
           protocols: [3],
           capabilities,
           syncEnabled: enableSync,
           webEnabled: enableWeb && Boolean(options.webDir),
-          registrationMode: status.registrationMode,
+          registrationMode: await store.registrationMode(),
           accountProtection: defaultProtection,
           basePath,
           security: {
@@ -775,8 +565,10 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         });
       }
       if (routedPath === '/api/ready' && req.method === 'GET') {
-        const verification = await store.verify();
-        return send(res, verification.ok ? 200 : 503, { ok: verification.ok, serverId, database: verification });
+        // Read-only and constant-time: the container healthcheck runs this every 30s.
+        // The whole-database check moved to the maintenance job `database.integrity-check`.
+        const probe = await store.probe();
+        return send(res, probe.ok ? 200 : 503, { ok: probe.ok, serverId, mode: 'light', database: probe });
       }
       if (basePath && (path === '/api' || path.startsWith('/api/'))) return send(res, 404, { error: 'not found' });
       if (routedPath && serveWeb(req, res, routedPath, enableWeb ? options.webDir : undefined)) return;
@@ -969,6 +761,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           refreshHash: opaqueHash(secret, refreshToken),
           expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
           ip,
+          kind: req.headers['x-zichan-session'] === 'admin-cookie' ? 'admin' : 'ledger',
         });
         await store.noteLogin(user.username);
         await log('info', 'login_success', 'Sync user logged in', { ip, username: user.username, detail: { sessionId: session.id, deviceId: session.deviceId } });
@@ -1047,7 +840,22 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           } : {}),
         });
       }
-      if (isAdmin) return await handleAdmin(req, res, apiPath, auth);
+      if (isAdmin) {
+        if (auth.role === 'member') {
+          await log('warn', 'admin_forbidden', 'Member attempted an administrative request', {
+            ip,
+            username: auth.user.username,
+            status: 403,
+            detail: { requestId },
+          });
+          return send(res, 403, { code: 'ADMIN_REQUIRED', error: 'administrator role required', requestId });
+        }
+        return await admin.handle(req, res, apiPath, {
+          user: { username: user.username, accountId: user.accountId, disabled: user.disabled },
+          session: { id: session.id, createdAt: session.createdAt, expiresAt: session.expiresAt, kind: session.kind },
+          role: auth.role,
+        }, requestId);
+      }
 
       if (req.method === 'POST' && apiPath === '/api/auth/password-change/authorize') {
         const code = randomBytes(32).toString('base64url');
@@ -1262,6 +1070,16 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         const requested = Number(url.searchParams.get('limit') ?? 200);
         if (!Number.isSafeInteger(after) || after < 0) return send(res, 400, { error: 'invalid cursor' });
         const page = await store.listCommits(user.username, after, Number.isSafeInteger(requested) ? Math.max(1, Math.min(200, requested)) : 200);
+        await store.recordSyncEvent({
+          operation: 'pull',
+          outcome: 'ok',
+          username: user.username,
+          accountId: user.accountId,
+          deviceName: session.deviceName,
+          commitCount: page.commits.length,
+          durationMs: Date.now() - requestStartedAt,
+          requestId,
+        });
         return send(res, 200, { ...page, serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch });
       }
       if (req.method === 'POST' && apiPath === '/api/v3/commits') {
@@ -1278,7 +1096,17 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           incoming.push({ commitId: row.commitId, ledgerId: row.ledgerId, contentHash: row.contentHash, encCommit: row.encCommit });
         }
         const result = await store.pushCommits(user.username, incoming);
-        if (result.assigned.length) await log('info', 'commits_pushed', 'Received encrypted commits', { ip, username: user.username, detail: { count: result.assigned.length } });
+        if (result.assigned.length) await log('info', 'commits_pushed', 'Received encrypted commits', { ip, username: user.username, detail: { count: result.assigned.length, requestId } });
+        await store.recordSyncEvent({
+          operation: 'push',
+          outcome: 'ok',
+          username: user.username,
+          accountId: user.accountId,
+          deviceName: session.deviceName,
+          commitCount: result.assigned.length,
+          durationMs: Date.now() - requestStartedAt,
+          requestId,
+        });
         return send(res, 200, { assigned: result.assigned, headSeq: result.replica.headSeq, serverId, replicaId: result.replica.replicaId, streamEpoch: result.replica.streamEpoch });
       }
       return send(res, 404, { error: 'not found' });
@@ -1286,13 +1114,25 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       const isBlob = Boolean(routedPath?.startsWith('/api/v3/blobs'));
       const status = errorStatus(error, isBlob);
       const code = errorCode(error);
+      const message = error instanceof Error ? error.message : String(error);
       await log(
         status >= 500 ? 'error' : 'warn',
         isBlob ? 'blob_request_failed' : 'request_failed',
         isBlob ? 'Encrypted attachment request failed' : 'Server request failed',
-        { ip, status, detail: { method: req.method, path: routedPath?.replace(/(\/invites\/)[^/]+/g, '$1<redacted>').replace(/[a-f0-9]{32,64}/g, '<opaque-id>'), code, error: error instanceof Error ? error.message : String(error) } },
+        { ip, status, detail: { method: req.method, path: routedPath?.replace(/(\/invites\/)[^/]+/g, '$1<redacted>').replace(/[a-f0-9]{32,64}/g, '<opaque-id>'), code, error: message, requestId } },
       ).catch(() => undefined);
-      return send(res, status, { ...(code ? { code } : {}), error: error instanceof Error ? error.message : String(error) });
+      // Server-visible sync failures feed the diagnostics page; client offline gaps stay out of scope.
+      if (routedPath?.startsWith('/api/v3')) {
+        await store.recordSyncEvent({
+          operation: isBlob ? 'blob' : 'commit',
+          outcome: 'error',
+          ...(code ? { resultCode: code } : {}),
+          category: syncEventCategory(code, status),
+          durationMs: Date.now() - requestStartedAt,
+          requestId,
+        }).catch(() => undefined);
+      }
+      return send(res, status, { ...(code ? { code } : {}), error: message, requestId });
     }
   });
   server.headersTimeout = 15_000;
@@ -1304,7 +1144,10 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     serverId,
     dataDir,
     ready,
+    started,
     close: async () => {
+      metrics.stop();
+      await started.catch(() => undefined);
       if (server.listening) await new Promise<void>((resolveClose, reject) => server.close((error) => error ? reject(error) : resolveClose()));
       await store.close();
       await blobStore.close();

@@ -141,6 +141,8 @@ test('rejects removed sync profiles, old management routes, and open defaults in
     ['apps/web/src/legacy.ts', `const key = '${['zichan.sync.server', 'Profiles.v3'].join('')}';`, /removed sync configuration/],
     ['apps/sync-server/src/legacy.ts', "const route = '/admin/status';", /removed \/admin route/],
     ['apps/desktop/scripts/legacy.mjs', "process.env.REGISTRATION_MODE ||= 'open';", /defaults registration to open/],
+    ['apps/sync-server/docker-compose.yml', '      - REGISTRATION_MODE=${REGISTRATION_MODE:-open}', /defaults registration to open/],
+    ['apps/sync-server/Dockerfile', 'ENV REGISTRATION_MODE=open', /defaults registration to open/],
   ];
   for (const [relativePath, source, expected] of cases) {
     const root = await fixture();

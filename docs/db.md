@@ -58,7 +58,7 @@ Indexes cover the hot query columns (FKs + dates): `game_records.season_id`,
 ## 当前 Schema 基线
 
 [migrations.ts](../packages/db/src/migrations.ts) 只创建并接受当前开发基线
-`current_schema_2026_09_01_navigation_layout`（version 116）。项目尚未发布，因此不保留历史升级链：发现旧 marker、旧表、缺列、
+`current_schema_2026_09_14_ledger_timezone`（version 117）。项目尚未发布，因此不保留历史升级链：发现旧 marker、旧表、缺列、
 多列或额外表时会抛出 `SchemaResetRequiredError`，Web/桌面初始化错误页提供“重置本机开发数据”。Web 端另外会把未加密、
 无法解密或数据密钥不匹配的 IndexedDB 快照标记为需要显式重置，并同时提供重试和返回解锁入口。
 应用不会自动删除账本，也不会猜测性转换旧结构。若数据库已有业务表但缺少 `schema_migrations`，验证会在写入任何 marker
