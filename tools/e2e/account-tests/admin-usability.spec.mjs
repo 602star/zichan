@@ -38,7 +38,7 @@ test('reflects the stored registration policy and paginates and filters invitati
   const f = await fixture();
   try {
     const codes = [];
-    for (let index = 0; index < 26; index += 1) {
+    for (let index = 0; index < 51; index += 1) {
       const response = await f.api('/invites', { days: 7 });
       expect(response.status).toBe(200);
       codes.push((await response.json()).invite.code);
@@ -50,10 +50,23 @@ test('reflects the stored registration policy and paginates and filters invitati
     await expect(page.getByLabel('当前策略')).toHaveValue('open');
     await expect(page.locator('tbody tr')).toHaveCount(25);
     await expect(page.getByText('第 1 页')).toBeVisible();
+    await expect(page.getByRole('button', { name: '上一页', exact: true })).toBeDisabled();
+    // Three pages forward, then back: the cursor history must survive every step.
     await page.getByRole('button', { name: '下一页', exact: true }).click();
+    await expect(page.getByText('第 2 页')).toBeVisible();
+    await expect(page.locator('tbody tr')).toHaveCount(25);
+    await page.getByRole('button', { name: '下一页', exact: true }).click();
+    await expect(page.getByText('第 3 页')).toBeVisible();
     await expect(page.locator('tbody tr')).toHaveCount(1);
     await expect(page.getByRole('cell', { name: codes[0], exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: '下一页', exact: true })).toBeDisabled();
+    await page.getByRole('button', { name: '上一页', exact: true }).click();
+    await expect(page.getByText('第 2 页')).toBeVisible();
+    await expect(page.locator('tbody tr')).toHaveCount(25);
+    await page.getByRole('button', { name: '上一页', exact: true }).click();
+    await expect(page.getByText('第 1 页')).toBeVisible();
+    await expect(page.locator('tbody tr')).toHaveCount(25);
+    await expect(page.getByRole('button', { name: '上一页', exact: true })).toBeDisabled();
     await page.getByLabel('状态').selectOption('revoked');
     await expect(page.getByText('第 1 页')).toBeVisible();
     await expect(page.locator('tbody tr')).toHaveCount(1);

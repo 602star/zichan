@@ -46,11 +46,20 @@ export function createJobHandlers(deps: JobHandlerDeps): Partial<Record<AdminJob
       if (accountId && !account) throw new ServerStoreError('NOT_FOUND', 404, '账号不存在');
       const resumeFrom = typeof job.job.params['resumeFrom'] === 'string' ? job.job.params['resumeFrom'] : undefined;
       await job.progress({ phase: 'scanning', processed: 0 });
+      // The checkpoint is written at batch boundaries, so a restart resumes after the last
+      // verified object instead of rescanning everything or losing the progress report.
+      let lastCheckpointAt = 0;
       const result = await blobStore.verify({
         ...(resumeFrom ? { resumeFrom } : {}),
         ...(account ? { username: account.username } : {}),
         batchSize: 25,
-        onProgress: async (progress) => { await job.progress({ phase: 'scanning', processed: progress.processed, total: progress.total }); },
+        onProgress: async (progress) => {
+          await job.progress({ phase: 'scanning', processed: progress.processed, total: progress.total });
+          const at = Date.now();
+          if (!progress.lastKey || at - lastCheckpointAt < 1_000) return;
+          lastCheckpointAt = at;
+          await job.checkpoint({ lastKey: progress.lastKey, processed: progress.processed, total: progress.total, checkpointAt: new Date(at).toISOString() });
+        },
         shouldCancel: () => job.cancelled(),
       });
       const summary: JsonRecord = {

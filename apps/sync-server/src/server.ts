@@ -472,6 +472,10 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     sessionDays: SESSION_TTL_MS / 86_400_000,
   });
   // Recovery, deployment-record import and sampling all start after the stores are ready.
+  // The queue is also re-kicked on a slow timer: a task that stayed `queued` because the
+  // worker stopped after a failed write must not wait for someone to open the console.
+  const queueWatchdog = setInterval(() => jobs.kick(), 60_000);
+  queueWatchdog.unref?.();
   const started = ready.then(async () => {
     // An unparseable environment override must stop the boot, not be replaced by a default.
     await runtimeSettings.load();
@@ -482,6 +486,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       if (recovery.interrupted.length) {
         console.log(`jobs: ${recovery.interrupted.length} interrupted task(s) recorded as interrupted, ${recovery.resumed.length} resumed from a checkpoint`);
       }
+      const queued = (await store.countJobsByStatus())['queued'] ?? 0;
+      if (queued) console.log(`jobs: ${queued} queued task(s) scheduled at startup`);
     } catch (error) {
       await log('warn', 'startup_tasks_failed', 'Startup recovery tasks failed', {
         detail: { error: error instanceof Error ? error.message : String(error) },
@@ -1145,6 +1151,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     ready,
     started,
     close: async () => {
+      clearInterval(queueWatchdog);
       metrics.stop();
       await started.catch(() => undefined);
       if (server.listening) await new Promise<void>((resolveClose, reject) => server.close((error) => error ? reject(error) : resolveClose()));

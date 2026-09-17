@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { EncryptedBlobStore } from './blob-store.js';
 import { ADMIN_BODY_BYTES, pathParts, readBody, send, sendText } from './http-util.js';
-import { isJobType, jobParamsFor, type JobRunner } from './jobs.js';
+import { isJobType, jobOutcome, jobParamsFor, type JobRunner } from './jobs.js';
 import { importMaintenanceRecords } from './maintenance-records.js';
 import type { MetricsService } from './metrics.js';
 import { SETTING_FIELDS, type SettingsFacade } from './settings.js';
@@ -17,11 +17,16 @@ import {
   ServerStoreError,
   type AccountRole,
   type AdminAlert,
+  type AdminJob,
+  type AdminJobType,
   type JsonRecord,
   type RegistrationMode,
   type ServerLog,
   type SyncServerStore,
 } from './store.js';
+
+/** Task types that only the server owner may create, re-run or cancel. */
+const JOB_OWNER_ONLY: AdminJobType[] = ['backup.verify', 'restore.drill'];
 
 export interface AdminRouterDeps {
   store: SyncServerStore;
@@ -139,44 +144,65 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     return label;
   };
 
-  /** Write routes accept an optional idempotency key so a timeout cannot duplicate work. */
-  const withIdempotency = async (
-    req: IncomingMessage,
-    res: ServerResponse,
-    action: string,
-    payload: unknown,
-    run: () => Promise<{ status: number; body: JsonRecord }>,
-  ): Promise<void> => {
-    const rawKey = req.headers['idempotency-key'];
-    const key = Array.isArray(rawKey) ? rawKey[0] : rawKey;
-    if (!key) {
-      const result = await run();
-      send(res, result.status, result.body);
-      return;
-    }
-    if (!/^[A-Za-z0-9._:-]{8,128}$/.test(key)) {
-      send(res, 400, { code: 'INVALID_IDEMPOTENCY_KEY', error: '幂等键格式无效' });
-      return;
-    }
-    const fingerprint = createHash('sha256').update(`${action}:${JSON.stringify(payload ?? {})}`).digest('hex');
-    const existing = await store.idempotentResult(key);
-    if (existing) {
-      if (existing.fingerprint !== fingerprint) {
-        send(res, 409, { code: 'IDEMPOTENCY_KEY_REUSED', error: '该幂等键曾用于不同的请求参数，已拒绝' });
-        return;
-      }
-      send(res, existing.status, { ...existing.body, replayed: true });
-      return;
-    }
-    const result = await run();
-    await store.storeIdempotentResult(key, fingerprint, result.status, result.body);
-    send(res, result.status, result.body);
-  };
-
   const handle = async (req: IncomingMessage, res: ServerResponse, apiPath: string, auth: AdminAuth, requestId: string): Promise<void> => {
     let suffix = apiPath.slice('/api/admin'.length) || '/';
     let parts = pathParts(suffix);
     const search = new URL(req.url ?? '/', 'http://localhost').searchParams;
+
+    /**
+     * Write routes accept an optional idempotency key so a timeout cannot duplicate work.
+     *
+     * The key is claimed *before* the work runs and keeps the requesting operator: two
+     * concurrent requests with the same key can no longer both execute it, and a request that
+     * arrives while the first one is still running is told to verify the outcome instead of
+     * silently repeating the work.
+     */
+    const withIdempotency = async (
+      req: IncomingMessage,
+      res: ServerResponse,
+      action: string,
+      payload: unknown,
+      run: () => Promise<{ status: number; body: JsonRecord }>,
+    ): Promise<void> => {
+      const rawKey = req.headers['idempotency-key'];
+      const key = Array.isArray(rawKey) ? rawKey[0] : rawKey;
+      if (!key) {
+        const result = await run();
+        send(res, result.status, result.body);
+        return;
+      }
+      if (!/^[A-Za-z0-9._:-]{8,128}$/.test(key)) {
+        send(res, 400, { code: 'INVALID_IDEMPOTENCY_KEY', error: '幂等键格式无效' });
+        return;
+      }
+      const fingerprint = createHash('sha256').update(`${action}:${JSON.stringify(payload ?? {})}`).digest('hex');
+      const claim = await store.claimIdempotency(key, fingerprint, auth.user.accountId);
+      if (claim.state === 'mismatch') {
+        send(res, 409, { code: 'IDEMPOTENCY_KEY_REUSED', error: '该幂等键曾用于不同的请求参数，已拒绝' });
+        return;
+      }
+      if (claim.state === 'actor-mismatch') {
+        send(res, 409, { code: 'IDEMPOTENCY_ACTOR_MISMATCH', error: '该幂等键已由另一个管理账号占用；请为本账号生成新的幂等键' });
+        return;
+      }
+      if (claim.state === 'in-progress') {
+        send(res, 409, { code: 'IDEMPOTENCY_IN_PROGRESS', error: '同一幂等键的请求仍在处理中；请刷新核实结果，不要重复提交' });
+        return;
+      }
+      if (claim.state === 'replay') {
+        send(res, claim.status, { ...claim.body, replayed: true });
+        return;
+      }
+      try {
+        const result = await run();
+        await store.completeIdempotency(key, result.status, result.body);
+        send(res, result.status, result.body);
+      } catch (error) {
+        // Work that produced no result must not block a later attempt with the same key.
+        await store.releaseIdempotency(key).catch(() => undefined);
+        throw error;
+      }
+    };
 
     const assertManageTarget = async (username: string, quota = false) => {
       const target = await store.getUser(username);
@@ -185,6 +211,27 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if ((!quota && role === 'owner') || auth.role === 'admin' && role !== 'member') throw new ServerStoreError('PROTECTED_ACCOUNT', 403, 'cannot manage this privileged account');
       return target;
     };
+
+    /**
+     * Creating, re-running and cancelling a task share one rule, evaluated against the
+     * *current* operator: re-running an old task must not bypass an owner-only type or the
+     * protection around a privileged target account.
+     */
+    const assertJobAuthorized = async (type: AdminJobType, accountId?: string) => {
+      if (JOB_OWNER_ONLY.includes(type) && auth.role !== 'owner') {
+        throw new ServerStoreError('OWNER_REQUIRED', 403, '该任务需要所有者权限');
+      }
+      if (!accountId) return undefined;
+      const target = await store.userByAccountId(accountId);
+      if (!target) throw new ServerStoreError('NOT_FOUND', 404, 'account not found');
+      if (auth.role !== 'owner' && await store.roleForUser(target.username) !== 'member') {
+        throw new ServerStoreError('PROTECTED_ACCOUNT', 403, 'cannot manage this privileged account');
+      }
+      return target;
+    };
+
+    /** The console shows "finished" and "found problems" separately. */
+    const withOutcome = (job: AdminJob) => ({ ...job, outcome: jobOutcome(job) });
 
     // New management URLs use immutable IDs. Legacy URLs below keep the same guards.
     if (parts[0] === 'accounts' && parts.length === 3) {
@@ -372,33 +419,24 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) return send(res, 400, { error: 'limit must be between 1 and 200' });
       const status = search.get('status') ?? '';
       if (status && !['queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(status)) return send(res, 400, { error: 'invalid status' });
-      return send(res, 200, await store.listJobs({
+      const page = await store.listJobs({
         limit,
         ...(status ? { status } : {}),
         ...(search.get('type') ? { type: search.get('type')! } : {}),
         ...(search.get('cursor') ? { cursor: search.get('cursor')! } : {}),
-      }));
+      });
+      return send(res, 200, { ...page, jobs: page.jobs.map(withOutcome) });
     }
 
     if (req.method === 'POST' && suffix === '/jobs') {
       const body = await readBody(req, ADMIN_BODY_BYTES);
       const type = body.type;
       if (!isJobType(type)) return send(res, 400, { code: 'JOB_TYPE_INVALID', error: '不支持的任务类型' });
-      if (type === 'backup.verify' || type === 'restore.drill') {
-        if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '该任务需要所有者权限' });
-      }
       const accountId = typeof body.accountId === 'string' ? body.accountId : undefined;
       // Validate the closed parameter set first so a malformed value is a client error,
       // not an account lookup miss.
       const params = jobParamsFor(type, body);
-      let targetAccount: Awaited<ReturnType<typeof store.userByAccountId>>;
-      if (accountId) {
-        targetAccount = await store.userByAccountId(accountId);
-        if (!targetAccount) return send(res, 404, { error: 'account not found' });
-        if (auth.role !== 'owner' && await store.roleForUser(targetAccount.username) !== 'member') {
-          return send(res, 403, { code: 'PROTECTED_ACCOUNT', error: 'cannot manage this privileged account' });
-        }
-      }
+      await assertJobAuthorized(type, accountId);
       return void await withIdempotency(req, res, `jobs:${type}:${accountId ?? ''}`, body, async () => {
         const job = await store.createJob({
           type,
@@ -408,7 +446,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         });
         await log('info', 'job_created', 'Maintenance job queued', { username: auth.user.username, detail: { jobId: job.jobId, type: job.type } });
         jobs.kick();
-        return { status: 202, body: { job } };
+        return { status: 202, body: { job: withOutcome(job) } };
       });
     }
 
@@ -417,19 +455,24 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if (req.method === 'GET' && parts.length === 2) {
         const job = await store.getJob(jobId);
         if (!job) return send(res, 404, { error: 'job not found' });
-        return send(res, 200, { job, events: await store.listJobEvents(jobId, 50) });
+        return send(res, 200, { job: withOutcome(job), events: await store.listJobEvents(jobId, 50) });
       }
       if (req.method === 'POST' && parts[2] === 'cancel') {
-        const job = await store.requestJobCancel(jobId);
+        const job = await store.getJob(jobId);
         if (!job) return send(res, 404, { error: 'job not found' });
-        if (job.status === 'queued') jobs.kick();
+        await assertJobAuthorized(job.type, job.targetAccountId);
+        const cancelled = await store.requestJobCancel(jobId);
+        if (!cancelled) return send(res, 404, { error: 'job not found' });
+        if (cancelled.status === 'queued') jobs.kick();
         await log('info', 'job_cancel_requested', 'Maintenance job cancellation requested', { username: auth.user.username, detail: { jobId } });
-        return send(res, 200, { job });
+        return send(res, 200, { job: withOutcome(cancelled) });
       }
       if (req.method === 'POST' && parts[2] === 'retry') {
         const job = await store.getJob(jobId);
         if (!job) return send(res, 404, { error: 'job not found' });
         if (job.status === 'running' || job.status === 'queued') return send(res, 409, { code: 'JOB_ACTIVE', error: '任务仍在执行，不能重新执行' });
+        // Re-authorize from the stored task, not from whoever created it back then.
+        await assertJobAuthorized(job.type, job.targetAccountId);
         return void await withIdempotency(req, res, `job-retry:${jobId}`, {}, async () => {
           const created = await store.createJob({
             type: job.type,
@@ -440,7 +483,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
           });
           await store.appendJobEvent(created.jobId, 'info', `由 ${jobId} 重新执行`);
           jobs.kick();
-          return { status: 202, body: { job: created } };
+          return { status: 202, body: { job: withOutcome(created) } };
         });
       }
       return send(res, 404, { error: 'not found' });
@@ -648,7 +691,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       return void await withIdempotency(req, res, 'database.verify', {}, async () => {
         const job = await store.createJob({ type: 'database.integrity-check', params: {}, createdBy: auth.user.username });
         jobs.kick();
-        return { status: 202, body: { job } };
+        return { status: 202, body: { job: withOutcome(job) } };
       });
     }
 
@@ -669,6 +712,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     if (req.method === 'POST' && suffix === '/quotas/blobs/verify') {
       const body = await readBody(req, ADMIN_BODY_BYTES).catch(() => ({}) as JsonRecord);
       const accountId = typeof body.accountId === 'string' ? body.accountId : undefined;
+      await assertJobAuthorized('blobs.verify', accountId);
       return void await withIdempotency(req, res, `blobs.verify:${accountId ?? 'all'}`, body, async () => {
         const job = await store.createJob({
           type: 'blobs.verify',
@@ -677,7 +721,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
           ...(accountId ? { targetAccountId: accountId } : {}),
         });
         jobs.kick();
-        return { status: 202, body: { job } };
+        return { status: 202, body: { job: withOutcome(job) } };
       });
     }
 

@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { AccountActions } from './AccountActions.js';
-import { Badge, Button, DataTable, Field, Loading, Panel, Pager, Select, TextInput, bytes, muted, row, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Panel, Pager, Select, TextInput, bytes, muted, row, useCursorPager, useResource, when } from './ui.js';
 import type { AccountRow } from './types.js';
 
 const quotaTone = (state: AccountRow['quotaState']) => state === 'over' ? 'bad' as const : state === 'warning' ? 'warn' as const : 'ok' as const;
@@ -14,9 +14,9 @@ export function UsersPage({ client, query, navigate, role }: {
   navigate: (to: string) => void;
   role: string;
 }) {
-  const [cursors, setCursors] = useState<string[]>(['']);
+  const pager = useCursorPager({ query, path: '/users', navigate });
+  const cursor = pager.cursor;
   const [openRow, setOpenRow] = useState('');
-  const cursor = query.get('cursor') ?? cursors.at(-1) ?? '';
   const search = query.get('search') ?? '';
   const roleFilter = query.get('role') ?? '';
   const state = query.get('state') ?? '';
@@ -28,16 +28,7 @@ export function UsersPage({ client, query, navigate, role }: {
     `/users?limit=25&cursor=${encodeURIComponent(cursor)}${search ? `&search=${encodeURIComponent(search)}` : ''}${roleFilter ? `&role=${roleFilter}` : ''}${state ? `&state=${state}` : ''}${protection ? `&protection=${protection}` : ''}${quota ? `&quota=${quota}` : ''}`,
   ), [cursor, search, roleFilter, state, protection, quota]);
 
-  const update = (patch: Record<string, string | undefined>, keepCursor = false): void => {
-    const next = new URLSearchParams(query);
-    for (const [key, value] of Object.entries(patch)) {
-      if (value === undefined || value === '') next.delete(key);
-      else next.set(key, value);
-    }
-    if (!keepCursor) next.delete('cursor');
-    setCursors(['']);
-    navigate(`/users${next.toString() ? `?${next.toString()}` : ''}`);
-  };
+  const update = pager.apply;
 
   const canManage = (user: AccountRow) => user.role !== 'owner' && (role === 'owner' || user.role === 'member');
   const columns = [
@@ -128,11 +119,11 @@ export function UsersPage({ client, query, navigate, role }: {
           empty="没有符合条件的账号。"
         />
         <Pager
-          page={cursors.length}
+          page={pager.page}
           hasNext={Boolean(list.data?.nextCursor)}
-          hasPrevious={cursors.length > 1}
-          onNext={() => { if (list.data?.nextCursor) { setCursors((rows) => [...rows, list.data!.nextCursor!]); update({ cursor: list.data!.nextCursor }, true); } }}
-          onPrevious={() => { const next = cursors.slice(0, -1); setCursors(next); update({ cursor: next.at(-1) || undefined }, true); }}
+          hasPrevious={pager.hasPrevious}
+          onNext={() => { if (list.data?.nextCursor) pager.next(list.data.nextCursor); }}
+          onPrevious={pager.previous}
         />
       </Panel>
     </>

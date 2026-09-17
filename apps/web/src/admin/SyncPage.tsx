@@ -1,32 +1,24 @@
 /** Sync diagnostics: every server-visible failure with a reason and a next step. */
 import type { AdminClient } from './client.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, TextInput, muted, row, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, TextInput, muted, row, useCursorPager, useResource, when } from './ui.js';
 import { SYNC_CATEGORIES, type SyncEvent } from './types.js';
 import { useState } from 'react';
 
 export function SyncPage({ client, query, navigate }: { client: AdminClient; query: URLSearchParams; navigate: (to: string) => void }) {
   const category = query.get('category') ?? '';
   const outcome = query.get('outcome') ?? '';
-  const cursor = query.get('cursor') ?? '';
   const from = query.get('from') ?? '';
   const until = query.get('until') ?? '';
   const [fromDraft, setFromDraft] = useState(from);
   const [untilDraft, setUntilDraft] = useState(until);
-  const [cursors, setCursors] = useState<string[]>(['']);
+  const pager = useCursorPager({ query, path: '/sync', navigate });
+  const cursor = pager.cursor;
 
   const list = useResource(() => client.request<{ events: SyncEvent[]; nextCursor?: string; coverage: string }>(
     `/sync-events?limit=50${category ? `&category=${category}` : ''}${outcome ? `&outcome=${outcome}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${from ? `&from=${encodeURIComponent(from)}` : ''}${until ? `&until=${encodeURIComponent(until)}` : ''}`,
   ), [category, outcome, cursor, from, until]);
 
-  const update = (patch: Record<string, string | undefined>, keepCursor = false): void => {
-    const next = new URLSearchParams(query);
-    for (const [key, value] of Object.entries(patch)) {
-      if (!value) next.delete(key); else next.set(key, value);
-    }
-    if (!keepCursor) next.delete('cursor');
-    setCursors(['']);
-    navigate(`/sync${next.toString() ? `?${next.toString()}` : ''}`);
-  };
+  const update = pager.apply;
 
   return (
     <>
@@ -94,8 +86,9 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
           empty="没有符合条件的诊断记录。"
         />
         <div style={{ ...row, marginTop: 10, justifyContent: 'flex-end' }}>
-          <Button disabled={cursors.length <= 1} onClick={() => { const next = cursors.slice(0, -1); setCursors(next); update({ cursor: next.at(-1) || undefined }, true); }}>较新记录</Button>
-          <Button disabled={!list.data?.nextCursor} onClick={() => { setCursors((stack) => [...stack, list.data!.nextCursor!]); update({ cursor: list.data!.nextCursor }, true); }}>更早记录</Button>
+          <span style={muted}>第 {pager.page} 页</span>
+          <Button disabled={!pager.hasPrevious} onClick={pager.previous}>较新记录</Button>
+          <Button disabled={!list.data?.nextCursor} onClick={() => { if (list.data?.nextCursor) pager.next(list.data.nextCursor); }}>更早记录</Button>
         </div>
         <p style={muted}>后台不提供“强制重新同步所有用户”这类操作：同步由客户端发起，服务端只记录结果。</p>
       </Panel>

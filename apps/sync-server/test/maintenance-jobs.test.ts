@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loginAccount, registerAccount } from '@zichan/db';
@@ -9,6 +8,7 @@ import { EncryptedBlobStore } from '../src/blob-store.js';
 import { createServerBackup } from '../src/backup.js';
 import { writeMaintenanceRecord } from '../src/maintenance-records.js';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
+import { objectDirectory, objectNamespace, seedObjects } from './support/blob-fixtures.js';
 import { CURRENT_SERVER_SCHEMA, SyncServerStore } from '../src/store.js';
 
 const password = 'correct horse battery staple';
@@ -48,57 +48,6 @@ const waitForJob = async (f: Awaited<ReturnType<typeof fixture>>, jobId: string)
   throw new Error(`job ${jobId} never finished`);
 };
 
-/** Writes a real one-chunk object tree plus its catalog, so the scan reads actual files. */
-function writeObjectTree(dataDir: string, username: string, ledgerId: string, blobId: string, contents: Buffer): void {
-  const namespace = createHash('sha256').update(`${username}\0${ledgerId}`).digest('hex');
-  const directory = join(dataDir, 'blobs', 'objects', namespace, blobId.slice(0, 2), blobId);
-  mkdirSync(directory, { recursive: true });
-  writeFileSync(join(directory, '0.chunk'), contents);
-  writeFileSync(join(directory, 'object.json'), JSON.stringify({
-    username,
-    ledgerId,
-    blobId,
-    state: 'available',
-    createdAt: new Date().toISOString(),
-    manifest: {
-      v: 1,
-      blobId,
-      cipherBytes: contents.byteLength,
-      chunkCount: 1,
-      chunks: [{ index: 0, sizeBytes: contents.byteLength, ciphertextSha256: createHash('sha256').update(contents).digest('hex'), iv: 'AAECAwQFBgcICQoL' }],
-    },
-  }));
-}
-
-/** Inserts catalog rows directly so a scan has many objects without HTTP round trips. */
-async function seedObjects(dataDir: string, username: string, ledgerId: string, count: number, withFiles: boolean): Promise<string[]> {
-  const driver = new NodeSqliteDriver(join(dataDir, 'server.sqlite'));
-  const namespace = createHash('sha256').update(`${username}\0${ledgerId}`).digest('hex');
-  const blobIds: string[] = [];
-  try {
-    for (let index = 0; index < count; index += 1) {
-      const blobId = createHash('sha256').update(`seeded-${index}`).digest('hex');
-      blobIds.push(blobId);
-      const contents = Buffer.alloc(32, index % 251);
-      const manifest = {
-        v: 1,
-        blobId,
-        cipherBytes: contents.byteLength,
-        chunkCount: 1,
-        chunks: [{ index: 0, sizeBytes: contents.byteLength, ciphertextSha256: createHash('sha256').update(contents).digest('hex'), iv: 'AAECAwQFBgcICQoL' }],
-      };
-      if (withFiles) writeObjectTree(dataDir, username, ledgerId, blobId, contents);
-      await driver.run(
-        `INSERT OR REPLACE INTO blob_objects
-         (username, ledger_id, blob_id, namespace, state, cipher_bytes, chunk_count, manifest_json, created_at, updated_at, deleted_at)
-         VALUES (?, ?, ?, ?, 'available', ?, 1, ?, ?, ?, NULL)`,
-        [username, ledgerId, blobId, namespace, contents.byteLength, JSON.stringify(manifest), new Date().toISOString(), new Date().toISOString()],
-      );
-    }
-  } finally { await driver.close(); }
-  return blobIds;
-}
-
 describe('maintenance jobs', () => {
   it('scans attachments in batches, keeps serving requests, and reports unreadable objects', async () => {
     const f = await fixture();
@@ -108,8 +57,7 @@ describe('maintenance jobs', () => {
       const ledgerId = initialized.replica.ledgerId;
       const seeded = await seedObjects(f.dir, 'member', ledgerId, 120, true);
       const corrupt = seeded[0]!;
-      const namespace = createHash('sha256').update(`member\0${ledgerId}`).digest('hex');
-      writeFileSync(join(f.dir, 'blobs', 'objects', namespace, corrupt.slice(0, 2), corrupt, '0.chunk'), Buffer.alloc(32, 9));
+      writeFileSync(join(objectDirectory(f.dir, objectNamespace('member', ledgerId), corrupt), '0.chunk'), Buffer.alloc(32, 9));
 
       const created = await f.api(f.owner.accessToken, '/jobs', { type: 'blobs.verify' });
       expect(created.status).toBe(202);

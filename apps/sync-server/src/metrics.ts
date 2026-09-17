@@ -31,6 +31,28 @@ const emptyCounters = (): PendingCounters => ({
   syncPushOk: 0, syncPushFailed: 0, syncPullOk: 0, blobOk: 0, blobFailed: 0,
 });
 
+export interface BackupSummary {
+  recordId: string;
+  /** Latest attempt, whatever its outcome. */
+  status: string;
+  attemptedAt: string;
+  verificationOk?: boolean;
+  /** Newest attempt that succeeded *and* passed verification: the only one "backup overdue" may count. */
+  lastSuccessRecordId?: string;
+  lastSuccessAt?: string;
+  /** Newest attempt whose verification actually ran and passed. */
+  lastVerifiedRecordId?: string;
+  lastVerifiedAt?: string;
+}
+
+export interface BackupRecordSummary {
+  recordId: string;
+  createdAt: string;
+  status: string;
+  verifiedAt?: string;
+  verificationOk?: boolean;
+}
+
 export interface ServiceSnapshot {
   sampledAt: string;
   stale: boolean;
@@ -47,7 +69,7 @@ export interface ServiceSnapshot {
   jobs: Record<string, number>;
   alerts: { active: number; pending: number; items: AdminAlert[] };
   verification: { database?: JsonRecord; blobs?: JsonRecord };
-  backup: JsonRecord | null;
+  backup: BackupSummary | null;
   uptimeSeconds: number;
   sampledWithinMs: number;
 }
@@ -57,7 +79,7 @@ export interface MetricsServiceDeps {
   blobStore: EncryptedBlobStore;
   settings: SettingsReader;
   log: (level: ServerLogLevel, action: string, message: string, meta?: Record<string, unknown>) => Promise<void>;
-  listBackupRecords: () => Promise<{ recordId: string; createdAt: string; status: string; verifiedAt?: string; verificationOk?: boolean }[]>;
+  listBackupRecords: () => Promise<BackupRecordSummary[]>;
   startedAt: number;
   intervalMs?: number;
 }
@@ -159,28 +181,38 @@ export function createMetricsService(deps: MetricsServiceDeps) {
     }
 
     const backup = current.backup;
-    const recorded = backup && typeof backup['status'] === 'string' ? String(backup['status']) : undefined;
     // A record whose verification failed is a failed backup even if creation succeeded.
-    const status = recorded === 'failed' || backup?.['verificationOk'] === false ? 'failed' : recorded;
-    const lastSuccess = backup && typeof backup['createdAt'] === 'string' ? String(backup['createdAt']) : undefined;
+    const failed = backup ? backup.status === 'failed' || backup.verificationOk === false : false;
     await store.upsertAlert({
       key: 'backup:failure',
       rule: 'backup-failure',
       scope: 'backup',
       severity: 'critical',
-      active: status === 'failed',
-      detail: { status: status ?? 'none', createdAt: lastSuccess ?? null },
+      active: failed,
+      detail: {
+        status: backup?.status ?? 'none',
+        attemptedAt: backup?.attemptedAt ?? null,
+        verificationOk: backup?.verificationOk ?? null,
+        lastSuccessAt: backup?.lastSuccessAt ?? null,
+      },
     });
+    // Backups are overdue only when no backup both succeeded and passed verification.
     const intervalHours = Number(settings.effective('backupIntervalHours'));
     if (intervalHours > 0) {
-      const due = !lastSuccess || Date.now() - Date.parse(lastSuccess) > intervalHours * 3_600_000;
+      const lastSuccessAt = backup?.lastSuccessAt;
+      const due = !lastSuccessAt || Date.now() - Date.parse(lastSuccessAt) > intervalHours * 3_600_000;
       await store.upsertAlert({
         key: 'backup:overdue',
         rule: 'backup-overdue',
         scope: 'backup',
         severity: 'warning',
         active: due,
-        detail: { intervalHours, lastSuccess: lastSuccess ?? null },
+        detail: {
+          intervalHours,
+          lastSuccessAt: lastSuccessAt ?? null,
+          lastAttemptAt: backup?.attemptedAt ?? null,
+          lastVerifiedAt: backup?.lastVerifiedAt ?? null,
+        },
       });
     }
 
@@ -225,6 +257,21 @@ export function createMetricsService(deps: MetricsServiceDeps) {
     };
     const records = await listBackupRecords();
     const latest = records[0];
+    // "Latest attempt", "latest success" and "latest verified" are three different facts:
+    // a failed attempt must not postpone the overdue alert, and a failed verification must be
+    // visible even when the attempt itself succeeded.
+    const lastSuccess = records.find((record) => record.status === 'completed' && record.verificationOk !== false);
+    const lastVerified = records.find((record) => record.verificationOk === true && typeof record.verifiedAt === 'string');
+    const backup: BackupSummary | null = latest
+      ? {
+        recordId: latest.recordId,
+        status: latest.status,
+        attemptedAt: latest.createdAt,
+        ...(latest.verificationOk === undefined ? {} : { verificationOk: latest.verificationOk }),
+        ...(lastSuccess ? { lastSuccessRecordId: lastSuccess.recordId, lastSuccessAt: lastSuccess.createdAt } : {}),
+        ...(lastVerified ? { lastVerifiedRecordId: lastVerified.recordId, lastVerifiedAt: lastVerified.verifiedAt! } : {}),
+      }
+      : null;
     const next: ServiceSnapshot = {
       sampledAt: new Date().toISOString(),
       stale: false,
@@ -241,12 +288,7 @@ export function createMetricsService(deps: MetricsServiceDeps) {
       jobs,
       alerts: { active: 0, pending: 0, items: [] },
       verification,
-      backup: latest
-        ? {
-          recordId: latest.recordId, status: latest.status, createdAt: latest.createdAt,
-          ...(latest.verifiedAt ? { verifiedAt: latest.verifiedAt } : {}),
-        }
-        : null,
+      backup,
       uptimeSeconds: Math.max(0, Math.round((Date.now() - deps.startedAt) / 1000)),
       sampledWithinMs: 0,
     };

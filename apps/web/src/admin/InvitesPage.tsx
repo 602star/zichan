@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Pager, Panel, Select, TextInput, message, muted, row, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Notice, Pager, Panel, Select, TextInput, message, muted, row, useCursorPager, useResource, when } from './ui.js';
 import type { Invite } from './types.js';
 
 const stateOf = (invite: Invite): { label: string; tone: 'ok' | 'bad' | 'muted' } => {
@@ -14,8 +14,8 @@ const stateOf = (invite: Invite): { label: string; tone: 'ok' | 'bad' | 'muted' 
 
 export function InvitesPage({ client, role, query, navigate }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (to: string) => void }) {
   const state = query.get('state') ?? '';
-  const cursor = query.get('cursor') ?? '';
-  const [cursors, setCursors] = useState<string[]>(['']);
+  const pager = useCursorPager({ query, path: '/invites', navigate });
+  const cursor = pager.cursor;
   const [days, setDays] = useState('7');
   const [issued, setIssued] = useState<Invite>();
   const [error, setError] = useState('');
@@ -25,13 +25,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
     `/invites?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${state ? `&state=${state}` : ''}`,
   ), [cursor, state]);
 
-  const update = (patch: Record<string, string | undefined>, keepCursor = false): void => {
-    const next = new URLSearchParams(query);
-    for (const [key, value] of Object.entries(patch)) { if (!value) next.delete(key); else next.set(key, value); }
-    if (!keepCursor) next.delete('cursor');
-    setCursors(['']);
-    navigate(`/invites${next.toString() ? `?${next.toString()}` : ''}`);
-  };
+  const update = pager.apply;
 
   const setMode = (value: string): void => {
     void client.request('/registration', { mode: value }, { idempotencyKey: adminIdempotencyKey(`registration-${value}`) })
@@ -114,11 +108,11 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
           empty="还没有邀请码。"
         />
         <Pager
-          page={cursors.length}
+          page={pager.page}
           hasNext={Boolean(invites.data?.nextCursor)}
-          hasPrevious={cursors.length > 1}
-          onNext={() => { if (invites.data?.nextCursor) { setCursors((stack) => [...stack, invites.data!.nextCursor!]); update({ cursor: invites.data!.nextCursor }, true); } }}
-          onPrevious={() => { const next = cursors.slice(0, -1); setCursors(next); update({ cursor: next.at(-1) || undefined }, true); }}
+          hasPrevious={pager.hasPrevious}
+          onNext={() => { if (invites.data?.nextCursor) pager.next(invites.data.nextCursor); }}
+          onPrevious={pager.previous}
         />
       </Panel>
     </>

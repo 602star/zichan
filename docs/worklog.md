@@ -3,6 +3,61 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-17 — 后台可靠性批次：任务权限、幂等占用、检查点恢复、备份健康、分页与告警
+
+**Goal:** 接上一轮后台一期落地后的一次只读巡检结论，先修“可信度”类缺陷（报告里的 P1/P2 第一批）：
+权限一致性、幂等并发窗口、任务重启恢复、备份健康口径、分页返回逻辑、告警连续计数，以及任务结果表达。
+不改架构（仍是单体 + SQLite），不加 schema 版本。
+
+### 交付
+
+1. **任务权限统一**（`apps/sync-server/src/admin.ts`）：新增 `assertJobAuthorized(type, accountId)`，
+   创建、重新执行、取消三条路径共用。重试/取消按**当前**操作者重新校验任务类型与目标账号，因此管理员
+   不能重试一条所有者创建的 `backup.verify` / `restore.drill`（403 `OWNER_REQUIRED`），也不能重试指向
+   受保护账号的任务（403 `PROTECTED_ACCOUNT`）。取消此前完全不校验；`POST /quotas/blobs/verify` 补齐了
+   目标账号校验。
+2. **幂等键在执行前占用**（`store.claimIdempotency` / `completeIdempotency` / `releaseIdempotency`）：
+   先 `INSERT ... ON CONFLICT DO NOTHING` 原子占用，再执行业务，最后提交结果；记录绑定发起 accountId。
+   并发同一键只有一个会执行，另一个得到 202 `replayed` 或 409 `IDEMPOTENCY_IN_PROGRESS`；换参数 409
+   `IDEMPOTENCY_KEY_REUSED`；其他管理账号复用同键 409 `IDEMPOTENCY_ACTOR_MISMATCH`；执行失败未产生结果时
+   释放占用，不会把键永久钉死。
+3. **任务检查点与启动调度**：`store.checkpointJob()` 在扫描过程中按批次把
+   `{ lastKey, processed, total, checkpointAt }` 合并进任务记录（节流 1s，且只在 `running` 时写）；
+   `blobStore.verify` 的 `onProgress` 带上 `lastKey`。`jobs.recover()` 结束时会 `kick()`，服务启动时
+   自动调度恢复出来的任务与队列里已有的任务；另加 60 秒看门狗兜底（`server.ts`），避免执行器异常退出
+   后队列停住。`drain()` 现在能关闭“连失败都记不下”的任务，防止一条 `running` 卡死整个队列。
+4. **任务结果表达**：新增 `jobOutcome()`（`clean` / `issues-found` / `failed` / `cancelled` / `interrupted` /
+   `pending`），随结果写入并在 `/jobs` 列表、详情、概览里返回。校验发现问题时任务仍是“成功”，但结果与
+   执行记录标注“任务执行完成，但校验发现问题”，页面用黄色而不是绿色“成功”。任务详情还给出不依赖 JSON 的
+   结果摘要，原始字段仍保留。
+5. **备份健康分三个时间点**（`metrics.ts`）：快照区分最近尝试（`attemptedAt`，不论成败）、最近成功备份
+   （`lastSuccessAt`，校验未通过的不算）、最近校验通过（`lastVerifiedAt`）。“备份逾期”只按最近成功备份计算，
+   失败尝试不再推迟告警；快照补上了此前漏掉的 `verificationOk`（那段判断原本是死代码）。
+6. **告警区分累计与连续**：`admin_alerts` 新增 `bad_streak`（追加式列，`ensureColumn` 补齐），只有连续两个
+   采样周期异常才生效，“异常 → 正常 → 异常”不再误判；累计次数、连续次数与确认记录分别保留，概览页同时展示。
+7. **列表分页**（`apps/web/src/admin/ui.tsx` 新增 `useCursorPager`）：游标历史属于它所基于的筛选条件，
+   翻页保留、筛选变化才重置。此前 `update()` 无条件 `setCursors([''])`，点下一页后页码与“上一页”都会失效。
+   用户、会话、邀请、任务、同步五个页面改用它；从链接直接打开某一页也会显示正确页码。
+8. **概览刷新对齐**：核心指标与服务状态同一个 30 秒轮询一起刷新（此前只刷新概览），并显示指标最后读取时间。
+
+### Verified
+
+- 新增 `apps/sync-server/test/admin-reliability.test.ts` 12 项：重试/取消的属主与受保护账号拒绝、幂等键
+  绑定账号与并发只执行一次、`jobOutcome` 表与“发现问题”任务的事件文案、运行中检查点（轮询任务记录看到
+  `checkpointAt` 后才取消）、重启后从中断点续跑、重启时自动调度排队与恢复任务、备份健康三种时间点、
+  告警“异常→正常→异常”仍为待确认。`test/support/blob-fixtures.ts` 抽出共用的附件目录/目录表夹具，
+  `maintenance-jobs.test.ts` 改用它（其中种子数据每 200 条让出事件循环，避免同步写文件阻塞定时器）。
+- `apps/sync-server` 100 项、web 502 项、core 128、db 158、logger 7 全部通过；`npm run typecheck`、
+  `npm run lint`（0 error / 0 warning）、`npm run release:check`（schema 117）、`npm run test:scripts` 通过。
+- E2E：`npm run test:e2e:account` 31 例通过（10.0 分钟，Chrome）；邀请页分页用例扩到三页来回（先建 51 个邀请），
+  并且在把 `useCursorPager` 临时改回“总是重置游标”后该用例确实失败（第 3 页丢失），修复后恢复通过。
+
+### 留待下一批
+
+- 运行概览的趋势图与告警历史/确认/静默/外部通知；用户为中心的关联排障（账号选择器、备份选择器、日期时间控件）；
+  维护计划与保留策略；只读运维角色与高风险操作的重新验证身份；管理员 MFA；重型任务隔离与容量压测。
+- 已知未做：`docs/server-admin-plan.md` §十四 里列的“未做/留待”项不变。
+
 ## 2026-09-17 — 服务器管理后台一期（A–D）落地：前端拆分、维护任务与运行管理
 
 **Goal:** 用户要求“按照记录开始做，全部完成”——按 `docs/server-admin-plan.md` 把一期的 A–D 阶段做完，

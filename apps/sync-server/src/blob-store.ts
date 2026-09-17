@@ -82,7 +82,9 @@ export interface VerifyOptions {
   /** Restricts the scan to one account so per-account maintenance stays bounded. */
   username?: string;
   batchSize?: number;
-  onProgress?: (progress: { processed: number; total: number }) => Promise<void> | void;
+  /** Reports a batch boundary; also the point where cancellation is observed. The last
+   * verified key rides along so the caller can persist a resumable checkpoint. */
+  onProgress?: (progress: { processed: number; total: number; lastKey?: string }) => Promise<void> | void;
   shouldCancel?: () => Promise<boolean> | boolean;
 }
 
@@ -631,13 +633,13 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
       }
       if ((position + 1) % batchSize !== 0) continue;
       await new Promise<void>((resolveYield) => setImmediate(resolveYield));
-      await options.onProgress?.({ processed: position + 1, total: rows.length });
+      await options.onProgress?.({ processed: position + 1, total: rows.length, ...(result.lastKey ? { lastKey: result.lastKey } : {}) });
       if (options.shouldCancel && await options.shouldCancel()) {
         result.cancelled = true;
         return result;
       }
     }
-    await options.onProgress?.({ processed: rows.length, total: rows.length });
+    await options.onProgress?.({ processed: rows.length, total: rows.length, ...(result.lastKey ? { lastKey: result.lastKey } : {}) });
     return result;
   }
 

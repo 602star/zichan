@@ -17,6 +17,8 @@ export function message(error: unknown): string {
       INVITE_USED: '邀请码已使用，不能再改变状态。',
       STALE_WRITE: '账号数据已被其他管理员修改，请刷新后再提交。',
       IDEMPOTENCY_KEY_REUSED: '该幂等键已用于不同的请求参数，已拒绝；请刷新后重新发起。',
+      IDEMPOTENCY_IN_PROGRESS: '同一幂等键的请求仍在处理中。请刷新核实结果，不要重复提交。',
+      IDEMPOTENCY_ACTOR_MISMATCH: '该幂等键已被另一个管理账号占用。请刷新后重新发起。',
       REQUEST_TIMEOUT: '请求超时，服务器可能已完成操作。请先刷新核实结果，再决定是否重试。',
       JOB_TYPE_INVALID: '不支持的任务类型。',
       JOB_PARAMETER_INVALID: '任务参数无效。',
@@ -93,6 +95,57 @@ export function usePolling(callback: () => void, intervalMs: number, enabled = t
     document.addEventListener('visibilitychange', onVisibility);
     return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, [enabled, intervalMs]);
+}
+
+export interface CursorPager {
+  cursor: string;
+  /** 1-based page number of the current view. */
+  page: number;
+  hasPrevious: boolean;
+  next: (nextCursor: string) => void;
+  previous: () => void;
+  /** Replaces filters in the URL; the cursor history restarts unless the patch sets `cursor`. */
+  apply: (patch: Record<string, string | undefined>) => void;
+}
+
+/**
+ * Cursor pagination shared by every list page.
+ *
+ * The trail of visited cursors belongs to the filter set it was built with: changing a filter
+ * starts a new trail, while stepping pages keeps it, so "previous" survives more than one step
+ * and the page number counts the pages actually visited instead of resetting to one.
+ */
+export function useCursorPager({ query, path, navigate }: { query: URLSearchParams; path: string; navigate: (to: string) => void }): CursorPager {
+  const filters = new URLSearchParams(query);
+  const cursor = filters.get('cursor') ?? '';
+  filters.delete('cursor');
+  const signature = filters.toString();
+  const [trail, setTrail] = useState<{ signature: string; cursors: string[] }>({ signature, cursors: cursor ? ['', cursor] : [''] });
+  // A view opened straight from a shared link still shows a usable page number.
+  const cursors = trail.signature === signature ? trail.cursors : (cursor ? ['', cursor] : ['']);
+  const apply = (patch: Record<string, string | undefined>): void => {
+    const next = new URLSearchParams(query);
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined || value === '') next.delete(key); else next.set(key, value);
+    }
+    if (!('cursor' in patch)) next.delete('cursor');
+    navigate(`${path}${next.toString() ? `?${next.toString()}` : ''}`);
+  };
+  return {
+    cursor,
+    page: cursors.length,
+    hasPrevious: cursors.length > 1,
+    next: (nextCursor) => {
+      setTrail({ signature, cursors: [...cursors, nextCursor] });
+      apply({ cursor: nextCursor });
+    },
+    previous: () => {
+      const shortened = cursors.slice(0, -1);
+      setTrail({ signature, cursors: shortened });
+      apply({ cursor: shortened.at(-1) });
+    },
+    apply,
+  };
 }
 
 export function Panel({ title, action, children, note }: { title?: string; action?: ReactNode; children: ReactNode; note?: string }) {

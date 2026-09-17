@@ -20,7 +20,12 @@ export interface Snapshot {
   jobs: Record<string, number>;
   alerts: { active: number; pending: number };
   verification: { database?: Record<string, unknown>; blobs?: Record<string, unknown> };
-  backup: { recordId: string; status: string; createdAt: string; verifiedAt?: string } | null;
+  /** Latest attempt, latest *successful* attempt and latest verified attempt are kept apart. */
+  backup: {
+    recordId: string; status: string; attemptedAt: string; verificationOk?: boolean;
+    lastSuccessRecordId?: string; lastSuccessAt?: string;
+    lastVerifiedRecordId?: string; lastVerifiedAt?: string;
+  } | null;
   uptimeSeconds: number;
   sampledWithinMs: number;
 }
@@ -29,6 +34,8 @@ export interface Alert {
   key: string; rule: string; scope: string; severity: 'warning' | 'critical';
   state: 'pending' | 'active' | 'resolved';
   firstSeenAt: string; lastSeenAt: string; occurrences: number;
+  /** Bad samples in a row; only two in a row activate the alert. */
+  consecutive: number;
   detail?: Record<string, unknown>;
   acknowledgedAt?: string; acknowledgedBy?: string; resolvedAt?: string;
 }
@@ -94,6 +101,8 @@ export interface Job {
   jobId: string; type: string; params: Record<string, unknown>; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
   createdAt: string; createdBy: string; targetAccountId?: string; startedAt?: string; finishedAt?: string;
   phase?: string; processed: number; total: number;
+  /** Computed by the server: finished is not the same as healthy. */
+  outcome?: 'pending' | 'clean' | 'issues-found' | 'failed' | 'cancelled' | 'interrupted';
   result?: Record<string, unknown>; errorCode?: string; errorMessage?: string;
   cancelRequested: boolean; retryOf?: string;
 }

@@ -15,9 +15,11 @@ export function OverviewPage({ client, navigate, accountName }: {
   const [range, setRange] = useState<(typeof RANGES)[number]>('24h');
   const overview = useResource(() => client.request<Overview>('/overview'), []);
   const metrics = useResource(() => client.request<Metrics>(`/metrics?range=${range}`), [range]);
-  usePolling(overview.reload, 30_000);
+  // Both views age together: a poll that refreshed only the overview left the counters stale.
+  usePolling(() => { overview.reload(); metrics.reload(); }, 30_000);
 
   const snapshot = overview.data?.snapshot;
+  const backup = snapshot?.backup ?? null;
   const alerts = overview.data?.alerts ?? [];
   const blocking = alerts.filter((alert) => alert.state === 'active');
   const degraded = Boolean(blocking.length) || overview.stale;
@@ -60,6 +62,7 @@ export function OverviewPage({ client, navigate, accountName }: {
           <Stat label="附件请求" value={metrics.data ? `${metrics.data.totals.blobOk} 成功 / ${metrics.data.totals.blobFailed} 失败` : '暂无数据'} />
         </div>
         {metrics.data?.observedSince ? <p style={muted}>自 {when(metrics.data.observedSince)} 起有数据。</p> : null}
+        {metrics.loadedAt ? <p style={muted}>最后读取：{new Date(metrics.loadedAt).toLocaleTimeString()}（与「服务状态」一起每 30 秒刷新）</p> : null}
       </Panel>
 
       <Panel title="数据保障">
@@ -67,9 +70,11 @@ export function OverviewPage({ client, navigate, accountName }: {
           <Stat label="磁盘余量" tone={diskLow ? 'bad' : undefined}
             value={diskFree === null ? '暂无数据' : bytes(diskFree)}
             hint={diskFree === null || !diskTotal ? '无法读取磁盘信息' : `共 ${bytes(diskTotal)}，剩余 ${((diskFree / diskTotal) * 100).toFixed(1)}%`} />
-          <Stat label="最近成功备份" tone={snapshot?.backup?.status === 'failed' ? 'bad' : undefined}
-            value={snapshot?.backup ? when(snapshot.backup.createdAt) : '暂无数据'}
-            hint={snapshot?.backup ? `状态 ${snapshot.backup.status}` : '尚未登记备份记录'} />
+          <Stat label="最近成功备份" tone={backup && (backup.status === 'failed' || backup.verificationOk === false) ? 'bad' : undefined}
+            value={backup?.lastSuccessAt ? when(backup.lastSuccessAt) : '暂无数据'}
+            hint={backup
+              ? `最近尝试 ${when(backup.attemptedAt)}（${backup.status}${backup.verificationOk === false ? ' · 校验未通过' : ''}）${backup.lastVerifiedAt ? `；最近校验通过 ${when(backup.lastVerifiedAt)}` : '；尚未成功校验'}`
+              : '尚未登记备份记录'} />
           <Stat label="最近数据库校验" value={typeof snapshot?.verification.database?.['checkedAt'] === 'string' ? when(String(snapshot.verification.database['checkedAt'])) : '暂无数据'}
             hint={typeof snapshot?.verification.database?.['result'] === 'string' ? `结果 ${snapshot.verification.database['result']}` : '尚未执行'} />
           <Stat label="最近附件校验" value={typeof snapshot?.verification.blobs?.['issueCount'] === 'number' ? `问题 ${snapshot.verification.blobs['issueCount']}` : '暂无数据'}
@@ -92,7 +97,7 @@ export function OverviewPage({ client, navigate, accountName }: {
               <li key={alert.key} style={{ marginBottom: 8 }}>
                 <Badge tone={alert.state === 'active' ? 'bad' : 'warn'}>{alert.state === 'active' ? '活动' : '待确认'}</Badge>{' '}
                 {describeAlert(alert)}{' '}
-                <span style={muted}>影响：{alert.scope}；首次 {when(alert.firstSeenAt)}，最近 {when(alert.lastSeenAt)}，共 {alert.occurrences} 次</span>{' '}
+                <span style={muted}>影响：{alert.scope}；首次 {when(alert.firstSeenAt)}，最近 {when(alert.lastSeenAt)}，共 {alert.occurrences} 次（连续 {alert.consecutive} 次）</span>{' '}
                 <Button onClick={() => { void acknowledge(client, alert, overview.reload); }}>确认</Button>{' '}
                 <NextStep alert={alert} navigate={navigate} />
               </li>
@@ -147,7 +152,10 @@ function describeAlert(alert: Alert): string {
   switch (alert.rule) {
     case 'capacity': return `账号 ${String(detail['username'] ?? '')} 的${alert.scope === 'commit' ? '提交' : '附件'}用量接近上限`;
     case 'backup-failure': return '备份失败或校验未通过';
-    case 'backup-overdue': return `超过 ${String(detail['intervalHours'] ?? '')} 小时没有成功备份`;
+    case 'backup-overdue': {
+      const lastSuccess = typeof detail['lastSuccessAt'] === 'string' ? when(detail['lastSuccessAt']) : '从未';
+      return `超过 ${String(detail['intervalHours'] ?? '')} 小时没有成功备份（最近成功：${lastSuccess}）`;
+    }
     case 'verification-issue': return alert.scope === 'database' ? '数据库校验发现问题' : '附件校验发现问题';
     case 'cleanup-failure': return `附件清理连续失败 ${String(detail['consecutiveFailures'] ?? '')} 次`;
     case 'sync-errors': return `持续出现同步错误（最近 ${String(detail['recentErrors'] ?? '')} 次）`;

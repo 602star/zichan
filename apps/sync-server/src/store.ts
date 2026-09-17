@@ -219,6 +219,8 @@ export interface AdminAlert {
   firstSeenAt: string;
   lastSeenAt: string;
   occurrences: number;
+  /** Bad samples in a row; only two in a row activate the alert. */
+  consecutive: number;
   detail?: JsonRecord;
   acknowledgedAt?: string;
   acknowledgedBy?: string;
@@ -618,6 +620,7 @@ CREATE TABLE IF NOT EXISTS admin_alerts (
   last_seen_at TEXT NOT NULL,
   occurrences INTEGER NOT NULL DEFAULT 1,
   healthy_checks INTEGER NOT NULL DEFAULT 0,
+  bad_streak INTEGER NOT NULL DEFAULT 0,
   detail_json TEXT,
   acknowledged_at TEXT,
   acknowledged_by TEXT,
@@ -642,7 +645,9 @@ CREATE TABLE IF NOT EXISTS admin_idempotency (
   status INTEGER NOT NULL,
   body_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL
+  expires_at TEXT NOT NULL,
+  actor_account_id TEXT,
+  state TEXT NOT NULL DEFAULT 'complete'
 );
 CREATE INDEX IF NOT EXISTS idx_admin_idempotency_expiry ON admin_idempotency (expires_at);
 CREATE TABLE IF NOT EXISTS server_metric_buckets (
@@ -705,6 +710,12 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
     await this.ensureColumn('sync_sessions', 'kind', "TEXT NOT NULL DEFAULT 'ledger'");
     await this.ensureColumn('server_admin_audit', 'reason', 'TEXT');
     await this.ensureColumn('server_admin_audit', 'request_id', 'TEXT');
+    // Alerts keep a consecutive-bad counter apart from the cumulative occurrence count, so
+    // "bad → healthy → bad" cannot be reported as two consecutive failures.
+    await this.ensureColumn('admin_alerts', 'bad_streak', 'INTEGER NOT NULL DEFAULT 0');
+    // Idempotency records are claimed before the work runs and carry the requesting operator.
+    await this.ensureColumn('admin_idempotency', 'actor_account_id', 'TEXT');
+    await this.ensureColumn('admin_idempotency', 'state', "TEXT NOT NULL DEFAULT 'complete'");
     const migrations = await this.driver.all<{ version: number; name: string }>('SELECT version, name FROM server_schema_migrations ORDER BY version');
     const previous = migrations.length === 1 && (
       Number(migrations[0]?.version) === 6 && migrations[0]?.name === 'server_account_owner_v6'
@@ -2422,34 +2433,40 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
         ? {
           occurrences: Number(row['occurrences'] ?? 0),
           healthyChecks: Number(row['healthy_checks'] ?? 0),
+          badStreak: Number(row['bad_streak'] ?? 0),
           state: String(row['state']),
         }
         : undefined;
       let occurrences = current?.occurrences ?? 0;
       let healthyChecks = current?.healthyChecks ?? 0;
+      let badStreak = current?.badStreak ?? 0;
       let state: AdminAlert['state'] = (current?.state as AdminAlert['state']) ?? 'pending';
       let resolvedAt: string | null = row?.['resolved_at'] == null ? null : String(row['resolved_at']);
       if (input.active) {
         occurrences += 1;
         healthyChecks = 0;
-        // Two consecutive bad samples make an alert active; a single sample stays pending.
-        state = occurrences >= 2 ? 'active' : 'pending';
+        // Only consecutive bad samples activate an alert: a healthy sample in between resets the
+        // streak, so "bad → healthy → bad" stays pending instead of counting as two in a row.
+        badStreak += 1;
+        state = badStreak >= 2 ? 'active' : 'pending';
         resolvedAt = null;
       } else if (current && current.state !== 'resolved') {
+        badStreak = 0;
         healthyChecks += 1;
         if (healthyChecks >= 2) { state = 'resolved'; resolvedAt = at; }
       }
       await driver.run(
         `INSERT INTO admin_alerts
-         (alert_key, rule, scope, severity, state, first_seen_at, last_seen_at, occurrences, healthy_checks, detail_json, resolved_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (alert_key, rule, scope, severity, state, first_seen_at, last_seen_at, occurrences, healthy_checks, bad_streak, detail_json, resolved_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(alert_key) DO UPDATE SET
            severity = excluded.severity, state = excluded.state, last_seen_at = excluded.last_seen_at,
            occurrences = excluded.occurrences, healthy_checks = excluded.healthy_checks,
+           bad_streak = excluded.bad_streak,
            detail_json = excluded.detail_json, resolved_at = excluded.resolved_at`,
         [
           input.key, input.rule, input.scope, input.severity, state, row?.['first_seen_at'] == null ? at : String(row['first_seen_at']),
-          at, occurrences, healthyChecks, input.detail ? JSON.stringify(input.detail) : null, resolvedAt,
+          at, occurrences, healthyChecks, badStreak, input.detail ? JSON.stringify(input.detail) : null, resolvedAt,
         ],
       );
       const saved = await driver.get<Record<string, unknown>>('SELECT * FROM admin_alerts WHERE alert_key = ?', [input.key]);
@@ -2469,6 +2486,7 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
       firstSeenAt: String(row['first_seen_at']),
       lastSeenAt: String(row['last_seen_at']),
       occurrences: Number(row['occurrences'] ?? 0),
+      consecutive: Number(row['bad_streak'] ?? 0),
       ...(row['detail_json'] == null ? {} : { detail: jsonObject(row['detail_json']) }),
       ...(row['acknowledged_at'] == null ? {} : { acknowledgedAt: String(row['acknowledged_at']) }),
       ...(row['acknowledged_by'] == null ? {} : { acknowledgedBy: String(row['acknowledged_by']) }),
@@ -2538,24 +2556,79 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
       }));
   }
 
-  async idempotentResult(key: string): Promise<{ fingerprint: string; status: number; body: JsonRecord } | undefined> {
+  /**
+   * Claims an idempotency key before the work starts, so two concurrent requests with the
+   * same key cannot both perform it. The row keeps the requesting operator and stays
+   * `in-progress` until the result is committed: a caller that arrives after a crash in
+   * that window is told to verify the outcome instead of silently repeating the work.
+   */
+  async claimIdempotency(key: string, fingerprint: string, actorAccountId: string, ttlMs = 24 * 60 * 60 * 1000): Promise<
+    | { state: 'claimed' }
+    | { state: 'replay'; status: number; body: JsonRecord }
+    | { state: 'mismatch' }
+    | { state: 'actor-mismatch' }
+    | { state: 'in-progress' }
+  > {
     await this.ready;
-    const row = await this.driver.get<Record<string, unknown>>(
-      'SELECT fingerprint, status, body_json FROM admin_idempotency WHERE idempotency_key = ? AND expires_at > ?',
-      [key, nowIso()],
-    );
-    return row ? { fingerprint: String(row['fingerprint']), status: Number(row['status']), body: jsonObject(row['body_json']) } : undefined;
+    const at = new Date();
+    const expiresAt = new Date(at.getTime() + ttlMs).toISOString();
+    return this.driver.transaction(async (driver) => {
+      const insert = await driver.run(
+        `INSERT INTO admin_idempotency (idempotency_key, fingerprint, status, body_json, created_at, expires_at, actor_account_id, state)
+         VALUES (?, ?, 0, '{}', ?, ?, ?, 'in-progress')
+         ON CONFLICT(idempotency_key) DO NOTHING`,
+        [key, fingerprint, at.toISOString(), expiresAt, actorAccountId],
+      );
+      if (Number(insert.changes ?? 0) === 1) return { state: 'claimed' };
+      const existing = await driver.get<Record<string, unknown>>('SELECT * FROM admin_idempotency WHERE idempotency_key = ?', [key]);
+      if (!existing) return { state: 'claimed' };
+      if (String(existing['expires_at']) <= at.toISOString()) {
+        // An expired record never blocks a fresh attempt.
+        await driver.run('DELETE FROM admin_idempotency WHERE idempotency_key = ?', [key]);
+        await driver.run(
+          `INSERT INTO admin_idempotency (idempotency_key, fingerprint, status, body_json, created_at, expires_at, actor_account_id, state)
+           VALUES (?, ?, 0, '{}', ?, ?, ?, 'in-progress')`,
+          [key, fingerprint, at.toISOString(), expiresAt, actorAccountId],
+        );
+        return { state: 'claimed' };
+      }
+      if (String(existing['fingerprint']) !== fingerprint) return { state: 'mismatch' };
+      // The record belongs to whoever claimed it: another operator reusing the key gets told
+      // instead of being handed someone else's recorded result.
+      if (String(existing['actor_account_id'] ?? '') !== '' && String(existing['actor_account_id']) !== actorAccountId) return { state: 'actor-mismatch' };
+      if (String(existing['state'] ?? '') !== 'complete') return { state: 'in-progress' };
+      return { state: 'replay', status: Number(existing['status']), body: jsonObject(existing['body_json']) };
+    });
   }
 
-  async storeIdempotentResult(key: string, fingerprint: string, status: number, body: JsonRecord, ttlMs = 24 * 60 * 60 * 1000): Promise<void> {
+  async completeIdempotency(key: string, status: number, body: JsonRecord): Promise<void> {
     await this.ready;
     const at = new Date();
     await this.driver.run(
-      `INSERT OR REPLACE INTO admin_idempotency (idempotency_key, fingerprint, status, body_json, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [key, fingerprint, status, JSON.stringify(body), at.toISOString(), new Date(at.getTime() + ttlMs).toISOString()],
+      "UPDATE admin_idempotency SET status = ?, body_json = ?, state = 'complete' WHERE idempotency_key = ?",
+      [status, JSON.stringify(body), key],
     );
     await this.driver.run('DELETE FROM admin_idempotency WHERE expires_at <= ?', [at.toISOString()]);
+  }
+
+  /** Releases a claim whose work failed before it produced a result, so a retry can proceed. */
+  async releaseIdempotency(key: string): Promise<void> {
+    await this.ready;
+    await this.driver.run("DELETE FROM admin_idempotency WHERE idempotency_key = ? AND state <> 'complete'", [key]);
+  }
+
+  /** Persists resumable progress on a running job; a finished job is never overwritten. */
+  async checkpointJob(jobId: string, checkpoint: JsonRecord): Promise<void> {
+    await this.ready;
+    await this.driver.transaction(async (driver) => {
+      const row = await driver.get<{ result_json: string | null; status: string }>(
+        'SELECT result_json, status FROM admin_jobs WHERE job_id = ?',
+        [jobId],
+      );
+      if (!row || String(row.status) !== 'running') return;
+      const merged = { ...jsonObject(row.result_json), ...checkpoint };
+      await driver.run('UPDATE admin_jobs SET result_json = ? WHERE job_id = ? AND status = \'running\'', [JSON.stringify(merged), jobId]);
+    });
   }
 
   async upsertBackupRecord(record: ServerBackupRecord): Promise<void> {

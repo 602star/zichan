@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, message, muted, row, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, message, muted, row, useCursorPager, useResource, when } from './ui.js';
 import type { SessionRow } from './types.js';
 
 export function SessionsPage({ client, query, navigate, selfAccountId }: {
@@ -14,9 +14,9 @@ export function SessionsPage({ client, query, navigate, selfAccountId }: {
   const search = query.get('search') ?? '';
   const state = query.get('state') ?? '';
   const kind = query.get('kind') ?? '';
-  const cursor = query.get('cursor') ?? '';
+  const pager = useCursorPager({ query, path: '/sessions', navigate });
+  const cursor = pager.cursor;
   const [searchDraft, setSearchDraft] = useState(search);
-  const [cursors, setCursors] = useState<string[]>(['']);
   const [report, setReport] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -24,15 +24,7 @@ export function SessionsPage({ client, query, navigate, selfAccountId }: {
     `/sessions?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${search ? `&search=${encodeURIComponent(search)}` : ''}${state ? `&state=${state}` : ''}${kind ? `&kind=${kind}` : ''}`,
   ), [cursor, search, state, kind]);
 
-  const update = (patch: Record<string, string | undefined>, keepCursor = false): void => {
-    const next = new URLSearchParams(query);
-    for (const [key, value] of Object.entries(patch)) {
-      if (!value) next.delete(key); else next.set(key, value);
-    }
-    if (!keepCursor) next.delete('cursor');
-    setCursors(['']);
-    navigate(`/sessions${next.toString() ? `?${next.toString()}` : ''}`);
-  };
+  const update = pager.apply;
 
   const rows = list.data?.sessions ?? [];
   const currentSessionId = client.currentSessionId();
@@ -131,10 +123,11 @@ export function SessionsPage({ client, query, navigate, selfAccountId }: {
           empty="没有符合条件的会话。"
         />
         <Pager
+          page={pager.page}
           hasNext={Boolean(list.data?.nextCursor)}
-          hasPrevious={cursors.length > 1}
-          onNext={() => { if (list.data?.nextCursor) { setCursors((stack) => [...stack, list.data!.nextCursor!]); update({ cursor: list.data!.nextCursor }, true); } }}
-          onPrevious={() => { const next = cursors.slice(0, -1); setCursors(next); update({ cursor: next.at(-1) || undefined }, true); }}
+          hasPrevious={pager.hasPrevious}
+          onNext={() => { if (list.data?.nextCursor) pager.next(list.data.nextCursor); }}
+          onPrevious={pager.previous}
         />
         <p style={muted}>{list.data?.note ?? ''}</p>
         <p style={muted}>所有者与管理员可以撤销自己账号的其他会话（需要最近 5 分钟内的登录）；当前会话请通过顶部「退出管理后台」结束，避免出现不清楚的登录状态。其他账号的管理员或所有者会话受保护。</p>
