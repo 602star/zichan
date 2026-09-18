@@ -24,6 +24,7 @@ import {
   type ServerLog,
   type SyncServerStore,
 } from './store.js';
+import type { MfaService } from './mfa.js';
 
 /** Task types that only the server owner may create, re-run or cancel. */
 const JOB_OWNER_ONLY: AdminJobType[] = ['backup.verify', 'restore.drill'];
@@ -33,6 +34,7 @@ export interface AdminRouterDeps {
   blobStore: EncryptedBlobStore;
   settings: SettingsFacade;
   metrics: MetricsService;
+  mfa: MfaService;
   jobs: JobRunner;
   log: (level: ServerLog['level'], action: string, message: string, meta?: Omit<ServerLog, 'id' | 'at' | 'level' | 'action' | 'message'>) => Promise<void>;
   dataDir: string;
@@ -60,6 +62,7 @@ const AUDIT_ACTIONS = [
   'invite-create', 'invite-state', 'password-reset-issue', 'password-reset-revoke', 'password-reset-complete',
   'password-change-authorize', 'owner-recovery-local', 'settings-save', 'settings-update', 'sessions-revoke-all',
   'alert-acknowledge', 'alert-silence', 'alert-unsilence',
+  'mfa-enroll', 'mfa-disable', 'mfa-recovery-codes',
 ];
 
 const SYNC_EVENT_CATEGORIES = ['session-invalid', 'quota-exceeded', 'protocol-incompatible', 'ledger-mismatch', 'server-storage-error', 'other'];
@@ -206,6 +209,16 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         // Work that produced no result must not block a later attempt with the same key.
         await store.releaseIdempotency(key).catch(() => undefined);
         throw error;
+      }
+    };
+
+    /**
+     * Enrolling or removing a second factor is a security change: it needs a fresh login, the
+     * same window as role changes and session revocation.
+     */
+    const assertRecentLogin = async (): Promise<void> => {
+      if (Date.now() - Date.parse(auth.session.createdAt) > 5 * 60_000) {
+        throw new ServerStoreError('RECENT_LOGIN_REQUIRED', 403, '此敏感操作需要最近 5 分钟内的登录，请退出管理后台并重新登录');
       }
     };
 
@@ -549,6 +562,80 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       return send(res, 200, { alert });
     }
 
+    if (req.method === 'GET' && suffix === '/mfa') {
+      const status = await deps.mfa.status(auth.user.username);
+      const missing = await deps.mfa.administratorsWithoutMfa();
+      return send(res, 200, {
+        ...status,
+        // Visibility for the policy: an operator can see who would be locked out before
+        // switching the requirement on.
+        required: String(settings.settings.effective('requireAdminMfa')) === 'on',
+        administratorsWithoutMfa: missing,
+        note: '两步验证保护的是管理后台登录：同一账号在本机记账端的登录不受影响。本地维护程序（所有者恢复）不要求验证码，那是需要服务器物理/文件系统访问权限的应急路径。',
+      });
+    }
+
+    if (req.method === 'POST' && parts[0] === 'mfa' && parts[1] === 'enroll') {
+      await assertRecentLogin();
+      const existing = await deps.mfa.status(auth.user.username);
+      if (existing.enabled) {
+        return send(res, 409, { code: 'MFA_ALREADY_ENABLED', error: '两步验证已启用；如需重新绑定请先关闭' });
+      }
+      const enrollment = await deps.mfa.beginEnrollment(auth.user.username, auth.user.username);
+      await log('info', 'mfa_enroll_started', 'Second factor enrollment started', { username: auth.user.username });
+      // The secret is returned once, to the account that is enrolling it.
+      return send(res, 200, enrollment);
+    }
+
+    if (req.method === 'POST' && parts[0] === 'mfa' && parts[1] === 'confirm') {
+      await assertRecentLogin();
+      const body = await readBody(req, ADMIN_BODY_BYTES);
+      const result = await deps.mfa.confirmEnrollment(auth.user.username, typeof body.code === 'string' ? body.code : '');
+      if (!result.ok) {
+        await log('warn', 'mfa_enroll_failed', 'Second factor confirmation failed', { username: auth.user.username, status: 400, detail: { reason: result.reason } });
+        return send(res, 400, {
+          code: result.reason === 'not-enrolled' ? 'MFA_NOT_ENROLLED' : 'MFA_CODE_INVALID',
+          error: result.reason === 'not-enrolled' ? '请先开始绑定，再输入验证码' : '验证码不正确；请确认设备时间准确后重试',
+        });
+      }
+      await store.mutateAdmin(auth.session.id, { action: 'mfa-enroll', accountId: auth.user.accountId }, { requestId: body.requestId as string | undefined });
+      await log('info', 'mfa_enrolled', 'Second factor enabled for an administrator', { username: auth.user.username });
+      // Recovery codes are shown exactly once, at the moment they are created.
+      return send(res, 200, { ok: true, recoveryCodes: result.recoveryCodes });
+    }
+
+    if (req.method === 'POST' && parts[0] === 'mfa' && parts[1] === 'recovery-codes') {
+      await assertRecentLogin();
+      const body = await readBody(req, ADMIN_BODY_BYTES);
+      const result = await deps.mfa.regenerateRecoveryCodes(auth.user.username, typeof body.code === 'string' ? body.code : '');
+      if (!result.ok) {
+        await log('warn', 'mfa_recovery_regenerate_failed', 'Recovery code regeneration refused', { username: auth.user.username, status: 400 });
+        return send(res, 400, { code: 'MFA_CODE_INVALID', error: '需要当前的验证码或一个未使用的恢复码才能重新生成' });
+      }
+      await store.mutateAdmin(auth.session.id, { action: 'mfa-recovery-codes', accountId: auth.user.accountId }, { requestId: body.requestId as string | undefined });
+      await log('info', 'mfa_recovery_regenerated', 'Recovery codes regenerated', { username: auth.user.username });
+      return send(res, 200, { ok: true, recoveryCodes: result.recoveryCodes });
+    }
+
+    if (req.method === 'POST' && parts[0] === 'mfa' && parts[1] === 'disable') {
+      await assertRecentLogin();
+      const body = await readBody(req, ADMIN_BODY_BYTES);
+      const policy = String(settings.settings.effective('requireAdminMfa')) === 'on';
+      if (policy) {
+        // With the policy on, disabling would immediately lock this administrator out; the
+        // requirement has to be lifted first, which the owner can do from settings.
+        return send(res, 409, { code: 'MFA_REQUIRED_BY_POLICY', error: '服务器要求管理员启用两步验证；请先由所有者关闭该要求' });
+      }
+      const result = await deps.mfa.disable(auth.user.username, typeof body.code === 'string' ? body.code : '');
+      if (!result.ok) {
+        await log('warn', 'mfa_disable_failed', 'Second factor disable refused', { username: auth.user.username, status: 400 });
+        return send(res, 400, { code: 'MFA_CODE_INVALID', error: '关闭两步验证需要当前验证码或一个未使用的恢复码' });
+      }
+      await store.mutateAdmin(auth.session.id, { action: 'mfa-disable', accountId: auth.user.accountId }, { requestId: body.requestId as string | undefined });
+      await log('info', 'mfa_disabled', 'Second factor disabled', { username: auth.user.username });
+      return send(res, 200, { ok: true });
+    }
+
     if (req.method === 'GET' && suffix === '/storage') {
       const composition = await blobStore.storageComposition();
       const diskFree = composition.diskFreeBytes;
@@ -598,6 +685,17 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const body = await readBody(req, ADMIN_BODY_BYTES);
       const updates = body.settings;
       if (typeof updates !== 'object' || updates === null || Array.isArray(updates)) return send(res, 400, { code: 'INVALID_SETTINGS', error: 'settings 必须是一个对象' });
+      // Requiring a second factor is only safe if every administrator already has one: with the
+      // policy on and a missing factor, that account can no longer sign in at all.
+      if ((updates as JsonRecord)['requireAdminMfa'] === 'on') {
+        const missing = await deps.mfa.administratorsWithoutMfa();
+        if (missing.length) {
+          return send(res, 409, {
+            code: 'MFA_ENROLLMENT_INCOMPLETE',
+            error: `启用前请先让这些管理员完成两步验证绑定：${missing.join('、')}`,
+          });
+        }
+      }
       return void await withIdempotency(req, res, 'settings', updates, async () => {
         const saved = await settings.settings.save(updates as Record<string, unknown>);
         await store.mutateAdmin(auth.session.id, { action: 'settings-save', keys: Object.keys(updates as JsonRecord) }, { requestId });

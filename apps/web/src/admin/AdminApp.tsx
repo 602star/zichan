@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react';
-import type { SyncAuthMe } from '@zichan/db';
+import { MfaRequiredError, type SyncAuthMe } from '@zichan/db';
 import { THEMES } from '../theme.js';
 import { AdminClient, type AdminHealth } from './client.js';
 import { adminHref, navigate as navigateRoute, useRoute } from './router.js';
@@ -9,6 +9,7 @@ import { JobsPage } from './JobsPage.js';
 import { OverviewPage } from './OverviewPage.js';
 import { SessionsPage } from './SessionsPage.js';
 import { SettingsPage } from './SettingsPage.js';
+import { SecurityPage } from './SecurityPage.js';
 import { StoragePage } from './StoragePage.js';
 import { SyncPage } from './SyncPage.js';
 import { UserDetailPage } from './UserDetailPage.js';
@@ -26,6 +27,7 @@ const NAVIGATION: { path: string; label: string; ownerOnly?: boolean }[] = [
   { path: '/jobs', label: '任务中心' },
   { path: '/logs', label: '运行日志' },
   { path: '/audit', label: '管理审计' },
+  { path: '/security', label: '账号安全' },
   { path: '/settings', label: '系统设置' },
 ];
 
@@ -37,12 +39,15 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(true);
   const [attempt, setAttempt] = useState(0);
+  // Present only between a password that needs a code and the code that finishes the login.
+  const [mfaChallenge, setMfaChallenge] = useState<{ expiresAt: string }>();
+  const [mfaCode, setMfaCode] = useState('');
   const [message, setMessage] = useState('正在检查服务器与管理会话…');
   useEffect(() => {
     let active = true;
     const previous = Object.fromEntries(Object.keys(THEMES.terracotta!).map((name) => [name, document.documentElement.style.getPropertyValue(name)]));
     for (const [name, value] of Object.entries(THEMES.terracotta!)) document.documentElement.style.setProperty(name, value);
-    const client = new AdminClient(baseUrl, (note) => { if (active) { setAccount(undefined); setPassword(''); setMessage(note); } });
+    const client = new AdminClient(baseUrl, (note) => { if (active) { setAccount(undefined); setPassword(''); setMfaChallenge(undefined); setMfaCode(''); setMessage(note); } });
     clientRef.current = client;
     setBusy(true); setHealth(undefined); setMessage('正在检查服务器与管理会话…');
     void (async () => {
@@ -76,11 +81,35 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
       });
       setAccount(user); setHealth((value) => value ? { ...value, claimed: true } : value); setMessage('');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
-      // Registration may have committed even if its response was lost.
-      try { setHealth(await client.health()); } catch { /* Keep the last verified state. */ }
+      // The password was right but the account owes a code: switch the same card to its second
+      // state instead of reporting a login failure.
+      const challenge = client.pendingChallenge();
+      if (error instanceof MfaRequiredError && challenge) {
+        setMfaChallenge(challenge); setMfaCode('');
+        setMessage('账号密码已验证，请输入验证书中的 6 位验证码或一枚一次性恢复码。');
+      } else {
+        setMessage(error instanceof Error ? error.message : String(error));
+        // Registration may have committed even if its response was lost.
+        try { setHealth(await client.health()); } catch { /* Keep the last verified state. */ }
+      }
     }
     finally { setPassword(''); setBusy(false); }
+  }
+
+  /** Answers the pending challenge. A wrong code keeps the challenge: only expiry forces a retry. */
+  async function submitMfa(event: FormEvent) {
+    event.preventDefault();
+    const client = clientRef.current;
+    if (!client || busy || !mfaCode.trim()) return;
+    setBusy(true); setMessage('');
+    try {
+      const user = await client.completeMfa(mfaCode.trim());
+      setAccount(user); setMfaChallenge(undefined); setMfaCode(''); setMessage('');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      if (!client.pendingChallenge()) { setMfaChallenge(undefined); setMfaCode(''); }
+    }
+    finally { setBusy(false); }
   }
 
   async function logout() {
@@ -120,17 +149,28 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
           <h2>{!health ? '尚未连接管理服务器' : !health.claimed ? '初始化服务器所有者' : '管理员登录'}</h2>
           {!health && !busy && <p>请确认后端服务已启动。仅启动 5173 前端页面不能创建服务器账号。</p>}
           {!busy && message && <button onClick={() => { setPassword(''); setAttempt((value) => value + 1); }}>重新连接服务器</button>}
-          <form onSubmit={(event) => void submit(event)} style={{ display: 'grid', gap: 16 }}>
-            <label>用户名<input className="zc-input" aria-label="管理账号用户名" autoComplete="username" required minLength={3} value={username} disabled={busy} onChange={(event) => setUsername(event.target.value)} /></label>
-            <label>账号密码<input className="zc-input" aria-label="管理账号密码" type="password" autoComplete={health?.claimed ? 'current-password' : 'new-password'} required minLength={8} value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} /></label>
-            {health && !health.claimed && <p>首次使用：设置管理员用户名和密码即可。创建成功后，此页面将只提供登录，不会创建个人账本。</p>}
-            <button disabled={busy || !health} type="submit">{busy ? '处理中…' : !health ? '等待服务器连接' : health.claimed ? '登录管理后台' : '创建所有者并进入后台'}</button>
-          </form>
+          {mfaChallenge
+            ? <form onSubmit={(event) => void submitMfa(event)} style={{ display: 'grid', gap: 16 }}>
+              <p style={{ margin: 0 }}>两步验证已开启。挑战将在 {new Date(mfaChallenge.expiresAt).toLocaleTimeString()} 失效，超时后请重新输入账号密码。</p>
+              <label>验证码或恢复码<input className="zc-input" aria-label="两步验证码" inputMode="numeric" autoComplete="one-time-code" maxLength={9} required value={mfaCode} disabled={busy} onChange={(event) => setMfaCode(event.target.value)} /></label>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <button disabled={busy || !mfaCode.trim()} type="submit">{busy ? '校验中…' : '验证并进入后台'}</button>
+                <button type="button" disabled={busy} onClick={() => { setMfaChallenge(undefined); setMfaCode(''); setMessage(''); }}>返回账号密码</button>
+              </div>
+              <p style={{ margin: 0 }}>恢复码每个只能使用一次；用它登录成功后，请在“账号安全”页重新生成。</p>
+            </form>
+            : <form onSubmit={(event) => void submit(event)} style={{ display: 'grid', gap: 16 }}>
+              <label>用户名<input className="zc-input" aria-label="管理账号用户名" autoComplete="username" required minLength={3} value={username} disabled={busy} onChange={(event) => setUsername(event.target.value)} /></label>
+              <label>账号密码<input className="zc-input" aria-label="管理账号密码" type="password" autoComplete={health?.claimed ? 'current-password' : 'new-password'} required minLength={8} value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} /></label>
+              {health && !health.claimed && <p>首次使用：设置管理员用户名和密码即可。创建成功后，此页面将只提供登录，不会创建个人账本。</p>}
+              <button disabled={busy || !health} type="submit">{busy ? '处理中…' : !health ? '等待服务器连接' : health.claimed ? '登录管理后台' : '创建所有者并进入后台'}</button>
+            </form>}
           {health?.claimed && <PasswordRecovery baseUrl={baseUrl} onComplete={setUsername} />}
           <section aria-label="管理后台权限与存储说明" style={{ marginTop: 24, lineHeight: 1.8 }}>
             <strong>登录会使用什么权限？</strong>
             <p>仅验证服务器管理身份，不创建或解锁个人账本，不申请账本持久存储或磁盘文件访问权限。</p>
             <p>使用独立的 HttpOnly 管理会话 Cookie，不与记账登录互相覆盖。账号密码不写入应用存储，访问令牌仅在内存中；此后台不提供“记住设备”。</p>
+            <p>两步验证启用后，密码通过仍需输入验证码；忘记验证书时可用一次性恢复码登录。</p>
             <p>管理角色可管理账号、设备和容量。托管账本由服务器保管解密凭据；私密账本的恢复码由用户保管，管理后台不提供查看密钥的入口。</p>
           </section>
         </section>}
@@ -174,6 +214,7 @@ function AdminShell({ client, account, baseUrl }: { client: AdminClient; account
       case 'jobs': return <JobsPage client={client} query={route.query} navigate={go} role={role} />;
       case 'logs': return <LogsPage client={client} query={route.query} navigate={go} />;
       case 'audit': return <AuditPage client={client} query={route.query} navigate={go} />;
+      case 'security': return <SecurityPage client={client} username={account.username} role={role} />;
       case 'settings': return <SettingsPage client={client} role={role} />;
       default: return <OverviewPage client={client} navigate={go} accountName={account.username} role={role} />;
     }

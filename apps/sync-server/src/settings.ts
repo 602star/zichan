@@ -70,6 +70,15 @@ export const SETTING_FIELDS: SettingField[] = [
     description: '备份保留只清理已经校验成功的历史备份，并始终保留最近一个有效备份。',
   },
   {
+    name: 'requireAdminMfa',
+    label: '要求管理员启用两步验证',
+    kind: 'select',
+    envVar: 'ADMIN_REQUIRE_MFA',
+    default: 'off',
+    options: ['off', 'on'],
+    description: '开启后管理后台登录需要已验证的两步验证；所有管理员都完成绑定后才允许开启。本地恢复流程不受影响，用于紧急找回访问。',
+  },
+  {
     name: 'alertWebhookUrl',
     label: '告警外部通知地址（Webhook）',
     kind: 'text',

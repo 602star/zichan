@@ -206,6 +206,8 @@ export {
   isLocalNetworkSyncUrl,
   registerAccount,
   loginAccount,
+  completeMfaLogin,
+  MfaRequiredError,
   refreshAccountSession,
   fetchAuthMe,
   fetchLedgerKeyEnvelope,
@@ -214,6 +216,7 @@ export {
   type RegisterAccountOptions,
   type RegisterAccountResult,
   type LoginAccountOptions,
+  type MfaChallenge,
   type SyncAuthSession,
   type SyncAuthMe,
 } from './http-transport.js';

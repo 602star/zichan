@@ -1,8 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AdminClient, adminBaseUrl } from '../src/admin/client.js';
-import { fetchAuthMe, loginAccount, refreshAccountSession, registerAccount } from '@zichan/db';
+import { AdminClient, AdminError, adminBaseUrl } from '../src/admin/client.js';
+import { completeMfaLogin, fetchAuthMe, loginAccount, MfaRequiredError, refreshAccountSession, registerAccount } from '@zichan/db';
 
-vi.mock('@zichan/db', () => ({ fetchAuthMe: vi.fn(), loginAccount: vi.fn(), refreshAccountSession: vi.fn(), registerAccount: vi.fn() }));
+vi.mock('@zichan/db', () => ({
+  fetchAuthMe: vi.fn(),
+  loginAccount: vi.fn(),
+  refreshAccountSession: vi.fn(),
+  registerAccount: vi.fn(),
+  completeMfaLogin: vi.fn(),
+  // The console distinguishes "a code is still owed" from "the login failed" by this class.
+  MfaRequiredError: class MfaRequiredError extends Error {
+    constructor(public readonly mfa: { challenge: string; expiresAt: string; methods: string[] }) { super('mfa required'); }
+  },
+}));
 const health = { serverId: 'server-admin-test', serverPublicKey: 'pinned-key', claimed: true, capabilities: ['server-management-v1'] };
 const auth = (expires = Date.now() + 60_000) => ({ accountId: 'account-test', accessToken: 'access-secret', refreshToken: '', accessExpiresAt: new Date(expires).toISOString(), session: { id: 'session-test', username: 'operator' }, role: 'owner' });
 const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body });
@@ -125,5 +135,34 @@ describe('independent management session lifecycle', () => {
     await expect(client.request('/users')).rejects.toMatchObject({ code: 'ACCOUNT_CHANGED' });
     expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/users'))).toBe(false);
     expect(lost).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks for the second factor instead of adopting a half-finished login', async () => {
+    const challenge = { challenge: 'token.challenge-id', expiresAt: new Date(Date.now() + 300_000).toISOString(), methods: ['totp'] };
+    vi.mocked(loginAccount).mockRejectedValue(new MfaRequiredError(challenge) as never);
+    await expect(client.login('operator', 'password')).rejects.toBeInstanceOf(MfaRequiredError);
+    // The password proved one factor: there is no session to leak, and the challenge is kept.
+    expect(client.pendingChallenge()).toEqual(challenge);
+    expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/api/auth/me'))).toBe(false);
+
+    vi.mocked(completeMfaLogin).mockResolvedValue(auth() as never);
+    vi.mocked(fetchAuthMe).mockResolvedValue({ ...auth(), username: 'operator', role: 'owner' } as never);
+    await expect(client.completeMfa('123456')).resolves.toMatchObject({ username: 'operator' });
+    expect(completeMfaLogin).toHaveBeenCalledWith('http://localhost:8787/ledger', challenge.challenge, '123456', expect.objectContaining({ sessionContext: 'admin' }));
+    expect(client.pendingChallenge()).toBeUndefined();
+  });
+
+  it('keeps a live challenge after a wrong code but drops an expired one', async () => {
+    const challenge = { challenge: 'token.challenge-id', expiresAt: new Date(Date.now() + 300_000).toISOString(), methods: ['totp'] };
+    vi.mocked(loginAccount).mockRejectedValue(new MfaRequiredError(challenge) as never);
+    await expect(client.login('operator', 'password')).rejects.toBeInstanceOf(MfaRequiredError);
+
+    vi.mocked(completeMfaLogin).mockRejectedValueOnce(new AdminError(401, 'MFA_INVALID', '两步验证未通过') as never);
+    await expect(client.completeMfa('000000')).rejects.toMatchObject({ code: 'MFA_INVALID' });
+    expect(client.pendingChallenge()).toEqual(challenge);
+
+    vi.mocked(completeMfaLogin).mockRejectedValueOnce(new AdminError(410, 'MFA_EXPIRED', '两步验证已超时') as never);
+    await expect(client.completeMfa('000000')).rejects.toMatchObject({ code: 'MFA_EXPIRED' });
+    expect(client.pendingChallenge()).toBeUndefined();
   });
 });

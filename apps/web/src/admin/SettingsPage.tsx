@@ -5,8 +5,7 @@ import { adminIdempotencyKey } from './idempotency.js';
 import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, Stat, TextInput, message, muted, row, useResource } from './ui.js';
 import type { SettingsPayload } from './types.js';
 
-export function SettingsPage({ client, role }: { client: AdminClient; role: string }) {
-  const payload = useResource(() => client.request<SettingsPayload>('/settings'), []);
+export function SettingsPage({ client, role }: { client: AdminClient; role: string }) {  const payload = useResource(() => client.request<SettingsPayload>('/settings'), []);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -28,7 +27,9 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
     for (const field of data.settings) {
       if (!field.editable) continue;
       const raw = draft[field.name] ?? '';
-      if (field.kind === 'text') {
+      // Text and select fields travel as typed strings: coercing "on" through Number() would
+      // silently drop every non-numeric setting instead of saving it.
+      if (field.kind === 'text' || field.kind === 'select') {
         if (raw !== String(field.value)) updates[field.name] = raw;
         continue;
       }
@@ -61,19 +62,25 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
               </span>
             ) },
             {
-              key: 'value', header: '生效值', render: (field) => (
-                <TextInput
+              key: 'value', header: '生效值', render: (field) => field.kind === 'select'
+                ? <Select
+                  value={draft[field.name] ?? String(field.value)}
+                  disabled={!field.editable || role !== 'owner'}
+                  onChange={(event) => setDraft((current) => ({ ...current, [field.name]: event.target.value }))}
+                >
+                  {(field.options ?? []).map((option) => <option key={option} value={option}>{selectLabel(field.name, option)}</option>)}
+                </Select>
+                : <TextInput
                   value={draft[field.name] ?? String(field.value)}
                   disabled={!field.editable || role !== 'owner'}
                   onChange={(event) => setDraft((current) => ({ ...current, [field.name]: event.target.value }))}
                   // Secrets are never returned; only allow-listed, non-secret fields reach here.
                   placeholder={field.kind === 'text' ? '留空表示不通知' : undefined}
                   style={{ width: field.kind === 'text' ? 260 : 120 }}
-                />
-              ),
+                />,
             },
             { key: 'source', header: '来源', render: (field) => <Badge tone={field.source === 'env' ? 'warn' : field.source === 'database' ? 'ok' : 'muted'}>{field.source === 'env' ? `环境变量 ${field.envVar}` : field.source === 'database' ? '数据库设置' : '默认值'}</Badge> },
-            { key: 'range', header: '允许范围', secondary: true, render: (field) => field.kind === 'number' ? `${field.minimum ?? ''}–${field.maximum ?? ''}` : field.kind === 'text' ? `http(s) 地址，最多 ${field.maxLength ?? 500} 字符` : (field.options ?? []).join('、') },
+            { key: 'range', header: '允许范围', secondary: true, render: (field) => field.kind === 'number' ? `${field.minimum ?? ''}–${field.maximum ?? ''}` : field.kind === 'text' ? `http(s) 地址，最多 ${field.maxLength ?? 500} 字符` : (field.options ?? []).map((option) => selectLabel(field.name, option)).join('、') },
             { key: 'stored', header: '已保存值', secondary: true, render: (field) => field.stored === null ? '未保存' : String(field.stored) },
           ]}
           rows={data.settings}
@@ -118,4 +125,10 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
       </Panel>
     </>
   );
+}
+
+/** Select values are stored as short tokens; the label is what an operator reads. */
+function selectLabel(name: string, option: string): string {
+  const labels: Record<string, string> = { on: '开启', off: '关闭' };
+  return labels[option] ?? option;
 }

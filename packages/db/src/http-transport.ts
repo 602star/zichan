@@ -48,6 +48,24 @@ export interface LoginAccountOptions extends HttpRequestOptions {
   expectedServerId?: string;
 }
 
+/**
+ * A password was accepted but the account still owes a second factor. The password cannot be
+ * reused to finish the login: the challenge is the only thing that can be answered, and it expires.
+ */
+export interface MfaChallenge {
+  challenge: string;
+  expiresAt: string;
+  methods: string[];
+}
+
+/** Thrown by `loginAccount` instead of returning a session when a code is still missing. */
+export class MfaRequiredError extends Error {
+  constructor(readonly mfa: MfaChallenge) {
+    super('该账号已开启两步验证，请输入验证器中的 6 位验证码或一次性恢复码。');
+    this.name = 'MfaRequiredError';
+  }
+}
+
 export interface SyncAuthSession {
   accountId?: string;
   sessionTransport?: 'cookie' | 'token';
@@ -431,11 +449,59 @@ export async function loginAccount(
     redirect: 'error',
   }, options);
   if (!loginResponse.ok) throw await errorMessage('login failed', loginResponse);
-  return readAuthSession(loginResponse, options.sessionTransport ?? 'token');
+  const payload = await loginResponse.json() as Record<string, unknown>;
+  const challenge = mfaChallengeFrom(payload);
+  // No session is returned yet: the password proved one factor, and the caller has to answer the
+  // challenge before a session exists at all.
+  if (challenge) throw new MfaRequiredError(challenge);
+  return authSessionFrom(payload as unknown as SyncAuthSession, options.sessionTransport ?? 'token');
+}
+
+/**
+ * Answers a challenge from `loginAccount`. A recovery code is accepted in the same field, so a
+ * lost authenticator does not lock an administrator out of the console.
+ */
+export async function completeMfaLogin(
+  baseUrl: string,
+  challenge: string,
+  code: string,
+  options: LoginAccountOptions = {},
+): Promise<SyncAuthSession> {
+  assertSecureSyncUrl(baseUrl);
+  if (!challenge || !code.trim()) throw new Error('两步验证需要挑战标识和验证码或恢复码');
+  // A cookie login must carry the browser session; a token login deliberately sends nothing.
+  const cookieLogin = options.sessionTransport === 'cookie';
+  const response = await fetch(`${baseUrl}/api/auth/login/mfa`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(options.sessionTransport === 'cookie' ? { 'X-Zichan-Session': options.sessionContext === 'admin' ? 'admin-cookie' : 'cookie' } : {}) },
+    body: JSON.stringify({
+      challenge,
+      code,
+      deviceId: options.deviceId ?? generatedDeviceId(),
+      deviceName: options.deviceName?.trim() || 'Zichan client',
+    }),
+    redirect: 'error',
+    ...(cookieLogin ? { credentials: 'same-origin' } : {}),
+  }, options);
+  if (!response.ok) throw await errorMessage('second factor failed', response);
+  return readAuthSession(response, options.sessionTransport ?? 'token');
+}
+
+/** Reads the challenge out of a login response, or `undefined` when the login finished. */
+function mfaChallengeFrom(payload: Record<string, unknown>): MfaChallenge | undefined {
+  if (payload['mfaRequired'] !== true) return undefined;
+  const challenge = typeof payload['challenge'] === 'string' ? payload['challenge'] : '';
+  const expiresAt = typeof payload['expiresAt'] === 'string' ? payload['expiresAt'] : '';
+  if (!challenge || !expiresAt) throw new Error('服务器要求两步验证，但返回的挑战信息不完整，请联系管理员');
+  const methods = Array.isArray(payload['methods']) ? payload['methods'].filter((entry): entry is string => typeof entry === 'string') : [];
+  return { challenge, expiresAt, methods: methods.length ? methods : ['totp'] };
 }
 
 async function readAuthSession(response: { json(): Promise<unknown> }, transport: 'cookie' | 'token'): Promise<SyncAuthSession> {
-  const body = await response.json() as SyncAuthSession;
+  return authSessionFrom(await response.json() as SyncAuthSession, transport);
+}
+
+function authSessionFrom(body: SyncAuthSession, transport: 'cookie' | 'token'): SyncAuthSession {
   if (!body.accessToken || !body.accessExpiresAt || !body.session?.id || !body.session.expiresAt
     || (transport === 'cookie' ? body.sessionTransport !== 'cookie' || body.refreshToken !== undefined : !body.refreshToken)) {
     throw new Error('authentication returned an incomplete or mismatched session');

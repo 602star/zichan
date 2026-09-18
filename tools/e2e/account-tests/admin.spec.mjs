@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
+import { currentStep, totpAtStep } from '../../../apps/sync-server/dist/totp.js';
 import { loginAccount, registerAccount } from '../../../packages/db/dist/index.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -17,6 +18,17 @@ async function listen(options) {
   await new Promise((done) => instance.server.listen(0, '127.0.0.1', done));
   return instance;
 }
+
+/** The code an authenticator would show right now. */
+function codeForStep(secret, offset) {
+  const code = totpAtStep(secret, currentStep(Date.now()) + offset);
+  if (!code) throw new Error('could not compute a code');
+  return code;
+}
+
+/** The confirming code spends its step, so the login has to use the next one. */
+const currentCode = (secret) => codeForStep(secret, 0);
+const nextStepCode = (secret) => codeForStep(secret, 1);
 
 async function signIn(page, origin, username = 'owner') {
   await page.goto(`${origin}/admin/`);
@@ -35,6 +47,8 @@ test.beforeAll(async () => {
   // role change or account state.
   await registerAccount(baseUrl, 'member-plain', password);
   await registerAccount(baseUrl, 'viewer-one', password);
+  // The second-factor case owns this account; the other cases keep signing in as the bare owner.
+  await registerAccount(baseUrl, 'mfa-admin', password);
 });
 test.afterAll(async () => { server?.server.closeAllConnections(); await server?.close(); });
 
@@ -194,4 +208,81 @@ test('clears the management session in other tabs when one tab signs out', async
   await expect(page.getByRole('alert')).toContainText('其他标签页已改变管理会话');
   await expect(page.getByRole('heading', { name: '管理员登录' })).toBeVisible();
   await second.close();
+});
+
+test('signs an administrator in with a second factor and shows the recovery codes once', async ({ page }) => {
+  // Promote the dedicated account while the owner is signed in.
+  await signIn(page, baseUrl);
+  await page.getByRole('link', { name: '用户管理' }).click();
+  await page.getByRole('row').filter({ has: page.getByText('mfa-admin', { exact: true }) }).getByRole('button', { name: '详情' }).click();
+  await page.getByRole('button', { name: '修改角色' }).click();
+  await page.getByLabel('角色').selectOption('admin');
+  await page.getByRole('button', { name: '保存' }).click();
+  await expect(page.getByText('操作已完成。')).toBeVisible();
+  await page.getByRole('button', { name: '退出管理后台' }).click();
+
+  // The administrator enrolls their own factor: nobody can do it for them.
+  await page.goto(`${baseUrl}/admin/security`);
+  await page.getByLabel('管理账号用户名').fill('mfa-admin');
+  await page.getByLabel('管理账号密码').fill(password);
+  await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '账号安全' })).toBeVisible();
+  await expect(page.getByText('未启用', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '生成绑定密钥' }).click();
+  const secret = await page.getByLabel('绑定密钥（手动输入时使用）').inputValue();
+  expect(secret).toMatch(/^[A-Z2-7]{16,}$/);
+  await expect(page.getByText('未确认前不会生效')).toBeVisible();
+
+  // A wrong code is refused, and the half-finished enrollment still does not gate the login.
+  await page.getByLabel('两步验证码').fill('000000');
+  await page.getByRole('button', { name: '确认并启用' }).click();
+  await expect(page.getByText(/验证码不正确/)).toBeVisible();
+  await expect(page.getByText('未启用', { exact: true })).toBeVisible();
+
+  // The code from the authenticator activates the factor and hands out the recovery codes once.
+  await page.getByLabel('两步验证码').fill(currentCode(secret));
+  await page.getByRole('button', { name: '确认并启用' }).click();
+  await expect(page.getByText('已启用', { exact: true })).toBeVisible();
+  const pre = page.locator('pre');
+  await expect(pre).toBeVisible();
+  const codes = (await pre.innerText()).split(/\n/).map((line) => line.trim()).filter(Boolean);
+  expect(codes).toHaveLength(10);
+  expect(codes[0]).toMatch(/^[A-Z2-7]{4}-[A-Z2-7]{4}$/);
+  await page.getByRole('button', { name: '我已保存，隐藏恢复码' }).click();
+  await expect(page.getByText('恢复码已从页面隐藏')).toBeVisible();
+
+  // After a reload the secret and the codes are gone: the page never returns them again.
+  await page.reload();
+  await expect(page.getByText('已启用', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('绑定密钥（手动输入时使用）')).toHaveCount(0);
+  await expect(page.locator('pre')).toHaveCount(0);
+
+  // Signing in now stops at the second factor, and the console says so instead of failing.
+  await page.getByRole('button', { name: '退出管理后台' }).click();
+  await page.getByLabel('管理账号用户名').fill('mfa-admin');
+  await page.getByLabel('管理账号密码').fill(password);
+  await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
+  await expect(page.getByText(/账号密码已验证/)).toBeVisible();
+  await expect(page.getByRole('link', { name: '运行概览' })).toHaveCount(0);
+  await page.getByLabel('两步验证码').fill('000000');
+  await page.getByRole('button', { name: '验证并进入后台' }).click();
+  await expect(page.getByText(/两步验证未通过/)).toBeVisible();
+  // The wrong code kept the challenge: the same screen still finishes the login.
+  await page.getByLabel('两步验证码').fill(nextStepCode(secret));
+  await page.getByRole('button', { name: '验证并进入后台' }).click();
+  await expect(page.getByRole('link', { name: '运行概览' })).toBeVisible();
+
+  // A recovery code works in the same field, which is all a lost device leaves behind.
+  await page.getByRole('button', { name: '退出管理后台' }).click();
+  await page.getByLabel('管理账号用户名').fill('mfa-admin');
+  await page.getByLabel('管理账号密码').fill(password);
+  await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
+  await expect(page.getByRole('button', { name: '返回账号密码' })).toBeVisible();
+  await page.getByLabel('两步验证码').fill(codes[0]);
+  await page.getByRole('button', { name: '验证并进入后台' }).click();
+  await expect(page.getByRole('link', { name: '运行概览' })).toBeVisible();
+
+  // The spent code is gone: the page reports nine left, and no tenth chance exists.
+  await page.getByRole('link', { name: '账号安全' }).click();
+  await expect(page.getByText('9 个')).toBeVisible();
 });

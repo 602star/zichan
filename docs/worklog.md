@@ -3,6 +3,65 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-17 — 管理员两步验证（TOTP + 一次性恢复码）
+
+**Goal:** 接上一批留待清单的第一项：给管理后台登录加第二因子，并让它**不会把管理员锁在门外**。不升 schema
+（新表用 `CREATE TABLE IF NOT EXISTS`，追加列走 `ensureColumn`，v11 老库照常可读）。
+
+### 交付
+
+1. **TOTP 只用 `node:crypto` 实现**（`src/totp.ts`）：base32 编解码、HMAC-SHA1 动态截断、`otpauth://` 链接、
+   恢复码生成与哈希，以及 `verifyTotp` 返回**已消耗的时间步**——「验证通过」和「这个码只能用一次」是同一件
+   事，所以返回步号而不是布尔值。窗口前后各 1 步，容忍轻微时钟偏差。
+2. **服务层与存储层分离**（`src/mfa.ts` 与 `store.ts` 的 `admin_mfa` / `admin_mfa_challenges`）：TOTP 密钥用
+   `server.secret` 派生的密钥做 AES-256-GCM 加密后入库，拿到数据库副本但没有 `server.secret` 得不到可用
+   验证码；恢复码只存 SHA-256 哈希，在事务里一次消耗一个；时间步用 `UPDATE ... WHERE last_step < ?` 的写入
+   结果判定，两个并发请求不可能同时用一个码。
+3. **半途的绑定不生效**：`enroll` 只生成密钥（返回一次）并标记 `confirmed = 0`，`confirm` 必须用验证器里的
+   验证码确认才启用；未确认的绑定既不放行也不拦截登录。否则唯一的管理员一次误操作就进不去控制台——
+   而控制台正是修这个问题的地方。
+4. **登录时序**（`server.ts`）：`/api/auth/login/finish` 在密码通过后，若该账号需要第二步则**不创建会话**，只
+   返回 `{ mfaRequired, challenge, expiresAt, methods }`；`/api/auth/login/mfa` 用 `{ challenge, code,
+   deviceId, deviceName }` 换会话。挑战 5 分钟失效、一次性、连续 5 次错误作废；标识与令牌分两段返回，只
+   拿到一半无法使用。挑战**只在 `X-Zichan-Session: admin-cookie` 上下文签发与应答**：记账登录既不要求也
+   不需要它（记账入口没有输入第二步的地方，把它变成必需项等于让人丢掉账本访问权）；本地维护程序（所有者
+   恢复）同样不要求，那是需要文件系统访问权限的应急路径。
+5. **第二步只属于本人**：`mutateAdmin` 新增自作用域校验——MFA 的绑定、关闭、恢复码重新生成必须是操作者自己
+   的账号（否则管理员能清掉所有者的第二因子），同时也不再被「不能管理特权账号」规则挡住（否则所有者连自己
+   的都关不掉）。这是整个后台里唯一任何角色都不能代他人执行的变更。
+6. **可选策略 `requireAdminMfa`**：开启前先算名单，只要还有管理员没绑定就整条拒绝（409
+   `MFA_ENROLLMENT_INCOMPLETE` 并列出名字）；开着时不能关闭自己的第二因子（409 `MFA_POLICY_ENABLED`）。
+   没绑定的管理员登录得到 403 `MFA_ENROLLMENT_REQUIRED`，与「密码错误」区分开，避免反复试密码。策略与绑定
+   状态不一致不会让服务启动失败——登录时拒绝即可，把登录麻烦升级成停机不划算。
+7. **「账号安全」自助页 + 强制要求设置**（`apps/web/src/admin/SecurityPage.tsx`、设置页）：绑定密钥、otpauth
+   链接、确认、剩余恢复码数量、重新生成、关闭全在一页；密钥与恢复码只在生成当次显示，之后页面不再返回。
+   所有者另见尚未绑定的管理员名单。设置页原先**只支持 text/number 两种字段**，select 字段会被 `Number()`
+   变成 NaN 而静默丢弃（已有的 `backupAutoEnabled` 也受影响）——一并修掉并渲染成下拉框。
+8. **登录卡片增加第二步状态**（`AdminApp.tsx` + `client.ts` + `packages/db` 的 `completeMfaLogin`）：密码通过但
+   仍欠验证码时，控制台把它当作「还没登录」而不是「登录失败」，并保留挑战（挑战只在内存里，刷新页面即作废，
+   这正是应有的行为）。
+
+### Verified
+
+- 新增 `apps/sync-server/test/admin-mfa.test.ts`（5 项，端到端 + 存储层）：管理会话在验证码通过前不存在、同一
+  个码不能再用（新挑战也不行）、恢复码一次有效、记账登录不受影响、挑战在非管理上下文被拒；策略开启前的名单
+  校验与开启后未绑定管理员的 403；存储层验证密钥加密（密文不含明文密钥）、恢复码只存哈希、未确认绑定不放行、
+  重新生成会让旧恢复码立刻失效、关闭需要当前验证码。为避免等 30 秒真实时间，测试只伪造 `Date`，让每个码落在
+  自己的时间步里。
+- 该用例先抓出一个真实缺陷：`disable` / `regenerateRecoveryCodes` 里写成 `if (!await verify(...))`，而 `verify`
+  返回的是对象——**任何一个错误验证码都能关闭两步验证或重发恢复码**；同时 `regenerateRecoveryCodes` 把验证前
+  读到的 `lastStep` 写回，会把刚消耗掉的时间步还回去。两处都已修，并加了「授权重新生成的那个码也不能再用」
+  的断言。
+- `apps/web/test/admin-client.test.ts` 增加两项：欠验证码的密码不会被当成会话（挑战保留、不请求 `/me`），错误
+  验证码保留挑战、过期后清空。
+- `apps/sync-server` 132 项、web 514 项、db 158 项通过；`npm run typecheck`、`npm run lint`（0/0）、
+  `npm run build:web`、`npm run release:check`、`npm run test:scripts` 通过。
+
+### 留待下一批
+
+重型任务隔离（哈希放独立工作线程/进程）与容量压测基线。
+
+
 ## 2026-09-17 — 只读运维角色 + 任务执行前权限复验
 
 **Goal:** 接上一批留待清单的下一段（$十一 阶段 E 的第一项）：把“只读运维角色”和“高风险操作重新验证身份”

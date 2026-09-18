@@ -1,4 +1,4 @@
-import { fetchAuthMe, loginAccount, refreshAccountSession, registerAccount, type SyncAuthMe, type SyncAuthSession } from '@zichan/db';
+import { completeMfaLogin, fetchAuthMe, loginAccount, MfaRequiredError, refreshAccountSession, registerAccount, type MfaChallenge, type SyncAuthMe, type SyncAuthSession } from '@zichan/db';
 
 export interface AdminHealth {
   serverId: string;
@@ -47,6 +47,8 @@ export function adminBaseUrl(location: Pick<Location, 'origin' | 'pathname'>): s
 export class AdminClient {
   private session?: SyncAuthSession;
   private identity?: AdminHealth;
+  /** Set between a password that needs a code and the answer that completes the login. */
+  private pendingMfa?: { username: string; challenge: MfaChallenge; health: AdminHealth; generation: number };
   private generation = 0;
   private controller = new AbortController();
   private refreshing?: Promise<void>;
@@ -64,6 +66,7 @@ export class AdminClient {
     this.controller.abort();
     this.controller = new AbortController();
     this.session = undefined;
+    this.pendingMfa = undefined;
     this.refreshing = undefined;
   }
 
@@ -96,9 +99,49 @@ export class AdminClient {
       this.current(generation);
       onInitialized?.();
     }
-    const session = await loginAccount(this.baseUrl, username, password, { signal: this.controller.signal, sessionTransport: 'cookie', sessionContext: 'admin', deviceName: 'Zichan · 服务器管理后台', expectedServerId: health.serverId, expectedServerPublicKey: health.serverPublicKey });
+    let session: SyncAuthSession;
+    try {
+      session = await loginAccount(this.baseUrl, username, password, { signal: this.controller.signal, sessionTransport: 'cookie', sessionContext: 'admin', deviceName: 'Zichan · 服务器管理后台', expectedServerId: health.serverId, expectedServerPublicKey: health.serverPublicKey });
+    } catch (error) {
+      // A password accepted without a code is not a session: the challenge is kept in memory and
+      // the console asks for the code before anything is treated as authenticated.
+      if (error instanceof MfaRequiredError) {
+        this.pendingMfa = { username, challenge: error.mfa, health, generation };
+      }
+      throw error;
+    }
     this.current(generation);
+    return this.adopt(session, generation);
+  }
+
+  /** Answers the second factor for a login that `login` left pending. */
+  async completeMfa(code: string): Promise<SyncAuthMe> {
+    const pending = this.pendingMfa;
+    if (!pending) throw new AdminError(400, 'MFA_CHALLENGE_MISSING', '两步验证挑战已失效，请重新输入账号密码登录。');
+    this.current(pending.generation);
+    let session: SyncAuthSession;
+    try {
+      session = await completeMfaLogin(this.baseUrl, pending.challenge.challenge, code, {
+        signal: this.controller.signal, sessionTransport: 'cookie', sessionContext: 'admin',
+        deviceName: 'Zichan · 服务器管理后台', expectedServerId: pending.health.serverId, expectedServerPublicKey: pending.health.serverPublicKey,
+      });
+    } catch (error) {
+      // A wrong code keeps the challenge alive; only expiry or an already-answered challenge
+      // sends the operator back to the password step.
+      if (error instanceof AdminError && (error.status === 410 || error.status === 409)) this.pendingMfa = undefined;
+      throw error;
+    }
+    this.current(pending.generation);
+    return this.adopt(session, pending.generation);
+  }
+
+  /** The challenge this tab is answering, if any. */
+  pendingChallenge(): MfaChallenge | undefined { return this.pendingMfa?.challenge; }
+
+  private async adopt(session: SyncAuthSession, generation: number): Promise<SyncAuthMe> {
+    this.pendingMfa = undefined;
     this.session = session;
+    this.current(generation);
     const account = await this.me();
     if (account.role === 'member') {
       await this.logout();

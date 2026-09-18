@@ -103,6 +103,10 @@ export type AdminMutation =
   /** Alert lifecycle: acknowledgement and silence are audited like any other management act. */
   | { action: 'alert-acknowledge'; key: string }
   | { action: 'alert-silence'; key: string; hours: number }
+  /** Second-factor changes on the actor's own account; audited like any other security change. */
+  | { action: 'mfa-enroll'; accountId: string }
+  | { action: 'mfa-disable'; accountId: string }
+  | { action: 'mfa-recovery-codes'; accountId: string }
   | { action: 'alert-unsilence'; key: string };
 
 export interface ServerLog {
@@ -221,6 +225,19 @@ export interface MetricBucket {
   blobFailed: number;
 }
 
+/** An administrator's enrolled second factor. The secret is stored encrypted. */
+export interface AdminMfaRecord {
+  username: string;
+  secretCipher: string;
+  /** False while enrollment is half-finished; such a record never gates login. */
+  confirmed: boolean;
+  enabledAt: string;
+  lastStep: number;
+  /** Hashes of the recovery codes that have not been used yet. */
+  recoveryHashes: string[];
+  enrolledBy?: string;
+}
+
 export interface AdminAlert {
   key: string;
   rule: string;
@@ -317,6 +334,17 @@ function jsonObject(value: unknown): JsonRecord {
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonRecord : {};
   } catch {
     return {};
+  }
+}
+
+/** String-array column (recovery-code hashes): anything unexpected reads as "none left". */
+function jsonArray(value: unknown): string[] {
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+  } catch {
+    return [];
   }
 }
 
@@ -731,7 +759,31 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
   key TEXT PRIMARY KEY,
   value_json TEXT NOT NULL,
   updated_at TEXT NOT NULL
-);`);
+);
+CREATE TABLE IF NOT EXISTS admin_mfa (
+  username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
+  -- Ciphertext, not the raw shared secret: a stolen database file alone does not yield
+  -- working codes, because the key lives in server.secret next to it.
+  secret_cipher TEXT NOT NULL,
+  enabled_at TEXT NOT NULL,
+  -- 1 only once a code from the authenticator proved the enrollment works.
+  confirmed INTEGER NOT NULL DEFAULT 0,
+  -- Highest time step already accepted; a code at or below it is a replay.
+  last_step INTEGER NOT NULL DEFAULT -1,
+  -- Unused recovery codes, stored as hashes and removed one at a time.
+  recovery_json TEXT NOT NULL,
+  enrolled_by TEXT
+);
+CREATE TABLE IF NOT EXISTS admin_mfa_challenges (
+  challenge_id TEXT PRIMARY KEY,
+  username TEXT NOT NULL COLLATE NOCASE,
+  token_hash TEXT NOT NULL,
+  ip TEXT,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challenges (expires_at);`);
     // Additive column upgrades keep pre-v11 databases readable without a schema reset.
     await this.ensureColumn('sync_users', 'revision', 'INTEGER NOT NULL DEFAULT 1');
     await this.ensureColumn('sync_sessions', 'kind', "TEXT NOT NULL DEFAULT 'ledger'");
@@ -1217,7 +1269,13 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
       // stay protected. The current session ends through logout instead.
       const selfSessions = Boolean(target && target.account_id === actor.account_id
         && (mutation.action === 'revoke-session' || mutation.action === 'sessions-revoke-all'));
-      if (target && !selfSessions && ((!quotaMutation && target.role === 'owner') || actor.role === 'admin' && target.role !== 'member')) {
+      if (mutation.action === 'mfa-enroll' || mutation.action === 'mfa-disable' || mutation.action === 'mfa-recovery-codes') {
+        // The factor belongs to the account it protects, so this is the one management change no
+        // role can make on someone else's behalf.
+        if (!target || target.account_id !== actor.account_id) {
+          throw new ServerStoreError('PROTECTED_ACCOUNT', 403, '两步验证只能由账号本人管理，不能由他人代操作');
+        }
+      } else if (target && !selfSessions && ((!quotaMutation && target.role === 'owner') || actor.role === 'admin' && target.role !== 'member')) {
         throw new ServerStoreError('PROTECTED_ACCOUNT', 403, 'cannot manage this privileged account');
       }
       if ((mutation.action === 'role' || mutation.action === 'registration' || mutation.action === 'settings-save') && actor.role !== 'owner') {
@@ -1921,6 +1979,120 @@ CREATE TABLE IF NOT EXISTS server_maintenance_state (
       'INSERT OR REPLACE INTO server_maintenance_state (key, value_json, updated_at) VALUES (?, ?, ?)',
       [key, JSON.stringify(value), nowIso()],
     );
+  }
+
+  async getMfa(username: string): Promise<AdminMfaRecord | undefined> {
+    await this.ready;
+    const row = await this.driver.get<Record<string, unknown>>('SELECT * FROM admin_mfa WHERE username = ?', [username]);
+    return row ? this.mapMfa(row) : undefined;
+  }
+
+  async saveMfa(record: Omit<AdminMfaRecord, 'lastStep'> & { lastStep?: number }): Promise<void> {
+    await this.ready;
+    await this.driver.run(
+      `INSERT INTO admin_mfa (username, secret_cipher, enabled_at, confirmed, last_step, recovery_json, enrolled_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(username) DO UPDATE SET secret_cipher = excluded.secret_cipher, confirmed = excluded.confirmed, enabled_at = excluded.enabled_at,
+         last_step = excluded.last_step, recovery_json = excluded.recovery_json, enrolled_by = excluded.enrolled_by`,
+      [
+        record.username, record.secretCipher, record.enabledAt, record.confirmed ? 1 : 0, record.lastStep ?? -1,
+        JSON.stringify(record.recoveryHashes), record.enrolledBy ?? null,
+      ],
+    );
+  }
+
+  async deleteMfa(username: string): Promise<void> {
+    await this.ready;
+    await this.driver.run('DELETE FROM admin_mfa WHERE username = ?', [username]);
+  }
+
+  /**
+   * Consumes one time step. Returns false when the step was already used, so replaying a
+   * code that is still inside its validity window cannot open a second session.
+   */
+  async recordMfaStep(username: string, step: number): Promise<boolean> {
+    await this.ready;
+    const result = await this.driver.run('UPDATE admin_mfa SET last_step = ? WHERE username = ? AND last_step < ?', [step, username, step]);
+    return Number(result.changes ?? 0) > 0;
+  }
+
+  /** Removes one recovery code; the read-modify-write shares a transaction so two uses cannot both succeed. */
+  async consumeMfaRecoveryCode(username: string, codeHash: string): Promise<boolean> {
+    await this.ready;
+    return this.driver.transaction(async (driver) => {
+      const row = await driver.get<{ recovery_json: string }>('SELECT recovery_json FROM admin_mfa WHERE username = ?', [username]);
+      if (!row) return false;
+      const hashes = jsonArray(row.recovery_json);
+      if (!hashes.includes(codeHash)) return false;
+      const remaining = hashes.filter((entry) => entry !== codeHash);
+      await driver.run('UPDATE admin_mfa SET recovery_json = ? WHERE username = ?', [JSON.stringify(remaining), username]);
+      return true;
+    });
+  }
+
+  /** Owner plus every administrator: the set that a "require MFA" policy applies to. */
+  async listAdminUsernames(): Promise<string[]> {
+    await this.ready;
+    const rows = await this.driver.all<{ username: string }>(`
+      SELECT o.username FROM server_ownership o
+      UNION
+      SELECT a.username FROM server_administrators a
+    `);
+    return rows.map((row) => String(row.username));
+  }
+
+  async countMfaEnrolled(): Promise<number> {
+    await this.ready;
+    const row = await this.driver.get<{ value: number }>('SELECT COUNT(*) AS value FROM admin_mfa');
+    return Number(row?.value ?? 0);
+  }
+
+  async createMfaChallenge(input: { id: string; username: string; tokenHash: string; ip?: string; expiresAt: string }): Promise<void> {
+    await this.ready;
+    // Expired challenges are cleared here: they are only useful for a few minutes and there is
+    // no scheduled job that would otherwise collect them.
+    await this.driver.run('DELETE FROM admin_mfa_challenges WHERE expires_at <= ?', [nowIso()]);
+    await this.driver.run(
+      'INSERT INTO admin_mfa_challenges (challenge_id, username, token_hash, ip, attempts, expires_at) VALUES (?, ?, ?, ?, 0, ?)',
+      [input.id, input.username, input.tokenHash, input.ip ?? null, input.expiresAt],
+    );
+  }
+
+  async getMfaChallenge(id: string): Promise<{ username: string; tokenHash: string; attempts: number; expiresAt: string; consumedAt?: string } | undefined> {
+    await this.ready;
+    const row = await this.driver.get<Record<string, unknown>>('SELECT * FROM admin_mfa_challenges WHERE challenge_id = ?', [id]);
+    if (!row) return undefined;
+    return {
+      username: String(row['username']),
+      tokenHash: String(row['token_hash']),
+      attempts: Number(row['attempts'] ?? 0),
+      expiresAt: String(row['expires_at']),
+      ...(row['consumed_at'] == null ? {} : { consumedAt: String(row['consumed_at']) }),
+    };
+  }
+
+  async noteMfaChallengeAttempt(id: string): Promise<number> {
+    await this.ready;
+    await this.driver.run('UPDATE admin_mfa_challenges SET attempts = attempts + 1 WHERE challenge_id = ?', [id]);
+    const row = await this.driver.get<{ attempts: number }>('SELECT attempts FROM admin_mfa_challenges WHERE challenge_id = ?', [id]);
+    return Number(row?.attempts ?? 0);
+  }
+
+  async consumeMfaChallenge(id: string): Promise<void> {
+    await this.ready;
+    await this.driver.run('UPDATE admin_mfa_challenges SET consumed_at = ? WHERE challenge_id = ? AND consumed_at IS NULL', [nowIso(), id]);
+  }
+
+  private mapMfa(row: Record<string, unknown>): AdminMfaRecord {
+    return {
+      username: String(row['username']),
+      secretCipher: String(row['secret_cipher']),
+      confirmed: bool(row['confirmed']),
+      enabledAt: String(row['enabled_at']),
+      lastStep: Number(row['last_step'] ?? -1),
+      recoveryHashes: jsonArray(row['recovery_json']),
+      ...(row['enrolled_by'] == null ? {} : { enrolledBy: String(row['enrolled_by']) }),
+    };
   }
 
   /** One sample per request is aggregated into a minute and an hour bucket. */

@@ -141,6 +141,17 @@ export interface AuditEntry {
   before: unknown; after: unknown; actorName: string; targetName: string; summary: string;
 }
 
+export interface MfaStatusPayload {
+  enabled: boolean;
+  pending: boolean;
+  enabledAt?: string;
+  recoveryCodesRemaining: number;
+  /** Server-side policy: every administrator must have a confirmed second factor. */
+  required: boolean;
+  administratorsWithoutMfa: string[];
+  note: string;
+}
+
 export interface SettingsField {
   name: string; label: string; kind: 'number' | 'select' | 'text'; unit?: string; description: string; maxLength?: number;
   stored: number | string | null; envVar: string; source: 'env' | 'database' | 'default';

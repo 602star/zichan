@@ -30,6 +30,7 @@ import { createJobRunner } from './jobs.js';
 import { importMaintenanceRecords } from './maintenance-records.js';
 import { createMetricsService } from './metrics.js';
 import { createSettings } from './settings.js';
+import { createMfaService } from './mfa.js';
 import {
   ServerStoreError,
   SyncServerStore,
@@ -435,6 +436,59 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
 
   const runtimeSettings = createSettings(store);
   const settings = runtimeSettings.settings;
+
+  const mfa = createMfaService({ store, serverSecret: secret });
+  /** MFA is required for management console logins when the deployment asks for it. */
+  const requireAdminMfa = (): boolean => String(settings.effective('requireAdminMfa')) === 'on';
+
+  /**
+   * Issues the session once every factor is satisfied. Both login paths end here: the only
+   * difference between them is how they proved the account, not what they get afterwards.
+   */
+  const completeLogin = async (input: {
+    user: { username: string; accountId: string; opaqueRegistrationRecord: string };
+    deviceId: string;
+    deviceName: string;
+    ip: string;
+    adminContext: boolean;
+    request: IncomingMessage;
+    response: ServerResponse;
+  }): Promise<JsonRecord> => {
+    const cookieSession = browserSession.requested(input.request);
+    const sessionId = `session-${randomBytes(16).toString('hex')}`;
+    const refreshToken = createRefreshToken(sessionId);
+    const session = await store.createSession({
+      expectedRegistrationRecord: input.user.opaqueRegistrationRecord,
+      id: sessionId,
+      username: input.user.username,
+      deviceId: input.deviceId,
+      deviceName: input.deviceName,
+      refreshHash: opaqueHash(secret, refreshToken),
+      expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      ip: input.ip,
+      kind: input.adminContext ? 'admin' : 'ledger',
+    });
+    await store.noteLogin(input.user.username);
+    await log('info', 'login_success', 'Sync user logged in', { ip: input.ip, username: input.user.username, detail: { sessionId: session.id, deviceId: session.deviceId } });
+    const replica = await store.getReplica(input.user.username);
+    if (cookieSession) browserSession.write(input.request, input.response, refreshToken);
+    return {
+      ...issueAccessToken(input.user.username, session.id),
+      accountId: input.user.accountId,
+      ...(cookieSession ? { sessionTransport: 'cookie' } : { refreshToken }),
+      session: publicSession(session) as unknown as JsonRecord,
+      role: await store.roleForUser(input.user.username),
+      ...(replica ? { ledgerId: replica.ledgerId } : {}),
+    };
+  };
+
+  /** Shared device identity validation; both login steps accept the same shape. */
+  const deviceIdentityOf = (body: JsonRecord): { deviceId: string; deviceName: string } | undefined => {
+    const { deviceId, deviceName } = body;
+    if (typeof deviceId !== 'string' || !/^[A-Za-z0-9_.:-]{8,128}$/.test(deviceId)
+      || typeof deviceName !== 'string' || !deviceName.trim() || deviceName.length > 120) return undefined;
+    return { deviceId, deviceName: deviceName.trim() };
+  };
   const jobHandlers = createJobHandlers({ store, blobStore, dataDir, settings, log });
   const jobs = createJobRunner({ store, log, handlers: jobHandlers });
   const metrics = createMetricsService({
@@ -457,6 +511,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     settings: runtimeSettings,
     metrics,
     jobs,
+    mfa,
     log,
     dataDir,
     databaseFile: store.databaseFile,
@@ -722,7 +777,10 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         });
       }
       if (req.method === 'POST' && apiPath === '/api/auth/login/finish') {
-        const cookieSession = browserSession.requested(req);
+        // Validate the transport up front: a cross-site management login is refused here, before
+        // a second-factor challenge is even created. The session itself is written later, once
+        // every factor has been proven.
+        void browserSession.requested(req);
         const { loginId, finishLoginRequest, deviceId, deviceName } = await readBody(req, AUTH_BODY_BYTES);
         const loginState = typeof loginId === 'string'
           ? await store.consumeOpaqueLoginState(loginId, ip)
@@ -751,35 +809,73 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           await log('warn', 'login_disabled', 'Disabled sync user attempted login', { ip, username: user.username, status: 403 });
           return send(res, 403, { error: 'user disabled' });
         }
-        if (typeof deviceId !== 'string' || !/^[A-Za-z0-9_.:-]{8,128}$/.test(deviceId)
-          || typeof deviceName !== 'string' || !deviceName.trim() || deviceName.length > 120) {
-          return send(res, 400, { error: 'invalid device identity' });
+        const identity = deviceIdentityOf({ deviceId, deviceName });
+        if (!identity) return send(res, 400, { error: 'invalid device identity' });
+
+        const adminContext = req.headers['x-zichan-session'] === 'admin-cookie';
+        // Second factor. The password is only half the proof for a management account, so a
+        // session is not created yet: the console gets a short-lived challenge to answer.
+        if (await mfa.requiredFor(user.username, { manage: adminContext, policy: requireAdminMfa() })) {
+          const enrollment = await mfa.status(user.username);
+          if (!enrollment.enabled) {
+            await log('warn', 'login_mfa_enrollment_required', 'Administrator without MFA was refused at login', { ip, username: user.username, status: 403 });
+            return send(res, 403, {
+              code: 'MFA_ENROLLMENT_REQUIRED',
+              error: '服务器要求管理员启用两步验证。请先在可信环境完成绑定，或由所有者暂时关闭该要求',
+            });
+          }
+          const challenge = await mfa.createChallenge(user.username, adminContext, ip);
+          await log('info', 'login_mfa_challenge', 'Password accepted, second factor requested', { ip, username: user.username });
+          return send(res, 200, { mfaRequired: true, methods: ['totp'], ...challenge });
         }
-        const sessionId = `session-${randomBytes(16).toString('hex')}`;
-        const refreshToken = createRefreshToken(sessionId);
-        const session = await store.createSession({
-          expectedRegistrationRecord: user.opaqueRegistrationRecord,
-          id: sessionId,
-          username: user.username,
-          deviceId,
-          deviceName: deviceName.trim(),
-          refreshHash: opaqueHash(secret, refreshToken),
-          expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+
+        return send(res, 200, await completeLogin({
+          user,
+          deviceId: identity.deviceId,
+          deviceName: identity.deviceName,
           ip,
-          kind: req.headers['x-zichan-session'] === 'admin-cookie' ? 'admin' : 'ledger',
-        });
-        await store.noteLogin(user.username);
-        await log('info', 'login_success', 'Sync user logged in', { ip, username: user.username, detail: { sessionId: session.id, deviceId: session.deviceId } });
-        const replica = await store.getReplica(user.username);
-        if (cookieSession) browserSession.write(req, res, refreshToken);
-        return send(res, 200, {
-          ...issueAccessToken(user.username, session.id),
-          accountId: user.accountId,
-          ...(cookieSession ? { sessionTransport: 'cookie' } : { refreshToken }),
-          session: publicSession(session),
-          role: await store.roleForUser(user.username),
-          ...(replica ? { ledgerId: replica.ledgerId } : {}),
-        });
+          adminContext,
+          request: req,
+          response: res,
+        }));
+      }
+      if (req.method === 'POST' && apiPath === '/api/auth/login/mfa') {
+        const body = await readBody(req, AUTH_BODY_BYTES);
+        const { challenge, code } = body;
+        if (typeof challenge !== 'string' || typeof code !== 'string' || !code.trim()) {
+          return send(res, 400, { error: 'invalid second factor request' });
+        }
+        const identity = deviceIdentityOf(body);
+        if (!identity) return send(res, 400, { error: 'invalid device identity' });
+        // The factor only guards management logins, so the console context is required here too.
+        const adminContext = req.headers['x-zichan-session'] === 'admin-cookie';
+        if (!adminContext) {
+          return send(res, 400, { code: 'MFA_ADMIN_CONTEXT_REQUIRED', error: '两步验证只用于管理后台登录' });
+        }
+        const result = await mfa.verifyChallenge(challenge, code, adminContext);
+        if (!result.ok) {
+          const status = result.reason === 'expired' ? 410 : result.reason === 'consumed' ? 409 : result.reason === 'attempts' ? 429 : 401;
+          await log('warn', 'login_mfa_failed', 'Second factor rejected', { ip, status, detail: { reason: result.reason ?? 'invalid' } });
+          return send(res, status, {
+            code: `MFA_${String(result.reason ?? 'invalid').toUpperCase()}`,
+            error: '两步验证未通过，请重新核对验证码或使用恢复码',
+          });
+        }
+        const user = await store.getUser(result.username ?? '');
+        if (!user || user.disabled) {
+          await log('warn', 'login_disabled', 'Disabled sync user attempted login', { ip, username: result.username, status: 403 });
+          return send(res, 403, { error: 'user disabled' });
+        }
+        await log('info', 'login_mfa_success', 'Second factor accepted', { ip, username: user.username, detail: { method: result.method } });
+        return send(res, 200, await completeLogin({
+          user,
+          deviceId: identity.deviceId,
+          deviceName: identity.deviceName,
+          ip,
+          adminContext,
+          request: req,
+          response: res,
+        }));
       }
       if (req.method === 'POST' && apiPath === '/api/auth/refresh') {
         const cookieSession = browserSession.requested(req);
