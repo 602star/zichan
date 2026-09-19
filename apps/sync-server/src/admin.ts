@@ -11,6 +11,7 @@ import type { EncryptedBlobStore } from './blob-store.js';
 import { ADMIN_BODY_BYTES, pathParts, readBody, send, sendText } from './http-util.js';
 import { isJobType, jobOutcome, jobParamsFor, type JobRunner } from './jobs.js';
 import { importMaintenanceRecords } from './maintenance-records.js';
+import { redactForExport, redactText } from './log-redaction.js';
 import type { MetricsService } from './metrics.js';
 import { SETTING_FIELDS, type SettingsFacade } from './settings.js';
 import {
@@ -1008,6 +1009,81 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         });
         return { status: 200, body: { ok: true } };
       });
+    }
+
+    /**
+     * Run log export.
+     *
+     * The audit could be exported and the run log could not, so handing a failure to someone
+     * else meant a screenshot. This mirrors the audit export — same formats, same filters, same
+     * cap — and adds the redaction the audit export relies on being unnecessary: log detail is
+     * free-form, so secrets are removed by key name *and* by value shape rather than by trusting
+     * every current log call site.
+     */
+    if (req.method === 'GET' && suffix === '/logs/export') {
+      const format = search.get('format') ?? 'json';
+      if (format !== 'json' && format !== 'csv') return send(res, 400, { error: 'format must be json or csv' });
+      const from = optionalIso(search.get('from'), 'from');
+      const until = optionalIso(search.get('until'), 'until');
+      const level = search.get('level') ?? '';
+      if (level && !['debug', 'info', 'warn', 'error'].includes(level)) return send(res, 400, { error: 'invalid level' });
+      const term = (search.get('search') ?? '').trim();
+      if (term.length > 128) return send(res, 400, { error: 'search must not exceed 128 characters' });
+      const username = (search.get('username') ?? '').trim();
+      if (username.length > 64) return send(res, 400, { error: 'username must not exceed 64 characters' });
+      const requestId = (search.get('requestId') ?? '').trim();
+      if (requestId.length > 64) return send(res, 400, { error: 'requestId must not exceed 64 characters' });
+      const action = (search.get('action') ?? '').trim();
+      if (action.length > 64) return send(res, 400, { error: 'action must not exceed 64 characters' });
+
+      const collected: Record<string, unknown>[] = [];
+      let cursor: string | undefined;
+      // Same ceiling as the audit export. An export is a deliberate act, so it is capped to
+      // keep one request from reading the whole retained log.
+      for (let page = 0; page < 50 && collected.length < 5_000; page += 1) {
+        const chunk = await store.listLogs({
+          limit: 200,
+          ...(level ? { level } : {}),
+          ...(from ? { from } : {}),
+          ...(until ? { until } : {}),
+          ...(term ? { requestId: term } : {}),
+          ...(requestId ? { requestId } : {}),
+          ...(username ? { username } : {}),
+          ...(action ? { action } : {}),
+          ...(cursor ? { cursor } : {}),
+        });        for (const entry of chunk.logs) {
+          // The request id is carried inside the detail record, the same place the console reads
+          // it from; it is pulled out into its own column so the export can be filtered and
+          // sorted on it without parsing JSON.
+          const detailRequestId = typeof entry.detail?.['requestId'] === 'string' ? entry.detail['requestId'] : '';
+          collected.push({
+            at: entry.at,
+            level: entry.level,
+            action: entry.action,
+            message: redactText(entry.message),
+            ip: entry.ip ?? '',
+            username: entry.username ?? '',
+            status: entry.status ?? '',
+            requestId: detailRequestId,
+            detail: entry.detail ? JSON.stringify(redactForExport(entry.detail)) : '',
+          });
+        }
+        if (!chunk.nextCursor) break;
+        cursor = chunk.nextCursor;
+      }
+
+      await log('info', 'logs_exported', 'Run log exported', {
+        username: auth.user.username,
+        detail: { format, rows: collected.length, level: level || 'all', redacted: true },
+      });
+      const redaction = '导出的日志已按字段名与取值形态脱敏：令牌、密钥、邀请码与重置码不会出现在文件里；账号 ID、任务 ID 与请求 ID 保留，否则导出无法与后台对应。';
+      if (format === 'json') {
+        return sendText(res, 200, 'application/json; charset=utf-8', `${JSON.stringify({ exportedAt: new Date().toISOString(), redaction, rows: collected }, null, 2)}\n`, 'run-log.json');
+      }
+      const headers = ['at', 'level', 'action', 'message', 'ip', 'username', 'status', 'requestId', 'detail'];
+      const escapeCsv = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+      const csv = [headers.join(','), ...collected.map((row) => headers.map((header) => escapeCsv(row[header])).join(','))].join('\n');
+      return sendText(res, 200, 'text/csv; charset=utf-8', `${csv}\n`, 'run-log.csv');
     }
 
     if (req.method === 'GET' && suffix === '/logs') {

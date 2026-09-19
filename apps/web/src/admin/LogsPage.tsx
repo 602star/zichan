@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { AccountFilter, TimeRangeFilter } from './filters.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, muted, row, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, message, muted, row, useActionError, useResource, when } from './ui.js';
 import type { AuditEntry, LogEntry } from './types.js';
 
 export function LogsPage({ client, query, navigate }: { client: AdminClient; query: URLSearchParams; navigate: (to: string) => void }) {
@@ -16,10 +16,21 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
   const [requestDraft, setRequestDraft] = useState(requestId);
   const [cursor, setCursor] = useState('');
   const [stack, setStack] = useState<string[]>(['']);
+  // An export that silently does nothing is worse than one that says why it failed, so a
+  // failed download is reported in-page like every other action on this console.
+  // Named `exportError` because `action` is already the URL action filter on this page.
+  const exportError = useActionError();
 
   const list = useResource(() => client.request<{ logs: LogEntry[]; nextCursor?: string; actions?: string[] }>(
     `/logs?limit=100${level ? `&level=${level}` : ''}${requestId ? `&requestId=${encodeURIComponent(requestId)}` : ''}${action ? `&action=${encodeURIComponent(action)}` : ''}${username ? `&username=${encodeURIComponent(username)}` : ''}${from ? `&from=${encodeURIComponent(from)}` : ''}${until ? `&until=${encodeURIComponent(until)}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
   ), [level, requestId, action, username, from, until, cursor]);
+
+  // The export follows the current filters but not the cursor: it is "everything matching this
+  // view", not "this page of it".
+  const exportQuery = new URLSearchParams();
+  for (const [key, value] of Object.entries({ level, requestId, action, username, from, until })) {
+    if (value) exportQuery.set(key, value);
+  }
 
   const update = (patch: Record<string, string | undefined>): void => {
     const next = new URLSearchParams(query);
@@ -32,6 +43,7 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
   return (
     <>
       <h2>运行日志</h2>
+      {exportError.error ? <Notice tone="warn">{exportError.error}</Notice> : null}
       <Panel title="用途" note="运行日志用于排查错误与性能问题；它按时间和大小限制裁剪，且写入失败时会降级输出，避免日志故障放大业务故障。">
         {requestId ? <p><Notice>正在按请求 {requestId} 关联日志。从用户详情页进来时会同时带上账号筛选。</Notice></p> : null}
       </Panel>
@@ -57,7 +69,13 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
           <Button onClick={() => update({ requestId: requestDraft })}>按请求 ID 筛选</Button>
           <Button onClick={() => { setRequestDraft(''); update({ requestId: undefined, from: undefined, until: undefined, level: undefined, action: undefined, accountId: undefined, username: undefined }); }}>清除筛选</Button>
           <Button onClick={list.reload}>刷新</Button>
+          <Button onClick={() => void exportLogs(client, 'json', exportQuery.toString()).then(exportError.clear).catch((caught) => exportError.setError(message(caught)))}>导出 JSON</Button>
+          <Button onClick={() => void exportLogs(client, 'csv', exportQuery.toString()).then(exportError.clear).catch((caught) => exportError.setError(message(caught)))}>导出 CSV</Button>
         </div>
+        <p style={muted}>
+          导出沿用当前筛选条件（最多 5000 条），并按字段名与取值形态脱敏：令牌、密钥、邀请码与重置码不会出现在文件里。
+          账号 ID、任务 ID 与请求 ID 保留，否则导出无法与后台对应。
+        </p>
       </Panel>
 
       <Panel title="日志">
@@ -214,6 +232,18 @@ async function download(client: AdminClient, format: 'json' | 'csv', filters: st
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = `management-audit.${format}`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Same download path as the audit export; the file is the run log, redacted server-side. */
+async function exportLogs(client: AdminClient, format: 'json' | 'csv', filters: string): Promise<void> {
+  const text = await client.download(`/logs/export?format=${format}${filters ? `&${filters}` : ''}`);
+  const blob = new Blob([text], { type: format === 'csv' ? 'text/csv' : 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `run-log.${format}`;
   anchor.click();
   URL.revokeObjectURL(url);
 }

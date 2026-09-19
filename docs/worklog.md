@@ -3,6 +3,76 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-19（补 4）— 运行日志可以导出，且导出是脱敏的
+
+**Goal:** 用户清单第二部分：「运行日志不能导出（审计能导 JSON/CSV）。排障时把日志交给别人
+只能截图。」
+
+### 诊断（先看「导出」到底缺什么）
+
+- 审计有 `/audit/export?format=json|csv`：沿用筛选、最多 5000 条、导出本身写一条
+  `audit_exported`。运行日志**完全没有导出路径**，页面上只有「刷新」。
+- 所以缺的不是一个按钮，而是**一条把自由文本带出控制台的通路**。审计导出之所以安全，是
+  因为它只导出结构化字段（并且明确不导出邀请码、重置码、令牌、密钥）；运行日志的 `detail`
+  是自由 JSON、`message` 是自由文本，两者都不能靠「调用点现在很干净」来保证。
+- 全仓库扫了一遍 `log(...)` 的调用点：**当前**没有把邀请码或令牌写进日志的地方
+  （`invite_created` / `invite_disabled` 都不带 `code`），但 `detail` 的形状是开放的——
+  以后加一行就可能带上。这决定了脱敏必须**按形状**做，而不是按调用点做。
+
+### 交付
+
+1. **`GET /api/admin/logs/export?format=json|csv`**：沿用页面的筛选（级别、动作、账号、
+   请求 ID、时间范围、搜索），最多 5000 条，与审计导出同一个上限与同样的游标遍历方式。
+   `requestId` 从 `detail` 里提出来成为独立列——否则导出无法按它排序或过滤。
+2. **脱敏（`apps/sync-server/src/log-redaction.ts`），两条独立规则**：
+   - **按字段名**：`pass`/`secret`/`token`/`credential`/`invite`/`reset`/`apikey`/`private`/
+     `authorization`/`cookie` 命中的键，任意深度替换为 `[已脱敏]`；
+   - **按取值形态**：32 位以上十六进制、43 位 base64url（重置码长度）、64 位以上不透明串，
+     即使键名无辜也替换。`message` 与自由文本按整词匹配，句子不会因为长就被当成密钥。
+3. **刻意保留**账号 ID、任务 ID、请求 ID、设备 ID、ISO 时间戳：它们也是长串，但删掉之后
+   导出就无法与后台对应，而那正是导出的用途。深度超过 6 层整体替换为 `[层级过深]`，
+   不无界递归。
+4. **页面上有导出按钮并说明脱敏范围**（「令牌、密钥、邀请码与重置码不会出现在文件里；
+   账号 ID、任务 ID 与请求 ID 保留」）。导出失败走页内 `Notice`（`useActionError`），
+   不用 `window.alert`——与上一批统一的反馈风格一致。
+5. **导出本身写一条 `logs_exported`**，`detail.redacted: true`：导出是读操作，但也是数据
+   离开服务器的时刻，留痕与审计导出的理由相同。只读运维可导出——这正是该角色存在的场景。
+
+### 判断（为什么这么做）
+
+- **脱敏按形状，不按调用点**。按调用点做等于假设「以后没人会在日志里写秘密」，而
+  `detail` 是自由 JSON，这个假设没有任何东西在维护。两条规则各自堵一种漏法：字段名规则挡住
+  「以后新增的日志行把秘密放进不该放的字段」，取值形态规则挡住「秘密落进 message/path」。
+- **保留关联 ID 是刻意的取舍**。脱敏做成「凡长串皆删」最省事，但那样导出的文件既不能按请求
+  定位、也不能和后台页面对上，等于把一个能用的证据变成一份无用的转储。所以阈值取的是秘密的
+  长度（≥32 位十六进制 / 43 位 / ≥64 位），而这些 ID 都带前缀、长度更短。
+- **导出与审计同构**：同样的格式、同样的上限、同样的留痕。运维不需要记两套规则。
+- **只读运维可以导出**：导出是读，而「把证据交给别人」正是只读运维在事故中的用途；拒绝它
+  会让这个角色在最需要的时候不可用。
+
+### 环境与工具坑（本轮新踩）
+
+- **`useActionError` 的返回对象不能命名成 `action`**：`LogsPage` 里 `action` 已经是 URL 上的
+  动作筛选变量，重名会静默遮蔽。改名为 `exportError`。
+- **`exportQuery` 是 `URLSearchParams`，不能直接传给 `string` 参数**：要 `.toString()`。
+- **`f.server.store` 不存在**：`createSyncServer` 不暴露 store。测试要往日志表里写一行，
+  得另开一个 `SyncServerStore` 连同一个 `server.sqlite`（与其它测试的做法一致）。
+- **CSV 表头不带引号**（只有数据行转义），断言表头时别写成 `"at","level",...`。
+- **e2e 下载要用 `page.waitForEvent('download')` + `createReadStream`**，并断言
+  `suggestedFilename()`——只断言「点了按钮没报错」证明不了文件内容。
+
+### Verified
+
+- `npm test` 通过：sync-server 180（原 169 + 新增 11）、web 528、core 135、db 169、logger 7。
+- `npm run typecheck`、`npm run lint`（0 error / 0 warning）、`npm run build:server`、
+  `npm run build:web` 通过。
+- 新增 `apps/sync-server/test/log-redaction.test.ts`（6 项：按字段名任意深度脱敏、按取值形态
+  脱敏且不误伤句子、关联 ID 全部保留、自由文本整词替换、超深结构不无界递归、键名大小写与
+  组合命中）；`apps/sync-server/test/admin-log-export.test.ts`（5 项：JSON/CSV 与脱敏声明、
+  **真的落进日志表的秘密会被删掉而关联 ID 保留**、筛选与参数校验、导出自身留痕、
+  只读运维可导出）；`tools/e2e/account-tests/admin-log-export.spec.mjs`（2 项真实浏览器用例：
+  按钮存在、页面说明脱敏范围、下载到的 JSON 内容正确且非空、导出跟随页面筛选）。
+
 ## 2026-09-19（补 3）— 登录安全：暴力尝试在后台看得见
 
 **Goal:** 用户清单第二部分的第一项「暴力破解在后台看不见」。`login_failed` 只写运行日志、
