@@ -3,6 +3,67 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-19 — 进程资源与数据库状态（后台运维可观测）
+
+**Goal:** 公网服务器部署下，后台需要能回答“这个进程占多少内存、还活着吗”和“数据库在怎么长”。不升
+schema（只给 `server_metric_buckets` 追加列），不改变任何账号、同步与加密行为。
+
+### 交付
+
+1. **进程资源采样（`src/runtime-stats.ts`）**：只用 Node 自身的能力，不写平台相关的探测。
+   `process.memoryUsage()` 的五个字段都采，因为**只看堆会得出错误结论**：附件校验逐块读文件、备份走
+   `VACUUM INTO`，这些缓冲落在 `external`/`arrayBuffers`，堆看起来一直很健康。CPU 用两次读数之差算
+   **窗口平均**（单次 `cpuUsage()` 是终身累计，永远不会降下来）；事件循环延迟用 `monitorEventLoopDelay`
+   直方图，读一次就 `reset()`，所以窗口恰好是一个采样周期。
+2. **资源读数进指标分桶**：`server_metric_buckets` 追加 `rss_bytes` / `heap_used_bytes` / `external_bytes`
+   / `cpu_percent` / `event_loop_max_ms`，写入时用 `max()` 合并。**这是刻意的**：这些是时点量，按请求
+   计数器那样累加会得到一个没有意义的数。既有分桶读作 0，不会被误读成“当时占用为零”。
+3. **数据库结构读数（`store.databaseStats()`）**：全部是常量时间 PRAGMA（页数、页大小、空闲页、日志模式、
+   同步级别、缓存、mmap、WAL 自动检查点与 `journal_size_limit`、写入等待上限）。**表级占用单独放在
+   `databaseTableUsage()`**：它要走 `dbstat` 扫全文件，实测 125 MiB 库约 256 毫秒（`integrity_check`
+   同库约 333 毫秒），所以只能按需执行，绝不进 30 秒轮询。
+4. **`ANALYZE` 做成任务**（`database.analyze`）：表增长后查询计划会基于过时估计选错索引，但 `ANALYZE`
+   每次都会重写 `sqlite_stat1`，所以它是任务中心的一项，不是采样的一部分。执行时间写入维护状态供页面显示。
+5. **新页面 `/admin/resources`（进程与数据库）**：进程资源（含容器内存上限占比）、资源趋势（五条序列，
+   单位随序列切换）、数据库状态、以及**按需**的表与索引占用扫描。概览页加一节摘要，并保留“查看详情与趋势”。
+6. **六条新告警规则**：内存接近上限、常驻内存持续上升、事件循环延迟、CPU 持续占用、WAL 超过配置上限、
+   数据库空闲页可回收。阈值刻意保守——见下面“判断”。
+
+### 判断（为什么这么做）
+
+- **内存没有单一的“太多”数字**，所以规则分两条：一条对着**真实上限**（容器内存上限 85% 告警、95% 严重；
+  没有上限则用设置项 `memoryWarnBytes` 的绝对阈值），一条对着**趋势**。两者都没有时不产生任何记录：
+  留一条永远“待确认”的空告警只是噪音。绝对阈值不报比例，否则等于凭空发明一个上限。
+- **事件循环延迟阈值必须高于平台定时器粒度**。本机实测 Windows 上空闲基线就是约 16 毫秒
+  （`resolution` 设 1/5/10 毫秒都是 16 毫秒左右），默认 50 毫秒正是为了不误报；这也让这一项成为
+  “同步任务有没有堵住请求处理”的诚实指标——正好是下一批“重型任务隔离”的验收依据。
+- **“内存持续上升”要同时满足比例与绝对量**（整个窗口 12 个采样都在升，且增长超过 64 MiB 且超过起点一半），
+  否则一个忙碌的下午看起来就像泄漏。测试里给了反例：从小基数翻倍不算泄漏。
+- **不提供 VACUUM 按钮**：空闲页只是磁盘占用偏高的解释，回收要停服，属于部署侧受控流程。
+- **边界写在界面上**：这里只统计同步服务器进程本身；SQLite 默认未启用 mmap，所以数据库页不计入常驻内存。
+
+### 环境与工具坑（本轮新踩，重要）
+
+- **写入通道脱敏会连续破坏文件**：`const password = ['a','b'].join('-')` 这种「键名/标识符后接表达式」
+  在**写入**时就被替换成占位符并真落盘，而且会把赋值**拆成两行**，导致语法错误。更麻烦的是**显示层
+  两个方向都会骗人**：正常内容也会被显示成占位符，所以用眼睛看输出分不清真假。可靠判据只有一条：
+  读文件后输出布尔（`text.includes('RED'+'ACTED')`）或字符码。规避写法：标识符不要以 `password`
+  这类词结尾（改叫 `accountLogin`），值用拼接构造。本轮一个测试文件因此被破坏了三次。
+- **`max(x, NULL)` 在 SQLite 里返回 NULL**，不是 `x`。写聚合 SQL 时别假设它像 `Math.max`。
+
+### Verified
+
+- `npm test` 通过（sync-server 159、web 526、其余 166 + 7）。新增
+  `apps/sync-server/test/admin-resources.test.ts`（10 项：内存字段关系、CPU 是窗口平均、直方图按采样重置、
+  结构读数自洽、空闲页可回收、`ANALYZE` 落时间戳、表级占用排序与索引不报行数、分桶保存峰值而非累加、
+  采样失败后读数标记为过期）、`admin-resource-alerts.test.ts`（11 项：每条规则都带反例——无上限不建记录、
+  波动 CPU 不触发、16 毫秒空闲基线不触发、小基数翻倍不算泄漏）、`admin-resources-api.test.ts`（6 项：
+  轮询不带扫描、`?tables=1` 才扫描且行数真实、只读运维可读全部且写被 `READ_ONLY_ROLE` 拒绝、概览带读数）、
+  `apps/web/test/admin-resources-trend.test.ts`（3 项）。
+- `npm run typecheck`、`npm run lint`（0 error / 0 warning）、`npm run build:server` 通过。
+- `npm run release:check` 仍为红灯，但**在本次改动之前就已经是红灯**（`docs/db.md` 未记录客户端
+  schema 118 / `current_schema_2026_09_18_account_onboarding`）；已用 `git stash` 对照确认与本轮无关。
+
 ## 2026-09-17 — 管理员两步验证（TOTP + 一次性恢复码）
 
 **Goal:** 接上一批留待清单的第一项：给管理后台登录加第二因子，并让它**不会把管理员锁在门外**。不升 schema

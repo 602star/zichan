@@ -56,6 +56,12 @@ export function OverviewPage({ client, navigate, accountName, role }: {
   const diskFree = snapshot?.storage.diskFreeBytes ?? null;
   const diskTotal = snapshot?.storage.diskTotalBytes ?? null;
   const diskLow = diskFree !== null && diskTotal !== null && diskTotal > 0 && diskFree / diskTotal < 0.1;
+  // The memory ceiling shown here is the same one the alert rule uses, so the card and the
+  // alert can never disagree about what "85%" means. A configured threshold is not in the
+  // overview payload; the resources page shows that one.
+  const process_ = snapshot?.process;
+  const memoryLimit = process_?.constrainedBytes && process_.constrainedBytes > 0 ? process_.constrainedBytes : null;
+  const memoryRatio = process_ && memoryLimit ? process_.rssBytes / memoryLimit : null;
 
   return (
     <>
@@ -134,6 +140,24 @@ export function OverviewPage({ client, navigate, accountName, role }: {
           <Button onClick={() => navigate('/jobs')}>进入任务中心</Button>
           <Button onClick={() => navigate('/sync')}>同步诊断</Button>
         </p>
+      </Panel>
+
+      <Panel title="进程与数据库" action={<Button onClick={() => navigate('/resources')}>查看详情与趋势</Button>}
+        note="这一节的数字只是同步服务器进程本身；数据库页缓存之外的部分不在此列。">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
+          <Stat label="常驻内存" tone={memoryRatio !== null && memoryRatio >= 0.85 ? 'warn' : undefined}
+            value={snapshot?.process ? bytes(snapshot.process.rssBytes) : '暂无数据'}
+            hint={memoryLimit ? `上限 ${bytes(memoryLimit)}，已用 ${((memoryRatio ?? 0) * 100).toFixed(1)}%` : '未设置容器上限或内存阈值'} />
+          <Stat label="堆外内存" value={snapshot?.process ? bytes(snapshot.process.externalBytes) : '暂无数据'}
+            hint="附件校验与备份的缓冲区在这里；只看堆会漏掉它" />
+          <Stat label="CPU 占用" value={snapshot?.process.cpuPercent === null || snapshot?.process.cpuPercent === undefined ? '暂无数据' : `${snapshot.process.cpuPercent.toFixed(1)}%`}
+            hint="采样窗口平均，不是瞬时值" />
+          <Stat label="事件循环延迟" tone={snapshot?.process.eventLoopMeanMs !== null && snapshot?.process.eventLoopMeanMs !== undefined && snapshot.process.eventLoopMeanMs >= 50 ? 'warn' : undefined}
+            value={snapshot?.process.eventLoopMeanMs === null || snapshot?.process.eventLoopMeanMs === undefined ? '暂无数据' : `${snapshot.process.eventLoopMeanMs.toFixed(1)} ms`}
+            hint="单线程 Node 上，这一项升高说明同步任务堵住了请求处理" />
+          <Stat label="数据库大小" value={bytes(snapshot?.storage.databaseBytes)}
+            hint={snapshot?.database ? `WAL ${bytes(snapshot.storage.walBytes)} · 可回收 ${bytes(snapshot.database.freelistBytes)}` : undefined} />
+        </div>
       </Panel>
 
       <Panel title="待处理事项" note="同类告警会被合并；每条都会记录首次发生、最后发生与次数。静默只停外部通知，规则、记录与恢复判断都不变。">
@@ -266,6 +290,10 @@ function NextStep({ alert, navigate }: { alert: Alert; navigate: (to: string) =>
   if (alert.rule === 'cleanup-failure') return <Button onClick={() => navigate('/storage')}>查看清理状态</Button>;
   if (alert.rule === 'sync-errors') return <Button onClick={() => navigate('/sync?outcome=error')}>查看同步诊断</Button>;
   if (alert.rule === 'disk-space') return <Button onClick={() => navigate('/storage')}>查看存储</Button>;
+  // Resource and database alerts all live on one page, so every one of them leads there.
+  if (alert.rule.startsWith('process-') || alert.rule.startsWith('database-') || alert.rule === 'event-loop-lag') {
+    return <Button onClick={() => navigate('/resources')}>查看进程与数据库</Button>;
+  }
   return null;
 }
 
@@ -282,6 +310,18 @@ function describeAlert(alert: Alert): string {
     case 'cleanup-failure': return `附件清理连续失败 ${String(detail['consecutiveFailures'] ?? '')} 次`;
     case 'sync-errors': return `持续出现同步错误（最近 ${String(detail['recentErrors'] ?? '')} 次）`;
     case 'disk-space': return '磁盘剩余空间不足';
+    case 'process-memory': {
+      const ratio = typeof detail['ratio'] === 'number' ? `，已占上限 ${(detail['ratio'] * 100).toFixed(0)}%` : '';
+      return `服务器进程常驻内存 ${bytes(Number(detail['rssBytes'] ?? 0))}${ratio}`;
+    }
+    case 'process-memory-growth': {
+      const window = String(detail['windowMinutes'] ?? '');
+      return `常驻内存持续上升：${window} 分钟内增加 ${bytes(Number(detail['growthBytes'] ?? 0))}`;
+    }
+    case 'event-loop-lag': return `事件循环平均延迟 ${String(detail['meanMs'] ?? '')} 毫秒，请求处理可能被同步任务阻塞`;
+    case 'process-cpu': return `服务器进程 CPU 占用 ${String(detail['cpuPercent'] ?? '')}%`;
+    case 'database-wal': return `WAL 文件 ${bytes(Number(detail['walBytes'] ?? 0))} 超过配置上限 ${bytes(Number(detail['journalSizeLimitBytes'] ?? 0))}`;
+    case 'database-fragmentation': return `数据库有 ${bytes(Number(detail['freelistBytes'] ?? 0))} 空闲页可回收（占比 ${((Number(detail['freelistRatio'] ?? 0)) * 100).toFixed(1)}%）`;
     default: return alert.rule;
   }
 }

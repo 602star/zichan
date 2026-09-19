@@ -40,6 +40,21 @@ export function createJobHandlers(deps: JobHandlerDeps): Partial<Record<AdminJob
       return result as unknown as JsonRecord;
     },
 
+    /**
+     * `ANALYZE` refreshes the statistics the query planner uses. Without it, the indexes this
+     * schema relies on are chosen on stale estimates as the tables grow. It is a task rather
+     * than something the sampling loop does, because it rewrites `sqlite_stat1` every time.
+     */
+    'database.analyze': async (job) => {
+      await job.progress({ phase: 'analyzing' });
+      await job.note('info', '开始重建查询计划统计（ANALYZE）');
+      const result = await store.analyze();
+      await job.note(result.tables > 0 ? 'info' : 'warn', result.tables > 0
+        ? `统计已重建：${result.tables} 个表的统计信息，用时 ${result.durationMs} 毫秒`
+        : '统计未生成：数据库中没有可分析的表或索引');
+      return result as unknown as JsonRecord;
+    },
+
     'blobs.verify': async (job) => {
       const accountId = typeof job.job.params['accountId'] === 'string' ? job.job.params['accountId'] : undefined;
       const account = accountId ? await store.userByAccountId(accountId) : undefined;

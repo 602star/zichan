@@ -1,4 +1,46 @@
 /** Response shapes of the management API, kept in one place for the pages below. */
+export interface ProcessSnapshot {
+  pid: number; nodeVersion: string;
+  rssBytes: number; heapTotalBytes: number; heapUsedBytes: number;
+  externalBytes: number; arrayBuffersBytes: number;
+  /** Window average since the previous sample; null on the very first one. */
+  cpuPercent: number | null;
+  eventLoopMeanMs: number | null; eventLoopMaxMs: number | null; eventLoopP99Ms: number | null;
+  heapLimitBytes: number | null;
+  /** Container memory limit when the runtime can read one. */
+  constrainedBytes: number | null;
+  availableBytes: number | null;
+  startedAt: string;
+  /** False when the last sample failed and these numbers are the previous reading. */
+  available: boolean;
+}
+
+export interface DatabaseStats {
+  pageCount: number; pageSize: number;
+  freelistBytes: number; freelistRatio: number; logicalBytes: number;
+  journalMode: string; autoVacuum: string; synchronous: string; tempStore: string;
+  cacheSizeKiB: number | null; mmapBytes: number;
+  walAutocheckpointPages: number; journalSizeLimitBytes: number; busyTimeoutMs: number;
+  encoding: string; analyzedTables: number; analyzedAt: string | null;
+}
+
+export interface DatabaseTableUsage {
+  name: string; kind: 'table' | 'index' | 'other'; bytes: number; pages: number; rowCount: number | null;
+}
+
+export interface ResourcesPayload {
+  serverId: string; version: string;
+  uptimeSeconds: number; sampledAt: string; stale: boolean;
+  process: ProcessSnapshot;
+  database: DatabaseStats | null;
+  storage: { databaseBytes: number; walBytes: number; shmBytes: number; diskTotalBytes: number | null; diskFreeBytes: number | null };
+  /** Only present when the request asked for the per-table scan. */
+  tables: { tables: DatabaseTableUsage[]; scannedAt: string; durationMs: number } | null;
+  identity: { pid: number; nodeVersion: string; uptimeSeconds: number; heapLimitBytes: number | null; constrainedBytes: number | null; availableBytes: number | null };
+  thresholds: { memoryWarnBytes: number; eventLoopLagWarnMs: number; cpuWarnPercent: number };
+  note: string;
+}
+
 export interface Snapshot {
   sampledAt: string;
   stale: boolean;
@@ -28,6 +70,8 @@ export interface Snapshot {
   } | null;
   uptimeSeconds: number;
   sampledWithinMs: number;
+  process: ProcessSnapshot;
+  database: DatabaseStats | null;
 }
 
 export interface Alert {
@@ -55,8 +99,14 @@ export interface Overview {
 
 export interface Metrics {
   range: string; granularity: string; from: string; until: string;
-  buckets: { bucketAt: string; requests: number; errors: number; slowRequests: number; durationMs: number; syncPushOk: number; syncPushFailed: number; syncPullOk: number; blobOk: number; blobFailed: number }[];
+  buckets: {
+    bucketAt: string; requests: number; errors: number; slowRequests: number; durationMs: number;
+    syncPushOk: number; syncPushFailed: number; syncPullOk: number; blobOk: number; blobFailed: number;
+    /** Resource readings are peaks inside the bucket, never sums. */
+    rssBytes: number; heapUsedBytes: number; externalBytes: number; cpuPercent: number; eventLoopMaxMs: number;
+  }[];
   totals: { requests: number; errors: number; slowRequests: number; errorRate: number | null; averageMs: number | null; syncPushOk: number; syncPushFailed: number; syncPullOk: number; blobOk: number; blobFailed: number };
+  resourcePeak: { rssBytes: number; heapUsedBytes: number; externalBytes: number; cpuPercent: number; eventLoopMaxMs: number };
   observedSince: string | null;
   note: string;
 }
@@ -185,6 +235,7 @@ export const SYNC_CATEGORIES: { value: string; label: string; next: string }[] =
 
 export const JOB_TYPES: { value: string; label: string; ownerOnly: boolean; hint: string }[] = [
   { value: 'database.integrity-check', label: '数据库完整性校验', ownerOnly: false, hint: '深度检查，替代就绪探测里的全库检查。' },
+  { value: 'database.analyze', label: '重建查询计划统计', ownerOnly: false, hint: '执行 ANALYZE，让查询计划在表增长后仍选中正确的索引。' },
   { value: 'blobs.verify', label: '附件校验', ownerOnly: false, hint: '分批扫描附件，可在批次边界取消。' },
   { value: 'storage.cleanup', label: '附件清理', ownerOnly: false, hint: '清理过期回收站与暂存上传，并记录释放空间。' },
   { value: 'logs.prune', label: '运行日志裁剪', ownerOnly: false, hint: '按保留条数裁剪运行日志。' },

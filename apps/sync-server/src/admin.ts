@@ -306,7 +306,89 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         alerts: snapshot.alerts.items,
         recentJobs: jobs_.jobs,
         recentFailures: pending,
-        capabilities: { sessionsPagination: true, jobs: true, metrics: true, syncDiagnostics: true, alerts: true },
+        capabilities: { sessionsPagination: true, jobs: true, metrics: true, syncDiagnostics: true, alerts: true, resources: true, databaseStats: true },
+      });
+    }
+
+    /**
+     * Resource and database diagnostics.
+     *
+     * `tables=1` adds the per-table page breakdown, which is the one expensive read here
+     * (`dbstat` walks the whole file, ~250 ms on a 125 MiB database). It is opt-in so the
+     * page can poll cheaply and ask for the breakdown only when someone wants it.
+     */
+    if (req.method === 'GET' && suffix === '/resources') {
+      const snapshot = await metrics.current();
+      const wantTables = search.get('tables') === '1';
+      const tables = wantTables ? await store.databaseTableUsage() : null;
+      // A fresh reading on demand: an operator opening the page should not see a 30-second-old
+      // number and wonder whether it is current.
+      const reading = wantTables ? undefined : metrics.runtime.sample();
+      const identity = metrics.runtime.identity();
+      return send(res, 200, {
+        serverId: deps.serverId,
+        version: deps.version,
+        uptimeSeconds: snapshot.uptimeSeconds,
+        sampledAt: snapshot.sampledAt,
+        stale: snapshot.stale,
+        process: reading
+          ? {
+            ...snapshot.process,
+            rssBytes: reading.rssBytes,
+            heapTotalBytes: reading.heapTotalBytes,
+            heapUsedBytes: reading.heapUsedBytes,
+            externalBytes: reading.externalBytes,
+            arrayBuffersBytes: reading.arrayBuffersBytes,
+            cpuPercent: reading.cpuPercent,
+            eventLoopMeanMs: reading.eventLoopMeanMs,
+            eventLoopMaxMs: reading.eventLoopMaxMs,
+            eventLoopP99Ms: reading.eventLoopP99Ms,
+            available: true,
+          }
+          : snapshot.process,
+        database: snapshot.database,
+        storage: {
+          databaseBytes: snapshot.storage.databaseBytes,
+          walBytes: snapshot.storage.walBytes,
+          shmBytes: snapshot.storage.shmBytes,
+          diskTotalBytes: snapshot.storage.diskTotalBytes,
+          diskFreeBytes: snapshot.storage.diskFreeBytes,
+        },
+        tables,
+        identity,
+        thresholds: {
+          memoryWarnBytes: Number(settings.settings.effective('memoryWarnBytes')) * 1024 * 1024,
+          eventLoopLagWarnMs: Number(settings.settings.effective('eventLoopLagWarnMs')),
+          cpuWarnPercent: Number(settings.settings.effective('cpuWarnPercent')),
+        },
+        // Stated on the page rather than left to the reader: this process is the server, and
+        // in the desktop build the shell around it is not counted here.
+        note: '这里只统计同步服务器进程本身；桌面外壳、浏览器渲染进程与 SQLite 页缓存之外的系统占用不在此列。',
+      });
+    }
+
+    if (req.method === 'GET' && suffix === '/database/stats') {
+      const snapshot = await metrics.current();
+      return send(res, 200, {
+        database: snapshot.database,
+        storage: {
+          databaseBytes: snapshot.storage.databaseBytes,
+          walBytes: snapshot.storage.walBytes,
+          shmBytes: snapshot.storage.shmBytes,
+        },
+        verification: snapshot.verification.database ?? null,
+        analyze: await store.maintenanceState('verification:analyze') ?? null,
+        note: '结构读数全部来自常量时间的 PRAGMA；表级占用需要单独扫描整库，见「表与索引占用」。',
+      });
+    }
+
+    if (req.method === 'POST' && suffix === '/database/analyze') {
+      // Same authorization path as every other task type, so the read-only rule cannot drift.
+      await assertJobAuthorized('database.analyze');
+      return void await withIdempotency(req, res, 'database.analyze', {}, async () => {
+        const job = await store.createJob({ type: 'database.analyze', params: {}, createdBy: auth.user.username });
+        jobs.kick();
+        return { status: 202, body: { job: withOutcome(job) } };
       });
     }
 
@@ -331,6 +413,15 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         blobOk: accumulator.blobOk + bucket.blobOk,
         blobFailed: accumulator.blobFailed + bucket.blobFailed,
       }), { requests: 0, errors: 0, slowRequests: 0, durationMs: 0, syncPushOk: 0, syncPushFailed: 0, syncPullOk: 0, blobOk: 0, blobFailed: 0 });
+      // Resource readings are peaks, not counters: the range summary reports the maximum seen
+      // and the last bucket's level, never a sum that would be meaningless.
+      const resourcePeak = buckets.reduce((accumulator, bucket) => ({
+        rssBytes: Math.max(accumulator.rssBytes, bucket.rssBytes),
+        heapUsedBytes: Math.max(accumulator.heapUsedBytes, bucket.heapUsedBytes),
+        externalBytes: Math.max(accumulator.externalBytes, bucket.externalBytes),
+        cpuPercent: Math.max(accumulator.cpuPercent, bucket.cpuPercent),
+        eventLoopMaxMs: Math.max(accumulator.eventLoopMaxMs, bucket.eventLoopMaxMs),
+      }), { rssBytes: 0, heapUsedBytes: 0, externalBytes: 0, cpuPercent: 0, eventLoopMaxMs: 0 });
       return send(res, 200, {
         range,
         granularity,
@@ -342,8 +433,9 @@ export function createAdminRouter(deps: AdminRouterDeps) {
           errorRate: totals.requests ? Number((totals.errors / totals.requests).toFixed(4)) : null,
           averageMs: totals.requests ? Math.round(totals.durationMs / totals.requests) : null,
         },
+        resourcePeak,
         observedSince: buckets[0]?.bucketAt ?? null,
-        note: '指标从本次上线开始积累；尚未采集的时间范围内没有数据，不等同于零。',
+        note: '指标从本次上线开始积累；尚未采集的时间范围内没有数据，不等同于零。资源读数为该分桶内的峰值，不是累加值。',
       });
     }
 
@@ -812,6 +904,10 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         tempStore: probe.tempStore,
         schemaVersion: probe.schemaVersion,
         sampledAt: snapshot.sampledAt,
+        // Enough of the resource and database picture to be useful without a second request,
+        // while the detail stays on /resources and /database/stats.
+        process: snapshot.process,
+        database: snapshot.database,
       });
     }
 

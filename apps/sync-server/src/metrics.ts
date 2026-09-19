@@ -6,13 +6,16 @@
  * dominant cost of the whole server. Alerts need two consecutive bad samples to
  * become active and two healthy samples to resolve, so a single blip cannot flap.
  */
+import { createRuntimeStats, type RuntimeStats, type RuntimeSample } from './runtime-stats.js';
 import type { EncryptedBlobStore } from './blob-store.js';
 import type { SettingsReader } from './settings.js';
-import type { AdminAlert, JsonRecord, ServerLogLevel, SyncServerStore } from './store.js';
+import type { AdminAlert, DatabaseStats, JsonRecord, ServerLogLevel, SyncServerStore } from './store.js';
 
 const SAMPLE_INTERVAL_MS = 30_000;
 const HOUSEKEEPING_INTERVAL_MS = 60 * 60 * 1000;
 const SLOW_REQUEST_MS = 1_000;
+/** How many past samples the resource alerts look at when deciding "still climbing". */
+const RESOURCE_HISTORY = 12;
 
 export interface AlertNotification {
   key: string;
@@ -88,6 +91,31 @@ export interface ServiceSnapshot {
   backup: BackupSummary | null;
   uptimeSeconds: number;
   sampledWithinMs: number;
+  /** Point-in-time process readings. Only this process: the desktop shell is not included. */
+  process: ProcessSnapshot;
+  /** Database structure readings; never includes the whole-file `dbstat` scan. */
+  database: DatabaseStats | null;
+}
+
+export interface ProcessSnapshot {
+  pid: number;
+  nodeVersion: string;
+  rssBytes: number;
+  heapTotalBytes: number;
+  heapUsedBytes: number;
+  externalBytes: number;
+  arrayBuffersBytes: number;
+  cpuPercent: number | null;
+  eventLoopMeanMs: number | null;
+  eventLoopMaxMs: number | null;
+  eventLoopP99Ms: number | null;
+  heapLimitBytes: number | null;
+  constrainedBytes: number | null;
+  availableBytes: number | null;
+  /** Process start time, as opposed to the sample time. */
+  startedAt: string;
+  /** Whether the reading is the process's own, or the last one before sampling failed. */
+  available: boolean;
 }
 
 export interface MetricsServiceDeps {
@@ -98,6 +126,8 @@ export interface MetricsServiceDeps {
   listBackupRecords: () => Promise<BackupRecordSummary[]>;
   startedAt: number;
   intervalMs?: number;
+  /** Injected in tests; the default reads `process` and `perf_hooks` directly. */
+  runtime?: RuntimeStats;
   /** Injected in tests; the default posts to the configured webhook when one is set. */
   notify?: AlertNotifier;
 }
@@ -105,8 +135,12 @@ export interface MetricsServiceDeps {
 export function createMetricsService(deps: MetricsServiceDeps) {
   const { store, blobStore, settings, log, listBackupRecords } = deps;
   const intervalMs = deps.intervalMs ?? SAMPLE_INTERVAL_MS;
+  const runtime = deps.runtime ?? createRuntimeStats();
+  const startedAtIso = new Date(deps.startedAt).toISOString();
   /** Previous state per alert: notifications fire on transitions, never on every sample. */
   const lastStates = new Map<string, AdminAlert['state']>();
+  /** Rolling window of RSS readings, used to tell "high" apart from "still climbing". */
+  const rssHistory: number[] = [];
   const defaultNotifier: AlertNotifier = async (notification) => {
     const url = String(settings.effective('alertWebhookUrl') ?? '').trim();
     if (!url) return { state: 'skipped' };
@@ -192,6 +226,162 @@ export function createMetricsService(deps: MetricsServiceDeps) {
     const counters = pending;
     pending = emptyCounters();
     await store.recordServiceSample(counters);
+  };
+
+  /** The resource reading travels with the request counters so one row describes the whole tick. */
+  const recordResourceSample = async (sample_: RuntimeSample): Promise<void> => {
+    await store.recordServiceSample({
+      rssBytes: sample_.rssBytes,
+      heapUsedBytes: sample_.heapUsedBytes,
+      externalBytes: sample_.externalBytes,
+      cpuPercent: sample_.cpuPercent ?? 0,
+      eventLoopMaxMs: sample_.eventLoopMaxMs ?? 0,
+    });
+  };
+
+  /**
+   * Resource rules. Each one answers a question an operator can act on, and each is derived
+   * from a reading the server can actually defend:
+   *
+   * - Memory has no single "too much" number, so there are two rules: one for a ceiling
+   *   (container limit, or a configured warning size) and one for a leak, which is a *trend*
+   *   over the window this process has been running rather than a level.
+   * - Event-loop delay is the honest "is this process still responsive" signal on a
+   *   single-threaded server. The threshold has to clear the platform's timer granularity:
+   *   Windows resolves timers at ~16 ms, so a threshold near zero would fire permanently.
+   * - CPU is a window average, so a momentary burst cannot trip it.
+   * - The two database rules are the ones a public server actually hits: a WAL that outgrew
+   *   its own configured limit (checkpointing is behind) and a file whose free pages mean a
+   *   `VACUUM` would return real disk space.
+   */
+  const evaluateResourceAlerts = async (current: ServiceSnapshot): Promise<void> => {
+    const process_ = current.process;
+    const memoryWarnBytes = Number(settings.effective('memoryWarnBytes')) * 1024 * 1024;
+    // Two different things can define "too much memory", and they mean different things:
+    // a container limit is a hard ceiling (crossing it is a kill), while a configured
+    // threshold is an absolute size the operator chose to be told about. They are kept
+    // apart so the alert text never claims a proportion that does not exist.
+    const ceiling = process_.constrainedBytes && process_.constrainedBytes > 0 ? process_.constrainedBytes : null;
+    if (ceiling === null && memoryWarnBytes <= 0) {
+      // Without either, there is nothing to compare against, so no record is created at all:
+      // a "pending" row for a rule that cannot apply would sit in the console as noise. An
+      // alert left over from when a limit existed is closed instead.
+      const existing = await store.getAlert('process:memory');
+      if (existing && existing.state !== 'resolved') {
+        await store.upsertAlert({
+          key: 'process:memory', rule: 'process-memory', scope: 'process', severity: 'warning',
+          active: false, detail: { rssBytes: process_.rssBytes, ceilingBytes: null, configuredWarnBytes: null, ratio: null },
+        });
+      }
+    } else if (ceiling !== null) {
+      const ratio = process_.rssBytes / ceiling;
+      await store.upsertAlert({
+        key: 'process:memory',
+        rule: 'process-memory',
+        scope: 'process',
+        severity: ratio >= 0.95 ? 'critical' : 'warning',
+        active: ratio >= 0.85,
+        detail: {
+          rssBytes: process_.rssBytes, heapUsedBytes: process_.heapUsedBytes,
+          externalBytes: process_.externalBytes, arrayBuffersBytes: process_.arrayBuffersBytes,
+          ceilingBytes: ceiling, ratio: Number(ratio.toFixed(3)), configuredWarnBytes: null,
+        },
+      });
+    } else {
+      await store.upsertAlert({
+        key: 'process:memory',
+        rule: 'process-memory',
+        scope: 'process',
+        severity: 'warning',
+        active: process_.rssBytes > memoryWarnBytes,
+        detail: {
+          rssBytes: process_.rssBytes, heapUsedBytes: process_.heapUsedBytes,
+          externalBytes: process_.externalBytes, arrayBuffersBytes: process_.arrayBuffersBytes,
+          ceilingBytes: null, ratio: null, configuredWarnBytes: memoryWarnBytes,
+        },
+      });
+    }
+
+    // A leak is only claimed when the whole window is full and the climb is both proportional
+    // and large in absolute terms; otherwise a busy afternoon would look like a leak.
+    const oldest = rssHistory[0];
+    const newest = rssHistory.at(-1);
+    const fullWindow = rssHistory.length >= RESOURCE_HISTORY;
+    const grew = oldest !== undefined && newest !== undefined ? newest - oldest : 0;
+    const growthActive = fullWindow && grew > 64 * 1024 * 1024 && newest! > oldest! * 1.5;
+    await store.upsertAlert({
+      key: 'process:memory-growth',
+      rule: 'process-memory-growth',
+      scope: 'process',
+      severity: 'warning',
+      active: growthActive,
+      detail: {
+        samples: rssHistory.length,
+        windowMinutes: Number(((RESOURCE_HISTORY * intervalMs) / 60_000).toFixed(1)),
+        oldestBytes: oldest ?? null,
+        newestBytes: newest ?? null,
+        growthBytes: fullWindow ? grew : null,
+      },
+    });
+
+    const lag = process_.eventLoopMeanMs;
+    const lagThreshold = Number(settings.effective('eventLoopLagWarnMs'));
+    await store.upsertAlert({
+      key: 'process:event-loop',
+      rule: 'event-loop-lag',
+      scope: 'process',
+      severity: (lag ?? 0) >= lagThreshold * 2 ? 'critical' : 'warning',
+      active: lag !== null && lag >= lagThreshold,
+      detail: {
+        meanMs: lag,
+        maxMs: process_.eventLoopMaxMs,
+        p99Ms: process_.eventLoopP99Ms,
+        thresholdMs: lagThreshold,
+      },
+    });
+
+    const cpu = process_.cpuPercent;
+    const cpuThreshold = Number(settings.effective('cpuWarnPercent'));
+    await store.upsertAlert({
+      key: 'process:cpu',
+      rule: 'process-cpu',
+      scope: 'process',
+      severity: 'warning',
+      active: cpu !== null && cpu >= cpuThreshold,
+      detail: { cpuPercent: cpu, thresholdPercent: cpuThreshold },
+    });
+
+    const database = current.database;
+    if (database) {
+      // The WAL is supposed to be truncated back to `journal_size_limit` after a checkpoint,
+      // so a file larger than that limit means checkpoints are not completing.
+      const limit = database.journalSizeLimitBytes;
+      const wal = current.storage.walBytes;
+      const walOver = limit > 0 && wal > limit;
+      await store.upsertAlert({
+        key: 'database:wal',
+        rule: 'database-wal',
+        scope: 'database',
+        severity: walOver && wal > limit * 2 ? 'critical' : 'warning',
+        active: walOver,
+        detail: { walBytes: wal, journalSizeLimitBytes: limit, ratio: limit > 0 ? Number((wal / limit).toFixed(2)) : null },
+      });
+
+      // Free pages are not corruption and not urgency: they are disk space a VACUUM would
+      // return. Reported so the number is visible before the disk fills, not after.
+      await store.upsertAlert({
+        key: 'database:fragmentation',
+        rule: 'database-fragmentation',
+        scope: 'database',
+        severity: 'warning',
+        active: database.freelistRatio >= 0.25 && database.freelistBytes > 32 * 1024 * 1024,
+        detail: {
+          freelistBytes: database.freelistBytes,
+          freelistRatio: database.freelistRatio,
+          logicalBytes: database.logicalBytes,
+        },
+      });
+    }
   };
 
   /** Capacity, backup, verification, cleanup and sync-error alert rules. */
@@ -317,6 +507,8 @@ export function createMetricsService(deps: MetricsServiceDeps) {
       });
     }
 
+    await evaluateResourceAlerts(current);
+
     const alerts = await store.listAlerts({ limit: 200 });
     const now = Date.now();
     const silenced = alerts.filter((alert) => alert.silencedUntil && Date.parse(alert.silencedUntil) > now);
@@ -330,8 +522,18 @@ export function createMetricsService(deps: MetricsServiceDeps) {
   };
 
   const sample = async (): Promise<ServiceSnapshot> => {
+    const reading = runtime.sample();
+    // The histogram counts since the previous read, so this window is exactly one tick wide.
+    rssHistory.push(reading.rssBytes);
+    if (rssHistory.length > RESOURCE_HISTORY) rssHistory.shift();
     const counts = await store.status();
-    const [storage, jobs] = await Promise.all([blobStore.storageComposition(), store.countJobsByStatus()]);
+    const [storage, jobs, database] = await Promise.all([
+      blobStore.storageComposition(),
+      store.countJobsByStatus(),
+      // Structure readings are constant-time pragmas, safe on the sampling timer.
+      store.databaseStats().catch(() => null),
+    ]);
+    const identity = runtime.identity();
     const verification = {
       ...(await store.maintenanceState('verification:database') ? { database: (await store.maintenanceState('verification:database'))! } : {}),
       ...(await store.maintenanceState('verification:blobs') ? { blobs: (await store.maintenanceState('verification:blobs'))! } : {}),
@@ -372,10 +574,30 @@ export function createMetricsService(deps: MetricsServiceDeps) {
       backup,
       uptimeSeconds: Math.max(0, Math.round((Date.now() - deps.startedAt) / 1000)),
       sampledWithinMs: 0,
+      process: {
+        pid: identity.pid,
+        nodeVersion: identity.nodeVersion,
+        rssBytes: reading.rssBytes,
+        heapTotalBytes: reading.heapTotalBytes,
+        heapUsedBytes: reading.heapUsedBytes,
+        externalBytes: reading.externalBytes,
+        arrayBuffersBytes: reading.arrayBuffersBytes,
+        cpuPercent: reading.cpuPercent,
+        eventLoopMeanMs: reading.eventLoopMeanMs,
+        eventLoopMaxMs: reading.eventLoopMaxMs,
+        eventLoopP99Ms: reading.eventLoopP99Ms,
+        heapLimitBytes: identity.heapLimitBytes,
+        constrainedBytes: identity.constrainedBytes,
+        availableBytes: identity.availableBytes,
+        startedAt: startedAtIso,
+        available: true,
+      },
+      database,
     };
     await evaluateAlerts(next);
     snapshot = next;
     snapshotAt = Date.now();
+    await recordResourceSample(reading);
     await store.setMaintenanceState('snapshot:service', next as unknown as JsonRecord);
     return next;
   };
@@ -419,12 +641,23 @@ export function createMetricsService(deps: MetricsServiceDeps) {
       try {
         return { ...(await sample()), sampledWithinMs: 0 };
       } catch (error) {
-        if (snapshot) return { ...snapshot, stale: true, sampledWithinMs: Date.now() - snapshotAt };
+        // The previous snapshot is kept, but the process reading in it is now old: saying so
+        // is the difference between "memory is fine" and "memory was fine a minute ago".
+        if (snapshot) {
+          return {
+            ...snapshot,
+            stale: true,
+            sampledWithinMs: Date.now() - snapshotAt,
+            process: { ...snapshot.process, available: false },
+          };
+        }
         throw error;
       }
     },
     sample,
     async flush(): Promise<void> { await flushCounters(); },
+    /** Exposed so the resources page can refresh a reading without waiting for the next tick. */
+    runtime,
     start(): void {
       if (timer) return;
       timer = setInterval(() => { void tick(); }, intervalMs);
@@ -437,6 +670,7 @@ export function createMetricsService(deps: MetricsServiceDeps) {
       if (housekeepingTimer) clearInterval(housekeepingTimer);
       timer = undefined;
       housekeepingTimer = undefined;
+      runtime.stop();
     },
   };
 }

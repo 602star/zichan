@@ -35,6 +35,7 @@ export interface JobRunnerDeps {
 
 export const JOB_TYPES: AdminJobType[] = [
   'database.integrity-check',
+  'database.analyze',
   'blobs.verify',
   'storage.cleanup',
   'logs.prune',
@@ -63,6 +64,7 @@ export function jobOutcome(job: { type: AdminJobType; status: AdminJobStatus; re
   switch (job.type) {
     case 'blobs.verify': return Number(result['issueCount'] ?? 0) > 0 ? 'issues-found' : 'clean';
     case 'database.integrity-check': return result['ok'] === false ? 'issues-found' : 'clean';
+    case 'database.analyze': return result['tables'] === 0 ? 'issues-found' : 'clean';
     case 'backup.verify': return result['ok'] === false ? 'issues-found' : 'clean';
     case 'restore.drill': return result['ok'] === false ? 'issues-found' : 'clean';
     case 'storage.cleanup': return result['lastOk'] === false ? 'issues-found' : 'clean';

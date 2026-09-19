@@ -5,13 +5,18 @@ import { trendGeometry, trendSummary, type TrendPoint } from './trend.js';
 const VIEW_WIDTH = 600;
 const VIEW_HEIGHT = 120;
 
-export function TrendChart({ points, label, formatValue, tone, granularityNote }: {
+export function TrendChart({ points, label, formatValue, tone, granularityNote, summaryMode = 'total' }: {
   points: TrendPoint[];
   /** Accessible description; also used as the chart title for screen readers. */
   label: string;
   formatValue: (value: number) => string;
   tone?: 'ok' | 'warn' | 'bad';
   granularityNote?: string;
+  /**
+   * What a bucket's value means. Counters add up, so a range total is meaningful; a resource
+   * reading is a peak, and printing a sum of peaks would be a number nobody can act on.
+   */
+  summaryMode?: 'total' | 'peak';
 }) {
   if (!points.length) return <p style={muted}>暂无数据：这个时间范围内还没有采集到分桶。</p>;
   const { bars, maximum } = trendGeometry(points, { width: VIEW_WIDTH, height: VIEW_HEIGHT });
@@ -34,8 +39,11 @@ export function TrendChart({ points, label, formatValue, tone, granularityNote }
         ))}
       </svg>
       <figcaption style={muted}>
-        每个分桶：{bars.length} 个{granularityNote ? `（${granularityNote}）` : ''}；合计 {formatValue(summary.total)}
-        ，峰值 {formatValue(summary.peak)}{summary.peakAt ? `（${new Date(summary.peakAt).toLocaleString()}）` : ''}
+        每个分桶：{bars.length} 个{granularityNote ? `（${granularityNote}）` : ''}；
+        {summaryMode === 'peak' ? '最高' : '合计'} {formatValue(summary.peak)}
+        {summaryMode === 'peak'
+          ? (summary.peakAt ? `（${new Date(summary.peakAt).toLocaleString()}）` : '')
+          : <>{`，峰值 ${formatValue(summary.peak)}`}{summary.peakAt ? `（${new Date(summary.peakAt).toLocaleString()}）` : ''}</>}
         {maximum > 0 ? '' : '；该范围内没有非零数据'}
       </figcaption>
     </figure>

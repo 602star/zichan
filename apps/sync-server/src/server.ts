@@ -602,6 +602,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           'admin-console-v2',
           'admin-jobs-v1',
           'admin-metrics-v1',
+          'admin-resources-v1',
           'sync-diagnostics-v1',
         ];
         return send(res, 200, {

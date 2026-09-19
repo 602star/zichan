@@ -148,6 +148,36 @@ export const SETTING_FIELDS: SettingField[] = [
     max: 90,
     description: '更早的分钟级分桶会被清理；小时级分桶保留 90 天。',
   },
+  {
+    name: 'memoryWarnBytes',
+    label: '进程内存告警阈值（MiB，0 表示只按容器上限判断）',
+    kind: 'number',
+    envVar: 'ADMIN_MEMORY_WARN_MB',
+    default: 0,
+    min: 0,
+    max: 1_048_576,
+    description: '常驻内存超过该值时告警。容器部署通常不需要设置：容器内存上限优先，达到 85% 告警、95% 记为严重。',
+  },
+  {
+    name: 'eventLoopLagWarnMs',
+    label: '事件循环延迟告警阈值（毫秒）',
+    kind: 'number',
+    envVar: 'ADMIN_EVENT_LOOP_WARN_MS',
+    default: 50,
+    min: 10,
+    max: 5_000,
+    description: '单线程 Node 上这一项直接反映同步任务是否堵住了请求处理。默认 50 毫秒已高于 Windows 约 16 毫秒的定时器粒度；设得过低会在空闲时也持续告警。',
+  },
+  {
+    name: 'cpuWarnPercent',
+    label: '进程 CPU 告警阈值（%）',
+    kind: 'number',
+    envVar: 'ADMIN_CPU_WARN_PERCENT',
+    default: 90,
+    min: 10,
+    max: 100,
+    description: '按采样窗口平均计算，瞬时尖峰不会触发；单核满负荷约为 100%。',
+  },
 ];
 
 const FIELD_BY_NAME = new Map(SETTING_FIELDS.map((field) => [field.name, field]));

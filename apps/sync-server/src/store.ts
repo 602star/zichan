@@ -150,6 +150,7 @@ export interface ServerBackupArchive {
 
 export type AdminJobType =
   | 'database.integrity-check'
+  | 'database.analyze'
   | 'blobs.verify'
   | 'storage.cleanup'
   | 'logs.prune'
@@ -223,6 +224,50 @@ export interface MetricBucket {
   syncPullOk: number;
   blobOk: number;
   blobFailed: number;
+  /**
+   * Resource readings are point-in-time values, not counters, so the trend stores the peak
+   * seen inside the bucket. Summing them the way request counters are summed would produce a
+   * number that means nothing.
+   */
+  rssBytes: number;
+  heapUsedBytes: number;
+  externalBytes: number;
+  cpuPercent: number;
+  eventLoopMaxMs: number;
+}
+
+/** Point-in-time database structure readings; the expensive per-table breakdown is not here. */
+export interface DatabaseStats {
+  pageCount: number;
+  pageSize: number;
+  /** Bytes in pages SQLite has freed but not returned: what a VACUUM would reclaim. */
+  freelistBytes: number;
+  freelistRatio: number;
+  /** Logical size of the main database file, derived from the page counters. */
+  logicalBytes: number;
+  journalMode: string;
+  autoVacuum: string;
+  synchronous: string;
+  tempStore: string;
+  cacheSizeKiB: number | null;
+  mmapBytes: number;
+  walAutocheckpointPages: number;
+  journalSizeLimitBytes: number;
+  busyTimeoutMs: number;
+  encoding: string;
+  /** Rows SQLite considers "large" per table, from the analyzer tables. */
+  analyzedTables: number;
+  /** When `ANALYZE` last ran, derived from `sqlite_stat1` timestamps when available. */
+  analyzedAt: string | null;
+}
+
+/** Per-table page usage from `dbstat`. Only produced on demand: it scans the whole file. */
+export interface DatabaseTableUsage {
+  name: string;
+  kind: 'table' | 'index' | 'other';
+  bytes: number;
+  pages: number;
+  rowCount: number | null;
 }
 
 /** An administrator's enrolled second factor. The secret is stored encrypted. */
@@ -806,6 +851,13 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     await this.ensureColumn('server_backup_records', 'retention_json', 'TEXT');
     // Read-only operators are administrators with this flag set; granting one is a role change.
     await this.ensureColumn('server_administrators', 'read_only', 'INTEGER NOT NULL DEFAULT 0');
+    // Resource readings ride along with the request counters. They are peaks per bucket, not
+    // counters, so an existing bucket simply keeps 0 for ranges recorded before this column.
+    await this.ensureColumn('server_metric_buckets', 'rss_bytes', 'INTEGER NOT NULL DEFAULT 0');
+    await this.ensureColumn('server_metric_buckets', 'heap_used_bytes', 'INTEGER NOT NULL DEFAULT 0');
+    await this.ensureColumn('server_metric_buckets', 'external_bytes', 'INTEGER NOT NULL DEFAULT 0');
+    await this.ensureColumn('server_metric_buckets', 'cpu_percent', 'REAL NOT NULL DEFAULT 0');
+    await this.ensureColumn('server_metric_buckets', 'event_loop_max_ms', 'REAL NOT NULL DEFAULT 0');
     const migrations = await this.driver.all<{ version: number; name: string }>('SELECT version, name FROM server_schema_migrations ORDER BY version');
     const previous = migrations.length === 1 && (
       Number(migrations[0]?.version) === 6 && migrations[0]?.name === 'server_account_owner_v6'
@@ -1967,6 +2019,116 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     return { ok: result === 'ok', result, schemaVersion: CURRENT_SERVER_SCHEMA, checkedAt: nowIso() };
   }
 
+  /**
+   * Structure readings that are safe to take on a timer.
+   *
+   * Every statement here is either a constant-time pragma or a read of the small analyzer
+   * table. The per-table page breakdown deliberately lives in `databaseTableUsage`, because
+   * that one walks the whole file: measured at ~250 ms on a 125 MiB database, which is far
+   * too long to put inside a 30-second sampling loop.
+   */
+  async databaseStats(): Promise<DatabaseStats> {
+    await this.ready;
+    const pragma = async (name: string): Promise<Record<string, unknown> | undefined> =>
+      this.driver.get<Record<string, unknown>>(`PRAGMA ${name}`);
+    const [
+      pageCount, pageSize, freelist, journal, autoVacuum, synchronous,
+      tempStore, cacheSize, mmap, autocheckpoint, journalLimit, busyTimeout, encoding,
+    ] = await Promise.all([
+      pragma('page_count'), pragma('page_size'), pragma('freelist_count'), pragma('journal_mode'),
+      pragma('auto_vacuum'), pragma('synchronous'), pragma('temp_store'), pragma('cache_size'),
+      pragma('mmap_size'), pragma('wal_autocheckpoint'), pragma('journal_size_limit'),
+      pragma('busy_timeout'), pragma('encoding'),
+    ]);
+    const pages = Number(pageCount?.['page_count'] ?? 0);
+    const size = Number(pageSize?.['page_size'] ?? 0);
+    const free = Number(freelist?.['freelist_count'] ?? 0);
+    // `PRAGMA cache_size` is negative when it counts KiB rather than pages. Both forms are
+    // converted so the page shows a size, not a number whose unit depends on how it was set.
+    const cacheRaw = Number(cacheSize?.['cache_size'] ?? 0);
+    const cacheSizeKiB = cacheRaw === 0 ? null
+      : cacheRaw < 0 ? Math.abs(cacheRaw)
+        : Math.round((cacheRaw * size) / 1024);
+    // The analyzer table only exists after `ANALYZE`; a missing one means "never analyzed".
+    const analyzed = await this.driver.get<{ value: number }>('SELECT COUNT(*) AS value FROM sqlite_stat1')
+      .catch(() => undefined);
+    return {
+      pageCount: pages,
+      pageSize: size,
+      freelistBytes: free * size,
+      freelistRatio: pages > 0 ? Number((free / pages).toFixed(4)) : 0,
+      logicalBytes: pages * size,
+      journalMode: String(journal?.['journal_mode'] ?? ''),
+      autoVacuum: autoVacuum?.['auto_vacuum'] === 0 || autoVacuum?.['auto_vacuum'] === '0' ? 'none'
+        : autoVacuum?.['auto_vacuum'] === 1 || autoVacuum?.['auto_vacuum'] === '1' ? 'full' : 'incremental',
+      synchronous: ({ 0: 'off', 1: 'normal', 2: 'full', 3: 'extra' } as Record<number, string>)[Number(synchronous?.['synchronous'] ?? -1)] ?? 'unknown',
+      tempStore: Number(tempStore?.['temp_store']) === 2 ? 'memory'
+        : Number(tempStore?.['temp_store']) === 1 ? 'file' : 'default',
+      cacheSizeKiB,
+      mmapBytes: Number(mmap?.['mmap_size'] ?? 0),
+      walAutocheckpointPages: Number(autocheckpoint?.['wal_autocheckpoint'] ?? 0),
+      journalSizeLimitBytes: Number(journalLimit?.['journal_size_limit'] ?? 0),
+      busyTimeoutMs: Number(busyTimeout?.['timeout'] ?? 0),
+      encoding: String(encoding?.['encoding'] ?? ''),
+      analyzedTables: Number(analyzed?.value ?? 0),
+      analyzedAt: (await this.maintenanceState('verification:analyze'))?.['checkedAt'] as string | undefined ?? null,
+    };
+  }
+
+  /**
+   * Per-table page usage. This is the expensive read: `dbstat` walks every page in the file.
+   * It is never called from the sampling loop, only from an explicit refresh or a job.
+   */
+  async databaseTableUsage(): Promise<{ tables: DatabaseTableUsage[]; scannedAt: string; durationMs: number }> {
+    await this.ready;
+    const startedAt = Date.now();
+    // Ordered by size and then by name: without the tiebreaker, tables that occupy the same
+    // number of pages would come back in an arbitrary order and a small limit could hide one.
+    const rows = await this.driver.all<Record<string, unknown>>(
+      `SELECT name, SUM(pgsize) AS bytes, COUNT(*) AS pages
+       FROM dbstat GROUP BY name ORDER BY bytes DESC, name ASC LIMIT 200`,
+    );
+    const tables: DatabaseTableUsage[] = [];
+    for (const row of rows) {
+      const name = String(row['name']);
+      // `dbstat` reports indexes under their own name; the console groups them under the table
+      // they belong to so an operator sees "this table costs X", not an index catalogue.
+      const index = /^sqlite_autoindex_(.+)_\d+$/.exec(name) ?? /^idx_[^_]*_(.+)$/.exec(name);
+      tables.push({
+        name,
+        kind: name.startsWith('sqlite_') && !name.startsWith('sqlite_autoindex') ? 'other'
+          : name.startsWith('idx_') || name.startsWith('sqlite_autoindex') ? 'index' : 'table',
+        bytes: Number(row['bytes'] ?? 0),
+        pages: Number(row['pages'] ?? 0),
+        rowCount: index ? null : await this.tableRowCount(name),
+      });
+    }
+    return { tables, scannedAt: nowIso(), durationMs: Date.now() - startedAt };
+  }
+
+  /** Row counts are read only for names that exist in the schema, so the value cannot inject SQL. */
+  private async tableRowCount(name: string): Promise<number | null> {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return null;
+    const known = await this.driver.get<{ value: number }>(
+      "SELECT COUNT(*) AS value FROM sqlite_schema WHERE type = 'table' AND name = ?",
+      [name],
+    );
+    if (!known || Number(known.value) === 0) return null;
+    const row = await this.driver.get<{ value: number }>(`SELECT COUNT(*) AS value FROM "${name}"`);
+    return row ? Number(row.value) : null;
+  }
+
+  /** `ANALYZE` is what makes the query planner keep using the indexes as the tables grow. */
+  async analyze(): Promise<{ tables: number; durationMs: number; checkedAt: string }> {
+    await this.ready;
+    const startedAt = Date.now();
+    await this.driver.exec('ANALYZE');
+    const analyzed = await this.driver.get<{ value: number }>('SELECT COUNT(*) AS value FROM sqlite_stat1');
+    const checkedAt = nowIso();
+    await this.setMaintenanceState('verification:analyze', { checkedAt, tables: Number(analyzed?.value ?? 0) });
+    return { tables: Number(analyzed?.value ?? 0), durationMs: Date.now() - startedAt, checkedAt };
+  }
+
   async maintenanceState(key: string): Promise<JsonRecord | undefined> {
     await this.ready;
     const row = await this.driver.get<{ value_json: string }>('SELECT value_json FROM server_maintenance_state WHERE key = ?', [key]);
@@ -2107,8 +2269,9 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
         await driver.run(
           `INSERT INTO server_metric_buckets
            (granularity, bucket_at, requests, errors, slow_requests, duration_ms,
-            sync_push_ok, sync_push_failed, sync_pull_ok, blob_ok, blob_failed)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            sync_push_ok, sync_push_failed, sync_pull_ok, blob_ok, blob_failed,
+            rss_bytes, heap_used_bytes, external_bytes, cpu_percent, event_loop_max_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(granularity, bucket_at) DO UPDATE SET
              requests = requests + excluded.requests,
              errors = errors + excluded.errors,
@@ -2118,12 +2281,21 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
              sync_push_failed = sync_push_failed + excluded.sync_push_failed,
              sync_pull_ok = sync_pull_ok + excluded.sync_pull_ok,
              blob_ok = blob_ok + excluded.blob_ok,
-             blob_failed = blob_failed + excluded.blob_failed`,
+             blob_failed = blob_failed + excluded.blob_failed,
+             -- Resource readings are point-in-time, so the bucket keeps the highest one seen.
+             -- Adding them up like the counters above would be a number without meaning.
+             rss_bytes = max(rss_bytes, excluded.rss_bytes),
+             heap_used_bytes = max(heap_used_bytes, excluded.heap_used_bytes),
+             external_bytes = max(external_bytes, excluded.external_bytes),
+             cpu_percent = max(cpu_percent, excluded.cpu_percent),
+             event_loop_max_ms = max(event_loop_max_ms, excluded.event_loop_max_ms)`,
           [
             granularity, bucketAt,
             sample.requests ?? 0, sample.errors ?? 0, sample.slowRequests ?? 0, sample.durationMs ?? 0,
             sample.syncPushOk ?? 0, sample.syncPushFailed ?? 0, sample.syncPullOk ?? 0,
             sample.blobOk ?? 0, sample.blobFailed ?? 0,
+            sample.rssBytes ?? 0, sample.heapUsedBytes ?? 0, sample.externalBytes ?? 0,
+            sample.cpuPercent ?? 0, sample.eventLoopMaxMs ?? 0,
           ],
         );
       }
@@ -2147,6 +2319,11 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       syncPullOk: Number(row['sync_pull_ok'] ?? 0),
       blobOk: Number(row['blob_ok'] ?? 0),
       blobFailed: Number(row['blob_failed'] ?? 0),
+      rssBytes: Number(row['rss_bytes'] ?? 0),
+      heapUsedBytes: Number(row['heap_used_bytes'] ?? 0),
+      externalBytes: Number(row['external_bytes'] ?? 0),
+      cpuPercent: Number(row['cpu_percent'] ?? 0),
+      eventLoopMaxMs: Number(row['event_loop_max_ms'] ?? 0),
     }));
   }
 

@@ -32,6 +32,8 @@ function resultSummary(job: Job): string | undefined {
       return `已检查 ${count('checkedObjects')} 个附件对象、${count('checkedChunks')} 个分块，问题 ${count('issueCount')} 个（范围：${String(result['scope'] ?? '全部账号')}）。`;
     case 'database.integrity-check':
       return `PRAGMA integrity_check 结果：${String(result['result'] ?? '未知')}；${result['ok'] ? '未发现问题' : '发现问题，请先保护现有数据。'}`;
+    case 'database.analyze':
+      return `已重建 ${count('tables')} 个表的查询计划统计，用时 ${count('durationMs')} 毫秒。`;
     case 'backup.verify': {
       const issues = Array.isArray(result['issues']) ? (result['issues'] as string[]).join('；') : '';
       return `校验 ${count('checkedFiles')} 个文件，数据库 ${String(result['databaseResult'] ?? '未知')}；${result['ok'] ? '通过' : `未通过：${issues}`}。`;

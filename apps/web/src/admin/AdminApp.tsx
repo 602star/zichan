@@ -7,6 +7,7 @@ import { AuditPage, LogsPage } from './LogsPage.js';
 import { InvitesPage } from './InvitesPage.js';
 import { JobsPage } from './JobsPage.js';
 import { OverviewPage } from './OverviewPage.js';
+import { ResourcesPage } from './ResourcesPage.js';
 import { SessionsPage } from './SessionsPage.js';
 import { SettingsPage } from './SettingsPage.js';
 import { SecurityPage } from './SecurityPage.js';
@@ -19,6 +20,7 @@ import { PasswordRecovery } from '../ui/PasswordRecovery.js';
 
 const NAVIGATION: { path: string; label: string; ownerOnly?: boolean }[] = [
   { path: '/overview', label: '运行概览' },
+  { path: '/resources', label: '进程与数据库' },
   { path: '/users', label: '用户管理' },
   { path: '/sessions', label: '设备与会话' },
   { path: '/sync', label: '同步诊断' },
@@ -211,6 +213,7 @@ function AdminShell({ client, account, baseUrl }: { client: AdminClient; account
       case 'sync': return <SyncPage client={client} query={route.query} navigate={go} />;
       case 'invites': return <InvitesPage client={client} role={role} query={route.query} navigate={go} />;
       case 'storage': return <StoragePage client={client} role={role} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
+      case 'resources': return <ResourcesPage client={client} role={role} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
       case 'jobs': return <JobsPage client={client} query={route.query} navigate={go} role={role} />;
       case 'logs': return <LogsPage client={client} query={route.query} navigate={go} />;
       case 'audit': return <AuditPage client={client} query={route.query} navigate={go} />;
