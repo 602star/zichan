@@ -1,6 +1,6 @@
 /** Derived read-models shared by screens — all computed via @zichan/core. */
 import {
-  postingsFromChain, postingsFromTransaction, computeBalances, latestPrices, D,
+  accountChainPostings, accountTransactionPostings, accountOpeningPostings, computeBalances, latestPrices, D,
   type Asset, type Balance, type Posting,
 } from '@zichan/core';
 import type { Snapshot } from './snapshot.js';
@@ -29,9 +29,9 @@ function externalAccountIds(snap: Snapshot): Set<string> {
  * linked or module-created transaction, never posted directly by a game record. */
 export function financialPostings(snap: Snapshot): Posting[] {
   const external = externalAccountIds(snap);
-  const out: Posting[] = [];
-  for (const c of snap.chains) out.push(...postingsFromChain(c));
-  for (const t of snap.transactions) out.push(...postingsFromTransaction(t));
+  const out: Posting[] = accountOpeningPostings(snap.accounts);
+  for (const c of snap.chains) out.push(...accountChainPostings(c, snap.accounts));
+  for (const t of snap.transactions) out.push(...accountTransactionPostings(t, snap.accounts));
   return out.filter((p) => !(p.accountId && external.has(p.accountId)));
 }
 

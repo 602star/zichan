@@ -50,7 +50,8 @@ describe('first-run ledger initialization', () => {
       expect(await store.settings.count()).toBe(1);
       expect(await store.categories.count()).toBeGreaterThan(0);
       expect(await store.fixedAssetCategories.count()).toBeGreaterThan(0);
-      expect(await store.accounts.count()).toBe(0);
+      expect(await store.accounts.count()).toBe(2);
+      expect((await store.accounts.list()).map((a) => a.purpose).sort()).toEqual(['default_expense', 'default_income']);
       expect(await store.transactions.count()).toBe(0);
       expect(await store.conversionChains.count()).toBe(0);
       expect(await store.dcaPlans.count()).toBe(0);

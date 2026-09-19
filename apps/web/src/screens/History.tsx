@@ -73,8 +73,8 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 const VALUE_LABELS: Record<string, Record<string, string>> = {
   status: {
-    pending: '待确认',
-    cleared: '已清算',
+    pending: '待核实',
+    cleared: '已记录',
     reconciled: '已对账',
     active: '启用',
     paused: '暂停',

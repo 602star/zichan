@@ -124,7 +124,6 @@ export function moveNavigationItem(
 }
 
 export function navigationLabel(id: ScreenId, mode: LedgerMode): string {
-  if (mode === 'spending' && id === 'transactions') return '日常支出';
-  if (mode === 'spending' && id === 'reports') return '支出报表';
+  void mode;
   return NAVIGATION_ITEMS.find((item) => item.id === id)?.label ?? id;
 }

@@ -104,12 +104,12 @@ const SCOPE_FIELDS: Record<Exclude<SnapshotScope, 'all'>, SnapshotField[]> = {
     'categories', 'payees', 'transactions', 'transactionSplits', 'refundAllocations',
   ],
   reports: [
-    'assets', 'settings', 'chains', 'priceMarks', 'dcaExecutions', 'games', 'gameAccounts', 'seasons',
+    'assets', 'accounts', 'settings', 'chains', 'priceMarks', 'dcaExecutions', 'games', 'gameAccounts', 'seasons',
     'gameRecords', 'gameCashflowLinks', 'fixedAssets', 'fixedAssetCategories', 'fixedEvents', 'fixedCashflowLinks',
     'fixedUsageMetrics', 'fixedUsageLogs', 'fixedConsumables', 'fixedGoals', 'categories', 'payees',
     'budgetCategories',
   ],
-  settings: ['assets', 'settings', 'categories'],
+  settings: ['assets', 'accounts', 'settings', 'categories'],
   manage: [
     'assets', 'accounts', 'settings', 'priceMarks', 'dcaPlans', 'games', 'gameAccounts', 'seasons',
     'fixedAssetCategories', 'attachments', 'categories', 'transactionTags', 'transactionLocations',

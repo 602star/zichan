@@ -1,7 +1,7 @@
 import { accountSessionStorage } from '../account-storage.js';
 import { useEffect, useState, type CSSProperties } from 'react';
 import { checkConsistency, recomputeCaches, purgeTombstones, type ConsistencyIssue } from '@zichan/db';
-import { type AsOfMode, type LedgerMode, type LotMethod, type Setting, localToday } from '@zichan/core';
+import { type AsOfMode, type LotMethod, type Setting, localToday } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { useSnapshot } from '../db/snapshot.js';
 import { baseAsset } from '../db/derive.js';
@@ -73,11 +73,6 @@ import {
 
 const METHODS: [LotMethod, string][] = [
   ['fifo', 'FIFO · 先进先出'], ['lifo', 'LIFO · 后进先出'], ['average', '平均成本'], ['manual', '手动选择批次'],
-];
-const LEDGER_MODES: [LedgerMode, string][] = [
-  ['spending', '轻量记账 · 只记收支'],
-  ['accounts', '账户记账 · 收支 + 转账 + 对账'],
-  ['assets', '完整资产账本 · 投资/物品资产/游戏资产'],
 ];
 type SettingsTab = 'ledger' | 'account' | 'data' | 'appearance';
 /*
@@ -584,7 +579,7 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
   const latestAuto = backups.find((b) => b.reason === 'auto');
   const warnings = safetyWarnings(backups, safetyState);
   const hasIndependentBackup = backups.some((backup) => backup.externalSaved) || Boolean(safetyState.lastExternalBackupAt);
-  const usesAccounts = (setting?.ledgerMode ?? 'spending') !== 'spending';
+  const usesAccounts = true;
   const formFields = new Set(optionalTransactionFields(setting, usesAccounts));
   const formFieldOptions = transactionFormFieldOptions(usesAccounts);
   const categoryCatalog = allCategories(readySnap.categories).filter((category) => category.parentId && category.isActive !== false);
@@ -661,20 +656,12 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
                   {METHODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </div>
-              <div className="zc-field">
-                <label className="zc-label">记账模式 · 录入深度</label>
-                <select aria-label="记账模式 · 录入深度" className="zc-select" value={setting?.ledgerMode ?? 'spending'} onChange={(e) => saveSetting({ ledgerMode: e.target.value as LedgerMode })}>
-                  {LEDGER_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>
-                {/*
-                 * The mode no longer decides which modules exist. Without this hint
-                 * 「记账模式」 reads as a shell-wide switch, and a user who picks 完整资产账本
-                 * and still sees four sidebar entries concludes the setting did nothing.
-                 */}
-                <p className="zc-meta" style={{ marginTop: 6 }}>
-                  只决定录入表单的深度与用词（是否出现账户、转账与对账），不决定显示哪些模块。模块显隐与顺序在下方“侧边栏与模块”里设置，手机端也可以从“更多 → 未启用模块”直接启用。
-                </p>
-              </div>
+              {(['expense', 'income'] as const).map((direction) => <div className="zc-field" key={direction}>
+                <label className="zc-label">{direction === 'expense' ? '支出默认账户' : '收入默认账户'}</label>
+                <select className="zc-select" aria-label={direction === 'expense' ? '支出默认账户' : '收入默认账户'} value={(direction === 'expense' ? setting?.expenseDefaultAccountId : setting?.incomeDefaultAccountId) ?? ''} onChange={(e) => saveSetting(direction === 'expense' ? { expenseDefaultAccountId: e.target.value } : { incomeDefaultAccountId: e.target.value })}>
+                  {snap.accounts.filter((a) => a.isActive !== false && a.kind !== 'other' && a.purpose !== (direction === 'expense' ? 'default_income' : 'default_expense')).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select><p className="zc-meta">仅用于新的记录，已有记录保留原账户。全部功能均可使用。</p>
+              </div>)}
               <div className="zc-field">
                 <label className="zc-label">账本日 · 报表算到哪一天</label>
                 <input
@@ -736,7 +723,7 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
               </ConfirmDialog>
             )}
             <p className="zc-meta" style={{ marginTop: 10 }}>
-              模块币种只预填新记录，不改写历史币种或金额；新预算默认使用日常记账币种并在保存后冻结。轻量记账隐藏账户、转账和对账；退款默认回冲原消费与原预算，也可改为按退款到账日期统计。
+              模块币种只预填新记录，不改写历史币种或金额；新预算默认使用日常记账币种并在保存后冻结。退款默认回冲原消费与原预算，也可改为按退款到账日期统计。
             </p>
           </div>
 
@@ -768,9 +755,9 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
           </div>
 
           <div className="zc-card">
-            <h2 className="zc-section-title">记账表单字段</h2>
+            <h2 className="zc-section-title">常用附加字段</h2>
             <p className="zc-caption" style={{ marginTop: 6 }}>
-              日期、交易时间、类型、二级分类、金额、币种、描述和附件固定显示；下方字段会出现在“更多信息”里。当前模式：{usesAccounts ? '账户/资产模式' : '轻量记账'}。
+              勾选的字段在新增记账时直接展开。其他字段可在更多信息中填写；编辑时已有内容会自动显示。账户、转账和退款必需信息由当前操作决定，无需在这里勾选。
             </p>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '12px 0 10px' }}>
               {[

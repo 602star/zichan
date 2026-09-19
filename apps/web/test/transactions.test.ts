@@ -405,36 +405,16 @@ describe('buildTransactions', () => {
 });
 
 describe('ledger mode forms', () => {
-  it('keeps spending mode focused on income and expenses', () => {
+  it('opens all features independently of the old initialization mode', () => {
     const s = makeSnapshot();
-    s.setting!.ledgerMode = 'spending';
-
-    const tx = transactionForm(s);
-    const txKeys = tx.fields.map((f) => f.key);
-    const txTypes = optionsOf(tx.fields.find((f) => f.key === 'type')!).map((o) => o.value);
-    expect(txKeys).not.toContain('accountId');
-    expect(txKeys).not.toContain('transferAccountId');
-    expect(txKeys).not.toContain('status');
-    expect(txKeys).toContain('time');
-    expect(txKeys).toContain('timezone');
-    expect(txKeys).toContain('locationId');
-    expect(txKeys).toContain('tagIds');
-    expect(txKeys).toContain('attachmentDrafts');
-    expect(txKeys).toContain('latitude');
-    expect(txKeys).toContain('longitude');
-    expect(tx.fields.find((f) => f.key === 'attachmentDrafts')).toMatchObject({ capture: 'environment' });
-    expect(tx.fields.find((f) => f.key === 'locationName')).toMatchObject({ deviceAction: 'current-location' });
-    expect(tx.fields.find((f) => f.key === 'latitude')).toMatchObject({ hidden: true });
-    expect(txTypes).toEqual(['expense', 'income', 'refund']);
-
-    const bill = scheduledTransactionForm(s);
-    const billKeys = bill.fields.map((f) => f.key);
-    const billTypes = optionsOf(bill.fields.find((f) => f.key === 'type')!).map((o) => o.value);
-    expect(billKeys).not.toContain('accountId');
-    expect(billKeys).not.toContain('transferAmount');
-    expect(billTypes).toEqual(['expense', 'income']);
-
-    expect(payeeForm(s).fields.map((f) => f.key)).not.toContain('defaultAccountId');
+    for (const mode of ['spending', 'accounts', 'assets'] as const) {
+      s.setting!.ledgerMode = mode;
+      const tx = transactionForm(s);
+      expect(tx.fields.map((f) => f.key)).toContain('accountId');
+      expect(optionsOf(tx.fields.find((f) => f.key === 'type')!).map((o) => o.value)).toEqual(['expense', 'income', 'transfer', 'refund']);
+      expect(scheduledTransactionForm(s).fields.map((f) => f.key)).toContain('accountId');
+      expect(payeeForm(s).fields.map((f) => f.key)).toContain('defaultAccountId');
+    }
   });
 
   it('provides a full accountless expense form for the daily-expense entry', () => {
@@ -629,23 +609,8 @@ describe('ledger mode forms', () => {
     expect(accounts.map((option) => option.value)).toEqual(['account-b']);
   });
 
-  it('keeps game cashflow accountless in spending mode and requires accounts in deeper modes', () => {
-    const spending = makeSnapshot();
-    spending.setting!.ledgerMode = 'spending';
-    const spendingForm = gameRecordForm(spending);
-    const spendingAccount = spendingForm.fields.find((field) => field.key === 'settlementAccountId')!;
-    expect(spendingAccount.required).toBe(false);
-    expect(spendingAccount.visibleWhen?.({ settlementCashflowMode: 'create_transaction' })).toBe(false);
-    expect(spendingForm.validate?.({
-      gameId: spending.ids.game,
-      recordType: 'withdraw',
-      settlementAssetId: spending.ids.gbp,
-      settlementAmount: '10',
-      settlementCashflowMode: 'create_transaction',
-      settlementCategoryId: 'income-leaf',
-    })).toBeUndefined();
-
-    for (const ledgerMode of ['accounts', 'assets'] as const) {
+  it('uses initialized accounts for game cashflows in either onboarding path', () => {
+    for (const ledgerMode of ['spending', 'accounts', 'assets'] as const) {
       const deeper = makeSnapshot();
       deeper.setting!.ledgerMode = ledgerMode;
       const deeperForm = gameRecordForm(deeper);

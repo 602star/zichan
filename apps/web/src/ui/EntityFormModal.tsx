@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { TagPicker } from './TagPicker.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { DialogShell } from './DialogShell.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
@@ -7,6 +8,7 @@ import { useStore } from '../db/store.js';
 import { ensureAttachmentBlobAvailable } from '../attachment-sync.js';
 import { barcodeScannerAvailable, currentDevicePosition, scanBarcode } from '../device-capabilities.js';
 import {
+  type FormDraft,
   deleteFormDraft,
   formDraftFingerprint,
   formDraftKey,
@@ -14,14 +16,14 @@ import {
   saveFormDraft,
 } from '../db/form-drafts.js';
 import {
-  emptyOptionHint,
+  emptyOptionHint, progressiveFieldGroups,
   isFieldVisible,
   isMoreFieldVisible,
   requiredFieldErrors,
   unreachableErrorKeys,
 } from '../form-validation.js';
 
-export type FieldType = 'text' | 'number' | 'date' | 'time' | 'select' | 'category' | 'multiselect' | 'allocation' | 'checkbox' | 'textarea' | 'file';
+export type FieldType = 'text' | 'number' | 'date' | 'time' | 'select' | 'category' | 'multiselect' | 'tags' | 'allocation' | 'checkbox' | 'textarea' | 'file';
 
 export interface FieldOption {
   value: string;
@@ -58,6 +60,9 @@ export interface FieldDef {
   /** Always-visible helper line under the control, for rules the label cannot carry. */
   hint?: string;
   defaultValue?: string;
+  resetWhen?: string[];
+  singleOptionSummary?: boolean;
+  checkboxValues?: { checked: string; unchecked: string; label: string };
   half?: boolean; // render at half width (two-column grid)
   section?: 'core' | 'more';
   lockedVisible?: boolean;
@@ -72,6 +77,13 @@ export interface EntityFormSpec<T> {
   /** Stable namespace for auto-saved drafts. Defaults to the form title. */
   draftKey?: string;
   modalWidth?: number;
+  moreInitiallyOpen?: boolean;
+  progressiveFields?: boolean;
+  confirmNewDraft?: boolean;
+  refreshDefaults?: (values: Record<string, string>, manual: ReadonlySet<string>) => Record<string, string>;
+  summary?: (values: Record<string, string>) => string | undefined;
+  optionalFieldOptions?: { key: string; label: string }[];
+  onFieldChange?: (values: Record<string, string>, key: string, manual: ReadonlySet<string>) => Record<string, string>;
   fields: FieldDef[];
   /** existing entity → string form values */
   toValues: (entity: T) => Record<string, string>;
@@ -159,7 +171,7 @@ function normalizeValues(fields: FieldDef[], values: Record<string, string>, cha
     const optionValues = new Set(options.map((o) => o.value));
     const current = next[f.key] ?? '';
     if (f.type === 'select' || f.type === 'category') {
-      const shouldReset = current && !optionValues.has(current);
+      const shouldReset = (current && !optionValues.has(current)) || (!!changedKey && !!f.resetWhen?.includes(changedKey));
       const shouldDefault = !current && !f.allowEmpty && options.length > 0;
       if ((shouldReset || shouldDefault) && f.key !== changedKey) {
         next = { ...next, [f.key]: f.allowEmpty ? '' : options[0]?.value ?? '' };
@@ -205,6 +217,8 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   const draftKey = formDraftKey(spec.draftKey ?? spec.title, entity);
   const initialFingerprint = useRef(formDraftFingerprint(initialValues, initialFiles));
   const touched = useRef(false);
+  const manualFields = useRef(new Set(initial ? Object.keys(spec.toValues(initial)).filter((key) => !!spec.toValues(initial)[key]) : []));
+  const [prefilledValues, setPrefilledValues] = useState(initial ? initialValues : {});
   const savedOrDeleted = useRef(false);
   const [values, setValues] = useState<Record<string, string>>(initialValues);
   const [busy, setBusy] = useState(false);
@@ -218,6 +232,8 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   const [deviceBusy, setDeviceBusy] = useState('');
   const [fileValues, setFileValues] = useState<Record<string, FileRow[]>>(initialFiles);
   const [draftReady, setDraftReady] = useState(false);
+  const draftHandled = useRef(false);
+  const [pendingDraft, setPendingDraft] = useState<FormDraft | null>(null);
   const [draftRestoredAt, setDraftRestoredAt] = useState('');
   const [closeOpen, setCloseOpen] = useState(false);
   const creating = isNew ?? !initial;
@@ -227,10 +243,17 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
 
   useEffect(() => {
     let cancelled = false;
+    if (draftHandled.current) return;
     void loadFormDraft(draftKey, entityVersion)
       .then((draft) => {
-        if (cancelled || !draft || touched.current) return;
-        setValues(normalizeValues(spec.fields, { ...initialValues, ...draft.values }));
+        if (cancelled) return;
+        draftHandled.current = true;
+        if (!draft || touched.current) return;
+        if (creating && spec.confirmNewDraft) { setPendingDraft(draft); return; }
+        const restored = normalizeValues(spec.fields, { ...initialValues, ...draft.values });
+        setValues(restored);
+        setPrefilledValues(restored);
+        manualFields.current = new Set(Object.keys(draft.values).filter((key) => draft.values[key] !== initialValues[key]));
         setFileValues(draft.files ?? {});
         setDraftRestoredAt(draft.savedAt);
       })
@@ -241,42 +264,45 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     return () => {
       cancelled = true;
     };
-  }, [draftKey, entityVersion, initialValues, spec.fields]);
+  }, [draftKey, entityVersion, initialValues, spec.fields, spec.confirmNewDraft, creating]);
 
   useEffect(() => {
-    if (!draftReady || !dirty || savedOrDeleted.current) return;
+    if (!draftReady || pendingDraft || !dirty || savedOrDeleted.current) return;
     const timer = window.setTimeout(() => {
-      void saveFormDraft(draftKey, values, fileValues, entityVersion).catch(() => undefined);
+      void saveFormDraft(draftKey, values, fileValues, entityVersion, [...manualFields.current]).catch(() => undefined);
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [draftKey, draftReady, dirty, entityVersion, fileValues, values]);
+  }, [draftKey, draftReady, pendingDraft, dirty, entityVersion, fileValues, values]);
 
   useEffect(() => {
-    if (!dirty || savedOrDeleted.current) return;
+    if (pendingDraft || !dirty || savedOrDeleted.current) return;
     const beforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
     };
     window.addEventListener('beforeunload', beforeUnload);
     return () => window.removeEventListener('beforeunload', beforeUnload);
-  }, [dirty]);
+  }, [dirty, pendingDraft]);
 
   const set = (key: string, value: string) => {
     touched.current = true;
-    setValues((v) => normalizeValues(spec.fields, { ...v, [key]: value }, key));
+    manualFields.current.add(key);
+    setValues((v) => { const next = { ...v, [key]: value }; return normalizeValues(spec.fields, spec.onFieldChange?.(next, key, manualFields.current) ?? next, key); });
   };
   const requestClose = () => {
     if (busy) return;
+    if (pendingDraft) { onClose(); return; }
     if (dirty) setCloseOpen(true);
     else onClose();
   };
   const allMoreFields = spec.fields.filter((f) => f.section === 'more' && !f.hidden);
   const allMoreFieldKeys = allMoreFields.map((f) => f.key);
-  const moreFields = allMoreFields.filter((f) => isFieldVisible(f, values));
-  const coreFields = spec.fields.filter((f) => f.section !== 'more' && isFieldVisible(f, values));
+  const groups = spec.progressiveFields ? progressiveFieldGroups(spec.fields, values, prefilledValues, optionalFieldKeys ?? []) : undefined;
+  const moreFields = groups?.more ?? allMoreFields.filter((f) => isFieldVisible(f, values));
+  const coreFields = groups?.core ?? spec.fields.filter((f) => f.section !== 'more' && isFieldVisible(f, values));
   const visibleOptional = new Set(optionalFieldKeys ?? moreFields.map((f) => f.key));
-  const visibleMoreFields = moreFields.filter((f) => isMoreFieldVisible(f, values, optionalFieldKeys, allMoreFieldKeys));
-  const moreExpanded = moreOpen ?? visibleMoreFields.length > 0;
+  const visibleMoreFields = groups ? moreFields : moreFields.filter((f) => isMoreFieldVisible(f, values, optionalFieldKeys, allMoreFieldKeys));
+  const moreExpanded = moreOpen ?? spec.moreInitiallyOpen ?? visibleMoreFields.length > 0;
   const toggleOptionalField = async (key: string) => {
     const current = new Set(optionalFieldKeys ?? moreFields.map((f) => f.key));
     if (current.has(key)) current.delete(key);
@@ -289,7 +315,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     if (!field || !isFieldVisible(field, values)) return;
     if (field.section !== 'more') return;
     setMoreOpen(true);
-    if (isMoreFieldVisible(field, values, optionalFieldKeys, allMoreFieldKeys)) return;
+    if (spec.progressiveFields || isMoreFieldVisible(field, values, optionalFieldKeys, allMoreFieldKeys)) return;
     const current = new Set(optionalFieldKeys ?? moreFields.map((f) => f.key));
     current.add(key);
     await onOptionalFieldKeysChange?.([...current]);
@@ -386,7 +412,16 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     }
   }
 
+  useEffect(() => {
+    if (initial || pendingDraft || !spec.refreshDefaults) return;
+    setValues((current) => {
+      const next = spec.refreshDefaults!(current, manualFields.current);
+      return Object.keys(next).some((key) => next[key] !== current[key]) ? next : current;
+    });
+  }, [initial, pendingDraft, spec]);
+
   async function save() {
+    if (!draftReady || pendingDraft) return;
     setErr(null);
     const normalized = { ...values };
     for (const field of spec.fields) {
@@ -458,28 +493,45 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
         <div className="zc-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
           <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{creating ? '新增' : '编辑'} · {spec.title}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {moreFields.length > 0 && onOptionalFieldKeysChange && (
+            {(spec.optionalFieldOptions?.length || moreFields.length > 0) && onOptionalFieldKeysChange && (
               <button
                 onClick={() => setFieldPickerOpen((v) => !v)}
                 style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-secondary)', borderRadius: 'var(--r-sm)', padding: '7px 10px', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', cursor: 'pointer' }}
               >
-                字段显示
+                {spec.progressiveFields ? '常用附加字段' : '字段显示'}
               </button>
             )}
             <button type="button" data-dialog-initial-focus aria-label="关闭" onClick={requestClose} disabled={busy} style={{ border: 'none', background: 'transparent', fontSize: 'var(--fs-heading)', cursor: busy ? 'not-allowed' : 'pointer', color: 'var(--text-tertiary)', opacity: busy ? 0.6 : 1 }}>×</button>
           </div>
         </div>
 
+        {pendingDraft && <div role="status" style={{ padding: 12, marginBottom: 12, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+          <p>发现未完成的记账草稿（{pendingDraft.values.date} {pendingDraft.values.time}）。恢复后会保留原记录时间，请核对账户和余额起点。</p>
+          <button type="button" onClick={() => {
+            const draft = pendingDraft;
+            const manual = new Set(draft.manualFieldKeys ?? Object.keys(draft.values));
+            let restored = { ...initialValues, ...draft.values };
+            if (!initial && draft.manualFieldKeys && spec.refreshDefaults) restored = spec.refreshDefaults(restored, manual);
+            manualFields.current = manual;
+            setValues(normalizeValues(spec.fields, restored)); setPrefilledValues(restored);
+            setFileValues(draft.files ?? {}); setDraftRestoredAt(draft.savedAt); setPendingDraft(null);
+          }}>恢复草稿</button>
+          <button type="button" onClick={() => void deleteFormDraft(draftKey).then(() => {
+            manualFields.current = new Set(); setValues(initialValues); setPrefilledValues(initial ? initialValues : {});
+            setFileValues(initialFiles); setDraftRestoredAt(''); setPendingDraft(null);
+          }).catch(() => setErr('清除草稿失败，请重试'))}>重新开始</button>
+        </div>}
         {draftRestoredAt && (
           <div role="status" style={{ marginBottom: 12, padding: '8px 10px', border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>
             已恢复 {new Date(draftRestoredAt).toLocaleString()} 自动保存的草稿。
           </div>
         )}
 
+        {spec.summary?.(values) && <p role="status" className="zc-caption">{spec.summary(values)}</p>}
         {fieldPickerOpen && (
           <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 12, marginBottom: 14, background: 'var(--surface-2)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
-              <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>更多信息字段</div>
+              <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>{spec.progressiveFields ? '常用附加字段' : '更多信息字段'}</div>
               {optionalFieldPresets && (
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {optionalFieldPresets.map((preset) => (
@@ -494,8 +546,9 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                 </div>
               )}
             </div>
+            {spec.progressiveFields && <p className="zc-caption">勾选的字段在新增记账时直接展开。其他字段可在更多信息中填写；编辑时已有内容会自动显示。</p>}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-              {allMoreFields.map((f) => (
+              {(spec.optionalFieldOptions ? spec.optionalFieldOptions.map((option) => ({ ...spec.fields.find((f) => f.key === option.key)!, label: option.label })) : allMoreFields).map((f) => (
                 <label key={f.key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '6px 10px', background: 'var(--surface)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>
                   <input type="checkbox" checked={f.lockedVisible || f.required || visibleOptional.has(f.key)} disabled={f.lockedVisible || f.required || busy} onChange={() => void toggleOptionalField(f.key)} />
                   {f.label}
@@ -610,7 +663,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button onClick={requestClose} disabled={busy} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>取消</button>
-            <button onClick={save} disabled={busy} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+            <button onClick={save} disabled={busy || !draftReady || !!pendingDraft} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
               {busy ? '保存中…' : '保存'}
             </button>
           </div>
@@ -635,7 +688,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
             cancelLabel="继续编辑"
             onCancel={() => setCloseOpen(false)}
             onConfirm={() => persistDraftBeforeClose(
-              () => saveFormDraft(draftKey, values, fileValues, entityVersion),
+              () => saveFormDraft(draftKey, values, fileValues, entityVersion, [...manualFields.current]),
               onClose,
             )}
           >
@@ -665,7 +718,7 @@ function FormField(props: {
   return (
     <div className="zc-form-field" key={f.key} data-form-field={fieldId} style={{ gridColumn: f.half ? 'span 1' : 'span 2' }}>
       <label className="zc-label" htmlFor={fieldId}>{f.label}{f.required && <span style={{ color: 'var(--negative)', marginLeft: 3 }}>*</span>}</label>
-      {f.type === 'select' ? (
+      {f.type === 'select' && f.singleOptionSummary && options.length === 1 ? <output id={fieldId} aria-label={f.label} style={{ display: 'block', padding: '8px 0' }}>{options[0]!.label}</output> : f.type === 'select' ? (
         <select id={fieldId} name={f.key} className="zc-select" required={f.required} value={value} onChange={(e) => set(f.key, e.target.value)}>
           {f.allowEmpty && <option value="">（无）</option>}
           {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -680,6 +733,8 @@ function FormField(props: {
           defaultShowHidden={f.categoryShowHiddenDefault}
           onChange={(next) => set(f.key, next)}
         />
+      ) : f.type === 'tags' ? (
+        <TagPicker id={fieldId} options={options} value={value} onChange={(next) => set(f.key, next)} />
       ) : f.type === 'multiselect' ? (
         <select
           id={fieldId}
@@ -702,8 +757,8 @@ function FormField(props: {
         />
       ) : f.type === 'checkbox' ? (
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-body)', color: 'var(--text-primary)', paddingTop: 4 }}>
-          <input id={fieldId} name={f.key} type="checkbox" checked={value === 'true'} onChange={(e) => set(f.key, e.target.checked ? 'true' : 'false')} />
-          启用
+          <input id={fieldId} name={f.key} type="checkbox" aria-label={f.label} checked={value === (f.checkboxValues?.checked ?? 'true')} onChange={(e) => set(f.key, e.target.checked ? (f.checkboxValues?.checked ?? 'true') : (f.checkboxValues?.unchecked ?? 'false'))} />
+          {f.checkboxValues?.label ?? '启用'}
         </label>
       ) : f.type === 'textarea' ? (
         <textarea

@@ -1,7 +1,7 @@
 import {
   D, addDays as shiftDays, addMonths as shiftMonths, computeBalances, dateRangeForPreset,
   isDateInRange, isTransactionActive, listScheduleOccurrences, nextUnhandledScheduleOccurrence,
-  postingsFromTransaction, sum, localToday,
+  postingsFromTransaction, accountTransactionPostings, sum, localToday,
   type DateRange, type DateRangePreset,
   type Transaction, type TransactionCategory, type TransactionStatus, type TransactionType,
   type ScheduledTransaction,
@@ -454,8 +454,8 @@ function statusLabel(snap: Snapshot, t: Transaction): string {
   const coverage = transactionReconciliationCoverage(snap, t);
   if (coverage === 'full') return '已对账';
   if (coverage === 'partial') return '部分对账';
-  if (t.status === 'pending') return '待确认';
-  return '已清算';
+  if (t.status === 'pending') return '待核实';
+  return '已记录';
 }
 
 function hasAdvancedQuery(query?: AdvancedTransactionQuery): boolean {
@@ -790,14 +790,15 @@ function buildAccountBalances(snap: Snapshot): AccountBalanceVM[] {
 export function buildAccountLedger(snap: Snapshot, accountId: string, assetId?: string, range: DateRange = {}): AccountLedgerRowVM[] {
   const entries: { tx: Transaction; amount: string; assetId: string }[] = [];
   for (const tx of snap.transactions.filter(isTransactionActive)) {
-    for (const p of postingsFromTransaction(tx)) {
+    for (const p of accountTransactionPostings(tx, snap.accounts)) {
       if (p.accountId !== accountId) continue;
       if (assetId && p.assetId !== assetId) continue;
       entries.push({ tx, amount: p.amount, assetId: p.assetId });
     }
   }
   entries.sort((a, b) => a.tx.date.localeCompare(b.tx.date) || a.tx.updatedAt.localeCompare(b.tx.updatedAt));
-  let running = D(0);
+  const account = snap.accounts.find((a) => a.id === accountId);
+  let running = D(account?.openingBalance ?? 0);
   const rows: AccountLedgerRowVM[] = [];
   for (const e of entries) {
     running = running.plus(e.amount);

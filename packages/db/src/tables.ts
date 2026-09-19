@@ -60,6 +60,7 @@ export const TABLES = {
   accounts: {
     name: 'accounts',
     cols: [
+      c('purpose'), c('openingBalance'), c('openingAssetId'), c('balanceStartAt'), c('balanceStartDate'), c('balanceCheckpoints'),
       c('name'), c('kind'), c('platform'), c('statementDay', 'int'), c('paymentDueDay', 'int'),
       c('creditLimit'), c('loanPrincipal'), c('annualInterestRate'), c('loanStartDate'), c('loanEndDate'),
       c('isActive', 'bool'), c('archivedAt'),
@@ -72,6 +73,7 @@ export const TABLES = {
       c('baseCurrencyAssetId'), c('transactionDefaultAssetId'), c('investmentCostAssetId'),
       c('fixedAssetDefaultCurrencyAssetId'), c('gameDefaultSettlementAssetId'),
       c('ledgerMode'), c('ledgerKind'), c('initializedAt'), c('defaultLotMethod'), c('asOfDate'), c('timezone'),
+      c('expenseDefaultAccountId'), c('incomeDefaultAccountId'), c('asOfMode'),
       c('transactionFormOptionalFields'), c('categoryPickerDefaultScope'), c('navigationLayoutJson'), c('refundAttributionMode'), c('dataSafetyStateJson'), c('syncServersJson'),
     ],
     indexes: [
@@ -294,6 +296,7 @@ export const TABLES = {
   transactions: {
     name: 'transactions',
     cols: [
+      c('balanceTiming'), c('balanceTimingAccountId'),
       c('date'), c('time'), c('timezone'), c('timePrecision'), c('occurredAtUtc'), c('utcOffsetMinutes', 'int'), c('timeDisambiguation'),
       c('type'), c('category'), c('amount'),
       c('assetId'), c('accountId'), c('transferAssetId'), c('transferAccountId'), c('transferAmount'),
@@ -457,6 +460,7 @@ export function rowToEntity<T extends BaseEntity>(spec: TableSpec, row: Record<s
         v = rawTags.split(',').map((x: string) => x.trim()).filter(Boolean);
       }
     }
+    if (col.field === 'balanceCheckpoints' && typeof v === 'string') v = JSON.parse(v);
     if (v !== undefined) out[col.field] = v;
   }
   // isDeleted must always be a boolean even when stored 0.

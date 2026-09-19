@@ -54,6 +54,7 @@ describe('Settings maintenance reads', () => {
     const empty = pagedCollection<BaseEntity>([]);
     const store = {
       assets: empty,
+      accounts: empty,
       settings: empty,
       categories: pagedCollection(categories),
       listStepsByChains: async () => new Map(),

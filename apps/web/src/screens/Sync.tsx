@@ -212,8 +212,8 @@ const FIELD_LABELS: Record<string, string> = {
   thumbnailSha256: '缩略图校验和',
 };
 const STATUS_LABELS: Record<string, string> = {
-  pending: '待确认',
-  cleared: '已清算',
+  pending: '待核实',
+  cleared: '已记录',
   reconciled: '已对账',
   active: '启用',
   paused: '暂停',

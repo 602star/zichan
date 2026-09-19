@@ -1,5 +1,6 @@
 import {
   D,
+  isDefaultAccount, accountBalanceTiming, accountTransactionPostings,
   assertConversionShape,
   assertDcaExecutionShape,
   assertDcaPlanShape,
@@ -7,7 +8,6 @@ import {
   assertTransactionShape,
   isValidDay,
   normalizeOccurrence,
-  postingsFromTransaction,
   type Account,
   type Asset,
   type BaseEntity,
@@ -224,6 +224,7 @@ async function assetReferenceCount(driver: SqlDriver, id: string): Promise<numbe
     activeCount(driver, 'fixed_asset_cashflow_links', 'source_asset_id = ? OR base_asset_id = ?', [id, id]),
     activeCount(driver, 'budget_categories', 'asset_id = ?', [id]),
     activeCount(driver, 'scheduled_transactions', 'asset_id = ? OR transfer_asset_id = ?', [id, id]),
+    activeCount(driver, 'accounts', 'opening_asset_id = ?', [id]),
     activeCount(driver, 'transaction_templates', 'asset_id = ?', [id]),
     activeCount(driver, 'reconciliation_sessions', 'asset_id = ?', [id]),
     activeCount(driver, 'reconciliation_items', 'asset_id = ?', [id]),
@@ -248,6 +249,7 @@ async function assetReferenceCount(driver: SqlDriver, id: string): Promise<numbe
 
 async function accountReferenceCount(driver: SqlDriver, id: string): Promise<number> {
   const counts = await Promise.all([
+    activeCount(driver, 'settings', 'expense_default_account_id = ? OR income_default_account_id = ?', [id, id]),
     activeCount(driver, 'transactions', 'account_id = ? OR transfer_account_id = ?', [id, id]),
     scalarCount(driver, `
       SELECT COUNT(*) AS count
@@ -595,6 +597,34 @@ async function validateAccountWrite(
   allowReferencedChanges = false,
 ): Promise<void> {
   requireText(candidate.name, '账户名称', 'name');
+  if (candidate.purpose && !['funds', 'default_expense', 'default_income'].includes(candidate.purpose)) fail('账户用途无效', 'purpose');
+  if (current && current.purpose !== candidate.purpose) fail('账户用途不能直接修改', 'purpose');
+  if (isDefaultAccount(candidate)) {
+    const duplicates = await listEntities<Account>(driver, TABLES.accounts);
+    if (duplicates.some((a) => a.id !== candidate.id && !a.isDeleted && a.purpose === candidate.purpose)) fail('默认收支账户已经存在', 'purpose');
+    if (candidate.openingBalance !== undefined || candidate.balanceStartAt) fail('默认收支账户不填写资金余额', 'openingBalance');
+    if (candidate.isActive === false) fail('默认收支账户需要保留以承接记账', 'isActive');
+  }
+  if ([candidate.openingBalance, candidate.openingAssetId, candidate.balanceStartAt, candidate.balanceStartDate].some((v) => v !== undefined)) {
+    if (candidate.openingBalance === undefined || !candidate.openingAssetId || !candidate.balanceStartAt || !candidate.balanceStartDate) fail('请完整填写余额、币种及余额起点', 'openingBalance');
+    const asset = await activeAsset(driver, candidate.openingAssetId, 'openingAssetId');
+    decimal(candidate.openingBalance, '起始余额', 'openingBalance');
+    if (decimalPlaces(candidate.openingBalance) > asset.decimals) fail('起始余额超过币种精度', 'openingBalance');
+    if (!Number.isFinite(Date.parse(candidate.balanceStartAt)) || new Date(candidate.balanceStartAt).toISOString() !== candidate.balanceStartAt || !isValidDay(candidate.balanceStartDate)) fail('余额起点无效', 'balanceStartAt');
+  }
+  if (candidate.balanceCheckpoints) {
+    if (!Array.isArray(candidate.balanceCheckpoints)) fail('余额核对参照无效', 'balanceCheckpoints');
+    for (const point of candidate.balanceCheckpoints) {
+      if (!point || !Number.isFinite(Date.parse(point.at)) || !isValidDay(point.date)) fail('余额核对参照时间无效', 'balanceCheckpoints');
+      await activeAsset(driver, point.assetId, 'balanceCheckpoints', true);
+      decimal(point.balance, '参照余额', 'balanceCheckpoints');
+    }
+  }
+  if (current && !allowReferencedChanges && await accountReferenceCount(driver, current.id) > 0) {
+    for (const key of ['openingBalance', 'openingAssetId', 'balanceStartAt', 'balanceStartDate'] as const) {
+      if (candidate[key] !== current[key]) fail('已有流水的余额起点请通过核对流程调整', key);
+    }
+  }
   if (!ACCOUNT_KINDS.has(candidate.kind)) fail('账户类型无效', 'kind');
   if (current && !allowReferencedChanges && await accountReferenceCount(driver, current.id) > 0 && current.kind !== candidate.kind) {
     fail('已被引用的账户不能修改类型，请新建账户后迁移', 'kind');
@@ -670,6 +700,21 @@ async function validateTransactionWrite(
   const setting = await driver.get<{ ledger_mode?: string }>('SELECT ledger_mode FROM settings WHERE is_deleted = 0 ORDER BY rowid LIMIT 1');
   const accountRequired = (setting?.ledger_mode ?? 'spending') !== 'spending';
 
+  for (const id of [transaction.accountId, transaction.transferAccountId].filter(Boolean) as string[]) {
+    const account = await getEntity<Account>(driver, TABLES.accounts, id);
+    if (!account) continue;
+    if (transaction.balanceTiming && transaction.balanceTimingAccountId === account.id) {
+      const derivedTiming = accountBalanceTiming(account, { ...transaction, balanceTiming: undefined, balanceTimingAccountId: undefined });
+      if (derivedTiming !== 'unknown' && derivedTiming !== transaction.balanceTiming) fail('起点先后选择与交易日期时间不一致，请重新确认', 'balanceTiming');
+    }
+    if (isDefaultAccount(account)) {
+      if (transaction.type === 'transfer' || transaction.type === 'adjustment') fail('转账和对账需要选择银行卡或钱包', 'accountId');
+      if ((transaction.type === 'income') !== (account.purpose === 'default_income')) fail('请选择与收支方向相符的默认账户', 'accountId');
+    } else if ((!account.openingAssetId || account.openingAssetId === (id === transaction.transferAccountId ? transaction.transferAssetId ?? transaction.assetId : transaction.assetId)) && accountBalanceTiming(account, transaction) === 'unknown') {
+      fail('请确认这笔收支发生在余额起点之前还是之后', 'balanceTiming');
+    }
+  }
+  if (transaction.balanceTiming && (!['before', 'after'].includes(transaction.balanceTiming) || transaction.balanceTimingAccountId !== transaction.accountId)) fail('余额起点归属选择无效', 'balanceTiming');
   if (transaction.type === 'transfer') {
     if (!transaction.accountId || !transaction.transferAccountId) fail('转账必须填写转出和转入账户', 'accountId');
     await activeAccount(driver, transaction.accountId, 'accountId', allowInactiveReferences);
@@ -815,6 +860,11 @@ async function validateReferenceEntity(
   };
   switch (entityType) {
     case 'setting':
+      for (const [field, forbidden] of [['expenseDefaultAccountId', 'default_income'], ['incomeDefaultAccountId', 'default_expense']] as const) {
+        if (!row[field]) continue;
+        const account = await getEntity<Account>(driver, TABLES.accounts, String(row[field]));
+        if (!account || account.isDeleted || (!allowInactiveReferences && account.isActive === false) || account.kind === 'other' || account.purpose === forbidden) fail('请选择对应方向的默认账户或资金账户', field);
+      }
       await activeAsset(driver, String(row['baseCurrencyAssetId'] ?? ''), 'baseCurrencyAssetId', allowInactiveReferences);
       for (const field of ['transactionDefaultAssetId', 'investmentCostAssetId', 'fixedAssetDefaultCurrencyAssetId', 'gameDefaultSettlementAssetId']) {
         if (row[field]) await activeAsset(driver, String(row[field]), field, allowInactiveReferences);
@@ -1128,6 +1178,7 @@ export async function validateEntityDelete<T extends BaseEntity>(
   entityType: string,
   current: T,
 ): Promise<void> {
+  if (entityType === 'account' && isDefaultAccount(current as unknown as Account)) fail('默认收支账户需要保留，不能删除');
   const references = await entityReferenceCount(driver, entityType, current.id);
   if (references > 0) {
     fail(`该${entityDeleteLabel(entityType)}仍有 ${references} 项引用，请使用归档、合并或迁移`);
@@ -1311,6 +1362,12 @@ export async function validateConversionAggregateSnapshot(
     fail(error instanceof Error ? error.message : '资产转换链路无效', 'steps');
   }
   await activeAsset(driver, normalized.baseCurrencyAssetId, 'baseCurrencyAssetId', options.allowInactiveReferences);
+  const referencedIds = new Set(steps.flatMap((s) => [s.accountFromId, s.accountToId, ...(s.fees ?? []).map((f) => f.accountId)]).filter(Boolean));
+  for (const id of referencedIds) {
+    const account = await getEntity<Account>(driver, TABLES.accounts, id!);
+    if (account && isDefaultAccount(account)) fail('资产转换请选择资金账户，默认收支账户不能用于转账', 'steps');
+    if (account && steps.some((s) => (s.accountFromId === id && s.fromAssetId === account.openingAssetId) || (s.accountToId === id && s.toAssetId === account.openingAssetId) || (s.fees ?? []).some((f) => f.accountId === id && f.assetId === account.openingAssetId)) && accountBalanceTiming(account, normalized) === 'unknown') fail('请补充准确的转换时间，以确认与账户余额起点的先后顺序', 'time');
+  }
   const orderedSteps = [...steps].sort((left, right) => left.order - right.order);
   for (const [index, step] of orderedSteps.entries()) {
     const from = await activeAsset(driver, step.fromAssetId, `steps.${index}.fromAssetId`, options.allowInactiveReferences);
@@ -1343,7 +1400,8 @@ export async function validateReconciliationAggregateSnapshot(
   items: ReconciliationItem[],
   options: { allowInactiveReferences?: boolean } = {},
 ): Promise<void> {
-  await activeAccount(driver, session.accountId, 'accountId', options.allowInactiveReferences);
+  const account = await activeAccount(driver, session.accountId, 'accountId', options.allowInactiveReferences);
+  if (isDefaultAccount(account)) fail('默认收支账户不参与资金对账', 'accountId');
   const asset = await activeAsset(driver, session.assetId, 'assetId', options.allowInactiveReferences);
   normalizeOccurrence({ date: session.statementDate, timePrecision: 'day' });
   for (const field of ['statementBalance', 'openingBalance', 'selectedTotal', 'clearedBalance', 'difference'] as const) {
@@ -1370,7 +1428,7 @@ export async function validateReconciliationAggregateSnapshot(
     const transaction = await getEntity<Transaction>(driver, TABLES.transactions, item.transactionId);
     if (!transaction || transaction.isDeleted || transaction.recordState === 'voided') fail('对账项目引用的流水不存在或已作废', 'items');
     if (transaction.date > session.statementDate) fail('对账项目日期晚于账单截止日', 'items');
-    const actualPosting = postingsFromTransaction(transaction)
+    const actualPosting = accountTransactionPostings(transaction, [account])
       .filter((posting) => posting.accountId === session.accountId && posting.assetId === session.assetId)
       .reduce((total, posting) => total.plus(posting.amount), D(0));
     if (!itemAmount.eq(actualPosting)) fail('对账项目金额与流水实际过账金额不一致', 'items');

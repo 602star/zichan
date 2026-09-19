@@ -16,6 +16,7 @@ export interface FormFieldLike {
   hidden?: boolean;
   section?: 'core' | 'more';
   lockedVisible?: boolean;
+  defaultValue?: string;
   visibleWhen?: (values: Record<string, string>) => boolean;
 }
 
@@ -84,4 +85,18 @@ export function unreachableErrorKeys(
 export function emptyOptionHint(field: FormFieldLike, optionCount: number): string | undefined {
   if (!field.required || optionCount > 0) return undefined;
   return `${field.label}还没有可选项，请先新增`;
+}
+
+/** Only transaction forms opt into progressive placement; preferences never hide data. */
+export function progressiveFieldGroups<T extends FormFieldLike>(fields: T[], values: Record<string, string>, prefilled: Record<string, string>, preferred: string[]) {
+  const pinned = new Set(preferred);
+  const core: T[] = [];
+  const more: T[] = [];
+  for (const field of fields) {
+    if (!isFieldVisible(field, values)) continue;
+    const value = prefilled[field.key]?.trim() ?? '';
+    const hasData = value !== '' && value !== '[]' && value !== '{}' && value !== (field.defaultValue ?? '');
+    (field.section !== 'more' || field.required || field.lockedVisible || pinned.has(field.key) || hasData ? core : more).push(field);
+  }
+  return { core, more };
 }

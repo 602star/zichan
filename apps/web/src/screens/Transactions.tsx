@@ -1,8 +1,11 @@
+import { EarlierBalancePanel } from '../ui/EarlierBalancePanel.js';
+import { AccountSetupPanel } from '../ui/AccountSetupPanel.js';
+import { AccountHistoryPanel } from '../ui/AccountHistoryPanel.js';
 import { accountSessionStorage } from '../account-storage.js';
 import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { QueryGeneration } from '../query-generation.js';
 import {
-  D, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, newId,
+  D, accountBalanceTiming, isDefaultAccount, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, newId,
   type BudgetCategory, type Category, type Payee, type ReconciliationSession,
   type LedgerMode, type ScheduledTransaction, type Setting, type Transaction, type TransactionSavedView, type TransactionSplit, type TransactionTemplate, type TransactionType,
 } from '@zichan/core';
@@ -75,6 +78,7 @@ import {
 } from '../db/attachment-storage.js';
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
+import { resolveTransactionTags } from '../transaction-tags.js';
 import { ReconciliationModal } from './ReconciliationModal.js';
 import { DialogShell } from '../ui/DialogShell.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
@@ -91,8 +95,8 @@ const TYPE_OPTIONS: { value: 'all' | TransactionType; label: string }[] = [
 const BASIC_TYPE_OPTIONS = TYPE_OPTIONS.filter((o) => o.value !== 'transfer' && o.value !== 'adjustment');
 const STATUS_OPTIONS = [
   { value: 'all', label: '全部状态' },
-  { value: 'pending', label: '待确认' },
-  { value: 'cleared', label: '已清算' },
+  { value: 'pending', label: '待核实' },
+  { value: 'cleared', label: '已记录' },
   { value: 'partially_reconciled', label: '部分对账' },
   { value: 'reconciled', label: '已对账' },
 ] as const;
@@ -240,11 +244,28 @@ export function Transactions() {
   const [transactionReadError, setTransactionReadError] = useState('');
   const [voidedPage, setVoidedPage] = useState<TransactionBrowsePage | null>(null);
   const [budgetAggregates, setBudgetAggregates] = useState<TransactionReportAggregateRow[] | null>(null);
+  const [defaultAccountTotals, setDefaultAccountTotals] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!snap || tab !== 'accounts') return;
+    let cancelled = false;
+    const month = localToday().slice(0, 7);
+    void Promise.all(snap.accounts.filter(isDefaultAccount).map(async (a) => {
+      const rows = await store.transactionReportAggregate({ accountId: a.id, from: month + '-01', to: month + '-31' });
+      const totals = new Map<string, string>();
+      for (const row of rows) for (const value of row.amounts) totals.set(row.reportAssetId, D(totals.get(row.reportAssetId) ?? 0).plus(value).toString());
+      return [a.id, [...totals].map(([id, value]) => value + ' ' + (snap.assets.find((asset) => asset.id === id)?.code ?? id)).join(' / ') || '0'] as const;
+    })).then((rows) => { if (!cancelled) setDefaultAccountTotals(Object.fromEntries(rows)); }).catch(() => { if (!cancelled) setDefaultAccountTotals({}); });
+    return () => { cancelled = true; };
+  }, [snap, tab, rev, store]);
   const [accountBalanceAggregates, setAccountBalanceAggregates] = useState<AccountBalanceAggregateRow[]>([]);
   const [accountLedgerPage, setAccountLedgerPage] = useState<AccountLedgerPage | null>(null);
   const [accountLedgerBusy, setAccountLedgerBusy] = useState(false);
   const ledgerMode: LedgerMode = snap?.setting?.ledgerMode ?? 'spending';
-  const usesAccounts = ledgerMode !== 'spending';
+  const usesAccounts = true;
+  const [accountSetupOpen, setAccountSetupOpen] = useState(false);
+  const [accountHistoryOpen, setAccountHistoryOpen] = useState(false);
+  const [earlierBalanceAccount, setEarlierBalanceAccount] = useState<import('@zichan/core').Account | null>(null);
+  const [addedAccount, setAddedAccount] = useState<import('@zichan/core').Account | null>(null);
 
   useEffect(() => {
     const raw = accountSessionStorage.getItem('zichan.transactions.filterPreset');
@@ -293,17 +314,15 @@ export function Transactions() {
       setEditingTx(null);
       setRefundDraft(null);
       setTemplateDraft(null);
-      if (ledgerMode === 'spending') {
-        setQuickTemplate(null);
-        setQuickExpenseOpen(true);
-      } else {
-        setEditingTx('new');
-      }
+      setEditingTx('new');
     };
     try {
       if (accountSessionStorage.getItem('zichan.quickTransaction') === '1') {
         accountSessionStorage.removeItem('zichan.quickTransaction');
         openQuickTransaction();
+      }
+      if (accountSessionStorage.getItem('zichan.postFirstRun') === 'account-setup') {
+        accountSessionStorage.removeItem('zichan.postFirstRun'); setTab('accounts'); setAccountSetupOpen(true);
       }
       if (accountSessionStorage.getItem('zichan.postFirstRun') === 'quick-expense') {
         accountSessionStorage.removeItem('zichan.postFirstRun');
@@ -463,7 +482,7 @@ export function Transactions() {
       .filter((row) => !D(row.amount).isZero())
       .sort((left, right) => left.accountName.localeCompare(right.accountName) || left.assetCode.localeCompare(right.assetCode));
   }, [accountBalanceAggregates, snap]);
-  const selectedAccountForRead = accountId || accountBalanceRows[0]?.accountId || snap?.accounts[0]?.id || '';
+  const selectedAccountForRead = accountId || accountBalanceRows[0]?.accountId || snap?.accounts.find((a) => !isDefaultAccount(a) && a.kind !== 'other')?.id || '';
   const selectedAssetForRead = assetId === 'all' ? undefined : assetId;
   useEffect(() => {
     const gate = accountQuery.current;
@@ -564,7 +583,7 @@ export function Transactions() {
         ? '已对账'
         : row.reconciliationStatus === 'partially_reconciled'
           ? '部分对账'
-          : row.reconciliationStatus === 'pending' ? '待确认' : '已清算',
+          : row.reconciliationStatus === 'pending' ? '待核实' : '已记录',
       amount: row.postingAmount,
       balance: row.balance,
       assetCode: readySnap.assets.find((item) => item.id === row.assetId)?.code ?? row.assetId,
@@ -761,6 +780,13 @@ export function Transactions() {
     bump();
   }
 
+  function clearOtherFilters() {
+    setFilters((current) => ({ ...DEFAULT_FILTERS, range: current.range, dateFrom: current.dateFrom, dateTo: current.dateTo }));
+    setCategoryDrill(null);
+    setSelectedIds([]);
+    setSavedViewError('');
+  }
+
   function applySavedView(view: TransactionSavedView) {
     try {
       const parsed = JSON.parse(view.queryJson) as Partial<TransactionFilters>;
@@ -900,17 +926,6 @@ export function Transactions() {
     delete clean.attachmentDrafts;
     delete clean.refundAllocationDrafts;
     let next: Transaction = { ...clean, status: clean.status ?? 'cleared' };
-    if (!usesAccounts) {
-      if (next.type === 'transfer') throw new Error('轻量模式不记录转账，请在设置中切换到账户模式');
-      next = {
-        ...next,
-        accountId: undefined,
-        transferAssetId: undefined,
-        transferAccountId: undefined,
-        transferAmount: undefined,
-        status: 'cleared',
-      };
-    }
     if (next.type === 'transfer') {
       if (!next.accountId || !next.transferAccountId) throw new Error('转账需要填写转出和转入账户');
       next = {
@@ -947,10 +962,11 @@ export function Transactions() {
     let saved: Transaction;
     try {
       saved = await activeStore.runInAuditBatch('保存流水及附件', async (transactionStore) => {
+        const tagIds = await resolveTransactionTags(transactionStore, next.tagIds);
         const payeeId = await rememberPayee(transactionStore, next);
         const loc = await rememberLocation(transactionStore, next);
         const transaction = (await saveTransactionAggregate(transactionStore, {
-          transaction: { ...next, payeeId, ...loc },
+          transaction: { ...next, tagIds, payeeId, ...loc },
           expectedVersion: next.version,
           refundAllocations: next.type === 'refund' && next.refundAllocationMode === 'specified'
             ? refundAllocationDrafts
@@ -1236,6 +1252,7 @@ export function Transactions() {
                 view={recordView}
                 onViewChange={setRecordView}
               />
+              <button type="button" onClick={clearOtherFilters} style={button}>清除其他筛选</button>
               {/* 下钻是环写进筛选的，所以在环能到的地方必须能退出去：轻量模式没有
                   筛选行，这条面包屑是那两级筛选唯一的出口，也顺便把「现在在看哪一层」
                   写在屏上——图表本身不随筛选变化，不说清楚就只能靠猜。 */}
@@ -1390,23 +1407,33 @@ export function Transactions() {
         </>
       )}
 
+      {earlierBalanceAccount && <EarlierBalancePanel store={store} account={earlierBalanceAccount} setting={snap.setting} onClose={() => setEarlierBalanceAccount(null)} onSaved={() => { setEarlierBalanceAccount(null); bump(); }} />}
+      {accountSetupOpen && <AccountSetupPanel store={store} assets={snap.assets} setting={snap.setting} onSaved={(account) => { setAccountSetupOpen(false); setAddedAccount(account); setAccountId(account.id); bump(); }} onClose={() => setAccountSetupOpen(false)} />}
+      {accountHistoryOpen && <AccountHistoryPanel store={store} accounts={snap.accounts} assets={snap.assets} categories={snap.categories} timeZone={snap.setting?.timezone} initialAccountId={addedAccount?.id} onChanged={bump} onClose={() => setAccountHistoryOpen(false)} />}
+      {addedAccount && <div style={cardTight} role="status">已添加 {addedAccount.name} · 余额起点 {new Date(addedAccount.balanceStartAt!).toLocaleString('zh-CN', { timeZone: snap.setting?.timezone })}，{addedAccount.openingBalance} {snap.assets.find((a) => a.id === addedAccount.openingAssetId)?.code}。以前的记录已保留。<p>默认付款：{snap.accounts.find((a) => a.id === snap.setting?.expenseDefaultAccountId)?.name}；默认收款：{snap.accounts.find((a) => a.id === snap.setting?.incomeDefaultAccountId)?.name}。</p>
+        <button style={button} onClick={() => setAccountHistoryOpen(true)}>整理以前的记录</button><button style={button} onClick={() => { setAddedAccount(null); openNewTransaction(); }}>记一笔</button>
+      </div>}
       {usesAccounts && activeTab === 'accounts' && (
         <div style={card}>
           <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'end', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
             <div>
               <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>账户流水与对账</div>
-              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>输入银行期末余额，逐笔核对账单中已经清算的账户流水。</div>
+              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>选择银行卡或钱包，填写账单期末余额，再逐笔核对收支。</div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setEditingReconcile('new')} style={primary}>开始对账</button>
+              <button onClick={() => setAccountSetupOpen(true)} style={primary}>添加银行卡 / 钱包</button>
+              <button onClick={() => snap.accounts.some((a) => !isDefaultAccount(a) && a.kind !== 'other') ? setAccountHistoryOpen(true) : setAccountSetupOpen(true)} style={button}>整理以前的记录</button>
             </div>
           </div>
           <div style={{ marginBottom: 14 }}>
             <DateRangeBar value={activeDateValue} onChange={(next) => setFilters((current) => ({ ...current, range: next.preset, dateFrom: next.from, dateTo: next.to }))} />
           </div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>{snap.accounts.filter(isDefaultAccount).map((a) => <button key={a.id} style={button} onClick={() => { setFilters((current) => ({ ...current, accountId: a.id })); setTab('records'); }}>{a.name} · 本月{a.purpose === 'default_income' ? '收入' : '净支出'} {defaultAccountTotals[a.id] ?? '…'} · 查看记录</button>)}</div>
+          <p className="zc-meta">默认账户归集暂不细分来源的收支。下方银行卡与钱包展示账面余额；余额流水从各自的余额起点开始。</p>
+          {!selectedAccountId ? <p>添加银行卡或钱包后，可以核对余额和账单。现在也可以继续使用默认账户记收支。</p> : <>
           <div className="zc-account-filter-grid" style={{ display: 'grid', gridTemplateColumns: '220px 160px 1fr', gap: 10, marginBottom: 14 }}>
             <select style={selectStyle} value={selectedAccountId} onChange={(e) => setAccountId(e.target.value)}>
-              {snap.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {snap.accounts.filter((a) => !isDefaultAccount(a) && a.kind !== 'other').map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
             <select style={selectStyle} value={assetId} onChange={(e) => setAssetId(e.target.value)}>
               <option value="all">全部币种</option>
@@ -1418,6 +1445,9 @@ export function Transactions() {
               ))}
             </div>
           </div>
+          {snap.accounts.find((a) => a.id === selectedAccountId)?.balanceStartAt && <button style={button} onClick={() => setEarlierBalanceAccount(snap.accounts.find((a) => a.id === selectedAccountId)!)}>从更早日期核算</button>}
+          <button style={button} onClick={() => setEditingReconcile('new')}>核对账单</button>
+          <button style={button} onClick={() => { setFilters((current) => ({ ...current, accountId: selectedAccountId })); setTab('records'); }}>查看这个账户的全部收支</button>
           <Table headers={['日期', '摘要', '分类', '状态', '金额', '余额']}>
             {ledger.map((r) => (
               <tr key={`${r.tx.id}:${r.amount}:${r.balance}`}>
@@ -1454,7 +1484,7 @@ export function Transactions() {
               </tr>
             ))}
             {reconciliationRows.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={6}>该时间范围内暂无对账记录</td></tr>}
-          </Table>
+          </Table></>}
         </div>
       )}
 
@@ -1863,6 +1893,8 @@ function batchPreviewLine(tx: Transaction, snap: Snapshot, usesAccounts: boolean
   const payee = tx.payeeId ? snap.payees.find((p) => p.id === tx.payeeId)?.name ?? tx.payeeId : tx.merchant;
   const account = tx.accountId ? snap.accounts.find((a) => a.id === tx.accountId)?.name ?? tx.accountId : undefined;
   const status = STATUS_OPTIONS.find((s) => s.value === tx.status)?.label ?? tx.status;
+  const funds = snap.accounts.find((a) => a.id === tx.accountId);
+  const beforeOpening = funds?.balanceStartAt && funds.openingAssetId === tx.assetId && accountBalanceTiming(funds, tx) === 'before';
   const location = tx.locationId ? snap.transactionLocations.find((l) => l.id === tx.locationId)?.name ?? tx.locationName ?? tx.locationId : tx.locationName;
   const tags = (tx.tagIds ?? []).map((id) => tagLabel(id, snap)).join('、');
   return [
@@ -1870,6 +1902,7 @@ function batchPreviewLine(tx: Transaction, snap: Snapshot, usesAccounts: boolean
     payee ? `商户 ${payee}` : '',
     usesAccounts && account ? `账户 ${account}` : '',
     usesAccounts ? `状态 ${status}` : '',
+    beforeOpening ? '已包含在起始余额中，不重复扣减' : '',
     location ? `地点 ${location}` : '',
     tags ? `标签 ${tags}` : '无标签',
   ].filter(Boolean).join(' · ');

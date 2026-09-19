@@ -69,7 +69,7 @@ const SCREEN_IDS = new Set<ScreenId>(NAVIGATION_ITEMS.map((item) => item.id));
 function initialScreen(): ScreenId {
   try {
     if (connectionLinkFromLocation()) return 'sync';
-    if (accountSessionStorage.getItem('zichan.postFirstRun') === 'quick-expense') return 'transactions';
+    if (['quick-expense', 'account-setup'].includes(accountSessionStorage.getItem('zichan.postFirstRun') ?? '')) return 'transactions';
     const stored = accountSessionStorage.getItem(RETRY_SCREEN_KEY);
     accountSessionStorage.removeItem(RETRY_SCREEN_KEY);
     if (stored && SCREEN_IDS.has(stored as ScreenId)) return stored as ScreenId;
@@ -444,9 +444,7 @@ export function App() {
     fontVariantNumeric: 'tabular-nums',
   };
 
-  const [title, sub] = ledgerMode === 'spending' && screen === 'transactions'
-    ? ['日常支出', '只记录真实支出，打开即可记账']
-    : META[screen];
+  const [title, sub] = META[screen];
   const asOf = snap ? ledgerAsOf(snap) : null;
   // A manual cut-off that has fallen behind is a data-correctness problem, not a
   // preference, so the header flags it instead of showing a neutral date.

@@ -59,6 +59,12 @@ export type AccountKind =
   | 'other';
 
 export interface Account extends BaseEntity {
+  purpose?: 'funds' | 'default_expense' | 'default_income';
+  openingBalance?: string;
+  openingAssetId?: string;
+  balanceStartAt?: string;
+  balanceStartDate?: string;
+  balanceCheckpoints?: { at: string; date: string; assetId: string; balance: string }[];
   name: string;
   kind: AccountKind;
   /** Platform/venue label, e.g. "Binance", "Kraken", "Steam". */
@@ -101,6 +107,8 @@ export interface Setting extends BaseEntity {
   gameDefaultSettlementAssetId?: string;
   /** Daily ledger depth: lightweight spending, account ledger, or full asset ledger. */
   ledgerMode?: LedgerMode;
+  expenseDefaultAccountId?: string;
+  incomeDefaultAccountId?: string;
   /** Whether this ledger contains user data or the explicitly selected demo dataset. */
   ledgerKind?: LedgerKind;
   /** Durable first-run completion marker. Startup work must not run before this exists. */
@@ -755,6 +763,9 @@ export interface ReconciliationItem extends BaseEntity {
  * ConversionChain 是双边转换(from → to)。
  */
 export interface Transaction extends BaseEntity {
+  /** Explicit placement when an old date-only record overlaps a balance snapshot. */
+  balanceTiming?: 'before' | 'after';
+  balanceTimingAccountId?: string;
   date: string; // YYYY-MM-DD
   time?: string; // HH:mm[:ss]
   timezone?: string; // IANA name or UTC offset label

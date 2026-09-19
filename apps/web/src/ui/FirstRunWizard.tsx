@@ -1,7 +1,7 @@
 import { accountSessionStorage } from '../account-storage.js';
 import { accountProtection } from '../account-protection.js';
 import { useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
-import type { LedgerMode, Setting } from '@zichan/core';
+import type { Setting } from '@zichan/core';
 import type { SqlLedgerStore } from '@zichan/db';
 import {
   adoptUnlockedLedgerKeyEnvelope,
@@ -15,7 +15,6 @@ import {
 } from '../db/backups.js';
 import {
   BASE_CURRENCY_CHOICES,
-  QUICK_START_LEDGER_OPTIONS,
   initializeDemoLedger,
   initializeEmptyLedger,
   initializedLedgerSetting,
@@ -95,7 +94,7 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
   const flight = useRef<FirstRunFlight>({ active: false });
   const [choice, setChoice] = useState<FirstRunChoice>(null);
   const [baseCurrencyCode, setBaseCurrencyCode] = useState<BaseCurrencyChoice['code']>('CNY');
-  const [ledgerMode, setLedgerMode] = useState<LedgerMode>('spending');
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [openedBackup, setOpenedBackup] = useState<ParsedEncryptedBackup | null>(null);
@@ -178,25 +177,20 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
     <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(22px, 5vw, 64px)', boxSizing: 'border-box', background: '#f0e9dc', color: '#4e473f', fontFamily: 'system-ui, sans-serif' }}>
       <section style={{ width: 'min(920px, 100%)', margin: '0 auto' }}>
         <div style={{ color: '#985734', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.12em' }}>ZICHAN · 首次设置</div>
-        <h1 style={{ margin: '10px 0 4px', fontSize: 'var(--fs-hero)', color: '#672f20' }}>开始你的账本</h1>
-        <p style={{ margin: 0, color: '#756b60', lineHeight: 1.7 }}>默认账本只用于记录日常支出，无需配置账户、币种或账本模式。</p>
-
-        <section style={{ marginTop: 28, padding: 'clamp(20px, 4vw, 32px)', border: '2px solid #985734', borderRadius: 'var(--r-md)', background: '#fff9f1', boxShadow: '0 18px 48px rgba(75,61,43,.08)' }}>
-          <h2 style={{ margin: 0, fontSize: 'var(--fs-heading)', color: '#672f20' }}>直接开始记支出</h2>
-          <p style={{ margin: '8px 0 0', color: '#756b60', fontSize: 'var(--fs-body)', lineHeight: 1.65 }}>自动创建人民币轻量账本，并准备常用支出模板；不会写入账户、余额或虚假流水。</p>
-          <button
-            type="button"
-            aria-label="直接开始记支出"
-            disabled={busy}
-            onClick={() => void complete(
-              () => initializeEmptyLedger(store, QUICK_START_LEDGER_OPTIONS),
-              rememberQuickExpenseStart,
-            )}
-            style={{ ...button, marginTop: 18, opacity: busy ? 0.55 : 1 }}
-          >
-            {busy ? '正在创建…' : '直接开始记支出'}
-          </button>
-        </section>
+        <h1 style={{ margin: '10px 0', fontSize: 'var(--fs-hero)' }}>你希望怎样开始记账？</h1>
+        <p>先决定要不要分开记录银行卡、微信和支付宝。以后随时可以添加账户。</p>
+        <label>记账币种 <select aria-label="记账币种" value={baseCurrencyCode} onChange={(e) => setBaseCurrencyCode(e.target.value as BaseCurrencyChoice['code'])} style={field}>{BASE_CURRENCY_CHOICES.map((c) => <option key={c.code} value={c.code}>{c.name}（{c.code}）</option>)}</select></label>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 18, marginTop: 24 }}>
+          <section style={{ padding: 24, background: '#fff9f1', border: '2px solid #985734', borderRadius: 'var(--r-md)' }}>
+            <h2>先记收支</h2><p>看赚了多少、花在哪里。系统准备好收入和支出账户，你直接记金额和分类。</p><p className="zc-meta">不确定就先选这个。</p>
+            <button disabled={busy} style={button} onClick={() => void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode: 'spending' }), rememberQuickExpenseStart)}>{busy ? '正在创建…' : '开始记账'}</button>
+          </section>
+          <section style={{ padding: 24, background: '#fffdf9', border: '1px solid #cfc4b4', borderRadius: 'var(--r-md)' }}>
+            <h2>分账户记账</h2><p>还想知道每张卡、每个钱包剩多少钱。添加账户和当前余额，记账时选择收付款账户，之后可以转账和核对账单。</p>
+            <button disabled={busy} style={button} onClick={() => void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode: 'accounts' }), () => accountSessionStorage.setItem('zichan.postFirstRun', 'account-setup'))}>{busy ? '正在创建…' : '添加常用账户'}</button>
+          </section>
+        </div>
+        <p style={{ marginTop: 16 }}>两种方式都能使用全部功能；这个选择只影响开始时的设置。</p>
 
         <div style={{ marginTop: 22 }}>
           <div style={{ color: '#756b60', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>其他方式</div>
@@ -204,7 +198,6 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
             {([
               ['import', '导入备份'],
               ['demo', '体验演示'],
-              ['advanced', '高级创建'],
             ] as const).map(([value, title]) => (
               <button
                 key={value}
@@ -222,33 +215,6 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
 
         {choice && (
           <section style={{ marginTop: 18, padding: 'clamp(18px, 4vw, 28px)', border: '1px solid #d6ccbd', borderRadius: 'var(--r-md)', background: '#fffdf9', boxShadow: '0 18px 48px rgba(75,61,43,.08)' }}>
-          {choice === 'advanced' && (
-            <form onSubmit={(event) => {
-              event.preventDefault();
-              void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode }));
-            }}>
-              <h2 style={{ margin: 0, fontSize: 'var(--fs-heading)' }}>高级创建</h2>
-              <p style={{ color: '#756b60', fontSize: 'var(--fs-body)', lineHeight: 1.6 }}>仅在需要其他基础币种，或更深的录入深度时调整。记账模式只决定录入表单的深度与用词（是否出现账户、转账与对账），不决定显示哪些模块——模块可以在创建后到“设置 → 侧边栏与模块”里启用。个人账本仍不会创建业务流水。</p>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 14, marginTop: 16 }}>
-                <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
-                  基础币种
-                  <select value={baseCurrencyCode} onChange={(event) => setBaseCurrencyCode(event.target.value as BaseCurrencyChoice['code'])} style={field}>
-                    {BASE_CURRENCY_CHOICES.map((currency) => <option key={currency.code} value={currency.code}>{currency.name}（{currency.code}）</option>)}
-                  </select>
-                </label>
-                <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
-                  记账模式 · 录入深度
-                  <select value={ledgerMode} onChange={(event) => setLedgerMode(event.target.value as LedgerMode)} style={field}>
-                    <option value="spending">轻量记账</option>
-                    <option value="accounts">账户记账</option>
-                    <option value="assets">完整资产账本</option>
-                  </select>
-                </label>
-              </div>
-              <button type="submit" aria-label="确认高级创建" disabled={busy} style={{ ...button, marginTop: 20, opacity: busy ? 0.55 : 1 }}>{busy ? '正在创建…' : '使用这些设置创建'}</button>
-            </form>
-          )}
-
           {choice === 'import' && (
             <div>
               <h2 style={{ margin: 0, fontSize: 'var(--fs-heading)' }}>导入加密备份</h2>

@@ -23,6 +23,7 @@ import {
   transactionLocationForm, transactionTagForm, transactionTemplateForm,
 } from '../forms.js';
 import { card, th as thStyle, td as tdStyle } from '../ui/styles.js';
+import { AccountSetupPanel } from '../ui/AccountSetupPanel.js';
 import { QuickCategorySettings } from '../ui/QuickCategorySettings.js';
 import { DateRangeBar, dateRangeValue } from '../ui/DateRangeBar.js';
 import { allCategories, availableExtensionCategories, CATEGORY_PACKS, categoryIsHidden, categoryLabel, categoryPackMemberState, categoryPackState, categoryPacksContaining, TYPE_LABEL, type CatalogCategory, type CategoryPack, type CategoryPackMemberState, type CategoryPackState } from '../transactionMeta.js';
@@ -60,6 +61,7 @@ function readManageTarget(): ManageTarget {
 export function Manage() {
   const { store, bump } = useStore();
   const snap = useSnapshot('manage');
+  const [accountSetupOpen, setAccountSetupOpen] = useState(false);
   const [initialTarget] = useState(readManageTarget);
   const [tab, setTab] = useState<ManageTab>(initialTarget.tab ?? 'transactionCategories');
   const [categoryMode, setCategoryMode] = useState<CategoryCenterMode>(initialTarget.categoryMode ?? 'structure');
@@ -79,7 +81,7 @@ export function Manage() {
 
   const codeOf = (id: string) => assetById(snap).get(id)?.code ?? id;
   const gameName = (id: string) => snap.games.find((g) => g.id === id)?.name ?? id;
-  const usesAccounts = (snap.setting?.ledgerMode ?? 'spending') !== 'spending';
+  const usesAccounts = true;
   // Captured after the null guard so the hoisted pack helpers below do not have to
   // re-narrow the snapshot.
   const packCategories = snap.categories;
@@ -274,6 +276,7 @@ export function Manage() {
         </>
       )}
 
+      {accountSetupOpen && <AccountSetupPanel store={store} assets={snap.assets} setting={snap.setting} onClose={() => setAccountSetupOpen(false)} onSaved={() => { setAccountSetupOpen(false); bump(); }} />}
       {tab === 'other' && (
         <>
           <Section
@@ -301,6 +304,7 @@ export function Manage() {
                     : '—',
               ]}
               duplicateKey={(a) => `${norm(a.kind)}:${norm(a.platform)}:${norm(a.name)}`}
+              onAdd={() => setAccountSetupOpen(true)}
               makeSpec={() => accountForm()}
               put={(transactionStore, entity) => transactionStore.accounts.put(entity)}
               bump={bump} masterKind="account"
@@ -992,6 +996,7 @@ function Section<T extends { id: string; version: number }>(props: {
   row: (t: T) => ReactNode[];
   dateOf?: (t: T) => string;
   duplicateKey?: (t: T) => string | undefined;
+  onAdd?: () => void;
   makeSpec: () => EntityFormSpec<T>;
   put: (store: SqlLedgerStore, entity: T) => Promise<unknown>;
   bump: () => void;
@@ -1036,7 +1041,7 @@ function Section<T extends { id: string; version: number }>(props: {
         >
           {showDuplicates ? '显示全部' : '只看重复'}
         </button>
-        <button onClick={() => setEditing('new')} style={{ padding: '7px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ 新增{title}</button>
+        <button onClick={() => props.onAdd ? props.onAdd() : setEditing('new')} style={{ padding: '7px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ 新增{title}</button>
       </div>
       {dateOf && <div style={{ marginBottom: 12 }}><DateRangeBar value={dateRange} onChange={setDateRange} compact /></div>}
       <div style={{ overflowX: 'auto' }}>

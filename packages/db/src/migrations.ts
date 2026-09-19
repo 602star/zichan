@@ -1,14 +1,14 @@
 /**
- * Development schema baseline. This project has not shipped, so it deliberately
- * supports only the current schema instead of carrying historical upgrade code.
+ * Development schema baseline, with an in-place upgrade from the immediately
+ * preceding ledger-timezone schema so account onboarding preserves existing data.
  */
 import type { Logger } from '@zichan/logger';
 import type { SqlDriver } from './driver.js';
 import { MIGRATIONS_TABLE_SQL, schemaStatements } from './schema.js';
 import { TABLES, allCols, type TableSpec } from './tables.js';
 
-export const CURRENT_SCHEMA_VERSION = 117;
-export const CURRENT_SCHEMA_NAME = 'current_schema_2026_09_14_ledger_timezone';
+export const CURRENT_SCHEMA_VERSION = 118;
+export const CURRENT_SCHEMA_NAME = 'current_schema_2026_09_18_account_onboarding';
 export const SCHEMA_RESET_REQUIRED_CODE = 'SCHEMA_RESET_REQUIRED';
 
 export class SchemaResetRequiredError extends Error {
@@ -196,6 +196,22 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
   const applied = await driver.all<{ version: number; name: string }>(
     'SELECT version, name FROM schema_migrations ORDER BY version',
   );
+
+  if (applied.length === 1 && applied[0]?.version === 117 && applied[0]?.name === 'current_schema_2026_09_14_ledger_timezone') {
+    await driver.transaction(async (transaction) => {
+      for (const [table, fields] of Object.entries({
+        accounts: ['purpose', 'opening_balance', 'opening_asset_id', 'balance_start_at', 'balance_start_date', 'balance_checkpoints'],
+        settings: ['expense_default_account_id', 'income_default_account_id', 'as_of_mode'],
+        transactions: ['balance_timing', 'balance_timing_account_id'],
+      })) {
+        for (const field of fields) await transaction.exec(`ALTER TABLE ${table} ADD COLUMN ${field} TEXT`);
+      }
+      await assertCurrentSchema(transaction);
+      await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',
+        [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
+    });
+    return 1;
+  }
 
   if (applied.length === 0) {
     const preexisting = tableNames.filter((name) => name !== 'schema_migrations');

@@ -7,13 +7,7 @@ export type TransactionFormOptionalKey =
   | 'locationId'
   | 'locationName'
   | 'tagIds'
-  | 'accountId'
-  | 'transferAssetId'
-  | 'transferAccountId'
-  | 'transferAmount'
   | 'status'
-  | 'refundForId'
-  | 'refundAppliedAmount'
   | 'note';
 
 export const TRANSACTION_FORM_FIELDS: { key: TransactionFormOptionalKey; label: string; accountsOnly?: boolean }[] = [
@@ -23,13 +17,7 @@ export const TRANSACTION_FORM_FIELDS: { key: TransactionFormOptionalKey; label: 
   { key: 'locationId', label: '地点' },
   { key: 'locationName', label: '地点文本' },
   { key: 'tagIds', label: '标签' },
-  { key: 'accountId', label: '账户', accountsOnly: true },
-  { key: 'transferAssetId', label: '转入币种', accountsOnly: true },
-  { key: 'transferAccountId', label: '转入账户', accountsOnly: true },
-  { key: 'transferAmount', label: '转入金额', accountsOnly: true },
-  { key: 'status', label: '状态', accountsOnly: true },
-  { key: 'refundForId', label: '退款关联原支出' },
-  { key: 'refundAppliedAmount', label: '冲减原消费金额' },
+  { key: 'status', label: '待核实', accountsOnly: true },
   { key: 'note', label: '备注' },
 ];
 

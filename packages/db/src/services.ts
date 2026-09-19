@@ -5,7 +5,8 @@
  * seed; now it's one tested place.
  */
 import {
-  D, Decimal, traceChain, conversionStepAmounts, assertConversionShape, matchSell, lotFromTrace, isTransactionActive, newId, refundAppliedAmount,
+  D,
+  defaultTransactionAccount, isDefaultAccount, accountTransactionPostings, Decimal, traceChain, conversionStepAmounts, assertConversionShape, matchSell, lotFromTrace, isTransactionActive, newId, refundAppliedAmount,
   assertDcaExecutionShape, assertDcaPlanShape, assertTransactionShape, dcaOccurrenceDate, transactionReportingEffect,
   normalizeOccurrence, canonicalJson,
   listScheduleOccurrences, nextUnhandledScheduleOccurrence, postingsFromTransaction,
@@ -415,7 +416,7 @@ function activeRefunds(rows: Transaction[], originalId: string, excludingId?: st
 
 function transactionFinancialChanged(before: Transaction, after: Transaction): boolean {
   const financial = [
-    'date', 'type', 'amount', 'assetId', 'accountId', 'transferAssetId', 'transferAccountId',
+    'date', 'time', 'timezone', 'balanceTiming', 'balanceTimingAccountId', 'type', 'amount', 'assetId', 'accountId', 'transferAssetId', 'transferAccountId',
     'transferAmount', 'refundForId', 'refundAppliedAmount', 'refundAppliedAssetId', 'recordState',
     'adjustmentDirection', 'reconciliationSessionId', 'reportingTreatment',
   ];
@@ -871,6 +872,11 @@ export async function saveTransactionAggregate(
   input: SaveTransactionAggregateInput,
 ): Promise<SavedTransactionAggregate> {
   const existedBeforeSave = await store.transactions.get(input.transaction.id);
+  if (!input.transaction.accountId && ['expense', 'income', 'refund'].includes(input.transaction.type)) {
+    const original = input.transaction.refundForId ? await store.transactions.get(input.transaction.refundForId) : undefined;
+    input = { ...input, transaction: { ...input.transaction, accountId: existedBeforeSave?.accountId ?? original?.accountId ??
+      defaultTransactionAccount(await store.accounts.list(), (await store.settings.list())[0], input.transaction.type) } };
+  }
   return store.runInAuditBatch(existedBeforeSave ? '保存流水' : '新增流水', async (store) => {
     const existing = await store.transactions.get(input.transaction.id);
     if (existing && transactionFinancialChanged(existing, input.transaction) && await isTransactionReconciled(store, existing.id)) {
@@ -2124,6 +2130,7 @@ export interface ReconciliationPreview {
   clearedBalance: string;
   difference: string;
   candidates: ReconciliationCandidate[];
+  excluded?: { beforeOpening: number; afterStatement: number; alreadyReconciled: number };
 }
 
 export interface ReconciliationInput {
@@ -2137,8 +2144,8 @@ export interface ReconciliationInput {
   note?: string;
 }
 
-function postingAmount(transaction: Transaction, accountId: string, assetId: string): string {
-  return postingsFromTransaction(transaction)
+function postingAmount(transaction: Transaction, accountId: string, assetId: string, accounts?: import('@zichan/core').Account[]): string {
+  return (accounts ? accountTransactionPostings(transaction, accounts) : postingsFromTransaction(transaction))
     .filter((posting) => posting.accountId === accountId && posting.assetId === assetId)
     .reduce((total, posting) => total.plus(posting.amount), D(0))
     .toString();
@@ -2146,6 +2153,9 @@ function postingAmount(transaction: Transaction, accountId: string, assetId: str
 
 export async function previewReconciliation(store: SqlLedgerStore, input: ReconciliationInput): Promise<ReconciliationPreview> {
   if (!input.accountId || !input.assetId) throw new Error('请选择对账账户和币种');
+  const account = await store.accounts.get(input.accountId);
+  if (!account || isDefaultAccount(account)) throw new Error('请选择银行卡或钱包进行对账');
+  if (account.balanceStartDate && input.statementDate < account.balanceStartDate) throw new Error('账单日不能早于余额起点');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.statementDate)) throw new Error('账单截止日无效');
   const sessions = (await store.reconciliationSessions.list())
     .filter((row) => row.status === 'closed' && row.accountId === input.accountId && row.assetId === input.assetId)
@@ -2159,11 +2169,19 @@ export async function previewReconciliation(store: SqlLedgerStore, input: Reconc
   const reconciledKeys = new Set(activeItems
     .filter((row) => closedIds.has(row.reconciliationId))
     .map((row) => `${row.transactionId}\0${row.accountId}\0${row.assetId}`));
-  const candidates = (await store.transactions.list())
-    .filter((row) => isTransactionActive(row) && row.date <= input.statementDate)
+  const transactions = (await store.transactions.list()).filter(isTransactionActive);
+  const excluded = { beforeOpening: 0, afterStatement: 0, alreadyReconciled: 0 };
+  for (const transaction of transactions) {
+    if (D(postingAmount(transaction, input.accountId, input.assetId)).isZero()) continue;
+    if (transaction.date > input.statementDate) excluded.afterStatement++;
+    else if (D(postingAmount(transaction, input.accountId, input.assetId, [account])).isZero()) excluded.beforeOpening++;
+    else if (reconciledKeys.has(`${transaction.id}\0${input.accountId}\0${input.assetId}`)) excluded.alreadyReconciled++;
+  }
+  const candidates = transactions
+    .filter((row) => row.date <= input.statementDate)
     .map((transaction) => ({
       transaction,
-      postingAmount: postingAmount(transaction, input.accountId, input.assetId),
+      postingAmount: postingAmount(transaction, input.accountId, input.assetId, [account]),
       reconciled: reconciledKeys.has(`${transaction.id}\0${input.accountId}\0${input.assetId}`),
     }))
     .filter((row) => !D(row.postingAmount).isZero() && !row.reconciled)
@@ -2172,11 +2190,12 @@ export async function previewReconciliation(store: SqlLedgerStore, input: Reconc
   const selectedTotal = candidates
     .filter((row) => selected.has(row.transaction.id))
     .reduce((total, row) => total.plus(row.postingAmount), D(0));
-  const openingBalance = D(previousSession?.statementBalance ?? 0);
+  const openingBalance = D(previousSession?.statementBalance ?? (account.openingAssetId === input.assetId ? account.openingBalance : undefined) ?? 0);
   const clearedBalance = openingBalance.plus(selectedTotal);
   const difference = D(input.statementBalance || 0).minus(clearedBalance);
   return {
     previousSession,
+    excluded,
     openingBalance: openingBalance.toString(),
     selectedTotal: selectedTotal.toString(),
     clearedBalance: clearedBalance.toString(),
@@ -2240,6 +2259,7 @@ export async function closeReconciliation(store: SqlLedgerStore, input: Reconcil
         reconciliationSessionId: sessionId,
         status: 'cleared',
         description: '对账余额调整',
+        balanceTiming: 'after', balanceTimingAccountId: input.accountId,
       });
     }
 
@@ -3631,7 +3651,7 @@ export function preflightImport(data: unknown): BackupPreflight {
         pushIssue(issues, 'error', 'reconciliation_adjustment_mismatch', '对账调整流水与对账批次不一致', 'reconciliation_item', id);
       }
       try {
-        const expected = postingsFromTransaction(transaction as unknown as Transaction)
+        const expected = accountTransactionPostings(transaction as unknown as Transaction, rows(dataObj, 'accounts') as unknown as import('@zichan/core').Account[])
           .filter((posting) => posting.accountId === session['accountId'] && posting.assetId === session['assetId'])
           .reduce((total, posting) => total.plus(posting.amount), D(0));
         if (!expected.eq(String(r['postingAmount'] ?? ''))) {
@@ -4595,6 +4615,27 @@ export async function importLedger(
   data: LedgerBackup,
   options: ImportLedgerOptions = {},
 ): Promise<ImportResult> {
+  const sourcePreflight = preflightImport(data);
+  if (!sourcePreflight.ok) throw new Error(`importLedger: preflight failed (${sourcePreflight.issues.filter((i) => i.level === 'error').map((i) => `${i.code}: ${i.message}`).join('; ')})`);
+  const existingDefaults = (await store.accounts.list()).filter(isDefaultAccount);
+  const mapping = new Map<string, string>();
+  for (const account of data.accounts as import('@zichan/core').Account[]) {
+    const existing = existingDefaults.find((a) => a.purpose === account.purpose);
+    if (existing && existing.id !== account.id) mapping.set(account.id, existing.id);
+  }
+  if (mapping.size) {
+    const accountFields = new Set(['accountId', 'accountFromId', 'accountToId', 'transferAccountId', 'defaultAccountId', 'expenseDefaultAccountId', 'incomeDefaultAccountId', 'balanceTimingAccountId']);
+    const remap = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(remap);
+      if (!value || typeof value !== 'object') return value;
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
+        accountFields.has(key) && typeof item === 'string' ? mapping.get(item) ?? item : remap(item)]));
+    };
+    const rewritten = remap(data) as LedgerBackup;
+    rewritten.accounts = (data.accounts as import('@zichan/core').Account[]).map((a) => mapping.has(a.id) ? existingDefaults.find((x) => x.id === mapping.get(a.id))! : a);
+    rewritten.attachments = (rewritten.attachments as import('@zichan/core').Attachment[]).map((a) => a.entityType === 'account' && mapping.has(a.entityId) ? { ...a, entityId: mapping.get(a.entityId)! } : a);
+    data = rewritten;
+  }
   const preflight = preflightImport(data);
   if (!preflight.ok) {
     throw new Error(`importLedger: preflight failed (${preflight.issues.filter((i) => i.level === 'error').map((i) => `${i.code}: ${i.message}`).join('; ')})`);

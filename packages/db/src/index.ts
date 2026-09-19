@@ -247,3 +247,4 @@ export {
   type SyncReplicaState,
   type StoredSyncCommit,
 } from './sync-types.js';
+export { ensureDefaultAccounts, createFundAccount, previewAccountAssignment, assignTransactionAccounts, previewEarlierBalance, applyEarlierBalance, type EarlierBalanceInput, type AccountAssignment } from './account-onboarding.js';

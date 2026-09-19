@@ -7,6 +7,7 @@ export interface FormDraft {
   version: 1;
   key: string;
   entityVersion?: number;
+  manualFieldKeys?: string[];
   savedAt: string;
   values: Record<string, string>;
   files: Record<string, AttachmentDraftData[]>;
@@ -42,11 +43,13 @@ export async function saveFormDraft(
   values: Record<string, string>,
   files: Record<string, AttachmentDraftData[]>,
   entityVersion?: number,
+  manualFieldKeys?: string[],
 ): Promise<FormDraft> {
   const draft: FormDraft = {
     version: 1,
     key,
     entityVersion,
+    manualFieldKeys,
     savedAt: new Date().toISOString(),
     values,
     files,

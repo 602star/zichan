@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useState } from 'react';
 import {
-  D,
+  D, isDefaultAccount,
   localToday,
   type ReconciliationItem,
   type ReconciliationSession,
@@ -161,7 +161,7 @@ export function ReconciliationModal(props: Props) {
       panelStyle={{ width: 'min(1120px, 96vw)', maxHeight: '92dvh', overflow: 'hidden', background: 'var(--surface)', color: 'var(--text-primary)', borderRadius: 'var(--r-sm)', boxShadow: '0 24px 70px rgba(0,0,0,.24)', display: 'flex', flexDirection: 'column' }}
     >
         <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' }}>
-          <div><div id={titleId} style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{session ? '对账详情' : '银行对账'}</div><div style={{ marginTop: 4, fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>按银行账单逐笔核对账户分录</div></div>
+          <div><div id={titleId} style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{session ? '对账详情' : '核对账单'}</div><div style={{ marginTop: 4, fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>按银行卡或钱包账单逐笔核对收支</div></div>
           <button type="button" data-dialog-initial-focus onClick={props.onClose} disabled={busy} aria-label="关闭" style={{ ...button, minWidth: 40, padding: 0 }}>×</button>
         </div>
 
@@ -172,10 +172,10 @@ export function ReconciliationModal(props: Props) {
               setAccountId(nextId);
               setStatementDate(latestStatementDate(snap.accounts.find((account) => account.id === nextId)?.statementDay));
               setSelectedIds([]);
-            }} style={{ ...inputStyle, marginTop: 6 }}>{snap.accounts.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+            }} style={{ ...inputStyle, marginTop: 6 }}>{snap.accounts.filter((row) => (!isDefaultAccount(row) && row.kind !== 'other') || row.id === session?.accountId).map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
             <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>币种<select disabled={!!session} value={assetId} onChange={(event) => { setAssetId(event.target.value); setSelectedIds([]); }} style={{ ...inputStyle, marginTop: 6 }}>{snap.assets.map((row) => <option key={row.id} value={row.id}>{row.code} · {row.name}</option>)}</select></label>
             <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>账单截止日<input disabled={!!session} type="date" value={statementDate} onChange={(event) => { setStatementDate(event.target.value); setSelectedIds([]); }} style={{ ...inputStyle, marginTop: 6 }} /></label>
-            <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>银行期末余额<input disabled={!!session} inputMode="decimal" value={statementBalance} onChange={(event) => setStatementBalance(event.target.value)} style={{ ...inputStyle, marginTop: 6 }} /></label>
+            <label style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>账单期末余额<input disabled={!!session} inputMode="decimal" value={statementBalance} onChange={(event) => setStatementBalance(event.target.value)} style={{ ...inputStyle, marginTop: 6 }} /></label>
           </div>
 
           <div className="zc-reconciliation-summary" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', marginTop: 18, borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
@@ -191,7 +191,7 @@ export function ReconciliationModal(props: Props) {
             <>
               <div style={{ display: 'flex', gap: 10, marginTop: 18, alignItems: 'center' }}>
                 <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索日期、摘要、商户、分类或金额" style={{ ...inputStyle, flex: 1 }} />
-                <button type="button" onClick={() => setSelectedIds(preview?.candidates.filter((row) => row.transaction.status !== 'pending').map((row) => row.transaction.id) ?? [])} style={button}>勾选已清算</button>
+                <button type="button" onClick={() => setSelectedIds(preview?.candidates.filter((row) => row.transaction.status !== 'pending').map((row) => row.transaction.id) ?? [])} style={button}>勾选无需核实的记录</button>
                 <button type="button" onClick={() => setSelectedIds([])} style={button}>清空</button>
               </div>
               <div style={{ marginTop: 10, borderTop: '1px solid var(--border)' }}>
@@ -201,10 +201,13 @@ export function ReconciliationModal(props: Props) {
                     <span style={{ color: 'var(--text-tertiary)' }}>{transaction.date}</span>
                     <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{transaction.description ?? transaction.merchant ?? categoryLabel(transaction.category, snap.categories)}</span>
                     <b style={{ textAlign: 'right' }}>{postingAmount}</b>
-                    <span style={{ color: transaction.status === 'pending' ? 'var(--warning)' : 'var(--fg-subtle)' }}>{transaction.status === 'pending' ? '待清算' : '已清算'}</span>
+                    <span style={{ color: transaction.status === 'pending' ? 'var(--warning)' : 'var(--fg-subtle)' }}>{transaction.status === 'pending' ? '待核实' : '已记录'}</span>
                   </label>
                 ))}
-                {visibleCandidates.length === 0 && <div style={{ padding: 24, color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)', textAlign: 'center' }}>没有可核对的流水</div>}
+                {visibleCandidates.length === 0 && <div style={{ padding: 24, color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)', textAlign: 'center' }}>{preview?.candidates.length ? '没有符合搜索条件的流水，请清除搜索后查看。' : '当前账户、币种和账单截止日下，没有待核对的流水。'}</div>}
+                {!!preview?.excluded?.beforeOpening && <p className="zc-meta">{preview.excluded.beforeOpening} 笔记录已包含在起始余额中，不重复扣减余额，也不参与本次对账。可在账户页查看这个账户的全部收支。</p>}
+                {!!preview?.excluded?.afterStatement && <p className="zc-meta">{preview.excluded.afterStatement} 笔记录晚于账单截止日，请检查截止日期。</p>}
+                {!!preview?.excluded?.alreadyReconciled && <p className="zc-meta">{preview.excluded.alreadyReconciled} 笔记录已对账，可在对账记录中查看。</p>}
               </div>
             </>
           )}

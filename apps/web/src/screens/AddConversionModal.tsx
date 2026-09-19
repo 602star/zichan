@@ -234,7 +234,7 @@ export function AddConversionModal({
       setCreatingAssetCode(null);
     }
   }, [bump, effectiveBookCurrencyId, store]);
-  const usesAccounts = (snap?.setting?.ledgerMode ?? 'spending') !== 'spending';
+  const usesAccounts = true;
   const existingDcaExecution = initial && snap
     ? snap.dcaExecutions.find((execution) => !execution.isDeleted && execution.chainId === initial.chain.id)
     : undefined;
@@ -448,7 +448,7 @@ export function AddConversionModal({
   const accountSelect = (label: string, value: string, onChange: (value: string) => void) => (
     <select aria-label={label} className="zc-select" value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">不指定账户</option>
-      {snap.accounts.filter((account) => !account.isDeleted).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+      {snap.accounts.filter((account) => !account.isDeleted && !account.purpose?.startsWith('default_')).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
     </select>
   );
 

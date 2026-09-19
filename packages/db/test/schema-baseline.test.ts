@@ -82,3 +82,22 @@ INSERT INTO schema_migrations (version, name, applied_at) VALUES (16, 'old-item-
     await driver.close();
   });
 });
+
+it('upgrades the preceding schema without changing existing ledger records', async () => {
+  const driver = new NodeSqliteDriver();
+  try {
+    await runMigrations(driver, log);
+    await driver.run("INSERT INTO accounts (id, name, kind, version, is_deleted) VALUES ('wallet-kept', '旧钱包', 'wallet', 7, 0)");
+    await driver.run("INSERT INTO transactions (id, date, amount, type, account_id, version, is_deleted) VALUES ('kept', '2026-09-01', '12.34', 'expense', 'wallet-kept', 3, 0)");
+    for (const [table, fields] of Object.entries({
+      accounts: ['purpose', 'opening_balance', 'opening_asset_id', 'balance_start_at', 'balance_start_date', 'balance_checkpoints'],
+      settings: ['expense_default_account_id', 'income_default_account_id', 'as_of_mode'],
+      transactions: ['balance_timing', 'balance_timing_account_id'],
+    })) for (const field of fields) await driver.exec('ALTER TABLE ' + table + ' DROP COLUMN ' + field);
+    await driver.run('UPDATE schema_migrations SET version = 117, name = ?', ['current_schema_2026_09_14_ledger_timezone']);
+    expect(await runMigrations(driver, log)).toBe(1);
+    expect(await driver.all('SELECT id, name, version, opening_balance FROM accounts')).toEqual([{ id: 'wallet-kept', name: '旧钱包', version: 7, opening_balance: null }]);
+    expect(await driver.all('SELECT id, amount, account_id, version FROM transactions')).toEqual([{ id: 'kept', amount: '12.34', account_id: 'wallet-kept', version: 3 }]);
+    expect(await runMigrations(driver, log)).toBe(0);
+  } finally { await driver.close(); }
+});

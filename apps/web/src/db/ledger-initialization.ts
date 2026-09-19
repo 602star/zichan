@@ -8,7 +8,7 @@ import {
   type Setting,
   type TransactionTemplate,
 } from '@zichan/core';
-import type { SqlLedgerStore } from '@zichan/db';
+import { ensureDefaultAccounts, type SqlLedgerStore } from '@zichan/db';
 import { DEFAULT_FIXED_ASSET_CATEGORIES } from '../fixedAssetCategories.js';
 import {
   DEFAULT_ENABLED_CATEGORY_IDS,
@@ -70,7 +70,7 @@ export async function initializedLedgerSetting(store: SqlLedgerStore): Promise<S
   const settings = await store.settings.list();
   if (settings.length > 1) throw new Error('数据库包含多个活动账本设置，无法安全继续初始化');
   const setting = settings[0];
-  if (setting && isInitialized(setting)) return setting;
+  if (setting && isInitialized(setting)) return (await ensureDefaultAccounts(store)) ?? setting;
   const [assets, categories, fixedCategories] = await Promise.all([
     store.assets.count(),
     store.categories.count(),
@@ -122,6 +122,7 @@ export async function initializeEmptyLedger(
       initializedAt,
       defaultLotMethod: 'fifo',
       asOfDate: localToday(),
+      asOfMode: 'auto_today',
       // Pinned at creation so a later device-zone change cannot reinterpret
       // stored business days.
       timezone: systemTimeZone(),
@@ -144,7 +145,7 @@ export async function initializeEmptyLedger(
         isActive: true,
       } as TransactionTemplate);
     }
-    return setting;
+    return (await ensureDefaultAccounts(transaction)) ?? setting;
   }, 'system', { undoable: false });
 }
 

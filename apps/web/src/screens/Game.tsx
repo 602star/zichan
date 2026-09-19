@@ -208,7 +208,7 @@ export function Game() {
       </div>
     );
   }
-  const usesAccounts = (snap.setting?.ledgerMode ?? 'spending') !== 'spending';
+  const usesAccounts = true;
   const accountOptions = snap.gameAccounts.filter((account) =>
     !account.isDeleted && !account.archivedAt && !account.mergedIntoId && account.gameId === selectedGameId);
 

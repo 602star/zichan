@@ -5,6 +5,7 @@
  */
 import {
   D,
+  defaultTransactionAccount, accountChainPostings, type Posting,
   newId,
   sha256Json,
   systemCategory,
@@ -433,7 +434,17 @@ class SqlCollection<T extends BaseEntity> implements Collection<T> {
       const ctx = { ...this.ctx, driver };
       const row = await driver.get(`SELECT * FROM ${this.spec.name} WHERE id = ?`, [entity.id]);
       const existing = row ? rowToEntity<T>(this.spec, row) : null;
-      const normalized = normalizeDomainEntity(this.entityType, entity);
+      let normalized = normalizeDomainEntity(this.entityType, entity);
+      if (this.entityType === 'transaction') {
+        const transaction = normalized as unknown as import('@zichan/core').Transaction;
+        if (!transaction.accountId && ['expense', 'income', 'refund'].includes(transaction.type)) {
+          const accounts = (await driver.all('SELECT * FROM accounts WHERE is_deleted = 0')).map((r) => rowToEntity<import('@zichan/core').Account>(TABLES.accounts, r));
+          const settings = await driver.get('SELECT * FROM settings WHERE is_deleted = 0 LIMIT 1');
+          const setting = settings ? rowToEntity<import('@zichan/core').Setting>(TABLES.settings, settings) : undefined;
+          const original = transaction.refundForId ? await driver.get<{account_id: string}>('SELECT account_id FROM transactions WHERE id = ?', [transaction.refundForId]) : undefined;
+          normalized = { ...transaction, accountId: original?.account_id ?? defaultTransactionAccount(accounts, setting, transaction.type) } as unknown as T;
+        }
+      }
       await ensureSystemCategoryReferences(
         driver,
         this.entityType,
@@ -1274,6 +1285,19 @@ function exactPositiveDecimalPredicate(
 const TRANSACTION_REPORT_DATE_SQL =
   "CASE WHEN t.type = 'refund' THEN COALESCE(t.refund_effect_date, t.date) ELSE t.date END";
 
+function accountPostingIncludedSql(column: string): string {
+  const assetColumn = column === 't.transfer_account_id' ? 'COALESCE(t.transfer_asset_id, t.asset_id)' : 't.asset_id';
+  return `NOT EXISTS (SELECT 1 FROM accounts a WHERE a.id = ${column} AND a.is_deleted = 0 AND (
+    COALESCE(a.purpose, 'funds') IN ('default_expense', 'default_income') OR a.kind = 'other'
+    OR (a.balance_start_at IS NOT NULL AND a.opening_asset_id = ${assetColumn} AND NOT (
+      CASE WHEN t.balance_timing_account_id = a.id AND t.balance_timing IS NOT NULL THEN t.balance_timing = 'after'
+      WHEN t.occurred_at_utc IS NOT NULL THEN t.occurred_at_utc >= a.balance_start_at
+      ELSE t.date > a.balance_start_date END
+    ))))`;
+}
+const OPENING_POSTINGS_SQL = `SELECT id AS account_id, opening_asset_id AS asset_id, opening_balance AS posting_amount
+  FROM accounts WHERE is_deleted = 0 AND opening_balance IS NOT NULL AND COALESCE(purpose, 'funds') = 'funds'`;
+
 const TRANSACTION_POSTINGS_CTE = `postings AS (
   SELECT t.id AS transaction_id, '0' AS posting_side, t.date AS posting_date, t.asset_id AS asset_id,
          t.account_id AS account_id,
@@ -1284,7 +1308,7 @@ const TRANSACTION_POSTINGS_CTE = `postings AS (
          END AS posting_amount
   FROM transactions t
   WHERE t.is_deleted = 0 AND COALESCE(t.record_state, 'active') = 'active'
-    AND t.account_id IS NOT NULL
+    AND t.account_id IS NOT NULL AND ${accountPostingIncludedSql('t.account_id')}
   UNION ALL
   SELECT t.id AS transaction_id, '1' AS posting_side, t.date AS posting_date,
          COALESCE(t.transfer_asset_id, t.asset_id) AS asset_id,
@@ -1292,7 +1316,7 @@ const TRANSACTION_POSTINGS_CTE = `postings AS (
          COALESCE(t.transfer_amount, t.amount) AS posting_amount
   FROM transactions t
   WHERE t.is_deleted = 0 AND COALESCE(t.record_state, 'active') = 'active'
-    AND t.type = 'transfer' AND t.transfer_account_id IS NOT NULL
+    AND t.type = 'transfer' AND t.transfer_account_id IS NOT NULL AND ${accountPostingIncludedSql('t.transfer_account_id')}
 )`;
 
 /** Dashboard balances include account-less postings but exclude the special
@@ -1306,20 +1330,14 @@ const DASHBOARD_TRANSACTION_POSTINGS_CTE = `dashboard_postings AS (
          END AS posting_amount
   FROM transactions t
   WHERE t.is_deleted = 0 AND COALESCE(t.record_state, 'active') = 'active'
-    AND NOT EXISTS (
-      SELECT 1 FROM accounts a
-      WHERE a.id = t.account_id AND a.is_deleted = 0 AND a.kind = 'other'
-    )
+    AND ${accountPostingIncludedSql('t.account_id')}
   UNION ALL
   SELECT COALESCE(t.transfer_asset_id, t.asset_id) AS asset_id,
          COALESCE(t.transfer_amount, t.amount) AS posting_amount
   FROM transactions t
   WHERE t.is_deleted = 0 AND COALESCE(t.record_state, 'active') = 'active'
     AND t.type = 'transfer'
-    AND NOT EXISTS (
-      SELECT 1 FROM accounts a
-      WHERE a.id = t.transfer_account_id AND a.is_deleted = 0 AND a.kind = 'other'
-    )
+    AND ${accountPostingIncludedSql('t.transfer_account_id')}
 )`;
 
 const TRANSACTION_RECONCILIATION_STATUS_SQL = `CASE
@@ -2519,19 +2537,33 @@ export class SqlLedgerStore implements LedgerStore {
     }));
   }
 
+  async accountConversionPostings(): Promise<Posting[]> {
+    const accounts = await this.accounts.list();
+    const chains = await this.conversionChains.list();
+    const steps = await this.listStepsByChains(chains.map((c) => c.id));
+    return chains.flatMap((chain) => accountChainPostings({ chain, steps: steps.get(chain.id) ?? [] }, accounts));
+  }
+
   async accountBalanceAggregates(): Promise<AccountBalanceAggregateRow[]> {
     const rows = await this.driver.all<Record<string, unknown>>(
       `WITH ${TRANSACTION_POSTINGS_CTE}
        SELECT account_id, asset_id, json_group_array(posting_amount) AS amounts_json
-       FROM postings
+       FROM (SELECT account_id, asset_id, posting_amount FROM postings UNION ALL ${OPENING_POSTINGS_SQL})
        GROUP BY account_id, asset_id
        ORDER BY account_id, asset_id`,
     );
-    return rows.map((row) => ({
+    const result = rows.map((row) => ({
       accountId: String(row['account_id']),
       assetId: String(row['asset_id']),
       amounts: JSON.parse(String(row['amounts_json'])) as string[],
     }));
+    for (const posting of await this.accountConversionPostings()) {
+      if (!posting.accountId) continue;
+      const row = result.find((r) => r.accountId === posting.accountId && r.assetId === posting.assetId);
+      if (row) row.amounts.push(posting.amount);
+      else result.push({ accountId: posting.accountId, assetId: posting.assetId, amounts: [posting.amount] });
+    }
+    return result.sort((a, b) => a.accountId.localeCompare(b.accountId) || a.assetId.localeCompare(b.assetId));
   }
 
   async dashboardTransactionReadModel(input: {
@@ -2662,6 +2694,13 @@ export class SqlLedgerStore implements LedgerStore {
         sum(JSON.parse(String(row['amounts_json'])) as string[]).toString(),
       ]));
     }
+    if (!input.startingBalances) {
+      const account = await this.accounts.get(input.accountId);
+      if (account?.openingAssetId && account.openingBalance !== undefined && (!input.to || !account.balanceStartDate || input.to >= account.balanceStartDate)) {
+        balances[account.openingAssetId] = D(balances[account.openingAssetId] ?? 0).plus(account.openingBalance).toString();
+      }
+    }
+    const conversionPostings = (await this.accountConversionPostings()).filter((p) => p.accountId === input.accountId);
     const resultRows: AccountLedgerReadRow[] = [];
     for (const row of pageRows) {
       const transaction = rowToEntity<import('@zichan/core').Transaction>(TABLES.transactions, row);
@@ -2674,7 +2713,7 @@ export class SqlLedgerStore implements LedgerStore {
         transaction,
         assetId,
         postingAmount,
-        balance,
+        balance: conversionPostings.filter((p) => p.assetId === assetId && p.date <= transaction.date).reduce((total, p) => total.plus(p.amount), D(balance)).toString(),
         reconciliationStatus: String(row['reconciliation_status']) as AccountLedgerReadRow['reconciliationStatus'],
       });
       balances[assetId] = D(balance).minus(postingAmount).toString();
@@ -2695,6 +2734,7 @@ export class SqlLedgerStore implements LedgerStore {
   }
 
   async transactionReportAggregate(input: {
+    accountId?: string;
     from?: string;
     to?: string;
   } = {}): Promise<TransactionReportAggregateRow[]> {
@@ -2707,6 +2747,7 @@ export class SqlLedgerStore implements LedgerStore {
       "COALESCE(reporting_treatment, 'ordinary') <> 'balance_only'",
     ];
     const params: SqlParam[] = [];
+    if (input.accountId) { clauses.push('account_id = ?'); params.push(input.accountId); }
     if (input.from) {
       clauses.push(`${dateExpression} >= ?`);
       params.push(input.from);
@@ -3450,6 +3491,7 @@ export class SqlLedgerStore implements LedgerStore {
       const current = await this.transactions.get(id);
       const transaction = {
         ...(current ?? {}), ...incomingTransaction, id,
+        balanceTiming: incomingTransaction['balanceTiming'], balanceTimingAccountId: incomingTransaction['balanceTimingAccountId'],
         createdAt: current?.createdAt || String(incomingTransaction['createdAt'] ?? ''),
         updatedAt: current?.updatedAt ?? '', version: current?.version ?? 0,
         isDeleted: incomingTransaction['isDeleted'] === true,
@@ -3554,6 +3596,13 @@ export class SqlLedgerStore implements LedgerStore {
     const collection = this.syncCollection(type);
     if (!collection) throw new Error(`不支持的同步聚合类型 ${type}`);
     const current = await collection.get(id);
+    if (type === 'account' && current && payload['balanceStartAt'] !== (current as import('@zichan/core').Account).balanceStartAt && payload['balanceCheckpoints']) {
+      const { previewEarlierBalance } = await import('./account-onboarding.js');
+      const preview = await previewEarlierBalance(this, { accountId: id, openingBalance: String(payload['openingBalance']), balanceStartAt: String(payload['balanceStartAt']), balanceStartDate: String(payload['balanceStartDate']) });
+      if (!D(preview.difference).isZero()) throw new Error('同步的余额起点与本地记录不一致');
+      await this.withValidatedRestore(['account:' + id], [], async (restore) => { await restore.accounts.put({ ...payload, id, createdAt: current.createdAt, updatedAt: current.updatedAt, version: current.version, isDeleted: false } as unknown as import('@zichan/core').Account); });
+      return;
+    }
     await collection.put({
       ...(current ?? {}), ...payload, id,
       createdAt: current?.createdAt || String(payload['createdAt'] ?? ''),
