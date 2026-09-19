@@ -119,6 +119,19 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
     finally { setBusy(false); }
   }
 
+  /**
+   * The session is already dead server-side (the password change revoked it), so this only
+   * clears the console and explains what happened. Calling `logout` would revoke nothing and
+   * could fail on the dead token, replacing a clear message with a confusing one; rebuilding the
+   * client instead would wipe the explanation, because the effect resets the message while it
+   * reconnects. The client is left in place and is already usable for the next login: the
+   * password change cleared its session, and its own state is what the login form needs.
+   */
+  function signOutWithNote(note: string): void {
+    setAccount(undefined); setPassword(''); setMfaChallenge(undefined); setMfaCode('');
+    setMessage(note);
+  }
+
   async function logout() {
     setAccount(undefined); setBusy(true); setMessage('');
     try { await clientRef.current?.logout(); }
@@ -151,7 +164,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
       </header>
       {message && <p role="alert" style={{ padding: 14, background: 'var(--surface)', border: '1px solid var(--negative)', borderRadius: 'var(--r-sm)' }}>{message}</p>}
       {account && clientRef.current
-        ? <AdminShell client={clientRef.current} account={account} baseUrl={baseUrl} />
+        ? <AdminShell client={clientRef.current} account={account} baseUrl={baseUrl} onSignedOut={signOutWithNote} />
         : <section style={{ maxWidth: 580, margin: '24px auto', padding: 24, borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
           <h2>{!health ? '尚未连接管理服务器' : !health.claimed ? '初始化服务器所有者' : '管理员登录'}</h2>
           {!health && !busy && <p>请确认后端服务已启动。仅启动 5173 前端页面不能创建服务器账号。</p>}
@@ -189,7 +202,11 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
 export { roleLabel };
 
 /** Sidebar navigation plus the routed page. Every page has its own URL. */
-function AdminShell({ client, account, baseUrl }: { client: AdminClient; account: SyncAuthMe; baseUrl: string }) {
+function AdminShell({ client, account, baseUrl, onSignedOut }: {
+  client: AdminClient; account: SyncAuthMe; baseUrl: string;
+  /** Ends the console session locally and states why, without calling logout again. */
+  onSignedOut: (note: string) => void;
+}) {
   const route = useRoute();
   const [menuOpen, setMenuOpen] = useState(false);
   const basePath = baseUrl.replace(/^https?:\/\/[^/]+/, '');
@@ -230,7 +247,9 @@ function AdminShell({ client, account, baseUrl }: { client: AdminClient; account
       case 'jobs': return <JobsPage client={client} query={route.query} navigate={go} role={role} />;
       case 'logs': return <LogsPage client={client} query={route.query} navigate={go} />;
       case 'audit': return <AuditPage client={client} query={route.query} navigate={go} />;
-      case 'security': return <SecurityPage client={client} username={account.username} role={role} />;
+      // Changing the account password revokes every session, so the console signs itself out
+      // instead of leaving a dead session on screen that fails on the next click.
+      case 'security': return <SecurityPage client={client} username={account.username} role={role} onPasswordChanged={() => { onSignedOut('账号密码已修改，请用新密码重新登录。'); }} />;
       case 'settings': return <SettingsPage client={client} role={role} />;
       default: return <OverviewPage client={client} navigate={go} accountName={account.username} role={role} />;
     }

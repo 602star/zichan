@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, Field, Loading, Notice, Panel, Stat, TextInput, message, row, useResource, when } from './ui.js';
+import { Badge, Button, Field, Loading, Notice, Panel, Stat, TextInput, message, row, useActionError, useResource, when } from './ui.js';
 import type { MfaStatusPayload } from './types.js';
 
 interface Enrollment {
@@ -16,7 +16,11 @@ interface Enrollment {
   otpauthUrl: string;
 }
 
-export function SecurityPage({ client, username, role }: { client: AdminClient; username: string; role: string }) {
+export function SecurityPage({ client, username, role, onPasswordChanged }: {
+  client: AdminClient; username: string; role: string;
+  /** Called after the account password changed: every session is gone, so the console must sign out. */
+  onPasswordChanged?: () => void;
+}) {
   const status = useResource(() => client.request<MfaStatusPayload>('/mfa'), []);
   const [enrollment, setEnrollment] = useState<Enrollment>();
   const [code, setCode] = useState('');
@@ -25,6 +29,11 @@ export function SecurityPage({ client, username, role }: { client: AdminClient; 
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [nextPassword, setNextPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const passwordError = useActionError();
+  const [passwordNotice, setPasswordNotice] = useState('');
 
   // A change of enrollment state invalidates whatever half-finished flow was on screen. Recovery
   // codes are deliberately not cleared here: the reload that follows a successful confirmation
@@ -40,6 +49,22 @@ export function SecurityPage({ client, username, role }: { client: AdminClient; 
     setBusy(true); setNotice(''); setError('');
     try { await work(); } catch (caught) { setError(message(caught)); }
     finally { setBusy(false); }
+  };
+
+  const changeOwnPassword = async (): Promise<void> => {
+    if (nextPassword.length < 8) { passwordError.setError('新账号密码至少八位。'); return; }
+    if (nextPassword !== confirmation) { passwordError.setError('两次输入的新密码不一致。'); return; }
+    setBusy(true); passwordError.clear(); setPasswordNotice('');
+    try {
+      await client.changePassword(currentPassword, nextPassword);
+      setCurrentPassword(''); setNextPassword(''); setConfirmation('');
+      setPasswordNotice('账号密码已修改。为安全起见，此账号的全部登录会话（包括当前这个管理后台）都已失效，请用新密码重新登录。');
+      onPasswordChanged?.();
+    } catch (caught) {
+      passwordError.setError(message(caught));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const begin = () => run(async () => {
@@ -75,6 +100,26 @@ export function SecurityPage({ client, username, role }: { client: AdminClient; 
       <h2>账号安全</h2>
       <Loading loading={status.loading} error={status.error} stale={status.stale} loadedAt={status.loadedAt} />
       <p>{data.note}</p>
+
+      <Panel title="我的账号密码" note={`当前账号：${username}`}>
+        <p style={{ marginTop: 0 }}>修改后，此账号的<strong>全部登录会话</strong>都会失效（包括当前这个管理后台与其他设备），需要用新密码重新登录。账本、恢复码与两步验证设置不受影响，未同步的数据仍保留在本机。</p>
+        <div style={{ display: 'grid', gap: 10, maxWidth: 420 }}>
+          <Field label="当前账号密码">
+            <TextInput aria-label="当前账号密码" type="password" autoComplete="current-password" value={currentPassword} disabled={busy} onChange={(event) => setCurrentPassword(event.target.value)} />
+          </Field>
+          <Field label="新账号密码（至少八位）">
+            <TextInput aria-label="新账号密码" type="password" autoComplete="new-password" value={nextPassword} disabled={busy} onChange={(event) => setNextPassword(event.target.value)} />
+          </Field>
+          <Field label="再次输入新密码">
+            <TextInput aria-label="再次输入新密码" type="password" autoComplete="new-password" value={confirmation} disabled={busy} onChange={(event) => setConfirmation(event.target.value)} />
+          </Field>
+          <div>
+            <Button disabled={busy || !currentPassword || nextPassword.length < 8 || nextPassword !== confirmation} onClick={() => { void changeOwnPassword(); }}>确认修改账号密码</Button>
+          </div>
+        </div>
+        {passwordNotice ? <Notice tone="info">{passwordNotice}</Notice> : null}
+        {passwordError.error ? <Notice tone="bad">{passwordError.error}</Notice> : null}
+      </Panel>
 
       <Panel title="我的两步验证" note={`当前账号：${username}`}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>

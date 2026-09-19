@@ -240,6 +240,59 @@ export class AdminClient {
     }
   }
 
+  /**
+   * Changes this administrator’s own account password.
+   *
+   * The current password is proved the same way the ledger app proves it — a fresh OPAQUE
+   * login — because that is the only thing that answers “does the person at this keyboard
+   * know the current password right now”. The console’s own session cannot answer it: it
+   * only proves somebody signed in on this browser, possibly a long time ago.
+   *
+   * The proof gets a throwaway token session, never the console’s cookie: a login overwrites
+   * that cookie, so a mistyped current password would silently sign the operator out. The proof
+   * session authorizes the change and is discarded either way; the change itself revokes every
+   * session of the account, this console’s included, so the caller ends up signed out.
+   *
+   * The second factor guards console login, not this operation: an administrator’s ledger login
+   * deliberately skips it, and this proof is a ledger-shaped login. Asking for a code here would
+   * mean one server operation had two different rules depending on which page called it.
+   */
+  async changePassword(currentPassword: string, nextPassword: string): Promise<void> {
+    const generation = this.generation;
+    if (!currentPassword) throw new AdminError(400, 'PASSWORD_REQUIRED', '请输入当前账号密码。');
+    if (nextPassword.length < 8) throw new AdminError(400, 'PASSWORD_TOO_SHORT', '新账号密码至少八位。');
+    if (currentPassword === nextPassword) throw new AdminError(400, 'PASSWORD_UNCHANGED', '新账号密码不能与当前账号密码相同。');
+    const username = this.session?.session.username;
+    if (!username) throw new AdminError(401, 'ADMIN_REQUIRED', '管理会话已失效，请重新登录。');
+    const health = await this.health();
+    this.current(generation);
+    const identity = { expectedServerId: health.serverId, expectedServerPublicKey: health.serverPublicKey };
+    const verified = await loginAccount(this.baseUrl, username, currentPassword, {
+      ...identity, deviceName: 'Zichan · 修改管理密码', sessionTransport: 'token',
+    });
+    this.current(generation);
+    try {
+      const authorized = await fetch(`${this.baseUrl}/api/auth/password-change/authorize`, {
+        method: 'POST', cache: 'no-store', redirect: 'error', signal: this.controller.signal,
+        headers: { Authorization: 'Bearer ' + verified.accessToken },
+      });
+      this.current(generation);
+      const body = await readAdminJson<{ code?: string; error?: string }>(authorized);
+      if (!authorized.ok || !body.code) throw new AdminError(authorized.status, body.code ?? '', body.error ?? `无法授权本次密码变更（HTTP ${authorized.status}）`);
+      await registerAccount(this.baseUrl, username, nextPassword, { ...identity, passwordResetCode: body.code });
+      this.current(generation);
+    } finally {
+      // The change already revoked this session; a failed attempt must not leave an extra live one.
+      await fetch(`${this.baseUrl}/api/auth/logout`, {
+        method: 'POST', cache: 'no-store', redirect: 'error',
+        headers: { Authorization: 'Bearer ' + verified.accessToken },
+      }).catch(() => undefined);
+    }
+    // Every session of this account is gone now, this console’s included.
+    this.clear();
+    this.channel?.postMessage('session-changed');
+  }
+
   /** Controlled export: the server decides which fields are safe to leave the console. */
   async download(path: string): Promise<string> {
     const generation = this.generation;
