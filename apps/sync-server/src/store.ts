@@ -3326,12 +3326,107 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     return row ? this.mapBackupRecord(row) : undefined;
   }
 
-  async listBackupRecords(limit = 50): Promise<ServerBackupRecord[]> {
+  /**
+   * The newest record that succeeded and passed verification, and the newest one verified.
+   *
+   * These are asked directly rather than derived from a page of recent records. Deriving them
+   * was wrong in a way that mattered: with a nightly backup and a broken deployment, the newest
+   * page can be entirely failures, so "last successful backup" looked empty and the overdue
+   * alert fired on a server that had backed up successfully every night until that week.
+   */
+  async latestBackupSummary(): Promise<{
+    lastSuccess: { recordId: string; createdAt: string } | null;
+    lastVerified: { recordId: string; verifiedAt: string } | null;
+    lastRetention: { recordId: string; createdAt: string; note?: string; retention?: JsonRecord } | null;
+  }> {
     await this.ready;
-    return (await this.driver.all<Record<string, unknown>>(
-      'SELECT * FROM server_backup_records ORDER BY created_at DESC LIMIT ?',
-      [Math.max(1, Math.min(200, limit))],
-    )).map((row) => this.mapBackupRecord(row));
+    // "Succeeded" means created *and* not rejected by verification: a record whose verification
+    // failed is a failed backup even though its creation succeeded.
+    const success = await this.driver.get<{ record_id: string; created_at: string }>(
+      `SELECT record_id, created_at FROM server_backup_records
+       WHERE status = 'completed'
+         AND (verification_json IS NULL OR json_extract(verification_json, '$.ok') IS NOT 0)
+       ORDER BY created_at DESC, record_id DESC LIMIT 1`,
+    );
+    const verified = await this.driver.get<{ record_id: string; verified_at: string }>(
+      `SELECT record_id, verified_at FROM server_backup_records
+       WHERE verified_at IS NOT NULL
+         AND verification_json IS NOT NULL
+         AND json_extract(verification_json, '$.ok') IS 1
+       ORDER BY verified_at DESC, record_id DESC LIMIT 1`,
+    );
+    // The newest retention run, for the same reason: it is asked about by date, not by page.
+    // Its note and outcome travel with it: the page reported "已清理 N 份" before the list was
+    // paged, and paging must not cost the operator that answer.
+    const retention = await this.driver.get<{ record_id: string; created_at: string; note: string | null; retention_json: string | null }>(
+      `SELECT record_id, created_at, note, retention_json FROM server_backup_records
+       WHERE retention_json IS NOT NULL
+       ORDER BY created_at DESC, record_id DESC LIMIT 1`,
+    );
+    return {
+      lastSuccess: success ? { recordId: String(success.record_id), createdAt: String(success.created_at) } : null,
+      lastVerified: verified ? { recordId: String(verified.record_id), verifiedAt: String(verified.verified_at) } : null,
+      lastRetention: retention
+        ? {
+          recordId: String(retention.record_id),
+          createdAt: String(retention.created_at),
+          ...(retention.note == null ? {} : { note: String(retention.note) }),
+          ...(retention.retention_json == null ? {} : { retention: jsonObject(retention.retention_json) }),
+        }
+        : null,
+    };
+  }
+
+  /**
+   * Backup records, newest first, with a cursor.
+   *
+   * This used to take a fixed 50 with no way past them, so a deployment that backs up nightly
+   * could only ever see the last few weeks — and "when did the last *successful* backup happen"
+   * could be answered wrongly when the newest 50 were all failures.
+   *
+   * The cursor is `created_at|record_id`, matching the sort key, so paging is stable even when
+   * several records share a timestamp.
+   */
+  async listBackupRecords(limit = 50, options: {
+    cursor?: string;
+    status?: string;
+    kind?: string;
+  } = {}): Promise<{ backups: ServerBackupRecord[]; nextCursor?: string; total: number }> {
+    await this.ready;
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.status) { clauses.push('status = ?'); params.push(options.status); }
+    if (options.kind) { clauses.push('kind = ?'); params.push(options.kind); }
+    // The cursor is applied after the filters so paging stays consistent within a filtered view.
+    if (options.cursor) {
+      const [cursorAt, cursorId] = options.cursor.split('|');
+      clauses.push('(created_at < ? OR (created_at = ? AND record_id < ?))');
+      params.push(cursorAt ?? '', cursorAt ?? '', cursorId ?? '');
+    }
+    let sql = 'SELECT * FROM server_backup_records';
+    if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
+    sql += ' ORDER BY created_at DESC, record_id DESC LIMIT ?';
+    const pageSize = Math.max(1, Math.min(200, limit));
+    const rows = await this.driver.all<Record<string, unknown>>(sql, [...params, pageSize + 1]);
+    const page = rows.slice(0, pageSize).map((row) => this.mapBackupRecord(row));
+    const last = page.at(-1);
+
+    // The total counts the filtered set, not the page: "how many failed backups are retained"
+    // is a question about the whole set.
+    const totalClauses: string[] = [];
+    const totalParams: (string | number)[] = [];
+    if (options.status) { totalClauses.push('status = ?'); totalParams.push(options.status); }
+    if (options.kind) { totalClauses.push('kind = ?'); totalParams.push(options.kind); }
+    const totalRow = await this.driver.get<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM server_backup_records${totalClauses.length ? ` WHERE ${totalClauses.join(' AND ')}` : ''}`,
+      totalParams,
+    );
+
+    return {
+      backups: page,
+      ...(rows.length > pageSize && last ? { nextCursor: `${last.createdAt}|${last.recordId}` } : {}),
+      total: Number(totalRow?.total ?? 0),
+    };
   }
 
   private mapBackupRecord(row: Record<string, unknown>): ServerBackupRecord {

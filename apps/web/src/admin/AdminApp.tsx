@@ -225,7 +225,7 @@ function AdminShell({ client, account, baseUrl }: { client: AdminClient; account
       case 'security-events': return <SecurityEventsPage client={client} />;
       case 'alerts': return <AlertsPage client={client} role={role} navigate={go} />;
       case 'invites': return <InvitesPage client={client} role={role} query={route.query} navigate={go} />;
-      case 'storage': return <StoragePage client={client} role={role} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
+      case 'storage': return <StoragePage client={client} role={role} query={route.query} navigate={go} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
       case 'resources': return <ResourcesPage client={client} role={role} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
       case 'jobs': return <JobsPage client={client} query={route.query} navigate={go} role={role} />;
       case 'logs': return <LogsPage client={client} query={route.query} navigate={go} />;

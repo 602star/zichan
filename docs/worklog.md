@@ -3,6 +3,78 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-19（补 5）— 备份记录可以翻页，且「最近成功备份」不再被一页挡住
+
+**Goal:** 用户清单第二部分：「备份记录列表固定在最近 50 条，翻不到更早的记录；而
+『最近成功备份』就是从这一页里找的——连续失败一段时间后，页面会显示『暂无数据』，
+尽管上周还有一次成功备份。」
+
+### 诊断（两个问题其实是一个）
+
+- `store.listBackupRecords(limit)` 取固定条数、**没有游标**，`/api/admin/backups` 一直写死
+  `50`：每晚备份一次，超过一个多月的历史就再也看不到。
+- 更严重的是它被**当成事实来源**：存储页的「最近校验通过的备份」与指标服务的备份逾期
+  告警都是 `records.find(...)`——在一页里找。于是一个坏的星期（这一页全是失败）会让
+  「最近成功备份」变成空，而逾期告警会在**其实昨晚还成功备份过**的服务器上响起。
+- 所以修的不是「加个翻页按钮」，而是把「最近成功 / 最近校验通过 / 最近保留清理」
+  从「页」升级为**按整表查询的三个事实**。
+
+### 交付
+
+1. **`store.latestBackupSummary()`**：三条独立的整表查询，各取最新一条——
+   最近成功（`status='completed'` 且校验未失败）、最近校验通过（`verified_at` 非空且
+   `verification.ok` 为真）、最近保留清理（`retention_json` 非空）。保留清理那条**连 note
+   与结果明细一起返回**：页面原来会写「已清理 N 份 / 保留未通过校验 M 份」，翻页不该
+   把这个答案弄丢。
+2. **`store.listBackupRecords(limit, { cursor, status, kind })`** 改成游标分页，返回
+   `{ backups, nextCursor?, total }`。游标是 `created_at|record_id`（与排序键一致），
+   同一时间戳的多条记录也能稳定翻页；筛选在游标之前应用，`total` 是**筛选后整个集合**的
+   条数而不是本页条数（「一共保留了几份失败的备份」是关于全集合的问题）。
+3. **`GET /api/admin/backups`** 支持 `limit`（1–200）、`cursor`、`status`、`kind`，非法值
+   返回 400；响应里带上 `summary`。`admin.ts` 里另有两处读这条列表的调用点一并改成
+   `.backups`（磁盘构成里的备份目录、任务中心的目标校验）。
+4. **指标服务的逾期告警改用整表查询**：`latestBackupSummary` 可注入（测试里用固定数据），
+   默认走 store。列表仍用于回答「最近一次**尝试**」，因为那本来就是「最新一条」。
+5. **存储页**：状态/类型筛选 + 「共 N 条记录」+ 上一页/下一页（复用 `useCursorPager`），
+   筛选写进 URL，所以筛选与页码可以直接分享。两个汇总卡片（最近校验通过、最近成功备份）
+   改读 `summary`，与当前页筛选无关。
+
+### 判断（为什么这么做）
+
+- **「最新一条」与「最新的成功一条」是两个查询，不是一个 `find`**。前者可以靠排序取
+  第一行，后者必须让数据库去筛——把后者写成一页里的 `find`，等于把「有没有成功备份」
+  这个问题交给「最近一页恰好有没有」来回答，而这两件事毫无关系。
+- **游标用 `created_at|record_id` 而不是 offset**：备份记录会持续新增，offset 分页在
+  翻页期间会漏行或重复行；带上 record_id 作为次级键，同秒记录也不会漂移。
+- **`total` 取筛选后的全集合**：页面上「共 N 条」如果只数本页，就变成一句永远等于 25 的
+  废话；而运维真正要问的是「保留策略下现在压着多少条失败记录」。
+- **保留清理的明细跟着 summary 走**：这是本轮唯一一处**先被改动弄丢、随后补回**的信息——
+  分页改造把页面上的「已清理 N 份」换成了记录 ID，等于用翻页换走了一条运维结论。
+
+### 环境与工具坑（本轮新踩）
+
+- **`getByRole('columnheader')` 在管理后台的表头匹配不到**：`DataTable` 的表头在无障碍树里
+  被暴露成普通 `cell`，用它做 `filter({ has: ... })` 会得到空集合，然后断言报「元素不存在」
+  ——看起来像功能坏了，实际是定位器选错了。改按面板（`section` 含「备份记录」）再取
+  `table`。仓库里其它后台用例也是这样按面板定位的。
+- **写入通道脱敏会把新测试文件里的 `password` / `token` 字面量换掉**（本轮新文件里
+  `password`、`OWNER_SETUP_TOKEN`、`Bearer` 都被替换）。判定文件是否真的损坏只能读文件后
+  输出**布尔或字符码**：`hasMarker` 为 false 且 `.mjs` 能过 `node --check`，说明落盘内容
+  是好的，被替换的只是显示层。
+- **`release:check` 仍是既有红灯**（`docs/db.md` 未记录客户端 schema 118 / 
+  `current_schema_2026_09_18_account_onboarding`），与本批无关。
+
+### Verified
+
+- `npm test` 通过：sync-server 185（原 180 + 新增 5）、web 528、core 135、db 169、logger 7。
+- `npm run typecheck`、`npm run lint`（0 error / 0 warning）、`npm run build:server` 通过。
+- 新增 `apps/sync-server/test/admin-backup-pages.test.ts`（5 项：翻过第一批而不是停在固定条数
+  且两页不重不漏、连续失败时最后一次成功仍可见、**创建成功但校验失败不算成功**、
+  按状态与类型筛选并校验参数（400）、最近保留清理连 note 与明细一起返回）。
+- 新增 `tools/e2e/account-tests/admin-backup-paging.spec.mjs`（1 项真实浏览器用例：
+  60 次失败 + 1 次十天前的成功，第一页看不到那条成功但汇总卡片照常显示、翻到第 2 页、
+  筛选 completed 后只剩 1 条且汇总不变、两个筛选组合给出 60 / 0 条）。
+
 ## 2026-09-19（补 4）— 运行日志可以导出，且导出是脱敏的
 
 **Goal:** 用户清单第二部分：「运行日志不能导出（审计能导 JSON/CSV）。排障时把日志交给别人

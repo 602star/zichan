@@ -605,8 +605,24 @@ export function createAdminRouter(deps: AdminRouterDeps) {
 
     if (req.method === 'GET' && suffix === '/backups') {
       await importMaintenanceRecords(store, deps.dataDir);
+      const limit = Number(search.get('limit') ?? 25);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) return send(res, 400, { error: 'limit must be between 1 and 200' });
+      const status = search.get('status') ?? '';
+      if (status && !['completed', 'failed', 'planned'].includes(status)) return send(res, 400, { error: 'invalid status' });
+      const kind = search.get('kind') ?? '';
+      if (kind && !['manual', 'scheduled', 'drill'].includes(kind)) return send(res, 400, { error: 'invalid kind' });
+      const page = await store.listBackupRecords(limit, {
+        ...(search.get('cursor') ? { cursor: search.get('cursor')! } : {}),
+        ...(status ? { status } : {}),
+        ...(kind ? { kind } : {}),
+      });
+      // The newest success / verification / retention run are queried, not read off this page:
+      // with a filter applied, or simply with enough recent failures, the page may not contain
+      // them, and reporting "never" for something that happened last week is worse than useless.
+      const summary = await store.latestBackupSummary();
       return send(res, 200, {
-        backups: await store.listBackupRecords(50),
+        ...page,
+        summary,
         note: '备份与恢复由部署侧维护程序在服务停止时执行，后台只登记与展示结果；不提供浏览器下载整套服务器备份。',
       });
     }
@@ -775,7 +791,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         ...composition,
         cleanup: blobStore.cleanupStatus(),
         // Reported from the deployment record; the console never selects a backup path.
-        backupDirectory: (await store.listBackupRecords(1))[0]?.outputPath ?? null,
+        backupDirectory: (await store.listBackupRecords(1)).backups[0]?.outputPath ?? null,
         note: '逻辑配额占用与物理磁盘占用分开显示；备份目录不在 Web 静态服务范围内。',
         diskFreeRatio: diskFree !== null && diskTotal ? Number((diskFree / diskTotal).toFixed(4)) : null,
       });

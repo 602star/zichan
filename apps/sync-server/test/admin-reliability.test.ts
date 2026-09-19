@@ -366,6 +366,19 @@ describe('backup health and alert streaks', () => {
         settings,
         log: async () => undefined,
         listBackupRecords: async () => records,
+        // The alert reads the whole set, not the page. In production this is a query; here it is
+        // derived from the same fixtures so the two views stay consistent.
+        latestBackupSummary: async () => ({
+          lastSuccess: (() => {
+            const found = records.find((entry) => entry.status === 'completed' && entry.verificationOk !== false);
+            return found ? { recordId: found.recordId, createdAt: found.createdAt } : null;
+          })(),
+          lastVerified: (() => {
+            const found = records.find((entry) => entry.verificationOk === true && entry.verifiedAt);
+            return found ? { recordId: found.recordId, verifiedAt: found.verifiedAt! } : null;
+          })(),
+          lastRetention: null,
+        }),
         startedAt: Date.now(),
       });
       // Two samples: an alert only becomes active after two consecutive bad ones.

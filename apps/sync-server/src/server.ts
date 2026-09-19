@@ -500,7 +500,10 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     blobStore,
     settings,
     log,
-    listBackupRecords: async () => (await store.listBackupRecords(20)).map((record) => ({
+    // Alerts only need the newest records to answer "latest attempt / latest success / latest
+    // verified"; the paginated view is the console's, not the sampler's. The success/verified
+    // answers come from `latestBackupSummary` below, which is queried over the whole table.
+    listBackupRecords: async () => (await store.listBackupRecords(20)).backups.map((record) => ({
       recordId: record.recordId,
       createdAt: record.createdAt,
       status: record.status,

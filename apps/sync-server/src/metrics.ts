@@ -124,6 +124,18 @@ export interface MetricsServiceDeps {
   settings: SettingsReader;
   log: (level: ServerLogLevel, action: string, message: string, meta?: Record<string, unknown>) => Promise<void>;
   listBackupRecords: () => Promise<BackupRecordSummary[]>;
+  /**
+   * Newest success, newest verified success and newest retention run, queried over the whole table.
+   *
+   * The alert must not be derived from `listBackupRecords()`: that list is paged for the console,
+   * so a run of failures longer than one page would hide the last good backup and raise a false
+   * "backup overdue". Defaults to the store query.
+   */
+  latestBackupSummary?: () => Promise<{
+    lastSuccess: { recordId: string; createdAt: string } | null;
+    lastVerified: { recordId: string; verifiedAt: string } | null;
+    lastRetention: { recordId: string; createdAt: string } | null;
+  }>;
   startedAt: number;
   intervalMs?: number;
   /** Injected in tests; the default reads `process` and `perf_hooks` directly. */
@@ -134,6 +146,9 @@ export interface MetricsServiceDeps {
 
 export function createMetricsService(deps: MetricsServiceDeps) {
   const { store, blobStore, settings, log, listBackupRecords } = deps;
+  // Defaults to the store query so a caller that only needs the sampler does not have to wire it;
+  // it stays injectable because it drives the overdue alert and must be testable in isolation.
+  const latestBackupSummary = deps.latestBackupSummary ?? (() => store.latestBackupSummary());
   const intervalMs = deps.intervalMs ?? SAMPLE_INTERVAL_MS;
   const runtime = deps.runtime ?? createRuntimeStats();
   const startedAtIso = new Date(deps.startedAt).toISOString();
@@ -543,8 +558,13 @@ export function createMetricsService(deps: MetricsServiceDeps) {
     // "Latest attempt", "latest success" and "latest verified" are three different facts:
     // a failed attempt must not postpone the overdue alert, and a failed verification must be
     // visible even when the attempt itself succeeded.
-    const lastSuccess = records.find((record) => record.status === 'completed' && record.verificationOk !== false);
-    const lastVerified = records.find((record) => record.verificationOk === true && typeof record.verifiedAt === 'string');
+    //
+    // They are queried directly rather than picked out of the recent page. Picking them out was
+    // wrong whenever the recent page held no success: with a nightly backup and a broken week,
+    // "last successful backup" came back empty and the overdue alert fired on a server that had
+    // backed up successfully every night before that. The page is for the console; this is for
+    // the alert.
+    const { lastSuccess, lastVerified } = await latestBackupSummary();
     const backup: BackupSummary | null = latest
       ? {
         recordId: latest.recordId,
@@ -552,7 +572,7 @@ export function createMetricsService(deps: MetricsServiceDeps) {
         attemptedAt: latest.createdAt,
         ...(latest.verificationOk === undefined ? {} : { verificationOk: latest.verificationOk }),
         ...(lastSuccess ? { lastSuccessRecordId: lastSuccess.recordId, lastSuccessAt: lastSuccess.createdAt } : {}),
-        ...(lastVerified ? { lastVerifiedRecordId: lastVerified.recordId, lastVerifiedAt: lastVerified.verifiedAt! } : {}),
+        ...(lastVerified ? { lastVerifiedRecordId: lastVerified.recordId, lastVerifiedAt: lastVerified.verifiedAt } : {}),
       }
       : null;
     const next: ServiceSnapshot = {

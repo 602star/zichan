@@ -276,7 +276,9 @@ describe('deployment maintenance records', () => {
         await store.ready;
         const { importMaintenanceRecords } = await import('../src/maintenance-records.js');
         expect(await importMaintenanceRecords(store, dir)).toBe(0);
-        expect(await store.listBackupRecords()).toEqual([]);
+        // The list is paginated now: the records are under `backups`, and the summary fields sit
+        // beside it so the console never derives them from a truncated page.
+        expect(await store.listBackupRecords()).toMatchObject({ backups: [], total: 0 });
         expect(readFileSync(join(dir, 'maintenance', 'broken.json'), 'utf8')).toContain('recordId');
       } finally { await store.close(); }
     } finally { rmSync(dir, { recursive: true, force: true }); }

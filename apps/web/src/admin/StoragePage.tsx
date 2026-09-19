@@ -1,8 +1,8 @@
 /** Storage and backups: physical usage, logical quota, the maintenance plan, records and drills. */
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, message, muted, row, useActionError, useResource, when, canWrite } from './ui.js';
-import type { BackupRecord, SettingsPayload, Storage } from './types.js';
+import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, Stat, bytes, message, muted, row, useActionError, useCursorPager, useResource, when, canWrite } from './ui.js';
+import type { BackupsPayload, SettingsPayload, Storage } from './types.js';
 
 /** One line of the declared plan: the raw value plus how the page should show it. */
 function planField(settings: SettingsPayload | undefined, name: string): { raw: string; display: string } {
@@ -13,11 +13,19 @@ function planField(settings: SettingsPayload | undefined, name: string): { raw: 
   return { raw, display };
 }
 
-export function StoragePage({ client, role, onJob }: { client: AdminClient; role: string; onJob: (jobId: string) => void }) {
+export function StoragePage({ client, role, query, navigate, onJob }: {
+  client: AdminClient; role: string; query: URLSearchParams; navigate: (to: string) => void; onJob: (jobId: string) => void;
+}) {
   const writable = canWrite(role);
   const actionError = useActionError();
   const storage = useResource(() => client.request<Storage>('/storage'), []);
-  const backups = useResource(() => client.request<{ backups: BackupRecord[]; note: string }>('/backups'), []);
+  const backupStatus = query.get('status') ?? '';
+  const backupKind = query.get('kind') ?? '';
+  const cursor = query.get('cursor') ?? '';
+  const pager = useCursorPager({ query, path: '/storage', navigate });
+  const backups = useResource(() => client.request<BackupsPayload>(
+    `/backups?limit=25${backupStatus ? `&status=${backupStatus}` : ''}${backupKind ? `&kind=${backupKind}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+  ), [backupStatus, backupKind, cursor]);
   const settings = useResource(() => client.request<SettingsPayload>('/settings'), []);
   const composition = storage.data;
 
@@ -30,9 +38,10 @@ export function StoragePage({ client, role, onJob }: { client: AdminClient; role
   const intervalHours = planField(settings.data, 'backupIntervalHours');
   const autoEnabled = autoPlan.raw === 'on';
   const planIncomplete = autoEnabled && (!directory.raw || !windowLabel.raw);
-  // The newest record that actually passed verification: what an overdue check should count.
-  const lastVerified = (backups.data?.backups ?? []).find((record) => record.verification && record.verification['ok'] !== false);
-  const lastRetention = (backups.data?.backups ?? []).find((record) => record.retention);
+  // Read from the server, not picked out of the visible page: with a filter applied — or simply
+  // after a run of failures — the newest success may not be on this page, and showing "暂无数据"
+  // for a backup that succeeded last week is a lie the operator would act on.
+  const summary = backups.data?.summary;
 
   const startJob = (type: 'storage.cleanup' | 'backup.verify' | 'restore.drill', recordId?: string) => {
     actionError.clear();
@@ -56,16 +65,18 @@ export function StoragePage({ client, role, onJob }: { client: AdminClient; role
           <Stat label="维护窗口" value={windowLabel.display} hint="停服备份与恢复演练只允许在该窗口内进行" />
           <Stat label="保留份数" value={retentionPlan.display} hint="只清理校验成功的历史备份，且始终保留最近一个有效备份" />
           <Stat label="逾期告警间隔" value={intervalHours.raw === '0' ? '不检查' : `${intervalHours.display} 小时`} hint="超过该间隔没有成功备份时告警" />
-          <Stat label="最近校验通过的备份" value={lastVerified ? when(lastVerified.createdAt) : '暂无数据'}
-            hint={lastVerified ? lastVerified.recordId : '尚未有校验通过的备份记录'} />
+          <Stat label="最近校验通过的备份" value={summary?.lastVerified ? when(summary.lastVerified.verifiedAt) : '暂无数据'}
+            hint={summary?.lastVerified ? summary.lastVerified.recordId : '尚未有校验通过的备份记录'} />
+          <Stat label="最近成功备份" value={summary?.lastSuccess ? when(summary.lastSuccess.createdAt) : '暂无数据'}
+            hint={summary?.lastSuccess ? summary.lastSuccess.recordId : '尚未有成功备份'} />
         </div>
         {planIncomplete ? <Notice tone="bad">已启用自动备份，但备份位置或维护窗口仍为空：请到「系统设置」补齐，否则这个计划无法执行。</Notice> : null}
-        {autoEnabled && !lastVerified ? <Notice tone="warn">已启用自动备份，但还没有校验通过的备份记录：请确认部署侧程序确实在运行，并完成一次备份与校验。</Notice> : null}
-        {lastRetention ? (
+        {autoEnabled && !summary?.lastVerified ? <Notice tone="warn">已启用自动备份，但还没有校验通过的备份记录：请确认部署侧程序确实在运行，并完成一次备份与校验。</Notice> : null}
+        {summary?.lastRetention ? (
           <Notice>
-            最近一次保留清理：{when(lastRetention.createdAt)} · {lastRetention.note ?? '已执行'}
-            {lastRetention.retention ? ` · 已清理 ${String(lastRetention.retention['removed'] ? String((lastRetention.retention['removed'] as unknown[]).length) : '0')} 份`
-              + `${Number(lastRetention.retention['unverifiedCount'] ?? 0) > 0 ? ` · 保留未通过校验的 ${String(lastRetention.retention['unverifiedCount'])} 份待人工处理` : ''}` : ''}
+            最近一次保留清理：{when(summary.lastRetention.createdAt)} · {summary.lastRetention.note ?? '已执行'}
+            {summary.lastRetention.retention ? ` · 已清理 ${String(summary.lastRetention.retention['removed'] ? String((summary.lastRetention.retention['removed'] as unknown[]).length) : '0')} 份`
+              + `${Number(summary.lastRetention.retention['unverifiedCount'] ?? 0) > 0 ? ` · 保留未通过校验的 ${String(summary.lastRetention.retention['unverifiedCount'])} 份待人工处理` : ''}` : ''}
           </Notice>
         ) : <p style={muted}>还没有保留清理记录：运行 <code>{`npm run server:prune-backups -- --backup-dir <目录> --keep ${retentionPlan.raw || '3'}`}</code> 后这里会显示结果（可先加 <code>--dry-run</code> 预演）。</p>}
       </Panel>
@@ -118,6 +129,27 @@ export function StoragePage({ client, role, onJob }: { client: AdminClient; role
           备份与恢复必须在服务停止时执行，由部署侧维护程序完成（停止服务 → 备份 → 校验 → 恢复启动）。
           后台不直接调用这类流程，也不提供在浏览器里下载整套服务器备份。
         </Notice>
+        <div style={{ ...row, marginBottom: 10 }}>
+          <Field label="状态">
+            <Select value={backupStatus} onChange={(event) => pager.apply({ status: event.target.value || undefined, cursor: undefined })}>
+              <option value="">全部</option>
+              <option value="completed">已完成</option>
+              <option value="failed">失败</option>
+              <option value="planned">计划中</option>
+            </Select>
+          </Field>
+          <Field label="类型">
+            <Select value={backupKind} onChange={(event) => pager.apply({ kind: event.target.value || undefined, cursor: undefined })}>
+              <option value="">全部</option>
+              <option value="scheduled">计划备份</option>
+              <option value="manual">手动备份</option>
+              <option value="drill">恢复演练</option>
+            </Select>
+          </Field>
+          {/* The count is of the filtered set, not this page: "how many failed backups are kept"
+              is a question about the whole set. */}
+          <span style={muted}>共 {backups.data?.total ?? 0} 条记录</span>
+        </div>
         <DataTable
           columns={[
             { key: 'record', header: '记录', render: (record) => <code style={{ fontSize: 'var(--fs-sm)' }}>{record.recordId}</code> },
@@ -151,6 +183,11 @@ export function StoragePage({ client, role, onJob }: { client: AdminClient; role
           rowKey={(record) => record.recordId}
           empty="还没有备份记录。备份位置与维护窗口需要在部署侧配置后才能启用自动备份。"
         />
+        <div style={{ ...row, marginTop: 10, justifyContent: 'flex-end' }}>
+          {backups.data?.nextCursor ? <span style={muted}>第 {pager.page} 页</span> : null}
+          <Button disabled={!pager.hasPrevious} onClick={pager.previous}>上一页</Button>
+          <Button disabled={!backups.data?.nextCursor} onClick={() => backups.data?.nextCursor && pager.next(backups.data.nextCursor)}>下一页</Button>
+        </div>
         <p style={muted}>恢复演练在隔离目录执行：验证清单、数据库、附件引用，以及恢复后旧会话与未消费的恢复凭据未复活。生产恢复继续走部署侧受控流程，并保留替换前的数据目录。</p>
         <p style={muted}>备份目录不在 Web 静态服务范围内；保留策略只清理校验成功的历史备份，未通过校验的一律保留并列出，且始终至少保留最近一个有效备份。</p>
       </Panel>

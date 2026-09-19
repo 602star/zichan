@@ -205,6 +205,26 @@ export interface BackupRecord {
   errorMessage?: string; note?: string;
 }
 
+/**
+ * The paginated backup list.
+ *
+ * `summary` is queried server-side rather than derived from `backups`: with a filter applied, or
+ * after a run of failures, the newest success may not be on this page at all.
+ */
+export interface BackupsPayload {
+  backups: BackupRecord[];
+  nextCursor?: string;
+  /** Size of the filtered set, not of this page. */
+  total: number;
+  summary: {
+    lastSuccess: { recordId: string; createdAt: string } | null;
+    lastVerified: { recordId: string; verifiedAt: string } | null;
+    /** The newest retention run carries its note and outcome, so the page can still say what it did. */
+    lastRetention: { recordId: string; createdAt: string; note?: string; retention?: Record<string, unknown> } | null;
+  };
+  note: string;
+}
+
 export interface Storage {
   databaseBytes: number; walBytes: number; shmBytes: number;
   objectBytes: number; objectCount: number; trashBytes: number; trashCount: number;
