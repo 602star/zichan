@@ -5,6 +5,7 @@ import { AdminClient, type AdminHealth } from './client.js';
 import { adminHref, navigate as navigateRoute, useRoute } from './router.js';
 import { AuditPage, LogsPage } from './LogsPage.js';
 import { AlertsPage } from './AlertsPage.js';
+import { SecurityEventsPage } from './SecurityEventsPage.js';
 import { InvitesPage } from './InvitesPage.js';
 import { JobsPage } from './JobsPage.js';
 import { OverviewPage } from './OverviewPage.js';
@@ -26,6 +27,7 @@ const NAVIGATION: { path: string; label: string; ownerOnly?: boolean }[] = [
   { path: '/resources', label: '进程与数据库' },
   { path: '/users', label: '用户管理' },
   { path: '/sessions', label: '设备与会话' },
+  { path: '/security-events', label: '登录安全' },
   { path: '/sync', label: '同步诊断' },
   { path: '/invites', label: '注册与邀请', ownerOnly: true },
   { path: '/storage', label: '存储与备份' },
@@ -220,6 +222,7 @@ function AdminShell({ client, account, baseUrl }: { client: AdminClient; account
           : <UsersPage client={client} query={route.query} navigate={go} role={role} />;
       case 'sessions': return <SessionsPage client={client} query={route.query} navigate={go} role={role} selfAccountId={account.accountId ?? ''} />;
       case 'sync': return <SyncPage client={client} query={route.query} navigate={go} />;
+      case 'security-events': return <SecurityEventsPage client={client} />;
       case 'alerts': return <AlertsPage client={client} role={role} navigate={go} />;
       case 'invites': return <InvitesPage client={client} role={role} query={route.query} navigate={go} />;
       case 'storage': return <StoragePage client={client} role={role} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;

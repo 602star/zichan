@@ -389,8 +389,11 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   const log = async (level: ServerLog['level'], action: string, message: string, meta: Omit<ServerLog, 'id' | 'at' | 'level' | 'action' | 'message'> = {}) => {
     await store.appendLog({ id: randomBytes(12).toString('hex'), at: nowIso(), level, action, message, ...meta });
   };
+  // The bucket key stays the primary key; `scope`/`source` are recorded alongside it so the
+  // console can show what is being throttled without parsing the key (an IPv6 source contains
+  // colons, so splitting on them would attribute the bucket to the wrong address).
   const allow = (ip: string, bucket: string, limit: number, windowMs: number) =>
-    store.takeRateLimit(`${ip}:${bucket}`, limit, windowMs);
+    store.takeRateLimit(`${ip}:${bucket}`, limit, windowMs, bucket, ip);
   blobStore.onCleanupResult = (status) => {
     void log(status.lastOk ? 'info' : 'error', 'blob_cleanup', status.lastOk
       ? 'Scheduled attachment cleanup completed'

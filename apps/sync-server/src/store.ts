@@ -600,7 +600,9 @@ CREATE TABLE IF NOT EXISTS server_rate_limits (
   window_started_at INTEGER NOT NULL,
   hits INTEGER NOT NULL,
   blocked_until INTEGER NOT NULL DEFAULT 0,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  scope TEXT,
+  source TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_rate_limits_updated ON server_rate_limits (updated_at);
 CREATE TABLE IF NOT EXISTS sync_replicas (
@@ -870,6 +872,11 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     await this.ensureColumn('server_metric_buckets', 'external_bytes', 'INTEGER NOT NULL DEFAULT 0');
     await this.ensureColumn('server_metric_buckets', 'cpu_percent', 'REAL NOT NULL DEFAULT 0');
     await this.ensureColumn('server_metric_buckets', 'event_loop_max_ms', 'REAL NOT NULL DEFAULT 0');
+    // Rate-limit buckets record what they are for and who hit them, so the console can show
+    // "which address is being throttled" without splitting the opaque key on a colon (an
+    // IPv6 source contains colons, so parsing the key would mis-attribute it).
+    await this.ensureColumn('server_rate_limits', 'scope', 'TEXT');
+    await this.ensureColumn('server_rate_limits', 'source', 'TEXT');
     // Client identification on diagnostic events. Additive and nullable: events recorded before
     // this column simply have no client information, which reads as "unknown", not "old".
     await this.ensureColumn('sync_events', 'client_kind', 'TEXT');
@@ -1178,6 +1185,10 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     bucketKey: string,
     limit: number,
     windowMs: number,
+    /** What the bucket protects, e.g. `auth` — recorded for the console, not for decisions. */
+    scope?: string,
+    /** Who the bucket belongs to (a source IP). Recorded, never used to make a decision. */
+    source?: string,
   ): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
     await this.ready;
     const now = Date.now();
@@ -1195,9 +1206,9 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       const blockedUntil = allowed ? 0 : windowStartedAt + windowMs;
       await driver.run(
         `INSERT OR REPLACE INTO server_rate_limits
-         (bucket_key, window_started_at, hits, blocked_until, updated_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        [bucketKey, windowStartedAt, hits, blockedUntil, now],
+         (bucket_key, window_started_at, hits, blocked_until, updated_at, scope, source)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [bucketKey, windowStartedAt, hits, blockedUntil, now, scope ?? null, source ?? null],
       );
       if (randomInt(0, 100) < 1) {
         await driver.run('DELETE FROM server_rate_limits WHERE updated_at < ?', [now - 7 * 24 * 60 * 60 * 1000]);
@@ -1207,6 +1218,107 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
         retryAfterSeconds: allowed ? 0 : Math.max(1, Math.ceil((blockedUntil - now) / 1000)),
       };
     });
+  }
+
+  /**
+   * Failed authentication attempts, grouped by source address.
+   *
+   * A brute-force attempt is visible as one address accumulating failures across many accounts,
+   * so the grouping is by source and the account names are kept as evidence rather than as the
+   * key. Reading the run log for this does not work: it is capped, and a line-level view makes
+   * "is this one attacker or one careless user" a manual count.
+   */
+  async failedLoginsBySource(options: {
+    from?: string;
+    until?: string;
+    /** Only addresses at or above this many failures; keeps a long tail out of the view. */
+    minFailures?: number;
+    limit?: number;
+  } = {}): Promise<{
+    sources: { source: string; failures: number; accountCount: number; accounts: string[]; firstAt: string; lastAt: string }[];
+    /** Every recorded failure in range, including addresses below the threshold. */
+    total: number;
+    /** How many distinct addresses are in the view, not just on this page. */
+    sourceCount: number;
+  }> {
+    await this.ready;
+    const clauses = ['action IN (\'login_failed\', \'login_disabled\', \'login_mfa_failed\')'];
+    const params: (string | number)[] = [];
+    if (options.from) { clauses.push('at >= ?'); params.push(options.from); }
+    if (options.until) { clauses.push('at < ?'); params.push(options.until); }
+    // A log line with no IP cannot be attributed to a source, so it is excluded rather than
+    // grouped under a placeholder that would look like a real address.
+    clauses.push("COALESCE(ip, '') <> ''");
+    const where = `WHERE ${clauses.join(' AND ')}`;
+    const rows = await this.driver.all<Record<string, unknown>>(
+      `SELECT ip AS source, COUNT(*) AS failures, MIN(at) AS first_at, MAX(at) AS last_at,
+              COUNT(DISTINCT CASE WHEN COALESCE(username, '') <> '' THEN username END) AS account_count
+       FROM server_logs ${where}
+       GROUP BY ip HAVING COUNT(*) >= ? ORDER BY failures DESC, last_at DESC LIMIT ?`,
+      [...params, Math.max(1, options.minFailures ?? 1), Math.max(1, Math.min(options.limit ?? 100, 500))],
+    );
+    const totals = await this.driver.get<{ total: number; source_count: number }>(
+      `SELECT COUNT(*) AS total, COUNT(DISTINCT ip) AS source_count FROM server_logs ${where}`,
+      params,
+    );
+    // The account names are the evidence an operator reads; they are fetched only for the
+    // addresses that survived the filter, so the cost stays proportional to what is shown.
+    const sources = await Promise.all(rows.map(async (row) => {
+      const accounts = await this.driver.all<{ username: string }>(
+        `SELECT DISTINCT username FROM server_logs ${where} AND ip = ? AND COALESCE(username, '') <> '' LIMIT 10`,
+        [...params, String(row['source'])],
+      );
+      return {
+        source: String(row['source']),
+        failures: Number(row['failures'] ?? 0),
+        accountCount: Number(row['account_count'] ?? 0),
+        accounts: accounts.map((entry) => entry.username),
+        firstAt: String(row['first_at']),
+        lastAt: String(row['last_at']),
+      };
+    }));
+    return { sources, total: Number(totals?.total ?? 0), sourceCount: Number(totals?.source_count ?? 0) };
+  }
+
+  /**
+   * Rate-limit buckets, currently blocked first.
+   *
+   * The table is written on every throttled request and was never readable from the console, so
+   * "is this address being limited right now" had no answer that did not involve SQL. A bucket
+   * with no `scope`/`source` predates those columns: it is reported as unknown rather than
+   * parsed out of the key.
+   */
+  async listRateLimits(options: { activeOnly?: boolean; limit?: number } = {}): Promise<{
+    buckets: { bucketKey: string; scope: string | null; source: string | null; hits: number; windowStartedAt: string; blockedUntil: string | null; updatedAt: string }[];
+    active: number;
+    tracked: number;
+  }> {
+    await this.ready;
+    const now = Date.now();
+    const clauses = options.activeOnly ? ['blocked_until > ?'] : [];
+    const params: number[] = options.activeOnly ? [now] : [];
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const rows = await this.driver.all<Record<string, unknown>>(
+      `SELECT * FROM server_rate_limits ${where} ORDER BY blocked_until DESC, updated_at DESC LIMIT ?`,
+      [...params, Math.max(1, Math.min(options.limit ?? 200, 1_000))],
+    );
+    const counts = await this.driver.get<{ active: number; tracked: number }>(
+      'SELECT SUM(CASE WHEN blocked_until > ? THEN 1 ELSE 0 END) AS active, COUNT(*) AS tracked FROM server_rate_limits',
+      [now],
+    );
+    return {
+      buckets: rows.map((row) => ({
+        bucketKey: String(row['bucket_key']),
+        scope: row['scope'] == null ? null : String(row['scope']),
+        source: row['source'] == null ? null : String(row['source']),
+        hits: Number(row['hits'] ?? 0),
+        windowStartedAt: new Date(Number(row['window_started_at'] ?? 0)).toISOString(),
+        blockedUntil: Number(row['blocked_until'] ?? 0) > now ? new Date(Number(row['blocked_until'])).toISOString() : null,
+        updatedAt: new Date(Number(row['updated_at'] ?? 0)).toISOString(),
+      })),
+      active: Number(counts?.active ?? 0),
+      tracked: Number(counts?.tracked ?? 0),
+    };
   }
 
   async listUsers(after = '', limit = 100, filters: {

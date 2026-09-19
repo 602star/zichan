@@ -610,6 +610,44 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       });
     }
 
+    /**
+     * Failed authentication attempts, grouped by source address.
+     *
+     * This is its own view rather than a filter on the run log: the log is capped and shows
+     * one line per attempt, so "is one address trying many accounts" cannot be read off it.
+     * Readable by the read-only operator — it is diagnostic, not a change.
+     */
+    if (req.method === 'GET' && suffix === '/auth-failures') {
+      const from = optionalIso(search.get('from'), 'from');
+      const until = optionalIso(search.get('until'), 'until');
+      const minFailures = Number(search.get('minFailures') ?? 1);
+      if (!Number.isSafeInteger(minFailures) || minFailures < 1 || minFailures > 10_000) return send(res, 400, { error: 'minFailures must be between 1 and 10000' });
+      const result = await store.failedLoginsBySource({
+        ...(from ? { from } : {}),
+        ...(until ? { until } : {}),
+        minFailures,
+        limit: 200,
+      });
+      // Whether an address is currently throttled comes from the limiter, not from the failure
+      // count: the two answer different questions and guessing one from the other would be wrong.
+      const limits = await store.listRateLimits({ limit: 1_000 });
+      const blocked = new Set(limits.buckets.filter((bucket) => bucket.blockedUntil && bucket.source).map((bucket) => bucket.source));
+      return send(res, 200, {
+        ...result,
+        sources: result.sources.map((source) => ({ ...source, throttled: blocked.has(source.source) })),
+        note: '只统计服务端记录到的登录失败：账号被禁用、第二因子被拒，以及到达服务端的密码校验失败。来源 IP 取自连接或可信代理头，没有来源地址的记录不计入；客户端在本地就判定为密码错误、因而根本没有发出请求的尝试不会出现在这里。',
+      });
+    }
+
+    /** Rate-limit buckets: what is being throttled right now, and what has been seen recently. */
+    if (req.method === 'GET' && suffix === '/rate-limits') {
+      const activeOnly = search.get('active') === '1';
+      return send(res, 200, {
+        ...await store.listRateLimits({ activeOnly }),
+        note: '限流桶在每次受限请求时写入，超过上限的地址在窗口结束前被拒绝；这里只读展示，不提供手动解封。',
+      });
+    }
+
     if (req.method === 'GET' && suffix === '/alerts') {
       const state = search.get('state') ?? '';
       if (state && !['pending', 'active', 'resolved'].includes(state)) return send(res, 400, { error: 'invalid state' });

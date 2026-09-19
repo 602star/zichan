@@ -154,6 +154,33 @@ export interface SyncEvent {
   clientKind?: string; clientVersion?: string; protocolVersion?: string;
 }
 
+/** Failed authentication attempts grouped by source address. */
+export interface AuthFailuresPayload {
+  sources: {
+    source: string; failures: number; accountCount: number; accounts: string[];
+    firstAt: string; lastAt: string;
+    /** Whether the limiter currently blocks this address, read from the limiter itself. */
+    throttled: boolean;
+  }[];
+  total: number;
+  sourceCount: number;
+  note: string;
+}
+
+/** Rate-limit buckets as recorded by the limiter. */
+export interface RateLimitsPayload {
+  buckets: {
+    bucketKey: string;
+    /** Absent on buckets written before these columns existed; shown as unknown, not guessed. */
+    scope: string | null;
+    source: string | null;
+    hits: number; windowStartedAt: string; blockedUntil: string | null; updatedAt: string;
+  }[];
+  active: number;
+  tracked: number;
+  note: string;
+}
+
 export interface Job {
   jobId: string; type: string; params: Record<string, unknown>; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
   createdAt: string; createdBy: string; targetAccountId?: string; startedAt?: string; finishedAt?: string;

@@ -3,6 +3,74 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-19（补 3）— 登录安全：暴力尝试在后台看得见
+
+**Goal:** 用户清单第二部分的第一项「暴力破解在后台看不见」。`login_failed` 只写运行日志、
+不进审计，限流桶表 `server_rate_limits` 也没有任何页面。管理员的失败登录尝试应该有一条
+独立视图：来源 IP、次数、是否被限流。
+
+### 诊断（先确认「看不见」到底是什么形态）
+
+- 运行日志里有 `login_failed` / `login_disabled` / `login_mfa_failed` 三种动作，都带 `ip`。
+  但日志**被保留策略裁剪、且每次尝试一行**：要回答「这是一个攻击者还是一个手滑的用户」
+  得人工数，这正是「看不见」的实际含义——不是没有数据，是没有形状。
+- `server_rate_limits` 只有 `bucket_key`（形如 `ip:bucket`）、`hits`、`blocked_until`。
+  连「哪个地址被限流」都要在 SQL 里拆字符串。
+- **发现一个必须先讲清楚的事实**：`loginAccount` 在密码错误时由 OPAQUE 客户端**在本地**
+  判定（`finishLogin` 返回 `null`），根本不发 `/login/finish` 请求。所以官方客户端的一次
+  密码输错**不会**产生任何服务端记录。如果把这留白，运维会把空表读成「没人尝试过」。
+
+### 交付
+
+1. **按来源地址聚合失败登录**（`store.failedLoginsBySource` + `GET /api/admin/auth-failures`）：
+   失败次数、涉及账号（最多列 10 个并给出总数）、首次与最近时间。**账号名是证据，来源地址是键**——
+   一个地址跨多个账号才是攻击的形状。`minFailures` 只收窄列表，`total` 仍然是范围内记录到的全部，
+   阈值不重新定义测量。
+2. **限流桶页面**（`store.listRateLimits` + `GET /api/admin/rate-limits`）：来源、用途、窗口内次数、
+   是否处于限流，可按 `?active=1` 只看正在限流的。表新增 `scope` / `source` 两列（追加式，
+   `ensureColumn` 补齐），**不从 `bucket_key` 拆解**：IPv6 地址本身含冒号，按冒号拆会把桶归到错误的地址；
+   旧记录显示「未知」而不是猜一个。
+3. **「是否被限流」读限流器自己的状态**，不从失败次数反推：反推会在服务器其实没在拦截时声称它在拦截。
+   单测里有专门的反例（3 次失败 → `throttled` 必须为 false）。
+4. **新页面 `/admin/security-events`「登录安全」**，把上面两条并排展示，并把边界写在界面上。
+   读操作，只读运维可见（这是诊断，不是变更）。**不提供手动解封**：解封会让正在进行的尝试
+   重新获得配额，属于应当由时间解决的窗口。
+
+### 判断（为什么这么做）
+
+- **「客户端本地就拒绝」这件事必须写进页面**，而不是留在代码注释里。OPAQUE 的设计就是让
+  错误密码在客户端就被识别，服务端看不到——这是正确行为，但它让「这张表是空的」有两种
+  截然不同的解释。写清楚边界比补一堆空告警诚实。
+- **聚合而不是罗列**：视图的价值在于形状。逐行展示等于把运行日志重新渲染一遍，运维还是要自己数。
+- **不反推限流**：失败次数与限流是两件独立的事，前者是攻击的证据，后者是服务器的动作。
+  用一个猜另一个，会在最需要准确的时刻给出错误结论。
+- **只读运维可见**：攻击正在进行时，值班的只读运维正是应该能看到它的人。
+
+### 环境与工具坑（本轮新踩）
+
+- **`loginAccount` 不能用来测试服务端的登录失败**：官方客户端在本地就把错误密码判掉了，
+  用它写的用例会产生 0 条服务端记录、然后「证明」聚合是坏的。测试必须驱动真实的 OPAQUE
+  握手（`client.startLogin` + `client.finishLogin` + 手工 `/finish`），这也正是攻击者做的事。
+- **限流按地址分桶，测试与管理员登录共用同一个桶**：e2e 里先登录再灌请求，否则 26 次
+  攻击会把管理员的登录一起限流掉（这是真实行为，不是测试瑕疵，页面存在的意义之一就是让它可见）。
+- **`COUNT(DISTINCT COALESCE(username, ''))` 会把「无账号」算成一个账号**：一条没有用户名的
+  失败记录会报告「涉及 1 个账号」。改成 `COUNT(DISTINCT CASE WHEN ... THEN username END)`。
+- **`Panel` 的标题是 `<strong>` 不是 heading**，e2e 里不能用 `getByRole('heading')` 定位面板；
+  用 `section` + 标题文本过滤。
+- **e2e 里同一地址同时出现在两张表**，`getByRole('cell')` 会命中 8 个元素（strict mode 报错）；
+  断言必须限定到具体面板。
+
+### Verified
+
+- `npm test` 通过：sync-server 169（原 163 + 新增 6）、web 528、core 135、db 169、logger 7。
+- `npm run typecheck`、`npm run lint`（0 error / 0 warning）、`npm run build:server` 通过。
+- 新增 `apps/sync-server/test/admin-security-events.test.ts`（6 项：按来源聚合且账号名可读、
+  无用户名的失败不计为账号、阈值只收窄列表不改 total、3 次失败不报限流、限流桶带来源与用途
+  且 `?active=1` 只返回被限流的、只读运维两个接口都可读）；`tools/e2e/account-tests/admin-security-events.spec.mjs`
+  （2 项真实浏览器用例：页面可达且写明边界、限流后两张表都标记出来）。
+- 全量 `npm test` 期间 `management.test.ts` 曾失败一次，随后连跑 3 次该文件与全量套件均通过，
+  判定为偶发；不是本轮改动引起。
+
 ## 2026-09-19（补 2）— 管理后台：能确认为缺陷的七项（该修，不是该加）
 
 **Goal:** 用户给出一份清单，第一部分是「能确认为缺陷的」。这一批只做这七项：都不是新功能，
