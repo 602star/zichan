@@ -43,6 +43,20 @@ export function adminBaseUrl(location: Pick<Location, 'origin' | 'pathname'>): s
   return match ? `${location.origin}${match[1]}` : undefined;
 }
 
+/**
+ * A 404 with no error code is not a missing record: the server does not serve this route at
+ * all. In practice that means the console is newer than the process answering it - a page
+ * served from source against a server built before the route existed. Passing the server's
+ * bare "not found" through tells the operator nothing and reads like their data is gone, so
+ * name the mismatch and the fix instead.
+ */
+export function describeUnservedRoute(status: number, code: string, text: string): string {
+  if (status !== 404 || code) return text;
+  return /^not found$/i.test(text.trim())
+    ? '服务器未提供该管理接口（HTTP 404）。这通常表示运行中的服务端比当前页面旧：请先重新构建并重启服务端（npm run build:server 后 npm run start:all），再刷新本页。'
+    : text;
+}
+
 /** Management sessions never enter ledger stores, localStorage or sessionStorage. */
 export class AdminClient {
   private session?: SyncAuthSession;
@@ -213,7 +227,7 @@ export class AdminClient {
       }, async (res) => {
         const result = await readAdminJson<{ code?: string; error?: string; requestId?: string }>(res);
         this.current(generation);
-        if (!res.ok) throw new AdminError(res.status, result.code ?? '', result.error ?? `HTTP ${res.status}`, result.requestId ?? res.headers?.get?.('x-request-id') ?? undefined);
+        if (!res.ok) throw new AdminError(res.status, result.code ?? '', describeUnservedRoute(res.status, result.code ?? '', result.error ?? `HTTP ${res.status}`), result.requestId ?? res.headers?.get?.('x-request-id') ?? undefined);
         return result as T;
       }, options.timeoutMs ?? (path.endsWith('/verify') ? 120_000 : 30_000));
     } catch (error) {

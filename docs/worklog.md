@@ -3,6 +3,56 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-19（补）— 服务端比页面旧时不再只显示 “not found”
+
+**Goal:** 运维打开「进程与数据库」页时看到的是 `not found` 三个字，无法判断是数据没了、还是部署错配。
+
+### 根因（先诊断，再改）
+
+- 页面本身没有问题。`/admin/resources` 的**页面源码**由 Vite 按源码实时编译，而**运行中的服务端进程**
+  是 2026-09-15 启动的旧构建：它没有 `/api/admin/resources` 路由，于是走到兜底 `send(res, 404, { error: 'not found' })`。
+  证据是 `/api/health` 的 `capabilities` 只有 17 项、缺 `admin-resources-v1`（新构建为 22 项）。
+- 前端把这个裸字符串原样渲染，所以运维看到的是英文 `not found`，而不是“服务端版本旧”。
+- 修复分两步：重启服务端让新路由生效（`npm run stop` + `npm run start:all`），并让**这个失败模式自解释**。
+
+### 交付
+
+1. **`describeUnservedRoute()`（`apps/web/src/admin/client.ts`）**：仅当 `404` **且没有错误码**、且文案就是
+   `not found` 时，翻译成“服务器未提供该管理接口（HTTP 404）。这通常表示运行中的服务端比当前页面旧：
+   请先重新构建并重启服务端（npm run build:server 后 npm run start:all），再刷新本页。”
+   **判据刻意收窄**：带错误码的 404（`NOT_FOUND`/`account not found`/`job not found`…）保留服务端原文，
+   因为那才真的是“这条记录不存在”，改写会抹掉有用信息。
+2. **测试**：`apps/web/test/admin-client.test.ts` 加 2 项——裸 `not found` 被翻译；带错误码的 404 保留原文。
+   `tools/e2e/account-tests/admin-resources.spec.mjs` 加 1 项真实浏览器用例（拦截该路由返回 404，断言页面
+   显示的是版本错配说明）。
+
+### 判断（为什么这么做）
+
+- **404 有两种完全不同的含义**，前端此前把它们混成一种。`{error:'not found'}` 来自路由兜底，是**部署事实**；
+  `{code:'NOT_FOUND', error:'account not found'}` 是**业务事实**。把前者翻译成部署建议、后者保持原样，
+  比统一文案更诚实。
+- **文案里给出确切命令**（`npm run build:server` 后 `npm run start:all`），因为“服务端旧”这句话本身不可执行。
+
+### 环境与工具坑（本轮新踩）
+
+- **`npm run test:e2e:account` 不会自动带上浏览器路径**：本机 `ms-playwright\chromium_headless_shell-1193`
+  缺 `headless_shell.exe`，不设 `PLAYWRIGHT_EXECUTABLE_PATH` 时**全部 37 项以 `browserType.launch` 失败**，
+  且报错发生在 launch 阶段、很容易被误读成“我的改动弄坏了 37 个用例”。判定方法：看首个失败是不是
+  `Executable doesn't exist ... headless_shell.exe`。必须显式设置：
+  `$env:PLAYWRIGHT_EXECUTABLE_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"`。
+- **e2e 读的是 `apps/web/dist`，不是源码**：只改 `src/**` 而不 `npm run build:web`，e2e 断言的是旧前端产物。
+  本轮第一次验证就是这样失败的（页面仍显示旧文案），重新构建前端后才通过。
+- **PowerShell 会吞掉 `node -e` 里的引号**（`'` 与转义 `\"` 反复出错），多行脚本一律写成 `.cjs`/`.mjs`
+  文件再执行，不要用内联 `node -e`。
+
+### Verified
+
+- `npm test` 通过：sync-server 159、web 528（原 526 + 新增 2）、其余 166 + 7 + 128。
+- `npm run typecheck`、`npm run lint`（0 error / 0 warning）通过。
+- `npm run build:web` 通过；管理后台相关 e2e 14 项真实浏览器用例全过
+  （`admin.spec.mjs` 6、`admin-usability.spec.mjs` 3、`admin-dev-proxy.spec.mjs` 1、`admin-resources.spec.mjs` 4，含新增的版本错配用例），无回归。
+- 已用独立实例复现旧行为：未重启服务端时页面显示裸 `not found`；重启后能力列表升到 22 项，页面正常。
+
 ## 2026-09-19 — 进程资源与数据库状态（后台运维可观测）
 
 **Goal:** 公网服务器部署下，后台需要能回答“这个进程占多少内存、还活着吗”和“数据库在怎么长”。不升

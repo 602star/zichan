@@ -141,3 +141,20 @@ test('lets a read-only operator read the page and refuses the write', async ({ p
     expect((await refused.json()).code).toBe('READ_ONLY_ROLE');
   } finally { await f.close(); }
 });
+
+test('names a server older than the page instead of echoing "not found"', async ({ page }) => {
+  const f = await fixture();
+  try {
+    // The failure an operator actually hits when a dev page is served from source against a
+    // process built before this route existed: a bare 404 with no error code.
+    await page.route('**/api/admin/resources**', (route) =>
+      route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) }));
+
+    await signIn(page, f.url);
+    await page.getByRole('link', { name: '进程与数据库' }).click();
+    // The console states the mismatch and the fix rather than passing the server's wording
+    // through, which reads like the data is gone.
+    await expect(page.getByText(/运行中的服务端比当前页面旧/)).toBeVisible();
+    await expect(page.getByText(/重新构建并重启服务端/)).toBeVisible();
+  } finally { await f.close(); }
+});

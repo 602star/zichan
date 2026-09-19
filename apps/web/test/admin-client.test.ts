@@ -85,6 +85,25 @@ describe('independent management session lifecycle', () => {
     fetcher.mockResolvedValueOnce(new Response('', { status: 500 }) as never);
     await expect(client.health()).rejects.toThrow('请确认服务器已启动');
   });
+
+  it('names an unserved admin route as a version mismatch, not as missing data', async () => {
+    // The page is served from source while the process behind it is an older build: the route
+    // does not exist yet and the server answers with a bare "not found".
+    await client.login('operator', 'password');
+    fetcher.mockResolvedValueOnce(reply({ error: 'not found' }, 404));
+    await expect(client.request('/resources')).rejects.toMatchObject({
+      status: 404,
+      message: expect.stringContaining('重新构建并重启服务端'),
+    });
+  });
+
+  it('keeps the server wording for a 404 that identifies what is missing', async () => {
+    await client.login('operator', 'password');
+    fetcher.mockResolvedValueOnce(reply({ code: 'NOT_FOUND', error: 'account not found' }, 404));
+    await expect(client.request('/accounts/missing')).rejects.toMatchObject({ message: 'account not found' });
+    fetcher.mockResolvedValueOnce(reply({ error: 'job not found' }, 404));
+    await expect(client.request('/jobs/missing')).rejects.toMatchObject({ message: 'job not found' });
+  });
   it('routes management without routing ledger paths into the admin bootstrap', () => {
     expect(adminBaseUrl({ origin: 'https://example.com', pathname: '/ledger/admin/users' })).toBe('https://example.com/ledger');
     expect(adminBaseUrl({ origin: 'https://example.com', pathname: '/admin' })).toBe('https://example.com');
