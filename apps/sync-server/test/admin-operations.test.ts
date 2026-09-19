@@ -78,6 +78,22 @@ describe('management console operations', () => {
 
       const logs = await (await f.api(f.owner.accessToken, `/logs?requestId=${deniedBody.requestId}`)).json() as { logs: { action: string }[] };
       expect(logs.logs.length).toBeGreaterThanOrEqual(1);
+
+      // The refusal must also land in the failed-attempt table: the panels that read it were
+      // permanently empty because nothing wrote to it.
+      const failures = await (await f.api(f.owner.accessToken, '/audit/failures')).json() as {
+        failures: { action: string; code: string | null; requestId: string | null; targetAccountId: string | null }[];
+      };
+      const recorded = failures.failures.find((failure) => failure.requestId === deniedBody.requestId);
+      expect(recorded).toBeDefined();
+      expect(recorded).toMatchObject({ action: 'accounts', code: 'PROTECTED_ACCOUNT' });
+      // The account the change targeted is what an operator looks up.
+      expect(recorded!.targetAccountId).toBe(f.owner.accountId);
+      // A read is not a management change and must not be recorded as a failure.
+      const readOnly = await f.api(manager.accessToken, `/accounts/${f.owner.accountId}`);
+      expect(readOnly.status).toBeLessThan(400);
+      const afterRead = await (await f.api(f.owner.accessToken, '/audit/failures')).json() as { failures: unknown[] };
+      expect(afterRead.failures).toHaveLength(failures.failures.length);
     } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
   });
 
@@ -332,6 +348,48 @@ describe('management console operations', () => {
       await store.recordAdminFailure({ action: 'state', code: 'PROTECTED_ACCOUNT', message: 'nope', requestId: 'req-1' });
       expect((await store.listAdminFailures(5))[0]).toMatchObject({ action: 'state', code: 'PROTECTED_ACCOUNT', requestId: 'req-1' });
     } finally { await store.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  /**
+   * The audit trail used to be the only table with no bound at all, and the failure cap was a
+   * hard-coded 2000 that no operator could change.
+   */
+  it('bounds the audit trail and the failed-attempt list by their own retentions', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zichan-audit-retention-'));
+    const store = new SyncServerStore(join(dir, 'server.sqlite'), 'invite', 'srv-audit-retention');
+    try {
+      await store.ready;
+      for (let index = 0; index < 12; index += 1) {
+        await store.recordAdminFailure({ action: 'state', code: 'PROTECTED_ACCOUNT', message: `attempt ${index}` });
+      }
+      // The cap is honoured on the write path, not only by an explicit prune run.
+      await store.recordAdminFailure({ action: 'state', code: 'PROTECTED_ACCOUNT', message: 'last', retention: 5 });
+      const kept = await store.listAdminFailures(50);
+      expect(kept).toHaveLength(5);
+      expect(kept[0]).toMatchObject({ message: 'last' });
+
+      // Audit trimming is a separate operation with its own, much larger bound.
+      const audit = await store.pruneAdminAudit(0);
+      expect(audit.removed).toBeGreaterThanOrEqual(0);
+      const failures = await store.pruneAdminFailures(2);
+      expect(failures.removed).toBe(3);
+      expect(await store.listAdminFailures(50)).toHaveLength(2);
+    } finally { await store.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  /** The list column used to be fed by a type assertion over a field the query never returned. */
+  it('reports the last successful sync per account and leaves it empty when never synced', async () => {
+    const f = await fixture();
+    try {
+      const listed = await (await f.api(f.owner.accessToken, '/users')).json() as {
+        users: { username: string; lastSyncAt: string | null }[];
+      };
+      const member = listed.users.find((user) => user.username === 'member');
+      expect(member).toBeDefined();
+      // Never synced: null, not a fabricated timestamp.
+      expect(member!.lastSyncAt).toBeNull();
+      expect(listed.users.find((user) => user.username === 'owner')).toHaveProperty('lastSyncAt');
+    } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
   });
 });
 

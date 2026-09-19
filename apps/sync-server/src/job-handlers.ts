@@ -119,6 +119,21 @@ export function createJobHandlers(deps: JobHandlerDeps): Partial<Record<AdminJob
       return { metricsRemoved: metrics.removed, syncEventsRemoved: events.removed };
     },
 
+    /**
+     * Audit retention is its own task rather than part of `metrics.prune`, because the audit
+     * trail is the record an operator may need to keep longest: running it separately keeps a
+     * routine metrics trim from being the thing that shortened it.
+     */
+    'audit.prune': async (job) => {
+      const auditRetention = Number(settings.effective('auditRetention'));
+      const failureRetention = Number(settings.effective('auditFailureRetention'));
+      await job.progress({ phase: 'pruning' });
+      const audit = await store.pruneAdminAudit(auditRetention);
+      const failures = await store.pruneAdminFailures(failureRetention);
+      await job.note('info', `管理审计裁剪完成：审计 ${audit.removed} 条（保留 ${auditRetention}）、失败尝试 ${failures.removed} 条（保留 ${failureRetention}）`);
+      return { auditRemoved: audit.removed, failuresRemoved: failures.removed, auditRetention, failureRetention };
+    },
+
     'backup.verify': async (job) => {
       const record = await requireRecord(job);
       await job.progress({ phase: 'verifying' });

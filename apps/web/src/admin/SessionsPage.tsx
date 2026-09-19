@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, canWrite, message, muted, row, useCursorPager, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, canWrite, message, muted, roleLabel, row, useActionError, useCursorPager, useResource, when } from './ui.js';
 import type { SessionRow } from './types.js';
 
 export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
@@ -20,6 +20,7 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
   const [searchDraft, setSearchDraft] = useState(search);
   const [report, setReport] = useState('');
   const [busy, setBusy] = useState(false);
+  const actionError = useActionError();
 
   const list = useResource(() => client.request<{ sessions: SessionRow[]; nextCursor?: string; paginationUnit: string; note: string }>(
     `/sessions?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${search ? `&search=${encodeURIComponent(search)}` : ''}${state ? `&state=${state}` : ''}${kind ? `&kind=${kind}` : ''}`,
@@ -106,7 +107,7 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
             ) },
             { key: 'device', header: '设备名称', render: (session) => session.deviceName },
             { key: 'kind', header: '会话类型', render: (session) => session.kind === 'admin' ? '管理后台' : '记账' },
-            { key: 'role', header: '角色', secondary: true, render: (session) => session.role === 'owner' ? '所有者' : session.role === 'admin' ? '管理员' : '普通用户' },
+            { key: 'role', header: '角色', secondary: true, render: (session) => roleLabel(session.role) },
             { key: 'state', header: '状态', render: (session) => <Badge tone={session.revokedAt ? 'bad' : session.active ? 'ok' : 'muted'}>{session.revokedAt ? '已撤销' : session.active ? '有效' : '已过期'}</Badge> },
             { key: 'created', header: '首次登录', secondary: true, render: (session) => when(session.createdAt) },
             { key: 'seen', header: '最近活动', render: (session) => when(session.lastSeenAt) },
@@ -118,7 +119,7 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
                   onClick={() => {
                     void client.request(`/sessions/${session.id}/revoke`, {}, { idempotencyKey: adminIdempotencyKey(`revoke-${session.id}`) })
                       .then(() => list.reload())
-                      .catch((error) => window.alert(message(error)));
+                      .catch((error) => actionError.setError(message(error)));
                   }}>撤销</Button>
               ),
             },
@@ -136,6 +137,7 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
         />
         <p style={muted}>{list.data?.note ?? ''}</p>
         <p style={muted}>所有者与管理员可以撤销自己账号的其他会话（需要最近 5 分钟内的登录）；当前会话请通过顶部「退出管理后台」结束，避免出现不清楚的登录状态。其他账号的管理员或所有者会话受保护。</p>
+        {actionError.error ? <Notice tone="bad">{actionError.error}</Notice> : null}
       </Panel>
     </>
   );

@@ -29,7 +29,7 @@
 | DELETE/POST | `/api/v3/blobs/:id`、`:id/restore` | 移入回收区或恢复 |
 | GET/POST | `/api/v3/backups` | 列出或登记已完成上传的加密 `.zcbak` 归档 |
 | DELETE | `/api/v3/backups/:archiveId` | 删除备份目录项并把对应密文对象移入回收区 |
-| GET | `/api/admin/status`、`/api/admin/users`、`/api/admin/logs` | 管理员查看运行、用户与日志状态 |
+| GET | `/api/admin/overview`、`/api/admin/users`、`/api/admin/logs` | 管理员查看运行、用户与日志状态 |
 | GET/POST | `/api/admin/devices` | 管理员查看和撤销用户设备会话 |
 | GET/POST | `/api/admin/registration`、`/api/admin/invites` | 管理注册模式与邀请码 |
 | GET/POST | `/api/admin/quotas` | 查看或调整用户提交与附件配额 |

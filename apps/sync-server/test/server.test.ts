@@ -599,11 +599,11 @@ describe('sync-server endpoints', () => {
         disabled: false,
         session: { username: 'owner-user', active: true },
       });
-      expect((await fetch(u + '/api/admin/status', {
+      expect((await fetch(u + '/api/admin/overview', {
         headers: { Authorization: 'Bearer retired-static-credential' },
       })).status).toBe(401);
       const retiredHeaderName = ['X', 'Admin', 'Token'].join('-');
-      expect((await fetch(u + '/api/admin/status', {
+      expect((await fetch(u + '/api/admin/overview', {
         headers: { [retiredHeaderName]: 'retired-static-credential' },
       })).status).toBe(401);
       expect((await registerUser(u, 'invite-user', 'pw')).status).toBe(403);
@@ -617,7 +617,7 @@ describe('sync-server endpoints', () => {
       expect(memberRegistration.status).toBe(200);
       expect(await memberRegistration.json()).toMatchObject({ role: 'member' });
       const memberToken = await accessToken(u, 'invite-user', 'pw');
-      expect((await fetch(u + '/api/admin/status', {
+      expect((await fetch(u + '/api/admin/overview', {
         headers: { Authorization: `Bearer ${memberToken}` },
       })).status).toBe(403);
       const usersRes = await fetch(u + '/api/admin/users', { headers: adminHeaders });
@@ -825,8 +825,10 @@ describe('sync-server endpoints', () => {
       const firstUrl = `http://localhost:${(first.server.address() as AddressInfo).port}`;
       expect((await registerUser(firstUrl, 'persisted', 'pw')).status).toBe(200);
       const ownerAccessToken = await accessToken(firstUrl, 'persisted', 'pw');
-      const status = await fetch(firstUrl + '/api/admin/status', { headers: { Authorization: `Bearer ${ownerAccessToken}` } });
-      expect(await status.json()).toMatchObject({ journalMode: 'wal', tempStore: 'memory', schemaVersion: CURRENT_SERVER_SCHEMA, userCount: 1, claimed: true });
+      const ready = await fetch(firstUrl + '/api/ready');
+      expect(await ready.json()).toMatchObject({ mode: 'light', database: { journalMode: 'wal', tempStore: 'memory', schemaVersion: CURRENT_SERVER_SCHEMA } });
+      const overview = await fetch(firstUrl + '/api/admin/overview', { headers: { Authorization: `Bearer ${ownerAccessToken}` } });
+      expect(await overview.json()).toMatchObject({ snapshot: { counts: { userCount: 1 } } });
       await first.close();
       first = null;
       expect(existsSync(join(dataDir, 'server.sqlite'))).toBe(true);

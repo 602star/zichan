@@ -152,7 +152,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     return label;
   };
 
-  const handle = async (req: IncomingMessage, res: ServerResponse, apiPath: string, auth: AdminAuth, requestId: string): Promise<void> => {
+  const handleRoute = async (req: IncomingMessage, res: ServerResponse, apiPath: string, auth: AdminAuth, requestId: string): Promise<void> => {
     let suffix = apiPath.slice('/api/admin'.length) || '/';
     let parts = pathParts(suffix);
     const search = new URL(req.url ?? '/', 'http://localhost').searchParams;
@@ -881,36 +881,6 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       return send(res, 200, { failures: await store.listAdminFailures(50), note: '失败尝试单独记录，不与已回滚的事务审计混在一起。' });
     }
 
-    if (req.method === 'GET' && suffix === '/status') {
-      const snapshot = await metrics.current();
-      const probe = await store.probe();
-      return send(res, 200, {
-        ok: true,
-        serverId: deps.serverId,
-        syncEnabled: deps.enableSync,
-        webEnabled: deps.enableWeb,
-        basePath: deps.basePath,
-        dataDir: deps.dataDir,
-        databaseFile: deps.databaseFile,
-        claimed: await store.ownerUsername() !== undefined,
-        registrationMode: await store.registrationMode(),
-        userCount: snapshot.counts.userCount,
-        disabledUserCount: snapshot.counts.disabledUserCount,
-        inviteCount: snapshot.counts.inviteCount,
-        commitCount: snapshot.counts.commitCount,
-        commitBytes: snapshot.counts.commitBytes,
-        activeSessionCount: snapshot.counts.activeSessionCount,
-        journalMode: probe.journalMode,
-        tempStore: probe.tempStore,
-        schemaVersion: probe.schemaVersion,
-        sampledAt: snapshot.sampledAt,
-        // Enough of the resource and database picture to be useful without a second request,
-        // while the detail stays on /resources and /database/stats.
-        process: snapshot.process,
-        database: snapshot.database,
-      });
-    }
-
     if (req.method === 'GET' && suffix === '/database/verify') {
       const recorded = await store.maintenanceState('verification:database');
       return send(res, 200, {
@@ -1160,6 +1130,44 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     }
 
     return send(res, 404, { error: 'not found' });
+  };
+
+  /**
+   * Records every refused or rolled-back management change before rethrowing.
+   *
+   * The table existed but nothing wrote to it, so the failure panels stayed empty and a
+   * rejected attempt (read-only operator, protected account, stale version) left a log line at
+   * most. Only requests that actually got past authentication are recorded, and the record is
+   * best-effort: a diagnostic must never replace the real error.
+   */
+  const handle = async (req: IncomingMessage, res: ServerResponse, apiPath: string, auth: AdminAuth, requestId: string): Promise<void> => {
+    const noteFailure = async (action: string, error: unknown, targetAccountId?: string): Promise<void> => {
+      const code = error instanceof ServerStoreError ? error.code : 'INTERNAL_ERROR';
+      const text = error instanceof Error ? error.message : String(error);
+      await store.recordAdminFailure({
+        actorAccountId: auth.user.accountId,
+        ...(targetAccountId ? { targetAccountId } : {}),
+        action,
+        code,
+        message: text,
+        requestId,
+        retention: Number(settings.settings.effective('auditFailureRetention')),
+      });
+    };
+
+    if (req.method === 'GET' || req.method === 'HEAD') return handleRoute(req, res, apiPath, auth, requestId);
+    try {
+      return await handleRoute(req, res, apiPath, auth, requestId);
+    } catch (error) {
+      const suffix = apiPath.slice('/api/admin'.length) || '/';
+      const parts = pathParts(suffix);
+      // Prefer the account the change targeted: that is what an operator looks up.
+      const target = parts[0] === 'accounts' && parts[1]
+        ? (await store.userByAccountId(parts[1]).catch(() => undefined))?.accountId
+        : undefined;
+      await noteFailure(parts[0] ?? 'unknown', error, target).catch(() => undefined);
+      throw error;
+    }
   };
 
   return { handle };

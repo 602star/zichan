@@ -1,7 +1,7 @@
 /** Storage and backups: physical usage, logical quota, the maintenance plan, records and drills. */
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, message, muted, row, useResource, when, canWrite } from './ui.js';
+import { Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, message, muted, row, useActionError, useResource, when, canWrite } from './ui.js';
 import type { BackupRecord, SettingsPayload, Storage } from './types.js';
 
 /** One line of the declared plan: the raw value plus how the page should show it. */
@@ -15,6 +15,7 @@ function planField(settings: SettingsPayload | undefined, name: string): { raw: 
 
 export function StoragePage({ client, role, onJob }: { client: AdminClient; role: string; onJob: (jobId: string) => void }) {
   const writable = canWrite(role);
+  const actionError = useActionError();
   const storage = useResource(() => client.request<Storage>('/storage'), []);
   const backups = useResource(() => client.request<{ backups: BackupRecord[]; note: string }>('/backups'), []);
   const settings = useResource(() => client.request<SettingsPayload>('/settings'), []);
@@ -22,8 +23,8 @@ export function StoragePage({ client, role, onJob }: { client: AdminClient; role
 
   const autoPlan = planField(settings.data, 'backupAutoEnabled');
   const directory = planField(settings.data, 'backupDirectory');
-  // Named `windowLabel`, not `window`: a local named `window` shadows the global one and breaks
-  // every `window.alert` in this file.
+  // Named `windowLabel`, not `window`: a local named `window` shadows the global one. Page
+  // errors are reported in place through `useActionError`, never through a blocking dialog.
   const windowLabel = planField(settings.data, 'backupWindow');
   const retentionPlan = planField(settings.data, 'backupRetentionCount');
   const intervalHours = planField(settings.data, 'backupIntervalHours');
@@ -34,15 +35,17 @@ export function StoragePage({ client, role, onJob }: { client: AdminClient; role
   const lastRetention = (backups.data?.backups ?? []).find((record) => record.retention);
 
   const startJob = (type: 'storage.cleanup' | 'backup.verify' | 'restore.drill', recordId?: string) => {
+    actionError.clear();
     void client.request<{ job: { jobId: string } }>('/jobs', { type, ...(recordId ? { recordId } : {}) }, { idempotencyKey: adminIdempotencyKey(`${type}-${recordId ?? 'all'}`) })
       .then((result) => onJob(result.job.jobId))
-      .catch((error) => window.alert(message(error)));
+      .catch((error) => actionError.setError(message(error)));
   };
 
   return (
     <>
       <h2>存储与备份</h2>
       <Loading loading={storage.loading} error={storage.error} stale={storage.stale} loadedAt={storage.loadedAt} />
+      {actionError.error ? <Notice tone="bad">{actionError.error}</Notice> : null}
 
       <Panel title="维护计划" action={<Button onClick={settings.reload}>刷新</Button>}
         note="这里只声明与检查计划：自动备份默认关闭，且必须先配置备份位置与维护窗口才能启用。真正的停服备份由部署侧程序在维护窗口内执行，后台不会自己停服。">

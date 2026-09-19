@@ -606,6 +606,10 @@ export function createMetricsService(deps: MetricsServiceDeps) {
     try {
       await store.pruneLogs(Number(settings.effective('logRetention')));
       await store.pruneSyncEvents(Number(settings.effective('syncEventRetention')));
+      // The audit trail used to be the one table with no bound at all. It is trimmed here too,
+      // but with its own much larger retention.
+      await store.pruneAdminAudit(Number(settings.effective('auditRetention')));
+      await store.pruneAdminFailures(Number(settings.effective('auditFailureRetention')));
       const minuteDays = Number(settings.effective('metricsMinuteRetentionDays'));
       await store.pruneMetrics(new Date(Date.now() - (7 - minuteDays) * 24 * 60 * 60 * 1000));
       await store.recordServiceSample(emptyCounters());

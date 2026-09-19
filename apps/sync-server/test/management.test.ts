@@ -129,10 +129,10 @@ describe('server management authorization', () => {
       expect((await f.api(f.member.accessToken, '/status')).status).toBe(403);
       expect((await f.api(f.owner.accessToken, `/accounts/${f.manager.accountId}/role`, { role: 'owner' })).status).toBe(400);
       expect((await f.api(f.owner.accessToken, `/accounts/${f.manager.accountId}/role`, { role: 'admin' })).status).toBe(200);
-      expect((await f.api(f.manager.accessToken, '/status')).status).toBe(401);
+      expect((await f.api(f.manager.accessToken, '/overview')).status).toBe(401);
       const manager = await loginAccount(f.url, 'manager', password);
       expect(manager.role).toBe('admin');
-      expect((await f.api(manager.accessToken, '/status')).status).toBe(200);
+      expect((await f.api(manager.accessToken, '/overview')).status).toBe(200);
       for (const [path, body] of [
         ['/registration', { mode: 'open' }],
         [`/accounts/${f.member.accountId}/role`, { role: 'admin' }],

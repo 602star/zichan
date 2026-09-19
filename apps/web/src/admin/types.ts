@@ -116,6 +116,8 @@ export interface AccountRow {
   activeDeviceCount: number; commitBytes: number; commitQuotaBytes: number;
   createdAt: string; updatedAt: string; lastLoginAt?: string; revision: number;
   protectionMode: string | null; quotaState: 'ok' | 'warning' | 'over';
+  /** Last successful sync event for this account; null when it has never synced. */
+  lastSyncAt?: string | null;
 }
 
 export interface AccountDetail {
@@ -240,6 +242,7 @@ export const JOB_TYPES: { value: string; label: string; ownerOnly: boolean; hint
   { value: 'storage.cleanup', label: '附件清理', ownerOnly: false, hint: '清理过期回收站与暂存上传，并记录释放空间。' },
   { value: 'logs.prune', label: '运行日志裁剪', ownerOnly: false, hint: '按保留条数裁剪运行日志。' },
   { value: 'metrics.prune', label: '指标与诊断裁剪', ownerOnly: false, hint: '按保留策略裁剪指标分桶与诊断事件。' },
+  { value: 'audit.prune', label: '管理审计裁剪', ownerOnly: false, hint: '按保留条数裁剪管理审计与失败尝试；审计上限默认远高于运行日志。' },
   { value: 'backup.verify', label: '备份校验', ownerOnly: true, hint: '校验已登记的备份记录。' },
   { value: 'restore.drill', label: '恢复演练', ownerOnly: true, hint: '在隔离目录恢复并核对旧会话未复活。' },
 ];

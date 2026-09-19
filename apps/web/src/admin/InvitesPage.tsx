@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Pager, Panel, Select, TextInput, message, muted, row, useCursorPager, useResource, when, canWrite } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Notice, Pager, Panel, Select, TextInput, message, muted, row, useActionError, useCursorPager, useResource, when, canWrite } from './ui.js';
 import type { Invite } from './types.js';
 
 const stateOf = (invite: Invite): { label: string; tone: 'ok' | 'bad' | 'muted' } => {
@@ -20,6 +20,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
   const [days, setDays] = useState('7');
   const [issued, setIssued] = useState<Invite>();
   const [error, setError] = useState('');
+  const actionError = useActionError();
 
   const mode = useResource(() => client.request<{ mode: string }>('/registration'), []);
   const invites = useResource(() => client.request<{ invites: Invite[]; nextCursor?: string }>(
@@ -29,9 +30,10 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
   const update = pager.apply;
 
   const setMode = (value: string): void => {
+    actionError.clear();
     void client.request('/registration', { mode: value }, { idempotencyKey: adminIdempotencyKey(`registration-${value}`) })
       .then(() => mode.reload())
-      .catch((caught) => window.alert(message(caught)));
+      .catch((caught) => actionError.setError(message(caught)));
   };
 
   return (
@@ -98,7 +100,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
                   onClick={() => {
                     void client.request(`/invites/${encodeURIComponent(invite.code)}/disable`, { disabled: !invite.disabled }, { idempotencyKey: adminIdempotencyKey(`invite-${invite.code}-${invite.disabled ? 'enable' : 'disable'}`) })
                       .then(() => invites.reload())
-                      .catch((caught) => window.alert(message(caught)));
+                      .catch((caught) => actionError.setError(message(caught)));
                   }}
                 >{invite.disabled ? '重新启用' : '撤销'}</Button>
               ),
@@ -116,6 +118,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
           onPrevious={pager.previous}
         />
       </Panel>
+      {actionError.error ? <Notice tone="bad">{actionError.error}</Notice> : null}
     </>
   );
 }

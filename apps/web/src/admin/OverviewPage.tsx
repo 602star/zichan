@@ -1,8 +1,8 @@
 /** Runtime overview: the day-to-day entry point, not a wall of counters. */
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
-import { adminIdempotencyKey } from './idempotency.js';
 import { Badge, Button, Loading, Notice, Panel, Select, Stat, TextInput, bytes, canWrite, message, muted, row, usePolling, useResource, when } from './ui.js';
+import { alertNextStep, alertStateLabel, acknowledgeAlert, describeAlert, isSilenced, silenceAlert, unsilenceAlert, SILENCE_HOURS } from './alerts.js';
 import { TrendChart } from './chart.js';
 import type { TrendPoint } from './trend.js';
 import type { Alert, Metrics, Overview } from './types.js';
@@ -28,7 +28,6 @@ function seriesValue(bucket: Metrics['buckets'][number], key: SeriesKey): number
 }
 
 /** Silence windows offered in the console: one shift, one day, one week. */
-const SILENCE_HOURS = [1, 4, 24, 72, 168];
 
 export function OverviewPage({ client, navigate, accountName, role }: {
   client: AdminClient;
@@ -40,6 +39,8 @@ export function OverviewPage({ client, navigate, accountName, role }: {
   const [series, setSeries] = useState<SeriesKey>('requests');
   // Silence is a recorded decision: the duration and the reason travel together.
   const [silenceDraft, setSilenceDraft] = useState<{ key: string; hours: number; reason: string }>();
+  // Alert actions report in place instead of a blocking dialog that cannot carry a request id.
+  const [actionError, setActionError] = useState('');
   const overview = useResource(() => client.request<Overview>('/overview'), []);
   const metrics = useResource(() => client.request<Metrics>(`/metrics?range=${range}`), [range]);
   // Both views age together: a poll that refreshed only the overview left the counters stale.
@@ -160,28 +161,30 @@ export function OverviewPage({ client, navigate, accountName, role }: {
         </div>
       </Panel>
 
-      <Panel title="待处理事项" note="同类告警会被合并；每条都会记录首次发生、最后发生与次数。静默只停外部通知，规则、记录与恢复判断都不变。">
+      <Panel title="待处理事项" note="同类告警会被合并；每条都会记录首次发生、最后发生与次数。静默只停外部通知，规则、记录与恢复判断都不变。恢复后的告警在「告警历史」里仍可回看。">
         {alerts.length === 0 ? <p style={muted}>暂无待处理事项。</p> : (
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             {alerts.map((alert) => {
               const silenced = isSilenced(alert);
+              const stateLabel = alertStateLabel(alert);
               return (
                 <li key={alert.key} style={{ marginBottom: 10 }}>
-                  <Badge tone={silenced ? 'muted' : alert.state === 'active' ? 'bad' : 'warn'}>
-                    {silenced ? '已静默' : alert.state === 'active' ? '活动' : '待确认'}
-                  </Badge>{' '}
-                  {alert.state === 'resolved' ? <Badge tone="ok">已恢复</Badge> : null}{' '}
+                  <Badge tone={stateLabel.tone}>{stateLabel.text}</Badge>{' '}
                   {alert.acknowledgedAt ? <Badge tone="muted">已确认</Badge> : null}{' '}
                   {describeAlert(alert)}{' '}
                   <span style={muted}>影响：{alert.scope}；首次 {when(alert.firstSeenAt)}，最近 {when(alert.lastSeenAt)}，共 {alert.occurrences} 次（连续 {alert.consecutive} 次）</span>{' '}
                   <NextStep alert={alert} navigate={navigate} />{' '}
-                  <Button disabled={!canWrite(role) || Boolean(alert.acknowledgedAt)} onClick={() => { void acknowledge(client, alert, overview.reload); }}>
+                  <Button disabled={!canWrite(role) || Boolean(alert.acknowledgedAt)} onClick={() => {
+                    void acknowledgeAlert(client, alert).catch((error) => setActionError(message(error))).finally(overview.reload);
+                  }}>
                     {alert.acknowledgedAt ? `已由 ${alert.acknowledgedBy ?? ''} 确认` : '确认'}
                   </Button>{' '}
                   {silenced ? (
                     <span style={muted}>
                       已静默至 {when(alert.silencedUntil ?? '')}{alert.silenceReason ? `（${alert.silenceReason}）` : ''}{' '}
-                      <Button disabled={!canWrite(role)} onClick={() => { void unsilence(client, alert, overview.reload); }}>取消静默</Button>
+                      <Button disabled={!canWrite(role)} onClick={() => {
+                        void unsilenceAlert(client, alert).catch((error) => setActionError(message(error))).finally(overview.reload);
+                      }}>取消静默</Button>
                     </span>
                   ) : silenceDraft?.key === alert.key ? (
                     <span style={row}>
@@ -193,7 +196,12 @@ export function OverviewPage({ client, navigate, accountName, role }: {
                       </Select>
                       <TextInput placeholder="静默原因（必填，写入审计）" value={silenceDraft.reason}
                         onChange={(event) => setSilenceDraft({ ...silenceDraft, reason: event.target.value })} />
-                      <Button disabled={!silenceDraft.reason.trim()} onClick={() => { void silence(client, alert, silenceDraft, () => { setSilenceDraft(undefined); overview.reload(); }); }}>确认静默</Button>
+                      <Button disabled={!silenceDraft.reason.trim()} onClick={() => {
+                        void silenceAlert(client, alert, silenceDraft)
+                          .then(() => setSilenceDraft(undefined))
+                          .catch((error) => setActionError(message(error)))
+                          .finally(overview.reload);
+                      }}>确认静默</Button>
                       <Button onClick={() => setSilenceDraft(undefined)}>取消</Button>
                     </span>
                   ) : (
@@ -210,6 +218,7 @@ export function OverviewPage({ client, navigate, accountName, role }: {
             })}
           </ul>
         )}
+        {actionError ? <Notice tone="bad">{actionError}</Notice> : null}
         {overview.data?.recentFailures.length ? (
           <>
             <strong style={{ display: 'block', marginTop: 12 }}>最近失败的管理操作</strong>
@@ -234,96 +243,10 @@ export function OverviewPage({ client, navigate, accountName, role }: {
   );
 }
 
-async function acknowledge(client: AdminClient, alert: Alert, reload: () => void): Promise<void> {
-  try {
-    await client.request(`/alerts/${encodeURIComponent(alert.key)}/acknowledge`, {}, { idempotencyKey: adminIdempotencyKey(`ack-${alert.key}`) });
-  } catch (error) {
-    window.alert(message(error));
-  }
-  reload();
-}
-
-/** A silence with an end time in the past no longer applies. */
-function isSilenced(alert: Alert): boolean {
-  return Boolean(alert.silencedUntil) && Date.parse(alert.silencedUntil ?? '') > Date.now();
-}
-
-async function silence(
-  client: AdminClient,
-  alert: Alert,
-  draft: { hours: number; reason: string },
-  done: () => void,
-): Promise<void> {
-  try {
-    // The reason is part of the request: an unexplained silence is not auditable.
-    await client.request(`/alerts/${encodeURIComponent(alert.key)}/silence`, { hours: draft.hours, reason: draft.reason.trim() },
-      { idempotencyKey: adminIdempotencyKey(`silence-${alert.key}`) });
-    done();
-  } catch (error) {
-    window.alert(message(error));
-  }
-}
-
-async function unsilence(client: AdminClient, alert: Alert, reload: () => void): Promise<void> {
-  try {
-    await client.request(`/alerts/${encodeURIComponent(alert.key)}/unsilence`, {}, { idempotencyKey: adminIdempotencyKey(`unsilence-${alert.key}`) });
-  } catch (error) {
-    window.alert(message(error));
-  }
-  reload();
-}
-
+/** Renders the shared next step as a button, so the history page and this page agree. */
 function NextStep({ alert, navigate }: { alert: Alert; navigate: (to: string) => void }) {
-  // Capacity alerts name one account, so the next step is that account's page, not a filtered
-  // list the operator would have to pick from by hand.
-  if (alert.rule === 'capacity') {
-    // The key itself is `capacity:<scope>:<accountId>`, so the fallback works even for a
-    // record written before the detail carried the accountId.
-    const fromDetail = typeof alert.detail?.['accountId'] === 'string' ? alert.detail['accountId'] : '';
-    const accountId = fromDetail || (alert.key.split(':')[2] ?? '');
-    return accountId
-      ? <Button onClick={() => navigate(`/users/${encodeURIComponent(accountId)}`)}>进入该用户详情</Button>
-      : <Button onClick={() => navigate('/users?quota=over')}>进入用户管理</Button>;
-  }
-  if (alert.rule.startsWith('backup')) return <Button onClick={() => navigate('/storage')}>查看备份</Button>;
-  if (alert.rule === 'verification-issue') return <Button onClick={() => navigate('/jobs')}>查看校验任务</Button>;
-  if (alert.rule === 'cleanup-failure') return <Button onClick={() => navigate('/storage')}>查看清理状态</Button>;
-  if (alert.rule === 'sync-errors') return <Button onClick={() => navigate('/sync?outcome=error')}>查看同步诊断</Button>;
-  if (alert.rule === 'disk-space') return <Button onClick={() => navigate('/storage')}>查看存储</Button>;
-  // Resource and database alerts all live on one page, so every one of them leads there.
-  if (alert.rule.startsWith('process-') || alert.rule.startsWith('database-') || alert.rule === 'event-loop-lag') {
-    return <Button onClick={() => navigate('/resources')}>查看进程与数据库</Button>;
-  }
-  return null;
-}
-
-function describeAlert(alert: Alert): string {
-  const detail = alert.detail ?? {};
-  switch (alert.rule) {
-    case 'capacity': return `账号 ${String(detail['username'] ?? '')} 的${alert.scope === 'commit' ? '提交' : '附件'}用量接近上限`;
-    case 'backup-failure': return '备份失败或校验未通过';
-    case 'backup-overdue': {
-      const lastSuccess = typeof detail['lastSuccessAt'] === 'string' ? when(detail['lastSuccessAt']) : '从未';
-      return `超过 ${String(detail['intervalHours'] ?? '')} 小时没有成功备份（最近成功：${lastSuccess}）`;
-    }
-    case 'verification-issue': return alert.scope === 'database' ? '数据库校验发现问题' : '附件校验发现问题';
-    case 'cleanup-failure': return `附件清理连续失败 ${String(detail['consecutiveFailures'] ?? '')} 次`;
-    case 'sync-errors': return `持续出现同步错误（最近 ${String(detail['recentErrors'] ?? '')} 次）`;
-    case 'disk-space': return '磁盘剩余空间不足';
-    case 'process-memory': {
-      const ratio = typeof detail['ratio'] === 'number' ? `，已占上限 ${(detail['ratio'] * 100).toFixed(0)}%` : '';
-      return `服务器进程常驻内存 ${bytes(Number(detail['rssBytes'] ?? 0))}${ratio}`;
-    }
-    case 'process-memory-growth': {
-      const window = String(detail['windowMinutes'] ?? '');
-      return `常驻内存持续上升：${window} 分钟内增加 ${bytes(Number(detail['growthBytes'] ?? 0))}`;
-    }
-    case 'event-loop-lag': return `事件循环平均延迟 ${String(detail['meanMs'] ?? '')} 毫秒，请求处理可能被同步任务阻塞`;
-    case 'process-cpu': return `服务器进程 CPU 占用 ${String(detail['cpuPercent'] ?? '')}%`;
-    case 'database-wal': return `WAL 文件 ${bytes(Number(detail['walBytes'] ?? 0))} 超过配置上限 ${bytes(Number(detail['journalSizeLimitBytes'] ?? 0))}`;
-    case 'database-fragmentation': return `数据库有 ${bytes(Number(detail['freelistBytes'] ?? 0))} 空闲页可回收（占比 ${((Number(detail['freelistRatio'] ?? 0)) * 100).toFixed(1)}%）`;
-    default: return alert.rule;
-  }
+  const next = alertNextStep(alert);
+  return next ? <Button onClick={() => navigate(next.to)}>{next.label}</Button> : null;
 }
 
 function formatUptime(seconds: number): string {

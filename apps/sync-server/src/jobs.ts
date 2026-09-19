@@ -40,6 +40,7 @@ export const JOB_TYPES: AdminJobType[] = [
   'storage.cleanup',
   'logs.prune',
   'metrics.prune',
+  'audit.prune',
   'backup.verify',
   'restore.drill',
 ];

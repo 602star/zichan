@@ -3,10 +3,9 @@ import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
 import { AccountActions, RoleNote } from './AccountActions.js';
 import { PasswordResetIssuer } from './PasswordResetIssuer.js';
-import { Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, canWrite, message, muted, row, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, canWrite, message, muted, roleLabel, row, useActionError, useResource, when } from './ui.js';
 import { SYNC_CATEGORIES, type AccountDetail, type SessionRow } from './types.js';
 
-const roleName = (role: string) => role === 'owner' ? '所有者' : role === 'admin' ? '管理员' : '普通用户';
 const sessionState = (session: SessionRow) => session.revokedAt ? '已撤销' : session.active ? '有效' : '已过期';
 
 export function UserDetailPage({ client, accountId, role, navigate, onChanged, selfAccountId }: {
@@ -18,6 +17,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
   selfAccountId: string;
 }) {
   const detail = useResource(() => client.request<AccountDetail>(`/accounts/${encodeURIComponent(accountId)}`), [accountId]);
+  const actionError = useActionError();
   const reload = () => { detail.reload(); onChanged(); };
 
   if (detail.loading && !detail.data) return <><h2>用户详情</h2><Loading loading error={detail.error} /></>;
@@ -76,7 +76,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
           <Stat label="accountId" value={<code style={{ fontSize: 'var(--fs-sm)' }}>{account.accountId}</code>} />
           <Stat label="创建时间" value={when(account.createdAt)} />
-          <Stat label="角色" value={roleName(account.role)} />
+          <Stat label="角色" value={roleLabel(account.role)} />
           <Stat label="状态" value={account.disabled ? <Badge tone="bad">已禁用</Badge> : <Badge tone="ok">正常</Badge>} />
           <Stat label="保护模式" value={account.protection ? (account.protection.mode === 'managed' ? '云端托管' : account.protection.mode === 'private' ? '私密' : account.protection.mode) : '未设置'}
             hint={account.protection ? `版本 ${account.protection.version}` : '用户尚未设置账本保护'} />
@@ -117,7 +117,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
                 <Button disabled={!canRevokeSession(session)} title={session.id === currentSessionId ? '当前会话请用顶部「退出管理后台」结束' : undefined} onClick={() => {
                   void client.request(`/sessions/${session.id}/revoke`, {}, { idempotencyKey: adminIdempotencyKey(`revoke-${session.id}`) })
                     .then(reload)
-                    .catch((error) => window.alert(message(error)));
+                    .catch((error) => actionError.setError(message(error)));
                 }}>撤销</Button>
               ),
             },
@@ -126,6 +126,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
           rowKey={(session) => session.id}
           empty="该账号还没有登录过。"
         />
+        {actionError.error ? <Notice tone="bad">{actionError.error}</Notice> : null}
       </Panel>
 
       <Panel title="同步情况">

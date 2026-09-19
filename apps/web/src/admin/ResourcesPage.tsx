@@ -11,7 +11,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, canWrite, message, muted, row, usePolling, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, canWrite, message, muted, row, useActionError, usePolling, useResource, when } from './ui.js';
 import { TrendChart } from './chart.js';
 import type { Metrics, Overview, ResourcesPayload } from './types.js';
 import type { TrendPoint as ChartPoint } from './trend.js';
@@ -68,6 +68,7 @@ export function ResourcesPage({ client, role, onJob }: { client: AdminClient; ro
   const [tables, setTables] = useState<ResourcesPayload['tables']>();
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState('');
+  const actionError = useActionError();
   const resources = useResource(() => client.request<ResourcesPayload>('/resources'), []);
   const overview = useResource(() => client.request<Overview>('/overview'), []);
   const metrics = useResource(() => client.request<Metrics>(`/metrics?range=${range}`), [range]);
@@ -100,15 +101,17 @@ export function ResourcesPage({ client, role, onJob }: { client: AdminClient; ro
   };
 
   const analyze = () => {
+    actionError.clear();
     void client.request<{ job: { jobId: string } }>('/database/analyze', {}, { idempotencyKey: adminIdempotencyKey('database-analyze') })
       .then((result) => onJob(result.job.jobId))
-      .catch((error) => window.alert(message(error)));
+      .catch((error) => actionError.setError(message(error)));
   };
 
   return (
     <>
       <h2>进程与数据库</h2>
       <Loading loading={resources.loading} error={resources.error} stale={resources.stale} loadedAt={resources.loadedAt} />
+      {actionError.error ? <Notice tone="bad">{actionError.error}</Notice> : null}
 
       {process_ && !process_.available ? (
         <Notice tone="warn">最近一次采样失败，下面显示的是上一次成功的读数，不代表当前状态。</Notice>

@@ -3,6 +3,83 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-19（补 2）— 管理后台：能确认为缺陷的七项（该修，不是该加）
+
+**Goal:** 用户给出一份清单，第一部分是「能确认为缺陷的」。这一批只做这七项：都不是新功能，
+而是同一类问题的七个实例——界面显示的东西和服务端真正提供的东西对不上。
+
+### 交付（七项，每项都先定位根因）
+
+1. **「最近成功同步」永远是「暂无数据」**。`UsersPage.tsx` 读的是
+   `(user as AccountRow & { lastSyncAt?: string }).lastSyncAt`，而 `store.listUsers()` 的
+   SELECT 里没有这个字段——**类型断言把这个 bug 藏住了**：TS 认为字段存在，运行时永远是
+   `undefined`。修法是补进 SQL（`sync_events` 中该账号最近一次 `outcome = 'ok'` 的时间，
+   用相关子查询）并**删掉断言**，让类型回到真实。从未同步过返回 `null`，页面显示「暂无数据」——
+   这是真话，不是把最近登录冒充同步时间。
+2. **只读运维（viewer）在三处显示成「普通用户」**：`UsersPage` 角色筛选没有 viewer 选项（服务端
+   `/users?role=` 一直支持）、`UserDetailPage` 的 `roleName()` 只认 owner/admin、`SessionsPage`
+   的角色列同样漏了。而 `AdminApp` 与 `UsersPage` 的映射是对的——同一个账号在不同页面角色不同。
+   修法是**只留一处映射**（`ui.tsx` 的 `ROLE_LABELS` + `roleLabel`），四处调用同一个函数。
+3. **管理审计没有保留策略**。`logs`/`metrics`/`sync_events` 都有裁剪任务和保留设置项，
+   `server_admin_audit` 无上限增长，`admin_audit_failures` 是硬编码 2000 条（`store.ts`）不可配置。
+   审计本该是「查历史」的表，反而最容易撑大。新增设置项 `auditRetention`（默认 50000）与
+   `auditFailureRetention`（默认 2000，保持旧行为），以及任务中心的 `audit.prune`；每小时巡检也带上。
+   **没有并进 `metrics.prune`**：一次例行的指标裁剪不该顺手缩短审计。
+4. **`admin_audit_failures` 从来没有人写入**（这是上面那条查出来的）：表、接口和两个面板都在，
+   写路径不存在，所以「最近失败的管理操作」与审计页的失败区**永久是空的**。被拒绝的写操作
+   （权限不足、受保护账号、结构冲突）此前只留一行运行日志。现在在 `admin.ts` 的路由外层
+   捕获 `ServerStoreError` 并记录动作、错误码、目标 accountId 与 requestId，然后原样重新抛出。
+   **读请求不记录**（读不是管理变更）；记录是尽力而为的，诊断写失败不会把已处理的拒绝变成 500。
+5. **已恢复的告警没有地方看**。服务端 `GET /api/admin/alerts?state=resolved` 一直支持，但前端
+   只调 acknowledge/silence/unsilence，没有列表页；概览拿到的快照本身就只含未恢复项。结果告警
+   一恢复就从界面上消失，「上周磁盘告警出现过几次」回答不了。新增 `/admin/alerts` 页，
+   并把告警的说明文字、状态标签与下一步入口抽到 `alerts.tsx` 一处，概览与历史页共用——
+   否则同一个规则会在两个页面上各说一套。
+6. **`GET /api/admin/status` 是孤儿接口**：与 `/overview`、`/api/ready`、`/api/admin/settings`
+   完全重叠，前端一次都不调用。**删掉**（不是让概览去用它：概览已经走 `/overview`，加一次调用
+   只是多一个要同步维护的接口）。测试与文档同步改成 `/overview` 与 `/api/ready`。
+7. **11 处 `window.alert` 报错**（Invites/Jobs/Overview/Resources/Sessions/Storage/UserDetail），
+   与页内 `Notice` 两套反馈风格并存：alert 阻塞、移动端难看，也带不了 requestId 让用户点进日志。
+   全部改为页内 `Notice`（新增 `useActionError`），并**顺带修好一个真问题**：概览页的
+   acknowledge/silence/unsilence 此前是「先 `reload()` 再 `catch`」，失败时界面照样刷新，
+   看起来像成功了。
+
+另外把「每个后台页面设置 `document.title`」一并做掉（用户详情额外带 accountId）：排查时通常
+同时开着几个标签，标题相同就分不清哪个是概览、哪个是日志。
+
+### 判断（为什么这么做）
+
+- **这七项的共同形状是「界面与服务端对不上」**，所以每一处都先确认哪一边是真的：`/users?role=`
+  支持 viewer 是真的（服务端过滤早就写了），「最近成功同步」没有数据也是真的（SQL 里就没这个字段）。
+  修的时候让**真实的那一边当基准**，而不是让两边都改成中间值。
+- **类型断言不是文档，是遮蔽**。`as AccountRow & { lastSyncAt?: string }` 让编译器闭嘴，
+  运行时照旧 `undefined`——删掉断言比补上字段更重要，因为补字段只是修了这一次。
+- **审计保留刻意做成独立任务**：审计是「谁在什么时候改了什么」的唯一记录，它的裁剪应该是
+  有人明确决定的动作，而不是别的例行任务顺带做的事。
+- **删掉孤儿接口而不是接线**：「让概览用它」需要先证明它比 `/overview` 更好，而它只是字段更多、
+  重复更多。删掉减少一个需要同步维护的接口面。
+- **失败尝试表接上写路径**：表存在而没人写，比没有这张表更糟——面板看起来像「从来没有失败过」，
+  而实际上失败一直在发生。
+
+### 环境与工具坑（本轮新踩）
+
+- **`npm test` 的输出被 ANSI 颜色码切开**，`Select-String 'Tests\s+\d'` 匹配不到汇总行；
+  先 `-replace "\x1b\[[0-9;]*m",""` 再去匹配才能拿到每个 workspace 的通过数。
+- **e2e 偶发 fixture 竞态**：`admin-resources.spec.mjs` 与其它 admin 用例一起跑时，
+  `registerAccount` 可能报「无法连接服务器」。**单跑该文件 4 项全过**，一起跑也是 14 项全过；
+  判断依据是失败点在 `fixture()` 里而不是断言处——不要把它读成「我的改动弄坏了用例」。
+
+### Verified
+
+- `npm test` 通过：sync-server 161（原 159 + 新增 2）、web 528、core 128、db 166、logger 7。
+- `npm run typecheck`、`npm run lint`（0 error / 0 warning）通过。
+- `npm run build:server` 通过；`npm run test:e2e:account` 管理后台相关 14 项真实浏览器用例全过
+  （`admin.spec.mjs` 6、`admin-usability.spec.mjs` 3、`admin-dev-proxy.spec.mjs` 1、
+  `admin-resources.spec.mjs` 4），无回归。
+- 新增服务端用例：失败尝试真的落表且带目标 accountId、读请求不落表、审计与失败表各自按自己的
+  保留上限裁剪（写路径也遵守上限）、`/users` 的 `lastSyncAt` 从未同步时为 `null`。
+- 全仓库 `window.alert` 归零（只剩注释里的一句说明）；`/api/admin/status` 只剩历史文档中的记录。
+
 ## 2026-09-19（补）— 服务端比页面旧时不再只显示 “not found”
 
 **Goal:** 运维打开「进程与数据库」页时看到的是 `not found` 三个字，无法判断是数据没了、还是部署错配。

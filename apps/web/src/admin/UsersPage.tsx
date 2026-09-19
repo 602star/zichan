@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { AccountActions } from './AccountActions.js';
-import { Badge, Button, DataTable, Field, Loading, Panel, Pager, Select, TextInput, bytes, canWrite, muted, row, useCursorPager, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Panel, Pager, Select, TextInput, bytes, canWrite, muted, roleLabel, row, useCursorPager, useResource, when } from './ui.js';
 import type { AccountRow } from './types.js';
 
 const quotaTone = (state: AccountRow['quotaState']) => state === 'over' ? 'bad' as const : state === 'warning' ? 'warn' as const : 'ok' as const;
@@ -33,7 +33,7 @@ export function UsersPage({ client, query, navigate, role }: {
   const canManage = (user: AccountRow) => canWrite(role) && user.role !== 'owner' && (role === 'owner' || user.role === 'member');
   const columns = [
     { key: 'username', header: '用户名', render: (user: AccountRow) => <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => navigate(`/users/${user.accountId}`)}>{user.username}</button> },
-    { key: 'role', header: '角色', render: (user: AccountRow) => user.role === 'owner' ? '所有者' : user.role === 'admin' ? '管理员' : user.role === 'viewer' ? '只读运维' : '普通用户' },
+    { key: 'role', header: '角色', render: (user: AccountRow) => roleLabel(user.role) },
     { key: 'state', header: '启用状态', render: (user: AccountRow) => user.disabled ? <Badge tone="bad">已禁用</Badge> : <Badge tone="ok">正常</Badge> },
     { key: 'protection', header: '保护模式', render: (user: AccountRow) => user.protectionMode === 'managed' ? '云端托管' : user.protectionMode === 'private' ? '私密' : user.protectionMode === 'relay' ? '中继' : '未设置' },
     {
@@ -44,7 +44,7 @@ export function UsersPage({ client, query, navigate, role }: {
         </span>
       ),
     },
-    { key: 'sync', header: '最近成功同步', secondary: true, render: (user: AccountRow) => when((user as AccountRow & { lastSyncAt?: string }).lastSyncAt) },
+    { key: 'sync', header: '最近成功同步', secondary: true, render: (user: AccountRow) => when(user.lastSyncAt) },
     { key: 'login', header: '最近登录', secondary: true, render: (user: AccountRow) => when(user.lastLoginAt) },
     { key: 'devices', header: '有效会话', secondary: true, render: (user: AccountRow) => String(user.activeDeviceCount) },
     {
@@ -70,7 +70,7 @@ export function UsersPage({ client, query, navigate, role }: {
           </Field>
           <Field label="角色">
             <Select value={roleFilter} onChange={(event) => update({ role: event.target.value })}>
-              <option value="">全部</option><option value="owner">所有者</option><option value="admin">管理员</option><option value="member">普通用户</option>
+              <option value="">全部</option><option value="owner">所有者</option><option value="admin">管理员</option><option value="viewer">只读运维</option><option value="member">普通用户</option>
             </Select>
           </Field>
           <Field label="状态">

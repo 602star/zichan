@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, TextInput, bytes, message, muted, row, useCursorPager, usePolling, useResource, when, canWrite } from './ui.js';
+import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, TextInput, bytes, message, muted, row, useActionError, useCursorPager, usePolling, useResource, when, canWrite } from './ui.js';
 import { JOB_TYPES, type Job, type JobEvent } from './types.js';
 
 const statusTone = (status: Job['status']) => status === 'succeeded' ? 'ok' as const : status === 'running' || status === 'queued' ? 'warn' as const
@@ -79,6 +79,7 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
   const [accountId, setAccountId] = useState(accountFilter);
   const [recordId, setRecordId] = useState('');
   const [error, setError] = useState('');
+  const actionError = useActionError();
 
   const list = useResource(() => client.request<{ jobs: Job[]; nextCursor?: string }>(
     `/jobs?limit=25${status ? `&status=${status}` : ''}${type ? `&type=${type}` : ''}${accountFilter ? `&accountId=${encodeURIComponent(accountFilter)}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
@@ -169,10 +170,10 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
                 <div style={row}>
                   <Button onClick={() => update({ job: job.jobId, cursor })}>查看</Button>
                   <Button disabled={!writable || !['queued', 'running'].includes(job.status)} onClick={() => {
-                    void client.request(`/jobs/${job.jobId}/cancel`, {}, { idempotencyKey: adminIdempotencyKey(`cancel-${job.jobId}`) }).then(list.reload).catch((caught) => window.alert(message(caught)));
+                    void client.request(`/jobs/${job.jobId}/cancel`, {}, { idempotencyKey: adminIdempotencyKey(`cancel-${job.jobId}`) }).then(list.reload).catch((caught) => actionError.setError(message(caught)));
                   }}>取消</Button>
                   <Button disabled={!writable || ['queued', 'running'].includes(job.status)} onClick={() => {
-                    void client.request(`/jobs/${job.jobId}/retry`, {}, { idempotencyKey: adminIdempotencyKey(`retry-${job.jobId}`) }).then(list.reload).catch((caught) => window.alert(message(caught)));
+                    void client.request(`/jobs/${job.jobId}/retry`, {}, { idempotencyKey: adminIdempotencyKey(`retry-${job.jobId}`) }).then(list.reload).catch((caught) => actionError.setError(message(caught)));
                   }}>重新执行</Button>
                 </div>
               ),
@@ -188,6 +189,7 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
           <Button disabled={!pager.hasPrevious} onClick={pager.previous}>上一页</Button>
           <Button disabled={!list.data?.nextCursor} onClick={() => { if (list.data?.nextCursor) pager.next(list.data.nextCursor); }}>下一页</Button>
         </div>
+        {actionError.error ? <Notice tone="bad">{actionError.error}</Notice> : null}
       </Panel>
 
       {jobId && detail.data ? (

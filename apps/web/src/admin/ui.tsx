@@ -15,6 +15,24 @@ export const canWrite = (role: string | undefined): boolean => role !== 'viewer'
 
 export const READ_ONLY_NOTE = '只读运维角色：此项不可用。';
 
+/**
+ * The one role→label mapping for the whole console.
+ *
+ * This used to be copied into each page, and the copies drifted: a read-only operator showed as
+ * "只读运维" on the overview and as "普通用户" in the user detail and session lists. Keeping a
+ * single map means adding a role cannot half-land in the UI.
+ */
+export const ROLE_LABELS: Record<string, string> = {
+  owner: '所有者',
+  admin: '管理员',
+  viewer: '只读运维',
+  member: '普通用户',
+};
+
+export function roleLabel(role: string | undefined | null): string {
+  return ROLE_LABELS[role ?? ''] ?? '普通用户';
+}
+
 export function message(error: unknown): string {
   if (error instanceof AdminError) {
     const labels: Record<string, string> = {
@@ -105,6 +123,18 @@ export function usePolling(callback: () => void, intervalMs: number, enabled = t
     document.addEventListener('visibilitychange', onVisibility);
     return () => { stop(); document.removeEventListener('visibilitychange', onVisibility); };
   }, [enabled, intervalMs]);
+}
+
+/**
+ * Reports the outcome of a write in the page, not in a blocking dialog.
+ *
+ * `window.alert` could not show the request id, could not be styled, and blocked the tab; every
+ * page had its own copy of the same one-liner. This keeps the message next to the control that
+ * produced it and renders it with the same `Notice` the read errors use.
+ */
+export function useActionError(): { error: string; setError: (message: string) => void; clear: () => void } {
+  const [error, setError] = useState('');
+  return { error, setError, clear: useCallback(() => setError(''), []) };
 }
 
 export interface CursorPager {

@@ -155,6 +155,7 @@ export type AdminJobType =
   | 'storage.cleanup'
   | 'logs.prune'
   | 'metrics.prune'
+  | 'audit.prune'
   | 'backup.verify'
   | 'restore.drill';
 export type AdminJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
@@ -1209,6 +1210,8 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
               COALESCE(q.commit_quota_bytes, ?) AS commit_quota_bytes,
               u.revision,
               k.mode AS protection_mode,
+              (SELECT MAX(e.at) FROM sync_events e
+               WHERE e.username = u.username AND e.outcome = 'ok') AS last_sync_at,
               (SELECT COUNT(*) FROM sync_sessions s
                WHERE s.username = u.username AND s.revoked_at IS NULL AND s.expires_at > ?) AS active_device_count
        FROM sync_users u
@@ -1254,6 +1257,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       activeDeviceCount: Number(row['active_device_count'] ?? 0),
       revision: Number(row['revision'] ?? 1),
       protectionMode: row['protection_mode'] == null ? null : String(row['protection_mode']),
+      lastSyncAt: row['last_sync_at'] == null ? null : String(row['last_sync_at']),
       quotaState: Number(row['commit_bytes'] ?? 0) >= Number(row['commit_quota_bytes']) ? 'over'
         : Number(row['commit_bytes'] ?? 0) >= Number(row['commit_quota_bytes']) * 0.9 ? 'warning' : 'ok',
     }));
@@ -3018,6 +3022,8 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     message?: string;
     reason?: string;
     requestId?: string;
+    /** Operator-configurable cap; defaults to the historical hard-coded 2000. */
+    retention?: number;
   }): Promise<void> {
     try {
       await this.ready;
@@ -3029,13 +3035,44 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
           input.code ?? null, input.message ?? null, input.reason ?? null, input.requestId ?? null,
         ],
       );
-      await this.driver.run(
-        'DELETE FROM admin_audit_failures WHERE id IN (SELECT id FROM admin_audit_failures ORDER BY id DESC LIMIT -1 OFFSET ?)',
-        [2_000],
-      );
+      await this.pruneAdminFailures(input.retention ?? 2_000);
     } catch {
       // Diagnostics must never turn a handled management failure into a server error.
     }
+  }
+
+  /**
+   * Audit retention.
+   *
+   * `server_admin_audit` is the table an operator reads to answer "who changed what, when", so it
+   * needs a bound of its own: it used to grow without limit while logs, metrics and sync events
+   * were all trimmed. The default is deliberately far above the log retention, because trimming
+   * the audit trail is a last resort, not routine housekeeping.
+   */
+  async pruneAdminAudit(retention = 50_000): Promise<{ removed: number }> {
+    await this.ready;
+    const result = await this.driver.run(
+      `DELETE FROM server_admin_audit WHERE id IN (
+         SELECT id FROM server_admin_audit ORDER BY id DESC LIMIT -1 OFFSET ?
+       )`,
+      [retention],
+    );
+    return { removed: Number(result.changes ?? 0) };
+  }
+
+  /**
+   * Rejected management attempts. This used to be a hard-coded 2000 that no operator could
+   * change; the cap is now a setting, and the write path trims against it.
+   */
+  async pruneAdminFailures(retention = 2_000): Promise<{ removed: number }> {
+    await this.ready;
+    const result = await this.driver.run(
+      `DELETE FROM admin_audit_failures WHERE id IN (
+         SELECT id FROM admin_audit_failures ORDER BY id DESC LIMIT -1 OFFSET ?
+       )`,
+      [retention],
+    );
+    return { removed: Number(result.changes ?? 0) };
   }
 
   async listAdminFailures(limit = 50): Promise<JsonRecord[]> {

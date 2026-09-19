@@ -4,6 +4,7 @@ import { THEMES } from '../theme.js';
 import { AdminClient, type AdminHealth } from './client.js';
 import { adminHref, navigate as navigateRoute, useRoute } from './router.js';
 import { AuditPage, LogsPage } from './LogsPage.js';
+import { AlertsPage } from './AlertsPage.js';
 import { InvitesPage } from './InvitesPage.js';
 import { JobsPage } from './JobsPage.js';
 import { OverviewPage } from './OverviewPage.js';
@@ -17,9 +18,11 @@ import { UserDetailPage } from './UserDetailPage.js';
 import { UsersPage } from './UsersPage.js';
 import './admin.css';
 import { PasswordRecovery } from '../ui/PasswordRecovery.js';
+import { roleLabel } from './ui.js';
 
 const NAVIGATION: { path: string; label: string; ownerOnly?: boolean }[] = [
   { path: '/overview', label: '运行概览' },
+  { path: '/alerts', label: '告警历史' },
   { path: '/resources', label: '进程与数据库' },
   { path: '/users', label: '用户管理' },
   { path: '/sessions', label: '设备与会话' },
@@ -180,10 +183,8 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
   </main>;
 }
 
-/** One label per role, so the read-only operator is named the same everywhere. */
-export function roleLabel(role: string): string {
-  return role === 'owner' ? '所有者' : role === 'admin' ? '管理员' : role === 'viewer' ? '只读运维' : '普通用户';
-}
+/** Re-exported so existing importers keep working; the mapping itself lives in `ui.tsx`. */
+export { roleLabel };
 
 /** Sidebar navigation plus the routed page. Every page has its own URL. */
 function AdminShell({ client, account, baseUrl }: { client: AdminClient; account: SyncAuthMe; baseUrl: string }) {
@@ -196,6 +197,14 @@ function AdminShell({ client, account, baseUrl }: { client: AdminClient; account
   const current = items.find((item) => route.path === item.path || route.path.startsWith(`${item.path}/`)) ?? items[0]!;
 
   useEffect(() => { setMenuOpen(false); }, [route.path]);
+  // Several console tabs are open at once during an incident; without a title they are
+  // indistinguishable in the tab bar. The user detail page names the account it shows.
+  useEffect(() => {
+    const detail = route.segments[0] === 'users' && route.segments[1] ? ` · ${route.segments[1]}` : '';
+    document.title = `${current.label}${detail} · 服务器管理后台`;
+    // `route.path` is the string identity of the view; `segments` is rebuilt per route object.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current.label, route.path]);
   // `/admin/` itself is not a page: canonicalise it to the overview URL so refresh and
   // sharing always land on a real location.
   useEffect(() => {
@@ -211,6 +220,7 @@ function AdminShell({ client, account, baseUrl }: { client: AdminClient; account
           : <UsersPage client={client} query={route.query} navigate={go} role={role} />;
       case 'sessions': return <SessionsPage client={client} query={route.query} navigate={go} role={role} selfAccountId={account.accountId ?? ''} />;
       case 'sync': return <SyncPage client={client} query={route.query} navigate={go} />;
+      case 'alerts': return <AlertsPage client={client} role={role} navigate={go} />;
       case 'invites': return <InvitesPage client={client} role={role} query={route.query} navigate={go} />;
       case 'storage': return <StoragePage client={client} role={role} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
       case 'resources': return <ResourcesPage client={client} role={role} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
