@@ -23,6 +23,7 @@ import {
 import { requireLedgerCryptoSession, storedLedgerKeyEnvelope } from './ledger-key-vault.js';
 import { accountProtection, protectionRequest } from './account-protection.js';
 import { withSyncLock } from './sync-lock.js';
+import { clientIdentity } from './client-identity.js';
 
 export interface ConfiguredSyncEndpoint extends ReplicaSyncEndpointResult {
   alias: string;
@@ -86,6 +87,7 @@ function authenticatedTransport(profile: SyncConnection): MeteredTransport {
       token: accessToken,
       cryptoSession: requireLedgerCryptoSession(keyEnvelope.ledgerId),
       keyEnvelope,
+      clientIdentity: clientIdentity(),
     });
   };
 

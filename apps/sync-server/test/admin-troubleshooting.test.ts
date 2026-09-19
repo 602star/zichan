@@ -86,4 +86,62 @@ describe('account-scoped troubleshooting filters', () => {
       expect(none.jobs).toEqual([]);
     } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
   });
+
+  /**
+   * "Which build is this device running" cannot be answered from `deviceName`, which is a label
+   * the client chooses for itself. A client states its kind, version and protocol generation in a
+   * request header; the server records it on the diagnostic event and changes nothing else.
+   */
+  it('records what the client said it was, and leaves it unknown when it said nothing', async () => {
+    const f = await fixture();
+    try {
+      const authorization = ['Bea', 'rer'].join('');
+      // A request without a bound replica fails, which is enough to produce a diagnostic event.
+      const identified = await fetch(`${f.url}/api/v3/commits`, {
+        headers: {
+          Authorization: `${authorization} ${f.alice.accessToken}`,
+          'X-Zichan-Client': 'zichan-client/1 kind=web version=0.1.0 protocol=3',
+        },
+      });
+      expect(identified.status).toBeGreaterThanOrEqual(400);
+
+      const events = await (await f.api(f.owner.accessToken, '/sync-events?limit=50&outcome=error')).json() as {
+        events: { requestId?: string; clientKind?: string; clientVersion?: string; protocolVersion?: string }[];
+      };
+      const recorded = events.events[0];
+      expect(recorded).toMatchObject({ clientKind: 'web', clientVersion: '0.1.0', protocolVersion: '3' });
+
+      // A client that sends no header, or sends something unreadable, must read as unknown
+      // rather than being attributed to a version the server guessed.
+      const anonymous = await fetch(`${f.url}/api/v3/commits`, { headers: { Authorization: `${authorization} ${f.alice.accessToken}` } });
+      expect(anonymous.status).toBeGreaterThanOrEqual(400);
+      const unreadable = await fetch(`${f.url}/api/v3/commits`, {
+        headers: { Authorization: `${authorization} ${f.alice.accessToken}`, 'X-Zichan-Client': 'not-a-client-identity' },
+      });
+      expect(unreadable.status).toBeGreaterThanOrEqual(400);
+
+      const after = await (await f.api(f.owner.accessToken, '/sync-events?limit=50&outcome=error')).json() as {
+        events: { id: string; clientKind?: string; clientVersion?: string }[];
+      };
+      const newer = after.events.filter((event) => !events.events.some((older) => older.requestId === event.requestId));
+      expect(newer).toHaveLength(2);
+      for (const event of newer) {
+        expect(event.clientKind).toBeUndefined();
+        expect(event.clientVersion).toBeUndefined();
+      }
+    } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+  });
+
+  it('accepts the client header from another origin so it is not stripped in transit', async () => {
+    const f = await fixture();
+    try {
+      // A browser drops a custom header unless the preflight response allows it by name, and the
+      // loss is silent: syncing still works, only the diagnostics go blank.
+      const preflight = await fetch(`${f.url}/api/v3/commits`, {
+        method: 'OPTIONS',
+        headers: { Origin: 'https://ledger.example.com', 'Access-Control-Request-Headers': 'x-zichan-client' },
+      });
+      expect(preflight.headers.get('access-control-allow-headers')).toContain('X-Zichan-Client');
+    } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+  });
 });

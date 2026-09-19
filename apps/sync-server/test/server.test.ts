@@ -508,7 +508,10 @@ describe('sync-server endpoints', () => {
       });
       expect(preflight.status).toBe(204);
       expect(preflight.headers.get('access-control-allow-origin')).toBe('*');
-      expect(preflight.headers.get('access-control-allow-headers')).toBe('Content-Type,Authorization');
+      // `X-Zichan-Client` is the client's self-reported build identification. A browser drops a
+      // custom header unless the preflight allows it by name, and the loss is silent: syncing
+      // still works, only the diagnostics lose the client version.
+      expect(preflight.headers.get('access-control-allow-headers')).toBe('Content-Type,Authorization,X-Zichan-Client');
       expect(preflight.headers.has('access-control-allow-credentials')).toBe(false);
       const forwarded = { 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.8' };
       const startLoginRequest = opaque.client.startLogin({ password: 'public-test' }).startLoginRequest;

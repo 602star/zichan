@@ -2,6 +2,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Buffer } from 'node:buffer';
 import { MAX_ENCRYPTED_CHUNK_BYTES } from './blob-store.js';
+import { CLIENT_IDENTITY_HEADER, parseClientIdentity, type ClientIdentity } from '@zichan/core';
 import { ServerStoreError, type JsonRecord, type SyncEventCategory } from './store.js';
 
 export const MAX_BODY_BYTES = 16 * 1024 * 1024;
@@ -23,6 +24,17 @@ export function headerValue(req: IncomingMessage, name: string): string {
 
 export function bearerToken(req: IncomingMessage): string {
   return headerValue(req, 'authorization').replace(/^Bearer\s+/i, '');
+}
+
+/**
+ * Client identification for a sync request, or `undefined` when the client did not say.
+ *
+ * Read once per request and threaded into the diagnostic event. It is deliberately not
+ * validated against anything: an unrecognised value means "unknown client", and the
+ * request proceeds exactly as it would without the header.
+ */
+export function clientIdentity(req: IncomingMessage): ClientIdentity | undefined {
+  return parseClientIdentity(headerValue(req, CLIENT_IDENTITY_HEADER));
 }
 
 export function readBody(req: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<JsonRecord> {

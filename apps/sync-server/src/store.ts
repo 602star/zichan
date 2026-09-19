@@ -212,6 +212,14 @@ export interface SyncEvent {
   bytes?: number;
   durationMs?: number;
   requestId?: string;
+  /**
+   * What the client said it was. Self-reported, so it is diagnostic evidence, not proof:
+   * it answers "is this an old build" without the server having to trust it for anything.
+   * All three are absent for clients that send no client header at all.
+   */
+  clientKind?: string;
+  clientVersion?: string;
+  protocolVersion?: string;
 }
 
 export interface MetricBucket {
@@ -778,7 +786,10 @@ CREATE TABLE IF NOT EXISTS sync_events (
   commit_count INTEGER,
   bytes INTEGER,
   duration_ms INTEGER,
-  request_id TEXT
+  request_id TEXT,
+  client_kind TEXT,
+  client_version TEXT,
+  protocol_version TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sync_events_at ON sync_events (at DESC);
 CREATE INDEX IF NOT EXISTS idx_sync_events_username ON sync_events (username, at DESC);
@@ -859,6 +870,11 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     await this.ensureColumn('server_metric_buckets', 'external_bytes', 'INTEGER NOT NULL DEFAULT 0');
     await this.ensureColumn('server_metric_buckets', 'cpu_percent', 'REAL NOT NULL DEFAULT 0');
     await this.ensureColumn('server_metric_buckets', 'event_loop_max_ms', 'REAL NOT NULL DEFAULT 0');
+    // Client identification on diagnostic events. Additive and nullable: events recorded before
+    // this column simply have no client information, which reads as "unknown", not "old".
+    await this.ensureColumn('sync_events', 'client_kind', 'TEXT');
+    await this.ensureColumn('sync_events', 'client_version', 'TEXT');
+    await this.ensureColumn('sync_events', 'protocol_version', 'TEXT');
     const migrations = await this.driver.all<{ version: number; name: string }>('SELECT version, name FROM server_schema_migrations ORDER BY version');
     const previous = migrations.length === 1 && (
       Number(migrations[0]?.version) === 6 && migrations[0]?.name === 'server_account_owner_v6'
@@ -2346,12 +2362,13 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     const at = event.at ?? nowIso();
     await this.driver.run(
       `INSERT OR REPLACE INTO sync_events
-       (id, at, username, account_id, device_name, operation, outcome, result_code, category, commit_count, bytes, duration_ms, request_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, at, username, account_id, device_name, operation, outcome, result_code, category, commit_count, bytes, duration_ms, request_id, client_kind, client_version, protocol_version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         randomBytes(12).toString('hex'), at, event.username ?? null, event.accountId ?? null, event.deviceName ?? null,
         event.operation, event.outcome, event.resultCode ?? null, event.category ?? null,
         event.commitCount ?? null, event.bytes ?? null, event.durationMs ?? null, event.requestId ?? null,
+        event.clientKind ?? null, event.clientVersion ?? null, event.protocolVersion ?? null,
       ],
     );
   }
@@ -2399,6 +2416,9 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       ...(row['bytes'] == null ? {} : { bytes: Number(row['bytes']) }),
       ...(row['duration_ms'] == null ? {} : { durationMs: Number(row['duration_ms']) }),
       ...(row['request_id'] == null ? {} : { requestId: String(row['request_id']) }),
+      ...(row['client_kind'] == null ? {} : { clientKind: String(row['client_kind']) }),
+      ...(row['client_version'] == null ? {} : { clientVersion: String(row['client_version']) }),
+      ...(row['protocol_version'] == null ? {} : { protocolVersion: String(row['protocol_version']) }),
     }));
     const last = events.at(-1);
     return { events, ...(rows.length > options.limit && last ? { nextCursor: `${last.at}|${last.id}` } : {}) };

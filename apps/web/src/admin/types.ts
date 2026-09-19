@@ -150,6 +150,8 @@ export interface SyncEvent {
   id: string; at: string; username?: string; accountId?: string; deviceName?: string;
   operation: string; outcome: 'ok' | 'error'; resultCode?: string;
   category?: string; commitCount?: number; bytes?: number; durationMs?: number; requestId?: string;
+  /** Self-reported by the client; absent for clients that send no client header. */
+  clientKind?: string; clientVersion?: string; protocolVersion?: string;
 }
 
 export interface Job {

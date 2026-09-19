@@ -1,13 +1,20 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { offlineBuild } from './offline-build.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 export default defineConfig(({ mode }) => {
   const env = { ...loadEnv(mode, process.cwd(), ''), ...process.env };
   const target = new URL(env.ZICHAN_DEV_API_TARGET || `http://127.0.0.1:${env.PORT || '8787'}${env.BASE_PATH || '/'}`);
   const basePath = target.pathname.replace(/\/+$/, '');
+  const appVersion = (JSON.parse(readFileSync(fileURLToPath(new URL('./package.json', import.meta.url)), 'utf8')) as { version?: string }).version ?? 'dev';
   return {
   base: './',
+  // Reported to the sync server in a header, so an operator can tell an old build apart
+  // from a broken one. `dev` outside a release build is deliberate: a dev server is not
+  // a released build, and claiming a version would make the diagnostics wrong.
+  define: { __ZICHAN_APP_VERSION__: JSON.stringify(appVersion) },
   plugins: [react(), offlineBuild()],
   // sql.js is CJS: let Vite pre-bundle it (CJS→ESM). The .wasm is handled
   // separately via `?url` in sqljs-driver.ts and copied to the build output.

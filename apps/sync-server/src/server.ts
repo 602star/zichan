@@ -20,6 +20,7 @@ import {
   headerValue,
   isRecord,
   syncEventCategory,
+  clientIdentity,
   readBinaryBody,
   readBody,
   send,
@@ -164,7 +165,7 @@ function applyCors(req: IncomingMessage, res: ServerResponse): void {
   if (!origin) return;
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,HEAD,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Zichan-Client');
   res.setHeader('Access-Control-Max-Age', '600');
 }
 
@@ -562,6 +563,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     // One id per request binds the response, the log line and any diagnostic record.
     const requestId = `req-${randomBytes(REQUEST_ID_BYTES).toString('hex')}`;
     const requestStartedAt = Date.now();
+    // Self-reported, informational only: an unreadable value is treated as "not reported".
+    const client = clientIdentity(req);
     res.setHeader('X-Request-Id', requestId);
     res.once('finish', () => {
       if (!routedPath || !routedPath.startsWith('/api')) return;
@@ -1181,6 +1184,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           commitCount: page.commits.length,
           durationMs: Date.now() - requestStartedAt,
           requestId,
+          ...(client ? { clientKind: client.kind, clientVersion: client.version, protocolVersion: client.protocol } : {}),
         });
         return send(res, 200, { ...page, serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch });
       }
@@ -1208,6 +1212,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           commitCount: result.assigned.length,
           durationMs: Date.now() - requestStartedAt,
           requestId,
+          ...(client ? { clientKind: client.kind, clientVersion: client.version, protocolVersion: client.protocol } : {}),
         });
         return send(res, 200, { assigned: result.assigned, headSeq: result.replica.headSeq, serverId, replicaId: result.replica.replicaId, streamEpoch: result.replica.streamEpoch });
       }
@@ -1232,6 +1237,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           category: syncEventCategory(code, status),
           durationMs: Date.now() - requestStartedAt,
           requestId,
+          ...(client ? { clientKind: client.kind, clientVersion: client.version, protocolVersion: client.protocol } : {}),
         }).catch(() => undefined);
       }
       return send(res, status, { ...(code ? { code } : {}), error: message, requestId });

@@ -16,6 +16,7 @@ import {
   type SqlLedgerStore,
 } from '@zichan/db';
 import { SqlJsDriver } from './db/sqljs-driver.js';
+import { clientIdentity } from './client-identity.js';
 
 export interface PreparedRemoteLedgerJoin {
   ledgerId: string;
@@ -158,6 +159,7 @@ export async function prepareRemoteLedgerJoin(
     cryptoSession,
     keyEnvelope: envelope,
     requireExistingReplica: true,
+    clientIdentity: clientIdentity(),
   });
   const prepared = await stageRemoteLedgerJoin(
     input.ledgerId,

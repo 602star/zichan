@@ -6,6 +6,13 @@
 export * from './types.js';
 export * from './category-catalog.js';
 export { PLAIN_HTTP_HOST_ALLOWLIST, isPlainHttpHost } from './transport-policy.js';
+export {
+  CLIENT_IDENTITY_HEADER,
+  SYNC_PROTOCOL_VERSION,
+  formatClientIdentity,
+  parseClientIdentity,
+  type ClientIdentity,
+} from './client-identity.js';
 export { D, Decimal, sum, round, roundD, safeDiv, isZero, eq, type Numeric } from './decimal.js';
 export { newId, prefixedId } from './ids.js';
 export {

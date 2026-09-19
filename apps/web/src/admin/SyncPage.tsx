@@ -65,6 +65,10 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
       <Panel title="诊断记录">
         <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
         <Notice>{list.data?.coverage ?? '覆盖范围：仅服务端可见的同步结果。'}</Notice>
+        <Notice>
+          客户端信息由客户端自报，服务端不据此改变任何行为：它只用来判断“这个设备是不是旧版本”，不构成身份证明。
+          早于该字段的记录显示“未知”，那是当时没有上报，不等于客户端旧。
+        </Notice>
         {accountId ? <Notice>当前只显示账号 {username || accountId} 的记录。</Notice> : null}
         <DataTable
           columns={[
@@ -82,6 +86,12 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
               },
             },
             { key: 'device', header: '设备', secondary: true, render: (event) => event.deviceName ?? '暂无数据' },
+            {
+              key: 'client', header: '客户端', secondary: true,
+              // Self-reported, so it is shown as a claim rather than a fact. "未知" is the
+              // honest reading for a client that sends nothing — not "old".
+              render: (event) => describeClient(event),
+            },
             { key: 'operation', header: '操作类型', render: (event) => event.operation },
             { key: 'commits', header: '提交数量', secondary: true, render: (event) => event.commitCount === undefined ? '暂无数据' : String(event.commitCount) },
             { key: 'bytes', header: '传输字节', secondary: true, render: (event) => event.bytes === undefined ? '暂无数据' : String(event.bytes) },
@@ -107,4 +117,16 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
       </Panel>
     </>
   );
+}
+
+/** One line describing the client that produced an event, or the reason there is none. */
+function describeClient(event: SyncEvent): string {
+  const kind = event.clientKind === 'desktop' ? '桌面端' : event.clientKind === 'web' ? '网页版' : event.clientKind === 'mobile' ? '移动端' : event.clientKind;
+  if (!kind && !event.clientVersion) return '未知';
+  const parts = [kind ?? '未知客户端'];
+  if (event.clientVersion) parts.push(`版本 ${event.clientVersion}`);
+  // Protocol is only worth showing when the server can compare it against something; the
+  // version alone is what answers "is this an old build".
+  if (event.protocolVersion) parts.push(`协议 v${event.protocolVersion}`);
+  return parts.join(' · ');
 }

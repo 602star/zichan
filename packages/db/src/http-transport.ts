@@ -10,6 +10,9 @@ import {
   type LedgerCryptoSession,
   type LedgerKeyEnvelope,
   type SyncCommitV2,
+  CLIENT_IDENTITY_HEADER,
+  formatClientIdentity,
+  type ClientIdentity,
 } from '@zichan/core';
 import type { CommitTransport, ReplicaConnection } from './event-sync.js';
 import type { SyncReplicaIdentity } from './sync-types.js';
@@ -24,6 +27,12 @@ export interface HttpTransportOptions {
   keyEnvelope: LedgerKeyEnvelope;
   /** Refuse to create a server-side binding; used by destructive join preflight. */
   requireExistingReplica?: boolean;
+  /**
+   * What this build is, reported to the server so sync diagnostics can tell an old
+   * client apart from a broken one. Purely informational: nothing server-side branches
+   * on it, and omitting it changes no behaviour.
+   */
+  clientIdentity?: ClientIdentity;
 }
 
 export interface RegisterAccountOptions extends HttpRequestOptions {
@@ -169,7 +178,11 @@ export function assertSecureSyncUrl(baseUrl: string): void {
 
 export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport {
   assertSecureSyncUrl(opts.baseUrl);
-  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.token}` };
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${opts.token}` };
+  if (opts.clientIdentity) {
+    try { headers[CLIENT_IDENTITY_HEADER] = formatClientIdentity(opts.clientIdentity); }
+    catch { /* An unusable identity is simply not reported. */ }
+  }
   let connection: ReplicaConnection | undefined;
 
   const readReplica = async (): Promise<{
