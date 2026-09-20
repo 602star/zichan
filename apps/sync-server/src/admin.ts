@@ -12,6 +12,7 @@ import { ADMIN_BODY_BYTES, pathParts, readBody, send, sendText } from './http-ut
 import { isJobType, jobOutcome, jobParamsFor, type JobRunner } from './jobs.js';
 import { cursorMatchesSort, readCursor, resolveSort, type ResolvedSort, type SortOption } from './list-sort.js';
 import { importMaintenanceRecords } from './maintenance-records.js';
+import { drainView, resolveMaintenance, type MaintenanceState, type WriteTracker } from './maintenance-mode.js';
 import { redactForExport, redactText } from './log-redaction.js';
 import type { MetricsService } from './metrics.js';
 import { SETTING_FIELDS, type SettingsFacade } from './settings.js';
@@ -47,6 +48,10 @@ export interface AdminRouterDeps {
   mfa: MfaService;
   jobs: JobRunner;
   log: (level: ServerLog['level'], action: string, message: string, meta?: Omit<ServerLog, 'id' | 'at' | 'level' | 'action' | 'message'>) => Promise<void>;
+  /** Reads the declared maintenance window; the same reader the request gate uses. */
+  maintenance: { read: () => Promise<MaintenanceState | undefined> };
+  /** Counts client writes in flight, so the console can say whether stopping is safe. */
+  writeTracker: WriteTracker;
   dataDir: string;
   databaseFile: string;
   serverId: string;
@@ -73,6 +78,7 @@ const AUDIT_ACTIONS = [
   'password-change-authorize', 'owner-recovery-local', 'settings-save', 'settings-update', 'sessions-revoke-all',
   'alert-acknowledge', 'alert-silence', 'alert-unsilence',
   'mfa-enroll', 'mfa-disable', 'mfa-recovery-codes',
+  'maintenance-on', 'maintenance-off',
 ];
 
 const SYNC_EVENT_CATEGORIES = ['session-invalid', 'quota-exceeded', 'protocol-incompatible', 'ledger-mismatch', 'server-storage-error', 'other'];
@@ -185,6 +191,10 @@ export function describeAudit(
       return `管理员 ${actor} 将告警 ${String(after['key'] ?? '')} 静默 ${String(after['hours'] ?? '')} 小时（至 ${after['silencedUntil'] ? dateOnly(String(after['silencedUntil'])) : '未记录'}），期间不发送外部通知。${reason}`;
     case 'alert-unsilence':
       return `管理员 ${actor} 取消了对告警 ${String(after['key'] ?? '')} 的静默。${reason}`;
+    case 'maintenance-on':
+      return `管理员 ${actor} 声明进入维护模式${after['until'] ? `（计划至 ${dateOnly(String(after['until']))}）` : '（未设结束时间）'}，客户端写入被拒绝，读取保持可用。${reason}`;
+    case 'maintenance-off':
+      return `管理员 ${actor} 结束维护模式，客户端写入恢复。${reason}`;
     default:
       return `管理员 ${actor} 执行了 ${entry.action}。${reason}`;
   }
@@ -350,6 +360,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const snapshot = await metrics.current();
       const jobs_ = await store.listJobs({ limit: 5 });
       const pending = await store.listAdminFailures(5);
+      const counts = await store.countJobsByStatus();
       return send(res, 200, {
         serverId: deps.serverId,
         version: deps.version,
@@ -357,7 +368,11 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         alerts: snapshot.alerts.items,
         recentJobs: jobs_.jobs,
         recentFailures: pending,
-        capabilities: { sessionsPagination: true, jobs: true, metrics: true, syncDiagnostics: true, alerts: true, resources: true, databaseStats: true },
+        // The same reader the write gate uses, so the page cannot report "维护中" for a window
+        // that has already expired — or claim normal operation while writes are being refused.
+        maintenance: resolveMaintenance(await deps.maintenance.read()),
+        drain: drainView(deps.writeTracker, { running: counts['running'] ?? 0, queued: counts['queued'] ?? 0 }),
+        capabilities: { sessionsPagination: true, jobs: true, metrics: true, syncDiagnostics: true, alerts: true, resources: true, databaseStats: true, maintenance: true },
       });
     }
 
@@ -922,6 +937,61 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         await log('info', 'settings_updated', 'Runtime settings updated', { username: auth.user.username, detail: { keys: Object.keys(updates as JsonRecord) } });
         return { status: 200, body: { settings: saved } };
       });
+    }
+
+    /**
+     * Declares or clears the maintenance window.
+     *
+     * Owner-only, and gated on a fresh login: this is the switch that decides whether the whole
+     * fleet can write, so it belongs with role changes and session revocation rather than with
+     * ordinary settings. The deployment-side procedure is still what stops the process; this
+     * declares the window and closes the write gate.
+     */
+    if (suffix === '/maintenance') {
+      if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '仅服务器所有者可以声明维护窗口' });
+      if (req.method === 'GET') {
+        const view = resolveMaintenance(await deps.maintenance.read());
+        const counts = await store.countJobsByStatus();
+        return send(res, 200, {
+          maintenance: view,
+          drain: drainView(deps.writeTracker, { running: counts['running'] ?? 0, queued: counts['queued'] ?? 0 }),
+          procedure: {
+            backupCommand: 'npm run server:backup -- --output <目录>',
+            note: '后台不执行停服备份与生产恢复：这些流程必须先停掉服务本身。此页声明窗口并判断现在停机是否会中断写入。',
+          },
+        });
+      }
+      if (req.method === 'POST') {
+        const body = await readBody(req, ADMIN_BODY_BYTES);
+        const enabled = body.enabled;
+        if (typeof enabled !== 'boolean') return send(res, 400, { code: 'INVALID_MAINTENANCE', error: 'enabled 必须是布尔值' });
+        const rawMessage = typeof body.message === 'string' ? body.message.trim() : '';
+        if (rawMessage.length > 300) return send(res, 400, { code: 'INVALID_MAINTENANCE', error: '维护说明不能超过 300 个字符' });
+        // An unparseable or already-past end time is refused rather than stored: either one would
+        // declare a window that silently does not apply, which looks identical to a working one.
+        let until: string | null = null;
+        if (typeof body.until === 'string' && body.until.trim()) {
+          const parsed = Date.parse(body.until);
+          if (!Number.isFinite(parsed)) return send(res, 400, { code: 'INVALID_MAINTENANCE', error: '结束时间无法识别，请使用 ISO 8601 时间' });
+          if (parsed <= Date.now()) return send(res, 400, { code: 'INVALID_MAINTENANCE', error: '结束时间必须晚于当前时间' });
+          until = new Date(parsed).toISOString();
+        }
+        return void await withIdempotency(req, res, `maintenance:${String(enabled)}`, { enabled, until, message: rawMessage }, async () => {
+          await store.mutateAdmin(
+            auth.session.id,
+            enabled
+              ? { action: 'maintenance-on', until, message: rawMessage }
+              : { action: 'maintenance-off' },
+            { reason: typeof body.reason === 'string' ? body.reason.slice(0, 200) : undefined, requestId },
+          );
+          await log(enabled ? 'warn' : 'info', enabled ? 'maintenance_enabled' : 'maintenance_disabled',
+            enabled ? 'Maintenance window declared; client writes are refused' : 'Maintenance window cleared; client writes resumed',
+            { username: auth.user.username, detail: { until } });
+          const view = resolveMaintenance(await deps.maintenance.read());
+          const counts = await store.countJobsByStatus();
+          return { status: 200, body: { maintenance: view, drain: drainView(deps.writeTracker, { running: counts['running'] ?? 0, queued: counts['queued'] ?? 0 }) } };
+        });
+      }
     }
 
     if (req.method === 'GET' && suffix === '/audit') {

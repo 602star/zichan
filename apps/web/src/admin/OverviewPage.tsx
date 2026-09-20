@@ -4,6 +4,7 @@ import type { AdminClient } from './client.js';
 import { Badge, Button, Loading, Notice, Panel, Select, Stat, TextInput, bytes, canWrite, message, muted, row, usePolling, useResource, when } from './ui.js';
 import { alertNextStep, alertStateLabel, acknowledgeAlert, describeAlert, isSilenced, silenceAlert, unsilenceAlert, SILENCE_HOURS } from './alerts.js';
 import { TrendChart } from './chart.js';
+import { MaintenancePanel } from './MaintenancePanel.js';
 import type { TrendPoint } from './trend.js';
 import type { Alert, Metrics, Overview } from './types.js';
 
@@ -53,7 +54,12 @@ export function OverviewPage({ client, navigate, accountName, role }: {
   // the service status. The server counts the same way, so the two never disagree.
   const blocking = alerts.filter((alert) => alert.state === 'active' && !isSilenced(alert));
   const silenced = alerts.filter(isSilenced);
-  const degraded = Boolean(blocking.length) || overview.stale;
+  // A declared maintenance window is not a degradation: it is a planned state, and it already
+  // explains why writes are refused. Folding it into "降级" would send an operator hunting for a
+  // fault that does not exist.
+  const maintenance = overview.data?.maintenance;
+  const drain = overview.data?.drain;
+  const degraded = (Boolean(blocking.length) || overview.stale) && !maintenance?.active;
   const diskFree = snapshot?.storage.diskFreeBytes ?? null;
   const diskTotal = snapshot?.storage.diskTotalBytes ?? null;
   const diskLow = diskFree !== null && diskTotal !== null && diskTotal > 0 && diskFree / diskTotal < 0.1;
@@ -71,8 +77,8 @@ export function OverviewPage({ client, navigate, accountName, role }: {
 
       <Panel title="服务状态">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-          <Stat label="状态" value={degraded ? '降级' : '正常'} tone={degraded ? 'warn' : undefined}
-            hint={blocking.length ? `${blocking.length} 条告警处于活动状态` : silenced.length ? `没有活动告警；${silenced.length} 条已静默` : '没有活动告警'} />
+          <Stat label="状态" value={maintenance?.active ? '维护中' : degraded ? '降级' : '正常'} tone={maintenance?.active ? 'warn' : degraded ? 'warn' : undefined}
+            hint={maintenance?.active ? '客户端写入已暂停，读取正常' : blocking.length ? `${blocking.length} 条告警处于活动状态` : silenced.length ? `没有活动告警；${silenced.length} 条已静默` : '没有活动告警'} />
           <Stat label="运行时间" value={snapshot ? formatUptime(snapshot.uptimeSeconds) : '暂无数据'} />
           <Stat label="服务版本" value={overview.data?.version ?? '暂无数据'} hint={`服务器 ID ${overview.data?.serverId ?? ''}`} />
           <Stat label="最后采样" value={snapshot ? new Date(snapshot.sampledAt).toLocaleTimeString() : '暂无数据'}
@@ -80,6 +86,8 @@ export function OverviewPage({ client, navigate, accountName, role }: {
           <Stat label="有效会话" value={snapshot ? snapshot.counts.activeSessionCount : '暂无数据'} hint="有效会话不代表在线人数" />
         </div>
       </Panel>
+
+      <MaintenancePanel client={client} role={role} view={maintenance} drain={drain} onChanged={() => overview.reload()} />
 
       <Panel
         title="核心指标"

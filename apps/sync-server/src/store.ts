@@ -2,6 +2,7 @@ import { Buffer } from 'node:buffer';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { NodeSqliteDriver } from '@zichan/db/node';
 import { cursorValue, readCursor, resolveSort, type ResolvedSort, type SortOption } from './list-sort.js';
+import { MAINTENANCE_KEY } from './maintenance-mode.js';
 
 /**
  * Sortable columns of the account list.
@@ -212,7 +213,13 @@ export type AdminMutation =
   | { action: 'mfa-enroll'; accountId: string }
   | { action: 'mfa-disable'; accountId: string }
   | { action: 'mfa-recovery-codes'; accountId: string }
-  | { action: 'alert-unsilence'; key: string };
+  | { action: 'alert-unsilence'; key: string }
+  /**
+   * Maintenance windows are audited like any other management act: "who took sync down, and when"
+   * is exactly the question the audit trail exists to answer.
+   */
+  | { action: 'maintenance-on'; until: string | null; message: string }
+  | { action: 'maintenance-off' };
 
 export interface ServerLog {
   id: string;
@@ -1708,6 +1715,17 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
           await driver.run('UPDATE admin_alerts SET silenced_until = NULL, silenced_by = NULL, silence_reason = NULL WHERE alert_key = ?', [mutation.key]);
           after = { key: mutation.key, silencedUntil: null };
         }
+      } else if (mutation.action === 'maintenance-on' || mutation.action === 'maintenance-off') {
+        // Stored in the same key/value table the settings use, and written inside this transaction
+        // so the flag and its audit record cannot diverge.
+        const previous = await driver.get<{ value_json: string }>('SELECT value_json FROM server_maintenance_state WHERE key = ?', [MAINTENANCE_KEY]);
+        const previousState = previous ? JSON.parse(previous.value_json) as JsonRecord : {};
+        const next = mutation.action === 'maintenance-on'
+          ? { enabled: true, message: mutation.message, until: mutation.until, startedAt: at, startedBy: actor.username }
+          : { enabled: false, message: '', until: null, startedAt: null, startedBy: null };
+        await driver.run('INSERT OR REPLACE INTO server_maintenance_state (key, value_json, updated_at) VALUES (?, ?, ?)', [MAINTENANCE_KEY, JSON.stringify(next), at]);
+        before = { enabled: previousState['enabled'] === true, until: previousState['until'] ?? null };
+        after = { enabled: next.enabled, until: next.until, message: next.message };
       }
       if (target && (mutation.action === 'role' || mutation.action === 'state')) await driver.run('DELETE FROM account_password_resets WHERE account_id = ?', [target.account_id]);
       if (target) await driver.run('UPDATE sync_users SET revision = revision + 1 WHERE username = ?', [target.username]);

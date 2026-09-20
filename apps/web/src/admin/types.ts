@@ -94,7 +94,33 @@ export interface Overview {
   alerts: Alert[];
   recentJobs: Job[];
   recentFailures: { id: number; at: string; action: string; code: string | null; message: string | null; requestId: string | null; actorAccountId: string | null }[];
+  /**
+   * The declared maintenance window, resolved by the same function the write gate uses. Present
+   * since `capabilities.maintenance`; absent on an older server, which is why it is optional.
+   */
+  maintenance?: MaintenanceView;
+  drain?: DrainView;
   capabilities: Record<string, boolean>;
+}
+
+export interface MaintenanceView {
+  /** Whether client writes are being refused *right now* — not merely whether the flag is set. */
+  active: boolean;
+  enabled: boolean;
+  message: string;
+  until: string | null;
+  startedAt: string | null;
+  startedBy: string | null;
+  /** Set when the operator declared an end time and it has passed. */
+  expired: boolean;
+}
+
+export interface DrainView {
+  inFlightWrites: number;
+  runningJobs: number;
+  queuedJobs: number;
+  safeToStop: boolean;
+  note: string;
 }
 
 export interface Metrics {

@@ -29,6 +29,7 @@ import {
 import { createJobHandlers } from './job-handlers.js';
 import { createJobRunner } from './jobs.js';
 import { importMaintenanceRecords } from './maintenance-records.js';
+import { MAINTENANCE_KEY, createWriteTracker, isClientWrite, resolveMaintenance, type MaintenanceState } from './maintenance-mode.js';
 import { createMetricsService } from './metrics.js';
 import { createSettings } from './settings.js';
 import { createMfaService } from './mfa.js';
@@ -441,6 +442,25 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   const runtimeSettings = createSettings(store);
   const settings = runtimeSettings.settings;
 
+  /**
+   * Maintenance mode is read per request rather than cached: the flag is written from the admin
+   * router in this same process, and a cached "off" would keep letting writes in after an operator
+   * declared a window. It is a single indexed primary-key read on the request path.
+   */
+  const maintenanceState = async (): Promise<MaintenanceState | undefined> => {
+    const raw = await store.maintenanceState(MAINTENANCE_KEY);
+    if (!raw) return undefined;
+    return {
+      enabled: raw['enabled'] === true,
+      message: typeof raw['message'] === 'string' ? raw['message'] : '',
+      until: typeof raw['until'] === 'string' ? raw['until'] : null,
+      startedAt: typeof raw['startedAt'] === 'string' ? raw['startedAt'] : null,
+      startedBy: typeof raw['startedBy'] === 'string' ? raw['startedBy'] : null,
+    };
+  };
+  const maintenance = { read: maintenanceState };
+  const writeTracker = createWriteTracker();
+
   const mfa = createMfaService({ store, serverSecret: secret });
   /** MFA is required for management console logins when the deployment asks for it. */
   const requireAdminMfa = (): boolean => String(settings.effective('requireAdminMfa')) === 'on';
@@ -520,6 +540,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     jobs,
     mfa,
     log,
+    maintenance,
+    writeTracker,
     dataDir,
     databaseFile: store.databaseFile,
     serverId,
@@ -569,6 +591,11 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     // One id per request binds the response, the log line and any diagnostic record.
     const requestId = `req-${randomBytes(REQUEST_ID_BYTES).toString('hex')}`;
     const requestStartedAt = Date.now();
+    // Set once the request is accepted as a client write, so the outer `finally` can release the
+    // count even when the handler throws. A leaked count would make the console claim a write is
+    // still in flight forever, which is exactly the signal an operator uses to decide it is safe
+    // to stop the process.
+    let countedWrite = false;
     // Self-reported, informational only: an unreadable value is treated as "not reported".
     const client = clientIdentity(req);
     res.setHeader('X-Request-Id', requestId);
@@ -647,6 +674,20 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       const apiPath = routedPath;
       if (apiPath !== '/api' && !apiPath.startsWith('/api/')) return send(res, 404, { error: 'not found' });
       if (!enableSync && (apiPath === '/api' || apiPath.startsWith('/api/'))) return send(res, 503, { error: 'sync api disabled' });
+      // Maintenance refuses client writes only. Admin routes must stay open or the mode could
+      // never be cleared, and auth must stay open so people can still sign in while it is on.
+      if (isClientWrite(req.method ?? 'GET', apiPath)) {
+        const view = resolveMaintenance(await maintenance.read());
+        if (view.active) {
+          res.setHeader('Retry-After', view.until ? String(Math.max(1, Math.ceil((Date.parse(view.until) - Date.now()) / 1000))) : '600');
+          await log('warn', 'maintenance_write_refused', 'Client write refused during the maintenance window', {
+            ip, status: 503, detail: { method: req.method, path: apiPath, requestId },
+          });
+          return send(res, 503, { code: 'MAINTENANCE', error: view.message, ...(view.until ? { until: view.until } : {}), requestId });
+        }
+        writeTracker.begin();
+        countedWrite = true;
+      }
       const isAdmin = apiPath === '/api/admin' || apiPath.startsWith('/api/admin/');
       if (isAdmin && !origin.secureTransport(req, allowInsecureHttp)) {
         return send(res, 426, { code: 'HTTPS_REQUIRED', error: 'HTTPS is required for remote administration' });
@@ -1247,6 +1288,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         }).catch(() => undefined);
       }
       return send(res, status, { ...(code ? { code } : {}), error: message, requestId });
+    } finally {
+      if (countedWrite) writeTracker.end();
     }
   });
   server.headersTimeout = 15_000;
