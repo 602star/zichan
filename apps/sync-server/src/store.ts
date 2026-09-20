@@ -2096,6 +2096,117 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     };
   }
 
+  /**
+   * Runs one statement against the same connection the store uses.
+   *
+   * Exists for tests that need to seed rows the public API deliberately cannot create (an
+   * invitation whose policy already expired, a record backdated to a past day). A second
+   * connection to the same file would work too, but then the store's own reads could race the
+   * write; going through the store keeps one connection and one ordering.
+   */
+  async seed(sql: string, params: (string | number | null)[] = []): Promise<void> {
+    await this.ready;
+    await this.driver.run(sql, params);
+  }
+
+  /**
+   * New accounts over time, and how many of them came from an invitation.
+   *
+   * The console counted requests only, so "are we growing, and which batch of invitations did
+   * it" had no answer at all. Registration time is the account's own `created_at`; attribution
+   * is the invitation that names the account as its user, which is the only link that exists
+   * between an account and how it got in.
+   *
+   * Buckets are UTC, like the metric buckets, and are rendered in local time by the console.
+   */
+  async registrationGrowth(options: { from?: string; until?: string; granularity?: 'day' | 'month' } = {}): Promise<{
+    granularity: 'day' | 'month';
+    buckets: { at: string; accounts: number; invited: number }[];
+    totals: { accounts: number; invited: number; uninvited: number };
+  }> {
+    await this.ready;
+    const granularity = options.granularity === 'month' ? 'month' : 'day';
+    // `2026-09-20` for a day, `2026-09` for a month: the bucket key is the date prefix itself.
+    const width = granularity === 'month' ? 7 : 10;
+    const clauses: string[] = [];
+    const params: (string | number)[] = [width];
+    if (options.from) { clauses.push('u.created_at >= ?'); params.push(options.from); }
+    if (options.until) { clauses.push('u.created_at < ?'); params.push(options.until); }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    // EXISTS rather than a join: an account must be counted once even if more than one row
+    // somehow names it, and the count of accounts is the number the page reports.
+    const rows = await this.driver.all<Record<string, unknown>>(
+      `SELECT substr(u.created_at, 1, ?) AS bucket, COUNT(*) AS accounts,
+              SUM(CASE WHEN EXISTS (SELECT 1 FROM registration_invites i WHERE i.used_by = u.username) THEN 1 ELSE 0 END) AS invited
+       FROM sync_users u ${where}
+       GROUP BY bucket ORDER BY bucket`,
+      params,
+    );
+    const buckets = rows.map((row) => ({
+      at: String(row['bucket']),
+      accounts: Number(row['accounts'] ?? 0),
+      invited: Number(row['invited'] ?? 0),
+    }));
+    const accounts = buckets.reduce((sum, bucket) => sum + bucket.accounts, 0);
+    const invited = buckets.reduce((sum, bucket) => sum + bucket.invited, 0);
+    // "Uninvited" is a difference, not a category: it is open registration plus the owner the
+    // deployment created, and nothing in the data separates those two.
+    return { granularity, buckets, totals: { accounts, invited, uninvited: accounts - invited } };
+  }
+
+  /**
+   * Invitations grouped by the day they were created, with how many were actually used.
+   *
+   * "How many people did that batch of invitations bring in" cannot be answered from the invite
+   * list: that is one row per code, and adding up uses across pages by hand is exactly the manual
+   * tally the failed-login view exists to avoid.
+   *
+   * Totals cover the whole history rather than the selected range — "how many did invitations
+   * ever bring in" is the question the number is for — while `batches` is the range.
+   */
+  async inviteAttribution(options: { from?: string; until?: string; limit?: number } = {}): Promise<{
+    batches: { at: string; issued: number; used: number }[];
+    totals: { issued: number; used: number; available: number; revoked: number; expired: number };
+  }> {
+    await this.ready;
+    const now = nowIso();
+    // The state rules mirror `listInvitesPage` exactly, so the summary and the list cannot
+    // disagree about what "available" means. An invitation with no policy row never expires.
+    const totalsRow = await this.driver.get<Record<string, unknown>>(
+      `SELECT COUNT(*) AS issued,
+              COALESCE(SUM(CASE WHEN i.used_by IS NOT NULL THEN 1 ELSE 0 END), 0) AS used,
+              COALESCE(SUM(CASE WHEN i.used_by IS NULL AND i.disabled = 1 THEN 1 ELSE 0 END), 0) AS revoked,
+              COALESCE(SUM(CASE WHEN i.used_by IS NULL AND i.disabled = 0 AND p.expires_at <= ? THEN 1 ELSE 0 END), 0) AS expired,
+              COALESCE(SUM(CASE WHEN i.used_by IS NULL AND i.disabled = 0 AND (p.expires_at IS NULL OR p.expires_at > ?) THEN 1 ELSE 0 END), 0) AS available
+       FROM registration_invites i
+       LEFT JOIN registration_invite_policy p ON p.code = i.code`,
+      [now, now],
+    );
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    if (options.from) { clauses.push('created_at >= ?'); params.push(options.from); }
+    if (options.until) { clauses.push('created_at < ?'); params.push(options.until); }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    const limit = Math.max(1, Math.min(200, options.limit ?? 90));
+    const rows = await this.driver.all<Record<string, unknown>>(
+      `SELECT substr(created_at, 1, 10) AS bucket, COUNT(*) AS issued,
+              COALESCE(SUM(CASE WHEN used_by IS NOT NULL THEN 1 ELSE 0 END), 0) AS used
+       FROM registration_invites ${where}
+       GROUP BY bucket ORDER BY bucket DESC LIMIT ?`,
+      [...params, limit],
+    );
+    return {
+      batches: rows.map((row) => ({ at: String(row['bucket']), issued: Number(row['issued'] ?? 0), used: Number(row['used'] ?? 0) })),
+      totals: {
+        issued: Number(totalsRow?.['issued'] ?? 0),
+        used: Number(totalsRow?.['used'] ?? 0),
+        available: Number(totalsRow?.['available'] ?? 0),
+        revoked: Number(totalsRow?.['revoked'] ?? 0),
+        expired: Number(totalsRow?.['expired'] ?? 0),
+      },
+    };
+  }
+
   async verify(): Promise<{ ok: boolean; result: string; journalMode: string; tempStore: string; schemaVersion: number }> {
     await this.ready;
     const check = await this.driver.get<Record<string, unknown>>('PRAGMA quick_check');

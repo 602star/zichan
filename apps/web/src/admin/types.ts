@@ -273,6 +273,23 @@ export interface LogEntry {
   ip?: string; username?: string; status?: number; detail?: Record<string, unknown>;
 }
 
+/** Registration growth and invitation attribution, as returned by `/registration/growth`. */
+export interface RegistrationGrowth {
+  range: string;
+  granularity: 'day' | 'month';
+  from: string | null;
+  until: string;
+  growth: {
+    granularity: 'day' | 'month';
+    buckets: { at: string; accounts: number; invited: number }[];
+    totals: { accounts: number; invited: number; uninvited: number };
+  };
+  attribution: {
+    batches: { at: string; issued: number; used: number }[];
+    totals: { issued: number; used: number; available: number; revoked: number; expired: number };
+  };
+}
+
 export interface Invite { code: string; disabled: boolean; usedBy?: string; expiresAt?: string; createdAt?: string; state?: string }
 
 export const SYNC_CATEGORIES: { value: string; label: string; next: string }[] = [

@@ -48,28 +48,31 @@ test('reflects the stored registration policy and paginates and filters invitati
     await page.getByRole('link', { name: '注册与邀请' }).click();
     // The select reflects the server value; a policy change saves immediately.
     await expect(page.getByLabel('当前策略')).toHaveValue('open');
-    await expect(page.locator('tbody tr')).toHaveCount(25);
+    // Scoped to the invitation list: the growth panel above it has a batch table with rows too,
+    // so a bare `tbody tr` would count both.
+    const list = page.locator('table').filter({ has: page.getByText('邀请码', { exact: true }) });
+    await expect(list.locator('tbody tr')).toHaveCount(25);
     await expect(page.getByText('第 1 页')).toBeVisible();
     await expect(page.getByRole('button', { name: '上一页', exact: true })).toBeDisabled();
     // Three pages forward, then back: the cursor history must survive every step.
     await page.getByRole('button', { name: '下一页', exact: true }).click();
     await expect(page.getByText('第 2 页')).toBeVisible();
-    await expect(page.locator('tbody tr')).toHaveCount(25);
+    await expect(list.locator('tbody tr')).toHaveCount(25);
     await page.getByRole('button', { name: '下一页', exact: true }).click();
     await expect(page.getByText('第 3 页')).toBeVisible();
-    await expect(page.locator('tbody tr')).toHaveCount(1);
+    await expect(list.locator('tbody tr')).toHaveCount(1);
     await expect(page.getByRole('cell', { name: codes[0], exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: '下一页', exact: true })).toBeDisabled();
     await page.getByRole('button', { name: '上一页', exact: true }).click();
     await expect(page.getByText('第 2 页')).toBeVisible();
-    await expect(page.locator('tbody tr')).toHaveCount(25);
+    await expect(list.locator('tbody tr')).toHaveCount(25);
     await page.getByRole('button', { name: '上一页', exact: true }).click();
     await expect(page.getByText('第 1 页')).toBeVisible();
-    await expect(page.locator('tbody tr')).toHaveCount(25);
+    await expect(list.locator('tbody tr')).toHaveCount(25);
     await expect(page.getByRole('button', { name: '上一页', exact: true })).toBeDisabled();
     await page.getByLabel('状态').selectOption('revoked');
     await expect(page.getByText('第 1 页')).toBeVisible();
-    await expect(page.locator('tbody tr')).toHaveCount(1);
+    await expect(list.locator('tbody tr')).toHaveCount(1);
     const saved = page.waitForResponse((response) => response.url().includes('/api/admin/registration') && response.request().method() === 'POST');
     await page.getByLabel('当前策略').selectOption('closed');
     expect((await saved).status()).toBe(200);

@@ -3,6 +3,61 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-19（补 7）— 注册与用户增长：邀请码到底拉来了多少人
+
+**Goal:** 用户清单第二部分：「没有注册/用户增长趋势。指标只统计请求维度；邀请码有 `usedBy` 归因但没有任何聚合
+（『这个月靠哪批邀请码拉来多少人』答不了）。」
+
+### 诊断（缺的是聚合，不是数据）
+
+- `sync_users.created_at` 一直在，`registration_invites.used_by` 也一直在，但两者都没有被按时间聚合过。
+  邀请列表是「一个码一行」的分页列表，想回答「这批码带来多少人」只能在页面上手工数——正是失败登录视图
+  存在要避免的那种人工统计。
+- 所以新增的是两个**聚合查询**，不是新数据：按注册时间分桶的新账号数（并分出「来自邀请」），以及
+  按发放日期分桶的邀请码发出/使用数。
+
+### 交付
+
+1. **`store.registrationGrowth()`**：按日/月分桶的新账号数与其中来自邀请的数量。用 `EXISTS` 而不是 JOIN，
+   保证一个账号只被计一次；桶是 UTC（与指标桶一致），页面按本地时间显示。
+2. **`store.inviteAttribution()`**：按发放日期分桶的「发出/已用」，以及**覆盖全部历史**的状态汇总
+   （可用/已用/已撤销/已过期）。状态口径与 `listInvitesPage` 逐条对齐，否则两处会对同一个码给出不同说法。
+3. **`GET /api/admin/registration/growth`**：`range=30d|90d|365d|all`（一年与全部默认按月），`granularity` 可显式指定，
+   非法值 400。
+4. **注册与邀请页新增「注册与邀请增长」面板**：四个数字（新账号、来自邀请、无邀请码、邀请码使用率）+
+   新账号趋势图 + 按日期的批次表（最多 30 行）+ 状态汇总一句话。
+
+### 判断（为什么这么做）
+
+- **「无邀请码」是一个差，不是一个类别**：它同时包含开放注册与部署创建的所有者账号，数据里没有区分字段。
+  页面照实说这一点，而不是编一个看起来更精确的分类。
+- **汇总与批次表刻意覆盖不同范围**：汇总回答「邀请码一共拉来多少人」（全历史），范围只收窄批次表。
+  如果汇总也跟着范围走，「累计发出多少」这个数字会随筛选变化，那它就不是累计了。
+- **批次表不列邀请码本身**：那是邀请列表的事。这个面板回答「多少」，不回答「哪个」。
+- **新增 `store.seed()` 只给测试用**：现有测试都是另开一个 `NodeSqliteDriver` 连接同一文件来塞数据，
+  但那会让 store 自己的读与测试的写竞争；走 store 自己的连接保持一个连接、一个顺序。
+
+### Verified
+
+- `npm test` 全绿：sync-server 195（+6）、web 533、core 135、db 169、logger 7。
+- `npm run typecheck`、`npm run lint`（0 error / 0 warning）、`npm run build:server` 通过。
+- 新增 `apps/sync-server/test/admin-registration-growth.test.ts`（6 项：按桶计数且各桶之和等于总数、
+  按月/按日分桶不丢账号、范围收窄到没有账号的时期返回空而不是自行放宽、按发放日期归因且状态之和等于总数、
+  过期邀请码算「已过期」而不是「可用」、端点对管理员返回完整载荷且拒绝非法 range/granularity）。
+- 新增 `tools/e2e/account-tests/admin-registration-growth.spec.mjs`（1 项真实浏览器用例：面板数字、
+  批次表只列数量不列码、状态汇总文案、切换范围后分桶从按日变按月）。
+
+### 环境与工具坑（本轮新踩）
+
+- **`page.locator('section')` 会命中页面外壳**：管理后台每页本身就是一个 `<section>`，用 `section` 过滤面板再断言
+  「某元素不存在」，因为命中的是外层容器而永远不成立。**「不存在」类断言必须先锚到一个足够窄的容器**
+  （这里改用带 `发放日期` 表头的 `table`）。
+- 测试里用 `initializeOwner: true` 在 node 里会撞 `SESSION_ORIGIN_REJECTED`（没有浏览器 Origin）；
+  初始化所有者要用 `ownerSetupToken`（≥32 字符）。
+- **新面板会让既有 e2e 的宽定位器失效**：`admin-usability` 用 `page.locator('tbody tr')` 数邀请列表行数，
+  我在同一页新增的批次表让它变成 26。这不是产品回归，是**定位器本来就不够窄**；修的是既有用例，
+  把它锚到表头为「邀请码」的那张表。**在共用页面上加表格时，先搜一遍有没有按 `tbody tr` 计数的用例。**
+
 ## 2026-09-19（补 6）— 管理员在后台改自己的密码
 
 **Goal:** 用户清单第二部分：「管理员自己没有『修改密码』入口。`/api/auth/password-change/authorize`

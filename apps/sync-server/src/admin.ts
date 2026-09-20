@@ -1204,6 +1204,35 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       });
     }
 
+    if (req.method === 'GET' && suffix === '/registration/growth') {
+      const range = search.get('range') ?? '90d';
+      if (!['30d', '90d', '365d', 'all'].includes(range)) return send(res, 400, { error: 'range must be 30d, 90d, 365d or all' });
+      const granularity = search.get('granularity') ?? (range === '365d' || range === 'all' ? 'month' : 'day');
+      if (granularity !== 'day' && granularity !== 'month') return send(res, 400, { error: 'granularity must be day or month' });
+      const spanMs = range === '30d' ? 30 : range === '90d' ? 90 : range === '365d' ? 365 : null;
+      const until = new Date();
+      const from = spanMs === null ? undefined : new Date(until.getTime() - spanMs * 86_400_000);
+      const [growth, attribution] = await Promise.all([
+        store.registrationGrowth({
+          granularity,
+          ...(from ? { from: from.toISOString() } : {}),
+          until: until.toISOString(),
+        }),
+        // Attribution covers the whole history on purpose: "how many did invitations ever bring
+        // in" is the question, and the range only narrows the per-batch view.
+        store.inviteAttribution(from ? { from: from.toISOString() } : {}),
+      ]);
+      res.setHeader('Cache-Control', 'no-store');
+      return send(res, 200, {
+        range,
+        granularity,
+        from: from ? from.toISOString() : null,
+        until: until.toISOString(),
+        growth,
+        attribution,
+      });
+    }
+
     if (req.method === 'GET' && suffix === '/invites') {
       const cursor = search.get('cursor') ?? '';
       const limit = Number(search.get('limit') ?? 25);

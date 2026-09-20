@@ -2,8 +2,10 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Pager, Panel, Select, TextInput, message, muted, row, useActionError, useCursorPager, useResource, when, canWrite } from './ui.js';
-import type { Invite } from './types.js';
+import { Badge, Button, DataTable, Field, Loading, Notice, Pager, Panel, Select, Stat, TextInput, message, muted, row, useActionError, useCursorPager, useResource, when, canWrite } from './ui.js';
+import type { Invite, RegistrationGrowth } from './types.js';
+import { TrendChart } from './chart.js';
+import type { TrendPoint } from './trend.js';
 
 const stateOf = (invite: Invite): { label: string; tone: 'ok' | 'bad' | 'muted' } => {
   if (invite.usedBy) return { label: '已使用', tone: 'muted' };
@@ -18,11 +20,13 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
   const pager = useCursorPager({ query, path: '/invites', navigate });
   const cursor = pager.cursor;
   const [days, setDays] = useState('7');
+  const range = query.get('growth') ?? '90d';
   const [issued, setIssued] = useState<Invite>();
   const [error, setError] = useState('');
   const actionError = useActionError();
 
   const mode = useResource(() => client.request<{ mode: string }>('/registration'), []);
+  const growth = useResource(() => client.request<RegistrationGrowth>(`/registration/growth?range=${range}`), [range]);
   const invites = useResource(() => client.request<{ invites: Invite[]; nextCursor?: string }>(
     `/invites?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${state ? `&state=${state}` : ''}`,
   ), [cursor, state]);
@@ -71,6 +75,66 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
           </Notice>
         ) : null}
         {error ? <Notice tone="bad">{error}</Notice> : null}
+      </Panel>
+
+      <Panel
+        title="注册与邀请增长"
+        note="新账号按注册时间分桶；「来自邀请」是邀请码里记着这个账号的那部分。没有邀请码的账号不区分开放注册与部署创建的账号——数据里没有这个区别。"
+        action={(
+          <Field label="范围">
+            <Select value={range} onChange={(event) => update({ growth: event.target.value })}>
+              <option value="30d">近 30 天</option>
+              <option value="90d">近 90 天</option>
+              <option value="365d">近一年</option>
+              <option value="all">全部</option>
+            </Select>
+          </Field>
+        )}
+      >
+        <Loading loading={growth.loading} error={growth.error} stale={growth.stale} loadedAt={growth.loadedAt} />
+        {growth.data ? (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+              <Stat label="新账号" value={String(growth.data.growth.totals.accounts)} hint={`${growth.data.growth.granularity === 'month' ? '按月' : '按日'}分桶，共 ${growth.data.growth.buckets.length} 个`} />
+              <Stat label="其中来自邀请" value={String(growth.data.growth.totals.invited)} />
+              <Stat label="无邀请码" value={String(growth.data.growth.totals.uninvited)} hint="开放注册或部署创建" />
+              <Stat
+                label="邀请码使用率"
+                value={growth.data.attribution.totals.issued ? `${Math.round(growth.data.attribution.totals.used / growth.data.attribution.totals.issued * 100)}%` : '—'}
+                hint={`累计发出 ${growth.data.attribution.totals.issued}，已用 ${growth.data.attribution.totals.used}`}
+              />
+            </div>
+            <TrendChart
+              points={growth.data.growth.buckets.map((bucket): TrendPoint => ({ at: bucket.at, value: bucket.accounts }))}
+              label={`新账号趋势，${growth.data.range}`}
+              formatValue={(value) => `${value} 个账号`}
+              granularityNote={growth.data.granularity === 'month' ? '按自然月' : '按自然日'}
+            />
+            {growth.data.attribution.batches.length ? (
+              <DataTable
+                columns={[
+                  { key: 'at', header: '发放日期', render: (batch) => batch.at },
+                  { key: 'issued', header: '发出', render: (batch) => String(batch.issued) },
+                  { key: 'used', header: '已用', render: (batch) => String(batch.used) },
+                  {
+                    key: 'rate',
+                    header: '使用率',
+                    secondary: true,
+                    render: (batch) => (batch.issued ? `${Math.round(batch.used / batch.issued * 100)}%` : '—'),
+                  },
+                ]}
+                rows={growth.data.attribution.batches.slice(0, 30)}
+                rowKey={(batch) => batch.at}
+                empty="这个范围内没有发出过邀请码。"
+              />
+            ) : null}
+            <p style={muted}>
+              邀请码状态汇总（全部历史）：可用 {growth.data.attribution.totals.available}、已用 {growth.data.attribution.totals.used}、
+              已撤销 {growth.data.attribution.totals.revoked}、已过期 {growth.data.attribution.totals.expired}。
+              上面按日期列出的是所选范围内发出的批次，最多 30 行。
+            </p>
+          </>
+        ) : null}
       </Panel>
 
       <Panel title="邀请列表" action={<Button onClick={invites.reload}>刷新</Button>}>
