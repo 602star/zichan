@@ -262,9 +262,83 @@ export interface Column<T> {
   render: (row: T) => ReactNode;
   /** Hidden on narrow screens to keep the table readable on a phone. */
   secondary?: boolean;
+  /** Replaces the header text, e.g. with a sort button. The plain `header` stays for screen readers. */
+  headerNode?: ReactNode;
+  /**
+   * Sort state of this column, when it is sortable. Exposed as `aria-sort` on the header cell,
+   * which is where assistive technology looks for it — a button whose name is just the column
+   * label gives no hint that the column is ordered, or in which direction.
+   */
+  ariaSort?: 'ascending' | 'descending';
+  /**
+   * Columns that may be hidden by the operator. A column that is not optional cannot be turned
+   * off: an identity or action column is why the table exists, and hiding it leaves a grid of
+   * values nobody can act on.
+   */
+  optional?: boolean;
 }
 
-export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeKey, renderExpanded }: {
+/**
+ * Remembers which optional columns are hidden, per table.
+ *
+ * Kept in localStorage rather than the URL: a link someone shares should show the data, not the
+ * sender's column layout, and the choice is about the person rather than about this view.
+ */
+export function useHiddenColumns(table: string, columns: { key: string; optional?: boolean }[]): {
+  hidden: string[];
+  toggle: (key: string) => void;
+  reset: () => void;
+} {
+  const storageKey = `zichan.admin.columns.${table}`;
+  const optionalKeys = columns.filter((column) => column.optional).map((column) => column.key);
+  const read = (): string[] => {
+    try {
+      const raw = globalThis.localStorage?.getItem(storageKey);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return [];
+      // Drop keys this table no longer has, so a renamed column cannot come back as a phantom.
+      return parsed.filter((key): key is string => typeof key === 'string' && optionalKeys.includes(key));
+    } catch { return []; }
+  };
+  const [hidden, setHidden] = useState<string[]>(read);
+  const write = (next: string[]): void => {
+    setHidden(next);
+    try { globalThis.localStorage?.setItem(storageKey, JSON.stringify(next)); } catch { /* A full or blocked store must not break the page. */ }
+  };
+  return {
+    hidden,
+    toggle: (key) => write(hidden.includes(key) ? hidden.filter((item) => item !== key) : [...hidden, key]),
+    reset: () => write([]),
+  };
+}
+
+/** The column-visibility control, rendered next to a table's other controls. */
+export function ColumnPicker({ columns, hidden, onToggle, onReset }: {
+  columns: { key: string; header: string; optional?: boolean }[];
+  hidden: string[];
+  onToggle: (key: string) => void;
+  onReset: () => void;
+}) {
+  const optional = columns.filter((column) => column.optional);
+  if (!optional.length) return null;
+  return (
+    <details style={{ display: 'inline-block' }}>
+      <summary style={{ cursor: 'pointer', ...muted }}>列显示{hidden.length ? `（已隐藏 ${hidden.length} 列）` : ''}</summary>
+      <div style={{ ...row, marginTop: 6, maxWidth: 420 }}>
+        {optional.map((column) => (
+          <label key={column.key} style={{ ...muted, display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+            <input type="checkbox" checked={!hidden.includes(column.key)} onChange={() => onToggle(column.key)} />
+            {column.header}
+          </label>
+        ))}
+        {hidden.length ? <Button onClick={onReset}>全部显示</Button> : null}
+      </div>
+    </details>
+  );
+}
+
+export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeKey, renderExpanded, hiddenColumns = [] }: {
   columns: Column<T>[];
   rows: T[];
   rowKey: (row: T) => string;
@@ -273,15 +347,18 @@ export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeK
   activeKey?: string;
   /** Rendered in a full-width row directly under the active row. */
   renderExpanded?: (row: T) => ReactNode;
+  /** Keys of optional columns the operator turned off. */
+  hiddenColumns?: string[];
 }) {
   if (!rows.length) return <p style={muted}>{empty}</p>;
+  const visible = columns.filter((column) => !hiddenColumns.includes(column.key));
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
-            {columns.map((column) => (
-              <th key={column.key} className={column.secondary ? 'zc-admin-secondary' : undefined} style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid var(--border)', ...muted }}>{column.header}</th>
+            {visible.map((column) => (
+              <th key={column.key} className={column.secondary ? 'zc-admin-secondary' : undefined} aria-sort={column.ariaSort} style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid var(--border)', ...muted }}>{column.headerNode ?? column.header}</th>
             ))}
           </tr>
         </thead>
@@ -295,13 +372,13 @@ export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeK
                   onClick={onRowClick ? () => onRowClick(item) : undefined}
                   style={{ cursor: onRowClick ? 'pointer' : undefined, background: activeKey === key ? 'var(--surface-muted, #f1f3f4)' : undefined }}
                 >
-                  {columns.map((column) => (
+                  {visible.map((column) => (
                     <td key={column.key} className={column.secondary ? 'zc-admin-secondary' : undefined} style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', verticalAlign: 'top' }}>{column.render(item)}</td>
                   ))}
                 </tr>
                 {renderExpanded && activeKey === key ? (
                   <tr>
-                    <td colSpan={columns.length} style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)', background: 'var(--surface-muted, #f1f3f4)' }}>
+                    <td colSpan={visible.length} style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)', background: 'var(--surface-muted, #f1f3f4)' }}>
                       {renderExpanded(item)}
                     </td>
                   </tr>

@@ -1,8 +1,26 @@
 /** Sync diagnostics: every server-visible failure with a reason and a next step. */
 import { AccountFilter, TimeRangeFilter } from './filters.js';
 import type { AdminClient } from './client.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, muted, row, useCursorPager, useResource, when } from './ui.js';
+import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, muted, row, useCursorPager, useHiddenColumns, useResource, when } from './ui.js';
+import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import { SYNC_CATEGORIES, type SyncEvent } from './types.js';
+
+/** Sortable columns; only these have a server-side ordering behind them. */
+const SORTS: SortChoice[] = [
+  { key: 'at', label: '服务端接收时间' },
+  { key: 'account', label: '账号', first: 'asc' },
+  { key: 'operation', label: '操作类型', first: 'asc' },
+  { key: 'duration', label: '耗时' },
+  { key: 'commits', label: '提交数量' },
+];
+
+/** Optional columns, listed once so the picker and the table cannot disagree. */
+const OPTIONAL_COLUMNS = [
+  { key: 'device', header: '设备', optional: true },
+  { key: 'client', header: '客户端', optional: true },
+  { key: 'commits', header: '提交数量', optional: true },
+  { key: 'bytes', header: '传输字节', optional: true },
+];
 
 export function SyncPage({ client, query, navigate }: { client: AdminClient; query: URLSearchParams; navigate: (to: string) => void }) {
   const category = query.get('category') ?? '';
@@ -15,12 +33,24 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
   const username = query.get('username') ?? '';
   const pager = useCursorPager({ query, path: '/sync', navigate });
   const cursor = pager.cursor;
+  const listParams = readListParams(query, { sort: 'at', dir: 'desc', limit: 50 });
+  const { hidden, toggle, reset } = useHiddenColumns('sync', OPTIONAL_COLUMNS);
 
-  const list = useResource(() => client.request<{ events: SyncEvent[]; nextCursor?: string; coverage: string }>(
-    `/sync-events?limit=50${category ? `&category=${category}` : ''}${outcome ? `&outcome=${outcome}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${from ? `&from=${encodeURIComponent(from)}` : ''}${until ? `&until=${encodeURIComponent(until)}` : ''}${accountId ? `&accountId=${encodeURIComponent(accountId)}` : ''}`,
-  ), [category, outcome, cursor, from, until, accountId]);
+  const list = useResource(() => client.request<{ events: SyncEvent[]; nextCursor?: string; coverage: string; sort?: { key: string; direction: string } }>(
+    `/sync-events?${listParamsQuery(listParams)}${category ? `&category=${category}` : ''}${outcome ? `&outcome=${outcome}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${from ? `&from=${encodeURIComponent(from)}` : ''}${until ? `&until=${encodeURIComponent(until)}` : ''}${accountId ? `&accountId=${encodeURIComponent(accountId)}` : ''}`,
+  ), [category, outcome, cursor, from, until, accountId, listParams.sort, listParams.direction, listParams.limit]);
 
   const update = pager.apply;
+  // The sort the server actually used, which is not always the one that was asked for.
+  const appliedSort = list.data?.sort ?? { key: listParams.sort, direction: listParams.direction };
+  // One spreadable value per column, so the clickable header and the announced sort state cannot
+  // drift apart.
+  const sortHeader = (key: string, label: string) => sortableHeader(
+    SORTS.find((entry) => entry.key === key) ?? { key, label },
+    appliedSort.key,
+    appliedSort.direction,
+    (next) => update({ sort: next.sort, dir: next.dir }),
+  );
 
   return (
     <>
@@ -70,11 +100,15 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
           早于该字段的记录显示“未知”，那是当时没有上报，不等于客户端旧。
         </Notice>
         {accountId ? <Notice>当前只显示账号 {username || accountId} 的记录。</Notice> : null}
+        <div style={{ ...row, marginTop: 10 }}>
+          <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} sizes={[25, 50, 100, 200]} />
+          <ColumnPicker columns={OPTIONAL_COLUMNS} hidden={hidden} onToggle={toggle} onReset={reset} />
+        </div>
         <DataTable
           columns={[
-            { key: 'at', header: '服务端接收时间', render: (event) => when(event.at) },
+            { key: 'at', header: '服务端接收时间', ...sortHeader('at', '服务端接收时间'), render: (event) => when(event.at) },
             {
-              key: 'account', header: '账号', render: (event) => {
+              key: 'account', header: '账号', ...sortHeader('account', '账号'), render: (event) => {
                 // Empty rather than '—': '—' is a sentinel that short-circuits every fallback.
                 if (!event.username) return '暂无数据';
                 return (
@@ -85,17 +119,17 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
                 );
               },
             },
-            { key: 'device', header: '设备', secondary: true, render: (event) => event.deviceName ?? '暂无数据' },
+            { key: 'device', header: '设备', secondary: true, optional: true, render: (event) => event.deviceName ?? '暂无数据' },
             {
-              key: 'client', header: '客户端', secondary: true,
+              key: 'client', header: '客户端', secondary: true, optional: true,
               // Self-reported, so it is shown as a claim rather than a fact. "未知" is the
               // honest reading for a client that sends nothing — not "old".
               render: (event) => describeClient(event),
             },
-            { key: 'operation', header: '操作类型', render: (event) => event.operation },
-            { key: 'commits', header: '提交数量', secondary: true, render: (event) => event.commitCount === undefined ? '暂无数据' : String(event.commitCount) },
-            { key: 'bytes', header: '传输字节', secondary: true, render: (event) => event.bytes === undefined ? '暂无数据' : String(event.bytes) },
-            { key: 'duration', header: '耗时', render: (event) => event.durationMs === undefined ? '暂无数据' : `${event.durationMs} ms` },
+            { key: 'operation', header: '操作类型', ...sortHeader('operation', '操作类型'), render: (event) => event.operation },
+            { key: 'commits', header: '提交数量', secondary: true, optional: true, ...sortHeader('commits', '提交数量'), render: (event) => event.commitCount === undefined ? '暂无数据' : String(event.commitCount) },
+            { key: 'bytes', header: '传输字节', secondary: true, optional: true, render: (event) => event.bytes === undefined ? '暂无数据' : String(event.bytes) },
+            { key: 'duration', header: '耗时', ...sortHeader('duration', '耗时'), render: (event) => event.durationMs === undefined ? '暂无数据' : `${event.durationMs} ms` },
             { key: 'result', header: '结果', render: (event) => event.outcome === 'ok' ? <Badge tone="ok">成功</Badge> : <Badge tone="bad">{event.resultCode ?? '失败'}</Badge> },
             { key: 'reason', header: '原因', render: (event) => SYNC_CATEGORIES.find((entry) => entry.value === event.category)?.label ?? '暂无数据' },
             {
@@ -106,6 +140,7 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
           ]}
           rows={list.data?.events ?? []}
           rowKey={(event) => event.id}
+          hiddenColumns={hidden}
           empty={accountId ? '该账号在这个范围内没有服务端可见的同步记录：可能当前离线或没有新操作，这不等于故障。' : '没有符合条件的诊断记录。'}
         />
         <div style={{ ...row, marginTop: 10, justifyContent: 'flex-end' }}>

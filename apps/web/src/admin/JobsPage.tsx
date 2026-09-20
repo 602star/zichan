@@ -2,8 +2,22 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, TextInput, bytes, message, muted, row, useActionError, useCursorPager, usePolling, useResource, when, canWrite } from './ui.js';
+import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, TextInput, bytes, message, muted, row, useActionError, useCursorPager, useHiddenColumns, usePolling, useResource, when, canWrite } from './ui.js';
+import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import { JOB_TYPES, type Job, type JobEvent } from './types.js';
+
+/** Sortable columns; only these have a server-side ordering behind them. */
+const SORTS: SortChoice[] = [
+  { key: 'created', label: '创建时间' },
+  { key: 'status', label: '状态' },
+  { key: 'type', label: '类型' },
+];
+
+/** Optional columns, listed once so the picker and the table cannot disagree. */
+const OPTIONAL_COLUMNS = [
+  { key: 'by', header: '发起人', optional: true },
+  { key: 'finished', header: '结束时间', optional: true },
+];
 
 const statusTone = (status: Job['status']) => status === 'succeeded' ? 'ok' as const : status === 'running' || status === 'queued' ? 'warn' as const
   : status === 'failed' ? 'bad' as const : 'muted' as const;
@@ -75,15 +89,17 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
   const accountFilter = query.get('accountId') ?? '';
   const pager = useCursorPager({ query, path: '/jobs', navigate });
   const cursor = pager.cursor;
+  const listParams = readListParams(query, { sort: 'created', dir: 'desc', limit: 25 });
+  const { hidden, toggle, reset } = useHiddenColumns('jobs', OPTIONAL_COLUMNS);
   const [jobType, setJobType] = useState('blobs.verify');
   const [accountId, setAccountId] = useState(accountFilter);
   const [recordId, setRecordId] = useState('');
   const [error, setError] = useState('');
   const actionError = useActionError();
 
-  const list = useResource(() => client.request<{ jobs: Job[]; nextCursor?: string }>(
-    `/jobs?limit=25${status ? `&status=${status}` : ''}${type ? `&type=${type}` : ''}${accountFilter ? `&accountId=${encodeURIComponent(accountFilter)}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
-  ), [status, type, accountFilter, cursor]);
+  const list = useResource(() => client.request<{ jobs: Job[]; nextCursor?: string; sort?: { key: string; direction: string } }>(
+    `/jobs?${listParamsQuery(listParams)}${status ? `&status=${status}` : ''}${type ? `&type=${type}` : ''}${accountFilter ? `&accountId=${encodeURIComponent(accountFilter)}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+  ), [status, type, accountFilter, cursor, listParams.sort, listParams.direction, listParams.limit]);
   const detail = useResource(
     () => jobId ? client.request<{ job: Job; events: JobEvent[] }>(`/jobs/${jobId}`) : Promise.resolve(undefined),
     [jobId],
@@ -91,6 +107,17 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
   usePolling(() => { list.reload(); detail.reload(); }, 5_000, Boolean(jobId) || Boolean(list.data?.jobs.some((job) => ['queued', 'running'].includes(job.status))));
 
   const update = pager.apply;
+  // The sort the server actually used, which is not always the one that was asked for: a page
+  // built against an older server must show what it got rather than what it wanted.
+  const appliedSort = list.data?.sort ?? { key: listParams.sort, direction: listParams.direction };
+  // One spreadable value per column, so the clickable header and the announced sort state cannot
+  // drift apart.
+  const sortHeader = (key: string, label: string) => sortableHeader(
+    SORTS.find((entry) => entry.key === key) ?? { key, label },
+    appliedSort.key,
+    appliedSort.direction,
+    (next) => update({ sort: next.sort, dir: next.dir }),
+  );
 
   const selected = JOB_TYPES.find((entry) => entry.value === jobType)!;
   const submit = async (): Promise<void> => {
@@ -155,15 +182,19 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
             <Button onClick={() => update({ accountId: undefined })}>取消该账号筛选</Button>
           </p>
         ) : null}
+        <div style={{ ...row, marginTop: 10 }}>
+          <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} />
+          <ColumnPicker columns={OPTIONAL_COLUMNS} hidden={hidden} onToggle={toggle} onReset={reset} />
+        </div>
         <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
         <DataTable
           columns={[
-            { key: 'type', header: '类型', render: (job) => JOB_TYPES.find((entry) => entry.value === job.type)?.label ?? job.type },
-            { key: 'status', header: '状态', render: (job) => <Badge tone={statusTone(job.status)}>{statusLabel(job.status)}</Badge> },
+            { key: 'type', header: '类型', ...sortHeader('type', '类型'), render: (job) => JOB_TYPES.find((entry) => entry.value === job.type)?.label ?? job.type },
+            { key: 'status', header: '状态', ...sortHeader('status', '状态'), render: (job) => <Badge tone={statusTone(job.status)}>{statusLabel(job.status)}</Badge> },
             { key: 'progress', header: '进度', render: (job) => job.total ? `${job.processed}/${job.total}` : job.processed ? String(job.processed) : (job.phase ?? '—') },
-            { key: 'by', header: '发起人', secondary: true, render: (job) => job.createdBy },
-            { key: 'created', header: '创建时间', render: (job) => when(job.createdAt) },
-            { key: 'finished', header: '结束时间', secondary: true, render: (job) => when(job.finishedAt) },
+            { key: 'by', header: '发起人', secondary: true, optional: true, render: (job) => job.createdBy },
+            { key: 'created', header: '创建时间', ...sortHeader('created', '创建时间'), render: (job) => when(job.createdAt) },
+            { key: 'finished', header: '结束时间', secondary: true, optional: true, render: (job) => when(job.finishedAt) },
             { key: 'error', header: '结果', render: (job) => { const value = outcomeOf(job); return value ? <Badge tone={value.tone}>{value.label}</Badge> : '—'; } },
             {
               key: 'actions', header: '操作', render: (job) => (
@@ -181,6 +212,7 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
           ]}
           rows={list.data?.jobs ?? []}
           rowKey={(job) => job.jobId}
+          hiddenColumns={hidden}
           empty="还没有维护任务。"
           activeKey={jobId || undefined}
         />

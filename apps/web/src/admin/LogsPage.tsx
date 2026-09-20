@@ -2,8 +2,39 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { AccountFilter, TimeRangeFilter } from './filters.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, message, muted, row, useActionError, useResource, when } from './ui.js';
+import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, message, muted, row, useActionError, useHiddenColumns, useResource, when } from './ui.js';
+import { PageSizeSelect, SortHeader, listParamsQuery, readListParams, type SortChoice } from './list-controls.js';
 import type { AuditEntry, LogEntry } from './types.js';
+
+/** Sortable columns of the run log; only these have a server-side ordering. */
+const LOG_SORTS: SortChoice[] = [
+  { key: 'at', label: '时间' },
+  { key: 'level', label: '级别', first: 'asc' },
+  { key: 'action', label: '动作', first: 'asc' },
+  { key: 'username', label: '用户', first: 'asc' },
+];
+
+/** Optional columns of the run log, listed once so the picker and the table cannot disagree. */
+const LOG_OPTIONAL_COLUMNS = [
+  { key: 'status', header: '状态码', optional: true },
+  { key: 'user', header: '用户', optional: true },
+  { key: 'request', header: '请求 ID', optional: true },
+];
+
+/** Sortable columns of the management audit. */
+const AUDIT_SORTS: SortChoice[] = [
+  { key: 'at', label: '时间' },
+  { key: 'action', label: '动作代码', first: 'asc' },
+  { key: 'actor', label: '操作者', first: 'asc' },
+  { key: 'target', label: '目标', first: 'asc' },
+];
+
+/** Optional columns of the management audit. */
+const AUDIT_OPTIONAL_COLUMNS = [
+  { key: 'action', header: '动作代码', optional: true },
+  { key: 'reason', header: '原因', optional: true },
+  { key: 'request', header: '请求 ID', optional: true },
+];
 
 export function LogsPage({ client, query, navigate }: { client: AdminClient; query: URLSearchParams; navigate: (to: string) => void }) {
   const level = query.get('level') ?? '';
@@ -16,14 +47,16 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
   const [requestDraft, setRequestDraft] = useState(requestId);
   const [cursor, setCursor] = useState('');
   const [stack, setStack] = useState<string[]>(['']);
+  const listParams = readListParams(query, { sort: 'at', dir: 'desc', limit: 100 });
+  const { hidden, toggle, reset } = useHiddenColumns('logs', LOG_OPTIONAL_COLUMNS);
   // An export that silently does nothing is worse than one that says why it failed, so a
   // failed download is reported in-page like every other action on this console.
   // Named `exportError` because `action` is already the URL action filter on this page.
   const exportError = useActionError();
 
-  const list = useResource(() => client.request<{ logs: LogEntry[]; nextCursor?: string; actions?: string[] }>(
-    `/logs?limit=100${level ? `&level=${level}` : ''}${requestId ? `&requestId=${encodeURIComponent(requestId)}` : ''}${action ? `&action=${encodeURIComponent(action)}` : ''}${username ? `&username=${encodeURIComponent(username)}` : ''}${from ? `&from=${encodeURIComponent(from)}` : ''}${until ? `&until=${encodeURIComponent(until)}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
-  ), [level, requestId, action, username, from, until, cursor]);
+  const list = useResource(() => client.request<{ logs: LogEntry[]; nextCursor?: string; actions?: string[]; sort?: { key: string; direction: string } }>(
+    `/logs?${listParamsQuery(listParams)}${level ? `&level=${level}` : ''}${requestId ? `&requestId=${encodeURIComponent(requestId)}` : ''}${action ? `&action=${encodeURIComponent(action)}` : ''}${username ? `&username=${encodeURIComponent(username)}` : ''}${from ? `&from=${encodeURIComponent(from)}` : ''}${until ? `&until=${encodeURIComponent(until)}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+  ), [level, requestId, action, username, from, until, cursor, listParams.sort, listParams.direction, listParams.limit]);
 
   // The export follows the current filters but not the cursor: it is "everything matching this
   // view", not "this page of it".
@@ -39,6 +72,16 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
     setCursor(''); setStack(['']);
     navigate(`/logs${next.toString() ? `?${next.toString()}` : ''}`);
   };
+  // The sort the server actually used, which is not always the one that was asked for.
+  const appliedSort = list.data?.sort ?? { key: listParams.sort, direction: listParams.direction };
+  const sortHeader = (key: string, label: string) => (
+    <SortHeader
+      choice={LOG_SORTS.find((entry) => entry.key === key) ?? { key, label }}
+      sort={appliedSort.key}
+      direction={appliedSort.direction}
+      onSort={(next) => update({ sort: next.sort, dir: next.dir })}
+    />
+  );
 
   return (
     <>
@@ -79,17 +122,21 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
       </Panel>
 
       <Panel title="日志">
+        <div style={{ ...row, marginTop: 10 }}>
+          <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} sizes={[50, 100, 200, 500]} />
+          <ColumnPicker columns={LOG_OPTIONAL_COLUMNS} hidden={hidden} onToggle={toggle} onReset={reset} />
+        </div>
         <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
         <DataTable
           columns={[
-            { key: 'at', header: '时间', render: (entry) => when(entry.at) },
-            { key: 'level', header: '级别', render: (entry) => <Badge tone={entry.level === 'error' ? 'bad' : entry.level === 'warn' ? 'warn' : 'muted'}>{entry.level}</Badge> },
-            { key: 'action', header: '动作', render: (entry) => entry.action },
+            { key: 'at', header: '时间', headerNode: sortHeader('at', '时间'), render: (entry) => when(entry.at) },
+            { key: 'level', header: '级别', headerNode: sortHeader('level', '级别'), render: (entry) => <Badge tone={entry.level === 'error' ? 'bad' : entry.level === 'warn' ? 'warn' : 'muted'}>{entry.level}</Badge> },
+            { key: 'action', header: '动作', headerNode: sortHeader('action', '动作'), render: (entry) => entry.action },
             { key: 'message', header: '说明', render: (entry) => entry.message },
-            { key: 'status', header: '状态码', secondary: true, render: (entry) => entry.status === undefined ? '—' : String(entry.status) },
-            { key: 'user', header: '用户', secondary: true, render: (entry) => entry.username ?? '—' },
+            { key: 'status', header: '状态码', secondary: true, optional: true, render: (entry) => entry.status === undefined ? '—' : String(entry.status) },
+            { key: 'user', header: '用户', secondary: true, optional: true, headerNode: sortHeader('username', '用户'), render: (entry) => entry.username ?? '—' },
             {
-              key: 'request', header: '请求 ID', render: (entry) => {
+              key: 'request', header: '请求 ID', optional: true, render: (entry) => {
                 const value = typeof entry.detail?.['requestId'] === 'string' ? entry.detail['requestId'] : '';
                 return value ? <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => update({ requestId: value })}>{value}</button> : '—';
               },
@@ -97,6 +144,7 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
           ]}
           rows={list.data?.logs ?? []}
           rowKey={(entry) => entry.id}
+          hiddenColumns={hidden}
           empty="没有符合条件的日志。"
         />
         <div style={{ ...row, marginTop: 10, justifyContent: 'flex-end' }}>
@@ -125,6 +173,8 @@ export function AuditPage({ client, query, navigate }: { client: AdminClient; qu
   const [stack, setStack] = useState<string[]>(['']);
   const [exportError, setExportError] = useState('');
   const [exporting, setExporting] = useState(false);
+  const listParams = readListParams(query, { sort: 'at', dir: 'desc', limit: 50 });
+  const { hidden, toggle, reset } = useHiddenColumns('audit', AUDIT_OPTIONAL_COLUMNS);
 
   /** Filters go to the server so paging walks the filtered history, not just page one. */
   const filters = new URLSearchParams();
@@ -133,9 +183,9 @@ export function AuditPage({ client, query, navigate }: { client: AdminClient; qu
   }
   const filterQuery = filters.toString();
 
-  const list = useResource(() => client.request<{ entries: AuditEntry[]; actions?: string[]; nextCursor?: string }>(
-    `/audit?limit=50${filterQuery ? `&${filterQuery}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
-  ), [action, search, actor, target, from, until, cursor]);
+  const list = useResource(() => client.request<{ entries: AuditEntry[]; actions?: string[]; nextCursor?: string; sort?: { key: string; direction: string } }>(
+    `/audit?${listParamsQuery(listParams)}${filterQuery ? `&${filterQuery}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+  ), [action, search, actor, target, from, until, cursor, listParams.sort, listParams.direction, listParams.limit]);
   const failures = useResource(() => client.request<{ failures: { id: number; at: string; action: string; code: string | null; message: string | null; requestId: string | null }[]; note: string }>('/audit/failures'), []);
 
   const update = (patch: Record<string, string | undefined>): void => {
@@ -150,6 +200,16 @@ export function AuditPage({ client, query, navigate }: { client: AdminClient; qu
     setExpanded(undefined);
     navigate('/audit');
   };
+  // The sort the server actually used, which is not always the one that was asked for.
+  const appliedSort = list.data?.sort ?? { key: listParams.sort, direction: listParams.direction };
+  const sortHeader = (key: string, label: string) => (
+    <SortHeader
+      choice={AUDIT_SORTS.find((entry) => entry.key === key) ?? { key, label }}
+      sort={appliedSort.key}
+      direction={appliedSort.direction}
+      onSort={(next) => update({ sort: next.sort, dir: next.dir })}
+    />
+  );
 
   return (
     <>
@@ -179,14 +239,20 @@ export function AuditPage({ client, query, navigate }: { client: AdminClient; qu
       </Panel>
 
       <Panel title="审计记录">
+        <div style={{ ...row, marginTop: 10 }}>
+          <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} sizes={[25, 50, 100, 200]} />
+          <ColumnPicker columns={AUDIT_OPTIONAL_COLUMNS} hidden={hidden} onToggle={toggle} onReset={reset} />
+        </div>
         <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
         <DataTable
           columns={[
-            { key: 'at', header: '时间', render: (entry) => when(entry.at) },
+            { key: 'at', header: '时间', headerNode: sortHeader('at', '时间'), render: (entry) => when(entry.at) },
             { key: 'summary', header: '操作', render: (entry) => entry.summary },
-            { key: 'action', header: '动作代码', secondary: true, render: (entry) => entry.action },
-            { key: 'reason', header: '原因', secondary: true, render: (entry) => entry.reason ?? '—' },
-            { key: 'request', header: '请求 ID', secondary: true, render: (entry) => entry.requestId ?? '—' },
+            { key: 'action', header: '动作代码', secondary: true, optional: true, headerNode: sortHeader('action', '动作代码'), render: (entry) => entry.action },
+            { key: 'actor', header: '操作者', secondary: true, optional: true, headerNode: sortHeader('actor', '操作者'), render: (entry) => entry.actorName ?? entry.actorAccountId },
+            { key: 'target', header: '目标', secondary: true, optional: true, headerNode: sortHeader('target', '目标'), render: (entry) => entry.targetName ?? entry.targetAccountId ?? '—' },
+            { key: 'reason', header: '原因', secondary: true, optional: true, render: (entry) => entry.reason ?? '—' },
+            { key: 'request', header: '请求 ID', secondary: true, optional: true, render: (entry) => entry.requestId ?? '—' },
             {
               key: 'detail', header: '详情', render: (entry) => (
                 <Button onClick={() => setExpanded(expanded === entry.id ? undefined : entry.id)}>{expanded === entry.id ? '收起' : '展开'}</Button>
@@ -195,6 +261,7 @@ export function AuditPage({ client, query, navigate }: { client: AdminClient; qu
           ]}
           rows={list.data?.entries ?? []}
           rowKey={(entry) => String(entry.id)}
+          hiddenColumns={hidden}
           empty="没有符合条件的审计记录。"
         />
         {expanded !== undefined ? (

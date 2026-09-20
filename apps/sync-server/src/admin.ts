@@ -10,12 +10,21 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { EncryptedBlobStore } from './blob-store.js';
 import { ADMIN_BODY_BYTES, pathParts, readBody, send, sendText } from './http-util.js';
 import { isJobType, jobOutcome, jobParamsFor, type JobRunner } from './jobs.js';
+import { cursorMatchesSort, readCursor, resolveSort, type ResolvedSort, type SortOption } from './list-sort.js';
 import { importMaintenanceRecords } from './maintenance-records.js';
 import { redactForExport, redactText } from './log-redaction.js';
 import type { MetricsService } from './metrics.js';
 import { SETTING_FIELDS, type SettingsFacade } from './settings.js';
 import {
   ServerStoreError,
+  AUDIT_SORT_OPTIONS,
+  BACKUP_SORT_OPTIONS,
+  INVITE_SORT_OPTIONS,
+  JOB_SORT_OPTIONS,
+  LOG_SORT_OPTIONS,
+  SESSION_SORT_OPTIONS,
+  SYNC_EVENT_SORT_OPTIONS,
+  USER_SORT_OPTIONS,
   type AccountRole,
   type AdminAlert,
   type AdminJob,
@@ -67,6 +76,47 @@ const AUDIT_ACTIONS = [
 ];
 
 const SYNC_EVENT_CATEGORIES = ['session-invalid', 'quota-exceeded', 'protocol-incompatible', 'ledger-mismatch', 'server-storage-error', 'other'];
+
+/**
+ * Reads the sort/direction pair shared by every cursor-paginated list.
+ *
+ * An unknown sort name falls back to the list's default: page and server deploy separately, and a
+ * page that knows a newer column must not break the list against an older server. A direction is
+ * a closed set of two, so a third value is a typo worth reporting instead of silently reversing.
+ * The resolved sort is always echoed in the response, so the page shows what the server did.
+ */
+function readListSort(
+  search: URLSearchParams,
+  options: Record<string, SortOption>,
+  fallback: string,
+  fallbackDirection: 'asc' | 'desc' = 'desc',
+): { sort: ResolvedSort; error?: string } {
+  const direction = search.get('dir') ?? '';
+  if (direction && direction !== 'asc' && direction !== 'desc') return { sort: resolveSort(options, null, fallback, null, fallbackDirection), error: 'dir must be asc or desc' };
+  return { sort: resolveSort(options, search.get('sort'), fallback, direction, fallbackDirection) };
+}
+
+/**
+ * Refuses a cursor that cannot be used with the resolved ordering.
+ *
+ * Two things are refused, and both would otherwise return a page that looks fine:
+ *
+ * - a cursor that cannot be parsed at all. Falling back to "no cursor" silently serves page one
+ *   again, so an operator clicking "next" on a corrupted link sees the first page and no error;
+ * - a cursor issued under a different ordering. Reinterpreting it returns a page that is stable,
+ *   plausible and wrong, which is worse than an error because nothing about it looks broken.
+ */
+function cursorGuard(search: URLSearchParams, sort: ResolvedSort): { ok: true } | { ok: false; code: string; error: string } {
+  const raw = search.get('cursor');
+  if (!raw) return { ok: true };
+  const cursor = readCursor(raw);
+  if (!cursor) return { ok: false, code: 'INVALID_CURSOR', error: '翻页游标无法识别，请从第一页重新开始' };
+  if (!cursorMatchesSort(cursor, sort)) {
+    return { ok: false, code: 'CURSOR_SORT_MISMATCH', error: '翻页游标与当前排序不一致，请从第一页重新开始' };
+  }
+  return { ok: true };
+}
+
 
 function bytes(value: number): string {
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
@@ -467,6 +517,10 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const searchTerm = search.get('search') ?? '';
       if (!['', 'active', 'revoked', 'expired'].includes(state) || !['', 'ledger', 'admin'].includes(kind)) return send(res, 400, { error: 'invalid session filter' });
       if (searchTerm.length > 128) return send(res, 400, { error: 'search must not exceed 128 characters' });
+      const { sort, error } = readListSort(search, SESSION_SORT_OPTIONS, 'lastSeen');
+      if (error) return send(res, 400, { error });
+      const guard = cursorGuard(search, sort);
+      if (!guard.ok) return send(res, 400, { code: guard.code, error: guard.error });
       const page = await store.listSessionsPage({
         limit,
         ...(search.get('cursor') ? { cursor: search.get('cursor')! } : {}),
@@ -474,9 +528,11 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         ...(state ? { state } : {}),
         ...(kind ? { kind } : {}),
         memberOnly: auth.role !== 'owner',
+        sort,
       });
       return send(res, 200, {
         ...page,
+        sort: { key: sort.key, direction: sort.direction },
         paginationUnit: 'session',
         note: '设备名与客户端信息由客户端上报；不通过 IP 推断地理位置。',
       });
@@ -511,8 +567,13 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const from = optionalIso(search.get('from'), 'from');
       const until = optionalIso(search.get('until'), 'until');
       const accountId = search.get('accountId') ?? undefined;
+      const { sort, error } = readListSort(search, SYNC_EVENT_SORT_OPTIONS, 'at');
+      if (error) return send(res, 400, { error });
+      const guard = cursorGuard(search, sort);
+      if (!guard.ok) return send(res, 400, { code: guard.code, error: guard.error });
       const page = await store.listSyncEvents({
         limit,
+        sort,
         ...(search.get('cursor') ? { cursor: search.get('cursor')! } : {}),
         ...(accountId ? { accountId } : {}),
         ...(search.get('username') ? { username: search.get('username')! } : {}),
@@ -523,6 +584,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       });
       return send(res, 200, {
         ...page,
+        sort: { key: sort.key, direction: sort.direction },
         coverage: '仅覆盖服务端可见的同步结果；客户端离线期间的失败需要客户端诊断上报后才会出现。长时间没有同步不代表故障。',
       });
     }
@@ -532,14 +594,19 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) return send(res, 400, { error: 'limit must be between 1 and 200' });
       const status = search.get('status') ?? '';
       if (status && !['queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted'].includes(status)) return send(res, 400, { error: 'invalid status' });
+      const { sort, error } = readListSort(search, JOB_SORT_OPTIONS, 'created');
+      if (error) return send(res, 400, { error });
+      const guard = cursorGuard(search, sort);
+      if (!guard.ok) return send(res, 400, { code: guard.code, error: guard.error });
       const page = await store.listJobs({
         limit,
         ...(status ? { status } : {}),
         ...(search.get('type') ? { type: search.get('type')! } : {}),
         ...(search.get('accountId') ? { accountId: search.get('accountId')! } : {}),
         ...(search.get('cursor') ? { cursor: search.get('cursor')! } : {}),
+        sort,
       });
-      return send(res, 200, { ...page, jobs: page.jobs.map(withOutcome) });
+      return send(res, 200, { ...page, jobs: page.jobs.map(withOutcome), sort: { key: sort.key, direction: sort.direction } });
     }
 
     if (req.method === 'POST' && suffix === '/jobs') {
@@ -611,7 +678,12 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if (status && !['completed', 'failed', 'planned'].includes(status)) return send(res, 400, { error: 'invalid status' });
       const kind = search.get('kind') ?? '';
       if (kind && !['manual', 'scheduled', 'drill'].includes(kind)) return send(res, 400, { error: 'invalid kind' });
+      const { sort, error } = readListSort(search, BACKUP_SORT_OPTIONS, 'created');
+      if (error) return send(res, 400, { error });
+      const guard = cursorGuard(search, sort);
+      if (!guard.ok) return send(res, 400, { code: guard.code, error: guard.error });
       const page = await store.listBackupRecords(limit, {
+        sort,
         ...(search.get('cursor') ? { cursor: search.get('cursor')! } : {}),
         ...(status ? { status } : {}),
         ...(kind ? { kind } : {}),
@@ -622,6 +694,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const summary = await store.latestBackupSummary();
       return send(res, 200, {
         ...page,
+        sort: { key: sort.key, direction: sort.direction },
         summary,
         note: '备份与恢复由部署侧维护程序在服务停止时执行，后台只登记与展示结果；不提供浏览器下载整套服务器备份。',
       });
@@ -852,16 +925,19 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     }
 
     if (req.method === 'GET' && suffix === '/audit') {
-      const before = Number(search.get('cursor') ?? Number.MAX_SAFE_INTEGER);
-      if (!Number.isSafeInteger(before) || before < 1) return send(res, 400, { error: 'invalid cursor' });
       const term = search.get('search')?.trim() ?? '';
       if (term.length > 128) return send(res, 400, { error: 'search must not exceed 128 characters' });
       const action = search.get('action') ?? '';
       if (action && !AUDIT_ACTIONS.includes(action)) return send(res, 400, { error: 'invalid action' });
       const from = optionalIso(search.get('from'), 'from');
       const until = optionalIso(search.get('until'), 'until');
+      const { sort, error } = readListSort(search, AUDIT_SORT_OPTIONS, 'at');
+      if (error) return send(res, 400, { error });
+      const guard = cursorGuard(search, sort);
+      if (!guard.ok) return send(res, 400, { code: guard.code, error: guard.error });
       const page = await store.listAdminAudit({
-        before,
+        sort,
+        ...(search.get('cursor') ? { cursor: search.get('cursor')! } : {}),
         limit: 50,
         ...(term ? { search: term } : {}),
         ...(action ? { action } : {}),
@@ -881,7 +957,12 @@ export function createAdminRouter(deps: AdminRouterDeps) {
           summary: describeAudit({ action: String(entry['action']), before: entry['before'], after: entry['after'], reason: entry['reason'] as string | null }, actor, target),
         };
       }));
-      return send(res, 200, { entries, actions: AUDIT_ACTIONS, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) });
+      return send(res, 200, {
+        entries,
+        actions: AUDIT_ACTIONS,
+        sort: { key: sort.key, direction: sort.direction },
+        ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+      });
     }
 
     if (req.method === 'GET' && suffix === '/audit/export') {
@@ -895,10 +976,14 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const until = optionalIso(search.get('until'), 'until');
       const cache = new Map<string, string>();
       const collected: Record<string, unknown>[] = [];
-      let cursor = Number.MAX_SAFE_INTEGER;
+      // The export walks the same ordering the page shows, so the file matches what the operator
+      // was looking at. It follows the filters but not the page cursor: "everything matching".
+      const exportSort = resolveSort(AUDIT_SORT_OPTIONS, 'at', 'at', 'desc');
+      let cursor: string | undefined;
       for (let page = 0; page < 20 && collected.length < 5_000; page += 1) {
         const chunk = await store.listAdminAudit({
-          before: cursor,
+          sort: exportSort,
+          ...(cursor ? { cursor } : {}),
           limit: 200,
           ...(action ? { action } : {}),
           ...(term ? { search: term } : {}),
@@ -919,7 +1004,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
           });
         }
         if (!chunk.nextCursor) break;
-        cursor = Number(chunk.nextCursor);
+        cursor = chunk.nextCursor;
       }
       await log('info', 'audit_exported', 'Management audit exported', {
         username: auth.user.username,
@@ -1109,8 +1194,13 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const until = optionalIso(search.get('until'), 'until');
       const username = (search.get('username') ?? '').trim();
       if (username.length > 64) return send(res, 400, { error: 'username must not exceed 64 characters' });
+      const { sort, error } = readListSort(search, LOG_SORT_OPTIONS, 'at');
+      if (error) return send(res, 400, { error });
+      const guard = cursorGuard(search, sort);
+      if (!guard.ok) return send(res, 400, { code: guard.code, error: guard.error });
       const page = await store.listLogs({
         limit,
+        sort,
         ...(search.get('level') ? { level: search.get('level')! } : {}),
         ...(from ? { from } : {}),
         ...(until ? { until } : {}),
@@ -1120,7 +1210,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         ...(search.get('action') ? { action: search.get('action')! } : {}),
       });
       // The action list comes from the table, so the filter stays correct as actions are added.
-      return send(res, 200, { ...page, actions: await store.listLogActions() });
+      return send(res, 200, { ...page, actions: await store.listLogActions(), sort: { key: sort.key, direction: sort.direction } });
     }
 
     if (req.method === 'GET' && suffix === '/users') {
@@ -1132,7 +1222,14 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const quota = search.get('quota') ?? '';
       if (!['', 'owner', 'admin', 'viewer', 'member'].includes(role) || !['', 'enabled', 'disabled'].includes(state)) return send(res, 400, { error: 'invalid filter' });
       if (!['', 'managed', 'private', 'relay', 'none'].includes(protection) || !['', 'ok', 'warning', 'over'].includes(quota)) return send(res, 400, { error: 'invalid filter' });
-      return send(res, 200, await store.listUsers(search.get('cursor') ?? '', limit, { search: (search.get('search') ?? '').slice(0, 128), role, state, protection, quota }));
+      const { sort, error } = readListSort(search, USER_SORT_OPTIONS, 'created');
+      if (error) return send(res, 400, { error });
+      const guard = cursorGuard(search, sort);
+      if (!guard.ok) return send(res, 400, { code: guard.code, error: guard.error });
+      const page = await store.listUsers(search.get('cursor') ?? '', limit, { search: (search.get('search') ?? '').slice(0, 128), role, state, protection, quota, sort });
+      // The resolved sort is echoed so the page shows what the server actually did, not what it
+      // asked for.
+      return send(res, 200, { ...page, sort: { key: sort.key, direction: sort.direction } });
     }
 
     if (req.method === 'GET' && suffix === '/devices') {
@@ -1237,13 +1334,19 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const cursor = search.get('cursor') ?? '';
       const limit = Number(search.get('limit') ?? 25);
       const state = search.get('state') ?? '';
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100
-        || cursor !== '' && (!/^[1-9]\d*$/.test(cursor) || !Number.isSafeInteger(Number(cursor)))
-        || !['', 'available', 'used', 'revoked', 'expired'].includes(state)) {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !['', 'available', 'used', 'revoked', 'expired'].includes(state)) {
         return send(res, 400, { error: 'invalid invitation pagination or filter' });
       }
+      const { sort, error } = readListSort(search, INVITE_SORT_OPTIONS, 'created');
+      if (error) return send(res, 400, { error });
+      const guard = cursorGuard(search, sort);
+      if (!guard.ok) return send(res, 400, { code: guard.code, error: guard.error });
       res.setHeader('Cache-Control', 'no-store');
-      return send(res, 200, await store.listInvitesPage(Number(cursor), limit, state));
+      const page = await store.listInvitesPage(cursor, limit, state, sort);
+      // The cursor is `sort~dir~key|rowid`; the key is a date or a state, never the code. A
+      // legacy numeric cursor from before this list was sortable is still accepted, because it
+      // means the same thing the default ordering means.
+      return send(res, 200, { ...page, sort: { key: sort.key, direction: sort.direction } });
     }
 
     if (req.method === 'POST' && suffix === '/invites') {

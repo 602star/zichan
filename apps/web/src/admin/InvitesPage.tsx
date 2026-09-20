@@ -2,10 +2,24 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Pager, Panel, Select, Stat, TextInput, message, muted, row, useActionError, useCursorPager, useResource, when, canWrite } from './ui.js';
+import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Pager, Panel, Select, Stat, TextInput, message, muted, row, useActionError, useCursorPager, useHiddenColumns, useResource, when, canWrite } from './ui.js';
+import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import type { Invite, RegistrationGrowth } from './types.js';
 import { TrendChart } from './chart.js';
 import type { TrendPoint } from './trend.js';
+
+/** Sortable columns of the invitation list; none of them is the invitation code itself. */
+const SORTS: SortChoice[] = [
+  { key: 'created', label: '创建时间' },
+  { key: 'expires', label: '有效期至' },
+  { key: 'state', label: '状态', first: 'asc' },
+];
+
+/** Optional columns, listed once so the picker and the table cannot disagree. */
+const OPTIONAL_COLUMNS = [
+  { key: 'created', header: '创建时间', optional: true },
+  { key: 'used', header: '使用者', optional: true },
+];
 
 const stateOf = (invite: Invite): { label: string; tone: 'ok' | 'bad' | 'muted' } => {
   if (invite.usedBy) return { label: '已使用', tone: 'muted' };
@@ -19,6 +33,8 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
   const state = query.get('state') ?? '';
   const pager = useCursorPager({ query, path: '/invites', navigate });
   const cursor = pager.cursor;
+  const listParams = readListParams(query, { sort: 'created', dir: 'desc', limit: 25 });
+  const { hidden, toggle, reset } = useHiddenColumns('invites', OPTIONAL_COLUMNS);
   const [days, setDays] = useState('7');
   const range = query.get('growth') ?? '90d';
   const [issued, setIssued] = useState<Invite>();
@@ -27,11 +43,21 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
 
   const mode = useResource(() => client.request<{ mode: string }>('/registration'), []);
   const growth = useResource(() => client.request<RegistrationGrowth>(`/registration/growth?range=${range}`), [range]);
-  const invites = useResource(() => client.request<{ invites: Invite[]; nextCursor?: string }>(
-    `/invites?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${state ? `&state=${state}` : ''}`,
-  ), [cursor, state]);
+  const invites = useResource(() => client.request<{ invites: Invite[]; nextCursor?: string; sort?: { key: string; direction: string } }>(
+    `/invites?${listParamsQuery(listParams)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${state ? `&state=${state}` : ''}`,
+  ), [cursor, state, listParams.sort, listParams.direction, listParams.limit]);
 
   const update = pager.apply;
+  // The sort the server actually used, which is not always the one that was asked for.
+  const appliedSort = invites.data?.sort ?? { key: listParams.sort, direction: listParams.direction };
+  // One spreadable value per column, so the clickable header and the announced sort state cannot
+  // drift apart.
+  const sortHeader = (key: string, label: string) => sortableHeader(
+    SORTS.find((entry) => entry.key === key) ?? { key, label },
+    appliedSort.key,
+    appliedSort.direction,
+    (next) => update({ sort: next.sort, dir: next.dir }),
+  );
 
   const setMode = (value: string): void => {
     actionError.clear();
@@ -148,15 +174,17 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
               <option value="expired">已过期</option>
             </Select>
           </Field>
+          <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} />
+          <ColumnPicker columns={OPTIONAL_COLUMNS} hidden={hidden} onToggle={toggle} onReset={reset} />
         </div>
         <Loading loading={invites.loading} error={invites.error} stale={invites.stale} loadedAt={invites.loadedAt} />
         <DataTable
           columns={[
             { key: 'code', header: '邀请码', render: (invite) => <code style={{ fontSize: 'var(--fs-sm)' }}>{invite.code}</code> },
-            { key: 'state', header: '状态', render: (invite) => { const value = stateOf(invite); return <Badge tone={value.tone}>{value.label}</Badge>; } },
-            { key: 'created', header: '创建时间', secondary: true, render: (invite) => when(invite.createdAt) },
-            { key: 'expires', header: '有效期至', render: (invite) => when(invite.expiresAt) },
-            { key: 'used', header: '使用者', secondary: true, render: (invite) => invite.usedBy ?? '—' },
+            { key: 'state', header: '状态', ...sortHeader('state', '状态'), render: (invite) => { const value = stateOf(invite); return <Badge tone={value.tone}>{value.label}</Badge>; } },
+            { key: 'created', header: '创建时间', secondary: true, optional: true, ...sortHeader('created', '创建时间'), render: (invite) => when(invite.createdAt) },
+            { key: 'expires', header: '有效期至', ...sortHeader('expires', '有效期至'), render: (invite) => when(invite.expiresAt) },
+            { key: 'used', header: '使用者', secondary: true, optional: true, render: (invite) => invite.usedBy ?? '—' },
             {
               key: 'actions', header: '操作', render: (invite) => (
                 <Button
@@ -172,6 +200,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
           ]}
           rows={invites.data?.invites ?? []}
           rowKey={(invite) => invite.code}
+          hiddenColumns={hidden}
           empty="还没有邀请码。"
         />
         <Pager

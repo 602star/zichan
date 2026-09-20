@@ -46,8 +46,14 @@ describe('server management authorization', () => {
       expect(firstResponse.headers.get('cache-control')).toBe('no-store');
       const first = await firstResponse.json();
       expect(first.invites.map((invite: { code: string }) => invite.code)).toEqual([codes[3], codes[2]]);
-      expect(first.nextCursor).toMatch(/^\d+$/);
-      const second = await (await f.api(f.owner.accessToken, `/invites?limit=2&cursor=${first.nextCursor}`)).json();
+      // The cursor follows the ordering, and the ordering never names the invitation code: a
+      // pagination URL lands in browser history, referrer headers and pasted chat messages, so a
+      // live single-use credential must not be in it. This is the property the numeric cursor used
+      // to provide; asserting the invariant rather than the shape keeps it protected as the list
+      // gains sortable columns.
+      expect(first.nextCursor).toBeTruthy();
+      for (const code of codes) expect(first.nextCursor).not.toContain(code);
+      const second = await (await f.api(f.owner.accessToken, `/invites?limit=2&cursor=${encodeURIComponent(first.nextCursor)}`)).json();
       expect(second.invites.map((invite: { code: string }) => invite.code)).toEqual([codes[1], codes[0]]);
       expect(second.nextCursor).toBeUndefined();
       for (const [i, state] of ['available', 'revoked', 'expired', 'used'].entries()) {

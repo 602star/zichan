@@ -1,8 +1,26 @@
 /** Storage and backups: physical usage, logical quota, the maintenance plan, records and drills. */
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, Stat, bytes, message, muted, row, useActionError, useCursorPager, useResource, when, canWrite } from './ui.js';
+import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, Stat, bytes, message, muted, row, useActionError, useCursorPager, useHiddenColumns, useResource, when, canWrite } from './ui.js';
+import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import type { BackupsPayload, SettingsPayload, Storage } from './types.js';
+
+/** Sortable columns; only these have a server-side ordering behind them. */
+const SORTS: SortChoice[] = [
+  { key: 'created', label: '创建时间' },
+  { key: 'status', label: '状态', first: 'asc' },
+  { key: 'kind', label: '类型', first: 'asc' },
+  { key: 'files', label: '文件数' },
+  { key: 'size', label: '总大小' },
+];
+
+/** Optional columns, listed once so the picker and the table cannot disagree. */
+const OPTIONAL_COLUMNS = [
+  { key: 'files', header: '文件数', optional: true },
+  { key: 'size', header: '总大小', optional: true },
+  { key: 'retention', header: '保留清理', optional: true },
+  { key: 'path', header: '位置', optional: true },
+];
 
 /** One line of the declared plan: the raw value plus how the page should show it. */
 function planField(settings: SettingsPayload | undefined, name: string): { raw: string; display: string } {
@@ -23,11 +41,23 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
   const backupKind = query.get('kind') ?? '';
   const cursor = query.get('cursor') ?? '';
   const pager = useCursorPager({ query, path: '/storage', navigate });
+  const listParams = readListParams(query, { sort: 'created', dir: 'desc', limit: 25 });
+  const { hidden, toggle, reset } = useHiddenColumns('backups', OPTIONAL_COLUMNS);
   const backups = useResource(() => client.request<BackupsPayload>(
-    `/backups?limit=25${backupStatus ? `&status=${backupStatus}` : ''}${backupKind ? `&kind=${backupKind}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
-  ), [backupStatus, backupKind, cursor]);
+    `/backups?${listParamsQuery(listParams)}${backupStatus ? `&status=${backupStatus}` : ''}${backupKind ? `&kind=${backupKind}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+  ), [backupStatus, backupKind, cursor, listParams.sort, listParams.direction, listParams.limit]);
   const settings = useResource(() => client.request<SettingsPayload>('/settings'), []);
   const composition = storage.data;
+  // The sort the server actually used, which is not always the one that was asked for.
+  const appliedSort = backups.data?.sort ?? { key: listParams.sort, direction: listParams.direction };
+  // One spreadable value per column, so the clickable header and the announced sort state cannot
+  // drift apart.
+  const sortHeader = (key: string, label: string) => sortableHeader(
+    SORTS.find((entry) => entry.key === key) ?? { key, label },
+    appliedSort.key,
+    appliedSort.direction,
+    (next) => pager.apply({ sort: next.sort, dir: next.dir, cursor: undefined }),
+  );
 
   const autoPlan = planField(settings.data, 'backupAutoEnabled');
   const directory = planField(settings.data, 'backupDirectory');
@@ -146,6 +176,8 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
               <option value="drill">恢复演练</option>
             </Select>
           </Field>
+          <PageSizeSelect value={listParams.limit} onApply={(size) => pager.apply({ limit: String(size), cursor: undefined })} />
+          <ColumnPicker columns={OPTIONAL_COLUMNS} hidden={hidden} onToggle={toggle} onReset={reset} />
           {/* The count is of the filtered set, not this page: "how many failed backups are kept"
               is a question about the whole set. */}
           <span style={muted}>共 {backups.data?.total ?? 0} 条记录</span>
@@ -153,14 +185,15 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
         <DataTable
           columns={[
             { key: 'record', header: '记录', render: (record) => <code style={{ fontSize: 'var(--fs-sm)' }}>{record.recordId}</code> },
-            { key: 'status', header: '状态', render: (record) => <Badge tone={record.status === 'failed' ? 'bad' : 'ok'}>{record.status === 'failed' ? '失败' : record.status === 'planned' ? '计划中' : '已完成'}</Badge> },
-            { key: 'created', header: '创建时间', render: (record) => when(record.createdAt) },
-            { key: 'files', header: '文件数', secondary: true, render: (record) => record.fileCount === undefined ? '暂无数据' : String(record.fileCount) },
-            { key: 'size', header: '总大小', secondary: true, render: (record) => bytes(record.totalBytes) },
+            { key: 'status', header: '状态', ...sortHeader('status', '状态'), render: (record) => <Badge tone={record.status === 'failed' ? 'bad' : 'ok'}>{record.status === 'failed' ? '失败' : record.status === 'planned' ? '计划中' : '已完成'}</Badge> },
+            { key: 'created', header: '创建时间', ...sortHeader('created', '创建时间'), render: (record) => when(record.createdAt) },
+            { key: 'files', header: '文件数', secondary: true, optional: true, ...sortHeader('files', '文件数'), render: (record) => record.fileCount === undefined ? '暂无数据' : String(record.fileCount) },
+            { key: 'size', header: '总大小', secondary: true, optional: true, ...sortHeader('size', '总大小'), render: (record) => bytes(record.totalBytes) },
+            { key: 'kind', header: '类型', ...sortHeader('kind', '类型'), render: (record) => record.kind === 'scheduled' ? '计划备份' : record.kind === 'manual' ? '手动备份' : '恢复演练' },
             { key: 'verify', header: '校验状态', render: (record) => record.verification ? (record.verification['ok'] === false ? <Badge tone="bad">未通过</Badge> : <Badge tone="ok">通过</Badge>) : '尚未校验' },
             { key: 'drill', header: '恢复演练', render: (record) => record.drill ? (record.drill['ok'] === false ? <Badge tone="bad">未通过</Badge> : <Badge tone="ok">通过</Badge>) : '尚未演练' },
             {
-              key: 'retention', header: '保留清理', secondary: true, render: (record) => {
+              key: 'retention', header: '保留清理', secondary: true, optional: true, render: (record) => {
                 const retention = record.retention;
                 if (!retention) return '—';
                 if (retention['dryRun'] === true) return '预演（未删除）';
@@ -169,7 +202,7 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
                 return `${removed ? `已清理 ${removed} 份` : '无需清理'}${unverified ? ` · 保留未通过校验 ${unverified} 份` : ''}`;
               },
             },
-            { key: 'path', header: '位置', secondary: true, render: (record) => record.outputPath ?? '暂无数据' },
+            { key: 'path', header: '位置', secondary: true, optional: true, render: (record) => record.outputPath ?? '暂无数据' },
             {
               key: 'actions', header: '操作', render: (record) => (
                 <div style={row}>
@@ -181,6 +214,7 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
           ]}
           rows={backups.data?.backups ?? []}
           rowKey={(record) => record.recordId}
+          hiddenColumns={hidden}
           empty="还没有备份记录。备份位置与维护窗口需要在部署侧配置后才能启用自动备份。"
         />
         <div style={{ ...row, marginTop: 10, justifyContent: 'flex-end' }}>

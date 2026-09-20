@@ -2,8 +2,34 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, canWrite, message, muted, roleLabel, row, useActionError, useCursorPager, useResource, when } from './ui.js';
+import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, canWrite, message, muted, roleLabel, row, useActionError, useCursorPager, useHiddenColumns, useResource, when } from './ui.js';
+import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import type { SessionRow } from './types.js';
+
+/**
+ * Sortable columns. Only these are offered: a header that sorts in the browser would reorder the
+ * twenty-five rows on screen and present the result as "the newest sessions".
+ */
+const SESSION_SORTS: SortChoice[] = [
+  { key: 'lastSeen', label: '最近活动' },
+  { key: 'created', label: '首次登录' },
+  { key: 'expires', label: '到期时间' },
+  { key: 'name', label: '用户名', first: 'asc' },
+];
+
+/** Optional columns, listed so the picker and the table cannot disagree about which exist. */
+const SESSION_COLUMNS = [
+  { key: 'user', header: '用户' },
+  { key: 'device', header: '设备名称' },
+  { key: 'kind', header: '会话类型' },
+  { key: 'role', header: '角色', optional: true },
+  { key: 'state', header: '状态' },
+  { key: 'created', header: '首次登录', optional: true },
+  { key: 'seen', header: '最近活动' },
+  { key: 'expires', header: '到期时间', optional: true },
+  { key: 'ip', header: '来源 IP', optional: true },
+  { key: 'actions', header: '操作' },
+];
 
 export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
   client: AdminClient;
@@ -17,16 +43,29 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
   const kind = query.get('kind') ?? '';
   const pager = useCursorPager({ query, path: '/sessions', navigate });
   const cursor = pager.cursor;
+  const listParams = readListParams(query, { sort: 'lastSeen', dir: 'desc', limit: 25 });
+  const { hidden, toggle, reset } = useHiddenColumns('sessions', SESSION_COLUMNS);
   const [searchDraft, setSearchDraft] = useState(search);
   const [report, setReport] = useState('');
   const [busy, setBusy] = useState(false);
   const actionError = useActionError();
 
-  const list = useResource(() => client.request<{ sessions: SessionRow[]; nextCursor?: string; paginationUnit: string; note: string }>(
-    `/sessions?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${search ? `&search=${encodeURIComponent(search)}` : ''}${state ? `&state=${state}` : ''}${kind ? `&kind=${kind}` : ''}`,
-  ), [cursor, search, state, kind]);
+  const list = useResource(() => client.request<{ sessions: SessionRow[]; nextCursor?: string; paginationUnit: string; note: string; sort?: { key: string; direction: string } }>(
+    `/sessions?${listParamsQuery(listParams)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${search ? `&search=${encodeURIComponent(search)}` : ''}${state ? `&state=${state}` : ''}${kind ? `&kind=${kind}` : ''}`,
+  ), [cursor, search, state, kind, listParams.sort, listParams.direction, listParams.limit]);
 
   const update = pager.apply;
+  // The sort the server actually used, which is not always the one that was asked for: a page
+  // built against an older server must show what it got rather than what it wanted.
+  const appliedSort = list.data?.sort ?? { key: listParams.sort, direction: listParams.direction };
+  // One spreadable value per column, so the clickable header and the announced sort state cannot
+  // drift apart.
+  const sortHeader = (key: string, label: string) => sortableHeader(
+    SESSION_SORTS.find((entry) => entry.key === key) ?? { key, label },
+    appliedSort.key,
+    appliedSort.direction,
+    (next) => update({ sort: next.sort, dir: next.dir }),
+  );
 
   const rows = list.data?.sessions ?? [];
   const currentSessionId = client.currentSessionId();
@@ -94,6 +133,10 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
           <Button onClick={() => { setSearchDraft(''); update({ search: undefined, state: undefined, kind: undefined }); }}>清除筛选</Button>
           <Button disabled={busy || revocableCount === 0} onClick={() => { void revokeMany(); }}>撤销当前页可撤销的会话</Button>
         </div>
+        <div style={{ ...row, marginTop: 10 }}>
+          <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} />
+          <ColumnPicker columns={SESSION_COLUMNS} hidden={hidden} onToggle={toggle} onReset={reset} />
+        </div>
         {report ? <Notice tone="warn"><span style={{ whiteSpace: 'pre-wrap' }}>{report}</span></Notice> : null}
       </Panel>
 
@@ -101,18 +144,18 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
         <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
         <DataTable
           columns={[
-            { key: 'user', header: '用户', render: (session) => (
+            { key: 'user', header: '用户', ...sortHeader('name', '用户名'), render: (session) => (
               <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}
                 onClick={() => navigate(`/users/${encodeURIComponent(session.accountId ?? '')}${session.accountId ? '' : `?search=${encodeURIComponent(session.username)}`}`)}>{session.username}</button>
             ) },
             { key: 'device', header: '设备名称', render: (session) => session.deviceName },
             { key: 'kind', header: '会话类型', render: (session) => session.kind === 'admin' ? '管理后台' : '记账' },
-            { key: 'role', header: '角色', secondary: true, render: (session) => roleLabel(session.role) },
+            { key: 'role', header: '角色', secondary: true, optional: true, render: (session) => roleLabel(session.role) },
             { key: 'state', header: '状态', render: (session) => <Badge tone={session.revokedAt ? 'bad' : session.active ? 'ok' : 'muted'}>{session.revokedAt ? '已撤销' : session.active ? '有效' : '已过期'}</Badge> },
-            { key: 'created', header: '首次登录', secondary: true, render: (session) => when(session.createdAt) },
-            { key: 'seen', header: '最近活动', render: (session) => when(session.lastSeenAt) },
-            { key: 'expires', header: '到期时间', secondary: true, render: (session) => when(session.expiresAt) },
-            { key: 'ip', header: '来源 IP', secondary: true, render: (session) => session.lastIp ?? '暂无数据' },
+            { key: 'created', header: '首次登录', secondary: true, optional: true, ...sortHeader('created', '首次登录'), render: (session) => when(session.createdAt) },
+            { key: 'seen', header: '最近活动', ...sortHeader('lastSeen', '最近活动'), render: (session) => when(session.lastSeenAt) },
+            { key: 'expires', header: '到期时间', secondary: true, optional: true, ...sortHeader('expires', '到期时间'), render: (session) => when(session.expiresAt) },
+            { key: 'ip', header: '来源 IP', secondary: true, optional: true, render: (session) => session.lastIp ?? '暂无数据' },
             {
               key: 'actions', header: '操作', render: (session) => (
                 <Button disabled={!revocable(session)} title={session.id === currentSessionId ? '当前会话请用顶部「退出管理后台」结束' : undefined}
@@ -125,6 +168,7 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
             },
           ]}
           rows={rows}
+          hiddenColumns={hidden}
           rowKey={(session) => session.id}
           empty="没有符合条件的会话。"
         />

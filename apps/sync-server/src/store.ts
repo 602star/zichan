@@ -1,6 +1,111 @@
 import { Buffer } from 'node:buffer';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { NodeSqliteDriver } from '@zichan/db/node';
+import { cursorValue, readCursor, resolveSort, type ResolvedSort, type SortOption } from './list-sort.js';
+
+/**
+ * Sortable columns of the account list.
+ *
+ * Every expression is NULL-safe on purpose: SQLite puts NULLs first in ASC and last in DESC, and
+ * `col > NULL` is NULL rather than true, so a page whose last row had a NULL value would stop
+ * paging without any error. Coalescing gives every row a total position instead.
+ *
+ * Aggregates are not allowed here: the cursor comparison is a WHERE fragment, and an aggregate
+ * cannot appear there. `usage` is therefore a correlated subquery rather than SUM(...).
+ *
+ * Timestamps are compared in the format they are stored in. `expires_at` is an ISO string with a
+ * `T` separator, and `T` (0x54) sorts after the space (0x20) in `datetime('now')`, so the two are
+ * not interchangeable: on the same calendar day, an instant that has already passed compares as
+ * still ahead of `now`. `strftime` produces the stored format instead.
+ */
+/** Sortable columns of the session list. `name` is the account, not the device. */
+export const SESSION_SORT_OPTIONS: Record<string, SortOption> = {
+  lastSeen: { expr: 's.last_seen_at', tiebreaker: 's.session_id', column: 'last_seen_at' },
+  created: { expr: 's.created_at', tiebreaker: 's.session_id', column: 'created_at' },
+  expires: { expr: 's.expires_at', tiebreaker: 's.session_id', column: 'expires_at' },
+  name: { expr: 's.username COLLATE NOCASE', tiebreaker: 's.session_id', column: 'username' },
+  device: { expr: 's.device_name COLLATE NOCASE', tiebreaker: 's.session_id', column: 'device_name' },
+};
+
+/** Sortable columns of the run log. */
+export const LOG_SORT_OPTIONS: Record<string, SortOption> = {
+  at: { expr: 'at', tiebreaker: 'id', column: 'at' },
+  level: { expr: 'level', tiebreaker: 'id', column: 'level' },
+  action: { expr: 'action COLLATE NOCASE', tiebreaker: 'id', column: 'action' },
+  username: { expr: "COALESCE(username, '') COLLATE NOCASE", tiebreaker: 'id', column: 'username' },
+};
+
+/** Sortable columns of the task list. */
+export const JOB_SORT_OPTIONS: Record<string, SortOption> = {
+  created: { expr: 'created_at', tiebreaker: 'job_id', column: 'created_at' },
+  status: { expr: 'status', tiebreaker: 'job_id', column: 'status' },
+  type: { expr: 'type', tiebreaker: 'job_id', column: 'type' },
+};
+
+/** Sortable columns of the sync diagnostic list. */
+export const SYNC_EVENT_SORT_OPTIONS: Record<string, SortOption> = {
+  at: { expr: 'at', tiebreaker: 'id', column: 'at' },
+  account: { expr: "COALESCE(username, '') COLLATE NOCASE", tiebreaker: 'id', column: 'username' },
+  device: { expr: "COALESCE(device_name, '') COLLATE NOCASE", tiebreaker: 'id', column: 'device_name' },
+  operation: { expr: 'operation COLLATE NOCASE', tiebreaker: 'id', column: 'operation' },
+  duration: { expr: 'COALESCE(duration_ms, -1)', tiebreaker: 'id', numeric: true, column: 'duration_ms' },
+  commits: { expr: 'COALESCE(commit_count, -1)', tiebreaker: 'id', numeric: true, column: 'commit_count' },
+};
+
+/** Sortable columns of the backup record list. */
+export const BACKUP_SORT_OPTIONS: Record<string, SortOption> = {
+  created: { expr: 'created_at', tiebreaker: 'record_id', column: 'created_at' },
+  status: { expr: 'status', tiebreaker: 'record_id', column: 'status' },
+  kind: { expr: 'kind', tiebreaker: 'record_id', column: 'kind' },
+  files: { expr: 'COALESCE(file_count, -1)', tiebreaker: 'record_id', numeric: true, column: 'file_count' },
+  size: { expr: 'COALESCE(total_bytes, -1)', tiebreaker: 'record_id', numeric: true, column: 'total_bytes' },
+};
+
+/**
+ * Sortable columns of the management audit.
+ *
+ * Ordered by `at` rather than `id`: the page shows a time, and sorting by a surrogate key that
+ * merely happens to agree with it would look right until two entries share a timestamp. `id` is
+ * the tiebreaker, so the ordering is still total.
+ */
+export const AUDIT_SORT_OPTIONS: Record<string, SortOption> = {
+  at: { expr: 'at', tiebreaker: 'id', column: 'at' },
+  action: { expr: 'action COLLATE NOCASE', tiebreaker: 'id', column: 'action' },
+  actor: { expr: 'actor_account_id COLLATE NOCASE', tiebreaker: 'id', column: 'actor_account_id' },
+  target: { expr: "COALESCE(target_account_id, '') COLLATE NOCASE", tiebreaker: 'id', column: 'target_account_id' },
+};
+
+/**
+ * Sortable columns of the invitation list.
+ *
+ * The invitation code itself is deliberately not sortable. The cursor carries the sort value, and
+ * this list's cursor is numeric for a reason: a pagination URL ends up in browser history, in
+ * referrer headers and in whatever the operator pastes into a chat. Sorting by code would put a
+ * live single-use credential there. `created`, `expires` and `state` all answer the questions an
+ * operator actually has ("what did we hand out, what is about to lapse, what is still usable"),
+ * and none of them is a secret.
+ *
+ * `expires_at` lives in the policy table, so the ordering joins it in. `state` reuses the very
+ * expression the filter uses, so the two cannot disagree about what "available" means.
+ */
+export const INVITE_STATE_SQL = `CASE WHEN i.used_by IS NOT NULL THEN 'used'
+  WHEN i.disabled = 1 THEN 'revoked'
+  WHEN p.expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now') THEN 'expired' ELSE 'available' END`;
+
+export const INVITE_SORT_OPTIONS: Record<string, SortOption> = {
+  created: { expr: 'i.created_at', tiebreaker: 'i.rowid', column: 'created_at' },
+  expires: { expr: "COALESCE(p.expires_at, '')", tiebreaker: 'i.rowid', column: 'expires_at' },
+  state: { expr: INVITE_STATE_SQL, tiebreaker: 'i.rowid', column: 'invite_state' },
+};
+
+export const USER_SORT_OPTIONS: Record<string, SortOption> = {
+  created: { expr: 'u.created_at', tiebreaker: 'u.username', column: 'created_at' },
+  name: { expr: 'u.username COLLATE NOCASE', tiebreaker: 'u.username', column: 'username' },
+  lastLogin: { expr: "COALESCE(u.last_login_at, '')", tiebreaker: 'u.username', column: 'last_login_at' },
+  lastSync: { expr: "COALESCE((SELECT MAX(e.at) FROM sync_events e WHERE e.username = u.username AND e.outcome = 'ok'), '')", tiebreaker: 'u.username', column: 'last_sync_at' },
+  devices: { expr: "(SELECT COUNT(*) FROM sync_sessions s WHERE s.username = u.username AND s.revoked_at IS NULL AND s.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", tiebreaker: 'u.username', numeric: true, column: 'active_device_count' },
+  usage: { expr: 'COALESCE((SELECT SUM(c.cipher_bytes) FROM sync_server_commits c WHERE c.username = u.username), 0)', tiebreaker: 'u.username', numeric: true, column: 'commit_bytes' },
+};
 
 export type RegistrationMode = 'open' | 'invite' | 'closed';
 export type AccountRole = 'owner' | 'admin' | 'viewer' | 'member';
@@ -1321,6 +1426,14 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     };
   }
 
+  /**
+   * Accounts, newest-first by default, with a cursor that follows the ordering.
+   *
+   * The sort is resolved by the caller from a whitelist (`userSortOptions`) because a sort name
+   * arrives in a query string; this method only turns it into SQL. Rows are ordered by name today,
+   * but the cursor was a plain `username > ?`, so adding a sortable column meant every existing
+   * page silently mis-paged until the cursor followed suit.
+   */
   async listUsers(after = '', limit = 100, filters: {
     search?: string;
     role?: string;
@@ -1328,8 +1441,13 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     protection?: string;
     /** Capacity state is derived from the encrypted-commit quota, which is the billed one. */
     quota?: string;
+    sort?: ResolvedSort;
   } = {}): Promise<{ users: JsonRecord[]; nextCursor?: string }> {
     await this.ready;
+    const sort = filters.sort ?? resolveSort(USER_SORT_OPTIONS, null, 'created', null);
+    // The cursor is compared against the ordering expression, so the two are built together.
+    const cursor = readCursor(after);
+    const cursorClause = cursor ? sort.cursor(sort.value(cursor.value), cursor.id) : undefined;
     const rows = await this.driver.all<Record<string, unknown>>(
       `SELECT u.username, i.account_id, u.disabled, u.created_at, u.updated_at, u.last_login_at,
               ${ROLE_SQL} AS role,
@@ -1350,25 +1468,27 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
        LEFT JOIN sync_server_commits c ON c.username = u.username
        LEFT JOIN sync_user_quotas q ON q.username = u.username
        LEFT JOIN sync_key_custody k ON k.username = u.username
-       WHERE u.username > ? COLLATE NOCASE
-         AND (? = '' OR instr(lower(u.username), lower(?)) > 0 OR i.account_id = ?)
+       WHERE (? = '' OR instr(lower(u.username), lower(?)) > 0 OR i.account_id = ?)
          AND (? = '' OR ${ROLE_SQL} = ?)
          AND (? = '' OR u.disabled = ?)
          AND (? = '' OR COALESCE(k.mode, 'none') = ?)
+         ${cursorClause ? `AND ${cursorClause.sql}` : ''}
        GROUP BY u.username
        HAVING (? = ''
          OR (? = 'over' AND COALESCE(SUM(c.cipher_bytes), 0) >= COALESCE(q.commit_quota_bytes, ?))
          OR (? = 'warning' AND COALESCE(SUM(c.cipher_bytes), 0) >= COALESCE(q.commit_quota_bytes, ?) * 0.9
              AND COALESCE(SUM(c.cipher_bytes), 0) < COALESCE(q.commit_quota_bytes, ?))
          OR (? = 'ok' AND COALESCE(SUM(c.cipher_bytes), 0) < COALESCE(q.commit_quota_bytes, ?) * 0.9))
-       ORDER BY u.username COLLATE NOCASE
+       ORDER BY ${sort.orderBy}
        LIMIT ?`,
       [
-        this.defaultCommitQuotaBytes, nowIso(), after,
+        this.defaultCommitQuotaBytes, nowIso(),
         filters.search ?? '', filters.search ?? '', filters.search ?? '',
         filters.role ?? '', filters.role ?? '',
         filters.state ?? '', filters.state === 'disabled' ? 1 : 0,
         filters.protection ?? '', filters.protection ?? '',
+        // Bound here, not at the end: the cursor lives in WHERE and the quota rules in HAVING.
+        ...(cursorClause ? cursorClause.params : []),
         filters.quota ?? '', filters.quota ?? '', this.defaultCommitQuotaBytes,
         filters.quota ?? '', this.defaultCommitQuotaBytes, this.defaultCommitQuotaBytes,
         filters.quota ?? '', this.defaultCommitQuotaBytes,
@@ -1389,7 +1509,13 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       quotaState: Number(row['commit_bytes'] ?? 0) >= Number(row['commit_quota_bytes']) ? 'over'
         : Number(row['commit_bytes'] ?? 0) >= Number(row['commit_quota_bytes']) * 0.9 ? 'warning' : 'ok',
     }));
-    return { users: page, ...(rows.length > limit ? { nextCursor: String(rows[limit - 1]?.['username'] ?? '') } : {}) };
+    // The cursor carries the sort it belongs to: reusing it under another ordering would return
+    // a stable, plausible, wrong page instead of an error.
+    const last = rows.length > limit ? rows[limit - 1] : undefined;
+    return {
+      users: page,
+      ...(last ? { nextCursor: sort.write(cursorValue(last, sort), String(last['username'] ?? '')) } : {}),
+    };
   }
 
   async setUserDisabled(username: string, disabled: boolean): Promise<SyncUser | undefined> {
@@ -1592,7 +1718,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
   }
 
   async listAdminAudit(options: {
-    before?: number;
+    cursor?: string;
     limit?: number;
     search?: string;
     action?: string;
@@ -1600,24 +1726,33 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     targetAccountId?: string;
     from?: string;
     until?: string;
+    sort?: ResolvedSort;
   } = {}): Promise<{ entries: JsonRecord[]; nextCursor?: string }> {
     await this.ready;
+    const sort = options.sort ?? resolveSort(AUDIT_SORT_OPTIONS, null, 'at', null);
     const limit = Math.max(1, Math.min(200, options.limit ?? 50));
-    const clauses: string[] = ['id < ?'];
-    const params: (string | number)[] = [options.before ?? Number.MAX_SAFE_INTEGER];
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
     if (options.search) { clauses.push("instr(lower(action || ' ' || actor_account_id || ' ' || COALESCE(target_account_id, '')), lower(?)) > 0"); params.push(options.search); }
     if (options.action) { clauses.push('action = ?'); params.push(options.action); }
     if (options.actorAccountId) { clauses.push('actor_account_id = ?'); params.push(options.actorAccountId); }
     if (options.targetAccountId) { clauses.push('target_account_id = ?'); params.push(options.targetAccountId); }
     if (options.from) { clauses.push('at >= ?'); params.push(options.from); }
     if (options.until) { clauses.push('at < ?'); params.push(options.until); }
-    params.push(limit + 1);
-    const rows = await this.driver.all<Record<string, unknown>>(
-      `SELECT * FROM server_admin_audit WHERE ${clauses.join(' AND ')} ORDER BY id DESC LIMIT ?`,
-      params,
-    );
-    return { entries: rows.slice(0, limit).map((row) => ({ id: row['id'], at: row['at'], actorAccountId: row['actor_account_id'], targetAccountId: row['target_account_id'], action: row['action'], reason: row['reason'], requestId: row['request_id'], before: JSON.parse(String(row['before_json'])), after: JSON.parse(String(row['after_json'])) })),
-      ...(rows.length > limit ? { nextCursor: String(rows[limit - 1]!['id']) } : {}) };
+    // The cursor is compared against the ordering expression, so the two are built together.
+    const cursor = readCursor(options.cursor);
+    const cursorClause = cursor ? sort.cursor(sort.value(cursor.value), cursor.id) : undefined;
+    if (cursorClause) clauses.push(cursorClause.sql);
+    let sql = 'SELECT * FROM server_admin_audit';
+    if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
+    sql += ` ORDER BY ${sort.orderBy} LIMIT ?`;
+    const rows = await this.driver.all<Record<string, unknown>>(sql, [...params, ...(cursorClause ? cursorClause.params : []), limit + 1]);
+    const lastRow = rows.length > limit ? rows[limit - 1] : undefined;
+    return {
+      entries: rows.slice(0, limit).map((row) => ({ id: row['id'], at: row['at'], actorAccountId: row['actor_account_id'], targetAccountId: row['target_account_id'], action: row['action'], reason: row['reason'], requestId: row['request_id'], before: JSON.parse(String(row['before_json'])), after: JSON.parse(String(row['after_json'])) })),
+      // The cursor carries the sort it belongs to, so it cannot be reused under another ordering.
+      ...(lastRow ? { nextCursor: sort.write(cursorValue(lastRow, sort), String(lastRow['id'])) } : {}),
+    };
   }
 
   async assertPasswordReset(username: string, codeHash: string): Promise<void> {
@@ -1976,7 +2111,9 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     /** Exact account name, as recorded on the log line. */
     username?: string;
     action?: string;
+    sort?: ResolvedSort;
   }): Promise<{ logs: ServerLog[]; nextCursor?: string }> {
+    const sort = options.sort ?? resolveSort(LOG_SORT_OPTIONS, null, 'at', null);
     await this.ready;
     const clauses: string[] = [];
     const params: (string | number | null)[] = [];
@@ -1985,13 +2122,16 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     if (options.action) { clauses.push('action = ?'); params.push(options.action); }
     if (options.from) { clauses.push('at >= ?'); params.push(options.from); }
     if (options.until) { clauses.push('at < ?'); params.push(options.until); }
-    if (options.cursor) { const [cursorAt, cursorId] = options.cursor.split('|'); clauses.push('(at < ? OR (at = ? AND id < ?))'); params.push(cursorAt ?? '', cursorAt ?? '', cursorId ?? ''); }
+    // The cursor is compared against the ordering expression, so the two are built together.
+    const cursor = readCursor(options.cursor);
+    const cursorClause = cursor ? sort.cursor(sort.value(cursor.value), cursor.id) : undefined;
+    if (cursorClause) clauses.push(cursorClause.sql);
     // Lets an operator jump from an error message straight to the request log line.
     if (options.requestId) { clauses.push("instr(COALESCE(detail_json, ''), ?) > 0"); params.push(options.requestId); }
     let sql = 'SELECT * FROM server_logs';
     if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
-    sql += ' ORDER BY at DESC, id DESC LIMIT ?';
-    params.push(options.limit + 1);
+    sql += ` ORDER BY ${sort.orderBy} LIMIT ?`;
+    params.push(...(cursorClause ? cursorClause.params : []), options.limit + 1);
     const rows = await this.driver.all<Record<string, unknown>>(sql, params);
     const page = rows.slice(0, options.limit).map((row): ServerLog => ({
       id: String(row['id']), at: String(row['at']), level: String(row['level']) as ServerLogLevel,
@@ -2001,8 +2141,13 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       ...(row['status'] == null ? {} : { status: Number(row['status']) }),
       ...(row['detail_json'] == null ? {} : { detail: jsonObject(row['detail_json']) }),
     }));
+    // The cursor carries the sort it belongs to, so it cannot be reused under another ordering.
+    const lastRow = rows.length > options.limit ? rows[options.limit - 1] : undefined;
     const last = page.at(-1);
-    return { logs: page, ...(rows.length > options.limit && last ? { nextCursor: `${last.at}|${last.id}` } : {}) };
+    return {
+      logs: page,
+      ...(lastRow && last ? { nextCursor: sort.write(cursorValue(lastRow, sort), last.id) } : {}),
+    };
   }
 
 
@@ -2077,22 +2222,37 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     });
   }
 
-  async listInvitesPage(before = 0, limit = 25, state = ''): Promise<{ invites: Invite[]; nextCursor?: string }> {
+  /**
+   * Invitations, newest first by default.
+   *
+   * The cursor is still numeric-by-default in the sense that it never carries the invitation code:
+   * `cursor_id` is `rowid`, and every sort option uses `rowid` as its tiebreaker, so a cursor
+   * holds an ordering key plus an integer identity, never the credential. The list is paged by the
+   * ordering the operator asked for, and the cursor follows that ordering.
+   */
+  async listInvitesPage(cursor = '', limit = 25, state = '', sort?: ResolvedSort): Promise<{ invites: Invite[]; nextCursor?: string }> {
     await this.ready;
-    // A numeric cursor avoids placing the invitation credential in pagination URLs.
+    const resolved = sort ?? resolveSort(INVITE_SORT_OPTIONS, null, 'created', null);
+    const parsed = readCursor(cursor);
+    const cursorClause = parsed ? resolved.cursor(resolved.value(parsed.value), parsed.id) : undefined;
     const rows = await this.driver.all<Record<string, unknown>>(
-      `SELECT i.*, i.rowid AS cursor_id, p.expires_at FROM registration_invites i
+      // `expires_at` lives on the policy row, so the join supplies it for both the state and the page.
+      `SELECT i.*, i.rowid AS cursor_id, p.expires_at, ${INVITE_STATE_SQL} AS invite_state
+       FROM registration_invites i
        LEFT JOIN registration_invite_policy p ON p.code = i.code
-       WHERE (? = 0 OR i.rowid < ?)
-         AND (? = '' OR CASE WHEN i.used_by IS NOT NULL THEN 'used'
-           WHEN i.disabled = 1 THEN 'revoked'
-           WHEN p.expires_at <= ? THEN 'expired' ELSE 'available' END = ?)
-       ORDER BY i.rowid DESC LIMIT ?`,
-      [before, before, state, nowIso(), state, limit + 1],
+       WHERE (? = '' OR ${INVITE_STATE_SQL} = ?)
+         ${cursorClause ? `AND ${cursorClause.sql}` : ''}
+       ORDER BY ${resolved.orderBy} LIMIT ?`,
+      [state, state, ...(cursorClause ? cursorClause.params : []), limit + 1],
     );
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
     return {
-      invites: rows.slice(0, limit).map(inviteFromRow),
-      ...(rows.length > limit ? { nextCursor: String(rows[limit - 1]!['cursor_id']) } : {}),
+      invites: page.map(inviteFromRow),
+      // The tiebreaker is the rowid, so a cursor never lands mid-tie and never names a code.
+      ...(rows.length > limit && last
+        ? { nextCursor: resolved.write(cursorValue(last, resolved), String(last['cursor_id'])) }
+        : {}),
     };
   }
 
@@ -2605,8 +2765,10 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     outcome?: string;
     from?: string;
     until?: string;
+    sort?: ResolvedSort;
   }): Promise<{ events: SyncEvent[]; nextCursor?: string }> {
     await this.ready;
+    const sort = options.sort ?? resolveSort(SYNC_EVENT_SORT_OPTIONS, null, 'at', null);
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     if (options.username) { clauses.push('username = ?'); params.push(options.username); }
@@ -2615,15 +2777,14 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     if (options.outcome) { clauses.push('outcome = ?'); params.push(options.outcome); }
     if (options.from) { clauses.push('at >= ?'); params.push(options.from); }
     if (options.until) { clauses.push('at < ?'); params.push(options.until); }
-    if (options.cursor) {
-      const [cursorAt, cursorId] = options.cursor.split('|');
-      clauses.push('(at < ? OR (at = ? AND id < ?))');
-      params.push(cursorAt ?? '', cursorAt ?? '', cursorId ?? '');
-    }
+    // The cursor is compared against the ordering expression, so the two are built together.
+    const cursor = readCursor(options.cursor);
+    const cursorClause = cursor ? sort.cursor(sort.value(cursor.value), cursor.id) : undefined;
+    if (cursorClause) clauses.push(cursorClause.sql);
     let sql = 'SELECT * FROM sync_events';
     if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
-    sql += ' ORDER BY at DESC, id DESC LIMIT ?';
-    params.push(options.limit + 1);
+    sql += ` ORDER BY ${sort.orderBy} LIMIT ?`;
+    params.push(...(cursorClause ? cursorClause.params : []), options.limit + 1);
     const rows = await this.driver.all<Record<string, unknown>>(sql, params);
     const events = rows.slice(0, options.limit).map((row): SyncEvent => ({
       id: String(row['id']),
@@ -2643,8 +2804,13 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       ...(row['client_version'] == null ? {} : { clientVersion: String(row['client_version']) }),
       ...(row['protocol_version'] == null ? {} : { protocolVersion: String(row['protocol_version']) }),
     }));
+    // The cursor carries the sort it belongs to, so it cannot be reused under another ordering.
+    const lastRow = rows.length > options.limit ? rows[options.limit - 1] : undefined;
     const last = events.at(-1);
-    return { events, ...(rows.length > options.limit && last ? { nextCursor: `${last.at}|${last.id}` } : {}) };
+    return {
+      events,
+      ...(lastRow && last ? { nextCursor: sort.write(cursorValue(lastRow, sort), last.id) } : {}),
+    };
   }
 
   async pruneSyncEvents(retention = 20_000): Promise<{ removed: number }> {
@@ -2732,7 +2898,9 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     state?: string;
     kind?: string;
     memberOnly?: boolean;
+    sort?: ResolvedSort;
   }): Promise<{ sessions: AccountSessionSummary[]; nextCursor?: string }> {
+    const sort = options.sort ?? resolveSort(SESSION_SORT_OPTIONS, null, 'lastSeen', null);
     await this.ready;
     const at = nowIso();
     const clauses: string[] = [];
@@ -2748,19 +2916,18 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     else if (options.state === 'revoked') clauses.push('s.revoked_at IS NOT NULL');
     else if (options.state === 'expired') { clauses.push('s.revoked_at IS NULL AND s.expires_at <= ?'); params.push(at); }
     if (options.kind) { clauses.push('s.kind = ?'); params.push(options.kind); }
-    if (options.cursor) {
-      const [cursorSeen, cursorId] = options.cursor.split('|');
-      clauses.push('(s.last_seen_at < ? OR (s.last_seen_at = ? AND s.session_id < ?))');
-      params.push(cursorSeen ?? '', cursorSeen ?? '', cursorId ?? '');
-    }
+    // The cursor is compared against the ordering expression, so the two are built together.
+    const cursor = readCursor(options.cursor);
+    const cursorClause = cursor ? sort.cursor(sort.value(cursor.value), cursor.id) : undefined;
     let sql = `SELECT s.*, i.account_id,
         ${ROLE_SQL} AS role
       FROM sync_sessions s
       JOIN sync_account_identities i ON i.username = s.username
       LEFT JOIN server_administrators a ON a.username = s.username
       LEFT JOIN server_ownership o ON o.username = s.username`;
+    if (cursorClause) { clauses.push(cursorClause.sql); params.push(...cursorClause.params); }
     if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
-    sql += ' ORDER BY s.last_seen_at DESC, s.session_id DESC LIMIT ?';
+    sql += ` ORDER BY ${sort.orderBy} LIMIT ?`;
     params.push(options.limit + 1);
     const rows = await this.driver.all<Record<string, unknown>>(sql, params);
     const sessions = rows.slice(0, options.limit).map((row): AccountSessionSummary => ({
@@ -2778,8 +2945,13 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       ...(row['revoked_at'] == null ? {} : { revokedAt: String(row['revoked_at']) }),
       active: row['revoked_at'] == null && String(row['expires_at']) > at,
     }));
+    // The cursor carries the sort it belongs to, so a cursor cannot be reused under another one.
+    const lastRow = rows.length > options.limit ? rows[options.limit - 1] : undefined;
     const last = sessions.at(-1);
-    return { sessions, ...(rows.length > options.limit && last ? { nextCursor: `${last.lastSeenAt}|${last.id}` } : {}) };
+    return {
+      sessions,
+      ...(lastRow && last ? { nextCursor: sort.write(cursorValue(lastRow, sort), last.id) } : {}),
+    };
   }
 
   /** Every account-scoped read a single detail page needs, without exposing ledger bytes. */
@@ -2950,7 +3122,8 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     return row ? this.mapJob(row) : undefined;
   }
 
-  async listJobs(options: { limit: number; status?: string; type?: string; cursor?: string; accountId?: string }): Promise<{ jobs: AdminJob[]; nextCursor?: string }> {
+  async listJobs(options: { limit: number; status?: string; type?: string; cursor?: string; accountId?: string; sort?: ResolvedSort }): Promise<{ jobs: AdminJob[]; nextCursor?: string }> {
+    const sort = options.sort ?? resolveSort(JOB_SORT_OPTIONS, null, 'created', null);
     await this.ready;
     const clauses: string[] = [];
     const params: (string | number)[] = [];
@@ -2959,19 +3132,23 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     // Targeted account: the field is only ever set for account-scoped task types, so this
     // filter is exactly "tasks that name this account".
     if (options.accountId) { clauses.push('target_account_id = ?'); params.push(options.accountId); }
-    if (options.cursor) {
-      const [cursorAt, cursorId] = options.cursor.split('|');
-      clauses.push('(created_at < ? OR (created_at = ? AND job_id < ?))');
-      params.push(cursorAt ?? '', cursorAt ?? '', cursorId ?? '');
-    }
+    // The cursor is compared against the ordering expression, so the two are built together.
+    const cursor = readCursor(options.cursor);
+    const cursorClause = cursor ? sort.cursor(sort.value(cursor.value), cursor.id) : undefined;
+    if (cursorClause) clauses.push(cursorClause.sql);
     let sql = 'SELECT * FROM admin_jobs';
     if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
-    sql += ' ORDER BY created_at DESC, job_id DESC LIMIT ?';
-    params.push(options.limit + 1);
+    sql += ` ORDER BY ${sort.orderBy} LIMIT ?`;
+    params.push(...(cursorClause ? cursorClause.params : []), options.limit + 1);
     const rows = await this.driver.all<Record<string, unknown>>(sql, params);
     const jobs = rows.slice(0, options.limit).map((row) => this.mapJob(row));
+    // The cursor carries the sort it belongs to, so it cannot be reused under another ordering.
+    const lastRow = rows.length > options.limit ? rows[options.limit - 1] : undefined;
     const last = jobs.at(-1);
-    return { jobs, ...(rows.length > options.limit && last ? { nextCursor: `${last.createdAt}|${last.jobId}` } : {}) };
+    return {
+      jobs,
+      ...(lastRow && last ? { nextCursor: sort.write(cursorValue(lastRow, sort), last.jobId) } : {}),
+    };
   }
 
   async countJobsByStatus(): Promise<Record<string, number>> {
@@ -3502,25 +3679,25 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     cursor?: string;
     status?: string;
     kind?: string;
+    sort?: ResolvedSort;
   } = {}): Promise<{ backups: ServerBackupRecord[]; nextCursor?: string; total: number }> {
     await this.ready;
+    const sort = options.sort ?? resolveSort(BACKUP_SORT_OPTIONS, null, 'created', null);
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     if (options.status) { clauses.push('status = ?'); params.push(options.status); }
     if (options.kind) { clauses.push('kind = ?'); params.push(options.kind); }
     // The cursor is applied after the filters so paging stays consistent within a filtered view.
-    if (options.cursor) {
-      const [cursorAt, cursorId] = options.cursor.split('|');
-      clauses.push('(created_at < ? OR (created_at = ? AND record_id < ?))');
-      params.push(cursorAt ?? '', cursorAt ?? '', cursorId ?? '');
-    }
+    const cursor = readCursor(options.cursor);
+    const cursorClause = cursor ? sort.cursor(sort.value(cursor.value), cursor.id) : undefined;
+    if (cursorClause) clauses.push(cursorClause.sql);
     let sql = 'SELECT * FROM server_backup_records';
     if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
-    sql += ' ORDER BY created_at DESC, record_id DESC LIMIT ?';
+    sql += ` ORDER BY ${sort.orderBy} LIMIT ?`;
     const pageSize = Math.max(1, Math.min(200, limit));
-    const rows = await this.driver.all<Record<string, unknown>>(sql, [...params, pageSize + 1]);
+    const rows = await this.driver.all<Record<string, unknown>>(sql, [...params, ...(cursorClause ? cursorClause.params : []), pageSize + 1]);
     const page = rows.slice(0, pageSize).map((row) => this.mapBackupRecord(row));
-    const last = page.at(-1);
+    const lastRow = rows.length > pageSize ? rows[pageSize - 1] : undefined;
 
     // The total counts the filtered set, not the page: "how many failed backups are retained"
     // is a question about the whole set.
@@ -3535,7 +3712,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
 
     return {
       backups: page,
-      ...(rows.length > pageSize && last ? { nextCursor: `${last.createdAt}|${last.recordId}` } : {}),
+      ...(lastRow ? { nextCursor: sort.write(cursorValue(lastRow, sort), String(lastRow['record_id'])) } : {}),
       total: Number(totalRow?.total ?? 0),
     };
   }

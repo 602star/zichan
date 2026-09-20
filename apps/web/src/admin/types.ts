@@ -222,6 +222,8 @@ export interface BackupsPayload {
     /** The newest retention run carries its note and outcome, so the page can still say what it did. */
     lastRetention: { recordId: string; createdAt: string; note?: string; retention?: Record<string, unknown> } | null;
   };
+  /** The ordering the server actually applied, echoed back so the page cannot show a lie. */
+  sort?: { key: string; direction: string };
   note: string;
 }
 
