@@ -86,6 +86,12 @@ export interface VerifyOptions {
    * verified key rides along so the caller can persist a resumable checkpoint. */
   onProgress?: (progress: { processed: number; total: number; lastKey?: string }) => Promise<void> | void;
   shouldCancel?: () => Promise<boolean> | boolean;
+  /**
+   * Hash a chunk. The default hashes inline, which blocks the loop for the duration; the server
+   * injects one that hands large chunks to a worker. Injectable so the store keeps working with no
+   * worker pool in tests, and so the verification logic does not depend on how hashing is done.
+   */
+  hashChunk?: (path: string) => Promise<string>;
 }
 
 /** Scheduled maintenance used to fail silently; the last outcome is now readable. */
@@ -610,6 +616,8 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
       scanParams,
     );
     const batchSize = Math.max(1, Math.min(500, Math.trunc(options.batchSize ?? 25)));
+    // Inline by default: a caller without a worker pool still gets a correct verification.
+    const hashChunk = options.hashChunk ?? ((path: string) => Promise.resolve(sha256(readFileSync(path))));
     await options.onProgress?.({ processed: 0, total: rows.length });
     for (const [position, row] of rows.entries()) {
       const username = String(row['username']);
@@ -623,9 +631,11 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
         for (const chunk of manifest.chunks) {
           const path = join(directory, `${chunk.index}.chunk`);
           if (!existsSync(path)) throw new Error(`chunk ${chunk.index} is missing`);
-          const contents = readFileSync(path);
           result.checkedChunks += 1;
-          if (contents.byteLength !== chunk.sizeBytes || sha256(contents) !== chunk.ciphertextSha256) throw new Error(`chunk ${chunk.index} checksum mismatch`);
+          // Size from `statSync`, not by reading the file: the hash is computed elsewhere, and
+          // reading the whole chunk here would block the main thread for I/O that the hash already
+          // needs — the same bytes read twice, once of them on the loop.
+          if (statSync(path).size !== chunk.sizeBytes || await hashChunk(path) !== chunk.ciphertextSha256) throw new Error(`chunk ${chunk.index} checksum mismatch`);
         }
         result.checkedObjects += 1;
       } catch (error) {

@@ -8,6 +8,7 @@ import { NodeSqliteDriver } from '@zichan/db/node';
 import { restoreServerBackup, verifyServerBackup } from './backup.js';
 import type { EncryptedBlobStore } from './blob-store.js';
 import type { JobContext } from './jobs.js';
+import type { HashOffload } from './hash-offload.js';
 import type { SettingsReader } from './settings.js';
 import { ServerStoreError, SyncServerStore, type AdminJobType, type JsonRecord, type ServerLogLevel } from './store.js';
 
@@ -16,6 +17,8 @@ export interface JobHandlerDeps {
   blobStore: EncryptedBlobStore;
   dataDir: string;
   settings: SettingsReader;
+  /** Hashes large files off the main thread; verification would otherwise block the loop. */
+  hashOffload: HashOffload;
   log: (level: ServerLogLevel, action: string, message: string, meta?: Record<string, unknown>) => Promise<void>;
 }
 
@@ -68,6 +71,10 @@ export function createJobHandlers(deps: JobHandlerDeps): Partial<Record<AdminJob
         ...(resumeFrom ? { resumeFrom } : {}),
         ...(account ? { username: account.username } : {}),
         batchSize: 25,
+        // Hashing happens off the main thread for chunks large enough to matter: without this the
+        // loop is blocked for the length of the object, which is exactly what the event-loop
+        // metric exists to catch.
+        hashChunk: (path) => deps.hashOffload.sha256File(path),
         onProgress: async (progress) => {
           await job.progress({ phase: 'scanning', processed: progress.processed, total: progress.total });
           const at = Date.now();
@@ -137,7 +144,9 @@ export function createJobHandlers(deps: JobHandlerDeps): Partial<Record<AdminJob
     'backup.verify': async (job) => {
       const record = await requireRecord(job);
       await job.progress({ phase: 'verifying' });
-      const verification = await verifyServerBackup(record.outputPath!);
+      // A backup holds the database plus every attachment, so this walks whole files: the largest
+      // single blocking read in the console. It is hashed off the main thread for that reason.
+      const verification = await verifyServerBackup(record.outputPath!, { hashFile: (path) => deps.hashOffload.sha256File(path) });
       await store.upsertBackupRecord({
         ...record,
         verifiedAt: new Date().toISOString(),

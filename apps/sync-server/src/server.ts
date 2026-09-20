@@ -28,6 +28,7 @@ import {
 } from './http-util.js';
 import { createJobHandlers } from './job-handlers.js';
 import { createJobRunner } from './jobs.js';
+import { createHashOffload } from './hash-offload.js';
 import { importMaintenanceRecords } from './maintenance-records.js';
 import { MAINTENANCE_KEY, createWriteTracker, isClientWrite, resolveMaintenance, type MaintenanceState } from './maintenance-mode.js';
 import { createMetricsService } from './metrics.js';
@@ -513,7 +514,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       || typeof deviceName !== 'string' || !deviceName.trim() || deviceName.length > 120) return undefined;
     return { deviceId, deviceName: deviceName.trim() };
   };
-  const jobHandlers = createJobHandlers({ store, blobStore, dataDir, settings, log });
+  const hashOffload = createHashOffload();
+  const jobHandlers = createJobHandlers({ store, blobStore, dataDir, settings, log, hashOffload });
   const jobs = createJobRunner({ store, log, handlers: jobHandlers });
   const metrics = createMetricsService({
     store,
@@ -1305,6 +1307,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     close: async () => {
       clearInterval(queueWatchdog);
       metrics.stop();
+      // Workers keep the process alive and hold their own heap; a shutdown that leaves them running
+      // would make the process appear to hang after the server has closed.
+      await hashOffload.close();
       await started.catch(() => undefined);
       if (server.listening) await new Promise<void>((resolveClose, reject) => server.close((error) => error ? reject(error) : resolveClose()));
       await store.close();

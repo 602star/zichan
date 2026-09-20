@@ -240,9 +240,12 @@ export async function createServerBackup(dataDirValue: string, outputValue: stri
   }
 }
 
-export async function verifyServerBackup(backupDirValue: string): Promise<ServerBackupVerification> {
+export async function verifyServerBackup(backupDirValue: string, options: { hashFile?: (path: string) => Promise<string> } = {}): Promise<ServerBackupVerification> {
   const backupDir = resolve(backupDirValue);
   const manifest = readManifest(backupDir);
+  // Inline by default: the CLI and the restore path have no worker pool, and correctness must not
+  // depend on one being wired in.
+  const hashFile = options.hashFile ?? (async (path: string) => sha256File(path));
   const issues: string[] = [];
   const backedUpServerId = existsSync(join(backupDir, 'server-id')) ? readFileSync(join(backupDir, 'server-id'), 'utf8').trim() : '';
   if (backedUpServerId !== manifest.serverId) issues.push('服务器 ID 与备份清单不一致');
@@ -260,7 +263,7 @@ export async function verifyServerBackup(backupDirValue: string): Promise<Server
     }
     const size = statSync(path).size;
     if (size !== file.sizeBytes) issues.push(`${file.path} 大小不符`);
-    else if (sha256File(path) !== file.sha256) issues.push(`${file.path} 校验和不符`);
+    else if (await hashFile(path) !== file.sha256) issues.push(`${file.path} 校验和不符`);
   }
   let databaseResult = 'not-checked';
   if (!issues.some((issue) => issue.startsWith('server.sqlite'))) {
