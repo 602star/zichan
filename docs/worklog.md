@@ -3,6 +3,55 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-20（补 12）— 外部通知渠道：邮件与多个 Webhook
+
+**Goal:** 用户清单第二部分：「外部通知只有 webhook（邮件/IM 仍留待）。」
+
+### 诊断（缺的不是“再加一个 webhook”，而是“多个目的地”）
+
+- 原来只有一个 `alertWebhookUrl`：一个地址、一种请求体。回答不了运维真正会问的问题——「同时发到团队群和值班接口」
+  「没人盯群的时候发邮件」。
+- 各家聊天服务要的信封不同。把通用 JSON 发给 Slack/飞书/钉钉会得到 400，而那个 400 看起来像网络故障。
+  所以格式必须是**显式选择**，不能从 URL 猜。
+- 只有一个目的地时，「通知失败」是一个够用的词。有多个目的地时它不够用：三个渠道里只有邮件中继坏了，
+  运维需要知道是哪一个。
+
+### 交付
+
+1. **`apps/sync-server/src/alert-channels.ts`**：渠道是一个具名目的地，带 `kind`（`webhook`/`email`）与 `format`。
+   最多 10 个渠道；重名、非 http(s) 地址、坏格式、坏端口、坏收发地址都在解析时抛出**具体原因**——
+   静默丢掉的渠道就是一个没人知道没在投递的渠道。
+2. **每个渠道单独投递、单独报告**：`sent`/`failed`/`skipped` 按渠道记录。部分成功仍是成功（`sent`），
+   但失败渠道写进 `notify_error`，因为「告警送到了」和「某个目的地坏了」是两件事。一个渠道失败不阻塞其它渠道。
+3. **`apps/sync-server/src/smtp-client.ts`**：自己实现的 SMTP（EHLO / 可选 STARTTLS / AUTH LOGIN / MAIL / RCPT / DATA）。
+   本服务只保留一个运行时依赖且被打成单文件，而发一封信需要的 SMTP 很小。测试对着**真实 socket** 跑，不是 mock。
+4. **不做静默降级**：服务器不提供 STARTTLS 而渠道要求加密 → 失败，而不是明文发送中继密码；地址里带 CR/LF → 拒绝
+   （SMTP 是行协议，换行会变成新的邮件头）。错误信息里**绝不回显命令行**：AUTH 的用户名和密码是裸 base64，
+   而那串文本会落在告警行上并在页面上渲染。
+5. **密码从不回显**：读取设置时 `password` 只返回占位符；保存时把占位符解释为「保持原值」。
+   把占位符当字面密码存回去会锁死操作员自己的中继。
+6. **兼容既有部署**：`alertWebhookUrl` 仍作为一个渠道继续工作；一旦配置了 `alertChannels`，就只按列表投递，
+   不让旧地址重复触发。
+
+### 判断（为什么这么做）
+
+- **格式是显式选择**：从 URL 猜服务类型会把「发错了信封」变成「投递失败」，而后者会让人去查网络。
+- **`requireTls` 默认开**：默认明文发送凭据或内容是错的默认值。
+- **解析失败 = `failed`，不是「没配渠道」**：写坏的 JSON 静默变成「不需要通知」，是这一批最该避免的失效模式。
+
+### Verified
+
+- 新增 `apps/sync-server/test/alert-channels.test.ts`（8 项：解析与拒绝、格式形状、占位符与密钥合并、逐渠道汇总）。
+- 新增 `apps/sync-server/test/smtp-client.test.ts`（7 项，真实 socket：完整投递、AUTH 失败不谎报成功、收件人被拒、
+  地址换行注入、错误信息不含凭据）。
+- 新增 `apps/sync-server/test/alert-channels-e2e.test.ts`（6 项，真实 HTTP 服务器、**不注入 notifier**：两个渠道都收到、
+  Slack 形状正确、坏渠道不掩盖好渠道、全坏才算失败、非 http 渠道被拒、旧 webhook 仍工作）。
+- 变异测试确认能抓住七类静默失效：坏渠道被丢弃、密码回显、占位符被存成真密码、格式退化为通用 JSON、
+  部分失败报成整体失败、凭据写进失败原因、地址换行被接受；端到端另有五类：只投第一个渠道、解析失败读成「没配」、
+  旧 webhook 失效、部分失败报成成功、格式退化。
+- `npm test` 全绿：sync-server 265（新增 21）、web 548、core 135、db 169、logger 7。
+- `npm run typecheck`、`npm run lint`（0 error / 0 warning）通过。
+
 ## 2026-09-20（补 11）— 重型任务隔离：哈希放到工作线程
 
 **Goal:** 用户清单第二部分：「重型任务隔离没做——哈希仍在主线程。事件循环延迟指标已经在采，正好是它的验收依据。」

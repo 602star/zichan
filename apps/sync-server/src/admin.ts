@@ -13,6 +13,7 @@ import { isJobType, jobOutcome, jobParamsFor, type JobRunner } from './jobs.js';
 import { cursorMatchesSort, readCursor, resolveSort, type ResolvedSort, type SortOption } from './list-sort.js';
 import { importMaintenanceRecords } from './maintenance-records.js';
 import { drainView, resolveMaintenance, type MaintenanceState, type WriteTracker } from './maintenance-mode.js';
+import { maskChannel, mergeChannelSecrets, parseAlertChannels, SECRET_PLACEHOLDER } from './alert-channels.js';
 import { redactForExport, redactText } from './log-redaction.js';
 import type { MetricsService } from './metrics.js';
 import { SETTING_FIELDS, type SettingsFacade } from './settings.js';
@@ -123,6 +124,20 @@ function cursorGuard(search: URLSearchParams, sort: ResolvedSort): { ok: true } 
   return { ok: true };
 }
 
+
+/**
+ * Masks any SMTP password inside a stored channel list.
+ *
+ * Operates on the raw string so it can be applied both to the stored value and to the resolved
+ * one, and returns the input unchanged when it does not parse — the save path reports that as a
+ * validation error, and the read path must not turn it into one.
+ */
+export function maskChannelList(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim()) return typeof value === 'string' ? value : '';
+  try {
+    return JSON.stringify(parseAlertChannels(value).map(maskChannel));
+  } catch { return value; }
+}
 
 function bytes(value: number): string {
   const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
@@ -892,8 +907,15 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         if (raw && raw['value'] !== undefined) stored[field.name] = raw['value'] as number | string;
       }
       return send(res, 200, {
-        settings: SETTING_FIELDS.map((field) => settings.settings.resolve(field)),
-        stored,
+        // A stored SMTP password is never echoed back: this page is screenshotted into support
+        // threads. The placeholder means "unchanged" if it is saved again as-is.
+        settings: SETTING_FIELDS.map((field) => settings.settings.resolve(field)).map((field) => (
+          field.name === 'alertChannels' ? { ...field, value: maskChannelList(field.value) } : field
+        )),
+        stored: Object.fromEntries(Object.entries(stored).map(([name, value]) => [
+          name,
+          name === 'alertChannels' ? maskChannelList(value) : value,
+        ])),
         environment: {
           registrationMode: await store.registrationMode(),
           accountProtection: deps.defaultProtection,
@@ -932,7 +954,21 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         }
       }
       return void await withIdempotency(req, res, 'settings', updates, async () => {
-        const saved = await settings.settings.save(updates as Record<string, unknown>);
+        const incoming = updates as Record<string, unknown>;
+        // A masked password coming back means "unchanged": keeping it verbatim would store the
+        // placeholder as the real password and silently break the relay.
+        if (typeof incoming['alertChannels'] === 'string' && incoming['alertChannels'].includes(SECRET_PLACEHOLDER)) {
+          const previous = await store.maintenanceState('setting:alertChannels');
+          const storedValue = typeof previous?.['value'] === 'string' ? previous['value'] as string : '';
+          try {
+            const next = parseAlertChannels(incoming['alertChannels']);
+            const kept = mergeChannelSecrets(next, storedValue ? parseAlertChannels(storedValue) : []);
+            incoming['alertChannels'] = JSON.stringify(kept);
+          } catch (error) {
+            return { status: 400, body: { code: 'INVALID_SETTING', error: error instanceof Error ? error.message : String(error) } };
+          }
+        }
+        const saved = await settings.settings.save(incoming as Record<string, unknown>);
         await store.mutateAdmin(auth.session.id, { action: 'settings-save', keys: Object.keys(updates as JsonRecord) }, { requestId });
         await log('info', 'settings_updated', 'Runtime settings updated', { username: auth.user.username, detail: { keys: Object.keys(updates as JsonRecord) } });
         return { status: 200, body: { settings: saved } };

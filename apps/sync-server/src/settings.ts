@@ -20,9 +20,11 @@ export interface SettingField {
   maxLength?: number;
   /**
    * Only for `kind: 'text'`. `url` requires an http(s) address; `free` accepts any
-   * trimmed string up to `maxLength` (a path or a window label is not a URL).
+   * trimmed string up to `maxLength` (a path or a window label is not a URL); `json` accepts
+   * anything that parses, so a structured value (the alert channel list) is validated by its own
+   * parser instead of here.
    */
-  textFormat?: 'url' | 'free';
+  textFormat?: 'url' | 'free' | 'json';
   options?: string[];
   unit?: string;
   /** Settings that shape alerts rather than requests. */
@@ -70,6 +72,16 @@ export const SETTING_FIELDS: SettingField[] = [
     description: '备份保留只清理已经校验成功的历史备份，并始终保留最近一个有效备份。',
   },
   {
+    name: 'alertChannels',
+    label: '告警通知渠道（JSON 数组）',
+    kind: 'text',
+    textFormat: 'json',
+    envVar: 'ADMIN_ALERT_CHANNELS',
+    default: '',
+    maxLength: 8000,
+    description: '可同时配置多个渠道：webhook（generic/slack/discord/feishu/dingtalk/wecom/text）与 email（SMTP）。留空则回退到上面的单一 Webhook 地址。每个渠道的投递结果分别记录，一个渠道失败不影响其它渠道。',
+  },
+  {
     name: 'requireAdminMfa',
     label: '要求管理员启用两步验证',
     kind: 'select',
@@ -86,7 +98,7 @@ export const SETTING_FIELDS: SettingField[] = [
     default: '',
     maxLength: 500,
     textFormat: 'url',
-    description: '告警转为活动或恢复时向该地址 POST 一条 JSON；留空表示只在本页展示，不对外通知。',
+    description: '告警转为活动或恢复时向该地址 POST 一条 JSON；留空表示只在本页展示，不对外通知。配置了下面的「告警通知渠道」时以渠道列表为准。',
   },
   {
     name: 'quotaWarnRatio',
@@ -229,6 +241,11 @@ function coerce(field: SettingField, value: unknown): number | string | undefine
     if (!trimmed) return '';
     if (trimmed.length > (field.maxLength ?? 500)) return undefined;
     if ((field.textFormat ?? 'url') === 'url' && !/^https?:\/\/[^\s]+$/i.test(trimmed)) return undefined;
+    // Structure is checked by the feature's own parser at delivery time; here it only has to be
+    // JSON, so a malformed list is refused at save rather than discovered when an alert fires.
+    if (field.textFormat === 'json') {
+      try { JSON.parse(trimmed); } catch { return undefined; }
+    }
     return trimmed;
   }
   if (field.kind === 'select') {

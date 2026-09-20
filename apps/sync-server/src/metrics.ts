@@ -10,6 +10,8 @@ import { createRuntimeStats, type RuntimeStats, type RuntimeSample } from './run
 import type { EncryptedBlobStore } from './blob-store.js';
 import type { SettingsReader } from './settings.js';
 import type { AdminAlert, DatabaseStats, JsonRecord, ServerLogLevel, SyncServerStore } from './store.js';
+import { parseAlertChannels, webhookPayload, type AlertChannel, type ChannelResult } from './alert-channels.js';
+import { sendAlertEmail } from './smtp-client.js';
 
 const SAMPLE_INTERVAL_MS = 30_000;
 const HOUSEKEEPING_INTERVAL_MS = 60 * 60 * 1000;
@@ -144,8 +146,56 @@ export interface MetricsServiceDeps {
   notify?: AlertNotifier;
 }
 
+/**
+ * Folds per-channel results into the single verdict the alert row stores.
+ *
+ * `failed` only when *every* attempted channel failed. One channel down while another delivered is
+ * a degraded notification path, not a lost alert, and recording it as `failed` would send someone
+ * looking for an alert that did arrive.
+ */
+export function summarizeChannelResults(results: ChannelResult[]): { state: 'sent' | 'failed' | 'skipped'; error?: string } {
+  if (!results.length) return { state: 'skipped' };
+  const sent = results.filter((result) => result.state === 'sent');
+  const failed = results.filter((result) => result.state === 'failed');
+  if (sent.length) {
+    // Partial failure is still reported, because the operator needs to know one destination is
+    // broken even though the alert got through.
+    return failed.length
+      ? { state: 'sent', error: `部分渠道失败：${failed.map((result) => `${result.name}（${result.error ?? '未知原因'}）`).join('；')}` }
+      : { state: 'sent' };
+  }
+  if (!failed.length) return { state: 'skipped' };
+  return { state: 'failed', error: failed.map((result) => `${result.name}（${result.error ?? '未知原因'}）`).join('；') };
+}
+
 export function createMetricsService(deps: MetricsServiceDeps) {
   const { store, blobStore, settings, log, listBackupRecords } = deps;
+
+  /** Sends one notification to one channel and never throws: the caller records the reason. */
+  const deliver = async (channel: AlertChannel, notification: AlertNotification): Promise<ChannelResult> => {
+    try {
+      if (channel.kind === 'email') {
+        await sendAlertEmail(channel, notification);
+        return { name: channel.name, kind: 'email', state: 'sent' };
+      }
+      const payload = webhookPayload(channel.format, notification);
+      const response = await fetch(channel.url, {
+        method: 'POST',
+        headers: { 'Content-Type': payload.contentType },
+        body: payload.body,
+      });
+      return response.ok
+        ? { name: channel.name, kind: 'webhook', state: 'sent' }
+        : { name: channel.name, kind: 'webhook', state: 'failed', error: `HTTP ${String(response.status)}` };
+    } catch (error) {
+      return {
+        name: channel.name,
+        kind: channel.kind,
+        state: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  };
   // Defaults to the store query so a caller that only needs the sampler does not have to wire it;
   // it stays injectable because it drives the overdue alert and must be testable in isolation.
   const latestBackupSummary = deps.latestBackupSummary ?? (() => store.latestBackupSummary());
@@ -156,19 +206,33 @@ export function createMetricsService(deps: MetricsServiceDeps) {
   const lastStates = new Map<string, AdminAlert['state']>();
   /** Rolling window of RSS readings, used to tell "high" apart from "still climbing". */
   const rssHistory: number[] = [];
+  /**
+   * Delivers to every enabled channel, independently.
+   *
+   * The legacy single webhook (`alertWebhookUrl`) still works and is treated as one more channel,
+   * so an existing deployment keeps notifying without a migration step. When the channel list is
+   * configured it is the whole list: a deployment that moved to named channels should not also get
+   * the old URL firing.
+   */
   const defaultNotifier: AlertNotifier = async (notification) => {
-    const url = String(settings.effective('alertWebhookUrl') ?? '').trim();
-    if (!url) return { state: 'skipped' };
+    let channels: AlertChannel[] = [];
     try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(notification),
-      });
-      return response.ok ? { state: 'sent' } : { state: 'failed', error: `HTTP ${String(response.status)}` };
+      channels = parseAlertChannels(settings.effective('alertChannels')).filter((channel) => channel.enabled);
     } catch (error) {
-      return { state: 'failed', error: error instanceof Error ? error.message : String(error) };
+      return { state: 'failed', error: `告警渠道配置无法解析：${error instanceof Error ? error.message : String(error)}` };
     }
+    if (!channels.length) {
+      const legacy = String(settings.effective('alertWebhookUrl') ?? '').trim();
+      if (!legacy) return { state: 'skipped' };
+      channels = [{ kind: 'webhook', name: 'webhook', url: legacy, format: 'generic', enabled: true }];
+    }
+    // Sequential on purpose: a handful of destinations, and a deterministic order keeps the
+    // per-channel record easy to read back.
+    const results: ChannelResult[] = [];
+    for (const channel of channels) {
+      results.push(await deliver(channel, notification));
+    }
+    return summarizeChannelResults(results);
   };
   const notifier = deps.notify ?? defaultNotifier;
 

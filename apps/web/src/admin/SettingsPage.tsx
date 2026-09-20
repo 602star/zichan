@@ -75,12 +75,12 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
                   disabled={!field.editable || role !== 'owner'}
                   onChange={(event) => setDraft((current) => ({ ...current, [field.name]: event.target.value }))}
                   // Secrets are never returned; only allow-listed, non-secret fields reach here.
-                  placeholder={field.kind === 'text' ? '留空表示不通知' : undefined}
-                  style={{ width: field.kind === 'text' ? 260 : 120 }}
+                  placeholder={field.kind === 'text' ? textPlaceholder(field.textFormat) : undefined}
+                  style={{ width: field.kind === 'text' ? textWidth(field.textFormat) : 120 }}
                 />,
             },
             { key: 'source', header: '来源', render: (field) => <Badge tone={field.source === 'env' ? 'warn' : field.source === 'database' ? 'ok' : 'muted'}>{field.source === 'env' ? `环境变量 ${field.envVar}` : field.source === 'database' ? '数据库设置' : '默认值'}</Badge> },
-            { key: 'range', header: '允许范围', secondary: true, render: (field) => field.kind === 'number' ? `${field.minimum ?? ''}–${field.maximum ?? ''}` : field.kind === 'text' ? `http(s) 地址，最多 ${field.maxLength ?? 500} 字符` : (field.options ?? []).map((option) => selectLabel(field.name, option)).join('、') },
+            { key: 'range', header: '允许范围', secondary: true, render: (field) => field.kind === 'number' ? `${field.minimum ?? ''}–${field.maximum ?? ''}` : field.kind === 'text' ? textRange(field.textFormat, field.maxLength) : (field.options ?? []).map((option) => selectLabel(field.name, option)).join('、') },
             { key: 'stored', header: '已保存值', secondary: true, render: (field) => field.stored === null ? '未保存' : String(field.stored) },
           ]}
           rows={data.settings}
@@ -131,4 +131,29 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
 function selectLabel(name: string, option: string): string {
   const labels: Record<string, string> = { on: '开启', off: '关闭' };
   return labels[option] ?? option;
+}
+
+/**
+ * A text field is not necessarily a URL.
+ *
+ * The settings table used to describe every text field as "http(s) 地址", which is right for the
+ * webhook and wrong for the channel list (a JSON array) and for a backup path or maintenance
+ * window (free text). Telling an operator to enter an address they cannot enter is worse than
+ * saying nothing.
+ */
+function textRange(format: string | undefined, maxLength: number | undefined): string {
+  const limit = `最多 ${maxLength ?? 500} 字符`;
+  if (format === 'json') return `JSON 数组，${limit}`;
+  if (format === 'free') return `自由文本，${limit}`;
+  return `http(s) 地址，${limit}`;
+}
+
+function textPlaceholder(format: string | undefined): string {
+  if (format === 'json') return '留空表示不通知';
+  if (format === 'free') return '留空表示未配置';
+  return '留空表示不通知';
+}
+
+function textWidth(format: string | undefined): number {
+  return format === 'json' ? 420 : 260;
 }

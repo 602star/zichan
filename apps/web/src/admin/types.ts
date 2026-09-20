@@ -283,6 +283,8 @@ export interface MfaStatusPayload {
 
 export interface SettingsField {
   name: string; label: string; kind: 'number' | 'select' | 'text'; unit?: string; description: string; maxLength?: number;
+  /** Only for text fields: `url` is an http(s) address, `json` a channel list, `free` anything. */
+  textFormat?: 'url' | 'free' | 'json';
   stored: number | string | null; envVar: string; source: 'env' | 'database' | 'default';
   value: number | string; minimum?: number; maximum?: number; options?: string[]; editable: boolean;
 }
