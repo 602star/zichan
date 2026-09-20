@@ -16,6 +16,25 @@ export const canWrite = (role: string | undefined): boolean => role !== 'viewer'
 export const READ_ONLY_NOTE = '只读运维角色：此项不可用。';
 
 /**
+ * Whether the actor may manage this account: disable it, change its role, or end its sessions.
+ *
+ * Mirrors the server rule in `store.mutateAdmin`: an owner is protected from everyone (only the
+ * owner manages their own account, and even that is limited), and an administrator may only touch
+ * ordinary members. This was copied into the user list and the user detail page, and the two
+ * copies had to agree with a third on the server; bulk actions would have made a fourth. One
+ * definition means a rule change lands everywhere or nowhere.
+ */
+export const canManageAccount = (actorRole: string | undefined, targetRole: string | undefined): boolean => {
+  if (!canWrite(actorRole)) return false;
+  if (targetRole === 'owner') return false;
+  return actorRole === 'owner' || targetRole === 'member';
+};
+
+/** Whether the actor may retune this account's quota. Additive and reversible, so owners may do it to themselves. */
+export const canEditAccountQuota = (actorRole: string | undefined, targetRole: string | undefined): boolean =>
+  canWrite(actorRole) && (actorRole === 'owner' || targetRole === 'member');
+
+/**
  * The one role→label mapping for the whole console.
  *
  * This used to be copied into each page, and the copies drifted: a read-only operator showed as
@@ -313,6 +332,45 @@ export function useHiddenColumns(table: string, columns: { key: string; optional
   };
 }
 
+/**
+ * Row selection for a paged table.
+ *
+ * Selection is scoped to the rows currently loaded, and that scope is stated in the UI: a cursor
+ * page cannot select "everything matching the filter", and a control that implies it can would be
+ * the most dangerous kind of wrong — the operator would believe a whole filter was handled when
+ * only one page was.
+ *
+ * Keys are dropped when the page changes rather than carried across pages. Carrying them would let
+ * an invisible selection from a previous page be acted on, which is the same problem one step
+ * removed.
+ */
+export function useRowSelection(rows: { accountId: string }[]): {
+  selected: string[];
+  toggle: (key: string) => void;
+  setAll: (keys: string[]) => void;
+  clear: () => void;
+  /** Rows that are selected and still present on this page. */
+  selectedRows: typeof rows;
+} {
+  const [selected, setSelected] = useState<string[]>([]);
+  const pageKeys = rows.map((row) => row.accountId);
+  const pageKey = pageKeys.join('|');
+  const lastPageKey = useRef(pageKey);
+  if (lastPageKey.current !== pageKey) {
+    // Render-phase reset: a selection that outlives its rows is a selection the operator cannot see.
+    lastPageKey.current = pageKey;
+    if (selected.length) setSelected([]);
+  }
+  const visible = selected.filter((key) => pageKeys.includes(key));
+  return {
+    selected: visible,
+    toggle: (key) => setSelected(visible.includes(key) ? visible.filter((item) => item !== key) : [...visible, key]),
+    setAll: (keys) => setSelected(keys),
+    clear: () => setSelected([]),
+    selectedRows: rows.filter((row) => visible.includes(row.accountId)),
+  };
+}
+
 /** The column-visibility control, rendered next to a table's other controls. */
 export function ColumnPicker({ columns, hidden, onToggle, onReset }: {
   columns: { key: string; header: string; optional?: boolean }[];
@@ -338,7 +396,7 @@ export function ColumnPicker({ columns, hidden, onToggle, onReset }: {
   );
 }
 
-export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeKey, renderExpanded, hiddenColumns = [] }: {
+export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeKey, renderExpanded, hiddenColumns = [], selection }: {
   columns: Column<T>[];
   rows: T[];
   rowKey: (row: T) => string;
@@ -349,14 +407,43 @@ export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeK
   renderExpanded?: (row: T) => ReactNode;
   /** Keys of optional columns the operator turned off. */
   hiddenColumns?: string[];
+  /**
+   * Turns on row selection. The checkbox column is added by the table rather than by each page, so
+   * the header checkbox and the row checkboxes cannot disagree about which rows are selectable.
+   */
+  selection?: {
+    selected: string[];
+    onToggle: (key: string) => void;
+    onToggleAll: (keys: string[]) => void;
+    /** Rows the actor may act on. Rows outside this set render a disabled checkbox with a reason. */
+    selectable: (row: T) => boolean;
+    /** Why a row cannot be selected; shown on the disabled checkbox. */
+    reason?: (row: T) => string | undefined;
+    label?: string;
+  };
 }) {
   if (!rows.length) return <p style={muted}>{empty}</p>;
   const visible = columns.filter((column) => !hiddenColumns.includes(column.key));
+  const selectableKeys = selection ? rows.filter(selection.selectable).map(rowKey) : [];
+  const allSelected = selectableKeys.length > 0 && selectableKeys.every((key) => selection!.selected.includes(key));
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
+            {selection ? (
+              <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid var(--border)', width: 1, ...muted }}>
+                <input
+                  type="checkbox"
+                  aria-label={selection.label ?? '选择本页可操作的账号'}
+                  checked={allSelected}
+                  // Nothing selectable on this page is a real state, not an error: a page of owners
+                  // has no bulk action to offer, and a checkbox that cannot be used must say so.
+                  disabled={selectableKeys.length === 0}
+                  onChange={() => selection.onToggleAll(allSelected ? [] : selectableKeys)}
+                />
+              </th>
+            ) : null}
             {visible.map((column) => (
               <th key={column.key} className={column.secondary ? 'zc-admin-secondary' : undefined} aria-sort={column.ariaSort} style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid var(--border)', ...muted }}>{column.headerNode ?? column.header}</th>
             ))}
@@ -365,6 +452,8 @@ export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeK
         <tbody>
           {rows.map((item) => {
             const key = rowKey(item);
+            const allowed = selection ? selection.selectable(item) : false;
+            const why = selection?.reason?.(item);
             return (
               <Fragment key={key}>
                 <tr
@@ -372,13 +461,25 @@ export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeK
                   onClick={onRowClick ? () => onRowClick(item) : undefined}
                   style={{ cursor: onRowClick ? 'pointer' : undefined, background: activeKey === key ? 'var(--surface-muted, #f1f3f4)' : undefined }}
                 >
+                  {selection ? (
+                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', verticalAlign: 'top' }}>
+                      <input
+                        type="checkbox"
+                        aria-label={`选择 ${key}`}
+                        checked={selection.selected.includes(key)}
+                        disabled={!allowed}
+                        title={!allowed ? why : undefined}
+                        onChange={() => selection.onToggle(key)}
+                      />
+                    </td>
+                  ) : null}
                   {visible.map((column) => (
                     <td key={column.key} className={column.secondary ? 'zc-admin-secondary' : undefined} style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', verticalAlign: 'top' }}>{column.render(item)}</td>
                   ))}
                 </tr>
                 {renderExpanded && activeKey === key ? (
                   <tr>
-                    <td colSpan={visible.length} style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)', background: 'var(--surface-muted, #f1f3f4)' }}>
+                    <td colSpan={visible.length + (selection ? 1 : 0)} style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)', background: 'var(--surface-muted, #f1f3f4)' }}>
                       {renderExpanded(item)}
                     </td>
                   </tr>

@@ -3,7 +3,7 @@ import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
 import { AccountActions, RoleNote } from './AccountActions.js';
 import { PasswordResetIssuer } from './PasswordResetIssuer.js';
-import { Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, canWrite, message, muted, roleLabel, row, useActionError, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, canEditAccountQuota, canManageAccount, canWrite, message, muted, roleLabel, row, useActionError, useResource, when } from './ui.js';
 import { SYNC_CATEGORIES, type AccountDetail, type SessionRow } from './types.js';
 
 const sessionState = (session: SessionRow) => session.revokedAt ? '已撤销' : session.active ? '有效' : '已过期';
@@ -34,9 +34,9 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
   const { account, capacity, sessions, sync, audit, jobs } = detail.data;
   // A read-only operator never gets a write control, whatever the target's role is.
   const writable = canWrite(role);
-  const canManage = writable && account.role !== 'owner' && (role === 'owner' || account.role === 'member');
+  const canManage = canManageAccount(role, account.role);
   // Quota changes are additive and reversible, so owners may also retune their own account.
-  const canEditQuota = writable && (role === 'owner' || account.role === 'member');
+  const canEditQuota = canEditAccountQuota(role, account.role);
   // Owners and administrators keep control of their own devices; the current session ends
   // through logout, and the server additionally requires a recent login for this.
   const currentSessionId = client.currentSessionId();

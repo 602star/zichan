@@ -2,8 +2,9 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { AccountActions } from './AccountActions.js';
-import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Panel, Pager, Select, TextInput, bytes, canWrite, muted, roleLabel, row, useCursorPager, useHiddenColumns, useResource, when } from './ui.js';
+import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, bytes, canEditAccountQuota, canManageAccount, muted, roleLabel, row, useCursorPager, useHiddenColumns, useResource, useRowSelection, when } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
+import { BULK_LABELS, partitionSelection, runBulkAction, type BulkAction, type BulkOutcome } from './bulk-actions.js';
 import type { AccountRow } from './types.js';
 
 /**
@@ -36,6 +37,46 @@ const SORTS: SortChoice[] = [
 const quotaTone = (state: AccountRow['quotaState']) => state === 'over' ? 'bad' as const : state === 'warning' ? 'warn' as const : 'ok' as const;
 const quotaLabel = (state: AccountRow['quotaState']) => state === 'over' ? '已超额' : state === 'warning' ? '接近上限' : '正常';
 
+/**
+ * States the scope of a bulk action before it runs.
+ *
+ * The count is not enough: an operator who selected the wrong rows needs to see *which* rows, and
+ * which ones will be skipped and why, while they can still cancel. The same partition the run will
+ * use is shown here, so the confirmation and the report cannot disagree.
+ */
+function BulkConfirm({ action, rows, selected, canManage, busy, onConfirm, onCancel }: {
+  action: BulkAction;
+  rows: AccountRow[];
+  selected: string[];
+  canManage: (account: AccountRow) => boolean;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { ready, skipped } = partitionSelection(rows, selected, action, canManage);
+  return (
+    <div style={{ display: 'grid', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 8, marginBottom: 8 }}>
+      <strong>{BULK_LABELS[action]}：确认范围</strong>
+      <p style={muted}>
+        {action === 'revoke-sessions'
+          ? '将结束所选账号的全部会话，用户需要重新登录。数据保留。'
+          : action === 'disable'
+            ? '将禁用所选账号并立即结束其会话，数据保留。'
+            : '将启用所选账号；旧会话不会复活，用户需要重新登录。'}
+        每个账号单独执行并单独报告结果。
+      </p>
+      <p style={muted}>将处理 {ready.length} 个：{ready.length ? ready.map((account) => account.username).join('、') : '（无）'}</p>
+      {skipped.length ? (
+        <p style={muted}>将跳过 {skipped.length} 个：{skipped.map((entry) => `${entry.account.username}（${entry.reason}）`).join('；')}</p>
+      ) : null}
+      <div style={row}>
+        <Button disabled={busy || ready.length === 0} onClick={onConfirm}>确认执行</Button>
+        <Button onClick={onCancel}>取消</Button>
+      </div>
+    </div>
+  );
+}
+
 export function UsersPage({ client, query, navigate, role }: {
   client: AdminClient;
   query: URLSearchParams;
@@ -53,10 +94,16 @@ export function UsersPage({ client, query, navigate, role }: {
   const [searchDraft, setSearchDraft] = useState(search);
   const listParams = readListParams(query, { sort: 'created', dir: 'desc', limit: 25 });
   const { hidden, toggle, reset } = useHiddenColumns('users', OPTIONAL_COLUMNS);
+  const [bulk, setBulk] = useState<BulkAction | ''>('');
+  const [bulkOutcome, setBulkOutcome] = useState<BulkOutcome>();
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const list = useResource(() => client.request<{ users: AccountRow[]; nextCursor?: string; sort?: { key: string; direction: string } }>(
     `/users?${listParamsQuery(listParams)}&cursor=${encodeURIComponent(cursor)}${search ? `&search=${encodeURIComponent(search)}` : ''}${roleFilter ? `&role=${roleFilter}` : ''}${state ? `&state=${state}` : ''}${protection ? `&protection=${protection}` : ''}${quota ? `&quota=${quota}` : ''}`,
   ), [cursor, search, roleFilter, state, protection, quota, listParams.sort, listParams.direction, listParams.limit]);
+
+  const rows = list.data?.users ?? [];
+  const selection = useRowSelection(rows);
 
   const update = pager.apply;
   // The sort the server actually used, which is not always the one that was asked for: a page
@@ -71,7 +118,7 @@ export function UsersPage({ client, query, navigate, role }: {
     (next) => update({ sort: next.sort, dir: next.dir }),
   );
 
-  const canManage = (user: AccountRow) => canWrite(role) && user.role !== 'owner' && (role === 'owner' || user.role === 'member');
+  const canManage = (user: AccountRow) => canManageAccount(role, user.role);
   const columns = [
     { key: 'username', header: '用户名', ...sortHeader('name', '用户名'), render: (user: AccountRow) => <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => navigate(`/users/${user.accountId}`)}>{user.username}</button> },
     { key: 'role', header: '角色', render: (user: AccountRow) => roleLabel(user.role) },
@@ -142,13 +189,54 @@ export function UsersPage({ client, query, navigate, role }: {
           <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} />
           <ColumnPicker columns={columns} hidden={hidden} onToggle={toggle} onReset={reset} />
         </div>
+        {selection.selected.length ? (
+          <div style={{ ...row, marginBottom: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
+            <span style={muted}>已选 {selection.selected.length} 个账号（仅当前页）</span>
+            <Select aria-label="批量操作" value={bulk} onChange={(event) => { setBulk(event.target.value as BulkAction | ''); setBulkOutcome(undefined); }}>
+              <option value="">批量操作…</option>
+              <option value="disable">禁用账号</option>
+              <option value="enable">启用账号</option>
+              <option value="revoke-sessions">结束全部会话</option>
+            </Select>
+            <Button onClick={() => selection.clear()}>取消选择</Button>
+          </div>
+        ) : null}
+        {bulk && selection.selected.length ? (
+          <BulkConfirm
+            action={bulk}
+            rows={rows}
+            selected={selection.selected}
+            canManage={canManage}
+            busy={bulkBusy}
+            onCancel={() => setBulk('')}
+            onConfirm={() => {
+              setBulkBusy(true);
+              void runBulkAction(client, bulk, rows, selection.selected, canManage).then((outcome) => {
+                setBulkOutcome(outcome);
+                setBulk('');
+                setBulkBusy(false);
+                selection.clear();
+                list.reload();
+              });
+            }}
+          />
+        ) : null}
+        {bulkOutcome ? <Notice tone={bulkOutcome.failed.length ? 'warn' : undefined}><span style={{ whiteSpace: 'pre-wrap' }}>{bulkOutcome.lines.join('\n')}</span></Notice> : null}
         <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
         <DataTable
           columns={columns}
           hiddenColumns={hidden}
-          rows={list.data?.users ?? []}
+          rows={rows}
           rowKey={(user) => user.accountId}
           activeKey={openRow || undefined}
+          selection={{
+            selected: selection.selected,
+            onToggle: selection.toggle,
+            onToggleAll: selection.setAll,
+            selectable: canManage,
+            reason: (user) => user.role === 'owner' ? '所有者账号不可批量处理' : '你的角色不能管理该账号',
+            label: '选择本页可管理的账号',
+          }}
           renderExpanded={(user) => (
             <AccountActions
               client={client}
@@ -158,7 +246,7 @@ export function UsersPage({ client, query, navigate, role }: {
                 activeDeviceCount: user.activeDeviceCount,
               }}
               canManage={canManage(user)}
-              canEditQuota={role === 'owner' || user.role === 'member'}
+              canEditQuota={canEditAccountQuota(role, user.role)}
               token="inline"
               onDone={list.reload}
             />
