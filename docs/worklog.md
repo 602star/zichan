@@ -14,9 +14,12 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
 1. **表格里 `accountId` 不能一键复制**（只有邀请码能复制）→ 新增共享 `CopyValue`，并**说明结果**：
    一次生效的点击和一次什么都没做的点击原本长得一样，而 `navigator.clipboard` 在非安全源
    （后台默认走局域网明文 HTTP）上根本不存在。邀请码的旧复制按钮也换成它。
-2. **无面包屑 / 页内锚点**，窄屏下 11 个页面靠折叠菜单来回跳 → 加面包屑。轨迹由路由在一处推导，
+2. **无面包屑 / 页内锚点**，窄屏下 11 个页面靠折叠菜单来回跳 → 两者都补。面包屑的轨迹由路由在一处推导，
    而不是写进每个页面，所以页面不可能漏掉它；最后一节是当前页，渲染成文本而不是链接
-   ——链到自己所在的地方是个什么都不做的控件。
+   ——链到自己所在的地方是个什么都不做的控件。页内跳转只给真正需要的页（概览、账号安全、用户详情、
+   两个日志页）：这些页开头是两到八块面板，窄屏下“页面存在的理由”那张表在折叠线以下，
+   中间没有任何东西可以跳过去。跳转项的 id 与 `Panel` 用的是同一个 `sectionId` 助手，
+   所以标签不会和它的目标走散；`PanelIndex` 在不足三节时自己什么都不渲染。
 3. **后台硬编码 terracotta 主题**（`AdminApp.tsx:124` 直接 `{...THEMES.terracotta}`），`styles.css` 只有一套浅色，
    没有深色模式 → 见下节。
 4. **概览缺「最近管理员登录」** → 新增 `store.recentAdminLogins(5)` 并在概览展示：谁、什么时候、从哪个 IP。
@@ -60,11 +63,13 @@ it was verified. Newest entries first. (Requested: “记录你做什么操作�
   预水合块与 `theme.ts` 一致、页面画布与 `color-scheme`。
 - 新增 `apps/sync-server/test/admin-logins.test.ts`（4 项：只列管理会话、已结束会话仍可见但标记、
   按时间倒序且不超过上限、角色取管理员表且未记录的 IP 不出现空字段）。
-- 新增 `tools/e2e/account-tests/appearance.spec.mjs`（3 项，**真实 Chrome**：深色系统→整页深色且正文变亮、
+- 新增 `tools/e2e/account-tests/appearance.spec.mjs`（4 项，**真实 Chrome**：深色系统→整页深色且正文变亮、
   显式选择压过系统两个方向、重载后保持、强调色家族是独立轴、管理后台跟随同一偏好且**遍历后台节点确认
-  没有亮色残留**）。这三项抓到了上面「页面画布」那个真实缺陷：`body` 原本没有背景，
-  第一次断言拿到 `rgba(0,0,0,0)` 就说明我断言的通道是空的。
-- `npm test` 全绿：**74 个 suite / 565 项**（web 548→565）。
+  没有亮色残留**、页内跳转的每个目标都真实存在且点击后真的滚到位）。深色那三项抓到了上面
+  「页面画布」那个真实缺陷：`body` 原本没有背景，第一次断言拿到 `rgba(0,0,0,0)` 就说明我断言的通道是空的。
+- 新增 `apps/web/test/admin-anchors.test.ts`（5 项：`sectionId` 确定性且能当 fragment、每个跳转项
+  都有对应面板、不足三节不显示跳转、跳转在面板之前渲染）。
+- `npm test` 全绿：**153 个 suite / 1150 项**（基线 1124；web 548→570，sync-server 265→269）。
 - `npm run typecheck`、`npm run lint`（0 error / 0 warning）、`npm run build:web` 通过。
 
 ## 2026-09-20（补 12）— 外部通知渠道：邮件与多个 Webhook

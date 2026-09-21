@@ -3,6 +3,8 @@ import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties,
 import { AdminError } from './client.js';
 
 export const panel: CSSProperties = { padding: 16, borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', marginTop: 12 };
+/** Keeps a jumped-to section clear of the sticky page header. */
+export const anchorOffset: CSSProperties = { scrollMarginTop: 16 };
 export const row: CSSProperties = { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' };
 export const muted: CSSProperties = { color: 'var(--text-muted)', fontSize: 'var(--fs-sm)' };
 
@@ -207,9 +209,19 @@ export function useCursorPager({ query, path, navigate }: { query: URLSearchPara
   };
 }
 
-export function Panel({ title, action, children, note }: { title?: string; action?: ReactNode; children: ReactNode; note?: string }) {
+/**
+ * A titled section of a page.
+ *
+ * `id` is what makes the section addressable: a long page can offer a jump list
+ * (`PanelIndex`), and a link from elsewhere can point at one section instead of
+ * the top of the page. It is derived from the title rather than asked for
+ * separately, because a second name for the same section is a second thing to
+ * keep in step - and a duplicate id would silently break the jump target.
+ */
+export function Panel({ title, id, action, children, note }: { title?: string; id?: string; action?: ReactNode; children: ReactNode; note?: string }) {
+  const anchor = id ?? (title ? sectionId(title) : undefined);
   return (
-    <section style={panel}>
+    <section id={anchor} style={{ ...panel, ...(anchor ? anchorOffset : {}) }}>
       {(title || action) && (
         <div style={{ ...row, justifyContent: 'space-between', marginBottom: 12 }}>
           {title ? <strong>{title}</strong> : <span />}
@@ -219,6 +231,61 @@ export function Panel({ title, action, children, note }: { title?: string; actio
       {children}
       {note ? <p style={{ ...muted, marginTop: 10 }}>{note}</p> : null}
     </section>
+  );
+}
+
+/**
+ * Turn a section title into a usable fragment id.
+ *
+ * Titles are Chinese, and a fragment has to survive being typed into an address
+ * bar and pasted into a chat message, so anything that is not a letter, a digit
+ * or a hyphen is dropped rather than percent-encoded. Two titles that differ only
+ * in punctuation would collide; `PanelIndex` de-duplicates the list it renders,
+ * so a collision costs a shared jump target rather than a broken link.
+ */
+export function sectionId(title: string): string {
+  const slug = title.trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '');
+  return slug ? `section-${slug}` : 'section';
+}
+
+export interface PageSection {
+  id: string;
+  label: string;
+}
+
+/**
+ * A jump list for a page with several sections.
+ *
+ * Rendered only when a page actually has enough sections to be worth scanning:
+ * three links above a two-panel page would be more chrome than content. This is
+ * the in-page half of the same problem the breadcrumbs solve between pages -
+ * on a narrow screen the sidebar is behind a toggle, so the only way to reach
+ * the bottom of a long page was to scroll through everything above it.
+ */
+export function PanelIndex({ sections }: { sections: PageSection[] }) {
+  const seen = new Set<string>();
+  const unique = sections.filter((section) => {
+    if (!section.id || seen.has(section.id)) return false;
+    seen.add(section.id);
+    return true;
+  });
+  if (unique.length < 3) return null;
+  return (
+    <nav aria-label="页内跳转" className="zc-admin-panel-index" style={{ ...row, gap: 8, marginBottom: 12 }}>
+      {unique.map((section) => (
+        <a
+          key={section.id}
+          href={`#${section.id}`}
+          onClick={(event) => {
+            // Scroll without letting the hash change the URL: the console's routes
+            // are its own, and a stray fragment would be read back as a route.
+            event.preventDefault();
+            document.getElementById(section.id)?.scrollIntoView({ block: 'start' });
+          }}
+          style={{ fontSize: 'var(--fs-sm)', color: 'var(--text-secondary)' }}
+        >{section.label}</a>
+      ))}
+    </nav>
   );
 }
 

@@ -1,7 +1,7 @@
 /** Runtime overview: the day-to-day entry point, not a wall of counters. */
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
-import { Badge, Button, DataTable, Loading, Notice, Panel, Select, Stat, TextInput, bytes, canWrite, message, muted, roleLabel, row, usePolling, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Loading, Notice, Panel, PanelIndex, sectionId, Select, Stat, TextInput, bytes, canWrite, message, muted, roleLabel, row, usePolling, useResource, when } from './ui.js';
 import { alertNextStep, alertStateLabel, acknowledgeAlert, describeAlert, isSilenced, silenceAlert, unsilenceAlert, SILENCE_HOURS } from './alerts.js';
 import { TrendChart } from './chart.js';
 import { MaintenancePanel } from './MaintenancePanel.js';
@@ -73,6 +73,11 @@ export function OverviewPage({ client, navigate, accountName, role }: {
   return (
     <>
       <h2>运行概览</h2>
+      <PanelIndex sections={[
+        { id: sectionId('服务状态'), label: '服务状态' },
+        { id: sectionId('最近管理员登录'), label: '管理员登录' },
+        { id: sectionId('待处理事项'), label: '待处理事项' },
+      ]} />
       <Loading loading={overview.loading} error={overview.error} stale={overview.stale} loadedAt={overview.loadedAt} />
 
       <Panel title="服务状态">

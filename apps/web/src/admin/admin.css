@@ -31,6 +31,14 @@
 .zc-admin-nav a:hover { background: var(--surface-2); }
 .zc-admin-nav a[data-active="true"] { background: var(--surface-2); font-weight: var(--fw-bold); border-left: 3px solid var(--accent); }
 .zc-admin-content { min-width: 0; }
+
+/*
+ * The in-page jump list. Wraps on a narrow screen instead of scrolling sideways,
+ * because a horizontally scrolling row of links is not discoverable.
+ */
+.zc-admin-panel-index { row-gap: 6px; }
+.zc-admin-panel-index a { text-decoration: none; }
+.zc-admin-panel-index a:hover { text-decoration: underline; }
 /* Hidden until the narrow layout actually hides a column; see the media query below. */
 .zc-admin-columns-toggle { display: none; }
 .zc-admin-menu-toggle { display: none; }

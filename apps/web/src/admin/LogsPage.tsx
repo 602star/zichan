@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { AccountFilter, TimeRangeFilter } from './filters.js';
-import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, message, muted, row, useActionError, useHiddenColumns, useResource, when } from './ui.js';
+import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Pager, PanelIndex, sectionId, Select, TextInput, message, muted, row, useActionError, useHiddenColumns, useResource, when } from './ui.js';
 import { PageSizeSelect, SortHeader, listParamsQuery, readListParams, type SortChoice } from './list-controls.js';
 import type { AuditEntry, LogEntry } from './types.js';
 
@@ -86,6 +86,11 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
   return (
     <>
       <h2>运行日志</h2>
+      <PanelIndex sections={[
+        { id: sectionId('用途'), label: '用途' },
+        { id: sectionId('筛选'), label: '筛选' },
+        { id: sectionId('日志'), label: '日志' },
+      ]} />
       {exportError.error ? <Notice tone="warn">{exportError.error}</Notice> : null}
       <Panel title="用途" note="运行日志用于排查错误与性能问题；它按时间和大小限制裁剪，且写入失败时会降级输出，避免日志故障放大业务故障。">
         {requestId ? <p><Notice>正在按请求 {requestId} 关联日志。从用户详情页进来时会同时带上账号筛选。</Notice></p> : null}
@@ -214,6 +219,11 @@ export function AuditPage({ client, query, navigate }: { client: AdminClient; qu
   return (
     <>
       <h2>管理审计</h2>
+      <PanelIndex sections={[
+        { id: sectionId('筛选'), label: '筛选' },
+        { id: sectionId('审计记录'), label: '审计记录' },
+        { id: sectionId('失败的管理操作'), label: '失败的管理操作' },
+      ]} />
       <Panel title="筛选" note="审计用于追溯权限、账号与配置变更；筛选在服务端执行，翻页会继续沿着同一组筛选条件。导出遵循当前筛选条件。">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
           <Field label="关键字（动作或 accountId）"><TextInput value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="role、account-…" /></Field>

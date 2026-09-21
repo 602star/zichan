@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, Field, Loading, Notice, Panel, Stat, TextInput, message, row, useActionError, useResource, when } from './ui.js';
+import { Badge, Button, Field, Loading, Notice, Panel, PanelIndex, sectionId, Stat, TextInput, message, row, useActionError, useResource, when } from './ui.js';
 import type { MfaStatusPayload } from './types.js';
 
 interface Enrollment {
@@ -98,6 +98,11 @@ export function SecurityPage({ client, username, role, onPasswordChanged }: {
   return (
     <>
       <h2>账号安全</h2>
+      <PanelIndex sections={[
+        { id: sectionId('我的账号密码'), label: '账号密码' },
+        { id: sectionId('我的两步验证'), label: '两步验证' },
+        { id: sectionId('其他管理员的绑定情况'), label: '其他管理员' },
+      ]} />
       <Loading loading={status.loading} error={status.error} stale={status.stale} loadedAt={status.loadedAt} />
       <p>{data.note}</p>
 

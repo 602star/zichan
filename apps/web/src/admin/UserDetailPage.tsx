@@ -3,7 +3,7 @@ import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
 import { AccountActions, RoleNote } from './AccountActions.js';
 import { PasswordResetIssuer } from './PasswordResetIssuer.js';
-import { Badge, Button, CopyValue, DataTable, Loading, Notice, Panel, Stat, bytes, canEditAccountQuota, canManageAccount, canWrite, message, muted, roleLabel, row, useActionError, useResource, when } from './ui.js';
+import { Badge, Button, CopyValue, DataTable, Loading, Notice, Panel, PanelIndex, sectionId, Stat, bytes, canEditAccountQuota, canManageAccount, canWrite, message, muted, roleLabel, row, useActionError, useResource, when } from './ui.js';
 import { SYNC_CATEGORIES, type AccountDetail, type SessionRow } from './types.js';
 
 const sessionState = (session: SessionRow) => session.revokedAt ? '已撤销' : session.active ? '有效' : '已过期';
@@ -25,6 +25,12 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
     return (
       <>
         <h2>用户详情</h2>
+        <PanelIndex sections={[
+          { id: sectionId('账号信息'), label: '账号信息' },
+          { id: sectionId('设备与会话'), label: '设备与会话' },
+          { id: sectionId('同步情况'), label: '同步情况' },
+          { id: sectionId('操作记录'), label: '操作记录' },
+        ]} />
         <Loading loading={false} error={detail.error} />
         <Button onClick={() => navigate('/users')}>返回用户列表</Button>
       </>
