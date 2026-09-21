@@ -488,7 +488,7 @@ export function transactionTemplateForm(snap: Snapshot, options: LedgerFormOptio
 export function payeeForm(snap: Snapshot, options: LedgerFormOptions = {}): EntityFormSpec<Payee> {
   const usesAccounts = options.usesAccounts ?? true;
   return {
-    title: '商户',
+    title: '交易对象',
     fields: [
       { key: 'name', label: '名称', type: 'text', half: true, required: true },
       { key: 'defaultCategory', label: '默认分类', type: 'category', half: true, options: categoryOptions(snap.categories, undefined, { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), allowEmpty: true },
@@ -598,8 +598,8 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       { key: 'refundAppliedAmount', label: '冲减原消费金额', type: 'number', half: true, placeholder: '按原支出币种填写', lockedVisible: true, hidden: expenseOnly, required: true, visibleWhen: (v) => (v.type === 'refund' || refundMode) && refundNeedsSeparateOffset(v) },
       { key: 'refundAllocationMode', label: '退款分配方式', type: 'select', half: true, options: [{ value: 'proportional', label: '按原单剩余比例' }, { value: 'specified', label: '指定退款项目' }], defaultValue: 'proportional', lockedVisible: true, hidden: expenseOnly, visibleWhen: (v) => v.type === 'refund' && refundAllocationOptions(v).length > 1 },
       { key: 'refundAllocationDrafts', label: '指定退款项目金额', type: 'allocation', options: refundAllocationOptions, lockedVisible: true, hidden: expenseOnly, visibleWhen: (v) => v.type === 'refund' && v.refundAllocationMode === 'specified' },
-      { key: 'payeeId', label: '已有商户', type: 'select', half: true, options: payeeOpts(snap), allowEmpty: true, section: 'more' },
-      { key: 'merchant', label: '新商户名称', type: 'text', half: true, placeholder: '没有维护商户时填写', section: 'more' },
+      { key: 'payeeId', label: '商家 / 平台', relatedValueKeys: ['merchant'], type: 'payee', payees: snap.payees, categories: snap.categories, section: 'more' },
+      { key: 'merchant', label: '交易对象名称', type: 'text', hidden: true },
       { key: 'locationId', label: '地点', type: 'select', half: true, options: locationOpts(snap), allowEmpty: true, section: 'more' },
       { key: 'locationName', label: '地点文本', type: 'text', half: true, placeholder: '公司附近 / 家 / 某商场', section: 'more', deviceAction: 'current-location' },
       { key: 'latitude', label: '纬度', type: 'text', hidden: true },

@@ -3,6 +3,13 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-21 — 平台选择交付与收尾复验
+
+- 日常记账合并为可搜索、可直接输入的「商家 / 平台」（收入为「付款方」），管理页统一称「交易对象」。提供九个场景、分类相关推荐及全账本最近/常用对象；保存交易时才原子创建对象，不自动绑定首笔分类和账户。
+- 兼容旧名称、别名、字段偏好和历史记录；平台改名后复用原对象，停用或删除后不通过目录重复创建。范围详见 `docs/payee-platform-design.md`。
+- 核实账号 ID 可读文本和复制按钮、schema 文档修复已由 `d08060a` 提交。关闭方案 F9 的过期红灯状态，明确服务器 6–10 白名单升级还会补齐表与账号身份映射。
+- 验证：构建、Lint、网页端 574 项测试通过；账户入门回归 6 项、平台选择浏览器流程 2 项通过，检查了桌面与手机截图；管理端 appearance 流程 5 项复验通过（含账号 ID 文本与复制按钮断言）；`npm run release:check` 通过（schema 118）。
+
 ## 2026-09-21（补 2）— 账号 ID 可读，且发布门禁恢复绿灯
 
 **Goal:** 收尾工作区里未提交的一处改动（用户列表「账号 ID」列），并处理自 2026-09-17 起就红着的 `npm run release:check`。

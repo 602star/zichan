@@ -12,6 +12,7 @@
 export interface FormFieldLike {
   key: string;
   label: string;
+  relatedValueKeys?: string[];
   required?: boolean;
   hidden?: boolean;
   section?: 'core' | 'more';
@@ -94,7 +95,7 @@ export function progressiveFieldGroups<T extends FormFieldLike>(fields: T[], val
   const more: T[] = [];
   for (const field of fields) {
     if (!isFieldVisible(field, values)) continue;
-    const value = prefilled[field.key]?.trim() ?? '';
+    const value = [field.key, ...(field.relatedValueKeys ?? [])].map((key) => prefilled[key]?.trim()).find(Boolean) ?? '';
     const hasData = value !== '' && value !== '[]' && value !== '{}' && value !== (field.defaultValue ?? '');
     (field.section !== 'more' || field.required || field.lockedVisible || pinned.has(field.key) || hasData ? core : more).push(field);
   }

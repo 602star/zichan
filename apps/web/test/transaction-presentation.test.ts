@@ -18,7 +18,7 @@ describe('transaction form presentation', () => {
     const defaults = Object.fromEntries(spec.fields.map((f) => [f.key, f.defaultValue ?? '']));
     const preferences: string[] = [];
     const groups = progressiveFieldGroups(spec.fields, { type: 'expense' }, { ...defaults, merchant: '旧商户', note: '旧备注', tagIds: 'tag-reimburse' }, preferences);
-    expect(keys(groups.core)).toEqual(expect.arrayContaining(['merchant', 'note', 'tagIds']));
+    expect(keys(groups.core)).toEqual(expect.arrayContaining(['payeeId', 'note', 'tagIds']));
     expect(keys(groups.more)).toEqual(expect.arrayContaining(['status', 'timezone']));
     expect(preferences).toEqual([]);
   });
@@ -26,7 +26,7 @@ describe('transaction form presentation', () => {
     const spec = transactionForm(makeSnapshot());
     const groups = progressiveFieldGroups(spec.fields, { type: 'expense' }, {}, ['note']);
     expect(keys(groups.core)).toContain('note');
-    expect(keys(groups.more)).toContain('merchant');
+    expect(keys(groups.more)).toContain('payeeId');
   });
   it('migrates obsolete preference keys while retaining valid choices', () => {
     const snap = makeSnapshot();

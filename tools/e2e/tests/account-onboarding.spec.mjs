@@ -166,7 +166,7 @@ test('clear other filters preserves dates while resetting drill and advanced con
   await expect(page.getByRole('button', { name: '保留的筛选方案', exact: true })).toBeVisible();
   const dateBeforeClear = await Promise.all(['开始日期', '结束日期', '快捷时间范围'].map((label) => page.getByLabel(label, { exact: true }).inputValue()));
   await page.getByRole('button', { name: '清除其他筛选', exact: true }).click();
-  for (const label of ['流水类型', '流水账户', '流水商户', '流水标签', '流水状态']) {
+  for (const label of ['流水类型', '流水账户', '流水交易对象', '流水标签', '流水状态']) {
     await expect(page.getByLabel(label, { exact: true })).toHaveValue('all');
   }
   for (const label of ['最低金额', '最高金额', '流水搜索']) {

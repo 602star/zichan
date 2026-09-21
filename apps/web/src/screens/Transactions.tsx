@@ -79,6 +79,7 @@ import {
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
 import { resolveTransactionTags } from '../transaction-tags.js';
+import { rememberTransactionPayee } from '../payee-recording.js';
 import { ReconciliationModal } from './ReconciliationModal.js';
 import { DialogShell } from '../ui/DialogShell.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
@@ -865,22 +866,6 @@ export function Transactions() {
     bump();
   }
 
-  async function rememberPayee(store: SqlLedgerStore, entity: Transaction): Promise<string | undefined> {
-    const merchant = entity.merchant?.trim();
-    if (entity.payeeId || !merchant) return entity.payeeId;
-    const found = readySnap.payees.find((p) =>
-      p.name.toLowerCase() === merchant.toLowerCase()
-      || p.aliases?.some((a) => a.toLowerCase() === merchant.toLowerCase()),
-    );
-    if (found) return found.id;
-    const p = await store.payees.put({
-      id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false,
-      name: merchant, aliases: [], defaultCategory: entity.type === 'transfer' ? undefined : entity.category,
-      defaultAccountId: usesAccounts ? entity.accountId : undefined, isActive: true,
-    });
-    return p.id;
-  }
-
   async function rememberLocation(store: SqlLedgerStore, entity: Transaction): Promise<Pick<Transaction, 'locationId' | 'locationName' | 'latitude' | 'longitude' | 'locationAccuracyMeters'>> {
     const name = entity.locationName?.trim();
     const coordinates = { latitude: entity.latitude, longitude: entity.longitude, locationAccuracyMeters: entity.locationAccuracyMeters };
@@ -963,7 +948,7 @@ export function Transactions() {
     try {
       saved = await activeStore.runInAuditBatch('保存流水及附件', async (transactionStore) => {
         const tagIds = await resolveTransactionTags(transactionStore, next.tagIds);
-        const payeeId = await rememberPayee(transactionStore, next);
+        const payeeId = await rememberTransactionPayee(transactionStore, next);
         const loc = await rememberLocation(transactionStore, next);
         const transaction = (await saveTransactionAggregate(transactionStore, {
           transaction: { ...next, tagIds, payeeId, ...loc },
@@ -1238,7 +1223,7 @@ export function Transactions() {
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button onClick={() => setShowVoided((value) => !value)} style={showVoided ? primary : button}>作废记录 {voidedPage?.totalCount ?? 0}</button>
                 <button onClick={() => setEditingCategory('new')} style={button}>+ 分类</button>
-                <button onClick={() => setEditingPayee('new')} style={button}>+ 商户</button>
+                <button onClick={() => setEditingPayee('new')} style={button}>+ 交易对象</button>
                 <button onClick={() => setEditingSplit('new')} style={button}>+ 拆分</button>
                 {/* 图区在列表下方（手机上可能好几屏），所以留一个直接下去的锚点。 */}
                 <button onClick={() => document.getElementById('transaction-charts')?.scrollIntoView({ block: 'start' })} style={button}>构成与趋势 ↓</button>
@@ -1770,7 +1755,7 @@ export function Transactions() {
           initial={editingPayee === 'new' ? undefined : editingPayee}
           onSave={async (e) => {
             await store.runInAuditBatch(
-              `${editingPayee === 'new' ? '新增' : '编辑'}商户“${e.name}”`,
+              `${editingPayee === 'new' ? '新增' : '编辑'}交易对象“${e.name}”`,
               (transactionStore) => transactionStore.payees.put(e),
             );
             bump();
@@ -1778,7 +1763,7 @@ export function Transactions() {
           onDelete={editingPayee !== 'new' ? async () => {
             const compensation = await archiveMasterData(store, 'payee', editingPayee.id, editingPayee.version);
             bump();
-            undo.offer(`商户“${editingPayee.name}”已归档`, async () => {
+            undo.offer(`交易对象“${editingPayee.name}”已归档`, async () => {
               await restoreArchivedMasterData(store, compensation);
               bump();
             });
@@ -1820,8 +1805,8 @@ const ADVANCED_FIELD_OPTIONS: { value: AdvancedQueryField; label: string; accoun
   { value: 'amount', label: '金额' },
   { value: 'assetId', label: '币种' },
   { value: 'accountId', label: '账户', accountsOnly: true },
-  { value: 'payeeId', label: '商户' },
-  { value: 'merchant', label: '商户文本' },
+  { value: 'payeeId', label: '交易对象' },
+  { value: 'merchant', label: '交易对象文本' },
   { value: 'description', label: '描述' },
   { value: 'note', label: '备注' },
   { value: 'tagId', label: '标签' },
@@ -1899,7 +1884,7 @@ function batchPreviewLine(tx: Transaction, snap: Snapshot, usesAccounts: boolean
   const tags = (tx.tagIds ?? []).map((id) => tagLabel(id, snap)).join('、');
   return [
     `${TYPE_LABEL[tx.type]} · ${categoryLabel(tx.category, snap.categories)}`,
-    payee ? `商户 ${payee}` : '',
+    payee ? `交易对象 ${payee}` : '',
     usesAccounts && account ? `账户 ${account}` : '',
     usesAccounts ? `状态 ${status}` : '',
     beforeOpening ? '已包含在起始余额中，不重复扣减' : '',
@@ -1911,7 +1896,7 @@ function batchPreviewLine(tx: Transaction, snap: Snapshot, usesAccounts: boolean
 function batchSummary(patch: BatchPatch, snap: Snapshot): string {
   const parts: string[] = [];
   if (patch.category) parts.push(`分类：${categoryLabel(patch.category, snap.categories)}`);
-  if (patch.payeeId) parts.push(`商户：${snap.payees.find((p) => p.id === patch.payeeId)?.name ?? patch.payeeId}`);
+  if (patch.payeeId) parts.push(`交易对象：${snap.payees.find((p) => p.id === patch.payeeId)?.name ?? patch.payeeId}`);
   if (patch.accountId) parts.push(`账户：${snap.accounts.find((a) => a.id === patch.accountId)?.name ?? patch.accountId}`);
   if (patch.status) parts.push(`状态：${STATUS_OPTIONS.find((s) => s.value === patch.status)?.label ?? patch.status}`);
   if (patch.locationId) parts.push(`地点：${snap.transactionLocations.find((l) => l.id === patch.locationId)?.name ?? patch.locationId}`);
@@ -2239,8 +2224,8 @@ function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilter
           {snap.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       )}
-      <select aria-label="流水商户" style={selectStyle} value={filters.payeeId ?? 'all'} onChange={(e) => setFilters((f) => ({ ...f, payeeId: e.target.value }))}>
-        <option value="all">全部商户</option>
+      <select aria-label="流水交易对象" style={selectStyle} value={filters.payeeId ?? 'all'} onChange={(e) => setFilters((f) => ({ ...f, payeeId: e.target.value }))}>
+        <option value="all">全部交易对象</option>
         {snap.payees.filter((p) => !p.isDeleted).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
       <select aria-label="流水标签" style={selectStyle} value={filters.tagId ?? 'all'} onChange={(e) => setFilters((f) => ({ ...f, tagId: e.target.value }))}>
@@ -2254,7 +2239,7 @@ function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilter
       )}
       <input aria-label="最低金额" className="zc-input" value={filters.amountMin ?? ''} placeholder="最低金额" onChange={(e) => setFilters((f) => ({ ...f, amountMin: e.target.value }))} />
       <input aria-label="最高金额" className="zc-input" value={filters.amountMax ?? ''} placeholder="最高金额" onChange={(e) => setFilters((f) => ({ ...f, amountMax: e.target.value }))} />
-      <input aria-label="流水搜索" className="zc-input" value={filters.search} placeholder="搜索描述、商户、备注、标签、地点" onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} style={{ gridColumn: 'span 2' }} />
+      <input aria-label="流水搜索" className="zc-input" value={filters.search} placeholder="搜索描述、交易对象、备注、标签、地点" onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} style={{ gridColumn: 'span 2' }} />
     </div>
   );
 }
@@ -2645,7 +2630,7 @@ function BatchEditModal(props: {
             onChange={(next) => { markDirty(); setCategory(next); }}
           />
           <select style={selectStyle} value={payeeId} onChange={(e) => { markDirty(); setPayeeId(e.target.value); }}>
-            <option value="">不改商户</option>
+            <option value="">不改交易对象</option>
             {snap.payees.filter((p) => !p.isDeleted).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
           {usesAccounts && (

@@ -163,7 +163,7 @@ export function Manage() {
         {([
           ['transactionCategories', '收支分类'],
           ['fixedCategories', '物品分类'],
-          ['labels', '标签与商户'],
+          ['labels', '标签与交易对象'],
           ['other', '其他资料'],
         ] as const).map(([id, label]) => (
           <button key={id} role="tab" aria-selected={tab === id} type="button" onClick={() => setTab(id)} style={manageTabButton(tab === id)}>{label}</button>
@@ -262,7 +262,7 @@ export function Manage() {
             lifecycleCandidates={snap.transactionLocations.filter((row) => row.isActive).map((row) => ({ id: row.id, label: row.name }))}
           />
           <Section
-            title="商户" headers={usesAccounts ? ['名称', '默认分类', '默认账户', '别名'] : ['名称', '默认分类', '别名']}
+            title="交易对象" headers={usesAccounts ? ['名称', '默认分类', '默认账户', '别名'] : ['名称', '默认分类', '别名']}
             items={snap.payees}
             row={(p) => usesAccounts
               ? [p.name, p.defaultCategory ? categoryLabel(p.defaultCategory, snap.categories) : '—', p.defaultAccountId ? snap.accounts.find((a) => a.id === p.defaultAccountId)?.name ?? p.defaultAccountId : '—', p.aliases?.join(' / ') ?? '—']

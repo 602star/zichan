@@ -34,7 +34,7 @@
 - **F7（前端结构）** 管理后台**没有路由**：`AdminConsole.tsx:60` 用 `tabs` 状态切面板，`/admin/` 是单页；`apps/web/package.json` 没有任何 router 依赖 → “每页独立 URL”是新增能力，有独立工作量。
   - 好消息：服务端已有 SPA 回退（`server.ts` 的 `serveWeb`：目标文件不存在且**无扩展名**时回退 `index.html`），`/admin/overview` 这类路径可直接刷新；因此**不需要**改服务端，也**不需要** hash 路由，但不能用带扩展名的路径。
 - **F8（审计）** 审计表已含操作者、目标、动作、前后值，且与变更同事务提交（`server-admin.md` 会话与审计；`store.ts:888` 附近的 `mutateAdmin`）→ **失败尝试目前不留痕**（事务回滚即消失）。新增失败记录必须走独立事务或独立表，不能挂进会回滚的那个事务。
-- **F9（基线红灯）** `npm run release:check` 在当前 HEAD **就是失败的**：`docs/db.md:61` 仍写 `version 116 / current_schema_2026_09_01_navigation_layout`，而代码基线已是 117 `current_schema_2026_09_14_ledger_timezone`。它不是本方案引入的问题，但会影响“验收命令全绿”的说法，实施前需要先修文档或明确豁免。
+- **F9（已关闭，2026-09-21）** 方案检查时 `npm run release:check` 因数据库文档落后于代码而失败。`d08060a` 已将文档同步到 version 118 / `current_schema_2026_09_18_account_onboarding`，并记录支持的原地升级路径；本轮复验发布检查通过，无需豁免。
 - **F10（门禁盲区）** 现有发布门禁抓不到 F1 之外的这类默认值问题：`scripts/release/check-consistency.mjs:22` 的 `OPEN_REGISTRATION_DEFAULT` 正则要求 `open` 带引号，而 Compose 写的是 `${REGISTRATION_MODE:-open}`，因此**不会被拦住**。改配置时要顺带收紧门禁，否则这次修好仍会回归。
 - **F11（备份现状比初稿描述更完整）** 备份已经覆盖：`server.sqlite` + sidecar（`server.secret`、`server-id`、`opaque.server-setup`、`custody.key`）+ `blobs/{objects,trash,staging}` 三个目录（`backup.ts:22-24`、`:210-219`），写入 manifest 逐文件 sha256，并在产出后立刻 `verifyServerBackup`（`:243-275`）；`restoreServerBackup` 恢复时会撤销全部会话、清空未完成登录态与密码重置码（`:278-301`）。→ 所以“不能只复制 SQLite 文件”这个约束**现在已满足**；在线备份缺的是**写协调**（快照与附件保留的一致性），不是“补齐附件”。
 - **F12（证据边界）** 本机没有 Docker 与 PostgreSQL。容器内非 root 运行、数据目录权限、旧卷升级（§十 第 7 条）只能由 CI 的 `sync-server-container` job（`.github/workflows/ci.yml`）或目标机演练提供证据；在线一致性备份同理。方案中凡此类条目都写明证据来源，不接受“本机看起来没问题”。
@@ -326,7 +326,7 @@ Owner/Admin/Member 权限继续沿用。额外的只读运维角色放在 E 阶�
 
 范围建议按 **A–D 作为完整后台一期，E 作为增强阶段**。公网多人使用时，将管理员 MFA 提前作为上线条件。
 
-**开工前置（R10）**：`npm run release:check` 在当前 HEAD 失败（`docs/db.md` schema 版本落后，F9）。它是既有问题，与后台方案无关，但属于阶段 A 的入口条件——先修文档或明确豁免，再谈“CI 全绿”。
+**开工前置（R10，已完成）**：F9 的文档版本偏差已修复，2026-09-21 复验 `npm run release:check` 通过。这只说明发布一致性门禁通过，不代替其他 CI 验收项。
 
 ## 十二、边界与不做的事
 
@@ -349,7 +349,7 @@ Owner/Admin/Member 权限继续沿用。额外的只读运维角色放在 E 阶�
 | 类型与风格 | `npm run typecheck`、`npm run lint` |
 | 构建 | `npm run build:server`（= `build:api` + `build:web`） |
 | 管理后台 E2E | `npm run test:e2e`、`npm run test:e2e:account`（含 `tools/e2e/account-tests/admin.spec.mjs`、`admin-usability.spec.mjs`、`admin-dev-proxy.spec.mjs`、`password-recovery.spec.mjs`） |
-| 发布一致性门禁 | `npm run release:check`（当前红灯，见 F9） |
+| 发布一致性门禁 | `npm run release:check`（2026-09-21 通过，F9 已关闭） |
 | 维护程序 | `npm run server:backup`、`server:verify-backup`、`server:restore` |
 
 仅 CI 或目标机可执行（本机无 Docker，F12）：

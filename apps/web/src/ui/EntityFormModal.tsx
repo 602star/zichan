@@ -1,4 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
+import type { Category, Payee } from '@zichan/core';
+import { PayeePicker } from './PayeePicker.js';
 import { TagPicker } from './TagPicker.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { DialogShell } from './DialogShell.js';
@@ -23,7 +25,7 @@ import {
   unreachableErrorKeys,
 } from '../form-validation.js';
 
-export type FieldType = 'text' | 'number' | 'date' | 'time' | 'select' | 'category' | 'multiselect' | 'tags' | 'allocation' | 'checkbox' | 'textarea' | 'file';
+export type FieldType = 'text' | 'number' | 'date' | 'time' | 'select' | 'category' | 'multiselect' | 'tags' | 'payee' | 'allocation' | 'checkbox' | 'textarea' | 'file';
 
 export interface FieldOption {
   value: string;
@@ -49,6 +51,9 @@ export interface FieldOption {
 export interface FieldDef {
   key: string;
   label: string;
+  relatedValueKeys?: string[];
+  payees?: Payee[];
+  categories?: Category[];
   type: FieldType;
   options?: FieldOption[] | ((values: Record<string, string>) => FieldOption[]);
   allowEmpty?: boolean; // for select: offer a "（无）" option
@@ -568,6 +573,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                 f={f}
                 fieldId={fieldId}
                 options={options}
+                values={values}
                 value={values[f.key] ?? ''}
                 selectedValues={selectedValues(f.key)}
                 fileRows={fileRows(f.key)}
@@ -609,6 +615,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                       f={f}
                       fieldId={fieldId}
                       options={options}
+                      values={values}
                       value={values[f.key] ?? ''}
                       selectedValues={selectedValues(f.key)}
                       fileRows={fileRows(f.key)}
@@ -701,6 +708,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
 
 function FormField(props: {
   f: FieldDef;
+  values: Record<string, string>;
   fieldId: string;
   options: FieldOption[];
   value: string;
@@ -714,10 +722,10 @@ function FormField(props: {
   error?: string;
   hint?: string;
 }) {
-  const { f, fieldId, options, value, selectedValues, fileRows, set, readFiles, setFileRows, deviceBusy, runDeviceAction, error, hint } = props;
+  const { f, values, fieldId, options, value, selectedValues, fileRows, set, readFiles, setFileRows, deviceBusy, runDeviceAction, error, hint } = props;
   return (
     <div className="zc-form-field" key={f.key} data-form-field={fieldId} style={{ gridColumn: f.half ? 'span 1' : 'span 2' }}>
-      <label className="zc-label" htmlFor={fieldId}>{f.label}{f.required && <span style={{ color: 'var(--negative)', marginLeft: 3 }}>*</span>}</label>
+      <label className="zc-label" htmlFor={fieldId}>{f.type === 'payee' && values.type === 'income' ? '付款方' : f.label}{f.required && <span style={{ color: 'var(--negative)', marginLeft: 3 }}>*</span>}</label>
       {f.type === 'select' && f.singleOptionSummary && options.length === 1 ? <output id={fieldId} aria-label={f.label} style={{ display: 'block', padding: '8px 0' }}>{options[0]!.label}</output> : f.type === 'select' ? (
         <select id={fieldId} name={f.key} className="zc-select" required={f.required} value={value} onChange={(e) => set(f.key, e.target.value)}>
           {f.allowEmpty && <option value="">（无）</option>}
@@ -733,6 +741,8 @@ function FormField(props: {
           defaultShowHidden={f.categoryShowHiddenDefault}
           onChange={(next) => set(f.key, next)}
         />
+      ) : f.type === 'payee' ? (
+        <PayeePicker id={fieldId} payees={f.payees ?? []} categories={f.categories ?? []} payeeId={value} merchant={values.merchant ?? ''} categoryId={values.category ?? ''} type={values.type ?? 'expense'} onChange={(id, name) => { set(f.key, id); set('merchant', name); }} />
       ) : f.type === 'tags' ? (
         <TagPicker id={fieldId} options={options} value={value} onChange={(next) => set(f.key, next)} />
       ) : f.type === 'multiselect' ? (

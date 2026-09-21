@@ -1983,6 +1983,14 @@ export class SqlLedgerStore implements LedgerStore {
     });
   }
 
+  /** Whole-ledger statistics, independent of the transaction list's filters and pagination. */
+  async payeeUsage(): Promise<{ payeeId: string; count: number; lastUsed: string }[]> {
+    const rows = await this.ctx.driver.all<{ payee_id: string; uses: number; last_used: string }>(
+      "SELECT payee_id, COUNT(*) AS uses, MAX(COALESCE(occurred_at_utc, date)) AS last_used FROM transactions WHERE is_deleted = 0 AND COALESCE(record_state, 'active') = 'active' AND payee_id IS NOT NULL GROUP BY payee_id",
+    );
+    return rows.map((row) => ({ payeeId: row.payee_id, count: Number(row.uses), lastUsed: row.last_used }));
+  }
+
   subscribe(listener: StoreChangeListener): () => void {
     return this.ctx.changeBus.subscribe(listener);
   }
