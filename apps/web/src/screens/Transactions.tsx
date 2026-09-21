@@ -2480,9 +2480,9 @@ function RefundHistoryDialog(props: {
     <DialogShell
       labelledBy={titleId}
       onDismiss={onClose}
-      backdropStyle={{ background: 'rgba(0,0,0,.34)' }}
+      backdropStyle={{ background: 'var(--scrim)' }}
       panelClassName="zc-entity-modal zc-refund-history"
-      panelStyle={{ width: 'min(560px, 100%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 18, boxShadow: '0 18px 60px rgba(0,0,0,.2)', maxHeight: '86vh', overflow: 'auto' }}
+      panelStyle={{ width: 'min(560px, 100%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 18, boxShadow: 'var(--shadow-lg)', maxHeight: '86vh', overflow: 'auto' }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
         <div style={{ minWidth: 0 }}>
@@ -2618,9 +2618,9 @@ function BatchEditModal(props: {
       labelledBy={titleId}
       onDismiss={onClose}
       dismissDisabled={busy}
-      backdropStyle={{ background: 'rgba(0,0,0,.34)' }}
+      backdropStyle={{ background: 'var(--scrim)' }}
       panelClassName="zc-entity-modal zc-batch-modal"
-      panelStyle={{ width: 'min(760px, 100%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 18, boxShadow: '0 18px 60px rgba(0,0,0,.2)' }}
+      panelStyle={{ width: 'min(760px, 100%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 18, boxShadow: 'var(--shadow-lg)' }}
     >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <div>

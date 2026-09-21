@@ -26,16 +26,61 @@
   --positive: #3f8f6b;
   --negative: #c2604a;
   --warning: #9a681d;
+  /* The danger alias: `--negative` is 「支出」 on the ledger screens, so a
+     destructive *action* needs a name of its own rather than borrowing the one
+     that already means something else. */
+  --danger: #c2604a;
+  /* Text that sits on an accent-filled button. Light mode paints the accent dark
+     enough for white; dark mode re-points it at a near-black, because a light
+     accent on a dark surface is the readable pairing there. */
+  --on-accent: #ffffff;
+
+  /* Status surfaces, named once so a badge, a banner or a disabled control can
+     belong to the palette instead of falling back to a hardcoded literal. */
+  --border-strong: #d3c5ae;
+  --surface-muted: #f1ece2;
+  --ok-surface: #e6f4ea;
+  --warn-surface: #fdf3dc;
+  --danger-surface: #fce8e6;
+
+  /*
+   * Shadows and the dialog scrim.
+   *
+   * Named because a dark surface needs a different shadow, not a darker one: on
+   * a near-black page a translucent black drop shadow is invisible, so dark mode
+   * re-points these at a deeper black plus a subtle light edge. The scrim follows
+   * the same logic - over a dark page it has to be *denser* to separate the dialog
+   * from the content behind it, which a fixed literal cannot express.
+   */
+  --shadow-md: 0 18px 40px rgba(46, 36, 27, .16);
+  --shadow-lg: 0 24px 80px rgba(46, 36, 27, .12);
+  --shadow-up: 0 -10px 30px rgba(15, 23, 42, .08);
+  --shadow-up-strong: 0 -22px 64px rgba(15, 23, 42, .24);
+  --scrim: rgba(20, 16, 12, 0.38);
+
+  /*
+   * `color-scheme` is what makes the *browser's* own chrome follow the palette:
+   * scrollbars, the caret, the focus ring of a native control and the blank page
+   * behind a short document. Declared here and re-pointed per mode at runtime;
+   * without it a dark page keeps light scrollbars and a white overscroll gutter.
+   */
+  color-scheme: light;
 
   /* Text roles: three levels a reader can actually tell apart, so supporting
      copy stops reading as a fog of near-identical greys. */
   --text-primary: var(--fg);
   --text-secondary: var(--fg-muted);
   --text-tertiary: var(--fg-subtle);
+  /* The management console asked for this name before anything declared it, so
+     every one of its muted labels was falling through to a literal. */
+  --text-muted: var(--fg-muted);
 
   /* Type scale: seven steps, down from 27 ad-hoc sizes. */
   --fs-meta: 11px;      /* labels, badges, chart axes */
   --fs-caption: 12px;   /* dense secondary text */
+  /* The management console's name for the same step; aliased rather than given
+     its own size so a stray 12.5px cannot appear there. */
+  --fs-sm: var(--fs-caption);
   --fs-body: 13px;      /* default body */
   --fs-title: 15px;     /* section titles, row emphasis */
   --fs-heading: 20px;   /* page and dialog titles */
@@ -93,6 +138,61 @@
   --cat-other: #9c948a;
 }
 
+/*
+ * Pre-hydration dark defaults.
+ *
+ * `theme.ts` paints the chosen palette onto <html> at runtime, but that runs
+ * after the stylesheet is parsed and after React mounts. Without this block a
+ * reader whose system asks for dark gets a full cream page - the splash, the
+ * unlock gate, the first paint - before the palette catches up, which reads as a
+ * flash of the wrong theme on every load. The values are the default family's
+ * dark palette; a reader who picked another family gets one frame of it and then
+ * the chosen one, which is a far smaller cost than a white page.
+ *
+ * Only the default theme is duplicated here on purpose: this is a stopgap for the
+ * first paint, not a second source of truth, and `design-scale.test.ts` checks
+ * that it agrees with `DARK_THEMES.terracotta`.
+ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191512;
+    --surface: #221d19;
+    --surface-2: #2b2521;
+    --fg: #f2e9dd;
+    --fg-muted: #b9ab9a;
+    --fg-subtle: #8a7e70;
+    --border: #3b322b;
+    --accent: #e0a072;
+    --accent-soft: #3a2a1f;
+    --positive: #6fc79b;
+    --negative: #e79079;
+    --warning: #d9ad63;
+    --danger: #e79079;
+    --on-accent: #241a12;
+    --text-muted: #b9ab9a;
+    --border-strong: #4d4239;
+    --surface-muted: #2a2420;
+    --ok-surface: #1e2f26;
+    --warn-surface: #332a1a;
+    --danger-surface: #38211e;
+    --cat-1: #e0a072;
+    --cat-2: #7fb6cc;
+    --cat-3: #a3c47a;
+    --cat-4: #d9b46a;
+    --cat-5: #cf8fb0;
+    --cat-6: #9aa0d8;
+    --cat-other: #9c948a;
+    /* A dark page needs a deeper, denser shadow and scrim; the light values are
+       invisible against it. */
+    --shadow-md: 0 18px 40px rgba(0, 0, 0, .55);
+    --shadow-lg: 0 24px 80px rgba(0, 0, 0, .6);
+    --shadow-up: 0 -10px 30px rgba(0, 0, 0, .5);
+    --shadow-up-strong: 0 -22px 64px rgba(0, 0, 0, .62);
+    --scrim: rgba(0, 0, 0, .58);
+    color-scheme: dark;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -100,6 +200,24 @@ html,
 body {
   margin: 0;
   height: 100%;
+}
+
+/*
+ * The page canvas itself.
+ *
+ * `--bg` is applied to the app shell, which only covers as much height as its
+ * content. Everything below a short page - and the whole document while a
+ * pre-login gate or the splash is showing - is painted by the root element's
+ * background, which otherwise falls back to the user agent's white. That is what
+ * makes a dark screen look broken at the bottom of a short page, so the root
+ * carries the palette too and `body` inherits it rather than repeating it.
+ */
+html {
+  background: var(--bg);
+}
+body {
+  background: inherit;
+  color: var(--text-primary);
 }
 
 /*
@@ -262,11 +380,11 @@ button,
 .zc-btn--primary {
   border-color: var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .zc-btn--primary:hover:not(:disabled) {
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .zc-btn--danger {
@@ -385,7 +503,7 @@ button,
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--surface);
-  box-shadow: 0 18px 40px rgba(46, 36, 27, .16);
+  box-shadow: var(--shadow-md);
 }
 
 .zc-menu-item {
@@ -415,22 +533,22 @@ button,
   display: grid;
   place-items: center;
   padding: 24px;
-  color: #302e2b;
-  background: #f3eee7;
+  color: var(--fg);
+  background: var(--bg);
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 .zc-error-boundary-card {
   width: min(620px, 100%);
   padding: clamp(24px, 5vw, 44px);
-  border: 1px solid #d8cec2;
+  border: 1px solid var(--border);
   border-radius: var(--r-md);
-  background: #fffdf9;
-  box-shadow: 0 24px 80px rgba(46, 36, 27, .12);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
 }
 
 .zc-error-boundary-kicker {
-  color: #a34f36;
+  color: var(--accent);
   font-size: var(--fs-caption);
   font-weight: var(--fw-medium);
   letter-spacing: .08em;
@@ -444,7 +562,7 @@ button,
 .zc-error-boundary p,
 .zc-error-boundary details,
 .zc-error-boundary [role="status"] {
-  color: #6f6961;
+  color: var(--text-secondary);
   font-size: var(--fs-body);
   line-height: 1.65;
 }
@@ -465,18 +583,18 @@ button,
 .zc-error-boundary-actions button {
   min-height: 40px;
   padding: 0 15px;
-  border: 1px solid #c9bdb0;
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);
-  color: #594f47;
-  background: #fffdf9;
+  color: var(--text-primary);
+  background: var(--surface);
   font-weight: var(--fw-bold);
   cursor: pointer;
 }
 
 .zc-error-boundary-actions button:first-child {
-  border-color: #a34f36;
-  color: #fff;
-  background: #a34f36;
+  border-color: var(--accent);
+  color: var(--on-accent);
+  background: var(--accent);
 }
 
 .zc-app-shell {
@@ -535,7 +653,7 @@ button,
   border: none;
   border-radius: var(--r-round);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: var(--fw-bold);
   cursor: pointer;
 }
@@ -1138,7 +1256,7 @@ input[type="radio"] {
 .zc-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(20, 16, 12, 0.38);
+  background: var(--scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1151,7 +1269,7 @@ input[type="radio"] {
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--surface);
-  box-shadow: 0 24px 80px rgba(20, 16, 12, 0.28);
+  box-shadow: var(--shadow-lg);
   overscroll-behavior: contain;
 }
 
@@ -1557,7 +1675,7 @@ input[type="radio"] {
 }
 
 .zc-category-state.is-frequent {
-  background: rgba(63,143,107,.13);
+  background: var(--ok-surface);
   color: var(--positive);
 }
 
@@ -1853,7 +1971,7 @@ input[type="radio"] {
     padding: 5px 6px env(safe-area-inset-bottom);
     border-top: 1px solid var(--border);
     background: color-mix(in srgb, var(--surface) 94%, transparent);
-    box-shadow: 0 -10px 30px rgba(15, 23, 42, .08);
+    box-shadow: var(--shadow-up);
     backdrop-filter: blur(14px);
   }
 
@@ -1900,7 +2018,7 @@ input[type="radio"] {
     border: 4px solid var(--surface);
     border-radius: var(--r-round);
     background: var(--accent);
-    color: #fff;
+    color: var(--on-accent);
     box-sizing: content-box;
   }
 
@@ -1910,7 +2028,7 @@ input[type="radio"] {
     inset: 0;
     display: flex;
     align-items: flex-end;
-    background: rgba(20, 16, 12, .4);
+    background: var(--scrim);
   }
 
   .zc-mobile-drawer {
@@ -1921,7 +2039,7 @@ input[type="radio"] {
     padding: 8px 16px calc(18px + env(safe-area-inset-bottom));
     border-radius: var(--r-sm) var(--r-sm) 0 0;
     background: var(--surface);
-    box-shadow: 0 -22px 64px rgba(15, 23, 42, .24);
+    box-shadow: var(--shadow-up-strong);
   }
 
   .zc-mobile-drawer-handle {

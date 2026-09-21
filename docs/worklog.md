@@ -3,6 +3,70 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-21 — 低成本体验细节：复制、面包屑、深色模式、最近管理员登录、窄屏次要列
+
+**Goal:** 用户清单第三部分「低成本体验细节」五项。
+
+> 第一部分（能确认为缺陷的七项）已在 `a772536` 交付；本批不再重复。
+
+### 交付
+
+1. **表格里 `accountId` 不能一键复制**（只有邀请码能复制）→ 新增共享 `CopyValue`，并**说明结果**：
+   一次生效的点击和一次什么都没做的点击原本长得一样，而 `navigator.clipboard` 在非安全源
+   （后台默认走局域网明文 HTTP）上根本不存在。邀请码的旧复制按钮也换成它。
+2. **无面包屑 / 页内锚点**，窄屏下 11 个页面靠折叠菜单来回跳 → 加面包屑。轨迹由路由在一处推导，
+   而不是写进每个页面，所以页面不可能漏掉它；最后一节是当前页，渲染成文本而不是链接
+   ——链到自己所在的地方是个什么都不做的控件。
+3. **后台硬编码 terracotta 主题**（`AdminApp.tsx:124` 直接 `{...THEMES.terracotta}`），`styles.css` 只有一套浅色，
+   没有深色模式 → 见下节。
+4. **概览缺「最近管理员登录」** → 新增 `store.recentAdminLogins(5)` 并在概览展示：谁、什么时候、从哪个 IP。
+   读 `sync_sessions`（`kind='admin'`）而不是运行日志：日志是被裁剪的流，最旧的会被删掉，
+   「上周谁登过」会随着日志滚动而悄悄失去答案。已结束的会话仍然列出但标记为非活动——这正是审计要的。
+   没有记录过 IP 的会话**不返回该字段**，而不是返回空串，页面才能说「未记录」而不是显示空白单元格。
+5. **移动端 `zc-admin-secondary` 直接藏掉次要列，没有「展开」入口** → 加宽屏展开开关。
+
+### 深色模式（为什么这么做）
+
+- **两个轴，不是一个主题列表**：强调色家族（terracotta/sage/plum）与明暗是**独立的**。选一个暖色强调
+  不应该连带决定背景；想用深色屏幕的人不该失去自己选的强调色。所以 `THEMES` 存浅色、`DARK_THEMES` 存深色，
+  键名完全相同，可以整体替换而没有任何调用点需要知道拿到的是哪一个。
+- **偏好属于设备，不属于账本**：外观存在 `localStorage`，**不同步、不进备份、不属于加密账本**。
+  把深色屏幕通过一次同步往返传到另一台设备上是错的。
+- **`system` 是偏好不是调色板**：解析成具体 `light`/`dark` 只发生在 `appearance.ts` 一处，账本外壳、
+  管理后台、登录前的各个 gate 都读同一个结果；系统改主意时（`matchMedia` change）立即重解析，不用刷新。
+- **补上从未声明的 token**：管理后台一直在引用 `var(--surface-muted, #f1f3f4)` 这类名字，而**没有任何地方声明过它们**
+  ——每一次引用都落到硬编码的浅色兜底值，这才是后台根本无法跟随深色的根因。新增
+  `--surface-muted` / `--ok-surface` / `--warn-surface` / `--danger-surface` / `--danger` / `--border-strong` /
+  `--text-muted` / `--fs-sm` / `--on-accent` / 阴影 / `--scrim`，每个主题、每种模式各一份。
+- **`--on-accent` 而不是 `#fff`**：深色模式下强调色是**浅**的，白字在上面读不了，所以深色把它指向近黑。
+  所有坐在强调色填充上的文字都改成它（含共享 `btnPrimary`、确认对话框、各页新增按钮）。
+- **页面画布也要跟着走**：`--bg` 原本只贴在外壳上，而外壳只有内容那么高；短页面下方（以及登录前 gate、启动闪屏
+  期间）由根元素背景绘制，默认是 UA 的白。这正是「深色页面底部看着像坏了」的原因。改成 `html { background: var(--bg) }`
+  ＋ `body { background: inherit }`。
+- **`color-scheme`**：滚动条、光标、原生控件的焦点圈跟随它而不是我们的 token，所以按模式声明。
+- **预水合深色兜底**：`theme.ts` 在运行时往 `<html>` 上刷色，但那在样式表解析之后、React 挂载之后。
+  没有兜底的话，系统要求深色的读者每次加载都会先看到整页奶油色。`styles.css` 里加
+  `@media (prefers-color-scheme: dark)` 块，值就是默认家族的深色盘；`design-scale.test.ts` 校验它与
+  `DARK_THEMES.terracotta` 一致（否则它会悄悄漂移）。
+- **登录前的界面一并处理**：启动闪屏、解锁、只读恢复、初始化失败、首次运行向导、两个服务器 gate
+  原先写的是字面奶油色（那时还没有可继承的调色板），现在全部走 token。二维码和 PDF 画布**保持浅色**——
+  它们不是屏幕，深色底会让它们扫不出来/印不出来。
+
+### Verified
+
+- 新增 `apps/web/test/appearance.test.ts`（12 项：偏好解析与逐字段回退、存储不可用、`system` 解析、
+  调色板应用与还原、深色确实比浅色暗、浏览器 chrome 跟随）。
+- `design-scale.test.ts` 扩到 17 项：两模式 token 键名一致、每个未声明的 token 现在都有声明、
+  预水合块与 `theme.ts` 一致、页面画布与 `color-scheme`。
+- 新增 `apps/sync-server/test/admin-logins.test.ts`（4 项：只列管理会话、已结束会话仍可见但标记、
+  按时间倒序且不超过上限、角色取管理员表且未记录的 IP 不出现空字段）。
+- 新增 `tools/e2e/account-tests/appearance.spec.mjs`（3 项，**真实 Chrome**：深色系统→整页深色且正文变亮、
+  显式选择压过系统两个方向、重载后保持、强调色家族是独立轴、管理后台跟随同一偏好且**遍历后台节点确认
+  没有亮色残留**）。这三项抓到了上面「页面画布」那个真实缺陷：`body` 原本没有背景，
+  第一次断言拿到 `rgba(0,0,0,0)` 就说明我断言的通道是空的。
+- `npm test` 全绿：**74 个 suite / 565 项**（web 548→565）。
+- `npm run typecheck`、`npm run lint`（0 error / 0 warning）、`npm run build:web` 通过。
+
 ## 2026-09-20（补 12）— 外部通知渠道：邮件与多个 Webhook
 
 **Goal:** 用户清单第二部分：「外部通知只有 webhook（邮件/IM 仍留待）。」

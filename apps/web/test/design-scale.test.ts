@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { THEMES } from '../src/theme.js';
+import { DARK_THEMES, THEMES } from '../src/theme.js';
 
 /*
  * Batch 0 of the visual-density plan: the scale must exist in CSS, and every
@@ -126,6 +126,23 @@ describe('design scale contract', () => {
    * the slots are real tokens, and every theme needs them: a theme that skips
    * one leaves a slice transparent.
    */
+  it('paints the page canvas from the palette, not the user agent default', () => {
+    // `--bg` on the app shell only covers the shell's own height; everything
+    // below a short page is the root element's background, which defaults to
+    // white. A dark screen that stops at the last row of content reads as a
+    // rendering fault, so the root has to carry the palette too.
+    expect(css).toMatch(/html \{\s*background: var\(--bg\);/);
+    expect(css).toMatch(/body \{\s*background: inherit;/);
+    expect(css).toMatch(/body \{[^}]*color: var\(--text-primary\)/);
+  });
+
+  it('declares a colour scheme so native chrome follows the palette', () => {
+    // Scrollbars, the caret and a native control's focus ring follow
+    // `color-scheme`, not our tokens.
+    expect(css).toMatch(/:root \{[\s\S]*?color-scheme: light;/);
+    expect(css).toMatch(/@media \(prefers-color-scheme: dark\)[\s\S]*?color-scheme: dark;/);
+  });
+
   it('gives every theme values for the categorical slots', () => {
     const slots = ['--cat-1', '--cat-2', '--cat-3', '--cat-4', '--cat-5', '--cat-6', '--cat-other'];
     for (const slot of slots) {
@@ -136,6 +153,70 @@ describe('design scale contract', () => {
         expect(theme[slot], `${id} is missing ${slot}`).toMatch(/^#[0-9a-f]{6}$/i);
       }
     }
+    // A dark palette that skipped a slot would leave a chart slice transparent
+    // on exactly the screens where the legend still lists it.
+    for (const [id, theme] of Object.entries(DARK_THEMES)) {
+      for (const slot of slots) {
+        expect(theme[slot], `dark ${id} is missing ${slot}`).toMatch(/^#[0-9a-f]{6}$/i);
+      }
+    }
+  });
+
+  /*
+   * A dark palette has to declare the same token names as its light twin, or the
+   * mode switch leaves whatever the light theme set. The two maps are separate
+   * objects, so nothing else keeps them in step.
+   */
+  it('declares the same tokens in both modes for every theme', () => {
+    for (const id of Object.keys(THEMES) as (keyof typeof THEMES)[]) {
+      const light = Object.keys(THEMES[id]!).sort();
+      const dark = Object.keys(DARK_THEMES[id]!).sort();
+      expect(dark, `${id} dark palette does not match its light token list`).toEqual(light);
+    }
+  });
+
+  /*
+   * The management console referred to these names before anything declared them,
+   * so every reference silently fell through to a hardcoded light literal - which
+   * is what made the console unable to follow a dark screen at all.
+   */
+  it('declares every token the console used to fall back on', () => {
+    for (const token of [
+      '--fs-sm', '--text-muted', '--surface-muted', '--ok-surface', '--warn-surface',
+      '--danger-surface', '--danger', '--border-strong', '--on-accent',
+      '--shadow-md', '--shadow-lg', '--shadow-up', '--shadow-up-strong', '--scrim',
+    ]) {
+      expect(css, `${token} must be declared on :root`).toContain(`${token}:`);
+    }
+    // Every one of them also has to exist per theme and per mode, or a themed
+    // badge or shadow keeps the default palette's value.
+    for (const [id, theme] of Object.entries(THEMES)) {
+      for (const token of ['--on-accent', '--danger', '--text-muted', '--surface-muted', '--ok-surface', '--warn-surface', '--danger-surface', '--border-strong']) {
+        expect(theme[token], `${id} is missing ${token}`).toMatch(/^#[0-9a-f]{6}$/i);
+      }
+    }
+  });
+
+  /*
+   * The pre-hydration block is what stops a dark screen from flashing cream while
+   * the bundle loads. It duplicates one palette, so it can drift from `theme.ts`
+   * without anything failing - unless it is compared here.
+   */
+  it('keeps the pre-hydration dark defaults in step with the default theme', () => {
+    const block = /@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([\s\S]*?)\n  \}/.exec(css);
+    expect(block, 'the pre-hydration dark block must exist').toBeTruthy();
+    // Both custom properties and plain declarations (notably `color-scheme`) are
+    // captured, because the block has to state the mode as well as the palette.
+    const declared = Object.fromEntries(
+      [...block![1].matchAll(/(^|\s)([a-z-]+[0-9]*):\s*([^;\n]+);/g)].map((m) => [m[2], m[3].trim()]),
+    );
+    // Shadows and `color-scheme` are mode-level, not palette-level; the palette
+    // tokens are the ones that must agree with `DARK_THEMES.terracotta`.
+    for (const [token, value] of Object.entries(DARK_THEMES.terracotta!)) {
+      if (token.startsWith('--shadow') || token === '--scrim') continue;
+      expect(declared[token], `${token} differs between styles.css and theme.ts`).toBe(value);
+    }
+    expect(declared['color-scheme']).toBe('dark');
   });
 
   /*

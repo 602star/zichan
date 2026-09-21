@@ -9,7 +9,7 @@ const panel = {
   padding: 22,
   width: 460,
   maxWidth: 'calc(100vw - 32px)',
-  boxShadow: '0 22px 70px rgba(15, 23, 42, .24)',
+  boxShadow: 'var(--shadow-lg)',
 } as const;
 
 const button = btnOutline;
@@ -72,8 +72,8 @@ export function ConfirmDialog(props: {
   }
 
   const confirmStyle = props.tone === 'danger'
-    ? { ...button, border: '1px solid var(--negative)', background: 'var(--negative)', color: '#fff' }
-    : { ...button, border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff' };
+    ? { ...button, border: '1px solid var(--negative)', background: 'var(--negative)', color: 'var(--on-accent)' }
+    : { ...button, border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)' };
 
   return (
     <DialogShell

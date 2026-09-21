@@ -6,7 +6,17 @@ import { useStore } from './db/store.js';
 import { loadSnapshot, useSnapshot, type Snapshot } from './db/snapshot.js';
 import { baseAsset } from './db/derive.js';
 import { setBaseSymbol } from './format.js';
-import { THEMES, FONT_FAMILY, type ThemeId } from './theme.js';
+import { FONT_FAMILY, type ThemeId, type ThemeModePreference } from './theme.js';
+import {
+  appearanceTokens,
+  applyBrowserChrome,
+  applyThemeTokens,
+  readAppearancePreference,
+  resolveThemeMode,
+  subscribeSystemMode,
+  systemPrefersDark,
+  writeAppearancePreference,
+} from './appearance.js';
 import { PlusIcon } from './ui/PlusIcon.js';
 import {
   BackupPassphraseRequiredError,
@@ -239,7 +249,27 @@ export function App() {
   const { store, bump, storageBackend, dataLocation } = useStore();
   const snap = useSnapshot('shell');
   const [screen, setScreen] = useState<ScreenId>(initialScreen);
-  const [theme, setTheme] = useState<ThemeId>('terracotta');
+  // Appearance is a device preference, not ledger data: it is read from local
+  // storage once and written back on change, never synced or exported.
+  const [appearance, setAppearance] = useState(readAppearancePreference);
+  const theme = appearance.theme;
+  // `system` resolves against the OS now, and re-resolves when it changes: a
+  // reader on "follow the system" must not have to reload at sunset.
+  const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
+  const themeMode = resolveThemeMode(appearance.mode, prefersDark);
+  useEffect(() => subscribeSystemMode(() => setPrefersDark(systemPrefersDark())), []);
+  /*
+   * Painted on <html>, not on the app shell. The shell cannot reach the error
+   * boundary (a sibling, not a descendant), the pre-login gates, or the area
+   * below a short page; all of those are visible with the palette applied and
+   * would otherwise stay cream on a dark screen.
+   */
+  useEffect(() => {
+    const tokens = appearanceTokens(theme, themeMode);
+    const restore = applyThemeTokens(document.documentElement, tokens, themeMode);
+    applyBrowserChrome(tokens);
+    return restore;
+  }, [theme, themeMode]);
   const [importDialog, setImportDialog] = useState<ImportDialog | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [importPassphrase, setImportPassphrase] = useState('');
@@ -437,7 +467,6 @@ export function App() {
   }
 
   const rootStyle: CSSProperties = {
-    ...(THEMES[theme] as CSSProperties),
     background: 'var(--bg)',
     color: 'var(--text-primary)',
     fontFamily: FONT_FAMILY,
@@ -517,7 +546,15 @@ export function App() {
             {screen === 'history' && <History />}
             {screen === 'manage' && <Manage />}
             {screen === 'sync' && <Sync />}
-            {screen === 'settings' && <Settings theme={theme} setTheme={setTheme} />}
+            {screen === 'settings' && (
+              <Settings
+                theme={theme}
+                mode={appearance.mode}
+                resolvedMode={themeMode}
+                setTheme={(next: ThemeId) => setAppearance(writeAppearancePreference({ theme: next }))}
+                setMode={(next: ThemeModePreference) => setAppearance(writeAppearancePreference({ mode: next }))}
+              />
+            )}
           </Suspense>
         </div>
       </main>
@@ -593,7 +630,7 @@ export function App() {
                     border: '1px solid var(--border)',
                     borderRadius: mode === 'merge' ? 'var(--r-sm) 0 0 var(--r-sm)' : '0 var(--r-sm) var(--r-sm) 0',
                     background: importDialog.mode === mode ? 'var(--accent)' : 'var(--surface)',
-                    color: importDialog.mode === mode ? '#fff' : 'var(--fg-muted)',
+                    color: importDialog.mode === mode ? 'var(--on-accent)' : 'var(--fg-muted)',
                     fontSize: 'var(--fs-caption)',
                     fontWeight: 'var(--fw-medium)',
                     cursor: 'pointer',
@@ -691,7 +728,7 @@ function Sidebar(props: {
       <div className="zc-sidebar-brand" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px 20px' }}>
         <div style={{
           width: 36, height: 36, borderRadius: 'var(--r-sm)', background: 'var(--accent)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-title)',
+          alignItems: 'center', justifyContent: 'center', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-title)',
         }}>资</div>
         <div className="zc-sidebar-brand-copy">
           <div style={{ fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-title)', letterSpacing: 0 }}>资产生命周期</div>
@@ -742,7 +779,7 @@ function Sidebar(props: {
                        stays square; only the active tint is dynamic. */
                     border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
                     background: active ? 'var(--accent)' : 'var(--surface-2)',
-                    color: active ? '#fff' : 'var(--accent)',
+                    color: active ? 'var(--on-accent)' : 'var(--accent)',
                   }}
                 >
                   <PlusIcon size={20} />

@@ -521,7 +521,7 @@ export function QuickExpenseModal({
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
           <button type="button" onClick={requestClose} disabled={busy} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', color: 'var(--text-secondary)', padding: '10px 16px', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>取消</button>
-          <button type="button" onClick={() => void submit()} disabled={busy} style={{ border: '1px solid var(--accent)', borderRadius: 'var(--r-sm)', background: 'var(--accent)', color: '#fff', padding: '10px 20px', fontWeight: 'var(--fw-bold)', cursor: busy ? 'wait' : 'pointer' }}>{busy ? '保存中…' : '保存支出'}</button>
+          <button type="button" onClick={() => void submit()} disabled={busy} style={{ border: '1px solid var(--accent)', borderRadius: 'var(--r-sm)', background: 'var(--accent)', color: 'var(--on-accent)', padding: '10px 20px', fontWeight: 'var(--fw-bold)', cursor: busy ? 'wait' : 'pointer' }}>{busy ? '保存中…' : '保存支出'}</button>
         </div>
         {closeOpen && (
           <ConfirmDialog

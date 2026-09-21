@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { MfaRequiredError, type SyncAuthMe } from '@zichan/db';
-import { THEMES } from '../theme.js';
+import {
+  appearanceTokens,
+  applyBrowserChrome,
+  applyThemeTokens,
+  readAppearancePreference,
+  resolveThemeMode,
+  subscribeSystemMode,
+  systemPrefersDark,
+} from '../appearance.js';
 import { AdminClient, type AdminHealth } from './client.js';
 import { adminHref, navigate as navigateRoute, useRoute } from './router.js';
 import { AuditPage, LogsPage } from './LogsPage.js';
@@ -19,7 +27,7 @@ import { UserDetailPage } from './UserDetailPage.js';
 import { UsersPage } from './UsersPage.js';
 import './admin.css';
 import { PasswordRecovery } from '../ui/PasswordRecovery.js';
-import { roleLabel } from './ui.js';
+import { Breadcrumbs, roleLabel } from './ui.js';
 
 const NAVIGATION: { path: string; label: string; ownerOnly?: boolean }[] = [
   { path: '/overview', label: '运行概览' },
@@ -50,10 +58,20 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
   const [mfaChallenge, setMfaChallenge] = useState<{ expiresAt: string }>();
   const [mfaCode, setMfaCode] = useState('');
   const [message, setMessage] = useState('正在检查服务器与管理会话…');
+  // The same device preference the ledger app uses, so the two surfaces agree and
+  // an operator who picked a dark screen does not get a cream console.
+  const [appearance] = useState(readAppearancePreference);
+  const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
+  const themeMode = resolveThemeMode(appearance.mode, prefersDark);
+  useEffect(() => subscribeSystemMode(() => setPrefersDark(systemPrefersDark())), []);
+  useEffect(() => {
+    const tokens = appearanceTokens(appearance.theme, themeMode);
+    const restore = applyThemeTokens(document.documentElement, tokens, themeMode);
+    applyBrowserChrome(tokens);
+    return restore;
+  }, [appearance.theme, themeMode]);
   useEffect(() => {
     let active = true;
-    const previous = Object.fromEntries(Object.keys(THEMES.terracotta!).map((name) => [name, document.documentElement.style.getPropertyValue(name)]));
-    for (const [name, value] of Object.entries(THEMES.terracotta!)) document.documentElement.style.setProperty(name, value);
     const client = new AdminClient(baseUrl, (note) => { if (active) { setAccount(undefined); setPassword(''); setMfaChallenge(undefined); setMfaCode(''); setMessage(note); } });
     clientRef.current = client;
     setBusy(true); setHealth(undefined); setMessage('正在检查服务器与管理会话…');
@@ -69,10 +87,6 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
     })();
     return () => {
       active = false; client.dispose();
-      for (const [name, value] of Object.entries(previous)) {
-        if (value) document.documentElement.style.setProperty(name, value);
-        else document.documentElement.style.removeProperty(name);
-      }
     };
   }, [baseUrl, attempt]);
 
@@ -139,7 +153,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
     finally { setBusy(false); }
   }
 
-  return <main className="zc-admin-root" style={{ ...THEMES.terracotta, minHeight: '100dvh', background: 'var(--bg)', color: 'var(--text-primary)', padding: 'clamp(12px, 3vw, 32px)', boxSizing: 'border-box', fontFamily: 'system-ui, sans-serif' } as CSSProperties}>
+  return <main className="zc-admin-root" style={{ minHeight: '100dvh', background: 'var(--bg)', color: 'var(--text-primary)', padding: 'clamp(12px, 3vw, 32px)', boxSizing: 'border-box', fontFamily: 'system-ui, sans-serif' } as CSSProperties}>
     <div style={{ maxWidth: 1220, margin: '0 auto' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
         <div>
@@ -154,6 +168,9 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
             </span>
           ) : null}
           <a href={`${baseUrl}/app/`}>打开记账应用</a>
+          {/* The console has no appearance picker of its own; it follows the device
+              preference set in the ledger app, so a shared screen looks consistent. */}
+          <span style={{ color: 'var(--text-secondary)' }}>{themeMode === 'dark' ? '深色' : '浅色'}</span>
           {account ? (
             <>
               <span>{account.username} · {roleLabel(account.role)}</span>
@@ -214,6 +231,10 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
   const role = account.role;
   const items = NAVIGATION.filter((item) => !item.ownerOnly || role === 'owner');
   const current = items.find((item) => route.path === item.path || route.path.startsWith(`${item.path}/`)) ?? items[0]!;
+  // A detail page is one level below its list, and the trailing segment is an opaque id rather
+  // than a label. Only the user detail route has a readable parent, so only it gets an extra crumb;
+  // anything else would be a link whose text an operator cannot read.
+  const detailCrumb = current.path === '/users' && route.segments[1] ? '用户详情' : undefined;
 
   useEffect(() => { setMenuOpen(false); }, [route.path]);
   // Several console tabs are open at once during an incident; without a title they are
@@ -272,10 +293,19 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
         ))}
       </nav>
       <section className="zc-admin-content">
+        <Breadcrumbs
+          crumbs={[
+            { label: '管理后台', href: adminHref(basePath, '/overview') },
+            ...(route.path === current.path
+              ? [{ label: current.label }]
+              : [{ label: current.label, href: adminHref(basePath, current.path) }, { label: detailCrumb ?? current.label }]),
+          ]}
+          onNavigate={go}
+        />
         {/* The role is stated up front, because a read-only operator sees every page and would
             otherwise only find out by being refused. */}
         {role === 'viewer'
-          ? <p role="status" style={{ padding: 12, marginBottom: 12, borderRadius: 'var(--r-sm)', background: 'var(--warn-surface, #fef7e0)', border: '1px solid var(--border)' }}>
+          ? <p role="status" style={{ padding: 12, marginBottom: 12, borderRadius: 'var(--r-sm)', background: 'var(--warn-surface)', border: '1px solid var(--border)' }}>
             只读运维角色：可以查看全部页面并导出日志与审计，不能执行任何管理变更（修改账号、会话、注册策略、任务、设置或备份操作都会被服务端拒绝）。
           </p>
           : null}

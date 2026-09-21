@@ -21,7 +21,7 @@ export function TrendChart({ points, label, formatValue, tone, granularityNote, 
   if (!points.length) return <p style={muted}>暂无数据：这个时间范围内还没有采集到分桶。</p>;
   const { bars, maximum } = trendGeometry(points, { width: VIEW_WIDTH, height: VIEW_HEIGHT });
   const summary = trendSummary(points);
-  const fill = tone === 'bad' ? 'var(--danger, #b3261e)' : tone === 'warn' ? 'var(--warning, #8a5a00)' : 'var(--accent, #1a73e8)';
+  const fill = tone === 'bad' ? 'var(--danger)' : tone === 'warn' ? 'var(--warning)' : 'var(--accent)';
   return (
     <figure style={{ margin: '10px 0 0' }}>
       <svg

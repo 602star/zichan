@@ -415,7 +415,7 @@ function segmentButton(active: boolean) {
     border: '1px solid var(--border)',
     borderRadius: 'var(--r-sm)',
     background: active ? 'var(--accent)' : 'var(--surface)',
-    color: active ? '#fff' : 'var(--fg-muted)',
+    color: active ? 'var(--on-accent)' : 'var(--fg-muted)',
     fontSize: 'var(--fs-caption)',
     fontWeight: 'var(--fw-medium)',
     cursor: 'pointer',

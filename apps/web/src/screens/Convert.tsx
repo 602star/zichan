@@ -90,7 +90,7 @@ export function Convert() {
           {TYPE_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
         <button onClick={() => setShowVoided((value) => !value)} style={pillBtn(showVoided)}>作废记录 {snap.chains.filter((row) => row.chain.recordState === 'voided').length}</button>
-        <button onClick={() => setAdding({})} style={{ padding: '10px 16px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer' }}>+ 新增转换</button>
+        <button onClick={() => setAdding({})} style={{ padding: '10px 16px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer' }}>+ 新增转换</button>
       </div>
       <DateRangeBar value={dateRange} onChange={setDateRange} />
 
@@ -176,7 +176,7 @@ export function Convert() {
                             {c.steps.map((s) => (
                               <div key={s.n} style={{ ...card, padding: '14px 16px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                  <span style={{ width: 22, height: 22, borderRadius: 'var(--r-round)', background: 'var(--accent)', color: '#fff', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{s.n}</span>
+                                  <span style={{ width: 22, height: 22, borderRadius: 'var(--r-round)', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{s.n}</span>
                                   <span style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{s.from}</span>
                                   <span style={{ color: 'var(--text-tertiary)' }}>→</span>
                                   <span style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{s.to}</span>

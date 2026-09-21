@@ -156,9 +156,9 @@ export function ReconciliationModal(props: Props) {
       labelledBy={titleId}
       onDismiss={props.onClose}
       dismissDisabled={busy}
-      backdropStyle={{ zIndex: 90, background: 'rgba(33, 30, 27, .42)' }}
+      backdropStyle={{ zIndex: 90, background: 'var(--scrim)' }}
       panelClassName="zc-reconciliation-modal"
-      panelStyle={{ width: 'min(1120px, 96vw)', maxHeight: '92dvh', overflow: 'hidden', background: 'var(--surface)', color: 'var(--text-primary)', borderRadius: 'var(--r-sm)', boxShadow: '0 24px 70px rgba(0,0,0,.24)', display: 'flex', flexDirection: 'column' }}
+      panelStyle={{ width: 'min(1120px, 96vw)', maxHeight: '92dvh', overflow: 'hidden', background: 'var(--surface)', color: 'var(--text-primary)', borderRadius: 'var(--r-sm)', boxShadow: 'var(--shadow-lg)', display: 'flex', flexDirection: 'column' }}
     >
         <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' }}>
           <div><div id={titleId} style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{session ? '对账详情' : '核对账单'}</div><div style={{ marginTop: 4, fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>按银行卡或钱包账单逐笔核对收支</div></div>

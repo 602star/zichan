@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { AccountActions } from './AccountActions.js';
-import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, bytes, canEditAccountQuota, canManageAccount, muted, roleLabel, row, useCursorPager, useHiddenColumns, useResource, useRowSelection, when } from './ui.js';
+import { Badge, Button, ColumnPicker, CopyValue, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, bytes, canEditAccountQuota, canManageAccount, muted, roleLabel, row, useCursorPager, useHiddenColumns, useResource, useRowSelection, when } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import { BULK_LABELS, partitionSelection, runBulkAction, type BulkAction, type BulkOutcome } from './bulk-actions.js';
 import type { AccountRow } from './types.js';
@@ -123,6 +123,9 @@ export function UsersPage({ client, query, navigate, role }: {
     { key: 'username', header: '用户名', ...sortHeader('name', '用户名'), render: (user: AccountRow) => <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => navigate(`/users/${user.accountId}`)}>{user.username}</button> },
     { key: 'role', header: '角色', render: (user: AccountRow) => roleLabel(user.role) },
     { key: 'state', header: '启用状态', render: (user: AccountRow) => user.disabled ? <Badge tone="bad">已禁用</Badge> : <Badge tone="ok">正常</Badge> },
+    // The account id is what appears in logs, audit rows and support tickets; it used to be
+    // unselectable text that had to be retyped by hand.
+    { key: 'accountId', header: '账号 ID', optional: true, secondary: true, render: (user: AccountRow) => <CopyValue value={user.accountId} label="账号 ID" /> },
     { key: 'protection', header: '保护模式', optional: true, render: (user: AccountRow) => user.protectionMode === 'managed' ? '云端托管' : user.protectionMode === 'private' ? '私密' : user.protectionMode === 'relay' ? '中继' : '未设置' },
     {
       key: 'quota', header: '容量使用率', ...sortHeader('usage', '容量使用率'), render: (user: AccountRow) => (

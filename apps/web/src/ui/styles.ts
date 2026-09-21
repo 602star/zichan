@@ -44,7 +44,7 @@ export const btnPrimary: CSSProperties = {
   ...btnBase,
   borderColor: 'var(--accent)',
   background: 'var(--accent)',
-  color: '#fff',
+  color: 'var(--on-accent)',
 };
 
 export const btnOutline: CSSProperties = btnBase;

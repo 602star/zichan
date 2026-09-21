@@ -3,7 +3,7 @@ import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
 import { AccountActions, RoleNote } from './AccountActions.js';
 import { PasswordResetIssuer } from './PasswordResetIssuer.js';
-import { Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, canEditAccountQuota, canManageAccount, canWrite, message, muted, roleLabel, row, useActionError, useResource, when } from './ui.js';
+import { Badge, Button, CopyValue, DataTable, Loading, Notice, Panel, Stat, bytes, canEditAccountQuota, canManageAccount, canWrite, message, muted, roleLabel, row, useActionError, useResource, when } from './ui.js';
 import { SYNC_CATEGORIES, type AccountDetail, type SessionRow } from './types.js';
 
 const sessionState = (session: SessionRow) => session.revokedAt ? '已撤销' : session.active ? '有效' : '已过期';
@@ -74,7 +74,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
 
       <Panel title="账号信息">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-          <Stat label="accountId" value={<code style={{ fontSize: 'var(--fs-sm)' }}>{account.accountId}</code>} />
+          <Stat label="accountId" value={<span style={row}><code style={{ fontSize: 'var(--fs-sm)' }}>{account.accountId}</code><CopyValue value={account.accountId} /></span>} />
           <Stat label="创建时间" value={when(account.createdAt)} />
           <Stat label="角色" value={roleLabel(account.role)} />
           <Stat label="状态" value={account.disabled ? <Badge tone="bad">已禁用</Badge> : <Badge tone="ok">正常</Badge>} />

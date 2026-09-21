@@ -2972,6 +2972,42 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     };
   }
 
+  /**
+   * The management-console sign-ins an operator wants to see at a glance: who got in, when, and
+   * from where.
+   *
+   * Read from the sessions rather than the run log on purpose. The log is a capped, trimmed
+   * stream — the oldest entries are deleted to keep the table bounded — so "who signed in last
+   * week" would silently lose its answer as the log rolls over. A session row lives as long as the
+   * session does, and the console context is already recorded on it (`kind = 'admin'`), so the
+   * answer is exact for as long as it matters.
+   */
+  async recentAdminLogins(limit: number): Promise<{
+    sessionId: string; username: string; role: AccountRole; at: string; ip?: string; active: boolean;
+  }[]> {
+    await this.ready;
+    const at = nowIso();
+    const rows = await this.driver.all<Record<string, unknown>>(
+      `SELECT s.session_id, s.username, s.created_at, s.expires_at, s.revoked_at, s.last_ip,
+          ${ROLE_SQL} AS role
+        FROM sync_sessions s
+        LEFT JOIN server_administrators a ON a.username = s.username
+        LEFT JOIN server_ownership o ON o.username = s.username
+        WHERE s.kind = 'admin'
+        ORDER BY s.created_at DESC, s.session_id DESC
+        LIMIT ?`,
+      [Math.max(1, Math.min(50, Math.trunc(limit)))],
+    );
+    return rows.map((row) => ({
+      sessionId: String(row['session_id']),
+      username: String(row['username']),
+      role: row['role'] === 'owner' ? 'owner' : row['role'] === 'admin' ? 'admin' : row['role'] === 'viewer' ? 'viewer' : 'member',
+      at: String(row['created_at']),
+      ...(row['last_ip'] == null ? {} : { ip: String(row['last_ip']) }),
+      active: row['revoked_at'] == null && String(row['expires_at']) > at,
+    }));
+  }
+
   /** Every account-scoped read a single detail page needs, without exposing ledger bytes. */
   async accountDetail(accountId: string): Promise<JsonRecord | undefined> {
     await this.ready;

@@ -223,7 +223,7 @@ export function Panel({ title, action, children, note }: { title?: string; actio
 }
 
 export function Stat({ label, value, hint, tone }: { label: string; value: ReactNode; hint?: string; tone?: 'warn' | 'bad' }) {
-  const color = tone === 'bad' ? 'var(--danger, #b3261e)' : tone === 'warn' ? 'var(--warning, #8a5a00)' : undefined;
+  const color = tone === 'bad' ? 'var(--danger)' : tone === 'warn' ? 'var(--warning)' : undefined;
   return (
     <div style={{ padding: 14, borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
       <div style={muted}>{label}</div>
@@ -234,14 +234,14 @@ export function Stat({ label, value, hint, tone }: { label: string; value: React
 }
 
 export function Badge({ children, tone }: { children: ReactNode; tone?: 'ok' | 'warn' | 'bad' | 'muted' }) {
-  const background = tone === 'ok' ? 'var(--ok-surface, #e6f4ea)' : tone === 'warn' ? 'var(--warn-surface, #fef7e0)'
-    : tone === 'bad' ? 'var(--danger-surface, #fce8e6)' : 'var(--surface-muted, #f1f3f4)';
+  const background = tone === 'ok' ? 'var(--ok-surface)' : tone === 'warn' ? 'var(--warn-surface)'
+    : tone === 'bad' ? 'var(--danger-surface)' : 'var(--surface-muted)';
   return <span style={{ background, borderRadius: 'var(--r-pill)', padding: '2px 8px', fontSize: 'var(--fs-sm)', whiteSpace: 'nowrap' }}>{children}</span>;
 }
 
 export function Notice({ children, tone }: { children: ReactNode; tone?: 'bad' | 'warn' | 'info' }) {
-  const background = tone === 'bad' ? 'var(--danger-surface, #fce8e6)' : tone === 'warn' ? 'var(--warn-surface, #fef7e0)' : 'var(--surface-muted, #f1f3f4)';
-  return <p style={{ background, borderRadius: 'var(--r-sm, 6px)', padding: '8px 10px', margin: '8px 0 0' }}>{children}</p>;
+  const background = tone === 'bad' ? 'var(--danger-surface)' : tone === 'warn' ? 'var(--warn-surface)' : 'var(--surface-muted)';
+  return <p style={{ background, borderRadius: 'var(--r-sm)', padding: '8px 10px', margin: '8px 0 0' }}>{children}</p>;
 }
 
 export function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -254,11 +254,43 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 }
 
 export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} style={{ minHeight: 36, padding: '0 8px', borderRadius: 'var(--r-sm, 6px)', border: '1px solid var(--border)', background: 'var(--surface)', ...props.style }} />;
+  return <input {...props} style={{ minHeight: 36, padding: '0 8px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', ...props.style }} />;
 }
 
 export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select {...props} style={{ minHeight: 36, padding: '0 8px', borderRadius: 'var(--r-sm, 6px)', border: '1px solid var(--border)', background: 'var(--surface)', ...props.style }} />;
+  return <select {...props} style={{ minHeight: 36, padding: '0 8px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', ...props.style }} />;
+}
+
+/**
+ * Copies a value and says whether it worked.
+ *
+ * The invitation code already had a copy button, and it reported nothing: a click that worked and a
+ * click that did nothing looked identical, and `navigator.clipboard` is absent entirely on an
+ * insecure origin (the console is served over plain HTTP on a LAN by default). Both cases now show
+ * an outcome instead of leaving the operator to paste and find out.
+ */
+export function CopyValue({ value, label = '复制', copiedLabel = '已复制' }: { value: string; label?: string; copiedLabel?: string }) {
+  const [state, setState] = useState<'idle' | 'ok' | 'failed'>('idle');
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  const copy = async (): Promise<void> => {
+    let next: 'ok' | 'failed' = 'ok';
+    try {
+      const clipboard = globalThis.navigator?.clipboard;
+      if (!clipboard) throw new Error('clipboard unavailable');
+      await clipboard.writeText(value);
+    } catch {
+      next = 'failed';
+    }
+    setState(next);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setState('idle'), 2_000);
+  };
+  return (
+    <Button onClick={() => { void copy(); }} title={value} aria-label={`${label} ${value}`}>
+      {state === 'ok' ? copiedLabel : state === 'failed' ? '复制失败' : label}
+    </Button>
+  );
 }
 
 export function Button({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
@@ -267,11 +299,50 @@ export function Button({ children, ...props }: React.ButtonHTMLAttributes<HTMLBu
       type="button"
       {...props}
       style={{
-        minHeight: 36, padding: '0 12px', borderRadius: 'var(--r-sm, 6px)', border: '1px solid var(--border)',
-        background: props.disabled ? 'var(--surface-muted, #f1f3f4)' : 'var(--surface)', cursor: props.disabled ? 'default' : 'pointer',
+        minHeight: 36, padding: '0 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)',
+        background: props.disabled ? 'var(--surface-muted)' : 'var(--surface)', cursor: props.disabled ? 'default' : 'pointer',
         ...props.style,
       }}
     >{children}</button>
+  );
+}
+
+/**
+ * The trail back up from a page.
+ *
+ * Every page already has a real URL, but a page reached by following a link — a user detail opened
+ * from a quota alert, say — offered no way back except the browser button, and on a narrow screen
+ * the sidebar is collapsed behind a toggle. The trail is derived from the route in one place rather
+ * than written into each page, so a page cannot ship without one.
+ *
+ * The last crumb is the current page and is rendered as text, not a link: a link to where you
+ * already are is a control that does nothing.
+ */
+export function Breadcrumbs({ crumbs, onNavigate }: {
+  crumbs: { label: string; href?: string }[];
+  onNavigate?: (href: string) => void;
+}) {
+  // A single crumb is just the page title, which the page already shows.
+  if (crumbs.length < 2) return null;
+  return (
+    <nav aria-label="面包屑" style={{ ...row, gap: 6, marginBottom: 10, fontSize: 'var(--fs-sm)' }}>
+      {crumbs.map((crumb, index) => {
+        const last = index === crumbs.length - 1;
+        return (
+          <Fragment key={`${crumb.label}-${String(index)}`}>
+            {index ? <span aria-hidden="true" style={muted}>›</span> : null}
+            {last || !crumb.href ? (
+              <span aria-current={last ? 'page' : undefined} style={last ? { color: 'var(--text-primary)' } : muted}>{crumb.label}</span>
+            ) : (
+              <a
+                href={crumb.href}
+                onClick={onNavigate ? (event) => { event.preventDefault(); onNavigate(crumb.href!); } : undefined}
+              >{crumb.label}</a>
+            )}
+          </Fragment>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -422,13 +493,30 @@ export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeK
     label?: string;
   };
 }) {
+  // Declared before the empty-state return: a hook after it would be skipped on an empty page,
+  // which changes the hook order between renders and crashes React on the next non-empty load.
+  const [wideColumns, setWideColumns] = useState(false);
   if (!rows.length) return <p style={muted}>{empty}</p>;
   const visible = columns.filter((column) => !hiddenColumns.includes(column.key));
+  // Only offered when this table actually has a column the narrow layout hides; otherwise it is a
+  // button that does nothing.
+  const hasSecondary = visible.some((column) => column.secondary);
   const selectableKeys = selection ? rows.filter(selection.selectable).map(rowKey) : [];
   const allSelected = selectableKeys.length > 0 && selectableKeys.every((key) => selection!.selected.includes(key));
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+    <div>
+      {hasSecondary ? (
+        <button
+          type="button"
+          className="zc-admin-columns-toggle"
+          aria-pressed={wideColumns}
+          onClick={() => setWideColumns((value) => !value)}
+        >
+          {wideColumns ? '收起次要列' : '展开次要列'}
+        </button>
+      ) : null}
+      <div className="zc-admin-table" data-wide={wideColumns ? 'true' : undefined} style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
             {selection ? (
@@ -459,7 +547,7 @@ export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeK
                 <tr
                   data-active={activeKey === key ? 'true' : undefined}
                   onClick={onRowClick ? () => onRowClick(item) : undefined}
-                  style={{ cursor: onRowClick ? 'pointer' : undefined, background: activeKey === key ? 'var(--surface-muted, #f1f3f4)' : undefined }}
+                  style={{ cursor: onRowClick ? 'pointer' : undefined, background: activeKey === key ? 'var(--surface-muted)' : undefined }}
                 >
                   {selection ? (
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', verticalAlign: 'top' }}>
@@ -479,7 +567,7 @@ export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeK
                 </tr>
                 {renderExpanded && activeKey === key ? (
                   <tr>
-                    <td colSpan={visible.length + (selection ? 1 : 0)} style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)', background: 'var(--surface-muted, #f1f3f4)' }}>
+                    <td colSpan={visible.length + (selection ? 1 : 0)} style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)', background: 'var(--surface-muted)' }}>
                       {renderExpanded(item)}
                     </td>
                   </tr>
@@ -487,8 +575,9 @@ export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeK
               </Fragment>
             );
           })}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -663,7 +663,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button onClick={requestClose} disabled={busy} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>取消</button>
-            <button onClick={save} disabled={busy || !draftReady || !!pendingDraft} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+            <button onClick={save} disabled={busy || !draftReady || !!pendingDraft} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
               {busy ? '保存中…' : '保存'}
             </button>
           </div>
@@ -1031,7 +1031,7 @@ export function CategoryPicker(props: {
             border: '1px solid var(--border)',
             borderRadius: 'var(--r-md)',
             background: 'var(--surface)',
-            boxShadow: '0 16px 46px rgba(0,0,0,.18)',
+            boxShadow: 'var(--shadow-md)',
           }}
         >
           <div style={{ padding: 10, borderBottom: '1px solid var(--border)', display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
@@ -1128,7 +1128,7 @@ function categoryDot(index: number) {
     alignItems: 'center',
     justifyContent: 'center',
     flex: '0 0 auto',
-    color: '#fff',
+    color: 'var(--on-accent)',
     background: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
     fontSize: 'var(--fs-caption)',
     fontWeight: 'var(--fw-medium)',

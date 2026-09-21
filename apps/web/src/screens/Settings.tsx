@@ -14,7 +14,7 @@ import { DeviceSecurityPanel } from '../ui/DeviceSecurityPanel.js';
 import { LedgerProtectionPanel } from '../ui/LedgerProtectionPanel.js';
 import { AccountSecurityPanel } from '../ui/AccountSecurityPanel.js';
 import { accountProtection } from '../account-protection.js';
-import { ACCENTS, THEME_NAMES, THEMES, type ThemeId } from '../theme.js';
+import { ACCENTS, DARK_ACCENTS, THEME_NAMES, THEME_MODE_NAMES, THEMES, type ThemeId, type ThemeMode, type ThemeModePreference } from '../theme.js';
 import { PortableStoragePanel } from '../ui/PortableStoragePanel.js';
 import { allCategories, categoryIsHidden } from '../transactionMeta.js';
 import {
@@ -126,7 +126,15 @@ function BrowserAccountExit({ onExit }: { onExit: () => Promise<void> }) {
   </section>;
 }
 
-export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme: ThemeId) => void }) {
+export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
+  theme: ThemeId;
+  /** What the reader asked for; `system` follows the operating system. */
+  mode: ThemeModePreference;
+  /** The mode actually in effect, so the copy can say what "跟随系统" resolved to. */
+  resolvedMode: ThemeMode;
+  setTheme: (theme: ThemeId) => void;
+  setMode: (mode: ThemeModePreference) => void;
+}) {
   const { store, bump, storageBackend, dataLocation, firstUseMode, browserStoragePersistent, resetLocalData, exitAccount } = useStore();
   const snap = useSnapshot('settings');
   const [tab, setTab] = useState<SettingsTab>('ledger');
@@ -1188,7 +1196,7 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
       {tab === 'appearance' && (
         <section className="zc-section" aria-label="视觉方案">
           <h2 className="zc-section-title">视觉方案</h2>
-          <p className="zc-caption">切换配色与强调色。只影响本机显示，不改变账本数据、同步内容或其它设备上的外观。移动端抽屉不再单独提供入口。</p>
+          <p className="zc-caption">切换配色与明暗。只影响本机显示，不改变账本数据、同步内容或其它设备上的外观。移动端抽屉不再单独提供入口。</p>
           <div role="radiogroup" aria-label="视觉方案" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
             {(Object.keys(THEMES) as ThemeId[]).map((id) => (
               <button
@@ -1212,8 +1220,43 @@ export function Settings({ theme, setTheme }: { theme: ThemeId; setTheme: (theme
                   fontWeight: 'var(--fw-medium)',
                 }}
               >
-                <span aria-hidden="true" style={{ width: 18, height: 18, borderRadius: 'var(--r-round)', background: ACCENTS[id] }} />
+                {/* The swatch shows the accent of the mode in effect, so picking a
+                    family does not preview a colour the reader will never see. */}
+                <span aria-hidden="true" style={{ width: 18, height: 18, borderRadius: 'var(--r-round)', background: resolvedMode === 'dark' ? DARK_ACCENTS[id] : ACCENTS[id] }} />
                 {THEME_NAMES[id]}
+              </button>
+            ))}
+          </div>
+          <h2 className="zc-section-title" style={{ marginTop: 22 }}>明暗</h2>
+          <p className="zc-caption">
+            默认跟随系统。选择「跟随系统」时，系统切换深浅色会立即生效，无需重新打开页面。
+            {mode === 'system' ? `当前系统为${resolvedMode === 'dark' ? '深色' : '浅色'}。` : ''}
+          </p>
+          <div role="radiogroup" aria-label="明暗" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
+            {(['system', 'light', 'dark'] as ThemeModePreference[]).map((option) => (
+              <button
+                key={option}
+                type="button"
+                role="radio"
+                aria-checked={mode === option}
+                onClick={() => setMode(option)}
+                style={{
+                  flex: '1 1 148px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  minHeight: 'var(--control-h)',
+                  padding: '0 14px',
+                  borderRadius: 'var(--r-sm)',
+                  cursor: 'pointer',
+                  background: 'var(--surface-2)',
+                  border: mode === option ? '2px solid var(--accent)' : '1px solid var(--border)',
+                  color: 'var(--text-primary)',
+                  fontWeight: 'var(--fw-medium)',
+                }}
+              >
+                <span aria-hidden="true" style={{ width: 18, height: 18, borderRadius: 'var(--r-round)', border: '1px solid var(--border-strong)', background: option === 'dark' ? 'var(--fg)' : option === 'light' ? 'var(--surface)' : 'linear-gradient(120deg, var(--surface) 0 50%, var(--fg) 50% 100%)' }} />
+                {THEME_MODE_NAMES[option]}
               </button>
             ))}
           </div>

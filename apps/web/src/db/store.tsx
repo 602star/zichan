@@ -201,7 +201,7 @@ function Splash({ label }: { label: string }) {
   return (
     <div style={{
       minHeight: '100dvh', display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: '#f0e9dc', color: '#6b6155', fontFamily: 'system-ui, sans-serif', fontSize: 'var(--fs-body)',
+      background: 'var(--bg)', color: 'var(--text-secondary)', fontFamily: 'system-ui, sans-serif', fontSize: 'var(--fs-body)',
     }}>
       {label}
     </div>
@@ -222,18 +222,18 @@ function DeviceStorageGate(props: {
   return (
     <div style={{
       minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24,
-      background: '#f0e9dc', color: '#4e473f', fontFamily: 'system-ui, sans-serif',
+      background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif',
     }}>
       <form
         onSubmit={(event) => {
           event.preventDefault();
           if (canSubmit) void props.onUnlock(password);
         }}
-        style={{ width: 'min(420px, 100%)', border: '1px solid #d6ccbd', background: '#fffdf9', padding: 24, boxShadow: '0 18px 48px rgba(75,61,43,.12)' }}
+        style={{ width: 'min(420px, 100%)', border: '1px solid var(--border)', background: 'var(--surface)', padding: 24, boxShadow: 'var(--shadow-lg)' }}
       >
         <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{creating ? '保护本机账本' : '解锁本机账本'}</div>
-        <div style={{ marginTop: 7, color: '#756b60', fontSize: 'var(--fs-body)', lineHeight: 1.55 }}>{props.state.message}</div>
-        <div style={{ marginTop: 5, color: '#8c8175', fontSize: 'var(--fs-meta)', lineHeight: 1.5 }}>
+        <div style={{ marginTop: 7, color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.55 }}>{props.state.message}</div>
+        <div style={{ marginTop: 5, color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', lineHeight: 1.5 }}>
           新账本使用同一个“账本密码”保护加密备份与端到端同步密钥；密码不会写入磁盘。
           配置同步时会再次要求输入这个密码，名称相同，不是另一个密码。
         </div>
@@ -245,7 +245,7 @@ function DeviceStorageGate(props: {
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            style={{ width: '100%', minHeight: 44, marginTop: 6, border: '1px solid #cfc4b4', padding: '0 11px', boxSizing: 'border-box', fontSize: 'var(--fs-title)' }}
+            style={{ width: '100%', minHeight: 44, marginTop: 6, border: '1px solid var(--border-strong)', padding: '0 11px', boxSizing: 'border-box', fontSize: 'var(--fs-title)' }}
           />
         </label>
         {creating && (
@@ -256,17 +256,17 @@ function DeviceStorageGate(props: {
               type="password"
               value={confirmation}
               onChange={(event) => setConfirmation(event.target.value)}
-              style={{ width: '100%', minHeight: 44, marginTop: 6, border: '1px solid #cfc4b4', padding: '0 11px', boxSizing: 'border-box', fontSize: 'var(--fs-title)' }}
+              style={{ width: '100%', minHeight: 44, marginTop: 6, border: '1px solid var(--border-strong)', padding: '0 11px', boxSizing: 'border-box', fontSize: 'var(--fs-title)' }}
             />
           </label>
         )}
-        <div style={{ minHeight: 20, marginTop: 8, color: '#a43f36', fontSize: 'var(--fs-caption)' }}>
+        <div style={{ minHeight: 20, marginTop: 8, color: 'var(--negative)', fontSize: 'var(--fs-caption)' }}>
           {props.error || (password && password.length < 8 ? '密码至少需要 8 个字符' : creating && confirmation && password !== confirmation ? '两次输入不一致' : '')}
         </div>
         <button
           type="submit"
           disabled={!canSubmit || props.busy}
-          style={{ width: '100%', minHeight: 44, marginTop: 6, border: 0, background: '#9b5b35', color: '#fff', fontWeight: 'var(--fw-bold)', cursor: canSubmit && !props.busy ? 'pointer' : 'not-allowed', opacity: canSubmit && !props.busy ? 1 : 0.55 }}
+          style={{ width: '100%', minHeight: 44, marginTop: 6, border: 0, background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', cursor: canSubmit && !props.busy ? 'pointer' : 'not-allowed', opacity: canSubmit && !props.busy ? 1 : 0.55 }}
         >
           {props.busy ? '正在解锁…' : creating ? '创建并打开' : '解锁'}
         </button>
@@ -275,7 +275,7 @@ function DeviceStorageGate(props: {
             type="button"
             disabled={props.busy}
             onClick={() => void props.onReset()}
-            style={{ width: '100%', marginTop: 12, border: 0, background: 'transparent', color: '#8c8175', fontSize: 'var(--fs-caption)', cursor: props.busy ? 'not-allowed' : 'pointer' }}
+            style={{ width: '100%', marginTop: 12, border: 0, background: 'transparent', color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', cursor: props.busy ? 'not-allowed' : 'pointer' }}
           >
             忘记密码并重置本机开发数据
           </button>
@@ -324,22 +324,22 @@ function BrowserStorageRecoveryGate(props: {
   }
 
   return (
-    <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(24px, 6vw, 64px)', boxSizing: 'border-box', background: '#f0e9dc', color: '#4e473f', fontFamily: 'system-ui, sans-serif' }}>
-      <section style={{ width: 'min(760px, 100%)', margin: '6vh auto 0', padding: 'clamp(20px, 5vw, 34px)', border: '1px solid #d7b1a8', borderRadius: 'var(--r-md)', background: '#fffaf5' }}>
-        <div style={{ color: '#9b4037', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.1em' }}>只读恢复模式</div>
-        <h1 style={{ margin: '9px 0 8px', color: '#672f20', fontSize: 'var(--fs-display)' }}>浏览器不再保证本地数据持久保存</h1>
-        <p style={{ color: '#756b60', lineHeight: 1.7 }}>{props.reason}</p>
-        <p style={{ color: '#756b60', lineHeight: 1.7 }}>账本没有被删除。恢复持久授权前不会运行定期任务、自动备份或普通写入；你可以先导出加密备份，或者改为连接同步服务器。</p>
+    <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(24px, 6vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif' }}>
+      <section style={{ width: 'min(760px, 100%)', margin: '6vh auto 0', padding: 'clamp(20px, 5vw, 34px)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', background: 'var(--surface)' }}>
+        <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.1em' }}>只读恢复模式</div>
+        <h1 style={{ margin: '9px 0 8px', color: 'var(--text-primary)', fontSize: 'var(--fs-display)' }}>浏览器不再保证本地数据持久保存</h1>
+        <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7 }}>{props.reason}</p>
+        <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7 }}>账本没有被删除。恢复持久授权前不会运行定期任务、自动备份或普通写入；你可以先导出加密备份，或者改为连接同步服务器。</p>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 20 }}>
-          <button type="button" disabled={busy !== null} onClick={() => void retryPersistence()} style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 'var(--r-sm)', background: '#985734', color: '#fff', fontWeight: 'var(--fw-bold)' }}>重新申请持久授权</button>
-          <button type="button" disabled={busy !== null} onClick={() => void exportRecoveryBackup()} style={{ minHeight: 44, padding: '0 16px', border: '1px solid #b9a99a', borderRadius: 'var(--r-sm)', background: '#fff', color: '#672f20', fontWeight: 'var(--fw-bold)' }}>导出加密 .zcbak</button>
-          <button type="button" disabled={busy !== null} onClick={props.onUseServer} style={{ minHeight: 44, padding: '0 16px', border: 0, background: 'transparent', color: '#672f20', fontWeight: 'var(--fw-bold)' }}>改为连接服务器</button>
+          <button type="button" disabled={busy !== null} onClick={() => void retryPersistence()} style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 'var(--r-sm)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)' }}>重新申请持久授权</button>
+          <button type="button" disabled={busy !== null} onClick={() => void exportRecoveryBackup()} style={{ minHeight: 44, padding: '0 16px', border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', color: 'var(--text-primary)', fontWeight: 'var(--fw-bold)' }}>导出加密 .zcbak</button>
+          <button type="button" disabled={busy !== null} onClick={props.onUseServer} style={{ minHeight: 44, padding: '0 16px', border: 0, background: 'transparent', color: 'var(--text-primary)', fontWeight: 'var(--fw-bold)' }}>改为连接服务器</button>
         </div>
         <BrowserStorageConsent busy={busy !== null} onContinue={async () => {
           setBusy('persist');
           try { await props.onContinueLocal(); } catch (error) { setMessage(String(error)); } finally { setBusy(null); }
         }} />
-        {message && <div role="status" style={{ marginTop: 14, color: message.includes('失败') ? '#9b4037' : '#4f704d', lineHeight: 1.6 }}>{message}</div>}
+        {message && <div role="status" style={{ marginTop: 14, color: message.includes('失败') ? 'var(--negative)' : 'var(--positive)', lineHeight: 1.6 }}>{message}</div>}
       </section>
     </main>
   );
@@ -864,7 +864,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }} onCancel={() => { clearFirstUseMode(); setFirstUseMode(null); }} />;
     return (
       <>
-      {!isTauriRuntime() && <div style={{ padding: 12, background: '#fffaf2', display: 'flex', justifyContent: 'space-between' }}><span>当前账号：{loadSyncConnections()[0]?.username}</span><button disabled={unlockBusy || resetting} onClick={() => void exitBrowserAccount().then(closeForAccountExit).catch((reason) => setUnlockError(String(reason)))}>退出并切换账号</button></div>}
+      {!isTauriRuntime() && <div style={{ padding: 12, background: 'var(--surface-2)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}><span>当前账号：{loadSyncConnections()[0]?.username}</span><button disabled={unlockBusy || resetting} onClick={() => void exitBrowserAccount().then(closeForAccountExit).catch((reason) => setUnlockError(String(reason)))}>退出并切换账号</button></div>}
       <DeviceStorageGate
         state={storageProtection}
         busy={unlockBusy || resetting}
@@ -886,7 +886,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     };
     return (
-      <div style={{ minHeight: '100dvh', padding: 40, fontFamily: 'system-ui, sans-serif', background: '#f0e9dc', color: '#6b2f27' }}>
+      <div style={{ minHeight: '100dvh', padding: 40, fontFamily: 'system-ui, sans-serif', background: 'var(--bg)', color: 'var(--text-primary)' }}>
         <div style={{ maxWidth: 720, margin: '10vh auto 0' }}>
           <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>数据库初始化失败</div>
           <label style={{ display: 'block', marginTop: 12, fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
@@ -897,7 +897,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               aria-label="数据库初始化错误详情"
               onFocus={(event) => event.currentTarget.select()}
               spellCheck={false}
-              style={{ display: 'block', boxSizing: 'border-box', width: '100%', minHeight: 156, maxHeight: '42dvh', marginTop: 8, padding: 12, border: '1px solid #b9a99a', borderRadius: 'var(--r-sm)', background: '#fffdf9', color: '#6b2f27', fontFamily: 'ui-monospace, monospace', fontSize: 'var(--fs-body)', lineHeight: 1.5, resize: 'vertical', overflow: 'auto', userSelect: 'text', WebkitUserSelect: 'text' }}
+              style={{ display: 'block', boxSizing: 'border-box', width: '100%', minHeight: 156, maxHeight: '42dvh', marginTop: 8, padding: 12, border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', color: 'var(--text-primary)', fontFamily: 'ui-monospace, monospace', fontSize: 'var(--fs-body)', lineHeight: 1.5, resize: 'vertical', overflow: 'auto', userSelect: 'text', WebkitUserSelect: 'text' }}
             />
           </label>
           {error.resetRequired ? (
@@ -911,7 +911,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 type="button"
                 disabled={resetting}
                 onClick={() => void resetDevelopmentData()}
-                style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 'var(--r-sm)', background: '#b4483d', color: '#fff', fontWeight: 'var(--fw-bold)' }}
+                style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 'var(--r-sm)', background: 'var(--negative)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)' }}
               >
                 {resetting ? '正在重置…' : '重置本机开发数据'}
               </button>
@@ -920,7 +920,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               type="button"
               disabled={resetting}
               onClick={retryInitialization}
-              style={{ minHeight: 44, padding: '0 16px', border: '1px solid #b9a99a', borderRadius: 'var(--r-sm)', background: '#fffdf9', color: '#6b2f27', fontWeight: 'var(--fw-bold)' }}
+              style={{ minHeight: 44, padding: '0 16px', border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', color: 'var(--text-primary)', fontWeight: 'var(--fw-bold)' }}
             >
               重新尝试
             </button>
@@ -928,7 +928,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               type="button"
               disabled={resetting}
               onClick={() => void copyInitializationDiagnostic()}
-              style={{ minHeight: 44, padding: '0 16px', border: '1px solid #b9a99a', borderRadius: 'var(--r-sm)', background: '#fffdf9', color: '#6b2f27', fontWeight: 'var(--fw-bold)' }}
+              style={{ minHeight: 44, padding: '0 16px', border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', color: 'var(--text-primary)', fontWeight: 'var(--fw-bold)' }}
             >
               {errorCopyStatus === 'copied' ? '已复制诊断信息' : '复制诊断信息'}
             </button>
@@ -936,7 +936,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               type="button"
               disabled={resetting}
               onClick={() => void returnToStorageUnlock()}
-              style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 'var(--r-sm)', background: 'transparent', color: '#6b2f27', fontWeight: 'var(--fw-bold)' }}
+              style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 'var(--r-sm)', background: 'transparent', color: 'var(--text-primary)', fontWeight: 'var(--fw-bold)' }}
             >
               返回解锁
             </button>
@@ -1011,13 +1011,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         <div
           role="status"
           aria-label="当前是演示账本"
-          style={{ position: 'fixed', top: 8, left: '50%', zIndex: 10000, transform: 'translateX(-50%)', border: '1px solid #d8ad75', borderRadius: 'var(--r-pill)', padding: '4px 10px', background: '#fff4dc', color: '#7b451d', boxShadow: '0 4px 12px rgba(75,61,43,.13)', fontFamily: 'system-ui, sans-serif', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', pointerEvents: 'none' }}
+          style={{ position: 'fixed', top: 8, left: '50%', zIndex: 10000, transform: 'translateX(-50%)', border: '1px solid var(--warning)', borderRadius: 'var(--r-pill)', padding: '4px 10px', background: 'var(--warn-surface)', color: 'var(--warning)', boxShadow: 'var(--shadow-md)', fontFamily: 'system-ui, sans-serif', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', pointerEvents: 'none' }}
         >
           演示账本
         </div>
       )}
       {!isTauriRuntime() && firstUseMode === 'local' && !browserPersistence.persisted && (
-        <div role="status" style={{ padding: 10, background: '#fff4dc', color: '#672f20', fontSize: 'var(--fs-body)' }}>
+        <div role="status" style={{ padding: 10, background: 'var(--warn-surface)', color: 'var(--text-primary)', fontSize: 'var(--fs-body)' }}>
           普通本地存储：未获得防自动清理保护。请使用“导出”保存浏览器外加密备份；不要清除本站数据或在无痕窗口保存重要账本。
         </div>
       )}

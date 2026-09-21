@@ -1,12 +1,12 @@
 /** Runtime overview: the day-to-day entry point, not a wall of counters. */
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
-import { Badge, Button, Loading, Notice, Panel, Select, Stat, TextInput, bytes, canWrite, message, muted, row, usePolling, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Loading, Notice, Panel, Select, Stat, TextInput, bytes, canWrite, message, muted, roleLabel, row, usePolling, useResource, when } from './ui.js';
 import { alertNextStep, alertStateLabel, acknowledgeAlert, describeAlert, isSilenced, silenceAlert, unsilenceAlert, SILENCE_HOURS } from './alerts.js';
 import { TrendChart } from './chart.js';
 import { MaintenancePanel } from './MaintenancePanel.js';
 import type { TrendPoint } from './trend.js';
-import type { Alert, Metrics, Overview } from './types.js';
+import type { AdminLoginSummary, Alert, Metrics, Overview } from './types.js';
 
 const RANGES = ['1h', '24h', '7d'] as const;
 
@@ -167,6 +167,22 @@ export function OverviewPage({ client, navigate, accountName, role }: {
           <Stat label="数据库大小" value={bytes(snapshot?.storage.databaseBytes)}
             hint={snapshot?.database ? `WAL ${bytes(snapshot.storage.walBytes)} · 可回收 ${bytes(snapshot.database.freelistBytes)}` : undefined} />
         </div>
+      </Panel>
+
+      <Panel title="最近管理员登录" note="只列管理后台的登录会话（同步客户端会话不在此列）。IP 来自请求来源，反向代理部署时可能是代理地址。">
+        {!overview.data?.recentAdminLogins?.length ? <p style={muted}>暂无管理员登录记录。</p> : (
+          <DataTable
+            columns={[
+              { key: 'user', header: '账号', render: (entry: AdminLoginSummary) => <>{entry.username} <span style={muted}>{roleLabel(entry.role)}</span></> },
+              { key: 'at', header: '登录时间', render: (entry: AdminLoginSummary) => when(entry.at) },
+              { key: 'ip', header: '来源 IP', render: (entry: AdminLoginSummary) => entry.ip || '未记录' },
+              { key: 'state', header: '状态', render: (entry: AdminLoginSummary) => entry.active ? <Badge tone="ok">有效</Badge> : <Badge tone="muted">已结束</Badge> },
+            ]}
+            rows={overview.data.recentAdminLogins}
+            rowKey={(entry) => entry.sessionId}
+            empty="暂无管理员登录记录。"
+          />
+        )}
       </Panel>
 
       <Panel title="待处理事项" note="同类告警会被合并；每条都会记录首次发生、最后发生与次数。静默只停外部通知，规则、记录与恢复判断都不变。恢复后的告警在「告警历史」里仍可回看。">

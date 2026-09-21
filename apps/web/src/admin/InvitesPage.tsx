@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Pager, Panel, Select, Stat, TextInput, message, muted, row, useActionError, useCursorPager, useHiddenColumns, useResource, when, canWrite } from './ui.js';
+import { Badge, Button, ColumnPicker, CopyValue, DataTable, Field, Loading, Notice, Pager, Panel, Select, Stat, TextInput, message, muted, row, useActionError, useCursorPager, useHiddenColumns, useResource, when, canWrite } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import type { Invite, RegistrationGrowth } from './types.js';
 import { TrendChart } from './chart.js';
@@ -97,7 +97,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
         {issued ? (
           <Notice tone="warn">
             <span>新邀请码（离开本页后仍可在列表中看到）：<code>{issued.code}</code></span>{' '}
-            <Button onClick={() => { void navigator.clipboard?.writeText(issued.code); }}>复制</Button>
+            <CopyValue value={issued.code} label="邀请码" />
           </Notice>
         ) : null}
         {error ? <Notice tone="bad">{error}</Notice> : null}

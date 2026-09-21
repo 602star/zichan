@@ -95,12 +95,32 @@ export interface Overview {
   recentJobs: Job[];
   recentFailures: { id: number; at: string; action: string; code: string | null; message: string | null; requestId: string | null; actorAccountId: string | null }[];
   /**
+   * Who opened the management console, when, and from where. Optional because an older server
+   * does not send it; the panel is simply absent rather than rendering an empty table.
+   */
+  recentAdminLogins?: AdminLoginSummary[];
+  /**
    * The declared maintenance window, resolved by the same function the write gate uses. Present
    * since `capabilities.maintenance`; absent on an older server, which is why it is optional.
    */
   maintenance?: MaintenanceView;
   drain?: DrainView;
   capabilities: Record<string, boolean>;
+}
+
+/**
+ * One management-console login: who, when, from where, and whether that session is still alive.
+ *
+ * `ip` is optional because a session restored from a database that predates the column has none;
+ * the panel shows "未记录" rather than an empty cell that reads like a missing value.
+ */
+export interface AdminLoginSummary {
+  sessionId: string;
+  username: string;
+  role: string;
+  at: string;
+  ip?: string;
+  active: boolean;
 }
 
 export interface MaintenanceView {

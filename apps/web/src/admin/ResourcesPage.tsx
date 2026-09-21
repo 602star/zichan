@@ -49,10 +49,10 @@ function seriesFormat(key: SeriesKey): (value: number) => string {
 function Meter({ ratio, tone, label }: { ratio: number | null; tone?: 'warn' | 'bad'; label: string }) {
   if (ratio === null || !Number.isFinite(ratio)) return <span style={muted}>暂无上限可比</span>;
   const clamped = Math.max(0, Math.min(1, ratio));
-  const fill = tone === 'bad' ? 'var(--danger, #b3261e)' : tone === 'warn' ? 'var(--warning, #8a5a00)' : 'var(--accent, #1a73e8)';
+  const fill = tone === 'bad' ? 'var(--danger)' : tone === 'warn' ? 'var(--warning)' : 'var(--accent)';
   return (
     <div role="img" aria-label={label}>
-      <div style={{ height: 8, borderRadius: 'var(--r-pill)', background: 'var(--surface-muted, #f1f3f4)', overflow: 'hidden' }}>
+      <div style={{ height: 8, borderRadius: 'var(--r-pill)', background: 'var(--surface-muted)', overflow: 'hidden' }}>
         <div style={{ width: `${clamped * 100}%`, height: '100%', background: fill }} />
       </div>
       <span style={muted}>{label}</span>

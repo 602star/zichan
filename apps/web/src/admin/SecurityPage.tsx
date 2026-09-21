@@ -157,7 +157,7 @@ export function SecurityPage({ client, username, role, onPasswordChanged }: {
 
       {recoveryCodes.length
         ? <Panel title="一次性恢复码" note="每行一个，每个只能使用一次；丢失设备时用它登录，登录后会提示重新绑定。">
-          <pre style={{ margin: 0, padding: 12, borderRadius: 'var(--r-sm, 6px)', background: 'var(--surface-muted, #f1f3f4)', fontFamily: 'monospace', userSelect: 'all' }}>{recoveryCodes.join('\n')}</pre>
+          <pre style={{ margin: 0, padding: 12, borderRadius: 'var(--r-sm)', background: 'var(--surface-muted)', fontFamily: 'monospace', userSelect: 'all' }}>{recoveryCodes.join('\n')}</pre>
           <Button style={{ marginTop: 10 }} disabled={busy} onClick={() => { setRecoveryCodes([]); setNotice('恢复码已从页面隐藏。'); }}>我已保存，隐藏恢复码</Button>
         </Panel>
         : null}

@@ -383,6 +383,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         alerts: snapshot.alerts.items,
         recentJobs: jobs_.jobs,
         recentFailures: pending,
+        recentAdminLogins: await store.recentAdminLogins(5),
         // The same reader the write gate uses, so the page cannot report "维护中" for a window
         // that has already expired — or claim normal operation while writes are being refused.
         maintenance: resolveMaintenance(await deps.maintenance.read()),

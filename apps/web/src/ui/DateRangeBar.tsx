@@ -111,7 +111,7 @@ function viewButton(active: boolean): CSSProperties {
     minWidth: 58,
     border: '1px solid var(--border)',
     background: active ? 'var(--accent)' : 'var(--surface)',
-    color: active ? '#fff' : 'var(--fg-muted)',
+    color: active ? 'var(--on-accent)' : 'var(--fg-muted)',
     padding: '0 11px',
     fontSize: 'var(--fs-caption)',
     fontWeight: 'var(--fw-medium)',

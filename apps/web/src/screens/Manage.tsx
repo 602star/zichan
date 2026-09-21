@@ -505,7 +505,7 @@ function CategorySection({ snap, store, bump }: {
           <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 4 }}>按一级分类折叠管理；隐藏分类仍可通过搜索找到。</div>
           {duplicateCount > 0 && <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--negative)', marginTop: 3 }}>发现 {duplicateCount} 组可能重复分类。</div>}
         </div>
-        <button onClick={() => setEditing('new')} style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ 新增分类</button>
+        <button onClick={() => setEditing('new')} style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ 新增分类</button>
       </div>
 
       <div className="zc-category-manage-toolbar">
@@ -751,7 +751,7 @@ function FixedCategorySection({ snap, store, bump }: {
           <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>物品资产分类<span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginLeft: 8 }}>{categories.length}</span></div>
           <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 4 }}>一级分类稳定，二级分类可搜索、隐藏和排序；新建物品必须选择二级分类。</div>
         </div>
-        <button onClick={() => setEditing('new')} style={{ padding: '8px 14px', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer' }}>+ 新增物品分类</button>
+        <button onClick={() => setEditing('new')} style={{ padding: '8px 14px', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer' }}>+ 新增物品分类</button>
       </div>
       <div className="zc-manage-toolbar" style={{ display: 'grid', gridTemplateColumns: '1fr 180px auto', gap: 10, marginBottom: 10 }}>
         <input aria-label="搜索物品资产分类" className="zc-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索一级或二级分类" />
@@ -942,7 +942,7 @@ function packButton(primary: boolean) {
     borderRadius: 'var(--r-sm)',
     border: `1px solid ${primary ? 'var(--accent)' : 'var(--border)'}`,
     background: primary ? 'var(--accent)' : 'var(--surface)',
-    color: primary ? '#fff' : 'var(--fg-muted)',
+    color: primary ? 'var(--on-accent)' : 'var(--fg-muted)',
     fontSize: 'var(--fs-meta)',
     fontWeight: 'var(--fw-bold)',
     cursor: 'pointer',
@@ -1041,7 +1041,7 @@ function Section<T extends { id: string; version: number }>(props: {
         >
           {showDuplicates ? '显示全部' : '只看重复'}
         </button>
-        <button onClick={() => props.onAdd ? props.onAdd() : setEditing('new')} style={{ padding: '7px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ 新增{title}</button>
+        <button onClick={() => props.onAdd ? props.onAdd() : setEditing('new')} style={{ padding: '7px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ 新增{title}</button>
       </div>
       {dateOf && <div style={{ marginBottom: 12 }}><DateRangeBar value={dateRange} onChange={setDateRange} compact /></div>}
       <div style={{ overflowX: 'auto' }}>
