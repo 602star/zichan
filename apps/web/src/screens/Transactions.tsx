@@ -2158,7 +2158,6 @@ function CategoryConditionValue(props: { snap: Snapshot; value: string; onChange
       emptyLabel="请选择"
       placeholder="请选择"
       defaultShowHidden={props.snap.setting?.categoryPickerDefaultScope === 'all'}
-      minPanelWidth={480}
       triggerStyle={selectStyle}
       onChange={props.onChange}
     />
@@ -2214,7 +2213,6 @@ function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilter
         emptyLabel={boardOnlyLabel ? `${boardOnlyLabel} · 全部` : '全部分类'}
         placeholder={boardOnlyLabel ? `${boardOnlyLabel} · 全部` : '全部分类'}
         defaultShowHidden={snap.setting?.categoryPickerDefaultScope === 'all'}
-        minPanelWidth={480}
         triggerStyle={selectStyle}
         onChange={(next) => onCategoryChange(next)}
       />
@@ -2625,7 +2623,6 @@ function BatchEditModal(props: {
             emptyLabel="不改分类"
             placeholder="不改分类"
             defaultShowHidden={snap.setting?.categoryPickerDefaultScope === 'all'}
-            minPanelWidth={480}
             triggerStyle={selectStyle}
             onChange={(next) => { markDirty(); setCategory(next); }}
           />

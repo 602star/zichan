@@ -14,8 +14,8 @@ async function recordExpense(page, { category, amount, description }) {
   const form = page.getByRole('dialog', { name: '新增 · 日常支出' });
   await expect(form).toBeVisible();
   await form.getByLabel('二级分类').click();
-  const panel = form.locator('.zc-category-picker-panel');
-  await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill(category);
+  const panel = page.locator('.zc-category-picker-panel');
+  await panel.getByLabel('搜索分类', { exact: true }).fill(category);
   // 面板右栏写的是叶子名本身，自带的斜杠原样保留，所以按名字直接找得到。
   await panel.getByRole('option', { name: category }).first().click();
   if (description) await form.getByLabel('描述').fill(description);
@@ -89,8 +89,8 @@ test('the picker spells a subcategory name with a slash verbatim', async ({ page
   const form = page.getByRole('dialog', { name: '新增 · 日常支出' });
   await expect(form).toBeVisible();
   await form.getByLabel('二级分类').click();
-  const panel = form.locator('.zc-category-picker-panel');
-  await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('打车/网约车');
+  const panel = page.locator('.zc-category-picker-panel');
+  await panel.getByLabel('搜索分类', { exact: true }).fill('打车/网约车');
 
   // 右栏：首字色块 + 叶子名，中间只允许空白，不允许「 / 」。
   const option = panel.getByRole('option').filter({ hasText: '打车' });

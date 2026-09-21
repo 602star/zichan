@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useState } from 'react';
 import { D, accountBalanceTiming, isDefaultAccount, type Account, type Asset, type Category, type Transaction } from '@zichan/core';
 import { assignTransactionAccounts, previewAccountAssignment, saveTransactionAggregate, type SqlLedgerStore } from '@zichan/db';
 import { categoryLabel } from '../transactionMeta.js';
+import { CategoryPicker } from './EntityFormModal.js';
 import { DialogShell } from './DialogShell.js';
 import { btnOutline, btnPrimary } from './styles.js';
 
@@ -34,7 +35,13 @@ export function AccountHistoryPanel({ store, accounts, assets, categories, timeZ
     <label>归入账户<select className="zc-select" value={target} onChange={(e) => { setTarget(e.target.value); setTiming({}); setPreview(null); }}>{funds.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
     {account?.balanceStartAt && <p>余额起点：{new Date(account.balanceStartAt).toLocaleString('zh-CN', { timeZone })} · {account.openingBalance} {assets.find((a) => a.id === account.openingAssetId)?.code}</p>}
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}><input aria-label="筛选历史记录" className="zc-input" placeholder="备注、分类或金额" value={filter} onChange={(e) => setFilter(e.target.value)} /><input aria-label="开始日期" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /><input aria-label="结束日期" type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
-    <label>分类<select className="zc-select" value={category} onChange={(e) => setCategory(e.target.value)}><option value="">全部分类</option>{[...new Set(rows.map((t) => t.category))].map((id) => <option key={id} value={id}>{categoryLabel(id, categories)}</option>)}</select></label>
+    <CategoryPicker fieldId={`${title}-category`} name="historyCategory" ariaLabel="历史记录分类" value={category}
+      allowEmpty emptyLabel="全部分类" placeholder="全部分类" defaultShowHidden
+      options={[...new Set(rows.map((t) => t.category))].map((id) => {
+        const item = categories.find((entry) => entry.id === id);
+        return { value: id, label: categoryLabel(id, categories), name: item?.name ?? id,
+          parentName: categories.find((entry) => entry.id === item?.parentId)?.name ?? '其他', inactive: item?.isActive === false };
+      })} onChange={setCategory} />
     <button style={btnOutline} disabled={busy} onClick={() => { setSelected(Object.fromEntries(visible.map((t) => [t.id, true]))); setPreview(null); }}>选择筛选结果（{visible.length} 笔）</button>
     <div style={{ maxHeight: 280, overflow: 'auto', marginTop: 12 }}>{visible.map((t) => <div key={t.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
       <label><input type="checkbox" checked={!!selected[t.id]} disabled={busy} onChange={(e) => { setSelected({ ...selected, [t.id]: e.target.checked }); setPreview(null); }} />{t.date} · {t.description || categoryLabel(t.category, categories)} · {t.amount} {assets.find((a) => a.id === t.assetId)?.code}</label>

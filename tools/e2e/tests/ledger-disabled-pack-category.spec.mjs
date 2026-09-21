@@ -8,8 +8,8 @@ async function recordExpense(page, { category, description, amount, dialogName }
   await page.getByRole('button', { name: '+ 记支出' }).click();
   const form = page.getByRole('dialog', { name: dialogName });
   await form.getByLabel('二级分类').click();
-  const panel = form.locator('.zc-category-picker-panel');
-  await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill(category);
+  const panel = page.locator('.zc-category-picker-panel');
+  await panel.getByLabel('搜索分类', { exact: true }).fill(category);
   await panel.getByRole('option', { name: new RegExp(category) }).first().click();
   await form.getByLabel('描述').fill(description);
   await page.getByRole('textbox', { name: /^金额/ }).fill(amount);
@@ -67,7 +67,7 @@ test('keeps transactions of a disabled pack filterable without re-enabling it', 
   await panel.getByRole('button', { name: /显示隐藏/ }).click();
   await expect(panel.getByRole('option', { name: /食堂/ }).first()).toContainText('已停用');
   await panel.getByRole('button', { name: '只看高频' }).click();
-  await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('食堂');
+  await panel.getByLabel('搜索分类', { exact: true }).fill('食堂');
   const option = panel.getByRole('option', { name: /食堂/ }).first();
   await expect(option).toBeVisible();
   await expect(option).toContainText('已停用');
@@ -87,9 +87,10 @@ test('keeps transactions of a disabled pack filterable without re-enabling it', 
   await page.getByRole('button', { name: '+ 记账' }).click();
   const entryForm = page.getByRole('dialog', { name: /新增/ });
   await entryForm.getByLabel('二级分类').click();
-  const entryPanel = entryForm.locator('.zc-category-picker-panel');
-  await entryPanel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('食堂');
+  const entryPanel = page.locator('.zc-category-picker-panel');
+  await entryPanel.getByLabel('搜索分类', { exact: true }).fill('食堂');
   await expect(entryPanel.getByRole('option', { name: /食堂/ })).toHaveCount(0);
+  await page.keyboard.press('Escape');
   await entryForm.getByRole('button', { name: '取消', exact: true }).click();
 
   // 7. 高级查询的「二级分类」也能取到停用分类。
@@ -98,7 +99,7 @@ test('keeps transactions of a disabled pack filterable without re-enabling it', 
   const row = page.locator('.zc-advanced-condition-row').first();
   await row.getByLabel('高级查询字段').selectOption('category');
   await row.getByLabel('高级查询值').click();
-  await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('食堂');
+  await panel.getByLabel('搜索分类', { exact: true }).fill('食堂');
   await expect(panel.getByRole('option', { name: /食堂/ }).first()).toContainText('已停用');
   await panel.getByRole('option', { name: /食堂/ }).first().click();
   await expect(row.getByLabel('高级查询值')).toContainText('食堂');
@@ -111,6 +112,6 @@ test('keeps transactions of a disabled pack filterable without re-enabling it', 
   await page.getByRole('button', { name: '批量修改', exact: true }).click();
   const batch = page.getByRole('dialog', { name: '批量修改流水' });
   await batch.getByLabel('批量修改分类').click();
-  await batch.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('食堂');
-  await expect(batch.getByRole('option', { name: /食堂/ })).toHaveCount(0);
+  await page.getByRole('dialog', { name: '选择分类', exact: true }).getByLabel('搜索分类', { exact: true }).fill('食堂');
+  await expect(page.getByRole('dialog', { name: '选择分类', exact: true }).getByRole('option', { name: /食堂/ })).toHaveCount(0);
 });

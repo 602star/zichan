@@ -1,7 +1,8 @@
 /** Sessions are the management unit: filter, inspect, and revoke with a reported outcome. */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
+import { AccountFilter } from './filters.js';
 import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, canWrite, message, muted, roleLabel, row, useActionError, useCursorPager, useHiddenColumns, useResource, when } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import type { SessionRow } from './types.js';
@@ -39,6 +40,7 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
   selfAccountId: string;
 }) {
   const search = query.get('search') ?? '';
+  const accountId = query.get('accountId') ?? '';
   const state = query.get('state') ?? '';
   const kind = query.get('kind') ?? '';
   const pager = useCursorPager({ query, path: '/sessions', navigate });
@@ -46,13 +48,14 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
   const listParams = readListParams(query, { sort: 'lastSeen', dir: 'desc', limit: 25 });
   const { hidden, toggle, reset } = useHiddenColumns('sessions', SESSION_COLUMNS);
   const [searchDraft, setSearchDraft] = useState(search);
+  useEffect(() => { setSearchDraft(search); }, [search]);
   const [report, setReport] = useState('');
   const [busy, setBusy] = useState(false);
   const actionError = useActionError();
 
   const list = useResource(() => client.request<{ sessions: SessionRow[]; nextCursor?: string; paginationUnit: string; note: string; sort?: { key: string; direction: string } }>(
-    `/sessions?${listParamsQuery(listParams)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${search ? `&search=${encodeURIComponent(search)}` : ''}${state ? `&state=${state}` : ''}${kind ? `&kind=${kind}` : ''}`,
-  ), [cursor, search, state, kind, listParams.sort, listParams.direction, listParams.limit]);
+    `/sessions?${listParamsQuery(listParams)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${accountId ? `&accountId=${encodeURIComponent(accountId)}` : ''}${search ? `&search=${encodeURIComponent(search)}` : ''}${state ? `&state=${state}` : ''}${kind ? `&kind=${kind}` : ''}`,
+  ), [cursor, accountId, search, state, kind, listParams.sort, listParams.direction, listParams.limit]);
 
   const update = pager.apply;
   // The sort the server actually used, which is not always the one that was asked for: a page
@@ -112,6 +115,7 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
     <>
       <h2>设备与会话</h2>
       <Panel title="筛选" note="按会话分页：每页会话数固定，不再按账号展开。">
+        <AccountFilter client={client} accountId={accountId} username={query.get('username') ?? ''} onApply={update} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
           <Field label="用户名、accountId 或设备名">
             <TextInput value={searchDraft} maxLength={128} onChange={(event) => setSearchDraft(event.target.value)}
@@ -130,7 +134,7 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
         </div>
         <div style={{ ...row, marginTop: 10 }}>
           <Button onClick={() => update({ search: searchDraft })}>搜索</Button>
-          <Button onClick={() => { setSearchDraft(''); update({ search: undefined, state: undefined, kind: undefined }); }}>清除筛选</Button>
+          <Button onClick={() => { setSearchDraft(''); update({ search: undefined, accountId: undefined, username: undefined, state: undefined, kind: undefined }); }}>清除筛选</Button>
           <Button disabled={busy || revocableCount === 0} onClick={() => { void revokeMany(); }}>撤销当前页可撤销的会话</Button>
         </div>
         <div style={{ ...row, marginTop: 10 }}>

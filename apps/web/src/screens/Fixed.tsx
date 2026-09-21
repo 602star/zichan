@@ -33,7 +33,7 @@ import {
 } from '@zichan/db';
 import { useSnapshot } from '../db/snapshot.js';
 import { useStore } from '../db/store.js';
-import { EntityFormModal } from '../ui/EntityFormModal.js';
+import { CategoryPicker, EntityFormModal } from '../ui/EntityFormModal.js';
 import { AttachmentPreview } from '../ui/AttachmentPreview.js';
 import {
   abortPreparedAttachments,
@@ -289,7 +289,10 @@ export function Fixed() {
           <div className="zc-fixed-filter-grid" style={{ display: 'grid', gridTemplateColumns: '160px minmax(220px, 1fr) 220px 180px', gap: 10 }}>
             <select aria-label="物品状态" className="zc-select" value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="all">全部状态</option><option value="active">在用 / 闲置</option><option value="terminal">已售 / 报废 / 清退</option></select>
             <input aria-label="搜索物品" className="zc-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、品牌、型号或条形码" />
-            <select aria-label="物品分类" className="zc-select" value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="all">全部分类</option>{parents.map((parent) => <optgroup key={parent.id} label={parent.name}>{snap.fixedAssetCategories.filter((child) => child.parentId === parent.id && child.isActive).map((child) => <option key={child.id} value={child.id}>{child.name}</option>)}</optgroup>)}</select>
+            <CategoryPicker fieldId="fixed-filter-category" name="fixedCategory" ariaLabel="物品分类"
+              value={categoryId === 'all' ? '' : categoryId} allowEmpty emptyLabel="全部分类" placeholder="全部分类" defaultShowHidden
+              options={parents.flatMap((parent) => snap.fixedAssetCategories.filter((child) => child.parentId === parent.id && child.isActive).map((child) => ({ value: child.id, label: `${parent.name} / ${child.name}`, name: child.name, parentName: parent.name })))}
+              onChange={(next) => setCategoryId(next || 'all')} />
             <div style={{ alignSelf: 'center', textAlign: 'right', color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>找到 {cards.length} 件</div>
           </div>
           <Overview cards={cards} onEdit={setAssetModal} onEvent={(assetId) => setEventModal({ assetId })} onMetric={(assetId, metric) => setMetricModal({ assetId, metric })} onUsage={(metric) => setUsageModal({ metric })} onConsumable={(assetId) => setConsumableModal({ assetId })} onGoal={(assetId, goal) => setGoalModal({ assetId, goal })} onTimeline={openTimeline} />

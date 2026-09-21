@@ -13,8 +13,8 @@ async function register(page) {
 
 async function category(page, entry, name) {
   await entry.getByLabel(/^分类/).click();
-  const picker = entry;
-  await picker.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill(name);
+  const picker = page.getByRole('dialog', { name: '选择分类', exact: true });
+  await picker.getByLabel('搜索分类', { exact: true }).fill(name);
   await picker.getByRole('option', { name: new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).first().click();
 }
 

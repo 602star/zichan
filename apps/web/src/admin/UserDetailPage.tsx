@@ -72,7 +72,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
         <div style={row}>
           <Button onClick={() => navigate(`/sync?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的同步诊断</Button>
           <Button onClick={() => navigate(`/logs?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的运行日志</Button>
-          <Button onClick={() => navigate(`/sessions?search=${encodeURIComponent(account.username)}`)}>该账号的会话</Button>
+          <Button onClick={() => navigate(`/sessions?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的会话</Button>
           <Button onClick={() => navigate(`/audit?target=${encodeURIComponent(account.accountId)}`)}>以该账号为目标的管理审计</Button>
           <Button onClick={() => navigate(`/jobs?accountId=${encodeURIComponent(account.accountId)}`)}>该账号的维护任务</Button>
         </div>

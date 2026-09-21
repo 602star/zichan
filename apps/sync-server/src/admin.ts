@@ -541,6 +541,8 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     }
 
     if (req.method === 'GET' && suffix === '/sessions') {
+      const accountId = search.get('accountId') ?? '';
+      if (accountId.length > 128) return send(res, 400, { error: 'accountId must not exceed 128 characters' });
       const limit = Number(search.get('limit') ?? 25);
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) return send(res, 400, { error: 'limit must be between 1 and 200' });
       const state = search.get('state') ?? '';
@@ -554,6 +556,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if (!guard.ok) return send(res, 400, { code: guard.code, error: guard.error });
       const page = await store.listSessionsPage({
         limit,
+        ...(accountId ? { accountId } : {}),
         ...(search.get('cursor') ? { cursor: search.get('cursor')! } : {}),
         ...(searchTerm ? { search: searchTerm } : {}),
         ...(state ? { state } : {}),

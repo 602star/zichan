@@ -47,9 +47,9 @@ test('keeps the compact modal on the explicit quick-entry action', async ({ page
   await expect(quickCategory).toContainText('食品餐饮');
   await expect(quickCategory).toContainText('堂食餐饮');
   await quickCategory.click();
-  await expect(quickExpense.getByPlaceholder('查找分类，输入可搜索隐藏分类')).toBeVisible();
-  await expect(quickExpense.locator('.zc-category-picker-grid')).toBeVisible();
-  await quickCategory.click();
+  await expect(page.getByRole('dialog', { name: '选择分类', exact: true }).getByLabel('搜索分类', { exact: true })).toBeVisible();
+  await expect(page.locator('.zc-category-picker-grid')).toBeVisible();
+  await page.keyboard.press('Escape');
   await expect(quickExpense.getByLabel('支出备注')).toHaveValue('午餐');
   await expect(quickExpense.getByRole('textbox', { name: '支出金额' })).toHaveValue('');
   await page.getByRole('textbox', { name: '支出金额' }).fill('12.50');
@@ -178,8 +178,9 @@ test('enables and disables an extension pack for new entries and restores it whe
   await page.getByRole('button', { name: '+ 记支出' }).click();
   const expenseForm = page.getByRole('dialog', { name: '新增 · 日常支出' });
   await expenseForm.getByLabel('二级分类').click();
-  await expenseForm.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('食堂');
-  await expect(expenseForm.getByRole('option', { name: /食堂/ })).toHaveCount(0);
+  await page.getByRole('dialog', { name: '选择分类', exact: true }).getByLabel('搜索分类', { exact: true }).fill('食堂');
+  await expect(page.getByRole('dialog', { name: '选择分类', exact: true }).getByRole('option', { name: /食堂/ })).toHaveCount(0);
+  await page.keyboard.press('Escape');
   await expenseForm.getByRole('button', { name: '关闭', exact: true }).click();
 
   await sidebar.getByRole('button', { name: /管理$/ }).click();
@@ -192,8 +193,8 @@ test('enables and disables an extension pack for new entries and restores it whe
   await page.getByRole('button', { name: '+ 记支出' }).click();
   const restoredForm = page.getByRole('dialog', { name: '新增 · 日常支出' });
   await restoredForm.getByLabel('二级分类').click();
-  await restoredForm.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('食堂');
-  await expect(restoredForm.getByRole('option', { name: /食堂/ })).toBeVisible();
+  await page.getByRole('dialog', { name: '选择分类', exact: true }).getByLabel('搜索分类', { exact: true }).fill('食堂');
+  await expect(page.getByRole('dialog', { name: '选择分类', exact: true }).getByRole('option', { name: /食堂/ })).toBeVisible();
 });
 
 test('adds a catalog sub-category from the structure list without enabling a whole pack', async ({ page }) => {
@@ -222,8 +223,9 @@ test('adds a catalog sub-category from the structure list without enabling a who
   await page.getByRole('button', { name: '+ 记支出' }).click();
   const expenseForm = page.getByRole('dialog', { name: '新增 · 日常支出' });
   await expenseForm.getByLabel('二级分类').click();
-  await expenseForm.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('KTV');
-  await expect(expenseForm.getByRole('option', { name: /KTV/ })).toBeVisible();
+  await page.getByRole('dialog', { name: '选择分类', exact: true }).getByLabel('搜索分类', { exact: true }).fill('KTV');
+  await expect(page.getByRole('dialog', { name: '选择分类', exact: true }).getByRole('option', { name: /KTV/ })).toBeVisible();
+  await page.keyboard.press('Escape');
   await expenseForm.getByRole('button', { name: '关闭', exact: true }).click();
 
   // 撤销后回到未添加状态：单项添加不会留下“幽灵分类”。

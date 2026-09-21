@@ -2911,6 +2911,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
   /** Sessions are the management unit; the previous account-page unit is gone. */
   async listSessionsPage(options: {
     limit: number;
+    accountId?: string;
     cursor?: string;
     search?: string;
     state?: string;
@@ -2925,6 +2926,10 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     const params: (string | number)[] = [];
     if (options.memberOnly) {
       clauses.push(`${ROLE_SQL} = 'member'`);
+    }
+    if (options.accountId) {
+      clauses.push('i.account_id = ?');
+      params.push(options.accountId);
     }
     if (options.search) {
       clauses.push('(instr(lower(s.username), lower(?)) > 0 OR i.account_id = ? OR instr(lower(s.device_name), lower(?)) > 0)');

@@ -34,6 +34,184 @@ async function signIn(page, url) {
   await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
 }
 
+test('quota typos never reset overrides and settings reject a mixed invalid batch', async ({ page }) => {
+  const f = await fixture();
+  try {
+    await registerAccount(f.url, 'quota-target', password);
+    await signIn(page, f.url);
+    await page.getByRole('link', { name: '用户管理', exact: true }).click();
+    await page.getByRole('row').filter({ has: page.getByText('quota-target', { exact: true }) }).getByRole('button', { name: '详情', exact: true }).click();
+    const sent = [];
+    page.on('request', (request) => { if (request.method() === 'POST' && /\/accounts\/[^/]+\/(commits|blobs)$/.test(request.url())) sent.push(request.postDataJSON()); });
+    for (const [label, field] of [['调整提交配额', 'commitQuotaBytes'], ['调整附件配额', 'quotaBytes']]) {
+      await page.getByRole('button', { name: label, exact: true }).click();
+      const input = page.getByLabel('新的上限（GiB）', { exact: true });
+      const before = sent.length;
+      for (const invalid of ['abc', '1GiB', '', '1e999', '1025']) {
+        await input.fill(invalid);
+        await page.getByRole('button', { name: '保存', exact: true }).click();
+        await expect(page.getByText(/请输入纯数字|配额范围为/)).toBeVisible();
+        expect(sent.length).toBe(before);
+      }
+      const save = page.waitForResponse((response) => response.request().method() === 'POST' && /\/(commits|blobs)$/.test(response.url()));
+      const refreshed = page.waitForResponse((response) => response.request().method() === 'GET' && /\/api\/admin\/accounts\/account-[^/]+$/.test(response.url()));
+      await input.fill('1.5');
+      await page.getByRole('button', { name: '保存', exact: true }).click();
+      expect((await save).status()).toBe(200);
+      await expect(page.getByText('操作已完成。', { exact: true })).toBeVisible();
+      expect(sent.at(-1)[field]).toBe(1610612736);
+      await refreshed;
+      await page.getByRole('button', { name: label, exact: true }).click();
+      const reset = page.waitForResponse((response) => response.request().method() === 'POST' && /\/(commits|blobs)$/.test(response.url()));
+      const resetRefreshed = page.waitForResponse((response) => response.request().method() === 'GET' && /\/api\/admin\/accounts\/account-[^/]+$/.test(response.url()));
+      await page.getByRole('button', { name: '恢复服务器默认', exact: true }).click();
+      expect((await reset).status()).toBe(200);
+      expect(sent.at(-1)[field]).toBeNull();
+      await resetRefreshed;
+    }
+    const settingsResponse = page.waitForResponse((response) => response.url().endsWith('/api/admin/settings') && response.request().method() === 'GET');
+    await page.getByRole('link', { name: '系统设置', exact: true }).click();
+    const fields = (await (await settingsResponse).json()).settings.filter((field) => field.editable && field.kind === 'number');
+    const [bad, good] = fields;
+    const valid = good.value === good.minimum ? good.maximum : good.minimum;
+    let saves = 0;
+    page.on('request', (request) => { if (request.method() === 'POST' && request.url().endsWith('/api/admin/settings')) saves += 1; });
+    await page.getByLabel(bad.label, { exact: true }).fill('abc');
+    await page.getByLabel(good.label, { exact: true }).fill(String(valid));
+    await page.getByRole('button', { name: '保存允许在线修改的设置', exact: true }).click();
+    await expect(page.getByText('请修正标记的设置项；本次没有保存任何改动。')).toBeVisible();
+    await expect(page.getByLabel(bad.label, { exact: true })).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.getByLabel(good.label, { exact: true })).toHaveValue(String(valid));
+    expect(saves).toBe(0);
+    await page.getByLabel(bad.label, { exact: true }).fill(String(bad.value));
+    const saved = page.waitForResponse((response) => response.url().endsWith('/api/admin/settings') && response.request().method() === 'POST');
+    await page.getByRole('button', { name: '保存允许在线修改的设置', exact: true }).click();
+    expect((await saved).status()).toBe(200);
+  } finally { await f.close(); }
+});
+
+test('account session links use exact identity and compose with search filters', async ({ page }) => {
+  const f = await fixture();
+  try {
+    for (const name of ['alice', 'alice2']) { await registerAccount(f.url, name, password); await loginAccount(f.url, name, password); }
+    await signIn(page, f.url);
+    await page.getByRole('link', { name: '用户管理', exact: true }).click();
+    await page.getByRole('row').filter({ has: page.getByRole('button', { name: 'alice', exact: true }) }).getByRole('button', { name: '详情', exact: true }).click();
+    const accountId = new URL(page.url()).pathname.split('/').at(-1);
+    await page.getByRole('button', { name: '该账号的会话', exact: true }).click();
+    await expect.poll(() => new URL(page.url()).searchParams.get('accountId')).toBe(accountId);
+    const rows = (name) => page.getByRole('row').filter({ has: page.getByRole('button', { name, exact: true }) });
+    await expect(rows('alice').first()).toBeVisible();
+    await expect(rows('alice2')).toHaveCount(0);
+    await page.getByLabel('用户名、accountId 或设备名', { exact: true }).fill('alice2');
+    await page.getByRole('button', { name: '搜索', exact: true }).click();
+    await expect(rows('alice')).toHaveCount(0);
+    await expect(rows('alice2')).toHaveCount(0);
+    await page.getByRole('button', { name: '清除筛选', exact: true }).click();
+    await expect(rows('alice').first()).toBeVisible();
+    await expect(rows('alice2').first()).toBeVisible();
+    await page.goBack();
+    await page.reload();
+    await expect(rows('alice2')).toHaveCount(0);
+  } finally { await f.close(); }
+});
+
+for (const view of [
+  { path: 'users', label: '用户管理', input: '用户名或 accountId' },
+  { path: 'sessions', label: '设备与会话', input: '用户名、accountId 或设备名' },
+]) {
+  test(`${view.path} search follows browser back and forward without submitting drafts`, async ({ page }) => {
+    const f = await fixture();
+    try {
+      for (const name of ['history-alpha', 'history-beta']) {
+        await registerAccount(f.url, name, password);
+        await loginAccount(f.url, name, password);
+      }
+      await signIn(page, f.url);
+      await page.getByRole('link', { name: view.label, exact: true }).click();
+      const input = page.getByLabel(view.input, { exact: true });
+      const rowsFor = (name) => page.getByRole('row').filter({ has: page.getByRole('button', { name, exact: true }) });
+      const assertSearch = async (name, excluded) => {
+        await expect.poll(() => new URL(page.url()).searchParams.get('search') ?? '').toBe(name);
+        await expect(input).toHaveValue(name);
+        await expect(rowsFor(name).first()).toBeVisible();
+        await expect(rowsFor(excluded)).toHaveCount(0);
+      };
+      await input.fill('history-alpha');
+      await page.getByRole('button', { name: '搜索', exact: true }).click();
+      await assertSearch('history-alpha', 'history-beta');
+      await input.fill('history-beta');
+      await input.press('Enter');
+      await assertSearch('history-beta', 'history-alpha');
+      // A local draft must not filter the list or create browser history.
+      await input.fill('unsaved-draft');
+      await expect(rowsFor('history-beta').first()).toBeVisible();
+      expect(new URL(page.url()).searchParams.get('search')).toBe('history-beta');
+      await page.goBack();
+      await assertSearch('history-alpha', 'history-beta');
+      await page.goBack();
+      await expect(input).toHaveValue('');
+      await expect.poll(() => new URL(page.url()).searchParams.get('search')).toBeNull();
+      await expect(rowsFor('history-alpha').first()).toBeVisible();
+      await expect(rowsFor('history-beta').first()).toBeVisible();
+      await page.goForward();
+      await assertSearch('history-alpha', 'history-beta');
+      await page.goForward();
+      await assertSearch('history-beta', 'history-alpha');
+    } finally { await f.close(); }
+  });
+}
+
+test('revoking all account sessions requires confirmation and blocks duplicate requests', async ({ page }) => {
+  const f = await fixture();
+  let release;
+  try {
+    await registerAccount(f.url, 'session-target', password);
+    await loginAccount(f.url, 'session-target', password);
+    await signIn(page, f.url);
+    await page.getByRole('link', { name: '用户管理', exact: true }).click();
+    const detailResponse = page.waitForResponse((response) => /\/api\/admin\/accounts\/account-[^/]+$/.test(response.url()) && response.request().method() === 'GET');
+    await page.getByRole('row').filter({ has: page.getByText('session-target', { exact: true }) }).getByRole('button', { name: '详情', exact: true }).click();
+    const detail = await (await detailResponse).json();
+    expect(detail.activeSessionCount).toBeGreaterThan(0);
+    let requests = 0;
+    const gate = new Promise((resolve) => { release = resolve; });
+    await page.route('**/api/admin/accounts/*/sessions/revoke', async (route) => {
+      requests += 1;
+      if (requests === 1) {
+        await gate;
+        await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '测试暂时失败' }) });
+      } else await route.continue();
+    });
+    const trigger = page.getByRole('button', { name: '撤销全部可管理会话', exact: true });
+    const confirmation = page.getByRole('region', { name: '确认撤销全部会话', exact: true });
+    await trigger.click();
+    await expect(confirmation).toContainText('session-target');
+    await expect(confirmation).toContainText(detail.account.accountId);
+    await expect(confirmation).toContainText(`将影响 ${detail.activeSessionCount} 个有效会话`);
+    await confirmation.getByRole('button', { name: '取消', exact: true }).click();
+    await expect(confirmation).toBeHidden();
+    expect(requests).toBe(0);
+    await trigger.click();
+    await confirmation.getByRole('button', { name: '确认撤销', exact: true }).click();
+    await expect.poll(() => requests).toBe(1);
+    await expect(trigger).toBeDisabled();
+    await expect(confirmation.getByRole('button', { name: '正在撤销…', exact: true })).toBeDisabled();
+    await expect(confirmation.getByRole('button', { name: '取消', exact: true })).toBeDisabled();
+    await confirmation.getByRole('button', { name: '正在撤销…', exact: true }).evaluate((button) => { button.click(); button.click(); });
+    expect(requests).toBe(1);
+    release();
+    await expect(page.getByText(/测试暂时失败/)).toBeVisible();
+    await expect(confirmation.getByRole('button', { name: '确认撤销', exact: true })).toBeEnabled();
+    const refreshed = page.waitForResponse((response) => response.url().endsWith(`/api/admin/accounts/${detail.account.accountId}`) && response.request().method() === 'GET');
+    await confirmation.getByRole('button', { name: '确认撤销', exact: true }).click();
+    expect((await (await refreshed).json()).activeSessionCount).toBe(0);
+    await expect(confirmation).toBeHidden();
+    await expect(page.getByText('操作已完成。', { exact: true })).toBeVisible();
+    expect(requests).toBe(2);
+  } finally { release?.(); await f.close(); }
+});
+
 test('reflects the stored registration policy and paginates and filters invitations', async ({ page }) => {
   const f = await fixture();
   try {

@@ -13,8 +13,8 @@ async function recordExpense(page, { category, description, amount }) {
   await page.getByRole('button', { name: '+ 记支出' }).click();
   const form = page.getByRole('dialog', { name: '新增 · 日常支出' });
   await form.getByLabel('二级分类').click();
-  const panel = form.locator('.zc-category-picker-panel');
-  await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill(category);
+  const panel = page.locator('.zc-category-picker-panel');
+  await panel.getByLabel('搜索分类', { exact: true }).fill(category);
   await panel.getByRole('option', { name: new RegExp(category) }).first().click();
   await form.getByLabel('描述').fill(description);
   await page.getByRole('textbox', { name: /^金额/ }).fill(amount);
@@ -249,7 +249,7 @@ test('the filter row and the ring drill agree on what is filtering', async ({ pa
   const filter = page.getByLabel('流水分类');
   const panel = page.locator('.zc-category-picker-panel');
   const crumbs = page.locator('.zc-drill-crumbs');
-  const search = () => panel.getByPlaceholder('查找分类，输入可搜索隐藏分类');
+  const search = () => panel.getByLabel('搜索分类', { exact: true });
   await expect(filter).toContainText('全部分类');
 
   // 环下钻到一级：筛选真的停在一级上，控件就这么说。

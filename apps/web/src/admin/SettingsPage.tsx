@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
+import { settingNumber } from './number-input.js';
 import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, Stat, TextInput, message, muted, row, useResource } from './ui.js';
 import type { SettingsPayload } from './types.js';
 
@@ -9,10 +10,12 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!payload.data) return;
     setDraft(Object.fromEntries(payload.data.settings.map((field) => [field.name, String(field.value)])));
+    setFieldErrors({});
   }, [payload.data]);
 
   if (payload.loading && !payload.data) return <><h2>系统设置</h2><Loading loading error={payload.error} /></>;
@@ -24,6 +27,7 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
     // Numbers and text fields travel in one payload, each in its own type: coercing a URL
     // through Number() would turn every text field into a silent no-op.
     const updates: Record<string, number | string> = {};
+    const problems: Record<string, string> = {};
     for (const field of data.settings) {
       if (!field.editable) continue;
       const raw = draft[field.name] ?? '';
@@ -33,9 +37,13 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
         if (raw !== String(field.value)) updates[field.name] = raw;
         continue;
       }
-      const value = Number(raw);
-      if (Number.isFinite(value) && value !== field.value) updates[field.name] = value;
+      try {
+        const value = settingNumber(raw, field.minimum, field.maximum);
+        if (value !== field.value) updates[field.name] = value;
+      } catch (caught) { problems[field.name] = message(caught); }
     }
+    setFieldErrors(problems);
+    if (Object.keys(problems).length) { setError('请修正标记的设置项；本次没有保存任何改动。'); return; }
     if (!Object.keys(updates).length) { setNotice('没有需要保存的改动。'); return; }
     try {
       await client.request('/settings', { settings: updates }, { idempotencyKey: adminIdempotencyKey('settings') });
@@ -70,14 +78,17 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
                 >
                   {(field.options ?? []).map((option) => <option key={option} value={option}>{selectLabel(field.name, option)}</option>)}
                 </Select>
-                : <TextInput
+                : <div><TextInput
+                  aria-label={field.label}
+                  aria-invalid={Boolean(fieldErrors[field.name])}
+                  aria-describedby={fieldErrors[field.name] ? `setting-error-${field.name}` : undefined}
                   value={draft[field.name] ?? String(field.value)}
                   disabled={!field.editable || role !== 'owner'}
                   onChange={(event) => setDraft((current) => ({ ...current, [field.name]: event.target.value }))}
                   // Secrets are never returned; only allow-listed, non-secret fields reach here.
                   placeholder={field.kind === 'text' ? textPlaceholder(field.textFormat) : undefined}
                   style={{ width: field.kind === 'text' ? textWidth(field.textFormat) : 120 }}
-                />,
+                />{fieldErrors[field.name] ? <div id={`setting-error-${field.name}`} role="alert" style={{ color: 'var(--negative)' }}>{fieldErrors[field.name]}</div> : null}</div>,
             },
             { key: 'source', header: '来源', render: (field) => <Badge tone={field.source === 'env' ? 'warn' : field.source === 'database' ? 'ok' : 'muted'}>{field.source === 'env' ? `环境变量 ${field.envVar}` : field.source === 'database' ? '数据库设置' : '默认值'}</Badge> },
             { key: 'range', header: '允许范围', secondary: true, render: (field) => field.kind === 'number' ? `${field.minimum ?? ''}–${field.maximum ?? ''}` : field.kind === 'text' ? textRange(field.textFormat, field.maxLength) : (field.options ?? []).map((option) => selectLabel(field.name, option)).join('、') },

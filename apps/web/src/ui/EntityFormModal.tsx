@@ -1,9 +1,10 @@
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Category, Payee } from '@zichan/core';
 import { PayeePicker } from './PayeePicker.js';
 import { TagPicker } from './TagPicker.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { DialogShell } from './DialogShell.js';
+import { btnOutline } from './styles.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
 import { readAttachmentBlob, type AttachmentDraftData } from '../db/attachment-storage.js';
 import { useStore } from '../db/store.js';
@@ -951,180 +952,126 @@ function categoryGroups(options: FieldOption[], search: string, selectedValue: s
 }
 
 export function CategoryPicker(props: {
-  fieldId: string;
-  name: string;
-  value: string;
-  options: FieldOption[];
-  allowEmpty?: boolean;
-  defaultShowHidden?: boolean;
-  onChange: (value: string) => void;
-  /**
-   * 空选项的文案。表单里是“不选择”，筛选场景里是“全部分类”。
-   */
-  emptyLabel?: string;
-  /**
-   * 未选择时触发按钮上的文案。没有可见 <label> 的场景（筛选行）用它与空选项保持一致。
-   */
-  placeholder?: string;
-  /**
-   * 触发按钮的无障碍名称。表单用 <label htmlFor> 关联，筛选行没有可见标签，
-   * 需要显式给一个。
-   */
-  ariaLabel?: string;
-  /**
-   * 下拉面板的最小宽度。筛选行里的单元格只有 120px 左右，面板必须能超出触发
-   * 按钮的宽度，否则两栏（一级/二级）会被 overflow:hidden 剪掉。
-   */
-  minPanelWidth?: number;
-  /**
-   * 让触发按钮的外观与同行的原生 select 对齐（筛选行里混用两种控件）。
-   *
-   * 不要在这里传 `minHeight`：内联高度会压过粗指针/手机块里的 44px 触控地板。
-   * 桌面紧凑高度由 `button { min-height: var(--control-h) }`（38px）提供，
-   * 触控高度由 `.zc-select` 的 44px 地板提供。见 styles.css
-   * 「One control height for every button」。
-   */
-  triggerStyle?: CSSProperties;
+  fieldId: string; name: string; value: string; options: FieldOption[];
+  allowEmpty?: boolean; defaultShowHidden?: boolean; onChange: (value: string) => void;
+  emptyLabel?: string; placeholder?: string; ariaLabel?: string; triggerStyle?: CSSProperties;
 }) {
-  const {
-    fieldId, name, value, options, allowEmpty, defaultShowHidden = false, onChange,
-    emptyLabel = '不选择', placeholder = '选择分类', ariaLabel, minPanelWidth, triggerStyle,
-  } = props;
+  const { fieldId, name, value, options, allowEmpty, defaultShowHidden = false, onChange,
+    emptyLabel = '不选择', placeholder = '选择分类', ariaLabel, triggerStyle } = props;
+  const trigger = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [activeParent, setActiveParent] = useState('');
+  const [childrenStep, setChildrenStep] = useState(false);
+  const [compact, setCompact] = useState(false);
   const [showHidden, setShowHidden] = useState(defaultShowHidden);
+  const [placement, setPlacement] = useState<CSSProperties>({});
   const selected = options.find((option) => option.value === value);
   const selectedParts = selected ? splitCategoryLabel(selected) : undefined;
   const groups = categoryGroups(options, search, value, showHidden);
   const hiddenCount = options.filter((option) => option.hidden && !option.catalogOnly).length;
   const activeGroup = groups.find((group) => group.parent === activeParent)
-    ?? groups.find((group) => group.children.some((child) => child.value === value))
-    ?? groups[0];
-  const parentIndex = activeGroup ? groups.findIndex((group) => group.parent === activeGroup.parent) : 0;
+    ?? groups.find((group) => group.children.some((child) => child.value === value)) ?? groups[0];
+  const searching = Boolean(search.trim());
+  const choose = (next: string) => { onChange(next); setOpen(false); };
 
-  return (
-    <div style={{ position: 'relative' }}>
-      <button
-        id={fieldId}
-        name={name}
-        type="button"
-        className="zc-select"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        {...(ariaLabel ? { 'aria-label': ariaLabel } : {})}
-        onClick={() => setOpen((v) => !v)}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, textAlign: 'left', cursor: 'pointer', ...triggerStyle }}
-      >
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {selected ? (
-            <>
-              <span style={{ color: 'var(--text-tertiary)' }}>{selectedParts?.parent}</span>
-              <span style={{ color: 'var(--text-tertiary)', margin: '0 6px' }}>›</span>
-              <b>{selectedParts?.child}</b>
-            </>
-          ) : placeholder}
-        </span>
-        <span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>{open ? '▲' : '▼'}</span>
-      </button>
+  useLayoutEffect(() => {
+    if (!open) return;
+    const position = () => {
+      const rect = trigger.current?.getBoundingClientRect();
+      if (!rect) return;
+      const viewport = window.visualViewport;
+      const vw = viewport?.width ?? window.innerWidth;
+      const vh = viewport?.height ?? window.innerHeight;
+      const ox = viewport?.offsetLeft ?? 0;
+      const oy = viewport?.offsetTop ?? 0;
+      const width = Math.min(540, vw - 20);
+      setCompact(width < 340);
+      const panel = document.getElementById(titleId)?.closest('[role="dialog"]');
+      const height = Math.min(panel?.getBoundingClientRect().height || 400, 420, vh - 20);
+      const below = oy + vh - rect.bottom - 16;
+      const above = rect.top - oy - 16;
+      const down = below >= Math.min(height, 240) || below >= above;
+      const maxHeight = Math.max(100, Math.min(420, vh - 20, down ? below : above));
+      const actualHeight = Math.min(height, maxHeight);
+      const desired = down ? rect.bottom + 6 : rect.top - actualHeight - 6;
+      setPlacement({ width, maxHeight, left: Math.max(ox + 10, Math.min(rect.left, ox + vw - width - 10)),
+        top: Math.max(oy + 10, Math.min(desired, oy + vh - actualHeight - 10)) });
+    };
+    position();
+    const panel = document.getElementById(titleId)?.closest('[role="dialog"]');
+    const observer = new ResizeObserver(position);
+    if (panel) observer.observe(panel);
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    window.visualViewport?.addEventListener('resize', position);
+    window.visualViewport?.addEventListener('scroll', position);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', position);
+      window.removeEventListener('scroll', position, true);
+      window.visualViewport?.removeEventListener('resize', position);
+      window.visualViewport?.removeEventListener('scroll', position);
+    };
+  }, [open, titleId, searching, activeParent, childrenStep]);
 
-      {open && (
-        <div
-          className="zc-category-picker-panel"
-          style={{
-            position: 'absolute',
-            top: 'calc(100% + 6px)',
-            left: 0,
-            right: minPanelWidth ? 'auto' : 0,
-            ...(minPanelWidth ? { minWidth: minPanelWidth, maxWidth: 'min(96vw, 760px)' } : {}),
-            zIndex: 80,
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--r-md)',
-            background: 'var(--surface)',
-            boxShadow: 'var(--shadow-md)',
-          }}
-        >
-          <div style={{ padding: 10, borderBottom: '1px solid var(--border)', display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
-            <input
-              className="zc-input"
-              autoFocus
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="查找分类，输入可搜索隐藏分类"
-              style={{ height: 36 }}
-            />
-            {hiddenCount > 0 && (
-              <button
-                type="button"
-                aria-pressed={showHidden}
-                onClick={() => {
-                  setShowHidden((current) => !current);
-                }}
-                style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '0 11px', background: showHidden ? 'var(--accent-soft)' : 'var(--surface)', color: showHidden ? 'var(--accent)' : 'var(--fg-muted)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', cursor: 'pointer', whiteSpace: 'nowrap' }}
-              >
-                {showHidden ? '只看高频' : `显示隐藏 (${hiddenCount})`}
-              </button>
-            )}
+  const optionRow = (option: FieldOption, parent: string, index: number) => {
+    const parsed = splitCategoryLabel(option);
+    return <button key={option.value} type="button" role="option" aria-selected={value === option.value}
+      onClick={() => choose(option.value)} style={categoryChildButton(value === option.value)}>
+      <span aria-hidden="true" style={categoryDot(index)}>{parsed.child.slice(0, 1)}</span>
+      <span className="zc-category-option-text">{searching && <small>{parent} › </small>}{parsed.child}</span>
+      {option.catalogOnly ? <span style={categoryHiddenBadge()}>未启用</span>
+        : option.inactive ? <span style={categoryHiddenBadge('inactive')}>已停用</span>
+          : option.hidden && <span style={categoryHiddenBadge()}>隐藏</span>}
+    </button>;
+  };
+
+  return <div style={{ minWidth: 0 }}>
+    <button ref={trigger} id={fieldId} name={name} type="button" className="zc-select zc-category-trigger"
+      aria-haspopup="dialog" aria-expanded={open} {...(ariaLabel ? { 'aria-label': ariaLabel } : {})}
+      onClick={() => { setSearch(''); setChildrenStep(Boolean(selected)); setActiveParent(selectedParts?.parent ?? ''); setOpen(true); }}
+      style={{ ...triggerStyle, display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', whiteSpace: 'normal', height: 'auto' }}>
+      <span className="zc-category-option-text">{selected ? <><small>{selectedParts?.parent} › </small><b>{selectedParts?.child}</b></> : placeholder}</span>
+      <span aria-hidden="true">{open ? '▲' : '▼'}</span>
+    </button>
+    {open && <DialogShell labelledBy={titleId} onDismiss={() => setOpen(false)}
+      backdropClassName="zc-category-backdrop" panelClassName="zc-category-picker-panel"
+      panelStyle={{ position: 'fixed', ...placement }}>
+      <span id={titleId} className="zc-category-accessible-title">选择分类</span>
+      <div className="zc-category-picker-search">
+        <input className="zc-input" value={search} onChange={(event) => setSearch(event.target.value)}
+          placeholder="搜索分类" aria-label="搜索分类" />
+        <button type="button" className="zc-category-close" aria-label="关闭分类选择" onClick={() => setOpen(false)}>×</button>
+        {hiddenCount > 0 && <button type="button" className="zc-category-scope" aria-pressed={showHidden}
+          onClick={() => setShowHidden((current) => !current)}>{showHidden ? '只看高频' : `显示隐藏 (${hiddenCount})`}</button>}
+      </div>
+      {searching ? <div className="zc-category-picker-list" role="listbox" aria-label="分类搜索结果">
+        {groups.flatMap((group, index) => group.children.map((option) => optionRow(option, group.parent, index)))}
+        {!groups.length && <p className="zc-meta">没有匹配分类</p>}
+      </div> : <>
+        <div className="zc-category-step-nav">
+          {childrenStep ? <button type="button" style={btnOutline} onClick={() => setChildrenStep(false)}>返回一级分类</button> : <span>选择一级分类</span>}
+          {childrenStep && <strong className="zc-category-option-text">{activeGroup?.parent}</strong>}
+        </div>
+        <div className={`zc-category-picker-grid${childrenStep ? ' is-children' : ''}`}>
+          <div className="zc-category-picker-list zc-category-parents" hidden={compact && childrenStep}>
+            {allowEmpty && <button type="button" onClick={() => choose('')} style={categoryParentButton(!value)}>{emptyLabel}</button>}
+            {groups.map((group, index) => <button key={group.parent} type="button" aria-pressed={activeGroup?.parent === group.parent}
+              onClick={() => { setActiveParent(group.parent); setChildrenStep(true); }} style={categoryParentButton(activeGroup?.parent === group.parent)}>
+              <span aria-hidden="true" style={categoryDot(index)}>{group.parent.slice(0, 1)}</span>
+              <span className="zc-category-option-text">{group.parent}</span>
+            </button>)}
+            {!groups.length && <p className="zc-meta">没有可选分类</p>}
           </div>
-          <div className="zc-category-picker-grid">
-            <div className="zc-category-picker-list" style={{ borderRight: '1px solid var(--border)', background: 'var(--surface-2)' }}>
-              {allowEmpty && (
-                <button
-                  type="button"
-                  onClick={() => { onChange(''); setOpen(false); }}
-                  style={categoryParentButton(!value)}
-                >
-                  <span style={categoryDot(0)}>无</span>
-                  <span>{emptyLabel}</span>
-                </button>
-              )}
-              {groups.map((group, idx) => (
-                <button
-                  key={group.parent}
-                  type="button"
-                  onMouseEnter={() => setActiveParent(group.parent)}
-                  onClick={() => setActiveParent(group.parent)}
-                  style={categoryParentButton(activeGroup?.parent === group.parent)}
-                >
-                  <span style={categoryDot(idx)}>{group.parent.slice(0, 1)}</span>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{group.parent}</span>
-                </button>
-              ))}
-              {groups.length === 0 && (
-                <div style={{ padding: 14, fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>没有匹配分类</div>
-              )}
-            </div>
-            <div className="zc-category-picker-list" style={{ background: 'var(--surface)' }}>
-              {activeGroup?.children.map((option) => {
-                const parsed = splitCategoryLabel(option);
-                const active = value === option.value;
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    role="option"
-                    aria-selected={active}
-                    onClick={() => { onChange(option.value); setOpen(false); setSearch(''); setActiveParent(parsed.parent); }}
-                    style={categoryChildButton(active)}
-                  >
-                    <span style={categoryDot(Math.max(0, parentIndex))}>{parsed.child.slice(0, 1)}</span>
-                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: '1 1 auto' }}>{parsed.child}</span>
-                    {option.catalogOnly
-                      ? <span style={categoryHiddenBadge()}>未启用</span>
-                      : option.inactive
-                        // 停用的分类总是同时被写成 hidden，所以“已停用”要优先于“隐藏”，
-                        // 否则用户只看到“隐藏”，会以为开关一下就能找回来。
-                        ? <span style={categoryHiddenBadge('inactive')}>已停用</span>
-                        : option.hidden && <span style={categoryHiddenBadge()}>隐藏</span>}
-                  </button>
-                );
-              })}
-            </div>
+          <div className="zc-category-picker-list zc-category-children" hidden={compact && !childrenStep} role="listbox" aria-label={activeGroup?.parent ?? '二级分类'}>
+            {activeGroup?.children.map((option) => optionRow(option, activeGroup.parent, Math.max(0, groups.indexOf(activeGroup))))}
           </div>
         </div>
-      )}
-    </div>
-  );
+      </>}
+    </DialogShell>}
+  </div>;
 }
 
 const CATEGORY_COLORS = ['#f97316', '#8b5cf6', '#0f766e', '#0284c7', '#db2777', '#84cc16', '#64748b', '#dc2626', '#eab308'];
@@ -1148,17 +1095,17 @@ function categoryDot(index: number) {
 function categoryParentButton(active: boolean) {
   return {
     width: '100%',
-    height: 46,
+    minHeight: 46,
     border: 'none',
     borderRadius: 0,
     display: 'flex',
     alignItems: 'center',
-    gap: 10,
-    padding: '0 12px',
+    gap: 8,
+    padding: '8px 10px',
     background: active ? 'var(--accent-soft)' : 'transparent',
     color: active ? 'var(--accent)' : 'var(--fg-muted)',
     fontSize: 'var(--fs-body)',
-    fontWeight: 'var(--fw-bold)',
+    fontWeight: active ? 'var(--fw-medium)' : 'var(--fw-regular)',
     cursor: 'pointer',
     textAlign: 'left',
   } as const;
@@ -1182,17 +1129,17 @@ function categoryHiddenBadge(tone: 'muted' | 'inactive' = 'muted') {
 function categoryChildButton(active: boolean) {
   return {
     width: '100%',
-    height: 46,
+    minHeight: 46,
     border: 'none',
     borderRadius: 0,
     display: 'flex',
     alignItems: 'center',
-    gap: 10,
-    padding: '0 14px',
+    gap: 8,
+    padding: '8px 12px',
     background: active ? 'var(--accent-soft)' : 'transparent',
     color: active ? 'var(--accent)' : 'var(--fg)',
     fontSize: 'var(--fs-body)',
-    fontWeight: 'var(--fw-bold)',
+    fontWeight: active ? 'var(--fw-medium)' : 'var(--fw-regular)',
     cursor: 'pointer',
     textAlign: 'left',
   } as const;

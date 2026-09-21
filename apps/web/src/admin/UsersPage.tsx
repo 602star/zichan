@@ -1,5 +1,5 @@
 /** User management: filters live in the URL so refresh and sharing keep the view. */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { AccountActions } from './AccountActions.js';
 import { Badge, Button, ColumnPicker, CopyValue, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, bytes, canEditAccountQuota, canManageAccount, muted, roleLabel, row, useCursorPager, useHiddenColumns, useResource, useRowSelection, when } from './ui.js';
@@ -92,6 +92,7 @@ export function UsersPage({ client, query, navigate, role }: {
   const protection = query.get('protection') ?? '';
   const quota = query.get('quota') ?? '';
   const [searchDraft, setSearchDraft] = useState(search);
+  useEffect(() => { setSearchDraft(search); }, [search]);
   const listParams = readListParams(query, { sort: 'created', dir: 'desc', limit: 25 });
   const { hidden, toggle, reset } = useHiddenColumns('users', OPTIONAL_COLUMNS);
   const [bulk, setBulk] = useState<BulkAction | ''>('');

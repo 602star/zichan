@@ -19,7 +19,7 @@ test('filters daily transactions with the same category control as the record di
   // 分类筛选走标准分类控件（两级+搜索），而不是一个上百项的原生下拉。
   const filter = page.getByLabel('流水分类');
   await expect(filter).toHaveRole('button');
-  await expect(filter).toHaveAttribute('aria-haspopup', 'listbox');
+  await expect(filter).toHaveAttribute('aria-haspopup', 'dialog');
   await expect(filter).toContainText('全部分类');
 
   await filter.click();
@@ -28,7 +28,7 @@ test('filters daily transactions with the same category control as the record di
   // 一级分类分栏存在（标准控件是两栏，不是平铺列表）。
   await expect(panel.getByRole('button', { name: '交通出行' })).toBeVisible();
 
-  await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('加油');
+  await panel.getByLabel('搜索分类', { exact: true }).fill('加油');
   await panel.getByRole('option').first().click();
   /*
    * 触发按钮上的两级读法：一级在前、二级在后，叶子名自带的斜杠原样保留。
@@ -44,7 +44,7 @@ test('filters daily transactions with the same category control as the record di
 
   // 目录里尚未写入账本的分类不能作为筛选项：没有任何流水会引用它们。
   await filter.click();
-  await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('违章');
+  await panel.getByLabel('搜索分类', { exact: true }).fill('违章');
   await expect(panel.getByRole('option')).toHaveCount(0);
 });
 
@@ -64,7 +64,7 @@ test('picks an advanced-query category value with the searchable category contro
   await value.click();
   const panel = page.locator('.zc-category-picker-panel');
   await expect(panel).toBeVisible();
-  await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('加油');
+  await panel.getByLabel('搜索分类', { exact: true }).fill('加油');
   await panel.getByRole('option').first().click();
   await expect(value).toHaveText(/^交通出行\s*›\s*加油\/充电\s*[▲▼]$/);
 
@@ -93,9 +93,9 @@ test('picks a batch-modify category with the searchable category control', async
   await expect(value).toContainText('不改分类');
 
   await value.click();
-  const panel = modal.locator('.zc-category-picker-panel');
+  const panel = page.locator('.zc-category-picker-panel');
   await expect(panel).toBeVisible();
-  await panel.getByPlaceholder('查找分类，输入可搜索隐藏分类').fill('咖啡');
+  await panel.getByLabel('搜索分类', { exact: true }).fill('咖啡');
   await panel.getByRole('option').first().click();
   await expect(value).toContainText('咖啡');
 });
