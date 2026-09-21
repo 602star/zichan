@@ -134,6 +134,28 @@ test('a dark screen survives a reload, and the accent family is a separate axis'
   } finally { await f.close(); }
 });
 
+test('the account id is readable in the list, not just copyable', async ({ page }) => {
+  const f = await fixture();
+  try {
+    await page.goto(`${f.url}/admin/`);
+    await page.getByLabel('管理账号用户名').fill('owner');
+    await page.getByLabel('管理账号密码').fill('owner-test-password');
+    await page.getByRole('button', { name: '登录管理后台', exact: true }).click({ timeout: 30_000 });
+    await page.getByRole('link', { name: '用户管理' }).click();
+
+    // The column is optional and off by default, so turn it on first.
+    await page.getByText('列显示', { exact: false }).click();
+    await page.getByLabel('账号 ID', { exact: true }).check();
+    await page.keyboard.press('Escape');
+
+    // A column headed 账号 ID has to show the id. A button alone would leave the
+    // cell blank for anyone who only wants to read or select it.
+    const id = await page.locator('table code').first().textContent();
+    expect(id ?? '').toMatch(/^account-[a-f0-9]{32}$/);
+    await expect(page.getByRole('button', { name: `复制 ${id}` })).toBeVisible();
+  } finally { await f.close(); }
+});
+
 test('the console can jump between the sections of a long page', async ({ page }) => {
   const f = await fixture();
   try {

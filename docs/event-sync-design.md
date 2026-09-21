@@ -121,6 +121,8 @@ loopback 或私有局域网；HTTPS 页面连接私网 HTTP 仍可能被浏览�
 可信 HTTPS、服务器自带 Web 或桌面端。
 
 本项目尚未发布，只接受当前提交协议 v2、HTTP/密文协议 v3、加密归档 v4（载荷 v2、账本备份 v7）、
-同步服务器 `server_key_custody_v10`（schema 10）和本地账本
-`current_schema_2026_09_01_navigation_layout`（schema 116）。旧 PBKDF2/HMAC 认证、旧 Admin Token、旧管理路由、
+同步服务器 `server_management_ops_v11`（schema 11）和本地账本
+`current_schema_2026_09_18_account_onboarding`（schema 118）。旧 PBKDF2/HMAC 认证、旧 Admin Token、旧管理路由、
 旧同步连接配置、旧事件端点、旧游标表、快照同步以及开发期旧数据库均不读取或迁移；发现旧开发数据时明确要求重置。
+两个例外是紧邻的上一版：同步服务器 schema 6–10 与本地账本 version 117 会在启动时原地升级（只补列并改 marker），
+因为它们各自的上一版与当前版之间没有结构冲突。

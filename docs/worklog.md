@@ -3,6 +3,43 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-21（补 2）— 账号 ID 可读，且发布门禁恢复绿灯
+
+**Goal:** 收尾工作区里未提交的一处改动（用户列表「账号 ID」列），并处理自 2026-09-17 起就红着的 `npm run release:check`。
+
+### 1. 账号 ID 列：一个只写着「账号 ID」的按钮，等于什么都没显示
+
+上一批（`d8c5652`）给「账号 ID」列加的是 `CopyValue`，而它渲染出来的**只有一个按钮**。列头写着「账号 ID」，
+单元格里却没有任何 ID 可读——想读它、想用鼠标选中它、想让屏幕阅读器念出来的操作者，看到的是空白格。
+复制按钮回答的是「怎么把它拿走」，不是「它是什么」。现在两者并存：`<code>` 显示值，旁边才是复制按钮。
+
+这处是**补上一批的缺口**，不是新需求；`CopyValue` 的 `label` 默认值也保持「复制」，不为了这处再改可访问名。
+
+### 2. `release:check` 恢复绿灯：文档里的 schema 落后于代码
+
+门禁自 2026-09-17 起就失败（`docs/server-admin-plan.md` F9 与 `docs/worklog.md` 已两次记为「留待下次处理」），
+原因不是门禁太严，而是**文档没跟着代码走**：
+
+- `docs/db.md:61` 仍写 `current_schema_2026_09_14_ledger_timezone`（version 117），代码基线已是
+  `current_schema_2026_09_18_account_onboarding`（version 118）。
+- 顺带发现 `docs/event-sync-design.md:123-125` 的现状陈述也过期：写的是同步服务器
+  `server_key_custody_v10`（schema 10）与本地账本 schema 116，实际是 `server_management_ops_v11`（schema 11）
+  与 schema 118。
+
+改文档时如实补上代码里真实存在的例外：**紧邻的上一版会原地升级**——账本 version 117 会在启动时补
+`accounts`/`settings`/`transactions` 上账户入门所需的列再改 marker；同步服务器 schema 6–10 走同一条
+「只补列、不动账本字节与凭据」的路径（`store.ts:476-483`）。文档此前只写了「不承诺原地升级」，
+把这两条已有路径漏掉了，读者会以为升级一定会要求重置。
+
+### Verified
+
+- `npm test` 全绿：**153 个 suite**（core 18、db 19、logger 1、sync-server 40、web 75；web 570 项）。
+- `npm run typecheck`、`npm run lint`（0 error / 0 warning）通过。
+- `npm run release:check` 通过：`version=0.1.0 schema=118 workspaces=6`。
+- `tools/e2e/account-tests/appearance.spec.mjs` 全 5 项通过（真实 Chrome）。新增用例
+  「the account id is readable in the list, not just copyable」先打开可选列，再断言单元格里真的有
+  `account-…` 文本、且复制按钮仍可见——只断言按钮存在的话，正好漏掉这次要修的那个缺口。
+
 ## 2026-09-21 — 低成本体验细节：复制、面包屑、深色模式、最近管理员登录、窄屏次要列
 
 **Goal:** 用户清单第三部分「低成本体验细节」五项。

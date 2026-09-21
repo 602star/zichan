@@ -123,9 +123,11 @@ export function UsersPage({ client, query, navigate, role }: {
     { key: 'username', header: '用户名', ...sortHeader('name', '用户名'), render: (user: AccountRow) => <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => navigate(`/users/${user.accountId}`)}>{user.username}</button> },
     { key: 'role', header: '角色', render: (user: AccountRow) => roleLabel(user.role) },
     { key: 'state', header: '启用状态', render: (user: AccountRow) => user.disabled ? <Badge tone="bad">已禁用</Badge> : <Badge tone="ok">正常</Badge> },
-    // The account id is what appears in logs, audit rows and support tickets; it used to be
-    // unselectable text that had to be retyped by hand.
-    { key: 'accountId', header: '账号 ID', optional: true, secondary: true, render: (user: AccountRow) => <CopyValue value={user.accountId} label="账号 ID" /> },
+    // The account id is what appears in logs, audit rows and support tickets, but the list only
+    // ever showed it as a link target: an operator who needed to quote it had to open the detail
+    // page first. The value stays on screen — a column headed 账号 ID that only offers a button
+    // labelled the same thing shows nothing to read.
+    { key: 'accountId', header: '账号 ID', optional: true, secondary: true, render: (user: AccountRow) => <span style={row}><code style={{ fontSize: 'var(--fs-sm)' }}>{user.accountId}</code><CopyValue value={user.accountId} /></span> },
     { key: 'protection', header: '保护模式', optional: true, render: (user: AccountRow) => user.protectionMode === 'managed' ? '云端托管' : user.protectionMode === 'private' ? '私密' : user.protectionMode === 'relay' ? '中继' : '未设置' },
     {
       key: 'quota', header: '容量使用率', ...sortHeader('usage', '容量使用率'), render: (user: AccountRow) => (
