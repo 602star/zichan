@@ -328,6 +328,21 @@ export class LedgerPreviewRegistry {
     return session;
   }
 
+  /**
+   * The live session for one account, if any — without creating one.
+   *
+   * Opening decrypts a ledger and is therefore an audited act requiring a fresh login. A caller
+   * that only wants to know whether a preview is already open must not be able to trigger that
+   * decryption as a side effect, or a plain page load would become an unaudited read.
+   */
+  find(username: string): LedgerPreviewSession | undefined {
+    this.sweep();
+    for (const session of this.sessions.values()) {
+      if (session.username === username) return this.read(session.id);
+    }
+    return undefined;
+  }
+
   /** Drop a session and its plaintext now. */
   close(id: string): boolean {
     return this.sessions.delete(id);

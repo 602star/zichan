@@ -1383,11 +1383,20 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       return send(res, 200, { devices, nextCursor, paginationUnit: 'account' });
     }
 
+    /**
+     * Reports the preview already open for an account, if any.
+     *
+     * This must never open one. `registry.open` decrypts the user's ledger and replay it; a GET
+     * that did that would turn a page load into an unaudited read with no fresh-login check and
+     * no recorded reason — the exact act POST is guarded for. A GET answers "is there one?", and
+     * `undefined` is the honest answer to "no".
+     */
     if (req.method === 'GET' && parts[0] === 'users' && parts[2] === 'preview') {
       const username = decodeURIComponent(parts[1] ?? '');
       if (!await store.getUser(username)) return send(res, 404, { error: 'user not found' });
       if (auth.role !== 'owner') await assertManageTarget(username);
-      const preview = await requireLedgerPreview(username);
+      const preview = deps.ledgerPreview?.find(username);
+      if (!preview) return send(res, 404, { code: 'PREVIEW_NOT_OPEN', error: '当前没有打开的预览' });
       return send(res, 200, previewSummary(preview));
     }
 

@@ -10,7 +10,7 @@ import {
   systemPrefersDark,
 } from '../appearance.js';
 import { AdminClient, type AdminHealth } from './client.js';
-import { adminHref, navigate as navigateRoute, useRoute } from './router.js';
+import { adminBasePath, adminHref, navigate as navigateRoute, useRoute } from './router.js';
 import { AuditPage, LogsPage } from './LogsPage.js';
 import { AlertsPage } from './AlertsPage.js';
 import { SecurityEventsPage } from './SecurityEventsPage.js';
@@ -24,6 +24,7 @@ import { SecurityPage } from './SecurityPage.js';
 import { StoragePage } from './StoragePage.js';
 import { SyncPage } from './SyncPage.js';
 import { UserDetailPage } from './UserDetailPage.js';
+import { PreviewPage } from './PreviewPage.js';
 import { UsersPage } from './UsersPage.js';
 import './admin.css';
 import { PasswordRecovery } from '../ui/PasswordRecovery.js';
@@ -47,6 +48,7 @@ const NAVIGATION: { path: string; label: string; ownerOnly?: boolean }[] = [
 ];
 
 export function AdminApp({ baseUrl }: { baseUrl: string }) {
+  const route = useRoute();
   const clientRef = useRef<AdminClient>();
   const [account, setAccount] = useState<SyncAuthMe>();
   const [health, setHealth] = useState<AdminHealth>();
@@ -153,6 +155,33 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
     finally { setBusy(false); }
   }
 
+  /**
+   * A preview is not a console tab: it shows one account's ledger through the ordinary ledger
+   * UI, so it replaces the console chrome entirely rather than sitting inside it. Nesting it
+   * would put two headers and two navigation systems on one screen and leave the operator
+   * unsure which layer they are looking at — the exact confusion the preview banner exists to
+   * prevent. It is dispatched here, above the console's own header, for that reason.
+   *
+   * The target travels in the query rather than as a second path segment. The bundle is built
+   * with relative asset paths, so a URL one level deeper (`…/preview/<user>`) resolves
+   * `./assets/...` against that extra segment and 404s on any hard reload or shared link. Every
+   * other console page that carries state (the user list's filters, the sync page's account)
+   * uses a query for the same reason.
+   */
+  if (account && clientRef.current) {
+    const previewTarget = route.segments[0] === 'preview' ? route.query.get('username') ?? '' : '';
+    if (previewTarget) {
+      return (
+        <PreviewPage
+          client={clientRef.current}
+          username={previewTarget}
+          operator={account.username}
+          navigate={(to) => navigateRoute(adminHref(adminBasePath(window.location), to))}
+        />
+      );
+    }
+  }
+
   return <main className="zc-admin-root" style={{ minHeight: '100dvh', background: 'var(--bg)', color: 'var(--text-primary)', padding: 'clamp(12px, 3vw, 32px)', boxSizing: 'border-box', fontFamily: 'system-ui, sans-serif' } as CSSProperties}>
     <div style={{ maxWidth: 1220, margin: '0 auto' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
@@ -238,10 +267,15 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
 
   useEffect(() => { setMenuOpen(false); }, [route.path]);
   // Several console tabs are open at once during an incident; without a title they are
-  // indistinguishable in the tab bar. The user detail page names the account it shows.
+  // indistinguishable in the tab bar. The user detail page names the account it shows, and a
+  // preview names it too — a tab reading "运行概览" while showing a user's ledger is the one
+  // label that would be actively wrong.
   useEffect(() => {
+    const preview = route.segments[0] === 'preview' ? route.query.get('username') : undefined;
     const detail = route.segments[0] === 'users' && route.segments[1] ? ` · ${route.segments[1]}` : '';
-    document.title = `${current.label}${detail} · 服务器管理后台`;
+    document.title = preview
+      ? `预览 · ${preview} · 服务器管理后台`
+      : `${current.label}${detail} · 服务器管理后台`;
     // `route.path` is the string identity of the view; `segments` is rebuilt per route object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current.label, route.path]);
@@ -275,6 +309,9 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
       default: return <OverviewPage client={client} navigate={go} accountName={account.username} role={role} />;
     }
   })();
+
+  // A preview replaces the whole console chrome, so it is dispatched in `AdminApp` before the
+  // shell renders at all. Nothing to do here.
 
   return (
     <div className="zc-admin-shell">

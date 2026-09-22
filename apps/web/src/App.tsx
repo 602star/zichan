@@ -1,5 +1,5 @@
 import { accountSessionStorage } from './account-storage.js';
-import { lazy, Suspense, useEffect, useId, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
+import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
 import type { LedgerBackup } from '@zichan/db';
 import { type LedgerMode, localToday } from '@zichan/core';
 import { useStore } from './db/store.js';
@@ -76,8 +76,34 @@ const ACTIVE_SCREEN_KEY = 'zichan.activeScreen';
 const RETRY_SCREEN_KEY = 'zichan.retryScreen';
 const SCREEN_IDS = new Set<ScreenId>(NAVIGATION_ITEMS.map((item) => item.id));
 
-function initialScreen(): ScreenId {
+/**
+ * Screens a preview must never open.
+ *
+ * 同步 and 设置 describe the device the page runs on: saved connections, backup files, storage
+ * quota. Against someone else's ledger those readings are not merely unhelpful, they are wrong
+ * about the user — "还没有本地备份" is a claim about their data based on the operator's machine.
+ * The preview therefore offers the ledger screens and says so; it does not fake device facts.
+ */
+export const PREVIEW_HIDDEN_SCREENS: readonly ScreenId[] = ['sync', 'settings'];
+
+/** Redirect a screen the preview cannot honestly show, so a deep link lands somewhere real. */
+export function clampPreviewScreen(screen: ScreenId): ScreenId {
+  return PREVIEW_HIDDEN_SCREENS.includes(screen) ? 'dashboard' : screen;
+}
+
+/** The navigation a preview offers: the ledger's own order, minus the device-only screens. */
+export function previewNavigation(preferences: NavigationPreferences): NavigationPreferences {
+  return {
+    order: preferences.order,
+    visible: preferences.visible.filter((id) => !PREVIEW_HIDDEN_SCREENS.includes(id)),
+  };
+}
+
+function initialScreen(preview: boolean): ScreenId {
   try {
+    // A preview reads no session state: those keys belong to the operator's own ledger session,
+    // and consuming them here would consume them for the ledger app they came back to.
+    if (preview) return 'dashboard';
     if (connectionLinkFromLocation()) return 'sync';
     if (['quick-expense', 'account-setup'].includes(accountSessionStorage.getItem('zichan.postFirstRun') ?? '')) return 'transactions';
     const stored = accountSessionStorage.getItem(RETRY_SCREEN_KEY);
@@ -246,9 +272,9 @@ function importDiff(backup: LedgerBackup, snap: Snapshot | null): ImportDiff {
 }
 
 export function App() {
-  const { store, bump, storageBackend, dataLocation } = useStore();
+  const { store, bump, storageBackend, dataLocation, preview } = useStore();
   const snap = useSnapshot('shell');
-  const [screen, setScreen] = useState<ScreenId>(initialScreen);
+  const [screen, setScreen] = useState<ScreenId>(() => initialScreen(Boolean(preview)));
   // Appearance is a device preference, not ledger data: it is read from local
   // storage once and written back on change, never synced or exported.
   const [appearance, setAppearance] = useState(readAppearancePreference);
@@ -286,6 +312,16 @@ export function App() {
   const base = snap ? baseAsset(snap) : undefined;
   const ledgerMode: LedgerMode = snap?.setting?.ledgerMode ?? 'spending';
   const navigation = parseNavigationPreferences(snap?.setting?.navigationLayoutJson);
+  const effectiveNavigation = useMemo(
+    () => (preview ? previewNavigation(navigation) : navigation),
+    [preview, navigation],
+  );
+  // A stored `screen` can point at 同步/设置 — from a previous session, or from the operator's own
+  // ledger before this preview opened. Those screens describe this device, so the preview sends
+  // them to the dashboard rather than reporting the wrong machine's state as the user's.
+  useEffect(() => {
+    if (preview) setScreen((current) => clampPreviewScreen(current));
+  }, [preview]);
   useEffect(() => {
     if (base) setBaseSymbol(base.symbol ?? `${base.code} `);
   }, [base]);
@@ -308,15 +344,25 @@ export function App() {
   }, [screen]);
 
   useEffect(() => {
+    // The saved-backup list lives in this device's storage. In a preview it would describe the
+    // administrator's own backups while the page shows someone else's ledger, which reads as
+    // "this ledger has no backups" — a false statement about the user's data.
+    if (preview) return;
     const refreshSafety = () => {
       void listSavedBackups().then(setBackups);
     };
     refreshSafety();
     window.addEventListener('zichan:safety-updated', refreshSafety);
     return () => window.removeEventListener('zichan:safety-updated', refreshSafety);
-  }, []);
+  }, [preview]);
 
-  useEffect(() => installSyncLifecycle(store, () => bumpRef.current()), [store]);
+  // A preview is a read-only copy of somebody else's ledger: installing the sync lifecycle
+  // would try to push the administrator's session at the user's account and reconcile replicas
+  // that do not exist here. It is not merely useless, it is an attempt to write.
+  useEffect(() => {
+    if (preview) return;
+    return installSyncLifecycle(store, () => bumpRef.current());
+  }, [store, preview]);
 
   async function enableModule(id: ScreenId) {
     const current = snap?.setting;
@@ -479,11 +525,14 @@ export function App() {
   // preference, so the header flags it instead of showing a neutral date.
   const staleCutoff = asOf?.stale && asOf.mode === 'manual' ? asOf : null;
   const safetyState = safetyStateFromSetting(snap?.setting);
-  const safety = safetyWarnings(backups, safetyState);
+  // Backup and self-check history belongs to a device, and in a preview there is none: the
+  // warnings would describe the administrator's own machine while the page shows the user's
+  // ledger. "还没有本地备份" would then be a false claim about the user's data.
+  const safety = preview ? [] : safetyWarnings(backups, safetyState);
 
   return (
     <div className="zc-app-shell" style={rootStyle}>
-      <Sidebar screen={screen} setScreen={setScreen} onQuickTransaction={quickTransaction} ledgerMode={ledgerMode} navigation={navigation} />
+      <Sidebar screen={screen} setScreen={setScreen} onQuickTransaction={quickTransaction} ledgerMode={ledgerMode} navigation={effectiveNavigation} />
       <main className="zc-app-main">
         <header className="zc-app-header" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -495,11 +544,17 @@ export function App() {
             <div className="zc-header-subtitle" style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginTop: 3 }}>{sub}</div>
           </div>
           <div className="zc-header-meta" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div className="zc-header-actions" style={{ display: 'flex', gap: 8 }}>
-              <button onClick={doExport} style={ghostBtn} title="导出加密 .zcbak 备份">导出</button>
-              <button onClick={() => fileRef.current?.click()} style={ghostBtn} title="从加密归档导入">导入</button>
-              <input ref={fileRef} type="file" accept="application/x-zichan-backup,.zcbak" onChange={doImport} style={{ display: 'none' }} />
-            </div>
+            {/* Export and import act on this device's storage and on a .zcbak file. In a preview
+                there is neither: the data came from the server, and "exporting" it would write a
+                user's plaintext ledger onto the administrator's disk. The banner owns the only
+                action a preview has. */}
+            {preview ? null : (
+              <div className="zc-header-actions" style={{ display: 'flex', gap: 8 }}>
+                <button onClick={doExport} style={ghostBtn} title="导出加密 .zcbak 备份">导出</button>
+                <button onClick={() => fileRef.current?.click()} style={ghostBtn} title="从加密归档导入">导入</button>
+                <input ref={fileRef} type="file" accept="application/x-zichan-backup,.zcbak" onChange={doImport} style={{ display: 'none' }} />
+              </div>
+            )}
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface)',
               border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '8px 15px',
@@ -545,8 +600,11 @@ export function App() {
             {screen === 'reports' && <Reports />}
             {screen === 'history' && <History />}
             {screen === 'manage' && <Manage />}
-            {screen === 'sync' && <Sync />}
-            {screen === 'settings' && (
+            {/* 同步 and 设置 describe this device, not the ledger. A deep link or a restored
+                `screen` value must not land on them in a preview, so they are refused here too
+                rather than only hidden from the navigation. */}
+            {screen === 'sync' && !preview && <Sync />}
+            {screen === 'settings' && !preview && (
               <Settings
                 theme={theme}
                 mode={appearance.mode}
@@ -571,7 +629,7 @@ export function App() {
         reportCurrency={base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}
         asOf={formatAsOfDate(asOf?.asOf)}
         ledgerMode={ledgerMode}
-        navigation={navigation}
+        navigation={effectiveNavigation}
         enablingModule={enablingModule}
         onEnableModule={(id) => void enableModule(id)}
       />

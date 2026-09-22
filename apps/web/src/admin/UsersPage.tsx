@@ -146,6 +146,9 @@ export function UsersPage({ client, query, navigate, role }: {
       key: 'actions', header: '操作', render: (user: AccountRow) => (
         <div style={row}>
           <Button onClick={() => navigate(`/users/${user.accountId}`)}>详情</Button>
+          {/* Reading a ledger is allowed on any account, so this needs no permission check —
+              the server refuses only where it holds no key to decrypt with. */}
+          <Button onClick={() => navigate(`/preview/${encodeURIComponent(user.username)}`)}>预览</Button>
           <Button onClick={() => setOpenRow((current) => current === user.accountId ? '' : user.accountId)}>
             {openRow === user.accountId ? '收起快捷处理' : '快捷处理'}
           </Button>

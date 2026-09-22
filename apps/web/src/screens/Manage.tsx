@@ -62,7 +62,7 @@ function readManageTarget(): ManageTarget {
 }
 
 export function Manage() {
-  const { store, bump } = useStore();
+  const { store, bump, preview } = useStore();
   const snap = useSnapshot('manage');
   const [accountSetupOpen, setAccountSetupOpen] = useState(false);
   const [payeeView, setPayeeView] = useState<'mine' | 'catalog'>('mine');
@@ -350,6 +350,7 @@ export function Manage() {
           />
           <AttachmentSection
             items={snap.attachments}
+            preview={Boolean(preview)}
             onDelete={async (attachment) => {
               await store.runInAuditBatch(`删除附件“${attachment.fileName}”`, async (transactionStore) => {
                 await transactionStore.attachments.remove(attachment.id, attachment.version);
@@ -1102,7 +1103,7 @@ function Section<T extends { id: string; version: number }>(props: {
   );
 }
 
-function AttachmentSection({ items, onDelete }: { items: Attachment[]; onDelete: (attachment: Attachment) => Promise<void> }) {
+function AttachmentSection({ items, preview, onDelete }: { items: Attachment[]; preview: boolean; onDelete: (attachment: Attachment) => Promise<void> }) {
   const { store } = useStore();
   const [query, setQuery] = useState('');
   const [deleting, setDeleting] = useState<Attachment | null>(null);
@@ -1110,13 +1111,19 @@ function AttachmentSection({ items, onDelete }: { items: Attachment[]; onDelete:
   const [replicas, setReplicas] = useState<AttachmentReplicaBlobRow[]>([]);
   const [fetching, setFetching] = useState('');
   const [message, setMessage] = useState('');
-  const profileNames = Object.fromEntries(loadSyncConnections().map((profile) => [profile.id, profile.alias]));
+  // Both columns below describe *this device*: which blobs it has downloaded, and which sync
+  // profiles it has saved. In a preview neither belongs to the user whose ledger is on screen,
+  // and "按需下载 / 尚未同步" would read as a statement about their data. The preview shows the
+  // metadata it actually has — which is what the server handed over.
+  const profileNames = preview ? {} : Object.fromEntries(loadSyncConnections().map((profile) => [profile.id, profile.alias]));
   const refreshStates = useCallback(async () => {
+    if (preview) return;
     const entries = await Promise.all(items.map(async (attachment) => [attachment.sha256, await attachmentStorageStatus(attachment.sha256)] as const));
     setLocalStates(Object.fromEntries(entries));
     setReplicas(await store.attachmentState.listReplicaBlobs());
-  }, [items, store]);
+  }, [items, store, preview]);
   useEffect(() => {
+    if (preview) return;
     let active = true;
     const refresh = () => void refreshStates().catch(() => undefined);
     void (async () => {
@@ -1132,7 +1139,7 @@ function AttachmentSection({ items, onDelete }: { items: Attachment[]; onDelete:
       active = false;
       window.removeEventListener(ATTACHMENT_SYNC_STATE_EVENT, refresh);
     };
-  }, [items, refreshStates, store]);
+  }, [items, refreshStates, store, preview]);
   const fetchBody = async (attachment: Attachment) => {
     setFetching(attachment.id);
     setMessage('');
@@ -1175,14 +1182,17 @@ function AttachmentSection({ items, onDelete }: { items: Attachment[]; onDelete:
                 <td style={tdStyle}><b>{attachment.fileName}</b><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>{attachment.mimeType ?? '未知类型'} · 内容寻址对象</div></td>
                 <td style={tdStyle}>{attachment.entityType} · {attachment.entityId.slice(0, 8)}</td>
                 <td style={tdStyle}>{attachment.sizeBytes > 1024 * 1024 ? `${(attachment.sizeBytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB`}</td>
-                <td style={{ ...tdStyle, color: local === 'ready' ? 'var(--positive)' : local === 'trash' ? 'var(--accent)' : 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{local === 'ready' ? '可用' : local === 'trash' ? '回收区' : '按需下载'}</td>
+                <td style={{ ...tdStyle, color: preview ? 'var(--text-tertiary)' : local === 'ready' ? 'var(--positive)' : local === 'trash' ? 'var(--accent)' : 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{preview ? '预览不显示' : local === 'ready' ? '可用' : local === 'trash' ? '回收区' : '按需下载'}</td>
                 <td style={{ ...tdStyle, fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)', maxWidth: 220 }}>
-                  {remote.length ? remote.map((row) => `${profileNames[row.profileId] ?? row.profileId.slice(0, 8)}：${replicaStateLabel(row.state)}`).join(' · ') : '尚未同步'}
+                  {preview ? '预览不显示' : remote.length ? remote.map((row) => `${profileNames[row.profileId] ?? row.profileId.slice(0, 8)}：${replicaStateLabel(row.state)}`).join(' · ') : '尚未同步'}
                 </td>
                 <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 'var(--fs-meta)' }}>{attachment.sha256.slice(0, 16)}...</td>
                 <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                  {local !== 'ready' && <button type="button" disabled={fetching === attachment.id} onClick={() => void fetchBody(attachment)} style={{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', minHeight: 34, padding: '6px 10px', cursor: 'pointer', marginRight: 6 }}>{fetching === attachment.id ? '取回中…' : '取回正文'}</button>}
-                  <button type="button" onClick={() => setDeleting(attachment)} style={{ border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', minHeight: 34, padding: '6px 10px', cursor: 'pointer' }}>删除</button>
+                  {/* Fetching a body downloads it into this device's attachment store, and deleting
+                      edits the ledger. A preview offers neither: it is a read of what the server
+                      already holds. */}
+                  {!preview && local !== 'ready' && <button type="button" disabled={fetching === attachment.id} onClick={() => void fetchBody(attachment)} style={{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', minHeight: 34, padding: '6px 10px', cursor: 'pointer', marginRight: 6 }}>{fetching === attachment.id ? '取回中…' : '取回正文'}</button>}
+                  {preview ? null : <button type="button" onClick={() => setDeleting(attachment)} style={{ border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', minHeight: 34, padding: '6px 10px', cursor: 'pointer' }}>删除</button>}
                 </td>
               </tr>
             })}

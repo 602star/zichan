@@ -70,6 +70,14 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
       */}
       <Panel title="关联排障" note="从异常追到用户后，用这些入口查这个人相关的同步、日志、会话、审计与任务；筛选会带到目标页并写进 URL，可以直接分享。">
         <div style={row}>
+          {/*
+            Previewing is the one act an administrator may perform on any account, so it is
+            offered here rather than hidden behind a permission check. A private-mode account
+            has no sealed secret for the server to use, and the server says so on open; showing
+            the button for those accounts and reporting why beats an absent control that leaves
+            an operator wondering whether the feature exists.
+          */}
+          <Button onClick={() => navigate(`/preview/${encodeURIComponent(account.username)}`)}>预览记账数据</Button>
           <Button onClick={() => navigate(`/sync?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的同步诊断</Button>
           <Button onClick={() => navigate(`/logs?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的运行日志</Button>
           <Button onClick={() => navigate(`/sessions?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的会话</Button>

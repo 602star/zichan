@@ -59,7 +59,14 @@ import { syncConfiguredServers } from '../sync-orchestrator.js';
 import { clearCredentialVaultRuntimeState, persistCredential, runtimeCredentialMap, unlockCredentialVault } from '../credential-vault.js';
 import { loadSharedSyncDirectory, mergeSharedSyncDirectory, saveSharedSyncDirectory } from '../sync-server-directory.js';
 
-interface StoreCtx {
+/**
+ * What every ledger screen reads.
+ *
+ * Exported because the administrator preview mounts the same screens against a different
+ * source: it supplies this shape over a read-only in-memory store. Two providers, one
+ * context — a second context would mean a second `App`.
+ */
+export interface StoreCtx {
   store: SqlLedgerStore;
   /** Bumped after a write so data hooks reload. */
   rev: number;
@@ -70,9 +77,25 @@ interface StoreCtx {
   browserStoragePersistent: boolean;
   resetLocalData: () => Promise<void>;
   exitAccount?: () => Promise<void>;
+  /**
+   * Present only in the administrator preview. The ledger app reads it to replace the
+   * ordinary header affordances (export, import, settings) with preview facts.
+   */
+  preview?: {
+    previewId: string;
+    username: string;
+    operator: string;
+    expiresAt: string;
+    openedAt: string;
+    transactionCount: number;
+    attachmentCount: number;
+    commitCount: number;
+  };
+  closePreview?: () => Promise<void>;
 }
 
-const Ctx = createContext<StoreCtx | null>(null);
+export const StoreCtxContext = createContext<StoreCtx | null>(null);
+const Ctx = StoreCtxContext;
 const storeCloseFlights = new WeakMap<object, Promise<void>>();
 
 type ClosableStore = Pick<SqlLedgerStore, 'close'>;

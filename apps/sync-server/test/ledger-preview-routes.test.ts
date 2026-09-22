@@ -201,6 +201,36 @@ describe('ledger preview routes', () => {
     }
   }, 120_000);
 
+  it('reports an open preview without opening one', async () => {
+    const f = await fixture();
+    try {
+      // Nothing is open yet, and asking must not open anything. A GET that decrypted would be an
+      // unaudited read: no fresh-login check, no recorded reason.
+      const before = await f.api('/users/member-user/preview');
+      expect(before.status).toBe(404);
+      const beforeBody = (await before.json()) as { code: string };
+      expect(beforeBody.code).toBe('PREVIEW_NOT_OPEN');
+
+      const opened = await f.api('/users/member-user/preview', {
+        method: 'POST',
+        body: JSON.stringify({ reason: '排查' }),
+      });
+      expect(opened.status).toBe(201);
+      const summary = (await opened.json()) as { previewId: string };
+
+      const existing = await f.api('/users/member-user/preview');
+      expect(existing.status).toBe(200);
+      expect(((await existing.json()) as { previewId: string }).previewId).toBe(summary.previewId);
+
+      // And the unaudited GET left no audit row behind: the only one is the deliberate POST.
+      const store = new SyncServerStore(join(f.dataDir, 'server.sqlite'), 'open', f.server.serverId);
+      const audit = await store.listAdminAudit({ limit: 50 });
+      expect(audit.entries.filter((row) => row['action'] === 'ledger-preview-open')).toHaveLength(1);
+    } finally {
+      await f.server.close();
+    }
+  }, 120_000);
+
   it('refuses the backup once the preview is closed', async () => {
     const f = await fixture();
     try {
