@@ -861,11 +861,11 @@ export function gameForm(): EntityFormSpec<Game> {
   };
 }
 
-export function gameAccountForm(snap: Snapshot): EntityFormSpec<GameAccount> {
+export function gameAccountForm(snap: Snapshot, gameId?: string): EntityFormSpec<GameAccount> {
   return {
     title: '游戏账号',
     fields: [
-      { key: 'gameId', label: '游戏', type: 'select', half: true, options: gameOpts(snap), required: true },
+      { key: 'gameId', label: '游戏', type: 'select', half: true, options: gameOpts(snap), defaultValue: gameId, required: true },
       { key: 'accountName', label: '账号名称', type: 'text', half: true, required: true },
       { key: 'serverName', label: '区服', type: 'text', half: true },
       { key: 'characterName', label: '角色名', type: 'text', half: true },
@@ -877,12 +877,13 @@ export function gameAccountForm(snap: Snapshot): EntityFormSpec<GameAccount> {
   };
 }
 
-export function gameSeasonForm(snap: Snapshot): EntityFormSpec<GameSeason> {
+export function gameSeasonForm(snap: Snapshot, gameId?: string): EntityFormSpec<GameSeason> {
   const asOf = currentDate();
   return {
-    title: '赛季',
+    title: '游戏赛季',
+    modalWidth: 680,
     fields: [
-      { key: 'gameId', label: '游戏', type: 'select', half: true, options: gameOpts(snap), required: true },
+      { key: 'gameId', label: '游戏', type: 'select', half: true, options: gameOpts(snap), defaultValue: gameId, required: true },
       { key: 'name', label: '赛季名称', type: 'text', half: true, required: true },
       { key: 'seasonNo', label: '赛季编号', type: 'text', half: true },
       { key: 'status', label: '状态', type: 'select', half: true, options: SEASON_STATUS },
@@ -946,19 +947,20 @@ function gameCashflowFormValues(snap: Snapshot, record: GameRecord, role: GameCa
   };
 }
 
-export function gameRecordForm(snap: Snapshot): EntityFormSpec<GameRecordFormValue> {
+export function gameRecordForm(snap: Snapshot, context: { gameId?: string; seasonId?: string; gameAccountId?: string } = {}): EntityFormSpec<GameRecordFormValue> {
   const asOf = currentDate();
   const usesAccounts = true;
   return {
     title: '游戏记录',
-    draftKey: 'game-record',
+    draftKey: `game-record:${context.gameId ?? 'any'}:${context.seasonId ?? 'unassigned'}`,
+    confirmNewDraft: true,
     modalWidth: 900,
     fields: [
       { key: 'date', label: '日期', type: 'date', half: true, defaultValue: asOf, required: true },
       { key: 'recordType', label: '记录类型', type: 'select', half: true, options: REC_TYPES, required: true },
-      { key: 'gameId', label: '游戏', type: 'select', half: true, options: gameOpts(snap), required: true },
-      { key: 'seasonId', label: '赛季', type: 'select', half: true, options: (v) => seasonOpts(snap, v.gameId), allowEmpty: true },
-      { key: 'gameAccountId', label: '账号（可选）', type: 'select', half: true, options: (v) => gameAccountOpts(snap, v.gameId), allowEmpty: true },
+      { key: 'gameId', label: '游戏', type: 'select', half: true, options: gameOpts(snap), defaultValue: context.gameId, required: true },
+      { key: 'seasonId', defaultValue: context.seasonId, resetWhen: ['gameId'], hint: '留空的记录可在“未分配赛季”中查看和补归属。', label: '赛季', type: 'select', half: true, options: (v) => seasonOpts(snap, v.gameId), allowEmpty: true },
+      { key: 'gameAccountId', defaultValue: context.gameAccountId, resetWhen: ['gameId'], label: '账号（可选）', type: 'select', half: true, options: (v) => gameAccountOpts(snap, v.gameId), allowEmpty: true },
       { key: 'gameCurrencyName', label: '游戏货币', type: 'text', half: true, placeholder: '初火' },
       { key: 'gameCurrencyAmount', label: '货币数量', type: 'number', half: true },
       { key: 'settlementAssetId', label: '结算币种', type: 'select', half: true, allowEmpty: true, options: settlementOpts(snap, moduleCurrencyId(snap.setting, 'game')) },
@@ -1029,7 +1031,7 @@ export function gameRecordForm(snap: Snapshot): EntityFormSpec<GameRecordFormVal
     },
     fromValues: (v, e) => ({
       ...base(e), date: v.date, recordType: v.recordType as GameRecord['recordType'], gameId: v.gameId,
-      seasonId: S(v.seasonId), gameAccountId: S(v.gameAccountId), gameCurrencyName: S(v.gameCurrencyName),
+      seasonId: v.seasonId || '', gameAccountId: v.gameAccountId || '', gameCurrencyName: S(v.gameCurrencyName),
       gameCurrencyAmount: S(v.gameCurrencyAmount), settlementAssetId: S(v.settlementAssetId), settlementAmount: S(v.settlementAmount),
       settlementCashflowMode: (v.settlementCashflowMode as GameCashflowMode) || 'record_only',
       settlementTransactionId: S(v.settlementTransactionId), settlementCategoryId: S(v.settlementCategoryId),

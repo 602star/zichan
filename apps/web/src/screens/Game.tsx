@@ -1,5 +1,5 @@
 import { withCashflowPayee } from '../payee-recording.js';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   localToday,
   newId,
@@ -18,8 +18,8 @@ import {
 import { useSnapshot } from '../db/snapshot.js';
 import { useStore } from '../db/store.js';
 import { EntityFormModal } from '../ui/EntityFormModal.js';
-import { gameRecordForm, gameSeasonForm, type GameRecordFormValue } from '../forms.js';
-import { buildGameSeason } from '../selectors/game.js';
+import { gameAccountForm, gameRecordForm, gameSeasonForm, type GameRecordFormValue } from '../forms.js';
+import { ALL_GAME_RECORDS, UNASSIGNED_GAME_RECORDS, buildGameSeason } from '../selectors/game.js';
 import { money, signedMoney, num } from '../format.js';
 import { amountColor, btnOutline, btnPrimary, card, pillBtn, tag as tagStyle } from '../ui/styles.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
@@ -139,6 +139,10 @@ export function Game() {
   const [seasonId, setSeasonId] = useState<string | null>(null);
   const [editRec, setEditRec] = useState<GameRecord | 'new' | null>(null);
   const [addSeason, setAddSeason] = useState(false);
+  const [addAccount, setAddAccount] = useState(false);
+  const [preferredAccountId, setPreferredAccountId] = useState<string>();
+  const [saveNotice, setSaveNotice] = useState('');
+  const [savedRecordId, setSavedRecordId] = useState<string | null>(null);
   const [view, setView] = useState<'overview' | TimelineViewMode>('overview');
   const [focusDate, setFocusDate] = useState(localToday);
   const [dateRange, setDateRange] = useState<DateRangeValue>(() => dateRangeValue('all'));
@@ -154,6 +158,11 @@ export function Game() {
   const vm = useMemo(() => (snap && selectedGameId
     ? buildGameSeason(snap, selectedGameId, seasonId, { dateRange, accountId: accountFilter || undefined, recordType: recordTypeFilter })
     : null), [accountFilter, dateRange, recordTypeFilter, seasonId, selectedGameId, snap]);
+  useEffect(() => {
+    if (!savedRecordId) return;
+    const row = document.getElementById(`game-record-${savedRecordId}`);
+    if (row) { row.scrollIntoView({ block: 'nearest' }); setSavedRecordId(null); }
+  }, [snap, savedRecordId]);
   if (!snap) return null;
 
   const startFirstGame = async () => {
@@ -227,8 +236,9 @@ export function Game() {
         {activeGames.length > 1 ? (
           <select
             className="zc-select"
+            aria-label="当前游戏"
             value={selectedGameId}
-            onChange={(e) => { setGameId(e.target.value); setSeasonId(null); setAccountFilter(''); }}
+            onChange={(e) => { setGameId(e.target.value); setSeasonId(null); setAccountFilter(''); setPreferredAccountId(undefined); }}
             style={{ width: 180, fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-title)' }}
           >
             {activeGames.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
@@ -236,14 +246,14 @@ export function Game() {
         ) : (
           <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{vm.gameName}</div>
         )}
-        <span style={tagStyle}>{vm.gameTags}</span>
+        {vm.gameTags && <span style={tagStyle}>{vm.gameTags}</span>}
         <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>账号 · {vm.accountNames}</span>
         <div style={{ flex: 1 }} />
         <div className="zc-game-season-tabs" style={{ display: 'flex', gap: 8 }}>
-          {vm.tabs.map((t) => {
+          {[{ id: ALL_GAME_RECORDS, name: '全部记录', status: '' }, { id: UNASSIGNED_GAME_RECORDS, name: '未分配赛季', status: String(vm.unassignedCount) }, ...vm.tabs].map((t) => {
             const active = t.id === vm.activeId;
             return (
-              <button key={t.id} onClick={() => setSeasonId(t.id)} style={{
+              <button key={t.id} aria-pressed={active} onClick={() => setSeasonId(t.id)} style={{
                 padding: '9px 15px', borderRadius: 'var(--r-sm)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', cursor: 'pointer',
                 background: active ? 'var(--accent-soft)' : 'var(--surface)',
                 color: active ? 'var(--accent)' : 'var(--fg-muted)',
@@ -253,6 +263,9 @@ export function Game() {
               </button>
             );
           })}
+        </div>
+        <div className="zc-game-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button onClick={() => setAddAccount(true)} style={outlineBtn}>+ 账号</button>
           <button onClick={() => setAddSeason(true)} style={outlineBtn}>+ 赛季</button>
           <button onClick={() => setEditRec('new')} style={primaryBtn}>+ 记录</button>
         </div>
@@ -265,20 +278,23 @@ export function Game() {
         <select aria-label="游戏记录类型筛选" className="zc-select" value={recordTypeFilter} onChange={(event) => setRecordTypeFilter(event.target.value as typeof recordTypeFilter)} style={{ width: 150 }}><option value="all">全部记录类型</option>{Object.entries(REC_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
       </div>
       <DateRangeBar value={dateRange} onChange={setDateRange} />
+      {(accountFilter || recordTypeFilter !== 'all') && <button style={{ ...outlineBtn, alignSelf: 'flex-start' }} onClick={() => { setAccountFilter(''); setRecordTypeFilter('all'); }}>清除其他筛选</button>}
+      {saveNotice && <div role="status" className="zc-meta">{saveNotice}</div>}
+      {vm.activeId === UNASSIGNED_GAME_RECORDS && <p className="zc-meta">这些记录尚未分配赛季。点击记录编辑，即可选择所属赛季；不会自动改动历史归属。</p>}
 
       {view === 'overview' ? <><div className="zc-game-overview-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: 18, minWidth: 0 }}>
         <div style={card}>
-          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>{vm.season.name} · 赛季净收益（{vm.reportCurrencyCode}）</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>{vm.scopeName} · 净收益（{vm.reportCurrencyCode}）</div>
           <div style={{ fontSize: 'var(--fs-hero)', fontWeight: 'var(--fw-bold)', marginTop: 8, letterSpacing: 0, color: vm.net >= 0 ? 'var(--positive)' : 'var(--negative)' }}>
             {signedMoney(vm.net)}
           </div>
           <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4, fontWeight: 'var(--fw-regular)' }}>{vm.range}</div>
           <div className="zc-game-kpi-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 20 }}>
             {[
-              ['赛季收入', money(vm.income), 'var(--positive)'],
-              ['赛季支出', money(vm.expense), 'var(--negative)'],
-              ['每小时收益', vm.filtered ? '—' : money(vm.perHour), 'var(--fg)'],
-              ['每日收益', money(vm.perDay), 'var(--fg)'],
+              ['收入', money(vm.income), 'var(--positive)'],
+              ['支出', money(vm.expense), 'var(--negative)'],
+              ['每小时收益', vm.filtered || !vm.season ? '—' : money(vm.perHour), 'var(--fg)'],
+              ['每日收益', vm.season ? money(vm.perDay) : '—', 'var(--fg)'],
             ].map(([l, v, c]) => (
               <div key={l} style={{ background: 'var(--surface-2)', borderRadius: 'var(--r-md)', padding: 14 }}>
                 <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>{l}</div>
@@ -287,24 +303,25 @@ export function Game() {
             ))}
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16, paddingTop: 14, borderTop: '1px dashed var(--border)' }}>
-            <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>游戏时长 · {vm.hours} h</span>
+            <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>游戏时长 · {vm.season ? `${vm.hours} h` : '—'}</span>
             <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>记录余额（参考） · {num(vm.refBalance, 2)} {vm.refCurrencyLabel}</span>
           </div>
         </div>
 
         <div style={{ ...card, padding: '22px 24px' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-            <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>赛季记录流</div>
+            <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}> {vm.scopeName} · 记录流</div>
             <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>不强制库存 · 允许卖出 &gt; 买入</div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            {vm.records.map((r, i) => (
-              <div key={i} onClick={() => setEditRec(r.raw)} title="点击编辑" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
+            {!vm.records.length && <p className="zc-meta">当前范围没有记录，可查看“全部记录”或调整筛选。</p>}
+            {vm.records.map((r) => (
+              <div id={`game-record-${r.raw.id}`} className="zc-game-record-row" key={r.raw.id} role="button" tabIndex={0} aria-label={`编辑游戏记录 ${r.item || REC_LABEL[r.type]}`} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setEditRec(r.raw); } }} onClick={() => setEditRec(r.raw)} title="点击编辑" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
                 <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', width: 38, flexShrink: 0 }}>{r.date.slice(5)}</div>
                 <span style={recBadge(r.type)}>{REC_LABEL[r.type]}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-medium)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.item || REC_LABEL[r.type]}</div>
-                  <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 2 }}>{r.nativeAmount}</div>
+                  <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 2 }}>{r.nativeAmount}{!vm.season && ` · ${r.seasonName}`}</div>
                 </div>
                 <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', width: 64, textAlign: 'right', flexShrink: 0 }}>{r.acc}</div>
                 <div style={{ fontSize: 'var(--fs-body)', width: 74, textAlign: 'right', ...amountColor(r.amt) }}>
@@ -342,7 +359,7 @@ export function Game() {
 
       {editRec !== null && (
         <EntityFormModal
-          spec={gameRecordForm(snap)}
+          spec={gameRecordForm(snap, { gameId: selectedGameId, seasonId: vm.season?.id, gameAccountId: accountFilter || (accountOptions.some((a) => a.id === preferredAccountId) ? preferredAccountId : undefined) })}
           initial={editRec === 'new' ? undefined : editRec}
           onSave={async (value) => {
             const saved = await store.runInAuditBatch('保存游戏记录与交易对象', async (transactionStore) => saveGameRecordAggregate(transactionStore, {
@@ -351,6 +368,15 @@ export function Game() {
               fee: await withCashflowPayee(transactionStore, cashflowDraft(value, 'fee', usesAccounts)),
               expectedVersion: editRec === 'new' ? undefined : editRec.version,
             }));
+            setSavedRecordId(saved.record.id);
+            setGameId(saved.record.gameId);
+            setSeasonId(saved.record.seasonId || UNASSIGNED_GAME_RECORDS);
+            setDateRange(dateRangeValue('all'));
+            setAccountFilter('');
+            setRecordTypeFilter('all');
+            setFocusDate(saved.record.date);
+            setView('overview');
+            setSaveNotice('已定位到保存的记录，并重置日期、账号和类型筛选。');
             bump();
             if (editRec === 'new') {
               undo.offer('游戏记录已保存', async () => {
@@ -372,14 +398,29 @@ export function Game() {
           onClose={() => setEditRec(null)}
         />
       )}
+      {addAccount && <EntityFormModal spec={gameAccountForm(snap, selectedGameId)}
+        onSave={async (value) => {
+          await store.runInAuditBatch(`新增游戏账号“${value.accountName}”`, (tx) => tx.gameAccounts.put(value));
+          setGameId(value.gameId);
+          setAccountFilter('');
+          setPreferredAccountId(value.id);
+          setSaveNotice(`已添加账号“${value.accountName}”，新增记录时会默认选用。`);
+          bump();
+        }} onClose={() => setAddAccount(false)} />}
       {addSeason && (
         <EntityFormModal
-          spec={gameSeasonForm(snap)}
+          spec={gameSeasonForm(snap, selectedGameId)}
           onSave={async (e) => {
             await store.runInAuditBatch(
               `新增游戏赛季“${e.name}”`,
               (transactionStore) => transactionStore.gameSeasons.put(e),
             );
+            setGameId(e.gameId);
+            setSeasonId(e.id);
+            setDateRange(dateRangeValue('all'));
+            setAccountFilter('');
+            setRecordTypeFilter('all');
+            setView('overview');
             bump();
           }}
           onClose={() => setAddSeason(false)}

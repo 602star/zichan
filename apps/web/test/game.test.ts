@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { openLedger } from '@zichan/db/node';
 import { createGameWithDefaultSeason } from '../src/screens/Game.js';
-import { buildGameSeason } from '../src/selectors/game.js';
+import { ALL_GAME_RECORDS, UNASSIGNED_GAME_RECORDS, buildGameSeason } from '../src/selectors/game.js';
+import { gameAccountForm, gameRecordForm, gameSeasonForm } from '../src/forms.js';
 import { makeSnapshot } from './fixtures.js';
 
 describe('game first use', () => {
@@ -54,10 +55,11 @@ describe('buildGameSeason', () => {
     expect(vm.records[0]!.type).toBe('sell_currency');
   });
 
-  it('returns null when there are no seasons', () => {
+  it('keeps game records accessible when there are no seasons', () => {
     const s = makeSnapshot();
     s.seasons = [];
-    expect(buildGameSeason(s, s.ids.game, null)).toBeNull();
+    expect(buildGameSeason(s, s.ids.game, null)?.activeId).toBe(ALL_GAME_RECORDS);
+    expect(buildGameSeason(s, s.ids.game, null)?.records).toHaveLength(1);
   });
 
   it('filters records by an inclusive date range', () => {
@@ -92,5 +94,41 @@ describe('buildGameSeason', () => {
     const missing = buildGameSeason(s, s.ids.game, null)!;
     expect(missing.missingRateAssetCodes).toEqual(['USD']);
     expect(missing.net).toBe(-5);
+  });
+});
+
+
+describe('game record ownership', () => {
+  it('shows unassigned records without mixing other games or assigning history automatically', () => {
+    const snap = makeSnapshot();
+    const record = snap.gameRecords[0]!;
+    snap.gameRecords.push({ ...record, id: 'unassigned', seasonId: undefined });
+    snap.gameRecords.push({ ...record, id: 'foreign', gameId: 'another-game', seasonId: undefined });
+    expect(buildGameSeason(snap, snap.ids.game, null)?.records.map((r) => r.raw.id)).toEqual([record.id]);
+    expect(buildGameSeason(snap, snap.ids.game, ALL_GAME_RECORDS)?.records).toHaveLength(2);
+    const unassigned = buildGameSeason(snap, snap.ids.game, UNASSIGNED_GAME_RECORDS)!;
+    expect(unassigned.records.map((r) => r.raw.id)).toEqual(['unassigned']);
+    expect(unassigned.unassignedCount).toBe(1);
+    expect(unassigned.season).toBeUndefined();
+    expect(snap.gameRecords[1]!.seasonId).toBeUndefined();
+    snap.gameRecords[1]!.seasonId = snap.seasons[0]!.id;
+    expect(buildGameSeason(snap, snap.ids.game, null)?.records).toHaveLength(2);
+    expect(buildGameSeason(snap, snap.ids.game, UNASSIGNED_GAME_RECORDS)?.records).toHaveLength(0);
+  });
+
+  it('shares season fields and applies context only to defaults, with explicit clearing', () => {
+    const snap = makeSnapshot();
+    snap.gameCashflowLinks = [];
+    const seasonId = snap.seasons[0]!.id;
+    const form = gameRecordForm(snap, { gameId: snap.ids.game, seasonId });
+    expect(form.fields.find((f) => f.key === 'gameId')?.defaultValue).toBe(snap.ids.game);
+    expect(form.fields.find((f) => f.key === 'seasonId')?.defaultValue).toBe(seasonId);
+    expect(form.fields.find((f) => f.key === 'seasonId')?.resetWhen).toEqual(['gameId']);
+    const record = snap.gameRecords[0]!;
+    expect(form.fromValues({ ...form.toValues(record), seasonId: '' }, record).seasonId).toBe('');
+    const managed = gameSeasonForm(snap);
+    const contextual = gameSeasonForm(snap, snap.ids.game);
+    expect(contextual.fields.map((f) => ({ ...f, defaultValue: undefined }))).toEqual(managed.fields.map((f) => ({ ...f, defaultValue: undefined })));
+    expect(gameAccountForm(snap, snap.ids.game).fields.find((f) => f.key === 'gameId')?.defaultValue).toBe(snap.ids.game);
   });
 });

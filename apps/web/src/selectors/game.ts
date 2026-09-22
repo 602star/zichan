@@ -8,6 +8,9 @@ import type { Snapshot } from '../db/snapshot.js';
 import { createReportCurrency } from '../reportCurrency.js';
 import { ledgerAsOfDate } from '../as-of.js';
 
+export const ALL_GAME_RECORDS = '__all__';
+export const UNASSIGNED_GAME_RECORDS = '__unassigned__';
+
 const STATUS: Record<string, string> = { active: '进行中', ended: '已结束', upcoming: '未开始' };
 
 export interface GameRecordVM {
@@ -18,6 +21,7 @@ export interface GameRecordVM {
   acc: string;
   amt: number;
   nativeAmount: string;
+  seasonName: string;
 }
 export interface GameEfficiencyVM {
   id: string;
@@ -33,7 +37,9 @@ export interface GameSeasonVM {
   accountNames: string;
   tabs: { id: string; name: string; status: string }[];
   activeId: string;
-  season: GameSeason;
+  season?: GameSeason;
+  scopeName: string;
+  unassignedCount: number;
   range: string;
   net: number;
   income: string;
@@ -61,16 +67,20 @@ export function buildGameSeason(snap: Snapshot, gameId: string | null, selectedI
   const report = createReportCurrency(snap);
   const games = snap.games.filter((g) => !g.isDeleted);
   const game = games.find((g) => g.id === gameId) ?? games[0];
+  if (!game) return null;
   const seasons = snap.seasons
     .filter((s) => !s.isDeleted && (!game || s.gameId === game.id))
     .sort((a, b) => (b.startDate ?? '').localeCompare(a.startDate ?? ''));
-  const season = seasons.find((s) => s.id === (selectedId ?? seasons[0]?.id ?? '')) ?? seasons[0];
-  if (!season) return null;
+  const aggregate = selectedId === ALL_GAME_RECORDS || selectedId === UNASSIGNED_GAME_RECORDS;
+  const season = aggregate ? undefined : seasons.find((s) => s.id === selectedId) ?? seasons[0];
+  const activeId = season?.id ?? (selectedId === UNASSIGNED_GAME_RECORDS ? UNASSIGNED_GAME_RECORDS : ALL_GAME_RECORDS);
+  const gameRecords = snap.gameRecords.filter((r) => !r.isDeleted && r.gameId === game.id);
+  const unassignedCount = gameRecords.filter((r) => !r.seasonId).length;
 
   const gAccounts = snap.gameAccounts.filter((a) => !a.isDeleted && (!game || a.gameId === game.id));
   const dateRange = filters.dateRange ?? {};
-  const records = snap.gameRecords
-    .filter((r) => !r.isDeleted && r.seasonId === season.id)
+  const records = gameRecords
+    .filter((r) => season ? r.seasonId === season.id : activeId === UNASSIGNED_GAME_RECORDS ? !r.seasonId : true)
     .filter((r) => isDateInRange(r.date, dateRange))
     .filter((r) => !filters.accountId || r.gameAccountId === filters.accountId)
     .filter((r) => !filters.recordType || filters.recordType === 'all' || r.recordType === filters.recordType)
@@ -128,9 +138,11 @@ export function buildGameSeason(snap: Snapshot, gameId: string | null, selectedI
     gameTags: `${game?.platform ?? ''} · ${game?.serverName ?? ''}`.replace(/^ · | · $/g, ''),
     accountNames: gAccounts.map((a) => a.accountName).join(' / ') || '—',
     tabs: seasons.map((s) => ({ id: s.id, name: s.name, status: STATUS[s.status] ?? '' })),
-    activeId: season.id,
+    activeId,
     season,
-    range: `${season.startDate ?? ''} ~ ${season.endDate ?? '至今'} · ${summary.days} 天`,
+    scopeName: season?.name ?? (activeId === UNASSIGNED_GAME_RECORDS ? '未分配赛季' : '全部记录'),
+    unassignedCount,
+    range: season ? `${season.startDate ?? ''} ~ ${season.endDate ?? '至今'} · ${summary.days} 天` : `共 ${records.length} 条记录`,
     net: net.toNumber(),
     income: income.toString(),
     expense: expense.toString(),
@@ -145,6 +157,7 @@ export function buildGameSeason(snap: Snapshot, gameId: string | null, selectedI
     byType: efficiency(byTypeRaw),
     records: records.map((r) => ({
       raw: r,
+      seasonName: r.seasonId ? snap.seasons.find((s) => s.id === r.seasonId)?.name ?? '历史赛季' : '未分配赛季',
       date: r.date, type: r.recordType, item: r.note ?? '',
       acc: accName(r.gameAccountId),
       amt: financial(r).net.toNumber(),
