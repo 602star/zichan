@@ -61,7 +61,11 @@ export interface LedgerPreviewSession {
 
 export interface LedgerPreviewOptions {
   store: SyncServerStore;
-  custodyKey: Buffer;
+  /**
+   * The deployment custody key. Passed as a thunk because the server loads it while booting,
+   * after the router that owns this registry is already constructed.
+   */
+  custodyKey: Buffer | (() => Buffer);
   serverId: string;
   /** Sliding window: each read pushes expiry forward. */
   idleTtlMs?: number;
@@ -177,7 +181,8 @@ export async function buildLedgerBackup(
   commitCount: number;
   ledgerId: string;
 }> {
-  const { store, custodyKey, serverId } = options;
+  const { store, serverId } = options;
+  const custodyKey = typeof options.custodyKey === 'function' ? options.custodyKey() : options.custodyKey;
   const user = await store.getUser(username);
   if (!user) throw new ServerStoreError('UNKNOWN_USER', 404, '账号不存在');
 

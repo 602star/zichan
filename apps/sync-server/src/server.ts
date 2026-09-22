@@ -6,6 +6,7 @@ import { extname, join, resolve, sep } from 'node:path';
 import * as opaque from '@serenity-kit/opaque';
 import { normalizeSyncUsername, createLedgerKeyEnvelope, unlockLedgerKeyEnvelope, newId, PLAIN_HTTP_HOST_ALLOWLIST, type LedgerKeyEnvelope } from '@zichan/core';
 import { loadCustodyKey, sealCustodySecret, openCustodySecret } from './key-custody.js';
+import { LedgerPreviewRegistry } from './ledger-preview.js';
 import { EncryptedBlobStore } from './blob-store.js';
 import { createAdminRouter } from './admin.js';
 import { createRequestOrigin } from './request-origin.js';
@@ -388,6 +389,11 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     );
     opaqueServerPublicKey = opaque.server.getPublicKey(opaqueServerSetup);
   });
+  // A preview is only meaningful where the server holds a custody key, so a deployment with
+  // custody disabled gets no registry and the route answers with a clear refusal.
+  const ledgerPreview = custodyEnabled
+    ? new LedgerPreviewRegistry({ store, serverId, custodyKey: () => custodyKey })
+    : undefined;
   const log = async (level: ServerLog['level'], action: string, message: string, meta: Omit<ServerLog, 'id' | 'at' | 'level' | 'action' | 'message'> = {}) => {
     await store.appendLog({ id: randomBytes(12).toString('hex'), at: nowIso(), level, action, message, ...meta });
   };
@@ -553,6 +559,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     basePath,
     defaultProtection,
     custodyEnabled,
+    ledgerPreview,
     allowInsecureHttp,
     accessTokenMinutes: ACCESS_TOKEN_TTL_MS / 60_000,
     sessionDays: SESSION_TTL_MS / 86_400_000,

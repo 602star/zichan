@@ -211,6 +211,8 @@ export type AdminMutation =
   | { action: 'alert-silence'; key: string; hours: number }
   /** Second-factor changes on the actor's own account; audited like any other security change. */
   | { action: 'mfa-enroll'; accountId: string }
+  /** Reading a user's decrypted ledger is a management act and is recorded as one. */
+  | { action: 'ledger-preview-open'; accountId: string; previewId: string }
   | { action: 'mfa-disable'; accountId: string }
   | { action: 'mfa-recovery-codes'; accountId: string }
   | { action: 'alert-unsilence'; key: string }
@@ -1581,6 +1583,9 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       const target = targetId ? await driver.get<{ username: string; disabled: number; account_id: string; role: AccountRole }>(`${roleSql} WHERE i.account_id = ?`, [targetId]) : undefined;
       if (targetId && !target) throw new ServerStoreError('NOT_FOUND', 404, 'account not found');
       const quotaMutation = mutation.action === 'commit-quota' || mutation.action === 'blob-quota';
+      // A preview only reads. It is the one management act an administrator may perform on any
+      // account, so the privileged-target guard below must not apply to it.
+      const readOnlyMutation = mutation.action === 'ledger-preview-open';
       // Everyone keeps control of their own devices: an owner (or administrator) may revoke
       // their own other sessions after re-authenticating, while other privileged accounts
       // stay protected. The current session ends through logout instead.
@@ -1592,7 +1597,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
         if (!target || target.account_id !== actor.account_id) {
           throw new ServerStoreError('PROTECTED_ACCOUNT', 403, '两步验证只能由账号本人管理，不能由他人代操作');
         }
-      } else if (target && !selfSessions && ((!quotaMutation && target.role === 'owner') || actor.role === 'admin' && target.role !== 'member')) {
+      } else if (target && !selfSessions && !readOnlyMutation && ((!quotaMutation && target.role === 'owner') || actor.role === 'admin' && target.role !== 'member')) {
         throw new ServerStoreError('PROTECTED_ACCOUNT', 403, 'cannot manage this privileged account');
       }
       if ((mutation.action === 'role' || mutation.action === 'registration' || mutation.action === 'settings-save') && actor.role !== 'owner') {
@@ -1715,6 +1720,10 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
           await driver.run('UPDATE admin_alerts SET silenced_until = NULL, silenced_by = NULL, silence_reason = NULL WHERE alert_key = ?', [mutation.key]);
           after = { key: mutation.key, silencedUntil: null };
         }
+      } else if (mutation.action === 'ledger-preview-open') {
+        // Reading a decrypted ledger changes no state, but it still has to be recorded: the
+        // audit row is the only durable trace that the plaintext was viewed.
+        after = { previewId: mutation.previewId };
       } else if (mutation.action === 'maintenance-on' || mutation.action === 'maintenance-off') {
         // Stored in the same key/value table the settings use, and written inside this transaction
         // so the flag and its audit record cannot diverge.
@@ -1728,7 +1737,9 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
         after = { enabled: next.enabled, until: next.until, message: next.message };
       }
       if (target && (mutation.action === 'role' || mutation.action === 'state')) await driver.run('DELETE FROM account_password_resets WHERE account_id = ?', [target.account_id]);
-      if (target) await driver.run('UPDATE sync_users SET revision = revision + 1 WHERE username = ?', [target.username]);
+      // A preview changes nothing about the account, so it must not advance the revision:
+      // doing so would make a concurrent administrator's save look stale.
+      if (target && mutation.action !== 'ledger-preview-open') await driver.run('UPDATE sync_users SET revision = revision + 1 WHERE username = ?', [target.username]);
       await driver.run('INSERT INTO server_admin_audit (at, actor_account_id, target_account_id, action, before_json, after_json, reason, request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         [at, actor.account_id, targetId ?? null, mutation.action, JSON.stringify(before), JSON.stringify(after), options.reason ?? null, options.requestId ?? null]);
     });

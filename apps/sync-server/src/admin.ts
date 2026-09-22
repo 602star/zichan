@@ -37,6 +37,7 @@ import {
   type SyncServerStore,
 } from './store.js';
 import type { MfaService } from './mfa.js';
+import type { LedgerPreviewRegistry, LedgerPreviewSession } from './ledger-preview.js';
 
 /** Task types that only the server owner may create, re-run or cancel. */
 const JOB_OWNER_ONLY: AdminJobType[] = ['backup.verify', 'restore.drill'];
@@ -62,6 +63,8 @@ export interface AdminRouterDeps {
   basePath: string;
   defaultProtection: string;
   custodyEnabled: boolean;
+  /** Undefined when the server holds no custody key, which disables previews entirely. */
+  ledgerPreview?: LedgerPreviewRegistry;
   allowInsecureHttp: boolean;
   accessTokenMinutes: number;
   sessionDays: number;
@@ -80,6 +83,7 @@ const AUDIT_ACTIONS = [
   'alert-acknowledge', 'alert-silence', 'alert-unsilence',
   'mfa-enroll', 'mfa-disable', 'mfa-recovery-codes',
   'maintenance-on', 'maintenance-off',
+  'ledger-preview-open',
 ];
 
 const SYNC_EVENT_CATEGORIES = ['session-invalid', 'quota-exceeded', 'protocol-incompatible', 'ledger-mismatch', 'server-storage-error', 'other'];
@@ -206,6 +210,10 @@ export function describeAudit(
       return `管理员 ${actor} 将告警 ${String(after['key'] ?? '')} 静默 ${String(after['hours'] ?? '')} 小时（至 ${after['silencedUntil'] ? dateOnly(String(after['silencedUntil'])) : '未记录'}），期间不发送外部通知。${reason}`;
     case 'alert-unsilence':
       return `管理员 ${actor} 取消了对告警 ${String(after['key'] ?? '')} 的静默。${reason}`;
+    case 'ledger-preview-open':
+      // Reading a decrypted ledger leaves no state behind, so the sentence reports the act
+      // rather than a change.
+      return `管理员 ${actor} 查看了用户 ${target} 的记账数据（预览 ${String(after['previewId'] ?? '')}）。${reason}`;
     case 'maintenance-on':
       return `管理员 ${actor} 声明进入维护模式${after['until'] ? `（计划至 ${dateOnly(String(after['until']))}）` : '（未设结束时间）'}，客户端写入被拒绝，读取保持可用。${reason}`;
     case 'maintenance-off':
@@ -305,6 +313,28 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if ((!quota && role === 'owner') || auth.role !== 'owner' && role !== 'member') throw new ServerStoreError('PROTECTED_ACCOUNT', 403, 'cannot manage this privileged account');
       return target;
     };
+
+    /**
+     * A preview needs a custody key the server may not have. Saying so plainly beats an
+     * empty ledger view that reads as if the account has no data.
+     */
+    const requireLedgerPreview = async (username: string): Promise<LedgerPreviewSession> => {
+      const registry = deps.ledgerPreview;
+      if (!registry) throw new ServerStoreError('PREVIEW_UNAVAILABLE', 409, '此服务器未配置托管主密钥，无法预览用户账本');
+      return registry.open(username, auth.user.username);
+    };
+
+    /** What the console shows before it loads the ledger itself. */
+    const previewSummary = (preview: LedgerPreviewSession) => ({
+      previewId: preview.id,
+      username: preview.username,
+      ledgerId: preview.ledgerId,
+      transactionCount: preview.transactionCount,
+      attachmentCount: preview.attachmentCount,
+      commitCount: preview.commitCount,
+      openedAt: new Date(preview.createdAt).toISOString(),
+      expiresAt: new Date(preview.expiresAt).toISOString(),
+    });
 
     /**
      * Creating, re-running and cancelling a task share one rule, evaluated against the
@@ -1351,6 +1381,60 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const devices = (await Promise.all(users.filter((user) => auth.role === 'owner' || user['role'] === 'member').map(async (user) =>
         (await store.listSessions(String(user['username']))).map((session) => ({ ...publicSession(session), accountId: user['accountId'], role: user['role'] }))))).flat();
       return send(res, 200, { devices, nextCursor, paginationUnit: 'account' });
+    }
+
+    if (req.method === 'GET' && parts[0] === 'users' && parts[2] === 'preview') {
+      const username = decodeURIComponent(parts[1] ?? '');
+      if (!await store.getUser(username)) return send(res, 404, { error: 'user not found' });
+      if (auth.role !== 'owner') await assertManageTarget(username);
+      const preview = await requireLedgerPreview(username);
+      return send(res, 200, previewSummary(preview));
+    }
+
+    /**
+     * Opening a preview decrypts a user's ledger, so it counts as a sensitive act: a fresh
+     * login is required and the operator's reason is recorded before any data is returned.
+     */
+    if (req.method === 'POST' && parts[0] === 'users' && parts[2] === 'preview') {
+      const username = decodeURIComponent(parts[1] ?? '');
+      return void await withIdempotency(req, res, `ledger-preview:${username}`, {}, async () => {
+        const target = await store.getUser(username);
+        if (!target) return { status: 404, body: { error: 'user not found' } };
+        if (auth.role !== 'owner') await assertManageTarget(username);
+        await assertRecentLogin();
+        const { reason } = await readBody(req, ADMIN_BODY_BYTES);
+        const preview = await requireLedgerPreview(username);
+        const summary = previewSummary(preview);
+        await store.mutateAdmin(auth.session.id, {
+          action: 'ledger-preview-open', accountId: target.accountId, previewId: preview.id,
+        }, { reason: typeof reason === 'string' ? reason : '', requestId });
+        await log('warn', 'ledger_preview_opened', 'Operator opened a ledger preview', {
+          username,
+          detail: { previewId: preview.id, by: auth.user.username, transactions: summary.transactionCount },
+        });
+        return { status: 201, body: summary };
+      });
+    }
+
+    if (req.method === 'GET' && parts[0] === 'previews' && parts[2] === 'backup') {
+      const previewId = decodeURIComponent(parts[1] ?? '');
+      const preview = deps.ledgerPreview?.read(previewId);
+      // An expired or unknown id is not a transient failure: the operator has to open a new
+      // preview instead of retrying this one.
+      if (!preview) return send(res, 410, { code: 'PREVIEW_EXPIRED', error: '预览已过期，请重新打开' });
+      return send(res, 200, preview.backup as unknown as JsonRecord);
+    }
+
+    if (req.method === 'DELETE' && parts[0] === 'previews') {
+      const previewId = decodeURIComponent(parts[1] ?? '');
+      const preview = deps.ledgerPreview?.read(previewId);
+      if (!preview) return send(res, 200, { ok: true });
+      deps.ledgerPreview?.close(previewId);
+      await log('info', 'ledger_preview_closed', 'Operator closed a ledger preview', {
+        username: preview.username,
+        detail: { previewId, by: auth.user.username },
+      });
+      return send(res, 200, { ok: true });
     }
 
     if (req.method === 'GET' && parts[0] === 'users' && parts[2] === 'devices') {
