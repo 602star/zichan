@@ -1,3 +1,4 @@
+import { duplicateMasterData, DuplicateMasterDataError } from './master-data-identity.js';
 import {
   D, isValidEntityIcon,
   isDefaultAccount, accountBalanceTiming, accountTransactionPostings,
@@ -1106,6 +1107,15 @@ export async function validateEntityWrite<T extends BaseEntity>(
   if (candidate.isDeleted && current && !current.isDeleted) {
     if (!options.allowReferencedChanges) await validateEntityDelete(driver, entityType, current);
     return;
+  }
+  if (!options.allowReferencedChanges && !candidate.isDeleted) {
+    const identityTable = entityType === 'game_account' ? TABLES.gameAccounts : entityType === 'game_season' ? TABLES.gameSeasons
+      : entityType === 'transaction_tag' ? TABLES.transactionTags : entityType === 'payee' ? TABLES.payees : undefined;
+    if (identityTable) {
+      const matches = duplicateMasterData(entityType, candidate as BaseEntity & Record<string, unknown>,
+        await listEntities<BaseEntity & Record<string, unknown>>(driver, identityTable), current as (BaseEntity & Record<string, unknown>) | undefined);
+      if (matches.length) throw new DuplicateMasterDataError(entityType, matches);
+    }
   }
   switch (entityType) {
     case 'category':

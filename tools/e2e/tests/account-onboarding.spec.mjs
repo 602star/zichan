@@ -76,7 +76,7 @@ test('fund onboarding can be deferred on a phone without losing the initialized 
   await page.getByRole('button', { name: '添加常用账户', exact: true }).click();
   const setup = page.getByRole('dialog', { name: '添加银行卡或钱包' });
   await expect(setup).toBeVisible();
-  await setup.getByRole('button', { name: '稍后添加，先开始' }).click();
+  await setup.getByRole('button', { name: '取消', exact: true }).click();
   await expect(page.getByRole('button', { name: /默认支出账户/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /默认收入账户/ })).toBeVisible();
   await expect(page.getByRole('button', { name: '预算', exact: true })).toBeVisible();

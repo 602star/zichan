@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { openLedger } from '@zichan/db/node';
-import { draftTagName, draftTagValue, resolveTransactionTags } from '../src/transaction-tags.js';
+import { draftTagName, draftTagValue, restoreTagValue, resolveTransactionTags } from '../src/transaction-tags.js';
 
 describe('tags created while recording a transaction', () => {
   it('preserves punctuation through form values and drafts', () => {
@@ -16,7 +16,7 @@ describe('tags created while recording a transaction', () => {
       expect(ids).toHaveLength(1);
       const tag = (await store.transactionTags.get(ids[0]!))!;
       await store.transactionTags.put({ ...tag, isActive: false });
-      expect(await store.runInAuditBatch('restore tag', (tx) => resolveTransactionTags(tx, [draftTagValue('Travel'), tag.id]))).toEqual(ids);
+      expect(await store.runInAuditBatch('restore tag', (tx) => resolveTransactionTags(tx, [restoreTagValue(tag.id), tag.id]))).toEqual(ids);
       expect((await store.transactionTags.get(tag.id))?.isActive).toBe(true);
       await expect(store.runInAuditBatch('failed save', async (tx) => {
         await resolveTransactionTags(tx, [draftTagValue('取消的新标签')]);
@@ -27,4 +27,20 @@ describe('tags created while recording a transaction', () => {
       await store.close();
     }
   });
+});
+
+
+it('resolves grouped tags precisely and requires explicit restoration', async () => {
+  const store = await openLedger({ deviceId: 'group-tags' });
+  try {
+    const ids = await store.runInAuditBatch('groups', (tx) => resolveTransactionTags(tx, [draftTagValue('差旅', '工作'), draftTagValue('差旅', '个人')]));
+    expect(ids).toHaveLength(2);
+    await expect(store.runInAuditBatch('legacy ambiguous', (tx) => resolveTransactionTags(tx, ['new-tag:' + encodeURIComponent('差旅')]))).rejects.toThrow('多个同名');
+    expect(await store.runInAuditBatch('reuse', (tx) => resolveTransactionTags(tx, [draftTagValue('差旅', '工作')]))).toEqual([ids[0]]);
+    const tag = (await store.transactionTags.get(ids[0]!))!;
+    await store.transactionTags.put({ ...tag, isActive: false });
+    await expect(store.runInAuditBatch('implicit', (tx) => resolveTransactionTags(tx, [draftTagValue('差旅', '工作')]))).rejects.toThrow('恢复并选择');
+    expect((await store.transactionTags.get(tag.id))?.isActive).toBe(false);
+    expect(await store.runInAuditBatch('explicit', (tx) => resolveTransactionTags(tx, [restoreTagValue(tag.id)]))).toEqual([tag.id]);
+  } finally { await store.close(); }
 });

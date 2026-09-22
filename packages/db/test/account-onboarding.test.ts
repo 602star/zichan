@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { D, newId, accountOpeningPostings, accountTransactionPostings, computeBalances, type Account, type Transaction } from '@zichan/core';
 import { openLedger } from '../src/node.js';
-import { ensureDefaultAccounts, createFundAccount, assignTransactionAccounts, previewAccountAssignment } from '../src/account-onboarding.js';
+import { ensureDefaultAccounts, createFundAccount, saveAccountDetails, assignTransactionAccounts, previewAccountAssignment } from '../src/account-onboarding.js';
 import { saveTransaction, previewReconciliation, exportLedger, restoreLedger } from '../src/services.js';
 
 const base = () => ({ id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false });
@@ -158,5 +158,21 @@ it('applies the starting balance only to its currency and includes subsequent as
     const balances = Object.fromEntries((await store.accountBalanceAggregates()).map((r) => [r.assetId, r.amounts.reduce((total, value) => total.plus(value), D(0)).toString()]));
     expect(balances).toEqual({ CNY: '1050', USD: '34' });
     expect((await store.accountLedgerPage({ accountId: account.id })).rows[0]!.balance).toBe('1050');
+  } finally { await store.close(); }
+});
+
+
+it('edits account metadata and defaults atomically without rewriting the balance origin', async () => {
+  const { store, setting } = await setup();
+  try {
+    const created = await createFundAccount(store, { account: fund() });
+    const saved = await saveAccountDetails(store, { account: { ...created, note: 'Edited', openingBalance: '9999' }, defaultExpense: true, defaultIncome: false });
+    expect(saved.openingBalance).toBe(created.openingBalance);
+    expect(saved.balanceStartAt).toBe(created.balanceStartAt);
+    expect((await store.settings.get(setting.id))?.expenseDefaultAccountId).toBe(saved.id);
+    const reset = await saveAccountDetails(store, { account: saved, defaultExpense: false, defaultIncome: false });
+    expect((await store.settings.get(setting.id))?.expenseDefaultAccountId).toBe(setting.expenseDefaultAccountId);
+    await expect(saveAccountDetails(store, { account: { ...reset, kind: 'credit_card', statementDay: 99 }, defaultExpense: true, defaultIncome: true })).rejects.toThrow();
+    expect((await store.settings.get(setting.id))?.expenseDefaultAccountId).toBe(setting.expenseDefaultAccountId);
   } finally { await store.close(); }
 });

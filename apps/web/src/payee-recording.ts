@@ -1,5 +1,5 @@
 import { newId, type Transaction } from '@zichan/core';
-import type { SqlLedgerStore } from '@zichan/db';
+import { normalizeIdentity, type SqlLedgerStore } from '@zichan/db';
 import { catalogPayeeId, findPlatform, matchingPayee } from './payee-catalog.js';
 
 /** The caller's audit transaction commits this together with the ledger record. */
@@ -7,7 +7,10 @@ export async function rememberTransactionPayee(store: SqlLedgerStore, entity: Pi
   if (entity.payeeId || !entity.merchant?.trim()) return entity.payeeId;
   const name = entity.merchant.trim();
   const entry = findPlatform(name);
-  const existing = matchingPayee(await store.payees.list({ includeDeleted: true }), name, entry);
+  const rows = await store.payees.list({ includeDeleted: true });
+  const matches = rows.filter((row) => [row.name, ...(row.aliases ?? [])].some((n) => normalizeIdentity(n) === normalizeIdentity(name)));
+  if (matches.length > 1) throw new Error('有多个匹配的交易对象，请从列表明确选择');
+  const existing = matches[0] ?? matchingPayee(rows, name, entry);
   if (existing) {
     if (existing.isDeleted || !existing.isActive) throw new Error('这个交易对象已停用或删除，请在管理页恢复后使用。');
     return existing.id;

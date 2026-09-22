@@ -1,3 +1,5 @@
+import { DuplicateMasterDataError } from '@zichan/db';
+import { scheduleDuplicateWarning } from '../master-data-saving.js';
 import { EntityIcon, categoryIconValue, categoryOptionIcon } from './EntityIcon.js';
 import { EntityIconEditor } from './EntityIconEditor.js';
 import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
@@ -31,6 +33,7 @@ import {
 export type FieldType = 'icon' | 'text' | 'number' | 'date' | 'time' | 'select' | 'category' | 'multiselect' | 'tags' | 'payee' | 'allocation' | 'checkbox' | 'textarea' | 'file';
 
 export interface FieldOption {
+  groupName?: string;
   icon?: string;
   parentId?: string;
   parentIcon?: string;
@@ -89,6 +92,7 @@ export interface FieldDef {
 
 export interface EntityFormSpec<T> {
   title: string;
+  identityKind?: 'game_account' | 'game_season' | 'payee' | 'transaction_tag' | 'scheduled_transaction';
   /** Stable namespace for auto-saved drafts. Defaults to the form title. */
   draftKey?: string;
   modalWidth?: number;
@@ -220,6 +224,10 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   onOptionalFieldKeysChange?: (keys: string[]) => Promise<void> | void;
   optionalFieldPresets?: { label: string; keys: string[] }[];
 }) {
+  const { store } = useStore();
+  const [duplicates, setDuplicates] = useState<DuplicateMasterDataError | null>(null);
+  const [existingChoice, setExistingChoice] = useState<T | undefined>();
+  const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const formId = useId().replace(/:/g, '');
   const titleId = `${formId}-title`;
   const initialValues = useMemo(
@@ -436,7 +444,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     });
   }, [initial, pendingDraft, spec]);
 
-  async function save() {
+  async function save(confirmedWarning?: string) {
     if (busy || iconBusy || !draftReady || pendingDraft) return;
     setErr(null);
     const normalized = { ...values };
@@ -466,11 +474,17 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
       const files = Object.fromEntries(spec.fields
         .filter((field) => field.type === 'file')
         .map((field) => [field.key, fileRows(field.key)]));
-      await onSave(spec.fromValues(normalized, initial, files));
+      const candidate = spec.fromValues(normalized, initial, files);
+      if (spec.identityKind === 'scheduled_transaction') {
+        const warning = await scheduleDuplicateWarning(store, candidate as unknown as import('@zichan/core').ScheduledTransaction);
+        if (warning && warning !== confirmedWarning) { setSaveWarning(warning); setBusy(false); return; }
+      }
+      await onSave(candidate);
       savedOrDeleted.current = true;
       await deleteFormDraft(draftKey).catch(() => undefined);
       onClose();
     } catch (e) {
+      if (e instanceof DuplicateMasterDataError && e.kind === spec.identityKind) setDuplicates(e);
       setErr(e instanceof Error ? e.message : String(e));
       const rejected = rejectedFieldKey(e, spec.fields);
       if (rejected) {
@@ -655,6 +669,15 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
           </details>
         )}
 
+        {duplicates && <div role="alert">
+          <p>{duplicates.message}</p>
+          {duplicates.matches.map((row) => <button type="button" key={row.id} style={btnOutline} onClick={() => setExistingChoice(row as T)}>
+            查看或使用已有：{String(row.groupName ?? row.serverName ?? '')} {String(row.name ?? row.accountName ?? '')}
+          </button>)}
+          <button type="button" style={btnOutline} onClick={() => { setDuplicates(null); setErr(null); }}>返回修改</button>
+        </div>}
+        {existingChoice && <EntityFormModal spec={spec} initial={existingChoice} onSave={async (value) => { await onSave(value); savedOrDeleted.current = true; await deleteFormDraft(draftKey).catch(() => undefined); onClose(); }} onClose={() => setExistingChoice(undefined)} />}
+        {saveWarning && <ConfirmDialog title="可能重复的定期交易" confirmLabel="仍然创建 / 保存" cancelLabel="返回修改" onCancel={() => setSaveWarning(null)} onConfirm={async () => { const warning = saveWarning; setSaveWarning(null); await save(warning); }}>{saveWarning}</ConfirmDialog>}
         {err && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', marginTop: 12 }}>{err}</div>}
 
         {Object.keys(fieldErrors).length > 0 && (
@@ -687,7 +710,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button onClick={requestClose} disabled={busy || iconBusy} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>取消</button>
-            <button onClick={save} disabled={busy || iconBusy || !draftReady || !!pendingDraft} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+            <button onClick={() => void save()} disabled={busy || iconBusy || !draftReady || !!pendingDraft} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
               {busy ? '保存中…' : '保存'}
             </button>
           </div>

@@ -55,7 +55,6 @@ export function PayeeDirectory({ snap }: { snap: Snapshot }) {
           const latest = await transactionStore.payees.list({ includeDeleted: true });
           const found = matchingPayee(latest, editing.entry.name, editing.entry);
           if ((editing.isNew && found) || (found && found.id !== value.id)) throw new Error('该平台已添加，请关闭后重新打开编辑');
-          if (latest.some((row) => row.id !== value.id && !row.isDeleted && normalizedPayeeName(row.name) === normalizedPayeeName(value.name))) throw new Error('已存在同名交易对象');
           await transactionStore.payees.put({ ...value, aliases: [...new Set([...(value.aliases ?? []), editing.entry.name, ...editing.entry.aliases])] });
         });
         bump();

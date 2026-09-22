@@ -135,3 +135,23 @@ export async function applyEarlierBalance(store: SqlLedgerStore, input: EarlierB
     });
   }, 'user', { undoable: false });
 }
+
+
+/** Account metadata and default directions commit together; balance origins are preserved. */
+export async function saveAccountDetails(store: SqlLedgerStore, input: { account: Account; defaultExpense: boolean; defaultIncome: boolean }): Promise<Account> {
+  return store.runInAuditBatch('编辑账户资料与默认用途', async (tx) => {
+    const current = await tx.accounts.get(input.account.id);
+    if (!current || current.isDeleted || current.version !== input.account.version) throw new Error('账户已变化，请重新打开');
+    const account = await tx.accounts.put({ ...input.account, openingBalance: current.openingBalance, openingAssetId: current.openingAssetId,
+      balanceStartAt: current.balanceStartAt, balanceStartDate: current.balanceStartDate, balanceCheckpoints: current.balanceCheckpoints, purpose: current.purpose });
+    const setting = (await tx.settings.list())[0];
+    if (setting) {
+      const accounts = await tx.accounts.list();
+      const fallback = (purpose: Account['purpose']) => accounts.find((row) => row.purpose === purpose && row.isActive !== false)?.id;
+      const expense = input.defaultExpense ? account.id : setting.expenseDefaultAccountId === account.id ? fallback('default_expense') : setting.expenseDefaultAccountId;
+      const income = input.defaultIncome ? account.id : setting.incomeDefaultAccountId === account.id ? fallback('default_income') : setting.incomeDefaultAccountId;
+      await tx.settings.put({ ...setting, expenseDefaultAccountId: expense, incomeDefaultAccountId: income });
+    }
+    return account;
+  });
+}

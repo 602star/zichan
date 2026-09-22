@@ -1,3 +1,4 @@
+import { ACCOUNT_KINDS } from './account-fields.js';
 import { transactionFormFieldOptions } from './transactionFormPrefs.js';
 /**
  * Entity form specs — field definitions + value⇄entity mappers for the generic
@@ -61,7 +62,6 @@ function payeeFields(snap: Snapshot, key = 'payeeId', nameKey = 'merchant', extr
     { key: nameKey, label: '交易对象名称', type: 'text', hidden: true },
   ];
 }
-const tagOpts = (s: Snapshot) => s.transactionTags.filter((t) => !t.isDeleted && t.isActive).map((t) => ({ value: t.id, label: t.groupName ? `${t.groupName} / ${t.name}` : t.name }));
 const locationOpts = (s: Snapshot) => s.transactionLocations.filter((l) => !l.isDeleted && l.isActive).map((l) => ({ value: l.id, label: l.address ? `${l.name} · ${l.address}` : l.name }));
 const categoryPickerPreference = (s: Snapshot) => ({ categoryShowHiddenDefault: s.setting?.categoryPickerDefaultScope === 'all' });
 /** Asset options with the settlement currency first, so new forms default to it. */
@@ -101,11 +101,7 @@ const ASSET_TYPES = [
   { value: 'precious_metal', label: '贵金属' }, { value: 'game', label: '游戏货币' },
   { value: 'fixed', label: '物品资产' },
 ];
-const ACCOUNT_KINDS = [
-  { value: 'bank', label: '银行' }, { value: 'cash', label: '现金' }, { value: 'exchange', label: '交易所' },
-  { value: 'wallet', label: '钱包' }, { value: 'credit_card', label: '信用卡' }, { value: 'loan', label: '贷款' },
-  { value: 'game_platform', label: '游戏平台' }, { value: 'other', label: '其他' },
-];
+
 const REC_TYPES = [
   { value: 'buy_currency', label: '买入游戏币' }, { value: 'sell_currency', label: '游戏币卖出' },
   { value: 'produce', label: '游戏产出' }, { value: 'consume', label: '游戏消耗' },
@@ -411,6 +407,7 @@ export function categoryForm(snap?: Snapshot): EntityFormSpec<Category> {
 
 export function transactionTagForm(): EntityFormSpec<TransactionTag> {
   return {
+    identityKind: 'transaction_tag',
     title: '标签',
     fields: [
       { key: 'name', label: '名称', type: 'text', half: true, required: true },
@@ -468,7 +465,7 @@ export function transactionTemplateForm(snap: Snapshot, options: LedgerFormOptio
       { key: 'assetId', label: '币种', type: 'select', half: true, options: settlementOpts(snap), allowEmpty: true },
       ...accountFields,
       ...payeeFields(snap),
-      { key: 'tagIds', label: '标签', type: 'multiselect', options: tagOpts(snap) },
+      { key: 'tagIds', label: '标签', type: 'tags', options: snap.transactionTags.filter((t) => !t.isDeleted).map((t) => ({ value: t.id, label: t.groupName ? `${t.groupName} / ${t.name}` : t.name, name: t.name, groupName: t.groupName, inactive: !t.isActive })) },
       { key: 'locationId', label: '地点', type: 'select', half: true, options: locationOpts(snap), allowEmpty: true },
       { key: 'description', label: '描述', type: 'text', half: true },
       { key: 'sortOrder', label: '排序', type: 'number', half: true, defaultValue: '100' },
@@ -496,6 +493,7 @@ export function transactionTemplateForm(snap: Snapshot, options: LedgerFormOptio
 export function payeeForm(snap: Snapshot, options: LedgerFormOptions = {}): EntityFormSpec<Payee> {
   const usesAccounts = options.usesAccounts ?? true;
   return {
+    identityKind: 'payee',
     title: '交易对象',
     fields: [
       { key: 'name', label: '名称', type: 'text', half: true, required: true },
@@ -613,7 +611,7 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       { key: 'latitude', label: '纬度', type: 'text', hidden: true },
       { key: 'longitude', label: '经度', type: 'text', hidden: true },
       { key: 'locationAccuracyMeters', label: '定位精度', type: 'text', hidden: true },
-      { key: 'tagIds', label: '标签', type: 'tags', options: snap.transactionTags.filter((t) => !t.isDeleted).map((t) => ({ value: t.id, label: t.groupName ? `${t.groupName} / ${t.name}` : t.name, name: t.name, inactive: !t.isActive })), section: 'more' },
+      { key: 'tagIds', label: '标签', type: 'tags', options: snap.transactionTags.filter((t) => !t.isDeleted).map((t) => ({ value: t.id, label: t.groupName ? `${t.groupName} / ${t.name}` : t.name, name: t.name, groupName: t.groupName, inactive: !t.isActive })), section: 'more' },
       { key: 'note', label: '备注', type: 'textarea', section: 'more' },
     ],
     toValues: (t) => ({
@@ -770,6 +768,7 @@ export function scheduledTransactionForm(snap: Snapshot, options: LedgerFormOpti
     { key: 'transferAmount', label: '转入金额', type: 'number', half: true },
   ] : [];
   return {
+    identityKind: 'scheduled_transaction',
     title: '定期交易',
     fields: [
       { key: 'name', label: '名称', type: 'text', half: true, required: true },
@@ -863,6 +862,7 @@ export function gameForm(): EntityFormSpec<Game> {
 
 export function gameAccountForm(snap: Snapshot, gameId?: string): EntityFormSpec<GameAccount> {
   return {
+    identityKind: 'game_account',
     title: '游戏账号',
     fields: [
       { key: 'gameId', label: '游戏', type: 'select', half: true, options: gameOpts(snap), defaultValue: gameId, required: true },
@@ -880,6 +880,7 @@ export function gameAccountForm(snap: Snapshot, gameId?: string): EntityFormSpec
 export function gameSeasonForm(snap: Snapshot, gameId?: string): EntityFormSpec<GameSeason> {
   const asOf = currentDate();
   return {
+    identityKind: 'game_season',
     title: '游戏赛季',
     modalWidth: 680,
     fields: [

@@ -1,3 +1,4 @@
+import { resolveTransactionTags } from '../transaction-tags.js';
 import { PayeeDirectory } from '../ui/PayeeDirectory.js';
 import { withRememberedPayee } from '../payee-recording.js';
 import { CategoryMark, EntityIcon } from '../ui/EntityIcon.js';
@@ -65,6 +66,7 @@ export function Manage() {
   const { store, bump, preview } = useStore();
   const snap = useSnapshot('manage');
   const [accountSetupOpen, setAccountSetupOpen] = useState(false);
+  const [editingAccount, setEditingAccount] = useState<import('@zichan/core').Account>();
   const [payeeView, setPayeeView] = useState<'mine' | 'catalog'>('mine');
   const [initialTarget] = useState(readManageTarget);
   const [tab, setTab] = useState<ManageTab>(initialTarget.tab ?? 'transactionCategories');
@@ -286,7 +288,8 @@ export function Manage() {
         </>
       )}
 
-      {accountSetupOpen && <AccountSetupPanel store={store} assets={snap.assets} setting={snap.setting} onClose={() => setAccountSetupOpen(false)} onSaved={() => { setAccountSetupOpen(false); bump(); }} />}
+      {editingAccount && <AccountSetupPanel initial={editingAccount} store={store} assets={snap.assets} accounts={snap.accounts} setting={snap.setting} onClose={() => setEditingAccount(undefined)} onSaved={() => { setEditingAccount(undefined); bump(); }} />}
+      {accountSetupOpen && <AccountSetupPanel store={store} assets={snap.assets} accounts={snap.accounts} setting={snap.setting} onClose={() => setAccountSetupOpen(false)} onSaved={() => { setAccountSetupOpen(false); bump(); }} />}
       {tab === 'other' && (
         <>
           <Section
@@ -314,14 +317,14 @@ export function Manage() {
                     : '—',
               ]}
               duplicateKey={(a) => `${norm(a.kind)}:${norm(a.platform)}:${norm(a.name)}`}
-              onAdd={() => setAccountSetupOpen(true)}
+              onAdd={() => setAccountSetupOpen(true)} onEdit={setEditingAccount}
               makeSpec={() => accountForm()}
               put={(transactionStore, entity) => transactionStore.accounts.put(entity)}
               bump={bump} masterKind="account"
               lifecycleCandidates={snap.accounts.filter((row) => row.isActive !== false).map((row) => ({ id: row.id, label: row.name }))}
             />
           )}
-          <Section title="交易模板" headers={['名称', '类型', '分类', '金额']} items={snap.transactionTemplates} row={(t) => [t.name, TYPE_LABEL[t.type], categoryLabel(t.category, snap.categories), t.amount ?? '—']} duplicateKey={(t) => norm(t.name)} makeSpec={() => transactionTemplateForm(snap, { usesAccounts })} put={async (transactionStore, entity) => transactionStore.transactionTemplates.put(await withRememberedPayee(transactionStore, entity))} bump={bump} />
+          <Section title="交易模板" headers={['名称', '类型', '分类', '金额']} items={snap.transactionTemplates} row={(t) => [t.name, TYPE_LABEL[t.type], categoryLabel(t.category, snap.categories), t.amount ?? '—']} duplicateKey={(t) => norm(t.name)} makeSpec={() => transactionTemplateForm(snap, { usesAccounts })} put={async (transactionStore, entity) => transactionStore.transactionTemplates.put({ ...await withRememberedPayee(transactionStore, entity), tagIds: await resolveTransactionTags(transactionStore, entity.tagIds) })} bump={bump} />
           <Section title="价格与折算率" headers={['资产', '每单位价格', '计价币种', '日期']} items={snap.priceMarks} row={(m) => [codeOf(m.assetId), m.price, codeOf(m.quoteAssetId), m.date]} dateOf={(m) => m.date} duplicateKey={(m) => `${m.assetId}:${m.quoteAssetId}:${m.date}`} makeSpec={() => priceMarkForm(snap)} put={(transactionStore, entity) => transactionStore.priceMarks.put(entity)} bump={bump} />
           <Section title="定投计划" headers={['名称', '目标', '金额', '频率', '状态']} items={snap.dcaPlans} row={(p) => [p.name, codeOf(p.targetAssetId), `${p.plannedAmount} ${codeOf(p.baseCurrencyAssetId)}`, p.frequency, p.status]} duplicateKey={(p) => norm(p.name)} makeSpec={() => dcaPlanForm(snap)} put={(transactionStore, entity) => transactionStore.dcaPlans.put(entity)} bump={bump} />
           <Section title="分类预算" headers={['月份', '分类', '预算', '币种', '结转']} items={snap.budgetCategories} row={(b) => [b.month, categoryLabel(b.category, snap.categories), b.plannedAmount, codeOf(b.assetId), b.rolloverMode === 'none' ? '不结转' : b.rolloverMode === 'positive_only' ? '仅结余' : '含超支']} duplicateKey={(b) => `${b.month}:${b.category}`} makeSpec={() => budgetCategoryForm(snap)} put={(transactionStore, entity) => transactionStore.budgetCategories.put(entity)} bump={bump} />
@@ -336,9 +339,9 @@ export function Manage() {
           <Section
             title="游戏账号" headers={['游戏', '账号', '状态']} items={snap.gameAccounts}
             row={(a) => [gameName(a.gameId), a.accountName, a.status]}
-            duplicateKey={(a) => `${a.gameId}:${norm(a.accountName)}`}
+            duplicateKey={(a) => `${a.gameId}:${norm(a.serverName)}:${norm(a.accountName)}`}
             makeSpec={() => gameAccountForm(snap)} put={(transactionStore, entity) => transactionStore.gameAccounts.put(entity)} bump={bump} masterKind="game_account"
-            lifecycleCandidates={snap.gameAccounts.filter((row) => row.status === 'active').map((row) => ({ id: row.id, label: `${gameName(row.gameId)} / ${row.accountName}` }))}
+            lifecycleCandidates={snap.gameAccounts.filter((row) => row.status === 'active').map((row) => ({ id: row.id, label: `${gameName(row.gameId)} / ${row.serverName ? row.serverName + ' / ' : ''}${row.accountName}` }))}
           />
           <Section
             title="游戏赛季" headers={['游戏', '赛季', '开始', '状态']} items={snap.seasons}
@@ -1010,6 +1013,7 @@ function Section<T extends { id: string; version: number }>(props: {
   dateOf?: (t: T) => string;
   duplicateKey?: (t: T) => string | undefined;
   onAdd?: () => void;
+  onEdit?: (item: T) => void;
   makeSpec: () => EntityFormSpec<T>;
   put: (store: SqlLedgerStore, entity: T) => Promise<unknown>;
   bump: () => void;
@@ -1062,11 +1066,11 @@ function Section<T extends { id: string; version: number }>(props: {
           <thead><tr>{headers.map((h) => <th key={h} style={thStyle}>{h}</th>)}<th style={thStyle}></th></tr></thead>
           <tbody>
             {filteredItems.map((t) => (
-              <tr key={t.id} onClick={() => setEditing(t)} style={{ cursor: 'pointer' }}>
+              <tr key={t.id} onClick={() => props.onEdit ? props.onEdit(t) : setEditing(t)} style={{ cursor: 'pointer' }}>
                 {row(t).map((c, i) => <td key={i} style={tdStyle}>{c}</td>)}
                 <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}>
                   {masterKind && <button type="button" onClick={(event) => { event.stopPropagation(); setLifecycle(t); }} style={{ ...editLinkButton, marginRight: 12 }}>归档/合并</button>}
-                  <button type="button" aria-label={`编辑${title} ${props.itemLabel?.(t) ?? (typeof row(t)[0] === 'string' ? row(t)[0] : t.id)}`} onClick={(event) => { event.stopPropagation(); setEditing(t); }} style={editLinkButton}>编辑</button>
+                  <button type="button" aria-label={`编辑${title} ${props.itemLabel?.(t) ?? (typeof row(t)[0] === 'string' ? row(t)[0] : t.id)}`} onClick={(event) => { event.stopPropagation(); if (props.onEdit) props.onEdit(t); else setEditing(t); }} style={editLinkButton}>编辑</button>
                 </td>
               </tr>
             ))}
@@ -1081,7 +1085,7 @@ function Section<T extends { id: string; version: number }>(props: {
           onSave={async (e) => {
             const key = duplicateKey?.(e) ?? norm(row(e)[0]);
             const duplicate = key && items.some((item) => item.id !== e.id && (duplicateKey?.(item) ?? norm(row(item)[0])) === key);
-            if (duplicate) throw new Error(`已存在相同的${title}，请修改名称或关联信息`);
+            if (duplicate && !spec.identityKind) throw new Error(`已存在相同的${title}，请修改名称或关联信息`);
             await store.runInAuditBatch(
               `${initial ? '编辑' : '新增'}${title}`,
               (transactionStore) => put(transactionStore, e),

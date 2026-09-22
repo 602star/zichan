@@ -248,3 +248,7 @@ export {
   type StoredSyncCommit,
 } from './sync-types.js';
 export { ensureDefaultAccounts, createFundAccount, previewAccountAssignment, assignTransactionAccounts, previewEarlierBalance, applyEarlierBalance, type EarlierBalanceInput, type AccountAssignment } from './account-onboarding.js';
+
+export { normalizeIdentity, masterIdentity, duplicateMasterData, DuplicateMasterDataError } from './master-data-identity.js';
+
+export { saveAccountDetails } from './account-onboarding.js';
