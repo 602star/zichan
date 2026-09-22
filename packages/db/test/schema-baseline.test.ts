@@ -90,6 +90,7 @@ it('upgrades the preceding schema without changing existing ledger records', asy
     await driver.run("INSERT INTO accounts (id, name, kind, version, is_deleted) VALUES ('wallet-kept', '旧钱包', 'wallet', 7, 0)");
     await driver.run("INSERT INTO transactions (id, date, amount, type, account_id, version, is_deleted) VALUES ('kept', '2026-09-01', '12.34', 'expense', 'wallet-kept', 3, 0)");
     for (const [table, fields] of Object.entries({
+      payees: ['icon'],
       accounts: ['purpose', 'opening_balance', 'opening_asset_id', 'balance_start_at', 'balance_start_date', 'balance_checkpoints'],
       settings: ['expense_default_account_id', 'income_default_account_id', 'as_of_mode'],
       transactions: ['balance_timing', 'balance_timing_account_id'],
@@ -98,6 +99,21 @@ it('upgrades the preceding schema without changing existing ledger records', asy
     expect(await runMigrations(driver, log)).toBe(1);
     expect(await driver.all('SELECT id, name, version, opening_balance FROM accounts')).toEqual([{ id: 'wallet-kept', name: '旧钱包', version: 7, opening_balance: null }]);
     expect(await driver.all('SELECT id, amount, account_id, version FROM transactions')).toEqual([{ id: 'kept', amount: '12.34', account_id: 'wallet-kept', version: 3 }]);
+    expect(await runMigrations(driver, log)).toBe(0);
+  } finally { await driver.close(); }
+});
+
+it('upgrades schema 118 while preserving payees and category icons', async () => {
+  const driver = new NodeSqliteDriver();
+  try {
+    await runMigrations(driver, log);
+    await driver.run("INSERT INTO payees (id, name, version, is_deleted) VALUES ('kept-payee', '旧商家', 4, 0)");
+    await driver.run("INSERT INTO categories (id, name, type, icon, version, is_deleted) VALUES ('kept-category', '旧分类', 'expense', 'lucide:coffee', 2, 0)");
+    await driver.exec('ALTER TABLE payees DROP COLUMN icon');
+    await driver.run('UPDATE schema_migrations SET version = 118, name = ?', ['current_schema_2026_09_18_account_onboarding']);
+    expect(await runMigrations(driver, log)).toBe(1);
+    expect(await driver.all('SELECT id, name, version, icon FROM payees')).toEqual([{ id: 'kept-payee', name: '旧商家', version: 4, icon: null }]);
+    expect(await driver.all('SELECT id, icon, version FROM categories')).toEqual([{ id: 'kept-category', icon: 'lucide:coffee', version: 2 }]);
     expect(await runMigrations(driver, log)).toBe(0);
   } finally { await driver.close(); }
 });

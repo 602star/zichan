@@ -414,6 +414,7 @@ export interface FixedAssetCategory extends BaseEntity {
   name: string;
   parentId?: string;
   color?: string;
+  /** Built-in icon key or bounded raster data URL; empty string explicitly resets synced overrides. */
   icon?: string;
   sortOrder?: number;
   isHidden?: boolean;
@@ -591,6 +592,7 @@ export interface Category extends BaseEntity {
   type: TransactionCategoryType;
   parentId?: string;
   color?: string;
+  /** Built-in icon key or bounded raster data URL; empty string explicitly resets synced overrides. */
   icon?: string;
   sortOrder?: number;
   budgetable?: boolean;
@@ -628,6 +630,8 @@ export interface TransactionLocation extends BaseEntity {
 
 export interface Payee extends BaseEntity {
   name: string;
+  /** Built-in icon key or bounded raster data URL; empty string explicitly resets synced overrides. */
+  icon?: string;
   aliases?: string[];
   defaultCategory?: string;
   defaultAccountId?: string;

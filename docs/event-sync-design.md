@@ -122,8 +122,8 @@ loopback 或私有局域网；HTTPS 页面连接私网 HTTP 仍可能被浏览�
 
 本项目尚未发布，只接受当前提交协议 v2、HTTP/密文协议 v3、加密归档 v4（载荷 v2、账本备份 v7）、
 同步服务器 `server_management_ops_v11`（schema 11）和本地账本
-`current_schema_2026_09_18_account_onboarding`（schema 118）。旧 PBKDF2/HMAC 认证、旧 Admin Token、旧管理路由、
+`current_schema_2026_09_22_entity_icons`（schema 119）。旧 PBKDF2/HMAC 认证、旧 Admin Token、旧管理路由、
 旧同步连接配置、旧事件端点、旧游标表、快照同步以及开发期旧数据库均不读取或迁移；发现旧开发数据时明确要求重置。
-明确支持的例外是：同步服务器 schema 6–10（版本及名称必须匹配代码白名单）和本地账本 version 117。
-服务器启动时补齐当前表、列和账号身份映射，再更新 marker；账本 117 则补齐账户入门所需列后升级到 118。
+明确支持的例外是：同步服务器 schema 6–10（版本及名称必须匹配代码白名单）和本地账本 version 117–118。
+服务器启动时补齐当前表、列和账号身份映射，再更新 marker；账本 117 补齐账户入门所需列和 `payees.icon` 后升级到 119，118 只补 `payees.icon`。
 这些路径保留已有数据，不代表其他开发期版本也支持原地升级。

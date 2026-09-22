@@ -1,3 +1,4 @@
+import { CategoryMark, EntityIcon } from '../ui/EntityIcon.js';
 import { accountSessionStorage } from '../account-storage.js';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { isDateInRange, nextUnhandledScheduleOccurrence, type Attachment, type Category, type FixedAssetCategory } from '@zichan/core';
@@ -265,8 +266,8 @@ export function Manage() {
             title="交易对象" headers={usesAccounts ? ['名称', '默认分类', '默认账户', '别名'] : ['名称', '默认分类', '别名']}
             items={snap.payees}
             row={(p) => usesAccounts
-              ? [p.name, p.defaultCategory ? categoryLabel(p.defaultCategory, snap.categories) : '—', p.defaultAccountId ? snap.accounts.find((a) => a.id === p.defaultAccountId)?.name ?? p.defaultAccountId : '—', p.aliases?.join(' / ') ?? '—']
-              : [p.name, p.defaultCategory ? categoryLabel(p.defaultCategory, snap.categories) : '—', p.aliases?.join(' / ') ?? '—']}
+              ? [<span className="zc-entity-name"><EntityIcon icon={p.icon} platformId={p.id} platformName={p.name} fallback="store" />{p.name}</span>, p.defaultCategory ? categoryLabel(p.defaultCategory, snap.categories) : '—', p.defaultAccountId ? snap.accounts.find((a) => a.id === p.defaultAccountId)?.name ?? p.defaultAccountId : '—', p.aliases?.join(' / ') ?? '—']
+              : [<span className="zc-entity-name"><EntityIcon icon={p.icon} platformId={p.id} platformName={p.name} fallback="store" />{p.name}</span>, p.defaultCategory ? categoryLabel(p.defaultCategory, snap.categories) : '—', p.aliases?.join(' / ') ?? '—']}
             duplicateKey={(p) => norm(p.name)}
             makeSpec={() => payeeForm(snap)}
             put={(transactionStore, entity) => transactionStore.payees.put(entity)}
@@ -561,7 +562,7 @@ function CategorySection({ snap, store, bump }: {
               style={{ borderTop: '1px solid var(--border)' }}
             >
               <summary className="zc-category-group-summary">
-                <span style={{ width: 10, height: 10, borderRadius: 'var(--r-sm)', background: parent.color ?? 'var(--fg-subtle)', flex: '0 0 auto' }} />
+                <CategoryMark id={parent.id} categories={snap.categories} />
                 <span style={{ fontWeight: 'var(--fw-bold)', color: 'var(--text-primary)' }}>{parent.name}</span>
                 <span style={typeBadge(parent.type)}>{parent.type === 'income' ? '收入' : '支出'}</span>
                 <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{visibleChildren.length}/{children.length} 项</span>
@@ -580,7 +581,7 @@ function CategorySection({ snap, store, bump }: {
                       <tr key={category.id}>
                         <td style={tdStyle}>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ width: 9, height: 9, borderRadius: 'var(--r-sm)', background: category.color ?? parent.color ?? 'var(--fg-subtle)' }} />
+                            <CategoryMark id={category.id} categories={snap.categories} />
                             <span style={{ fontWeight: 'var(--fw-bold)' }}>{category.name}</span>
                             {isDuplicate(category) && <span style={stateBadge('duplicate')}>重复</span>}
                           </span>

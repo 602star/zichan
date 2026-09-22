@@ -288,7 +288,7 @@ export const TABLES = {
   payees: {
     name: 'payees',
     cols: [
-      c('name'), c('aliases'), c('defaultCategory'), c('defaultAccountId'), c('isActive', 'bool'),
+      c('name'), c('icon'), c('aliases'), c('defaultCategory'), c('defaultAccountId'), c('isActive', 'bool'),
       c('archivedAt'), c('archiveReason'), c('mergedIntoId'), c('note'),
     ],
     indexes: [{ name: 'idx_payees_name', cols: ['name'] }],

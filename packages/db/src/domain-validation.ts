@@ -1,5 +1,5 @@
 import {
-  D,
+  D, isValidEntityIcon,
   isDefaultAccount, accountBalanceTiming, accountTransactionPostings,
   assertConversionShape,
   assertDcaExecutionShape,
@@ -523,6 +523,7 @@ async function validateCategoryWrite(
   allowReferencedChanges = false,
   allowInactiveReferences = false,
 ): Promise<void> {
+  if (!isValidEntityIcon(candidate.icon)) fail('图标格式无效或图片过大', 'icon');
   const categories = await listEntities<Category>(driver, TABLES.categories);
   const refs = current && !allowReferencedChanges ? await categoryReferenceCount(driver, current.id) : 0;
   throwIssues(validateCategoryHierarchySnapshot(categories, candidate, current, refs, allowInactiveReferences));
@@ -671,6 +672,7 @@ async function validatePayeeWrite(
   allowInactiveReferences = false,
 ): Promise<void> {
   requireText(candidate.name, '商户名称', 'name');
+  if (!isValidEntityIcon(candidate.icon)) fail('图标格式无效或图片过大', 'icon');
   if (candidate.defaultCategory) {
     const category = await getEntity<Category>(driver, TABLES.categories, candidate.defaultCategory);
     if (!isAllowedReference(category, allowInactiveReferences) || !category.parentId) {

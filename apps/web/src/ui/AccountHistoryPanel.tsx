@@ -39,7 +39,7 @@ export function AccountHistoryPanel({ store, accounts, assets, categories, timeZ
       allowEmpty emptyLabel="全部分类" placeholder="全部分类" defaultShowHidden
       options={[...new Set(rows.map((t) => t.category))].map((id) => {
         const item = categories.find((entry) => entry.id === id);
-        return { value: id, label: categoryLabel(id, categories), name: item?.name ?? id,
+        return { value: id, icon: item?.icon, parentId: item?.parentId, parentIcon: categories.find((entry) => entry.id === item?.parentId)?.icon, color: item?.color, label: categoryLabel(id, categories), name: item?.name ?? id,
           parentName: categories.find((entry) => entry.id === item?.parentId)?.name ?? '其他', inactive: item?.isActive === false };
       })} onChange={setCategory} />
     <button style={btnOutline} disabled={busy} onClick={() => { setSelected(Object.fromEntries(visible.map((t) => [t.id, true]))); setPreview(null); }}>选择筛选结果（{visible.length} 笔）</button>

@@ -291,7 +291,7 @@ export function Fixed() {
             <input aria-label="搜索物品" className="zc-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、品牌、型号或条形码" />
             <CategoryPicker fieldId="fixed-filter-category" name="fixedCategory" ariaLabel="物品分类"
               value={categoryId === 'all' ? '' : categoryId} allowEmpty emptyLabel="全部分类" placeholder="全部分类" defaultShowHidden
-              options={parents.flatMap((parent) => snap.fixedAssetCategories.filter((child) => child.parentId === parent.id && child.isActive).map((child) => ({ value: child.id, label: `${parent.name} / ${child.name}`, name: child.name, parentName: parent.name })))}
+              options={parents.flatMap((parent) => snap.fixedAssetCategories.filter((child) => child.parentId === parent.id && child.isActive).map((child) => ({ value: child.id, icon: child.icon, parentId: parent.id, parentIcon: parent.icon, color: child.color ?? parent.color, label: `${parent.name} / ${child.name}`, name: child.name, parentName: parent.name })))}
               onChange={(next) => setCategoryId(next || 'all')} />
             <div style={{ alignSelf: 'center', textAlign: 'right', color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>找到 {cards.length} 件</div>
           </div>

@@ -790,6 +790,11 @@ export function categoryType(category: string, categories: Category[] = []): Tra
 }
 
 export interface CategoryOption {
+  icon?: string;
+  parentId?: string;
+  parentIcon?: string;
+  parentColor?: string;
+  color?: string;
   value: string;
   label: string;
   /**
@@ -853,6 +858,7 @@ export function categoryOptions(
       const parent = c.parentId ? named.get(c.parentId) : undefined;
       return {
         value: c.id as TransactionCategory,
+        icon: c.icon, parentId: c.parentId, parentIcon: parent?.icon, parentColor: parent?.color, color: c.color ?? parent?.color,
         label: parent ? `${parent.name} / ${c.name}` : c.name,
         name: c.name,
         parentName: parent?.name,

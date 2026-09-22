@@ -1,3 +1,4 @@
+import { EntityIcon } from './EntityIcon.js';
 import { useEffect, useState } from 'react';
 import type { Category, Payee } from '@zichan/core';
 import { useStore } from '../db/store.js';
@@ -42,7 +43,7 @@ export function PayeePicker({ id, payees, categories, payeeId, merchant, categor
     .filter(available).filter((entry) => !query || !ownMatches.some((payee) => matchingPayee([payee], entry.name, entry)))
     .slice(0, query || browse ? 20 : 6);
   const choose = (id: string, name: string) => { onChange(id, name); setOpen(false); };
-  const chip = { ...btnOutline, padding: '5px 10px', minHeight: 34, whiteSpace: 'normal' as const };
+  const chip = { ...btnOutline, display: 'inline-flex' as const, alignItems: 'center', gap: 6, padding: '5px 10px', minHeight: 34, whiteSpace: 'normal' as const };
   return <div onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
     <div style={{ display: 'flex', gap: 6 }}>
       <input id={id} className="zc-input" style={{ minWidth: 0, flex: 1 }} value={value}
@@ -58,7 +59,7 @@ export function PayeePicker({ id, payees, categories, payeeId, merchant, categor
         <button type="button" style={chip} aria-pressed={historyOrder === 'frequent'} onClick={() => setHistoryOrder('frequent')}>常用对象</button>
       </div>}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '6px 0 12px' }}>
-        {(query ? ownMatches.slice(0, 20) : recent).map((payee) => <button key={payee.id} type="button" style={chip} onClick={() => choose(payee.id, payee.name)}>{payee.name}</button>)}
+        {(query ? ownMatches.slice(0, 20) : recent).map((payee) => <button key={payee.id} type="button" style={chip} onClick={() => choose(payee.id, payee.name)}><EntityIcon icon={payee.icon} platformId={payee.id} platformName={payee.name} fallback="store" /><span>{payee.name}</span></button>)}
         {!query && !recent.length && <span className="zc-meta">使用后会显示在这里，也可以直接输入名称。</span>}
       </div>
       {usageError && <p className="zc-meta">最近使用暂时无法读取，仍可搜索或输入。</p>}
@@ -69,7 +70,7 @@ export function PayeePicker({ id, payees, categories, payeeId, merchant, categor
       {!!catalog.length && <>
         <p className="zc-meta">{query ? '平台目录' : browse ? PAYEE_SCENES.find((item) => item.id === scene)?.name : '相关平台'}</p>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {catalog.map((entry) => { const existing = matchingPayee(allPayees, entry.name, entry); return <button type="button" key={entry.id} style={chip} onClick={() => choose(existing?.id ?? '', existing?.name ?? entry.name)}>{existing?.name ?? entry.name}</button>; })}
+          {catalog.map((entry) => { const existing = matchingPayee(allPayees, entry.name, entry); return <button type="button" key={entry.id} style={chip} onClick={() => choose(existing?.id ?? '', existing?.name ?? entry.name)}><EntityIcon icon={existing?.icon} platformId={entry.id} platformName={entry.name} fallback="store" /><span>{existing?.name ?? entry.name}</span></button>; })}
         </div>
       </>}
       {isBlocked ? <p role="status" className="zc-meta">这个交易对象已停用或删除，请在管理页恢复后使用。</p>

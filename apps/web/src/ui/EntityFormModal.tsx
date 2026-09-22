@@ -1,3 +1,5 @@
+import { EntityIcon, categoryIconValue, categoryOptionIcon } from './EntityIcon.js';
+import { EntityIconEditor } from './EntityIconEditor.js';
 import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
 import type { Category, Payee } from '@zichan/core';
 import { PayeePicker } from './PayeePicker.js';
@@ -26,9 +28,14 @@ import {
   unreachableErrorKeys,
 } from '../form-validation.js';
 
-export type FieldType = 'text' | 'number' | 'date' | 'time' | 'select' | 'category' | 'multiselect' | 'tags' | 'payee' | 'allocation' | 'checkbox' | 'textarea' | 'file';
+export type FieldType = 'icon' | 'text' | 'number' | 'date' | 'time' | 'select' | 'category' | 'multiselect' | 'tags' | 'payee' | 'allocation' | 'checkbox' | 'textarea' | 'file';
 
 export interface FieldOption {
+  icon?: string;
+  parentId?: string;
+  parentIcon?: string;
+  parentColor?: string;
+  color?: string;
   value: string;
   label: string;
   /**
@@ -55,6 +62,7 @@ export interface FieldDef {
   relatedValueKeys?: string[];
   payees?: Payee[];
   categories?: Category[];
+  iconKind?: 'payee';
   type: FieldType;
   options?: FieldOption[] | ((values: Record<string, string>) => FieldOption[]);
   allowEmpty?: boolean; // for select: offer a "（无）" option
@@ -228,6 +236,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   const savedOrDeleted = useRef(false);
   const [values, setValues] = useState<Record<string, string>>(initialValues);
   const [busy, setBusy] = useState(false);
+  const [iconBusy, setIconBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [pendingFocus, setPendingFocus] = useState<string | null>(null);
@@ -296,7 +305,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     setValues((v) => { const next = { ...v, [key]: value }; return normalizeValues(spec.fields, spec.onFieldChange?.(next, key, manualFields.current) ?? next, key); });
   };
   const requestClose = () => {
-    if (busy) return;
+    if (busy || iconBusy) return;
     if (pendingDraft) { onClose(); return; }
     if (dirty) setCloseOpen(true);
     else onClose();
@@ -427,7 +436,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   }, [initial, pendingDraft, spec]);
 
   async function save() {
-    if (!draftReady || pendingDraft) return;
+    if (busy || iconBusy || !draftReady || pendingDraft) return;
     setErr(null);
     const normalized = { ...values };
     for (const field of spec.fields) {
@@ -492,7 +501,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     <DialogShell
       labelledBy={titleId}
       onDismiss={requestClose}
-      dismissDisabled={busy}
+      dismissDisabled={busy || iconBusy}
       panelClassName="zc-entity-modal"
       panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 26, width: `min(${spec.modalWidth ?? 560}px, 100%)`, maxHeight: '90vh', overflow: 'auto' }}
     >
@@ -507,7 +516,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                 {spec.progressiveFields ? '常用附加字段' : '字段显示'}
               </button>
             )}
-            <button type="button" data-dialog-initial-focus aria-label="关闭" onClick={requestClose} disabled={busy} style={{ border: 'none', background: 'transparent', fontSize: 'var(--fs-heading)', cursor: busy ? 'not-allowed' : 'pointer', color: 'var(--text-tertiary)', opacity: busy ? 0.6 : 1 }}>×</button>
+            <button type="button" data-dialog-initial-focus aria-label="关闭" onClick={requestClose} disabled={busy || iconBusy} style={{ border: 'none', background: 'transparent', fontSize: 'var(--fs-heading)', cursor: busy ? 'not-allowed' : 'pointer', color: 'var(--text-tertiary)', opacity: busy ? 0.6 : 1 }}>×</button>
           </div>
         </div>
 
@@ -585,6 +594,9 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                   setFileValues((current) => ({ ...current, [key]: rows }));
                   set(key, JSON.stringify(rows.map(serializableFile)));
                 }}
+                iconDisabled={busy || !!pendingDraft || !draftReady}
+                onIconBusyChange={setIconBusy}
+                entityId={typeof entity?.id === 'string' ? entity.id : undefined}
                 deviceBusy={deviceBusy === f.key}
                 runDeviceAction={runDeviceAction}
                 error={fieldErrors[f.key]}
@@ -627,6 +639,9 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                         setFileValues((current) => ({ ...current, [key]: rows }));
                         set(key, JSON.stringify(rows.map(serializableFile)));
                       }}
+                      iconDisabled={busy || !!pendingDraft || !draftReady}
+                      onIconBusyChange={setIconBusy}
+                      entityId={typeof entity?.id === 'string' ? entity.id : undefined}
                       deviceBusy={deviceBusy === f.key}
                       runDeviceAction={runDeviceAction}
                       error={fieldErrors[f.key]}
@@ -666,12 +681,12 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
         <div className="zc-modal-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 20 }}>
           <div>
             {initial && onDelete && (
-              <button onClick={() => setDeleteOpen(true)} disabled={busy} style={{ padding: '9px 16px', borderRadius: 'var(--r-sm)', border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>{deleteLabel}</button>
+              <button onClick={() => setDeleteOpen(true)} disabled={busy || iconBusy} style={{ padding: '9px 16px', borderRadius: 'var(--r-sm)', border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>{deleteLabel}</button>
             )}
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button onClick={requestClose} disabled={busy} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>取消</button>
-            <button onClick={save} disabled={busy || !draftReady || !!pendingDraft} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+            <button onClick={requestClose} disabled={busy || iconBusy} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>取消</button>
+            <button onClick={save} disabled={busy || iconBusy || !draftReady || !!pendingDraft} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
               {busy ? '保存中…' : '保存'}
             </button>
           </div>
@@ -718,6 +733,9 @@ function FormField(props: {
   set: (key: string, value: string) => void;
   readFiles: (key: string, files: FileList | null) => Promise<void>;
   setFileRows: (key: string, rows: FileRow[]) => void;
+  entityId?: string;
+  iconDisabled: boolean;
+  onIconBusyChange: (busy: boolean) => void;
   deviceBusy: boolean;
   runDeviceAction: (field: FieldDef) => Promise<void>;
   error?: string;
@@ -732,6 +750,10 @@ function FormField(props: {
           {f.allowEmpty && <option value="">（无）</option>}
           {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
+      ) : f.type === 'icon' ? (
+        <EntityIconEditor disabled={props.iconDisabled} id={fieldId} value={value} platformId={f.iconKind === 'payee' ? props.entityId : undefined} platformName={f.iconKind === 'payee' ? values.name : undefined}
+          defaultIcon={f.iconKind === 'payee' ? undefined : categoryIconValue(props.entityId ?? values.parentId ?? '', (f.categories ?? []).map((row) => row.id === props.entityId ? { ...row, icon: undefined, parentId: values.parentId } : row))}
+          onChange={(next) => set(f.key, next)} onBusyChange={props.onIconBusyChange} />
       ) : f.type === 'category' ? (
         <CategoryPicker
           fieldId={fieldId}
@@ -1016,11 +1038,11 @@ export function CategoryPicker(props: {
     };
   }, [open, titleId, searching, activeParent, childrenStep]);
 
-  const optionRow = (option: FieldOption, parent: string, index: number) => {
+  const optionRow = (option: FieldOption, parent: string) => {
     const parsed = splitCategoryLabel(option);
     return <button key={option.value} type="button" role="option" aria-selected={value === option.value}
       onClick={() => choose(option.value)} style={categoryChildButton(value === option.value)}>
-      <span aria-hidden="true" style={categoryDot(index)}>{parsed.child.slice(0, 1)}</span>
+      <EntityIcon icon={categoryOptionIcon(option)} color={option.color} />
       <span className="zc-category-option-text">{searching && <small>{parent} › </small>}{parsed.child}</span>
       {option.catalogOnly ? <span style={categoryHiddenBadge()}>未启用</span>
         : option.inactive ? <span style={categoryHiddenBadge('inactive')}>已停用</span>
@@ -1033,6 +1055,7 @@ export function CategoryPicker(props: {
       aria-haspopup="dialog" aria-expanded={open} {...(ariaLabel ? { 'aria-label': ariaLabel } : {})}
       onClick={() => { setSearch(''); setChildrenStep(Boolean(selected)); setActiveParent(selectedParts?.parent ?? ''); setOpen(true); }}
       style={{ ...triggerStyle, display: 'flex', alignItems: 'center', gap: 8, textAlign: 'left', whiteSpace: 'normal', height: 'auto' }}>
+      {selected && <EntityIcon icon={categoryOptionIcon(selected)} color={selected.color} />}
       <span className="zc-category-option-text">{selected ? <><small>{selectedParts?.parent} › </small><b>{selectedParts?.child}</b></> : placeholder}</span>
       <span aria-hidden="true">{open ? '▲' : '▼'}</span>
     </button>
@@ -1048,7 +1071,7 @@ export function CategoryPicker(props: {
           onClick={() => setShowHidden((current) => !current)}>{showHidden ? '只看高频' : `显示隐藏 (${hiddenCount})`}</button>}
       </div>
       {searching ? <div className="zc-category-picker-list" role="listbox" aria-label="分类搜索结果">
-        {groups.flatMap((group, index) => group.children.map((option) => optionRow(option, group.parent, index)))}
+        {groups.flatMap((group) => group.children.map((option) => optionRow(option, group.parent)))}
         {!groups.length && <p className="zc-meta">没有匹配分类</p>}
       </div> : <>
         <div className="zc-category-step-nav">
@@ -1058,15 +1081,15 @@ export function CategoryPicker(props: {
         <div className={`zc-category-picker-grid${childrenStep ? ' is-children' : ''}`}>
           <div className="zc-category-picker-list zc-category-parents" hidden={compact && childrenStep}>
             {allowEmpty && <button type="button" onClick={() => choose('')} style={categoryParentButton(!value)}>{emptyLabel}</button>}
-            {groups.map((group, index) => <button key={group.parent} type="button" aria-pressed={activeGroup?.parent === group.parent}
+            {groups.map((group) => <button key={group.parent} type="button" aria-pressed={activeGroup?.parent === group.parent}
               onClick={() => { setActiveParent(group.parent); setChildrenStep(true); }} style={categoryParentButton(activeGroup?.parent === group.parent)}>
-              <span aria-hidden="true" style={categoryDot(index)}>{group.parent.slice(0, 1)}</span>
+              <EntityIcon icon={group.children[0]?.parentIcon || categoryIconValue(group.children[0]?.parentId ?? '')} color={group.children[0]?.parentColor ?? group.children[0]?.color} />
               <span className="zc-category-option-text">{group.parent}</span>
             </button>)}
             {!groups.length && <p className="zc-meta">没有可选分类</p>}
           </div>
           <div className="zc-category-picker-list zc-category-children" hidden={compact && !childrenStep} role="listbox" aria-label={activeGroup?.parent ?? '二级分类'}>
-            {activeGroup?.children.map((option) => optionRow(option, activeGroup.parent, Math.max(0, groups.indexOf(activeGroup))))}
+            {activeGroup?.children.map((option) => optionRow(option, activeGroup.parent))}
           </div>
         </div>
       </>}
@@ -1074,23 +1097,6 @@ export function CategoryPicker(props: {
   </div>;
 }
 
-const CATEGORY_COLORS = ['#f97316', '#8b5cf6', '#0f766e', '#0284c7', '#db2777', '#84cc16', '#64748b', '#dc2626', '#eab308'];
-
-function categoryDot(index: number) {
-  return {
-    width: 24,
-    height: 24,
-    borderRadius: 'var(--r-sm)',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: '0 0 auto',
-    color: 'var(--on-accent)',
-    background: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
-    fontSize: 'var(--fs-caption)',
-    fontWeight: 'var(--fw-medium)',
-  } as const;
-}
 
 function categoryParentButton(active: boolean) {
   return {

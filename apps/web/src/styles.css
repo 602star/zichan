@@ -2936,3 +2936,12 @@ input[type="radio"] {
     scroll-behavior: auto !important;
   }
 }
+
+/* Entity icons keep their own footprint; labels retain the available width. */
+.zc-entity-name, .zc-icon-editor-actions { display: inline-flex; align-items: center; gap: 8px; }
+.zc-icon-editor-actions { flex-wrap: wrap; }
+.zc-icon-preview { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid var(--border); border-radius: var(--r-sm); }
+.zc-icon-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 6px; margin-top: 8px; }
+.zc-icon-options button { display: flex; align-items: center; justify-content: center; min-height: 40px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text-secondary); cursor: pointer; }
+.zc-icon-options button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.zc-icon-error { color: var(--negative); font-size: var(--fs-caption); }
