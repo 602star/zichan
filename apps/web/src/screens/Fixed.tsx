@@ -1,3 +1,4 @@
+import { withCashflowPayee } from '../payee-recording.js';
 import { useMemo, useState } from 'react';
 import {
   isDateInRange,
@@ -182,7 +183,7 @@ export function Fixed() {
         const saved = await saveFixedAssetAcquisition(transactionStore, {
           asset: clean,
           purchaseAmount,
-          cashflow,
+          cashflow: await withCashflowPayee(transactionStore, cashflow),
           expectedVersion: clean.version,
         });
         for (const prepared of attachmentPlan.prepared) {
@@ -236,11 +237,11 @@ export function Fixed() {
     delete event.cashflowMerchant;
     delete event.cashflowDescription;
     delete event.cashflowReportingTreatment;
-    await saveFixedAssetEvent(store, {
+    await store.runInAuditBatch('保存物品事件与交易对象', async (transactionStore) => saveFixedAssetEvent(transactionStore, {
       event,
-      cashflow,
+      cashflow: await withCashflowPayee(transactionStore, cashflow),
       expectedVersion: eventModal?.event?.version,
-    });
+    }));
     bump();
   }
 
@@ -255,11 +256,11 @@ export function Fixed() {
     delete consumable.cashflowMerchant;
     delete consumable.cashflowDescription;
     delete consumable.cashflowReportingTreatment;
-    await saveFixedAssetConsumable(store, {
+    await store.runInAuditBatch('保存耗材与交易对象', async (transactionStore) => saveFixedAssetConsumable(transactionStore, {
       consumable,
-      cashflow,
+      cashflow: await withCashflowPayee(transactionStore, cashflow),
       expectedVersion: consumableModal?.item?.version,
-    });
+    }));
     bump();
   }
 

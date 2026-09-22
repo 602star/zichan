@@ -18,3 +18,14 @@ export async function rememberTransactionPayee(store: SqlLedgerStore, entity: Pi
   });
   return payee.id;
 }
+
+/** Call inside the same audit transaction as the owning schedule/template/record. */
+export async function withRememberedPayee<T extends { payeeId?: string; merchant?: string }>(store: SqlLedgerStore, entity: T): Promise<T> {
+  return { ...entity, payeeId: await rememberTransactionPayee(store, entity) };
+}
+
+export async function withCashflowPayee<T extends { mode: string; createTransaction?: { payeeId?: string; merchant?: string } }>(store: SqlLedgerStore, draft: T): Promise<T> {
+  return draft.mode === 'create_transaction' && draft.createTransaction
+    ? { ...draft, createTransaction: await withRememberedPayee(store, draft.createTransaction) }
+    : draft;
+}

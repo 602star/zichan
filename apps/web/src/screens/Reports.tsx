@@ -743,7 +743,7 @@ function TransactionDetailTable(props: {
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table className="zc-card-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead><tr>{['报表归属日', '实际发生时间', '类型', '分类', '商户', '描述', '金额', '折算'].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
+          <thead><tr>{['报表归属日', '实际发生时间', '类型', '分类', '交易对象', '描述', '金额', '折算'].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
           <tbody>
             {rows.map((row) => (
               <tr key={row.id}>
@@ -751,7 +751,7 @@ function TransactionDetailTable(props: {
                 <td data-label="实际发生时间" style={tdStyle}>{row.cashDate}</td>
                 <td data-label="类型" style={tdStyle}>{row.type}</td>
                 <td data-label="分类" style={tdStyle}>{row.category}</td>
-                <td data-label="商户" style={tdStyle}>{row.payee}</td>
+                <td data-label="交易对象" style={tdStyle}>{row.payee}</td>
                 <td data-label="描述" style={{ ...tdStyle, whiteSpace: 'normal' }}>{row.description || '—'}</td>
                 <td data-label="金额" style={tdStyle}>{row.amount}</td>
                 <td data-label="折算" style={tdStyle}>{row.baseAmount}</td>

@@ -1,13 +1,14 @@
 import { EntityIcon } from './EntityIcon.js';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useId } from 'react';
+import { DialogShell } from './DialogShell.js';
 import type { Category, Payee } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { matchingPayee, normalizedPayeeName, PAYEE_SCENES, PLATFORM_CATALOG, relatedPlatforms, type PlatformEntry } from '../payee-catalog.js';
 import { btnOutline } from './styles.js';
 
-export function PayeePicker({ id, payees, categories, payeeId, merchant, categoryId, type, onChange }: {
+export function PayeePicker({ id, payees, categories, payeeId, merchant, categoryId, type, textOnly = false, onChange }: {
   id: string; payees: Payee[]; categories: Category[]; payeeId: string; merchant: string;
-  categoryId: string; type: string; onChange: (id: string, name: string) => void;
+  categoryId: string; type: string; textOnly?: boolean; onChange: (id: string, name: string) => void;
 }) {
   const { store, rev } = useStore();
   const [usage, setUsage] = useState<{ payeeId: string; count: number; lastUsed: string }[]>([]);
@@ -74,7 +75,40 @@ export function PayeePicker({ id, payees, categories, payeeId, merchant, categor
         </div>
       </>}
       {isBlocked ? <p role="status" className="zc-meta">这个交易对象已停用或删除，请在管理页恢复后使用。</p>
-        : query && <p className="zc-meta">可以直接填写名称，保存记账时才加入交易对象列表。</p>}
+        : query && <p className="zc-meta">{textOnly ? '这里只保存资料名称，不会修改关联流水。' : '可以直接填写名称，保存时加入交易对象列表。'}</p>}
     </div>}
   </div>;
+}
+
+/** Search and icons for existing references; typing never creates or changes a selection. */
+export function ExistingPayeePicker({ payees, value, onChange, label, emptyLabel = '请选择交易对象', emptyValue = '', allowInactive = true, clearLabel, disabled }: {
+  payees: Payee[]; value: string; onChange: (id: string) => void; label: string;
+  emptyLabel?: string; emptyValue?: string; allowInactive?: boolean; clearLabel?: string; disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const titleId = useId();
+  const selected = payees.find((payee) => payee.id === value);
+  const choose = (id: string) => { onChange(id); setOpen(false); };
+  const options = payees.filter((payee) => !payee.isDeleted && (allowInactive || payee.isActive))
+    .filter((payee) => [payee.name, ...(payee.aliases ?? [])].some((name) => normalizedPayeeName(name).includes(normalizedPayeeName(query))));
+  return <>
+    <button type="button" className="zc-select zc-existing-payee-trigger" aria-label={label} aria-haspopup="dialog" aria-expanded={open} disabled={disabled}
+      onClick={() => { setQuery(''); setOpen(true); }}>
+      {selected && <EntityIcon icon={selected.icon} platformId={selected.id} platformName={selected.name} fallback="store" />}
+      <span>{value === emptyValue ? emptyLabel : selected?.name ?? (value ? `历史对象 ${value}` : clearLabel ?? emptyLabel)}</span><span aria-hidden="true">▾</span>
+    </button>
+    {open && <DialogShell labelledBy={titleId} onDismiss={() => setOpen(false)} backdropStyle={{ zIndex: 1300 }} panelClassName="zc-existing-payee-dialog">
+      <div className="zc-existing-payee-heading"><b id={titleId}>{label}</b><button type="button" style={btnOutline} aria-label="关闭交易对象选择" onClick={() => setOpen(false)}>×</button></div>
+      <input className="zc-input" aria-label="搜索已有交易对象" placeholder="搜索名称或别名" value={query} onChange={(event) => setQuery(event.target.value)} />
+      <div role="listbox" aria-label="已有交易对象" className="zc-existing-payee-options">
+        <button type="button" role="option" aria-selected={value === emptyValue} onClick={() => choose(emptyValue)}>{emptyLabel}</button>
+        {clearLabel && emptyValue !== '' && <button type="button" role="option" aria-selected={value === ''} onClick={() => choose('')}>{clearLabel}</button>}
+        {options.map((payee) => <button type="button" role="option" aria-selected={value === payee.id} key={payee.id} onClick={() => choose(payee.id)}>
+          <EntityIcon icon={payee.icon} platformId={payee.id} platformName={payee.name} fallback="store" /><span>{payee.name}{!payee.isActive ? '（已停用）' : ''}</span>
+        </button>)}
+        {!options.length && <p className="zc-meta">没有匹配的已有交易对象</p>}
+      </div>
+    </DialogShell>}
+  </>;
 }

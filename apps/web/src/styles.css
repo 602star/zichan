@@ -2945,3 +2945,18 @@ input[type="radio"] {
 .zc-icon-options button { display: flex; align-items: center; justify-content: center; min-height: 40px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text-secondary); cursor: pointer; }
 .zc-icon-options button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .zc-icon-error { color: var(--negative); font-size: var(--fs-caption); }
+
+.zc-payee-directory-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.zc-payee-directory-filters > * { flex: 1 1 180px; min-width: 0; }
+.zc-payee-directory-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: 12px; }
+.zc-payee-directory-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-sm); }
+.zc-payee-directory-card b { overflow-wrap: anywhere; }
+
+.zc-existing-payee-trigger { display: flex; align-items: center; gap: 6px; text-align: left; min-width: 0; height: auto; }
+.zc-existing-payee-trigger > span:first-of-type { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.zc-existing-payee-dialog { width: min(440px, calc(100vw - 24px)); max-height: 80dvh; overflow: auto; padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); }
+.zc-existing-payee-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.zc-existing-payee-options { display: flex; flex-direction: column; max-height: 50dvh; overflow: auto; margin-top: 8px; }
+.zc-existing-payee-options > button { display: flex; align-items: center; gap: 8px; flex-shrink: 0; min-height: 40px; padding: 8px; border: 0; background: transparent; color: var(--text-primary); text-align: left; cursor: pointer; }
+.zc-existing-payee-options > button > span { overflow-wrap: anywhere; min-width: 0; }
+.zc-existing-payee-options > button[aria-selected="true"] { color: var(--accent); background: var(--accent-soft); }

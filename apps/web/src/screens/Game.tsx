@@ -1,3 +1,4 @@
+import { withCashflowPayee } from '../payee-recording.js';
 import { useMemo, useRef, useState } from 'react';
 import {
   localToday,
@@ -49,11 +50,12 @@ function cashflowDraft(value: GameRecordFormValue, role: 'settlement' | 'fee', u
   const categoryId = role === 'settlement' ? value.settlementCategoryId : value.feeCategoryId;
   const accountId = role === 'settlement' ? value.settlementAccountId : value.feeAccountId;
   const merchant = role === 'settlement' ? value.settlementMerchant : value.feeMerchant;
+  const payeeId = role === 'settlement' ? value.settlementPayeeId : value.feePayeeId;
   return {
     mode,
     linkedTransactionId,
     createTransaction: mode === 'create_transaction' && categoryId
-      ? { categoryId, accountId: usesAccounts ? accountId : undefined, merchant, description: value.note }
+      ? { categoryId, accountId: usesAccounts ? accountId : undefined, merchant, payeeId, description: value.note }
       : undefined,
   };
 }
@@ -117,11 +119,13 @@ function gameRecordEntity(value: GameRecordFormValue): GameRecord {
     settlementCategoryId: _settlementCategory,
     settlementAccountId: _settlementAccount,
     settlementMerchant: _settlementMerchant,
+    settlementPayeeId: _settlementPayeeId,
     feeCashflowMode: _feeMode,
     feeTransactionId: _feeTransaction,
     feeCategoryId: _feeCategory,
     feeAccountId: _feeAccount,
     feeMerchant: _feeMerchant,
+    feePayeeId: _feePayeeId,
     ...record
   } = value;
   return record;
@@ -341,12 +345,12 @@ export function Game() {
           spec={gameRecordForm(snap)}
           initial={editRec === 'new' ? undefined : editRec}
           onSave={async (value) => {
-            const saved = await saveGameRecordAggregate(store, {
+            const saved = await store.runInAuditBatch('保存游戏记录与交易对象', async (transactionStore) => saveGameRecordAggregate(transactionStore, {
               record: gameRecordEntity(value),
-              settlement: cashflowDraft(value, 'settlement', usesAccounts),
-              fee: cashflowDraft(value, 'fee', usesAccounts),
+              settlement: await withCashflowPayee(transactionStore, cashflowDraft(value, 'settlement', usesAccounts)),
+              fee: await withCashflowPayee(transactionStore, cashflowDraft(value, 'fee', usesAccounts)),
               expectedVersion: editRec === 'new' ? undefined : editRec.version,
-            });
+            }));
             bump();
             if (editRec === 'new') {
               undo.offer('游戏记录已保存', async () => {

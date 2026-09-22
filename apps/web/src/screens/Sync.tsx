@@ -150,7 +150,7 @@ const ENTITY_LABELS: Record<string, string> = {
   conversion_chain_steps: '资产转换步骤',
   category: '分类',
   categoryId: '物品分类',
-  payee: '商户',
+  payee: '交易对象',
   transaction: '流水',
   transaction_split: '流水拆分',
   transaction_tag: '标签',
@@ -180,8 +180,8 @@ const FIELD_LABELS: Record<string, string> = {
   transferAccountId: '转入账户',
   transferAmount: '转入金额',
   status: '状态',
-  payeeId: '商户',
-  merchant: '商户文本',
+  payeeId: '交易对象',
+  merchant: '交易对象名称',
   description: '描述',
   note: '备注',
   tagIds: '标签',
@@ -249,7 +249,7 @@ function formatValue(key: string, value: unknown, snap: Snapshot | null): string
     return nameById(snap.assets, id, (a) => `${a.code} · ${a.name}`) ?? unknownLabel('资产', id);
   }
   if (key.endsWith('AccountId') || key === 'accountId') return nameById(snap.accounts, id, (a) => a.name) ?? unknownLabel('账户', id);
-  if (key === 'payeeId') return nameById(snap.payees, id, (p) => p.name) ?? unknownLabel('商户', id);
+  if (key === 'payeeId') return nameById(snap.payees, id, (p) => p.name) ?? unknownLabel('交易对象', id);
   if (key === 'locationId') return nameById(snap.transactionLocations, id, (l) => l.name) ?? unknownLabel('地点', id);
   if (key === 'tagIds') return nameById(snap.transactionTags, id, (t) => t.groupName ? `${t.groupName} / ${t.name}` : t.name) ?? unknownLabel('标签', id);
   if (typeof value === 'object') {

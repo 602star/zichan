@@ -1,3 +1,4 @@
+import { ExistingPayeePicker } from '../ui/PayeePicker.js';
 import { EarlierBalancePanel } from '../ui/EarlierBalancePanel.js';
 import { AccountSetupPanel } from '../ui/AccountSetupPanel.js';
 import { AccountHistoryPanel } from '../ui/AccountHistoryPanel.js';
@@ -79,7 +80,7 @@ import {
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
 import { resolveTransactionTags } from '../transaction-tags.js';
-import { rememberTransactionPayee } from '../payee-recording.js';
+import { rememberTransactionPayee, withRememberedPayee } from '../payee-recording.js';
 import { ReconciliationModal } from './ReconciliationModal.js';
 import { DialogShell } from '../ui/DialogShell.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
@@ -1710,7 +1711,7 @@ export function Transactions() {
             if (e.type !== 'transfer' && !isLeafCategory(e.category)) throw new Error('请选择二级分类，不能直接选择一级分类');
             await store.runInAuditBatch(
               `${editingSchedule === 'new' ? '新增' : '编辑'}定期交易`,
-              (transactionStore) => transactionStore.scheduledTransactions.put(e),
+              async (transactionStore) => transactionStore.scheduledTransactions.put(await withRememberedPayee(transactionStore, e)),
             );
             bump();
           }}
@@ -1851,7 +1852,7 @@ function applyBatchPatch(tx: Transaction, patch: BatchPatch, snap: Snapshot, use
     if (catType !== next.type) throw new Error(`分类与流水类型不匹配：${next.description ?? next.id}`);
     next = { ...next, category: patch.category };
   }
-  if (patch.payeeId !== undefined) next = { ...next, payeeId: patch.payeeId || undefined };
+  if (patch.payeeId !== undefined) next = { ...next, payeeId: patch.payeeId, merchant: snap.payees.find((payee) => payee.id === patch.payeeId)?.name ?? '' };
   if (patch.accountId !== undefined && usesAccounts) next = { ...next, accountId: patch.accountId || undefined };
   if (patch.status !== undefined && usesAccounts) next = { ...next, status: patch.status || 'cleared' };
   if (patch.locationId !== undefined) {
@@ -1896,7 +1897,7 @@ function batchPreviewLine(tx: Transaction, snap: Snapshot, usesAccounts: boolean
 function batchSummary(patch: BatchPatch, snap: Snapshot): string {
   const parts: string[] = [];
   if (patch.category) parts.push(`分类：${categoryLabel(patch.category, snap.categories)}`);
-  if (patch.payeeId) parts.push(`交易对象：${snap.payees.find((p) => p.id === patch.payeeId)?.name ?? patch.payeeId}`);
+  if (patch.payeeId !== undefined) parts.push(patch.payeeId ? `交易对象：${snap.payees.find((p) => p.id === patch.payeeId)?.name ?? patch.payeeId}` : '清空交易对象');
   if (patch.accountId) parts.push(`账户：${snap.accounts.find((a) => a.id === patch.accountId)?.name ?? patch.accountId}`);
   if (patch.status) parts.push(`状态：${STATUS_OPTIONS.find((s) => s.value === patch.status)?.label ?? patch.status}`);
   if (patch.locationId) parts.push(`地点：${snap.transactionLocations.find((l) => l.id === patch.locationId)?.name ?? patch.locationId}`);
@@ -2122,6 +2123,7 @@ function ConditionValueInput(props: { snap: Snapshot; field: AdvancedQueryField;
   const { snap, field, value, options, onChange } = props;
   // 二级分类单独走分类控件：它有上百项且含隐藏分类，原生下拉既翻不动也够不到。
   if (field === 'category') return <CategoryConditionValue snap={snap} value={value} onChange={onChange} />;
+  if (field === 'payeeId') return <ExistingPayeePicker label="高级查询值" payees={snap.payees} value={value} onChange={onChange} />;
   if (options) {
     return (
       <select aria-label="高级查询值" style={selectStyle} value={value} onChange={(e) => onChange(e.target.value)}>
@@ -2222,10 +2224,8 @@ function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilter
           {snap.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       )}
-      <select aria-label="流水交易对象" style={selectStyle} value={filters.payeeId ?? 'all'} onChange={(e) => setFilters((f) => ({ ...f, payeeId: e.target.value }))}>
-        <option value="all">全部交易对象</option>
-        {snap.payees.filter((p) => !p.isDeleted).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-      </select>
+      <ExistingPayeePicker label="流水交易对象" payees={snap.payees} value={filters.payeeId ?? 'all'} emptyValue="all" emptyLabel="全部交易对象"
+        onChange={(payeeId) => setFilters((current) => ({ ...current, payeeId }))} />
       <select aria-label="流水标签" style={selectStyle} value={filters.tagId ?? 'all'} onChange={(e) => setFilters((f) => ({ ...f, tagId: e.target.value }))}>
         <option value="all">全部标签</option>
         {snap.transactionTags.filter((t) => !t.isDeleted).map((t) => <option key={t.id} value={t.id}>{t.groupName ? `${t.groupName} / ${t.name}` : t.name}</option>)}
@@ -2547,7 +2547,7 @@ function BatchEditModal(props: {
   const titleId = useId();
   const { snap, usesAccounts, count, transactions, onSave, onClose } = props;
   const [category, setCategory] = useState('');
-  const [payeeId, setPayeeId] = useState('');
+  const [payeeId, setPayeeId] = useState('__unchanged__');
   const [accountId, setAccountId] = useState('');
   const [status, setStatus] = useState('');
   const [locationId, setLocationId] = useState('');
@@ -2559,7 +2559,7 @@ function BatchEditModal(props: {
   const readMulti = (e: ChangeEvent<HTMLSelectElement>) => [...e.target.selectedOptions].map((o) => o.value);
   const patch: BatchPatch = {
     category: category || undefined,
-    payeeId: payeeId || undefined,
+    payeeId: payeeId === '__unchanged__' ? undefined : payeeId,
     accountId: accountId || undefined,
     status: (status || undefined) as Transaction['status'] | undefined,
     locationId: locationId || undefined,
@@ -2626,10 +2626,8 @@ function BatchEditModal(props: {
             triggerStyle={selectStyle}
             onChange={(next) => { markDirty(); setCategory(next); }}
           />
-          <select style={selectStyle} value={payeeId} onChange={(e) => { markDirty(); setPayeeId(e.target.value); }}>
-            <option value="">不改交易对象</option>
-            {snap.payees.filter((p) => !p.isDeleted).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          <ExistingPayeePicker label="批量修改交易对象" payees={snap.payees} value={payeeId} emptyValue="__unchanged__" emptyLabel="不改交易对象" clearLabel="清空交易对象"
+            allowInactive={false} disabled={busy} onChange={(id) => { markDirty(); setPayeeId(id); }} />
           {usesAccounts && (
             <>
               <select style={selectStyle} value={accountId} onChange={(e) => { markDirty(); setAccountId(e.target.value); }}>

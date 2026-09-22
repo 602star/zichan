@@ -54,7 +54,13 @@ const directionAccountOpts = (s: Snapshot, type: string) => {
   return s.accounts.filter((a) => !a.isDeleted && a.isActive !== false && a.kind !== 'other' && (type === 'transfer' ? !isDefaultAccount(a) : a.purpose !== (type === 'income' ? 'default_expense' : 'default_income')))
     .sort((a, b) => Number(b.id === selected) - Number(a.id === selected)).map((a) => ({ value: a.id, label: a.name }));
 };
-const payeeOpts = (s: Snapshot) => s.payees.filter((p) => !p.isDeleted && p.isActive).map((p) => ({ value: p.id, label: p.name }));
+function payeeFields(snap: Snapshot, key = 'payeeId', nameKey = 'merchant', extra: Partial<FieldDef> = {}): FieldDef[] {
+  return [
+    { key, label: '商家 / 平台', type: 'payee', payees: snap.payees, categories: snap.categories,
+      relatedValueKeys: [nameKey], payeeBinding: { nameKey }, ...extra },
+    { key: nameKey, label: '交易对象名称', type: 'text', hidden: true },
+  ];
+}
 const tagOpts = (s: Snapshot) => s.transactionTags.filter((t) => !t.isDeleted && t.isActive).map((t) => ({ value: t.id, label: t.groupName ? `${t.groupName} / ${t.name}` : t.name }));
 const locationOpts = (s: Snapshot) => s.transactionLocations.filter((l) => !l.isDeleted && l.isActive).map((l) => ({ value: l.id, label: l.address ? `${l.name} · ${l.address}` : l.name }));
 const categoryPickerPreference = (s: Snapshot) => ({ categoryShowHiddenDefault: s.setting?.categoryPickerDefaultScope === 'all' });
@@ -184,11 +190,13 @@ export type GameRecordFormValue = GameRecord & {
   settlementCategoryId?: string;
   settlementAccountId?: string;
   settlementMerchant?: string;
+  settlementPayeeId?: string;
   feeCashflowMode?: GameCashflowMode;
   feeTransactionId?: string;
   feeCategoryId?: string;
   feeAccountId?: string;
   feeMerchant?: string;
+  feePayeeId?: string;
 };
 export type FixedAssetFormValue = FixedAsset & {
   purchaseAmount?: string;
@@ -459,10 +467,9 @@ export function transactionTemplateForm(snap: Snapshot, options: LedgerFormOptio
       { key: 'amount', label: '常用金额', type: 'number', half: true },
       { key: 'assetId', label: '币种', type: 'select', half: true, options: settlementOpts(snap), allowEmpty: true },
       ...accountFields,
-      { key: 'payeeId', label: '商户', type: 'select', half: true, options: payeeOpts(snap), allowEmpty: true },
+      ...payeeFields(snap),
       { key: 'tagIds', label: '标签', type: 'multiselect', options: tagOpts(snap) },
       { key: 'locationId', label: '地点', type: 'select', half: true, options: locationOpts(snap), allowEmpty: true },
-      { key: 'merchant', label: '商户文本', type: 'text', half: true },
       { key: 'description', label: '描述', type: 'text', half: true },
       { key: 'sortOrder', label: '排序', type: 'number', half: true, defaultValue: '100' },
       { key: 'isActive', label: '启用', type: 'checkbox', half: true, defaultValue: 'true' },
@@ -600,8 +607,7 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       { key: 'refundAppliedAmount', label: '冲减原消费金额', type: 'number', half: true, placeholder: '按原支出币种填写', lockedVisible: true, hidden: expenseOnly, required: true, visibleWhen: (v) => (v.type === 'refund' || refundMode) && refundNeedsSeparateOffset(v) },
       { key: 'refundAllocationMode', label: '退款分配方式', type: 'select', half: true, options: [{ value: 'proportional', label: '按原单剩余比例' }, { value: 'specified', label: '指定退款项目' }], defaultValue: 'proportional', lockedVisible: true, hidden: expenseOnly, visibleWhen: (v) => v.type === 'refund' && refundAllocationOptions(v).length > 1 },
       { key: 'refundAllocationDrafts', label: '指定退款项目金额', type: 'allocation', options: refundAllocationOptions, lockedVisible: true, hidden: expenseOnly, visibleWhen: (v) => v.type === 'refund' && v.refundAllocationMode === 'specified' },
-      { key: 'payeeId', label: '商家 / 平台', relatedValueKeys: ['merchant'], type: 'payee', payees: snap.payees, categories: snap.categories, section: 'more' },
-      { key: 'merchant', label: '交易对象名称', type: 'text', hidden: true },
+      ...payeeFields(snap, 'payeeId', 'merchant', { section: 'more' }),
       { key: 'locationId', label: '地点', type: 'select', half: true, options: locationOpts(snap), allowEmpty: true, section: 'more' },
       { key: 'locationName', label: '地点文本', type: 'text', half: true, placeholder: '公司附近 / 家 / 某商场', section: 'more', deviceAction: 'current-location' },
       { key: 'latitude', label: '纬度', type: 'text', hidden: true },
@@ -772,7 +778,7 @@ export function scheduledTransactionForm(snap: Snapshot, options: LedgerFormOpti
       { key: 'amount', label: '金额', type: 'number', half: true, required: true },
       { key: 'assetId', label: '币种', type: 'select', half: true, options: settlementOpts(snap), required: true },
       ...accountFields,
-      { key: 'payeeId', label: '商户', type: 'select', half: true, options: payeeOpts(snap), allowEmpty: true },
+      ...payeeFields(snap),
       { key: 'frequency', label: '频率', type: 'select', half: true, options: SCHEDULE_FREQ },
       { key: 'anchorDate', label: '开始日期', type: 'date', half: true, defaultValue: asOf, required: true },
       { key: 'time', label: '生成时间', type: 'time', half: true, defaultValue: '09:00' },
@@ -788,7 +794,6 @@ export function scheduledTransactionForm(snap: Snapshot, options: LedgerFormOpti
         { value: 'latest', label: '只生成最近一期' },
       ] },
       { key: 'status', label: '状态', type: 'select', half: true, options: SCHEDULE_STATUS },
-      { key: 'merchant', label: '商户文本', type: 'text', half: true },
       { key: 'description', label: '描述', type: 'text', half: true },
       { key: 'note', label: '备注', type: 'text', half: true },
     ],
@@ -937,6 +942,7 @@ function gameCashflowFormValues(snap: Snapshot, record: GameRecord, role: GameCa
     categoryId: transaction?.category ?? '',
     accountId: transaction?.accountId ?? '',
     merchant: transaction?.merchant ?? '',
+    payeeId: transaction?.payeeId ?? '',
   };
 }
 
@@ -974,7 +980,7 @@ export function gameRecordForm(snap: Snapshot): EntityFormSpec<GameRecordFormVal
         options: (v) => directionAccountOpts(snap, GAME_INCOME_TYPES.has(v.recordType ?? '') ? 'income' : 'expense'), allowEmpty: !usesAccounts, required: usesAccounts,
         visibleWhen: (values) => usesAccounts && values.settlementCashflowMode === 'create_transaction',
       },
-      { key: 'settlementMerchant', label: '结算商户 / 平台', type: 'text', half: true, section: 'more', visibleWhen: (values) => values.settlementCashflowMode === 'create_transaction' },
+      ...payeeFields(snap, 'settlementPayeeId', 'settlementMerchant', { label: '结算商家 / 平台', section: 'more', payeeBinding: { nameKey: 'settlementMerchant', categoryKey: 'settlementCategoryId', type: (v) => GAME_INCOME_TYPES.has(v.recordType ?? '') ? 'income' : 'expense' }, visibleWhen: (values) => values.settlementCashflowMode === 'create_transaction' }),
       { key: 'feeAssetId', label: '手续费币种', type: 'select', half: true, options: assetOpts(snap), allowEmpty: true },
       { key: 'feeAmount', label: '手续费', type: 'number', half: true },
       { key: 'feeCashflowMode', label: '手续费资金处理', type: 'select', half: true, options: GAME_CASHFLOW_MODES, defaultValue: 'create_transaction' },
@@ -994,7 +1000,7 @@ export function gameRecordForm(snap: Snapshot): EntityFormSpec<GameRecordFormVal
         options: directionAccountOpts(snap, 'expense'), allowEmpty: !usesAccounts, required: usesAccounts,
         visibleWhen: (values) => usesAccounts && values.feeCashflowMode === 'create_transaction',
       },
-      { key: 'feeMerchant', label: '手续费商户 / 平台', type: 'text', half: true, section: 'more', visibleWhen: (values) => values.feeCashflowMode === 'create_transaction' },
+      ...payeeFields(snap, 'feePayeeId', 'feeMerchant', { label: '手续费商家 / 平台', section: 'more', payeeBinding: { nameKey: 'feeMerchant', categoryKey: 'feeCategoryId', type: 'expense' }, visibleWhen: (values) => values.feeCashflowMode === 'create_transaction' }),
       { key: 'note', label: '备注', type: 'text' },
     ],
     toValues: (record) => {
@@ -1010,12 +1016,14 @@ export function gameRecordForm(snap: Snapshot): EntityFormSpec<GameRecordFormVal
         settlementCategoryId: record.settlementCategoryId ?? settlement.categoryId,
         settlementAccountId: record.settlementAccountId ?? settlement.accountId,
         settlementMerchant: record.settlementMerchant ?? settlement.merchant,
+        settlementPayeeId: record.settlementPayeeId ?? settlement.payeeId,
         feeAssetId: record.feeAssetId ?? '', feeAmount: record.feeAmount ?? '',
         feeCashflowMode: record.feeCashflowMode ?? fee.mode,
         feeTransactionId: record.feeTransactionId ?? fee.transactionId,
         feeCategoryId: record.feeCategoryId ?? fee.categoryId,
         feeAccountId: record.feeAccountId ?? fee.accountId,
         feeMerchant: record.feeMerchant ?? fee.merchant,
+        feePayeeId: record.feePayeeId ?? fee.payeeId,
         note: record.note ?? '',
       };
     },
@@ -1025,11 +1033,11 @@ export function gameRecordForm(snap: Snapshot): EntityFormSpec<GameRecordFormVal
       gameCurrencyAmount: S(v.gameCurrencyAmount), settlementAssetId: S(v.settlementAssetId), settlementAmount: S(v.settlementAmount),
       settlementCashflowMode: (v.settlementCashflowMode as GameCashflowMode) || 'record_only',
       settlementTransactionId: S(v.settlementTransactionId), settlementCategoryId: S(v.settlementCategoryId),
-      settlementAccountId: S(v.settlementAccountId), settlementMerchant: S(v.settlementMerchant),
+      settlementAccountId: S(v.settlementAccountId), settlementMerchant: S(v.settlementMerchant), settlementPayeeId: S(v.settlementPayeeId),
       feeAssetId: S(v.feeAssetId), feeAmount: S(v.feeAmount),
       feeCashflowMode: (v.feeCashflowMode as GameCashflowMode) || 'record_only',
       feeTransactionId: S(v.feeTransactionId), feeCategoryId: S(v.feeCategoryId),
-      feeAccountId: S(v.feeAccountId), feeMerchant: S(v.feeMerchant), note: S(v.note),
+      feeAccountId: S(v.feeAccountId), feeMerchant: S(v.feeMerchant), feePayeeId: S(v.feePayeeId), note: S(v.note),
     }) as GameRecordFormValue,
     validate: (v) => {
       const season = v.seasonId ? snap.seasons.find((row) => row.id === v.seasonId) : undefined;
@@ -1125,8 +1133,7 @@ export function fixedAssetForm(snap: Snapshot, attachments: Attachment[] = [], p
       { key: 'cashflowSourceAmount', label: '从该支出分配的金额', type: 'number', half: true, visibleWhen: (values) => values.cashflowMode === 'linked_transaction', required: true },
       { key: 'cashflowCategory', label: '支出二级分类', type: 'category', options: categoryOptions(snap.categories, 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), visibleWhen: (values) => values.cashflowMode === 'create_transaction', required: true },
       { key: 'cashflowAccountId', label: '付款账户', type: 'select', half: true, options: directionAccountOpts(snap, 'expense'), allowEmpty: !usesAccounts, visibleWhen: (values) => values.cashflowMode === 'create_transaction', required: usesAccounts },
-      { key: 'cashflowPayeeId', label: '已有商户', type: 'select', half: true, options: payeeOpts(snap), allowEmpty: true, visibleWhen: (values) => values.cashflowMode === 'create_transaction' },
-      { key: 'cashflowMerchant', label: '商户文本', type: 'text', half: true, visibleWhen: (values) => values.cashflowMode === 'create_transaction' },
+      ...payeeFields(snap, 'cashflowPayeeId', 'cashflowMerchant', { payeeBinding: { nameKey: 'cashflowMerchant', categoryKey: 'cashflowCategory', type: (v) => v.type === 'sale' ? 'income' : 'expense' }, visibleWhen: (values) => values.cashflowMode === 'create_transaction' }),
       { key: 'cashflowDescription', label: '支出描述', type: 'text', visibleWhen: (values) => values.cashflowMode === 'create_transaction', placeholder: '默认使用“购买 + 物品名称”' },
       { key: 'status', label: '状态', type: 'select', half: true, options: FIXED_STATUS },
       { key: 'activatedDate', label: '启用日期', type: 'date', half: true },
@@ -1135,7 +1142,7 @@ export function fixedAssetForm(snap: Snapshot, attachments: Attachment[] = [], p
       { key: 'model', label: '型号', type: 'text', half: true },
       { key: 'serialNumber', label: '序列号', type: 'text', half: true },
       { key: 'barcode', label: '条形码 / 设备码', type: 'text', half: true, deviceAction: 'scan-barcode' },
-      { key: 'purchaseMerchant', label: '购买商户', type: 'text', half: true },
+      { key: 'purchaseMerchant', label: '购买商户', type: 'payee', payees: snap.payees, categories: snap.categories, payeeBinding: { nameKey: 'purchaseMerchant', textOnly: true } },
       { key: 'orderNumber', label: '订单号', type: 'text', half: true },
       { key: 'warrantyEndDate', label: '保修截止日', type: 'date', half: true },
       { key: 'warrantyProvider', label: '保修方', type: 'text', half: true },
@@ -1225,8 +1232,7 @@ export function fixedEventForm(
       { key: 'cashflowSourceAmount', label: '从该流水分配的金额', type: 'number', half: true, visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'linked_transaction', required: true },
       { key: 'cashflowCategory', label: '流水二级分类', type: 'category', options: (values) => categoryOptions(snap.categories, isInflow(values) ? 'income' : 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'create_transaction', required: true },
       { key: 'cashflowAccountId', label: '付款 / 收款账户', type: 'select', half: true, resetWhen: ['type'], options: (v) => directionAccountOpts(snap, isInflow(v) ? 'income' : 'expense'), allowEmpty: !usesAccounts, visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'create_transaction', required: usesAccounts },
-      { key: 'cashflowPayeeId', label: '已有商户', type: 'select', half: true, options: payeeOpts(snap), allowEmpty: true, visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'create_transaction' },
-      { key: 'cashflowMerchant', label: '商户文本', type: 'text', half: true, visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'create_transaction' },
+      ...payeeFields(snap, 'cashflowPayeeId', 'cashflowMerchant', { payeeBinding: { nameKey: 'cashflowMerchant', categoryKey: 'cashflowCategory', type: (v) => v.type === 'sale' ? 'income' : 'expense' }, visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'create_transaction' }),
       { key: 'cashflowDescription', label: '流水描述', type: 'text', visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'create_transaction' },
       { key: 'cashflowReportingTreatment', label: '出售报表口径', type: 'select', half: true, defaultValue: 'ordinary', options: [
         { value: 'ordinary', label: '计入收入' },
@@ -1364,8 +1370,7 @@ export function fixedConsumableForm(
       { key: 'cashflowSourceAmount', label: '从该支出分配的金额', type: 'number', half: true, visibleWhen: (values) => values.cashflowMode === 'linked_transaction', required: true },
       { key: 'cashflowCategory', label: '支出二级分类', type: 'category', options: categoryOptions(snap.categories, 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), visibleWhen: (values) => values.cashflowMode === 'create_transaction', required: true },
       { key: 'cashflowAccountId', label: '付款账户', type: 'select', half: true, options: directionAccountOpts(snap, 'expense'), allowEmpty: !usesAccounts, visibleWhen: (values) => values.cashflowMode === 'create_transaction', required: usesAccounts },
-      { key: 'cashflowPayeeId', label: '已有商户', type: 'select', half: true, options: payeeOpts(snap), allowEmpty: true, visibleWhen: (values) => values.cashflowMode === 'create_transaction' },
-      { key: 'cashflowMerchant', label: '商户文本', type: 'text', half: true, visibleWhen: (values) => values.cashflowMode === 'create_transaction' },
+      ...payeeFields(snap, 'cashflowPayeeId', 'cashflowMerchant', { payeeBinding: { nameKey: 'cashflowMerchant', categoryKey: 'cashflowCategory', type: (v) => v.type === 'sale' ? 'income' : 'expense' }, visibleWhen: (values) => values.cashflowMode === 'create_transaction' }),
       { key: 'cashflowDescription', label: '支出描述', type: 'text', visibleWhen: (values) => values.cashflowMode === 'create_transaction' },
       { key: 'installedDate', label: '安装日期', type: 'date', half: true },
       { key: 'usageMetricId', label: '寿命计算指标', type: 'select', half: true, options: metricOptions, allowEmpty: true },

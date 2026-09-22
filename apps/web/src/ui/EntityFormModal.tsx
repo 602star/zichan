@@ -63,6 +63,7 @@ export interface FieldDef {
   payees?: Payee[];
   categories?: Category[];
   iconKind?: 'payee';
+  payeeBinding?: { nameKey: string; categoryKey?: string; typeKey?: string; type?: string | ((values: Record<string, string>) => string); textOnly?: boolean };
   type: FieldType;
   options?: FieldOption[] | ((values: Record<string, string>) => FieldOption[]);
   allowEmpty?: boolean; // for select: offer a "（无）" option
@@ -742,9 +743,11 @@ function FormField(props: {
   hint?: string;
 }) {
   const { f, values, fieldId, options, value, selectedValues, fileRows, set, readFiles, setFileRows, deviceBusy, runDeviceAction, error, hint } = props;
+  const binding = f.payeeBinding;
+  const payeeType = typeof binding?.type === 'function' ? binding.type(values) : binding?.type ?? values[binding?.typeKey ?? 'type'] ?? 'expense';
   return (
     <div className="zc-form-field" key={f.key} data-form-field={fieldId} style={{ gridColumn: f.half ? 'span 1' : 'span 2' }}>
-      <label className="zc-label" htmlFor={fieldId}>{f.type === 'payee' && values.type === 'income' ? '付款方' : f.label}{f.required && <span style={{ color: 'var(--negative)', marginLeft: 3 }}>*</span>}</label>
+      <label className="zc-label" htmlFor={fieldId}>{f.type === 'payee' && payeeType === 'income' ? '付款方' : f.label}{f.required && <span style={{ color: 'var(--negative)', marginLeft: 3 }}>*</span>}</label>
       {f.type === 'select' && f.singleOptionSummary && options.length === 1 ? <output id={fieldId} aria-label={f.label} style={{ display: 'block', padding: '8px 0' }}>{options[0]!.label}</output> : f.type === 'select' ? (
         <select id={fieldId} name={f.key} className="zc-select" required={f.required} value={value} onChange={(e) => set(f.key, e.target.value)}>
           {f.allowEmpty && <option value="">（无）</option>}
@@ -765,7 +768,7 @@ function FormField(props: {
           onChange={(next) => set(f.key, next)}
         />
       ) : f.type === 'payee' ? (
-        <PayeePicker id={fieldId} payees={f.payees ?? []} categories={f.categories ?? []} payeeId={value} merchant={values.merchant ?? ''} categoryId={values.category ?? ''} type={values.type ?? 'expense'} onChange={(id, name) => { set(f.key, id); set('merchant', name); }} />
+        <PayeePicker id={fieldId} payees={f.payees ?? []} categories={f.categories ?? []} payeeId={binding?.textOnly ? '' : value} merchant={values[binding?.nameKey ?? 'merchant'] ?? ''} categoryId={values[binding?.categoryKey ?? 'category'] ?? ''} type={payeeType} textOnly={binding?.textOnly} onChange={(id, name) => { if (!binding?.textOnly) set(f.key, id); set(binding?.nameKey ?? 'merchant', name); }} />
       ) : f.type === 'tags' ? (
         <TagPicker id={fieldId} options={options} value={value} onChange={(next) => set(f.key, next)} />
       ) : f.type === 'multiselect' ? (
