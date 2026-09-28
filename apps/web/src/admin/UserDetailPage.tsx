@@ -77,7 +77,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
             the button for those accounts and reporting why beats an absent control that leaves
             an operator wondering whether the feature exists.
           */}
-          <Button onClick={() => navigate(`/preview/${encodeURIComponent(account.username)}`)}>预览记账数据</Button>
+          <Button onClick={() => navigate(`/preview?username=${encodeURIComponent(account.username)}`)}>预览记账数据</Button>
           <Button onClick={() => navigate(`/sync?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的同步诊断</Button>
           <Button onClick={() => navigate(`/logs?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的运行日志</Button>
           <Button onClick={() => navigate(`/sessions?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的会话</Button>

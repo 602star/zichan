@@ -332,3 +332,7 @@ deriveAttachmentCryptoContext(session, { serverId, ledgerId, username })
 - 浏览器命令：设置 `PLAYWRIGHT_EXECUTABLE_PATH` 为本机 Chrome 后，运行 `npm run test --prefix tools/e2e -- --config account.config.mjs admin-preview-attachment.spec.mjs admin-ledger-preview.spec.mjs`，3 项通过；已检查附件列表截图。
 - 最终全量日志：`.runtime/preview-delivery-tests-final.log`；首次运行、针对性复跑、类型检查、Lint、构建、发布检查和浏览器日志同目录，前缀为 `preview-delivery-`。
 - 已更新工作日志，并在 `memory/2026-09-22c.md` 标明旧阶段 5 待办已完成。本批完成代码交付验证，不包含线上部署或桌面发行包重建。
+
+### 同日补验：真实预览入口
+
+用户反馈点击预览无法进入后，发现两个按钮仍使用旧路径，之前的浏览器流程手动访问查询参数地址而漏测。已修复用户列表、详情页入口，并改为实际点击两处按钮及刷新预览页进行回归。相关单测 15 项、浏览器 3 项、Lint 与 Web 构建通过；当前用户流程为“预览 → 填写查看原因 → 打开预览”。

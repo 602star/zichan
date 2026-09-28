@@ -80,7 +80,8 @@ test('an administrator opens a user ledger as a read-only preview and can close 
     await expect(row.getByRole('button', { name: '预览' })).toBeVisible();
 
     // Opening decrypts the user's ledger, so the console asks for a reason and says why.
-    await page.goto(`${origin}/admin/preview?username=preview-user`);
+    await row.getByRole('button', { name: '预览', exact: true }).click();
+    await expect(page).toHaveURL(`${origin}/admin/preview?username=preview-user`);
     await expect(page.getByRole('heading', { name: /预览用户记账/ })).toBeVisible();
     await page.getByLabel('查看原因').fill('核对用户反馈的金额差异');
     await page.getByRole('button', { name: '打开预览' }).click();
@@ -112,7 +113,10 @@ test('an administrator opens a user ledger as a read-only preview and can close 
     // And the session is really gone, not just off screen: revisiting asks for a reason again
     // instead of handing back the ledger the operator just closed. (The 410 the server answers
     // for a closed preview id is covered by the route tests.)
-    await page.goto(`${origin}/admin/preview?username=preview-user`);
+    await row.getByRole('button', { name: '详情', exact: true }).click();
+    await page.getByRole('button', { name: '预览记账数据', exact: true }).click();
+    await expect(page).toHaveURL(`${origin}/admin/preview?username=preview-user`);
+    await page.reload();
     await expect(page.getByLabel('查看原因')).toBeVisible();
     await expect(page.locator('.zc-app-shell')).toHaveCount(0);
   } finally {
