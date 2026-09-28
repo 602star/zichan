@@ -1,7 +1,8 @@
 /** Runtime overview: the day-to-day entry point, not a wall of counters. */
-import { useState } from 'react';
+import { pendingAlerts, overviewStatus } from './operations.js';
+import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
-import { Badge, Button, DataTable, Loading, Notice, Panel, PanelIndex, sectionId, Select, Stat, TextInput, bytes, canWrite, message, muted, roleLabel, row, usePolling, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Loading, Notice, Panel, Select, Stat, TextInput, bytes, canWrite, message, muted, roleLabel, row, usePolling, useResource, when } from './ui.js';
 import { alertNextStep, alertStateLabel, acknowledgeAlert, describeAlert, isSilenced, silenceAlert, unsilenceAlert, SILENCE_HOURS } from './alerts.js';
 import { TrendChart } from './chart.js';
 import { MaintenancePanel } from './MaintenancePanel.js';
@@ -42,6 +43,7 @@ export function OverviewPage({ client, navigate, accountName, role }: {
   const [silenceDraft, setSilenceDraft] = useState<{ key: string; hours: number; reason: string }>();
   // Alert actions report in place instead of a blocking dialog that cannot carry a request id.
   const [actionError, setActionError] = useState('');
+  const [maintenanceExpanded, setMaintenanceExpanded] = useState(false);
   const overview = useResource(() => client.request<Overview>('/overview'), []);
   const metrics = useResource(() => client.request<Metrics>(`/metrics?range=${range}`), [range]);
   // Both views age together: a poll that refreshed only the overview left the counters stale.
@@ -49,17 +51,18 @@ export function OverviewPage({ client, navigate, accountName, role }: {
 
   const snapshot = overview.data?.snapshot;
   const backup = snapshot?.backup ?? null;
-  const alerts = overview.data?.alerts ?? [];
-  // A silenced alert is a decision, not an outage: it stays visible but stops colouring
-  // the service status. The server counts the same way, so the two never disagree.
-  const blocking = alerts.filter((alert) => alert.state === 'active' && !isSilenced(alert));
+  const alerts = pendingAlerts(overview.data?.alerts ?? []);
+  // Notification preferences never hide an active condition from the service summary.
+  const blocking = alerts.filter((alert) => alert.state === 'active');
   const silenced = alerts.filter(isSilenced);
   // A declared maintenance window is not a degradation: it is a planned state, and it already
   // explains why writes are refused. Folding it into "降级" would send an operator hunting for a
   // fault that does not exist.
   const maintenance = overview.data?.maintenance;
+  useEffect(() => { if (maintenance?.active) setMaintenanceExpanded(true); }, [maintenance?.active]);
   const drain = overview.data?.drain;
-  const degraded = (Boolean(blocking.length) || overview.stale) && !maintenance?.active;
+  const status = overviewStatus(overview.data, overview.stale);
+  const unknown = status === '状态未知';
   const diskFree = snapshot?.storage.diskFreeBytes ?? null;
   const diskTotal = snapshot?.storage.diskTotalBytes ?? null;
   const diskLow = diskFree !== null && diskTotal !== null && diskTotal > 0 && diskFree / diskTotal < 0.1;
@@ -73,27 +76,142 @@ export function OverviewPage({ client, navigate, accountName, role }: {
   return (
     <>
       <h2>运行概览</h2>
-      <PanelIndex sections={[
-        { id: sectionId('服务状态'), label: '服务状态' },
-        { id: sectionId('最近管理员登录'), label: '管理员登录' },
-        { id: sectionId('待处理事项'), label: '待处理事项' },
-      ]} />
+      <p>先查看需要处理的事项，再进入对应用户、备份或运行记录。</p>
       <Loading loading={overview.loading} error={overview.error} stale={overview.stale} loadedAt={overview.loadedAt} />
 
       <Panel title="服务状态">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-          <Stat label="状态" value={maintenance?.active ? '维护中' : degraded ? '降级' : '正常'} tone={maintenance?.active ? 'warn' : degraded ? 'warn' : undefined}
-            hint={maintenance?.active ? '客户端写入已暂停，读取正常' : blocking.length ? `${blocking.length} 条告警处于活动状态` : silenced.length ? `没有活动告警；${silenced.length} 条已静默` : '没有活动告警'} />
-          <Stat label="运行时间" value={snapshot ? formatUptime(snapshot.uptimeSeconds) : '暂无数据'} />
-          <Stat label="服务版本" value={overview.data?.version ?? '暂无数据'} hint={`服务器 ID ${overview.data?.serverId ?? ''}`} />
-          <Stat label="最后采样" value={snapshot ? new Date(snapshot.sampledAt).toLocaleTimeString() : '暂无数据'}
+          <Stat label="状态" value={status} tone={status === '运行正常' ? undefined : 'warn'}
+            hint={unknown ? '等待新鲜的服务数据，暂时无法判断运行情况' : maintenance?.active ? '客户端写入已暂停，读取正常' : blocking.length ? `${blocking.length} 条告警处于活动状态` : alerts.length ? `${alerts.length} 项正在持续观察${silenced.length ? '，部分通知已暂停' : ''}` : '请核对下方待办及备份保障'} />
+          <Stat label="最后采样" value={snapshot ? new Date(snapshot.sampledAt).toLocaleTimeString('zh-CN', { hour12: false }) : '暂无数据'}
             hint={overview.data ? `${Math.round((snapshot?.sampledWithinMs ?? 0) / 1000)} 秒前` : undefined} />
-          <Stat label="有效会话" value={snapshot ? snapshot.counts.activeSessionCount : '暂无数据'} hint="有效会话不代表在线人数" />
+          <Stat label="用户" value={snapshot ? `${snapshot.counts.userCount} 个` : '暂无数据'} hint={snapshot ? `${snapshot.counts.activeSessionCount} 个有效会话；有效会话不代表在线人数` : undefined} />
         </div>
       </Panel>
 
-      <MaintenancePanel client={client} role={role} view={maintenance} drain={drain} onChanged={() => overview.reload()} />
+      <Panel title="待处理事项" note="按活动状态和严重程度排列。标记已知晓只记录处理意向，暂停通知只停止提醒；问题恢复由系统检测。">
+        {unknown ? <Notice tone="warn">状态数据尚未就绪或已经过时，请刷新后判断；下方已有记录仅供参考。</Notice> : null}
+        {!unknown && alerts.length === 0 && !overview.data?.recentFailures.length && !overview.data?.recentJobs.some((job) => ['failed', 'interrupted'].includes(job.status)) ? <p style={muted}>当前没有检测到待处理事项。备份是否已执行，请继续查看下方数据保障。</p> : null}
+        {alerts.length ? (
+          <ul className="zc-admin-issues">
+            {alerts.map((alert) => {
+              const silenced = isSilenced(alert);
+              const stateLabel = alertStateLabel(alert);
+              return (
+                <li key={alert.key} style={{ marginBottom: 10 }}>
+                  <Badge tone={stateLabel.tone}>{stateLabel.text}</Badge>{' '}
+                  {alert.acknowledgedAt ? <Badge tone="muted">已知晓</Badge> : null}{' '}
+                  {describeAlert(alert)}{' '}
+                  <p style={muted}>范围：{alert.scope}；首次 {when(alert.firstSeenAt)}，最近 {when(alert.lastSeenAt)}，共 {alert.occurrences} 次（连续 {alert.consecutive} 次）</p>{' '}
+                  <NextStep alert={alert} navigate={navigate} />{' '}
+                  <Button disabled={!canWrite(role) || Boolean(alert.acknowledgedAt)} onClick={() => {
+                    void acknowledgeAlert(client, alert).catch((error) => setActionError(message(error))).finally(overview.reload);
+                  }}>
+                    {alert.acknowledgedAt ? `已由 ${alert.acknowledgedBy ?? ''} 知晓` : '标记已知晓'}
+                  </Button>{' '}
+                  {silenced ? (
+                    <span style={muted}>
+                      已暂停通知至 {when(alert.silencedUntil ?? '')}{alert.silenceReason ? `（${alert.silenceReason}）` : ''}{' '}
+                      <Button disabled={!canWrite(role)} onClick={() => {
+                        void unsilenceAlert(client, alert).catch((error) => setActionError(message(error))).finally(overview.reload);
+                      }}>恢复通知</Button>
+                    </span>
+                  ) : silenceDraft?.key === alert.key ? (
+                    <span style={row}>
+                      <Select
+                        value={String(silenceDraft.hours)}
+                        onChange={(event) => setSilenceDraft({ ...silenceDraft, hours: Number(event.target.value) })}
+                      >
+                        {SILENCE_HOURS.map((hours) => <option key={hours} value={hours}>{hours >= 24 ? `${hours / 24} 天` : `${hours} 小时`}</option>)}
+                      </Select>
+                      <TextInput placeholder="暂停通知原因（必填，写入审计）" value={silenceDraft.reason}
+                        onChange={(event) => setSilenceDraft({ ...silenceDraft, reason: event.target.value })} />
+                      <Button disabled={!silenceDraft.reason.trim()} onClick={() => {
+                        void silenceAlert(client, alert, silenceDraft)
+                          .then(() => setSilenceDraft(undefined))
+                          .catch((error) => setActionError(message(error)))
+                          .finally(overview.reload);
+                      }}>暂停通知</Button>
+                      <Button onClick={() => setSilenceDraft(undefined)}>取消</Button>
+                    </span>
+                  ) : (
+                    <Button disabled={!canWrite(role)} onClick={() => setSilenceDraft({ key: alert.key, hours: 24, reason: '' })}>暂停通知…</Button>
+                  )}
+                  {alert.notifyState ? (
+                    <div style={muted}>
+                      外部通知：{alert.notifyState === 'sent' ? '已发送' : alert.notifyState === 'skipped' ? '已跳过' : '发送失败'}
+                      {alert.lastNotifiedAt ? ` · ${when(alert.lastNotifiedAt)}` : ''}{alert.notifyError ? ` · ${alert.notifyError}` : ''}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+        {actionError ? <Notice tone="bad">{actionError}</Notice> : null}
+        {overview.data?.recentFailures.length ? (
+          <>
+            <strong style={{ display: 'block', marginTop: 12 }}>最近失败的管理操作</strong>
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {overview.data.recentFailures.map((failure) => (
+                <li key={failure.id}>
+                  {when(failure.at)} · {failure.action} · {failure.code ?? '未知错误'}{failure.requestId ? ` · 请求 ${failure.requestId}` : ''}
+                  <Button onClick={() => navigate(failure.requestId ? `/logs?requestId=${encodeURIComponent(failure.requestId)}` : '/audit')}>查看相关记录</Button>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : null}
+        {overview.data?.recentJobs.some((job) => ['failed', 'interrupted'].includes(job.status)) ? (
+          <div><strong>最近失败或中断的任务（请核对是否已重试）</strong>
+            <ul>{overview.data.recentJobs.filter((job) => ['failed', 'interrupted'].includes(job.status)).map((job) => <li key={job.jobId}>
+              {job.type} · {job.status === 'failed' ? '失败' : '中断'} · {when(job.createdAt)}{' '}
+              <Button onClick={() => navigate(`/jobs?job=${encodeURIComponent(job.jobId)}`)}>查看任务结果</Button>
+            </li>)}</ul>
+          </div>
+        ) : null}
+        <p style={{ marginTop: 8 }}>
+          <Button onClick={() => navigate('/users?quota=over')}>查看超额账号</Button>
+          <span style={muted}> 当前管理员：{accountName}</span>
+        </p>
+      </Panel>
 
+      <Panel title="常用操作">
+        <div style={row}>
+          <Button onClick={() => navigate('/users')}>查找用户与预览记账</Button>
+          <Button onClick={() => navigate('/storage')}>检查备份与恢复保障</Button>
+          {role === 'owner' ? <Button onClick={() => navigate('/invites')}>注册与邀请</Button> : null}
+          <Button onClick={() => navigate('/alerts')}>查看历史告警</Button>
+        </div>
+      </Panel>
+
+      <Panel title="数据保障">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+          <Stat label="磁盘余量" tone={diskLow ? 'bad' : undefined}
+            value={diskFree === null ? '暂无数据' : bytes(diskFree)}
+            hint={diskFree === null || !diskTotal ? '无法读取磁盘信息' : `共 ${bytes(diskTotal)}，剩余 ${((diskFree / diskTotal) * 100).toFixed(1)}%`} />
+          <Stat label="最近成功备份" tone={backup && (backup.status === 'failed' || backup.verificationOk === false) ? 'bad' : undefined}
+            value={backup?.lastSuccessAt ? when(backup.lastSuccessAt) : '暂无数据'}
+            hint={backup
+              ? `最近尝试 ${when(backup.attemptedAt)}（${backup.status}${backup.verificationOk === false ? ' · 校验未通过' : ''}）${backup.lastVerifiedAt ? `；最近校验通过 ${when(backup.lastVerifiedAt)}` : '；尚未成功校验'}`
+              : '尚未登记备份记录'} />
+          <Stat label="最近数据库校验" value={typeof snapshot?.verification.database?.['checkedAt'] === 'string' ? when(String(snapshot.verification.database['checkedAt'])) : '暂无数据'}
+            hint={typeof snapshot?.verification.database?.['result'] === 'string' ? `结果 ${snapshot.verification.database['result']}` : '尚未执行'} />
+          <Stat label="最近附件校验" value={typeof snapshot?.verification.blobs?.['issueCount'] === 'number' ? `问题 ${snapshot.verification.blobs['issueCount']}` : '暂无数据'}
+            hint="在任务中心发起" />
+          <Stat label="最近清理" tone={snapshot?.cleanup.lastOk === false ? 'bad' : undefined}
+            value={snapshot?.cleanup.lastFinishedAt ? when(snapshot.cleanup.lastFinishedAt) : '暂无数据'}
+            hint={snapshot?.cleanup.lastOk === false ? `连续失败 ${snapshot.cleanup.consecutiveFailures} 次：${snapshot.cleanup.lastError ?? ''}` : snapshot?.cleanup.lastOk ? `释放 ${bytes(snapshot.cleanup.lastFreedBytes)}` : '尚未运行'} />
+        </div>
+        <p style={{ ...row, marginTop: 10 }}>
+          <Button onClick={() => navigate('/storage')}>查看存储与备份</Button>
+          <Button onClick={() => navigate('/jobs')}>进入任务中心</Button>
+          <Button onClick={() => navigate('/sync')}>同步诊断</Button>
+        </p>
+      </Panel>
+
+      <details className="zc-admin-disclosure"><summary>查看请求趋势与技术指标</summary>
+      <p style={muted}>服务版本 {overview.data?.version ?? '未知'} · 已运行 {snapshot ? formatUptime(snapshot.uptimeSeconds) : '未知'} · 服务器 {overview.data?.serverId ?? '未知'}</p>
       <Panel
         title="核心指标"
         action={<div style={row}>{RANGES.map((value) => <Button key={value} disabled={value === range} onClick={() => setRange(value)}>{value}</Button>)}</div>}
@@ -131,31 +249,6 @@ export function OverviewPage({ client, navigate, accountName, role }: {
         {metrics.loadedAt ? <p style={muted}>最后读取：{new Date(metrics.loadedAt).toLocaleTimeString()}（与「服务状态」一起每 30 秒刷新）</p> : null}
       </Panel>
 
-      <Panel title="数据保障">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-          <Stat label="磁盘余量" tone={diskLow ? 'bad' : undefined}
-            value={diskFree === null ? '暂无数据' : bytes(diskFree)}
-            hint={diskFree === null || !diskTotal ? '无法读取磁盘信息' : `共 ${bytes(diskTotal)}，剩余 ${((diskFree / diskTotal) * 100).toFixed(1)}%`} />
-          <Stat label="最近成功备份" tone={backup && (backup.status === 'failed' || backup.verificationOk === false) ? 'bad' : undefined}
-            value={backup?.lastSuccessAt ? when(backup.lastSuccessAt) : '暂无数据'}
-            hint={backup
-              ? `最近尝试 ${when(backup.attemptedAt)}（${backup.status}${backup.verificationOk === false ? ' · 校验未通过' : ''}）${backup.lastVerifiedAt ? `；最近校验通过 ${when(backup.lastVerifiedAt)}` : '；尚未成功校验'}`
-              : '尚未登记备份记录'} />
-          <Stat label="最近数据库校验" value={typeof snapshot?.verification.database?.['checkedAt'] === 'string' ? when(String(snapshot.verification.database['checkedAt'])) : '暂无数据'}
-            hint={typeof snapshot?.verification.database?.['result'] === 'string' ? `结果 ${snapshot.verification.database['result']}` : '尚未执行'} />
-          <Stat label="最近附件校验" value={typeof snapshot?.verification.blobs?.['issueCount'] === 'number' ? `问题 ${snapshot.verification.blobs['issueCount']}` : '暂无数据'}
-            hint="在任务中心发起" />
-          <Stat label="最近清理" tone={snapshot?.cleanup.lastOk === false ? 'bad' : undefined}
-            value={snapshot?.cleanup.lastFinishedAt ? when(snapshot.cleanup.lastFinishedAt) : '暂无数据'}
-            hint={snapshot?.cleanup.lastOk === false ? `连续失败 ${snapshot.cleanup.consecutiveFailures} 次：${snapshot.cleanup.lastError ?? ''}` : snapshot?.cleanup.lastOk ? `释放 ${bytes(snapshot.cleanup.lastFreedBytes)}` : '尚未运行'} />
-        </div>
-        <p style={{ ...row, marginTop: 10 }}>
-          <Button onClick={() => navigate('/storage')}>查看存储与备份</Button>
-          <Button onClick={() => navigate('/jobs')}>进入任务中心</Button>
-          <Button onClick={() => navigate('/sync')}>同步诊断</Button>
-        </p>
-      </Panel>
-
       <Panel title="进程与数据库" action={<Button onClick={() => navigate('/resources')}>查看详情与趋势</Button>}
         note="这一节的数字只是同步服务器进程本身；数据库页缓存之外的部分不在此列。">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
@@ -174,6 +267,9 @@ export function OverviewPage({ client, navigate, accountName, role }: {
         </div>
       </Panel>
 
+      </details>
+
+      <details className="zc-admin-disclosure"><summary>最近管理员登录</summary>
       <Panel title="最近管理员登录" note="只列管理后台的登录会话（同步客户端会话不在此列）。IP 来自请求来源，反向代理部署时可能是代理地址。">
         {!overview.data?.recentAdminLogins?.length ? <p style={muted}>暂无管理员登录记录。</p> : (
           <DataTable
@@ -190,84 +286,12 @@ export function OverviewPage({ client, navigate, accountName, role }: {
         )}
       </Panel>
 
-      <Panel title="待处理事项" note="同类告警会被合并；每条都会记录首次发生、最后发生与次数。静默只停外部通知，规则、记录与恢复判断都不变。恢复后的告警在「告警历史」里仍可回看。">
-        {alerts.length === 0 ? <p style={muted}>暂无待处理事项。</p> : (
-          <ul style={{ margin: 0, paddingLeft: 18 }}>
-            {alerts.map((alert) => {
-              const silenced = isSilenced(alert);
-              const stateLabel = alertStateLabel(alert);
-              return (
-                <li key={alert.key} style={{ marginBottom: 10 }}>
-                  <Badge tone={stateLabel.tone}>{stateLabel.text}</Badge>{' '}
-                  {alert.acknowledgedAt ? <Badge tone="muted">已确认</Badge> : null}{' '}
-                  {describeAlert(alert)}{' '}
-                  <span style={muted}>影响：{alert.scope}；首次 {when(alert.firstSeenAt)}，最近 {when(alert.lastSeenAt)}，共 {alert.occurrences} 次（连续 {alert.consecutive} 次）</span>{' '}
-                  <NextStep alert={alert} navigate={navigate} />{' '}
-                  <Button disabled={!canWrite(role) || Boolean(alert.acknowledgedAt)} onClick={() => {
-                    void acknowledgeAlert(client, alert).catch((error) => setActionError(message(error))).finally(overview.reload);
-                  }}>
-                    {alert.acknowledgedAt ? `已由 ${alert.acknowledgedBy ?? ''} 确认` : '确认'}
-                  </Button>{' '}
-                  {silenced ? (
-                    <span style={muted}>
-                      已静默至 {when(alert.silencedUntil ?? '')}{alert.silenceReason ? `（${alert.silenceReason}）` : ''}{' '}
-                      <Button disabled={!canWrite(role)} onClick={() => {
-                        void unsilenceAlert(client, alert).catch((error) => setActionError(message(error))).finally(overview.reload);
-                      }}>取消静默</Button>
-                    </span>
-                  ) : silenceDraft?.key === alert.key ? (
-                    <span style={row}>
-                      <Select
-                        value={String(silenceDraft.hours)}
-                        onChange={(event) => setSilenceDraft({ ...silenceDraft, hours: Number(event.target.value) })}
-                      >
-                        {SILENCE_HOURS.map((hours) => <option key={hours} value={hours}>{hours >= 24 ? `${hours / 24} 天` : `${hours} 小时`}</option>)}
-                      </Select>
-                      <TextInput placeholder="静默原因（必填，写入审计）" value={silenceDraft.reason}
-                        onChange={(event) => setSilenceDraft({ ...silenceDraft, reason: event.target.value })} />
-                      <Button disabled={!silenceDraft.reason.trim()} onClick={() => {
-                        void silenceAlert(client, alert, silenceDraft)
-                          .then(() => setSilenceDraft(undefined))
-                          .catch((error) => setActionError(message(error)))
-                          .finally(overview.reload);
-                      }}>确认静默</Button>
-                      <Button onClick={() => setSilenceDraft(undefined)}>取消</Button>
-                    </span>
-                  ) : (
-                    <Button disabled={!canWrite(role)} onClick={() => setSilenceDraft({ key: alert.key, hours: 24, reason: '' })}>静默…</Button>
-                  )}
-                  {alert.notifyState ? (
-                    <div style={muted}>
-                      外部通知：{alert.notifyState === 'sent' ? '已发送' : alert.notifyState === 'skipped' ? '已跳过' : '发送失败'}
-                      {alert.lastNotifiedAt ? ` · ${when(alert.lastNotifiedAt)}` : ''}{alert.notifyError ? ` · ${alert.notifyError}` : ''}
-                    </div>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        {actionError ? <Notice tone="bad">{actionError}</Notice> : null}
-        {overview.data?.recentFailures.length ? (
-          <>
-            <strong style={{ display: 'block', marginTop: 12 }}>最近失败的管理操作</strong>
-            <ul style={{ margin: 0, paddingLeft: 18 }}>
-              {overview.data.recentFailures.map((failure) => (
-                <li key={failure.id}>
-                  {when(failure.at)} · {failure.action} · {failure.code ?? '未知错误'}{failure.requestId ? ` · 请求 ${failure.requestId}` : ''}
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : null}
-        {overview.data?.recentJobs.some((job) => ['failed', 'interrupted'].includes(job.status)) ? (
-          <p><Notice tone="warn">存在失败或中断的维护任务，<button type="button" onClick={() => navigate('/jobs')} style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}>在任务中心查看</button>。</Notice></p>
-        ) : null}
-        <p style={{ marginTop: 8 }}>
-          <Button onClick={() => navigate('/users?quota=over')}>查看超额账号</Button>
-          <span style={muted}> 当前管理员：{accountName}</span>
-        </p>
-      </Panel>
+      </details>
+
+      <details className="zc-admin-disclosure" open={maintenanceExpanded} onToggle={(event) => setMaintenanceExpanded(event.currentTarget.open)}><summary>维护操作</summary>
+      <MaintenancePanel client={client} role={role} view={maintenance} drain={drain} onChanged={() => overview.reload()} />
+
+      </details>
     </>
   );
 }

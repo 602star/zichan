@@ -29,23 +29,7 @@ import { UsersPage } from './UsersPage.js';
 import './admin.css';
 import { PasswordRecovery } from '../ui/PasswordRecovery.js';
 import { Breadcrumbs, roleLabel } from './ui.js';
-
-const NAVIGATION: { path: string; label: string; ownerOnly?: boolean }[] = [
-  { path: '/overview', label: '运行概览' },
-  { path: '/alerts', label: '告警历史' },
-  { path: '/resources', label: '进程与数据库' },
-  { path: '/users', label: '用户管理' },
-  { path: '/sessions', label: '设备与会话' },
-  { path: '/security-events', label: '登录安全' },
-  { path: '/sync', label: '同步诊断' },
-  { path: '/invites', label: '注册与邀请', ownerOnly: true },
-  { path: '/storage', label: '存储与备份' },
-  { path: '/jobs', label: '任务中心' },
-  { path: '/logs', label: '运行日志' },
-  { path: '/audit', label: '管理审计' },
-  { path: '/security', label: '账号安全' },
-  { path: '/settings', label: '系统设置' },
-];
+import { adminNavigation } from './navigation.js';
 
 export function AdminApp({ baseUrl }: { baseUrl: string }) {
   const route = useRoute();
@@ -193,7 +177,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           {health ? (
             <span title={`服务器 ${health.serverId}`}>
-              {health.claimed ? '已初始化' : '未初始化'} · 能力 {health.capabilities.length} 项
+              {health.claimed ? '已初始化' : '未初始化'}
             </span>
           ) : null}
           <a href={`${baseUrl}/app/`}>打开记账应用</a>
@@ -203,6 +187,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
           {account ? (
             <>
               <span>{account.username} · {roleLabel(account.role)}</span>
+              <a href={adminHref(adminBasePath(window.location), '/security')} onClick={(event) => { event.preventDefault(); navigateRoute(adminHref(adminBasePath(window.location), '/security')); }}>账号安全</a>
               <button onClick={() => void logout()}>退出管理后台</button>
             </>
           ) : null}
@@ -258,7 +243,8 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
   const basePath = baseUrl.replace(/^https?:\/\/[^/]+/, '');
   const go = (to: string) => { navigateRoute(adminHref(basePath, to)); setMenuOpen(false); };
   const role = account.role;
-  const items = NAVIGATION.filter((item) => !item.ownerOnly || role === 'owner');
+  const groups = adminNavigation(role);
+  const items = [...groups.flatMap((group) => group.pages), { path: '/security', label: '账号安全' }];
   const current = items.find((item) => route.path === item.path || route.path.startsWith(`${item.path}/`)) ?? items[0]!;
   // A detail page is one level below its list, and the trailing segment is an opaque id rather
   // than a label. Only the user detail route has a readable parent, so only it gets an extra crumb;
@@ -305,7 +291,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
       // Changing the account password revokes every session, so the console signs itself out
       // instead of leaving a dead session on screen that fails on the next click.
       case 'security': return <SecurityPage client={client} username={account.username} role={role} onPasswordChanged={() => { onSignedOut('账号密码已修改，请用新密码重新登录。'); }} />;
-      case 'settings': return <SettingsPage client={client} role={role} />;
+      case 'settings': return <SettingsPage client={client} role={role} query={route.query} navigate={go} />;
       default: return <OverviewPage client={client} navigate={go} accountName={account.username} role={role} />;
     }
   })();
@@ -319,7 +305,9 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
         {menuOpen ? '收起菜单' : `菜单 · ${current.label}`}
       </button>
       <nav className="zc-admin-nav" aria-label="管理后台导航" data-open={menuOpen ? 'true' : undefined}>
-        {items.map((item) => (
+        {groups.map((group) => {
+          const primary = group.pages[0]!;
+          const link = (item: { path: string; label: string }) => (
           <a
             key={item.path}
             href={adminHref(basePath, item.path)}
@@ -327,7 +315,16 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
             data-active={item === current ? 'true' : undefined}
             onClick={(event) => { event.preventDefault(); go(item.path); }}
           >{item.label}</a>
-        ))}
+          );
+          return <div className="zc-admin-nav-group" key={group.label}>
+            <span className="zc-admin-nav-heading">{group.label}</span>
+            {link(primary)}
+            {group.pages.length > 1 ? <details key={`${group.label}:${current.path}`} open={group.pages.slice(1).some((item) => item.path === current.path)}>
+              <summary>更多{group.label}入口</summary>
+              {group.pages.slice(1).map(link)}
+            </details> : null}
+          </div>;
+        })}
       </nav>
       <section className="zc-admin-content">
         <Breadcrumbs

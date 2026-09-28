@@ -216,6 +216,7 @@ const FIELD_BY_NAME = new Map(SETTING_FIELDS.map((field) => [field.name, field])
 const SETTING_PREFIX = 'setting:';
 
 export interface EffectiveSetting {
+  defaultValue: number | string;
   name: string;
   label: string;
   kind: SettingField['kind'];
@@ -352,6 +353,7 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
       kind: field.kind,
       ...(field.unit ? { unit: field.unit } : {}),
       description: field.description,
+      defaultValue: field.default,
       stored: storedValue,
       envVar: field.envVar,
       source,

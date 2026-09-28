@@ -263,6 +263,7 @@ export interface BackupsPayload {
   /** Size of the filtered set, not of this page. */
   total: number;
   summary: {
+    lastAttempt?: { recordId: string; status: string; createdAt: string; errorMessage?: string; verificationOk?: boolean } | null;
     lastSuccess: { recordId: string; createdAt: string } | null;
     lastVerified: { recordId: string; verifiedAt: string } | null;
     /** The newest retention run carries its note and outcome, so the page can still say what it did. */
@@ -302,6 +303,7 @@ export interface MfaStatusPayload {
 }
 
 export interface SettingsField {
+  defaultValue?: number | string;
   name: string; label: string; kind: 'number' | 'select' | 'text'; unit?: string; description: string; maxLength?: number;
   /** Only for text fields: `url` is an http(s) address, `json` a channel list, `free` anything. */
   textFormat?: 'url' | 'free' | 'json';

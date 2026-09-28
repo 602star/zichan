@@ -86,10 +86,25 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
       <Loading loading={storage.loading} error={storage.error} stale={storage.stale} loadedAt={storage.loadedAt} />
       {actionError.error ? <Notice tone="bad">{actionError.error}</Notice> : null}
 
+      <Panel title="备份执行状态" note="计划配置、执行记录、校验结果分别判断。登记过一次成功备份，不代表自动执行程序当前仍在运行。">
+        <Loading loading={backups.loading} error={backups.error} stale={backups.stale} loadedAt={backups.loadedAt} />
+        <div className="zc-admin-grid">
+          <Stat label="最近执行" value={!summary ? '状态未知' : !summary.lastAttempt ? '尚无执行记录' : summary.lastAttempt.status === 'failed' || summary.lastAttempt.verificationOk === false ? '失败或校验未通过' : '已完成'}
+            tone={summary?.lastAttempt?.status === 'failed' || summary?.lastAttempt?.verificationOk === false ? 'bad' : undefined}
+            hint={summary?.lastAttempt ? `${when(summary.lastAttempt.createdAt)} · ${summary.lastAttempt.errorMessage ?? summary.lastAttempt.recordId}` : '等待部署侧执行并登记备份'} />
+          <Stat label="可用证据" value={!summary ? '状态未知' : summary.lastVerified ? '存在已校验备份' : summary.lastSuccess ? '有完成记录，尚无校验通过记录' : '尚无成功备份记录'} hint="还原能力应通过恢复演练验证" />
+          <Stat label="自动执行程序" value="运行状态未知" hint="当前接口没有执行器心跳与下一次执行时间，不能仅凭计划开关判断" />
+        </div>
+        <p style={row}>
+          <Button onClick={() => navigate('/storage?status=failed')}>查看失败记录</Button>
+          {role === 'owner' ? <Button onClick={() => navigate('/settings?group=backup')}>配置备份计划</Button> : null}
+        </p>
+      </Panel>
+
       <Panel title="维护计划" action={<Button onClick={settings.reload}>刷新</Button>}
         note="这里只声明与检查计划：自动备份默认关闭，且必须先配置备份位置与维护窗口才能启用。真正的停服备份由部署侧程序在维护窗口内执行，后台不会自己停服。">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-          <Stat label="自动备份" tone={planIncomplete ? 'bad' : undefined} value={autoEnabled ? '已启用' : '未启用（默认）'}
+          <Stat label="自动备份计划" tone={planIncomplete ? 'bad' : undefined} value={!settings.data ? '状态未知' : planIncomplete ? '配置不完整' : autoEnabled ? '已配置启用' : '未启用'}
             hint={autoEnabled ? '实际执行仍在部署侧' : '开启前需要备份位置与维护窗口'} />
           <Stat label="备份位置" value={directory.display} hint="部署侧实际路径；后台不读写该目录" />
           <Stat label="维护窗口" value={windowLabel.display} hint="停服备份与恢复演练只允许在该窗口内进行" />

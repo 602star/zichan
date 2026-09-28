@@ -3693,6 +3693,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
    * alert fired on a server that had backed up successfully every night until that week.
    */
   async latestBackupSummary(): Promise<{
+    lastAttempt: { recordId: string; status: string; createdAt: string; errorMessage?: string; verificationOk?: boolean } | null;
     lastSuccess: { recordId: string; createdAt: string } | null;
     lastVerified: { recordId: string; verifiedAt: string } | null;
     lastRetention: { recordId: string; createdAt: string; note?: string; retention?: JsonRecord } | null;
@@ -3702,17 +3703,23 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     // failed is a failed backup even though its creation succeeded.
     const success = await this.driver.get<{ record_id: string; created_at: string }>(
       `SELECT record_id, created_at FROM server_backup_records
-       WHERE status = 'completed'
+       WHERE status = 'completed' AND kind != 'drill' AND retention_json IS NULL
          AND (verification_json IS NULL OR json_extract(verification_json, '$.ok') IS NOT 0)
        ORDER BY created_at DESC, record_id DESC LIMIT 1`,
     );
     const verified = await this.driver.get<{ record_id: string; verified_at: string }>(
       `SELECT record_id, verified_at FROM server_backup_records
-       WHERE verified_at IS NOT NULL
+       WHERE verified_at IS NOT NULL AND kind != 'drill' AND retention_json IS NULL
          AND verification_json IS NOT NULL
          AND json_extract(verification_json, '$.ok') IS 1
        ORDER BY verified_at DESC, record_id DESC LIMIT 1`,
     );
+    const attempt = await this.driver.get<Record<string, unknown>>(
+      `SELECT record_id, status, created_at, error_message, verification_json FROM server_backup_records
+       WHERE status != 'planned' AND kind != 'drill' AND retention_json IS NULL
+       ORDER BY created_at DESC, record_id DESC LIMIT 1`,
+    );
+    const verification = attempt?.['verification_json'] == null ? undefined : jsonObject(attempt['verification_json']);
     // The newest retention run, for the same reason: it is asked about by date, not by page.
     // Its note and outcome travel with it: the page reported "已清理 N 份" before the list was
     // paged, and paging must not cost the operator that answer.
@@ -3722,6 +3729,11 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
        ORDER BY created_at DESC, record_id DESC LIMIT 1`,
     );
     return {
+      lastAttempt: attempt ? {
+        recordId: String(attempt['record_id']), status: String(attempt['status']), createdAt: String(attempt['created_at']),
+        ...(attempt['error_message'] == null ? {} : { errorMessage: String(attempt['error_message']) }),
+        ...(typeof verification?.['ok'] === 'boolean' ? { verificationOk: verification['ok'] } : {}),
+      } : null,
       lastSuccess: success ? { recordId: String(success.record_id), createdAt: String(success.created_at) } : null,
       lastVerified: verified ? { recordId: String(verified.record_id), verifiedAt: String(verified.verified_at) } : null,
       lastRetention: retention

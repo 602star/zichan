@@ -32,14 +32,14 @@ async function fixture() {
 /** Writes backup records directly: the API only reads them, and deployment-side code writes them. */
 async function seed(f: { dataDir: string; server: { serverId: string } }, records: {
   recordId: string; createdAt: string; status: string; verifiedAt?: string; verificationOk?: boolean; retention?: boolean;
-  note?: string; unverifiedCount?: number;
+  note?: string; unverifiedCount?: number; kind?: string;
 }[]) {
   const store = new SyncServerStore(join(f.dataDir, 'server.sqlite'), 'open', f.server.serverId);
   try {
     for (const record of records) {
       await store.upsertBackupRecord({
         recordId: record.recordId,
-        kind: 'scheduled',
+        kind: record.kind ?? 'scheduled',
         status: record.status,
         createdAt: record.createdAt,
         ...(record.verifiedAt ? { verifiedAt: record.verifiedAt } : {}),
@@ -52,6 +52,25 @@ async function seed(f: { dataDir: string; server: { serverId: string } }, record
 }
 
 describe('backup record paging and summary', () => {
+  it('separates execution evidence from plans, retention and restore drills even with a filtered page', async () => {
+    const f = await fixture();
+    try {
+      await seed(f, [
+        { recordId: 'good', createdAt: '2026-09-01T00:00:00Z', status: 'completed', verifiedAt: '2026-09-01T00:01:00Z', verificationOk: true },
+        { recordId: 'failed', createdAt: '2026-09-02T00:00:00Z', status: 'failed' },
+        { recordId: 'prune', createdAt: '2026-09-03T00:00:00Z', status: 'completed', retention: true },
+        { recordId: 'drill', createdAt: '2026-09-04T00:00:00Z', status: 'completed', kind: 'drill', verifiedAt: '2026-09-04T00:01:00Z', verificationOk: true },
+        { recordId: 'plan', createdAt: '2026-09-05T00:00:00Z', status: 'planned' },
+      ]);
+      const response = await f.api('/backups?status=completed&limit=1');
+      expect(response.status).toBe(200);
+      const body = await response.json() as { summary: { lastAttempt: { recordId: string; status: string }; lastSuccess: { recordId: string }; lastVerified: { recordId: string } } };
+      expect(body.summary.lastAttempt).toMatchObject({ recordId: 'failed', status: 'failed' });
+      expect(body.summary.lastSuccess.recordId).toBe('good');
+      expect(body.summary.lastVerified.recordId).toBe('good');
+    } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+  });
+
   it('pages past the first batch instead of stopping at a fixed count', async () => {
     const f = await fixture();
     try {

@@ -1,5 +1,6 @@
 .zc-admin-root { line-height: 1.6; }
-.zc-admin-root h1 { margin: 12px 0; font-size: var(--fs-hero); }
+.zc-admin-root h1 { margin: 12px 0; font-size: var(--fs-heading); }
+.zc-admin-root [role="tab"][aria-selected="true"] { border-color: var(--accent); background: var(--surface-2); color: var(--accent); }
 .zc-admin-root h2 { margin-top: 0; font-size: var(--fs-heading); }
 .zc-admin-root p { color: var(--text-secondary); }
 .zc-admin-root a { color: var(--accent); text-underline-offset: 4px; }
@@ -31,6 +32,24 @@
 .zc-admin-nav a:hover { background: var(--surface-2); }
 .zc-admin-nav a[data-active="true"] { background: var(--surface-2); font-weight: var(--fw-bold); border-left: 3px solid var(--accent); }
 .zc-admin-content { min-width: 0; }
+.zc-admin-nav { max-height: calc(100dvh - 32px); overflow-y: auto; }
+.zc-admin-nav-group + .zc-admin-nav-group { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; }
+.zc-admin-nav-heading { display: block; padding: 0 10px; color: var(--text-tertiary); font-size: var(--fs-meta); }
+.zc-admin-nav summary { cursor: pointer; padding: 5px 10px; font-size: var(--fs-caption); color: var(--text-secondary); }
+.zc-admin-disclosure { margin: 16px 0; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); padding: 14px; }
+.zc-admin-disclosure > summary { cursor: pointer; font-weight: var(--fw-medium); padding: 4px; }
+.zc-admin-disclosure[open] > summary { margin-bottom: 14px; }
+.zc-admin-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 12px; }
+.zc-admin-issues { list-style: none; padding: 0; margin: 0; }
+.zc-admin-issues > li { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.zc-admin-issues > li:last-child { border-bottom: 0; }
+.zc-admin-issues p { margin: 6px 0; }
+.zc-admin-setting { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 32%); gap: 24px; padding: 18px 0; border-bottom: 1px solid var(--border); }
+.zc-admin-setting:first-child { padding-top: 0; }
+.zc-admin-setting:last-child { border-bottom: 0; }
+.zc-admin-setting p { margin: 6px 0; }
+.zc-admin-setting-reference { margin-top: 8px; font-size: var(--fs-caption); color: var(--text-secondary); }
+.zc-admin-setting-reference summary { cursor: pointer; }
 
 /*
  * The in-page jump list. Wraps on a narrow screen instead of scrolling sideways,
@@ -45,7 +64,7 @@
 @media (max-width: 767px) {
   .zc-admin-shell { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .zc-admin-menu-toggle { display: block; text-align: left; }
-  .zc-admin-nav { position: static; display: none; }
+  .zc-admin-nav { position: static; display: none; max-height: none; }
   .zc-admin-nav[data-open="true"] { display: grid; }
   /* Secondary columns stay out of the way instead of forcing a wide horizontal scroll — but the
      operator can still reach them, because a column hidden with no way back is lost data. */
@@ -54,6 +73,7 @@
   .zc-admin-table[data-wide="true"] .zc-admin-secondary { display: table-cell; }
   .zc-admin-table[data-wide="true"] { overflow-x: auto; }
   .zc-admin-root table { min-width: 0; }
+  .zc-admin-setting { grid-template-columns: minmax(0, 1fr); gap: 10px; }
 }
 @media (max-width: 767px) {
   .zc-admin-root button, .zc-admin-root input, .zc-admin-root select { min-height: 44px; }

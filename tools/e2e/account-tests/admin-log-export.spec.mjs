@@ -1,3 +1,4 @@
+import { clickAdminLink } from '../admin-navigation.mjs';
 /**
  * Run log export in a real browser.
  *
@@ -51,7 +52,7 @@ test('downloads the run log as JSON and CSV, stating what it redacted', async ({
   const f = await fixture();
   try {
     await signIn(page, f.url);
-    await page.getByRole('link', { name: '运行日志' }).click();
+    await clickAdminLink(page, '运行日志');
     await expect(page.getByRole('heading', { name: '运行日志' })).toBeVisible();
 
     // The page says what the file will and will not contain, so the reader is not left guessing.

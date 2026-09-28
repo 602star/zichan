@@ -1,3 +1,4 @@
+import { clickAdminLink } from '../admin-navigation.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,21 +72,21 @@ test('quota typos never reset overrides and settings reject a mixed invalid batc
     }
     const settingsResponse = page.waitForResponse((response) => response.url().endsWith('/api/admin/settings') && response.request().method() === 'GET');
     await page.getByRole('link', { name: '系统设置', exact: true }).click();
-    const fields = (await (await settingsResponse).json()).settings.filter((field) => field.editable && field.kind === 'number');
+    const fields = (await (await settingsResponse).json()).settings.filter((field) => field.editable && ['backupRetentionCount', 'backupIntervalHours'].includes(field.name));
     const [bad, good] = fields;
     const valid = good.value === good.minimum ? good.maximum : good.minimum;
     let saves = 0;
     page.on('request', (request) => { if (request.method() === 'POST' && request.url().endsWith('/api/admin/settings')) saves += 1; });
     await page.getByLabel(bad.label, { exact: true }).fill('abc');
     await page.getByLabel(good.label, { exact: true }).fill(String(valid));
-    await page.getByRole('button', { name: '保存允许在线修改的设置', exact: true }).click();
+    await page.getByRole('button', { name: '保存本组设置', exact: true }).click();
     await expect(page.getByText('请修正标记的设置项；本次没有保存任何改动。')).toBeVisible();
     await expect(page.getByLabel(bad.label, { exact: true })).toHaveAttribute('aria-invalid', 'true');
     await expect(page.getByLabel(good.label, { exact: true })).toHaveValue(String(valid));
     expect(saves).toBe(0);
     await page.getByLabel(bad.label, { exact: true }).fill(String(bad.value));
     const saved = page.waitForResponse((response) => response.url().endsWith('/api/admin/settings') && response.request().method() === 'POST');
-    await page.getByRole('button', { name: '保存允许在线修改的设置', exact: true }).click();
+    await page.getByRole('button', { name: '保存本组设置', exact: true }).click();
     expect((await saved).status()).toBe(200);
   } finally { await f.close(); }
 });
@@ -128,7 +129,7 @@ for (const view of [
         await loginAccount(f.url, name, password);
       }
       await signIn(page, f.url);
-      await page.getByRole('link', { name: view.label, exact: true }).click();
+      await clickAdminLink(page, view.label);
       const input = page.getByLabel(view.input, { exact: true });
       const rowsFor = (name) => page.getByRole('row').filter({ has: page.getByRole('button', { name, exact: true }) });
       const assertSearch = async (name, excluded) => {
@@ -223,7 +224,7 @@ test('reflects the stored registration policy and paginates and filters invitati
     }
     await f.api(`/invites/${codes[0]}/disable`, { disabled: true });
     await signIn(page, f.url);
-    await page.getByRole('link', { name: '注册与邀请' }).click();
+    await clickAdminLink(page, '注册与邀请');
     // The select reflects the server value; a policy change saves immediately.
     await expect(page.getByLabel('当前策略')).toHaveValue('open');
     // Scoped to the invitation list: the growth panel above it has a batch table with rows too,
@@ -257,7 +258,7 @@ test('reflects the stored registration policy and paginates and filters invitati
     await expect(page.getByText('当前已关闭注册：即使持有邀请码也无法注册。')).toBeVisible();
     // Revisiting the page reads the effective value back from the server.
     await page.getByRole('link', { name: '运行概览' }).click();
-    await page.getByRole('link', { name: '注册与邀请' }).click();
+    await clickAdminLink(page, '注册与邀请');
     await expect(page.getByLabel('当前策略')).toHaveValue('closed');
     await page.screenshot({ path: test.info().outputPath('admin-invitations.png'), fullPage: true });
   } finally { await f.close(); }
@@ -321,7 +322,7 @@ test('reports a failed account read, revokes a member session and shows verifica
       }
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ jobs: [finished] }) });
     });
-    await page.getByRole('link', { name: '任务中心' }).click();
+    await clickAdminLink(page, '任务中心');
     await page.getByRole('button', { name: '创建任务' }).click();
     await page.getByRole('button', { name: '查看', exact: true }).first().click();
     await expect(page.getByText('附件校验完成：1 个对象、2 个分块、1 个问题')).toBeVisible();

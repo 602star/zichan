@@ -1,3 +1,4 @@
+import { clickAdminLink } from '../admin-navigation.mjs';
 /**
  * Registration growth on the invitations page, in a real browser.
  *
@@ -49,7 +50,7 @@ test('shows registration growth and invitation attribution', async ({ page }) =>
   const f = await fixture();
   try {
     await signIn(page, f.url);
-    await page.getByRole('link', { name: '注册与邀请' }).click();
+    await clickAdminLink(page, '注册与邀请');
     await expect(page.getByRole('heading', { name: '注册与邀请' })).toBeVisible();
 
     // The page shell is itself a <section>, so a `section` filter matches the wrapper too and a

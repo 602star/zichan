@@ -1,3 +1,4 @@
+import { clickAdminLink } from '../admin-navigation.mjs';
 /**
  * The process and database page in a real browser.
  *
@@ -63,7 +64,8 @@ test('shows process and database readings, and scans tables only on request', as
 
     await signIn(page, f.url);
     // The overview carries the summary and leads to the detail page.
-    await expect(page.getByText('进程与数据库').first()).toBeVisible();
+    await page.locator('summary').filter({ hasText: '查看请求趋势与技术指标' }).click();
+    await expect(page.locator('#section-进程与数据库')).toBeVisible();
     await page.getByRole('button', { name: '查看详情与趋势' }).click();
     await expect(page.getByRole('heading', { name: '进程与数据库' })).toBeVisible();
 
@@ -100,7 +102,7 @@ test('queues ANALYZE from the page and reports it as a task', async ({ page }) =
   const f = await fixture();
   try {
     await signIn(page, f.url);
-    await page.getByRole('link', { name: '进程与数据库' }).click();
+    await clickAdminLink(page, '进程与数据库');
     await expect(page.getByRole('heading', { name: '进程与数据库' })).toBeVisible();
 
     // The button navigates to the created task, which is the existing console behaviour.
@@ -125,7 +127,7 @@ test('lets a read-only operator read the page and refuses the write', async ({ p
 
     await signIn(page, f.url, 'viewer-one');
     await expect(page.getByRole('status')).toContainText('只读运维角色');
-    await page.getByRole('link', { name: '进程与数据库' }).click();
+    await clickAdminLink(page, '进程与数据库');
     await expect(page.getByRole('heading', { name: '进程与数据库' })).toBeVisible();
 
     // Reading stays available, including the on-demand scan.
@@ -151,7 +153,7 @@ test('names a server older than the page instead of echoing "not found"', async 
       route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) }));
 
     await signIn(page, f.url);
-    await page.getByRole('link', { name: '进程与数据库' }).click();
+    await clickAdminLink(page, '进程与数据库');
     // The console states the mismatch and the fix rather than passing the server's wording
     // through, which reads like the data is gone.
     await expect(page.getByText(/运行中的服务端比当前页面旧/)).toBeVisible();

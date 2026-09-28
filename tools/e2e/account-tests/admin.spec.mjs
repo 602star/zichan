@@ -1,3 +1,4 @@
+import { clickAdminLink } from '../admin-navigation.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -77,7 +78,7 @@ test('initializes the owner in the browser, then keeps every management page on 
     await expect(page).toHaveURL(/\/ledger\/admin\/users$/);
 
     // Navigation keeps the URL in sync and back/forward works.
-    await page.getByRole('link', { name: '设备与会话' }).click();
+    await clickAdminLink(page, '设备与会话');
     await expect(page).toHaveURL(/\/ledger\/admin\/sessions$/);
     await expect(page.getByRole('heading', { name: '设备与会话' })).toBeVisible();
     await page.goBack();
@@ -88,7 +89,7 @@ test('initializes the owner in the browser, then keeps every management page on 
 test('runs the daily management work: policy, invites, roles, quotas and audit', async ({ page }) => {
   await signIn(page, baseUrl);
 
-  await page.getByRole('link', { name: '注册与邀请' }).click();
+  await clickAdminLink(page, '注册与邀请');
   await expect(page.getByLabel('当前策略')).toHaveValue('open');
   const policy = page.waitForResponse((response) => response.url().includes('/api/admin/registration') && response.request().method() === 'POST');
   await page.getByLabel('当前策略').selectOption('closed');
@@ -120,7 +121,7 @@ test('runs the daily management work: policy, invites, roles, quotas and audit',
   await page.getByRole('button', { name: '保存' }).click();
   await expect(page.getByText('操作已完成。')).toBeVisible();
 
-  await page.getByRole('link', { name: '管理审计' }).click();
+  await clickAdminLink(page, '管理审计');
   await expect(page.getByRole('cell', { name: /附件配额调整为 5 GiB/ })).toBeVisible();
   // The readable sentence and the structured reason column both stay searchable.
   await expect(page.getByRole('row').filter({ hasText: '附件配额调整为 5 GiB' }).getByRole('cell', { name: '协助处理容量申请', exact: true })).toBeVisible();
@@ -188,12 +189,12 @@ test('a read-only operator reaches every page but gets no write control', async 
     await expect(viewer.getByRole('status')).toContainText('只读运维角色');
     // Reads stay available everywhere.
     await expect(viewer.getByRole('heading', { name: '运行概览' })).toBeVisible();
-    await viewer.getByRole('link', { name: '任务中心' }).click();
+    await clickAdminLink(viewer, '任务中心');
     await expect(viewer.getByRole('button', { name: '创建任务' })).toBeDisabled();
     await viewer.getByRole('link', { name: '存储与备份' }).click();
     await expect(viewer.getByRole('button', { name: '立即清理回收站与暂存上传' })).toBeDisabled();
     await viewer.getByRole('link', { name: '系统设置' }).click();
-    await expect(viewer.getByRole('button', { name: '保存允许在线修改的设置' })).toBeDisabled();
+    await expect(viewer.getByRole('button', { name: '保存本组设置' })).toBeDisabled();
   } finally { await viewerContext.close(); }
 });
 

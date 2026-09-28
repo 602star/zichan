@@ -541,13 +541,10 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     // Alerts only need the newest records to answer "latest attempt / latest success / latest
     // verified"; the paginated view is the console's, not the sampler's. The success/verified
     // answers come from `latestBackupSummary` below, which is queried over the whole table.
-    listBackupRecords: async () => (await store.listBackupRecords(20)).backups.map((record) => ({
-      recordId: record.recordId,
-      createdAt: record.createdAt,
-      status: record.status,
-      ...(record.verifiedAt ? { verifiedAt: record.verifiedAt } : {}),
-      ...(record.verification ? { verificationOk: record.verification['ok'] !== false } : {}),
-    })),
+    listBackupRecords: async () => {
+      const { lastAttempt } = await store.latestBackupSummary();
+      return lastAttempt ? [lastAttempt] : [];
+    },
     startedAt,
   });
   const admin = createAdminRouter({

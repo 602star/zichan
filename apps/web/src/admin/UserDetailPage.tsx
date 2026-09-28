@@ -1,5 +1,6 @@
 /** One user, everything needed to act: account, capacity, sessions, sync, history. */
 import type { AdminClient } from './client.js';
+import { userSupport } from './operations.js';
 import { adminIdempotencyKey } from './idempotency.js';
 import { AccountActions, RoleNote } from './AccountActions.js';
 import { PasswordResetIssuer } from './PasswordResetIssuer.js';
@@ -38,6 +39,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
   }
 
   const { account, capacity, sessions, sync, audit, jobs } = detail.data;
+  const support = userSupport(detail.data);
   // A read-only operator never gets a write control, whatever the target's role is.
   const writable = canWrite(role);
   const canManage = canManageAccount(role, account.role);
@@ -62,6 +64,17 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
         <Button onClick={() => navigate('/users')}>返回用户列表</Button>
       </div>
       <Loading loading={detail.loading} error={detail.error} stale={detail.stale} loadedAt={detail.loadedAt} />
+
+      <Panel title="用户支持摘要" note="先核对账号与最近请求，再查看相关记录。没有同步记录或长期离线，不等于同步失败。">
+        <div className="zc-admin-grid">
+          <Stat label="账号访问" value={account.disabled ? '已停用' : '已启用'} tone={account.disabled ? 'warn' : undefined} hint="设备登录是否有效，请查看设备与会话" />
+          <Stat label="最近同步请求" value={support.sync} tone={support.latest?.outcome === 'error' ? 'bad' : undefined}
+            hint={support.latest ? `${when(support.latest.at)} · ${support.latest.resultCode ?? support.latest.operation}` : '服务器尚未记录到该用户的同步请求'} />
+          <Stat label="容量" value={support.quotaExceeded ? '已达到配额' : '当前未达到配额'} tone={support.quotaExceeded ? 'warn' : undefined} hint="提交与附件分别计算；达到上限可能限制继续上传" />
+          <Stat label="记账预览" value={account.protection?.mode === 'managed' && capacity.ledgerId ? '托管账本' : '暂不具备条件'} hint={support.preview} />
+        </div>
+        {support.latest?.outcome === 'error' ? <Notice tone="warn">下一步：{SYNC_CATEGORIES.find((entry) => entry.value === support.latest?.category)?.next ?? '打开该账号的同步诊断，核对失败原因与后续请求。'}</Notice> : null}
+      </Panel>
 
       {/*
         Troubleshooting starts from the account, so every related view is one click away and
@@ -195,7 +208,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
             </ul>
           </>
         ) : null}
-        <Notice>管理后台只展示管理信息与必要的同步元数据，不提供读取用户明文账本或密钥的入口。</Notice>
+        <Notice>托管账本可通过上方只读预览查看，查看原因会写入审计；私密账本无法由服务器解密。这里不显示用户密钥。</Notice>
       </Panel>
     </>
   );

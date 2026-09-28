@@ -1,12 +1,17 @@
 /** Effective settings: an allow-list, with the source of every value made explicit. */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
 import { settingNumber } from './number-input.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, Stat, TextInput, message, muted, row, useResource } from './ui.js';
+import { Badge, Button, Field, Loading, Notice, Panel, Select, Stat, TextInput, message, muted, row, useResource } from './ui.js';
+import { SETTING_GROUPS, settingGroup, mergeSettingDrafts } from './setting-groups.js';
 import type { SettingsPayload } from './types.js';
 
-export function SettingsPage({ client, role }: { client: AdminClient; role: string }) {  const payload = useResource(() => client.request<SettingsPayload>('/settings'), []);
+export function SettingsPage({ client, role, query, navigate }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (to: string) => void }) {
+  const group = SETTING_GROUPS.find((entry) => entry.id === query.get('group')) ?? SETTING_GROUPS[0];
+  const baseline = useRef<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const payload = useResource(() => client.request<SettingsPayload>('/settings'), []);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -14,7 +19,10 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
 
   useEffect(() => {
     if (!payload.data) return;
-    setDraft(Object.fromEntries(payload.data.settings.map((field) => [field.name, String(field.value)])));
+    const incoming = Object.fromEntries(payload.data.settings.map((field) => [field.name, String(field.value)]));
+    const previous = baseline.current;
+    setDraft((current) => mergeSettingDrafts(current, previous, incoming));
+    baseline.current = incoming;
     setFieldErrors({});
   }, [payload.data]);
 
@@ -22,13 +30,15 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
   if (!payload.data) return <><h2>系统设置</h2><Loading loading={false} error={payload.error} /></>;
 
   const data = payload.data;
+  const fields = data.settings.filter((field) => settingGroup(field.name) === group.id);
+  const changed = fields.filter((field) => field.editable && draft[field.name] !== undefined && draft[field.name] !== String(field.value));
   const save = async (): Promise<void> => {
     setNotice(''); setError('');
     // Numbers and text fields travel in one payload, each in its own type: coercing a URL
     // through Number() would turn every text field into a silent no-op.
     const updates: Record<string, number | string> = {};
     const problems: Record<string, string> = {};
-    for (const field of data.settings) {
+    for (const field of fields) {
       if (!field.editable) continue;
       const raw = draft[field.name] ?? '';
       // Text and select fields travel as typed strings: coercing "on" through Number() would
@@ -45,13 +55,17 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
     setFieldErrors(problems);
     if (Object.keys(problems).length) { setError('请修正标记的设置项；本次没有保存任何改动。'); return; }
     if (!Object.keys(updates).length) { setNotice('没有需要保存的改动。'); return; }
+    setSaving(true);
     try {
       await client.request('/settings', { settings: updates }, { idempotencyKey: adminIdempotencyKey('settings') });
-      setNotice(`已保存：${Object.keys(updates).join('、')}`);
+      // Submitted values can be normalized by the server (for example trimmed paths).
+      // Mark only these drafts as submitted so the refresh adopts their effective values.
+      baseline.current = { ...baseline.current, ...Object.fromEntries(fields.filter((field) => field.name in updates).map((field) => [field.name, draft[field.name] ?? ''])) };
+      setNotice(`已保存 ${group.label}：${fields.filter((field) => field.name in updates).map((field) => field.label).join('、')}。生效值刷新后可核对。`);
       payload.reload();
     } catch (caught) {
       setError(message(caught));
-    }
+    } finally { setSaving(false); }
   };
 
   return (
@@ -60,52 +74,60 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
       <Loading loading={payload.loading} error={payload.error} stale={payload.stale} loadedAt={payload.loadedAt} />
       {role !== 'owner' ? <Notice>只有服务器所有者可以修改设置；这里显示的是当前生效值。</Notice> : null}
 
-      <Panel title="生效配置" note="环境变量优先于数据库设置；来源为“环境变量”的项不能在页面上修改。">
-        <DataTable
-          columns={[
-            { key: 'label', header: '设置项', render: (field) => (
-              <span>
-                {field.label}
-                <div style={muted}>{field.description}</div>
-              </span>
-            ) },
-            {
-              key: 'value', header: '生效值', render: (field) => field.kind === 'select'
-                ? <Select
-                  value={draft[field.name] ?? String(field.value)}
-                  disabled={!field.editable || role !== 'owner'}
-                  onChange={(event) => setDraft((current) => ({ ...current, [field.name]: event.target.value }))}
-                >
-                  {(field.options ?? []).map((option) => <option key={option} value={option}>{selectLabel(field.name, option)}</option>)}
-                </Select>
-                : <div><TextInput
-                  aria-label={field.label}
-                  aria-invalid={Boolean(fieldErrors[field.name])}
-                  aria-describedby={fieldErrors[field.name] ? `setting-error-${field.name}` : undefined}
-                  value={draft[field.name] ?? String(field.value)}
-                  disabled={!field.editable || role !== 'owner'}
-                  onChange={(event) => setDraft((current) => ({ ...current, [field.name]: event.target.value }))}
-                  // Secrets are never returned; only allow-listed, non-secret fields reach here.
-                  placeholder={field.kind === 'text' ? textPlaceholder(field.textFormat) : undefined}
-                  style={{ width: field.kind === 'text' ? textWidth(field.textFormat) : 120 }}
-                />{fieldErrors[field.name] ? <div id={`setting-error-${field.name}`} role="alert" style={{ color: 'var(--negative)' }}>{fieldErrors[field.name]}</div> : null}</div>,
-            },
-            { key: 'source', header: '来源', render: (field) => <Badge tone={field.source === 'env' ? 'warn' : field.source === 'database' ? 'ok' : 'muted'}>{field.source === 'env' ? `环境变量 ${field.envVar}` : field.source === 'database' ? '数据库设置' : '默认值'}</Badge> },
-            { key: 'range', header: '允许范围', secondary: true, render: (field) => field.kind === 'number' ? `${field.minimum ?? ''}–${field.maximum ?? ''}` : field.kind === 'text' ? textRange(field.textFormat, field.maxLength) : (field.options ?? []).map((option) => selectLabel(field.name, option)).join('、') },
-            { key: 'stored', header: '已保存值', secondary: true, render: (field) => field.stored === null ? '未保存' : String(field.stored) },
-          ]}
-          rows={data.settings}
-          rowKey={(field) => field.name}
-          empty="没有可配置项。"
-        />
+      <div role="tablist" aria-label="设置分组" style={{ ...row, marginBottom: 16 }}>
+        {SETTING_GROUPS.map((entry) => <Button key={entry.id} role="tab" aria-selected={group.id === entry.id} disabled={saving}
+          onClick={() => { setError(''); setNotice(''); navigate('/settings?group=' + entry.id); }}>{entry.label}</Button>)}
+      </div>
+      <p>{group.description}</p>
+      <Panel title={group.label} note="环境变量优先于数据库设置；来源为“环境变量”的项不能在页面上修改。">
+        <div className="zc-admin-settings-fields">
+          {fields.map((field) => <div className="zc-admin-setting" key={field.name}>
+            <div>
+              <label htmlFor={'setting-' + field.name} style={{ fontWeight: 'var(--fw-medium)' }}>{field.label}</label>
+              <p id={'setting-help-' + field.name} style={muted}>{field.description}</p>
+              <details className="zc-admin-setting-reference"><summary>默认值与允许范围</summary>
+                <p style={muted}>默认：{field.defaultValue === undefined ? '未提供' : field.defaultValue === '' ? '空' : String(field.defaultValue)}；
+                  范围：{field.kind === 'number' ? String(field.minimum ?? '') + '–' + String(field.maximum ?? '') : field.kind === 'text' ? textRange(field.textFormat, field.maxLength) : (field.options ?? []).map((option) => selectLabel(field.name, option)).join('、')}</p>
+              </details>
+            </div>
+            <div>
+              {field.kind === 'select' ? <Select
+                id={'setting-' + field.name} aria-label={field.label} aria-describedby={'setting-help-' + field.name}
+                value={draft[field.name] ?? String(field.value)} disabled={saving || !field.editable || role !== 'owner'}
+                onChange={(event) => setDraft((current) => ({ ...current, [field.name]: event.target.value }))}>
+                {(field.options ?? []).map((option) => <option key={option} value={option}>{selectLabel(field.name, option)}</option>)}
+              </Select> : <TextInput
+                id={'setting-' + field.name} aria-label={field.label} aria-invalid={Boolean(fieldErrors[field.name])}
+                aria-describedby={'setting-help-' + field.name + (fieldErrors[field.name] ? ' setting-error-' + field.name : '')}
+                value={draft[field.name] ?? String(field.value)} disabled={saving || !field.editable || role !== 'owner'}
+                onChange={(event) => setDraft((current) => ({ ...current, [field.name]: event.target.value }))}
+                placeholder={field.kind === 'text' ? textPlaceholder(field.textFormat) : undefined}
+                style={{ width: '100%' }} />}
+              {fieldErrors[field.name] ? <div id={'setting-error-' + field.name} role="alert" style={{ color: 'var(--negative)' }}>{fieldErrors[field.name]}</div> : null}
+              <p style={{ ...muted, margin: '6px 0 0', overflowWrap: 'anywhere' }}>
+                <Badge tone="muted">{field.source === 'env' ? '由部署配置管理' : field.source === 'database' ? '已保存设置' : '默认值'}</Badge>
+                {field.source === 'env' ? <span> {field.envVar} 覆盖此项，需在部署环境修改</span> : null}
+              </p>
+            </div>
+          </div>)}
+        </div>
+        {changed.length ? <div aria-label="本组变更预览" style={{ marginTop: 12 }}>
+          <strong>将修改 {changed.length} 项</strong>
+          <ul>{changed.map((field) => <li key={field.name}>{field.label}：{String(field.value) || '空'} → {draft[field.name] || '空'}</li>)}</ul>
+        </div> : <p style={muted}>本组没有未保存的修改。</p>}
         <div style={{ ...row, marginTop: 10 }}>
-          <Button disabled={role !== 'owner'} onClick={() => { void save(); }}>保存允许在线修改的设置</Button>
-          <Button onClick={payload.reload}>放弃改动并刷新</Button>
+          <Button disabled={saving || payload.loading || payload.stale || !changed.length || role !== 'owner'} onClick={() => { void save(); }}>{saving ? '正在保存…' : '保存本组设置'}</Button>
+          <Button disabled={saving} onClick={() => {
+            setDraft((current) => ({ ...current, ...Object.fromEntries(fields.map((field) => [field.name, String(field.value)])) }));
+            setFieldErrors({}); setError(''); setNotice('已放弃本组改动。');
+          }}>放弃本组改动</Button>
+          <Button disabled={saving} onClick={payload.reload}>刷新生效值</Button>
         </div>
         {notice ? <Notice>{notice}</Notice> : null}
         {error ? <Notice tone="bad">{error}</Notice> : null}
       </Panel>
 
+      <details className="zc-admin-disclosure"><summary>部署信息与只读配置</summary>
       <Panel title="版本与安全设置">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
           <Stat label="服务版本" value={data.version.server} hint={`数据 schema ${data.version.schema}`} />
@@ -134,6 +156,7 @@ export function SettingsPage({ client, role }: { client: AdminClient; role: stri
         </ul>
         {role === 'owner' ? <Field label="注册策略（在“注册与邀请”页修改）"><Select disabled><option>{String(data.environment['registrationMode'])}</option></Select></Field> : null}
       </Panel>
+      </details>
     </>
   );
 }
@@ -163,8 +186,4 @@ function textPlaceholder(format: string | undefined): string {
   if (format === 'json') return '留空表示不通知';
   if (format === 'free') return '留空表示未配置';
   return '留空表示不通知';
-}
-
-function textWidth(format: string | undefined): number {
-  return format === 'json' ? 420 : 260;
 }

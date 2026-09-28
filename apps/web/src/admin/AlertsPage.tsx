@@ -33,7 +33,7 @@ export function AlertsPage({ client, role, navigate }: { client: AdminClient; ro
             <Select value={state} onChange={(event) => setState(event.target.value as StateFilter)}>
               <option value="resolved">已恢复</option>
               <option value="active">活动</option>
-              <option value="pending">待确认</option>
+              <option value="pending">持续观察</option>
               <option value="">全部</option>
             </Select>
           </Field>
@@ -67,10 +67,10 @@ export function AlertsPage({ client, role, navigate }: { client: AdminClient; ro
               render: (alert: Alert) => alert.state === 'resolved' ? when(alert.resolvedAt) : '未恢复',
             },
             {
-              key: 'ack', header: '确认', secondary: true,
+              key: 'ack', header: '知晓记录', secondary: true,
               render: (alert: Alert) => alert.acknowledgedAt
                 ? <span style={muted}>{alert.acknowledgedBy ?? ''} · {when(alert.acknowledgedAt)}</span>
-                : <span style={muted}>未确认</span>,
+                : <span style={muted}>未标记知晓</span>,
             },
             {
               key: 'actions', header: '操作', render: (alert: Alert) => {
@@ -82,7 +82,7 @@ export function AlertsPage({ client, role, navigate }: { client: AdminClient; ro
                       // A resolved alert has nothing left to act on; saying so beats a disabled button.
                       ? <span style={muted}>已结束</span>
                       : <span style={muted}>{canWrite(role) ? '在运行概览处理' : '只读运维不可处理'}</span>}
-                    {isSilenced(alert) ? <Badge tone="muted">静默至 {when(alert.silencedUntil ?? '')}</Badge> : null}
+                    {isSilenced(alert) ? <Badge tone="muted">通知暂停至 {when(alert.silencedUntil ?? '')}</Badge> : null}
                   </div>
                 );
               },

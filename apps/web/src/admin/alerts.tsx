@@ -17,10 +17,10 @@ export function isSilenced(alert: Alert): boolean {
 }
 
 export function alertStateLabel(alert: Alert): { text: string; tone: 'ok' | 'warn' | 'bad' | 'muted' } {
-  if (isSilenced(alert)) return { text: '已静默', tone: 'muted' };
-  if (alert.state === 'active') return { text: '活动', tone: 'bad' };
   if (alert.state === 'resolved') return { text: '已恢复', tone: 'ok' };
-  return { text: '待确认', tone: 'warn' };
+  if (isSilenced(alert)) return { text: '未恢复 · 通知已暂停', tone: alert.severity === 'critical' ? 'bad' : 'warn' };
+  if (alert.state === 'active') return { text: '活动', tone: 'bad' };
+  return { text: '持续观察', tone: 'warn' };
 }
 
 export function describeAlert(alert: Alert): string {
