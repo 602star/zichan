@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { EncryptedBlobStore } from './blob-store.js';
-import { ADMIN_BODY_BYTES, pathParts, readBody, send, sendText } from './http-util.js';
+import { ADMIN_BODY_BYTES, pathParts, readBody, send, sendDownload, sendText } from './http-util.js';
 import { isJobType, jobOutcome, jobParamsFor, type JobRunner } from './jobs.js';
 import { cursorMatchesSort, readCursor, resolveSort, type ResolvedSort, type SortOption } from './list-sort.js';
 import { importMaintenanceRecords } from './maintenance-records.js';
@@ -1432,6 +1432,31 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       // preview instead of retrying this one.
       if (!preview) return send(res, 410, { code: 'PREVIEW_EXPIRED', error: '预览已过期，请重新打开' });
       return send(res, 200, preview.backup as unknown as JsonRecord);
+    }
+
+    /**
+     * One attachment body, decrypted on the way out.
+     *
+     * The bytes are the user's own file and cannot be handed over without opening them here: the
+     * operator's console holds no ledger key. The request names a content hash, never a blob id —
+     * the id is derived from the preview's own key material, so this can only ever reach an object
+     * this ledger can already decrypt. The response is a download, never inline: nothing renders a
+     * user's arbitrary file inside the admin page.
+     */
+    if (req.method === 'GET' && parts[0] === 'previews' && parts[2] === 'attachments') {
+      const previewId = decodeURIComponent(parts[1] ?? '');
+      const sha256 = decodeURIComponent(parts[3] ?? '').toLowerCase();
+      const opened = await deps.ledgerPreview?.decryptAttachment(previewId, sha256);
+      // Undefined covers both "no such session" and "session ended mid-request"; either way the
+      // operator has to reopen the preview rather than retry this one.
+      if (!opened) return send(res, 410, { code: 'PREVIEW_EXPIRED', error: '预览已过期，请重新打开' });
+      // Reading a file is an act worth recording: the log records *that* it was looked at, never
+      // the contents.
+      await log('warn', 'ledger_preview_attachment_read', 'Operator downloaded a previewed attachment', {
+        username: opened.session.username,
+        detail: { previewId, by: auth.user.username, sha256: sha256.slice(0, 16), bytes: opened.file.bytes.byteLength },
+      });
+      return sendDownload(res, 200, opened.file.bytes, opened.file.mimeType, opened.file.fileName);
     }
 
     if (req.method === 'DELETE' && parts[0] === 'previews') {

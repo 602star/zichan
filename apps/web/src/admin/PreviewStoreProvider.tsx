@@ -51,10 +51,11 @@ export async function buildPreviewStore(backup: LedgerBackup): Promise<SqlLedger
   return new SqlLedgerStore(readOnlyDriver(inner));
 }
 
-export function PreviewStoreProvider({ backup, preview, onClose, children }: {
+export function PreviewStoreProvider({ backup, preview, onClose, downloadAttachment, children }: {
   backup: LedgerBackup;
   preview: StoreCtx['preview'];
   onClose?: () => Promise<void>;
+  downloadAttachment?: (sha256: string) => Promise<{ blob: Blob; fileName: string }>;
   children: ReactNode;
 }) {
   const [store, setStore] = useState<SqlLedgerStore | null>(null);
@@ -92,8 +93,9 @@ export function PreviewStoreProvider({ backup, preview, onClose, children }: {
     browserStoragePersistent: false,
     resetLocalData: async () => undefined,
     preview,
+    downloadPreviewAttachment: downloadAttachment,
     closePreview: onClose,
-  } : null), [store, preview, onClose]);
+  } : null), [store, preview, onClose, downloadAttachment]);
 
   if (error) {
     return (

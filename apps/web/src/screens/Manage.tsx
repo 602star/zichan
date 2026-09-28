@@ -1108,7 +1108,7 @@ function Section<T extends { id: string; version: number }>(props: {
 }
 
 function AttachmentSection({ items, preview, onDelete }: { items: Attachment[]; preview: boolean; onDelete: (attachment: Attachment) => Promise<void> }) {
-  const { store } = useStore();
+  const { store, downloadPreviewAttachment } = useStore();
   const [query, setQuery] = useState('');
   const [deleting, setDeleting] = useState<Attachment | null>(null);
   const [localStates, setLocalStates] = useState<Record<string, 'ready' | 'trash' | 'missing'>>({});
@@ -1148,6 +1148,25 @@ function AttachmentSection({ items, preview, onDelete }: { items: Attachment[]; 
     setFetching(attachment.id);
     setMessage('');
     try {
+      if (preview) {
+        // A preview has no local attachment store and no sync profile of its own: the only way to
+        // the bytes is the server decrypting them, which is what this route does.
+        if (!downloadPreviewAttachment) throw new Error('当前预览不支持下载附件');
+        const file = await downloadPreviewAttachment(attachment.sha256);
+        const url = URL.createObjectURL(file.blob);
+        try {
+          const anchor = document.createElement('a');
+          anchor.href = url;
+          anchor.download = file.fileName || attachment.fileName;
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+        setMessage(`已下载 ${file.fileName || attachment.fileName}`);
+        return;
+      }
       await ensureAttachmentBlobAvailable(store, {
         sha256: attachment.sha256,
         sizeBytes: attachment.sizeBytes,
@@ -1186,16 +1205,17 @@ function AttachmentSection({ items, preview, onDelete }: { items: Attachment[]; 
                 <td style={tdStyle}><b>{attachment.fileName}</b><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>{attachment.mimeType ?? '未知类型'} · 内容寻址对象</div></td>
                 <td style={tdStyle}>{attachment.entityType} · {attachment.entityId.slice(0, 8)}</td>
                 <td style={tdStyle}>{attachment.sizeBytes > 1024 * 1024 ? `${(attachment.sizeBytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(attachment.sizeBytes / 1024))} KB`}</td>
-                <td style={{ ...tdStyle, color: preview ? 'var(--text-tertiary)' : local === 'ready' ? 'var(--positive)' : local === 'trash' ? 'var(--accent)' : 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{preview ? '预览不显示' : local === 'ready' ? '可用' : local === 'trash' ? '回收区' : '按需下载'}</td>
+                <td style={{ ...tdStyle, color: preview ? 'var(--text-tertiary)' : local === 'ready' ? 'var(--positive)' : local === 'trash' ? 'var(--accent)' : 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{preview ? '预览不适用' : local === 'ready' ? '可用' : local === 'trash' ? '回收区' : '按需下载'}</td>
                 <td style={{ ...tdStyle, fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)', maxWidth: 220 }}>
-                  {preview ? '预览不显示' : remote.length ? remote.map((row) => `${profileNames[row.profileId] ?? row.profileId.slice(0, 8)}：${replicaStateLabel(row.state)}`).join(' · ') : '尚未同步'}
+                  {preview ? '预览不显示同步状态' : remote.length ? remote.map((row) => `${profileNames[row.profileId] ?? row.profileId.slice(0, 8)}：${replicaStateLabel(row.state)}`).join(' · ') : '尚未同步'}
                 </td>
                 <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 'var(--fs-meta)' }}>{attachment.sha256.slice(0, 16)}...</td>
                 <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                  {/* Fetching a body downloads it into this device's attachment store, and deleting
-                      edits the ledger. A preview offers neither: it is a read of what the server
-                      already holds. */}
-                  {!preview && local !== 'ready' && <button type="button" disabled={fetching === attachment.id} onClick={() => void fetchBody(attachment)} style={{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', minHeight: 34, padding: '6px 10px', cursor: 'pointer', marginRight: 6 }}>{fetching === attachment.id ? '取回中…' : '取回正文'}</button>}
+                  {/* Fetching a body normally downloads it into this device's attachment store.
+                      A preview cannot do that — the body is the user's, and only the server can
+                      decrypt it — so there it downloads the decrypted file instead. Deleting edits
+                      the ledger, which a preview never does. */}
+                  {local !== 'ready' && <button type="button" disabled={fetching === attachment.id} onClick={() => void fetchBody(attachment)} style={{ border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', minHeight: 34, padding: '6px 10px', cursor: 'pointer', marginRight: 6 }}>{fetching === attachment.id ? (preview ? '下载中…' : '取回中…') : (preview ? '下载' : '取回正文')}</button>}
                   {preview ? null : <button type="button" onClick={() => setDeleting(attachment)} style={{ border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', minHeight: 34, padding: '6px 10px', cursor: 'pointer' }}>删除</button>}
                 </td>
               </tr>

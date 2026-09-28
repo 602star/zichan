@@ -392,7 +392,17 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   // A preview is only meaningful where the server holds a custody key, so a deployment with
   // custody disabled gets no registry and the route answers with a clear refusal.
   const ledgerPreview = custodyEnabled
-    ? new LedgerPreviewRegistry({ store, serverId, custodyKey: () => custodyKey })
+    ? new LedgerPreviewRegistry({
+        store,
+        serverId,
+        custodyKey: () => custodyKey,
+        // Attachments live in the blob store, not in the commit log: the preview can list them
+        // from the backup but needs these two to actually open one.
+        readManifest: async ({ username, ledgerId, blobId }) =>
+          blobStore.manifest(username, ledgerId, blobId),
+        readChunk: async ({ username, ledgerId, blobId, index }) =>
+          blobStore.chunk(username, ledgerId, blobId, index),
+      })
     : undefined;
   const log = async (level: ServerLog['level'], action: string, message: string, meta: Omit<ServerLog, 'id' | 'at' | 'level' | 'action' | 'message'> = {}) => {
     await store.appendLog({ id: randomBytes(12).toString('hex'), at: nowIso(), level, action, message, ...meta });

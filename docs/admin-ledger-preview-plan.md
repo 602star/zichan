@@ -1,8 +1,8 @@
 # 管理员预览用户记账：实施方案
 
-> 状态：**已实施**（阶段 1–4、6）。服务端内核 `454059a`、管理路由 `238c508`；前端预览页、
-> 只读驱动、导航收窄与横幅见本轮改动。**阶段 5（附件解密下载）未做**——预览里的附件只显示
-> 元数据，不提供取回正文与下载。
+> 状态：**已实施**（阶段 1–6）。服务端内核 `454059a`、管理路由 `238c508`；前端预览页、
+> 只读驱动、导航收窄与横幅见本轮改动。**阶段 5 已完成**：管理页附件列表可下载，服务端解密并校验正文，
+> 中文文件名通过 `filename*` 返回；退出预览发送 DELETE 并清理附件缓存。
 > 实际落地的路由形状与 §4.3 有出入，以代码为准：`POST`/`GET /api/admin/users/:username/preview`、
 > `GET /api/admin/previews/:id/backup`、`DELETE /api/admin/previews/:id`。其中 GET 只报告已打开的
 > 会话，不会创建（原实现会顺手解密，已修）。预览页地址为 `…/preview?username=…`，账号放查询串。
@@ -264,6 +264,12 @@ deriveAttachmentCryptoContext(session, { serverId, ledgerId, username })
 库里存 `Alice`、用户当时输 `alice`，用库里的拼写复算 `blobId` 会**算出另一个 ID**，
 表现为"附件全部找不到"且**不报错**。必须有测试覆盖大小写不一致的情况。
 
+实现分别保留存储命名空间和加密用户名：存储始终使用账号原始拼写；AAD 依次尝试库中原串、
+小写形式、打开预览时提供的原串，并兼容密钥包中的历史附件密钥。测试真实构造库内 `Alice`，
+分别以 `Alice` / `alice` 加密上传，验证 HTTP 下载正文、中文文件名、缓存头及日志。
+服务端未保存任意历史客户端拼写，无法从哈希反推；若曾用其他大小写组合上传，可在预览 URL
+的 `username` 参数提供原串后重新打开。未命中时明确提示正文缺失或大小写不符，不返回空成功。
+
 附件下载仍走服务端解密流，前端只负责渲染。**不做 inline 预览**（只给下载），
 避免让后台渲染用户的任意文件。
 
@@ -310,3 +316,19 @@ deriveAttachmentCryptoContext(session, { serverId, ledgerId, username })
 
 你的决定里"**默认开**"我按"任何管理员点预览就能看"实现了（§4.3）。
 如果之后要收紧，加一个"按账号开关 + 双人授权"即可，接口形状不用变。
+
+## 12. 阶段 5 验证（2026-09-22）
+
+- `npm test`：1,205 个测试通过。
+- `npm run typecheck`、`npm run lint`、`npm run build:server`：通过。
+- `admin-preview-attachment.spec.mjs`：使用本机 Chrome，通过真实页面下载中文文件名附件，逐字节校验正文，并确认退出发送 DELETE。
+- 附件集成测试涵盖多分块、`Alice` / `alice` AAD、缺失附件、损坏密文、会话关闭和下载途中关闭；正文只在内存解密，响应禁止缓存。
+
+## 13. 交付复验（2026-09-28）
+
+- 收齐阶段 5 与退出预览 DELETE 修复；当前全量测试为 166 个文件、1,209 项通过（core 135、db 175、logger 7、sync-server 292、web 600）。§12 保留此前验证记录。
+- 首轮全量测试中，`admin-list-sort` 有一项在 fixture 注册账号时遇到本地服务器连接失败；单独复跑该文件 7 项通过，再完整运行 `npm test` 通过，未修改该测试。
+- `npm run typecheck`、`npm run lint`、`npm run build:server`、`npm run release:check`、`git diff --check` 通过。
+- 浏览器命令：设置 `PLAYWRIGHT_EXECUTABLE_PATH` 为本机 Chrome 后，运行 `npm run test --prefix tools/e2e -- --config account.config.mjs admin-preview-attachment.spec.mjs admin-ledger-preview.spec.mjs`，3 项通过；已检查附件列表截图。
+- 最终全量日志：`.runtime/preview-delivery-tests-final.log`；首次运行、针对性复跑、类型检查、Lint、构建、发布检查和浏览器日志同目录，前缀为 `preview-delivery-`。
+- 已更新工作日志，并在 `memory/2026-09-22c.md` 标明旧阶段 5 待办已完成。本批完成代码交付验证，不包含线上部署或桌面发行包重建。

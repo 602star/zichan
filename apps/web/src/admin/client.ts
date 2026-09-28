@@ -38,6 +38,23 @@ async function timedRequest<T>(url: string, init: RequestInit, read: (response: 
   }
 }
 
+/**
+ * The filename a download response asked to be saved as.
+ *
+ * Prefers RFC 5987 `filename*` (UTF-8 percent-encoded) over the plain `filename`, because a
+ * ledger's files routinely have non-ASCII names and the plain form cannot carry them. Falls back
+ * to an empty string so the caller can substitute its own.
+ */
+export function fileNameFromDisposition(header: string | null): string {
+  if (!header) return '';
+  const extended = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (extended?.[1]) {
+    try { return decodeURIComponent(extended[1].trim()); } catch { /* fall through to the plain form */ }
+  }
+  const plain = /filename="([^"]*)"/i.exec(header);
+  return plain?.[1] ?? '';
+}
+
 export function adminBaseUrl(location: Pick<Location, 'origin' | 'pathname'>): string | undefined {
   const match = /^(.*)\/admin(?:\/.*)?$/.exec(location.pathname);
   return match ? `${location.origin}${match[1]}` : undefined;
@@ -305,6 +322,59 @@ export class AdminClient {
     this.current(generation);
     if (!response.ok) throw new AdminError(response.status, '', `导出失败（HTTP ${response.status}）`);
     return response.text();
+  }
+
+  /**
+   * Fetch decrypted bytes, such as one attachment of a previewed ledger.
+   *
+   * Separate from `request` because that one parses JSON, and a user's file is not JSON. The
+   * server names the file in `Content-Disposition`, so the browser saves it under the name the
+   * ledger recorded rather than one this page invented.
+   */
+  async fetchBytes(path: string): Promise<{ blob: Blob; fileName: string }> {
+    const generation = this.generation;
+    if (!this.session || Date.parse(this.session.accessExpiresAt) < Date.now() + 30_000) await this.refresh();
+    this.current(generation);
+    const response = await fetch(`${this.baseUrl}/api/admin${path}`, {
+      cache: 'no-store', redirect: 'error', signal: this.controller.signal,
+      headers: { Authorization: `Bearer ${this.session?.accessToken ?? ''}` },
+    });
+    this.current(generation);
+    if (!response.ok) {
+      // The route answers with a JSON error body even for a binary request, so the operator gets
+      // the server's own words ("服务器上没有这份附件的正文") rather than a bare status code.
+      const body = await response.json().catch(() => ({})) as { code?: string; error?: string };
+      throw new AdminError(response.status, body.code ?? '', body.error ?? `下载失败（HTTP ${response.status}）`);
+    }
+    const blob = await response.blob();
+    this.current(generation);
+    return {
+      blob,
+      fileName: fileNameFromDisposition(response.headers.get('content-disposition')),
+    };
+  }
+
+  /**
+   * Send a method that is neither a read nor a JSON write.
+   *
+   * `request` decides between GET and POST from whether a body was passed, which cannot express
+   * DELETE — and a DELETE sent as a GET does not fail, it silently does nothing. That is exactly
+   * how "exit preview" came to leave the server holding a decrypted ledger: the button navigated
+   * away while the session stayed open. Naming the method explicitly is the fix.
+   */
+  async send(method: 'DELETE', path: string): Promise<void> {
+    const generation = this.generation;
+    if (!this.session || Date.parse(this.session.accessExpiresAt) < Date.now() + 30_000) await this.refresh();
+    this.current(generation);
+    const response = await fetch(`${this.baseUrl}/api/admin${path}`, {
+      method, cache: 'no-store', redirect: 'error', signal: this.controller.signal,
+      headers: { Authorization: `Bearer ${this.session?.accessToken ?? ''}` },
+    });
+    this.current(generation);
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({})) as { code?: string; error?: string };
+      throw new AdminError(response.status, body.code ?? '', body.error ?? `请求失败（HTTP ${response.status}）`);
+    }
   }
 
   async logout(): Promise<void> {

@@ -91,6 +91,14 @@ export interface StoreCtx {
     attachmentCount: number;
     commitCount: number;
   };
+  /**
+   * Downloads one attachment body of a previewed ledger.
+   *
+   * Only the server can decrypt it, so the preview hands the screens a fetch rather than the
+   * bytes: the Manage screen decides when an operator actually wants a file. Absent outside a
+   * preview, where the ordinary local/sync attachment paths apply.
+   */
+  downloadPreviewAttachment?: (sha256: string) => Promise<{ blob: Blob; fileName: string }>;
   closePreview?: () => Promise<void>;
 }
 

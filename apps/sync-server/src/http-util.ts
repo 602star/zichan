@@ -109,6 +109,34 @@ export function sendBinary(res: ServerResponse, status: number, body: Uint8Array
   res.end(body);
 }
 
+/**
+ * Send bytes as a download the browser saves rather than renders.
+ *
+ * `Content-Disposition: attachment` is the point: the console is handing over a user's file, and
+ * a file rendered in the admin page would run with the console's origin. The filename is stripped
+ * of anything that could break out of the quoted parameter — a name with a quote or a newline in
+ * it would otherwise let the ledger choose the response's header text.
+ */
+export function sendDownload(
+  res: ServerResponse,
+  status: number,
+  body: Uint8Array,
+  contentType: string,
+  filename: string,
+): void {
+  const safeName = filename.replace(/[^\x20-\x7e]|["\\]/g, '_').slice(0, 120) || 'attachment';
+  const encoded = encodeURIComponent(filename).replace(/['()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  res.writeHead(status, {
+    'Content-Type': /^[\w.+-]+\/[\w.+-]+$/.test(contentType) ? contentType : 'application/octet-stream',
+    'Content-Length': String(body.byteLength),
+    'Content-Disposition': `attachment; filename="${safeName}"; filename*=UTF-8''${encoded}`,
+    // Decrypted user content must never sit in a shared or browser cache.
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.end(body);
+}
+
 export function errorStatus(error: unknown, blob = false): number {
   if (error instanceof RequestBodyError || error instanceof ServerStoreError) return error.status;
   const code = typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code) : '';

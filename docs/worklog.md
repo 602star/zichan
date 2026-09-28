@@ -3,6 +3,15 @@
 A running record of what the coding agent did on this project — what changed, why, and how
 it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
 
+## 2026-09-28 — 管理员预览附件下载收尾与交付验证
+
+- 收齐此前留在工作区的预览附件改动：管理页可下载服务器解密后的附件，保留中文文件名；服务端校验密文分块与正文大小、SHA-256，响应禁止缓存，下载日志不含正文。兼容账号存储拼写、小写拼写、打开预览时提供的原串及历史附件密钥。
+- 退出预览改为显式 DELETE，关闭、过期和淘汰时清理附件缓存；下载途中关闭会话不再返回或保留下载结果。清理缓存释放引用，不承诺进程内存的安全擦除。
+- 最终 `npm test` 全量通过：166 个文件、1,209 项（core 135、db 175、logger 7、sync-server 292、web 600）。首次运行有一项 `admin-list-sort` 在 fixture 注册账号时连接本地服务器失败；该文件 7 项单独复跑通过，随后完整重跑通过，未改动该测试或业务代码。
+- `npm run typecheck`、`npm run lint`、`npm run build:server`、`npm run release:check` 和 `git diff --check` 通过。
+- 使用本机 Chrome 运行 `admin-ledger-preview.spec.mjs` 与 `admin-preview-attachment.spec.mjs`，3 项通过；覆盖只读账本、私密模式拒绝访问、中文附件文件名与正文逐字节校验、退出发送 DELETE。已检查 `tools/e2e/test-results/accounts/admin-preview-attachment-a-9d05e--from-the-read-only-preview/preview-attachment.png`，附件行、下载入口及横幅显示正常。
+- 验证日志保留在 `.runtime/preview-delivery-*.log`；截图及运行产物不入库。方案追加当前验收记录，旧记忆标明阶段 5 待办已完成。未部署服务或打包新的桌面发行版。
+
 ## 2026-09-23 — 统一资料录入、查重与标签分组
 
 - 游戏账号按游戏/区服/名称，赛季按游戏/名称，标签按分组/名称，交易对象按名称及已有别名，在数据库写入事务内统一查重。首尾空格与英文大小写不影响判断；已有重复资料的非身份字段编辑不受阻，恢复流程不自动合并资料。表单可查看并编辑匹配的已有资料。

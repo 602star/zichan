@@ -17,7 +17,7 @@
  * nothing but the fetch, the countdown and the close.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { LedgerBackup } from '@zichan/db';
 import { PreviewStoreProvider } from './PreviewStoreProvider.js';
 import { App } from '../App.js';
@@ -63,7 +63,6 @@ export function PreviewPage({ client, username, operator, navigate }: {
   // reason, and the server records it before returning any data.
   const [reason, setReason] = useState('');
   const [opening, setOpening] = useState(false);
-  const closed = useRef(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
@@ -72,10 +71,12 @@ export function PreviewPage({ client, username, operator, navigate }: {
 
   const closePreview = useCallback(async () => {
     const id = summary?.previewId;
-    closed.current = true;
     setClosing(true);
     try {
-      if (id) await client.request(`/previews/${encodeURIComponent(id)}`, undefined);
+      // DELETE, not `request`: that helper picks GET or POST from whether a body was passed, so
+      // asking it to close a preview sent a GET — which does not fail, it just does nothing, and
+      // the decrypted ledger stayed in server memory until its TTL. The method has to be explicit.
+      if (id) await client.send('DELETE', `/previews/${encodeURIComponent(id)}`);
     } catch {
       // Closing is best-effort: the session also expires on its own. Reporting a failure here
       // would suggest the plaintext is still there when the server may already have dropped it.
@@ -142,6 +143,18 @@ export function PreviewPage({ client, username, operator, navigate }: {
     commitCount: summary.commitCount,
   } : undefined), [summary, operator]);
 
+  /**
+   * Fetch one attachment body for the Manage screen.
+   *
+   * The download is started by the caller, which owns the anchor click; this only retrieves the
+   * bytes. Nothing here renders the file — the console hands it to the browser as a download.
+   */
+  const downloadAttachment = useCallback(async (sha256: string) => {
+    const id = summary?.previewId;
+    if (!id) throw new Error('预览已经结束，请重新打开预览');
+    return client.fetchBytes(`/previews/${encodeURIComponent(id)}/attachments/${encodeURIComponent(sha256)}`);
+  }, [client, summary?.previewId]);
+
   // The backup arrives in a second request, so a summary alone is not enough to render: passing
   // an undefined backup would fail the import with a message about the backup being invalid,
   // which describes the symptom rather than the fact that nothing has loaded yet.
@@ -206,7 +219,7 @@ export function PreviewPage({ client, username, operator, navigate }: {
 
       {remaining
         ? (
-          <PreviewStoreProvider backup={backup} preview={preview} onClose={closePreview}>
+          <PreviewStoreProvider backup={backup} preview={preview} onClose={closePreview} downloadAttachment={downloadAttachment}>
             <UndoProvider><App /></UndoProvider>
           </PreviewStoreProvider>
         )

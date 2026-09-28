@@ -263,4 +263,33 @@ describe('ledger preview routes', () => {
       await f.server.close();
     }
   }, 120_000);
+
+  it('rejects missing attachments, invalid checksums and closed previews', async () => {
+    const f = await fixture();
+    try {
+      const opened = await f.api('/users/member-user/preview', {
+        method: 'POST',
+        body: JSON.stringify({ reason: '核对发票' }),
+      });
+      const summary = (await opened.json()) as { previewId: string };
+
+      // An unknown checksum is a missing file, not an expired preview: the operator should not be
+      // sent back to reopen the preview over a file that simply is not in this ledger.
+      const absent = await f.api(`/previews/${summary.previewId}/attachments/${'f'.repeat(64)}`);
+      expect(absent.status).toBe(404);
+      expect(((await absent.json()) as { code: string }).code).toBe('ATTACHMENT_NOT_FOUND');
+
+      // A malformed checksum is refused before any storage is touched.
+      const malformed = await f.api(`/previews/${summary.previewId}/attachments/not-a-hash`);
+      expect(malformed.status).toBe(400);
+
+      // Closing the preview ends the route: the plaintext is gone, so the file is too.
+      await f.api(`/previews/${summary.previewId}`, { method: 'DELETE' });
+      const afterClose = await f.api(`/previews/${summary.previewId}/attachments/${'f'.repeat(64)}`);
+      expect(afterClose.status).toBe(410);
+      expect(((await afterClose.json()) as { code: string }).code).toBe('PREVIEW_EXPIRED');
+    } finally {
+      await f.server.close();
+    }
+  }, 120_000);
 });
