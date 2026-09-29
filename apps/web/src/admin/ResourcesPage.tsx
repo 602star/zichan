@@ -11,7 +11,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, canWrite, message, muted, row, useActionError, usePolling, useResource, when } from './ui.js';
+import { PageHeader, Badge, Button, DataTable, Loading, Notice, Panel, Stat, bytes, canWrite, message, muted, row, useActionError, usePolling, useResource, when } from './ui.js';
 import { TrendChart } from './chart.js';
 import type { Metrics, Overview, ResourcesPayload } from './types.js';
 import type { TrendPoint as ChartPoint } from './trend.js';
@@ -109,7 +109,7 @@ export function ResourcesPage({ client, role, onJob }: { client: AdminClient; ro
 
   return (
     <>
-      <h2>进程与数据库</h2>
+      <PageHeader title="进程与数据库" description="检查资源瓶颈与数据库占用，按需执行维护。" actions={<><Button onClick={resources.reload}>刷新</Button></>} />
       <Loading loading={resources.loading} error={resources.error} stale={resources.stale} loadedAt={resources.loadedAt} />
       {actionError.error ? <Notice tone="bad">{actionError.error}</Notice> : null}
 
@@ -117,8 +117,9 @@ export function ResourcesPage({ client, role, onJob }: { client: AdminClient; ro
         <Notice tone="warn">最近一次采样失败，下面显示的是上一次成功的读数，不代表当前状态。</Notice>
       ) : null}
 
+      <div className="zc-admin-resource-workspace">
       <Panel title="进程资源" note={resources.data?.note}
-        action={<Button onClick={resources.reload}>刷新</Button>}>
+       >
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
           <Stat label="常驻内存（RSS）" tone={memoryTone} value={process_ ? bytes(process_.rssBytes) : '暂无数据'}
             hint={process_ ? `进程 ${process_.pid} · Node ${process_.nodeVersion}` : undefined} />
@@ -183,7 +184,7 @@ export function ResourcesPage({ client, role, onJob }: { client: AdminClient; ro
 
       <Panel title="数据库状态" note="全部来自常量时间的 PRAGMA 读数，可以随页面一起刷新。"
         action={<div style={row}>
-          <Button onClick={resources.reload}>刷新</Button>
+
           <Button disabled={!writable} onClick={analyze}>重建查询计划统计</Button>
         </div>}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
@@ -246,6 +247,7 @@ export function ResourcesPage({ client, role, onJob }: { client: AdminClient; ro
           </p>
         )}
       </Panel>
+      </div>
     </>
   );
 }

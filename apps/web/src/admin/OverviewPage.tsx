@@ -2,7 +2,7 @@
 import { pendingAlerts, overviewStatus } from './operations.js';
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
-import { Badge, Button, DataTable, Loading, Notice, Panel, Select, Stat, TextInput, bytes, canWrite, message, muted, roleLabel, row, usePolling, useResource, when } from './ui.js';
+import { PageHeader, Badge, Button, DataTable, Loading, Notice, Panel, Select, Stat, TextInput, bytes, canWrite, message, muted, roleLabel, row, usePolling, useResource, when } from './ui.js';
 import { alertNextStep, alertStateLabel, acknowledgeAlert, describeAlert, isSilenced, silenceAlert, unsilenceAlert, SILENCE_HOURS } from './alerts.js';
 import { TrendChart } from './chart.js';
 import { MaintenancePanel } from './MaintenancePanel.js';
@@ -73,7 +73,7 @@ export function OverviewPage({ client, navigate, accountName, role }: {
 
   return (
     <>
-      <h2>运行概览</h2>
+      <PageHeader title="运行概览" />
       <p>服务运行、异常处理与维护操作。</p>
       <nav className="zc-admin-overview-jumps" aria-label="总览分区">
         <a href="#section-待处理事项">处理异常</a>

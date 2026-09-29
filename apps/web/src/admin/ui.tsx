@@ -218,10 +218,24 @@ export function useCursorPager({ query, path, navigate }: { query: URLSearchPara
  * separately, because a second name for the same section is a second thing to
  * keep in step - and a duplicate id would silently break the jump target.
  */
-export function Panel({ title, id, action, children, note }: { title?: string; id?: string; action?: ReactNode; children: ReactNode; note?: string }) {
+export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
+  return <div className="zc-admin-page-header">
+    <div><h2>{title}</h2>{description ? <p>{description}</p> : null}</div>
+    {actions ? <div className="zc-admin-page-actions">{actions}</div> : null}
+  </div>;
+}
+
+export function FilterBar({ children, note }: { children: ReactNode; note?: string }) {
+  return <section id={sectionId('筛选')} className="zc-admin-filterbar" aria-label="筛选">
+    {children}
+    {note ? <p className="zc-admin-filter-note">{note}</p> : null}
+  </section>;
+}
+
+export function Panel({ title, id, action, children, note, className }: { title?: string; id?: string; action?: ReactNode; children: ReactNode; note?: string; className?: string }) {
   const anchor = id ?? (title ? sectionId(title) : undefined);
   return (
-    <section className="zc-admin-panel" id={anchor} style={{ ...panel, ...(anchor ? anchorOffset : {}) }}>
+    <section className={['zc-admin-panel', className].filter(Boolean).join(' ')} id={anchor} style={{ ...panel, ...(anchor ? anchorOffset : {}) }}>
       {(title || action) && (
         <div style={{ ...row, justifyContent: 'space-between', marginBottom: 12 }}>
           {title ? <strong>{title}</strong> : <span />}
@@ -560,29 +574,13 @@ export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeK
     label?: string;
   };
 }) {
-  // Declared before the empty-state return: a hook after it would be skipped on an empty page,
-  // which changes the hook order between renders and crashes React on the next non-empty load.
-  const [wideColumns, setWideColumns] = useState(false);
   if (!rows.length) return <p style={muted}>{empty}</p>;
   const visible = columns.filter((column) => !hiddenColumns.includes(column.key));
-  // Only offered when this table actually has a column the narrow layout hides; otherwise it is a
-  // button that does nothing.
-  const hasSecondary = visible.some((column) => column.secondary);
   const selectableKeys = selection ? rows.filter(selection.selectable).map(rowKey) : [];
   const allSelected = selectableKeys.length > 0 && selectableKeys.every((key) => selection!.selected.includes(key));
   return (
     <div>
-      {hasSecondary ? (
-        <button
-          type="button"
-          className="zc-admin-columns-toggle"
-          aria-pressed={wideColumns}
-          onClick={() => setWideColumns((value) => !value)}
-        >
-          {wideColumns ? '收起次要列' : '展开次要列'}
-        </button>
-      ) : null}
-      <div className="zc-admin-table" data-wide={wideColumns ? 'true' : undefined} style={{ overflowX: 'auto' }}>
+      <div className="zc-admin-table" style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr>
@@ -629,7 +627,7 @@ export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeK
                     </td>
                   ) : null}
                   {visible.map((column) => (
-                    <td key={column.key} className={column.secondary ? 'zc-admin-secondary' : undefined} style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', verticalAlign: 'top' }}>{column.render(item)}</td>
+                    <td key={column.key} data-label={column.header} data-column={column.key} className={column.secondary ? 'zc-admin-secondary' : undefined} style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', verticalAlign: 'top' }}>{column.render(item)}</td>
                   ))}
                 </tr>
                 {renderExpanded && activeKey === key ? (

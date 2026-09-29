@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
 import { AccountFilter } from './filters.js';
-import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, canWrite, message, muted, roleLabel, row, useActionError, useCursorPager, useHiddenColumns, useResource, when } from './ui.js';
+import { PageHeader, FilterBar, Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, canWrite, message, muted, roleLabel, row, useActionError, useCursorPager, useHiddenColumns, useResource, when } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import type { SessionRow } from './types.js';
 
@@ -113,8 +113,8 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
 
   return (
     <>
-      <h2>设备与会话</h2>
-      <Panel title="筛选" note="按会话分页：每页会话数固定，不再按账号展开。">
+      <PageHeader title="设备与会话" description="查看登录设备，按账号和状态筛选并撤销会话。" actions={<><Button disabled={busy || revocableCount === 0} onClick={() => { void revokeMany(); }}>撤销当前页可撤销的会话</Button><Button onClick={list.reload}>刷新</Button></>} />
+      <FilterBar note="按会话分页：每页会话数固定，不再按账号展开。">
         <AccountFilter client={client} accountId={accountId} username={query.get('username') ?? ''} onApply={update} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
           <Field label="用户名、accountId 或设备名">
@@ -135,16 +135,16 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
         <div style={{ ...row, marginTop: 10 }}>
           <Button onClick={() => update({ search: searchDraft })}>搜索</Button>
           <Button onClick={() => { setSearchDraft(''); update({ search: undefined, accountId: undefined, username: undefined, state: undefined, kind: undefined }); }}>清除筛选</Button>
-          <Button disabled={busy || revocableCount === 0} onClick={() => { void revokeMany(); }}>撤销当前页可撤销的会话</Button>
+
         </div>
         <div style={{ ...row, marginTop: 10 }}>
           <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} />
           <ColumnPicker columns={SESSION_COLUMNS} hidden={hidden} onToggle={toggle} onReset={reset} />
         </div>
         {report ? <Notice tone="warn"><span style={{ whiteSpace: 'pre-wrap' }}>{report}</span></Notice> : null}
-      </Panel>
+      </FilterBar>
 
-      <Panel title="会话列表" action={<Button onClick={list.reload}>刷新</Button>}>
+      <Panel title="会话列表">
         <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
         <DataTable
           columns={[

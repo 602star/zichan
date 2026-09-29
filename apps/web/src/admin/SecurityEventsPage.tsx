@@ -8,7 +8,7 @@
  */
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, Stat, muted, row, useResource, when } from './ui.js';
+import { PageHeader, Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, Stat, muted, row, useResource, when } from './ui.js';
 import type { AuthFailuresPayload, RateLimitsPayload } from './types.js';
 
 export function SecurityEventsPage({ client }: { client: AdminClient }) {
@@ -22,16 +22,16 @@ export function SecurityEventsPage({ client }: { client: AdminClient }) {
 
   return (
     <>
-      <h2>登录安全</h2>
-      <Loading loading={failures.loading || limits.loading} error={failures.error ?? limits.error}
+      <PageHeader title="登录安全" description="查看失败登录来源与限流证据。" actions={<><Button onClick={() => { failures.reload(); limits.reload(); }}>刷新</Button></>} />
+      <Loading loading={failures.loading || limits.loading} error={failures.error || limits.error}
         stale={failures.stale || limits.stale} loadedAt={failures.loadedAt ?? limits.loadedAt} />
 
-      <Panel title="失败登录来源" action={<Button onClick={failures.reload}>刷新</Button>}
+      <Panel title="失败登录来源"
         note={failures.data?.note ?? '按来源地址聚合登录失败。'}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-          <Stat label="失败总次数" value={String(failures.data?.total ?? 0)} hint="含低于筛选阈值的来源" />
-          <Stat label="来源地址数" value={String(failures.data?.sourceCount ?? 0)} />
-          <Stat label="当前被限流" value={String(limits.data?.active ?? 0)} hint={`共跟踪 ${limits.data?.tracked ?? 0} 个限流桶`} />
+          <Stat label="失败总次数" value={failures.data ? String(failures.data.total) : '暂无数据'} hint="含低于筛选阈值的来源" />
+          <Stat label="来源地址数" value={failures.data ? String(failures.data.sourceCount) : '暂无数据'} />
+          <Stat label="当前被限流" value={limits.data ? String(limits.data.active) : '暂无数据'} hint={limits.data ? `共跟踪 ${limits.data.tracked} 个限流桶` : '等待读取限流状态'} />
         </div>
         <div style={{ ...row, marginTop: 10 }}>
           <Field label="至少失败次数">
@@ -76,7 +76,7 @@ export function SecurityEventsPage({ client }: { client: AdminClient }) {
         />
       </Panel>
 
-      <Panel title="限流桶" action={<Button onClick={limits.reload}>刷新</Button>}
+      <Panel title="限流桶"
         note={limits.data?.note ?? '限流桶在每次受限请求时写入。'}>
         <p style={muted}>
           限流按来源地址与用途分桶，超过上限的地址在窗口结束前被拒绝。这里只读展示：解封会让正在进行的暴力尝试重新获得配额，

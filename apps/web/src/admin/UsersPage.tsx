@@ -1,8 +1,8 @@
 /** User management: filters live in the URL so refresh and sharing keep the view. */
 import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
-import { AccountActions } from './AccountActions.js';
-import { Badge, Button, ColumnPicker, CopyValue, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, bytes, canEditAccountQuota, canManageAccount, muted, roleLabel, row, useCursorPager, useHiddenColumns, useResource, useRowSelection, when } from './ui.js';
+import { AccountActions, type AccountActionMode } from './AccountActions.js';
+import { PageHeader, FilterBar, Badge, Button, ColumnPicker, CopyValue, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, bytes, canEditAccountQuota, canManageAccount, muted, roleLabel, row, useCursorPager, useHiddenColumns, useResource, useRowSelection, when } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import { BULK_LABELS, partitionSelection, runBulkAction, type BulkAction, type BulkOutcome } from './bulk-actions.js';
 import type { AccountRow } from './types.js';
@@ -85,7 +85,10 @@ export function UsersPage({ client, query, navigate, role }: {
 }) {
   const pager = useCursorPager({ query, path: '/users', navigate });
   const cursor = pager.cursor;
+  const [rowMode, setRowMode] = useState<AccountActionMode>('');
   const [openRow, setOpenRow] = useState('');
+  const [rowBusy, setRowBusy] = useState(false);
+  const [rowNotice, setRowNotice] = useState('');
   const search = query.get('search') ?? '';
   const roleFilter = query.get('role') ?? '';
   const state = query.get('state') ?? '';
@@ -149,9 +152,12 @@ export function UsersPage({ client, query, navigate, role }: {
           {/* Reading a ledger is allowed on any account, so this needs no permission check —
               the server refuses only where it holds no key to decrypt with. */}
           <Button onClick={() => navigate(`/preview?username=${encodeURIComponent(user.username)}`)}>预览</Button>
-          <Button onClick={() => setOpenRow((current) => current === user.accountId ? '' : user.accountId)}>
-            {openRow === user.accountId ? '收起快捷处理' : '快捷处理'}
-          </Button>
+          {([
+            ['state', user.disabled ? '启用账号' : '禁用账号'], ['commit', '调整提交配额'],
+            ['blob', '调整附件配额'], ['role', '修改角色'], ['sessions', '撤销全部可管理会话'],
+          ] as const).map(([mode, label]) => <Button key={mode}
+            disabled={rowBusy || (mode === 'commit' || mode === 'blob' ? !canEditAccountQuota(role, user.role) : !canManage(user))}
+            onClick={() => { setRowNotice(''); setRowMode(mode); setOpenRow(user.accountId); }}>{label}</Button>)}
         </div>
       ),
     },
@@ -159,8 +165,8 @@ export function UsersPage({ client, query, navigate, role }: {
 
   return (
     <>
-      <h2>用户管理</h2>
-      <Panel title="筛选" note="筛选条件会写入地址栏；分享或刷新链接会保留当前视图。">
+      <PageHeader title="用户管理" description="查找账号、预览记账，或直接处理访问与配额。" actions={<><Button onClick={list.reload}>刷新</Button></>} />
+      <FilterBar note="筛选条件会写入地址栏；分享或刷新链接会保留当前视图。">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
           <Field label="用户名或 accountId">
             <TextInput value={searchDraft} maxLength={128} onChange={(event) => setSearchDraft(event.target.value)}
@@ -191,9 +197,10 @@ export function UsersPage({ client, query, navigate, role }: {
           <Button onClick={() => update({ search: searchDraft })}>搜索</Button>
           <Button onClick={() => { setSearchDraft(''); update({ search: undefined, role: undefined, state: undefined, protection: undefined, quota: undefined }); }}>清除筛选</Button>
         </div>
-      </Panel>
+      </FilterBar>
 
-      <Panel title="用户列表" action={<Button onClick={list.reload}>刷新</Button>}>
+      <Panel title="用户列表" className="zc-admin-user-records">
+        {rowNotice ? <Notice>{rowNotice}</Notice> : null}
         <div style={{ ...row, marginBottom: 8 }}>
           <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} />
           <ColumnPicker columns={columns} hidden={hidden} onToggle={toggle} onReset={reset} />
@@ -247,7 +254,9 @@ export function UsersPage({ client, query, navigate, role }: {
             label: '选择本页可管理的账号',
           }}
           renderExpanded={(user) => (
-            <AccountActions
+            <div><Button disabled={rowBusy} onClick={() => setOpenRow('')}>关闭处理面板</Button><AccountActions
+              key={user.accountId + rowMode} initialMode={rowMode} hideTriggers
+              onBusyChange={setRowBusy}
               client={client}
               target={{
                 accountId: user.accountId, username: user.username, role: user.role, revision: user.revision,
@@ -256,9 +265,8 @@ export function UsersPage({ client, query, navigate, role }: {
               }}
               canManage={canManage(user)}
               canEditQuota={canEditAccountQuota(role, user.role)}
-              token="inline"
-              onDone={list.reload}
-            />
+              onDone={() => { setOpenRow(''); setRowNotice(`${user.username}：操作已完成。`); list.reload(); }}
+            /></div>
           )}
           empty="没有符合条件的账号。"
         />

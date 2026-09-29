@@ -17,7 +17,9 @@ export interface AccountActionTarget {
   activeDeviceCount: number;
 }
 
-export function AccountActions({ client, target, canManage, canEditQuota, onDone, token }: {
+export type AccountActionMode = '' | 'state' | 'commit' | 'blob' | 'role' | 'sessions';
+
+export function AccountActions({ client, target, canManage, canEditQuota, onDone, token, initialMode = '', hideTriggers = false, onBusyChange }: {
   client: AdminClient;
   target: AccountActionTarget;
   canManage: boolean;
@@ -26,8 +28,11 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
   onDone: () => void;
   /** 'full' shows quotas and role changes; 'inline' keeps only state and sessions. */
   token?: 'full' | 'inline';
+  initialMode?: AccountActionMode;
+  hideTriggers?: boolean;
+  onBusyChange?: (busy: boolean) => void;
 }) {
-  const [mode, setMode] = useState<'' | 'state' | 'commit' | 'blob' | 'role' | 'sessions'>('');
+  const [mode, setMode] = useState<AccountActionMode>(initialMode);
   const [reason, setReason] = useState('');
   const [commitGiB, setCommitGiB] = useState(String(target.commitQuotaBytes / 1024 ** 3));
   const [blobGiB, setBlobGiB] = useState('');
@@ -41,7 +46,7 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
   const submit = async (path: string, body: Record<string, unknown>): Promise<void> => {
     if (submitting.current) return;
     submitting.current = true;
-    setBusy(true); setError(''); setNotice('');
+    setBusy(true); onBusyChange?.(true); setError(''); setNotice('');
     try {
       await client.request(`/accounts/${target.accountId}${path}`, { ...body, expectedVersion: target.revision, ...(reason ? { reason } : {}) }, { idempotencyKey: adminIdempotencyKey(path) });
       setMode('');
@@ -52,6 +57,7 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
     } finally {
       submitting.current = false;
       setBusy(false);
+      onBusyChange?.(false);
     }
   };
 
@@ -64,13 +70,13 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
 
   return (
     <div style={{ display: 'grid', gap: 8 }}>
-      <div style={row}>
+      {!hideTriggers ? <div style={row}>
         <Button disabled={busy || !canManage} onClick={() => setMode(mode === 'state' ? '' : 'state')}>{target.disabled ? '启用账号' : '禁用账号'}</Button>
         {full ? <Button disabled={busy || !canEditQuota} onClick={() => setMode(mode === 'commit' ? '' : 'commit')}>调整提交配额</Button> : null}
         {full ? <Button disabled={busy || !canEditQuota} onClick={() => setMode(mode === 'blob' ? '' : 'blob')}>调整附件配额</Button> : null}
         {full ? <Button disabled={busy || !canManage} onClick={() => setMode(mode === 'role' ? '' : 'role')}>修改角色</Button> : null}
         <Button disabled={busy || !canManage} onClick={() => { setError(''); setNotice(''); setMode('sessions'); }}>撤销全部可管理会话</Button>
-      </div>
+      </div> : null}
 
       {mode === 'sessions' ? (
         <section aria-label="确认撤销全部会话" style={{ display: 'grid', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}>

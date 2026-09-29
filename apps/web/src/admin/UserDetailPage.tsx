@@ -4,7 +4,7 @@ import { userSupport } from './operations.js';
 import { adminIdempotencyKey } from './idempotency.js';
 import { AccountActions, RoleNote } from './AccountActions.js';
 import { PasswordResetIssuer } from './PasswordResetIssuer.js';
-import { Badge, Button, CopyValue, DataTable, Loading, Notice, Panel, PanelIndex, sectionId, Stat, bytes, canEditAccountQuota, canManageAccount, canWrite, message, muted, roleLabel, row, useActionError, useResource, when } from './ui.js';
+import { PageHeader, Badge, Button, CopyValue, DataTable, Loading, Notice, Panel, PanelIndex, sectionId, Stat, bytes, canEditAccountQuota, canManageAccount, canWrite, message, muted, roleLabel, row, useActionError, useResource, when } from './ui.js';
 import { SYNC_CATEGORIES, type AccountDetail, type SessionRow } from './types.js';
 
 const sessionState = (session: SessionRow) => session.revokedAt ? '已撤销' : session.active ? '有效' : '已过期';
@@ -59,13 +59,12 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
 
   return (
     <>
-      <div style={{ ...row, justifyContent: 'space-between' }}>
-        <h2 style={{ margin: 0 }}>用户详情 · {account.username}</h2>
-        <div style={row}>
+      <PageHeader title={'用户详情 · ' + account.username} actions={
+        <>
           <Button onClick={() => navigate(`/preview?username=${encodeURIComponent(account.username)}`)}>预览记账数据</Button>
           <Button onClick={() => navigate('/users')}>返回用户列表</Button>
-        </div>
-      </div>
+        </>
+      } />
       <Loading loading={detail.loading} error={detail.error} stale={detail.stale} loadedAt={detail.loadedAt} />
 
       <div className="zc-admin-user-workspace">

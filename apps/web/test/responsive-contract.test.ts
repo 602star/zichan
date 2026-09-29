@@ -10,7 +10,6 @@ const charts = readFileSync(new URL('../src/ui/charts.tsx', import.meta.url), 'u
 const reportInsights = readFileSync(new URL('../src/ui/TransactionReportInsights.tsx', import.meta.url), 'utf8');
 const adminTable = readFileSync(new URL('../src/admin/ui.tsx', import.meta.url), 'utf8');
 const adminOverview = readFileSync(new URL('../src/admin/OverviewPage.tsx', import.meta.url), 'utf8');
-const adminCss = readFileSync(new URL('../src/admin/admin.css', import.meta.url), 'utf8');
 const ledgerEntry = readFileSync(new URL('../src/LedgerApp.tsx', import.meta.url), 'utf8');
 const dialogShell = readFileSync(new URL('../src/ui/DialogShell.tsx', import.meta.url), 'utf8');
 const errorBoundary = readFileSync(new URL('../src/ui/AppErrorBoundary.tsx', import.meta.url), 'utf8');
@@ -84,7 +83,7 @@ describe('responsive shell contract', () => {
     expect(adminTable).toContain("overflowX: 'auto'");
     expect(adminOverview).toContain('repeat(auto-fit, minmax(160px, 1fr))');
     // Direct navigation visibility is exercised at desktop/mobile widths in admin-clarity e2e.
-    expect(adminCss).toContain('.zc-admin-secondary { display: none; }');
+    // Admin record cards retain secondary fields on phones; browser tests cover their visibility.
     expect(reports).toContain('zc-report-chart-grid');
     // The chart markup moved to `ui/charts.tsx` so both screens draw the same
     // shapes; the scroll container has to move with it.

@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, ColumnPicker, CopyValue, DataTable, Field, Loading, Notice, Pager, Panel, Select, Stat, TextInput, message, muted, row, useActionError, useCursorPager, useHiddenColumns, useResource, when, canWrite } from './ui.js';
+import { PageHeader, Badge, Button, ColumnPicker, CopyValue, DataTable, Field, Loading, Notice, Pager, Panel, Select, Stat, TextInput, message, muted, row, useActionError, useCursorPager, useHiddenColumns, useResource, when, canWrite } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import type { Invite, RegistrationGrowth } from './types.js';
 import { TrendChart } from './chart.js';
@@ -68,7 +68,8 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
 
   return (
     <>
-      <h2>注册与邀请</h2>
+      <PageHeader title="注册与邀请" description="管理注册策略与邀请码，查看邀请使用情况。" actions={<><Button onClick={invites.reload}>刷新</Button></>} />
+      <div className="zc-admin-two-column">
       <Panel title="注册策略" note="新服务器默认仅邀请注册。关闭注册时，邀请码也不能注册。">
         <Loading loading={mode.loading} error={mode.error} />
         <div style={{ ...row, alignItems: 'flex-end' }}>
@@ -103,6 +104,55 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
         {error ? <Notice tone="bad">{error}</Notice> : null}
       </Panel>
 
+      </div>
+      <Panel title="邀请列表">
+        <div style={{ ...row, marginBottom: 10 }}>
+          <Field label="状态">
+            <Select value={state} onChange={(event) => update({ state: event.target.value })}>
+              <option value="">全部</option>
+              <option value="available">可用</option>
+              <option value="used">已使用</option>
+              <option value="revoked">已撤销</option>
+              <option value="expired">已过期</option>
+            </Select>
+          </Field>
+          <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} />
+          <ColumnPicker columns={OPTIONAL_COLUMNS} hidden={hidden} onToggle={toggle} onReset={reset} />
+        </div>
+        <Loading loading={invites.loading} error={invites.error} stale={invites.stale} loadedAt={invites.loadedAt} />
+        <DataTable
+          columns={[
+            { key: 'code', header: '邀请码', render: (invite) => <code style={{ fontSize: 'var(--fs-sm)' }}>{invite.code}</code> },
+            { key: 'state', header: '状态', ...sortHeader('state', '状态'), render: (invite) => { const value = stateOf(invite); return <Badge tone={value.tone}>{value.label}</Badge>; } },
+            { key: 'created', header: '创建时间', secondary: true, optional: true, ...sortHeader('created', '创建时间'), render: (invite) => when(invite.createdAt) },
+            { key: 'expires', header: '有效期至', ...sortHeader('expires', '有效期至'), render: (invite) => when(invite.expiresAt) },
+            { key: 'used', header: '使用者', secondary: true, optional: true, render: (invite) => invite.usedBy ?? '—' },
+            {
+              key: 'actions', header: '操作', render: (invite) => (
+                <Button
+                  disabled={Boolean(invite.usedBy)}
+                  onClick={() => {
+                    void client.request(`/invites/${encodeURIComponent(invite.code)}/disable`, { disabled: !invite.disabled }, { idempotencyKey: adminIdempotencyKey(`invite-${invite.code}-${invite.disabled ? 'enable' : 'disable'}`) })
+                      .then(() => invites.reload())
+                      .catch((caught) => actionError.setError(message(caught)));
+                  }}
+                >{invite.disabled ? '重新启用' : '撤销'}</Button>
+              ),
+            },
+          ]}
+          rows={invites.data?.invites ?? []}
+          rowKey={(invite) => invite.code}
+          hiddenColumns={hidden}
+          empty="还没有邀请码。"
+        />
+        <Pager
+          page={pager.page}
+          hasNext={Boolean(invites.data?.nextCursor)}
+          hasPrevious={pager.hasPrevious}
+          onNext={() => { if (invites.data?.nextCursor) pager.next(invites.data.nextCursor); }}
+          onPrevious={pager.previous}
+        />
+      </Panel>
       <Panel
         title="注册与邀请增长"
         note="新账号按注册时间分桶；「来自邀请」是邀请码里记着这个账号的那部分。没有邀请码的账号不区分开放注册与部署创建的账号——数据里没有这个区别。"
@@ -163,54 +213,6 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
         ) : null}
       </Panel>
 
-      <Panel title="邀请列表" action={<Button onClick={invites.reload}>刷新</Button>}>
-        <div style={{ ...row, marginBottom: 10 }}>
-          <Field label="状态">
-            <Select value={state} onChange={(event) => update({ state: event.target.value })}>
-              <option value="">全部</option>
-              <option value="available">可用</option>
-              <option value="used">已使用</option>
-              <option value="revoked">已撤销</option>
-              <option value="expired">已过期</option>
-            </Select>
-          </Field>
-          <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} />
-          <ColumnPicker columns={OPTIONAL_COLUMNS} hidden={hidden} onToggle={toggle} onReset={reset} />
-        </div>
-        <Loading loading={invites.loading} error={invites.error} stale={invites.stale} loadedAt={invites.loadedAt} />
-        <DataTable
-          columns={[
-            { key: 'code', header: '邀请码', render: (invite) => <code style={{ fontSize: 'var(--fs-sm)' }}>{invite.code}</code> },
-            { key: 'state', header: '状态', ...sortHeader('state', '状态'), render: (invite) => { const value = stateOf(invite); return <Badge tone={value.tone}>{value.label}</Badge>; } },
-            { key: 'created', header: '创建时间', secondary: true, optional: true, ...sortHeader('created', '创建时间'), render: (invite) => when(invite.createdAt) },
-            { key: 'expires', header: '有效期至', ...sortHeader('expires', '有效期至'), render: (invite) => when(invite.expiresAt) },
-            { key: 'used', header: '使用者', secondary: true, optional: true, render: (invite) => invite.usedBy ?? '—' },
-            {
-              key: 'actions', header: '操作', render: (invite) => (
-                <Button
-                  disabled={Boolean(invite.usedBy)}
-                  onClick={() => {
-                    void client.request(`/invites/${encodeURIComponent(invite.code)}/disable`, { disabled: !invite.disabled }, { idempotencyKey: adminIdempotencyKey(`invite-${invite.code}-${invite.disabled ? 'enable' : 'disable'}`) })
-                      .then(() => invites.reload())
-                      .catch((caught) => actionError.setError(message(caught)));
-                  }}
-                >{invite.disabled ? '重新启用' : '撤销'}</Button>
-              ),
-            },
-          ]}
-          rows={invites.data?.invites ?? []}
-          rowKey={(invite) => invite.code}
-          hiddenColumns={hidden}
-          empty="还没有邀请码。"
-        />
-        <Pager
-          page={pager.page}
-          hasNext={Boolean(invites.data?.nextCursor)}
-          hasPrevious={pager.hasPrevious}
-          onNext={() => { if (invites.data?.nextCursor) pager.next(invites.data.nextCursor); }}
-          onPrevious={pager.previous}
-        />
-      </Panel>
       {actionError.error ? <Notice tone="bad">{actionError.error}</Notice> : null}
     </>
   );

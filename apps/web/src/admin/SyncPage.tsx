@@ -1,7 +1,7 @@
 /** Sync diagnostics: every server-visible failure with a reason and a next step. */
 import { AccountFilter, TimeRangeFilter } from './filters.js';
 import type { AdminClient } from './client.js';
-import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, muted, row, useCursorPager, useHiddenColumns, useResource, when } from './ui.js';
+import { PageHeader, FilterBar, Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, muted, row, useCursorPager, useHiddenColumns, useResource, when } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import { SYNC_CATEGORIES, type SyncEvent } from './types.js';
 
@@ -54,23 +54,10 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
 
   return (
     <>
-      <h2>同步诊断</h2>
-      <Panel title="错误分类">
-        <DataTable
-          columns={[
-            { key: 'label', header: '类型', render: (entry) => entry.label },
-            { key: 'meaning', header: '页面解释', render: (entry) => entry.value },
-            { key: 'next', header: '下一步', render: (entry) => entry.next },
-          ]}
-          rows={SYNC_CATEGORIES}
-          rowKey={(entry) => entry.value}
-          empty="暂无分类。"
-        />
-        <Button onClick={() => update({ category: 'session-invalid' })}>只看会话失效</Button>{' '}
-        <Button onClick={() => update({ outcome: 'error' })}>只看失败</Button>
-      </Panel>
+      <PageHeader title="同步诊断" description="先看请求结果，再按错误原因处理；无记录不代表故障。" actions={<><Button onClick={() => update({ outcome: 'error' })}>只看失败</Button><Button onClick={() => update({ category: 'session-invalid' })}>只看会话失效</Button><Button onClick={list.reload}>刷新</Button></>} />
 
-      <Panel title="筛选" note="从用户详情页进来时会带着该账号的时间范围无关筛选，可直接看到这个用户的同步结果。">
+
+      <FilterBar note="从用户详情页进来时会带着该账号的时间范围无关筛选，可直接看到这个用户的同步结果。">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
           <AccountFilter client={client} accountId={accountId} username={username} onApply={(next) => update({ accountId: next.accountId, username: next.username })} />
           <Field label="错误分类">
@@ -88,17 +75,14 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
         <TimeRangeFilter from={from} until={until} onApply={(range) => update({ from: range.from, until: range.until })} />
         <div style={{ ...row, marginTop: 10 }}>
           <Button onClick={() => update({ category: undefined, outcome: undefined, from: undefined, until: undefined, accountId: undefined, username: undefined })}>清除筛选</Button>
-          <Button onClick={list.reload}>刷新</Button>
+
         </div>
-      </Panel>
+      </FilterBar>
 
       <Panel title="诊断记录">
         <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
         <Notice>{list.data?.coverage ?? '覆盖范围：仅服务端可见的同步结果。'}</Notice>
-        <Notice>
-          客户端信息由客户端自报，服务端不据此改变任何行为：它只用来判断“这个设备是不是旧版本”，不构成身份证明。
-          早于该字段的记录显示“未知”，那是当时没有上报，不等于客户端旧。
-        </Notice>
+
         {accountId ? <Notice>当前只显示账号 {username || accountId} 的记录。</Notice> : null}
         <div style={{ ...row, marginTop: 10 }}>
           <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} sizes={[25, 50, 100, 200]} />
@@ -148,7 +132,25 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
           <Button disabled={!pager.hasPrevious} onClick={pager.previous}>较新记录</Button>
           <Button disabled={!list.data?.nextCursor} onClick={() => { if (list.data?.nextCursor) pager.next(list.data.nextCursor); }}>更早记录</Button>
         </div>
+        <Notice>
+          客户端信息由客户端自报，服务端不据此改变任何行为：它只用来判断“这个设备是不是旧版本”，不构成身份证明。
+          早于该字段的记录显示“未知”，那是当时没有上报，不等于客户端旧。
+        </Notice>
         <p style={muted}>后台不提供“强制重新同步所有用户”这类操作：同步由客户端发起，服务端只记录结果。</p>
+      </Panel>
+      <Panel title="错误分类" className="zc-admin-reference">
+        <DataTable
+          columns={[
+            { key: 'label', header: '类型', render: (entry) => entry.label },
+            { key: 'meaning', header: '页面解释', render: (entry) => entry.value },
+            { key: 'next', header: '下一步', render: (entry) => entry.next },
+          ]}
+          rows={SYNC_CATEGORIES}
+          rowKey={(entry) => entry.value}
+          empty="暂无分类。"
+        />
+        {' '}
+
       </Panel>
     </>
   );

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
 import { settingNumber } from './number-input.js';
-import { Badge, Button, Field, Loading, Notice, Panel, Select, Stat, TextInput, message, muted, row, useResource } from './ui.js';
+import { PageHeader, Badge, Button, Field, Loading, Notice, Panel, Select, Stat, TextInput, message, muted, row, useResource } from './ui.js';
 import { SETTING_GROUPS, settingGroup, mergeSettingDrafts } from './setting-groups.js';
 import type { SettingsPayload } from './types.js';
 
@@ -70,7 +70,7 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
 
   return (
     <>
-      <h2>系统设置</h2>
+      <PageHeader title="系统设置" />
       <Loading loading={payload.loading} error={payload.error} stale={payload.stale} loadedAt={payload.loadedAt} />
       {role !== 'owner' ? <Notice>只有服务器所有者可以修改设置；这里显示的是当前生效值。</Notice> : null}
 

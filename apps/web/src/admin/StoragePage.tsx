@@ -1,7 +1,7 @@
 /** Storage and backups: physical usage, logical quota, the maintenance plan, records and drills. */
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, Stat, bytes, message, muted, row, useActionError, useCursorPager, useHiddenColumns, useResource, when, canWrite } from './ui.js';
+import { PageHeader, Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, Stat, bytes, message, muted, row, useActionError, useCursorPager, useHiddenColumns, useResource, when, canWrite } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import type { BackupsPayload, SettingsPayload, Storage } from './types.js';
 
@@ -82,7 +82,7 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
 
   return (
     <>
-      <h2>存储与备份</h2>
+      <PageHeader title="存储与备份" />
       <Loading loading={storage.loading} error={storage.error} stale={storage.stale} loadedAt={storage.loadedAt} />
       {actionError.error ? <Notice tone="bad">{actionError.error}</Notice> : null}
 

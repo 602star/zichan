@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, Field, Loading, Notice, Panel, PanelIndex, sectionId, Stat, TextInput, message, row, useActionError, useResource, when } from './ui.js';
+import { PageHeader, Badge, Button, Field, Loading, Notice, Panel, PanelIndex, sectionId, Stat, TextInput, message, row, useActionError, useResource, when } from './ui.js';
 import type { MfaStatusPayload } from './types.js';
 
 interface Enrollment {
@@ -97,7 +97,7 @@ export function SecurityPage({ client, username, role, onPasswordChanged }: {
 
   return (
     <>
-      <h2>账号安全</h2>
+      <PageHeader title="账号安全" description="管理自己的密码、两步验证与恢复码。" />
       <PanelIndex sections={[
         { id: sectionId('我的账号密码'), label: '账号密码' },
         { id: sectionId('我的两步验证'), label: '两步验证' },
@@ -106,6 +106,7 @@ export function SecurityPage({ client, username, role, onPasswordChanged }: {
       <Loading loading={status.loading} error={status.error} stale={status.stale} loadedAt={status.loadedAt} />
       <p>{data.note}</p>
 
+      <div className="zc-admin-security-workspace">
       <Panel title="我的账号密码" note={`当前账号：${username}`}>
         <p style={{ marginTop: 0 }}>修改后，此账号的<strong>全部登录会话</strong>都会失效（包括当前这个管理后台与其他设备），需要用新密码重新登录。账本、恢复码与两步验证设置不受影响，未同步的数据仍保留在本机。</p>
         <div style={{ display: 'grid', gap: 10, maxWidth: 420 }}>
@@ -196,6 +197,7 @@ export function SecurityPage({ client, username, role, onPasswordChanged }: {
             : <p><Badge tone="ok">全部管理员都已启用</Badge></p>
           : <p>仅服务器所有者可以查看完整名单；如需确认，请联系所有者。</p>}
       </Panel>
+      </div>
     </>
   );
 }

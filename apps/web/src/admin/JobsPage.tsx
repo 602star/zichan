@@ -1,8 +1,8 @@
 /** Task centre: request work, watch progress, cancel at a safe boundary, re-run. */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, TextInput, bytes, message, muted, row, useActionError, useCursorPager, useHiddenColumns, usePolling, useResource, when, canWrite } from './ui.js';
+import { PageHeader, Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, TextInput, bytes, message, muted, row, useActionError, useCursorPager, useHiddenColumns, usePolling, useResource, when, canWrite } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import { JOB_TYPES, type Job, type JobEvent } from './types.js';
 
@@ -95,6 +95,8 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
   const [accountId, setAccountId] = useState(accountFilter);
   const [recordId, setRecordId] = useState('');
   const [error, setError] = useState('');
+  const [creating, setCreating] = useState(false);
+  const submitting = useRef(false);
   const actionError = useActionError();
 
   const list = useResource(() => client.request<{ jobs: Job[]; nextCursor?: string; sort?: { key: string; direction: string } }>(
@@ -121,23 +123,54 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
 
   const selected = JOB_TYPES.find((entry) => entry.value === jobType)!;
   const submit = async (): Promise<void> => {
-    setError('');
+    if (submitting.current || !writable) return;
+    submitting.current = true; setCreating(true); setError('');
     try {
-      await client.request('/jobs', {
+      const created = await client.request<{ job: Job }>('/jobs', {
         type: jobType,
-        ...(accountId ? { accountId } : {}),
+        ...(accountId && jobType === 'blobs.verify' ? { accountId } : {}),
         ...(recordId && (jobType === 'backup.verify' || jobType === 'restore.drill') ? { recordId } : {}),
       }, { idempotencyKey: adminIdempotencyKey(`job-${jobType}`) });
       list.reload();
+      update({ job: created.job.jobId });
     } catch (caught) {
       setError(message(caught));
-    }
+    } finally { submitting.current = false; setCreating(false); }
   };
 
   return (
     <>
-      <h2>任务中心</h2>
-      <Panel title="创建维护任务" note="首期重型维护任务最多同时执行一个；创建后返回 202，执行期间刷新或关闭页面都不影响任务。">
+      <PageHeader title="任务中心" description="执行维护、查看进度与结果，失败后核对是否需要重试。" actions={<><Button onClick={list.reload}>刷新列表</Button><Button onClick={() => navigate('/storage')}>查看备份记录</Button></>} />
+      {jobId ? <Loading loading={detail.loading} error={detail.error} stale={detail.stale} loadedAt={detail.loadedAt} /> : null}
+      {jobId && detail.data ? (
+        <Panel title={`任务详情 · ${detail.data.job.jobId}`} action={<Button onClick={() => update({ job: undefined, cursor })}>关闭</Button>}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+            <div><div style={muted}>状态</div><Badge tone={statusTone(detail.data.job.status)}>{statusLabel(detail.data.job.status)}</Badge></div>
+            <div><div style={muted}>阶段</div>{detail.data.job.phase ?? '—'}</div>
+            <div><div style={muted}>进度</div>{detail.data.job.total ? `${detail.data.job.processed}/${detail.data.job.total}` : String(detail.data.job.processed)}</div>
+            <div><div style={muted}>原任务</div>{detail.data.job.retryOf ?? '—'}</div>
+            <div><div style={muted}>取消请求</div>{detail.data.job.cancelRequested ? '已请求，将在安全边界生效' : '无'}</div>
+            <div><div style={muted}>参数</div><code style={{ fontSize: 'var(--fs-sm)' }}>{JSON.stringify(detail.data.job.params)}</code></div>
+          </div>
+          {detail.data.job.errorMessage ? <Notice tone="bad">{detail.data.job.errorCode}：{detail.data.job.errorMessage}</Notice> : null}
+          <OutcomeNote job={detail.data.job} />
+          {detail.data.job.result ? (
+            <>
+              <strong style={{ display: 'block', marginTop: 10 }}>结果摘要</strong>
+              <pre style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--fs-sm)' }}>{JSON.stringify(detail.data.job.result, null, 2)}</pre>
+            </>
+          ) : null}
+          <strong style={{ display: 'block', marginTop: 10 }}>执行记录</strong>
+          {detail.data.events.length === 0 ? <p style={muted}>暂无记录。</p> : (
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              {detail.data.events.map((event) => <li key={event.id}>{when(event.at)} · {event.level} · {event.message}</li>)}
+            </ul>
+          )}
+          <Button onClick={() => navigate(`/logs?action=job_${encodeURIComponent(detail.data!.job.type.replace(/[.]/g, '_'))}`)}>查看同类任务日志</Button>
+        </Panel>
+      ) : null}
+      <div className="zc-admin-jobs-workspace">
+      <Panel title="创建维护任务" note="重型维护任务逐个执行；创建后自动显示进度，刷新或关闭页面不影响执行。">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
           <Field label="任务类型">
             <Select value={jobType} onChange={(event) => setJobType(event.target.value)}>
@@ -153,9 +186,9 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
         </div>
         <p style={muted}>{selected.hint}</p>
         <div style={row}>
-          <Button disabled={!writable} onClick={() => { void submit(); }}>创建任务</Button>
-          <Button onClick={list.reload}>刷新列表</Button>
-          <Button onClick={() => navigate('/storage')}>查看备份记录</Button>
+          <Button disabled={!writable || creating} onClick={() => { void submit(); }}>{creating ? '正在创建…' : '创建任务'}</Button>
+
+
         </div>
         {error ? <Notice tone="bad">{error}</Notice> : null}
         <Notice>任务只接受预定义类型与参数，不接受命令或任意文件路径。</Notice>
@@ -224,33 +257,9 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
         {actionError.error ? <Notice tone="bad">{actionError.error}</Notice> : null}
       </Panel>
 
-      {jobId && detail.data ? (
-        <Panel title={`任务详情 · ${detail.data.job.jobId}`} action={<Button onClick={() => update({ job: undefined, cursor })}>关闭</Button>}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-            <div><div style={muted}>状态</div><Badge tone={statusTone(detail.data.job.status)}>{statusLabel(detail.data.job.status)}</Badge></div>
-            <div><div style={muted}>阶段</div>{detail.data.job.phase ?? '—'}</div>
-            <div><div style={muted}>进度</div>{detail.data.job.total ? `${detail.data.job.processed}/${detail.data.job.total}` : String(detail.data.job.processed)}</div>
-            <div><div style={muted}>原任务</div>{detail.data.job.retryOf ?? '—'}</div>
-            <div><div style={muted}>取消请求</div>{detail.data.job.cancelRequested ? '已请求，将在安全边界生效' : '无'}</div>
-            <div><div style={muted}>参数</div><code style={{ fontSize: 'var(--fs-sm)' }}>{JSON.stringify(detail.data.job.params)}</code></div>
-          </div>
-          {detail.data.job.errorMessage ? <Notice tone="bad">{detail.data.job.errorCode}：{detail.data.job.errorMessage}</Notice> : null}
-          <OutcomeNote job={detail.data.job} />
-          {detail.data.job.result ? (
-            <>
-              <strong style={{ display: 'block', marginTop: 10 }}>结果摘要</strong>
-              <pre style={{ whiteSpace: 'pre-wrap', fontSize: 'var(--fs-sm)' }}>{JSON.stringify(detail.data.job.result, null, 2)}</pre>
-            </>
-          ) : null}
-          <strong style={{ display: 'block', marginTop: 10 }}>执行记录</strong>
-          {detail.data.events.length === 0 ? <p style={muted}>暂无记录。</p> : (
-            <ul style={{ margin: 0, paddingLeft: 18 }}>
-              {detail.data.events.map((event) => <li key={event.id}>{when(event.at)} · {event.level} · {event.message}</li>)}
-            </ul>
-          )}
-          <Button onClick={() => navigate(`/logs?search=${encodeURIComponent(detail.data!.job.type)}`)}>查看关联日志</Button>
-        </Panel>
-      ) : null}
+
+
+      </div>
     </>
   );
 }

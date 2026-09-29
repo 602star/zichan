@@ -277,7 +277,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
       case 'sessions': return <SessionsPage client={client} query={route.query} navigate={go} role={role} selfAccountId={account.accountId ?? ''} />;
       case 'sync': return <SyncPage client={client} query={route.query} navigate={go} />;
       case 'security-events': return <SecurityEventsPage client={client} />;
-      case 'alerts': return <AlertsPage client={client} role={role} navigate={go} />;
+      case 'alerts': return <AlertsPage client={client} role={role} navigate={go} query={route.query} />;
       case 'invites': return <InvitesPage client={client} role={role} query={route.query} navigate={go} />;
       case 'storage': return <StoragePage client={client} role={role} query={route.query} navigate={go} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
       case 'resources': return <ResourcesPage client={client} role={role} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;

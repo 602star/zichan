@@ -6,42 +6,37 @@
  * reads `GET /alerts?state=resolved` (which the server always supported) and keeps the record
  * readable: first seen, last seen, occurrences, how it ended.
  */
-import { useState } from 'react';
+import { AlertControls } from './AlertControls.js';
 import type { AdminClient } from './client.js';
 import { alertNextStep, alertStateLabel, describeAlert, isSilenced } from './alerts.js';
-import { Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, Stat, canWrite, muted, row, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Loading, Notice, Panel, PageHeader, FilterBar, muted, row, useResource, when } from './ui.js';
 import type { Alert } from './types.js';
 
 type StateFilter = '' | 'pending' | 'active' | 'resolved';
 
-export function AlertsPage({ client, role, navigate }: { client: AdminClient; role: string; navigate: (to: string) => void }) {
-  const [state, setState] = useState<StateFilter>('resolved');
+export function AlertsPage({ client, role, navigate, query }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (to: string) => void }) {
+  const requested = query.get('state') ?? 'resolved';
+  const state: StateFilter = ['active', 'pending', 'resolved', ''].includes(requested) ? requested as StateFilter : 'resolved';
   const list = useResource(() => client.request<{ alerts: Alert[] }>(`/alerts${state ? `?state=${state}` : ''}`), [state]);
 
-  const alerts = list.data?.alerts ?? [];
+  const alerts = (list.data?.alerts ?? []).filter((alert) => alert.state !== 'pending' || alert.consecutive > 0);
   const resolved = alerts.filter((alert) => alert.state === 'resolved');
   const active = alerts.filter((alert) => alert.state === 'active');
 
   return (
     <>
-      <h2>告警历史</h2>
+      <PageHeader title="告警历史" description="在当前记录上处理告警；知晓与暂停通知都不代表问题恢复。" actions={<Button onClick={list.reload}>刷新</Button>} />
       <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
 
-      <Panel title="筛选" note="告警按规则与影响范围合并；恢复后记录仍然保留，因此可以回看某条告警出现过多少次。">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
-          <Field label="状态">
-            <Select value={state} onChange={(event) => setState(event.target.value as StateFilter)}>
-              <option value="resolved">已恢复</option>
-              <option value="active">活动</option>
-              <option value="pending">持续观察</option>
-              <option value="">全部</option>
-            </Select>
-          </Field>
-          <Stat label="当前显示" value={`${alerts.length} 条`} hint={state ? undefined : `活动 ${active.length} 条，已恢复 ${resolved.length} 条`} />
+      <FilterBar>
+        <div className="zc-admin-view-switch" aria-label="告警状态">
+          {([['active', '活动'], ['pending', '持续观察'], ['resolved', '已恢复'], ['', '全部']] as const).map(([value, label]) =>
+            <Button key={value} aria-pressed={state === value} onClick={() => navigate('/alerts?state=' + value)}>{label}</Button>)}
+          <span style={muted}>{list.data ? '当前显示 ' + alerts.length + ' 条' + (state ? '' : '，活动 ' + active.length + ' 条，已恢复 ' + resolved.length + ' 条') : '正在读取告警'}</span>
         </div>
-      </Panel>
+      </FilterBar>
 
-      <Panel title="告警记录" action={<Button onClick={list.reload}>刷新</Button>}>
+      <Panel title="告警记录">
         {!alerts.length && !list.loading ? (
           <Notice>
             没有符合条件的告警记录。恢复后的告警会一直留在这里；如果从未产生过告警，这里就是空的。
@@ -78,10 +73,7 @@ export function AlertsPage({ client, role, navigate }: { client: AdminClient; ro
                 return (
                   <div style={row}>
                     {next ? <Button onClick={() => navigate(next.to)}>{next.label}</Button> : null}
-                    {alert.state === 'resolved'
-                      // A resolved alert has nothing left to act on; saying so beats a disabled button.
-                      ? <span style={muted}>已结束</span>
-                      : <span style={muted}>{canWrite(role) ? '在运行概览处理' : '只读运维不可处理'}</span>}
+                    <AlertControls client={client} alert={alert} role={role} onChanged={list.reload} />
                     {isSilenced(alert) ? <Badge tone="muted">通知暂停至 {when(alert.silencedUntil ?? '')}</Badge> : null}
                   </div>
                 );
