@@ -48,7 +48,6 @@ async function signIn(page, url) {
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
   await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
-  await page.locator('summary').filter({ hasText: '维护操作' }).click();
 }
 
 test('declares a maintenance window, shows it as a planned state, and restores writes', async ({ page }) => {

@@ -80,15 +80,23 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
       </div>
       <p>{group.description}</p>
       <Panel title={group.label} note="环境变量优先于数据库设置；来源为“环境变量”的项不能在页面上修改。">
+        <div className="zc-admin-savebar" style={{ ...row, marginTop: 10 }}>
+          <Button disabled={saving || payload.loading || payload.stale || !changed.length || role !== 'owner'} onClick={() => { void save(); }}>{saving ? '正在保存…' : '保存本组设置'}</Button>
+          <Button disabled={saving} onClick={() => {
+            setDraft((current) => ({ ...current, ...Object.fromEntries(fields.map((field) => [field.name, String(field.value)])) }));
+            setFieldErrors({}); setError(''); setNotice('已放弃本组改动。');
+          }}>放弃本组改动</Button>
+          <Button disabled={saving} onClick={payload.reload}>刷新生效值</Button>
+        </div>
         <div className="zc-admin-settings-fields">
           {fields.map((field) => <div className="zc-admin-setting" key={field.name}>
             <div>
               <label htmlFor={'setting-' + field.name} style={{ fontWeight: 'var(--fw-medium)' }}>{field.label}</label>
               <p id={'setting-help-' + field.name} style={muted}>{field.description}</p>
-              <details className="zc-admin-setting-reference"><summary>默认值与允许范围</summary>
+              <div className="zc-admin-setting-reference">
                 <p style={muted}>默认：{field.defaultValue === undefined ? '未提供' : field.defaultValue === '' ? '空' : String(field.defaultValue)}；
                   范围：{field.kind === 'number' ? String(field.minimum ?? '') + '–' + String(field.maximum ?? '') : field.kind === 'text' ? textRange(field.textFormat, field.maxLength) : (field.options ?? []).map((option) => selectLabel(field.name, option)).join('、')}</p>
-              </details>
+              </div>
             </div>
             <div>
               {field.kind === 'select' ? <Select
@@ -115,19 +123,12 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
           <strong>将修改 {changed.length} 项</strong>
           <ul>{changed.map((field) => <li key={field.name}>{field.label}：{String(field.value) || '空'} → {draft[field.name] || '空'}</li>)}</ul>
         </div> : <p style={muted}>本组没有未保存的修改。</p>}
-        <div style={{ ...row, marginTop: 10 }}>
-          <Button disabled={saving || payload.loading || payload.stale || !changed.length || role !== 'owner'} onClick={() => { void save(); }}>{saving ? '正在保存…' : '保存本组设置'}</Button>
-          <Button disabled={saving} onClick={() => {
-            setDraft((current) => ({ ...current, ...Object.fromEntries(fields.map((field) => [field.name, String(field.value)])) }));
-            setFieldErrors({}); setError(''); setNotice('已放弃本组改动。');
-          }}>放弃本组改动</Button>
-          <Button disabled={saving} onClick={payload.reload}>刷新生效值</Button>
-        </div>
+
         {notice ? <Notice>{notice}</Notice> : null}
         {error ? <Notice tone="bad">{error}</Notice> : null}
       </Panel>
 
-      <details className="zc-admin-disclosure"><summary>部署信息与只读配置</summary>
+      <div className="zc-admin-deployment">
       <Panel title="版本与安全设置">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
           <Stat label="服务版本" value={data.version.server} hint={`数据 schema ${data.version.schema}`} />
@@ -156,7 +157,7 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
         </ul>
         {role === 'owner' ? <Field label="注册策略（在“注册与邀请”页修改）"><Select disabled><option>{String(data.environment['registrationMode'])}</option></Select></Field> : null}
       </Panel>
-      </details>
+      </div>
     </>
   );
 }

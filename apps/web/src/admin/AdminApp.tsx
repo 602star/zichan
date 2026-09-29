@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { MfaRequiredError, type SyncAuthMe } from '@zichan/db';
 import {
   appearanceTokens,
@@ -166,13 +166,12 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
     }
   }
 
-  return <main className="zc-admin-root" style={{ minHeight: '100dvh', background: 'var(--bg)', color: 'var(--text-primary)', padding: 'clamp(12px, 3vw, 32px)', boxSizing: 'border-box', fontFamily: 'system-ui, sans-serif' } as CSSProperties}>
-    <div style={{ maxWidth: 1220, margin: '0 auto' }}>
-      <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
+  return <main className="zc-admin-root" data-mode={themeMode}>
+    <div className="zc-admin-frame">
+      <header className="zc-admin-topbar">
         <div>
-          <div style={{ color: 'var(--accent)', fontWeight: 'var(--fw-bold)' }}>ZICHAN · SERVER ADMIN</div>
-          <h1 style={{ margin: '4px 0' }}>服务器管理后台</h1>
-          <p style={{ margin: 0, overflowWrap: 'anywhere' }}>{baseUrl}</p>
+          <div className="zc-admin-brand"><span aria-hidden="true">Z</span><h1>服务器管理后台</h1></div>
+          <p className="zc-admin-server">{baseUrl}</p>
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           {health ? (
@@ -181,8 +180,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
             </span>
           ) : null}
           <a href={`${baseUrl}/app/`}>打开记账应用</a>
-          {/* The console has no appearance picker of its own; it follows the device
-              preference set in the ledger app, so a shared screen looks consistent. */}
+          {/* The console follows the device's light/dark mode, with its own operational palette. */}
           <span style={{ color: 'var(--text-secondary)' }}>{themeMode === 'dark' ? '深色' : '浅色'}</span>
           {account ? (
             <>
@@ -239,9 +237,8 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
   onSignedOut: (note: string) => void;
 }) {
   const route = useRoute();
-  const [menuOpen, setMenuOpen] = useState(false);
   const basePath = baseUrl.replace(/^https?:\/\/[^/]+/, '');
-  const go = (to: string) => { navigateRoute(adminHref(basePath, to)); setMenuOpen(false); };
+  const go = (to: string) => { navigateRoute(adminHref(basePath, to)); };
   const role = account.role;
   const groups = adminNavigation(role);
   const items = [...groups.flatMap((group) => group.pages), { path: '/security', label: '账号安全' }];
@@ -251,7 +248,6 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
   // anything else would be a link whose text an operator cannot read.
   const detailCrumb = current.path === '/users' && route.segments[1] ? '用户详情' : undefined;
 
-  useEffect(() => { setMenuOpen(false); }, [route.path]);
   // Several console tabs are open at once during an incident; without a title they are
   // indistinguishable in the tab bar. The user detail page names the account it shows, and a
   // preview names it too — a tab reading "运行概览" while showing a user's ledger is the one
@@ -301,12 +297,8 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
 
   return (
     <div className="zc-admin-shell">
-      <button className="zc-admin-menu-toggle" aria-expanded={menuOpen} onClick={() => setMenuOpen((value) => !value)}>
-        {menuOpen ? '收起菜单' : `菜单 · ${current.label}`}
-      </button>
-      <nav className="zc-admin-nav" aria-label="管理后台导航" data-open={menuOpen ? 'true' : undefined}>
+      <nav className="zc-admin-nav" aria-label="管理后台导航">
         {groups.map((group) => {
-          const primary = group.pages[0]!;
           const link = (item: { path: string; label: string }) => (
           <a
             key={item.path}
@@ -318,11 +310,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
           );
           return <div className="zc-admin-nav-group" key={group.label}>
             <span className="zc-admin-nav-heading">{group.label}</span>
-            {link(primary)}
-            {group.pages.length > 1 ? <details key={`${group.label}:${current.path}`} open={group.pages.slice(1).some((item) => item.path === current.path)}>
-              <summary>更多{group.label}入口</summary>
-              {group.pages.slice(1).map(link)}
-            </details> : null}
+            {group.pages.map(link)}
           </div>;
         })}
       </nav>

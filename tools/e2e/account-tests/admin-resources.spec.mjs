@@ -64,7 +64,6 @@ test('shows process and database readings, and scans tables only on request', as
 
     await signIn(page, f.url);
     // The overview carries the summary and leads to the detail page.
-    await page.locator('summary').filter({ hasText: '查看请求趋势与技术指标' }).click();
     await expect(page.locator('#section-进程与数据库')).toBeVisible();
     await page.getByRole('button', { name: '查看详情与趋势' }).click();
     await expect(page.getByRole('heading', { name: '进程与数据库' })).toBeVisible();

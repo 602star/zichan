@@ -61,10 +61,18 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
     <>
       <div style={{ ...row, justifyContent: 'space-between' }}>
         <h2 style={{ margin: 0 }}>用户详情 · {account.username}</h2>
-        <Button onClick={() => navigate('/users')}>返回用户列表</Button>
+        <div style={row}>
+          <Button onClick={() => navigate(`/preview?username=${encodeURIComponent(account.username)}`)}>预览记账数据</Button>
+          <Button onClick={() => navigate('/users')}>返回用户列表</Button>
+        </div>
       </div>
       <Loading loading={detail.loading} error={detail.error} stale={detail.stale} loadedAt={detail.loadedAt} />
 
+      <div className="zc-admin-user-workspace">
+      <Panel title="处理该用户">
+        <AccountActions client={client} target={target} canManage={canManage} canEditQuota={canEditQuota} onDone={reload} />
+        {canManage ? <div style={{ marginTop: 12 }}><PasswordResetIssuer client={client} accountId={account.accountId} username={account.username} onDone={reload} /></div> : null}
+      </Panel>
       <Panel title="用户支持摘要" note="先核对账号与最近请求，再查看相关记录。没有同步记录或长期离线，不等于同步失败。">
         <div className="zc-admin-grid">
           <Stat label="账号访问" value={account.disabled ? '已停用' : '已启用'} tone={account.disabled ? 'warn' : undefined} hint="设备登录是否有效，请查看设备与会话" />
@@ -83,14 +91,6 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
       */}
       <Panel title="关联排障" note="从异常追到用户后，用这些入口查这个人相关的同步、日志、会话、审计与任务；筛选会带到目标页并写进 URL，可以直接分享。">
         <div style={row}>
-          {/*
-            Previewing is the one act an administrator may perform on any account, so it is
-            offered here rather than hidden behind a permission check. A private-mode account
-            has no sealed secret for the server to use, and the server says so on open; showing
-            the button for those accounts and reporting why beats an absent control that leaves
-            an operator wondering whether the feature exists.
-          */}
-          <Button onClick={() => navigate(`/preview?username=${encodeURIComponent(account.username)}`)}>预览记账数据</Button>
           <Button onClick={() => navigate(`/sync?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的同步诊断</Button>
           <Button onClick={() => navigate(`/logs?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的运行日志</Button>
           <Button onClick={() => navigate(`/sessions?accountId=${encodeURIComponent(account.accountId)}&username=${encodeURIComponent(account.username)}`)}>该账号的会话</Button>
@@ -124,10 +124,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
         </div>
       </Panel>
 
-      <Panel title="处理该用户">
-        <AccountActions client={client} target={target} canManage={canManage} canEditQuota={canEditQuota} onDone={reload} />
-        {canManage ? <div style={{ marginTop: 12 }}><PasswordResetIssuer client={client} accountId={account.accountId} username={account.username} onDone={reload} /></div> : null}
-      </Panel>
+
 
       <Panel title="设备与会话" note="设备名与客户端信息由客户端上报；不通过 IP 推断地理位置。">
         <DataTable
@@ -210,6 +207,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
         ) : null}
         <Notice>托管账本可通过上方只读预览查看，查看原因会写入审计；私密账本无法由服务器解密。这里不显示用户密钥。</Notice>
       </Panel>
+      </div>
     </>
   );
 }

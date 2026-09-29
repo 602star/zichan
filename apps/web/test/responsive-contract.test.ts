@@ -83,8 +83,7 @@ describe('responsive shell contract', () => {
     expect(transactions).toContain('zc-budget-grid');
     expect(adminTable).toContain("overflowX: 'auto'");
     expect(adminOverview).toContain('repeat(auto-fit, minmax(160px, 1fr))');
-    // The console shell collapses to a menu and drops secondary columns on phones.
-    expect(adminCss).toContain('.zc-admin-nav[data-open="true"]');
+    // Direct navigation visibility is exercised at desktop/mobile widths in admin-clarity e2e.
     expect(adminCss).toContain('.zc-admin-secondary { display: none; }');
     expect(reports).toContain('zc-report-chart-grid');
     // The chart markup moved to `ui/charts.tsx` so both screens draw the same

@@ -136,7 +136,6 @@ test('runs the daily management work: policy, invites, roles, quotas and audit',
 
   // The shell collapses to a menu at phone width.
   await page.setViewportSize({ width: 390, height: 800 });
-  await page.getByRole('button', { name: /菜单/ }).click();
   await expect(page.getByRole('link', { name: '运行概览' })).toBeVisible();
 });
 

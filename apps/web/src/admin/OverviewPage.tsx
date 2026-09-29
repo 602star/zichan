@@ -1,6 +1,6 @@
 /** Runtime overview: the day-to-day entry point, not a wall of counters. */
 import { pendingAlerts, overviewStatus } from './operations.js';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { Badge, Button, DataTable, Loading, Notice, Panel, Select, Stat, TextInput, bytes, canWrite, message, muted, roleLabel, row, usePolling, useResource, when } from './ui.js';
 import { alertNextStep, alertStateLabel, acknowledgeAlert, describeAlert, isSilenced, silenceAlert, unsilenceAlert, SILENCE_HOURS } from './alerts.js';
@@ -43,7 +43,6 @@ export function OverviewPage({ client, navigate, accountName, role }: {
   const [silenceDraft, setSilenceDraft] = useState<{ key: string; hours: number; reason: string }>();
   // Alert actions report in place instead of a blocking dialog that cannot carry a request id.
   const [actionError, setActionError] = useState('');
-  const [maintenanceExpanded, setMaintenanceExpanded] = useState(false);
   const overview = useResource(() => client.request<Overview>('/overview'), []);
   const metrics = useResource(() => client.request<Metrics>(`/metrics?range=${range}`), [range]);
   // Both views age together: a poll that refreshed only the overview left the counters stale.
@@ -59,7 +58,6 @@ export function OverviewPage({ client, navigate, accountName, role }: {
   // explains why writes are refused. Folding it into "降级" would send an operator hunting for a
   // fault that does not exist.
   const maintenance = overview.data?.maintenance;
-  useEffect(() => { if (maintenance?.active) setMaintenanceExpanded(true); }, [maintenance?.active]);
   const drain = overview.data?.drain;
   const status = overviewStatus(overview.data, overview.stale);
   const unknown = status === '状态未知';
@@ -76,9 +74,16 @@ export function OverviewPage({ client, navigate, accountName, role }: {
   return (
     <>
       <h2>运行概览</h2>
-      <p>先查看需要处理的事项，再进入对应用户、备份或运行记录。</p>
+      <p>服务运行、异常处理与维护操作。</p>
+      <nav className="zc-admin-overview-jumps" aria-label="总览分区">
+        <a href="#section-待处理事项">处理异常</a>
+        <a href="#section-核心指标">请求趋势</a>
+        <a href="#section-最近管理员登录">管理员登录</a>
+        <a href="#section-维护窗口">维护窗口</a>
+      </nav>
       <Loading loading={overview.loading} error={overview.error} stale={overview.stale} loadedAt={overview.loadedAt} />
 
+      <div className="zc-admin-dashboard">
       <Panel title="服务状态">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
           <Stat label="状态" value={status} tone={status === '运行正常' ? undefined : 'warn'}
@@ -210,8 +215,7 @@ export function OverviewPage({ client, navigate, accountName, role }: {
         </p>
       </Panel>
 
-      <details className="zc-admin-disclosure"><summary>查看请求趋势与技术指标</summary>
-      <p style={muted}>服务版本 {overview.data?.version ?? '未知'} · 已运行 {snapshot ? formatUptime(snapshot.uptimeSeconds) : '未知'} · 服务器 {overview.data?.serverId ?? '未知'}</p>
+      <p className="zc-admin-runtime-note" style={muted}>服务版本 {overview.data?.version ?? '未知'} · 已运行 {snapshot ? formatUptime(snapshot.uptimeSeconds) : '未知'} · 服务器 {overview.data?.serverId ?? '未知'}</p>
       <Panel
         title="核心指标"
         action={<div style={row}>{RANGES.map((value) => <Button key={value} disabled={value === range} onClick={() => setRange(value)}>{value}</Button>)}</div>}
@@ -267,9 +271,6 @@ export function OverviewPage({ client, navigate, accountName, role }: {
         </div>
       </Panel>
 
-      </details>
-
-      <details className="zc-admin-disclosure"><summary>最近管理员登录</summary>
       <Panel title="最近管理员登录" note="只列管理后台的登录会话（同步客户端会话不在此列）。IP 来自请求来源，反向代理部署时可能是代理地址。">
         {!overview.data?.recentAdminLogins?.length ? <p style={muted}>暂无管理员登录记录。</p> : (
           <DataTable
@@ -286,12 +287,8 @@ export function OverviewPage({ client, navigate, accountName, role }: {
         )}
       </Panel>
 
-      </details>
-
-      <details className="zc-admin-disclosure" open={maintenanceExpanded} onToggle={(event) => setMaintenanceExpanded(event.currentTarget.open)}><summary>维护操作</summary>
       <MaintenancePanel client={client} role={role} view={maintenance} drain={drain} onChanged={() => overview.reload()} />
-
-      </details>
+      </div>
     </>
   );
 }

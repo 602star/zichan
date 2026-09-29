@@ -86,6 +86,7 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
       <Loading loading={storage.loading} error={storage.error} stale={storage.stale} loadedAt={storage.loadedAt} />
       {actionError.error ? <Notice tone="bad">{actionError.error}</Notice> : null}
 
+      <div className="zc-admin-storage-workspace">
       <Panel title="备份执行状态" note="计划配置、执行记录、校验结果分别判断。登记过一次成功备份，不代表自动执行程序当前仍在运行。">
         <Loading loading={backups.loading} error={backups.error} stale={backups.stale} loadedAt={backups.loadedAt} />
         <div className="zc-admin-grid">
@@ -99,73 +100,6 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
           <Button onClick={() => navigate('/storage?status=failed')}>查看失败记录</Button>
           {role === 'owner' ? <Button onClick={() => navigate('/settings?group=backup')}>配置备份计划</Button> : null}
         </p>
-      </Panel>
-
-      <Panel title="维护计划" action={<Button onClick={settings.reload}>刷新</Button>}
-        note="这里只声明与检查计划：自动备份默认关闭，且必须先配置备份位置与维护窗口才能启用。真正的停服备份由部署侧程序在维护窗口内执行，后台不会自己停服。">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-          <Stat label="自动备份计划" tone={planIncomplete ? 'bad' : undefined} value={!settings.data ? '状态未知' : planIncomplete ? '配置不完整' : autoEnabled ? '已配置启用' : '未启用'}
-            hint={autoEnabled ? '实际执行仍在部署侧' : '开启前需要备份位置与维护窗口'} />
-          <Stat label="备份位置" value={directory.display} hint="部署侧实际路径；后台不读写该目录" />
-          <Stat label="维护窗口" value={windowLabel.display} hint="停服备份与恢复演练只允许在该窗口内进行" />
-          <Stat label="保留份数" value={retentionPlan.display} hint="只清理校验成功的历史备份，且始终保留最近一个有效备份" />
-          <Stat label="逾期告警间隔" value={intervalHours.raw === '0' ? '不检查' : `${intervalHours.display} 小时`} hint="超过该间隔没有成功备份时告警" />
-          <Stat label="最近校验通过的备份" value={summary?.lastVerified ? when(summary.lastVerified.verifiedAt) : '暂无数据'}
-            hint={summary?.lastVerified ? summary.lastVerified.recordId : '尚未有校验通过的备份记录'} />
-          <Stat label="最近成功备份" value={summary?.lastSuccess ? when(summary.lastSuccess.createdAt) : '暂无数据'}
-            hint={summary?.lastSuccess ? summary.lastSuccess.recordId : '尚未有成功备份'} />
-        </div>
-        {planIncomplete ? <Notice tone="bad">已启用自动备份，但备份位置或维护窗口仍为空：请到「系统设置」补齐，否则这个计划无法执行。</Notice> : null}
-        {autoEnabled && !summary?.lastVerified ? <Notice tone="warn">已启用自动备份，但还没有校验通过的备份记录：请确认部署侧程序确实在运行，并完成一次备份与校验。</Notice> : null}
-        {summary?.lastRetention ? (
-          <Notice>
-            最近一次保留清理：{when(summary.lastRetention.createdAt)} · {summary.lastRetention.note ?? '已执行'}
-            {summary.lastRetention.retention ? ` · 已清理 ${String(summary.lastRetention.retention['removed'] ? String((summary.lastRetention.retention['removed'] as unknown[]).length) : '0')} 份`
-              + `${Number(summary.lastRetention.retention['unverifiedCount'] ?? 0) > 0 ? ` · 保留未通过校验的 ${String(summary.lastRetention.retention['unverifiedCount'])} 份待人工处理` : ''}` : ''}
-          </Notice>
-        ) : <p style={muted}>还没有保留清理记录：运行 <code>{`npm run server:prune-backups -- --backup-dir <目录> --keep ${retentionPlan.raw || '3'}`}</code> 后这里会显示结果（可先加 <code>--dry-run</code> 预演）。</p>}
-      </Panel>
-
-      <Panel title="空间组成" note={composition?.note ?? '逻辑配额占用与物理磁盘占用分开显示。'}>
-        <DataTable
-          columns={[
-            { key: 'item', header: '项目', render: (entry) => entry.item },
-            { key: 'size', header: '占用', render: (entry) => entry.size },
-            { key: 'detail', header: '说明', render: (entry) => entry.detail },
-          ]}
-          rows={[
-            { item: '数据库', size: bytes(composition?.databaseBytes), detail: '主库 server.sqlite' },
-            { item: 'WAL 文件', size: bytes(composition?.walBytes), detail: `共享内存 ${bytes(composition?.shmBytes)}` },
-            { item: '有效附件', size: bytes(composition?.objectBytes), detail: `对象 ${composition?.objectCount ?? 0} 个` },
-            { item: '回收站', size: bytes(composition?.trashBytes), detail: `对象 ${composition?.trashCount ?? 0} 个；计入用户配额` },
-            { item: '暂存上传', size: bytes(composition?.stagingBytes), detail: `上传 ${composition?.stagingCount ?? 0} 个；计入用户配额` },
-            { item: '备份目录', size: composition?.backupDirectory ?? '暂无数据', detail: '由部署侧维护程序写入选定位置' },
-            {
-              item: '磁盘可用空间',
-              size: bytes(composition?.diskFreeBytes),
-              detail: composition?.diskFreeRatio === null || composition?.diskFreeRatio === undefined
-                ? '无法读取磁盘信息' : `共 ${bytes(composition?.diskTotalBytes)}，剩余 ${(composition.diskFreeRatio * 100).toFixed(1)}%`,
-            },
-          ]}
-          rowKey={(entry) => entry.item}
-          empty="暂无数据。"
-        />
-        <div style={{ ...row, marginTop: 10 }}>
-          <Button disabled={!writable} onClick={() => startJob('storage.cleanup')}>立即清理回收站与暂存上传</Button>
-          <Button onClick={storage.reload}>刷新</Button>
-        </div>
-      </Panel>
-
-      <Panel title="清理状态" note="定时清理不再静默处理失败：这里能看到最近一次运行、成功或失败，以及释放的空间。">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
-          <Stat label="最近运行" value={when(composition?.cleanup.lastFinishedAt)} />
-          <Stat label="结果" tone={composition?.cleanup.lastOk === false ? 'bad' : undefined}
-            value={composition?.cleanup.lastOk === null || composition?.cleanup.lastOk === undefined ? '暂无数据' : composition.cleanup.lastOk ? '成功' : '失败'}
-            hint={composition?.cleanup.lastError ?? undefined} />
-          <Stat label="连续失败次数" tone={(composition?.cleanup.consecutiveFailures ?? 0) > 1 ? 'bad' : undefined}
-            value={String(composition?.cleanup.consecutiveFailures ?? 0)} />
-          <Stat label="释放空间" value={bytes(composition?.cleanup.lastFreedBytes)} hint={`移除对象 ${composition?.cleanup.lastRemovedObjects ?? 0} 个、上传 ${composition?.cleanup.lastRemovedUploads ?? 0} 个`} />
-        </div>
       </Panel>
 
       <Panel title="备份记录" action={<Button onClick={backups.reload}>刷新</Button>} note={backups.data?.note}>
@@ -240,6 +174,76 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
         <p style={muted}>恢复演练在隔离目录执行：验证清单、数据库、附件引用，以及恢复后旧会话与未消费的恢复凭据未复活。生产恢复继续走部署侧受控流程，并保留替换前的数据目录。</p>
         <p style={muted}>备份目录不在 Web 静态服务范围内；保留策略只清理校验成功的历史备份，未通过校验的一律保留并列出，且始终至少保留最近一个有效备份。</p>
       </Panel>
+
+      <Panel title="维护计划" action={<Button onClick={settings.reload}>刷新</Button>}
+        note="这里只声明与检查计划：自动备份默认关闭，且必须先配置备份位置与维护窗口才能启用。真正的停服备份由部署侧程序在维护窗口内执行，后台不会自己停服。">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+          <Stat label="自动备份计划" tone={planIncomplete ? 'bad' : undefined} value={!settings.data ? '状态未知' : planIncomplete ? '配置不完整' : autoEnabled ? '已配置启用' : '未启用'}
+            hint={autoEnabled ? '实际执行仍在部署侧' : '开启前需要备份位置与维护窗口'} />
+          <Stat label="备份位置" value={directory.display} hint="部署侧实际路径；后台不读写该目录" />
+          <Stat label="维护窗口" value={windowLabel.display} hint="停服备份与恢复演练只允许在该窗口内进行" />
+          <Stat label="保留份数" value={retentionPlan.display} hint="只清理校验成功的历史备份，且始终保留最近一个有效备份" />
+          <Stat label="逾期告警间隔" value={intervalHours.raw === '0' ? '不检查' : `${intervalHours.display} 小时`} hint="超过该间隔没有成功备份时告警" />
+          <Stat label="最近校验通过的备份" value={summary?.lastVerified ? when(summary.lastVerified.verifiedAt) : '暂无数据'}
+            hint={summary?.lastVerified ? summary.lastVerified.recordId : '尚未有校验通过的备份记录'} />
+          <Stat label="最近成功备份" value={summary?.lastSuccess ? when(summary.lastSuccess.createdAt) : '暂无数据'}
+            hint={summary?.lastSuccess ? summary.lastSuccess.recordId : '尚未有成功备份'} />
+        </div>
+        {planIncomplete ? <Notice tone="bad">已启用自动备份，但备份位置或维护窗口仍为空：请到「系统设置」补齐，否则这个计划无法执行。</Notice> : null}
+        {autoEnabled && !summary?.lastVerified ? <Notice tone="warn">已启用自动备份，但还没有校验通过的备份记录：请确认部署侧程序确实在运行，并完成一次备份与校验。</Notice> : null}
+        {summary?.lastRetention ? (
+          <Notice>
+            最近一次保留清理：{when(summary.lastRetention.createdAt)} · {summary.lastRetention.note ?? '已执行'}
+            {summary.lastRetention.retention ? ` · 已清理 ${String(summary.lastRetention.retention['removed'] ? String((summary.lastRetention.retention['removed'] as unknown[]).length) : '0')} 份`
+              + `${Number(summary.lastRetention.retention['unverifiedCount'] ?? 0) > 0 ? ` · 保留未通过校验的 ${String(summary.lastRetention.retention['unverifiedCount'])} 份待人工处理` : ''}` : ''}
+          </Notice>
+        ) : <p style={muted}>还没有保留清理记录：运行 <code>{`npm run server:prune-backups -- --backup-dir <目录> --keep ${retentionPlan.raw || '3'}`}</code> 后这里会显示结果（可先加 <code>--dry-run</code> 预演）。</p>}
+      </Panel>
+
+      <Panel title="空间组成" note={composition?.note ?? '逻辑配额占用与物理磁盘占用分开显示。'}>
+        <DataTable
+          columns={[
+            { key: 'item', header: '项目', render: (entry) => entry.item },
+            { key: 'size', header: '占用', render: (entry) => entry.size },
+            { key: 'detail', header: '说明', render: (entry) => entry.detail },
+          ]}
+          rows={[
+            { item: '数据库', size: bytes(composition?.databaseBytes), detail: '主库 server.sqlite' },
+            { item: 'WAL 文件', size: bytes(composition?.walBytes), detail: `共享内存 ${bytes(composition?.shmBytes)}` },
+            { item: '有效附件', size: bytes(composition?.objectBytes), detail: `对象 ${composition?.objectCount ?? 0} 个` },
+            { item: '回收站', size: bytes(composition?.trashBytes), detail: `对象 ${composition?.trashCount ?? 0} 个；计入用户配额` },
+            { item: '暂存上传', size: bytes(composition?.stagingBytes), detail: `上传 ${composition?.stagingCount ?? 0} 个；计入用户配额` },
+            { item: '备份目录', size: composition?.backupDirectory ?? '暂无数据', detail: '由部署侧维护程序写入选定位置' },
+            {
+              item: '磁盘可用空间',
+              size: bytes(composition?.diskFreeBytes),
+              detail: composition?.diskFreeRatio === null || composition?.diskFreeRatio === undefined
+                ? '无法读取磁盘信息' : `共 ${bytes(composition?.diskTotalBytes)}，剩余 ${(composition.diskFreeRatio * 100).toFixed(1)}%`,
+            },
+          ]}
+          rowKey={(entry) => entry.item}
+          empty="暂无数据。"
+        />
+        <div style={{ ...row, marginTop: 10 }}>
+          <Button disabled={!writable} onClick={() => startJob('storage.cleanup')}>立即清理回收站与暂存上传</Button>
+          <Button onClick={storage.reload}>刷新</Button>
+        </div>
+      </Panel>
+
+      <Panel title="清理状态" note="定时清理不再静默处理失败：这里能看到最近一次运行、成功或失败，以及释放的空间。">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
+          <Stat label="最近运行" value={when(composition?.cleanup.lastFinishedAt)} />
+          <Stat label="结果" tone={composition?.cleanup.lastOk === false ? 'bad' : undefined}
+            value={composition?.cleanup.lastOk === null || composition?.cleanup.lastOk === undefined ? '暂无数据' : composition.cleanup.lastOk ? '成功' : '失败'}
+            hint={composition?.cleanup.lastError ?? undefined} />
+          <Stat label="连续失败次数" tone={(composition?.cleanup.consecutiveFailures ?? 0) > 1 ? 'bad' : undefined}
+            value={String(composition?.cleanup.consecutiveFailures ?? 0)} />
+          <Stat label="释放空间" value={bytes(composition?.cleanup.lastFreedBytes)} hint={`移除对象 ${composition?.cleanup.lastRemovedObjects ?? 0} 个、上传 ${composition?.cleanup.lastRemovedUploads ?? 0} 个`} />
+        </div>
+      </Panel>
+
+
+      </div>
     </>
   );
 }

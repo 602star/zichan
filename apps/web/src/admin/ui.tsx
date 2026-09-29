@@ -221,7 +221,7 @@ export function useCursorPager({ query, path, navigate }: { query: URLSearchPara
 export function Panel({ title, id, action, children, note }: { title?: string; id?: string; action?: ReactNode; children: ReactNode; note?: string }) {
   const anchor = id ?? (title ? sectionId(title) : undefined);
   return (
-    <section id={anchor} style={{ ...panel, ...(anchor ? anchorOffset : {}) }}>
+    <section className="zc-admin-panel" id={anchor} style={{ ...panel, ...(anchor ? anchorOffset : {}) }}>
       {(title || action) && (
         <div style={{ ...row, justifyContent: 'space-between', marginBottom: 12 }}>
           {title ? <strong>{title}</strong> : <span />}
@@ -292,7 +292,7 @@ export function PanelIndex({ sections }: { sections: PageSection[] }) {
 export function Stat({ label, value, hint, tone }: { label: string; value: ReactNode; hint?: string; tone?: 'warn' | 'bad' }) {
   const color = tone === 'bad' ? 'var(--danger)' : tone === 'warn' ? 'var(--warning)' : undefined;
   return (
-    <div style={{ padding: 14, borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
+    <div className="zc-admin-stat" style={{ padding: 14, borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
       <div style={muted}>{label}</div>
       <div style={{ fontSize: 'var(--fs-display)', fontWeight: 'var(--fw-bold)', color }}>{value}</div>
       {hint ? <div style={muted}>{hint}</div> : null}
