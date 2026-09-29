@@ -1,5 +1,5 @@
 export const SETTING_GROUPS = [
-  { id: 'backup', label: '备份计划', description: '首次部署或调整备份安排时配置。保存只更新计划声明；执行与校验结果到“存储与备份”核对。' },
+  { id: 'backup', label: '备份计划', description: '启用后会在维护窗口内自动短暂停服、备份校验并重启。保存前核对服务器路径和时区；到“存储与备份”查看执行器心跳与结果。' },
   { id: 'notifications', label: '告警通知', description: '需要站外提醒时配置。暂停某条通知不会修复问题；留空表示不向外发送。' },
   { id: 'security', label: '访问安全', description: '调整管理员登录要求。启用两步验证要求前，所有管理员需先在“账号安全”完成绑定。' },
   { id: 'retention', label: '记录保留', description: '根据排查所需的历史跨度调整。缩短保留范围可能在后续清理中删除旧记录。' },

@@ -17,6 +17,7 @@ import { maskChannel, mergeChannelSecrets, parseAlertChannels, SECRET_PLACEHOLDE
 import { redactForExport, redactText } from './log-redaction.js';
 import type { MetricsService } from './metrics.js';
 import { SETTING_FIELDS, type SettingsFacade } from './settings.js';
+import { executorStatus } from './backup-executor-state.js';
 import {
   ServerStoreError,
   AUDIT_SORT_OPTIONS,
@@ -760,6 +761,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         ...page,
         sort: { key: sort.key, direction: sort.direction },
         summary,
+        executor: executorStatus(deps.dataDir),
         note: '备份与恢复由部署侧维护程序在服务停止时执行，后台只登记与展示结果；不提供浏览器下载整套服务器备份。',
       });
     }

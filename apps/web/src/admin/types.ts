@@ -258,6 +258,11 @@ export interface BackupRecord {
  * after a run of failures, the newest success may not be on this page at all.
  */
 export interface BackupsPayload {
+  executor?: {
+    status: 'unknown' | 'offline' | 'starting' | 'disabled' | 'waiting' | 'running' | 'error' | 'stopped';
+    executorId?: string; heartbeatAt?: string; timezone?: string; nextRunAt?: string;
+    lastResult?: 'completed' | 'failed' | 'interrupted'; lastFinishedAt?: string; error?: string;
+  };
   backups: BackupRecord[];
   nextCursor?: string;
   /** Size of the filtered set, not of this page. */

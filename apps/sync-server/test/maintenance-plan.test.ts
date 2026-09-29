@@ -18,6 +18,18 @@ async function store(): Promise<{ store: SyncServerStore; dir: string }> {
 }
 
 describe('maintenance plan settings', () => {
+  it('keeps legacy free-text schedules readable while refusing newly enabled ambiguous schedules', async () => {
+    const { store: instance, dir } = await store();
+    try {
+      for (const [name, value] of Object.entries({ backupAutoEnabled: 'on', backupDirectory: '/srv/backups', backupWindow: '每周日 凌晨' })) {
+        await instance.setMaintenanceState(`setting:${name}`, { value });
+      }
+      const settings = createSettings(instance, {});
+      await expect(settings.load()).resolves.toBeDefined();
+      await expect(settings.settings.save({ backupAutoEnabled: 'on' })).rejects.toThrow(/维护窗口格式/);
+      await expect(settings.settings.save({ backupAutoEnabled: 'off' })).resolves.toBeDefined();
+    } finally { await instance.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
   it('exposes the plan fields with their own text formats', () => {
     const byName = new Map(SETTING_FIELDS.map((field) => [field.name, field]));
     expect(byName.get('backupAutoEnabled')).toMatchObject({ kind: 'select', default: 'off', options: ['off', 'on'] });

@@ -1,7 +1,7 @@
 /** Storage and backups: physical usage, logical quota, the maintenance plan, records and drills. */
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { PageHeader, Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, Stat, bytes, message, muted, row, useActionError, useCursorPager, useHiddenColumns, useResource, when, canWrite } from './ui.js';
+import { PageHeader, Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, Stat, bytes, message, muted, row, useActionError, useCursorPager, useHiddenColumns, usePolling, useResource, when, canWrite } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import type { BackupsPayload, SettingsPayload, Storage } from './types.js';
 
@@ -71,7 +71,10 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
   // Read from the server, not picked out of the visible page: with a filter applied — or simply
   // after a run of failures — the newest success may not be on this page, and showing "暂无数据"
   // for a backup that succeeded last week is a lie the operator would act on.
+  usePolling(backups.reload, 10_000, true);
   const summary = backups.data?.summary;
+  const executor = backups.stale ? undefined : backups.data?.executor;
+  const executorLabel = { unknown: '运行状态未知', offline: '心跳已失联', starting: '正在启动', disabled: '在线 · 自动备份未启用', waiting: '在线 · 等待执行', running: '正在备份', error: '执行异常', stopped: '执行器已停止' };
 
   const startJob = (type: 'storage.cleanup' | 'backup.verify' | 'restore.drill', recordId?: string) => {
     actionError.clear();
@@ -94,8 +97,14 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
             tone={summary?.lastAttempt?.status === 'failed' || summary?.lastAttempt?.verificationOk === false ? 'bad' : undefined}
             hint={summary?.lastAttempt ? `${when(summary.lastAttempt.createdAt)} · ${summary.lastAttempt.errorMessage ?? summary.lastAttempt.recordId}` : '等待部署侧执行并登记备份'} />
           <Stat label="可用证据" value={!summary ? '状态未知' : summary.lastVerified ? '存在已校验备份' : summary.lastSuccess ? '有完成记录，尚无校验通过记录' : '尚无成功备份记录'} hint="还原能力应通过恢复演练验证" />
-          <Stat label="自动执行程序" value="运行状态未知" hint="当前接口没有执行器心跳与下一次执行时间，不能仅凭计划开关判断" />
+          <Stat label="自动执行程序" value={executor ? executorLabel[executor.status] : '运行状态未知'}
+            tone={executor && ['offline', 'error', 'stopped'].includes(executor.status) ? 'bad' : undefined}
+            hint={executor?.heartbeatAt ? `最近心跳 ${when(executor.heartbeatAt)}` : '尚未收到有效的执行器心跳'} />
+          <Stat label="下一次执行" value={executor?.nextRunAt ? when(executor.nextRunAt) : '暂无计划时间'} hint={`服务器时区：${executor?.timezone ?? '未知'}；每个维护窗口最多尝试一次`} />
+          <Stat label="执行器上次结果" value={executor?.lastResult === 'completed' ? '备份与校验完成' : executor?.lastResult === 'failed' ? '失败' : executor?.lastResult === 'interrupted' ? '执行中断' : '尚无执行结果'} hint={executor?.lastFinishedAt ? when(executor.lastFinishedAt) : '以执行记录为准'} />
         </div>
+        {executor?.error ? <Notice tone="warn">{executor.error}</Notice> : null}
+        {executor?.executorId ? <p style={muted}>执行器：{executor.executorId}</p> : null}
         <p style={row}>
           <Button onClick={() => navigate('/storage?status=failed')}>查看失败记录</Button>
           {role === 'owner' ? <Button onClick={() => navigate('/settings?group=backup')}>配置备份计划</Button> : null}
@@ -176,11 +185,11 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
       </Panel>
 
       <Panel title="维护计划" action={<Button onClick={settings.reload}>刷新</Button>}
-        note="这里只声明与检查计划：自动备份默认关闭，且必须先配置备份位置与维护窗口才能启用。真正的停服备份由部署侧程序在维护窗口内执行，后台不会自己停服。">
+        note="自动备份默认关闭。启用后，执行器在服务器本地时区的维护窗口内自动停服、备份校验并重启；期间同步与后台短暂不可用。失败不会在同一窗口内反复重试。">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
           <Stat label="自动备份计划" tone={planIncomplete ? 'bad' : undefined} value={!settings.data ? '状态未知' : planIncomplete ? '配置不完整' : autoEnabled ? '已配置启用' : '未启用'}
-            hint={autoEnabled ? '实际执行仍在部署侧' : '开启前需要备份位置与维护窗口'} />
-          <Stat label="备份位置" value={directory.display} hint="部署侧实际路径；后台不读写该目录" />
+            hint={autoEnabled ? '请同时核对执行器心跳和执行结果' : '开启前需要备份位置与维护窗口'} />
+          <Stat label="备份位置" value={directory.display} hint="服务器绝对路径；执行器需要写入权限" />
           <Stat label="维护窗口" value={windowLabel.display} hint="停服备份与恢复演练只允许在该窗口内进行" />
           <Stat label="保留份数" value={retentionPlan.display} hint="只清理校验成功的历史备份，且始终保留最近一个有效备份" />
           <Stat label="逾期告警间隔" value={intervalHours.raw === '0' ? '不检查' : `${intervalHours.display} 小时`} hint="超过该间隔没有成功备份时告警" />

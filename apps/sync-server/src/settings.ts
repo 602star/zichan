@@ -6,6 +6,8 @@
  * overridden by, or overriding, the stored one.
  */
 import { ServerStoreError, type SyncServerStore } from './store.js';
+import { parseBackupWindow } from './backup-schedule.js';
+import { isAbsolute } from 'node:path';
 
 export interface SettingField {
   name: string;
@@ -39,7 +41,7 @@ export const SETTING_FIELDS: SettingField[] = [
     envVar: 'ADMIN_BACKUP_AUTO',
     default: 'off',
     options: ['off', 'on'],
-    description: '默认关闭。必须同时配置备份位置与维护窗口才能启用；实际备份仍由部署侧在其维护窗口内执行。',
+    description: '默认关闭。配置绝对备份路径与维护窗口后，执行器会在窗口内短暂停服、备份校验并恢复服务。每个窗口最多尝试一次，失败不会反复重试。',
   },
   {
     name: 'backupDirectory',
@@ -49,7 +51,7 @@ export const SETTING_FIELDS: SettingField[] = [
     envVar: 'ADMIN_BACKUP_DIRECTORY',
     default: '',
     maxLength: 300,
-    description: '声明备份写到哪里，用于计划展示与启用前检查；后台不会读写这个目录。',
+    description: '服务器上的绝对路径；执行器需要写入权限。不得与服务器数据目录或公开网页目录互相包含。',
   },
   {
     name: 'backupWindow',
@@ -59,7 +61,7 @@ export const SETTING_FIELDS: SettingField[] = [
     envVar: 'ADMIN_BACKUP_WINDOW',
     default: '',
     maxLength: 64,
-    description: '停服备份与恢复演练只允许在该窗口内进行；没有窗口就视为没有计划，不能启用自动备份。',
+    description: '支持 每天 03:00-04:00、周日 03:00-04:00 或 Sun 03:00-04:00，使用服务器本地时区。可跨午夜；窗口内启动一次，完成后恢复服务，错过的窗口不补跑。',
   },
   {
     name: 'backupRetentionCount',
@@ -286,10 +288,18 @@ export interface SettingsReader {
  * Rules that span fields. Enabling automatic backup without a declared location and window
  * describes a schedule nobody can keep, so it is refused instead of stored.
  */
-export function assertMaintenancePlan(next: Record<string, number | string>): void {
+export function assertMaintenancePlan(next: Record<string, number | string>, validateSchedule = true): void {
   if (next['backupAutoEnabled'] !== 'on') return;
   const missing = (next['backupDirectory'] ? '' : '备份位置') + (next['backupWindow'] ? '' : '、维护窗口');
-  if (missing === '') return;
+  if (missing === '') {
+    // Legacy versions allowed free-text window descriptions. Keep HTTP available so owners
+    // can correct them; the executor reports an error and refuses to stop the service.
+    if (!validateSchedule) return;
+    if (!isAbsolute(String(next['backupDirectory']))) throw new ServerStoreError('INVALID_SETTING', 400, '自动备份位置必须为绝对路径');
+    try { parseBackupWindow(String(next['backupWindow'])); }
+    catch (error) { throw new ServerStoreError('INVALID_SETTING', 400, error instanceof Error ? error.message : String(error)); }
+    return;
+  }
   throw new ServerStoreError('INVALID_SETTING', 400, `启用自动备份前必须先配置${missing}`);
 }
 
@@ -326,7 +336,7 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
         if (parsed !== undefined) loaded[field.name] = parsed;
       }
     }
-    assertMaintenancePlan(effectiveFrom(loaded));
+    assertMaintenancePlan(effectiveFrom(loaded), false);
     cache = loaded;
     cachedAt = Date.now();
     return loaded;

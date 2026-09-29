@@ -184,7 +184,7 @@ function readPersistedValue(path: string, name: string): string {
 function assertServerIdentityComplete(dataDir: string | undefined): void {
   if (!dataDir || !existsSync(dataDir)) return;
   if (!statSync(dataDir).isDirectory()) throw new Error(`同步服务器数据路径不是目录：${dataDir}`);
-  const entries = readdirSync(dataDir);
+  const entries = readdirSync(dataDir).filter((name) => name !== 'backup-executor.lock');
   if (!entries.length) return;
 
   const missing: string[] = REQUIRED_IDENTITY_FILES.filter((name) => !existsSync(join(dataDir, name)));
@@ -331,6 +331,7 @@ export interface SyncServerOptions {
 }
 
 export interface SyncServer {
+  backupPlan: () => Promise<import('./backup-executor.js').BackupPlan>;
   server: Server;
   serverId: string;
   dataDir: string;
@@ -1318,6 +1319,11 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     dataDir,
     ready,
     started,
+    backupPlan: async () => {
+      await runtimeSettings.load();
+      return { enabled: settings.effective('backupAutoEnabled') === 'on', directory: String(settings.effective('backupDirectory')),
+        window: String(settings.effective('backupWindow')), serverId };
+    },
     close: async () => {
       clearInterval(queueWatchdog);
       metrics.stop();

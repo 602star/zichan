@@ -3,6 +3,7 @@ import { rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { developmentDataDir } from './runtime-config.js';
 import { watchShutdownInput } from './shutdown-input.js';
+import { runBackupSupervisor } from './backup-supervisor.js';
 
 /**
  * Invalid configuration stops the boot with a named error. Silently substituting a
@@ -59,6 +60,10 @@ const webDir = process.env.WEB_DIST;
 const enableWeb = boolEnv('ENABLE_WEB', Boolean(webDir));
 const enableSync = boolEnv('ENABLE_SYNC', true);
 const basePath = process.env.BASE_PATH?.trim() || undefined;
+if (process.env.ZICHAN_SERVER_WORKER !== '1') {
+  await runBackupSupervisor(import.meta.url, dataDir, webDir, boolEnv('CONTROL_STDIN', false));
+  process.exit(0);
+}
 const service = createSyncServer({
   accountProtection: enumEnv('ACCOUNT_PROTECTION', ['managed', 'private'] as const, 'managed'),
   custodyEnabled: boolEnv('CUSTODY_ENABLED', true),
@@ -86,6 +91,11 @@ const pidFile = resolve(dataDir, 'server.pid');
 writeFileSync(pidFile, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), dataDir }), 'utf8');
 
 server.listen(port, host, () => {
+  const reportPlan = () => { void service.backupPlan().then((backupPlan) => {
+    if (process.connected) process.send?.({ backupPlan }, () => undefined);
+  }).catch((error: unknown) => console.error('Backup plan unavailable:', error)); };
+  reportPlan();
+  const reportTimer = setInterval(reportPlan, 5_000); reportTimer.unref();
   const bind = host ? `${host}:${port}` : `localhost:${port}`;
   console.log(`zichan server -> http://${bind}  (data directory: ${dataDir})`);
   console.log(`serverId=${serverId} sync=${enableSync ? 'on' : 'off'} web=${enableWeb && webDir ? 'on' : 'off'} registration=${registrationMode} basePath=${basePath || '/'}`);
@@ -118,5 +128,6 @@ const terminate = (reason: string) => {
 };
 process.once('SIGINT', () => terminate('SIGINT'));
 process.once('SIGTERM', () => terminate('SIGTERM'));
+process.once('disconnect', () => terminate('supervisor disconnected'));
 if (boolEnv('CONTROL_STDIN', false)) watchShutdownInput(process.stdin, terminate);
 process.once('exit', () => rmSync(pidFile, { force: true }));
