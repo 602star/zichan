@@ -85,6 +85,56 @@ test('a child failure returns its nonzero exit code and closes the managed lifec
   } finally { await stop('web', value.directory); await running; rmSync(value.directory, { recursive: true, force: true }); }
 });
 
+test('repeated start reuses the authenticated launcher and leaves its process and records intact', async () => {
+  const value = await fixture();
+  const running = start(value, { noBuild: true });
+  try {
+    await ready(value.units[0].ready);
+    const path = join(value.directory, '.runtime/launchers/web.json');
+    const before = readFileSync(path, 'utf8');
+    assert.equal(await start(value, { noBuild: true }), 0);
+    assert.equal(readFileSync(path, 'utf8'), before);
+    await assert.rejects(start({ ...value, units: [{ ...value.units[0], port: value.units[0].port + 1 }] }), /配置与本次请求不同/);
+    await ready(value.units[0].ready);
+    await stop('web', value.directory);
+    assert.equal(existsSync(path), false); // stop now waits for release, not just an acknowledgement.
+    await assertPortFree(value.units[0].port, '127.0.0.1');
+    assert.equal(await running, 0);
+  } finally { await stop('web', value.directory); await running; rmSync(value.directory, { recursive: true, force: true }); }
+});
+
+test('all mode reuses an existing unit and starts only the missing unit', async () => {
+  const value = await fixture();
+  const first = start(value, { noBuild: true });
+  let second;
+  try {
+    await ready(value.units[0].ready);
+    const path = join(value.directory, '.runtime/launchers/web.json');
+    const before = readFileSync(path, 'utf8');
+    const port = await freePort();
+    const extra = { ...value.units[0], key: 'desktop', port, ready: `http://127.0.0.1:${port}/`, env: { ...process.env, TEST_PORT: String(port) } };
+    second = start({ ...value, mode: 'all', units: [value.units[0], extra] }, { noBuild: true });
+    await ready(extra.ready);
+    assert.equal(readFileSync(path, 'utf8'), before);
+    await stop('desktop', value.directory);
+    assert.equal(await second, 0);
+    await ready(value.units[0].ready); // The new launcher does not own the reused unit.
+  } finally { await stop('all', value.directory); await second; await first; rmSync(value.directory, { recursive: true, force: true }); }
+});
+
+test('simultaneous double click creates one lifecycle and joins the other request', async () => {
+  const value = await fixture();
+  const first = start(value, { noBuild: true });
+  const second = start(value, { noBuild: true });
+  try {
+    await ready(value.units[0].ready);
+    assert.equal(await Promise.race([first, second]), 0);
+    await ready(value.units[0].ready);
+    await stop('web', value.directory);
+    assert.deepEqual(await Promise.all([first, second]), [0, 0]);
+  } finally { await stop('web', value.directory); await Promise.allSettled([first, second]); rmSync(value.directory, { recursive: true, force: true }); }
+});
+
 test('build failure never starts services and is not reported as success', async () => {
   const value = await fixture();
   value.build = 'fail';

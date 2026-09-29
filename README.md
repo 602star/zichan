@@ -77,6 +77,8 @@ apps/
 
 ## 一键启动 / 关闭
 
+重复点击启动会验证并复用本项目已运行的同配置服务，显示访问地址；不会新建重复进程或重新构建。端口、数据目录等配置不同时会提示冲突。需要加载新代码或新配置时，先运行 `npm stop`，等待停止完成，再运行 `npm start`（开发 Web 与服务器一起启动用 `npm run start:all`）。停止命令会等待服务释放端口与数据句柄，不必手动删除 PID 文件。
+
 - **Windows 双击入口**：`scripts/windows/start-all.cmd` 一键启动开发 Web（5173）和同步/管理服务器（8787）；
   `scripts/windows/start-web.cmd` 只启动开发 Web，`scripts/windows/start-sync-server.cmd` 单独启动已经包含静态 Web 的一体服务器，
   `scripts/windows/setup-webview2-runtime.cmd` 显式准备固定版 WebView2，`scripts/windows/build-desktop.cmd` 构建完全便携 ZIP。失败时窗口会保留诊断信息。

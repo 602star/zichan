@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createServer as createTcpServer } from 'node:net';
 import { networkInterfaces } from 'node:os';
@@ -9,7 +9,58 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const modes = ['web', 'sync', 'server', 'desktop', 'all'];
-const delay = (ms) => new Promise((done) => { const timer = setTimeout(done, ms); timer.unref(); });
+const delay = (ms) => new Promise((done) => setTimeout(done, ms));
+
+/** Only configuration that changes the running service participates; npm invocation variables do not. */
+function fingerprint(unit) {
+  const names = ['DATA_DIR', 'WEB_DIST', 'ENABLE_WEB', 'ENABLE_SYNC', 'BASE_PATH', 'REGISTRATION_MODE',
+    'ALLOW_INSECURE_HTTP', 'TRUSTED_PROXIES', 'ACCOUNT_PROTECTION', 'CUSTODY_ENABLED', 'CUSTODY_KEY_PATH',
+    'SYNC_SECRET', 'SERVER_ID', 'COMMIT_QUOTA_BYTES', 'ATTACHMENT_QUOTA_BYTES', 'ATTACHMENT_MAX_FILE_BYTES',
+    'ATTACHMENT_TRASH_RETENTION_MS', 'ZICHAN_DEV_API_TARGET', ...Object.keys(unit.env).filter((name) => name.startsWith('ADMIN_'))];
+  const env = Object.fromEntries([...new Set(names)].sort().map((name) => [name, unit.env[name] ?? '']));
+  return createHash('sha256').update(JSON.stringify({ entry: resolve(unit.entry), cwd: resolve(unit.cwd), args: unit.args, port: unit.port, host: unit.host, env })).digest('hex');
+}
+
+function readLauncher(file, directory) {
+  const state = JSON.parse(readFileSync(file, 'utf8'));
+  if (resolve(state.root ?? '') !== resolve(directory) || !/^[a-f0-9]{32}$/.test(state.id)
+    || !Number.isSafeInteger(state.pid) || state.pid < 1 || !/^[a-f0-9]{64}$/.test(state.token)
+    || !Number.isInteger(state.controlPort) || state.controlPort < 1 || state.controlPort > 65535) throw new Error(`Invalid launcher record: ${file}`);
+  return state;
+}
+
+async function inspectRunning(value) {
+  const reused = [];
+  for (const unit of value.units) {
+    const file = join(value.directory, '.runtime/launchers', `${unit.key}.json`);
+    if (!existsSync(file)) continue;
+    const state = readLauncher(file, value.directory);
+    if (!alive(state.pid)) continue;
+    let status;
+    try { status = await requestControl(state, undefined, '/status'); }
+    catch { throw new Error(`服务已有启动记录，但无法确认启动器状态。请先运行 npm stop，再启动；不会按 PID 强制结束进程。${file}`); }
+    const active = status.units?.find((entry) => entry.key === unit.key);
+    if (!active || active.fingerprint !== fingerprint(unit)) throw new Error(`已有 ${unit.key} 服务正在运行，但端口、路径或配置与本次请求不同。请先运行 npm stop 后再用新配置启动；现有服务未被修改。`);
+    if (status.phase === 'stopping') throw new Error('服务正在停止，请等待停止命令完成后再启动。');
+    // A second click during build/startup joins the existing launch instead of creating a second one.
+    const deadline = Date.now() + 120_000;
+    while (status.phase !== 'running') {
+      if (Date.now() >= deadline) throw new Error('现有启动器仍在构建或启动，请查看原启动窗口；未启动重复进程。');
+      await delay(250);
+      status = await requestControl(state, undefined, '/status');
+      if (status.phase === 'stopping') throw new Error('原启动过程已停止，请查看原窗口中的错误。');
+    }
+    if (unit.ready) {
+      try {
+        const response = await fetch(unit.ready, { signal: AbortSignal.timeout(5000), redirect: 'error' });
+        await response.body?.cancel();
+        if (!response.ok) throw new Error('not ready');
+      } catch { throw new Error(`已确认 ${unit.key} 服务归本项目管理，但暂时无法访问（可能正在自动备份）。未启动重复进程，请稍后重试。`); }
+    }
+    reused.push(unit.key);
+  }
+  return reused;
+}
 
 /** Non-loopback IPv4 addresses, so launcher output names the address other devices must use. */
 function lanAddresses() {
@@ -114,8 +165,8 @@ async function terminate(child, graceful = false) {
   await Promise.race([child.completion, delay(3000)]);
 }
 
-async function requestControl(state, body) {
-  const response = await fetch(`http://127.0.0.1:${state.controlPort}/stop`, { method: 'POST', redirect: 'error',
+async function requestControl(state, body, path = '/stop') {
+  const response = await fetch(`http://127.0.0.1:${state.controlPort}${path}`, { method: path === '/status' ? 'GET' : 'POST', redirect: 'error',
     signal: AbortSignal.timeout(5000), headers: { 'X-Zichan-Launcher': state.token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!response.ok) throw new Error(`Launcher control rejected the request: HTTP ${response.status}`);
   const result = await response.json();
@@ -131,20 +182,41 @@ export async function stop(mode = 'all', directory = root) {
   for (const key of keys) {
     const file = join(directory, '.runtime/launchers', `${key}.json`);
     if (!existsSync(file)) continue;
-    const state = JSON.parse(readFileSync(file, 'utf8'));
-    if (state.root !== directory || !/^[a-f0-9]{32}$/.test(state.id) || !Number.isSafeInteger(state.pid) || state.pid < 1 || !/^[a-f0-9]{64}$/.test(state.token) || !Number.isInteger(state.controlPort) || state.controlPort < 1 || state.controlPort > 65535) throw new Error(`Invalid launcher record: ${file}`);
+    const state = readLauncher(file, directory);
     if (seen.has(state.id)) continue;
     seen.add(state.id);
     if (!alive(state.pid)) { unlinkSync(file); continue; }
     await requestControl(state, { key });
+    const deadline = Date.now() + 60_000;
+    while (existsSync(file) && JSON.parse(readFileSync(file, 'utf8')).id === state.id) {
+      if (Date.now() >= deadline) throw new Error('停止请求已发送，但服务尚未确认退出。请检查原启动窗口；不要立即重复启动。');
+      await delay(100);
+    }
     stopped++;
   }
-  console.log(stopped ? `Stop requested for ${stopped} managed service(s).` : 'No matching managed launcher. Unmanaged processes and port listeners were not touched.');
+  console.log(stopped ? `Stopped ${stopped} managed launcher(s); ports and data handles have been released.` : 'No matching managed launcher. Unmanaged processes and port listeners were not touched.');
 }
 
 export async function start(value, { noBuild = false, check = false } = {}) {
-  preflight(value, noBuild);
-  for (const unit of value.units) await assertPortFree(unit.port, unit.host);
+  const reused = await inspectRunning(value);
+  if (reused.length) {
+    console.log(`[OK] 已在运行，复用现有服务：${reused.join(', ')}。没有创建新进程，也没有重新构建。`);
+    for (const url of value.urls) console.log(`  ${url}`);
+    if (reused.length === value.units.length) return 0;
+    value = { ...value, units: value.units.filter((unit) => !reused.includes(unit.key)),
+      build: reused.includes('server') ? null : value.build };
+  }
+  try {
+    preflight(value, noBuild);
+    for (const unit of value.units) await assertPortFree(unit.port, unit.host);
+  } catch (error) {
+    // Two simultaneous clicks can race the port probe before the winner publishes its record.
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await delay(50);
+      if ((await inspectRunning(value)).length) return start(value, { noBuild, check });
+    }
+    throw error;
+  }
   console.log(`Mode: ${value.mode}`);
   for (const url of value.urls) console.log(`  ${url}`);
   for (const unit of value.units) {
@@ -174,17 +246,25 @@ export async function start(value, { noBuild = false, check = false } = {}) {
   const children = new Map();
   const files = [];
   let ending = false;
+  let phase = 'starting';
   let finish;
   const finished = new Promise((done) => { finish = done; });
   let shutdownTask;
   const shutdown = (code = 0) => shutdownTask ??= (async () => {
     ending = true;
+    phase = 'stopping';
     await Promise.all([...children.values()].map(({ child, graceful }) => terminate(child, graceful)));
     finish(code);
   })();
   const control = createServer(async (req, res) => {
     const supplied = Buffer.from(String(req.headers['x-zichan-launcher'] || ''));
-    if (req.method !== 'POST' || req.url !== '/stop' || supplied.length !== token.length || !timingSafeEqual(supplied, Buffer.from(token))) { res.writeHead(403); res.end(); return; }
+    if (supplied.length !== token.length || !timingSafeEqual(supplied, Buffer.from(token))) { res.writeHead(403); res.end(); return; }
+    if (req.method === 'GET' && req.url === '/status') {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ id, root: value.directory, phase, units: value.units.map((unit) => ({ key: unit.key, fingerprint: fingerprint(unit) })) }));
+      return;
+    }
+    if (req.method !== 'POST' || req.url !== '/stop') { res.writeHead(403); res.end(); return; }
     let text = '';
     try {
       for await (const chunk of req) { text += chunk; if (text.length > 1024) { res.writeHead(413); res.end(); return; } }
@@ -238,8 +318,11 @@ export async function start(value, { noBuild = false, check = false } = {}) {
         if (ready) console.log(`Ready: ${unit.ready}`);
       }
     }
+    phase = 'running';
     return await finished;
   } catch (error) {
+    // The exclusive record creation can also lose a race after both port probes succeeded.
+    if (!files.length && !children.size && (await inspectRunning(value)).length) return await start(value, { noBuild, check });
     await shutdown(1);
     throw error;
   } finally {
