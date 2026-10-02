@@ -134,4 +134,27 @@ describe('historical game currency exchange rates', () => {
     expect(summary.incomeBase).toBe('0');
     expect(summary.referenceBalance).toBe('10');
   });
+
+  it('shows gross and received rates for a currency buy with an in-game fee', () => {
+    const purchase = { ...rec('buy_currency', '20', '通货', '1000'), settlementAssetId: 'CNY', gameCurrencyFeeAmount: '100' };
+    expect(gameRecordExchangeRate(purchase)).toMatchObject({ rate: '50', netRate: '45', netRateLabel: '到账汇率', valuation: '20' });
+    expect(seasonActivitySummary([purchase], s2).referenceBalances).toEqual([{ currencyName: '通货', balance: '900' }]);
+  });
+
+  it('keeps sell fees inside the sold quantity or debits them separately as selected', () => {
+    const sale = { ...rec('sell_currency', '1', '通货', '100'), settlementAssetId: 'CNY', gameCurrencyFeeAmount: '10', sellCurrencyFeeMode: 'included' as const };
+    expect(gameRecordExchangeRate(sale)).toMatchObject({ rate: '100', netRate: '90', netRateLabel: '扣费后兑换汇率' });
+    expect(seasonActivitySummary([sale], s2).referenceBalance).toBe('-100');
+    const extra = { ...sale, sellCurrencyFeeMode: 'extra' as const };
+    expect(gameRecordExchangeRate(extra)).toMatchObject({ rate: '100', netRate: '110', netRateLabel: '实际扣币汇率' });
+    expect(seasonActivitySummary([extra], s2).referenceBalance).toBe('-110');
+    expect(seasonActivitySummary([{ ...sale, sellCurrencyFeeMode: undefined }], s2).referenceBalance).toBe('-110');
+  });
+
+  it('never sums different named game currencies into one reference balance', () => {
+    const records = [rec('buy_currency', '0', '初火', '100'), rec('buy_currency', '0', '金币', '25'), rec('consume', '0', ' 初火 ', '10')];
+    const activity = seasonActivitySummary(records, s2);
+    expect(activity.referenceBalance).toBeNull();
+    expect(activity.referenceBalances).toEqual([{ currencyName: '初火', balance: '90' }, { currencyName: '金币', balance: '25' }]);
+  });
 });

@@ -115,6 +115,8 @@ async function createDefaultSeason(
 function gameRecordEntity(value: GameRecordFormValue): GameRecord {
   const {
     itemTradeMode: _itemTradeMode,
+    gameCurrencyChoice: _gameCurrencyChoice,
+    priceKnowledge: _priceKnowledge,
     settlementCashflowMode: _settlementMode,
     settlementTransactionId: _settlementTransaction,
     settlementCategoryId: _settlementCategory,
@@ -222,7 +224,7 @@ export function Game() {
       </div>
     );
   }
-  const usesAccounts = true;
+  const usesAccounts = (snap.setting?.ledgerMode ?? 'spending') !== 'spending';
   const accountOptions = snap.gameAccounts.filter((account) =>
     !account.isDeleted && !account.archivedAt && !account.mergedIntoId && account.gameId === selectedGameId);
 
@@ -305,7 +307,9 @@ export function Game() {
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16, paddingTop: 14, borderTop: '1px dashed var(--border)' }}>
             <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>游戏时长 · {vm.season ? `${vm.hours} h` : '—'}</span>
-            <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>记录余额（参考） · {num(vm.refBalance, 2)} {vm.refCurrencyLabel}</span>
+            <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', textAlign: 'right' }}>记录余额（参考） · {vm.currencyBalances.length
+              ? vm.currencyBalances.map((row) => `${num(row.balance, 2)} ${row.currencyName}`).join(' · ')
+              : '暂无通货记录'}</span>
           </div>
         </div>
 

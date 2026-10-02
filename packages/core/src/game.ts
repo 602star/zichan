@@ -43,8 +43,9 @@ export interface SeasonSummary {
   hours: string;
   perHour: string; // net / hours
   perDay: string; // net / days
-  /** Reference game-currency balance after currency and item trades. May be negative. */
-  referenceBalance: string;
+  /** Present only when the records contain at most one currency. */
+  referenceBalance: string | null;
+  referenceBalances: { currencyName: string; balance: string }[];
 }
 
 export interface SeasonSummaryOptions {
@@ -54,8 +55,8 @@ export interface SeasonSummaryOptions {
   asOf?: string;
 }
 
-/** Historical game currency per quote unit; valuation never creates cash P&L. */
-export function gameRecordExchangeRate(record: GameRecord): { rate: string; quoteAssetId: string; valuation: string } | undefined {
+/** Historical trade and net currency per quote unit; valuation never creates cash P&L. */
+export function gameRecordExchangeRate(record: GameRecord): { rate: string; netRate?: string; netRateLabel?: string; quoteAssetId: string; valuation: string } | undefined {
   const quantity = D(record.gameCurrencyAmount ?? 0).abs();
   if (quantity.isZero()) return undefined;
   const cashTrade = record.recordType === 'buy_currency' || record.recordType === 'sell_currency';
@@ -66,8 +67,26 @@ export function gameRecordExchangeRate(record: GameRecord): { rate: string; quot
     ? quantity.div(D(record.settlementAmount!).abs())
     : D(record.manualRate ?? 0);
   if (!rate.gt(0)) return undefined;
+  const fee = D(record.gameCurrencyFeeAmount ?? 0).abs();
+  let netQuantity = quantity;
+  let netRateLabel: string | undefined;
+  if (cashTrade && fee.gt(0)) {
+    if (record.recordType === 'buy_currency') {
+      netQuantity = quantity.minus(fee);
+      netRateLabel = '到账汇率';
+    } else if (record.sellCurrencyFeeMode === 'included') {
+      netQuantity = quantity.minus(fee);
+      netRateLabel = '扣费后兑换汇率';
+    } else {
+      netQuantity = quantity.plus(fee);
+      netRateLabel = '实际扣币汇率';
+    }
+  }
   return {
     rate: rate.toString(),
+    netRate: hasCash && netRateLabel && netQuantity.gt(0)
+      ? netQuantity.div(D(record.settlementAmount!).abs()).toString() : undefined,
+    netRateLabel,
     quoteAssetId,
     valuation: hasCash ? D(record.settlementAmount!).abs().toString() : quantity.div(rate).toString(),
   };
@@ -133,22 +152,38 @@ export function seasonSummary(
     perHour: safeDiv(net, hours).toString(),
     perDay: safeDiv(net, D(days)).toString(),
     referenceBalance: activity.referenceBalance,
+    referenceBalances: activity.referenceBalances,
   };
 }
 
 /** Non-financial activity, independent of settlement/fee currency selection. */
 export function seasonActivitySummary(
   records: GameRecord[], season: GameSeason | undefined, asOf?: string,
-): Pick<SeasonSummary, 'days' | 'hours' | 'referenceBalance'> {
-  let balance = D(0);
+): Pick<SeasonSummary, 'days' | 'hours' | 'referenceBalance' | 'referenceBalances'> {
+  const balances = new Map<string, { currencyName: string; amount: ReturnType<typeof D> }>();
   for (const record of records) {
     if (record.isDeleted) continue;
     const quantity = D(record.gameCurrencyAmount ?? 0).abs();
-    if (REF_ADD.has(record.recordType)) balance = balance.plus(quantity);
-    else if (REF_SUB.has(record.recordType)) balance = balance.minus(quantity);
-    balance = balance.minus(D(record.gameCurrencyFeeAmount ?? 0).abs());
+    const fee = D(record.gameCurrencyFeeAmount ?? 0).abs();
+    if (quantity.isZero() && fee.isZero()) continue;
+    const currencyName = record.gameCurrencyName?.trim().normalize('NFKC') || '未命名游戏币';
+    const key = currencyName.toLocaleLowerCase();
+    const current = balances.get(key) ?? { currencyName, amount: D(0) };
+    let delta = D(0);
+    if (REF_ADD.has(record.recordType)) delta = delta.plus(quantity);
+    else if (REF_SUB.has(record.recordType)) delta = delta.minus(quantity);
+    if (!(record.recordType === 'sell_currency' && record.sellCurrencyFeeMode === 'included')) delta = delta.minus(fee);
+    balances.set(key, { ...current, amount: current.amount.plus(delta) });
   }
-  return { days: seasonDays(season, asOf), hours: D(season?.hours ?? 0).toString(), referenceBalance: balance.toString() };
+  const referenceBalances = [...balances.values()]
+    .map(({ currencyName, amount }) => ({ currencyName, balance: amount.toString() }))
+    .sort((a, b) => a.currencyName.localeCompare(b.currencyName, 'zh-CN'));
+  return {
+    days: seasonDays(season, asOf),
+    hours: D(season?.hours ?? 0).toString(),
+    referenceBalance: referenceBalances.length <= 1 ? referenceBalances[0]?.balance ?? '0' : null,
+    referenceBalances,
+  };
 }
 
 /** Season length in days (inclusive of the start day, min 1). */

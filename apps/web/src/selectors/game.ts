@@ -47,8 +47,7 @@ export interface GameSeasonVM {
   perHour: string;
   perDay: string;
   hours: string;
-  refBalance: string;
-  refCurrencyLabel: string;
+  currencyBalances: { currencyName: string; balance: string }[];
   reportCurrencyCode: string;
   missingRateAssetCodes: string[];
   byAccount: GameEfficiencyVM[];
@@ -131,7 +130,6 @@ export function buildGameSeason(snap: Snapshot, gameId: string | null, selectedI
   const expense = sum(totals.map((row) => row.expense));
   const net = income.minus(expense);
   const hours = D(summary.hours);
-  const refCurrencyNames = [...new Set(records.map((record) => record.gameCurrencyName?.trim()).filter(Boolean))];
 
   return {
     gameName: game?.name ?? '游戏',
@@ -149,8 +147,7 @@ export function buildGameSeason(snap: Snapshot, gameId: string | null, selectedI
     perHour: safeDiv(net, hours).toString(),
     perDay: safeDiv(net, filteredDays).toString(),
     hours: summary.hours,
-    refBalance: summary.referenceBalance,
-    refCurrencyLabel: refCurrencyNames.length === 1 ? refCurrencyNames[0]! : '游戏币',
+    currencyBalances: summary.referenceBalances,
     reportCurrencyCode: report.code,
     missingRateAssetCodes: report.missingCodes(),
     byAccount: efficiency(accountItems),
@@ -168,7 +165,7 @@ export function buildGameSeason(snap: Snapshot, gameId: string | null, selectedI
         if (!snapshot) return cash ?? '—';
         const code = snap.assets.find((asset) => asset.id === snapshot.quoteAssetId)?.code ?? '计价币种';
         const unit = code === 'CNY' ? '元' : code;
-        const price = `${r.gameCurrencyAmount} ${r.gameCurrencyName || '游戏币'} · 1 ${unit}≈${snapshot.rate} ${r.gameCurrencyName || '游戏币'} · ${cash ? '成交' : '估值'} ${snapshot.valuation} ${unit}`;
+        const price = `${r.gameCurrencyAmount} ${r.gameCurrencyName || '游戏币'} · 成交 1 ${unit}≈${snapshot.rate} ${r.gameCurrencyName || '游戏币'}${snapshot.netRate ? ` · ${snapshot.netRateLabel} 1 ${unit}≈${snapshot.netRate} ${r.gameCurrencyName || '游戏币'}` : ''} · ${cash ? '收支' : '估值'} ${snapshot.valuation} ${unit}`;
         return cash ? `${cash} · ${price}` : price;
       })(),
     })),

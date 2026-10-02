@@ -609,22 +609,24 @@ describe('ledger mode forms', () => {
     expect(accounts.map((option) => option.value)).toEqual(['account-b']);
   });
 
-  it('uses initialized accounts for game cashflows in either onboarding path', () => {
+  it('requires game cashflow accounts only in account-based ledger modes', () => {
     for (const ledgerMode of ['spending', 'accounts', 'assets'] as const) {
       const deeper = makeSnapshot();
       deeper.setting!.ledgerMode = ledgerMode;
       const deeperForm = gameRecordForm(deeper);
       const account = deeperForm.fields.find((field) => field.key === 'settlementAccountId')!;
-      expect(account.required).toBe(true);
-      expect(account.visibleWhen?.({ recordType: 'withdraw', settlementAssetId: deeper.ids.gbp, settlementAmount: '10', settlementCashflowMode: 'create_transaction' })).toBe(true);
-      expect(deeperForm.validate?.({
+      const usesAccounts = ledgerMode !== 'spending';
+      expect(account.required).toBe(usesAccounts);
+      expect(account.visibleWhen?.({ recordType: 'withdraw', settlementAssetId: deeper.ids.gbp, settlementAmount: '10', settlementCashflowMode: 'create_transaction' })).toBe(usesAccounts);
+      const errors = deeperForm.validate?.({
         gameId: deeper.ids.game,
         recordType: 'withdraw',
         settlementAssetId: deeper.ids.gbp,
         settlementAmount: '10',
         settlementCashflowMode: 'create_transaction',
         settlementCategoryId: 'income-leaf',
-      })).toMatchObject({ settlementAccountId: '请选择结算账户' });
+      });
+      expect(errors).toEqual(usesAccounts ? { settlementAccountId: '请选择结算账户' } : undefined);
     }
   });
 });

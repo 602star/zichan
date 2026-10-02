@@ -397,6 +397,7 @@ export interface GameRecord extends BaseEntity {
   gameCurrencyName?: string;
   gameCurrencyAmount?: string; // reference only, not stock-checked (§3.3)
   gameCurrencyFeeAmount?: string; // optional in-game fee; deducted from reference balance, never a cash expense
+  sellCurrencyFeeMode?: 'included' | 'extra'; // sell-only: fee within gross sold quantity or additionally debited
   settlementAssetId?: string;
   settlementAmount?: string; // magnitude; direction from recordType
   feeAssetId?: string;

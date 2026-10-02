@@ -274,6 +274,25 @@ describe('P2 business compensation commands', () => {
     }
   });
 
+  it('saves a paid game currency purchase without an account in spending mode', async () => {
+    const store = await openLedger();
+    try {
+      const asset = await store.assets.put({ ...base(), code: 'CNY', name: '人民币', type: 'fiat', decimals: 2, symbol: '¥', isActive: true } satisfies Asset);
+      await store.settings.put({ ...base(), ledgerMode: 'spending', baseCurrencyAssetId: asset.id } satisfies Setting);
+      const parent = await store.categories.put({ ...base(), name: '娱乐', type: 'expense', isActive: true } satisfies Category);
+      const category = await store.categories.put({ ...base(), name: '游戏', type: 'expense', parentId: parent.id, isActive: true } satisfies Category);
+      const game = await store.games.put({ ...base(), name: '无账户游戏', enableSeason: false, isActive: true });
+      expect(await store.accounts.count()).toBe(0);
+      const saved = await saveGameRecordAggregate(store, {
+        record: { ...base(), gameId: game.id, date: '2026-10-02', recordType: 'buy_currency', gameCurrencyName: '通货', gameCurrencyAmount: '1000', gameCurrencyFeeAmount: '100', settlementAssetId: asset.id, settlementAmount: '20' },
+        settlement: { mode: 'create_transaction', createTransaction: { categoryId: category.id } },
+        fee: { mode: 'record_only' },
+      });
+      expect(saved.settlementTransaction).toMatchObject({ type: 'expense', amount: '20', accountId: undefined });
+      expect(await store.accounts.count()).toBe(0);
+    } finally { await store.close(); }
+  });
+
   it('stores a game-currency fee without creating a cash fee transaction', async () => {
     const store = await openLedger();
     try {

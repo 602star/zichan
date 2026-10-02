@@ -183,6 +183,8 @@ export type TransactionFormValue = Transaction & {
 };
 export type GameRecordFormValue = GameRecord & {
   itemTradeMode?: 'game_currency' | 'cash';
+  gameCurrencyChoice?: string;
+  priceKnowledge?: 'known' | 'unknown';
   settlementCashflowMode?: GameCashflowMode;
   settlementTransactionId?: string;
   settlementCategoryId?: string;
@@ -951,6 +953,7 @@ const GAME_CURRENCY_TYPES = new Set(['buy_currency', 'sell_currency', 'produce',
 const GAME_ITEM_BUY_TYPES = new Set(['buy_equipment', 'buy_material']);
 const GAME_ITEM_SALE_TYPES = new Set(['sell_equipment', 'sell_material']);
 const GAME_ITEM_TRADE_TYPES = new Set([...GAME_ITEM_BUY_TYPES, ...GAME_ITEM_SALE_TYPES]);
+const NEW_GAME_CURRENCY = '__new_game_currency__';
 const gameUsesCurrency = (v: Record<string, string>) => GAME_CURRENCY_TYPES.has(v.recordType ?? '')
   || (GAME_ITEM_TRADE_TYPES.has(v.recordType ?? '') && v.itemTradeMode !== 'cash');
 const gameHasSettlement = (v: Record<string, string>) => (GAME_EXPENSE_TYPES.has(v.recordType ?? '') || GAME_INCOME_TYPES.has(v.recordType ?? ''))
@@ -963,6 +966,8 @@ const gameCanPrice = (v: Record<string, string>) => ['buy_currency', 'sell_curre
   || (GAME_ITEM_TRADE_TYPES.has(v.recordType ?? '') && v.itemTradeMode !== 'cash');
 const gameUsesManualRate = (v: Record<string, string>) => gameCanPrice(v)
   && !(['buy_currency', 'sell_currency'].includes(v.recordType ?? '') && gameHasSettlementMoney(v));
+const gameCurrencyNameOf = (v: Record<string, string>) => v.gameCurrencyChoice && v.gameCurrencyChoice !== NEW_GAME_CURRENCY
+  ? v.gameCurrencyChoice : v.gameCurrencyName?.trim() || '';
 const gameDraftRateSummary = (v: Record<string, string>, snap: Snapshot): string | undefined => {
   try {
     const quantity = D(v.gameCurrencyAmount || 0);
@@ -975,9 +980,18 @@ const gameDraftRateSummary = (v: Record<string, string>, snap: Snapshot): string
     if (!rate.gt(0) || !assetId) return undefined;
     const code = snap.assets.find((asset) => asset.id === assetId)?.code ?? '计价币种';
     const unit = code === 'CNY' ? '元' : code;
-    const currency = v.gameCurrencyName || '游戏币';
+    const currency = gameCurrencyNameOf(v) || '游戏币';
     const value = derived ? settlement : quantity.div(rate);
-    return `当时汇率：1 ${unit} ≈ ${rate.toString()} ${currency}；本次 ${value.toString()} ${unit}${derived ? '（按实际收支自动计算）' : '（估值，不产生现实流水）'}。`;
+    const fee = D(v.gameCurrencyFeeAmount || 0);
+    const netQuantity = v.recordType === 'buy_currency' || (v.recordType === 'sell_currency' && v.sellCurrencyFeeMode === 'included')
+      ? quantity.minus(fee) : quantity.plus(fee);
+    const netLabel = v.recordType === 'buy_currency' ? '到账汇率'
+      : v.sellCurrencyFeeMode === 'included' ? '扣费后兑换汇率' : '实际扣币汇率';
+    const net = derived && fee.gt(0) && netQuantity.gt(0) ? `；${netLabel}：1 ${unit} ≈ ${netQuantity.div(settlement).toString()} ${currency}` : '';
+    const feeExplanation = v.recordType === 'sell_currency' && fee.gt(0)
+      ? v.sellCurrencyFeeMode === 'included' ? '；手续费包含在卖出数量内' : '；手续费另从余额扣除'
+      : '';
+    return `成交汇率：1 ${unit} ≈ ${rate.toString()} ${currency}${net}${feeExplanation}；本次 ${value.toString()} ${unit}${derived ? '（按实际收支自动计算）' : '（估值，不产生现实流水）'}。`;
   } catch { return undefined; }
 };
 const gameSettlementCategory = (recordType?: string) => GAME_INCOME_TYPES.has(recordType ?? '')
@@ -1026,7 +1040,16 @@ function gameCashflowFormValues(snap: Snapshot, record: GameRecord, role: GameCa
 
 export function gameRecordForm(snap: Snapshot, context: { gameId?: string; seasonId?: string; gameAccountId?: string } = {}): EntityFormSpec<GameRecordFormValue> {
   const asOf = currentDate();
-  const usesAccounts = true;
+  const usesAccounts = (snap.setting?.ledgerMode ?? 'spending') !== 'spending';
+  const currencyNames = (gameId?: string) => {
+    const names = new Map<string, string>();
+    for (const record of snap.gameRecords.filter((row) => !row.isDeleted && row.gameId === gameId)) {
+      const name = record.gameCurrencyName?.trim().normalize('NFKC');
+      if (name && !names.has(name.toLocaleLowerCase())) names.set(name.toLocaleLowerCase(), name);
+    }
+    return [...names.values()].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  };
+  const initialCurrencyChoice = currencyNames(context.gameId)[0] ?? NEW_GAME_CURRENCY;
   return {
     title: '游戏记录',
     draftKey: `game-record:${context.gameId ?? 'any'}:${context.seasonId ?? 'unassigned'}`,
@@ -1054,15 +1077,22 @@ export function gameRecordForm(snap: Snapshot, context: { gameId?: string; seaso
       return [description, gameDraftRateSummary(values, snap)].filter(Boolean).join(' ') || undefined;
     },
     onFieldChange: (values, key, manual) => {
+      if (key === 'gameId') {
+        const choice = currencyNames(values.gameId)[0] ?? NEW_GAME_CURRENCY;
+        return { ...values, gameCurrencyChoice: choice, gameCurrencyName: choice === NEW_GAME_CURRENCY ? '' : choice };
+      }
+      if (key === 'gameCurrencyChoice') return { ...values, gameCurrencyName: values.gameCurrencyChoice === NEW_GAME_CURRENCY ? '' : values.gameCurrencyChoice ?? '' };
+      if (key === 'priceKnowledge') return values.priceKnowledge === 'unknown'
+        ? { ...values, manualRate: '', rateAssetId: '' } : values;
       if (key === 'itemTradeMode') {
         return values.itemTradeMode === 'cash'
-          ? { ...values, gameCurrencyName: '', gameCurrencyAmount: '', gameCurrencyFeeAmount: '', manualRate: '', rateAssetId: '' }
+          ? { ...values, gameCurrencyName: '', gameCurrencyAmount: '', gameCurrencyFeeAmount: '', manualRate: '', rateAssetId: '', priceKnowledge: 'known' }
           : { ...values, settlementAssetId: '', settlementAmount: '', settlementTransactionId: '' };
       }
       if (key !== 'recordType') return values;
       let next = values;
       if (!gameUsesCurrency(values)) {
-        next = { ...next, gameCurrencyName: '', gameCurrencyAmount: '', gameCurrencyFeeAmount: '', manualRate: '', rateAssetId: '' };
+        next = { ...next, gameCurrencyName: '', gameCurrencyAmount: '', gameCurrencyFeeAmount: '', manualRate: '', rateAssetId: '', priceKnowledge: 'known' };
       }
       if (!gameHasSettlement(values)) {
         next = { ...next, settlementAssetId: '', settlementAmount: '', settlementTransactionId: '' };
@@ -1070,6 +1100,7 @@ export function gameRecordForm(snap: Snapshot, context: { gameId?: string; seaso
       if (values.recordType === 'fee') {
         next = { ...next, feeAssetId: '', feeAmount: '', feeTransactionId: '' };
       }
+      if (values.recordType !== 'sell_currency') next = { ...next, sellCurrencyFeeMode: '' };
       const options = categoryOptions(snap.categories, GAME_INCOME_TYPES.has(values.recordType ?? '') ? 'income' : 'expense', { leafOnly: true, includeHidden: true });
       const current = next.settlementCategoryId;
       if (manual.has('settlementCategoryId') && options.some((option) => option.value === current)) return next;
@@ -1083,11 +1114,21 @@ export function gameRecordForm(snap: Snapshot, context: { gameId?: string; seaso
       { key: 'seasonId', defaultValue: context.seasonId, resetWhen: ['gameId'], hint: '留空的记录可在“未分配赛季”中查看和补归属。', label: '赛季', type: 'select', half: true, options: (v) => seasonOpts(snap, v.gameId), allowEmpty: true },
       { key: 'gameAccountId', defaultValue: context.gameAccountId, resetWhen: ['gameId'], label: '账号（可选）', type: 'select', half: true, options: (v) => gameAccountOpts(snap, v.gameId), allowEmpty: true },
       { key: 'itemTradeMode', label: '装备／材料交易方式', type: 'select', half: true, defaultValue: 'game_currency', options: (v) => [{ value: 'game_currency', label: GAME_ITEM_BUY_TYPES.has(v.recordType ?? '') ? '使用游戏通货' : '获得游戏通货' }, { value: 'cash', label: GAME_ITEM_BUY_TYPES.has(v.recordType ?? '') ? '直接付款' : '直接收款' }], visibleWhen: (v) => GAME_ITEM_TRADE_TYPES.has(v.recordType ?? '') },
-      { key: 'gameCurrencyName', label: '游戏币名称', type: 'text', half: true, placeholder: '初火', visibleWhen: (v) => gameUsesCurrency(v) || !!v.gameCurrencyName || !!v.gameCurrencyAmount },
-      { key: 'gameCurrencyAmount', label: '游戏币数量', type: 'number', half: true, visibleWhen: (v) => gameUsesCurrency(v) || !!v.gameCurrencyName || !!v.gameCurrencyAmount },
-      { key: 'gameCurrencyFeeAmount', label: '游戏币手续费（可选）', type: 'number', half: true, hint: '从游戏币参考余额额外扣除，不产生现实资金流水。例：买入 1000、手续费 100，到账 900。', visibleWhen: (v) => gameUsesCurrency(v) || !!v.gameCurrencyFeeAmount },
-      { key: 'manualRate', label: '当时汇率：1 计价币种可换游戏币', type: 'number', half: true, hint: '例如 1 元＝2 通货、100 通货估值 50 元。估值不产生现实资金流水。', visibleWhen: (v) => gameUsesManualRate(v) || !!v.manualRate },
-      { key: 'rateAssetId', label: '汇率计价币种', type: 'select', half: true, allowEmpty: true, defaultValue: moduleCurrencyId(snap.setting, 'game') || settlementOpts(snap)[0]?.value, options: settlementOpts(snap, moduleCurrencyId(snap.setting, 'game')), visibleWhen: (v) => gameUsesManualRate(v) || !!v.manualRate },
+      { key: 'gameCurrencyChoice', label: '游戏币名称', type: 'select', half: true, defaultValue: initialCurrencyChoice,
+        options: (v) => [...currencyNames(v.gameId).map((name) => ({ value: name, label: name })), { value: NEW_GAME_CURRENCY, label: '+ 新增游戏币名称' }],
+        visibleWhen: gameUsesCurrency, required: true },
+      { key: 'gameCurrencyName', label: '新游戏币名称', type: 'text', half: true, placeholder: '例如：初火', required: true,
+        visibleWhen: (v) => gameUsesCurrency(v) && (!v.gameCurrencyChoice || v.gameCurrencyChoice === NEW_GAME_CURRENCY) },
+      { key: 'gameCurrencyAmount', label: '游戏币数量', type: 'number', half: true, required: true, visibleWhen: gameUsesCurrency },
+      { key: 'gameCurrencyFeeAmount', label: '游戏币手续费（可选）', type: 'number', half: true, hint: '买币时从到账数量扣除；卖币时选择包含在卖出数量中或额外扣除。不产生现实资金流水。', visibleWhen: (v) => gameUsesCurrency(v) || !!v.gameCurrencyFeeAmount },
+      { key: 'sellCurrencyFeeMode', label: '卖币手续费扣除方式', type: 'select', half: true, defaultValue: 'included',
+        options: [{ value: 'included', label: '包含在卖出数量中' }, { value: 'extra', label: '额外从游戏币余额扣除' }],
+        visibleWhen: (v) => v.recordType === 'sell_currency' && !!v.gameCurrencyFeeAmount },
+      { key: 'priceKnowledge', label: '历史价格', type: 'select', half: true, defaultValue: 'known',
+        options: [{ value: 'known', label: '填写当时汇率' }, { value: 'unknown', label: '仅补记数量，价格未知' }],
+        visibleWhen: gameUsesManualRate },
+      { key: 'manualRate', label: '当时汇率：1 计价币种可换游戏币', type: 'number', half: true, required: true, hint: '例如 1 元＝2 通货、100 通货估值 50 元。估值不产生现实资金流水。', visibleWhen: (v) => gameUsesManualRate(v) && v.priceKnowledge !== 'unknown' },
+      { key: 'rateAssetId', label: '汇率计价币种', type: 'select', half: true, required: true, allowEmpty: true, defaultValue: moduleCurrencyId(snap.setting, 'game') || settlementOpts(snap)[0]?.value, options: settlementOpts(snap, moduleCurrencyId(snap.setting, 'game')), visibleWhen: (v) => gameUsesManualRate(v) && v.priceKnowledge !== 'unknown' },
       { key: 'settlementAssetId', label: '实际收支币种', type: 'select', half: true, allowEmpty: true, options: settlementOpts(snap, moduleCurrencyId(snap.setting, 'game')), visibleWhen: gameShowsSettlement },
       { key: 'settlementAmount', label: '实际收支金额', type: 'number', half: true, visibleWhen: gameShowsSettlement },
       { key: 'settlementCashflowMode', label: '收支资金处理', type: 'select', half: true, options: GAME_CASHFLOW_MODES, defaultValue: 'create_transaction', visibleWhen: (v) => gameShowsSettlement(v) && gameHasSettlementMoney(v) },
@@ -1137,7 +1178,10 @@ export function gameRecordForm(snap: Snapshot, context: { gameId?: string; seaso
         date: record.date, recordType: record.recordType, gameId: record.gameId,
         seasonId: record.seasonId ?? '', gameAccountId: record.gameAccountId ?? '',
         itemTradeMode: GAME_ITEM_TRADE_TYPES.has(record.recordType) && record.settlementAmount && !record.gameCurrencyAmount ? 'cash' : 'game_currency',
+        gameCurrencyChoice: currencyNames(record.gameId).find((name) => name.toLocaleLowerCase() === record.gameCurrencyName?.trim().normalize('NFKC').toLocaleLowerCase()) ?? NEW_GAME_CURRENCY,
         gameCurrencyName: record.gameCurrencyName ?? '', gameCurrencyAmount: record.gameCurrencyAmount ?? '', gameCurrencyFeeAmount: record.gameCurrencyFeeAmount ?? '',
+        sellCurrencyFeeMode: record.sellCurrencyFeeMode ?? (record.recordType === 'sell_currency' && record.gameCurrencyFeeAmount ? 'extra' : 'included'),
+        priceKnowledge: record.manualRate || (record.settlementAmount && record.gameCurrencyAmount) ? 'known' : 'unknown',
         manualRate: record.manualRate ?? '', rateAssetId: record.rateAssetId ?? '',
         settlementAssetId: record.settlementAssetId ?? '', settlementAmount: record.settlementAmount ?? '',
         settlementCashflowMode: record.settlementCashflowMode ?? settlement.mode,
@@ -1158,11 +1202,13 @@ export function gameRecordForm(snap: Snapshot, context: { gameId?: string; seaso
     },
     fromValues: (v, e) => ({
       ...base(e), date: v.date, recordType: v.recordType as GameRecord['recordType'], gameId: v.gameId,
-      seasonId: v.seasonId || '', gameAccountId: v.gameAccountId || '', gameCurrencyName: S(v.gameCurrencyName),
+      seasonId: v.seasonId || '', gameAccountId: v.gameAccountId || '', gameCurrencyName: gameUsesCurrency(v) ? S(gameCurrencyNameOf(v).normalize('NFKC')) : undefined,
       gameCurrencyAmount: S(v.gameCurrencyAmount), gameCurrencyFeeAmount: S(v.gameCurrencyFeeAmount), settlementAssetId: S(v.settlementAssetId), settlementAmount: S(v.settlementAmount),
-      manualRate: gameUsesManualRate(v) ? S(v.manualRate) : gameCanPrice(v) && v.gameCurrencyAmount && v.settlementAmount
+      sellCurrencyFeeMode: v.recordType === 'sell_currency' && v.gameCurrencyFeeAmount
+        ? (v.sellCurrencyFeeMode as GameRecord['sellCurrencyFeeMode']) || 'included' : undefined,
+      manualRate: gameUsesManualRate(v) ? v.priceKnowledge === 'unknown' ? undefined : S(v.manualRate) : gameCanPrice(v) && v.gameCurrencyAmount && v.settlementAmount
         ? D(v.gameCurrencyAmount).div(D(v.settlementAmount)).toString() : undefined,
-      rateAssetId: gameUsesManualRate(v) && v.manualRate ? S(v.rateAssetId) : gameCanPrice(v) && v.gameCurrencyAmount && v.settlementAmount
+      rateAssetId: gameUsesManualRate(v) && v.priceKnowledge !== 'unknown' && v.manualRate ? S(v.rateAssetId) : gameCanPrice(v) && v.gameCurrencyAmount && v.settlementAmount
         ? S(v.settlementAssetId) : undefined,
       settlementCashflowMode: (v.settlementCashflowMode as GameCashflowMode) || 'record_only',
       settlementTransactionId: S(v.settlementTransactionId), settlementCategoryId: S(v.settlementCategoryId),
@@ -1172,17 +1218,40 @@ export function gameRecordForm(snap: Snapshot, context: { gameId?: string; seaso
       feeTransactionId: S(v.feeTransactionId), feeCategoryId: S(v.feeCategoryId),
       feeAccountId: S(v.feeAccountId), feeMerchant: S(v.feeMerchant), feePayeeId: S(v.feePayeeId), note: S(v.note),
       itemTradeMode: v.itemTradeMode as GameRecordFormValue['itemTradeMode'],
+      gameCurrencyChoice: v.gameCurrencyChoice,
+      priceKnowledge: v.priceKnowledge as GameRecordFormValue['priceKnowledge'],
     }) as GameRecordFormValue,
     validate: (v) => {
       const season = v.seasonId ? snap.seasons.find((row) => row.id === v.seasonId) : undefined;
       const account = v.gameAccountId ? snap.gameAccounts.find((row) => row.id === v.gameAccountId) : undefined;
       if (season && season.gameId !== v.gameId) return { seasonId: '赛季不属于所选游戏' } as Record<string, string>;
       if (account && account.gameId !== v.gameId) return { gameAccountId: '账号不属于所选游戏' } as Record<string, string>;
+      if (gameUsesCurrency(v)) {
+        if (!v.gameCurrencyChoice && !v.gameCurrencyName) return { gameCurrencyChoice: '请选择游戏币名称' };
+        if (v.gameCurrencyChoice && v.gameCurrencyChoice !== NEW_GAME_CURRENCY && !currencyNames(v.gameId).includes(v.gameCurrencyChoice)) return { gameCurrencyChoice: '所选游戏币不属于当前游戏' };
+        const currencyName = gameCurrencyNameOf(v);
+        if (!currencyName) return { gameCurrencyName: '请输入游戏币名称' };
+        if (v.gameCurrencyChoice === NEW_GAME_CURRENCY && currencyNames(v.gameId).some((name) => name.toLocaleLowerCase() === currencyName.normalize('NFKC').toLocaleLowerCase())) return { gameCurrencyName: '已有同名游戏币，请从列表中选择' };
+        if (!v.gameCurrencyAmount) return { gameCurrencyAmount: '请输入游戏币数量' };
+      }
       if (v.gameCurrencyAmount && !D(v.gameCurrencyAmount).gt(0)) return { gameCurrencyAmount: '游戏币数量必须大于 0' };
       if (v.gameCurrencyFeeAmount && !D(v.gameCurrencyFeeAmount).gt(0)) return { gameCurrencyFeeAmount: '游戏币手续费必须大于 0' };
+      if (v.gameCurrencyFeeAmount && v.gameCurrencyAmount && (v.recordType === 'buy_currency' || (v.recordType === 'sell_currency' && v.sellCurrencyFeeMode === 'included')) && D(v.gameCurrencyFeeAmount).gte(v.gameCurrencyAmount)) return { gameCurrencyFeeAmount: '游戏币手续费必须小于交易数量' };
       if (v.settlementAmount && !D(v.settlementAmount).gt(0)) return { settlementAmount: '实际收支金额必须大于 0' };
-      if (gameUsesManualRate(v) && v.manualRate && !D(v.manualRate).gt(0)) return { manualRate: '当时汇率必须大于 0' };
-      if (gameUsesManualRate(v) && v.manualRate && !v.rateAssetId) return { rateAssetId: '请选择汇率计价币种' };
+      if (gameHasSettlement(v) && !!v.settlementAssetId !== !!v.settlementAmount) {
+        return v.settlementAssetId ? { settlementAmount: '请输入实际收支金额' } : { settlementAssetId: '请选择实际收支币种' };
+      }
+      if (GAME_ITEM_TRADE_TYPES.has(v.recordType ?? '') && v.itemTradeMode === 'cash') {
+        if (!v.settlementAssetId) return { settlementAssetId: '请选择实际收支币种' };
+        if (!v.settlementAmount) return { settlementAmount: '请输入实际收支金额' };
+      }
+      if (gameUsesManualRate(v) && v.priceKnowledge !== 'unknown') {
+        if (!v.manualRate || !D(v.manualRate).gt(0)) return { manualRate: '当时汇率必须大于 0；价格未知时请选择“仅补记数量”' };
+        if (!v.rateAssetId) return { rateAssetId: '请选择汇率计价币种' };
+      }
+      if (!!v.feeAssetId !== !!v.feeAmount) {
+        return v.feeAssetId ? { feeAmount: '请输入现实手续费金额' } : { feeAssetId: '请选择现实手续费币种' };
+      }
       const settlementHasMoney = !!v.settlementAssetId && D(v.settlementAmount || 0).gt(0);
       if (settlementHasMoney && v.settlementCashflowMode === 'linked_transaction' && !v.settlementTransactionId) return { settlementTransactionId: '请选择已有流水' };
       if (settlementHasMoney && v.settlementCashflowMode === 'create_transaction') {

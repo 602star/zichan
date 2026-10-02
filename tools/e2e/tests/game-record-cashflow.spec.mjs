@@ -14,8 +14,9 @@ test('game season saves an optional in-game fee and a paid record without a cash
 
   await page.getByRole('button', { name: '+ 记录', exact: true }).click();
   let form = page.getByRole('dialog', { name: '新增 · 游戏记录', exact: true });
-  await form.getByLabel('游戏币名称').fill('通货');
+  await form.getByLabel('新游戏币名称').fill('通货');
   await form.getByLabel('游戏币数量').fill('1000');
+  await form.getByLabel('历史价格').selectOption('unknown');
   await form.getByLabel('游戏币手续费（可选）').fill('0');
   await form.getByLabel('备注', { exact: true }).fill('到账900通货');
   await expect(form.getByLabel('手续费账户')).toHaveCount(0);
@@ -29,16 +30,16 @@ test('game season saves an optional in-game fee and a paid record without a cash
 
   await page.getByRole('button', { name: '+ 记录', exact: true }).click();
   form = page.getByRole('dialog', { name: '新增 · 游戏记录', exact: true });
-  await form.getByLabel('游戏币名称').fill('通货');
+  await form.getByLabel('游戏币名称').selectOption('通货');
   await form.getByLabel('游戏币数量').fill('1000');
   await form.getByLabel('游戏币手续费（可选）').fill('100');
   const currency = form.getByLabel('实际收支币种');
   const assetId = await currency.locator('option').nth(1).getAttribute('value');
   await currency.selectOption(assetId);
   await form.getByLabel('实际收支金额').fill('20');
-  await expect(form.getByRole('status')).toContainText('当时汇率：1 元 ≈ 50 通货');
+  await expect(form.getByRole('status')).toContainText('成交汇率：1 元 ≈ 50 通货；到账汇率：1 元 ≈ 45 通货');
   await expect(form.getByLabel('收支资金处理')).toHaveValue('create_transaction');
-  await expect(form.getByLabel('结算账户')).toBeVisible();
+  await expect(form.getByLabel('结算账户')).toHaveCount(0);
   await expect(form.getByLabel('手续费账户')).toHaveCount(0);
   await form.getByLabel('备注', { exact: true }).fill('付20元到账900通货');
   await form.getByRole('button', { name: '保存', exact: true }).click();
@@ -52,7 +53,7 @@ test('game season saves an optional in-game fee and a paid record without a cash
     await page.getByRole('button', { name: '+ 记录', exact: true }).click();
     form = page.getByRole('dialog', { name: '新增 · 游戏记录', exact: true });
     await form.getByLabel('记录类型').selectOption(recordType);
-    await form.getByLabel('游戏币名称').fill('通货');
+    await form.getByLabel('游戏币名称').selectOption('通货');
     await form.getByLabel('游戏币数量').fill(quantity);
     await form.getByLabel('当时汇率：1 计价币种可换游戏币').fill(rate);
     await form.getByLabel('汇率计价币种').selectOption(assetId);

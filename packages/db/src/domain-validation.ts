@@ -1053,6 +1053,14 @@ async function validateReferenceEntity(
       if (row['gameCurrencyFeeAmount'] && !decimal(row['gameCurrencyFeeAmount'], '游戏币手续费', 'gameCurrencyFeeAmount').gt(0)) {
         fail('游戏币手续费必须大于 0', 'gameCurrencyFeeAmount');
       }
+      if (row['sellCurrencyFeeMode'] && !['included', 'extra'].includes(String(row['sellCurrencyFeeMode']))) {
+        fail('卖币手续费扣除方式无效', 'sellCurrencyFeeMode');
+      }
+      if (row['gameCurrencyFeeAmount'] && row['gameCurrencyAmount']
+        && (row['recordType'] === 'buy_currency' || (row['recordType'] === 'sell_currency' && row['sellCurrencyFeeMode'] === 'included'))
+        && decimal(row['gameCurrencyFeeAmount'], '游戏币手续费', 'gameCurrencyFeeAmount').gte(decimal(row['gameCurrencyAmount'], '游戏币数量', 'gameCurrencyAmount'))) {
+        fail('游戏币手续费必须小于交易数量', 'gameCurrencyFeeAmount');
+      }
       break;
     }
     case 'game_cashflow_link':

@@ -87,7 +87,7 @@ describe('buildGameSeason', () => {
     expect(converted.net).toBe(35);
     expect(converted.records[0]!.amt).toBe(35);
     expect(converted.records[0]!.nativeAmount).toBe('$50.00');
-    expect(converted.refCurrencyLabel).toBe('金币');
+    expect(converted.currencyBalances).toEqual([]);
     expect(converted.missingRateAssetCodes).toEqual([]);
 
     s.priceMarks = s.priceMarks.filter((row) => row.assetId !== usd.id);
@@ -99,6 +99,40 @@ describe('buildGameSeason', () => {
 
 
 describe('game record ownership', () => {
+  it('requires paired quantities and prices while allowing an explicit unknown-price backfill', () => {
+    const snap = makeSnapshot();
+    snap.gameRecords[0]!.gameCurrencyName = '通货';
+    const form = gameRecordForm(snap, { gameId: snap.ids.game });
+    const choice = form.fields.find((field) => field.key === 'gameCurrencyChoice')!;
+    const options = typeof choice.options === 'function' ? choice.options({ gameId: snap.ids.game }) : choice.options;
+    expect(options?.map((option) => option.value)).toContain('通货');
+    const item = { recordType: 'buy_equipment', itemTradeMode: 'game_currency', gameId: snap.ids.game, gameCurrencyChoice: '通货', gameCurrencyAmount: '100', priceKnowledge: 'known', rateAssetId: snap.ids.gbp };
+    expect(form.validate?.(item)).toEqual({ manualRate: expect.stringContaining('必须大于 0') });
+    expect(form.validate?.({ ...item, priceKnowledge: 'unknown' })).toBeUndefined();
+    expect(form.validate?.({ ...item, manualRate: '2' })).toBeUndefined();
+    expect(form.validate?.({ ...item, gameCurrencyAmount: '' })).toEqual({ gameCurrencyAmount: '请输入游戏币数量' });
+    expect(form.validate?.({ ...item, itemTradeMode: 'cash', settlementAssetId: '', settlementAmount: '' })).toEqual({ settlementAssetId: '请选择实际收支币种' });
+    expect(form.validate?.({ ...item, itemTradeMode: 'cash', settlementAssetId: snap.ids.gbp, settlementAmount: '' })).toEqual({ settlementAmount: '请输入实际收支金额' });
+    const currency = { recordType: 'buy_currency', gameId: snap.ids.game, gameCurrencyChoice: '通货', gameCurrencyAmount: '100', priceKnowledge: 'unknown' };
+    expect(form.validate?.({ ...currency, settlementAssetId: snap.ids.gbp })).toEqual({ settlementAmount: '请输入实际收支金额' });
+    expect(form.validate?.({ ...currency, settlementAmount: '20' })).toEqual({ settlementAssetId: '请选择实际收支币种' });
+    expect(form.validate?.({ ...currency, feeAmount: '1' })).toEqual({ feeAssetId: '请选择现实手续费币种' });
+    expect(form.validate?.({ ...currency, feeAssetId: snap.ids.gbp })).toEqual({ feeAmount: '请输入现实手续费金额' });
+  });
+
+  it('shows separate reference balances for different game currency names', () => {
+    const s = makeSnapshot();
+    const base = s.gameRecords[0]!;
+    s.gameRecords = [
+      { ...base, id: 'first', recordType: 'buy_currency', gameCurrencyName: '通货', gameCurrencyAmount: '100', settlementAmount: undefined, settlementAssetId: undefined },
+      { ...base, id: 'second', recordType: 'buy_currency', gameCurrencyName: '金币', gameCurrencyAmount: '20', settlementAmount: undefined, settlementAssetId: undefined },
+    ];
+    expect(buildGameSeason(s, s.ids.game, null)?.currencyBalances).toEqual([
+      { currencyName: '金币', balance: '20' },
+      { currencyName: '通货', balance: '100' },
+    ]);
+  });
+
   it('shows fields that belong to the selected record type and clears incompatible draft values', () => {
     const snap = makeSnapshot();
     snap.gameCashflowLinks = [];
@@ -131,7 +165,7 @@ describe('game record ownership', () => {
       recordType: 'fee', feeAssetId: 'gbp', feeAmount: '2', feeTransactionId: 'tx',
     }, 'recordType', new Set(['recordType']));
     expect(standaloneFee).toMatchObject({ feeAssetId: '', feeAmount: '', feeTransactionId: '' });
-    expect(visible('gameCurrencyAmount', { recordType: 'boosting_cost', gameCurrencyAmount: '100' })).toBe(true);
+    expect(visible('gameCurrencyAmount', { recordType: 'boosting_cost', gameCurrencyAmount: '100' })).toBe(false);
     const cashSale = form.onFieldChange?.({ recordType: 'sell_equipment', itemTradeMode: 'cash', gameCurrencyAmount: '500' }, 'itemTradeMode', new Set(['itemTradeMode']));
     expect(cashSale?.gameCurrencyAmount).toBe('');
     const currencySale = form.onFieldChange?.({ recordType: 'sell_equipment', itemTradeMode: 'game_currency', settlementAmount: '20' }, 'itemTradeMode', new Set(['itemTradeMode']));
@@ -142,7 +176,7 @@ describe('game record ownership', () => {
     expect(directBuy.itemTradeMode).toBe('cash');
     const currencyFee = form.fromValues({ ...form.toValues(snap.gameRecords[0]!), gameCurrencyFeeAmount: '100' });
     expect(currencyFee.gameCurrencyFeeAmount).toBe('100');
-    const pricedEquipment = form.fromValues({ ...form.toValues(snap.gameRecords[0]!), recordType: 'buy_equipment', itemTradeMode: 'game_currency', gameCurrencyAmount: '100', manualRate: '2', rateAssetId: snap.ids.gbp, settlementAmount: '', settlementAssetId: '' });
+    const pricedEquipment = form.fromValues({ ...form.toValues(snap.gameRecords[0]!), recordType: 'buy_equipment', itemTradeMode: 'game_currency', priceKnowledge: 'known', gameCurrencyAmount: '100', manualRate: '2', rateAssetId: snap.ids.gbp, settlementAmount: '', settlementAssetId: '' });
     expect(pricedEquipment).toMatchObject({ manualRate: '2', rateAssetId: snap.ids.gbp });
     expect(form.toValues(pricedEquipment)).toMatchObject({ manualRate: '2', rateAssetId: snap.ids.gbp });
     expect(visible('manualRate', { recordType: 'buy_equipment', itemTradeMode: 'game_currency' })).toBe(true);
@@ -150,8 +184,8 @@ describe('game record ownership', () => {
     const pricedCurrency = form.fromValues({ ...form.toValues(snap.gameRecords[0]!), recordType: 'buy_currency', gameCurrencyAmount: '100', settlementAmount: '50', settlementAssetId: snap.ids.gbp });
     expect(pricedCurrency).toMatchObject({ manualRate: '2', rateAssetId: snap.ids.gbp });
     expect(form.summary?.({ recordType: 'buy_currency', gameCurrencyName: '通货', gameCurrencyAmount: '100', settlementAmount: '50', settlementAssetId: snap.ids.gbp })).toContain('1 GBP ≈ 2 通货');
-    expect(form.validate?.({ recordType: 'buy_currency', gameCurrencyAmount: '0', settlementAmount: '50', settlementAssetId: snap.ids.gbp })).toEqual({ gameCurrencyAmount: '游戏币数量必须大于 0' });
-    expect(form.validate?.({ recordType: 'buy_equipment', itemTradeMode: 'game_currency', gameCurrencyAmount: '100', manualRate: '0', rateAssetId: snap.ids.gbp })).toEqual({ manualRate: '当时汇率必须大于 0' });
+    expect(form.validate?.({ recordType: 'buy_currency', gameCurrencyChoice: '__new_game_currency__', gameCurrencyName: '通货', gameCurrencyAmount: '0', settlementAmount: '50', settlementAssetId: snap.ids.gbp })).toEqual({ gameCurrencyAmount: '游戏币数量必须大于 0' });
+    expect(form.validate?.({ recordType: 'buy_equipment', itemTradeMode: 'game_currency', gameCurrencyChoice: '__new_game_currency__', gameCurrencyName: '通货', gameCurrencyAmount: '100', manualRate: '0', rateAssetId: snap.ids.gbp })).toEqual({ manualRate: expect.stringContaining('必须大于 0') });
     expect(form.refreshDefaults?.({ saleProceedsMode: 'cash', itemTradeMode: 'game_currency' }, new Set(['saleProceedsMode']))?.itemTradeMode).toBe('cash');
   });
 
@@ -164,8 +198,8 @@ describe('game record ownership', () => {
     ];
     const vm = buildGameSeason(snap, snap.ids.game, null)!;
     expect(vm.records.map((row) => row.nativeAmount)).toEqual([
-      '100 通货 · 1 GBP≈2 通货 · 估值 50 GBP',
-      '10 通货 · 1 GBP≈10 通货 · 估值 1 GBP',
+      '100 通货 · 成交 1 GBP≈2 通货 · 估值 50 GBP',
+      '10 通货 · 成交 1 GBP≈10 通货 · 估值 1 GBP',
     ]);
     expect(vm.net).toBe(0);
   });

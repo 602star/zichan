@@ -161,7 +161,7 @@ export const TABLES = {
     name: 'game_records',
     cols: [
       c('date'), c('gameId'), c('seasonId'), c('gameAccountId'), c('recordType'),
-      c('gameCurrencyName'), c('gameCurrencyAmount'), c('gameCurrencyFeeAmount'), c('settlementAssetId'), c('settlementAmount'),
+      c('gameCurrencyName'), c('gameCurrencyAmount'), c('gameCurrencyFeeAmount'), c('sellCurrencyFeeMode'), c('settlementAssetId'), c('settlementAmount'),
       c('feeAssetId'), c('feeAmount'), c('manualRate'), c('rateAssetId'), c('counterparty'), c('note'),
     ],
     indexes: [
