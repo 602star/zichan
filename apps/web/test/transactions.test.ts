@@ -616,7 +616,7 @@ describe('ledger mode forms', () => {
       const deeperForm = gameRecordForm(deeper);
       const account = deeperForm.fields.find((field) => field.key === 'settlementAccountId')!;
       expect(account.required).toBe(true);
-      expect(account.visibleWhen?.({ settlementCashflowMode: 'create_transaction' })).toBe(true);
+      expect(account.visibleWhen?.({ recordType: 'withdraw', settlementAssetId: deeper.ids.gbp, settlementAmount: '10', settlementCashflowMode: 'create_transaction' })).toBe(true);
       expect(deeperForm.validate?.({
         gameId: deeper.ids.game,
         recordType: 'withdraw',

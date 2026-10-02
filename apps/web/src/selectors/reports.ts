@@ -502,6 +502,7 @@ function chainTable(snap: Snapshot, options: ReportOptions): Table {
   ], rows);
 }
 
+const BUY_TYPES = new Set<GameRecordType>(['buy_currency', 'buy_equipment', 'buy_material']);
 const SELL_TYPES = new Set<GameRecordType>(['sell_currency', 'sell_equipment', 'sell_material']);
 function sumSettlement(report: ReportCurrency, records: GameRecord[], types: Set<GameRecordType> | GameRecordType) {
   const set = types instanceof Set ? types : new Set([types]);
@@ -536,7 +537,7 @@ function seasonTable(snap: Snapshot, options: ReportOptions): Table {
   for (const s of [...snap.seasons].sort((a, b) => (b.startDate ?? '').localeCompare(a.startDate ?? ''))) {
     const recs = snap.gameRecords.filter((r) => r.seasonId === s.id && !r.isDeleted && isDateInRange(r.date, range));
     if ((range.from || range.to) && recs.length === 0) continue;
-    const buy = sumSettlement(report, recs, 'buy_currency');
+    const buy = sumSettlement(report, recs, BUY_TYPES);
     const sell = sumSettlement(report, recs, SELL_TYPES);
     const topup = sumSettlement(report, recs, 'topup');
     const fees = gameFees(report, recs);

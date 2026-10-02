@@ -184,6 +184,7 @@ export {
   seasonSummary,
   seasonActivitySummary,
   seasonDays,
+  gameRecordExchangeRate,
 } from './game.js';
 
 export {

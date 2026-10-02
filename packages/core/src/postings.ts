@@ -80,6 +80,8 @@ const GAME_INCOME_TYPES = new Set([
 ]);
 const GAME_EXPENSE_TYPES = new Set([
   'buy_currency',
+  'buy_equipment',
+  'buy_material',
   'topup',
   'account_cost',
   'boosting_cost',

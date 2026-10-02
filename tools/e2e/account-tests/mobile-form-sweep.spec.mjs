@@ -444,7 +444,7 @@ test(`phone 390x844: a record-keeping pass fills and saves at phone size`, async
     await page.getByRole('button', { name: '+ 记录' }).click();
     const record = page.getByRole('dialog').last();
     await expect(record).toBeVisible();
-    await expect(record.getByLabel('结算币种')).toHaveValue('');
+    await expect(record.getByLabel('实际收支币种')).toHaveValue('');
     await record.getByRole('button', { name: '保存', exact: true }).click();
     await expect(record, '无现金流的游戏记录在手机上也要能存下来').toBeHidden({ timeout: 15_000 });
 

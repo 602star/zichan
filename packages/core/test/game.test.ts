@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { seasonSummary, seasonActivitySummary, seasonDays, round, type GameRecord, type GameSeason } from '../src/index.js';
+import { seasonSummary, seasonActivitySummary, seasonDays, round, gameRecordExchangeRate, type GameRecord, type GameSeason } from '../src/index.js';
 
 // Prototype season S2 · 灰烬余烬 (see 资产记账系统.dc.html SEASONS.s2).
 const s2: GameSeason = {
@@ -64,6 +64,40 @@ describe('seasonSummary — matches prototype S2 numbers', () => {
     expect(round(sum.referenceBalance, 0)).toBe('2200');
   });
 
+  it('counts equipment and material sales as game currency before the currency is sold for cash', () => {
+    const equipment = { ...rec('sell_equipment', '0', '初火', '300'), settlementAssetId: undefined, settlementAmount: undefined };
+    const material = { ...rec('sell_material', '0', '初火', '200'), settlementAssetId: undefined, settlementAmount: undefined };
+    const cashOut = rec('sell_currency', '10', '初火', '500');
+    const result = seasonSummary([equipment, material, cashOut], s2, { asOf: '2026-03-04' });
+    expect(result.referenceBalance).toBe('0');
+    expect(result.incomeBase).toBe('10');
+    expect(result.netBase).toBe('10');
+  });
+
+  it('spends game currency on equipment and material without a second cash expense', () => {
+    const buyCurrency = rec('buy_currency', '20', '初火', '1000');
+    const equipment = { ...rec('buy_equipment', '0', '初火', '600'), settlementAssetId: undefined, settlementAmount: undefined };
+    const material = { ...rec('buy_material', '0', '初火', '150'), settlementAssetId: undefined, settlementAmount: undefined };
+    const result = seasonSummary([buyCurrency, equipment, material], s2, { asOf: '2026-03-04' });
+    expect(result.referenceBalance).toBe('250');
+    expect(result.expenseBase).toBe('20');
+    expect(result.netBase).toBe('-20');
+
+    const directPurchase = rec('buy_equipment', '8');
+    const direct = seasonSummary([directPurchase], s2, { asOf: '2026-03-04' });
+    expect(direct.referenceBalance).toBe('0');
+    expect(direct.expenseBase).toBe('8');
+  });
+
+  it('deducts an optional game-currency fee from received currency without another cash expense', () => {
+    const purchase = { ...rec('buy_currency', '20', '通货', '1000'), gameCurrencyFeeAmount: '100' };
+    const result = seasonSummary([purchase], s2, { asOf: '2026-03-04' });
+    expect(result.referenceBalance).toBe('900');
+    expect(result.expenseBase).toBe('20');
+    expect(result.feeBase).toBe('0');
+    expect(seasonActivitySummary([purchase], s2).referenceBalance).toBe('900');
+  });
+
   it('rejects implicit mixed currencies and selects settlement and fees independently', () => {
     const mixed = [{ ...rec('sell_currency', '100', '初火', '10'), feeAssetId: 'USD', feeAmount: '2' }];
     expect(() => seasonSummary(mixed, s2)).toThrow('多个币种');
@@ -84,5 +118,20 @@ describe('seasonSummary — matches prototype S2 numbers', () => {
     expect(() => seasonSummary([invalid], s2)).toThrow('缺少资产币种');
     expect(seasonSummary([{ ...invalid, isDeleted: true }], s2).incomeBase).toBe('0');
     expect(() => seasonSummary([{ ...rec('produce', '0'), feeAmount: '1' }], s2)).toThrow('缺少资产币种');
+  });
+});
+
+describe('historical game currency exchange rates', () => {
+  it('uses the cash amount for currency trades and each item trade’s own saved rate', () => {
+    const currencyBuy = { ...rec('buy_currency', '50', '通货', '100'), settlementAssetId: 'CNY' };
+    const equipmentBuy = { ...rec('buy_equipment', '0', '通货', '100'), settlementAssetId: undefined, settlementAmount: undefined, manualRate: '2', rateAssetId: 'CNY' };
+    const equipmentSell = { ...rec('sell_equipment', '0', '通货', '10'), settlementAssetId: undefined, settlementAmount: undefined, manualRate: '10', rateAssetId: 'CNY' };
+    expect(gameRecordExchangeRate(currencyBuy)).toEqual({ rate: '2', quoteAssetId: 'CNY', valuation: '50' });
+    expect(gameRecordExchangeRate(equipmentBuy)).toEqual({ rate: '2', quoteAssetId: 'CNY', valuation: '50' });
+    expect(gameRecordExchangeRate(equipmentSell)).toEqual({ rate: '10', quoteAssetId: 'CNY', valuation: '1' });
+    const summary = seasonSummary([currencyBuy, equipmentBuy, equipmentSell], s2, { baseAssetId: 'CNY' });
+    expect(summary.expenseBase).toBe('50');
+    expect(summary.incomeBase).toBe('0');
+    expect(summary.referenceBalance).toBe('10');
   });
 });

@@ -48,7 +48,7 @@ const LOT_STATUSES = new Set(['open', 'closed']);
 const GAME_ACCOUNT_STATUSES = new Set(['active', 'inactive', 'sold', 'banned']);
 const GAME_SEASON_STATUSES = new Set(['upcoming', 'active', 'ended']);
 const GAME_RECORD_TYPES = new Set([
-  'buy_currency', 'sell_currency', 'produce', 'consume', 'sell_equipment', 'sell_material',
+  'buy_currency', 'sell_currency', 'produce', 'consume', 'buy_equipment', 'buy_material', 'sell_equipment', 'sell_material',
   'topup', 'withdraw', 'fee', 'account_cost', 'boosting_cost', 'other_expense', 'other_income',
 ]);
 const FIXED_ASSET_STATUSES = new Set(['active', 'stored', 'sold', 'scrapped', 'retired', 'gifted']);
@@ -1036,13 +1036,23 @@ async function validateReferenceEntity(
       if (row['settlementAssetId']) {
         await activeAsset(driver, String(row['settlementAssetId']), 'settlementAssetId', allowInactiveReferences);
       }
-      if (row['feeAssetId']) {
-        await activeAsset(driver, String(row['feeAssetId']), 'feeAssetId', allowInactiveReferences);
-      }
+        if (row['feeAssetId']) {
+          await activeAsset(driver, String(row['feeAssetId']), 'feeAssetId', allowInactiveReferences);
+        }
+        if (row['rateAssetId']) {
+          await activeAsset(driver, String(row['rateAssetId']), 'rateAssetId', allowInactiveReferences);
+        }
+        if (row['manualRate'] && !decimal(row['manualRate'], '游戏币汇率', 'manualRate').gt(0)) {
+          fail('游戏币汇率必须大于 0', 'manualRate');
+        }
+        if (row['manualRate'] && !row['rateAssetId']) fail('请选择游戏币汇率的计价币种', 'rateAssetId');
       if (row['settlementAmount'] && !decimal(row['settlementAmount'], '结算金额', 'settlementAmount').gt(0)) {
         fail('结算金额必须大于 0', 'settlementAmount');
       }
       if (row['feeAmount'] && !decimal(row['feeAmount'], '手续费', 'feeAmount').gt(0)) fail('手续费必须大于 0', 'feeAmount');
+      if (row['gameCurrencyFeeAmount'] && !decimal(row['gameCurrencyFeeAmount'], '游戏币手续费', 'gameCurrencyFeeAmount').gt(0)) {
+        fail('游戏币手续费必须大于 0', 'gameCurrencyFeeAmount');
+      }
       break;
     }
     case 'game_cashflow_link':

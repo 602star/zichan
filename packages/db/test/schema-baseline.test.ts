@@ -19,6 +19,8 @@ async function removeCostV2Schema(driver: NodeSqliteDriver): Promise<void> {
   }
   await driver.exec('ALTER TABLE transactions DROP COLUMN cost_quote');
   await driver.exec('ALTER TABLE reconciliation_sessions DROP COLUMN conversion_total');
+  await driver.exec('ALTER TABLE game_records DROP COLUMN game_currency_fee_amount');
+  await driver.exec('ALTER TABLE game_records DROP COLUMN rate_asset_id');
 }
 
 describe('current development schema baseline', () => {
@@ -153,10 +155,54 @@ it('upgrades schema 120 without rewriting existing reconciliations', async () =>
     await runMigrations(driver, log);
     await driver.run("INSERT INTO reconciliation_sessions (id, account_id, asset_id, statement_date, statement_balance, selected_total, version, is_deleted) VALUES ('kept', 'bank', 'CNY', '2026-09-30', '100', '25', 3, 0)");
     await driver.exec('ALTER TABLE reconciliation_sessions DROP COLUMN conversion_total');
+    await driver.exec('ALTER TABLE game_records DROP COLUMN game_currency_fee_amount');
+    await driver.exec('ALTER TABLE game_records DROP COLUMN rate_asset_id');
     await driver.run('UPDATE schema_migrations SET version = 120, name = ?', ['current_schema_2026_09_30_asset_cost_v2']);
     expect(await runMigrations(driver, log)).toBe(1);
     expect(await driver.all('SELECT id, statement_balance, selected_total, conversion_total, version FROM reconciliation_sessions'))
       .toEqual([{ id: 'kept', statement_balance: '100', selected_total: '25', conversion_total: null, version: 3 }]);
+    expect(await runMigrations(driver, log)).toBe(0);
+  } finally { await driver.close(); }
+});
+
+it('upgrades schema 121 and keeps existing game records', async () => {
+  const driver = new NodeSqliteDriver();
+  try {
+    await runMigrations(driver, log);
+    await driver.run("INSERT INTO game_records (id, game_id, date, record_type, game_currency_amount, version, is_deleted) VALUES ('kept', 'game', '2026-10-01', 'buy_currency', '1000', 3, 0)");
+    await driver.exec('ALTER TABLE game_records DROP COLUMN game_currency_fee_amount');
+    await driver.exec('ALTER TABLE game_records DROP COLUMN rate_asset_id');
+    await driver.run('UPDATE schema_migrations SET version = 121, name = ?', ['current_schema_2026_10_01_conversion_reconciliation']);
+    expect(await runMigrations(driver, log)).toBe(1);
+    expect(await driver.all('SELECT id, game_currency_amount, game_currency_fee_amount, version FROM game_records'))
+      .toEqual([{ id: 'kept', game_currency_amount: '1000', game_currency_fee_amount: null, version: 3 }]);
+    expect(await runMigrations(driver, log)).toBe(0);
+  } finally { await driver.close(); }
+});
+
+it('upgrades schema 122 and preserves historical game currency fees', async () => {
+  const driver = new NodeSqliteDriver();
+  try {
+    await runMigrations(driver, log);
+    await driver.run("INSERT INTO game_records (id, game_id, date, record_type, game_currency_amount, game_currency_fee_amount, manual_rate, version, is_deleted) VALUES ('kept', 'game', '2026-10-02', 'buy_currency', '1000', '100', '0.5', 3, 0)");
+    await driver.exec('ALTER TABLE game_records DROP COLUMN rate_asset_id');
+    await driver.run('UPDATE schema_migrations SET version = 122, name = ?', ['current_schema_2026_10_02_game_currency_fee']);
+    expect(await runMigrations(driver, log)).toBe(1);
+    expect(await driver.all('SELECT game_currency_amount, game_currency_fee_amount, manual_rate, rate_asset_id, version FROM game_records'))
+      .toEqual([{ game_currency_amount: '1000', game_currency_fee_amount: '100', manual_rate: '0.5', rate_asset_id: null, version: 3 }]);
+  } finally { await driver.close(); }
+});
+
+it('converts schema 123 rate snapshots to game currency per quote without changing valuations', async () => {
+  const driver = new NodeSqliteDriver();
+  try {
+    await runMigrations(driver, log);
+    await driver.run("INSERT INTO game_records (id, game_id, date, record_type, game_currency_amount, manual_rate, rate_asset_id, version, is_deleted) VALUES ('buy', 'game', '2026-01-01', 'buy_equipment', '100', '0.5', 'CNY', 3, 0)");
+    await driver.run("INSERT INTO game_records (id, game_id, date, record_type, game_currency_amount, manual_rate, rate_asset_id, version, is_deleted) VALUES ('sell', 'game', '2026-10-02', 'sell_equipment', '10', '0.1', 'CNY', 4, 0)");
+    await driver.run('UPDATE schema_migrations SET version = 123, name = ?', ['current_schema_2026_10_02_game_record_rate']);
+    expect(await runMigrations(driver, log)).toBe(1);
+    expect(await driver.all('SELECT id, manual_rate, version FROM game_records ORDER BY id'))
+      .toEqual([{ id: 'buy', manual_rate: '2', version: 3 }, { id: 'sell', manual_rate: '10', version: 4 }]);
     expect(await runMigrations(driver, log)).toBe(0);
   } finally { await driver.close(); }
 });

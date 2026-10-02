@@ -179,6 +179,22 @@ describe('required means "required when shown"', () => {
     expect(spec.validate?.(values)).toBeUndefined();
   });
 
+  it('does not require cashflow accounts for an unfilled optional game fee or settlement', () => {
+    const snap = makeSnapshot();
+    snap.accounts = [];
+    const spec = forms.gameRecordForm(snap) as unknown as { fields: Field[]; validate?: (v: Record<string, string>) => unknown };
+    const values = { ...defaultsOf(spec.fields), recordType: 'buy_currency', gameCurrencyName: '通货', gameCurrencyAmount: '1000', gameCurrencyFeeAmount: '100' };
+    expect(requiredFieldErrors(spec.fields, values)).toEqual({});
+    expect(spec.validate?.(values)).toBeUndefined();
+    expect(renderedFieldKeys(spec.fields, values)).not.toContain('feeAccountId');
+    expect(renderedFieldKeys(spec.fields, values)).not.toContain('settlementAccountId');
+
+    const paid = { ...values, settlementAssetId: snap.ids.gbp, settlementAmount: '20' };
+    expect(requiredFieldErrors(spec.fields, paid)).toHaveProperty('settlementAccountId');
+    const withCashFee = { ...paid, feeAssetId: snap.ids.gbp, feeAmount: '1' };
+    expect(requiredFieldErrors(spec.fields, withCashFee)).toHaveProperty('feeAccountId');
+  });
+
   it('never lets the field picker hide a required field', () => {
     const fields: Field[] = [
       { key: 'name', label: '名称', type: 'text', section: 'more', required: true },

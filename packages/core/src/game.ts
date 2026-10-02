@@ -16,19 +16,22 @@ const INCOME_TYPES = new Set<GameRecordType>([
 ]);
 const EXPENSE_TYPES = new Set<GameRecordType>([
   'buy_currency',
+  'buy_equipment',
+  'buy_material',
   'topup',
   'account_cost',
   'boosting_cost',
   'fee',
   'other_expense',
 ]);
-// Types that add to the reference currency balance (produce/buy add stock).
-const REF_ADD = new Set<GameRecordType>(['buy_currency', 'produce', 'other_income']);
+// Selling equipment/material for game currency adds to the reference balance;
+// selling that currency for cash later subtracts it.
+const REF_ADD = new Set<GameRecordType>(['buy_currency', 'produce', 'sell_equipment', 'sell_material', 'other_income']);
 const REF_SUB = new Set<GameRecordType>([
   'sell_currency',
   'consume',
-  'sell_equipment',
-  'sell_material',
+  'buy_equipment',
+  'buy_material',
 ]);
 
 export interface SeasonSummary {
@@ -40,7 +43,7 @@ export interface SeasonSummary {
   hours: string;
   perHour: string; // net / hours
   perDay: string; // net / days
-  /** Reference game-currency balance (buy + produce − sell − consume). May be negative. */
+  /** Reference game-currency balance after currency and item trades. May be negative. */
   referenceBalance: string;
 }
 
@@ -49,6 +52,25 @@ export interface SeasonSummaryOptions {
   baseAssetId?: string;
   /** Override "today" for day counting (defaults to now). */
   asOf?: string;
+}
+
+/** Historical game currency per quote unit; valuation never creates cash P&L. */
+export function gameRecordExchangeRate(record: GameRecord): { rate: string; quoteAssetId: string; valuation: string } | undefined {
+  const quantity = D(record.gameCurrencyAmount ?? 0).abs();
+  if (quantity.isZero()) return undefined;
+  const cashTrade = record.recordType === 'buy_currency' || record.recordType === 'sell_currency';
+  const hasCash = cashTrade && record.settlementAssetId && D(record.settlementAmount ?? 0).gt(0);
+  const quoteAssetId = hasCash ? record.settlementAssetId : record.rateAssetId;
+  if (!quoteAssetId) return undefined;
+  const rate = hasCash
+    ? quantity.div(D(record.settlementAmount!).abs())
+    : D(record.manualRate ?? 0);
+  if (!rate.gt(0)) return undefined;
+  return {
+    rate: rate.toString(),
+    quoteAssetId,
+    valuation: hasCash ? D(record.settlementAmount!).abs().toString() : quantity.div(rate).toString(),
+  };
 }
 
 export function seasonSummary(
@@ -124,6 +146,7 @@ export function seasonActivitySummary(
     const quantity = D(record.gameCurrencyAmount ?? 0).abs();
     if (REF_ADD.has(record.recordType)) balance = balance.plus(quantity);
     else if (REF_SUB.has(record.recordType)) balance = balance.minus(quantity);
+    balance = balance.minus(D(record.gameCurrencyFeeAmount ?? 0).abs());
   }
   return { days: seasonDays(season, asOf), hours: D(season?.hours ?? 0).toString(), referenceBalance: balance.toString() };
 }

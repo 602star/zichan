@@ -2846,7 +2846,7 @@ const GAME_INCOME_RECORD_TYPES = new Set<GameRecordType>([
   'sell_currency', 'sell_equipment', 'sell_material', 'withdraw', 'other_income',
 ]);
 const GAME_EXPENSE_RECORD_TYPES = new Set<GameRecordType>([
-  'buy_currency', 'topup', 'fee', 'account_cost', 'boosting_cost', 'other_expense',
+  'buy_currency', 'buy_equipment', 'buy_material', 'topup', 'fee', 'account_cost', 'boosting_cost', 'other_expense',
 ]);
 
 export interface GameCashflowTransactionDraft {

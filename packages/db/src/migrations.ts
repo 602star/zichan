@@ -3,12 +3,13 @@
  * baselines upgrade in place so existing records survive the icon field addition.
  */
 import type { Logger } from '@zichan/logger';
+import { D } from '@zichan/core';
 import type { SqlDriver } from './driver.js';
 import { MIGRATIONS_TABLE_SQL, schemaStatements } from './schema.js';
 import { TABLES, allCols, type TableSpec } from './tables.js';
 
-export const CURRENT_SCHEMA_VERSION = 121;
-export const CURRENT_SCHEMA_NAME = 'current_schema_2026_10_01_conversion_reconciliation';
+export const CURRENT_SCHEMA_VERSION = 124;
+export const CURRENT_SCHEMA_NAME = 'current_schema_2026_10_02_game_rate_per_quote';
 export const SCHEMA_RESET_REQUIRED_CODE = 'SCHEMA_RESET_REQUIRED';
 
 export class SchemaResetRequiredError extends Error {
@@ -201,9 +202,50 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
   const from118 = applied.length === 1 && applied[0]?.version === 118 && applied[0]?.name === 'current_schema_2026_09_18_account_onboarding';
   const from119 = applied.length === 1 && applied[0]?.version === 119 && applied[0]?.name === 'current_schema_2026_09_22_entity_icons';
   const from120 = applied.length === 1 && applied[0]?.version === 120 && applied[0]?.name === 'current_schema_2026_09_30_asset_cost_v2';
+  const from121 = applied.length === 1 && applied[0]?.version === 121 && applied[0]?.name === 'current_schema_2026_10_01_conversion_reconciliation';
+  const from122 = applied.length === 1 && applied[0]?.version === 122 && applied[0]?.name === 'current_schema_2026_10_02_game_currency_fee';
+  const from123 = applied.length === 1 && applied[0]?.version === 123 && applied[0]?.name === 'current_schema_2026_10_02_game_record_rate';
+  if (from123) {
+    await driver.transaction(async (transaction) => {
+      const rates = await transaction.all<{ id: string; manual_rate: string }>(
+        'SELECT id, manual_rate FROM game_records WHERE rate_asset_id IS NOT NULL AND manual_rate IS NOT NULL',
+      );
+      for (const { id, manual_rate } of rates) {
+        const previous = D(manual_rate);
+        if (!previous.gt(0)) continue;
+        await transaction.run('UPDATE game_records SET manual_rate = ? WHERE id = ?',
+          [D(1).div(previous).toSignificantDigits(16).toString(), id]);
+      }
+      await assertCurrentSchema(transaction);
+      await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',
+        [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
+    });
+    return 1;
+  }
+  if (from122) {
+    await driver.transaction(async (transaction) => {
+      await transaction.exec('ALTER TABLE game_records ADD COLUMN rate_asset_id TEXT');
+      await assertCurrentSchema(transaction);
+      await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',
+        [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
+    });
+    return 1;
+  }
+  if (from121) {
+    await driver.transaction(async (transaction) => {
+      await transaction.exec('ALTER TABLE game_records ADD COLUMN game_currency_fee_amount TEXT');
+      await transaction.exec('ALTER TABLE game_records ADD COLUMN rate_asset_id TEXT');
+      await assertCurrentSchema(transaction);
+      await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',
+        [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
+    });
+    return 1;
+  }
   if (from120) {
     await driver.transaction(async (transaction) => {
       await transaction.exec('ALTER TABLE reconciliation_sessions ADD COLUMN conversion_total TEXT');
+      await transaction.exec('ALTER TABLE game_records ADD COLUMN game_currency_fee_amount TEXT');
+      await transaction.exec('ALTER TABLE game_records ADD COLUMN rate_asset_id TEXT');
       await assertCurrentSchema(transaction);
       await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',
         [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
@@ -225,6 +267,8 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
       await transaction.exec('ALTER TABLE conversion_chains ADD COLUMN operation_order INTEGER');
       await transaction.exec('ALTER TABLE transactions ADD COLUMN cost_quote TEXT');
       await transaction.exec('ALTER TABLE reconciliation_sessions ADD COLUMN conversion_total TEXT');
+      await transaction.exec('ALTER TABLE game_records ADD COLUMN game_currency_fee_amount TEXT');
+      await transaction.exec('ALTER TABLE game_records ADD COLUMN rate_asset_id TEXT');
       for (const statement of schemaStatements()) await transaction.exec(statement);
       await assertCurrentSchema(transaction);
       await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',

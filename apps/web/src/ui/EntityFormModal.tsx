@@ -678,7 +678,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
         </div>}
         {existingChoice && <EntityFormModal spec={spec} initial={existingChoice} onSave={async (value) => { await onSave(value); savedOrDeleted.current = true; await deleteFormDraft(draftKey).catch(() => undefined); onClose(); }} onClose={() => setExistingChoice(undefined)} />}
         {saveWarning && <ConfirmDialog title="可能重复的定期交易" confirmLabel="仍然创建 / 保存" cancelLabel="返回修改" onCancel={() => setSaveWarning(null)} onConfirm={async () => { const warning = saveWarning; setSaveWarning(null); await save(warning); }}>{saveWarning}</ConfirmDialog>}
-        {err && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', marginTop: 12 }}>{err}</div>}
+        {err && <div role="alert" style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', marginTop: 12 }}>{err}</div>}
 
         {Object.keys(fieldErrors).length > 0 && (
           <div role="alert" style={{ marginTop: 10, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)' }}>
@@ -709,8 +709,11 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
             )}
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
+            {(!draftReady || pendingDraft) && <span role="status" style={{ alignSelf: 'center', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>
+              {pendingDraft ? '请先处理上方草稿' : '正在加载草稿…'}
+            </span>}
             <button onClick={requestClose} disabled={busy || iconBusy} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>取消</button>
-            <button onClick={() => void save()} disabled={busy || iconBusy || !draftReady || !!pendingDraft} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy ? 0.6 : 1 }}>
+            <button onClick={() => void save()} disabled={busy || iconBusy || !draftReady || !!pendingDraft} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy || !draftReady || !!pendingDraft ? 0.6 : 1 }}>
               {busy ? '保存中…' : '保存'}
             </button>
           </div>

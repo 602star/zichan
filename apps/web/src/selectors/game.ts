@@ -1,6 +1,6 @@
 /** Game-season view-model — pure selector over a Snapshot (unit-tested). */
 import {
-  D, daysBetween, isDateInRange, safeDiv, seasonActivitySummary, sum, gameRecordReportingPostings,
+  D, daysBetween, isDateInRange, safeDiv, seasonActivitySummary, sum, gameRecordReportingPostings, gameRecordExchangeRate,
   type DateRange,
   type Decimal, type GameRecord, type GameRecordType, type GameSeason,
 } from '@zichan/core';
@@ -161,9 +161,16 @@ export function buildGameSeason(snap: Snapshot, gameId: string | null, selectedI
       date: r.date, type: r.recordType, item: r.note ?? '',
       acc: accName(r.gameAccountId),
       amt: financial(r).net.toNumber(),
-      nativeAmount: r.settlementAssetId && r.settlementAmount
-        ? report.formatNative(r.settlementAmount, r.settlementAssetId)
-        : '—',
+      nativeAmount: (() => {
+        const cash = r.settlementAssetId && r.settlementAmount
+          ? report.formatNative(r.settlementAmount, r.settlementAssetId) : undefined;
+        const snapshot = gameRecordExchangeRate(r);
+        if (!snapshot) return cash ?? '—';
+        const code = snap.assets.find((asset) => asset.id === snapshot.quoteAssetId)?.code ?? '计价币种';
+        const unit = code === 'CNY' ? '元' : code;
+        const price = `${r.gameCurrencyAmount} ${r.gameCurrencyName || '游戏币'} · 1 ${unit}≈${snapshot.rate} ${r.gameCurrencyName || '游戏币'} · ${cash ? '成交' : '估值'} ${snapshot.valuation} ${unit}`;
+        return cash ? `${cash} · ${price}` : price;
+      })(),
     })),
     filtered,
   };

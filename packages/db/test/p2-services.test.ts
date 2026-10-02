@@ -251,6 +251,63 @@ describe('P2 business compensation commands', () => {
     }
   });
 
+  it('creates an expense cashflow for a direct equipment purchase', async () => {
+    const store = await openLedger();
+    try {
+      const { asset, account, expense } = await seedDailyLedger(store);
+      const game = await store.games.put({ ...base(), name: '装备交易游戏', enableSeason: false, isActive: true });
+      const saved = await saveGameRecordAggregate(store, {
+        record: {
+          ...base(), date: '2026-07-21', gameId: game.id, recordType: 'buy_equipment',
+          settlementAssetId: asset.id, settlementAmount: '18', note: '直接付款买装备',
+        },
+        settlement: {
+          mode: 'create_transaction',
+          createTransaction: { categoryId: expense.id, accountId: account.id },
+        },
+        fee: { mode: 'record_only' },
+      });
+      expect(saved.settlementTransaction).toMatchObject({ type: 'expense', amount: '18', category: expense.id });
+      expect(saved.settlementLink?.direction).toBe('outflow');
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('stores a game-currency fee without creating a cash fee transaction', async () => {
+    const store = await openLedger();
+    try {
+      const game = await store.games.put({ ...base(), name: '通货手续费游戏', enableSeason: false, isActive: true });
+      const saved = await saveGameRecordAggregate(store, {
+        record: {
+          ...base(), date: '2026-07-21', gameId: game.id, recordType: 'buy_currency',
+          gameCurrencyName: '通货', gameCurrencyAmount: '1000', gameCurrencyFeeAmount: '100',
+        },
+        settlement: { mode: 'record_only' },
+        fee: { mode: 'record_only' },
+      });
+      expect((await store.gameRecords.get(saved.record.id))?.gameCurrencyFeeAmount).toBe('100');
+      expect(saved.feeTransaction).toBeUndefined();
+      expect(await store.transactions.count()).toBe(0);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('persists an equipment trade’s dated rate and quote asset without creating cashflow', async () => {
+    const store = await openLedger();
+    try {
+      const asset = await store.assets.put({ ...base(), code: 'CNY', name: '人民币', type: 'fiat', decimals: 2, symbol: '¥', isActive: true } satisfies Asset);
+      const game = await store.games.put({ ...base(), name: '历史汇率游戏', enableSeason: false, isActive: true });
+      const saved = await saveGameRecordAggregate(store, {
+        record: { ...base(), gameId: game.id, date: '2026-01-01', recordType: 'buy_equipment', gameCurrencyName: '通货', gameCurrencyAmount: '100', manualRate: '2', rateAssetId: asset.id },
+        settlement: { mode: 'record_only' }, fee: { mode: 'record_only' },
+      });
+      expect(await store.gameRecords.get(saved.record.id)).toMatchObject({ manualRate: '2', rateAssetId: asset.id });
+      expect(await store.transactions.count()).toBe(0);
+    } finally { await store.close(); }
+  });
+
   /*
    * The both-or-neither rule has to name the half that is missing: an error with
    * no field cannot be located, and the form shows nothing to jump to.

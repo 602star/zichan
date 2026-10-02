@@ -472,7 +472,7 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
     }
   }
   const gameIncomeTypes = new Set(['sell_currency', 'sell_equipment', 'sell_material', 'withdraw', 'other_income']);
-  const gameExpenseTypes = new Set(['buy_currency', 'topup', 'fee', 'account_cost', 'boosting_cost', 'other_expense']);
+  const gameExpenseTypes = new Set(['buy_currency', 'buy_equipment', 'buy_material', 'topup', 'fee', 'account_cost', 'boosting_cost', 'other_expense']);
   const linkedGameTransactions = new Set<string>();
   for (const link of gameCashflowLinks) {
     const record = gameRecordById.get(link.gameRecordId);

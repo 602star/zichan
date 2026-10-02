@@ -374,10 +374,12 @@ export interface GameSeason extends BaseEntity {
 export type GameRecordType =
   | 'buy_currency' // 买入游戏币
   | 'sell_currency' // 卖出游戏币
-  | 'produce' // 游戏产出
-  | 'consume' // 游戏消耗
-  | 'sell_equipment' // 装备卖出
-  | 'sell_material' // 材料卖出
+  | 'produce' // 游戏币产出
+  | 'consume' // 游戏币消耗
+  | 'buy_equipment' // 装备买入（通常花费游戏通货，也可直接付款）
+  | 'buy_material' // 材料买入（通常花费游戏通货，也可直接付款）
+  | 'sell_equipment' // 装备卖出（通常换得游戏通货，也可直接收款）
+  | 'sell_material' // 材料卖出（通常换得游戏通货，也可直接收款）
   | 'topup' // 充值
   | 'withdraw' // 提现
   | 'fee' // 手续费
@@ -394,11 +396,13 @@ export interface GameRecord extends BaseEntity {
   recordType: GameRecordType;
   gameCurrencyName?: string;
   gameCurrencyAmount?: string; // reference only, not stock-checked (§3.3)
+  gameCurrencyFeeAmount?: string; // optional in-game fee; deducted from reference balance, never a cash expense
   settlementAssetId?: string;
   settlementAmount?: string; // magnitude; direction from recordType
   feeAssetId?: string;
   feeAmount?: string;
-  manualRate?: string;
+  manualRate?: string; // game currency units per 1 rateAssetId, frozen at record time
+  rateAssetId?: string; // quote asset for manualRate; distinct from actual cash settlement
   counterparty?: string;
   note?: string;
 }

@@ -27,14 +27,14 @@ import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
 
 const REC_LABEL: Record<GameRecordType, string> = {
-  buy_currency: '买入游戏币', sell_currency: '游戏币卖出', produce: '游戏产出', consume: '游戏消耗',
-  sell_equipment: '装备卖出', sell_material: '材料卖出', topup: '充值', withdraw: '提现', fee: '手续费',
+  buy_currency: '买入游戏币', sell_currency: '游戏币卖出', produce: '游戏币产出', consume: '游戏币消耗',
+  buy_equipment: '装备买入', sell_equipment: '装备卖出', buy_material: '材料买入', sell_material: '材料卖出', topup: '充值', withdraw: '提现', fee: '手续费',
   account_cost: '账号成本', boosting_cost: '代练成本', other_expense: '其他支出', other_income: '其他收入',
 };
 
 function recBadge(type: GameRecordType) {
   const base = { padding: '3px 9px', borderRadius: 'var(--r-sm)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', flexShrink: 0, whiteSpace: 'nowrap' } as const;
-  if (type === 'buy_currency' || type === 'topup') return { ...base, background: 'var(--accent-soft)', color: 'var(--accent)' };
+  if (type === 'buy_currency' || type === 'buy_equipment' || type === 'buy_material' || type === 'topup') return { ...base, background: 'var(--accent-soft)', color: 'var(--accent)' };
   if (type === 'fee') return { ...base, background: 'rgba(194,96,74,.13)', color: 'var(--negative)' };
   if (type === 'produce' || type === 'consume') return { ...base, background: 'var(--surface-2)', color: 'var(--text-tertiary)' };
   return { ...base, background: 'rgba(63,143,107,.13)', color: 'var(--positive)' };
@@ -114,6 +114,7 @@ async function createDefaultSeason(
 
 function gameRecordEntity(value: GameRecordFormValue): GameRecord {
   const {
+    itemTradeMode: _itemTradeMode,
     settlementCashflowMode: _settlementMode,
     settlementTransactionId: _settlementTransaction,
     settlementCategoryId: _settlementCategory,

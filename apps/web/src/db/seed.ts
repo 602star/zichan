@@ -336,8 +336,9 @@ export async function seedDemoLedger(store: SqlLedgerStore): Promise<void> {
   const s2r: GameRecord[] = [
     gr(s2.id, ashen.id, '2025-12-22', 'buy_currency', '初火 ×4,000', '4000', '16.0'),
     gr(s2.id, ashen.id, '2026-01-05', 'produce', '初火 ×6,200 · 深渊掉落', '6200', '0'),
-    gr(s2.id, ashen.id, '2026-02-03', 'sell_equipment', '暗焰长弓 ×1', undefined, '24.0'),
-    gr(s2.id, ember.id, '2026-02-10', 'sell_material', '星陨石 ×120', undefined, '9.5'),
+    gr(s2.id, ashen.id, '2026-02-03', 'sell_equipment', '暗焰长弓 ×1 · 换得初火', '2500', '0'),
+    gr(s2.id, ember.id, '2026-02-10', 'sell_material', '星陨石 ×120 · 换得初火', '1500', '0'),
+    gr(s2.id, ashen.id, '2026-02-12', 'buy_equipment', '霜纹护符 ×1 · 花费初火', '800', '0'),
     gr(s2.id, ashen.id, '2026-02-18', 'topup', '赛季月卡', undefined, '8.0'),
     gr(s2.id, ashen.id, '2026-02-28', 'sell_currency', '初火 ×8,000', '8000', '31.6'),
     gr(s2.id, ashen.id, '2026-03-01', 'fee', '平台交易抽成', undefined, '2.1'),
@@ -345,7 +346,7 @@ export async function seedDemoLedger(store: SqlLedgerStore): Promise<void> {
   const s1r: GameRecord[] = [
     gr(s1.id, ashen.id, '2025-09-05', 'buy_currency', '初火 ×10,000', '10000', '40.0'),
     gr(s1.id, ashen.id, '2025-10-12', 'produce', '初火 ×14,500 · 活动', '14500', '0'),
-    gr(s1.id, ashen.id, '2025-11-02', 'sell_equipment', '寒霜战铠 ×1', undefined, '52.0'),
+    gr(s1.id, ashen.id, '2025-11-02', 'sell_equipment', '寒霜战铠 ×1 · 换得初火', '6000', '0'),
     gr(s1.id, ashen.id, '2025-11-20', 'sell_currency', '初火 ×22,000', '22000', '68.0'),
     gr(s1.id, ashen.id, '2025-12-01', 'topup', '赛季通行证', undefined, '16.0'),
     gr(s1.id, ashen.id, '2025-12-10', 'fee', '平台交易抽成', undefined, '5.6'),
