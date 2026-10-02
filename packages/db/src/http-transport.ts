@@ -186,6 +186,7 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
   let connection: ReplicaConnection | undefined;
 
   const readReplica = async (): Promise<{
+    capabilities?: string[];
     serverId: string;
     bound: boolean;
     ledgerId?: string;
@@ -196,6 +197,7 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
     const response = await fetch(`${opts.baseUrl}/api/v3/replica`, { headers, redirect: 'error' });
     if (!response.ok) throw await errorMessage('replica lookup failed', response);
     return response.json() as Promise<{
+      capabilities?: string[];
       serverId: string;
       bound: boolean;
       ledgerId?: string;
@@ -223,6 +225,7 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
       if (replica.ledgerId !== ledgerId) throw new Error(`LEDGER_MISMATCH:${replica.ledgerId ?? 'unknown'}`);
       if (!replica.replicaId || !replica.streamEpoch || !replica.serverId) throw new Error('同步副本身份不完整');
       connection = {
+        capabilities: replica.capabilities,
         serverId: replica.serverId,
         replicaId: replica.replicaId,
         streamEpoch: replica.streamEpoch,
@@ -286,7 +289,8 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
       };
     },
 
-    async pushCommits(identity: SyncReplicaIdentity, commits: SyncCommitV2[]) {
+    async pushCommits(identity: SyncReplicaIdentity, commits: SyncCommitV2[], requiredCapabilities: string[] = []) {
+      if (requiredCapabilities.some((capability) => !connection?.capabilities?.includes(capability))) throw new Error('服务器需要升级以支持 asset-cost-v2；本地修改尚未上传');
       const encrypted = [];
       for (const commit of commits) {
         if (commit.ledgerId !== identity.ledgerId) throw new Error(`LEDGER_MISMATCH:${commit.ledgerId}`);
@@ -299,7 +303,7 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
         });
       }
       const response = await fetch(`${opts.baseUrl}/api/v3/commits`, {
-        method: 'POST', headers, body: JSON.stringify({ commits: encrypted }), redirect: 'error',
+        method: 'POST', headers, body: JSON.stringify({ commits: encrypted, capabilities: ['asset-cost-v2'], requiredCapabilities }), redirect: 'error',
       });
       if (!response.ok) throw await errorMessage('commit push failed', response);
       const body = await response.json() as {

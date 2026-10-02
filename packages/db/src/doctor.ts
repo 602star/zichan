@@ -16,8 +16,10 @@ import {
   normalizeOccurrence,
   sum,
   traceChain,
+  usesAssetCostState, assetCostSourceSummary, type AssetCostState,
 } from '@zichan/core';
 import type { SqlLedgerStore } from './repository.js';
+import { readAssetCostState } from './asset-cost-service.js';
 
 export type IssueKind =
   | 'lot_remaining_mismatch'
@@ -61,11 +63,18 @@ function groupBy<T, K>(items: T[], key: (t: T) => K): Map<K, T[]> {
 }
 
 /** Amount a chain's cache should hold, recomputed from its steps + consumptions. */
-async function chainExpected(store: SqlLedgerStore, chainId: string, type: string) {
+async function chainExpected(store: SqlLedgerStore, chainId: string, type: string, costState?: AssetCostState) {
   const steps = await store.listStepsByChain(chainId);
   if (!steps.length) return null;
   const chain = (await store.conversionChains.get(chainId))!;
+  if (chain.recordState === 'voided') return null;
   const t = traceChain({ chain, steps });
+  if (usesAssetCostState(costState, chain)) {
+    const acquired = costState.events.find((event) => event.eventId === `${steps.at(-1)!.id}:2-target`);
+    return { finalAssetId: t.finalAssetId, finalAmount: t.finalAmount, totalBaseCost: acquired?.costInBase ?? undefined,
+      totalBaseProceeds: type === 'sell' ? t.totalBaseProceeds : undefined, totalFeesInBase: t.totalFeesInBase,
+      realizedGainLoss: assetCostSourceSummary(costState, chainId).realizedGainLoss ?? undefined };
+  }
   if (type === 'sell') {
     const cons = await store.lotConsumptions.list({ where: { sellChainId: chainId } });
     const realized = sum(cons.map((c) => c.realizedPnlBase));
@@ -113,6 +122,9 @@ function occurrenceIsValid(row: {
 
 export async function checkConsistency(store: SqlLedgerStore): Promise<ConsistencyIssue[]> {
   const issues: ConsistencyIssue[] = [];
+  const costState = await readAssetCostState(store);
+  if (costState?.invalidAssetIds.length) issues.push({ kind: 'required_field_missing', entityType: 'cost_basis_opening', entityId: costState.openingId,
+    detail: '起点之前的账务或发生时间已变化，需要重新核对成本起点；相关盈亏未完整核算' });
   const lots = await store.lots.list();
   const cons = await store.lotConsumptions.list();
   const consByLot = groupBy(cons, (c) => c.lotId);
@@ -138,11 +150,19 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
   }
 
   const chains = await store.conversionChains.list();
+  const operations = await store.conversionOperations.list();
+  for (const operation of operations) for (const [index, id] of operation.chainIds.entries()) {
+    const child = chains.find((chain) => chain.id === id);
+    if (!child || child.operationId !== operation.id || child.operationOrder !== index || (child.recordState ?? 'active') !== (operation.recordState ?? 'active')) {
+      issues.push({ kind: 'missing_reference', entityType: 'conversion_operation', entityId: operation.id, detail: '连续转换子记录缺失、顺序、归属或作废状态不一致' });
+    }
+  }
   for (const ch of chains) {
+    if (ch.operationId && !operations.some((operation) => operation.id === ch.operationId && operation.chainIds.includes(ch.id))) issues.push({ kind: 'missing_reference', entityType: 'conversion_chain', entityId: ch.id, detail: '缺少所属连续转换' });
     if (!occurrenceIsValid(ch)) {
       issues.push({ kind: 'occurrence_invalid', entityType: 'conversion_chain', entityId: ch.id, detail: '本地时间、时区与 UTC 快照不一致' });
     }
-    const exp = await chainExpected(store, ch.id, ch.type);
+    const exp = await chainExpected(store, ch.id, ch.type, costState);
     if (!exp) continue;
     for (const [k, v] of Object.entries(exp)) {
       const cur = (ch as unknown as Record<string, unknown>)[k];
@@ -681,6 +701,7 @@ export interface RecomputeResult {
 /** Recompute and rewrite all derived caches. Safe to run anytime. */
 export async function recomputeCaches(store: SqlLedgerStore): Promise<RecomputeResult> {
   return store.withBackupImportContext((historicalStore) => historicalStore.transaction(async (txStore) => {
+    const costState = await readAssetCostState(txStore);
     const lots = await txStore.lots.list();
     const cons = await txStore.lotConsumptions.list();
     const consByLot = groupBy(cons, (c) => c.lotId);
@@ -698,11 +719,11 @@ export async function recomputeCaches(store: SqlLedgerStore): Promise<RecomputeR
 
     let chN = 0;
     for (const ch of await txStore.conversionChains.list()) {
-      const exp = await chainExpected(txStore, ch.id, ch.type);
+      const exp = await chainExpected(txStore, ch.id, ch.type, costState);
       if (!exp) continue;
       const changed = Object.entries(exp).some(([k, v]) => {
         const cur = (ch as unknown as Record<string, unknown>)[k];
-        if (cur == null || cur === '') return true;
+        if (cur == null || cur === '') return v != null;
         const isNumeric = typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v);
         return isNumeric ? !numericEqualWithinTolerance(cur, v) : cur !== v;
       });

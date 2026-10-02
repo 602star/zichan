@@ -635,6 +635,8 @@ function rowToStep(r: Record<string, unknown>): ConversionStep {
 
 /** aggregate type -> table spec, used when applying a synced aggregate revision. */
 const EVENT_SPECS: Record<string, TableSpec> = {
+  conversion_operation: TABLES.conversionOperations,
+  cost_basis_opening: TABLES.costBasisOpenings,
   asset: TABLES.assets, account: TABLES.accounts, setting: TABLES.settings,
   conversion_chain: TABLES.conversionChains, lot: TABLES.lots, lot_consumption: TABLES.lotConsumptions,
   price_mark: TABLES.priceMarks, dca_plan: TABLES.dcaPlans, dca_execution: TABLES.dcaExecutions,
@@ -679,6 +681,20 @@ function assertSyncAggregateIdentity(
   payload: Record<string, unknown> | null,
 ): void {
   if (!payload) return;
+  if (type === 'conversion_operation') {
+    const operation = asRecord(payload['operation']);
+    const conversions = payload['conversions'];
+    if (!operation || operation['id'] !== id || !Array.isArray(operation['chainIds']) || !Array.isArray(conversions)
+      || operation['chainIds'].length !== conversions.length || new Set(operation['chainIds']).size !== conversions.length) throw new Error('连续转换同步聚合不完整');
+    conversions.forEach((value, index) => {
+      const child = asRecord(value);
+      const chain = asRecord(child?.['chain']);
+      if (!child || !chain || chain['id'] !== (operation['chainIds'] as unknown[])[index] || chain['operationId'] !== id || chain['operationOrder'] !== index) throw new Error('连续转换步骤归属或顺序不一致');
+      if ((chain['recordState'] ?? 'active') !== (operation['recordState'] ?? 'active')) throw new Error('连续转换子记录作废状态不一致');
+      assertSyncAggregateIdentity('conversion', String(chain['id']), child);
+    });
+    return;
+  }
   const assertOwner = (value: unknown, idField: string, label: string) => {
     const row = asRecord(value);
     if (!row || row[idField] !== id) throw new Error(`${label}与同步聚合 ${type}:${id} 不一致`);
@@ -721,6 +737,21 @@ function projectConversionChain(value: Record<string, unknown>): Record<string, 
   return projected;
 }
 
+async function conversionOperationSnapshot(driver: SqlDriver, id: string): Promise<Record<string, unknown> | null> {
+  const stored = await driver.get<Record<string, unknown>>('SELECT * FROM conversion_operations WHERE id = ?', [id]);
+  if (!stored) return null;
+  const operation = rowToEntity<import('@zichan/core').ConversionOperation>(TABLES.conversionOperations, stored);
+  const conversions: Record<string, unknown>[] = [];
+  for (const chainId of operation.chainIds) {
+    const chainRow = await driver.get<Record<string, unknown>>('SELECT * FROM conversion_chains WHERE id = ?', [chainId]);
+    if (!chainRow) return null;
+    const chain = rowToEntity<ConversionChain>(TABLES.conversionChains, chainRow);
+    const steps = await driver.all<Record<string, unknown>>('SELECT * FROM conversion_steps WHERE chain_id = ? ORDER BY step_order', [chainId]);
+    conversions.push({ chain: projectConversionChain(chain as unknown as Record<string, unknown>), steps: steps.map((row) => syncPayload(rowToStep(row) as unknown as Record<string, unknown>)) });
+  }
+  return { operation: projectEntity(operation as unknown as Record<string, unknown>), conversions };
+}
+
 async function aggregateSnapshot(
   driver: SqlDriver,
   entityType: string,
@@ -728,6 +759,11 @@ async function aggregateSnapshot(
 ): Promise<{ aggregateType: string; aggregateId: string; op: 'put' | 'delete'; payload: Record<string, unknown> | null } | null> {
   if (SYNC_DERIVED_TYPES.has(entityType)) return null;
   const row = asRecord(payload);
+  if (entityType === 'conversion_operation') {
+    const id = String(row?.['id'] ?? '');
+    const payload = await conversionOperationSnapshot(driver, id);
+    return payload ? { aggregateType: 'conversion_operation', aggregateId: id, op: row?.['isDeleted'] === true ? 'delete' : 'put', payload } : null;
+  }
 
   if (entityType === 'conversion_chain' || entityType === 'conversion_chain_steps') {
     const chainId = entityType === 'conversion_chain' ? String(row?.['id'] ?? '') : String(row?.['chainId'] ?? row?.['id'] ?? '');
@@ -735,6 +771,11 @@ async function aggregateSnapshot(
     const chainRow = await driver.get<Record<string, unknown>>('SELECT * FROM conversion_chains WHERE id = ?', [chainId]);
     if (!chainRow) return null;
     const chain = rowToEntity<ConversionChain>(TABLES.conversionChains, chainRow) as unknown as Record<string, unknown>;
+    if (chain['operationId']) {
+      const operationId = String(chain['operationId']);
+      const payload = await conversionOperationSnapshot(driver, operationId);
+      return payload ? { aggregateType: 'conversion_operation', aggregateId: operationId, op: 'put', payload } : null;
+    }
     const stepRows = await driver.all<Record<string, unknown>>('SELECT * FROM conversion_steps WHERE chain_id = ? ORDER BY step_order', [chainId]);
     const aggregate = {
       chain: projectConversionChain(chain),
@@ -1129,7 +1170,13 @@ export interface DashboardTransactionReadModel {
 }
 
 export interface AccountLedgerReadRow {
-  transaction: import('@zichan/core').Transaction;
+  transaction?: import('@zichan/core').Transaction;
+  conversion?: {
+    chain: import('@zichan/core').ConversionChain;
+    step: import('@zichan/core').ConversionStep;
+  };
+  entryId: string;
+  date: string;
   assetId: string;
   postingAmount: string;
   balance: string;
@@ -1691,6 +1738,8 @@ async function tombstonePurgePreview(
 }
 
 export class SqlLedgerStore implements LedgerStore {
+  readonly conversionOperations: Collection<import('@zichan/core').ConversionOperation>;
+  readonly costBasisOpenings: Collection<import('@zichan/core').CostBasisOpening>;
   private readonly ctx: StoreCtx;
   private readonly log: Logger;
 
@@ -1769,6 +1818,8 @@ export class SqlLedgerStore implements LedgerStore {
       new SqlCollection<T>(this.ctx, spec, type);
 
     this.assets = C(TABLES.assets, 'asset');
+    this.conversionOperations = C(TABLES.conversionOperations, 'conversion_operation');
+    this.costBasisOpenings = C(TABLES.costBasisOpenings, 'cost_basis_opening');
     this.accounts = C(TABLES.accounts, 'account');
     this.settings = C(TABLES.settings, 'setting');
     this.conversionChains = C(TABLES.conversionChains, 'conversion_chain');
@@ -2647,7 +2698,7 @@ export class SqlLedgerStore implements LedgerStore {
       clauses.push('p.posting_date <= ?');
       params.push(input.to);
     }
-    const postingKey = "(p.transaction_id || ':' || p.posting_side)";
+    const postingKey = "('transaction:' || p.transaction_id || ':' || p.posting_side)";
     if (input.cursor) {
       clauses.push(`(p.posting_date < ? OR (p.posting_date = ? AND ${postingKey} < ?))`);
       params.push(input.cursor.value as SqlParam, input.cursor.value as SqlParam, input.cursor.id);
@@ -2657,7 +2708,7 @@ export class SqlLedgerStore implements LedgerStore {
     const [raw, countRow] = await Promise.all([
       this.driver.all<Record<string, unknown>>(
         `WITH ${TRANSACTION_POSTINGS_CTE}
-         SELECT t.*, p.posting_side, p.posting_amount,
+         SELECT t.*, p.posting_side, p.posting_amount, p.asset_id AS posting_asset_id,
                 ${TRANSACTION_RECONCILIATION_STATUS_SQL} AS reconciliation_status
          FROM postings p
          JOIN transactions t ON t.id = p.transaction_id
@@ -2673,8 +2724,53 @@ export class SqlLedgerStore implements LedgerStore {
         countParams,
       ),
     ]);
-    const hasMore = raw.length > limit;
-    const pageRows = hasMore ? raw.slice(0, limit) : raw;
+    type LedgerCandidate = Omit<AccountLedgerReadRow, 'balance'> & { key: string };
+    const transactionCandidates: LedgerCandidate[] = raw.map((row) => ({
+      transaction: rowToEntity<import('@zichan/core').Transaction>(TABLES.transactions, row),
+      entryId: `${String(row['id'])}:${String(row['posting_side'])}`,
+      key: `transaction:${String(row['id'])}:${String(row['posting_side'])}`,
+      date: String(row['date']),
+      assetId: String(row['posting_asset_id']),
+      postingAmount: String(row['posting_amount']),
+      reconciliationStatus: String(row['reconciliation_status']) as AccountLedgerReadRow['reconciliationStatus'],
+    }));
+    const accounts = await this.accounts.list();
+    const chains = await this.conversionChains.list();
+    const stepsByChain = await this.listStepsByChains(chains.map((chain) => chain.id));
+    const conversionCandidates: LedgerCandidate[] = [];
+    for (const chain of chains) {
+      const steps = stepsByChain.get(chain.id) ?? [];
+      const stepById = new Map(steps.map((step) => [step.id, step]));
+      const postings = accountChainPostings({ chain, steps }, accounts);
+      postings.forEach((posting, index) => {
+        if (posting.accountId !== input.accountId) return;
+        if (input.assetId && posting.assetId !== input.assetId) return;
+        const step = stepById.get(posting.source.id);
+        if (!step) return;
+        const key = `conversion:${chain.id}:${step.id}:${String(index).padStart(6, '0')}`;
+        conversionCandidates.push({
+          conversion: { chain, step },
+          entryId: key,
+          key,
+          date: posting.date,
+          assetId: posting.assetId,
+          postingAmount: posting.amount,
+          reconciliationStatus: 'cleared',
+        });
+      });
+    }
+    const inRange = (row: LedgerCandidate) =>
+      (!input.from || row.date >= input.from)
+      && (!input.to || row.date <= input.to);
+    const beforeCursor = (row: LedgerCandidate) =>
+      !input.cursor || row.date < input.cursor.value
+      || (row.date === input.cursor.value && row.key < input.cursor.id);
+    const visibleConversions = conversionCandidates.filter((row) => inRange(row) && beforeCursor(row));
+    const sortedCandidates = [...transactionCandidates, ...visibleConversions]
+      .sort((left, right) => right.date.localeCompare(left.date)
+        || (left.key < right.key ? 1 : left.key > right.key ? -1 : 0));
+    const hasMore = sortedCandidates.length > limit;
+    const pageRows = sortedCandidates.slice(0, limit);
     let balances: Record<string, string>;
     if (input.startingBalances) {
       balances = { ...input.startingBalances };
@@ -2701,6 +2797,10 @@ export class SqlLedgerStore implements LedgerStore {
         String(row['asset_id']),
         sum(JSON.parse(String(row['amounts_json'])) as string[]).toString(),
       ]));
+      for (const posting of conversionCandidates) {
+        if (input.to && posting.date > input.to) continue;
+        balances[posting.assetId] = D(balances[posting.assetId] ?? 0).plus(posting.postingAmount).toString();
+      }
     }
     if (!input.startingBalances) {
       const account = await this.accounts.get(input.accountId);
@@ -2708,35 +2808,29 @@ export class SqlLedgerStore implements LedgerStore {
         balances[account.openingAssetId] = D(balances[account.openingAssetId] ?? 0).plus(account.openingBalance).toString();
       }
     }
-    const conversionPostings = (await this.accountConversionPostings()).filter((p) => p.accountId === input.accountId);
     const resultRows: AccountLedgerReadRow[] = [];
     for (const row of pageRows) {
-      const transaction = rowToEntity<import('@zichan/core').Transaction>(TABLES.transactions, row);
-      const assetId = transaction.type === 'transfer' && row['posting_side'] === '1'
-        ? transaction.transferAssetId ?? transaction.assetId
-        : transaction.assetId;
-      const postingAmount = String(row['posting_amount']);
-      const balance = balances[assetId] ?? '0';
+      const balance = balances[row.assetId] ?? '0';
       resultRows.push({
-        transaction,
-        assetId,
-        postingAmount,
-        balance: conversionPostings.filter((p) => p.assetId === assetId && p.date <= transaction.date).reduce((total, p) => total.plus(p.amount), D(balance)).toString(),
-        reconciliationStatus: String(row['reconciliation_status']) as AccountLedgerReadRow['reconciliationStatus'],
+        transaction: row.transaction,
+        conversion: row.conversion,
+        entryId: row.entryId,
+        date: row.date,
+        assetId: row.assetId,
+        postingAmount: row.postingAmount,
+        balance,
+        reconciliationStatus: row.reconciliationStatus,
       });
-      balances[assetId] = D(balance).minus(postingAmount).toString();
+      balances[row.assetId] = D(balance).minus(row.postingAmount).toString();
     }
     const last = pageRows.at(-1);
-    const lastKey = last
-      ? `${String(last['id'])}:${String(last['posting_side'])}`
-      : undefined;
     return {
       rows: resultRows,
-      totalCount: Number(countRow?.count ?? 0),
+      totalCount: Number(countRow?.count ?? 0) + conversionCandidates.filter(inRange).length,
       hasMore,
       nextStartingBalances: balances,
-      ...(hasMore && last && lastKey
-        ? { nextCursor: { value: String(last['date']), id: lastKey } }
+      ...(hasMore && last
+        ? { nextCursor: { value: last.date, id: last.key } }
         : {}),
     };
   }
@@ -2933,6 +3027,11 @@ export class SqlLedgerStore implements LedgerStore {
       store.log.debug('saveChainWithSteps', { chainId: savedChain.id, steps: savedSteps.length });
       return { chain: savedChain, steps: savedSteps };
     });
+  }
+
+  /** Validates the same snapshot as saveChainWithSteps, without any writes. */
+  async validateConversionSnapshot(chain: ConversionChain, steps: ConversionStep[]): Promise<ConversionChain> {
+    return validateConversionAggregateSnapshot(this.driver, chain, steps, { allowInactiveReferences: inactiveReferencesAllowed(this.ctx) });
   }
 
   async operationLog(query: OperationLogQuery = {}): Promise<OperationLogEntry[]> {
@@ -3403,6 +3502,8 @@ export class SqlLedgerStore implements LedgerStore {
 
   private syncCollection(type: string): Collection<BaseEntity> | null {
     const rows: Record<string, unknown> = {
+      conversion_operation: this.conversionOperations,
+      cost_basis_opening: this.costBasisOpenings,
       asset: this.assets, account: this.accounts, setting: this.settings,
       price_mark: this.priceMarks, dca_plan: this.dcaPlans, dca_execution: this.dcaExecutions,
       game: this.games, game_account: this.gameAccounts, game_season: this.gameSeasons,
@@ -3423,6 +3524,7 @@ export class SqlLedgerStore implements LedgerStore {
   }
 
   async getSyncAggregate(type: string, id: string): Promise<Record<string, unknown> | null> {
+    if (type === 'conversion_operation') return conversionOperationSnapshot(this.driver, id);
     if (type === 'conversion') return (await aggregateSnapshot(this.driver, 'conversion_chain', { id }))?.payload ?? null;
     if (type === 'transaction') return (await aggregateSnapshot(this.driver, 'transaction', { id }))?.payload ?? null;
     if (type === 'reconciliation') return (await aggregateSnapshot(this.driver, 'reconciliation_session', { id }))?.payload ?? null;
@@ -3439,8 +3541,20 @@ export class SqlLedgerStore implements LedgerStore {
     // that snapshot as a live aggregate fails after dependent rows were removed
     // (for example reconciliation items or refund allocations).
     if (op === 'delete') {
+      if (type === 'conversion_operation') {
+        const operation = await this.conversionOperations.get(id);
+        if (operation) {
+          for (const chainId of operation.chainIds) {
+            const chain = await this.conversionChains.get(chainId);
+            if (chain && !chain.isDeleted) await this.conversionChains.remove(chain.id, chain.version);
+          }
+          await this.conversionOperations.remove(id, operation.version);
+        }
+        return;
+      }
       if (type === 'conversion') {
         const current = await this.conversionChains.get(id);
+        if (current?.operationId) throw new Error('连续转换子记录不能独立删除');
         if (current) await this.conversionChains.remove(id, current.version);
         return;
       }
@@ -3474,11 +3588,31 @@ export class SqlLedgerStore implements LedgerStore {
       return;
     }
     if (!payload) throw new Error(`同步聚合 ${type}:${id} 缺少快照`);
+    if (type === 'conversion_operation') {
+      const incoming = asRecord(payload['operation'])!;
+      const current = await this.conversionOperations.get(id);
+      const children = payload['conversions'] as Record<string, unknown>[];
+      const ids = incoming['chainIds'] as string[];
+      for (const oldId of current?.chainIds ?? []) if (!ids.includes(oldId)) {
+        const old = await this.conversionChains.get(oldId);
+        if (old && !old.isDeleted) await this.conversionChains.remove(oldId, old.version);
+      }
+      for (const child of children) {
+        const chain = asRecord(child['chain'])!;
+        const before = await this.conversionChains.get(String(chain['id']));
+        if (before && before.operationId !== id) throw new Error('连续转换不能覆盖独立转换或其他操作的子记录');
+        await this.saveChainWithSteps({ ...chain, version: before?.version ?? 0, createdAt: before?.createdAt ?? chain['createdAt'] ?? '', updatedAt: before?.updatedAt ?? '', isDeleted: chain['isDeleted'] === true } as unknown as ConversionChain,
+          child['steps'] as ConversionStep[]);
+      }
+      await this.conversionOperations.put({ ...incoming, id, version: current?.version ?? 0, createdAt: current?.createdAt ?? String(incoming['createdAt'] ?? ''), updatedAt: current?.updatedAt ?? '', isDeleted: incoming['isDeleted'] === true } as unknown as import('@zichan/core').ConversionOperation);
+      return;
+    }
     if (type === 'conversion') {
       const incomingChain = asRecord(payload['chain']);
       const incomingSteps = Array.isArray(payload['steps']) ? payload['steps'].map(asRecord).filter((row): row is Record<string, unknown> => !!row) : [];
       if (!incomingChain) throw new Error('资产转换同步快照缺少 chain');
       const current = await this.conversionChains.get(id);
+      if (current?.operationId || incomingChain['operationId']) throw new Error('连续转换子记录不能独立同步');
       const chain = {
         ...(current ?? {}), ...incomingChain, id,
         createdAt: current?.createdAt || String(incomingChain['createdAt'] ?? ''),

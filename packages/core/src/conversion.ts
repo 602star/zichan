@@ -4,6 +4,8 @@
  * derived from explicit fee rows so the ledger has one source of truth.
  */
 import { D, safeDiv, sum } from './decimal.js';
+import { assertCostQuoteSnapshot } from './asset-cost.js';
+import { conversionCostFingerprint } from './asset-cost-events.js';
 import type {
   ChainWithSteps,
   ConversionChain,
@@ -102,7 +104,7 @@ function feeInBase(fee: ConversionFee, baseId: string) {
   return D(0);
 }
 
-const CONVERSION_TYPES = new Set(['buy', 'sell', 'exchange', 'dca', 'deposit', 'withdraw']);
+const CONVERSION_TYPES = new Set(['buy', 'sell', 'swap', 'exchange', 'dca', 'deposit', 'withdraw']);
 const FEE_TREATMENTS = new Set(['source_included', 'source_extra', 'target_deducted', 'third_asset_extra']);
 const SOURCE_AMOUNT_MODES = new Set(['trade_principal', 'account_debit']);
 const TARGET_AMOUNT_MODES = new Set(['trade_gross', 'account_credit']);
@@ -110,6 +112,31 @@ const LOT_METHODS = new Set(['fifo', 'lifo', 'average', 'manual']);
 
 /** Validate portable conversion invariants without consulting persistence. */
 export function assertConversionShape(chain: ConversionChain, steps: ConversionStep[]): void {
+  const costV2 = chain.costQuotes !== undefined;
+  if (costV2) {
+    if (!chain.occurredAtUtc || !Array.isArray(chain.costQuotes) || chain.costQuotes.length !== steps.length) throw new Error('成本转换必须包含准确时间与每一步价值状态');
+    const quoteIds = new Set<string>();
+    for (const quote of chain.costQuotes) {
+      assertCostQuoteSnapshot(quote);
+      const step = steps.find((row) => row.id === quote.stepId);
+      if (!step || quoteIds.has(quote.stepId) || quote.baseCurrencyAssetId !== chain.baseCurrencyAssetId
+        || quote.dependencyFingerprint !== conversionCostFingerprint(step, chain.occurredAtUtc, chain.baseCurrencyAssetId)) throw new Error('价值依据条件已变化，请重新确认或清除为未知');
+      quoteIds.add(quote.stepId);
+      if (quote.quoteDate && quote.quoteDate > chain.date) throw new Error('不能采用交易日期之后的行情');
+      const fees = step.fees ?? [];
+      if (!Array.isArray(quote.feeValues) || quote.feeValues.length !== fees.length
+        || new Set(quote.feeValues.map((row) => row.feeId)).size !== fees.length) throw new Error('手续费冻结价值不完整');
+      for (const value of quote.feeValues) {
+        if (value.evidence) {
+          assertCostQuoteSnapshot(value.evidence);
+          if (value.evidence.baseCurrencyAssetId !== chain.baseCurrencyAssetId || value.evidence.valueInBase !== value.valueInBase
+            || value.evidence.dependencyFingerprint !== quote.dependencyFingerprint) throw new Error('手续费价值依据条件已变化');
+          if (value.evidence.quoteDate && value.evidence.quoteDate > chain.date) throw new Error('手续费不能采用交易日期之后的行情');
+        }
+        if (!fees.some((fee) => fee.id === value.feeId) || (value.valueInBase !== null && (!D(value.valueInBase).isFinite() || D(value.valueInBase).lt(0)))) throw new Error('手续费冻结价值无效');
+      }
+    }
+  }
   if (!CONVERSION_TYPES.has(chain.type)) throw new Error(`资产转换类型无效：${String(chain.type)}`);
   if (chain.recordState !== undefined && chain.recordState !== 'active' && chain.recordState !== 'voided') throw new Error('资产转换记录状态无效');
   if (chain.bookValueInBase !== undefined && !D(chain.bookValueInBase).gt(0)) throw new Error('资产转换账面折算金额必须大于 0');
@@ -146,7 +173,7 @@ export function assertConversionShape(chain: ConversionChain, steps: ConversionS
           ? fee.assetId === step.toAssetId
           : fee.assetId !== step.fromAssetId && fee.assetId !== step.toAssetId;
       if (!validAsset) throw new Error(`步骤 ${index + 1} 手续费位置与资产不匹配`);
-      if (fee.assetId !== chain.baseCurrencyAssetId && !D(fee.valueInBase ?? 0).gt(0)) {
+      if (!costV2 && fee.assetId !== chain.baseCurrencyAssetId && !D(fee.valueInBase ?? 0).gt(0)) {
         throw new Error(`步骤 ${index + 1} 非本位币手续费必须填写本位币金额`);
       }
     }
@@ -157,10 +184,10 @@ export function assertConversionShape(chain: ConversionChain, steps: ConversionS
     }
   }
   const trace = traceChain({ chain, steps: ordered });
-  if ((chain.type === 'buy' || chain.type === 'dca') && !D(trace.totalBaseCost).gt(0)) {
+  if (!costV2 && (chain.type === 'buy' || chain.type === 'dca') && !D(trace.totalBaseCost).gt(0)) {
     throw new Error('买入或定投必须形成大于 0 的账面成本');
   }
-  if (chain.type === 'sell' && !D(trace.totalBaseProceeds).gt(0)) {
+  if (!costV2 && chain.type === 'sell' && !D(trace.totalBaseProceeds).gt(0)) {
     throw new Error('卖出必须形成大于 0 的账面收入');
   }
 }

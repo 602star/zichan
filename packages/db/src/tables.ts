@@ -49,6 +49,14 @@ export function allCols(spec: TableSpec): Col[] {
 // ─────────────────────────── Registry ───────────────────────────
 
 export const TABLES = {
+  conversionOperations: {
+    name: 'conversion_operations',
+    cols: [c('title'), c('chainIds'), c('links'), c('recordState'), c('voidReason')],
+  },
+  costBasisOpenings: {
+    name: 'cost_basis_openings',
+    cols: [c('occurredAtUtc'), c('timezone'), c('baseCurrencyAssetId'), c('sourceFingerprint'), c('confirmedAt'), c('items')],
+  },
   assets: {
     name: 'assets',
     cols: [
@@ -83,6 +91,7 @@ export const TABLES = {
   conversionChains: {
     name: 'conversion_chains',
     cols: [
+      c('costQuotes'), c('operationId'), c('operationOrder', 'int'),
       c('date'), c('time'), c('timezone'), c('timePrecision'), c('occurredAtUtc'), c('utcOffsetMinutes', 'int'), c('timeDisambiguation'),
       c('type'), c('title'), c('baseCurrencyAssetId'), c('bookValueInBase'),
       c('relatedDcaExecutionId'), c('lotMethod'), c('manualLotIds'), c('recordState'), c('voidedAt'), c('voidReason'), c('note'),
@@ -296,6 +305,7 @@ export const TABLES = {
   transactions: {
     name: 'transactions',
     cols: [
+      c('costQuote'),
       c('balanceTiming'), c('balanceTimingAccountId'),
       c('date'), c('time'), c('timezone'), c('timePrecision'), c('occurredAtUtc'), c('utcOffsetMinutes', 'int'), c('timeDisambiguation'),
       c('type'), c('category'), c('amount'),
@@ -398,7 +408,7 @@ export const TABLES = {
     name: 'reconciliation_sessions',
     cols: [
       c('accountId'), c('assetId'), c('statementDate'), c('statementBalance'),
-      c('openingBalance'), c('selectedTotal'), c('clearedBalance'), c('difference'),
+      c('openingBalance'), c('selectedTotal'), c('conversionTotal'), c('clearedBalance'), c('difference'),
       c('status'), c('adjustmentTransactionId'), c('closedAt'), c('note'),
     ],
     indexes: [
@@ -428,7 +438,7 @@ function toStored(value: unknown, type: ColType): string | number | null {
   if (value === undefined || value === null) return null;
   if (type === 'bool') return value ? 1 : 0;
   if (type === 'int' || type === 'real') return Number(value);
-  if (Array.isArray(value)) return JSON.stringify(value);
+  if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
 }
 
@@ -449,7 +459,8 @@ export function rowToEntity<T extends BaseEntity>(spec: TableSpec, row: Record<s
   const out: Record<string, unknown> = {};
   for (const col of allCols(spec)) {
     let v = fromStored(row[col.col], col.type);
-    if ((col.field === 'tagIds' || col.field === 'aliases' || col.field === 'manualLotIds') && typeof v === 'string') {
+    if (col.field === 'actualBaseCost' && row[col.col] === null) v = null;
+    if ((col.field === 'tagIds' || col.field === 'aliases' || col.field === 'manualLotIds' || col.field === 'chainIds') && typeof v === 'string') {
       const rawTags = v;
       try {
         const parsed = JSON.parse(rawTags) as unknown;
@@ -460,7 +471,7 @@ export function rowToEntity<T extends BaseEntity>(spec: TableSpec, row: Record<s
         v = rawTags.split(',').map((x: string) => x.trim()).filter(Boolean);
       }
     }
-    if (col.field === 'balanceCheckpoints' && typeof v === 'string') v = JSON.parse(v);
+    if (['balanceCheckpoints', 'items', 'costQuotes', 'costQuote', 'links'].includes(col.field) && typeof v === 'string') v = JSON.parse(v);
     if (v !== undefined) out[col.field] = v;
   }
   // isDeleted must always be a boolean even when stored 0.

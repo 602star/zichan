@@ -147,6 +147,8 @@ const ENTITY_LABELS: Record<string, string> = {
   fixed_asset_consumable: '耗材',
   fixed_asset_goal: '使用成本目标',
   conversion_chain: '资产转换',
+  conversion_operation: '连续资产转换',
+  cost_basis_opening: '成本起点',
   conversion_chain_steps: '资产转换步骤',
   category: '分类',
   categoryId: '物品分类',
@@ -261,6 +263,11 @@ function formatValue(key: string, value: unknown, snap: Snapshot | null): string
 
 function aggregateTitle(type: string, id: string, payload: Record<string, unknown> | null, snap: Snapshot | null): string {
   if (!payload) return `${ENTITY_LABELS[type] ?? type} · ${id.slice(0, 8)}（已删除）`;
+  if (type === 'conversion_operation' && payload.operation && typeof payload.operation === 'object') {
+    const operation = payload.operation as Record<string, unknown>;
+    return `连续资产转换 · ${typeof operation.title === 'string' && operation.title ? operation.title : `${Array.isArray(operation.chainIds) ? operation.chainIds.length : 0} 个关联转换段`}`;
+  }
+  if (type === 'cost_basis_opening') return `成本起点 · ${String(payload.occurredAtUtc ?? '')} · ${snap?.assets.find((asset) => asset.id === payload.baseCurrencyAssetId)?.code ?? '核算币种待确认'}`;
   const candidates = [payload.name, payload.title, payload.description, payload.merchant, payload.code].filter(Boolean);
   if (typeof payload.category === 'string') candidates.push(categoryLabel(payload.category, snap?.categories ?? []));
   return `${ENTITY_LABELS[type] ?? type} · ${candidates.length ? String(candidates[0]) : id.slice(0, 8)}`;

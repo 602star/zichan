@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { openLedger } from '@zichan/db/node';
 import { DEFAULT_FIXED_ASSET_CATEGORIES } from '../src/fixedAssetCategories.js';
+import { loadSnapshot } from '../src/db/snapshot.js';
 import {
   ASSET_PRESETS,
+  ASSET_PRESET_GROUPS,
+  FEATURED_ASSET_PRESET_CODES,
   FIXED_ASSET_QUICK_PRESETS,
   ensureAssetPreset,
   fixedAssetPresetCategoryId,
@@ -49,8 +52,32 @@ describe('zero-configuration asset presets', () => {
     }
   });
 
+  it('keeps archived assets visible in management while conversion selectors omit them', async () => {
+    const store = await openLedger({ deviceId: 'asset-preset-management' });
+    try {
+      await store.assets.put({
+        id: 'archived-nzd', createdAt: '', updatedAt: '', version: 1, isDeleted: true,
+        code: 'NZD', name: '新西兰元', type: 'fiat', decimals: 2, isActive: false,
+      });
+      expect((await loadSnapshot(store, 'manage')).assets.map((asset) => asset.code)).toContain('NZD');
+      expect((await loadSnapshot(store, 'convert')).assets.map((asset) => asset.code)).not.toContain('NZD');
+    } finally {
+      await store.close();
+    }
+  });
+
+  it('keeps a unique, grouped common-currency catalog with valid featured entries', () => {
+    expect(ASSET_PRESETS.map((preset) => preset.code)).toEqual([
+      'CNY', 'USD', 'HKD', 'EUR', 'GBP', 'JPY', 'SGD', 'TWD', 'AUD', 'NZD', 'CAD', 'CHF',
+      'USDT', 'USDC', 'BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'SHIB', 'PEPE',
+    ]);
+    expect(new Set(ASSET_PRESETS.map((preset) => preset.code)).size).toBe(ASSET_PRESETS.length);
+    expect(FEATURED_ASSET_PRESET_CODES.every((code) => ASSET_PRESETS.some((preset) => preset.code === code))).toBe(true);
+    expect(ASSET_PRESET_GROUPS.find((group) => group.label === 'Meme 币')?.codes).toEqual(['DOGE', 'SHIB', 'PEPE']);
+    expect(ASSET_PRESET_GROUPS.flatMap((group) => group.codes).sort()).toEqual(ASSET_PRESETS.map((preset) => preset.code).sort());
+  });
+
   it('maps every fixed-asset quick card to an existing leaf category', () => {
-    expect(ASSET_PRESETS.map((preset) => preset.code)).toEqual(['USD', 'HKD', 'EUR', 'JPY', 'USDT', 'BTC', 'ETH']);
     expect(FIXED_ASSET_QUICK_PRESETS.map((preset) => [
       preset.label,
       fixedAssetPresetCategoryId(preset, DEFAULT_FIXED_ASSET_CATEGORIES as never),

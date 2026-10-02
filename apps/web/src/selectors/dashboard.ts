@@ -1,7 +1,7 @@
 /** Dashboard view-model — pure selector over a Snapshot (unit-tested). */
 import {
   D, Decimal, isDateInRange, sum, traceChain, fixedAssetCost, remainingHoldings, gameRecordReportingPostings,
-  nextUnhandledDcaOccurrence,
+  nextUnhandledDcaOccurrence, usesAssetCostState, dayOfInstant,
   isTransactionActive,
   isLotTrackedAssetType,
   type DateRange,
@@ -85,7 +85,7 @@ export function buildDashboard(
   // Market positions come from lots (authoritative cost/holding ledger);
   // fiat/stablecoin come from posting balances.
   const holdingsOf = (assetType: string, assetId: string) =>
-    isLotTrackedAssetType(assetType as Snapshot['assets'][number]['type'])
+    !snap.costState && isLotTrackedAssetType(assetType as Snapshot['assets'][number]['type'])
       ? remainingHoldings(snap.lots, assetId)
       : D(balanceOfAsset(snapshotWithoutTransactions, assetId))
         .plus(transactionBalances.get(assetId) ?? 0)
@@ -126,13 +126,25 @@ export function buildDashboard(
 
   const investedFiat = sum(snap.chains
     .filter((c) => activeChain(c) && (c.chain.type === 'dca' || c.chain.type === 'buy') && inSelectedRange(c.chain.date))
-    .map((c) => converted('investedFiat', traceChain(c).totalBaseCost, c.chain.baseCurrencyAssetId, c.chain.date))
+    .map((c) => {
+      if (!usesAssetCostState(snap.costState, c.chain)) return converted('investedFiat', traceChain(c).totalBaseCost, c.chain.baseCurrencyAssetId, c.chain.date);
+      const acquired = snap.costState.events.find((event) => event.eventId === `${c.steps.at(-1)?.id}:2-target`);
+      if (acquired?.costInBase == null) { incompleteMetrics.add('investedFiat'); return undefined; }
+      return converted('investedFiat', acquired.costInBase, acquired.baseCurrencyAssetId ?? c.chain.baseCurrencyAssetId, c.chain.date);
+    })
     .filter((value): value is Decimal => value !== undefined));
   let unrealized = D(0);
-  for (const a of snap.assets.filter((x) => isLotTrackedAssetType(x.type))) {
-    const amt = D(remainingHoldings(snap.lots, a.id));
+  for (const a of snap.assets.filter((x) => snap.costState ? x.type !== 'game' && x.type !== 'fixed' : isLotTrackedAssetType(x.type))) {
+    const amt = D(holdingsOf(a.type, a.id));
     const value = converted('unrealized', amt, a.id);
     if (!value || amt.isZero()) continue;
+    if (snap.costState) {
+      const position = snap.costState.positions.find((row) => row.assetId === a.id);
+      if (position?.costInBase == null || !D(position.quantity).eq(amt)) { incompleteMetrics.add('unrealized'); continue; }
+      const cost = converted('unrealized', position.costInBase, snap.costState.baseCurrencyAssetId);
+      if (cost) unrealized = unrealized.plus(value.minus(cost));
+      continue;
+    }
     let cost = D(0);
     let costKnown = true;
     for (const lot of snap.lots.filter((row) => row.assetId === a.id && !row.isDeleted && D(row.remainingAmount).gt(0))) {
@@ -144,10 +156,20 @@ export function buildDashboard(
     }
     if (costKnown) unrealized = unrealized.plus(value.minus(cost));
   }
-  const realizedCrypto = sum(snap.chains
-    .filter((c) => activeChain(c) && c.chain.type === 'sell' && inSelectedRange(c.chain.date))
-    .map((c) => converted('realizedCrypto', c.chain.realizedGainLoss ?? '0', c.chain.baseCurrencyAssetId, c.chain.date))
+  let realizedCrypto = sum(snap.chains
+    .filter((c) => activeChain(c) && c.chain.type === 'sell' && inSelectedRange(c.chain.date) && !usesAssetCostState(snap.costState, c.chain))
+    .map((c) => {
+      if (c.chain.realizedGainLoss === undefined) { incompleteMetrics.add('realizedCrypto'); return undefined; }
+      return converted('realizedCrypto', c.chain.realizedGainLoss, c.chain.baseCurrencyAssetId, c.chain.date);
+    })
     .filter((value): value is Decimal => value !== undefined));
+  if (snap.costState) for (const event of snap.costState.events.filter((row) => row.realize)) {
+    const date = dayOfInstant(event.occurredAtUtc, snap.costState.timezone);
+    if (!inSelectedRange(date)) continue;
+    if (event.realizedGainLoss === null) incompleteMetrics.add('realizedCrypto');
+    const value = converted('realizedCrypto', event.knownRealizedGainLoss, event.baseCurrencyAssetId ?? snap.costState.baseCurrencyAssetId, date);
+    if (value) realizedCrypto = realizedCrypto.plus(value);
+  }
   const seasonValues: Decimal[] = [];
   for (const record of snap.gameRecords.filter((row) => inSelectedRange(row.date))) {
     for (const posting of gameRecordReportingPostings(record)) {

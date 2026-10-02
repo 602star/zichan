@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { money, signedMoney, pct, amount, num, setBaseSymbol } from '../src/format.js';
+import { money, signedMoney, pct, amount, num, setBaseSymbol, significant } from '../src/format.js';
 
 describe('format', () => {
   it('money groups and fixes 2 decimals', () => {
@@ -20,9 +20,16 @@ describe('format', () => {
   });
 
   it('amount trims trailing zeros to the asset precision', () => {
+    expect(amount('0.00000001', 8)).toBe('0.00000001');
     expect(amount('0.00331700', 8)).toBe('0.003317');
     expect(num('1234.5', 2)).toBe('1,234.50');
     expect(num('9007199254740992.01', 2)).toBe('9,007,199,254,740,992.01');
+  });
+
+  it('unit prices preserve significant digits without rounding tiny values to zero', () => {
+    expect(significant('0.000000000123456789')).toBe('0.00000000012345679');
+    expect(significant('11.009009009')).toBe('11.009009');
+    expect(significant('12345.678901')).toBe('12,345.679');
   });
 
   it('setBaseSymbol changes the default money symbol', () => {

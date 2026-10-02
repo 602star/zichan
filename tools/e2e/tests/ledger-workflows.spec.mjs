@@ -146,7 +146,7 @@ test('enables and disables an extension pack for new entries and restores it whe
   await page.getByLabel('在侧边栏显示管理').click();
   await expect(page.getByLabel('在侧边栏显示管理')).toBeChecked();
   await sidebar.getByRole('button', { name: /管理$/ }).click();
-  await expect(page.getByText('分类与资料中心', { exact: true })).toBeVisible();
+  await expect(page.getByText('资产与资料中心', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '快捷显示与排序', exact: true }).click();
 
   const studentPack = page.getByTestId('category-pack-student');
@@ -204,7 +204,7 @@ test('adds a catalog sub-category from the structure list without enabling a who
   await page.getByLabel('在侧边栏显示管理').click();
   await expect(page.getByLabel('在侧边栏显示管理')).toBeChecked();
   await sidebar.getByRole('button', { name: /管理$/ }).click();
-  await expect(page.getByText('分类与资料中心', { exact: true })).toBeVisible();
+  await expect(page.getByText('资产与资料中心', { exact: true })).toBeVisible();
 
   // 结构管理默认打开。目录里存在、但账本里还没有的细分分类应当可浏览：
   // 搜索 KTV 会把它所在的「休闲娱乐」连这一项一起展开。

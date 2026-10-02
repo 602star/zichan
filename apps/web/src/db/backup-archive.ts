@@ -107,6 +107,8 @@ export type BackupArchiveInput = Blob | BackupArchiveSource;
 type LedgerSection = Exclude<keyof PortableLedgerBackup, 'version' | 'exportedAt' | 'chains'>;
 
 const LEDGER_SECTIONS = [
+  'conversionOperations',
+  'costBasisOpenings',
   'assets',
   'accounts',
   'settings',
@@ -149,7 +151,7 @@ interface BackupManifestRecord {
   record: 'manifest';
   payloadVersion: 2;
   backupKind: BackupKind;
-  ledgerVersion: 7;
+  ledgerVersion: 7 | 8;
   exportedAt: string;
   chainCount: number;
   sections: { name: LedgerSection; count: number }[];
@@ -239,7 +241,7 @@ function manifestFor(payload: BackupPayload): BackupManifestRecord {
   if (payload.version !== 2 || (payload.kind !== 'portable' && payload.kind !== 'device')) {
     throw new Error('备份正文版本无效');
   }
-  if (payload.ledger.version !== 7) throw new Error('账本备份版本无效');
+  if (payload.ledger.version !== 7 && payload.ledger.version !== 8) throw new Error('账本备份版本无效');
   if (payload.kind === 'device' && payload.deviceState?.version !== 1) {
     throw new Error('完整设备备份缺少设备恢复状态');
   }
@@ -250,9 +252,9 @@ function manifestFor(payload: BackupPayload): BackupManifestRecord {
     ledgerVersion: payload.ledger.version,
     exportedAt: payload.ledger.exportedAt,
     chainCount: payload.ledger.chains.length,
-    sections: LEDGER_SECTIONS.map((name) => ({
+    sections: LEDGER_SECTIONS.filter((name) => payload.ledger.version === 8 || (name !== 'costBasisOpenings' && name !== 'conversionOperations')).map((name) => ({
       name,
-      count: (payload.ledger[name] as unknown[]).length,
+      count: (payload.ledger[name] as unknown[] | undefined)?.length ?? 0,
     })),
     ...(payload.kind === 'device' ? {
       deviceState: {
@@ -269,8 +271,8 @@ function* payloadRecords(payload: BackupPayload): Generator<BackupNdjsonRecord> 
   const manifest = manifestFor(payload);
   yield manifest;
   for (const value of payload.ledger.chains) yield { record: 'chain', value };
-  for (const section of LEDGER_SECTIONS) {
-    for (const value of payload.ledger[section] as unknown[]) {
+  for (const { name: section } of manifest.sections) {
+    for (const value of (payload.ledger[section] as unknown[] | undefined) ?? []) {
       yield { record: 'entity', section, value };
     }
   }
@@ -600,10 +602,10 @@ function validManifest(value: unknown, archive: BackupArchiveHeader): value is B
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const row = value as Partial<BackupManifestRecord>;
   if (row.record !== 'manifest' || row.payloadVersion !== 2 || row.backupKind !== archive.kind
-    || row.ledgerVersion !== 7 || typeof row.exportedAt !== 'string'
+    || (row.ledgerVersion !== 7 && row.ledgerVersion !== 8) || typeof row.exportedAt !== 'string'
     || !Number.isSafeInteger(row.chainCount) || (row.chainCount ?? -1) < 0
-    || !Array.isArray(row.sections) || row.sections.length !== LEDGER_SECTIONS.length) return false;
-  const expected = new Set<string>(LEDGER_SECTIONS);
+    || !Array.isArray(row.sections) || row.sections.length !== LEDGER_SECTIONS.length - (row.ledgerVersion === 7 ? 2 : 0)) return false;
+  const expected = new Set<string>(LEDGER_SECTIONS.filter((name) => row.ledgerVersion === 8 || (name !== 'costBasisOpenings' && name !== 'conversionOperations')));
   if (row.sections.some((section) =>
     !section || !expected.delete(section.name)
     || !Number.isSafeInteger(section.count) || section.count < 0)) return false;
@@ -744,11 +746,11 @@ async function decodeLedgerPayload(
       return result;
     };
     const ledger = {
-      version: 7,
+      version: manifest.ledgerVersion,
       exportedAt: manifest.exportedAt,
       chains: await stagedValues('chain') as PortableLedgerBackup['chains'],
     } as unknown as PortableLedgerBackup;
-    for (const section of LEDGER_SECTIONS) {
+    for (const { name: section } of manifest.sections) {
       (ledger as unknown as Record<string, unknown[]>)[section] = await stagedValues('entity', section);
     }
     return {

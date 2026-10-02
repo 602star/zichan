@@ -1,6 +1,6 @@
 import { duplicateMasterData, DuplicateMasterDataError } from './master-data-identity.js';
 import {
-  D, isValidEntityIcon,
+  D, isValidEntityIcon, assertCostBasisOpening, assertCostQuoteSnapshot, transactionCostFingerprint,
   isDefaultAccount, accountBalanceTiming, accountTransactionPostings,
   assertConversionShape,
   assertDcaExecutionShape,
@@ -693,6 +693,14 @@ async function validateTransactionWrite(
 ): Promise<void> {
   try {
     assertTransactionShape(transaction);
+    if (transaction.costQuote) {
+      assertCostQuoteSnapshot(transaction.costQuote);
+      if (transaction.costQuote.dependencyFingerprint !== transactionCostFingerprint(transaction, transaction.costQuote.baseCurrencyAssetId)) {
+        fail('数量、币种或时间已变化，请重新确认折算价值，或清除后以未知成本保存', 'costQuote');
+      }
+      if (transaction.costQuote.quoteDate && transaction.costQuote.quoteDate > transaction.date) fail('不能采用交易日期之后的行情', 'costQuote');
+      await activeAsset(driver, transaction.costQuote.baseCurrencyAssetId, 'costQuote.baseCurrencyAssetId', allowInactiveReferences);
+    }
   } catch (error) {
     fail(error instanceof Error ? error.message : '流水结构无效');
   }
@@ -862,6 +870,21 @@ async function validateReferenceEntity(
     if (!target || target.isDeleted) fail(`${label}不存在`, field);
   };
   switch (entityType) {
+    case 'cost_basis_opening': {
+      const opening = row as unknown as import('@zichan/core').CostBasisOpening;
+      assertCostBasisOpening(opening);
+      await activeAsset(driver, opening.baseCurrencyAssetId, 'baseCurrencyAssetId', allowInactiveReferences);
+      for (const item of opening.items) {
+        const asset = await activeAsset(driver, item.assetId, 'items.assetId', true);
+        if (asset.type === 'game' || asset.type === 'fixed') fail('游戏和物品资产不使用金融成本起点', 'items.assetId');
+      }
+      break;
+    }
+    case 'conversion_operation':
+      if (!Array.isArray(row['chainIds']) || row['chainIds'].length === 0 || new Set(row['chainIds']).size !== row['chainIds'].length
+        || row['chainIds'].some((id) => typeof id !== 'string' || !id)) fail('连续转换需要不重复的有序子记录', 'chainIds');
+      if (row['recordState'] !== undefined && row['recordState'] !== 'active' && row['recordState'] !== 'voided') fail('连续转换状态无效', 'recordState');
+      break;
     case 'setting':
       for (const [field, forbidden] of [['expenseDefaultAccountId', 'default_income'], ['incomeDefaultAccountId', 'default_expense']] as const) {
         if (!row[field]) continue;
@@ -1368,12 +1391,14 @@ export async function validateConversionAggregateSnapshot(
   options: { allowInactiveReferences?: boolean } = {},
 ): Promise<ConversionChain> {
   const normalized = normalizeDomainEntity('conversion_chain', chain);
+  const previous = await getEntity<ConversionChain>(driver, TABLES.conversionChains, chain.id);
+  const oldSteps = previous ? await driver.all<Record<string, unknown>>('SELECT * FROM conversion_steps WHERE chain_id = ?', [chain.id]) : [];
   try {
     assertConversionShape(normalized, steps);
   } catch (error) {
     fail(error instanceof Error ? error.message : '资产转换链路无效', 'steps');
   }
-  await activeAsset(driver, normalized.baseCurrencyAssetId, 'baseCurrencyAssetId', options.allowInactiveReferences);
+  await activeAsset(driver, normalized.baseCurrencyAssetId, 'baseCurrencyAssetId', options.allowInactiveReferences || previous?.baseCurrencyAssetId === normalized.baseCurrencyAssetId);
   const referencedIds = new Set(steps.flatMap((s) => [s.accountFromId, s.accountToId, ...(s.fees ?? []).map((f) => f.accountId)]).filter(Boolean));
   for (const id of referencedIds) {
     const account = await getEntity<Account>(driver, TABLES.accounts, id!);
@@ -1382,24 +1407,27 @@ export async function validateConversionAggregateSnapshot(
   }
   const orderedSteps = [...steps].sort((left, right) => left.order - right.order);
   for (const [index, step] of orderedSteps.entries()) {
-    const from = await activeAsset(driver, step.fromAssetId, `steps.${index}.fromAssetId`, options.allowInactiveReferences);
-    const to = await activeAsset(driver, step.toAssetId, `steps.${index}.toAssetId`, options.allowInactiveReferences);
+    const old = oldSteps.find((row) => row['id'] === step.id);
+    const from = await activeAsset(driver, step.fromAssetId, `steps.${index}.fromAssetId`, options.allowInactiveReferences || old?.['from_asset_id'] === step.fromAssetId);
+    const to = await activeAsset(driver, step.toAssetId, `steps.${index}.toAssetId`, options.allowInactiveReferences || old?.['to_asset_id'] === step.toAssetId);
     if (decimalPlaces(step.fromAmount) > from.decimals || decimalPlaces(step.toAmount) > to.decimals) {
       fail(`步骤 ${index + 1} 的金额精度超过资产限制`, 'steps');
     }
     if (step.accountFromId) {
-      await activeAccount(driver, step.accountFromId, `steps.${index}.accountFromId`, options.allowInactiveReferences);
+      await activeAccount(driver, step.accountFromId, `steps.${index}.accountFromId`, options.allowInactiveReferences || old?.['account_from_id'] === step.accountFromId);
     }
     if (step.accountToId) {
-      await activeAccount(driver, step.accountToId, `steps.${index}.accountToId`, options.allowInactiveReferences);
+      await activeAccount(driver, step.accountToId, `steps.${index}.accountToId`, options.allowInactiveReferences || old?.['account_to_id'] === step.accountToId);
     }
     for (const fee of step.fees ?? []) {
-      const asset = await activeAsset(driver, fee.assetId, `steps.${index}.fees`, options.allowInactiveReferences);
+      const oldFees = JSON.parse(String(old?.['fees_json'] ?? '[]')) as NonNullable<ConversionStep['fees']>;
+      const oldFee = oldFees.find((row) => row.id === fee.id);
+      const asset = await activeAsset(driver, fee.assetId, `steps.${index}.fees`, options.allowInactiveReferences || oldFee?.assetId === fee.assetId);
       if (!decimal(fee.amount, '手续费', `steps.${index}.fees`).gt(0) || decimalPlaces(fee.amount) > asset.decimals) {
         fail(`步骤 ${index + 1} 手续费金额无效`, `steps.${index}.fees`);
       }
       if (fee.accountId) {
-        await activeAccount(driver, fee.accountId, `steps.${index}.fees.accountId`, options.allowInactiveReferences);
+        await activeAccount(driver, fee.accountId, `steps.${index}.fees.accountId`, options.allowInactiveReferences || oldFee?.accountId === fee.accountId);
       }
     }
   }
@@ -1419,6 +1447,10 @@ export async function validateReconciliationAggregateSnapshot(
   for (const field of ['statementBalance', 'openingBalance', 'selectedTotal', 'clearedBalance', 'difference'] as const) {
     decimal(session[field], '对账金额', field);
     if (decimalPlaces(session[field]) > asset.decimals) fail('对账金额超过币种精度', field);
+  }
+  if (session.conversionTotal !== undefined) {
+    decimal(session.conversionTotal, '资产转换对账金额', 'conversionTotal');
+    if (decimalPlaces(session.conversionTotal) > asset.decimals) fail('资产转换对账金额超过币种精度', 'conversionTotal');
   }
   if (session.status !== 'open' && session.status !== 'closed') fail('对账状态无效', 'status');
   if (session.status === 'closed' && !session.closedAt) fail('已关闭对账缺少关闭时间', 'closedAt');
@@ -1453,7 +1485,8 @@ export async function validateReconciliationAggregateSnapshot(
     selectedTotal = selectedTotal.plus(itemAmount);
   }
   if (session.adjustmentTransactionId && !hasAdjustment) fail('对账批次缺少对应的调整项目', 'adjustmentTransactionId');
-  if (!selectedTotal.eq(session.selectedTotal)) fail('已选流水合计与对账项目不一致', 'selectedTotal');
+  selectedTotal = selectedTotal.plus(session.conversionTotal ?? 0);
+  if (!selectedTotal.eq(session.selectedTotal)) fail('已选流水合计（含资产转换）与对账项目不一致', 'selectedTotal');
   const expectedCleared = D(session.openingBalance).plus(selectedTotal);
   if (!expectedCleared.eq(session.clearedBalance)) fail('清算余额必须等于期初余额加已选流水合计', 'clearedBalance');
   const expectedDifference = D(session.statementBalance).minus(expectedCleared);
@@ -1483,8 +1516,10 @@ export function syncAggregateApplyPriority(type: string, op: 'put' | 'delete'): 
     transaction_location: 13,
     payee: 14,
     game: 14,
+    cost_basis_opening: 15,
     transaction: 20,
     conversion: 20,
+    conversion_operation: 20,
     fixed_asset: 20,
     game_account: 21,
     game_season: 21,

@@ -22,7 +22,7 @@ export const NAVIGATION_ITEMS: readonly NavigationItem[] = [
   { id: 'fixed', label: '物品资产', icon: '▤', description: '物品成本与生命周期' },
   { id: 'reports', label: '报表', icon: '▦', description: '支出、成本与盈亏报表' },
   { id: 'history', label: '历史', icon: '◷', description: '操作记录与冲突处理' },
-  { id: 'manage', label: '管理', icon: '⊞', description: '分类、商户和基础资料' },
+  { id: 'manage', label: '管理', icon: '⊞', description: '资产、分类和基础资料' },
   { id: 'sync', label: '同步', icon: '⇅', description: '设备和同步服务器' },
   { id: 'settings', label: '设置', icon: '⚙', description: '记账、导航和数据设置' },
 ] as const;

@@ -4,6 +4,9 @@
  * and mobile shells all import from here. See docs/data-model.md.
  */
 export * from './types.js';
+export * from './asset-cost.js';
+export * from './asset-cost-events.js';
+export * from './asset-cost-ledger.js';
 export * from './category-catalog.js';
 export { PLAIN_HTTP_HOST_ALLOWLIST, isPlainHttpHost } from './transport-policy.js';
 export {

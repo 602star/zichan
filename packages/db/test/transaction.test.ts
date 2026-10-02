@@ -10,6 +10,7 @@ import {
 } from '@zichan/core';
 import {
   exportLedger,
+  memoryCommitTransport,
   closeReconciliation,
   checkConsistency,
   importLedger,
@@ -19,10 +20,13 @@ import {
   materializeScheduledTransaction,
   preflightImport,
   previewScheduledBacklog,
+  recordConversion,
+  recordSell,
   restoreTransaction,
   runDueScheduledTransactions,
   saveTransaction,
   saveTransactionAggregate,
+  syncReplica,
   undoLatestReconciliation,
   voidTransaction,
 } from '../src/index.js';
@@ -448,6 +452,89 @@ describe('transactions persistence', () => {
       ['income-gbp', '1000', '1000'],
     ]);
     await store.close();
+  });
+
+  it('shows fiat asset purchases in account history without counting them as income or expense', async () => {
+    const store = await openTransactionLedger();
+    try {
+      await store.assets.put({ ...base(), id: 'USD', code: 'USD', name: 'US Dollar', type: 'fiat', decimals: 2, isActive: true } as never);
+      await saveTransaction(store, tx({ id: 'salary-gbp', date: '2026-03-01', type: 'income', category: 'salary', amount: '1000', accountId: 'bank' }));
+      const chain = { ...base(), id: 'buy-usd', date: '2026-03-02', type: 'buy' as const, title: '买入美元', baseCurrencyAssetId: 'GBP' };
+      await recordConversion(store, { chain, steps: [{
+        id: 'buy-usd-step', chainId: chain.id, order: 1,
+        fromAssetId: 'GBP', fromAmount: '200', toAssetId: 'USD', toAmount: '250',
+        accountFromId: 'bank', accountToId: 'bank',
+      }] });
+      await saveTransaction(store, tx({ id: 'groceries-gbp', date: '2026-03-03', amount: '100', accountId: 'bank' }));
+      await saveTransaction(store, tx({ id: 'groceries-usd', date: '2026-03-04', amount: '50', assetId: 'USD', accountId: 'bank' }));
+
+      const first = await store.accountLedgerPage({ accountId: 'bank', limit: 2 });
+      expect(first.totalCount).toBe(5);
+      expect(first.rows.map((row) => [row.transaction?.id ?? row.conversion?.chain.id, row.postingAmount, row.balance])).toEqual([
+        ['groceries-usd', '-50', '200'],
+        ['groceries-gbp', '-100', '700'],
+      ]);
+      const second = await store.accountLedgerPage({
+        accountId: 'bank', limit: 2, cursor: first.nextCursor, startingBalances: first.nextStartingBalances,
+      });
+      expect(second.rows.map((row) => [row.conversion?.chain.id, row.assetId, row.postingAmount, row.balance])).toEqual([
+        ['buy-usd', 'USD', '250', '250'],
+        ['buy-usd', 'GBP', '-200', '800'],
+      ]);
+      const third = await store.accountLedgerPage({
+        accountId: 'bank', limit: 2, cursor: second.nextCursor, startingBalances: second.nextStartingBalances,
+      });
+      expect(third.rows.map((row) => [row.transaction?.id, row.balance])).toEqual([['salary-gbp', '1000']]);
+      expect(third.hasMore).toBe(false);
+      const incomeExpense = await store.transactionReportAggregate({ from: '2026-03-01', to: '2026-03-31' });
+      expect(incomeExpense.reduce((count, row) => count + row.count, 0)).toBe(3);
+      expect((await store.transactionBrowsePage({})).totalCount).toBe(3);
+      const sale = { ...base(), id: 'sell-usd', date: '2026-03-05', type: 'sell' as const, title: '卖出美元', baseCurrencyAssetId: 'GBP' };
+      await recordSell(store, { chain: sale, steps: [{
+        id: 'sell-usd-step', chainId: sale.id, order: 1,
+        fromAssetId: 'USD', fromAmount: '50', toAssetId: 'GBP', toAmount: '40',
+        accountFromId: 'bank', accountToId: 'bank',
+      }] });
+      const afterSale = await store.accountLedgerPage({ accountId: 'bank', limit: 2 });
+      expect(afterSale.totalCount).toBe(7);
+      expect(afterSale.rows.map((row) => [row.conversion?.chain.id, row.assetId, row.postingAmount, row.balance])).toEqual([
+        ['sell-usd', 'GBP', '40', '740'],
+        ['sell-usd', 'USD', '-50', '150'],
+      ]);
+      expect((await store.transactionBrowsePage({})).totalCount).toBe(3);
+      const gbpStatement = {
+        accountId: 'bank', assetId: 'GBP', statementDate: '2026-03-31', statementBalance: '740',
+        selectedTransactionIds: ['salary-gbp', 'groceries-gbp'],
+      };
+      expect(await previewReconciliation(store, gbpStatement)).toMatchObject({
+        conversionTotal: '-160', selectedTotal: '740', clearedBalance: '740', difference: '0',
+      });
+      await closeReconciliation(store, gbpStatement);
+      const usdStatement = {
+        accountId: 'bank', assetId: 'USD', statementDate: '2026-03-31', statementBalance: '150',
+        selectedTransactionIds: ['groceries-usd'],
+      };
+      expect(await previewReconciliation(store, usdStatement)).toMatchObject({
+        conversionTotal: '200', selectedTotal: '150', clearedBalance: '150', difference: '0',
+      });
+      await closeReconciliation(store, usdStatement);
+      expect(await previewReconciliation(store, {
+        ...gbpStatement, statementDate: '2026-04-30', selectedTransactionIds: [],
+      })).toMatchObject({ openingBalance: '740', conversionTotal: '0', selectedTotal: '0', difference: '0' });
+      const remote = await openLedger({ deviceId: 'remote-fiat-conversion-ledger' });
+      try {
+        await remote.adoptLedgerId(await store.getLedgerId());
+        const transport = memoryCommitTransport();
+        await syncReplica(store, transport, 'memory');
+        expect(await syncReplica(remote, transport, 'memory')).toMatchObject({ conflicts: 0, invalid: 0, pending: 0 });
+        expect((await remote.accountLedgerPage({ accountId: 'bank' })).totalCount).toBe(7);
+        expect((await remote.reconciliationSessions.list()).map((session) => session.conversionTotal).sort()).toEqual(['-160', '200']);
+      } finally {
+        await remote.close();
+      }
+    } finally {
+      await store.close();
+    }
   });
 
   it('builds a bounded dashboard transaction read model with exact balances', async () => {

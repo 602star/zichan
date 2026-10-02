@@ -8,7 +8,7 @@ import {
   D,
   defaultTransactionAccount, isDefaultAccount, accountTransactionPostings, Decimal, traceChain, conversionStepAmounts, assertConversionShape, matchSell, lotFromTrace, isTransactionActive, newId, refundAppliedAmount,
   assertDcaExecutionShape, assertDcaPlanShape, assertTransactionShape, dcaOccurrenceDate, transactionReportingEffect,
-  normalizeOccurrence, canonicalJson,
+  normalizeOccurrence, canonicalJson, conversionFinancialFingerprint, assertCostBasisOpening, usesAssetCostState, assetCostSourceSummary, freezeConversionQuote, dayOfInstant,
   listScheduleOccurrences, nextUnhandledScheduleOccurrence, postingsFromTransaction,
   scheduleExecutionId, scheduleOccurrenceDate, scheduleOccurrenceIsDue, scheduledTransactionId, zonedCalendarNow,
   DEFAULT_ENABLED_CATEGORY_IDS,
@@ -47,6 +47,7 @@ import type {
   CompensationEntityState,
 } from './business-compensation.js';
 import { DomainValidationError } from './domain-errors.js';
+import { readAssetCostState } from './asset-cost-service.js';
 import {
   validateAssetMutationSnapshot,
   validateCategoryHierarchySnapshot,
@@ -95,6 +96,45 @@ export interface UpdateConversionInput extends RecordConversionInput {
   expectedVersion?: number;
 }
 
+export interface ConversionMetadataUpdate {
+  chainId: string;
+  expectedVersion: number;
+  title?: string;
+  note?: string;
+  steps?: { id: string; platform?: string; note?: string; fees?: { id: string; note?: string }[] }[];
+}
+
+/** Metadata-only changes retain every frozen value and derived cost result. */
+export async function updateConversionMetadata(store: SqlLedgerStore, input: ConversionMetadataUpdate): Promise<RecordConversionResult> {
+  return store.transaction(async (transactionStore) => {
+    const current = await transactionStore.getChainWithSteps(input.chainId);
+    if (!current || current.chain.isDeleted) throw new Error('资产转换不存在');
+    if (current.chain.version !== input.expectedVersion) throw new ConcurrencyError('conversion_chain', input.chainId, input.expectedVersion, current.chain.version);
+    if (current.chain.operationId) throw new Error('连续转换必须整组编辑');
+    if (current.chain.recordState === 'voided') throw new Error('已作废的资产转换不能编辑，请先恢复');
+    const stepIds = new Set(current.steps.map((step) => step.id));
+    if (input.steps?.some((step) => !stepIds.has(step.id)) || new Set(input.steps?.map((step) => step.id)).size !== (input.steps?.length ?? 0)) throw new Error('文字修改引用了无效或重复步骤');
+    const chain = { ...current.chain, ...('title' in input ? { title: input.title?.trim() || undefined } : {}),
+      ...('note' in input ? { note: input.note?.trim() || undefined } : {}) };
+    const steps = current.steps.map((step) => {
+      const patch = input.steps?.find((row) => row.id === step.id);
+      if (patch?.fees?.some((fee) => !step.fees?.some((before) => before.id === fee.id))
+        || new Set(patch?.fees?.map((fee) => fee.id)).size !== (patch?.fees?.length ?? 0)) throw new Error('手续费备注引用无效或重复');
+      const fees = step.fees?.map((fee) => {
+        const metadata = patch?.fees?.find((row) => row.id === fee.id);
+        return metadata ? { ...fee, note: metadata.note?.trim() || undefined } : fee;
+      });
+      return { ...step, ...(step.fees ? { fees } : {}), ...(patch && 'platform' in patch ? { platform: patch.platform?.trim() || undefined } : {}),
+        ...(patch && 'note' in patch ? { note: patch.note?.trim() || undefined } : {}) };
+    });
+    if (canonicalJson({ chain, steps }) === canonicalJson(current)) return { chain: current.chain };
+    return transactionStore.runInAuditBatch('更新资产转换说明', async (batch) => {
+      const saved = await batch.saveChainWithSteps(chain, steps);
+      return { chain: saved.chain };
+    });
+  });
+}
+
 function conversionOrder(a: ConversionChain, b: ConversionChain): number {
   return a.date.localeCompare(b.date)
     || (a.time ?? '').localeCompare(b.time ?? '')
@@ -114,21 +154,32 @@ function validateConversionInput(chain: ConversionChain, steps: ConversionStep[]
 
 async function validateConversionReferences(store: SqlLedgerStore, chain: ConversionChain, steps: ConversionStep[]): Promise<ConversionChain> {
   const occurrence = normalizeOccurrence(chain);
-  await requireAsset(store, chain.baseCurrencyAssetId, 'baseCurrencyAssetId');
+  const previous = await store.getChainWithSteps(chain.id);
+  await requireAsset(store, chain.baseCurrencyAssetId, 'baseCurrencyAssetId', previous?.chain.baseCurrencyAssetId === chain.baseCurrencyAssetId);
   for (const [index, step] of steps.entries()) {
-    const from = await requireAsset(store, step.fromAssetId, `steps.${index}.fromAssetId`);
-    const to = await requireAsset(store, step.toAssetId, `steps.${index}.toAssetId`);
+    const old = previous?.steps.find((row) => row.id === step.id);
+    const from = await requireAsset(store, step.fromAssetId, `steps.${index}.fromAssetId`, old?.fromAssetId === step.fromAssetId);
+    const to = await requireAsset(store, step.toAssetId, `steps.${index}.toAssetId`, old?.toAssetId === step.toAssetId);
     if (amountPrecision(step.fromAmount) > from.decimals) validation(`步骤 ${index + 1} 转出金额精度超过 ${from.code} 的限制`);
     if (amountPrecision(step.toAmount) > to.decimals) validation(`步骤 ${index + 1} 转入金额精度超过 ${to.code} 的限制`);
-    await requireAccount(store, step.accountFromId, `steps.${index}.accountFromId`, false);
-    await requireAccount(store, step.accountToId, `steps.${index}.accountToId`, false);
+    await requireAccount(store, step.accountFromId, `steps.${index}.accountFromId`, false, old?.accountFromId === step.accountFromId);
+    await requireAccount(store, step.accountToId, `steps.${index}.accountToId`, false, old?.accountToId === step.accountToId);
     for (const fee of step.fees ?? []) {
-      const feeAsset = await requireAsset(store, fee.assetId, `steps.${index}.fees`);
+      const oldFee = old?.fees?.find((row) => row.id === fee.id);
+      const feeAsset = await requireAsset(store, fee.assetId, `steps.${index}.fees`, oldFee?.assetId === fee.assetId);
       if (!D(fee.amount).gt(0) || amountPrecision(fee.amount) > feeAsset.decimals) validation(`步骤 ${index + 1} 手续费金额无效`);
-      await requireAccount(store, fee.accountId, `steps.${index}.fees.accountId`, false);
+      await requireAccount(store, fee.accountId, `steps.${index}.fees.accountId`, false, oldFee?.accountId === fee.accountId);
     }
   }
-  return { ...chain, ...occurrence };
+  const normalized = { ...chain, ...occurrence };
+  const opening = (await store.costBasisOpenings.list()).sort((a, b) => Date.parse(b.occurredAtUtc) - Date.parse(a.occurredAtUtc))[0];
+  if (opening && (normalized.occurredAtUtc ? Date.parse(normalized.occurredAtUtc) > Date.parse(opening.occurredAtUtc) : chain.date >= dayOfInstant(opening.occurredAtUtc, opening.timezone ?? 'UTC'))) {
+    if (!normalized.occurredAtUtc) validation('成本起点之后的转换需要准确时间', 'time');
+    if (chain.baseCurrencyAssetId !== opening.baseCurrencyAssetId) validation('本账本已冻结成本核算币种；变更前请确认新的成本起点', 'baseCurrencyAssetId');
+    if (normalized.costQuotes === undefined) normalized.costQuotes = steps.map((step) => freezeConversionQuote(step, normalized.occurredAtUtc!, opening.baseCurrencyAssetId,
+      steps.length === 1 && chain.bookValueInBase ? { source: 'manual', valueInBase: chain.bookValueInBase, priceMarkIds: [] } : undefined));
+  }
+  return normalized;
 }
 
 const CHAIN_CACHE_KEYS = [
@@ -144,6 +195,7 @@ const CONSUMPTION_KEYS = [
 
 /** Rebuild every lot and sell consumption from active conversion aggregates. */
 export async function rebuildConversionDerivedInTransaction(store: SqlLedgerStore): Promise<void> {
+  const costState = await readAssetCostState(store);
   const chains = (await store.conversionChains.list())
     .filter((chain) => chain.recordState !== 'voided')
     .sort(conversionOrder);
@@ -168,6 +220,14 @@ export async function rebuildConversionDerivedInTransaction(store: SqlLedgerStor
     const { chain, steps } = aggregate;
     validateConversionInput(chain, steps);
     const trace = traceChain(aggregate);
+    if (usesAssetCostState(costState, chain)) {
+      const acquired = costState.events.find((event) => event.eventId === `${steps.at(-1)!.id}:2-target`);
+      const pnl = assetCostSourceSummary(costState, chain.id);
+      cacheByChain.set(chain.id, { finalAssetId: trace.finalAssetId, finalAmount: trace.finalAmount,
+        totalBaseCost: acquired?.costInBase ?? undefined, totalBaseProceeds: chain.type === 'sell' ? trace.totalBaseProceeds : undefined,
+        totalFeesInBase: trace.totalFeesInBase, realizedGainLoss: pnl.realizedGainLoss ?? undefined });
+      continue;
+    }
     if (chain.type === 'buy' || chain.type === 'dca') {
       if (D(trace.totalBaseCost).lte(0)) throw new Error(`转换“${chain.title ?? chain.date}”没有形成账面成本`);
       const old = lotBySource.get(chain.id);
@@ -283,7 +343,7 @@ export async function rebuildConversionDerivedInTransaction(store: SqlLedgerStor
       ...execution,
       isDeleted: false,
       date: finalChain.date,
-      actualBaseCost: finalChain.totalBaseCost ?? '0',
+      actualBaseCost: finalChain.totalBaseCost ?? (usesAssetCostState(costState, finalChain) ? null : '0'),
       baseCurrencyAssetId: finalChain.baseCurrencyAssetId,
       finalAssetId: finalChain.finalAssetId ?? execution.finalAssetId,
       finalAmount: finalChain.finalAmount ?? execution.finalAmount,
@@ -317,6 +377,7 @@ export async function recordConversion(
   store: SqlLedgerStore,
   input: RecordConversionInput,
 ): Promise<RecordConversionResult> {
+  if (input.chain.operationId) throw new Error('连续转换子记录必须通过整组保存接口提交');
   return store.runInAuditBatch('保存资产转换', async (store) => {
     const chain = await validateConversionReferences(store, { ...input.chain, recordState: input.chain.recordState ?? 'active' }, input.steps);
     validateConversionInput(chain, input.steps);
@@ -339,7 +400,11 @@ export interface RecordSellInput {
 
 export interface RecordSellResult {
   chain: ConversionChain;
-  match: SellMatchResult;
+  match: Omit<SellMatchResult, 'totalCostBase' | 'realizedPnlBase' | 'totalProceedsBase'> & {
+    totalCostBase: string | null;
+    realizedPnlBase: string | null;
+    totalProceedsBase: string | null;
+  };
 }
 
 /**
@@ -351,6 +416,7 @@ export async function recordSell(
   store: SqlLedgerStore,
   input: RecordSellInput,
 ): Promise<RecordSellResult> {
+  if (input.chain.operationId) throw new Error('连续转换子记录必须通过整组保存接口提交');
   const first = input.steps[0];
   if (!first) throw new Error('recordSell: a sell needs at least one step');
 
@@ -369,13 +435,16 @@ export async function recordSell(
     const saved = (await store.conversionChains.get(chain.id))!;
     const consumptions = await store.lotConsumptions.list({ where: { sellChainId: chain.id } });
     const updatedLots = (await store.lots.list()).filter((lot) => consumptions.some((row) => row.lotId === lot.id));
-    const match: SellMatchResult = {
+    const state = await readAssetCostState(store);
+    const summary = usesAssetCostState(state, saved) ? assetCostSourceSummary(state, saved.id) : undefined;
+    const mainRows = state?.consumptions.filter((row) => row.eventId === `${first.id}:0-source`) ?? [];
+    const match: RecordSellResult['match'] = {
       consumptions,
       updatedLots,
-      totalCostBase: consumptions.reduce((total, row) => total.plus(row.allocatedCostBase), D(0)).toString(),
-      totalProceedsBase: saved.totalBaseProceeds ?? '0',
-      realizedPnlBase: saved.realizedGainLoss ?? '0',
-      unmatchedAmount: '0',
+      totalCostBase: summary ? summary.costInBase : consumptions.reduce((total, row) => total.plus(row.allocatedCostBase), D(0)).toString(),
+      totalProceedsBase: summary ? mainRows.every((row) => row.proceedsInBase !== null) ? mainRows.reduce((total, row) => total.plus(row.proceedsInBase!), D(0)).toString() : null : saved.totalBaseProceeds ?? '0',
+      realizedPnlBase: summary ? summary.realizedGainLoss : saved.realizedGainLoss ?? null,
+      unmatchedAmount: summary?.gapQuantity ?? '0',
     };
     return { chain: saved, match };
   });
@@ -384,8 +453,14 @@ export async function recordSell(
 export async function updateConversion(store: SqlLedgerStore, input: UpdateConversionInput): Promise<RecordConversionResult | RecordSellResult> {
   const current = await store.conversionChains.get(input.chain.id);
   if (!current || current.isDeleted) throw new Error('资产转换不存在');
+  if (current.operationId) throw new Error('连续转换子记录不能独立编辑');
   if (current.recordState === 'voided') throw new Error('已作废的资产转换不能编辑，请先恢复');
   if (input.expectedVersion !== undefined && current.version !== input.expectedVersion) throw new Error('资产转换已被其他操作修改，请刷新后重试');
+  const oldSteps = await store.listStepsByChain(current.id);
+  if (conversionFinancialFingerprint({ chain: current, steps: oldSteps }) === conversionFinancialFingerprint(input)) {
+    return updateConversionMetadata(store, { chainId: current.id, expectedVersion: input.expectedVersion ?? input.chain.version,
+      title: input.chain.title, note: input.chain.note, steps: input.steps.map(({ id, platform, note, fees }) => ({ id, platform, note, fees: fees?.map(({ id, note }) => ({ id, note })) })) });
+  }
   const chain = {
     ...input.chain,
     id: current.id,
@@ -612,19 +687,19 @@ export async function restoreMisdisabledDefaultCategories(store: SqlLedgerStore)
   });
 }
 
-async function requireAsset(store: SqlLedgerStore, id: string, field: string) {
+async function requireAsset(store: SqlLedgerStore, id: string, field: string, retained = false) {
   const asset = await store.assets.get(id);
-  if (!asset || asset.isDeleted || !asset.isActive) validation(`引用的资产不存在或已停用：${id}`, field);
+  if (!asset || asset.isDeleted || (!retained && !asset.isActive)) validation(`引用的资产不存在或已停用：${id}`, field);
   return asset;
 }
 
-async function requireAccount(store: SqlLedgerStore, id: string | undefined, field: string, required: boolean) {
+async function requireAccount(store: SqlLedgerStore, id: string | undefined, field: string, required: boolean, retained = false) {
   if (!id) {
     if (required) validation('请选择账户', field);
     return undefined;
   }
   const account = await store.accounts.get(id);
-  if (!account || account.isDeleted || account.isActive === false) validation(`引用的账户不存在或已归档：${id}`, field);
+  if (!account || account.isDeleted || (!retained && account.isActive === false)) validation(`引用的账户不存在或已归档：${id}`, field);
   return account;
 }
 
@@ -1651,6 +1726,8 @@ type CompensationCollection = Collection<BaseEntity>;
 
 function collectionForCompensation(store: SqlLedgerStore, entityType: string): CompensationCollection | null {
   const collections: Record<string, unknown> = {
+    conversion_operation: store.conversionOperations,
+    cost_basis_opening: store.costBasisOpenings,
     asset: store.assets,
     account: store.accounts,
     setting: store.settings,
@@ -2130,6 +2207,8 @@ export interface ReconciliationPreview {
   clearedBalance: string;
   difference: string;
   candidates: ReconciliationCandidate[];
+  conversionTotal: string;
+  conversionEntries: { id: string; date: string; postingAmount: string }[];
   excluded?: { beforeOpening: number; afterStatement: number; alreadyReconciled: number };
 }
 
@@ -2186,10 +2265,21 @@ export async function previewReconciliation(store: SqlLedgerStore, input: Reconc
     }))
     .filter((row) => !D(row.postingAmount).isZero() && !row.reconciled)
     .sort((a, b) => a.transaction.date.localeCompare(b.transaction.date) || a.transaction.id.localeCompare(b.transaction.id));
+  const conversionEntries = (await store.accountConversionPostings())
+    .filter((posting) => posting.accountId === input.accountId && posting.assetId === input.assetId
+      && posting.date <= input.statementDate
+      && (!previousSession || posting.date > previousSession.statementDate))
+    .map((posting, index) => ({
+      id: `${posting.source.id}:${index}`,
+      date: posting.date,
+      postingAmount: posting.amount,
+    }))
+    .sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id));
+  const conversionTotal = conversionEntries.reduce((total, row) => total.plus(row.postingAmount), D(0));
   const selected = new Set(input.selectedTransactionIds);
   const selectedTotal = candidates
     .filter((row) => selected.has(row.transaction.id))
-    .reduce((total, row) => total.plus(row.postingAmount), D(0));
+    .reduce((total, row) => total.plus(row.postingAmount), conversionTotal);
   const openingBalance = D(previousSession?.statementBalance ?? (account.openingAssetId === input.assetId ? account.openingBalance : undefined) ?? 0);
   const clearedBalance = openingBalance.plus(selectedTotal);
   const difference = D(input.statementBalance || 0).minus(clearedBalance);
@@ -2201,6 +2291,8 @@ export async function previewReconciliation(store: SqlLedgerStore, input: Reconc
     clearedBalance: clearedBalance.toString(),
     difference: difference.toString(),
     candidates,
+    conversionTotal: conversionTotal.toString(),
+    conversionEntries,
   };
 }
 
@@ -2233,6 +2325,7 @@ export async function closeReconciliation(store: SqlLedgerStore, input: Reconcil
       statementBalance: D(input.statementBalance || 0).toString(),
       openingBalance: preview.openingBalance,
       selectedTotal: D(preview.selectedTotal).plus(originalDifference).toString(),
+      conversionTotal: preview.conversionTotal,
       clearedBalance: D(preview.clearedBalance).plus(originalDifference).toString(),
       difference: '0',
       status: 'closed',
@@ -3070,7 +3163,9 @@ export async function restoreDeletedGameRecord(
 // ─────────────────────────── export / import ───────────────────────────
 
 export interface LedgerBackup {
-  version: 7;
+  version: 7 | 8;
+  conversionOperations?: import('@zichan/core').ConversionOperation[];
+  costBasisOpenings?: import('@zichan/core').CostBasisOpening[];
   exportedAt: string;
   chains: { chain: ConversionChain; steps: ConversionStep[] }[];
   assets: unknown[];
@@ -3134,6 +3229,8 @@ export interface BackupPreflight {
 }
 
 const ENTITY_ARRAYS: { key: keyof LedgerBackup; type: string }[] = [
+  { key: 'conversionOperations', type: 'conversion_operation' },
+  { key: 'costBasisOpenings', type: 'cost_basis_opening' },
   { key: 'assets', type: 'asset' },
   { key: 'accounts', type: 'account' },
   { key: 'settings', type: 'setting' },
@@ -3267,11 +3364,12 @@ export function preflightImport(data: unknown): BackupPreflight {
     pushIssue(issues, 'error', 'invalid_json', '备份不是 JSON 对象');
     return { ok: false, summary, issues };
   }
-  if (obj['version'] !== 7) pushIssue(issues, 'error', 'unsupported_version', '仅支持当前 version=7 备份');
+  if (obj['version'] !== 7 && obj['version'] !== 8) pushIssue(issues, 'error', 'unsupported_version', '仅支持 version=7 或 version=8 备份');
   if (typeof obj['exportedAt'] === 'string') summary.exportedAt = obj['exportedAt'];
 
   const dataObj = obj as Partial<LedgerBackup>;
   for (const { key, type } of ENTITY_ARRAYS) {
+    if ((key === 'costBasisOpenings' || key === 'conversionOperations') && dataObj.version === 7 && dataObj[key] === undefined) continue;
     if (!Array.isArray(dataObj[key])) pushIssue(issues, 'error', 'missing_array', `${String(key)} 必须是数组`, type);
   }
   if (!Array.isArray(dataObj.chains)) pushIssue(issues, 'error', 'missing_array', 'chains 必须是数组', 'conversion_chain');
@@ -3338,7 +3436,42 @@ export function preflightImport(data: unknown): BackupPreflight {
   }
   summary.chains = chainIds.size;
 
+  // Groups are facts: never accept a backup that would silently split ownership.
+  const conversionRows = (Array.isArray(dataObj.chains) ? dataObj.chains : []).map((item) => asObj(asObj(item)?.['chain'])).filter((row): row is Record<string, unknown> => !!row);
+  const conversionById = new Map(conversionRows.map((row) => [String(row['id']), row]));
+  const operationById = new Map(rows(dataObj, 'conversionOperations').map(asObj).filter((row): row is Record<string, unknown> => !!row).map((row) => [String(row['id']), row]));
+  for (const [id, operation] of operationById) {
+    const children = operation['chainIds'];
+    if (!Array.isArray(children) || !children.length || children.some((child) => typeof child !== 'string') || new Set(children).size !== children.length) {
+      pushIssue(issues, 'error', 'invalid_conversion_operation', '连续转换子记录列表为空或重复', 'conversion_operation', id);
+      continue;
+    }
+    for (const [index, childId] of children.entries()) {
+      const child = conversionById.get(String(childId));
+      if (!child || child['operationId'] !== id || child['operationOrder'] !== index
+        || (operation['isDeleted'] !== true && child['isDeleted'] === true)
+        || (operation['isDeleted'] !== true && (child['recordState'] ?? 'active') !== (operation['recordState'] ?? 'active'))) {
+        pushIssue(issues, 'error', 'conversion_operation_mismatch', '连续转换子记录缺失、归属、顺序或作废状态不一致', 'conversion_operation', id);
+      }
+    }
+  }
+  for (const child of conversionRows) {
+    if (!child['operationId'] || child['isDeleted'] === true) continue;
+    const owner = operationById.get(String(child['operationId']));
+    if (!owner || owner['isDeleted'] === true || !Array.isArray(owner['chainIds']) || !owner['chainIds'].includes(child['id'])) {
+      pushIssue(issues, 'error', 'missing_conversion_operation', '转换子记录缺少所属连续操作', 'conversion_chain', String(child['id']));
+    }
+  }
+
   const assetIds = referenceIds['asset'] ?? new Set<string>();
+  for (const row of rows(dataObj, 'costBasisOpenings')) {
+    const opening = row as import('@zichan/core').CostBasisOpening;
+    try {
+      assertCostBasisOpening(opening);
+      requireRef(issues, assetIds, opening.baseCurrencyAssetId, 'missing_asset', '成本起点核算币种不存在', 'cost_basis_opening', opening.id);
+      for (const item of opening.items) requireRef(issues, assetIds, item.assetId, 'missing_asset', '成本起点资产不存在', 'cost_basis_opening', opening.id);
+    } catch (error) { pushIssue(issues, 'error', 'invalid_cost_opening', error instanceof Error ? error.message : String(error), 'cost_basis_opening', opening?.id); }
+  }
   const accountIds = referenceIds['account'] ?? new Set<string>();
   const categoryIds = referenceIds['category'] ?? new Set<string>();
   const tagIds = referenceIds['transaction_tag'] ?? new Set<string>();
@@ -3958,6 +4091,8 @@ export const validateLedgerBackup = preflightImport;
 /** Full snapshot of every entity (including soft-deleted) — a portable backup. */
 export async function exportLedger(store: SqlLedgerStore): Promise<LedgerBackup> {
   const all = { includeDeleted: true } as const;
+  const costBasisOpenings = await store.costBasisOpenings.list(all);
+  const conversionOperations = await store.conversionOperations.list(all);
   const chainRows = await store.conversionChains.list(all);
   const chains = await Promise.all(
     chainRows.map(async (chain) => ({ chain, steps: await store.listStepsByChain(chain.id) })),
@@ -3985,8 +4120,10 @@ export async function exportLedger(store: SqlLedgerStore): Promise<LedgerBackup>
     store.scheduledTransactions.list(all), store.scheduledExecutions.list(all),
     store.reconciliationSessions.list(all), store.reconciliationItems.list(all),
   ]);
+  const costV2 = conversionOperations.length > 0 || costBasisOpenings.length > 0 || chains.some(({ chain }) => chain.costQuotes?.length || chain.type === 'swap') || transactions.some((row) => row.costQuote);
   return {
-    version: 7, exportedAt: new Date().toISOString(), chains,
+    version: costV2 ? 8 : 7,
+    ...(costV2 ? { costBasisOpenings, conversionOperations } : {}), exportedAt: new Date().toISOString(), chains,
     assets, accounts, settings, lots, lotConsumptions, priceMarks, dcaPlans, dcaExecutions,
     games, gameAccounts, gameSeasons, gameRecords, gameCashflowLinks, fixedAssets, fixedAssetCategories, fixedAssetEvents, fixedAssetCashflowLinks,
     fixedAssetUsageMetrics, fixedAssetUsageLogs, fixedAssetConsumables, fixedAssetGoals, attachments,
@@ -4671,7 +4808,9 @@ export async function importLedger(
     for (const { chain, steps } of data.chains) {
       await store.saveChainWithSteps(chain, steps);
     }
+    await putAll(store.conversionOperations, data.conversionOperations ?? []);
     await putAll(store.settings, data.settings);
+    await putAll(store.costBasisOpenings, data.costBasisOpenings ?? []);
     await putAll(store.priceMarks, data.priceMarks);
     await putAll(store.lots, data.lots);
     await putAll(store.lotConsumptions, data.lotConsumptions);
@@ -4756,6 +4895,8 @@ export async function restoreLedger(
     // Dependants come first. Reference deletion is scoped to the exact rows
     // proven absent by preflight; aggregate validation still runs on the final snapshot.
     const collections: RestoreCollection[] = [
+      { key: 'conversionOperations', type: 'conversion_operation', storeKey: 'conversionOperations', coll: store.conversionOperations },
+      { key: 'costBasisOpenings', type: 'cost_basis_opening', storeKey: 'costBasisOpenings', coll: store.costBasisOpenings },
       { key: 'attachments', type: 'attachment', storeKey: 'attachments', coll: store.attachments },
       { key: 'reconciliationItems', type: 'reconciliation_item', storeKey: 'reconciliationItems', coll: store.reconciliationItems },
       { key: 'gameCashflowLinks', type: 'game_cashflow_link', storeKey: 'gameCashflowLinks', coll: store.gameCashflowLinks },
@@ -5002,6 +5143,7 @@ export async function voidConversion(store: SqlLedgerStore, chainId: string, rea
   return store.runInAuditBatch('作废资产转换', async (transactionStore) => {
     const chain = await transactionStore.conversionChains.get(chainId);
     if (!chain || chain.isDeleted) throw new Error('资产转换不存在');
+    if (chain.operationId) throw new Error('连续转换必须整组作废');
     if (chain.recordState === 'voided') return chain;
     const saved = await transactionStore.conversionChains.put({
       ...chain,
@@ -5018,6 +5160,7 @@ export async function restoreConversion(store: SqlLedgerStore, chainId: string):
   return store.runInAuditBatch('恢复资产转换', async (transactionStore) => {
     const chain = await transactionStore.conversionChains.get(chainId);
     if (!chain || chain.isDeleted) throw new Error('资产转换不存在');
+    if (chain.operationId) throw new Error('连续转换必须整组恢复');
     const saved = await transactionStore.conversionChains.put({
       ...chain,
       recordState: 'active',

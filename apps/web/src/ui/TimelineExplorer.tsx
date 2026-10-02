@@ -10,6 +10,7 @@ export function TimelineExplorer<T>(props: {
   onFocusDate: (date: string) => void;
   onViewChange: (view: TimelineViewMode) => void;
   dateOf: (item: T) => string;
+  timeOf?: (item: T) => string;
   keyOf: (item: T) => string;
   renderCompact: (item: T) => ReactNode;
   renderEntry: (item: T) => ReactNode;
@@ -18,10 +19,10 @@ export function TimelineExplorer<T>(props: {
   emptyText?: string;
 }) {
   const {
-    items, view, focusDate, onFocusDate, onViewChange, dateOf, keyOf,
+    items, view, focusDate, onFocusDate, onViewChange, dateOf, timeOf, keyOf,
     renderCompact, renderEntry, renderSummary, onOpen, emptyText = '该时间范围内没有记录。',
   } = props;
-  const sorted = [...items].sort((a, b) => dateOf(b).localeCompare(dateOf(a)) || keyOf(a).localeCompare(keyOf(b)));
+  const sorted = [...items].sort((a, b) => dateOf(b).localeCompare(dateOf(a)) || (timeOf ? timeOf(b).localeCompare(timeOf(a)) : 0) || keyOf(a).localeCompare(keyOf(b)));
 
   if (view === 'year') {
     const year = focusDate.slice(0, 4);

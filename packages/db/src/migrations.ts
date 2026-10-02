@@ -7,8 +7,8 @@ import type { SqlDriver } from './driver.js';
 import { MIGRATIONS_TABLE_SQL, schemaStatements } from './schema.js';
 import { TABLES, allCols, type TableSpec } from './tables.js';
 
-export const CURRENT_SCHEMA_VERSION = 119;
-export const CURRENT_SCHEMA_NAME = 'current_schema_2026_09_22_entity_icons';
+export const CURRENT_SCHEMA_VERSION = 121;
+export const CURRENT_SCHEMA_NAME = 'current_schema_2026_10_01_conversion_reconciliation';
 export const SCHEMA_RESET_REQUIRED_CODE = 'SCHEMA_RESET_REQUIRED';
 
 export class SchemaResetRequiredError extends Error {
@@ -199,7 +199,18 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
 
   const from117 = applied.length === 1 && applied[0]?.version === 117 && applied[0]?.name === 'current_schema_2026_09_14_ledger_timezone';
   const from118 = applied.length === 1 && applied[0]?.version === 118 && applied[0]?.name === 'current_schema_2026_09_18_account_onboarding';
-  if (from117 || from118) {
+  const from119 = applied.length === 1 && applied[0]?.version === 119 && applied[0]?.name === 'current_schema_2026_09_22_entity_icons';
+  const from120 = applied.length === 1 && applied[0]?.version === 120 && applied[0]?.name === 'current_schema_2026_09_30_asset_cost_v2';
+  if (from120) {
+    await driver.transaction(async (transaction) => {
+      await transaction.exec('ALTER TABLE reconciliation_sessions ADD COLUMN conversion_total TEXT');
+      await assertCurrentSchema(transaction);
+      await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',
+        [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
+    });
+    return 1;
+  }
+  if (from117 || from118 || from119) {
     await driver.transaction(async (transaction) => {
       if (from117) for (const [table, fields] of Object.entries({
         accounts: ['purpose', 'opening_balance', 'opening_asset_id', 'balance_start_at', 'balance_start_date', 'balance_checkpoints'],
@@ -208,7 +219,13 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
       })) {
         for (const field of fields) await transaction.exec(`ALTER TABLE ${table} ADD COLUMN ${field} TEXT`);
       }
-      await transaction.exec('ALTER TABLE payees ADD COLUMN icon TEXT');
+      if (!from119) await transaction.exec('ALTER TABLE payees ADD COLUMN icon TEXT');
+      await transaction.exec('ALTER TABLE conversion_chains ADD COLUMN cost_quotes TEXT');
+      await transaction.exec('ALTER TABLE conversion_chains ADD COLUMN operation_id TEXT');
+      await transaction.exec('ALTER TABLE conversion_chains ADD COLUMN operation_order INTEGER');
+      await transaction.exec('ALTER TABLE transactions ADD COLUMN cost_quote TEXT');
+      await transaction.exec('ALTER TABLE reconciliation_sessions ADD COLUMN conversion_total TEXT');
+      for (const statement of schemaStatements()) await transaction.exec(statement);
       await assertCurrentSchema(transaction);
       await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',
         [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);

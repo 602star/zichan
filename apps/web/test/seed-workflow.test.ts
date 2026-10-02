@@ -13,6 +13,9 @@ describe('real demo ledger workflow', () => {
     expect(await store.settings.count()).toBe(1);
 
     const snapshot = await loadSnapshot(store);
+    const convertSnapshot = await loadSnapshot(store, 'convert');
+    expect(convertSnapshot.transactions.length).toBeGreaterThan(0);
+    expect(convertSnapshot.transactions).toEqual(snapshot.transactions);
     expect(snapshot.setting?.ledgerKind).toBe('demo');
     expect(snapshot.setting?.initializedAt).toBeTruthy();
     expect(snapshot.setting?.transactionDefaultAssetId).toBe(snapshot.setting?.baseCurrencyAssetId);

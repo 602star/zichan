@@ -799,7 +799,7 @@ function TimeTrendChart(props: {
     }
   } else if (tab === 'dca') {
     for (const execution of snap.dcaExecutions.filter((row) => !row.isDeleted)) {
-      const converted = report.toReportAt(execution.actualBaseCost, execution.baseCurrencyAssetId, execution.date);
+      const converted = execution.actualBaseCost === null ? undefined : report.toReportAt(execution.actualBaseCost, execution.baseCurrencyAssetId, execution.date);
       if (converted) add(execution.date, converted.negated());
     }
   } else if (tab === 'chain') {
@@ -920,7 +920,7 @@ function ReportChart(props: {
       .filter((execution) => !execution.isDeleted && isDateInRange(execution.date, dateRange))
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((execution) => {
-        const converted = report.toReportAt(execution.actualBaseCost, execution.baseCurrencyAssetId, execution.date);
+        const converted = execution.actualBaseCost === null ? undefined : report.toReportAt(execution.actualBaseCost, execution.baseCurrencyAssetId, execution.date);
         if (converted) cumulative = cumulative.plus(converted);
         return {
           label: execution.date.slice(5),

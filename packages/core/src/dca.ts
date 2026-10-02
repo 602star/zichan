@@ -8,21 +8,23 @@ import type { DcaExecution } from './types.js';
 export interface DcaReportRow {
   executionId: string;
   date: string;
-  investedBase: string; // actualBaseCost this execution
+  investedBase: string | null; // actualBaseCost this execution
   acquiredAmount: string; // finalAmount this execution
   feeBase: string;
-  unitCost: string; // investedBase / acquiredAmount
+  unitCost: string | null; // investedBase / acquiredAmount
   cumulativeAmount: string;
-  cumulativeCost: string;
-  averageCost: string; // cumulativeCost / cumulativeAmount
+  cumulativeCost: string | null;
+  averageCost: string | null; // cumulativeCost / cumulativeAmount
 }
 
 export interface DcaReport {
   rows: DcaReportRow[];
-  totalInvested: string;
+  totalInvested: string | null;
+  knownInvested: string;
+  unknownExecutionCount: number;
   totalAcquired: string;
   totalFees: string;
-  averageCost: string;
+  averageCost: string | null;
 }
 
 export function buildDcaReport(executions: DcaExecution[]): DcaReport {
@@ -39,8 +41,10 @@ export function buildDcaReport(executions: DcaExecution[]): DcaReport {
 
   let cumAmount = D(0);
   let cumCost = D(0);
+  let incomplete = false;
 
   for (const e of sorted) {
+    incomplete ||= e.actualBaseCost === null;
     const invested = D(e.actualBaseCost);
     const acquired = D(e.finalAmount);
     cumAmount = cumAmount.plus(acquired);
@@ -49,25 +53,27 @@ export function buildDcaReport(executions: DcaExecution[]): DcaReport {
     rows.push({
       executionId: e.id,
       date: e.date,
-      investedBase: invested.toString(),
+      investedBase: e.actualBaseCost === null ? null : invested.toString(),
       acquiredAmount: acquired.toString(),
       feeBase: D(e.totalFeeInBase).toString(),
-      unitCost: safeDiv(invested, acquired).toString(),
+      unitCost: e.actualBaseCost === null ? null : safeDiv(invested, acquired).toString(),
       cumulativeAmount: cumAmount.toString(),
-      cumulativeCost: cumCost.toString(),
-      averageCost: safeDiv(cumCost, cumAmount).toString(),
+      cumulativeCost: incomplete ? null : cumCost.toString(),
+      averageCost: incomplete ? null : safeDiv(cumCost, cumAmount).toString(),
     });
   }
 
-  const totalInvested = sum(sorted.map((e) => e.actualBaseCost));
+  const totalInvested = sum(sorted.map((e) => e.actualBaseCost ?? '0'));
   const totalAcquired = sum(sorted.map((e) => e.finalAmount));
   const totalFees = sum(sorted.map((e) => e.totalFeeInBase));
 
   return {
     rows,
-    totalInvested: totalInvested.toString(),
+    totalInvested: incomplete ? null : totalInvested.toString(),
+    knownInvested: totalInvested.toString(),
+    unknownExecutionCount: sorted.filter((e) => e.actualBaseCost === null).length,
     totalAcquired: totalAcquired.toString(),
     totalFees: totalFees.toString(),
-    averageCost: safeDiv(totalInvested, totalAcquired).toString(),
+    averageCost: incomplete ? null : safeDiv(totalInvested, totalAcquired).toString(),
   };
 }

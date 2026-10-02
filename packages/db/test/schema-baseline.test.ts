@@ -11,6 +11,16 @@ import {
 
 const log = createLogger({ level: 'error', sinks: [nullSink()] });
 
+async function removeCostV2Schema(driver: NodeSqliteDriver): Promise<void> {
+  await driver.exec('DROP TABLE conversion_operations');
+  await driver.exec('DROP TABLE cost_basis_openings');
+  for (const field of ['cost_quotes', 'operation_id', 'operation_order']) {
+    await driver.exec(`ALTER TABLE conversion_chains DROP COLUMN ${field}`);
+  }
+  await driver.exec('ALTER TABLE transactions DROP COLUMN cost_quote');
+  await driver.exec('ALTER TABLE reconciliation_sessions DROP COLUMN conversion_total');
+}
+
 describe('current development schema baseline', () => {
   it('creates and verifies only the current schema', async () => {
     const driver = new NodeSqliteDriver();
@@ -96,6 +106,7 @@ it('upgrades the preceding schema without changing existing ledger records', asy
       transactions: ['balance_timing', 'balance_timing_account_id'],
     })) for (const field of fields) await driver.exec('ALTER TABLE ' + table + ' DROP COLUMN ' + field);
     await driver.run('UPDATE schema_migrations SET version = 117, name = ?', ['current_schema_2026_09_14_ledger_timezone']);
+    await removeCostV2Schema(driver);
     expect(await runMigrations(driver, log)).toBe(1);
     expect(await driver.all('SELECT id, name, version, opening_balance FROM accounts')).toEqual([{ id: 'wallet-kept', name: '旧钱包', version: 7, opening_balance: null }]);
     expect(await driver.all('SELECT id, amount, account_id, version FROM transactions')).toEqual([{ id: 'kept', amount: '12.34', account_id: 'wallet-kept', version: 3 }]);
@@ -111,9 +122,41 @@ it('upgrades schema 118 while preserving payees and category icons', async () =>
     await driver.run("INSERT INTO categories (id, name, type, icon, version, is_deleted) VALUES ('kept-category', '旧分类', 'expense', 'lucide:coffee', 2, 0)");
     await driver.exec('ALTER TABLE payees DROP COLUMN icon');
     await driver.run('UPDATE schema_migrations SET version = 118, name = ?', ['current_schema_2026_09_18_account_onboarding']);
+    await removeCostV2Schema(driver);
     expect(await runMigrations(driver, log)).toBe(1);
     expect(await driver.all('SELECT id, name, version, icon FROM payees')).toEqual([{ id: 'kept-payee', name: '旧商家', version: 4, icon: null }]);
     expect(await driver.all('SELECT id, icon, version FROM categories')).toEqual([{ id: 'kept-category', icon: 'lucide:coffee', version: 2 }]);
+    expect(await runMigrations(driver, log)).toBe(0);
+  } finally { await driver.close(); }
+});
+
+it('upgrades schema 119 without rewriting quantities, metadata or audit history', async () => {
+  const driver = new NodeSqliteDriver();
+  try {
+    await runMigrations(driver, log);
+    await driver.run("INSERT INTO conversion_chains (id, type, title, version, is_deleted) VALUES ('old', 'exchange', '原始标题', 7, 0)");
+    await driver.run("INSERT INTO conversion_steps (id, chain_id, step_order, from_asset_id, from_amount, to_asset_id, to_amount) VALUES ('step', 'old', 1, 'CNY', '1222.00', 'BTC', '111')");
+    await driver.run("INSERT INTO operation_log (id, at, entity_type, entity_id, op, payload) VALUES ('audit', '2026-01-01', 'conversion_chain', 'old', 'create', 'original')");
+    await removeCostV2Schema(driver);
+    await driver.run('UPDATE schema_migrations SET version = 119, name = ?', ['current_schema_2026_09_22_entity_icons']);
+    expect(await runMigrations(driver, log)).toBe(1);
+    expect(await driver.all('SELECT title, version, cost_quotes FROM conversion_chains')).toEqual([{ title: '原始标题', version: 7, cost_quotes: null }]);
+    expect(await driver.all('SELECT from_amount, to_amount FROM conversion_steps')).toEqual([{ from_amount: '1222.00', to_amount: '111' }]);
+    expect(await driver.all('SELECT payload FROM operation_log')).toEqual([{ payload: 'original' }]);
+    expect(await runMigrations(driver, log)).toBe(0);
+  } finally { await driver.close(); }
+});
+
+it('upgrades schema 120 without rewriting existing reconciliations', async () => {
+  const driver = new NodeSqliteDriver();
+  try {
+    await runMigrations(driver, log);
+    await driver.run("INSERT INTO reconciliation_sessions (id, account_id, asset_id, statement_date, statement_balance, selected_total, version, is_deleted) VALUES ('kept', 'bank', 'CNY', '2026-09-30', '100', '25', 3, 0)");
+    await driver.exec('ALTER TABLE reconciliation_sessions DROP COLUMN conversion_total');
+    await driver.run('UPDATE schema_migrations SET version = 120, name = ?', ['current_schema_2026_09_30_asset_cost_v2']);
+    expect(await runMigrations(driver, log)).toBe(1);
+    expect(await driver.all('SELECT id, statement_balance, selected_total, conversion_total, version FROM reconciliation_sessions'))
+      .toEqual([{ id: 'kept', statement_balance: '100', selected_total: '25', conversion_total: null, version: 3 }]);
     expect(await runMigrations(driver, log)).toBe(0);
   } finally { await driver.close(); }
 });

@@ -1,13 +1,47 @@
 import { useEffect, useState } from 'react';
-import type {
-  Account, Asset, Attachment, BaseEntity, BudgetCategory, Category, ChainWithSteps, Collection, DcaExecution, DcaPlan,
-  FixedAsset, FixedAssetCategory, FixedAssetConsumable, FixedAssetEvent, FixedAssetGoal,
-  FixedAssetCashflowLink, FixedAssetUsageLog, FixedAssetUsageMetric, Game, GameAccount, GameCashflowLink, GameRecord, GameSeason, Lot, LotConsumption, Payee, PriceMark,
-  RefundAllocation,
-  ReconciliationItem, ReconciliationSession, ScheduledExecution, ScheduledTransaction, Setting, Transaction, TransactionLocation,
-  TransactionSavedView, TransactionSplit, TransactionTag, TransactionTemplate, Query,
+import { usesAssetCostState,
+  type Account,
+  type Asset,
+  type Attachment,
+  type BaseEntity,
+  type BudgetCategory,
+  type Category,
+  type ChainWithSteps,
+  type Collection,
+  type DcaExecution,
+  type DcaPlan,
+  type FixedAsset,
+  type FixedAssetCategory,
+  type FixedAssetConsumable,
+  type FixedAssetEvent,
+  type FixedAssetGoal,
+  type FixedAssetCashflowLink,
+  type FixedAssetUsageLog,
+  type FixedAssetUsageMetric,
+  type Game,
+  type GameAccount,
+  type GameCashflowLink,
+  type GameRecord,
+  type GameSeason,
+  type Lot,
+  type LotConsumption,
+  type Payee,
+  type PriceMark,
+  type RefundAllocation,
+  type ReconciliationItem,
+  type ReconciliationSession,
+  type ScheduledExecution,
+  type ScheduledTransaction,
+  type Setting,
+  type Transaction,
+  type TransactionLocation,
+  type TransactionSavedView,
+  type TransactionSplit,
+  type TransactionTag,
+  type TransactionTemplate,
+  type Query,
 } from '@zichan/core';
-import type { SqlLedgerStore } from '@zichan/db';
+import { readAssetCostState, type SqlLedgerStore } from '@zichan/db';
 import { useStore } from './store.js';
 
 export type SnapshotScope =
@@ -26,6 +60,7 @@ export type SnapshotScope =
 
 /** Page-specific read model. Fields outside the requested scope are empty. */
 export interface Snapshot {
+  costState?: import('@zichan/core').AssetCostState;
   assets: Asset[];
   accounts: Account[];
   setting?: Setting;
@@ -67,7 +102,7 @@ export interface Snapshot {
   rowCounts?: Partial<Record<SnapshotField, number>>;
 }
 
-type SnapshotField = Exclude<keyof Snapshot, 'setting' | 'chains' | 'rowCounts'> | 'settings' | 'chains';
+type SnapshotField = Exclude<keyof Snapshot, 'setting' | 'chains' | 'rowCounts' | 'costState'> | 'settings' | 'chains';
 
 const ALL_FIELDS: SnapshotField[] = [
   'assets', 'accounts', 'settings', 'chains', 'lots', 'lotConsumptions', 'priceMarks', 'dcaPlans', 'dcaExecutions',
@@ -92,7 +127,7 @@ const SCOPE_FIELDS: Record<Exclude<SnapshotScope, 'all'>, SnapshotField[]> = {
     'budgetCategories', 'scheduledTransactions', 'scheduledExecutions', 'reconciliationSessions',
   ],
   convert: [
-    'assets', 'accounts', 'settings', 'chains', 'lots', 'lotConsumptions', 'priceMarks', 'dcaPlans', 'dcaExecutions',
+    'assets', 'accounts', 'settings', 'chains', 'lots', 'lotConsumptions', 'priceMarks', 'dcaPlans', 'dcaExecutions', 'transactions',
   ],
   fixed: [
     'assets', 'accounts', 'settings', 'priceMarks', 'fixedAssets', 'fixedAssetCategories', 'fixedEvents',
@@ -212,7 +247,7 @@ export async function loadSnapshot(store: SqlLedgerStore, scope: SnapshotScope =
     transactionSavedViews, payees, transactions, transactionSplits, refundAllocations, budgetCategories, scheduledTransactions,
     scheduledExecutions, reconciliationSessions, reconciliationItems,
   ] = await Promise.all([
-    load('assets', store.assets),
+    load('assets', store.assets, scope === 'manage' ? { includeDeleted: true } : {}),
     load('accounts', store.accounts),
     load('settings', store.settings),
     load('lots', store.lots),
@@ -249,8 +284,16 @@ export async function loadSnapshot(store: SqlLedgerStore, scope: SnapshotScope =
     load('reconciliationSessions', store.reconciliationSessions, { orderBy: 'statementDate', desc: true }),
     load('reconciliationItems', store.reconciliationItems, { orderBy: 'selectedAt' }),
   ]);
+  const costState = ['all', 'convert', 'dashboard', 'reports', 'manage', 'transactions'].includes(scope) ? await readAssetCostState(store) : undefined;
   return {
-    assets, accounts, setting: settings[0], chains, lots, lotConsumptions, priceMarks, dcaPlans, dcaExecutions,
+    costState,
+    assets, accounts, setting: settings[0], chains, lots, lotConsumptions, priceMarks, dcaPlans,
+    dcaExecutions: dcaExecutions.map((execution) => {
+      const chain = chains.find((row) => row.chain.id === execution.chainId)?.chain;
+      if (!usesAssetCostState(costState, chain ?? execution)) return execution;
+      const acquired = costState.events.filter((row) => row.sourceId === execution.chainId && row.assetId === execution.finalAssetId && row.kind === 'acquire').at(-1);
+      return { ...execution, actualBaseCost: acquired?.costInBase ?? null, baseCurrencyAssetId: acquired?.baseCurrencyAssetId ?? execution.baseCurrencyAssetId };
+    }),
     games, gameAccounts, seasons, gameRecords, gameCashflowLinks, fixedAssets, fixedAssetCategories, fixedEvents, fixedCashflowLinks,
     fixedUsageMetrics, fixedUsageLogs, fixedConsumables, fixedGoals, attachments,
     categories, transactionTags, transactionLocations, transactionTemplates, transactionSavedViews,
@@ -266,6 +309,9 @@ export function useSnapshot(scope: SnapshotScope = 'all'): Snapshot | null {
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     const entityTypes = new Set([...fieldsFor(scope)].flatMap((field) => FIELD_ENTITY_TYPES[field]));
+    if (['all', 'convert', 'dashboard', 'reports', 'manage', 'transactions'].includes(scope)) {
+      for (const type of ['cost_basis_opening', 'conversion_operation', 'transaction', 'conversion_chain', 'conversion_chain_steps', 'account']) entityTypes.add(type);
+    }
     return store.subscribe((change) => {
       if (change.entityTypes.includes('*') || change.entityTypes.some((type) => entityTypes.has(type))) {
         setRevision((value) => value + 1);

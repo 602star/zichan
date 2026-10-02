@@ -28,6 +28,7 @@ export type { SyncConflictBranchRow, SyncConflictGroupRow, SyncReplicaIdentity }
 
 export interface ReplicaConnection extends SyncReplicaIdentity {
   headSeq: number;
+  capabilities?: string[];
 }
 
 export interface PulledCommitRow {
@@ -44,7 +45,7 @@ export interface CommitTransport {
     headSeq: number;
     hasMore: boolean;
   }>;
-  pushCommits(identity: SyncReplicaIdentity, commits: SyncCommitV2[]): Promise<{
+  pushCommits(identity: SyncReplicaIdentity, commits: SyncCommitV2[], requiredCapabilities?: string[]): Promise<{
     assigned: { commitId: string; seq: number; contentHash: string }[];
     headSeq: number;
   }>;
@@ -629,12 +630,21 @@ export async function pushReplica(
   const identity: SyncReplicaIdentity = connection;
   const key = replicaKey(identity);
   const pending = await store.commitsPendingForReplica(key);
+  const requiresCostV2 = (await store.costBasisOpenings.count({ includeDeleted: true })) > 0
+    || pending.some((commit) => commit.revisions.some((revision) => {
+      const payload = revision.payload;
+      const chain = payload?.['chain'] as Record<string, unknown> | undefined;
+      const transaction = payload?.['transaction'] as Record<string, unknown> | undefined;
+      return revision.aggregateType === 'cost_basis_opening' || revision.aggregateType === 'conversion_operation'
+        || !!chain?.['costQuotes'] || chain?.['type'] === 'swap' || !!transaction?.['costQuote'];
+    }));
+  if (requiresCostV2 && !connection.capabilities?.includes('asset-cost-v2')) throw new Error('同步服务器不支持 asset-cost-v2，请升级服务器；本地修改仍保留在待同步队列');
   let pushed = 0;
   let headSeq = connection.headSeq;
   for (let offset = 0; offset < pending.length; offset += 100) {
     const page = pending.slice(offset, offset + 100);
     const wirePage = page.map(wireSyncCommit);
-    const response = await transport.pushCommits(identity, wirePage);
+    const response = await transport.pushCommits(identity, wirePage, requiresCostV2 ? ['asset-cost-v2'] : []);
     await assertPushAcknowledgements(wirePage, response);
     await store.transaction(async (tx) => {
       for (const ack of response.assigned) await tx.setCommitContentHash(ack.commitId, ack.contentHash);
@@ -921,7 +931,7 @@ export function memoryCommitTransport(serverId = 'memory'): CommitTransport & {
     async connect(ledgerId) {
       boundLedgerId ??= ledgerId;
       if (boundLedgerId !== ledgerId) throw new Error(`LEDGER_MISMATCH:${boundLedgerId}`);
-      return { serverId, replicaId, streamEpoch, ledgerId, headSeq: log.at(-1)?.seq ?? 0 };
+      return { serverId, replicaId, streamEpoch, ledgerId, headSeq: log.at(-1)?.seq ?? 0, capabilities: ['asset-cost-v2'] };
     },
     async pullCommits(identity, afterSeq, limit = 200) {
       if (identity.ledgerId !== boundLedgerId) throw new Error('LEDGER_MISMATCH');

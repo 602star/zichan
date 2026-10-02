@@ -5,6 +5,8 @@
  * (wa-sqlite on web, a dedicated Rust SQL bridge on native).
  */
 export { requestJson, HttpRequestError, type HttpRequestOptions } from './http-request.js';
+export * from './asset-cost-service.js';
+export * from './conversion-operation.js';
 export { SerialTaskQueue, type SqlDriver, type SqlParam, type SqlRunResult } from './driver.js';
 export { schemaStatements } from './schema.js';
 export {
@@ -82,6 +84,8 @@ export {
 } from './domain-validation.js';
 export {
   recordConversion,
+  updateConversionMetadata,
+  type ConversionMetadataUpdate,
   recordSell,
   updateConversion,
   rebuildConversionDerived,

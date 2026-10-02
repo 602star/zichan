@@ -32,6 +32,8 @@ const ENTITY_LABELS: Record<string, string> = {
   account: '账户',
   setting: '设置',
   conversion_chain: '转换链路',
+  conversion_operation: '连续资产转换',
+  cost_basis_opening: '成本起点',
   conversion_chain_steps: '转换步骤',
   transaction: '流水',
   transaction_split: '拆分',

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { loginAccount, registerAccount } from '@zichan/db';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
 import { describeAudit } from '../src/admin.js';
-import { SyncServerStore } from '../src/store.js';
+import { SyncServerStore, CURRENT_SERVER_SCHEMA } from '../src/store.js';
 
 const password = 'correct horse battery staple';
 
@@ -294,7 +294,7 @@ describe('management console operations', () => {
       const field = initial.settings.find((setting) => setting.name === 'quotaWarnRatio')!;
       expect(field.source).toBe('default');
       expect(initial.secrets['syncSecret']).toBe('configured');
-      expect(initial.version['schema']).toBe(11);
+      expect(initial.version['schema']).toBe(CURRENT_SERVER_SCHEMA);
       expect(JSON.stringify(initial)).not.toContain(password);
 
       const saved = await f.api(f.owner.accessToken, '/settings', { settings: { quotaWarnRatio: 0.95 } });

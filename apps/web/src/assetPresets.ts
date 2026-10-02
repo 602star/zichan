@@ -2,7 +2,8 @@ import { newId, type Asset, type AssetType, type FixedAssetCategory } from '@zic
 import type { SqlLedgerStore } from '@zichan/db';
 
 export interface AssetPreset {
-  code: 'USD' | 'HKD' | 'EUR' | 'JPY' | 'USDT' | 'BTC' | 'ETH';
+  code: 'CNY' | 'USD' | 'HKD' | 'EUR' | 'GBP' | 'JPY' | 'SGD' | 'TWD' | 'AUD' | 'NZD' | 'CAD' | 'CHF'
+    | 'USDT' | 'USDC' | 'BTC' | 'ETH' | 'SOL' | 'BNB' | 'XRP' | 'DOGE' | 'SHIB' | 'PEPE';
   name: string;
   type: AssetType;
   decimals: number;
@@ -12,14 +13,43 @@ export interface AssetPreset {
 export type AssetPresetCode = AssetPreset['code'];
 
 export const ASSET_PRESETS: readonly AssetPreset[] = [
+  { code: 'CNY', name: '人民币', type: 'fiat', decimals: 2, symbol: '¥' },
   { code: 'USD', name: '美元', type: 'fiat', decimals: 2, symbol: '$' },
   { code: 'HKD', name: '港币', type: 'fiat', decimals: 2, symbol: 'HK$' },
   { code: 'EUR', name: '欧元', type: 'fiat', decimals: 2, symbol: '€' },
+  { code: 'GBP', name: '英镑', type: 'fiat', decimals: 2, symbol: '£' },
   { code: 'JPY', name: '日元', type: 'fiat', decimals: 0, symbol: '¥' },
+  { code: 'SGD', name: '新加坡元', type: 'fiat', decimals: 2, symbol: 'S$' },
+  { code: 'TWD', name: '新台币', type: 'fiat', decimals: 2, symbol: 'NT$' },
+  { code: 'AUD', name: '澳元', type: 'fiat', decimals: 2, symbol: 'A$' },
+  { code: 'NZD', name: '新西兰元', type: 'fiat', decimals: 2, symbol: 'NZ$' },
+  { code: 'CAD', name: '加元', type: 'fiat', decimals: 2, symbol: 'C$' },
+  { code: 'CHF', name: '瑞士法郎', type: 'fiat', decimals: 2, symbol: 'CHF ' },
   { code: 'USDT', name: '泰达币', type: 'stablecoin', decimals: 6 },
+  { code: 'USDC', name: '美元稳定币', type: 'stablecoin', decimals: 6 },
   { code: 'BTC', name: '比特币', type: 'crypto', decimals: 8 },
   { code: 'ETH', name: '以太坊', type: 'crypto', decimals: 8 },
+  { code: 'SOL', name: 'Solana', type: 'crypto', decimals: 9 },
+  { code: 'BNB', name: 'BNB', type: 'crypto', decimals: 8 },
+  { code: 'XRP', name: 'XRP', type: 'crypto', decimals: 6 },
+  { code: 'DOGE', name: '狗狗币', type: 'crypto', decimals: 8, symbol: 'Ð' },
+  { code: 'SHIB', name: '柴犬币', type: 'crypto', decimals: 8 },
+  { code: 'PEPE', name: 'Pepe', type: 'crypto', decimals: 8 },
 ] as const;
+
+export const MEME_ASSET_PRESET_CODES: readonly AssetPresetCode[] = ['DOGE', 'SHIB', 'PEPE'];
+
+export const ASSET_PRESET_GROUPS = [
+  { label: '法币', codes: ASSET_PRESETS.filter((preset) => preset.type === 'fiat').map((preset) => preset.code) },
+  { label: '稳定币', codes: ASSET_PRESETS.filter((preset) => preset.type === 'stablecoin').map((preset) => preset.code) },
+  { label: '加密资产', codes: ASSET_PRESETS.filter((preset) => preset.type === 'crypto' && !MEME_ASSET_PRESET_CODES.includes(preset.code)).map((preset) => preset.code) },
+  { label: 'Meme 币', codes: MEME_ASSET_PRESET_CODES },
+] as const;
+
+/** Keep the main entry compact; the rest remain one tap away under “更多常用资产”. */
+export const FEATURED_ASSET_PRESET_CODES: readonly AssetPresetCode[] = [
+  'USD', 'HKD', 'EUR', 'USDT', 'USDC', 'BTC', 'ETH', 'SOL',
+];
 
 export function assetPreset(code: AssetPresetCode): AssetPreset {
   const preset = ASSET_PRESETS.find((row) => row.code === code);

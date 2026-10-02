@@ -147,6 +147,7 @@ export interface Setting extends BaseEntity {
 export type ConversionType =
   | 'buy'
   | 'sell'
+  | 'swap'
   | 'exchange'
   | 'dca'
   | 'deposit'
@@ -154,6 +155,10 @@ export type ConversionType =
 
 /** A single conversion event = one chain with N ordered steps (unifies §7 & §27.7). */
 export interface ConversionChain extends BaseEntity {
+  /** Frozen evidence per step; absent on legacy records. */
+  costQuotes?: import('./asset-cost.js').ConversionCostQuote[];
+  operationId?: string;
+  operationOrder?: number;
   date: string; // YYYY-MM-DD
   time?: string; // HH:mm[:ss]
   timezone?: string;
@@ -194,6 +199,7 @@ export type ConversionFeeTreatment =
   | 'third_asset_extra';
 
 export interface ConversionFee {
+  valueEvidence?: Pick<import('./asset-cost.js').CostQuoteSnapshot, 'source' | 'priceMarkIds' | 'quoteDate' | 'explanation'>;
   id: string;
   assetId: string;
   amount: string;
@@ -227,6 +233,15 @@ export interface ConversionStep {
 export interface ChainWithSteps {
   chain: ConversionChain;
   steps: ConversionStep[];
+}
+
+/** Owns all child conversions as one audited/synchronized operation. */
+export interface ConversionOperation extends BaseEntity {
+  title?: string;
+  chainIds: string[];
+  links?: { retainedQuantity: string; supplementalQuantity: string; accountId?: string }[];
+  recordState?: 'active' | 'voided';
+  voidReason?: string;
 }
 
 // ─────────────────────────── Lots & sell matching ───────────────────────────
@@ -301,7 +316,7 @@ export interface DcaExecution extends BaseEntity {
   scheduledDate: string;
   date: string; // actual YYYY-MM-DD
   plannedAmount: string;
-  actualBaseCost: string; // derived from its chain
+  actualBaseCost: string | null; // null means acquisition basis is not known
   baseCurrencyAssetId: string;
   finalAssetId: string;
   finalAmount: string;
@@ -743,6 +758,8 @@ export interface ReconciliationSession extends BaseEntity {
   statementBalance: string;
   openingBalance: string;
   selectedTotal: string;
+  /** Frozen net conversion postings in this statement period; older sessions omit it. */
+  conversionTotal?: string;
   clearedBalance: string;
   difference: string;
   status: ReconciliationStatus;
@@ -767,6 +784,7 @@ export interface ReconciliationItem extends BaseEntity {
  * ConversionChain 是双边转换(from → to)。
  */
 export interface Transaction extends BaseEntity {
+  costQuote?: import('./asset-cost.js').CostQuoteSnapshot;
   /** Explicit placement when an old date-only record overlaps a balance snapshot. */
   balanceTiming?: 'before' | 'after';
   balanceTimingAccountId?: string;

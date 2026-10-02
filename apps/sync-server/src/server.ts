@@ -1117,7 +1117,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         await log('info', 'replica_replaced', 'User replaced encrypted ledger', { ip, username: user.username, detail: { previousLedgerId: expectedLedgerId, ledgerId: bound.ledgerId } });
         return send(res, 200, { serverId, ledgerId: bound.ledgerId, replicaId: bound.replicaId, streamEpoch: bound.streamEpoch });
       }
-      if (req.method === 'GET' && apiPath === '/api/v3/replica') return send(res, 200, replica ? { serverId, bound: true, ledgerId: replica.ledgerId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch, headSeq: replica.headSeq } : { serverId, bound: false, headSeq: 0 });
+      if (req.method === 'GET' && apiPath === '/api/v3/replica') return send(res, 200, replica ? { serverId, bound: true, ledgerId: replica.ledgerId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch, headSeq: replica.headSeq, capabilities: ['asset-cost-v2'] } : { serverId, bound: false, headSeq: 0, capabilities: ['asset-cost-v2'] });
       if (req.method === 'POST' && apiPath === '/api/v3/replica/bind') {
         const { ledgerId } = await readBody(req, AUTH_BODY_BYTES);
         if (typeof ledgerId !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(ledgerId)) return send(res, 400, { code: 'INVALID_LEDGER_ID', error: 'invalid ledger id' });
@@ -1254,7 +1254,10 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       }
       if (req.method === 'POST' && apiPath === '/api/v3/commits') {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-        const { commits } = await readBody(req, MAX_BODY_BYTES);
+        const { commits, capabilities = [], requiredCapabilities = [] } = await readBody(req, MAX_BODY_BYTES);
+        if (!Array.isArray(capabilities) || !Array.isArray(requiredCapabilities)
+          || capabilities.length > 32 || requiredCapabilities.length > 32
+          || [...capabilities, ...requiredCapabilities].some((value) => typeof value !== 'string' || value.length > 80)) return send(res, 400, { error: 'invalid capabilities' });
         if (!Array.isArray(commits) || commits.length > 100) return send(res, 400, { error: 'invalid commit batch' });
         const incoming: Omit<StoredCommit, 'seq' | 'cipherBytes' | 'createdAt'>[] = [];
         const batchIds = new Map<string, string>();
@@ -1265,7 +1268,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           batchIds.set(row.commitId, row.contentHash);
           incoming.push({ commitId: row.commitId, ledgerId: row.ledgerId, contentHash: row.contentHash, encCommit: row.encCommit });
         }
-        const result = await store.pushCommits(user.username, incoming);
+        const result = await store.pushCommits(user.username, incoming, capabilities as string[], requiredCapabilities as string[]);
         if (result.assigned.length) await log('info', 'commits_pushed', 'Received encrypted commits', { ip, username: user.username, detail: { count: result.assigned.length, requestId } });
         await store.recordSyncEvent({
           operation: 'push',

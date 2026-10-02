@@ -473,10 +473,11 @@ export class ServerStoreError extends Error {
   }
 }
 
-export const CURRENT_SERVER_SCHEMA = 11;
-export const CURRENT_SERVER_SCHEMA_NAME = 'server_management_ops_v11';
+export const CURRENT_SERVER_SCHEMA = 12;
+export const CURRENT_SERVER_SCHEMA_NAME = 'server_asset_cost_capabilities_v12';
 export function supportedServerSchema(version: number, name: string): boolean {
   return version === CURRENT_SERVER_SCHEMA && name === CURRENT_SERVER_SCHEMA_NAME
+    || version === 11 && name === 'server_management_ops_v11'
     || version === 10 && name === 'server_key_custody_v10'
     || version === 9 && name === 'server_password_recovery_v9'
     || version === 8 && name === 'server_management_v8'
@@ -727,6 +728,12 @@ CREATE TABLE IF NOT EXISTS sync_replicas (
   head_seq INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sync_ledger_requirements (
+  username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
+  ledger_id TEXT NOT NULL,
+  capability TEXT NOT NULL,
+  PRIMARY KEY (username, ledger_id, capability)
 );
 CREATE TABLE IF NOT EXISTS sync_server_commits (
   username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
@@ -997,13 +1004,9 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     await this.ensureColumn('sync_events', 'client_version', 'TEXT');
     await this.ensureColumn('sync_events', 'protocol_version', 'TEXT');
     const migrations = await this.driver.all<{ version: number; name: string }>('SELECT version, name FROM server_schema_migrations ORDER BY version');
-    const previous = migrations.length === 1 && (
-      Number(migrations[0]?.version) === 6 && migrations[0]?.name === 'server_account_owner_v6'
-      || Number(migrations[0]?.version) === 7 && migrations[0]?.name === 'server_account_identity_v7'
-      || Number(migrations[0]?.version) === 8 && migrations[0]?.name === 'server_management_v8'
-      || Number(migrations[0]?.version) === 9 && migrations[0]?.name === 'server_password_recovery_v9'
-      || Number(migrations[0]?.version) === 10 && migrations[0]?.name === 'server_key_custody_v10'
-    );
+    const previous = migrations.length === 1
+      && Number(migrations[0]!.version) < CURRENT_SERVER_SCHEMA
+      && supportedServerSchema(Number(migrations[0]!.version), migrations[0]!.name);
     if (!migrations.length || previous) {
       // This additive identity upgrade does not touch ledger bytes, credentials,
       // owner assignment or replica bindings. No historical schema reset.
@@ -2031,12 +2034,19 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     return { commits, headSeq: replica.headSeq, nextSeq, hasMore: nextSeq < replica.headSeq };
   }
 
-  async pushCommits(username: string, incoming: Omit<StoredCommit, 'seq' | 'cipherBytes' | 'createdAt'>[]): Promise<{ assigned: { commitId: string; seq: number; contentHash: string }[]; replica: UserReplica }> {
+  async pushCommits(username: string, incoming: Omit<StoredCommit, 'seq' | 'cipherBytes' | 'createdAt'>[], capabilities: string[] = [], requiredCapabilities: string[] = []): Promise<{ assigned: { commitId: string; seq: number; contentHash: string }[]; replica: UserReplica }> {
     await this.ready;
     return this.driver.transaction(async (driver) => {
       const replicaRow = await driver.get<Record<string, unknown>>('SELECT * FROM sync_replicas WHERE username = ?', [username]);
       if (!replicaRow) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
       const replica = replicaFromRow(replicaRow);
+      const requirements = await driver.all<{ capability: string }>('SELECT capability FROM sync_ledger_requirements WHERE username = ? AND ledger_id = ?', [username, replica.ledgerId]);
+      if (requiredCapabilities.some((capability) => capability !== 'asset-cost-v2')) throw new ServerStoreError('UNSUPPORTED_CAPABILITY', 409, 'server upgrade required');
+      const required = new Set([...requirements.map((row) => row.capability), ...requiredCapabilities]);
+      if ([...required].some((capability) => !capabilities.includes(capability))) throw new ServerStoreError('CLIENT_UPGRADE_REQUIRED', 409, '该账本需要 asset-cost-v2，请升级客户端后再写入');
+      for (const capability of requiredCapabilities) {
+        await driver.run('INSERT OR IGNORE INTO sync_ledger_requirements (username, ledger_id, capability) VALUES (?, ?, ?)', [username, replica.ledgerId, capability]);
+      }
       const quotaRow = await driver.get<{ commit_quota_bytes: number }>('SELECT commit_quota_bytes FROM sync_user_quotas WHERE username = ?', [username]);
       const usedRow = await driver.get<{ bytes: number }>('SELECT COALESCE(SUM(cipher_bytes), 0) AS bytes FROM sync_server_commits WHERE username = ?', [username]);
       const quota = Number(quotaRow?.commit_quota_bytes ?? this.defaultCommitQuotaBytes);

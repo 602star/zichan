@@ -21,7 +21,7 @@ test('expands and collapses a fixed-asset primary category without tripping the 
   await sidebar.getByRole('button', { name: /设置$/ }).click();
   await page.getByLabel('在侧边栏显示管理').click();
   await sidebar.getByRole('button', { name: /管理$/ }).click();
-  await expect(page.getByText('分类与资料中心', { exact: true })).toBeVisible();
+  await expect(page.getByText('资产与资料中心', { exact: true })).toBeVisible();
 
   await page.getByRole('tab', { name: '物品分类', exact: true }).click();
   await expect(page.getByRole('button', { name: '+ 新增物品分类' })).toBeVisible();

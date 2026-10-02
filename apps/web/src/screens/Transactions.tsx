@@ -42,7 +42,7 @@ import {
   budgetCategoryForm, categoryForm, payeeForm, scheduledTransactionForm,
   transactionForm, transactionSplitForm, type AttachmentDraft, type TransactionFormValue,
 } from '../forms.js';
-import { money, signedMoney } from '../format.js';
+import { amount as fmtAmount, money, signedMoney } from '../format.js';
 import { amountColor, btnOutline, btnPrimary, card, cardTight, selectBase, tag as tagStyle, td as tdStyle, th as thStyle } from '../ui/styles.js';
 import { ChartLegend, CompositionDonut, TrendBars, type ChartSlice } from '../ui/charts.js';
 import { CATEGORY_COLORS, OTHER_CATEGORY_COLOR } from '../theme.js';
@@ -62,7 +62,6 @@ import {
   transactionIsReconciled,
   transactionDateRange,
   type AccountBalanceVM,
-  type AccountLedgerRowVM,
   historicalCategoryValueOptions,
 } from '../selectors/transactions.js';
 import { optionalTransactionFields, transactionFormPresetKeys } from '../transactionFormPrefs.js';
@@ -567,13 +566,37 @@ export function Transactions() {
   const activeDateValue: DateRangeValue = { preset: viewFilters.range, from: activeDateRange.from, to: activeDateRange.to };
   const selectedAccountId = selectedAccountForRead;
   const selectedAssetId = assetId === 'all' ? undefined : assetId;
-  const ledger: AccountLedgerRowVM[] = (accountLedgerPage?.rows ?? []).map((row) => {
+  const ledger = (accountLedgerPage?.rows ?? []).map((row) => {
+    const asset = readySnap.assets.find((item) => item.id === row.assetId);
+    const quantity = D(row.postingAmount);
+    const displayAmount = `${quantity.isZero() ? '' : quantity.isNegative() ? '−' : '+'}${fmtAmount(quantity.abs(), asset?.decimals ?? 8)}`;
+    if (row.conversion) {
+      const { chain, step } = row.conversion;
+      const fromCode = readySnap.assets.find((asset) => asset.id === step.fromAssetId)?.code ?? step.fromAssetId;
+      const toCode = readySnap.assets.find((asset) => asset.id === step.toAssetId)?.code ?? step.toAssetId;
+      const typeLabel: Record<string, string> = {
+        buy: '买入', sell: '卖出', swap: '资产互换', exchange: '换汇',
+        dca: '定投', deposit: '入金', withdraw: '提现',
+      };
+      return {
+        id: row.entryId,
+        title: chain.title || `${fromCode} → ${toCode}`,
+        categoryLabel: typeLabel[chain.type] ?? '资产转换',
+        date: row.date,
+        statusLabel: '已记录',
+        amount: row.postingAmount,
+        displayAmount,
+        balance: row.balance,
+        assetCode: asset?.code ?? row.assetId,
+      };
+    }
     const transaction = row.transaction;
+    if (!transaction) return null;
     const specialCategoryLabel = transaction.type === 'transfer'
       ? '转账'
       : transaction.type === 'adjustment' ? '对账调整' : undefined;
     return {
-      tx: transaction,
+      id: row.entryId,
       title: transactionSummaryTitle(
         transaction,
         readySnap.payees,
@@ -587,10 +610,11 @@ export function Transactions() {
           ? '部分对账'
           : row.reconciliationStatus === 'pending' ? '待核实' : '已记录',
       amount: row.postingAmount,
+      displayAmount,
       balance: row.balance,
-      assetCode: readySnap.assets.find((item) => item.id === row.assetId)?.code ?? row.assetId,
+      assetCode: asset?.code ?? row.assetId,
     };
-  });
+  }).filter((row): row is NonNullable<typeof row> => row !== null);
   const reconciliationRows = readySnap.reconciliationSessions.filter((row) => isDateInRange(row.statementDate, activeDateRange));
   const budgetRows = budgetAggregates
     ? buildBudgetMonthFromAggregates(readySnap, budgetMonth, budgetAggregates)
@@ -1218,7 +1242,7 @@ export function Transactions() {
               <div>
                 <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{usesAccounts ? '日常流水' : '日常支出'}</div>
                 <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3 }}>
-                  {usesAccounts ? '收入、支出、转账、退款和拆分交易' : '完整记录支出详情；侧栏或移动端“快记”可只填金额'}
+                  {usesAccounts ? '收入、支出、转账、退款和拆分交易；资产买卖与换汇可在“账户”中核对资金流' : '完整记录支出详情；侧栏或移动端“快记”可只填金额'}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1404,7 +1428,7 @@ export function Transactions() {
           <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'end', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
             <div>
               <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>账户流水与对账</div>
-              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>选择银行卡或钱包，填写账单期末余额，再逐笔核对收支。</div>
+              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>账户流水列出收支、转账和资产转换。买卖资产会改变账户余额，不计入日常收入或支出。</div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setAccountSetupOpen(true)} style={primary}>添加银行卡 / 钱包</button>
@@ -1433,15 +1457,15 @@ export function Transactions() {
           </div>
           {snap.accounts.find((a) => a.id === selectedAccountId)?.balanceStartAt && <button style={button} onClick={() => setEarlierBalanceAccount(snap.accounts.find((a) => a.id === selectedAccountId)!)}>从更早日期核算</button>}
           <button style={button} onClick={() => setEditingReconcile('new')}>核对账单</button>
-          <button style={button} onClick={() => { setFilters((current) => ({ ...current, accountId: selectedAccountId })); setTab('records'); }}>查看这个账户的全部收支</button>
+          <button style={button} onClick={() => { setFilters((current) => ({ ...current, accountId: selectedAccountId })); setTab('records'); }}>查看这个账户的日常收支</button>
           <Table headers={['日期', '摘要', '分类', '状态', '金额', '余额']}>
             {ledger.map((r) => (
-              <tr key={`${r.tx.id}:${r.amount}:${r.balance}`}>
+              <tr key={r.id}>
                 <td style={tdStyle}>{r.date}</td>
                 <td style={tdStyle}>{r.title}</td>
                 <td style={tdStyle}>{r.categoryLabel}</td>
                 <td style={tdStyle}>{r.statusLabel}</td>
-                <td style={{ ...tdStyle, ...amountColor(r.amount) }}>{signedMoney(r.amount)} {r.assetCode}</td>
+                <td style={{ ...tdStyle, ...amountColor(r.amount) }}>{r.displayAmount} {r.assetCode}</td>
                 <td style={tdStyle}>{r.balance} {r.assetCode}</td>
               </tr>
             ))}

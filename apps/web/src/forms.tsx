@@ -5,7 +5,7 @@ import { transactionFormFieldOptions } from './transactionFormPrefs.js';
  * EntityFormModal. Select options that depend on existing data take the snapshot.
  */
 import {
-  D, isValidDay, localToday, newId, isDefaultAccount, defaultTransactionAccount, accountBalanceTiming,
+  D, normalizeOccurrence, transactionCostFingerprint, isValidDay, localToday, newId, isDefaultAccount, defaultTransactionAccount, accountBalanceTiming,
   type Asset, type Account, type Attachment, type BudgetCategory, type Category, type DcaPlan,
   type PriceMark, type Game, type GameAccount, type GameSeason, type GameRecord, type GameCashflowMode, type GameCashflowRole, type FixedAsset,
   type FixedAssetCashflowMode, type FixedAssetCategory, type FixedAssetConsumable, type FixedAssetEvent, type FixedAssetGoal,
@@ -521,6 +521,16 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
   const refundMode = options.refundMode ?? false;
   const expenseOnly = options.expenseOnly ?? false;
   const defaultAssetId = defaultSettlementAssetId(snap);
+  const costCurrency = (v: Record<string, string>) => {
+    if (!snap.costState) return undefined;
+    try {
+      const instant = normalizeOccurrence({ date: v.date || currentDate(), time: S(v.time), timezone: S(v.timezone) }).occurredAtUtc;
+      const boundaries = snap.costState?.boundaries ?? (snap.costState ? [snap.costState] : []);
+      return instant ? [...boundaries].reverse().find((row) => Date.parse(row.occurredAtUtc) < Date.parse(instant))?.baseCurrencyAssetId : undefined;
+    } catch { return undefined; }
+  };
+  const showCostValue = (v: Record<string, string>) => v.type !== 'refund' && !!(costCurrency(v) || v.costValueInBase);
+
   const transactionAccounts = (v: Record<string, string>) => {
     const type = v.type ?? 'expense';
     const defaultId = defaultTransactionAccount(snap.accounts, snap.setting, type);
@@ -580,9 +590,10 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       return original ? '原消费：' + original.date + ' · ' + (original.description || original.category) + ' · ' + original.amount + ' ' + (snap.assets.find((a) => a.id === original.assetId)?.code ?? '') + (options.refundRemaining ? '；剩余可退 ' + options.refundRemaining : '') : '请选择原消费，再填写实际到账的退款金额、账户和日期。';
     },
     optionalFieldOptions: transactionFormFieldOptions(true),
-    onFieldChange: (values, key, manual) => key === 'type' && !manual.has('accountId')
-      ? { ...values, accountId: defaultTransactionAccount(snap.accounts, snap.setting, values.type ?? 'expense') ?? '' }
-      : values,
+    onFieldChange: (values, key, manual) => ({ ...values,
+      ...(key === 'type' && !manual.has('accountId') ? { accountId: defaultTransactionAccount(snap.accounts, snap.setting, values.type ?? 'expense') ?? '' } : {}),
+      ...(['date', 'time', 'timezone', 'type', 'amount', 'assetId', 'transferAmount', 'transferAssetId', 'costValueInBase'].includes(key) ? { costValueConfirmed: 'false' } : {}),
+    }),
     fields: [
       { key: 'amount', label: '金额', type: 'number', half: true, lockedVisible: true, required: true, hint: refundMode && options.refundRemaining ? `本次到账金额；剩余可退 ${options.refundRemaining}。改小即为部分退款。` : undefined },
       { key: 'assetId', label: '币种', type: 'select', half: true, options: settlementOpts(snap), defaultValue: defaultAssetId, lockedVisible: true, required: true },
@@ -600,6 +611,12 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       { key: 'description', label: '描述', type: 'text', half: true, placeholder: '午餐 / 工资 / 房租（可留空，列表用分类兜底）', lockedVisible: true },
       { key: 'attachmentDrafts', label: '附件 / 图片', type: 'file', accept: 'image/*,.pdf', multiple: true, capture: 'environment', lockedVisible: true },
       { key: 'timezone', label: '交易时区', type: 'text', half: true, defaultValue: currentTimezone(), section: 'more' },
+      { key: 'costCurrency', label: '成本核算币种', type: 'select', singleOptionSummary: true, section: 'more', lockedVisible: true, visibleWhen: showCostValue,
+        options: (v) => { const id = costCurrency(v) ?? v.costCurrency; return id ? [{ value: id, label: snap.assets.find((a) => a.id === id)?.code ?? id }] : []; } },
+      { key: 'costValueInBase', label: '成本核算价值', type: 'number', section: 'more', lockedVisible: true, visibleWhen: showCostValue,
+        hint: '收入填写取得成本，支出填写处置价值。留空保留未知；核算币种自身按单位成本 1 处理。' },
+      { key: 'costValueConfirmed', label: '确认成本核算价值', type: 'checkbox', section: 'more', lockedVisible: true, defaultValue: 'false', visibleWhen: (v) => showCostValue(v) && !!v.costValueInBase,
+        hint: '金额、资产或发生时间改变后需重新确认；也可清空核算价值，以未知成本保存。' },
       ...accountFields,
       { key: 'refundForId', label: '退款关联原支出', type: 'select', options: refundableExpenses.map((t) => ({ value: t.id, label: `${t.date} · ${t.description ?? t.merchant ?? t.category} · ${t.amount} ${snap.assets.find((a) => a.id === t.assetId)?.code ?? ''}` })), allowEmpty: !refundMode, lockedVisible: true, required: true, hidden: expenseOnly, visibleWhen: (v) => v.type === 'refund' },
       { key: 'refundAppliedAmount', label: '冲减原消费金额', type: 'number', half: true, placeholder: '按原支出币种填写', lockedVisible: true, hidden: expenseOnly, required: true, visibleWhen: (v) => (v.type === 'refund' || refundMode) && refundNeedsSeparateOffset(v) },
@@ -615,6 +632,9 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       { key: 'note', label: '备注', type: 'textarea', section: 'more' },
     ],
     toValues: (t) => ({
+      costCurrency: t.costQuote?.baseCurrencyAssetId ?? '',
+      costValueInBase: t.costQuote?.valueInBase ?? '',
+      costValueConfirmed: t.costQuote?.valueInBase != null ? 'true' : 'false',
       date: t.date,
       time: t.time ?? '',
       timezone: t.timezone ?? currentTimezone(),
@@ -652,7 +672,8 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
           thumbnailSizeBytes: a.thumbnailSizeBytes, thumbnailMimeType: a.thumbnailMimeType,
         } satisfies AttachmentDraft))),
     }),
-    fromValues: (v, e, files) => ({
+    fromValues: (v, e, files) => {
+      const transaction = {
       ...base(e),
       date: v.date,
       time: S(v.time),
@@ -699,8 +720,26 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       merchant: S(v.merchant),
       note: S(v.note),
       attachmentDrafts: files?.attachmentDrafts ?? parseAttachmentDrafts(v.attachmentDrafts),
-    }) as TransactionFormValue,
+      } as TransactionFormValue;
+      const baseId = costCurrency(v) ?? e?.costQuote?.baseCurrencyAssetId;
+      if (baseId) {
+        Object.assign(transaction, normalizeOccurrence(transaction));
+        const fingerprint = transactionCostFingerprint(transaction, baseId);
+        if (S(v.costValueInBase)) {
+          if (v.costValueConfirmed !== 'true') throw new Error('请重新确认成本核算价值，或清空后以未知成本保存');
+          const value = D(v.costValueInBase!).toString();
+          transaction.costQuote = e?.costQuote?.dependencyFingerprint === fingerprint && e.costQuote.valueInBase === value
+            ? e.costQuote : { baseCurrencyAssetId: baseId, valueInBase: value, source: 'manual', priceMarkIds: [], explanation: '用户确认日常交易核算价值', dependencyFingerprint: fingerprint };
+        } else if (e?.costQuote) transaction.costQuote = { baseCurrencyAssetId: baseId, valueInBase: null, source: 'unknown', priceMarkIds: [], dependencyFingerprint: fingerprint };
+      } else transaction.costQuote = e?.costQuote;
+      return transaction;
+    },
     validate: (v) => {
+      if (v.costValueInBase) {
+        try { if (!D(v.costValueInBase).isFinite() || D(v.costValueInBase).lt(0)) return { costValueInBase: '核算价值必须是非负数' }; }
+        catch { return { costValueInBase: '核算价值必须是有效数字' }; }
+        if (v.costValueConfirmed !== 'true') return { costValueConfirmed: '条件已变化，请重新确认核算价值或清空为未知' };
+      }
       if (!D(v.amount || '0').gt(0)) return { amount: '金额必须大于 0' } as Record<string, string>;
       if (v.type === 'transfer' && usesAccounts && (!v.accountId || !v.transferAccountId)) return { accountId: '转账需要转出账户', transferAccountId: '转账需要转入账户' } as Record<string, string>;
       if (v.type === 'refund' && !v.refundForId) return { refundForId: '退款必须关联原支出' } as Record<string, string>;

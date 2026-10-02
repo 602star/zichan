@@ -36,6 +36,8 @@ import { attachmentStorageStatus, reconcileAttachmentStorage } from '../db/attac
 import { ATTACHMENT_SYNC_STATE_EVENT, ensureAttachmentBlobAvailable } from '../attachment-sync.js';
 import { loadSyncConnections } from '../sync-config.js';
 import { useUndo } from '../ui/UndoToast.js';
+import { AssetIcon } from '../ui/AssetIcon.js';
+import { ASSET_PRESETS, ASSET_PRESET_GROUPS, ensureAssetPreset, type AssetPresetCode } from '../assetPresets.js';
 
 const ASSET_TYPE_LABEL: Record<string, string> = {
   fiat: '法币', stablecoin: '稳定币', crypto: '加密货币', stock: '股票', fund: '基金 / ETF',
@@ -47,7 +49,7 @@ const KIND_LABEL: Record<string, string> = {
 };
 const norm = (value: unknown) => String(value ?? '').trim().toLowerCase();
 
-type ManageTab = 'transactionCategories' | 'fixedCategories' | 'labels' | 'other';
+type ManageTab = 'transactionCategories' | 'fixedCategories' | 'labels' | 'assets' | 'other';
 type CategoryCenterMode = 'structure' | 'quick';
 type ManageTarget = { tab?: ManageTab; categoryMode?: CategoryCenterMode };
 
@@ -75,6 +77,8 @@ export function Manage() {
   const [categoryPackNotice, setCategoryPackNotice] = useState('');
   const [categoryPackError, setCategoryPackError] = useState('');
   const [expandedPack, setExpandedPack] = useState('');
+  const [addingAssetCode, setAddingAssetCode] = useState<AssetPresetCode | null>(null);
+  const [assetCatalogError, setAssetCatalogError] = useState('');
   const undo = useUndo(store, () => bump());
   useEffect(() => {
     try {
@@ -158,18 +162,32 @@ export function Manage() {
     }
   }
 
+  async function addPresetAsset(code: AssetPresetCode) {
+    setAddingAssetCode(code);
+    setAssetCatalogError('');
+    try {
+      await ensureAssetPreset(store, code);
+      bump();
+    } catch (error) {
+      setAssetCatalogError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAddingAssetCode(null);
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       <div>
-        <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>分类与资料中心</div>
-        <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4 }}>分类的结构、快速显示和排序统一在这里维护。</div>
+        <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>资产与资料中心</div>
+        <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4 }}>在资产标签管理货币与资产的加入、停用和归档；其他标签维护分类与基础资料。</div>
       </div>
 
-      <div role="tablist" aria-label="分类与资料中心" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', overflowX: 'auto' }}>
+      <div role="tablist" aria-label="资产与资料中心" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', overflowX: 'auto' }}>
         {([
           ['transactionCategories', '收支分类'],
           ['fixedCategories', '物品分类'],
           ['labels', '标签与交易对象'],
+          ['assets', '资产'],
           ['other', '其他资料'],
         ] as const).map(([id, label]) => (
           <button key={id} role="tab" aria-selected={tab === id} type="button" onClick={() => setTab(id)} style={manageTabButton(tab === id)}>{label}</button>
@@ -290,18 +308,44 @@ export function Manage() {
 
       {editingAccount && <AccountSetupPanel initial={editingAccount} store={store} assets={snap.assets} accounts={snap.accounts} setting={snap.setting} onClose={() => setEditingAccount(undefined)} onSaved={() => { setEditingAccount(undefined); bump(); }} />}
       {accountSetupOpen && <AccountSetupPanel store={store} assets={snap.assets} accounts={snap.accounts} setting={snap.setting} onClose={() => setAccountSetupOpen(false)} onSaved={() => { setAccountSetupOpen(false); bump(); }} />}
-      {tab === 'other' && (
+      {tab === 'assets' && (
         <>
           <Section
-            title="资产" headers={['代码', '名称', '类型', '精度']}
+            title="资产" headers={['代码', '名称', '类型', '精度', '状态']}
             items={snap.assets}
-            row={(a) => [a.code, a.name, ASSET_TYPE_LABEL[a.type] ?? a.type, String(a.decimals)]}
+            itemLabel={(a) => a.code}
+            row={(a) => [<span><span className="zc-entity-name"><AssetIcon code={a.code} symbol={a.symbol} size={22} />{a.code}</span><small className="zc-manage-asset-status-mobile">{a.isDeleted ? '已归档' : a.isActive ? '可用' : '已停用'}</small></span>, a.name, ASSET_TYPE_LABEL[a.type] ?? a.type, String(a.decimals), a.isDeleted ? <span style={stateBadge('inactive')}>已归档</span> : !a.isActive ? <span style={stateBadge('inactive')}>已停用</span> : <span style={stateBadge('available')}>可用</span>]}
+            searchText={(a) => `${a.code} ${a.name} ${a.isDeleted ? '已归档' : a.isActive ? '可用' : '已停用'}`}
             duplicateKey={(a) => norm(a.code)}
             makeSpec={() => assetForm()}
             put={(transactionStore, entity) => transactionStore.assets.put(entity)}
             bump={bump} masterKind="asset"
-            lifecycleCandidates={snap.assets.filter((row) => row.isActive).map((row) => ({ id: row.id, label: `${row.code} · ${row.name}` }))}
+            lifecycleCandidates={snap.assets.filter((row) => !row.isDeleted && row.isActive).map((row) => ({ id: row.id, label: `${row.code} · ${row.name}` }))}
           />
+          <details style={card}>
+            <summary style={{ color: 'var(--accent)', fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>添加常用资产</summary>
+            <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>预设不会自动加入账本。选中后只添加资产定义，不生成余额或交易；已停用和已归档的资产可在这里重新启用。</div>
+            {ASSET_PRESET_GROUPS.map((group) => <div key={group.label}>
+              <div className="zc-asset-preset-group-title">{group.label}</div>
+              <div className="zc-asset-preset-grid">
+                {ASSET_PRESETS.filter((preset) => group.codes.includes(preset.code)).map((preset) => {
+                  const existing = snap.assets.find((row) => !row.mergedIntoId && row.code.trim().toUpperCase() === preset.code);
+                  const active = existing && !existing.isDeleted && existing.isActive;
+                  const status = active ? '已加入' : existing?.isDeleted ? '已归档' : existing ? '已停用' : '未加入';
+                  return <button key={preset.code} type="button" className="zc-asset-preset-button" disabled={!!active || !!addingAssetCode} onClick={() => void addPresetAsset(preset.code)} aria-label={`${active ? '已加入' : existing ? '重新启用' : '加入资产'} ${preset.code}`}>
+                    <AssetIcon code={preset.code} symbol={preset.symbol} size={30} />
+                    <span><strong>{preset.code} · {preset.name}</strong><small>{status}{!active ? ' · 点击加入资产' : ''}</small></span>
+                  </button>;
+                })}
+              </div>
+            </div>)}
+            {assetCatalogError && <div role="alert" style={{ marginTop: 10, color: 'var(--negative)' }}>{assetCatalogError}</div>}
+          </details>
+        </>
+      )}
+
+      {tab === 'other' && (
+        <>
           {usesAccounts && (
             <Section
               title="账户" headers={['名称', '类型', '平台', '账单 / 期限']}

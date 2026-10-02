@@ -1,7 +1,8 @@
+import { conversionRateText } from './convert.js';
 /** Reports view-models — pure selectors over a Snapshot (unit-tested). */
 import {
   traceChain, conversionStepAmounts, fixedAssetCost, isDateInRange, gameRecordReportingPostings, D, safeDiv, sum,
-  isTransactionActive,
+  isTransactionActive, usesAssetCostState, assetCostSourceSummary,
   type Category,
   type DateRange,
   type GameRecord, type GameRecordType, type Transaction,
@@ -407,7 +408,7 @@ function dcaTable(snap: Snapshot, options: ReportOptions): Table {
     .filter((row) => !row.isDeleted && isDateInRange(row.date, range))
     .sort((a, b) => a.date.localeCompare(b.date))) {
     const acquired = D(execution.finalAmount);
-    const convertedCost = report.toReportAt(execution.actualBaseCost, execution.baseCurrencyAssetId, execution.date);
+    const convertedCost = execution.actualBaseCost === null ? undefined : report.toReportAt(execution.actualBaseCost, execution.baseCurrencyAssetId, execution.date);
     const convertedFee = report.toReportAt(execution.totalFeeInBase, execution.baseCurrencyAssetId, execution.date);
     const state = running.get(execution.finalAssetId) ?? { amount: D(0), cost: D(0), known: true };
     state.amount = state.amount.plus(acquired);
@@ -420,7 +421,7 @@ function dcaTable(snap: Snapshot, options: ReportOptions): Table {
     const average = state.known && !state.amount.isZero() ? state.cost.div(state.amount) : undefined;
     rows.push([
       { v: execution.date, bold: true },
-      { v: report.formatNative(execution.actualBaseCost, execution.baseCurrencyAssetId) },
+      { v: execution.actualBaseCost === null ? '成本未知' : report.formatNative(execution.actualBaseCost, execution.baseCurrencyAssetId) },
       { v: convertedCost ? report.formatReport(convertedCost) : '未折算', data: { reportAmount: convertedCost?.toString() ?? '' } },
       { v: `${fmtAmount(acquired, target?.decimals ?? 8)} ${targetCode}`, bold: true },
       { v: convertedFee ? report.formatReport(convertedFee) : '未折算', color: 'var(--negative)' },
@@ -449,11 +450,34 @@ function chainTable(snap: Snapshot, options: ReportOptions): Table {
       const firstAmounts = conversionStepAmounts(first);
       const path = [code(first.fromAssetId), ...c.steps.map((s) => code(s.toAssetId))].join('→');
       const rates = c.steps.map((s) => {
-        const amounts = conversionStepAmounts(s);
-        return `成交 ${amounts.tradeRate ?? '—'} / 有效 ${amounts.effectiveRate ?? '—'} / 参考 ${s.referenceRate ?? '—'}`;
+        return conversionRateText(s, code(s.fromAssetId), code(s.toAssetId));
       }).join('；');
+      if (usesAssetCostState(snap.costState, c.chain)) {
+        const state = snap.costState;
+        const summary = assetCostSourceSummary(state, c.chain.id);
+        const acquired = state.events.find((event) => event.eventId === `${c.steps.at(-1)?.id}:2-target`);
+        const realized = c.chain.type === 'sell' || c.chain.type === 'swap';
+        const value = realized ? summary.realizedGainLoss : acquired?.costInBase ?? null;
+        const costCurrency = c.chain.baseCurrencyAssetId;
+        const converted = value === null ? undefined : report.toReportAt(value, costCurrency, c.chain.date);
+        return [
+          { v: c.chain.title?.trim() || path, bold: true },
+          { v: report.formatNative(firstAmounts.sourceDebit, first.fromAssetId) },
+          { v: path }, { v: rates },
+          { v: c.chain.costQuotes?.some((quote) => quote.feeValues.some((fee) => fee.valueInBase === null)) ? '费用未估值' : report.formatNative(t.totalFeesInBase, costCurrency) },
+          { v: report.formatNative(t.finalAmount, t.finalAssetId), bold: true },
+          { v: value === null ? `未完整核算 · 已知收益 ${report.formatNative(summary.knownRealizedGainLoss, costCurrency)}` : report.formatNative(value, costCurrency) },
+          { v: converted ? realized ? report.formatSignedReport(converted) : report.formatReport(converted) : value === null ? '未完整核算' : '未折算', data: { reportAmount: converted?.abs().toString() ?? '' } },
+          { v: '—' },
+        ];
+      }
+      if (isSell && c.chain.realizedGainLoss === undefined) return [
+        { v: c.chain.title?.trim() || path }, { v: report.formatNative(firstAmounts.sourceDebit, first.fromAssetId) },
+        { v: path }, { v: rates }, { v: report.formatNative(t.totalFeesInBase, c.chain.baseCurrencyAssetId) },
+        { v: report.formatNative(t.finalAmount, t.finalAssetId) }, { v: '成本未知' }, { v: '未完整核算' }, { v: '—' },
+      ];
       const proceeds = D(t.totalBaseProceeds);
-      const pnl = D(c.chain.realizedGainLoss ?? '0');
+      const pnl = isSell ? D(c.chain.realizedGainLoss!) : D(0);
       const cost = isSell ? proceeds.minus(pnl) : D(t.totalBaseCost);
       const ret = isSell && !cost.isZero() ? pnl.div(cost).times(100) : null;
       const converted = report.toReportAt(isSell ? pnl : cost, c.chain.baseCurrencyAssetId, c.chain.date);

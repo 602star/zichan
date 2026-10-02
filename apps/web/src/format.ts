@@ -35,7 +35,12 @@ export function num(v: Numeric, decimals = 2): string {
 
 /** Format a crypto/asset amount, trimming trailing zeros but keeping precision. */
 export function amount(v: Numeric, decimals = 8): string {
-  return D(v).toDecimalPlaces(decimals).toString();
+  return D(v).toDecimalPlaces(decimals).toFixed().replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+}
+
+/** Rates and unit prices need significant digits, including very small values. */
+export function significant(v: Numeric, digits = 8): string {
+  return groupFixedDecimal(D(v).toSignificantDigits(digits).toFixed());
 }
 
 /** Percent from a 0..1 weight, e.g. pct(0.164) => "16.4%". */

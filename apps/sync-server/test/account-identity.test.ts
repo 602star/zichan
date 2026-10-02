@@ -29,7 +29,7 @@ describe('stable account identity', () => {
     }
   });
 
-  it.each([6, 7, 8])('upgrades schema %i without resetting credentials, identity, policy or records', async (version) => {
+  it.each([6, 7, 8, 9, 10, 11])('upgrades schema %i without resetting credentials, identity, policy or records', async (version) => {
     const dir = mkdtempSync(join(tmpdir(), 'zichan-account-upgrade-'));
     const file = join(dir, 'server.sqlite');
     const previous = new NodeSqliteDriver(file);
@@ -37,7 +37,7 @@ describe('stable account identity', () => {
     try {
       await previous.exec(`
         CREATE TABLE server_schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL);
-        INSERT INTO server_schema_migrations VALUES (${version}, '${version === 6 ? 'server_account_owner_v6' : version === 7 ? 'server_account_identity_v7' : 'server_management_v8'}', '2026-01-01');
+        INSERT INTO server_schema_migrations VALUES (${version}, '${version === 6 ? 'server_account_owner_v6' : version === 7 ? 'server_account_identity_v7' : version === 8 ? 'server_management_v8' : version === 9 ? 'server_password_recovery_v9' : version === 10 ? 'server_key_custody_v10' : 'server_management_ops_v11'}', '2026-01-01');
         CREATE TABLE sync_users (username TEXT PRIMARY KEY COLLATE NOCASE, opaque_registration_record TEXT NOT NULL,
           disabled INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_login_at TEXT);
         INSERT INTO sync_users VALUES ('existing', 'preserved-opaque-record', 0, '2026-01-01', '2026-01-01', NULL);

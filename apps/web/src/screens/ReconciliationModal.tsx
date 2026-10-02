@@ -161,7 +161,7 @@ export function ReconciliationModal(props: Props) {
       panelStyle={{ width: 'min(1120px, 96vw)', maxHeight: '92dvh', overflow: 'hidden', background: 'var(--surface)', color: 'var(--text-primary)', borderRadius: 'var(--r-sm)', boxShadow: 'var(--shadow-lg)', display: 'flex', flexDirection: 'column' }}
     >
         <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' }}>
-          <div><div id={titleId} style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{session ? '对账详情' : '核对账单'}</div><div style={{ marginTop: 4, fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>按银行卡或钱包账单逐笔核对收支</div></div>
+          <div><div id={titleId} style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{session ? '对账详情' : '核对账单'}</div><div style={{ marginTop: 4, fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>日常交易逐笔勾选；期间资产转换按账户实扣和到账自动计入</div></div>
           <button type="button" data-dialog-initial-focus onClick={props.onClose} disabled={busy} aria-label="关闭" style={{ ...button, minWidth: 40, padding: 0 }}>×</button>
         </div>
 
@@ -181,7 +181,7 @@ export function ReconciliationModal(props: Props) {
           <div className="zc-reconciliation-summary" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', marginTop: 18, borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
             {[
               ['上次期末', session?.openingBalance ?? preview?.openingBalance ?? '0'],
-              ['本次勾选', session?.selectedTotal ?? preview?.selectedTotal ?? '0'],
+              ['本次确认', session?.selectedTotal ?? preview?.selectedTotal ?? '0'],
               ['核对后余额', session?.clearedBalance ?? preview?.clearedBalance ?? '0'],
               ['差额', session?.difference ?? preview?.difference ?? '0'],
             ].map(([label, value]) => <div key={label} style={{ padding: '14px 12px' }}><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{label}</div><div style={{ marginTop: 5, fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)', color: label === '差额' && !D(value).isZero() ? 'var(--negative)' : 'var(--fg)' }}>{value}</div></div>)}
@@ -208,6 +208,11 @@ export function ReconciliationModal(props: Props) {
                 {!!preview?.excluded?.beforeOpening && <p className="zc-meta">{preview.excluded.beforeOpening} 笔记录已包含在起始余额中，不重复扣减余额，也不参与本次对账。可在账户页查看这个账户的全部收支。</p>}
                 {!!preview?.excluded?.afterStatement && <p className="zc-meta">{preview.excluded.afterStatement} 笔记录晚于账单截止日，请检查截止日期。</p>}
                 {!!preview?.excluded?.alreadyReconciled && <p className="zc-meta">{preview.excluded.alreadyReconciled} 笔记录已对账，可在对账记录中查看。</p>}
+                {!!preview?.conversionEntries.length && <div style={{ marginTop: 14 }}>
+                  <b>期间资产转换 · 自动计入 {preview.conversionTotal} {snap.assets.find((asset) => asset.id === assetId)?.code ?? assetId}</b>
+                  <p className="zc-meta">这些分录已进入账户余额，不作为收入或支出重复勾选；如账单金额不符，请先到资产转换或账户流水核对。</p>
+                  {preview.conversionEntries.map((row) => <div key={row.id} className="zc-reconciliation-session-row" style={{ minHeight: 38, display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr) 130px', gap: 12, alignItems: 'center', borderBottom: '1px solid var(--border)', fontSize: 'var(--fs-caption)' }}><span>{row.date}</span><span>资产转换</span><b style={{ textAlign: 'right' }}>{row.postingAmount}</b></div>)}
+                </div>}
               </div>
             </>
           )}
@@ -218,6 +223,7 @@ export function ReconciliationModal(props: Props) {
                 const transaction = sessionTransactions[item.transactionId];
                 return <div key={item.id} className="zc-reconciliation-session-row" style={{ minHeight: 46, display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr) 130px', gap: 12, alignItems: 'center', borderBottom: '1px solid var(--border)', fontSize: 'var(--fs-caption)' }}><span>{transaction?.date ?? '—'}</span><span>{transaction?.description ?? transaction?.merchant ?? transaction?.category ?? item.transactionId}</span><b style={{ textAlign: 'right' }}>{item.postingAmount}</b></div>;
               })}
+              {session.conversionTotal !== undefined && !D(session.conversionTotal).isZero() && <p className="zc-meta">本次对账自动计入资产转换净额 {session.conversionTotal} {snap.assets.find((asset) => asset.id === session.assetId)?.code ?? session.assetId}。</p>}
             </div>
           )}
 
