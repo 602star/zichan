@@ -183,7 +183,7 @@ export const TABLES = {
   fixedAssets: {
     name: 'fixed_assets',
     cols: [
-      c('name'), c('tag'), c('categoryId'), c('status'), c('purchaseDate'), c('activatedDate'),
+      c('name'), c('role'), c('bundledFromAssetId'), c('tag'), c('categoryId'), c('status'), c('purchaseDate'), c('activatedDate'),
       c('baseCurrencyAssetId'), c('brand'), c('model'), c('serialNumber'), c('barcode'),
       c('purchaseMerchant'), c('orderNumber'), c('warrantyEndDate'), c('warrantyProvider'),
       c('archivedAt'), c('archiveReason'), c('mergedIntoId'), c('note'),
@@ -200,8 +200,12 @@ export const TABLES = {
   },
   fixedAssetEvents: {
     name: 'fixed_asset_events',
-    cols: [c('fixedAssetId'), c('date'), c('type'), c('amountBase'), c('valueMode'), c('enteredAmount'), c('cashflowMode'), c('note')],
-    indexes: [{ name: 'idx_fevents_asset', cols: ['fixed_asset_id'] }],
+    cols: [c('fixedAssetId'), c('hostAssetId'), c('parentSaleEventId'), c('date'), c('type'), c('amountBase'), c('valueMode'), c('enteredAmount'), c('cashflowMode'), c('note')],
+    indexes: [
+      { name: 'idx_fevents_asset', cols: ['fixed_asset_id'] },
+      { name: 'idx_fevents_component_placement_day', cols: ['fixed_asset_id', 'date'], unique: true,
+        where: "is_deleted = 0 AND type IN ('install', 'detach')" },
+    ],
   },
   fixedAssetCashflowLinks: {
     name: 'fixed_asset_cashflow_links',
@@ -234,7 +238,7 @@ export const TABLES = {
   fixedAssetConsumables: {
     name: 'fixed_asset_consumables',
     cols: [
-      c('fixedAssetId'), c('name'), c('category'), c('amountBase'), c('cashflowMode'), c('purchaseDate'), c('installedDate'),
+      c('fixedAssetId'), c('name'), c('category'), c('purchaseMerchant'), c('amountBase'), c('cashflowMode'), c('purchaseDate'), c('installedDate'),
       c('usageMetricId'), c('installedAtUsage'), c('targetLife'), c('reminderAtRemaining'),
       c('replacedDate'), c('status'), c('note'),
     ],

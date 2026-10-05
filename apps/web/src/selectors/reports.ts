@@ -1,7 +1,7 @@
 import { conversionRateText } from './convert.js';
 /** Reports view-models — pure selectors over a Snapshot (unit-tested). */
 import {
-  traceChain, conversionStepAmounts, fixedAssetCost, isDateInRange, gameRecordReportingPostings, D, safeDiv, sum,
+  traceChain, conversionStepAmounts, componentCostOwnerAt, fixedAssetAttributedCost, isDateInRange, gameRecordReportingPostings, D, safeDiv, sum,
   isTransactionActive, usesAssetCostState, assetCostSourceSummary,
   type Category,
   type DateRange,
@@ -566,14 +566,18 @@ function fixedTable(snap: Snapshot, options: ReportOptions): Table {
   const report = createReportCurrency(snap, asOf);
   const statusLabel = { active: '使用中', stored: '收纳中', sold: '已售出', scrapped: '已报废', retired: '已清退', gifted: '已赠出' } as const;
   const rows = snap.fixedAssets.filter((f) => {
+    if (f.role === 'component' && componentCostOwnerAt(f, snap.fixedEvents, asOf)) return false;
     if (!range.from && !range.to) return true;
     if (isDateInRange(f.purchaseDate, range)) return true;
     if (snap.fixedEvents.some((event) => event.fixedAssetId === f.id && isDateInRange(event.date, range))) return true;
+    if (snap.fixedAssets.some((component) => component.role === 'component'
+      && componentCostOwnerAt(component, snap.fixedEvents, asOf) === f.id
+      && (isDateInRange(component.purchaseDate, range)
+        || snap.fixedEvents.some((event) => event.fixedAssetId === component.id && isDateInRange(event.date, range))))) return true;
     if (snap.fixedUsageLogs.some((log) => log.fixedAssetId === f.id && isDateInRange(log.date, range))) return true;
     return snap.fixedConsumables.some((item) => item.fixedAssetId === f.id && [item.purchaseDate, item.installedDate, item.replacedDate].some((date) => date && isDateInRange(date, range)));
   }).map((f): Cell[] => {
-      const c = fixedAssetCost(f, snap.fixedEvents, { asOf, usageMetrics: snap.fixedUsageMetrics, usageLogs: snap.fixedUsageLogs, consumables: snap.fixedConsumables });
-      const residual = c.basis === 'final' ? c.salePrice : c.currentValuation;
+      const c = fixedAssetAttributedCost(f, snap.fixedAssets, snap.fixedEvents, { asOf, usageMetrics: snap.fixedUsageMetrics, usageLogs: snap.fixedUsageLogs, consumables: snap.fixedConsumables });
       const convertedNet = report.toReport(c.netCost, f.baseCurrencyAssetId);
       const primaryUsage = c.usageCosts.find((row) => row.metricId) ?? c.usageCosts[0]!;
       const convertedUnit = report.toReport(primaryUsage.perUnit, f.baseCurrencyAssetId);
@@ -581,9 +585,9 @@ function fixedTable(snap: Snapshot, options: ReportOptions): Table {
         { v: f.name, bold: true },
         { v: snap.assets.find((asset) => asset.id === f.baseCurrencyAssetId)?.code ?? '—', color: 'var(--text-secondary)' },
         { v: report.formatNative(c.purchase, f.baseCurrencyAssetId) },
-        { v: report.formatNative(c.repair, f.baseCurrencyAssetId), color: 'var(--text-secondary)' },
-        { v: report.formatNative(c.consumable, f.baseCurrencyAssetId), color: 'var(--text-secondary)' },
-        { v: report.formatNative(residual ?? '0', f.baseCurrencyAssetId) },
+        { v: report.formatNative(D(c.investedCost).minus(c.purchase).toString(), f.baseCurrencyAssetId), color: 'var(--text-secondary)' },
+        { v: report.formatNative(c.investedCost, f.baseCurrencyAssetId), color: 'var(--text-secondary)' },
+        { v: report.formatNative(c.recoveredCost, f.baseCurrencyAssetId) },
         { v: report.formatNative(c.netCost, f.baseCurrencyAssetId), bold: true },
         { v: convertedNet ? report.formatReport(convertedNet) : '未折算', data: { reportAmount: convertedNet?.toString() ?? '' } },
         { v: `${c.heldDays} 天`, color: 'var(--text-secondary)' },
@@ -592,7 +596,7 @@ function fixedTable(snap: Snapshot, options: ReportOptions): Table {
       ];
     });
   return reportTable(report, [
-    '物品资产', '原币', '购买', '维修', '耗材', '现状残值 / 清退', '净使用成本',
-    `折算净成本（${report.code}）`, '持有天数', '主要单位成本', '状态',
+    '物品资产', '原币', '初始购入', '后续支出', '累计支出', '累计回款', '累计净投入',
+    `折算净投入（${report.code}）`, '持有天数', '单位净投入', '状态',
   ], rows);
 }

@@ -28,6 +28,7 @@ export const DEFAULT_FIXED_ASSET_CATEGORIES: BuiltInFixedAssetCategory[] = [
   child('fixed-electronics-game', '游戏设备', 'fixed-electronics', 17),
   child('fixed-electronics-network', '网络设备', 'fixed-electronics', 18, true),
   child('fixed-electronics-wearable', '智能穿戴', 'fixed-electronics', 19, true),
+  child('fixed-electronics-component', '电脑／数码配件', 'fixed-electronics', 20),
   parent('fixed-appliance', '家用电器', 20),
   child('fixed-appliance-washer', '洗衣机', 'fixed-appliance', 21),
   child('fixed-appliance-fridge', '冰箱冰柜', 'fixed-appliance', 22),
@@ -63,4 +64,5 @@ export const DEFAULT_FIXED_ASSET_CATEGORIES: BuiltInFixedAssetCategory[] = [
   parent('fixed-other', '其他物品', 90),
   child('fixed-other-unclassified', '待分类', 'fixed-other', 91),
   child('fixed-other-other', '其他', 'fixed-other', 92),
+  child('fixed-other-component', '可追踪配件', 'fixed-other', 93),
 ];

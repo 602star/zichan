@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   fixedAssetCost,
+  fixedConsumableRemaining,
   fixedGoalProgress,
   fixedUsageTotal,
   round,
@@ -24,16 +25,26 @@ function consumable(fixedAssetId: string, amountBase: string): FixedAssetConsuma
 }
 
 describe('physical item cost', () => {
-  it('keeps invested cost and net usage cost separate without automatic depreciation', () => {
+  it('does not consume the life of a spare before installation', () => {
+    const metric: FixedAssetUsageMetric = { ...base(), id: 'pages', fixedAssetId: 'printer', name: '页数',
+      unit: 'count', entryMode: 'increment', startValue: '0', isPrimary: true, isActive: true };
+    const logs: FixedAssetUsageLog[] = [{ ...base(), id: 'pages-1', fixedAssetId: 'printer', metricId: 'pages',
+      date: '2026-03-01', value: '90', entryMode: 'increment' }];
+    const spare = { ...consumable('printer', '20'), usageMetricId: 'pages', installedAtUsage: '0', targetLife: '100' };
+    expect(fixedConsumableRemaining(spare, [metric], logs)).toBeUndefined();
+    expect(fixedConsumableRemaining({ ...spare, installedDate: '2026-01-01' }, [metric], logs)).toBe('10');
+  });
+
+  it('keeps reference value separate from net investment', () => {
     const item = asset({ id: 'ip', purchaseDate: '2024-05-10', status: 'active' });
     const events = [event('ip', 'purchase', '2024-05-10', '999'), event('ip', 'residual_update', '2026-03-01', '520')];
     const cost = fixedAssetCost(item, events, { asOf: '2026-07-04', consumables: [consumable('ip', '45')] });
     expect(cost.basis).toBe('current');
     expect(round(cost.investedCost, 2)).toBe('1044.00');
-    expect(round(cost.netCost, 2)).toBe('524.00');
+    expect(round(cost.netCost, 2)).toBe('1044.00');
     const snapshot = fixedAssetCost(item, events, { asOf: dateAfter('2024-05-10', 784), consumables: [consumable('ip', '45')] });
     expect(snapshot.heldDays).toBe(785);
-    expect(round(snapshot.perDay, 2)).toBe('0.67');
+    expect(round(snapshot.perDay, 2)).toBe('1.33');
   });
 
   it('uses sale proceeds as final residual and stops the holding period', () => {
@@ -55,7 +66,20 @@ describe('physical item cost', () => {
     ];
     const cost = fixedAssetCost(item, events, { asOf: '2026-07-01' });
     expect(cost.currentResidual).toBe('250');
-    expect(round(cost.netCost, 2)).toBe('250.00');
+    expect(round(cost.netCost, 2)).toBe('500.00');
+  });
+
+  it('counts a part sale as recovery without ending the parent item', () => {
+    const item = asset({ id: 'laptop', purchaseDate: '2024-01-01', status: 'active' });
+    const cost = fixedAssetCost(item, [
+      event('laptop', 'purchase', '2024-01-01', '5000'),
+      event('laptop', 'upgrade', '2026-01-01', '2000'),
+      event('laptop', 'part_sale', '2026-02-01', '400'),
+    ], { asOf: '2026-03-01' });
+    expect(cost.investedCost).toBe('7000');
+    expect(cost.recoveredCost).toBe('400');
+    expect(cost.netCost).toBe('6600');
+    expect(cost.basis).toBe('current');
   });
 
   it('excludes future events, consumables, and usage from an as-of snapshot', () => {
@@ -93,7 +117,7 @@ describe('physical item cost', () => {
     const cost = fixedAssetCost(item, events, { asOf: '2026-07-01' });
     expect(cost.basis).toBe('final');
     expect(cost.salePrice).toBeUndefined(); // scrap (not sale) is the latest terminal
-    expect(round(cost.netCost, 2)).toBe('500.00');
+    expect(round(cost.netCost, 2)).toBe('380.00');
   });
 
   it('supports meter readings, manual increments, and frozen unit-cost goals', () => {

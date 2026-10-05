@@ -75,7 +75,7 @@ export function PayeePicker({ id, payees, categories, payeeId, merchant, categor
         </div>
       </>}
       {isBlocked ? <p role="status" className="zc-meta">这个交易对象已停用或删除，请在管理页恢复后使用。</p>
-        : query && <p className="zc-meta">{textOnly ? '这里只保存资料名称，不会修改关联流水。' : '可以直接填写名称，保存时加入交易对象列表。'}</p>}
+        : query && !textOnly && <p className="zc-meta">可以直接填写名称，保存时加入交易对象列表。</p>}
     </div>}
   </div>;
 }

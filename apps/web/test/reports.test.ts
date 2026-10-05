@@ -148,8 +148,8 @@ describe('buildReport', () => {
   it('fixed tab: one row with net cost', () => {
     const t = buildReport(snap, 'fixed');
     expect(t.rows.length).toBe(1);
-    expect(t.rows[0]![6]!.v).toBe('£200.00'); // 原币净成本
-    expect(t.rows[0]![7]!.v).toBe('£200.00'); // 报表币种净成本
+    expect(t.rows[0]![6]!.v).toBe('£500.00'); // 原币累计净投入
+    expect(t.rows[0]![7]!.v).toBe('£500.00'); // 报表币种累计净投入
   });
 
   it('applies inclusive custom ranges to every report tab', () => {
@@ -208,8 +208,8 @@ describe('buildReport', () => {
     expect(buildReport(s, 'dca').rows[0]![2]!.v).toBe('£80.00');
     expect(buildReport(s, 'chain').rows[0]![7]!.v).toBe('£80.00');
     expect(buildReport(s, 'season').rows[0]![6]!.v).toBe('+£40.00');
-    expect(buildReport(s, 'fixed').rows[0]![6]!.v).toBe('$200.00');
-    expect(buildReport(s, 'fixed').rows[0]![7]!.v).toBe('£160.00');
+    expect(buildReport(s, 'fixed').rows[0]![6]!.v).toBe('$500.00');
+    expect(buildReport(s, 'fixed').rows[0]![7]!.v).toBe('£400.00');
 
     s.priceMarks = s.priceMarks.filter((row) => row.assetId !== usd.id);
     const missing = buildReport(s, 'transactions');

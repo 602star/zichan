@@ -38,6 +38,7 @@ export interface FixedAssetCost {
   upgrade: string;
   otherCost: string;
   investedCost: string;
+  recoveredCost: string;
   grossCost: string;
   currentResidual?: string;
   currentValuation?: string;
@@ -95,6 +96,7 @@ export function fixedAssetCost(
   const consumable = sum(consumables.map((item) => item.amountBase));
   const eventCosts = sum(evs.filter((event) => COST_TYPES.has(event.type)).map((event) => event.amountBase));
   const investedCost = eventCosts.plus(consumable);
+  const recoveredCost = bucket('part_sale').plus(bucket('sale'));
 
   const residualEvents = evs.filter((event) => event.type === 'residual_update');
   const currentResidual = residualEvents.length ? D(residualEvents.at(-1)!.amountBase) : undefined;
@@ -105,10 +107,8 @@ export function fixedAssetCost(
   // authoritative.
   const final = !!terminalEvent
     || (opts.asOf === undefined && ['sold', 'scrapped', 'retired', 'gifted'].includes(asset.status));
-  const residual = final
-    ? (salePrice ?? (terminalEvent?.type === 'gift' ? currentResidual : undefined) ?? D(0))
-    : (currentResidual ?? D(0));
-  const netCost = investedCost.minus(residual);
+  // Reference value is informational; only recorded proceeds reduce net investment.
+  const netCost = investedCost.minus(recoveredCost);
   const endDate = terminalEvent?.date ?? asOf;
   const days = heldDays(asset.activatedDate ?? asset.purchaseDate, endDate);
 
@@ -138,6 +138,7 @@ export function fixedAssetCost(
     upgrade: upgrade.toString(),
     otherCost: '0',
     investedCost: investedCost.toString(),
+    recoveredCost: recoveredCost.toString(),
     grossCost: investedCost.toString(),
     netCost: netCost.toString(),
     heldDays: days,
@@ -197,7 +198,7 @@ export function fixedConsumableRemaining(
   metrics: FixedAssetUsageMetric[],
   logs: FixedAssetUsageLog[],
 ): string | undefined {
-  if (!consumable.usageMetricId || !consumable.targetLife) return undefined;
+  if (!consumable.installedDate || !consumable.usageMetricId || !consumable.targetLife) return undefined;
   const metric = metrics.find((row) => row.id === consumable.usageMetricId);
   if (!metric) return undefined;
   const current = D(fixedUsageTotal(metric, logs));

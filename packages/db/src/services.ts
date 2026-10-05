@@ -6,6 +6,7 @@
  */
 import {
   D,
+  componentHostAt,
   defaultTransactionAccount, isDefaultAccount, accountTransactionPostings, Decimal, traceChain, conversionStepAmounts, assertConversionShape, matchSell, lotFromTrace, isTransactionActive, newId, refundAppliedAmount,
   assertDcaExecutionShape, assertDcaPlanShape, assertTransactionShape, dcaOccurrenceDate, transactionReportingEffect,
   normalizeOccurrence, canonicalJson, conversionFinancialFingerprint, assertCostBasisOpening, usesAssetCostState, assetCostSourceSummary, freezeConversionQuote, dayOfInstant,
@@ -1371,7 +1372,10 @@ export async function previewMasterDataChange(
     if (!source || source.isDeleted) blockedReasons.push('原物品资产不存在');
     if (targetId && (!target || target.isDeleted || target.archivedAt)) blockedReasons.push('目标物品资产不存在或已归档');
     if (source && target && source.baseCurrencyAssetId !== target.baseCurrencyAssetId) blockedReasons.push('只能合并记账币种相同的物品');
+    if (source && target && (source.role ?? 'item') !== (target.role ?? 'item')) blockedReasons.push('整件物品与配件不能互相合并');
     references.events = await store.fixedAssetEvents.count({ where: { fixedAssetId: sourceId } });
+    references.hostedComponents = await store.fixedAssetEvents.count({ where: { hostAssetId: sourceId } });
+    references.bundledComponents = await store.fixedAssets.count({ where: { bundledFromAssetId: sourceId } });
     references.cashflows = await store.fixedAssetCashflowLinks.count({ where: { fixedAssetId: sourceId } });
     references.metrics = await store.fixedAssetUsageMetrics.count({ where: { fixedAssetId: sourceId } });
     references.logs = await store.fixedAssetUsageLogs.count({ where: { fixedAssetId: sourceId } });
@@ -1707,6 +1711,8 @@ export async function mergeMasterData(
     } else {
       const source = (await store.fixedAssets.get(sourceId))!;
       for (const row of await store.fixedAssetEvents.list({ where: { fixedAssetId: sourceId } })) await store.fixedAssetEvents.put({ ...row, fixedAssetId: targetId });
+      for (const row of await store.fixedAssetEvents.list({ where: { hostAssetId: sourceId } })) await store.fixedAssetEvents.put({ ...row, hostAssetId: targetId });
+      for (const row of await store.fixedAssets.list({ where: { bundledFromAssetId: sourceId } })) await store.fixedAssets.put({ ...row, bundledFromAssetId: targetId });
       for (const row of await store.fixedAssetCashflowLinks.list({ where: { fixedAssetId: sourceId } })) await store.fixedAssetCashflowLinks.put({ ...row, fixedAssetId: targetId });
       for (const row of await store.fixedAssetUsageMetrics.list({ where: { fixedAssetId: sourceId } })) await store.fixedAssetUsageMetrics.put({ ...row, fixedAssetId: targetId });
       for (const row of await store.fixedAssetUsageLogs.list({ where: { fixedAssetId: sourceId } })) await store.fixedAssetUsageLogs.put({ ...row, fixedAssetId: targetId });
@@ -3862,6 +3868,7 @@ export function preflightImport(data: unknown): BackupPreflight {
     const r = asObj(row); const id = rowId(row);
     requireRef(issues, assetIds, r?.['baseCurrencyAssetId'], 'missing_asset_ref', '固定资产引用了不存在的结算资产', 'fixed_asset', id);
     requireRef(issues, fixedCategoryIds, r?.['categoryId'], 'missing_fixed_category_ref', '物品资产引用了不存在的分类', 'fixed_asset', id);
+    if (r?.['bundledFromAssetId']) requireRef(issues, fixedAssetIds, r['bundledFromAssetId'], 'missing_fixed_asset_ref', '原配件所属物品不存在', 'fixed_asset', id);
     const category = rows(dataObj, 'fixedAssetCategories').map(asObj)
       .find((candidate) => candidate?.['id'] === r?.['categoryId']);
     const parent = rows(dataObj, 'fixedAssetCategories').map(asObj)
@@ -3875,6 +3882,8 @@ export function preflightImport(data: unknown): BackupPreflight {
   for (const row of rows(dataObj, 'fixedAssetEvents')) {
     const r = asObj(row); const id = rowId(row);
     requireRef(issues, fixedAssetIds, r?.['fixedAssetId'], 'missing_fixed_asset_ref', '固定资产事件引用了不存在的资产', 'fixed_asset_event', id);
+    if (r?.['hostAssetId']) requireRef(issues, fixedAssetIds, r['hostAssetId'], 'missing_fixed_asset_ref', '配件安装目标不存在', 'fixed_asset_event', id);
+    if (r?.['parentSaleEventId']) requireRef(issues, new Set(fixedEventById.keys()), r['parentSaleEventId'], 'missing_fixed_event_ref', '配件随售关联的整机出售事件不存在', 'fixed_asset_event', id);
   }
   const purchaseEventsByAsset = new Map<string, Record<string, unknown>[]>();
   for (const event of fixedEventRows.filter((row) => row['isDeleted'] !== true)) {
@@ -4198,6 +4207,7 @@ const FIXED_EVENT_CASHFLOW_DIRECTION: Partial<Record<FixedEventType, FixedAssetC
   purchase: 'outflow',
   repair: 'outflow',
   upgrade: 'outflow',
+  part_sale: 'inflow',
   sale: 'inflow',
 };
 
@@ -4359,6 +4369,23 @@ export async function saveFixedAssetAcquisition(
     const baseAsset = await requireAsset(store, input.asset.baseCurrencyAssetId, 'baseCurrencyAssetId');
     const purchaseAmount = D(input.purchaseAmount);
     if (purchaseAmount.lt(0)) validation('购买金额不能为负数', 'purchaseAmount');
+    if (input.asset.bundledFromAssetId) {
+      if (input.asset.role !== 'component' || !purchaseAmount.isZero() || input.cashflow.mode !== 'record_only') {
+        validation('原配件不应重复记录整机已包含的购买支出', 'purchaseAmount');
+      }
+      const origin = await store.fixedAssets.get(input.asset.bundledFromAssetId);
+      if (!origin || origin.isDeleted || origin.role === 'component') validation('原配件所属整机无效', 'bundledFromAssetId');
+      if (origin.baseCurrencyAssetId !== input.asset.baseCurrencyAssetId) validation('原配件记账币种需与整机一致', 'baseCurrencyAssetId');
+    }
+    if (existing && existing.baseCurrencyAssetId !== input.asset.baseCurrencyAssetId) {
+      const components = (await store.fixedAssets.list()).filter((row) => !row.isDeleted && row.role === 'component');
+      const events = await store.fixedAssetEvents.list();
+      if (input.asset.role === 'component' && events.some((row) => row.fixedAssetId === input.asset.id && row.type === 'install' && !row.isDeleted)
+        || input.asset.role !== 'component' && components.some((row) => row.bundledFromAssetId === input.asset.id
+          || events.some((event) => event.fixedAssetId === row.id && event.hostAssetId === input.asset.id && !event.isDeleted))) {
+        validation('已有配件归属记录，不能直接更改记账币种', 'baseCurrencyAssetId');
+      }
+    }
     if (amountPrecision(purchaseAmount.toString()) > baseAsset.decimals) {
       validation(`购买金额最多支持 ${baseAsset.decimals} 位小数`, 'purchaseAmount');
     }
@@ -4402,6 +4429,40 @@ export async function saveFixedAssetAcquisition(
   });
 }
 
+/** Reclassify an existing upgrade as a tracked part without duplicating its expense or transaction. */
+export async function convertFixedUpgradeToComponent(
+  store: SqlLedgerStore,
+  input: { upgradeEventId: string; expectedVersion: number; component: FixedAsset },
+): Promise<FixedAsset> {
+  return store.runInAuditBatch('将升级支出转为可追踪配件', async (store) => {
+    const upgrade = await store.fixedAssetEvents.get(input.upgradeEventId);
+    if (!upgrade || upgrade.isDeleted || upgrade.type !== 'upgrade' || upgrade.version !== input.expectedVersion) {
+      validation('升级记录已变更，请刷新后重试');
+    }
+    if (!D(upgrade.amountBase).gt(0)) validation('只有正金额升级支出可转为配件');
+    const host = await store.fixedAssets.get(upgrade.fixedAssetId);
+    if (!host || host.isDeleted || host.role === 'component' || ['sold', 'scrapped', 'retired', 'gifted'].includes(host.status)) {
+      validation('原物品已不可用于安装配件');
+    }
+    if (input.component.role !== 'component' || input.component.bundledFromAssetId
+      || input.component.baseCurrencyAssetId !== host.baseCurrencyAssetId
+      || input.component.purchaseDate !== upgrade.date) {
+      validation('配件购买日期和记账币种需与原升级记录一致');
+    }
+    await requireFixedAssetLeafCategory(store, input.component.categoryId);
+    if (await store.fixedAssets.get(input.component.id)) validation('配件记录已存在');
+    const saved = await store.fixedAssets.put(input.component);
+    await store.fixedAssetEvents.put({ ...upgrade, fixedAssetId: saved.id, type: 'purchase' });
+    const link = await currentFixedAssetCashflowLink(store, 'event', upgrade.id);
+    if (link && !link.isDeleted) await store.fixedAssetCashflowLinks.put({ ...link, fixedAssetId: saved.id });
+    await saveFixedAssetEvent(store, { event: {
+      id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false,
+      fixedAssetId: saved.id, hostAssetId: host.id, type: 'install', date: upgrade.date, amountBase: '0',
+    } });
+    return saved;
+  });
+}
+
 export async function reconcileFixedAssetStatus(store: SqlLedgerStore, assetId: string, resetIfNoTerminal = false): Promise<void> {
   const asset = await store.fixedAssets.get(assetId);
   if (!asset) throw new Error(`fixed asset not found: ${assetId}`);
@@ -4421,6 +4482,7 @@ export interface SaveFixedAssetEventInput {
   event: FixedAssetEvent;
   cashflow?: FixedAssetCashflowDraft;
   expectedVersion?: number;
+  includeComponents?: boolean;
 }
 
 export interface SavedFixedAssetEvent {
@@ -4444,6 +4506,7 @@ interface DeletedAttachmentCompensation {
 export interface DeletedFixedAssetEventCompensation {
   event: FixedAssetEvent;
   deletedVersion: number;
+  includedEvents: { event: FixedAssetEvent; deletedVersion: number }[];
   cashflow?: DeletedFixedCashflowCompensation;
   attachments: DeletedAttachmentCompensation[];
 }
@@ -4546,6 +4609,7 @@ export async function saveFixedAssetEvent(
 ): Promise<SavedFixedAssetEvent> {
   return store.runInAuditBatch('保存物品生命周期事件', async (store) => {
     const current = await store.fixedAssetEvents.get(input.event.id);
+    if (current?.parentSaleEventId || input.event.parentSaleEventId) validation('随整机出售的配件记录需通过整机出售事件维护');
     if (current?.type === 'purchase' || input.event.type === 'purchase') {
       validation('购买事件只能在物品编辑页维护');
     }
@@ -4556,12 +4620,81 @@ export async function saveFixedAssetEvent(
     if (!fixedAsset || fixedAsset.isDeleted) validation('物品资产不存在');
     const amount = D(input.event.amountBase);
     if (amount.lt(0)) validation('金额不能小于 0', 'amountBase');
+    if (input.event.type === 'part_sale' && !input.event.note?.trim()) validation('请填写卖出的配件名称', 'note');
+    if (input.event.type === 'install' || input.event.type === 'detach') {
+      if (fixedAsset.role !== 'component') validation('只有可追踪配件才能安装或拆下', 'type');
+      if (!amount.isZero()) validation('安装或拆下不能产生新的支出', 'amountBase');
+      if (input.cashflow?.mode && input.cashflow.mode !== 'record_only') validation('安装或拆下不产生资金流水', 'cashflowMode');
+      if (input.event.date < fixedAsset.purchaseDate) validation('操作日期不能早于配件购入日期', 'date');
+      const otherEvents = (await store.fixedAssetEvents.list({ where: { fixedAssetId: fixedAsset.id } }))
+        .filter((row) => row.id !== input.event.id);
+      if (otherEvents.some((row) => !row.isDeleted && (row.type === 'install' || row.type === 'detach') && row.date === input.event.date)) {
+        validation('同一配件同一天只能记录一次安装、拆下或转装', 'date');
+      }
+      const currentHost = componentHostAt(fixedAsset.id, otherEvents, input.event.date);
+      if (input.event.type === 'install') {
+        const host = input.event.hostAssetId ? await store.fixedAssets.get(input.event.hostAssetId) : null;
+        if (!host || host.isDeleted || host.role === 'component' || ['sold', 'scrapped', 'retired', 'gifted'].includes(host.status)) {
+          validation('请选择仍在持有的整件物品', 'hostAssetId');
+        }
+        if (host.id === fixedAsset.id || host.baseCurrencyAssetId !== fixedAsset.baseCurrencyAssetId) {
+          validation('配件与目标物品需使用相同记账币种', 'hostAssetId');
+        }
+        if (currentHost === host.id) validation('配件已安装在目标物品上', 'hostAssetId');
+      } else {
+        if (input.event.hostAssetId) validation('拆下配件不能指定目标物品', 'hostAssetId');
+        if (!currentHost) validation('该配件当前没有安装在物品上', 'type');
+      }
+      const terminal = (await store.fixedAssetEvents.list({ where: { fixedAssetId: fixedAsset.id } }))
+        .filter((row) => !row.isDeleted && row.id !== input.event.id && ['sale', 'scrap', 'retire', 'gift'].includes(row.type))
+        .sort((a, b) => a.date.localeCompare(b.date))[0];
+      if (terminal && input.event.date >= terminal.date) validation('已出售或清退的配件不能再安装或拆下', 'date');
+    } else if (input.event.hostAssetId) validation('只有安装事件可指定目标物品', 'hostAssetId');
+    if (input.event.type === 'sale' && fixedAsset.role === 'component') {
+      const futurePlacement = (await store.fixedAssetEvents.list({ where: { fixedAssetId: fixedAsset.id } }))
+        .some((row) => !row.isDeleted && row.id !== input.event.id
+          && (row.type === 'install' || row.type === 'detach') && row.date > input.event.date);
+      if (futurePlacement) validation('卖出日期之后还有配件安装记录，请先调整安装历史', 'date');
+    }
+    if (['sale', 'scrap', 'retire', 'gift'].includes(input.event.type)
+      && fixedAsset.role !== 'component' && !(input.event.type === 'sale' && input.includeComponents)) {
+      const components = (await store.fixedAssets.list()).filter((row) => !row.isDeleted && row.role === 'component');
+      const allEvents = (await store.fixedAssetEvents.list()).filter((row) => row.parentSaleEventId !== input.event.id);
+      if (components.some((row) => componentHostAt(row.id, allEvents, input.event.date) === fixedAsset.id)) {
+        validation('仍有配件安装在这件物品上，出售时请选择随整机出售，其他清退操作请先拆下配件', 'type');
+      }
+    }
     const direction = FIXED_EVENT_CASHFLOW_DIRECTION[input.event.type];
     const event = await store.fixedAssetEvents.put({
       ...input.event,
       version: current ? (input.expectedVersion ?? input.event.version) : input.event.version,
       cashflowMode: direction ? input.cashflow?.mode ?? 'record_only' : undefined,
     });
+    const previousIncluded = (await store.fixedAssetEvents.list({ where: { parentSaleEventId: event.id } }))
+      .filter((row) => !row.isDeleted);
+    if (event.type === 'sale' && fixedAsset.role !== 'component' && input.includeComponents) {
+      const components = (await store.fixedAssets.list()).filter((row) => !row.isDeleted && row.role === 'component');
+      const allEvents = (await store.fixedAssetEvents.list()).filter((row) => row.parentSaleEventId !== event.id);
+      const includedIds = new Set<string>();
+      for (const component of components.filter((row) => componentHostAt(row.id, allEvents, event.date) === fixedAsset.id)) {
+        includedIds.add(component.id);
+        const previous = previousIncluded.find((row) => row.fixedAssetId === component.id);
+        await store.fixedAssetEvents.put({
+          id: previous?.id ?? newId(), createdAt: previous?.createdAt ?? '', updatedAt: previous?.updatedAt ?? '',
+          version: previous?.version ?? 1, isDeleted: false, fixedAssetId: component.id,
+          parentSaleEventId: event.id, date: event.date, type: 'sale', amountBase: '0',
+          cashflowMode: 'record_only', note: `随 ${fixedAsset.name} 出售`,
+        });
+        await reconcileFixedAssetStatus(store, component.id);
+      }
+      for (const previous of previousIncluded.filter((row) => !includedIds.has(row.fixedAssetId))) {
+        await store.fixedAssetEvents.remove(previous.id, previous.version);
+        await reconcileFixedAssetStatus(store, previous.fixedAssetId, true);
+      }
+    } else for (const previous of previousIncluded) {
+      await store.fixedAssetEvents.remove(previous.id, previous.version);
+      await reconcileFixedAssetStatus(store, previous.fixedAssetId, true);
+    }
     let cashflow: { link?: FixedAssetCashflowLink; transaction?: Transaction } = {};
     if (direction) {
       cashflow = await saveFixedAssetCashflow(store, {
@@ -4571,7 +4704,7 @@ export async function saveFixedAssetEvent(
         date: event.date,
         amountBase: event.amountBase,
         direction,
-        description: `${event.type === 'sale' ? '出售' : event.type === 'repair' ? '维修' : '升级'} ${fixedAsset.name}`,
+        description: `${event.type === 'sale' ? '出售整件物品' : event.type === 'part_sale' ? '卖出配件' : event.type === 'repair' ? '维修' : '升级'} ${fixedAsset.name}`,
       }, input.cashflow ?? { mode: 'record_only', sourceAmount: '0' });
     } else {
       await clearFixedAssetCashflow(
@@ -4595,10 +4728,12 @@ export async function deleteFixedAssetEvent(
 ): Promise<DeletedFixedAssetEventCompensation> {
   const current = await store.fixedAssetEvents.get(event.id);
   if (!current || current.isDeleted) validation('物品生命周期事件不存在');
+  if (current.parentSaleEventId) validation('随整机出售的配件记录需通过整机出售事件维护');
   if (current.version !== event.version) validation('物品事件已在其他窗口被修改，请刷新后重试');
   const link = await currentFixedAssetCashflowLink(store, 'event', event.id);
   const cashflowSnapshot = await fixedCashflowDeleteSnapshot(store, link);
   const attachments = await store.attachments.list({ where: { entityType: 'fixed_asset_event', entityId: event.id } });
+  const included = (await store.fixedAssetEvents.list({ where: { parentSaleEventId: event.id } })).filter((row) => !row.isDeleted);
   await store.runInAuditBatch('删除物品生命周期事件', async (store) => {
     if (event.type === 'purchase') validation('购买事件随物品维护，不能单独删除');
     await clearFixedAssetCashflow(
@@ -4607,6 +4742,10 @@ export async function deleteFixedAssetEvent(
       '物品生命周期事件已删除',
     );
     for (const attachment of attachments) await store.attachments.remove(attachment.id, attachment.version);
+    for (const child of included) {
+      await store.fixedAssetEvents.remove(child.id, child.version);
+      await reconcileFixedAssetStatus(store, child.fixedAssetId, true);
+    }
     await store.fixedAssetEvents.remove(event.id, event.version);
     await reconcileFixedAssetStatus(store, event.fixedAssetId, ['sale', 'scrap', 'retire', 'gift'].includes(event.type));
   });
@@ -4614,6 +4753,9 @@ export async function deleteFixedAssetEvent(
   return {
     event: current,
     deletedVersion: deleted?.version ?? event.version + 1,
+    includedEvents: await Promise.all(included.map(async (child) => ({
+      event: child, deletedVersion: (await store.fixedAssetEvents.get(child.id))?.version ?? child.version + 1,
+    }))),
     cashflow: await fixedCashflowDeleteCompensation(store, cashflowSnapshot),
     attachments: await deletedAttachmentCompensations(store, attachments),
   };
@@ -4633,6 +4775,12 @@ export async function restoreDeletedFixedAssetEvent(
       version: current.version,
       isDeleted: false,
     });
+    for (const child of compensation.includedEvents ?? []) {
+      const deletedChild = await transactionStore.fixedAssetEvents.get(child.event.id);
+      if (!deletedChild?.isDeleted || deletedChild.version !== child.deletedVersion) validation('配件出售记录已改变，无法撤销整机出售');
+      await transactionStore.fixedAssetEvents.put({ ...child.event, version: deletedChild.version, isDeleted: false });
+      await reconcileFixedAssetStatus(transactionStore, child.event.fixedAssetId, true);
+    }
     await restoreFixedCashflowCompensation(transactionStore, compensation.cashflow);
     await restoreDeletedAttachments(transactionStore, compensation.attachments);
     await reconcileFixedAssetStatus(transactionStore, restored.fixedAssetId, true);
@@ -4793,6 +4941,24 @@ export async function importLedger(
         return Number(typeof leftParent === 'string' && Boolean(leftParent))
           - Number(typeof rightParent === 'string' && Boolean(rightParent));
       });
+    const dependencyFirst = <T extends { id: string }>(rows: T[], parentId: (row: T) => string | undefined): T[] => {
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      const visited = new Set<string>();
+      const visiting = new Set<string>();
+      const ordered: T[] = [];
+      const visit = (row: T): void => {
+        if (visited.has(row.id)) return;
+        if (visiting.has(row.id)) throw new Error(`importLedger: cyclic fixed-asset reference (${row.id})`);
+        visiting.add(row.id);
+        const parent = byId.get(parentId(row) ?? '');
+        if (parent) visit(parent);
+        visiting.delete(row.id);
+        visited.add(row.id);
+        ordered.push(row);
+      };
+      rows.forEach(visit);
+      return ordered;
+    };
     const transactions = [...data.transactions].sort((left, right) =>
       Number(left.type === 'refund') - Number(right.type === 'refund'));
 
@@ -4820,8 +4986,8 @@ export async function importLedger(
     await putAll(store.gameSeasons, data.gameSeasons);
     await putAll(store.gameRecords, data.gameRecords);
     await putAll(store.gameCashflowLinks, data.gameCashflowLinks);
-    await putAll(store.fixedAssets, data.fixedAssets);
-    await putAll(store.fixedAssetEvents, data.fixedAssetEvents);
+    await putAll(store.fixedAssets, dependencyFirst(data.fixedAssets as FixedAsset[], (row) => row.bundledFromAssetId));
+    await putAll(store.fixedAssetEvents, dependencyFirst(data.fixedAssetEvents as FixedAssetEvent[], (row) => row.parentSaleEventId));
     await putAll(store.fixedAssetCashflowLinks, data.fixedAssetCashflowLinks);
     await putAll(store.fixedAssetUsageMetrics, data.fixedAssetUsageMetrics);
     await putAll(store.fixedAssetUsageLogs, data.fixedAssetUsageLogs);

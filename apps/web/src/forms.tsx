@@ -118,9 +118,9 @@ const FIXED_STATUS = [
 ];
 const FIXED_EVENTS = [
   { value: 'purchase', label: '购买' }, { value: 'activate', label: '启用' },
-  { value: 'repair', label: '维修' }, { value: 'upgrade', label: '升级' },
-  { value: 'residual_update', label: '更新现状残值' }, { value: 'warranty_expire', label: '保修到期' },
-  { value: 'sale', label: '卖出' }, { value: 'scrap', label: '报废' },
+  { value: 'repair', label: '维修支出' }, { value: 'upgrade', label: '升级／改造支出' },
+  { value: 'part_sale', label: '卖出配件' }, { value: 'residual_update', label: '更新参考现值' }, { value: 'warranty_expire', label: '保修到期' },
+  { value: 'sale', label: '卖出整件物品' }, { value: 'scrap', label: '报废' },
   { value: 'retire', label: '清退' }, { value: 'gift', label: '赠出' },
 ];
 const FIXED_USAGE_UNITS = [
@@ -221,7 +221,7 @@ export interface FixedCashflowFormFields {
   cashflowDescription?: string;
   cashflowReportingTreatment?: Transaction['reportingTreatment'];
 }
-export type FixedAssetEventFormValue = FixedAssetEvent & FixedCashflowFormFields;
+export type FixedAssetEventFormValue = FixedAssetEvent & FixedCashflowFormFields & { includeComponents?: boolean };
 export type FixedAssetConsumableFormValue = FixedAssetConsumable & FixedCashflowFormFields;
 function parseAttachmentDrafts(v?: string): AttachmentDraft[] {
   try {
@@ -1309,6 +1309,26 @@ export function fixedAssetCategoryForm(snap: Snapshot): EntityFormSpec<FixedAsse
 export function fixedAssetForm(snap: Snapshot, attachments: Attachment[] = [], purchaseEvent?: FixedAssetEvent): EntityFormSpec<FixedAssetFormValue> {
   const asOf = currentDate();
   const preferredCurrency = moduleCurrencyId(snap.setting, 'fixed');
+  const expenseCategories = categoryOptions(snap.categories, 'expense', { leafOnly: true, includeHidden: true });
+  const suggestedExpenseCategory = (fixedCategoryId: string): string => {
+    const fixedCategory = snap.fixedAssetCategories.find((row) => row.id === fixedCategoryId);
+    const preferred = fixedCategory?.id === 'fixed-electronics-component' ? 'computer_accessories'
+      : fixedCategory?.parentId === 'fixed-electronics' || fixedCategory?.parentId === 'fixed-work'
+      ? 'digital_goods'
+      : fixedCategory?.parentId === 'fixed-appliance' || fixedCategory?.parentId === 'fixed-home'
+        ? 'furniture_appliance'
+        : fixedCategory?.parentId === 'fixed-vehicle' && fixedCategory.id === 'fixed-vehicle-accessory'
+          ? 'car_accessories'
+          : fixedCategory?.parentId === 'fixed-personal' && fixedCategory.id === 'fixed-personal-sport'
+            ? 'sports_equipment'
+            : fixedCategory?.parentId === 'fixed-personal' && fixedCategory.id === 'fixed-personal-bag'
+              ? 'luggage_bags'
+              : 'other_shopping';
+    return expenseCategories.find((row) => row.value === preferred)?.value
+      ?? expenseCategories.find((row) => row.value === 'other_shopping')?.value
+      ?? '';
+  };
+  const firstFixedCategoryId = fixedCategoryOpts(snap)[0]?.value ?? '';
   const expenseOptions = snap.transactions
     .filter((transaction) => !transaction.isDeleted && transaction.recordState !== 'voided' && transaction.type === 'expense')
     .sort((left, right) => right.date.localeCompare(left.date) || right.createdAt.localeCompare(left.createdAt))
@@ -1326,58 +1346,92 @@ export function fixedAssetForm(snap: Snapshot, attachments: Attachment[] = [], p
   return {
     title: '物品资产',
     modalWidth: 860,
+    moreInitiallyOpen: false,
+    onFieldChange: (values, key, manual) => {
+      let next = values;
+      if ((key === 'categoryId' || (key === 'cashflowMode' && values.cashflowMode === 'create_transaction' && !values.cashflowCategory))
+        && !manual.has('cashflowCategory')) {
+        next = { ...next, cashflowCategory: suggestedExpenseCategory(values.categoryId ?? '') };
+      }
+      if (key === 'purchaseMerchant') {
+        next = { ...next, cashflowMerchant: next.purchaseMerchant ?? '', cashflowPayeeId: '' };
+      }
+      if (key === 'cashflowMode' && next.cashflowMode === 'create_transaction') {
+        next = { ...next, cashflowMerchant: next.purchaseMerchant ?? '', cashflowPayeeId: '' };
+      }
+      if (['purchaseAmount', 'cashflowMode', 'cashflowTransactionId', 'baseCurrencyAssetId'].includes(key)
+        && next.cashflowMode === 'linked_transaction' && !manual.has('cashflowSourceAmount')) {
+        const selected = snap.transactions.find((row) => row.id === next.cashflowTransactionId);
+        next = { ...next, cashflowSourceAmount: !selected || selected.assetId === next.baseCurrencyAssetId
+          ? next.purchaseAmount ?? '' : '' };
+      }
+      return next;
+    },
     fields: [
+      { key: 'role', label: '物品用途', type: 'text', hidden: true, defaultValue: 'item' },
+      { key: 'bundledFromAssetId', label: '原配件所属物品', type: 'text', hidden: true },
       { key: 'name', label: '名称', type: 'text', half: true, required: true },
       { key: 'categoryId', label: '分类', type: 'category', half: true, options: fixedCategoryOpts(snap), required: true },
       { key: 'purchaseDate', label: '购买日期', type: 'date', half: true, defaultValue: asOf, required: true },
       { key: 'purchaseAmount', label: '购买金额', type: 'number', half: true, defaultValue: '0', required: true },
       { key: 'baseCurrencyAssetId', label: '记账币种', type: 'select', half: true, options: settlementOpts(snap, preferredCurrency), required: true },
+      { key: 'purchaseMerchant', label: '购买商户', type: 'payee', payees: snap.payees, categories: snap.categories,
+        payeeBinding: { nameKey: 'purchaseMerchant', categoryKey: 'cashflowCategory', type: 'expense', textOnly: true },
+        visibleWhen: (values) => !values.bundledFromAssetId,
+        hint: '填写一次即可；同时创建流水时也用作流水商户。关联已有流水不会修改原流水。' },
       { key: 'cashflowMode', label: '资金处理', type: 'select', half: true, defaultValue: 'record_only', options: [
-        { value: 'record_only', label: '仅登记物品（不影响余额）' },
-        { value: 'linked_transaction', label: '关联已有支出' },
-        { value: 'create_transaction', label: '同时创建支出' },
+        { value: 'record_only', label: '仅登记金额（不影响余额）' },
+        { value: 'linked_transaction', label: '关联已有流水' },
+        { value: 'create_transaction', label: '同时创建流水' },
       ], required: true },
       { key: 'cashflowTransactionId', label: '已有支出流水', type: 'select', options: expenseOptions, allowEmpty: true, visibleWhen: (values) => values.cashflowMode === 'linked_transaction', required: true },
-      { key: 'cashflowSourceAmount', label: '从该支出分配的金额', type: 'number', half: true, visibleWhen: (values) => values.cashflowMode === 'linked_transaction', required: true },
-      { key: 'cashflowCategory', label: '支出二级分类', type: 'category', options: categoryOptions(snap.categories, 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), visibleWhen: (values) => values.cashflowMode === 'create_transaction', required: true },
+      { key: 'cashflowSourceAmount', label: '从该支出分配的金额', type: 'number', half: true, visibleWhen: (values) => values.cashflowMode === 'linked_transaction', required: true,
+        hint: '同币种时默认等于购买金额；不同币种请填写原流水币种的金额。' },
+      { key: 'cashflowCategory', label: '支出二级分类', type: 'category', options: expenseCategories, defaultValue: suggestedExpenseCategory(firstFixedCategoryId), allowEmpty: true, ...categoryPickerPreference(snap), visibleWhen: (values) => values.cashflowMode === 'create_transaction', required: true },
       { key: 'cashflowAccountId', label: '付款账户', type: 'select', half: true, options: directionAccountOpts(snap, 'expense'), allowEmpty: !usesAccounts, visibleWhen: (values) => values.cashflowMode === 'create_transaction', required: usesAccounts },
-      ...payeeFields(snap, 'cashflowPayeeId', 'cashflowMerchant', { payeeBinding: { nameKey: 'cashflowMerchant', categoryKey: 'cashflowCategory', type: (v) => v.type === 'sale' ? 'income' : 'expense' }, visibleWhen: (values) => values.cashflowMode === 'create_transaction' }),
-      { key: 'cashflowDescription', label: '支出描述', type: 'text', visibleWhen: (values) => values.cashflowMode === 'create_transaction', placeholder: '默认使用“购买 + 物品名称”' },
-      { key: 'status', label: '状态', type: 'select', half: true, options: FIXED_STATUS },
-      { key: 'activatedDate', label: '启用日期', type: 'date', half: true },
-      { key: 'tag', label: '标签', type: 'text', half: true, placeholder: '主力机 / 客厅' },
-      { key: 'brand', label: '品牌', type: 'text', half: true },
-      { key: 'model', label: '型号', type: 'text', half: true },
-      { key: 'serialNumber', label: '序列号', type: 'text', half: true },
-      { key: 'barcode', label: '条形码 / 设备码', type: 'text', half: true, deviceAction: 'scan-barcode' },
-      { key: 'purchaseMerchant', label: '购买商户', type: 'payee', payees: snap.payees, categories: snap.categories, payeeBinding: { nameKey: 'purchaseMerchant', textOnly: true } },
-      { key: 'orderNumber', label: '订单号', type: 'text', half: true },
-      { key: 'warrantyEndDate', label: '保修截止日', type: 'date', half: true },
-      { key: 'warrantyProvider', label: '保修方', type: 'text', half: true },
-      { key: 'imageFiles', label: '物品图片', type: 'file', accept: 'image/*', multiple: true, capture: 'environment' },
-      { key: 'invoiceFiles', label: '发票 / 购买凭证', type: 'file', accept: 'image/*,.pdf', multiple: true, capture: 'environment' },
-      { key: 'warrantyFiles', label: '保修凭证 / 说明书', type: 'file', accept: 'image/*,.pdf', multiple: true, capture: 'environment' },
-      { key: 'note', label: '备注', type: 'textarea' },
+      { key: 'cashflowPayeeId', label: '流水交易对象', type: 'text', hidden: true },
+      { key: 'cashflowMerchant', label: '流水商户', type: 'text', hidden: true },
+      { key: 'cashflowDescription', label: '支出描述', type: 'text', section: 'more', visibleWhen: (values) => values.cashflowMode === 'create_transaction', placeholder: '默认使用“购买 + 物品名称”' },
+      { key: 'status', label: '使用状态', type: 'select', half: true,
+        options: (values) => FIXED_STATUS.filter((option) => option.value === 'active' || option.value === 'stored' || option.value === values.status),
+        visibleWhen: (values) => values.status === 'active' || values.status === 'stored' },
+      { key: 'activatedDate', label: '启用日期', type: 'date', half: true, section: 'more' },
+      { key: 'tag', label: '标签', type: 'text', half: true, section: 'more', placeholder: '主力机 / 客厅' },
+      { key: 'brand', label: '品牌', type: 'text', half: true, section: 'more' },
+      { key: 'model', label: '型号', type: 'text', half: true, section: 'more' },
+      { key: 'serialNumber', label: '序列号', type: 'text', half: true, section: 'more' },
+      { key: 'barcode', label: '条形码 / 设备码', type: 'text', half: true, section: 'more', deviceAction: 'scan-barcode' },
+      { key: 'orderNumber', label: '订单号', type: 'text', half: true, section: 'more' },
+      { key: 'warrantyEndDate', label: '保修截止日', type: 'date', half: true, section: 'more' },
+      { key: 'warrantyProvider', label: '保修方', type: 'text', half: true, section: 'more' },
+      { key: 'imageFiles', label: '物品图片', type: 'file', section: 'more', accept: 'image/*', multiple: true, capture: 'environment' },
+      { key: 'invoiceFiles', label: '发票 / 购买凭证', type: 'file', section: 'more', accept: 'image/*,.pdf', multiple: true, capture: 'environment' },
+      { key: 'warrantyFiles', label: '保修凭证 / 说明书', type: 'file', section: 'more', accept: 'image/*,.pdf', multiple: true, capture: 'environment' },
+      { key: 'note', label: '备注', type: 'textarea', section: 'more' },
     ],
     toValues: (asset) => {
       const cashflowLink = snap.fixedCashflowLinks.find((row) => !row.isDeleted && row.sourceType === 'event' && row.sourceId === purchaseEvent?.id);
       const cashflowTransaction = cashflowLink ? snap.transactions.find((row) => row.id === cashflowLink.transactionId) : undefined;
+      const purchaseMerchant = asset.purchaseMerchant || cashflowTransaction?.merchant || '';
+      const createdCashflow = purchaseEvent?.cashflowMode === 'create_transaction';
       return ({
-      name: asset.name, categoryId: asset.categoryId, tag: asset.tag ?? '', status: asset.status,
+      name: asset.name, role: asset.role ?? 'item', bundledFromAssetId: asset.bundledFromAssetId ?? '', categoryId: asset.categoryId, tag: asset.tag ?? '', status: asset.status,
       purchaseDate: asset.purchaseDate, purchaseAmount: asset.purchaseAmount ?? purchaseEvent?.amountBase ?? '0', activatedDate: asset.activatedDate ?? '', baseCurrencyAssetId: asset.baseCurrencyAssetId,
       cashflowMode: purchaseEvent?.cashflowMode ?? 'record_only',
       cashflowTransactionId: cashflowLink?.transactionId ?? '', cashflowSourceAmount: cashflowLink?.sourceAmount ?? purchaseEvent?.amountBase ?? '',
       cashflowCategory: cashflowTransaction?.category ?? '', cashflowAccountId: cashflowTransaction?.accountId ?? '',
-      cashflowPayeeId: cashflowTransaction?.payeeId ?? '', cashflowMerchant: cashflowTransaction?.merchant ?? '',
+      cashflowPayeeId: createdCashflow && purchaseMerchant.trim() !== (cashflowTransaction?.merchant ?? '').trim()
+        ? '' : cashflowTransaction?.payeeId ?? '',
+      cashflowMerchant: createdCashflow ? purchaseMerchant : cashflowTransaction?.merchant ?? '',
       cashflowDescription: cashflowTransaction?.description ?? '',
       brand: asset.brand ?? '', model: asset.model ?? '', serialNumber: asset.serialNumber ?? '', barcode: asset.barcode ?? '',
-      purchaseMerchant: asset.purchaseMerchant ?? '', orderNumber: asset.orderNumber ?? '', warrantyEndDate: asset.warrantyEndDate ?? '',
+      purchaseMerchant, orderNumber: asset.orderNumber ?? '', warrantyEndDate: asset.warrantyEndDate ?? '',
       warrantyProvider: asset.warrantyProvider ?? '', imageFiles: JSON.stringify(files('image')),
       invoiceFiles: JSON.stringify(files('invoice')), warrantyFiles: JSON.stringify([...files('warranty'), ...files('manual')]), note: asset.note ?? '',
     });
     },
     fromValues: (v, existing, formFiles) => ({
-      ...base(existing), name: v.name, categoryId: v.categoryId, tag: S(v.tag), status: v.status as FixedAsset['status'],
+      ...base(existing), name: v.name, role: (v.role || 'item') as FixedAsset['role'], bundledFromAssetId: S(v.bundledFromAssetId), categoryId: v.categoryId, tag: S(v.tag), status: v.status as FixedAsset['status'],
       purchaseDate: v.purchaseDate, purchaseAmount: D(v.purchaseAmount || 0).toString(), activatedDate: S(v.activatedDate), baseCurrencyAssetId: v.baseCurrencyAssetId,
       cashflowMode: (v.cashflowMode || 'record_only') as FixedAssetCashflowMode,
       cashflowTransactionId: S(v.cashflowTransactionId), cashflowSourceAmount: S(v.cashflowSourceAmount),
@@ -1394,6 +1448,7 @@ export function fixedAssetForm(snap: Snapshot, attachments: Attachment[] = [], p
     }) as FixedAssetFormValue,
     validate: (v) => {
       if (v.warrantyEndDate && v.purchaseDate && v.warrantyEndDate < v.purchaseDate) return { warrantyEndDate: '保修截止日不能早于购买日期' } as Record<string, string>;
+      if (v.activatedDate && v.purchaseDate && v.activatedDate < v.purchaseDate) return { activatedDate: '启用日期不能早于购买日期' } as Record<string, string>;
       if (D(v.purchaseAmount || 0).lt(0)) return { purchaseAmount: '购买金额不能为负数' } as Record<string, string>;
       if (v.cashflowMode !== 'record_only' && !D(v.purchaseAmount || 0).gt(0)) return { purchaseAmount: '关联资金时购买金额必须大于 0' } as Record<string, string>;
       if (v.cashflowMode === 'linked_transaction' && !v.cashflowTransactionId) return { cashflowTransactionId: '请选择已有支出流水' } as Record<string, string>;
@@ -1412,8 +1467,24 @@ export function fixedEventForm(
   investedCost = '0',
 ): EntityFormSpec<FixedAssetEventFormValue> {
   const usesAccounts = true;
-  const isFinancial = (values: Record<string, string>) => ['repair', 'upgrade', 'sale'].includes(values.type ?? '');
-  const isInflow = (values: Record<string, string>) => values.type === 'sale';
+  const isFinancial = (values: Record<string, string>) => ['repair', 'upgrade', 'part_sale', 'sale'].includes(values.type ?? '');
+  const isInflow = (values: Record<string, string>) => values.type === 'sale' || values.type === 'part_sale';
+  const fixedAsset = snap.fixedAssets.find((row) => row.id === fixedAssetId);
+  const fixedCategory = snap.fixedAssetCategories.find((row) => row.id === fixedAsset?.categoryId);
+  const hasInstalledComponents = snap.fixedEvents.some((row) => !row.isDeleted
+    && row.type === 'install' && row.hostAssetId === fixedAssetId);
+  const suggestedCategory = (type: string): string => {
+    const preferred = type === 'sale' || type === 'part_sale' ? 'sale_income'
+      : type === 'repair' ? fixedCategory?.parentId === 'fixed-vehicle' ? 'car_repair'
+        : fixedCategory?.parentId === 'fixed-home' || fixedCategory?.parentId === 'fixed-appliance' ? 'home_repair' : ''
+        : fixedCategory?.id === 'fixed-electronics-computer' ? 'computer_accessories'
+          : fixedCategory?.id === 'fixed-electronics-phone' ? 'phone_accessories'
+            : fixedCategory?.parentId === 'fixed-electronics' || fixedCategory?.parentId === 'fixed-work' ? 'digital_goods'
+              : fixedCategory?.parentId === 'fixed-appliance' || fixedCategory?.parentId === 'fixed-home' ? 'furniture_appliance'
+                : 'other_shopping';
+    const options = categoryOptions(snap.categories, type === 'sale' || type === 'part_sale' ? 'income' : 'expense', { leafOnly: true, includeHidden: true });
+    return options.some((row) => row.value === preferred) ? preferred : '';
+  };
   const transactionOptions = (values: Record<string, string>) => snap.transactions
     .filter((transaction) => !transaction.isDeleted
       && transaction.recordState !== 'voided'
@@ -1426,27 +1497,41 @@ export function fixedEventForm(
   return {
     title: '物品生命周期事件',
     modalWidth: 760,
+    onFieldChange: (values, key, manual) => {
+      if (key === 'cashflowMode' && values.cashflowMode === 'create_transaction' && !values.cashflowCategory && !manual.has('cashflowCategory')) {
+        return { ...values, cashflowCategory: suggestedCategory(values.type ?? '') };
+      }
+      if (key !== 'type') return values;
+      const options = categoryOptions(snap.categories, isInflow(values) ? 'income' : 'expense', { leafOnly: true, includeHidden: true });
+      if (manual.has('cashflowCategory') && options.some((row) => row.value === values.cashflowCategory)) return values;
+      return { ...values, cashflowCategory: isFinancial(values) ? suggestedCategory(values.type ?? '') : '' };
+    },
     fields: [
-      { key: 'type', label: '事件类型', type: 'select', half: true, options: FIXED_EVENTS.filter((option) => option.value !== 'purchase'), required: true },
+      { key: 'type', label: '事件类型', type: 'select', half: true, options: FIXED_EVENTS
+        .filter((option) => !['purchase', 'install', 'detach'].includes(option.value)
+          && (fixedAsset?.role !== 'component' || option.value !== 'part_sale'))
+        .map((option) => fixedAsset?.role === 'component' && option.value === 'sale' ? { ...option, label: '卖出该配件' } : option), required: true },
       { key: 'date', label: '日期', type: 'date', half: true, defaultValue: asOf, required: true },
-      { key: 'amountBase', label: '金额', type: 'number', half: true, defaultValue: '0', required: true },
-      { key: 'valueMode', label: '残值录入口径（仅更新残值）', type: 'select', half: true, options: [{ value: 'residual', label: '当前残值' }, { value: 'depreciation', label: '累计损耗金额' }] },
+      { key: 'amountBase', label: '本次金额', type: 'number', half: true, defaultValue: '0', required: true },
+      { key: 'valueMode', label: '参考现值录入口径（仅更新参考现值）', type: 'select', half: true, options: [{ value: 'residual', label: '当前参考现值' }, { value: 'depreciation', label: '累计损耗金额' }] },
       { key: 'cashflowMode', label: '资金处理', type: 'select', half: true, defaultValue: 'record_only', options: [
-        { value: 'record_only', label: '仅登记事件（不影响余额）' },
+        { value: 'record_only', label: '仅登记金额（不影响余额）' },
         { value: 'linked_transaction', label: '关联已有流水' },
         { value: 'create_transaction', label: '同时创建流水' },
       ], visibleWhen: isFinancial, required: true },
       { key: 'cashflowTransactionId', label: '已有资金流水', type: 'select', options: transactionOptions, allowEmpty: true, visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'linked_transaction', required: true },
       { key: 'cashflowSourceAmount', label: '从该流水分配的金额', type: 'number', half: true, visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'linked_transaction', required: true },
-      { key: 'cashflowCategory', label: '流水二级分类', type: 'category', options: (values) => categoryOptions(snap.categories, isInflow(values) ? 'income' : 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'create_transaction', required: true },
+      { key: 'cashflowCategory', label: '流水二级分类', type: 'category', options: (values) => categoryOptions(snap.categories, isInflow(values) ? 'income' : 'expense', { leafOnly: true, includeHidden: true }), allowEmpty: true, ...categoryPickerPreference(snap), visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'create_transaction', required: true },
       { key: 'cashflowAccountId', label: '付款 / 收款账户', type: 'select', half: true, resetWhen: ['type'], options: (v) => directionAccountOpts(snap, isInflow(v) ? 'income' : 'expense'), allowEmpty: !usesAccounts, visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'create_transaction', required: usesAccounts },
-      ...payeeFields(snap, 'cashflowPayeeId', 'cashflowMerchant', { payeeBinding: { nameKey: 'cashflowMerchant', categoryKey: 'cashflowCategory', type: (v) => v.type === 'sale' ? 'income' : 'expense' }, visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'create_transaction' }),
+      ...payeeFields(snap, 'cashflowPayeeId', 'cashflowMerchant', { payeeBinding: { nameKey: 'cashflowMerchant', categoryKey: 'cashflowCategory', type: (v) => v.type === 'sale' || v.type === 'part_sale' ? 'income' : 'expense' }, visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'create_transaction' }),
       { key: 'cashflowDescription', label: '流水描述', type: 'text', visibleWhen: (values) => isFinancial(values) && values.cashflowMode === 'create_transaction' },
       { key: 'cashflowReportingTreatment', label: '出售报表口径', type: 'select', half: true, defaultValue: 'ordinary', options: [
         { value: 'ordinary', label: '计入收入' },
         { value: 'balance_only', label: '仅增加余额，不计收入' },
-      ], visibleWhen: (values) => values.type === 'sale' && values.cashflowMode === 'create_transaction' },
-      { key: 'note', label: '备注', type: 'text', half: true },
+      ], visibleWhen: (values) => isInflow(values) && values.cashflowMode === 'create_transaction' },
+      { key: 'includeComponents', label: '已安装配件随整机出售', type: 'checkbox', defaultValue: 'false',
+        visibleWhen: (values) => values.type === 'sale' && fixedAsset?.role !== 'component' && (hasInstalledComponents || values.includeComponents === 'true') },
+      { key: 'note', label: '配件名称 / 备注', type: 'text', half: true },
     ],
     toValues: (event) => {
       const link = snap.fixedCashflowLinks.find((row) => !row.isDeleted && row.sourceType === 'event' && row.sourceId === event.id);
@@ -1465,6 +1550,7 @@ export function fixedEventForm(
         cashflowMerchant: transaction?.merchant ?? '',
         cashflowDescription: transaction?.description ?? '',
         cashflowReportingTreatment: transaction?.reportingTreatment ?? 'ordinary',
+        includeComponents: snap.fixedEvents.some((row) => row.parentSaleEventId === event.id && !row.isDeleted) ? 'true' : 'false',
         note: event.note ?? '',
       };
     },
@@ -1475,7 +1561,7 @@ export function fixedEventForm(
       const amountBase = type === 'residual_update' && valueMode === 'depreciation'
         ? D(investedCost).minus(entered)
         : entered;
-      const financial = ['repair', 'upgrade', 'sale'].includes(type);
+      const financial = ['repair', 'upgrade', 'part_sale', 'sale'].includes(type);
       return {
         ...base(existing),
         fixedAssetId: existing?.fixedAssetId ?? fixedAssetId,
@@ -1493,6 +1579,7 @@ export function fixedEventForm(
         cashflowMerchant: S(v.cashflowMerchant),
         cashflowDescription: S(v.cashflowDescription),
         cashflowReportingTreatment: (v.cashflowReportingTreatment || 'ordinary') as Transaction['reportingTreatment'],
+        includeComponents: v.includeComponents === 'true',
         note: S(v.note),
       } as FixedAssetEventFormValue;
     },
@@ -1506,8 +1593,69 @@ export function fixedEventForm(
       if (isFinancial(v) && v.cashflowMode === 'linked_transaction' && !D(v.cashflowSourceAmount || 0).gt(0)) errors.cashflowSourceAmount = '分配金额必须大于 0';
       if (isFinancial(v) && v.cashflowMode === 'create_transaction' && !v.cashflowCategory) errors.cashflowCategory = '请选择流水二级分类';
       if (isFinancial(v) && v.cashflowMode === 'create_transaction' && usesAccounts && !v.cashflowAccountId) errors.cashflowAccountId = '请选择账户';
+      if (v.type === 'part_sale' && !(v.note ?? '').trim()) errors.note = '请填写卖出的配件名称';
       return Object.keys(errors).length > 0 ? errors : undefined;
     },
+  };
+}
+
+export function fixedComponentPlacementForm(
+  snap: Snapshot,
+  componentId: string,
+  currentHostId?: string,
+): EntityFormSpec<FixedAssetEvent> {
+  const component = snap.fixedAssets.find((row) => row.id === componentId);
+  const hosts = snap.fixedAssets
+    .filter((row) => !row.isDeleted && row.role !== 'component' && row.id !== componentId
+      && row.baseCurrencyAssetId === component?.baseCurrencyAssetId
+      && !['sold', 'scrapped', 'retired', 'gifted'].includes(row.status))
+    .map((row) => ({ value: row.id, label: row.name }));
+  return {
+    title: currentHostId ? '拆下或转装配件' : '安装配件',
+    fields: [
+      { key: 'type', label: '操作', type: 'select', half: true, options: [
+        { value: 'install', label: currentHostId ? '转装到另一件物品' : '安装到物品' },
+        ...(currentHostId ? [{ value: 'detach', label: '拆下，暂不安装' }] : []),
+      ], required: true },
+      { key: 'date', label: '操作日期', type: 'date', half: true, defaultValue: currentDate(), required: true },
+      { key: 'hostAssetId', label: '目标物品', type: 'select', options: hosts, allowEmpty: true,
+        visibleWhen: (values) => values.type === 'install', required: true },
+      { key: 'note', label: '备注', type: 'text' },
+    ],
+    toValues: (event) => ({ type: event.type, date: event.date, hostAssetId: event.hostAssetId ?? '', note: event.note ?? '' }),
+    fromValues: (values, existing) => ({
+      ...base(existing), fixedAssetId: componentId, type: values.type as FixedAssetEvent['type'],
+      date: values.date, hostAssetId: values.type === 'install' ? values.hostAssetId : undefined,
+      amountBase: '0', note: S(values.note),
+    }) as FixedAssetEvent,
+    validate: (values) => values.type === 'install' && !values.hostAssetId
+      ? { hostAssetId: '请选择目标物品' } : undefined,
+  };
+}
+
+export function fixedUpgradeConversionForm(snap: Snapshot, host: FixedAsset, upgrade: FixedAssetEvent): EntityFormSpec<FixedAsset> {
+  const hostCategory = snap.fixedAssetCategories.find((row) => row.id === host.categoryId);
+  const componentCategoryId = hostCategory?.parentId === 'fixed-electronics'
+    ? 'fixed-electronics-component' : 'fixed-other-component';
+  const preferred = snap.fixedAssetCategories.find((row) => row.id === componentCategoryId && row.isActive && !row.isDeleted);
+  return {
+    title: '将升级支出转为可追踪配件',
+    summary: () => `原升级支出 ${upgrade.amountBase} 将改归新配件；原资金流水和总投入保持不变。`,
+    fields: [
+      { key: 'name', label: '配件名称', type: 'text', required: true, placeholder: '例如：32 GB 内存' },
+      { key: 'categoryId', label: '配件分类', type: 'category', options: fixedCategoryOpts(snap),
+        defaultValue: preferred?.id ?? fixedCategoryOpts(snap)[0]?.value, required: true },
+      { key: 'brand', label: '品牌', type: 'text', half: true },
+      { key: 'model', label: '型号', type: 'text', half: true },
+      { key: 'note', label: '备注', type: 'text' },
+    ],
+    toValues: (component) => ({ name: component.name, categoryId: component.categoryId,
+      brand: component.brand ?? '', model: component.model ?? '', note: component.note ?? '' }),
+    fromValues: (values, existing) => ({
+      ...base(existing), name: values.name, role: 'component', categoryId: values.categoryId,
+      status: 'active', purchaseDate: upgrade.date, baseCurrencyAssetId: host.baseCurrencyAssetId,
+      brand: S(values.brand), model: S(values.model), note: S(values.note),
+    }) as FixedAsset,
   };
 }
 
@@ -1551,8 +1699,24 @@ export function fixedConsumableForm(
   fixedAssetId: string,
   metrics: FixedAssetUsageMetric[],
   asOf = currentDate(),
+  existing?: FixedAssetConsumable,
 ): EntityFormSpec<FixedAssetConsumableFormValue> {
-  const metricOptions = metrics.filter((metric) => metric.fixedAssetId === fixedAssetId && metric.isActive).map((metric) => ({ value: metric.id, label: metric.name }));
+  const metricOptions = metrics
+    .filter((metric) => !metric.isDeleted && metric.fixedAssetId === fixedAssetId && (metric.isActive || metric.id === existing?.usageMetricId))
+    .map((metric) => ({ value: metric.id, label: metric.isActive ? metric.name : `${metric.name}（已停用）` }));
+  const fixedAsset = snap.fixedAssets.find((row) => row.id === fixedAssetId);
+  const fixedCategory = snap.fixedAssetCategories.find((row) => row.id === fixedAsset?.categoryId);
+  const currencyCode = snap.assets.find((row) => row.id === fixedAsset?.baseCurrencyAssetId)?.code;
+  const expenseCategories = categoryOptions(snap.categories, 'expense', { leafOnly: true, includeHidden: true });
+  const preferredCategory = fixedCategory?.id === 'fixed-electronics-computer' ? 'computer_accessories'
+    : fixedCategory?.id === 'fixed-electronics-phone' ? 'phone_accessories'
+      : fixedCategory?.parentId === 'fixed-vehicle' ? 'car_accessories'
+        : fixedCategory?.parentId === 'fixed-work' ? 'office_supplies'
+          : fixedCategory?.parentId === 'fixed-appliance' || fixedCategory?.parentId === 'fixed-home' ? 'repair_parts'
+            : fixedCategory?.parentId === 'fixed-electronics' ? 'digital_goods' : 'other_shopping';
+  const suggestedExpenseCategory = expenseCategories.find((row) => row.value === preferredCategory)?.value
+    ?? expenseCategories.find((row) => row.value === 'other_shopping')?.value
+    ?? '';
   const usesAccounts = true;
   const expenseOptions = snap.transactions
     .filter((transaction) => !transaction.isDeleted && transaction.recordState !== 'voided' && transaction.type === 'expense')
@@ -1564,45 +1728,80 @@ export function fixedConsumableForm(
   return {
     title: '耗材 / 易损件',
     modalWidth: 760,
+    moreInitiallyOpen: false,
+    onFieldChange: (values, key, manual) => {
+      let next = values;
+      if (key === 'purchaseMerchant') {
+        next = { ...next, cashflowMerchant: next.purchaseMerchant ?? '', cashflowPayeeId: '' };
+      }
+      if (key === 'cashflowMode' && next.cashflowMode === 'create_transaction') {
+        next = { ...next, cashflowMerchant: next.purchaseMerchant ?? '', cashflowPayeeId: '' };
+      }
+      if (key === 'cashflowMode' && values.cashflowMode === 'create_transaction'
+        && !values.cashflowCategory && !manual.has('cashflowCategory')) {
+        next = { ...next, cashflowCategory: suggestedExpenseCategory };
+      }
+      if (['amountBase', 'cashflowMode', 'cashflowTransactionId'].includes(key)
+        && next.cashflowMode === 'linked_transaction' && !manual.has('cashflowSourceAmount')) {
+        const selected = snap.transactions.find((row) => row.id === next.cashflowTransactionId);
+        next = { ...next, cashflowSourceAmount: !selected || selected.assetId === fixedAsset?.baseCurrencyAssetId
+          ? next.amountBase ?? '' : '' };
+      }
+      if (key === 'status' && next.status === 'active') next = { ...next, replacedDate: '' };
+      return next;
+    },
     fields: [
       { key: 'name', label: '名称', type: 'text', half: true, required: true, placeholder: '空调滤芯 / 墨盒 / 轮胎' },
-      { key: 'category', label: '耗材类别', type: 'text', half: true },
-      { key: 'amountBase', label: '购买成本', type: 'number', half: true, defaultValue: '0', required: true },
+      { key: 'amountBase', label: '购买金额', type: 'number', half: true, defaultValue: '0', required: true,
+        hint: currencyCode ? `按所属物品的记账币种 ${currencyCode} 填写。` : '按所属物品的记账币种填写。' },
       { key: 'purchaseDate', label: '购买日期', type: 'date', half: true, defaultValue: asOf, required: true },
+      { key: 'purchaseMerchant', label: '购买商户', type: 'payee', payees: snap.payees, categories: snap.categories,
+        payeeBinding: { nameKey: 'purchaseMerchant', categoryKey: 'cashflowCategory', type: 'expense', textOnly: true },
+        hint: '填写一次即可；同时创建流水时也用作流水商户。关联已有流水不会修改原流水。' },
       { key: 'cashflowMode', label: '资金处理', type: 'select', half: true, defaultValue: 'record_only', options: [
-        { value: 'record_only', label: '仅登记耗材（不影响余额）' },
-        { value: 'linked_transaction', label: '关联已有支出' },
-        { value: 'create_transaction', label: '同时创建支出' },
+        { value: 'record_only', label: '仅登记金额（不影响余额）' },
+        { value: 'linked_transaction', label: '关联已有流水' },
+        { value: 'create_transaction', label: '同时创建流水' },
       ], required: true },
       { key: 'cashflowTransactionId', label: '已有支出流水', type: 'select', options: expenseOptions, allowEmpty: true, visibleWhen: (values) => values.cashflowMode === 'linked_transaction', required: true },
-      { key: 'cashflowSourceAmount', label: '从该支出分配的金额', type: 'number', half: true, visibleWhen: (values) => values.cashflowMode === 'linked_transaction', required: true },
-      { key: 'cashflowCategory', label: '支出二级分类', type: 'category', options: categoryOptions(snap.categories, 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap), visibleWhen: (values) => values.cashflowMode === 'create_transaction', required: true },
+      { key: 'cashflowSourceAmount', label: '从该支出分配的金额', type: 'number', half: true, visibleWhen: (values) => values.cashflowMode === 'linked_transaction', required: true,
+        hint: '同币种时默认等于购买金额；不同币种请填写原流水币种的金额。' },
+      { key: 'cashflowCategory', label: '支出二级分类', type: 'category', options: expenseCategories, defaultValue: suggestedExpenseCategory, allowEmpty: true, ...categoryPickerPreference(snap), visibleWhen: (values) => values.cashflowMode === 'create_transaction', required: true },
       { key: 'cashflowAccountId', label: '付款账户', type: 'select', half: true, options: directionAccountOpts(snap, 'expense'), allowEmpty: !usesAccounts, visibleWhen: (values) => values.cashflowMode === 'create_transaction', required: usesAccounts },
-      ...payeeFields(snap, 'cashflowPayeeId', 'cashflowMerchant', { payeeBinding: { nameKey: 'cashflowMerchant', categoryKey: 'cashflowCategory', type: (v) => v.type === 'sale' ? 'income' : 'expense' }, visibleWhen: (values) => values.cashflowMode === 'create_transaction' }),
-      { key: 'cashflowDescription', label: '支出描述', type: 'text', visibleWhen: (values) => values.cashflowMode === 'create_transaction' },
-      { key: 'installedDate', label: '安装日期', type: 'date', half: true },
-      { key: 'usageMetricId', label: '寿命计算指标', type: 'select', half: true, options: metricOptions, allowEmpty: true },
-      { key: 'installedAtUsage', label: '安装时读数', type: 'number', half: true },
-      { key: 'targetLife', label: '目标寿命', type: 'number', half: true },
-      { key: 'reminderAtRemaining', label: '剩余多少时提醒', type: 'number', half: true },
-      { key: 'status', label: '状态', type: 'select', half: true, options: [{ value: 'active', label: '使用中' }, { value: 'replaced', label: '已更换' }, { value: 'discarded', label: '已丢弃' }] },
-      { key: 'replacedDate', label: '更换 / 丢弃日期', type: 'date', half: true },
-      { key: 'note', label: '备注', type: 'textarea' },
+      { key: 'cashflowPayeeId', label: '流水交易对象', type: 'text', hidden: true },
+      { key: 'cashflowMerchant', label: '流水商户', type: 'text', hidden: true },
+      { key: 'installedDate', label: '安装日期', type: 'date', half: true, hint: '先买来备用可留空；安装后再填写日期和寿命指标。' },
+      { key: 'status', label: '当前状态', type: 'select', half: true, options: (values) => [
+        { value: 'active', label: values.installedDate ? '使用中' : '待安装／持有中' },
+        { value: 'replaced', label: '已更换' }, { value: 'discarded', label: '已丢弃' },
+      ] },
+      { key: 'replacedDate', label: '更换／丢弃日期', type: 'date', half: true, visibleWhen: (values) => values.status === 'replaced' || values.status === 'discarded', required: true },
+      { key: 'category', label: '耗材类别', type: 'text', half: true, section: 'more', hint: '用于物品资料；流水分类在“同时创建流水”时单独选择。' },
+      { key: 'usageMetricId', label: '寿命计算指标', type: 'select', half: true, options: metricOptions, allowEmpty: true, section: 'more', visibleWhen: (values) => (!!values.installedDate || !!values.usageMetricId) && metricOptions.length > 0 },
+      { key: 'installedAtUsage', label: '安装时读数', type: 'number', half: true, section: 'more', visibleWhen: (values) => !!values.usageMetricId, required: true },
+      { key: 'targetLife', label: '目标寿命', type: 'number', half: true, section: 'more', visibleWhen: (values) => !!values.usageMetricId, required: true },
+      { key: 'reminderAtRemaining', label: '剩余多少时提醒', type: 'number', half: true, section: 'more', visibleWhen: (values) => !!values.usageMetricId && !!values.targetLife },
+      { key: 'cashflowDescription', label: '支出描述', type: 'text', section: 'more', visibleWhen: (values) => values.cashflowMode === 'create_transaction', placeholder: '默认使用“购买耗材 + 名称”' },
+      { key: 'note', label: '备注', type: 'textarea', section: 'more' },
     ],
     toValues: (item) => {
       const link = snap.fixedCashflowLinks.find((row) => !row.isDeleted && row.sourceType === 'consumable' && row.sourceId === item.id);
       const transaction = link ? snap.transactions.find((row) => row.id === link.transactionId) : undefined;
+      const purchaseMerchant = item.purchaseMerchant || transaction?.merchant || '';
+      const createdCashflow = item.cashflowMode === 'create_transaction';
       return {
         name: item.name,
         category: item.category ?? '',
+        purchaseMerchant,
         amountBase: item.amountBase,
         cashflowMode: item.cashflowMode ?? 'record_only',
         cashflowTransactionId: link?.transactionId ?? '',
         cashflowSourceAmount: link?.sourceAmount ?? item.amountBase,
         cashflowCategory: transaction?.category ?? '',
         cashflowAccountId: transaction?.accountId ?? '',
-        cashflowPayeeId: transaction?.payeeId ?? '',
-        cashflowMerchant: transaction?.merchant ?? '',
+        cashflowPayeeId: createdCashflow && purchaseMerchant.trim() !== (transaction?.merchant ?? '').trim()
+          ? '' : transaction?.payeeId ?? '',
+        cashflowMerchant: createdCashflow ? purchaseMerchant : transaction?.merchant ?? '',
         cashflowDescription: transaction?.description ?? '',
         purchaseDate: item.purchaseDate,
         installedDate: item.installedDate ?? '',
@@ -1620,6 +1819,7 @@ export function fixedConsumableForm(
       fixedAssetId: existing?.fixedAssetId ?? fixedAssetId,
       name: v.name,
       category: S(v.category),
+      purchaseMerchant: S(v.purchaseMerchant),
       amountBase: D(v.amountBase || 0).toString(),
       cashflowMode: (v.cashflowMode || 'record_only') as FixedAssetCashflowMode,
       cashflowTransactionId: S(v.cashflowTransactionId),
@@ -1632,16 +1832,22 @@ export function fixedConsumableForm(
       purchaseDate: v.purchaseDate,
       installedDate: S(v.installedDate),
       usageMetricId: S(v.usageMetricId),
-      installedAtUsage: S(v.installedAtUsage),
-      targetLife: S(v.targetLife),
-      reminderAtRemaining: S(v.reminderAtRemaining),
+      installedAtUsage: v.usageMetricId ? S(v.installedAtUsage) : undefined,
+      targetLife: v.usageMetricId ? S(v.targetLife) : undefined,
+      reminderAtRemaining: v.usageMetricId && v.targetLife ? S(v.reminderAtRemaining) : undefined,
       status: v.status as FixedAssetConsumable['status'],
-      replacedDate: S(v.replacedDate),
+      replacedDate: v.status === 'active' ? undefined : S(v.replacedDate),
       note: S(v.note),
     }) as FixedAssetConsumableFormValue,
     validate: (v) => {
       if (D(v.amountBase || 0).lt(0)) return { amountBase: '成本不能为负数' } as Record<string, string>;
-      if (v.targetLife && D(v.targetLife).lte(0)) return { targetLife: '目标寿命必须大于 0' } as Record<string, string>;
+      if (v.installedDate && v.purchaseDate && v.installedDate < v.purchaseDate) return { installedDate: '安装日期不能早于购买日期' } as Record<string, string>;
+      if (v.status !== 'active' && !v.replacedDate) return { replacedDate: '请填写更换或丢弃日期' } as Record<string, string>;
+      if (v.status !== 'active' && v.replacedDate && v.purchaseDate && v.replacedDate < v.purchaseDate) return { replacedDate: '更换或丢弃日期不能早于购买日期' } as Record<string, string>;
+      if (v.status !== 'active' && v.replacedDate && v.installedDate && v.replacedDate < v.installedDate) return { replacedDate: '更换或丢弃日期不能早于安装日期' } as Record<string, string>;
+      if (v.usageMetricId && !v.installedAtUsage) return { installedAtUsage: '请填写安装时读数' } as Record<string, string>;
+      if (v.usageMetricId && (!v.targetLife || D(v.targetLife).lte(0))) return { targetLife: '目标寿命必须大于 0' } as Record<string, string>;
+      if (v.usageMetricId && v.reminderAtRemaining && D(v.reminderAtRemaining).lt(0)) return { reminderAtRemaining: '提醒阈值不能为负数' } as Record<string, string>;
       if (v.cashflowMode !== 'record_only' && !D(v.amountBase || 0).gt(0)) return { amountBase: '关联资金时成本必须大于 0' } as Record<string, string>;
       if (v.cashflowMode === 'linked_transaction' && !v.cashflowTransactionId) return { cashflowTransactionId: '请选择已有支出流水' } as Record<string, string>;
       if (v.cashflowMode === 'linked_transaction' && !D(v.cashflowSourceAmount || 0).gt(0)) return { cashflowSourceAmount: '分配金额必须大于 0' } as Record<string, string>;
@@ -1660,7 +1866,7 @@ export function fixedGoalForm(fixedAssetId: string, metrics: FixedAssetUsageMetr
       { key: 'name', label: '目标名称', type: 'text', half: true, required: true, defaultValue: '使用成本目标' },
       { key: 'metricId', label: '计算口径', type: 'select', half: true, options: metricOptions, required: true },
       { key: 'mode', label: '设置方式', type: 'select', half: true, options: [{ value: 'unit_cost', label: '按目标单位成本' }, { value: 'usage', label: '按目标使用量' }], required: true },
-      { key: 'costBasisAmount', label: '目标成本基数（创建后冻结）', type: 'number', half: true, defaultValue: defaultCost, required: true },
+      { key: 'costBasisAmount', label: '目标基数（创建时冻结）', type: 'number', half: true, defaultValue: defaultCost, required: true },
       { key: 'targetUnitCost', label: '目标单位成本', type: 'number', half: true },
       { key: 'targetUsage', label: '目标使用量', type: 'number', half: true },
       { key: 'startDate', label: '开始日期', type: 'date', half: true, defaultValue: asOf, required: true },

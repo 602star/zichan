@@ -523,9 +523,14 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
 
   const purchasesByAsset = new Map<string, typeof fixedEvents>();
   const eventCashflowDirection = (type: string) =>
-    type === 'sale' ? 'inflow' : ['purchase', 'repair', 'upgrade'].includes(type) ? 'outflow' : undefined;
+    ['sale', 'part_sale'].includes(type) ? 'inflow' : ['purchase', 'repair', 'upgrade'].includes(type) ? 'outflow' : undefined;
   for (const event of fixedEvents) {
     missing(fixedAssetIds.has(event.fixedAssetId), 'fixed_asset_event', event.id, `引用了不存在的固定资产 ${event.fixedAssetId}`);
+    if (event.hostAssetId) missing(fixedAssetIds.has(event.hostAssetId), 'fixed_asset_event', event.id, `安装目标物品不存在 ${event.hostAssetId}`);
+    if (event.parentSaleEventId) missing(fixedEventById.has(event.parentSaleEventId), 'fixed_asset_event', event.id, `整机出售事件不存在 ${event.parentSaleEventId}`);
+    if (event.type === 'install' && (!event.hostAssetId || fixedAssetById.get(event.fixedAssetId)?.role !== 'component')) {
+      issues.push({ kind: 'fixed_cashflow_invalid', entityType: 'fixed_asset_event', entityId: event.id, detail: '安装事件必须属于配件并指定目标物品' });
+    }
     const direction = eventCashflowDirection(event.type);
     if (direction && !['record_only', 'linked_transaction', 'create_transaction'].includes(event.cashflowMode ?? '')) {
       issues.push({ kind: 'fixed_cashflow_invalid', entityType: 'fixed_asset_event', entityId: event.id, detail: '有资金影响的事件缺少有效资金模式' });
@@ -544,6 +549,7 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
   }
   for (const fixed of fixedAssets) {
     missing(assetIds.has(fixed.baseCurrencyAssetId), 'fixed_asset', fixed.id, `引用了不存在的结算资产 ${fixed.baseCurrencyAssetId}`);
+    if (fixed.bundledFromAssetId) missing(fixedAssetIds.has(fixed.bundledFromAssetId), 'fixed_asset', fixed.id, `原配件所属物品不存在 ${fixed.bundledFromAssetId}`);
     missing(fixedCategoryIds.has(fixed.categoryId), 'fixed_asset', fixed.id, `引用了不存在的物品分类 ${fixed.categoryId}`);
     const terminal = fixedEvents
       .filter((event) => event.fixedAssetId === fixed.id && ['sale', 'scrap', 'retire', 'gift'].includes(event.type))

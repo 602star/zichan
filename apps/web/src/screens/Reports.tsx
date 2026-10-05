@@ -1,6 +1,6 @@
 import { accountSessionStorage } from '../account-storage.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { fixedAssetCost, isDateInRange, gameRecordReportingPostings, traceChain, D, localToday, type DateRange, type QueryCursor } from '@zichan/core';
+import { componentCostOwnerAt, fixedAssetAttributedCost, isDateInRange, gameRecordReportingPostings, traceChain, D, localToday, type DateRange, type QueryCursor } from '@zichan/core';
 import { useSnapshot, type Snapshot } from '../db/snapshot.js';
 import { useStore } from '../db/store.js';
 import type { TransactionReportAggregateRow, TransactionReportPage } from '@zichan/db';
@@ -817,11 +817,11 @@ function TimeTrendChart(props: {
       }
     }
   } else {
-    for (const event of snap.fixedEvents.filter((row) => !row.isDeleted && ['purchase', 'repair', 'upgrade', 'sale'].includes(row.type))) {
+    for (const event of snap.fixedEvents.filter((row) => !row.isDeleted && ['purchase', 'repair', 'upgrade', 'part_sale', 'sale'].includes(row.type))) {
       const asset = snap.fixedAssets.find((row) => row.id === event.fixedAssetId);
       if (!asset) continue;
       const converted = report.toReportAt(event.amountBase, asset.baseCurrencyAssetId, event.date);
-      if (converted) add(event.date, event.type === 'sale' ? converted : converted.negated());
+      if (converted) add(event.date, event.type === 'sale' || event.type === 'part_sale' ? converted : converted.negated());
     }
     for (const item of snap.fixedConsumables.filter((row) => !row.isDeleted)) {
       const asset = snap.fixedAssets.find((row) => row.id === item.fixedAssetId);
@@ -938,13 +938,17 @@ function ReportChart(props: {
       return { label: s.name, value: Math.abs(net), text: report.formatSignedReport(net), color: net >= 0 ? 'var(--positive)' : 'var(--negative)' };
     }).filter((row) => row.value > 0 || (!dateRange.from && !dateRange.to));
   } else if (tab === 'fixed') {
-    title = `物品资产主要单位成本 · ${report.code}`;
+    title = `物品资产单位净投入 · ${report.code}`;
     const asOf = dateRange.to ?? ledgerAsOfDate(snap);
-    rows = snap.fixedAssets.filter((asset) => !dateRange.from && !dateRange.to
+    rows = snap.fixedAssets.filter((asset) => !(asset.role === 'component' && componentCostOwnerAt(asset, snap.fixedEvents, asOf)) && (!dateRange.from && !dateRange.to
       || isDateInRange(asset.purchaseDate, dateRange)
       || snap.fixedEvents.some((event) => event.fixedAssetId === asset.id && isDateInRange(event.date, dateRange))
-      || snap.fixedUsageLogs.some((log) => log.fixedAssetId === asset.id && isDateInRange(log.date, dateRange))).map((f) => {
-      const cost = fixedAssetCost(f, snap.fixedEvents, { asOf, usageMetrics: snap.fixedUsageMetrics, usageLogs: snap.fixedUsageLogs, consumables: snap.fixedConsumables });
+      || snap.fixedAssets.some((component) => component.role === 'component'
+        && componentCostOwnerAt(component, snap.fixedEvents, asOf) === asset.id
+        && (isDateInRange(component.purchaseDate, dateRange)
+          || snap.fixedEvents.some((event) => event.fixedAssetId === component.id && isDateInRange(event.date, dateRange))))
+      || snap.fixedUsageLogs.some((log) => log.fixedAssetId === asset.id && isDateInRange(log.date, dateRange)))).map((f) => {
+      const cost = fixedAssetAttributedCost(f, snap.fixedAssets, snap.fixedEvents, { asOf, usageMetrics: snap.fixedUsageMetrics, usageLogs: snap.fixedUsageLogs, consumables: snap.fixedConsumables });
       const usage = cost.usageCosts.find((row) => row.metricId) ?? cost.usageCosts[0]!;
       const converted = report.toReport(usage.perUnit, f.baseCurrencyAssetId);
       return {

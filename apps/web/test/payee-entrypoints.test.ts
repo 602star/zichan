@@ -15,10 +15,10 @@ describe('unified payee entry points', () => {
     const snap = makeSnapshot();
     const forms = [scheduledTransactionForm(snap), transactionTemplateForm(snap), fixedAssetForm(snap), fixedEventForm(snap, 'asset'), fixedConsumableForm(snap, 'asset', []), gameRecordForm(snap)];
     const bindings = forms.flatMap((form) => form.fields.filter((field) => field.type === 'payee'));
-    expect(bindings.map((field) => field.key)).toEqual(['payeeId', 'payeeId', 'cashflowPayeeId', 'purchaseMerchant', 'cashflowPayeeId', 'cashflowPayeeId', 'settlementPayeeId', 'feePayeeId']);
+    expect(bindings.map((field) => field.key)).toEqual(['payeeId', 'payeeId', 'purchaseMerchant', 'cashflowPayeeId', 'purchaseMerchant', 'settlementPayeeId', 'feePayeeId']);
     for (const field of bindings) expect(field.payeeBinding?.nameKey).toBeTruthy();
     for (const form of forms) expect(form.fields.some((field) => /商户文本|已有商户/.test(field.label))).toBe(false);
-    expect(bindings.find((field) => field.key === 'purchaseMerchant')?.payeeBinding?.textOnly).toBe(true);
+    expect(bindings.filter((field) => field.key === 'purchaseMerchant').every((field) => field.payeeBinding?.textOnly)).toBe(true);
     expect(bindings.find((field) => field.key === 'settlementPayeeId')?.payeeBinding?.categoryKey).toBe('settlementCategoryId');
   });
 

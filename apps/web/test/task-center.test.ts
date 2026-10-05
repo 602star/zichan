@@ -45,7 +45,7 @@ describe('task center', () => {
     }];
     snap.fixedConsumables = [{
       ...base, id: 'ink', fixedAssetId: fixed.id, name: '墨盒', amountBase: '20', cashflowMode: 'record_only',
-      purchaseDate: '2026-01-01', usageMetricId: 'metric', installedAtUsage: '0', targetLife: '100',
+      purchaseDate: '2026-01-01', installedDate: '2026-01-01', usageMetricId: 'metric', installedAtUsage: '0', targetLife: '100',
       reminderAtRemaining: '10', status: 'active',
     }];
 

@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   archiveMasterData,
+  convertFixedUpgradeToComponent,
   exportLedger,
+  importLedger,
   mergeMasterData,
   preflightImport,
   deleteFixedAssetEvent,
+  restoreDeletedFixedAssetEvent,
   saveFixedAssetAcquisition,
   saveFixedAssetConsumable,
   saveFixedAssetEvent,
@@ -12,6 +15,7 @@ import {
 } from '../src/index.js';
 import { openLedger } from '../src/node.js';
 import {
+  fixedAssetAttributedCost,
   newId,
   transactionReportingEffect,
   type Account,
@@ -133,6 +137,96 @@ describe('P1 correctness boundaries', () => {
     await store.close();
   });
 
+  it('moves a paid component between hosts and credits a bundled part sale to its original host', async () => {
+    const store = await openLedger();
+    const refs = await seedReferences(store);
+    const a = (await saveFixedAssetAcquisition(store, {
+      asset: fixedAsset(refs, '电脑 A'), purchaseAmount: '5000',
+      cashflow: { mode: 'record_only', sourceAmount: '0' },
+    })).asset;
+    const b = (await saveFixedAssetAcquisition(store, {
+      asset: fixedAsset(refs, '电脑 B'), purchaseAmount: '4000',
+      cashflow: { mode: 'record_only', sourceAmount: '0' },
+    })).asset;
+    const ram = (await saveFixedAssetAcquisition(store, {
+      asset: { ...fixedAsset(refs, '新内存'), role: 'component' }, purchaseAmount: '2000',
+      cashflow: { mode: 'record_only', sourceAmount: '0' },
+    })).asset;
+    const original = (await saveFixedAssetAcquisition(store, {
+      asset: { ...fixedAsset(refs, '原配内存'), role: 'component', bundledFromAssetId: a.id }, purchaseAmount: '0',
+      cashflow: { mode: 'record_only', sourceAmount: '0' },
+    })).asset;
+    const placement = (hostAssetId: string, date: string): FixedAssetEvent => ({
+      ...base(), fixedAssetId: ram.id, hostAssetId, type: 'install', date, amountBase: '0',
+    });
+    await saveFixedAssetEvent(store, { event: placement(a.id, '2026-07-23') });
+    await saveFixedAssetEvent(store, { event: placement(b.id, '2026-08-23') });
+    await saveFixedAssetEvent(store, { event: {
+      ...base(), fixedAssetId: original.id, type: 'sale', date: '2026-08-24', amountBase: '400',
+    } });
+    const assets = await store.fixedAssets.list();
+    const events = await store.fixedAssetEvents.list();
+    expect(fixedAssetAttributedCost(a, assets, events, { asOf: '2026-08-25' }).netCost).toBe('4600');
+    expect(fixedAssetAttributedCost(b, assets, events, { asOf: '2026-08-25' }).netCost).toBe('6000');
+    expect((await store.fixedAssets.get(a.id))?.status).toBe('active');
+    expect((await store.fixedAssets.get(original.id))?.status).toBe('sold');
+    const hostSale = { ...base(), fixedAssetId: b.id, type: 'sale' as const, date: '2026-09-01', amountBase: '3000' };
+    await expect(saveFixedAssetEvent(store, { event: hostSale })).rejects.toThrow('选择随整机出售');
+    const soldHost = await saveFixedAssetEvent(store, { event: hostSale, includeComponents: true });
+    expect((await store.fixedAssets.get(ram.id))?.status).toBe('sold');
+    expect((await store.fixedAssetEvents.list({ where: { parentSaleEventId: soldHost.event.id } }))).toHaveLength(1);
+    const deletedHostSale = await deleteFixedAssetEvent(store, soldHost.event);
+    expect((await store.fixedAssets.get(ram.id))?.status).toBe('active');
+    await restoreDeletedFixedAssetEvent(store, deletedHostSale);
+    expect((await store.fixedAssets.get(ram.id))?.status).toBe('sold');
+    expect((await store.fixedAssetEvents.list({ where: { parentSaleEventId: soldHost.event.id } }))).toHaveLength(1);
+    const backup = await exportLedger(store);
+    backup.fixedAssets.reverse();
+    backup.fixedAssetEvents.reverse();
+    const restoredStore = await openLedger();
+    await importLedger(restoredStore, backup);
+    expect((await restoredStore.fixedAssets.get(ram.id))?.status).toBe('sold');
+    expect((await restoredStore.fixedAssetEvents.list({ where: { parentSaleEventId: soldHost.event.id } }))).toHaveLength(1);
+    await restoredStore.close();
+    await expect(saveFixedAssetEvent(store, { event: {
+      ...base(), fixedAssetId: original.id, hostAssetId: a.id,
+      type: 'install', date: '2026-09-01', amountBase: '0',
+    } })).rejects.toThrow('已出售或清退');
+    await store.close();
+  });
+
+  it('converts an existing upgrade into a tracked component without duplicating its expense', async () => {
+    const store = await openLedger();
+    const refs = await seedReferences(store);
+    const host = (await saveFixedAssetAcquisition(store, {
+      asset: fixedAsset(refs, '笔记本'), purchaseAmount: '5000',
+      cashflow: { mode: 'record_only', sourceAmount: '0' },
+    })).asset;
+    const upgrade = await saveFixedAssetEvent(store, {
+      event: { ...base(), fixedAssetId: host.id, type: 'upgrade', date: '2026-08-01', amountBase: '2000' },
+      cashflow: {
+        mode: 'create_transaction', sourceAmount: '2000',
+        createTransaction: { categoryId: refs.expenseLeaf.id, accountId: refs.account.id },
+      },
+    });
+    const component = await convertFixedUpgradeToComponent(store, {
+      upgradeEventId: upgrade.event.id, expectedVersion: upgrade.event.version,
+      component: {
+        ...fixedAsset(refs, '新内存'), role: 'component', purchaseDate: '2026-08-01',
+      },
+    });
+    const converted = await store.fixedAssetEvents.get(upgrade.event.id);
+    const links = await store.fixedAssetCashflowLinks.list({ where: { sourceId: upgrade.event.id } });
+    expect(converted).toMatchObject({ fixedAssetId: component.id, type: 'purchase', amountBase: '2000' });
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({ fixedAssetId: component.id, transactionId: upgrade.transaction!.id });
+    expect((await store.transactions.list()).filter((row) => row.type === 'expense')).toHaveLength(1);
+    expect(fixedAssetAttributedCost(host, await store.fixedAssets.list(), await store.fixedAssetEvents.list(), {
+      asOf: '2026-08-02',
+    }).netCost).toBe('7000');
+    await store.close();
+  });
+
   it('rolls back an acquisition when it over-allocates an existing expense', async () => {
     const store = await openLedger();
     const refs = await seedReferences(store);
@@ -194,6 +288,19 @@ describe('P1 correctness boundaries', () => {
     expect(repairedAgain.transaction).toMatchObject({ id: repair.transaction!.id, amount: '90' });
     expect((await store.fixedAssetCashflowLinks.list({ where: { sourceId: repair.event.id } }))).toHaveLength(1);
 
+    const partSale = await saveFixedAssetEvent(store, {
+      event: {
+        ...base(), fixedAssetId: acquisition.asset.id, type: 'part_sale',
+        date: '2026-08-15', amountBase: '40', note: '旧内存',
+      } as FixedAssetEvent,
+      cashflow: {
+        mode: 'create_transaction', sourceAmount: '40',
+        createTransaction: { categoryId: refs.incomeLeaf.id, accountId: refs.account.id },
+      },
+    });
+    expect(partSale.transaction).toMatchObject({ type: 'income', amount: '40' });
+    expect((await store.fixedAssets.get(acquisition.asset.id))?.status).toBe('active');
+
     const sale = await saveFixedAssetEvent(store, {
       event: {
         ...base(),
@@ -228,6 +335,7 @@ describe('P1 correctness boundaries', () => {
         ...base(),
         fixedAssetId: acquisition.asset.id,
         name: '空调滤芯',
+        purchaseMerchant: '滤芯商店',
         amountBase: '25',
         cashflowMode: 'linked_transaction',
         purchaseDate: '2026-08-15',
@@ -244,6 +352,7 @@ describe('P1 correctness boundaries', () => {
       sourceId: consumable.consumable.id,
       ownership: 'linked',
     });
+    expect(await store.fixedAssetConsumables.get(consumable.consumable.id)).toMatchObject({ purchaseMerchant: '滤芯商店' });
 
     await deleteFixedAssetEvent(store, repairedAgain.event);
     expect(await store.transactions.get(repair.transaction!.id)).toMatchObject({ recordState: 'voided' });

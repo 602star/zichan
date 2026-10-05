@@ -83,8 +83,8 @@
 | `GameAccount` | 游戏账号 | §27.2 | 保留 |
 | `GameSeason` | 赛季 | §27.3 | 保留 |
 | `GameRecord` | 赛季记录流 | §27.4 | 保留 |
-| `FixedAsset` / `FixedAssetCategory` | 物品资料与一级/二级分类 | §16（仅散文） | 扩展 |
-| `FixedAssetEvent` | 购买、启用、维修、残值、卖出、报废、清退、赠出 | §16（仅散文） | 扩展 |
+| `FixedAsset` / `FixedAssetCategory` | 整件物品、可追踪配件与一级/二级分类 | §16（仅散文） | 扩展 |
+| `FixedAssetEvent` | 购入、维修、升级、配件安装/拆下、配件回款、整件出售等事件 | §16（仅散文） | 扩展 |
 | `FixedAssetCashflowLink` | 生命周期事件/耗材与资金流水之间的一对一冻结金额、方向、汇率和所有权 | 新需求 | 新增 |
 | `FixedAssetUsageMetric` / `FixedAssetUsageLog` | 次数、公里、小时、自定义用量 | 新需求 | 新增 |
 | `FixedAssetConsumable` | 滤芯等耗材寿命与提醒 | 新需求 | 新增 |
@@ -114,8 +114,8 @@ Posting { assetId, accountId?, amount(带符号), source: {kind, id}, date }
 
 - `ConversionStep` → 见 §0.3 的过账规则。
 - `GameRecord`（结算腿）→ 结算资产按类型 +/−，手续费独立借。游戏币本身**不过账到余额引擎**（§3.3 记录流，参考余额单独算）。
-- `FixedAssetEvent` / `FixedAssetConsumable` 本身不直接生成 Posting；购买、维修、升级、耗材和出售通过唯一关联的
-  `Transaction` 形成现金流，避免物品成本和流水重复过账。残值、报废、清退和用量不产生现金流。
+- `FixedAssetEvent` / `FixedAssetConsumable` 本身不直接生成 Posting；购入、维修、升级、耗材、配件回款和整件出售可通过唯一关联的
+  `Transaction` 形成现金流，避免物品金额和流水重复过账。参考现值、安装、拆下、报废、清退和用量不产生现金流。
 - `Transaction` → 日常收入按 `+amount`、日常支出按 `-amount`、退款按 `+amount` 回到账户并以 `-refundAppliedAmount` 冲减支出；转账按转出账户 `-amount`、转入账户 `+transferAmount`，且不计入收入/支出。作废记录不产生过账。
 
 `balances(postings)` 聚合出 `{assetId, accountId?} → 净额`。计划书 §28「余额 = 收入 − 支出 − 手续费」是本引擎的特例。
@@ -126,7 +126,7 @@ Posting { assetId, accountId?, amount(带符号), source: {kind, id}, date }
 
 1. **法币 / 加密（严格）**：走余额引擎 + Lot 成本 + 换算链路。BTC/ETH 启用 Lot 与 FIFO/手动配对。
 2. **游戏币（记录流）**：`GameRecord` 不做库存校验，允许卖>买、允许负参考余额；只按 游戏/账号/赛季 统计投入产出回收。
-3. **物品资产（生命周期）**：累计投入与用户输入的当前残值分开；不自动折旧。除按天外，还可按次数、公里、小时或自定义单位计算成本，目标创建后冻结成本基数。购买、维修、升级、耗材和出售都必须明确为仅登记、关联已有流水或同时创建流水，避免遗漏或重复现金流。
+3. **物品资产（生命周期）**：主口径为“累计净投入＝累计支出－累计回款”，参考现值不参与计算，不自动折旧；可追踪配件的成本随最近一次安装归属到整件物品，规则见 [物品资产与配件记账](fixed-asset-components.md)。除按天外，还可按次数、公里、小时或自定义单位计算成本，目标创建后冻结成本基数。购入、维修、升级、耗材和出售都必须明确为仅登记、关联已有流水或同时创建流水，避免遗漏或重复现金流。
 4. **日常支出（生活账本）**：`Setting.ledgerMode` 默认 `'spending'`，该模式的产品入口只新增和展示支出，且 `Transaction.accountId` 可空；页面主入口使用完整的仅支出表单，侧栏/移动端快记与首次引导使用金额优先的简版表单。两者都不要求账户；轻量模式本身仍保留分类、商户、地点、标签、备注、附件及拆分数据能力。切到 `'accounts'` 或 `'assets'` 后才暴露收入、退款、账户转账、状态（待确认/已清算）、预算、账单和 `ReconciliationSession`，并要求需要过账的资金记录选择账户。底层模型仍完整保留全部 `TransactionType`，以便导入历史数据和升级模式。退款通过 `refundForId` 关联有效原支出，以 `refundAppliedAmount/refundAppliedAssetId` 冻结统计冲减口径；`RefundAllocation` 冻结创建时的分类路径和拆分比例。`Setting.refundAttributionMode` 决定回冲原日期或计入退款日期。`recordState` 提供可恢复作废。`Transaction` 还记录日期、时间、时区、二级分类、地点、实体标签、文本备注和附件；`TransactionSplit` 必须精确合计到流水金额；`Category` 支持一级/二级分类和预算；每条 `BudgetCategory` 保存自身 `assetId`，避免默认币种变化后历史预算被重新解释。新个人账本原子创建 10 个不含金额的 `TransactionTemplate`，模板只预填当前打开的支出表单；`TransactionSavedView` 保存普通筛选 + 高级 AND/OR 查询 JSON；`ScheduledTransaction` 负责固定账单。游戏资金关联在 `'spending'` 模式同样允许无账户创建普通收支流水，数据库服务和一致性体检采用相同条件；更深模式继续强制账户。
 
 ---

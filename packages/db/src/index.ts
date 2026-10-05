@@ -135,6 +135,7 @@ export {
   importLedger,
   restoreLedger,
   saveFixedAssetAcquisition,
+  convertFixedUpgradeToComponent,
   saveFixedAssetEvent,
   deleteFixedAssetEvent,
   restoreDeletedFixedAssetEvent,

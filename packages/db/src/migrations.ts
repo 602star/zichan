@@ -8,8 +8,8 @@ import type { SqlDriver } from './driver.js';
 import { MIGRATIONS_TABLE_SQL, schemaStatements } from './schema.js';
 import { TABLES, allCols, type TableSpec } from './tables.js';
 
-export const CURRENT_SCHEMA_VERSION = 125;
-export const CURRENT_SCHEMA_NAME = 'current_schema_2026_10_02_sell_currency_fee_mode';
+export const CURRENT_SCHEMA_VERSION = 127;
+export const CURRENT_SCHEMA_NAME = 'current_schema_2026_10_05_consumable_merchant';
 export const SCHEMA_RESET_REQUIRED_CODE = 'SCHEMA_RESET_REQUIRED';
 
 export class SchemaResetRequiredError extends Error {
@@ -34,6 +34,27 @@ export const MIGRATIONS: Migration[] = [{
     for (const statement of schemaStatements()) await driver.exec(statement);
   },
 }];
+
+async function addFixedComponentColumns(driver: SqlDriver): Promise<void> {
+  for (const [table, column] of [
+    ['fixed_assets', 'role'],
+    ['fixed_assets', 'bundled_from_asset_id'],
+    ['fixed_asset_events', 'host_asset_id'],
+    ['fixed_asset_events', 'parent_sale_event_id'],
+  ] as const) {
+    const existing = await driver.all<{ name: string }>(`PRAGMA table_info(${table})`);
+    if (!existing.some((row) => row.name === column)) await driver.exec(`ALTER TABLE ${table} ADD COLUMN ${column} TEXT`);
+  }
+  await driver.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_fevents_component_placement_day ON fixed_asset_events (fixed_asset_id, date) WHERE is_deleted = 0 AND type IN ('install', 'detach')");
+  await addConsumablePurchaseMerchantColumn(driver);
+}
+
+async function addConsumablePurchaseMerchantColumn(driver: SqlDriver): Promise<void> {
+  const existing = await driver.all<{ name: string }>('PRAGMA table_info(fixed_asset_consumables)');
+  if (!existing.some((row) => row.name === 'purchase_merchant')) {
+    await driver.exec('ALTER TABLE fixed_asset_consumables ADD COLUMN purchase_merchant TEXT');
+  }
+}
 
 const SUPPORT_TABLE_COLUMNS: Record<string, string[]> = {
   conversion_steps: [
@@ -206,9 +227,30 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
   const from122 = applied.length === 1 && applied[0]?.version === 122 && applied[0]?.name === 'current_schema_2026_10_02_game_currency_fee';
   const from123 = applied.length === 1 && applied[0]?.version === 123 && applied[0]?.name === 'current_schema_2026_10_02_game_record_rate';
   const from124 = applied.length === 1 && applied[0]?.version === 124 && applied[0]?.name === 'current_schema_2026_10_02_game_rate_per_quote';
+  const from125 = applied.length === 1 && applied[0]?.version === 125 && applied[0]?.name === 'current_schema_2026_10_02_sell_currency_fee_mode';
+  const from126 = applied.length === 1 && applied[0]?.version === 126 && applied[0]?.name === 'current_schema_2026_10_04_fixed_components';
+  if (from126) {
+    await driver.transaction(async (transaction) => {
+      await addConsumablePurchaseMerchantColumn(transaction);
+      await assertCurrentSchema(transaction);
+      await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',
+        [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
+    });
+    return 1;
+  }
+  if (from125) {
+    await driver.transaction(async (transaction) => {
+      await addFixedComponentColumns(transaction);
+      await assertCurrentSchema(transaction);
+      await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',
+        [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
+    });
+    return 1;
+  }
   if (from124) {
     await driver.transaction(async (transaction) => {
       await transaction.exec('ALTER TABLE game_records ADD COLUMN sell_currency_fee_mode TEXT');
+      await addFixedComponentColumns(transaction);
       await assertCurrentSchema(transaction);
       await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',
         [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
@@ -218,6 +260,7 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
   if (from123) {
     await driver.transaction(async (transaction) => {
       await transaction.exec('ALTER TABLE game_records ADD COLUMN sell_currency_fee_mode TEXT');
+      await addFixedComponentColumns(transaction);
       const rates = await transaction.all<{ id: string; manual_rate: string }>(
         'SELECT id, manual_rate FROM game_records WHERE rate_asset_id IS NOT NULL AND manual_rate IS NOT NULL',
       );
@@ -237,6 +280,7 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
     await driver.transaction(async (transaction) => {
       await transaction.exec('ALTER TABLE game_records ADD COLUMN rate_asset_id TEXT');
       await transaction.exec('ALTER TABLE game_records ADD COLUMN sell_currency_fee_mode TEXT');
+      await addFixedComponentColumns(transaction);
       await assertCurrentSchema(transaction);
       await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',
         [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
@@ -248,6 +292,7 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
       await transaction.exec('ALTER TABLE game_records ADD COLUMN game_currency_fee_amount TEXT');
       await transaction.exec('ALTER TABLE game_records ADD COLUMN rate_asset_id TEXT');
       await transaction.exec('ALTER TABLE game_records ADD COLUMN sell_currency_fee_mode TEXT');
+      await addFixedComponentColumns(transaction);
       await assertCurrentSchema(transaction);
       await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',
         [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
@@ -260,6 +305,7 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
       await transaction.exec('ALTER TABLE game_records ADD COLUMN game_currency_fee_amount TEXT');
       await transaction.exec('ALTER TABLE game_records ADD COLUMN rate_asset_id TEXT');
       await transaction.exec('ALTER TABLE game_records ADD COLUMN sell_currency_fee_mode TEXT');
+      await addFixedComponentColumns(transaction);
       await assertCurrentSchema(transaction);
       await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',
         [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
@@ -284,6 +330,7 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
       await transaction.exec('ALTER TABLE game_records ADD COLUMN game_currency_fee_amount TEXT');
       await transaction.exec('ALTER TABLE game_records ADD COLUMN rate_asset_id TEXT');
       await transaction.exec('ALTER TABLE game_records ADD COLUMN sell_currency_fee_mode TEXT');
+      await addFixedComponentColumns(transaction);
       for (const statement of schemaStatements()) await transaction.exec(statement);
       await assertCurrentSchema(transaction);
       await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?',

@@ -1,6 +1,6 @@
 /** Dashboard view-model — pure selector over a Snapshot (unit-tested). */
 import {
-  D, Decimal, isDateInRange, sum, traceChain, fixedAssetCost, remainingHoldings, gameRecordReportingPostings,
+  D, Decimal, isDateInRange, sum, traceChain, componentCostOwnerAt, fixedAssetAttributedCost, remainingHoldings, gameRecordReportingPostings,
   nextUnhandledDcaOccurrence, usesAssetCostState, dayOfInstant,
   isTransactionActive,
   isLotTrackedAssetType,
@@ -109,7 +109,7 @@ export function buildDashboard(
   for (const fixed of snap.fixedAssets.filter((row) => row.status === 'active' || row.status === 'stored')) {
     const value = converted(
       'netWorth',
-      fixedAssetCost(fixed, snap.fixedEvents, { asOf, usageMetrics: snap.fixedUsageMetrics, usageLogs: snap.fixedUsageLogs, consumables: snap.fixedConsumables }).currentResidual ?? '0',
+      fixedAssetAttributedCost(fixed, snap.fixedAssets, snap.fixedEvents, { asOf, usageMetrics: snap.fixedUsageMetrics, usageLogs: snap.fixedUsageLogs, consumables: snap.fixedConsumables }).currentResidual ?? '0',
       fixed.baseCurrencyAssetId,
     );
     if (value) fixedValues.push(value);
@@ -117,7 +117,7 @@ export function buildDashboard(
   const fixedValue = sum(fixedValues);
   const alloc: Alloc[] = [...financial];
   if (fixedValue.isPositive()) {
-    alloc.push({ name: '物品资产', note: '在用及收纳物品现状残值', value: fixedValue.toString(), weight: 0 });
+    alloc.push({ name: '物品资产', note: '在用及收纳物品参考现值', value: fixedValue.toString(), weight: 0 });
   }
   const total = sum(alloc.map((a) => a.value));
   const netWorthComplete = !incompleteMetrics.has('netWorth');
@@ -179,10 +179,11 @@ export function buildDashboard(
   }
   const seasonNet = sum(seasonValues);
   const fixedPerDay = sum(snap.fixedAssets
-    .filter((f) => f.status === 'active')
+    .filter((f) => f.status === 'active'
+      && !(f.role === 'component' && componentCostOwnerAt(f, snap.fixedEvents, asOf)))
     .map((f) => converted(
       'fixedPerDay',
-      fixedAssetCost(f, snap.fixedEvents, { asOf, usageMetrics: snap.fixedUsageMetrics, usageLogs: snap.fixedUsageLogs, consumables: snap.fixedConsumables }).perDay,
+      fixedAssetAttributedCost(f, snap.fixedAssets, snap.fixedEvents, { asOf, usageMetrics: snap.fixedUsageMetrics, usageLogs: snap.fixedUsageLogs, consumables: snap.fixedConsumables }).perDay,
       f.baseCurrencyAssetId,
     ))
     .filter((value): value is Decimal => value !== undefined));

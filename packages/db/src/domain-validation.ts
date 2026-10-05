@@ -53,7 +53,7 @@ const GAME_RECORD_TYPES = new Set([
 ]);
 const FIXED_ASSET_STATUSES = new Set(['active', 'stored', 'sold', 'scrapped', 'retired', 'gifted']);
 const FIXED_EVENT_TYPES = new Set([
-  'purchase', 'activate', 'repair', 'upgrade', 'residual_update',
+  'purchase', 'activate', 'repair', 'upgrade', 'part_sale', 'install', 'detach', 'residual_update',
   'warranty_expire', 'sale', 'scrap', 'retire', 'gift',
 ]);
 
@@ -348,6 +348,8 @@ async function entityReferenceCount(driver: SqlDriver, entityType: string, id: s
         + (await attachmentReferenceCount(driver, 'game_record', id));
     case 'fixed_asset':
       return (await activeCount(driver, 'fixed_asset_events', 'fixed_asset_id = ?', [id]))
+        + (await activeCount(driver, 'fixed_asset_events', 'host_asset_id = ?', [id]))
+        + (await activeCount(driver, 'fixed_assets', 'bundled_from_asset_id = ?', [id]))
         + (await activeCount(driver, 'fixed_asset_cashflow_links', 'fixed_asset_id = ?', [id]))
         + (await activeCount(driver, 'fixed_asset_usage_metrics', 'fixed_asset_id = ?', [id]))
         + (await activeCount(driver, 'fixed_asset_usage_logs', 'fixed_asset_id = ?', [id]))
@@ -356,6 +358,7 @@ async function entityReferenceCount(driver: SqlDriver, entityType: string, id: s
         + (await attachmentReferenceCount(driver, 'fixed_asset', id));
     case 'fixed_asset_event':
       return (await activeCount(driver, 'fixed_asset_cashflow_links', "source_type = 'event' AND source_id = ?", [id]))
+        + (await activeCount(driver, 'fixed_asset_events', 'parent_sale_event_id = ?', [id]))
         + (await attachmentReferenceCount(driver, 'fixed_asset_event', id));
     case 'fixed_asset_consumable':
       return (await activeCount(driver, 'fixed_asset_cashflow_links', "source_type = 'consumable' AND source_id = ?", [id]))
@@ -968,10 +971,22 @@ async function validateReferenceEntity(
       await activeAsset(driver, String(row['baseCurrencyAssetId'] ?? ''), 'baseCurrencyAssetId', allowInactiveReferences);
       requireText(row['name'], '物品名称', 'name');
       if (!FIXED_ASSET_STATUSES.has(String(row['status']))) fail('物品状态无效', 'status');
+      if (row['role'] && !['item', 'component'].includes(String(row['role']))) fail('物品用途无效', 'role');
+      if (row['bundledFromAssetId']) {
+        if (row['role'] !== 'component' || row['bundledFromAssetId'] === row['id']) fail('原配件来源无效', 'bundledFromAssetId');
+        await ref(TABLES.fixedAssets, row['bundledFromAssetId'], 'bundledFromAssetId', '原配件所属物品');
+      }
       normalizeOccurrence({ date: String(row['purchaseDate'] ?? ''), timePrecision: 'day' });
       break;
     case 'fixed_asset_event':
       await ref(TABLES.fixedAssets, row['fixedAssetId'], 'fixedAssetId', '物品资产');
+      if (row['parentSaleEventId']) await ref(TABLES.fixedAssetEvents, row['parentSaleEventId'], 'parentSaleEventId', '整件出售事件');
+      if (row['hostAssetId']) {
+        if (row['hostAssetId'] === row['fixedAssetId']) fail('配件不能安装在自身', 'hostAssetId');
+        await ref(TABLES.fixedAssets, row['hostAssetId'], 'hostAssetId', '安装目标物品');
+      }
+      if (row['type'] === 'install' && !row['hostAssetId']) fail('请选择安装目标物品', 'hostAssetId');
+      if (row['type'] !== 'install' && row['hostAssetId']) fail('只有安装事件可指定目标物品', 'hostAssetId');
       if (!FIXED_EVENT_TYPES.has(String(row['type']))) fail('物品事件类型无效', 'type');
       normalizeOccurrence({ date: String(row['date'] ?? ''), timePrecision: 'day' });
       if (decimal(row['amountBase'], '事件金额', 'amountBase').lt(0)) fail('事件金额不能小于 0', 'amountBase');

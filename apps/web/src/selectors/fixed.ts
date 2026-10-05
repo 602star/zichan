@@ -1,7 +1,9 @@
 /** Physical-item view model — pure selector over a Snapshot. */
 import {
   D,
-  fixedAssetCost,
+  componentCostOwnerAt,
+  componentHostAt,
+  fixedAssetAttributedCost,
   fixedConsumableRemaining,
   fixedGoalProgress,
   fixedUsageTotal,
@@ -20,10 +22,19 @@ import type { Snapshot } from '../db/snapshot.js';
 import { amount as fmtAmount, money } from '../format.js';
 
 const EVENT_LABEL: Record<FixedEventType, string> = {
-  purchase: '购买', activate: '启用', repair: '维修', upgrade: '升级',
-  residual_update: '更新残值', warranty_expire: '保修到期', sale: '卖出',
+  purchase: '购入物品', activate: '启用', repair: '维修支出', upgrade: '升级／改造支出',
+  install: '安装／转装配件', detach: '拆下配件',
+  part_sale: '卖出配件', residual_update: '更新参考现值', warranty_expire: '保修到期', sale: '卖出整件物品',
   scrap: '报废', retire: '清退', gift: '赠出',
 };
+
+export function canPlaceFixedComponent(asset: FixedAsset): boolean {
+  return !asset.isDeleted && (asset.status === 'active' || asset.status === 'stored');
+}
+
+export function canConvertFixedUpgrade(asset: FixedAsset, event: FixedAssetEvent): boolean {
+  return canPlaceFixedComponent(asset) && !event.isDeleted && event.type === 'upgrade' && D(event.amountBase).gt(0);
+}
 
 const STATUS_LABEL: Record<FixedAsset['status'], string> = {
   active: '使用中', stored: '闲置/库存', sold: '已售出', scrapped: '已报废', retired: '已清退', gifted: '已赠出',
@@ -40,10 +51,19 @@ function joinDetail(...parts: (string | undefined)[]): string {
 }
 
 function dotColor(type: FixedEventType): string {
-  if (type === 'purchase' || type === 'activate') return 'var(--accent)';
-  if (type === 'sale') return 'var(--positive)';
-  if (type === 'repair' || type === 'scrap') return 'var(--negative)';
+  if (type === 'purchase' || type === 'repair' || type === 'upgrade') return 'var(--negative)';
+  if (type === 'sale' || type === 'part_sale') return 'var(--positive)';
+  if (type === 'activate') return 'var(--accent)';
   return 'var(--fg-subtle)';
+}
+
+export type FixedTimelineMoneyKind = 'spend' | 'recover' | 'reference';
+
+function eventMoneyKind(type: FixedEventType): FixedTimelineMoneyKind | undefined {
+  if (type === 'purchase' || type === 'repair' || type === 'upgrade') return 'spend';
+  if (type === 'part_sale' || type === 'sale') return 'recover';
+  if (type === 'residual_update') return 'reference';
+  return undefined;
 }
 
 export interface FixedTimelineVM {
@@ -52,6 +72,7 @@ export interface FixedTimelineVM {
   label: string;
   detail: string;
   amount?: string;
+  moneyKind?: FixedTimelineMoneyKind;
   color: string;
   kind: 'event' | 'usage' | 'consumable';
   raw: FixedAssetEvent | FixedAssetUsageLog | FixedAssetConsumable;
@@ -84,6 +105,10 @@ export interface FixedConsumableVM {
 export interface FixedCardVM {
   id: string;
   name: string;
+  isComponent: boolean;
+  installedIn?: string;
+  costOwner?: string;
+  installedComponents: string[];
   category: string;
   categoryParent: string;
   tag: string;
@@ -93,7 +118,9 @@ export interface FixedCardVM {
   perDay: string;
   net: string;
   invested: string;
+  recovered: string;
   residual: string;
+  referenceValue?: string;
   currencyCode: string;
   currencySymbol: string;
   imageAttachment?: Attachment;
@@ -112,6 +139,7 @@ export interface FixedCardVM {
 export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
   const categoryById = new Map(snap.fixedAssetCategories.map((category) => [category.id, category]));
   const assetById = new Map(snap.assets.map((asset) => [asset.id, asset]));
+  const fixedById = new Map(snap.fixedAssets.map((asset) => [asset.id, asset]));
   return snap.fixedAssets.map((asset): FixedCardVM => {
     const events = snap.fixedEvents.filter((event) => event.fixedAssetId === asset.id).sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
     const metrics = snap.fixedUsageMetrics.filter((metric) => metric.fixedAssetId === asset.id && metric.isActive);
@@ -121,7 +149,7 @@ export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
     const cashflowBySource = new Map(snap.fixedCashflowLinks
       .filter((link) => !link.isDeleted && link.fixedAssetId === asset.id)
       .map((link) => [`${link.sourceType}:${link.sourceId}`, link]));
-    const cost = fixedAssetCost(asset, events, { asOf, usageMetrics: metrics, usageLogs: logs, consumables });
+    const cost = fixedAssetAttributedCost(asset, snap.fixedAssets, snap.fixedEvents, { asOf, usageMetrics: metrics, usageLogs: logs, consumables });
     const currency = assetById.get(asset.baseCurrencyAssetId);
     const cash = (value: string) => money(value, currency?.symbol ?? currency?.code ?? '', currency?.decimals ?? 2);
     const category = categoryById.get(asset.categoryId);
@@ -150,6 +178,7 @@ export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
     const timeline: FixedTimelineVM[] = [
       ...events.map((event): FixedTimelineVM => {
         const link = cashflowBySource.get(`event:${event.id}`);
+        const moneyKind = eventMoneyKind(event.type);
         return {
           id: event.id,
           date: event.date,
@@ -157,9 +186,11 @@ export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
           detail: joinDetail(
             event.cashflowMode ? CASHFLOW_LABEL[event.cashflowMode] : undefined,
             link || event.cashflowMode === 'record_only' ? undefined : event.cashflowMode ? '资金关联缺失' : undefined,
+            event.type === 'install' ? `目标：${fixedById.get(event.hostAssetId ?? '')?.name ?? '未知物品'}` : undefined,
             event.note,
           ),
-          amount: event.amountBase !== '0' ? cash(event.amountBase) : undefined,
+          amount: moneyKind && (D(event.amountBase).gt(0) || moneyKind === 'reference') ? cash(event.amountBase) : undefined,
+          moneyKind,
           color: dotColor(event.type),
           kind: 'event',
           raw: event,
@@ -173,14 +204,19 @@ export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
         const link = cashflowBySource.get(`consumable:${item.id}`);
         const rows: FixedTimelineVM[] = [{
           id: item.id,
-          date: item.installedDate ?? item.purchaseDate,
-          label: '安装耗材',
+          date: item.purchaseDate,
+          label: item.installedDate === item.purchaseDate ? '购入并安装耗材' : '购入耗材',
           detail: joinDetail(item.name, CASHFLOW_LABEL[item.cashflowMode], link ? undefined : item.cashflowMode === 'record_only' ? undefined : '资金关联缺失'),
-          amount: item.amountBase !== '0' ? cash(item.amountBase) : undefined,
-          color: 'var(--text-tertiary)',
+          amount: D(item.amountBase).gt(0) ? cash(item.amountBase) : undefined,
+          moneyKind: 'spend',
+          color: 'var(--negative)',
           kind: 'consumable',
           raw: item,
         }];
+        if (item.installedDate && item.installedDate !== item.purchaseDate) rows.push({
+          id: `${item.id}:install`, date: item.installedDate, label: '安装耗材', detail: item.name,
+          color: 'var(--fg-subtle)', kind: 'consumable', raw: item,
+        });
         if (item.replacedDate) rows.push({ id: `${item.id}:terminal`, date: item.replacedDate, label: item.status === 'replaced' ? '更换耗材' : '丢弃耗材', detail: item.name, color: item.status === 'replaced' ? 'var(--accent)' : 'var(--negative)', kind: 'consumable', raw: item });
         return rows;
       }),
@@ -188,6 +224,10 @@ export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
     return {
       id: asset.id,
       name: asset.name,
+      isComponent: asset.role === 'component',
+      installedIn: asset.role === 'component' ? fixedById.get(componentHostAt(asset.id, snap.fixedEvents, asOf) ?? '')?.name : undefined,
+      costOwner: asset.role === 'component' ? fixedById.get(componentCostOwnerAt(asset, snap.fixedEvents, asOf) ?? '')?.name : undefined,
+      installedComponents: snap.fixedAssets.filter((row) => row.role === 'component' && componentHostAt(row.id, snap.fixedEvents, asOf) === asset.id).map((row) => row.name),
       category: category?.name ?? '待分类',
       categoryParent: parent?.name ?? category?.name ?? '其他物品',
       tag: asset.tag ?? '',
@@ -197,7 +237,9 @@ export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
       perDay: cost.perDay,
       net: cost.netCost,
       invested: cost.investedCost,
+      recovered: cost.recoveredCost,
       residual: cost.salePrice ?? cost.currentResidual ?? '0',
+      referenceValue: cost.currentResidual,
       currencyCode: currency?.code ?? '',
       currencySymbol: currency?.symbol ?? currency?.code ?? '',
       imageAttachment,
@@ -206,10 +248,10 @@ export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
       attachmentCount: itemAttachments.length,
       invoiceCount: itemAttachments.filter((attachment) => attachment.role === 'invoice').length,
       rows: [
-        { l: '累计投入', v: cash(cost.investedCost) },
-        { l: cost.basis === 'final' ? '最终回收' : '当前残值', v: cash(cost.salePrice ?? cost.currentResidual ?? '0') },
-        { l: '维修升级', v: cash(D(cost.repair).plus(cost.upgrade).toString()) },
-        { l: '耗材成本', v: cash(cost.consumable) },
+        { l: '累计支出', v: cash(cost.investedCost) },
+        { l: '累计回款', v: cash(cost.recoveredCost) },
+        { l: '维修／升级支出', v: cash(D(cost.repair).plus(cost.upgrade).toString()) },
+        { l: '耗材支出', v: cash(cost.consumable) },
       ],
       raw: asset,
       metrics: metricVMs,

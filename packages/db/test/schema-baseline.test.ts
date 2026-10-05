@@ -25,6 +25,37 @@ async function removeCostV2Schema(driver: NodeSqliteDriver): Promise<void> {
 }
 
 describe('current development schema baseline', () => {
+  it('upgrades schema 126 with a consumable merchant column while keeping existing records', async () => {
+    const driver = new NodeSqliteDriver();
+    await runMigrations(driver, log);
+    await driver.run("INSERT INTO fixed_asset_consumables (id, name, amount_base, purchase_date, version, is_deleted) VALUES ('old-ink', '旧墨盒', '20', '2026-01-01', 3, 0)");
+    await driver.exec('ALTER TABLE fixed_asset_consumables DROP COLUMN purchase_merchant');
+    await driver.run("UPDATE schema_migrations SET version = 126, name = 'current_schema_2026_10_04_fixed_components'");
+
+    expect(await runMigrations(driver, log)).toBe(1);
+    await expect(assertCurrentSchema(driver)).resolves.toBeUndefined();
+    expect(await driver.all('SELECT id, name, version, purchase_merchant FROM fixed_asset_consumables'))
+      .toEqual([{ id: 'old-ink', name: '旧墨盒', version: 3, purchase_merchant: null }]);
+    await driver.close();
+  });
+
+  it('upgrades schema 125 with component columns while keeping existing items', async () => {
+    const driver = new NodeSqliteDriver();
+    await runMigrations(driver, log);
+    await driver.run("INSERT INTO fixed_assets (id, name, is_deleted, version) VALUES ('old-laptop', '旧电脑', 0, 1)");
+    await driver.exec('ALTER TABLE fixed_assets DROP COLUMN role');
+    await driver.exec('ALTER TABLE fixed_assets DROP COLUMN bundled_from_asset_id');
+    await driver.exec('ALTER TABLE fixed_asset_events DROP COLUMN host_asset_id');
+    await driver.exec('ALTER TABLE fixed_asset_events DROP COLUMN parent_sale_event_id');
+    await driver.run("UPDATE schema_migrations SET version = 125, name = 'current_schema_2026_10_02_sell_currency_fee_mode'");
+
+    expect(await runMigrations(driver, log)).toBe(1);
+    await expect(assertCurrentSchema(driver)).resolves.toBeUndefined();
+    expect(await driver.all('SELECT id, name, role, bundled_from_asset_id FROM fixed_assets'))
+      .toEqual([{ id: 'old-laptop', name: '旧电脑', role: null, bundled_from_asset_id: null }]);
+    await driver.close();
+  });
+
   it('creates and verifies only the current schema', async () => {
     const driver = new NodeSqliteDriver();
     expect(await runMigrations(driver, log)).toBe(1);
