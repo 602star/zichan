@@ -8,7 +8,7 @@
 `@zichan/sync-server` 可在一个进程中提供 Web、密文同步和管理员 API，适合云主机、NAS 或家中常开的固定 IP 电脑。`ENABLE_WEB` 与 `ENABLE_SYNC` 可独立开关；`BASE_PATH=/home-ledger` 会把 Web、同步和管理端点统一挂到安全路径下。
 只把 `apps/web/dist` 上传到静态文件托管只能得到浏览器前端，浏览器没有权限启动 Node 同步服务；需要同步时必须另外运行本服务，或直接使用其 Web + API 一体化部署。
 
-与用户和账本相关的服务端持久状态只包含 OPAQUE 注册记录、设备会话的 refresh token HMAC、随机托管凭据或恢复码包装的密钥封套、加密托管凭据、密文提交、密文附件分块、已加密 `.zcbak` 归档及必要目录元数据，不保存账号密码。服务器自身另外持久化 `server.secret`、`custody.key`、`server-id`、`opaque.server-setup` 和首次初始化使用的 `owner-setup.secret`。账本字段、附件文件名、MIME、明文 SHA-256 和正文不会以明文上传；备份归档的创建时间、原因、类型、显示标签、大小和代次属于服务器可见的目录元数据。不同服务器可使用不同用户名和账号密码；这些登录凭据不参与账本加密。附件对象 ID 和分块密钥由会话中的账本附件密钥按服务器、账本和用户名作用域派生。
+与用户和账本相关的服务端持久状态包含登录账号与昵称、可选的已验证或待验证邮箱及通知偏好、邮件验证码摘要与配额通知队列、OPAQUE 注册记录、设备会话的 refresh token HMAC、随机托管凭据或恢复码包装的密钥封套、加密托管凭据、密文提交、密文附件分块、已加密 `.zcbak` 归档及必要目录元数据，不保存账号密码。服务器自身另外持久化 `server.secret`、`custody.key`、`server-id`、`opaque.server-setup` 和首次初始化使用的 `owner-setup.secret`。账本字段、附件文件名、MIME、明文 SHA-256 和正文不会以明文上传；备份归档的创建时间、原因、类型、显示标签、大小和代次属于服务器可见的目录元数据。不同服务器可使用不同用户名和账号密码；这些登录凭据不参与账本加密。附件对象 ID 和分块密钥由会话中的账本附件密钥按服务器、账本和用户名作用域派生。
 
 ## 当前 API
 
@@ -57,8 +57,8 @@ Windows 也可双击 `scripts\windows\start-sync-server.cmd`。该开发入口�
 
 - `DATA_DIR`：完整服务器数据目录；包含 `server.sqlite`、服务器身份/密钥和 `blobs/`。独立 sync-server
   开发运行可使用 workspace `server-data`，脚本和便携内置入口必须显式传入；便携 bundle 缺少该变量时直接失败。
-- `COMMIT_QUOTA_BYTES`：每个用户的默认密文提交配额，默认 512 MiB；管理员可逐用户覆盖。
-- `ATTACHMENT_QUOTA_BYTES`：默认用户配额，默认 2 GiB；管理员可逐用户覆盖。
+- `COMMIT_QUOTA_BYTES`：普通用户与只读运维的默认密文提交配额，默认 20 GiB；管理员可逐用户覆盖。
+- `ATTACHMENT_QUOTA_BYTES`：普通用户与只读运维的默认附件配额，默认 20 GiB；管理员可逐用户覆盖。所有者和管理员的两类配额均无限，仍受单文件大小和服务器实际磁盘空间限制。
 - `ATTACHMENT_MAX_FILE_BYTES`：单个明文附件上限，默认 100 MiB。
 - `ATTACHMENT_TRASH_RETENTION_MS`：回收区保留期，默认 30 天。
 - `REGISTRATION_MODE`：`open`、`invite` 或 `closed`，新服务器默认 `invite`；仅所有者可在管理页动态修改。已有库的策略不被部署默认值覆盖。

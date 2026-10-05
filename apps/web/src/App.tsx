@@ -69,6 +69,7 @@ const Reports = lazy(() => import('./screens/Reports.js').then((module) => ({ de
 const Manage = lazy(() => import('./screens/Manage.js').then((module) => ({ default: module.Manage })));
 const Transactions = lazy(() => import('./screens/Transactions.js').then((module) => ({ default: module.Transactions })));
 const Settings = lazy(() => import('./screens/Settings.js').then((module) => ({ default: module.Settings })));
+const Account = lazy(() => import('./screens/Account.js').then((module) => ({ default: module.Account })));
 const Sync = lazy(() => import('./screens/Sync.js').then((module) => ({ default: module.Sync })));
 const History = lazy(() => import('./screens/History.js').then((module) => ({ default: module.History })));
 
@@ -79,12 +80,12 @@ const SCREEN_IDS = new Set<ScreenId>(NAVIGATION_ITEMS.map((item) => item.id));
 /**
  * Screens a preview must never open.
  *
- * 同步 and 设置 describe the device the page runs on: saved connections, backup files, storage
+ * 同步、我的账号 and 设置 describe the operator's own device or account: saved connections, backup files, storage
  * quota. Against someone else's ledger those readings are not merely unhelpful, they are wrong
  * about the user — "还没有本地备份" is a claim about their data based on the operator's machine.
  * The preview therefore offers the ledger screens and says so; it does not fake device facts.
  */
-export const PREVIEW_HIDDEN_SCREENS: readonly ScreenId[] = ['sync', 'settings'];
+export const PREVIEW_HIDDEN_SCREENS: readonly ScreenId[] = ['sync', 'account', 'settings'];
 
 /** Redirect a screen the preview cannot honestly show, so a deep link lands somewhere real. */
 export function clampPreviewScreen(screen: ScreenId): ScreenId {
@@ -126,6 +127,7 @@ const META: Record<ScreenId, [string, string]> = {
   history: ['操作历史', '改前改后 · 批量操作 · 冲突解决记录'],
   manage: ['管理', '资产 · 分类 · 商户 · 价格'],
   sync: ['同步', '账号同步 · 加密数据与冲突处理'],
+  account: ['我的账号', '个人资料 · 存储配额 · 账号安全'],
   settings: ['设置', '记账模式 · 数据自检 · 备份'],
 };
 
@@ -604,6 +606,7 @@ export function App() {
                 `screen` value must not land on them in a preview, so they are refused here too
                 rather than only hidden from the navigation. */}
             {screen === 'sync' && !preview && <Sync />}
+            {screen === 'account' && !preview && <Account />}
             {screen === 'settings' && !preview && (
               <Settings
                 theme={theme}

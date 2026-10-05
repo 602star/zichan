@@ -566,7 +566,9 @@ export function createAdminRouter(deps: AdminRouterDeps) {
           blobObjectCount: usage.objectCount,
           blobTrashBytes: usage.trashBytes,
           blobStagingBytes: usage.stagingBytes,
-          quotaNote: '提交、有效附件、回收站与暂存上传都计入各自配额；降低上限不会删除已有数据，只限制后续上传。',
+          quotaNote: usage.quotaBytes === null
+            ? '所有者和管理员无限额；单文件大小与服务器实际磁盘空间仍有限制。'
+            : '提交、有效附件、回收站与暂存上传都计入各自配额；降低上限不会删除已有数据，只限制后续上传。',
         },
       });
     }

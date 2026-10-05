@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { AccountActions, type AccountActionMode } from './AccountActions.js';
-import { PageHeader, FilterBar, Badge, Button, ColumnPicker, CopyValue, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, bytes, canEditAccountQuota, canManageAccount, muted, roleLabel, row, useCursorPager, useHiddenColumns, useResource, useRowSelection, when } from './ui.js';
+import { PageHeader, FilterBar, Badge, Button, ColumnPicker, CopyValue, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, bytes, canEditAccountQuota, canManageAccount, muted, quotaLimit, roleLabel, row, useCursorPager, useHiddenColumns, useResource, useRowSelection, when } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
 import { BULK_LABELS, partitionSelection, runBulkAction, type BulkAction, type BulkOutcome } from './bulk-actions.js';
 import type { AccountRow } from './types.js';
@@ -124,7 +124,7 @@ export function UsersPage({ client, query, navigate, role }: {
 
   const canManage = (user: AccountRow) => canManageAccount(role, user.role);
   const columns = [
-    { key: 'username', header: '用户名', ...sortHeader('name', '用户名'), render: (user: AccountRow) => <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => navigate(`/users/${user.accountId}`)}>{user.username}</button> },
+    { key: 'username', header: '登录账号 / 昵称', ...sortHeader('name', '登录账号'), render: (user: AccountRow) => <span><button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => navigate(`/users/${user.accountId}`)}>{user.username}</button>{user.displayName && <span style={{ display: 'block', ...muted }}>{user.displayName}</span>}</span> },
     { key: 'role', header: '角色', render: (user: AccountRow) => roleLabel(user.role) },
     { key: 'state', header: '启用状态', render: (user: AccountRow) => user.disabled ? <Badge tone="bad">已禁用</Badge> : <Badge tone="ok">正常</Badge> },
     // The account id is what appears in logs, audit rows and support tickets, but the list only
@@ -136,8 +136,8 @@ export function UsersPage({ client, query, navigate, role }: {
     {
       key: 'quota', header: '容量使用率', ...sortHeader('usage', '容量使用率'), render: (user: AccountRow) => (
         <span>
-          <Badge tone={quotaTone(user.quotaState)}>{quotaLabel(user.quotaState)}</Badge>{' '}
-          <span style={muted}>{bytes(user.commitBytes)} / {bytes(user.commitQuotaBytes)}</span>
+          <Badge tone={quotaTone(user.quotaState)}>{user.commitQuotaBytes === null ? '无限' : quotaLabel(user.quotaState)}</Badge>{' '}
+          <span style={muted}>{bytes(user.commitBytes)} / {quotaLimit(user.commitQuotaBytes)}</span>
         </span>
       ),
     },
@@ -168,7 +168,7 @@ export function UsersPage({ client, query, navigate, role }: {
       <PageHeader title="用户管理" description="查找账号、预览记账，或直接处理访问与配额。" actions={<><Button onClick={list.reload}>刷新</Button></>} />
       <FilterBar note="筛选条件会写入地址栏；分享或刷新链接会保留当前视图。">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-          <Field label="用户名或 accountId">
+          <Field label="登录账号、昵称或 accountId">
             <TextInput value={searchDraft} maxLength={128} onChange={(event) => setSearchDraft(event.target.value)}
               onKeyDown={(event) => { if (event.key === 'Enter') update({ search: searchDraft }); }} />
           </Field>

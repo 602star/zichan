@@ -21,7 +21,7 @@ import { NodeSqliteDriver } from '@zichan/db/node';
 const BLOB_ID = /^[a-f0-9]{64}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const UPLOAD_ID = /^[a-f0-9]{32}$/;
-const DEFAULT_QUOTA_BYTES = 2 * 1024 * 1024 * 1024;
+const DEFAULT_QUOTA_BYTES = 20 * 1024 * 1024 * 1024;
 const DEFAULT_MAX_BLOB_BYTES = 100 * 1024 * 1024;
 const DEFAULT_UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CHUNKS = 512;
@@ -48,18 +48,20 @@ export interface BlobStoreOptions {
   maxBlobBytes?: number;
   uploadTtlMs?: number;
   trashRetentionMs?: number;
+  /** Owner and administrators are exempt from storage quotas on the sync server. */
+  isUnlimitedAccount?: (username: string) => Promise<boolean>;
 }
 
 export interface BlobUploadPlan {
   status: 'available' | 'upload';
   uploadId?: string;
   missingChunks: number[];
-  quotaBytes: number;
+  quotaBytes: number | null;
   usedBytes: number;
 }
 
 export interface BlobUsage {
-  quotaBytes: number;
+  quotaBytes: number | null;
   usedBytes: number;
   objectCount: number;
   trashBytes: number;
@@ -259,6 +261,7 @@ export class EncryptedBlobStore {
   private readonly maxBlobBytes: number;
   private readonly uploadTtlMs: number;
   private readonly trashRetentionMs: number;
+  private readonly isUnlimitedAccount?: (username: string) => Promise<boolean>;
   private uploadLock: Promise<void> = Promise.resolve();
   private cleanupTimer?: ReturnType<typeof setInterval>;
   private cleanupState: CleanupStatus = {
@@ -273,6 +276,7 @@ export class EncryptedBlobStore {
     mkdirSync(this.dataDir, { recursive: true });
     this.driver = new NodeSqliteDriver(join(this.dataDir, 'server.sqlite'));
     this.quotaBytes = options.quotaBytes ?? DEFAULT_QUOTA_BYTES;
+    this.isUnlimitedAccount = options.isUnlimitedAccount;
     this.maxBlobBytes = options.maxBlobBytes ?? DEFAULT_MAX_BLOB_BYTES;
     this.uploadTtlMs = options.uploadTtlMs ?? DEFAULT_UPLOAD_TTL_MS;
     this.trashRetentionMs = options.trashRetentionMs ?? 30 * 24 * 60 * 60 * 1000;
@@ -385,7 +389,7 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
     const trash = rows.find((row) => row.state === 'trash');
     const quota = await this.driver.get<{ quota_bytes: number }>('SELECT quota_bytes FROM blob_user_quotas WHERE username = ?', [username]);
     return {
-      quotaBytes: Number(quota?.quota_bytes ?? this.quotaBytes),
+      quotaBytes: await this.isUnlimitedAccount?.(username) ? null : Number(quota?.quota_bytes ?? this.quotaBytes),
       usedBytes: Number(available?.bytes ?? 0) + Number(trash?.bytes ?? 0) + Number(staging?.bytes ?? 0),
       objectCount: Number(available?.count ?? 0),
       trashBytes: Number(trash?.bytes ?? 0),
@@ -449,7 +453,7 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
         return { status: 'upload', uploadId: active.upload_id, missingChunks: manifest.chunks.map((chunk) => chunk.index).filter((index) => !done.has(index)), quotaBytes: usage.quotaBytes, usedBytes: usage.usedBytes };
       }
       const usage = await this.usage(username);
-      if (usage.usedBytes + manifest.cipherBytes > usage.quotaBytes) throw Object.assign(new Error('attachment quota exceeded'), { code: 'QUOTA_EXCEEDED' });
+      if (usage.quotaBytes !== null && usage.usedBytes + manifest.cipherBytes > usage.quotaBytes) throw Object.assign(new Error('attachment quota exceeded'), { code: 'QUOTA_EXCEEDED' });
       const uploadId = randomBytes(16).toString('hex');
       const ns = namespace(username, ledgerId);
       const createdAt = nowIso();

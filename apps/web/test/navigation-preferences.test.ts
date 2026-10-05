@@ -9,13 +9,14 @@ import {
 } from '../src/navigationPreferences.js';
 
 describe('navigation preferences', () => {
-  it('starts a new ledger with overview, daily cash flow, item assets, and settings', () => {
+  it('starts a new ledger with overview, daily cash flow, item assets, account, and settings', () => {
     const preferences = defaultNavigationPreferences();
 
     expect(orderedNavigationItems(preferences).map((item) => item.id)).toEqual([
       'dashboard',
       'transactions',
       'fixed',
+      'account',
       'settings',
     ]);
   });
@@ -37,7 +38,7 @@ describe('navigation preferences', () => {
     preferences = moveNavigationItem(preferences, 'manage', -1);
     const restored = parseNavigationPreferences(serializeNavigationPreferences(preferences));
 
-    expect(restored.visible).toEqual(['dashboard', 'transactions', 'manage', 'fixed', 'settings']);
+    expect(restored.visible).toEqual(['dashboard', 'transactions', 'manage', 'fixed', 'account', 'settings']);
     expect(restored.order.indexOf('manage')).toBeLessThan(restored.order.indexOf('fixed'));
   });
 
@@ -46,9 +47,10 @@ describe('navigation preferences', () => {
     preferences = setNavigationItemVisible(preferences, 'transactions', false);
     preferences = setNavigationItemVisible(preferences, 'settings', false);
 
-    expect(preferences.visible).toEqual(['dashboard', 'transactions', 'fixed', 'settings']);
+    expect(preferences.visible).toEqual(['dashboard', 'transactions', 'fixed', 'account', 'settings']);
     expect(parseNavigationPreferences('{"version":1,"order":[],"visible":[]}').visible).toEqual([
       'transactions',
+      'account',
       'settings',
     ]);
   });
@@ -60,8 +62,13 @@ describe('navigation preferences', () => {
 
     expect(parsed.order[0]).toBe('dashboard');
     expect(new Set(parsed.order).size).toBe(parsed.order.length);
-    expect(parsed.visible).toEqual(['dashboard', 'transactions', 'settings']);
+    expect(parsed.visible).toEqual(['dashboard', 'transactions', 'account', 'settings']);
     expect(parseNavigationPreferences('{broken')).toEqual(defaultNavigationPreferences());
     expect(parseNavigationPreferences('{}')).toEqual(defaultNavigationPreferences());
+  });
+
+  it('shows the new account page in previously saved navigation', () => {
+    const saved = JSON.stringify({ version: 1, order: ['dashboard', 'transactions', 'settings'], visible: ['dashboard', 'transactions', 'settings'] });
+    expect(parseNavigationPreferences(saved).visible).toContain('account');
   });
 });

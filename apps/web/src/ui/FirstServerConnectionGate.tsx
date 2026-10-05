@@ -72,6 +72,7 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
   const [parts, setParts] = useState<SyncUrlParts>(() => parseSyncBaseUrl(initialUrl));
   const [advanced, setAdvanced] = useState(false);
   const [username, setUsername] = useState(initialProfile?.username ?? '');
+  const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [inviteCode, setInviteCode] = useState('');
@@ -166,8 +167,10 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
   async function authenticate(action: 'login' | 'register') {
     if (busy) return;
     if (action === 'register' && password !== confirmation) { setError('两次输入的账号密码不一致'); return; }
+    if (action === 'register' && (!displayName.trim() || Array.from(displayName.trim()).length > 24)) { setError('请输入 1 至 24 个字符的昵称'); return; }
+    if (!/^[\p{L}\p{N}_.-]{2,64}$/u.test(username.trim().normalize('NFKC').toLowerCase())) { setError('登录账号须为 2 至 64 个中文、字母、数字或 _ . -'); return; }
     if (!username.trim() || password.length < 8) {
-      setError('请输入用户名和至少 8 个字符的服务器账号密码');
+      setError('请输入登录账号和至少 8 个字符的密码');
       return;
     }
     setBusy(true);
@@ -180,6 +183,7 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
         if (!checked.health.claimed) throw new Error('请先进入管理后台初始化服务器，再注册个人账号');
         if (checked.health.claimed && checked.health.registrationMode === 'invite' && !inviteCode.trim()) throw new Error('该服务器要求邀请码');
         await registerAccount(checked.baseUrl, username.trim(), password, {
+          displayName: displayName.trim(),
           inviteCode: inviteCode.trim() || undefined,
           expectedServerId: checked.health.serverId,
           expectedServerPublicKey: checked.health.serverPublicKey,
@@ -266,7 +270,8 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
           <form onSubmit={(event) => { event.preventDefault(); void authenticate(registering ? 'register' : 'login'); }}>
           {registering && <details style={{ marginTop: 12 }}><summary>高级：账本保护方式</summary><label><input type="checkbox" checked={privateMode} disabled={busy} onChange={(e) => setPrivateMode(e.target.checked)} />创建私密账本，自己保存恢复码</label><p>默认云端托管允许此服务器解密和恢复账本。私密模式不托管密钥，遗失恢复码后账号密码找回无法恢复账本。</p></details>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 18 }}>
-            <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>用户名</label><input aria-label="服务器用户名" value={username} onChange={(event) => { setUsername(event.target.value); setError(''); }} disabled={busy} autoComplete="username" style={{ ...input, marginTop: 6 }} /></div>
+            {registering && <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>昵称</label><input aria-label="昵称" value={displayName} onChange={(event) => { setDisplayName(event.target.value); setError(''); }} disabled={busy} autoComplete="nickname" required maxLength={48} placeholder="例如：小明" style={{ ...input, marginTop: 6 }} /><small style={{ color: 'var(--text-secondary)' }}>显示给自己看的名称，之后可以修改，支持中文。</small></div>}
+            <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>登录账号</label><input aria-label="服务器用户名" value={username} onChange={(event) => { setUsername(event.target.value); setError(''); }} disabled={busy} autoComplete="username" required placeholder={registering ? '例如：xiaoming 或 小明' : '输入注册时的登录账号'} style={{ ...input, marginTop: 6 }} />{registering && <small style={{ color: 'var(--text-secondary)' }}>用于登录，注册后暂不能修改；支持 2 至 64 个中文、字母、数字或 _ . -。</small>}</div>
             <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>账号密码</label><input aria-label="服务器账号密码" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} disabled={busy} autoComplete={registering ? 'new-password' : 'current-password'} required minLength={8} style={{ ...input, marginTop: 6 }} /></div>
             {registering && <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>确认账号密码</label><input aria-label="确认账号密码" type="password" required minLength={8} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy} autoComplete="new-password" style={{ ...input, marginTop: 6 }} /></div>}
             {health?.registrationMode === 'invite' && (!accountOnly || registering) && <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>邀请码</label><input aria-label="邀请码" value={inviteCode} onChange={(event) => { setInviteCode(event.target.value); setError(''); }} disabled={busy} style={{ ...input, marginTop: 6 }} /></div>}

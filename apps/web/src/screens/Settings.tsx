@@ -12,7 +12,6 @@ import { AS_OF_MODE_LABELS, asOfSummary, earliestRecordedDay, ledgerAsOf, needsA
 import { draftSetting, saveLedgerSetting } from '../db/ledger-settings.js';
 import { DeviceSecurityPanel } from '../ui/DeviceSecurityPanel.js';
 import { LedgerProtectionPanel } from '../ui/LedgerProtectionPanel.js';
-import { AccountSecurityPanel } from '../ui/AccountSecurityPanel.js';
 import { accountProtection } from '../account-protection.js';
 import { ACCENTS, DARK_ACCENTS, THEME_NAMES, THEME_MODE_NAMES, THEMES, type ThemeId, type ThemeMode, type ThemeModePreference } from '../theme.js';
 import { PortableStoragePanel } from '../ui/PortableStoragePanel.js';
@@ -74,7 +73,7 @@ import {
 const METHODS: [LotMethod, string][] = [
   ['fifo', 'FIFO · 先进先出'], ['lifo', 'LIFO · 后进先出'], ['average', '平均成本'], ['manual', '手动选择批次'],
 ];
-type SettingsTab = 'ledger' | 'account' | 'data' | 'appearance';
+type SettingsTab = 'ledger' | 'data' | 'appearance';
 /*
  * Settings used to be 13 groups / 95 controls / 7.3 phone screens tall, with
  * one-time maintenance (security, backup, self-check) sitting at the same level
@@ -86,7 +85,6 @@ type SettingsTab = 'ledger' | 'account' | 'data' | 'appearance';
  */
 const SETTINGS_TABS: [SettingsTab, string][] = [
   ['ledger', '记账'],
-  ['account', '同步与账号'],
   ['data', '数据与安全'],
   ['appearance', '外观'],
 ];
@@ -114,18 +112,6 @@ const ISSUE_LABELS: Record<string, string> = {
   attachment_file_invalid: '附件正文缺失或损坏',
 };
 
-function BrowserAccountExit({ onExit }: { onExit: () => Promise<void> }) {
-  const [confirm, setConfirm] = useState(false);
-  return <section className="zc-section" aria-label="账号与会话">
-    <h2 className="zc-section-title">账号与会话</h2>
-    <p className="zc-caption">退出会锁定本机账本，清除此标签页的同步凭据，并尝试撤销本站和附加服务器会话；未确认撤销会明确提示。不影响管理后台登录，不删除加密缓存和未同步记录。</p>
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-      <button onClick={() => setConfirm(true)} style={btnOutline}>退出记账账号</button>
-    </div>
-    {confirm && <ConfirmDialog title="退出记账账号" confirmLabel="确认退出" onCancel={() => setConfirm(false)} onConfirm={onExit}><p>退出前请确认重要记录已同步，或已导出加密备份。未同步数据会保留在本机；不要清除网站数据。</p></ConfirmDialog>}
-  </section>;
-}
-
 export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
   theme: ThemeId;
   /** What the reader asked for; `system` follows the operating system. */
@@ -135,7 +121,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
   setTheme: (theme: ThemeId) => void;
   setMode: (mode: ThemeModePreference) => void;
 }) {
-  const { store, bump, storageBackend, dataLocation, firstUseMode, browserStoragePersistent, resetLocalData, exitAccount } = useStore();
+  const { store, bump, storageBackend, dataLocation, firstUseMode, browserStoragePersistent, resetLocalData } = useStore();
   const snap = useSnapshot('settings');
   const [tab, setTab] = useState<SettingsTab>('ledger');
   const [issues, setIssues] = useState<ConsistencyIssue[] | null>(null);
@@ -848,28 +834,10 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
         </>
       )}
 
-      {tab === 'account' && (
-        <section className="zc-card" aria-label="账号与同步">
-          <h2 className="zc-section-title">账号与同步</h2>
-          <p className="zc-meta" style={{ marginTop: 6, marginBottom: 14 }}>
-            登录、退出与同步服务器集中在这里。退出只锁定本机账本并撤销本站与附加服务器会话，不删除加密缓存、未同步记录或服务器副本。
-          </p>
-          {exitAccount && <BrowserAccountExit onExit={exitAccount} />}
-          <section className="zc-section" aria-label="同步服务器连接">
-            <h2 className="zc-section-title">同步服务器</h2>
-            <p className="zc-caption">添加或编辑本机、局域网与公网服务器，分别登录后同步当前账本。这里配置的是用户同步连接，不是服务器管理后台。</p>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'sync' } }))} style={btnOutline}>管理同步服务器</button>
-            </div>
-          </section>
-        </section>
-      )}
-
       {tab === 'data' && (
         <>
           <DeviceSecurityPanel />
           <LedgerProtectionPanel store={store} />
-          <AccountSecurityPanel onExit={exitAccount} />
 
           <PortableStoragePanel />
 

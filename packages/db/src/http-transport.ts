@@ -36,6 +36,7 @@ export interface HttpTransportOptions {
 }
 
 export interface RegisterAccountOptions extends HttpRequestOptions {
+  displayName?: string;
   passwordResetCode?: string;
   initializeOwner?: boolean;
   ownerSetupToken?: string;
@@ -101,6 +102,7 @@ export interface SyncAuthSession {
 export interface SyncAuthMe {
   accountId?: string;
   username: string;
+  displayName?: string;
   role: 'owner' | 'admin' | 'viewer' | 'member';
   disabled: boolean;
   session: SyncAuthSession['session'];
@@ -354,6 +356,7 @@ export async function registerAccount(baseUrl: string, username: string, passwor
     headers: registrationHeaders,
     body: JSON.stringify({
       username: normalized,
+      displayName: opts.displayName,
       registrationRequest: start.registrationRequest,
       inviteCode: opts.inviteCode || undefined,
       ownerSetupToken: opts.ownerSetupToken || undefined,

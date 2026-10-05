@@ -45,7 +45,7 @@ export interface AttachmentBlobReference extends AttachmentBlobDescriptor {
 }
 
 export interface AttachmentServerUsage {
-  quotaBytes: number;
+  quotaBytes: number | null;
   usedBytes: number;
   objectCount: number;
   trashBytes: number;
@@ -99,7 +99,7 @@ interface UploadPlan {
   status: 'available' | 'upload';
   uploadId?: string;
   missingChunks: number[];
-  quotaBytes: number;
+  quotaBytes: number | null;
   usedBytes: number;
 }
 

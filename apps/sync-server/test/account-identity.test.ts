@@ -56,6 +56,7 @@ describe('stable account identity', () => {
       expect(user?.accountId).toMatch(/^account-[a-f0-9]{32}$/);
       if (version >= 7) expect(user?.accountId).toBe('account-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
       expect(user?.opaqueRegistrationRecord).toBe('preserved-opaque-record');
+      expect(user?.displayName).toBe('existing');
       expect(await next.ownerUsername()).toBe('existing');
       expect(await next.roleForUser('existing')).toBe('owner');
       expect(await next.registrationMode()).toBe('open');

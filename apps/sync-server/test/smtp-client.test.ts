@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:net';
-import { buildMessage, sendAlertEmail } from '../src/smtp-client.js';
+import { buildMessage, sendAlertEmail, sendEmail } from '../src/smtp-client.js';
 import type { EmailChannel } from '../src/alert-channels.js';
 
 const notification = {
@@ -147,6 +147,12 @@ describe('SMTP delivery', () => {
     const reason = await sendAlertEmail(channelFor(port), notification).then(() => '', (error: Error) => error.message);
     expect(reason).toContain('AUTH');
     expect(reason).not.toContain(Buffer.from('relay-password', 'utf8').toString('base64'));
+  });
+
+  it('rejects a dynamic recipient before opening a socket', async () => {
+    await expect(sendEmail(channelFor(1), {
+      to: ['owner@example.com\r\nRCPT TO:<attacker@example.com>'], subject: 'code', body: '12345678',
+    })).rejects.toThrow(/邮件地址无效/);
   });
 
   it('refuses a header value containing a newline', () => {

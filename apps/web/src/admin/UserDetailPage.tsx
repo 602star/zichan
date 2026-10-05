@@ -4,7 +4,7 @@ import { userSupport } from './operations.js';
 import { adminIdempotencyKey } from './idempotency.js';
 import { AccountActions, RoleNote } from './AccountActions.js';
 import { PasswordResetIssuer } from './PasswordResetIssuer.js';
-import { PageHeader, Badge, Button, CopyValue, DataTable, Loading, Notice, Panel, PanelIndex, sectionId, Stat, bytes, canEditAccountQuota, canManageAccount, canWrite, message, muted, roleLabel, row, useActionError, useResource, when } from './ui.js';
+import { PageHeader, Badge, Button, CopyValue, DataTable, Loading, Notice, Panel, PanelIndex, sectionId, Stat, bytes, canEditAccountQuota, canManageAccount, canWrite, message, muted, quotaLimit, roleLabel, row, useActionError, useResource, when } from './ui.js';
 import { SYNC_CATEGORIES, type AccountDetail, type SessionRow } from './types.js';
 
 const sessionState = (session: SessionRow) => session.revokedAt ? '已撤销' : session.active ? '有效' : '已过期';
@@ -101,6 +101,10 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
       <Panel title="账号信息">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
           <Stat label="accountId" value={<span style={row}><code style={{ fontSize: 'var(--fs-sm)' }}>{account.accountId}</code><CopyValue value={account.accountId} /></span>} />
+          <Stat label="登录账号" value={account.username} />
+          <Stat label="昵称" value={account.displayName || '未设置'} />
+          <Stat label="已验证邮箱" value={account.email || '未绑定'} hint={account.emailVerifiedAt ? `验证于 ${when(account.emailVerifiedAt)}` : '由用户在“我的账号”验证'} />
+          {account.pendingEmail && <Stat label="待验证邮箱" value={account.pendingEmail} />}
           <Stat label="创建时间" value={when(account.createdAt)} />
           <Stat label="角色" value={roleLabel(account.role)} />
           <Stat label="状态" value={account.disabled ? <Badge tone="bad">已禁用</Badge> : <Badge tone="ok">正常</Badge>} />
@@ -114,9 +118,9 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
 
       <Panel title="容量与配额" note={capacity.quotaNote}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
-          <Stat label="加密提交用量" value={bytes(capacity.commitBytes)} hint={`上限 ${bytes(capacity.commitQuotaBytes)}`} />
+          <Stat label="加密提交用量" value={bytes(capacity.commitBytes)} hint={`上限 ${quotaLimit(capacity.commitQuotaBytes)}`} />
           <Stat label="提交条数" value={String(capacity.commitCount)} hint={`headSeq ${capacity.headSeq}`} />
-          <Stat label="附件用量" value={bytes(capacity.blobUsedBytes)} hint={`上限 ${bytes(capacity.blobQuotaBytes)}；对象 ${capacity.blobObjectCount}`} />
+          <Stat label="附件用量" value={bytes(capacity.blobUsedBytes)} hint={`上限 ${quotaLimit(capacity.blobQuotaBytes)}；对象 ${capacity.blobObjectCount}`} />
           <Stat label="回收站占用" value={bytes(capacity.blobTrashBytes)} hint="计入配额" />
           <Stat label="暂存上传占用" value={bytes(capacity.blobStagingBytes)} hint="计入配额" />
           <Stat label="账本绑定" value={capacity.ledgerId ? <code style={{ fontSize: 'var(--fs-sm)' }}>{capacity.ledgerId.slice(0, 12)}…</code> : '未绑定'} hint={capacity.replicaId ?? ''} />

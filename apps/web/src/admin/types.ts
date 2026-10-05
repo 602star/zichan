@@ -159,7 +159,8 @@ export interface Metrics {
 
 export interface AccountRow {
   username: string; accountId: string; role: 'owner' | 'admin' | 'viewer' | 'member'; disabled: boolean;
-  activeDeviceCount: number; commitBytes: number; commitQuotaBytes: number;
+  displayName: string | null;
+  activeDeviceCount: number; commitBytes: number; commitQuotaBytes: number | null;
   createdAt: string; updatedAt: string; lastLoginAt?: string; revision: number;
   protectionMode: string | null; quotaState: 'ok' | 'warning' | 'over';
   /** Last successful sync event for this account; null when it has never synced. */
@@ -169,13 +170,14 @@ export interface AccountRow {
 export interface AccountDetail {
   account: {
     username: string; accountId: string; role: 'owner' | 'admin' | 'viewer' | 'member'; disabled: boolean;
+    displayName: string | null; email: string | null; emailVerifiedAt: string | null; pendingEmail: string | null;
     createdAt: string; updatedAt: string; lastLoginAt: string | null; version: number;
     protection: { mode: string; version: number } | null;
   };
   capacity: {
-    commitBytes: number; commitQuotaBytes: number; commitCount: number; headSeq: number;
+    commitBytes: number; commitQuotaBytes: number | null; commitCount: number; headSeq: number;
     ledgerId: string | null; replicaId: string | null;
-    blobUsedBytes: number; blobQuotaBytes: number; blobObjectCount: number;
+    blobUsedBytes: number; blobQuotaBytes: number | null; blobObjectCount: number;
     blobTrashBytes: number; blobStagingBytes: number; quotaNote: string;
   };
   sessions: SessionRow[];

@@ -1,6 +1,6 @@
 /** Encrypted sync storage with optional account key custody and transactional SQLite WAL. */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import * as opaque from '@serenity-kit/opaque';
@@ -30,6 +30,8 @@ import {
 import { createJobHandlers } from './job-handlers.js';
 import { createJobRunner } from './jobs.js';
 import { createHashOffload } from './hash-offload.js';
+import { parseAlertChannels, type EmailChannel } from './alert-channels.js';
+import { sendEmail } from './smtp-client.js';
 import { importMaintenanceRecords } from './maintenance-records.js';
 import { MAINTENANCE_KEY, createWriteTracker, isClientWrite, resolveMaintenance, type MaintenanceState } from './maintenance-mode.js';
 import { createMetricsService } from './metrics.js';
@@ -123,6 +125,7 @@ function signToken(secret: string, payload: JsonRecord): string {
 }
 
 interface TokenClaims {
+  displayName?: string;
   claimOwner?: boolean;
   ownerSetupOrigin?: string;
   passwordResetHash?: string;
@@ -328,6 +331,8 @@ export interface SyncServerOptions {
   basePath?: string;
   trustedProxies?: string[];
   allowInsecureHttp?: boolean;
+  /** Injectable delivery for integration tests; deployments use the configured SMTP channel. */
+  accountEmailSender?: (to: string, subject: string, body: string) => Promise<void>;
 }
 
 export interface SyncServer {
@@ -338,6 +343,8 @@ export interface SyncServer {
   ready: Promise<void>;
   /** Resolves once recovery, record import and sampling have started. */
   started: Promise<void>;
+  /** Drain pending account mail immediately; the background worker also runs every minute. */
+  flushAccountEmails: () => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -351,11 +358,16 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   const browserSession = createBrowserSessionCookies(basePath, origin.browserOrigin);
   const requestedDataDir = options.dataDir ? resolve(options.dataDir) : undefined;
   assertServerIdentityComplete(requestedDataDir);
+  let store: SyncServerStore;
   const blobStore = new EncryptedBlobStore({
     dataDir: requestedDataDir,
     quotaBytes: options.attachmentQuotaBytes,
     maxBlobBytes: options.attachmentMaxFileBytes,
     trashRetentionMs: options.attachmentTrashRetentionMs,
+    isUnlimitedAccount: async (username) => {
+      const role = await store.roleForUser(username);
+      return role === 'owner' || role === 'admin';
+    },
   });
   const dataDir = blobStore.dataDir;
   if (enableWeb && options.webDir) assertSeparateDirectories(dataDir, resolve(options.webDir));
@@ -368,12 +380,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   // Both stores use separate SQLite connections to the same file. Initialize
   // them in sequence so catalog recovery cannot hold a write transaction while
   // the server schema connection synchronously waits for that lock.
-  const store = new SyncServerStore(
+  store = new SyncServerStore(
     join(dataDir, 'server.sqlite'),
     options.registrationMode ?? 'invite',
     serverId,
     options.commitQuotaBytes,
     blobStore.ready,
+    options.attachmentQuotaBytes,
   );
   const custodyEnabled = options.custodyEnabled !== false;
   const defaultProtection = custodyEnabled ? options.accountProtection ?? 'managed' : 'private';
@@ -459,6 +472,18 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
 
   const runtimeSettings = createSettings(store);
   const settings = runtimeSettings.settings;
+  const accountEmailChannel = (): EmailChannel | undefined => parseAlertChannels(settings.effective('alertChannels'))
+    .find((channel): channel is EmailChannel => channel.kind === 'email' && channel.enabled);
+  const accountEmailAvailable = (): boolean => {
+    if (options.accountEmailSender) return true;
+    try { return Boolean(accountEmailChannel()); } catch { return false; }
+  };
+  const sendAccountMessage = async (to: string, subject: string, body: string): Promise<void> => {
+    if (options.accountEmailSender) return options.accountEmailSender(to, subject, body);
+    const channel = accountEmailChannel();
+    if (!channel) throw new Error('服务器尚未配置邮件发送渠道');
+    await sendEmail({ ...channel, requireTls: true }, { to: [to], subject, body });
+  };
 
   /**
    * Maintenance mode is read per request rather than cached: the flag is written from the admin
@@ -539,6 +564,16 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     blobStore,
     settings,
     log,
+    onCapacityActive: async (warning, episode) => {
+      const category = warning.scope === 'commit' ? '加密记录' : '附件';
+      const percent = Math.round(warning.usedBytes / warning.quotaBytes * 100);
+      await store.enqueueQuotaEmail(
+        warning.username,
+        `quota:${warning.username}:${warning.scope}:${episode}`,
+        `资产账本${category}容量提醒`,
+        `您的${category}存储用量已达到配额的 ${percent}%。请登录“我的账号”查看用量与剩余空间。\n\n此邮件不包含账本记录或附件内容。`,
+      );
+    },
     // Alerts only need the newest records to answer "latest attempt / latest success / latest
     // verified"; the paginated view is the console's, not the sampler's. The success/verified
     // answers come from `latestBackupSummary` below, which is queried over the whole table.
@@ -575,6 +610,28 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   // Recovery, deployment-record import and sampling all start after the stores are ready.
   // The queue is also re-kicked on a slow timer: a task that stayed `queued` because the
   // worker stopped after a failed write must not wait for someone to open the console.
+  let accountEmailFlight: Promise<void> | undefined;
+  const processAccountEmails = (): void => {
+    if (accountEmailFlight) return;
+    accountEmailFlight = (async () => {
+      for (const item of await store.dueAccountEmails()) {
+        if (!item.enabled || !item.email) {
+          await store.finishAccountEmail(item.id, 'skipped', item.attempts);
+          continue;
+        }
+        try {
+          await sendAccountMessage(item.email, item.subject, item.body);
+          await store.finishAccountEmail(item.id, 'sent', item.attempts);
+        } catch (error) {
+          await store.finishAccountEmail(item.id, 'failed', item.attempts);
+          await log('warn', 'account_email_delivery_failed', 'Account email delivery failed', { username: item.username, detail: { reason: error instanceof Error ? error.message : String(error) } });
+        }
+      }
+    })().catch((error) => log('warn', 'account_email_worker_failed', 'Account email worker failed', { detail: { reason: error instanceof Error ? error.message : String(error) } }))
+      .then(() => undefined).finally(() => { accountEmailFlight = undefined; });
+  };
+  const accountEmailTimer = setInterval(processAccountEmails, 60_000);
+  accountEmailTimer.unref?.();
   const queueWatchdog = setInterval(() => jobs.kick(), 60_000);
   queueWatchdog.unref?.();
   const started = ready.then(async () => {
@@ -584,6 +641,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       const recovery = await jobs.recover();
       await importMaintenanceRecords(store, dataDir);
       metrics.start();
+      processAccountEmails();
       if (recovery.interrupted.length) {
         console.log(`jobs: ${recovery.interrupted.length} interrupted task(s) recorded as interrupted, ${recovery.resumed.length} resumed from a checkpoint`);
       }
@@ -726,9 +784,11 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
 
       if (req.method === 'POST' && (apiPath === '/api/auth/register/start' || apiPath === '/api/auth/password-reset/start')) {
         const resettingPassword = apiPath === '/api/auth/password-reset/start';
-        const { username: rawUsername, registrationRequest, inviteCode, ownerSetupToken: suppliedSetup, initializeOwner, passwordResetCode } = await readBody(req, AUTH_BODY_BYTES);
+        const { username: rawUsername, displayName: rawDisplayName, registrationRequest, inviteCode, ownerSetupToken: suppliedSetup, initializeOwner, passwordResetCode } = await readBody(req, AUTH_BODY_BYTES);
         const username = typeof rawUsername === 'string' ? normalizeSyncUsername(rawUsername) : '';
-        if (!/^[\p{L}\p{N}_.-]{3,64}$/u.test(username)
+        const displayName = typeof rawDisplayName === 'string' ? rawDisplayName.trim().normalize('NFC') : undefined;
+        if (!/^[\p{L}\p{N}_.-]{2,64}$/u.test(username)
+          || (rawDisplayName !== undefined && (typeof rawDisplayName !== 'string' || !displayName || Array.from(displayName).length > 24 || /[\p{Cc}\p{Cf}]/u.test(displayName)))
           || typeof registrationRequest !== 'string'
           || !registrationRequest
           || registrationRequest.length > AUTH_BODY_BYTES
@@ -770,6 +830,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           ...(claimOwner ? { claimOwner: true } : {}),
           ...(webSetup ? { ownerSetupOrigin: req.headers.origin } : {}),
           username,
+          ...(displayName && !resettingPassword ? { displayName } : {}),
           ...(normalizedInvite ? { inviteCode: normalizedInvite } : {}),
           exp: Date.now() + OPAQUE_REGISTRATION_TTL_MS,
         });
@@ -801,7 +862,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           res.setHeader('Cache-Control', 'no-store');
           return send(res, 200, { ok: true, serverId, role: await store.roleForUser(claims.username) });
         }
-        const registration = await store.register(claims.username, registrationRecord, claims.inviteCode, claims.claimOwner === true);
+        const registration = await store.register(claims.username, registrationRecord, claims.inviteCode, claims.claimOwner === true, claims.displayName);
         await log('info', 'register_success', 'Registered sync user', {
           ip,
           username: claims.username,
@@ -812,7 +873,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       if (req.method === 'POST' && apiPath === '/api/auth/login/start') {
         const { username: rawUsername, startLoginRequest } = await readBody(req, AUTH_BODY_BYTES);
         const username = typeof rawUsername === 'string' ? normalizeSyncUsername(rawUsername) : '';
-        if (!/^[\p{L}\p{N}_.-]{3,64}$/u.test(username)
+        if (!/^[\p{L}\p{N}_.-]{2,64}$/u.test(username)
           || typeof startLoginRequest !== 'string'
           || !startLoginRequest
           || startLoginRequest.length > AUTH_BODY_BYTES) {
@@ -998,6 +1059,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         const replica = await store.getReplica(user.username);
         return send(res, 200, {
           username: user.username,
+          displayName: user.displayName,
           role: auth.role,
           accountId: user.accountId,
           disabled: false,
@@ -1008,6 +1070,64 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
             streamEpoch: replica.streamEpoch,
           } : {}),
         });
+      }
+      if (req.method === 'PUT' && apiPath === '/api/auth/profile') {
+        const body = await readBody(req, 1024);
+        const displayName = typeof body.displayName === 'string' ? body.displayName.trim().normalize('NFC') : '';
+        if (!displayName || Array.from(displayName).length > 24 || /[\p{Cc}\p{Cf}]/u.test(displayName)) {
+          return send(res, 400, { code: 'INVALID_DISPLAY_NAME', error: '昵称请填写 1 至 24 个字符，不能包含控制字符' });
+        }
+        await store.setDisplayName(user.username, displayName);
+        return send(res, 200, { username: user.username, displayName });
+      }
+      if (req.method === 'GET' && apiPath === '/api/auth/usage') {
+        const [commits, attachments] = await Promise.all([
+          store.commitUsage(user.username),
+          blobStore.usage(user.username),
+        ]);
+        res.setHeader('Cache-Control', 'no-store');
+        return send(res, 200, { commits, attachments });
+      }
+      if (apiPath === '/api/auth/email' || apiPath.startsWith('/api/auth/email/')) res.setHeader('Cache-Control', 'no-store');
+      if (req.method === 'GET' && apiPath === '/api/auth/email') {
+        return send(res, 200, { ...await store.accountEmail(user.username), available: accountEmailAvailable() });
+      }
+      if (req.method === 'POST' && apiPath === '/api/auth/email/request') {
+        const body = await readBody(req, 1024);
+        const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+        if (email.length > 254 || !/^[^\s@,<>]+@[^\s@,<>]+\.[^\s@,<>]+$/.test(email)) return send(res, 400, { code: 'INVALID_EMAIL', error: '请输入有效邮箱地址' });
+        if (!accountEmailAvailable()) return send(res, 503, { code: 'EMAIL_UNAVAILABLE', error: '服务器尚未配置可用的邮件发送渠道' });
+        const code = randomInt(100_000_000).toString().padStart(8, '0');
+        const hash = createHmac('sha256', secret).update(`${user.username}:${code}`).digest('hex');
+        await store.startEmailVerification(user.username, email, hash);
+        try {
+          await sendAccountMessage(email, '资产账本邮箱验证码', `您的邮箱验证码是：${code}\n\n验证码 10 分钟内有效。若您没有请求验证，请忽略此邮件。`);
+        } catch (error) {
+          await store.clearPendingEmailVerification(user.username, hash);
+          await log('warn', 'account_email_verification_send_failed', 'Account email verification delivery failed', { username: user.username, detail: { reason: error instanceof Error ? error.message : String(error) } });
+          return send(res, 503, { code: 'EMAIL_SEND_FAILED', error: '邮件发送失败，请稍后重试' });
+        }
+        await log('info', 'account_email_verification_sent', 'Account email verification sent', { username: user.username });
+        return send(res, 200, { pendingEmail: email, expiresInSeconds: 600 });
+      }
+      if (req.method === 'POST' && apiPath === '/api/auth/email/verify') {
+        const body = await readBody(req, 1024);
+        if (typeof body.code !== 'string' || !/^\d{8}$/.test(body.code)) return send(res, 400, { code: 'INVALID_EMAIL_CODE', error: '请输入邮件中的 8 位验证码' });
+        const hash = createHmac('sha256', secret).update(`${user.username}:${body.code}`).digest('hex');
+        await store.completeEmailVerification(user.username, hash);
+        await log('info', 'account_email_verified', 'Account email verified', { username: user.username });
+        return send(res, 200, await store.accountEmail(user.username));
+      }
+      if (req.method === 'PUT' && apiPath === '/api/auth/email/preferences') {
+        const body = await readBody(req, 1024);
+        if (typeof body.quotaNotifications !== 'boolean') return send(res, 400, { error: '通知开关无效' });
+        await store.setQuotaEmailNotifications(user.username, body.quotaNotifications);
+        return send(res, 200, await store.accountEmail(user.username));
+      }
+      if (req.method === 'DELETE' && apiPath === '/api/auth/email') {
+        await store.removeAccountEmail(user.username);
+        await log('info', 'account_email_removed', 'Account email removed', { username: user.username });
+        return send(res, 200, await store.accountEmail(user.username));
       }
       if (isAdmin) {
         if (auth.role === 'member') {
@@ -1322,6 +1442,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     dataDir,
     ready,
     started,
+    flushAccountEmails: async () => { processAccountEmails(); await accountEmailFlight; },
     backupPlan: async () => {
       await runtimeSettings.load();
       return { enabled: settings.effective('backupAutoEnabled') === 'on', directory: String(settings.effective('backupDirectory')),
@@ -1329,7 +1450,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     },
     close: async () => {
       clearInterval(queueWatchdog);
+      clearInterval(accountEmailTimer);
       metrics.stop();
+      await accountEmailFlight;
       // Workers keep the process alive and hold their own heap; a shutdown that leaves them running
       // would make the process appear to hang after the server has closed.
       await hashOffload.close();

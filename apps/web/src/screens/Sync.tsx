@@ -388,6 +388,7 @@ export function Sync() {
   const activeOperation = useRef<ProfileOperation>();
   const loginFeedbackGeneration = useRef(0);
   const [passwordConfirm, setPasswordConfirm] = useState('');
+  const [registerDisplayName, setRegisterDisplayName] = useState('');
   const [removeTarget, setRemoveTarget] = useState<string>();
   const [removeWarning, setRemoveWarning] = useState('');
   useEffect(() => () => { loginFeedbackGeneration.current++; operations.current.cancelAll(); }, []);
@@ -479,6 +480,7 @@ export function Sync() {
 
   useEffect(() => {
     setPasswordConfirm('');
+    setRegisterDisplayName('');
     const pending = operations.current;
     const feedback = loginFeedbackGeneration;
     return () => {
@@ -1045,19 +1047,21 @@ export function Sync() {
     try {
       if (isPrimaryWebConnection(profile)) throw new Error('本站账号请在退出后使用登录注册入口。');
       const cred = runtimeCredential(profile.id);
-      if (!profile.username.trim() || !cred?.password) throw new Error('请先填写用户名和密码');
+      if (!profile.username.trim() || !cred?.password) throw new Error('请先填写登录账号和密码');
+      if (!registerDisplayName.trim() || Array.from(registerDisplayName.trim()).length > 24) throw new Error('请填写 1 至 24 个字符的昵称');
       if (cred.password !== passwordConfirm) throw new Error('两次输入的服务器账号密码不一致');
       const identity = await inspectConnectionIdentity(profile, operation);
       operation.assertCurrent();
       if (!identity.claimed) throw new Error('服务器尚未初始化，请联系部署者先完成独立管理后台设置。');
       await registerAccount(buildBaseUrl(profile), profile.username.trim(), cred.password, {
-        signal: operation.signal, inviteCode: cred.inviteCode.trim() || undefined,
+        signal: operation.signal, inviteCode: cred.inviteCode.trim() || undefined, displayName: registerDisplayName.trim(),
         expectedServerId: identity.serverId, expectedServerPublicKey: identity.serverPublicKey,
       });
       registered = true;
       operation.assertCurrent();
       await loginProfileNow({ ...profile, ...identity }, operation);
       setPasswordConfirm('');
+      setRegisterDisplayName('');
     } catch (error) {
       if (operation.current()) patchProfile(profile.id, { status: 'login_required', lastError: registered
         ? `账号已注册，但自动登录未完成；请直接登录，不要重复注册。原因：${msg(error)}` : msg(error) });
@@ -1870,7 +1874,8 @@ export function Sync() {
                 )}
                 <div className="zc-sync-input-grid" style={inputGrid}>
                   <div><label className="zc-label">中文别名</label><input aria-label="中文别名" className="zc-input" value={selected.alias} onChange={(e) => patchProfile(selected.id, { alias: e.target.value })} /></div>
-                  <div><label className="zc-label">用户名</label><input aria-label="用户名" disabled={selectedIsPrimary} className="zc-input" value={selected.username} onChange={(e) => patchProfile(selected.id, { username: e.target.value })} /></div>
+                  <div><label className="zc-label">登录账号</label><input aria-label="用户名" disabled={selectedIsPrimary} className="zc-input" value={selected.username} onChange={(e) => patchProfile(selected.id, { username: e.target.value })} /><small>用于登录，注册后暂不能修改；支持中文，至少 2 个字符。</small></div>
+                  {!selectedIsPrimary && <div><label className="zc-label">昵称（仅注册需要）</label><input aria-label="注册昵称" className="zc-input" value={registerDisplayName} onChange={(e) => setRegisterDisplayName(e.target.value)} placeholder="例如：小明" /><small>显示名称，注册后可在账号设置修改。</small></div>}
                   {!selectedIsPrimary && <div><label className="zc-label">服务器账号密码（仅本次登录使用，不保存密码）</label><input aria-label="服务器账号密码" className="zc-input" type="password" value={cred.password} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { password: e.target.value, accessToken: undefined, refreshToken: undefined, accessExpiresAt: undefined, sessionId: undefined, sessionTransport: undefined })} /></div>}
                   {!selectedIsPrimary && <div><label className="zc-label">确认服务器账号密码（仅注册需要）</label><input aria-label="确认服务器账号密码" className="zc-input" type="password" value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} /></div>}
                   {selectedHealth?.registrationMode === 'invite' && <div><label className="zc-label">邀请码</label><input aria-label="邀请码" className="zc-input" value={cred.inviteCode} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { inviteCode: e.target.value })} /></div>}

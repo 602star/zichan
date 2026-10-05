@@ -677,6 +677,10 @@ export function bytes(value: number | null | undefined): string {
   return `${Number(amount.toFixed(unit === 0 ? 0 : 1))} ${units[unit]}`;
 }
 
+export function quotaLimit(value: number | null): string {
+  return value === null ? '无限' : bytes(value);
+}
+
 export function when(value: string | null | undefined): string {
   return value ? new Date(value).toLocaleString() : '暂无数据';
 }

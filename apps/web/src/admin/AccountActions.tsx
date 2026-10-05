@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
 import { quotaBytesFromGiB } from './number-input.js';
-import { Button, Field, Notice, Select, TextInput, bytes, message, muted, row } from './ui.js';
+import { Button, Field, Notice, Select, TextInput, bytes, message, muted, quotaLimit, row } from './ui.js';
 import type { AccountRow } from './types.js';
 
 export interface AccountActionTarget {
@@ -13,7 +13,7 @@ export interface AccountActionTarget {
   revision: number;
   disabled: boolean;
   commitBytes: number;
-  commitQuotaBytes: number;
+  commitQuotaBytes: number | null;
   activeDeviceCount: number;
 }
 
@@ -34,7 +34,7 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
 }) {
   const [mode, setMode] = useState<AccountActionMode>(initialMode);
   const [reason, setReason] = useState('');
-  const [commitGiB, setCommitGiB] = useState(String(target.commitQuotaBytes / 1024 ** 3));
+  const [commitGiB, setCommitGiB] = useState(target.commitQuotaBytes === null ? '' : String(target.commitQuotaBytes / 1024 ** 3));
   const [blobGiB, setBlobGiB] = useState('');
   const [role, setRole] = useState<'admin' | 'viewer' | 'member'>(target.role === 'admin' || target.role === 'viewer' ? target.role : 'member');
   const [busy, setBusy] = useState(false);
@@ -110,8 +110,9 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
         <div style={{ display: 'grid', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
           <strong>调整提交配额</strong>
           <p style={muted}>
-            当前用量 {bytes(target.commitBytes)}；上限 {bytes(target.commitQuotaBytes)}。低于当前用量时不会删除已有数据，只限制后续上传。
+            当前用量 {bytes(target.commitBytes)}；上限 {quotaLimit(target.commitQuotaBytes)}。低于当前用量时不会删除已有数据，只限制后续上传。
           </p>
+          {(target.role === 'owner' || target.role === 'admin') && <p style={muted}>所有者和管理员始终无限额；这里设置的数值只在角色变更为普通用户或只读运维后生效。</p>}
           <Field label="新的上限（GiB）"><TextInput value={commitGiB} inputMode="decimal" onChange={(event) => setCommitGiB(event.target.value)} /></Field>
           <p style={muted}>输入纯数字，范围 0.0009765625–1024 GiB，最多 30 位小数，按最近的整数字节保存。</p>
           <Field label="原因（会写入审计）"><TextInput value={reason} maxLength={200} onChange={(event) => setReason(event.target.value)} /></Field>
@@ -127,6 +128,7 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
         <div style={{ display: 'grid', gap: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
           <strong>调整附件配额</strong>
           <p style={muted}>提交、有效附件、回收站与暂存上传都计入配额；降低上限不删除已有内容。</p>
+          {(target.role === 'owner' || target.role === 'admin') && <p style={muted}>所有者和管理员始终无限额；这里设置的数值只在角色变更为普通用户或只读运维后生效。</p>}
           <Field label="新的上限（GiB）"><TextInput value={blobGiB} inputMode="decimal" onChange={(event) => setBlobGiB(event.target.value)} /></Field>
           <p style={muted}>输入纯数字，范围 0.0009765625–1024 GiB，最多 30 位小数，按最近的整数字节保存。</p>
           <Field label="原因（会写入审计）"><TextInput value={reason} maxLength={200} onChange={(event) => setReason(event.target.value)} /></Field>

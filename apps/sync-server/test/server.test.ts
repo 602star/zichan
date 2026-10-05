@@ -554,6 +554,7 @@ describe('sync-server endpoints', () => {
     const u = `http://localhost:${(s.server.address() as AddressInfo).port}`;
     try {
       const username = 'quota-user';
+      expect((await registerUser(u, 'owner', 'owner-password')).status).toBe(200);
       await registerUser(u, username, 'quota-password');
       const token = await accessToken(u, username, 'quota-password');
       const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
@@ -798,6 +799,7 @@ describe('sync-server endpoints', () => {
         registrationRequest: 'x'.repeat(70 * 1024),
       });
       expect(oversized.status).toBe(413);
+      expect((await registerUser(base, 'owner', 'owner-password')).status).toBe(200);
       expect((await registerUser(base, 'commit-quota', 'pw')).status).toBe(200);
       const token = await accessToken(base, 'commit-quota', 'pw');
       const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };

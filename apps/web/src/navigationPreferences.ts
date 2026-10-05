@@ -1,6 +1,6 @@
 import type { LedgerMode } from '@zichan/core';
 
-export type ScreenId = 'dashboard' | 'convert' | 'transactions' | 'game' | 'fixed' | 'reports' | 'history' | 'manage' | 'sync' | 'settings';
+export type ScreenId = 'dashboard' | 'convert' | 'transactions' | 'game' | 'fixed' | 'reports' | 'history' | 'manage' | 'sync' | 'account' | 'settings';
 
 export interface NavigationItem {
   id: ScreenId;
@@ -24,6 +24,7 @@ export const NAVIGATION_ITEMS: readonly NavigationItem[] = [
   { id: 'history', label: '历史', icon: '◷', description: '操作记录与冲突处理' },
   { id: 'manage', label: '管理', icon: '⊞', description: '资产、分类和基础资料' },
   { id: 'sync', label: '同步', icon: '⇅', description: '设备和同步服务器' },
+  { id: 'account', label: '我的账号', icon: '☺', description: '个人资料、配额和账号安全' },
   { id: 'settings', label: '设置', icon: '⚙', description: '记账、导航和数据设置' },
 ] as const;
 
@@ -34,7 +35,7 @@ const SCREEN_ID_SET = new Set<ScreenId>(ALL_SCREEN_IDS);
 
 /*
  * What a brand-new ledger shows. The pinned entries from REQUIRED_NAVIGATION_IDS
- * are added on top, so a fresh sidebar reads 总览 → 日常收支 → 物品资产 → 设置
+ * are added on top, so a fresh sidebar reads 总览 → 日常收支 → 物品资产 → 我的账号 → 设置
  * and the phone bar keeps its three primary slots for the modules a person
  * actually opens every day.
  *
@@ -42,7 +43,7 @@ const SCREEN_ID_SET = new Set<ScreenId>(ALL_SCREEN_IDS);
  * to 账户/资产记账 later must not silently add seven entries, and a module that
  * starts hidden is still one tap away under 更多 → 未启用模块.
  */
-const DEFAULT_VISIBLE_SCREEN_IDS: readonly ScreenId[] = ['dashboard', 'transactions', 'fixed'];
+const DEFAULT_VISIBLE_SCREEN_IDS: readonly ScreenId[] = ['dashboard', 'transactions', 'fixed', 'account'];
 
 function normalizedIds(value: unknown): ScreenId[] {
   if (!Array.isArray(value)) return [];
@@ -78,7 +79,8 @@ export function parseNavigationPreferences(value: string | undefined): Navigatio
     const requestedOrder = normalizedIds(parsed.order);
     const requestedVisible = normalizedIds(parsed.visible);
     const order = [...requestedOrder, ...ALL_SCREEN_IDS.filter((id) => !requestedOrder.includes(id))];
-    const visible = order.filter((id) => requestedVisible.includes(id) || REQUIRED_NAVIGATION_IDS.has(id));
+    const newAccountPage = !requestedOrder.includes('account');
+    const visible = order.filter((id) => requestedVisible.includes(id) || REQUIRED_NAVIGATION_IDS.has(id) || (newAccountPage && id === 'account'));
     return { order, visible };
   } catch {
     return defaultNavigationPreferences();

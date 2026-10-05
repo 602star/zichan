@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { createHash, randomBytes, randomInt } from 'node:crypto';
+import { createHash, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { NodeSqliteDriver } from '@zichan/db/node';
 import { cursorValue, readCursor, resolveSort, type ResolvedSort, type SortOption } from './list-sort.js';
 import { MAINTENANCE_KEY } from './maintenance-mode.js';
@@ -128,6 +128,7 @@ export interface LedgerProtection {
 export interface SyncUser {
   accountId: string;
   username: string;
+  displayName: string;
   opaqueRegistrationRecord: string;
   disabled: boolean;
   createdAt: string;
@@ -484,9 +485,13 @@ export function supportedServerSchema(version: number, name: string): boolean {
     || version === 7 && name === 'server_account_identity_v7'
     || version === 6 && name === 'server_account_owner_v6';
 }
-const DEFAULT_COMMIT_QUOTA_BYTES = 512 * 1024 * 1024;
-const DEFAULT_BLOB_QUOTA_BYTES = 2 * 1024 * 1024 * 1024;
+const DEFAULT_COMMIT_QUOTA_BYTES = 20 * 1024 * 1024 * 1024;
+const DEFAULT_BLOB_QUOTA_BYTES = 20 * 1024 * 1024 * 1024;
 const LOG_RETENTION = 5_000;
+
+function unlimitedQuotaRole(role: unknown): boolean {
+  return role === 'owner' || role === 'admin';
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -521,6 +526,7 @@ function userFromRow(row: Record<string, unknown>): SyncUser {
   return {
     accountId: String(row['account_id']),
     username: String(row['username']),
+    displayName: typeof row['display_name'] === 'string' && row['display_name'].trim() ? String(row['display_name']) : String(row['username']),
     opaqueRegistrationRecord: String(row['opaque_registration_record']),
     disabled: bool(row['disabled']),
     createdAt: String(row['created_at']),
@@ -644,6 +650,7 @@ CREATE TABLE IF NOT EXISTS server_meta (
 );
 CREATE TABLE IF NOT EXISTS sync_users (
   username TEXT PRIMARY KEY COLLATE NOCASE,
+  display_name TEXT,
   opaque_registration_record TEXT NOT NULL,
   disabled INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
@@ -789,6 +796,32 @@ CREATE TABLE IF NOT EXISTS sync_user_quotas (
   commit_quota_bytes INTEGER NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS account_email_settings (
+  username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
+  email TEXT,
+  verified_at TEXT,
+  pending_email TEXT,
+  pending_hash TEXT,
+  pending_expires_at TEXT,
+  code_sent_at TEXT,
+  code_attempts INTEGER NOT NULL DEFAULT 0,
+  window_started_at TEXT,
+  window_count INTEGER NOT NULL DEFAULT 0,
+  notify_quota INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS account_email_outbox (
+  id TEXT PRIMARY KEY,
+  event_key TEXT NOT NULL UNIQUE,
+  username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
+  subject TEXT NOT NULL,
+  body TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_account_email_outbox_due ON account_email_outbox (state, next_attempt_at);
 CREATE TABLE IF NOT EXISTS sync_backup_archives (
   username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
   ledger_id TEXT NOT NULL,
@@ -986,6 +1019,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     await this.ensureColumn('server_backup_records', 'retention_json', 'TEXT');
     // Read-only operators are administrators with this flag set; granting one is a role change.
     await this.ensureColumn('server_administrators', 'read_only', 'INTEGER NOT NULL DEFAULT 0');
+    await this.ensureColumn('sync_users', 'display_name', 'TEXT');
     // Resource readings ride along with the request counters. They are peaks per bucket, not
     // counters, so an existing bucket simply keeps 0 for ranges recorded before this column.
     await this.ensureColumn('server_metric_buckets', 'rss_bytes', 'INTEGER NOT NULL DEFAULT 0');
@@ -1101,6 +1135,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     opaqueRegistrationRecord: string,
     inviteCode?: string,
     claimOwner = false,
+    displayName?: string,
   ): Promise<{ role: AccountRole }> {
     await this.ready;
     return this.driver.transaction(async (driver) => {
@@ -1122,8 +1157,8 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       if (await driver.get('SELECT username FROM sync_users WHERE username = ?', [username])) throw new ServerStoreError('USER_EXISTS', 409, 'user exists');
       const at = nowIso();
       await driver.run(
-        'INSERT INTO sync_users (username, opaque_registration_record, disabled, created_at, updated_at) VALUES (?, ?, 0, ?, ?)',
-        [username, opaqueRegistrationRecord, at, at],
+        'INSERT INTO sync_users (username, display_name, opaque_registration_record, disabled, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)',
+        [username, displayName ?? username, opaqueRegistrationRecord, at, at],
       );
       await driver.run('INSERT INTO sync_account_identities (username, account_id) VALUES (?, ?)', [username, `account-${randomBytes(16).toString('hex')}`]);
       if (claimOwner) await driver.run(
@@ -1136,6 +1171,126 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       );
       return { role: assignedOwner?.username === username ? 'owner' : 'member' };
     });
+  }
+
+  async setDisplayName(username: string, displayName: string): Promise<void> {
+    await this.ready;
+    await this.driver.run('UPDATE sync_users SET display_name = ?, updated_at = ? WHERE username = ?', [displayName, nowIso(), username]);
+  }
+
+  async accountEmail(username: string): Promise<{ email?: string; verifiedAt?: string; pendingEmail?: string; quotaNotifications: boolean }> {
+    await this.ready;
+    const row = await this.driver.get<Record<string, unknown>>('SELECT email, verified_at, pending_email, notify_quota FROM account_email_settings WHERE username = ?', [username]);
+    return {
+      ...(row?.['email'] == null ? {} : { email: String(row['email']) }),
+      ...(row?.['verified_at'] == null ? {} : { verifiedAt: String(row['verified_at']) }),
+      ...(row?.['pending_email'] == null ? {} : { pendingEmail: String(row['pending_email']) }),
+      quotaNotifications: Number(row?.['notify_quota'] ?? 0) === 1,
+    };
+  }
+
+  async startEmailVerification(username: string, email: string, codeHash: string): Promise<void> {
+    await this.ready;
+    const at = nowIso();
+    await this.driver.transaction(async (driver) => {
+      const row = await driver.get<Record<string, unknown>>('SELECT * FROM account_email_settings WHERE username = ?', [username]);
+      if (row?.['email'] === email && row['verified_at']) throw new ServerStoreError('EMAIL_ALREADY_VERIFIED', 409, '该邮箱已验证');
+      if (row?.['code_sent_at'] && Date.parse(String(row['code_sent_at'])) > Date.now() - 60_000) throw new ServerStoreError('EMAIL_RATE_LIMIT', 429, '请一分钟后再发送验证码');
+      const sameWindow = row?.['window_started_at'] && Date.parse(String(row['window_started_at'])) > Date.now() - 24 * 60 * 60_000;
+      const count = sameWindow ? Number(row?.['window_count'] ?? 0) : 0;
+      if (count >= 5) throw new ServerStoreError('EMAIL_DAILY_LIMIT', 429, '今天的验证码发送次数已达上限');
+      await driver.run(
+        `INSERT INTO account_email_settings (username, pending_email, pending_hash, pending_expires_at, code_sent_at, code_attempts, window_started_at, window_count)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+         ON CONFLICT(username) DO UPDATE SET pending_email = excluded.pending_email, pending_hash = excluded.pending_hash,
+           pending_expires_at = excluded.pending_expires_at, code_sent_at = excluded.code_sent_at,
+           code_attempts = 0, window_started_at = excluded.window_started_at, window_count = excluded.window_count`,
+        [username, email, codeHash, new Date(Date.now() + 10 * 60_000).toISOString(), at, sameWindow ? String(row['window_started_at']) : at, count + 1],
+      );
+    });
+  }
+
+  async clearPendingEmailVerification(username: string, codeHash: string): Promise<void> {
+    await this.ready;
+    await this.driver.run(
+      `UPDATE account_email_settings SET pending_email = NULL, pending_hash = NULL, pending_expires_at = NULL, code_attempts = 0
+       WHERE username = ? AND pending_hash = ?`,
+      [username, codeHash],
+    );
+  }
+
+  async completeEmailVerification(username: string, codeHash: string): Promise<void> {
+    await this.ready;
+    const result = await this.driver.transaction(async (driver) => {
+      const row = await driver.get<Record<string, unknown>>('SELECT * FROM account_email_settings WHERE username = ?', [username]);
+      if (!row?.['pending_email'] || !row['pending_hash'] || !row['pending_expires_at'] || String(row['pending_expires_at']) <= nowIso()) return 'expired';
+      if (Number(row['code_attempts'] ?? 0) >= 5) return 'attempts';
+      await driver.run('UPDATE account_email_settings SET code_attempts = code_attempts + 1 WHERE username = ?', [username]);
+      const expected = Buffer.from(String(row['pending_hash']), 'hex');
+      const actual = Buffer.from(codeHash, 'hex');
+      if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return 'invalid';
+      await driver.run(
+        `UPDATE account_email_settings SET email = pending_email, verified_at = ?, pending_email = NULL, pending_hash = NULL,
+         pending_expires_at = NULL, code_attempts = 0, notify_quota = 0 WHERE username = ?`,
+        [nowIso(), username],
+      );
+      await driver.run("UPDATE account_email_outbox SET state = 'skipped' WHERE username = ? AND state = 'pending'", [username]);
+      return 'verified';
+    });
+    if (result !== 'verified') throw new ServerStoreError('EMAIL_CODE_INVALID', 400, result === 'attempts' ? '验证码尝试次数已达上限，请重新发送' : '验证码无效或已过期');
+  }
+
+  async setQuotaEmailNotifications(username: string, enabled: boolean): Promise<void> {
+    await this.ready;
+    await this.driver.transaction(async (driver) => {
+      const result = await driver.run('UPDATE account_email_settings SET notify_quota = ? WHERE username = ? AND email IS NOT NULL AND verified_at IS NOT NULL', [enabled ? 1 : 0, username]);
+      if (!result.changes) throw new ServerStoreError('EMAIL_NOT_VERIFIED', 400, '请先验证邮箱');
+      if (!enabled) await driver.run("UPDATE account_email_outbox SET state = 'skipped' WHERE username = ? AND state = 'pending'", [username]);
+    });
+  }
+
+  async removeAccountEmail(username: string): Promise<void> {
+    await this.ready;
+    await this.driver.transaction(async (driver) => {
+      await driver.run(`UPDATE account_email_settings SET email = NULL, verified_at = NULL, pending_email = NULL,
+        pending_hash = NULL, pending_expires_at = NULL, notify_quota = 0 WHERE username = ?`, [username]);
+      await driver.run("UPDATE account_email_outbox SET state = 'skipped' WHERE username = ? AND state = 'pending'", [username]);
+    });
+  }
+
+  async enqueueQuotaEmail(username: string, eventKey: string, subject: string, body: string): Promise<void> {
+    await this.ready;
+    const at = nowIso();
+    await this.driver.run(
+      `INSERT OR IGNORE INTO account_email_outbox (id, event_key, username, subject, body, next_attempt_at, created_at)
+       SELECT ?, ?, username, ?, ?, ?, ? FROM account_email_settings
+       WHERE username = ? AND email IS NOT NULL AND verified_at IS NOT NULL AND notify_quota = 1`,
+      [`mail-${randomBytes(16).toString('hex')}`, eventKey, subject, body, at, at, username],
+    );
+  }
+
+  async dueAccountEmails(limit = 20): Promise<{ id: string; username: string; email?: string; subject: string; body: string; attempts: number; enabled: boolean }[]> {
+    await this.ready;
+    const rows = await this.driver.all<Record<string, unknown>>(
+      `SELECT o.id, o.username, o.subject, o.body, o.attempts, s.email, s.verified_at, s.notify_quota
+       FROM account_email_outbox o LEFT JOIN account_email_settings s ON s.username = o.username
+       WHERE o.state = 'pending' AND o.next_attempt_at <= ? ORDER BY o.created_at LIMIT ?`,
+      [nowIso(), limit],
+    );
+    return rows.map((row) => ({
+      id: String(row['id']), username: String(row['username']), subject: String(row['subject']), body: String(row['body']),
+      attempts: Number(row['attempts'] ?? 0),
+      ...(row['email'] == null ? {} : { email: String(row['email']) }),
+      enabled: row['verified_at'] != null && Number(row['notify_quota'] ?? 0) === 1,
+    }));
+  }
+
+  async finishAccountEmail(id: string, outcome: 'sent' | 'skipped' | 'failed', attempts = 0): Promise<void> {
+    await this.ready;
+    const nextAttempts = attempts + 1;
+    const state = outcome === 'failed' && nextAttempts < 5 ? 'pending' : outcome;
+    const next = new Date(Date.now() + Math.min(60, 2 ** attempts) * 60_000).toISOString();
+    await this.driver.run('UPDATE account_email_outbox SET state = ?, attempts = ?, next_attempt_at = ?, sent_at = ? WHERE id = ?', [state, nextAttempts, next, outcome === 'sent' ? nowIso() : null, id]);
   }
 
   async noteLogin(username: string): Promise<void> {
@@ -1461,11 +1616,11 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     const cursor = readCursor(after);
     const cursorClause = cursor ? sort.cursor(sort.value(cursor.value), cursor.id) : undefined;
     const rows = await this.driver.all<Record<string, unknown>>(
-      `SELECT u.username, i.account_id, u.disabled, u.created_at, u.updated_at, u.last_login_at,
+      `SELECT u.username, u.display_name, i.account_id, u.disabled, u.created_at, u.updated_at, u.last_login_at,
               ${ROLE_SQL} AS role,
               r.ledger_id, r.replica_id, COALESCE(r.head_seq, 0) AS commit_count,
               COALESCE(SUM(c.cipher_bytes), 0) AS commit_bytes,
-              COALESCE(q.commit_quota_bytes, ?) AS commit_quota_bytes,
+              CASE WHEN ${ROLE_SQL} IN ('owner', 'admin') THEN NULL ELSE COALESCE(q.commit_quota_bytes, ?) END AS commit_quota_bytes,
               u.revision,
               k.mode AS protection_mode,
               (SELECT MAX(e.at) FROM sync_events e
@@ -1480,22 +1635,22 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
        LEFT JOIN sync_server_commits c ON c.username = u.username
        LEFT JOIN sync_user_quotas q ON q.username = u.username
        LEFT JOIN sync_key_custody k ON k.username = u.username
-       WHERE (? = '' OR instr(lower(u.username), lower(?)) > 0 OR i.account_id = ?)
+       WHERE (? = '' OR instr(lower(u.username), lower(?)) > 0 OR instr(lower(COALESCE(u.display_name, '')), lower(?)) > 0 OR i.account_id = ?)
          AND (? = '' OR ${ROLE_SQL} = ?)
          AND (? = '' OR u.disabled = ?)
          AND (? = '' OR COALESCE(k.mode, 'none') = ?)
          ${cursorClause ? `AND ${cursorClause.sql}` : ''}
        GROUP BY u.username
        HAVING (? = ''
-         OR (? = 'over' AND COALESCE(SUM(c.cipher_bytes), 0) >= COALESCE(q.commit_quota_bytes, ?))
-         OR (? = 'warning' AND COALESCE(SUM(c.cipher_bytes), 0) >= COALESCE(q.commit_quota_bytes, ?) * 0.9
+         OR (? = 'over' AND ${ROLE_SQL} NOT IN ('owner', 'admin') AND COALESCE(SUM(c.cipher_bytes), 0) >= COALESCE(q.commit_quota_bytes, ?))
+         OR (? = 'warning' AND ${ROLE_SQL} NOT IN ('owner', 'admin') AND COALESCE(SUM(c.cipher_bytes), 0) >= COALESCE(q.commit_quota_bytes, ?) * 0.9
              AND COALESCE(SUM(c.cipher_bytes), 0) < COALESCE(q.commit_quota_bytes, ?))
-         OR (? = 'ok' AND COALESCE(SUM(c.cipher_bytes), 0) < COALESCE(q.commit_quota_bytes, ?) * 0.9))
+         OR (? = 'ok' AND (${ROLE_SQL} IN ('owner', 'admin') OR COALESCE(SUM(c.cipher_bytes), 0) < COALESCE(q.commit_quota_bytes, ?) * 0.9)))
        ORDER BY ${sort.orderBy}
        LIMIT ?`,
       [
         this.defaultCommitQuotaBytes, nowIso(),
-        filters.search ?? '', filters.search ?? '', filters.search ?? '',
+        filters.search ?? '', filters.search ?? '', filters.search ?? '', filters.search ?? '',
         filters.role ?? '', filters.role ?? '',
         filters.state ?? '', filters.state === 'disabled' ? 1 : 0,
         filters.protection ?? '', filters.protection ?? '',
@@ -1508,17 +1663,17 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       ],
     );
     const page = rows.slice(0, limit).map((row) => ({
-      accountId: String(row['account_id']), username: String(row['username']), disabled: bool(row['disabled']),
+      accountId: String(row['account_id']), username: String(row['username']), displayName: row['display_name'] == null ? null : String(row['display_name']), disabled: bool(row['disabled']),
       role: row['role'] === 'owner' ? 'owner' : row['role'] === 'admin' ? 'admin' : row['role'] === 'viewer' ? 'viewer' : 'member',
       createdAt: String(row['created_at']), updatedAt: String(row['updated_at']),
       lastLoginAt: row['last_login_at'] ?? null, ledgerId: row['ledger_id'] ?? null,
       replicaId: row['replica_id'] ?? null, commitCount: Number(row['commit_count'] ?? 0),
-      commitBytes: Number(row['commit_bytes'] ?? 0), commitQuotaBytes: Number(row['commit_quota_bytes']),
+      commitBytes: Number(row['commit_bytes'] ?? 0), commitQuotaBytes: row['commit_quota_bytes'] == null ? null : Number(row['commit_quota_bytes']),
       activeDeviceCount: Number(row['active_device_count'] ?? 0),
       revision: Number(row['revision'] ?? 1),
       protectionMode: row['protection_mode'] == null ? null : String(row['protection_mode']),
       lastSyncAt: row['last_sync_at'] == null ? null : String(row['last_sync_at']),
-      quotaState: Number(row['commit_bytes'] ?? 0) >= Number(row['commit_quota_bytes']) ? 'over'
+      quotaState: row['commit_quota_bytes'] == null ? 'ok' : Number(row['commit_bytes'] ?? 0) >= Number(row['commit_quota_bytes']) ? 'over'
         : Number(row['commit_bytes'] ?? 0) >= Number(row['commit_quota_bytes']) * 0.9 ? 'warning' : 'ok',
     }));
     // The cursor carries the sort it belongs to: reusing it under another ordering would return
@@ -1872,8 +2027,9 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
         throw new ServerStoreError('LEDGER_MISMATCH', 409, '服务器账本已变化，请重新登录并确认要替换的账本');
       }
       const quota = await driver.get<{ commit_quota_bytes: number }>('SELECT commit_quota_bytes FROM sync_user_quotas WHERE username = ?', [username]);
+      const quotaRole = await driver.get<{ role: string }>(`SELECT ${ROLE_SQL} AS role FROM sync_users u LEFT JOIN server_administrators a ON a.username = u.username LEFT JOIN server_ownership o ON o.username = u.username WHERE u.username = ?`, [username]);
       const bytes = commits.reduce((sum, commit) => sum + Buffer.byteLength(JSON.stringify(commit.encCommit)), 0);
-      if (bytes > Number(quota?.commit_quota_bytes ?? this.defaultCommitQuotaBytes)) throw new ServerStoreError('COMMIT_QUOTA_EXCEEDED', 507, 'encrypted commit quota exceeded');
+      if (!unlimitedQuotaRole(quotaRole?.role) && bytes > Number(quota?.commit_quota_bytes ?? this.defaultCommitQuotaBytes)) throw new ServerStoreError('COMMIT_QUOTA_EXCEEDED', 507, 'encrypted commit quota exceeded');
       await driver.run('DELETE FROM sync_server_commits WHERE username = ?', [username]);
       await driver.run('DELETE FROM sync_key_envelopes WHERE username = ?', [username]);
       const next = { ...current, ledgerId, replicaId: `rep-${randomBytes(12).toString('hex')}`, streamEpoch: `epoch-${randomBytes(12).toString('hex')}`, headSeq: commits.length, updatedAt: at };
@@ -2048,6 +2204,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
         await driver.run('INSERT OR IGNORE INTO sync_ledger_requirements (username, ledger_id, capability) VALUES (?, ?, ?)', [username, replica.ledgerId, capability]);
       }
       const quotaRow = await driver.get<{ commit_quota_bytes: number }>('SELECT commit_quota_bytes FROM sync_user_quotas WHERE username = ?', [username]);
+      const quotaRole = await driver.get<{ role: string }>(`SELECT ${ROLE_SQL} AS role FROM sync_users u LEFT JOIN server_administrators a ON a.username = u.username LEFT JOIN server_ownership o ON o.username = u.username WHERE u.username = ?`, [username]);
       const usedRow = await driver.get<{ bytes: number }>('SELECT COALESCE(SUM(cipher_bytes), 0) AS bytes FROM sync_server_commits WHERE username = ?', [username]);
       const quota = Number(quotaRow?.commit_quota_bytes ?? this.defaultCommitQuotaBytes);
       let projected = Number(usedRow?.bytes ?? 0);
@@ -2063,7 +2220,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
         }
         const encoded = JSON.stringify(item.encCommit);
         const bytes = Buffer.byteLength(encoded);
-        if (projected + bytes > quota) throw new ServerStoreError('COMMIT_QUOTA_EXCEEDED', 507, 'encrypted commit quota exceeded');
+        if (!unlimitedQuotaRole(quotaRole?.role) && projected + bytes > quota) throw new ServerStoreError('COMMIT_QUOTA_EXCEEDED', 507, 'encrypted commit quota exceeded');
         headSeq += 1;
         projected += bytes;
         await driver.run(
@@ -2085,6 +2242,22 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     await this.ready;
     if (quotaBytes === undefined) await this.driver.run('DELETE FROM sync_user_quotas WHERE username = ?', [username]);
     else await this.driver.run('INSERT OR REPLACE INTO sync_user_quotas (username, commit_quota_bytes, updated_at) VALUES (?, ?, ?)', [username, quotaBytes, nowIso()]);
+  }
+
+  async commitUsage(username: string): Promise<{ usedBytes: number; quotaBytes: number | null; commitCount: number }> {
+    await this.ready;
+    const row = await this.driver.get<{ used_bytes: number; quota_bytes: number; commit_count: number }>(
+      `SELECT
+        (SELECT COALESCE(SUM(cipher_bytes), 0) FROM sync_server_commits WHERE username = ?) AS used_bytes,
+        (SELECT COUNT(*) FROM sync_server_commits WHERE username = ?) AS commit_count,
+        COALESCE((SELECT commit_quota_bytes FROM sync_user_quotas WHERE username = ?), ?) AS quota_bytes`,
+      [username, username, username, this.defaultCommitQuotaBytes],
+    );
+    return {
+      usedBytes: Number(row?.used_bytes ?? 0),
+      quotaBytes: unlimitedQuotaRole(await this.roleForUser(username)) ? null : Number(row?.quota_bytes ?? this.defaultCommitQuotaBytes),
+      commitCount: Number(row?.commit_count ?? 0),
+    };
   }
 
   async listInvites(): Promise<Invite[]> {
@@ -2870,16 +3043,18 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     await this.ready;
     const hasBlobTables = await this.driver.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'blob_objects'");
     const blobBytes = hasBlobTables
-      ? '(SELECT username, SUM(cipher_bytes) AS bytes FROM blob_objects WHERE state <> \'trash\' GROUP BY username)'
+      ? '(SELECT username, SUM(bytes) AS bytes FROM (SELECT username, cipher_bytes AS bytes FROM blob_objects UNION ALL SELECT username, cipher_bytes AS bytes FROM blob_uploads) GROUP BY username)'
       : '(SELECT NULL AS username, 0 AS bytes WHERE 0)'
     ;
     const blobQuotas = hasBlobTables ? 'blob_user_quotas' : null;
     const rows = await this.driver.all<Record<string, unknown>>(
-      `SELECT u.username, i.account_id,
+      `SELECT u.username, i.account_id, ${ROLE_SQL} AS role,
               COALESCE(c.bytes, 0) AS commit_bytes, COALESCE(q.commit_quota_bytes, ?) AS commit_quota,
               COALESCE(b.bytes, 0) AS blob_bytes, COALESCE(bq.quota_bytes, ?) AS blob_quota
        FROM sync_users u
        JOIN sync_account_identities i ON i.username = u.username
+       LEFT JOIN server_administrators a ON a.username = u.username
+       LEFT JOIN server_ownership o ON o.username = u.username
        LEFT JOIN (SELECT username, SUM(cipher_bytes) AS bytes FROM sync_server_commits GROUP BY username) c ON c.username = u.username
        LEFT JOIN sync_user_quotas q ON q.username = u.username
        LEFT JOIN ${blobBytes} b ON b.username = u.username
@@ -2889,6 +3064,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     );
     const warnings: { username: string; accountId: string; scope: 'commit' | 'blobs'; usedBytes: number; quotaBytes: number }[] = [];
     for (const row of rows) {
+      if (unlimitedQuotaRole(row['role'])) continue;
       const username = String(row['username']);
       const accountId = String(row['account_id']);
       const commitQuota = Number(row['commit_quota'] ?? 0);
@@ -3039,12 +3215,13 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     await this.ready;
     const at = nowIso();
     const row = await this.driver.get<Record<string, unknown>>(
-      `SELECT u.username, i.account_id, u.disabled, u.created_at, u.updated_at, u.last_login_at, u.revision,
+      `SELECT u.username, u.display_name, i.account_id, u.disabled, u.created_at, u.updated_at, u.last_login_at, u.revision,
               ${ROLE_SQL} AS role,
               r.ledger_id, r.replica_id, COALESCE(r.head_seq, 0) AS commit_count,
               (SELECT COUNT(*) FROM sync_server_commits c WHERE c.username = u.username) AS stored_commits,
               (SELECT COALESCE(SUM(c.cipher_bytes), 0) FROM sync_server_commits c WHERE c.username = u.username) AS commit_bytes,
-              COALESCE(q.commit_quota_bytes, ?) AS commit_quota_bytes,
+              CASE WHEN ${ROLE_SQL} IN ('owner', 'admin') THEN NULL ELSE COALESCE(q.commit_quota_bytes, ?) END AS commit_quota_bytes,
+              e.email, e.verified_at, e.pending_email,
               c2.mode AS protection_mode, c2.version AS protection_version
        FROM sync_account_identities i
        JOIN sync_users u ON u.username = i.username
@@ -3052,6 +3229,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
        LEFT JOIN server_ownership o ON o.username = u.username
        LEFT JOIN sync_replicas r ON r.username = u.username
        LEFT JOIN sync_user_quotas q ON q.username = u.username
+       LEFT JOIN account_email_settings e ON e.username = u.username
        LEFT JOIN sync_key_custody c2 ON c2.username = u.username
        WHERE i.account_id = ?`,
       [this.defaultCommitQuotaBytes, accountId],
@@ -3082,6 +3260,10 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       account: {
         username,
         accountId,
+        displayName: row['display_name'] == null ? null : String(row['display_name']),
+        email: row['email'] == null ? null : String(row['email']),
+        emailVerifiedAt: row['verified_at'] == null ? null : String(row['verified_at']),
+        pendingEmail: row['pending_email'] == null ? null : String(row['pending_email']),
         role: row['role'] === 'owner' ? 'owner' : row['role'] === 'admin' ? 'admin' : row['role'] === 'viewer' ? 'viewer' : 'member',
         disabled: bool(row['disabled']),
         createdAt: String(row['created_at']),
@@ -3094,7 +3276,7 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
       },
       capacity: {
         commitBytes: Number(row['commit_bytes'] ?? 0),
-        commitQuotaBytes: Number(row['commit_quota_bytes']),
+        commitQuotaBytes: row['commit_quota_bytes'] == null ? null : Number(row['commit_quota_bytes']),
         commitCount: Number(row['stored_commits'] ?? 0),
         headSeq: Number(row['commit_count'] ?? 0),
         ledgerId: row['ledger_id'] ?? null,

@@ -17,6 +17,7 @@
  */
 import { connect as connectTcp, type Socket } from 'node:net';
 import { connect as connectTls, TLSSocket } from 'node:tls';
+import { randomBytes } from 'node:crypto';
 import { summarize, type EmailChannel, type AlertNotification } from './alert-channels.js';
 
 /** One reply line, or a multiline reply ending with `code + space`. */
@@ -142,9 +143,18 @@ function upgradeToTls(socket: Socket, channel: EmailChannel, timeoutMs: number):
   });
 }
 
-/** Sends one notification. Throws with a readable reason; the caller records it per channel. */
-export async function sendAlertEmail(channel: EmailChannel, notification: AlertNotification, options: SmtpOptions = {}): Promise<void> {
+/** Sends one plain-text message through a configured SMTP transport. */
+export async function sendEmail(channel: EmailChannel, message: { to: string[]; subject: string; body: string }, options: SmtpOptions = {}): Promise<void> {
   const timeoutMs = options.timeoutMs ?? 15_000;
+  const payload = buildMessage({
+    from: channel.from,
+    fromName: 'Zichan',
+    to: message.to,
+    subject: message.subject,
+    body: message.body,
+    messageId: `<${randomBytes(12).toString('hex')}@zichan>`,
+    date: new Date().toUTCString(),
+  });
   let socket = await (options.connect ?? openSocket)(channel, timeoutMs);
   try {
     const greeting = await readReply(socket, timeoutMs);
@@ -172,22 +182,23 @@ export async function sendAlertEmail(channel: EmailChannel, notification: AlertN
       await command(socket, Buffer.from(channel.password, 'utf8').toString('base64'), timeoutMs, [2], 'AUTH');
     }
     await command(socket, `MAIL FROM:<${channel.from}>`, timeoutMs, [2, 3], 'MAIL FROM');
-    for (const address of channel.to) await command(socket, `RCPT TO:<${address}>`, timeoutMs, [2, 3], 'RCPT');
+    for (const address of message.to) await command(socket, `RCPT TO:<${address}>`, timeoutMs, [2, 3], 'RCPT');
     await command(socket, 'DATA', timeoutMs, [3], 'DATA');
-    const message = buildMessage({
-      from: channel.from,
-      fromName: 'Zichan',
-      to: channel.to,
-      subject: summarize(notification).split('\n')[0]!,
-      body: `${summarize(notification)}\n\n${JSON.stringify(notification.detail, null, 2)}`,
-      messageId: `<${notification.key}.${Date.now()}@zichan>`,
-      date: new Date(notification.at).toUTCString(),
-    });
-    socket.write(`${message}\r\n.\r\n`);
+    socket.write(`${payload}\r\n.\r\n`);
     const accepted = await readReply(socket, timeoutMs);
     if (accepted.code !== 250) throw new Error(`邮件服务器未接受消息：${accepted.text.split('\n')[0]}`);
     await command(socket, 'QUIT', timeoutMs, [2], 'QUIT').catch(() => undefined);
   } finally {
     socket.destroy();
   }
+}
+
+/** Sends an administrator alert using the same SMTP transport. */
+export async function sendAlertEmail(channel: EmailChannel, notification: AlertNotification, options: SmtpOptions = {}): Promise<void> {
+  const summary = summarize(notification);
+  return sendEmail(channel, {
+    to: channel.to,
+    subject: summary.split('\n')[0]!,
+    body: `${summary}\n\n${JSON.stringify(notification.detail, null, 2)}`,
+  }, options);
 }

@@ -144,6 +144,7 @@ export interface MetricsServiceDeps {
   runtime?: RuntimeStats;
   /** Injected in tests; the default posts to the configured webhook when one is set. */
   notify?: AlertNotifier;
+  onCapacityActive?: (warning: { username: string; scope: 'commit' | 'blobs'; usedBytes: number; quotaBytes: number }, episode: string) => Promise<void>;
 }
 
 /**
@@ -469,14 +470,20 @@ export function createMetricsService(deps: MetricsServiceDeps) {
     const capacity = await store.capacityWarnings(ratio);
     const warningKeys = new Set(capacity.map((warning) => `capacity:${warning.scope}:${warning.accountId ?? warning.username}`));
     for (const warning of capacity) {
-      await store.upsertAlert({
-        key: `capacity:${warning.scope}:${warning.accountId ?? warning.username}`,
+      const key = `capacity:${warning.scope}:${warning.accountId ?? warning.username}`;
+      const previous = await store.getAlert(key);
+      const currentAlert = await store.upsertAlert({
+        key,
         rule: 'capacity',
         scope: warning.scope,
         severity: 'warning',
         active: true,
         detail: { username: warning.username, accountId: warning.accountId, usedBytes: warning.usedBytes, quotaBytes: warning.quotaBytes, ratio },
       });
+      if (currentAlert.state === 'active' && previous?.state !== 'active') {
+        try { await deps.onCapacityActive?.(warning, currentAlert.lastSeenAt); }
+        catch (error) { await log('warn', 'account_quota_email_queue_failed', 'Could not queue account quota email', { username: warning.username, detail: { reason: error instanceof Error ? error.message : String(error) } }); }
+      }
     }
     // Recovery has to be verified too: an account that fell back under the threshold resolves.
     for (const alert of await store.listAlerts({})) {

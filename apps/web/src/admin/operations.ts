@@ -24,7 +24,8 @@ export function userSupport(detail: AccountDetail) {
   return {
     latest,
     sync: !latest ? '暂无同步记录' : latest.outcome === 'ok' ? '最近请求成功' : '最近请求失败',
-    quotaExceeded: capacity.commitBytes >= capacity.commitQuotaBytes || capacity.blobUsedBytes >= capacity.blobQuotaBytes,
+    quotaExceeded: capacity.commitQuotaBytes !== null && capacity.commitBytes >= capacity.commitQuotaBytes
+      || capacity.blobQuotaBytes !== null && capacity.blobUsedBytes >= capacity.blobQuotaBytes,
     preview: account.protection?.mode === 'private'
       ? '私密模式：服务器没有解密凭据'
       : !account.protection ? '尚未设置账本保护'
