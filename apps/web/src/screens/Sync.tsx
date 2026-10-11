@@ -7,11 +7,12 @@ import { ProfileOperations, type ProfileOperation } from '../profile-operation.j
 import { revokeConnectionSession } from '../revoke-connection-session.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { accountProtection } from '../account-protection.js';
-import { LedgerProtectionPanel } from '../ui/LedgerProtectionPanel.js';
 import { ServerCustodyPanel } from '../ui/ServerCustodyPanel.js';
 import { NodeReplicaPanel } from '../ui/NodeReplicaPanel.js';
 import { assertNodeReplicaIdentity } from '../node-replica-identity.js';
 import { LedgerMembersPanel } from '../ui/LedgerMembersPanel.js';
+import { Settings } from './Settings.js';
+import type { ThemeId, ThemeMode, ThemeModePreference } from '../theme.js';
 import { isDateInRange, localToday } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { useSnapshot, type Snapshot } from '../db/snapshot.js';
@@ -359,7 +360,15 @@ const primary = btnPrimary;
 const danger = btnDanger;
 const inputGrid = { display: 'grid', gridTemplateColumns: '1fr 120px 1fr 100px', gap: 10, marginBottom: 10 } as const;
 
-export function Sync() {
+export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, onSelectSection }: {
+  theme: ThemeId;
+  mode: ThemeModePreference;
+  resolvedMode: ThemeMode;
+  setTheme: (theme: ThemeId) => void;
+  setMode: (mode: ThemeModePreference) => void;
+  section: 'device' | 'server' | 'restore' | 'security';
+  onSelectSection: (section: 'device' | 'server' | 'restore' | 'security') => void;
+}) {
   const { store, bump } = useStore();
   const snap = useSnapshot('sync');
   const [profiles, setProfiles] = useState<SyncConnection[]>(loadSyncConnections);
@@ -437,7 +446,6 @@ export function Sync() {
    * console. A beginner with one device and one server never opens either.
    */
   const [showSettings, setShowSettings] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
   /*
    * The conflict box carries a full per-field merge editor. It is already gated
    * on `conflicts.length > 0`, but when it does render it is taller than the
@@ -1502,7 +1510,7 @@ export function Sync() {
   /*
    * The ledger-key card is rendered in two different layers: as a blocking first
    * step while the key is locked (nothing can sync without it), and as key
-   * management under 高级设置 once it is unlocked. Rendered from one definition
+   * management under 解锁与恢复设置 once it is unlocked. Rendered from one definition
    * so the same password fields can never appear twice at once.
    */
   const ledgerKeyCard = (
@@ -1544,18 +1552,394 @@ export function Sync() {
     </div>
   );
 
+  const serverPanel = (
+    <>
+      <NodeReplicaPanel profiles={profiles} ledgerId={ledgerKey.ledgerId}
+        pinNodeIdentity={(id, nodePublicKey) => patchProfile(id, { nodePublicKey })}
+        onConfigureServers={() => {
+          setShowSettings(true);
+          requestAnimationFrame(() => document.getElementById('server-connections')
+            ?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+        }} />
+      {profiles.find((profile) => profile.id === accountProtection()?.profileId && profile.ledgerId === ledgerKey.ledgerId)
+        && ledgerKey.unlocked && <LedgerMembersPanel profile={profiles.find((profile) => profile.id === accountProtection()?.profileId)!} />}
+
+      {/* ===== 第 2 层：客户端同步与服务器连接 ===== */}
+      <SyncSection
+        id="server-connections"
+        title="客户端同步与服务器连接"
+        summary={settingsSummary}
+        open={showSettings}
+        onToggle={() => setShowSettings((value) => !value)}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>
+            <input type="checkbox" checked={autoSyncEnabled} onChange={(event) => setAutoSyncEnabled(event.target.checked)} />
+            自动同步
+          </label>
+          <select aria-label="自动同步间隔" className="zc-select" value={autoSyncMinutes} onChange={(event) => setAutoSyncMinutes(Number(event.target.value))} disabled={!autoSyncEnabled} style={{ width: 120 }}>
+            {[1, 5, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分钟</option>)}
+          </select>
+          <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>{autoSyncStatus}</span>
+        </div>
+        {selected && <ServerCustodyPanel key={`${selected.id}:${selected.username}:${selected.baseUrl}`} profile={selected} />}
+      {<div style={card}>
+        <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>服务器配置</div>
+            <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
+              每台服务器可以使用各自的账号密码和服务路径，和“账本密码”是两回事，互不影响。{vault.message}。
+              {!isTauriRuntime() && '本站账号负责登录与缓存隔离，附加服务器独立使用令牌会话，保存在此标签页的 sessionStorage；关闭标签页后需重新登录，不覆盖本站 Cookie。'}
+            </div>
+          </div>
+          <button onClick={addProfile} style={primary}>新增服务器</button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '10px 0 14px', borderTop: '1px solid var(--border)' }}>
+          <input
+            aria-label="服务器连接链接"
+            className="zc-input"
+            style={{ flex: '1 1 420px' }}
+            value={connectionLinkDraft}
+            onChange={(event) => setConnectionLinkDraft(event.target.value)}
+            placeholder="粘贴不含秘密的连接链接"
+            spellCheck={false}
+          />
+          <button type="button" onClick={() => importConnectionLink(connectionLinkDraft)} disabled={!connectionLinkDraft.trim()} style={outline}>导入连接</button>
+        </div>
+
+        {vault.kind === 'native-stronghold' && (
+          <div style={{ display: 'flex', alignItems: 'end', gap: 10, flexWrap: 'wrap', padding: 12, marginBottom: 14, borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
+            <div style={{ minWidth: 230, flex: '1 1 260px' }}>
+              <label className="zc-label">Stronghold 本机密码</label>
+              <input
+                aria-label="Stronghold 本机密码"
+                className="zc-input"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                value={vaultPassword}
+                onChange={(event) => setVaultPassword(event.target.value)}
+                onKeyDown={(event) => { if (event.key === 'Enter' && !vault.unlocked) void unlockVault(); }}
+                placeholder={vault.initialized ? '解锁安全密码库' : '至少 8 个字符，用于创建安全密码库'}
+                disabled={vault.unlocked || vaultBusy}
+              />
+            </div>
+            {!vault.initialized && !vault.unlocked && (
+              <div style={{ minWidth: 230, flex: '1 1 260px' }}>
+                <label className="zc-label">确认本机密码</label>
+                <input aria-label="确认 Stronghold 本机密码" className="zc-input" type="password" autoComplete="off" spellCheck={false} value={vaultPasswordConfirm} onChange={(event) => setVaultPasswordConfirm(event.target.value)} placeholder="再次输入本机密码" disabled={vaultBusy} />
+              </div>
+            )}
+            <button type="button" onClick={() => void unlockVault()} disabled={vault.unlocked || vaultBusy || vaultPassword.length < 8 || (!vault.initialized && vaultPassword !== vaultPasswordConfirm)} style={vault.unlocked ? outline : primary}>
+              {vault.unlocked ? '已解锁' : vaultBusy ? '解锁中…' : vault.initialized ? '解锁' : '创建并解锁'}
+            </button>
+            <div style={{ flex: '1 1 240px', fontSize: 'var(--fs-caption)', color: vaultError ? 'var(--negative)' : vault.unlocked ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: 'var(--fw-medium)' }}>
+              {vaultError || (vault.unlocked ? `Stronghold 已解锁 · ${vault.platform}` : '解锁后才能读取、保存和自动使用服务器账号密码')}
+            </div>
+          </div>
+        )}
+
+        {vault.kind === 'browser-session' && vaultError && (
+          <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>{vaultError}</div>
+        )}
+
+        {selected && !selectedIsPrimary && (
+          <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 12, background: 'var(--surface-2)', marginBottom: 14 }}>
+            <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>首次配置向导</div>
+                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3 }}>选择服务器位置，先把地址和端口套到当前服务器，再填写账号密码。</div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {WIZARD_MODES.map((item) => (
+                  <button key={item.mode} onClick={() => chooseWizardMode(item.mode)} style={tabBtn(wizardMode === item.mode)} title={item.hint}>{item.label}</button>
+                ))}
+              </div>
+            </div>
+            {(wizardMode === 'lan' || wizardMode === 'public') && (
+              <div className="zc-sync-wizard-grid" style={{ display: 'grid', gridTemplateColumns: wizardMode === 'public' ? '1fr 180px' : '1fr', gap: 10, marginBottom: 10 }}>
+                <div>
+                  <label className="zc-label">{wizardMode === 'public' ? '公网域名' : '局域网 IP / 主机名'}</label>
+                  <input className="zc-input" value={wizardHost} onChange={(e) => setWizardHost(e.target.value)} placeholder={wizardMode === 'public' ? 'ledger.example.com' : '192.168.1.100'} />
+                </div>
+                {wizardMode === 'public' && (
+                  <div>
+                    <label className="zc-label">安全路径</label>
+                    <input className="zc-input" value={wizardBasePath} onChange={(e) => setWizardBasePath(e.target.value)} placeholder="/zichan" />
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button onClick={applyWizard} style={outline}>套用到当前服务器</button>
+              <button onClick={() => void applyWizardAndTest()} disabled={testingId === selected.id} style={outline}>{testingId === selected.id ? '测试中…' : '套用并测试连通性'}</button>
+              <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>
+                {buildBaseUrl({ ...selected, ...wizardPatch(wizardMode, wizardHost, wizardBasePath) })}
+              </span>
+            </div>
+            {selectedRemoteLedgerId && (
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--negative)' }}>
+                <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>此账号已绑定另一个账本</div>
+                <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', marginTop: 4 }}>
+                  远端账本 {selectedRemoteLedgerId}。系统会先只读验证远端密码、提交和账本一致性，再保存本机保护备份并原子替换；任何一步失败都会保留本机账本。
+                </div>
+                {joinTarget?.profileId !== selected.id ? (
+                  <button type="button" disabled={busy} onClick={() => { setJoinTarget({ profileId: selected.id, ledgerId: selectedRemoteLedgerId }); setJoinConfirmation(''); setJoinLedgerPassword(''); }} style={{ ...danger, marginTop: 10 }}>加入远端账本</button>
+                ) : (
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap', marginTop: 10 }}>
+                    <div style={{ minWidth: 240 }}>
+                      <label className="zc-label">输入“替换本机”确认</label>
+                      <input aria-label="确认替换本机账本" className="zc-input" value={joinConfirmation} onChange={(event) => setJoinConfirmation(event.target.value)} autoComplete="off" />
+                    </div>
+                    <div style={{ minWidth: 240 }}>
+                      <label className="zc-label">远端账本密码</label>
+                      <input aria-label="远端账本密码" className="zc-input" type="password" value={joinLedgerPassword} onChange={(event) => setJoinLedgerPassword(event.target.value)} autoComplete="off" />
+                    </div>
+                    <button type="button" disabled={busy || joinConfirmation !== '替换本机' || joinLedgerPassword.length < 8} onClick={() => void joinRemoteLedger(selected, selectedRemoteLedgerId)} style={danger}>验证、备份并加入</button>
+                    <button type="button" disabled={busy} onClick={() => { setJoinTarget(null); setJoinConfirmation(''); setJoinLedgerPassword(''); }} style={outline}>取消</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div style={{ overflowX: 'auto', marginBottom: 14 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr><th style={thStyle}>启用</th><th style={thStyle}>别名</th><th style={thStyle}>地址</th><th style={thStyle}>用户</th><th style={thStyle}>状态</th><th style={thStyle}>延迟</th><th style={thStyle}></th></tr></thead>
+            <tbody>
+              {profiles.map((p) => (
+                <tr key={p.id} onClick={() => setSelectedId(p.id)} style={{ cursor: 'pointer', background: selected?.id === p.id ? 'var(--accent-soft)' : 'transparent' }}>
+                  <td style={tdStyle}><span className="zc-check-target" onClick={(e) => e.stopPropagation()}><input aria-label={`启用 ${p.alias}`} type="checkbox" checked={p.enabled} disabled={isPrimaryWebConnection(p)} onChange={(e) => patchProfile(p.id, { enabled: e.target.checked })} onClick={(e) => e.stopPropagation()} /></span></td>
+                  <td style={tdStyle}>{p.alias}{isPrimaryWebConnection(p) && ' · 本站登录'}</td>
+                  <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{buildBaseUrl(p)}</td>
+                  <td style={tdStyle}>{p.username || '—'}</td>
+                  <td style={{ ...tdStyle, color: p.status === 'online' ? 'var(--positive)' : p.status === 'offline' || p.status === 'identity_changed' || p.status === 'replica_retired' ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 'var(--fw-bold)' }}>{statusText[p.status]}</td>
+                  <td style={tdStyle}>{p.lastLatencyMs !== undefined ? `${p.lastLatencyMs}ms` : '—'}</td>
+                  <td style={{ ...tdStyle, textAlign: 'right' }}>
+                    <button onClick={(e) => { e.stopPropagation(); void testProfile(p, 'health'); }} disabled={testingId === p.id} style={outline}>{testingId === p.id ? '测试中…' : '测试连通性'}</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {selected && (
+          <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 14, background: 'var(--surface-2)' }}>
+            <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', marginBottom: 10 }}>编辑服务器 · {selected.alias}</div>
+            <div style={{ marginBottom: 10 }}>
+              <label className="zc-label">完整服务器地址</label>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input
+                  aria-label="完整服务器地址"
+                  disabled={selectedIsPrimary}
+                  className="zc-input"
+                  style={{ flex: '1 1 420px' }}
+                  value={addressDraft}
+                  onChange={(event) => editAddressDraft(event.target.value)}
+                  placeholder="https://ledger.example.com/zichan"
+                  spellCheck={false}
+                />
+                <button type="button" onClick={() => setAdvancedAddress((value) => !value)} style={outline}>{advancedAddress ? '收起字段填写' : '按字段填写'}</button>
+                <button type="button" onClick={saveAddress} disabled={selectedIsPrimary || Boolean(addressError) || addressDraft === selected.baseUrl} style={primary}>保存地址</button>
+              </div>
+              <div style={{ marginTop: 5, fontSize: 'var(--fs-meta)', color: addressError ? 'var(--negative)' : 'var(--fg-subtle)', fontWeight: addressError ? 'var(--fw-bold)' : 'var(--fw-regular)' }}>
+                {addressError || '完整 URL 是唯一保存值；高级字段只是同一地址的编辑视图。公网必须使用 HTTPS。'}
+              </div>
+              <div style={{ marginTop: 4, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                HTTPS 网站中的浏览器可能阻止普通 HTTP 局域网地址；可改用可信 HTTPS、服务器自带 Web，或 Windows 便携版。
+              </div>
+            </div>
+            {selectedIsPrimary && <p>此连接属于本站登录账号，地址和用户名不可在此处替换。切换账号请先退出；其他服务器使用“新增服务器”配置。</p>}
+            {advancedAddress && !selectedIsPrimary && (
+              <>
+                <div className="zc-sync-input-grid" style={inputGrid}>
+                  <div><label className="zc-label">协议</label><select aria-label="协议" className="zc-select" value={addressParts.protocol} onChange={(e) => editAddressPart({ protocol: e.target.value as Protocol })}><option value="http">http</option><option value="https">https</option></select></div>
+                  <div><label className="zc-label">主机 / 域名</label><input aria-label="主机或域名" className="zc-input" value={addressParts.host} onChange={(e) => editAddressPart({ host: e.target.value })} /></div>
+                  <div><label className="zc-label">端口</label><input aria-label="端口" className="zc-input" value={addressParts.port} onChange={(e) => editAddressPart({ port: e.target.value })} placeholder="443" /></div>
+                  <div><label className="zc-label">服务路径</label><input aria-label="服务路径" className="zc-input" value={addressParts.path} onChange={(e) => editAddressPart({ path: e.target.value })} placeholder="/zichan" /></div>
+                </div>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', margin: '-2px 0 12px', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+                  <input type="checkbox" checked={selected.sharedUrls.includes(selected.baseUrl)} onChange={(event) => setActiveAddressShared(event.target.checked)} />
+                  将此地址写入账本的加密服务器目录，供其他设备发现。公网 HTTPS 默认开启；localhost 或局域网地址默认仅当前设备，手动共享前请确认其他设备也能访问该地址。
+                </label>
+              </>
+            )}
+            <div className="zc-sync-input-grid" style={inputGrid}>
+              <div><label className="zc-label">中文别名</label><input aria-label="中文别名" className="zc-input" value={selected.alias} onChange={(e) => patchProfile(selected.id, { alias: e.target.value })} /></div>
+              <div><label className="zc-label">登录账号</label><input aria-label="用户名" disabled={selectedIsPrimary} className="zc-input" value={selected.username} onChange={(e) => patchProfile(selected.id, { username: e.target.value })} /><small>用于登录，注册后暂不能修改；支持中文，至少 2 个字符。</small></div>
+              {!selectedIsPrimary && <div><label className="zc-label">昵称（仅注册需要）</label><input aria-label="注册昵称" className="zc-input" value={registerDisplayName} onChange={(e) => setRegisterDisplayName(e.target.value)} placeholder="例如：小明" /><small>显示名称，注册后可在账号设置修改。</small></div>}
+              {!selectedIsPrimary && <div><label className="zc-label">服务器账号密码（仅本次登录使用，不保存密码）</label><input aria-label="服务器账号密码" className="zc-input" type="password" value={cred.password} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { password: e.target.value, accessToken: undefined, refreshToken: undefined, accessExpiresAt: undefined, sessionId: undefined, sessionTransport: undefined })} /></div>}
+              {!selectedIsPrimary && <div><label className="zc-label">确认服务器账号密码（仅注册需要）</label><input aria-label="确认服务器账号密码" className="zc-input" type="password" value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} /></div>}
+              {selectedHealth?.registrationMode === 'invite' && <div><label className="zc-label">邀请码</label><input aria-label="邀请码" className="zc-input" value={cred.inviteCode} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { inviteCode: e.target.value })} /></div>}
+            </div>
+            {selectedHealth && (
+              <div style={{ margin: '-2px 0 10px', fontSize: 'var(--fs-meta)', color: !selectedHealth.claimed ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: !selectedHealth.claimed ? 'var(--fw-bold)' : 'var(--fw-regular)' }}>
+                {!selectedHealth.claimed
+                  ? '尚未初始化：请联系部署者先完成独立管理后台设置。用户端不创建管理员。'
+                  : `注册策略：${selectedHealth.registrationMode === 'open' ? '开放注册' : selectedHealth.registrationMode === 'invite' ? '仅邀请码' : '已关闭'}${selected.role ? ` · 当前账号：${selected.role === 'owner' ? '所有者' : selected.role === 'admin' ? '管理员' : '成员'}` : ''}`}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button onClick={() => void testProfile(selected, 'auth')} disabled={busy || testingId === selected.id} style={outline}>{testingId === selected.id ? '验证中…' : '验证账号密码'}</button>
+              <button onClick={() => void registerProfile(selected)} disabled={selectedIsPrimary || busy || Boolean(testingId) || selectedHealth?.claimed === false || selectedHealth?.registrationMode === 'closed'} style={outline}>注册</button>
+              <button onClick={() => void submitLogin(selected)} disabled={selectedIsPrimary || busy || Boolean(testingId)} style={outline}>登录</button>
+              <button onClick={() => void doSync(selected)} disabled={busy || !ledgerKey.unlocked} style={primary}>{busy ? '同步中…' : '同步此服务器'}</button>
+              <button type="button" onClick={() => void createConnectionShare(selected)} disabled={busy || !selected.serverId || !selected.serverPublicKey} style={outline}>连接链接 / 二维码</button>
+              <button
+                onClick={() => { operations.current.cancel(selected.id); setRemoveWarning(''); setRemoveTarget(selected.id); }}
+                disabled={selectedIsPrimary || profiles.length <= 1 || busy || (vault.kind === 'native-stronghold' && vault.initialized && !vault.unlocked)}
+                title={vault.kind === 'native-stronghold' && vault.initialized && !vault.unlocked ? '请先解锁 Stronghold，确保同步凭据一并删除' : '删除服务器'}
+                style={danger}
+              >删除</button>
+              <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>
+                {selected.serverId ? `服务器 ID：${selected.serverId}` : '尚未识别服务器 ID'}
+                {selected.replicaId ? ` · 副本 ID：${selected.replicaId}` : ''}
+                {selected.streamEpoch ? ` · 流世代：${selected.streamEpoch}` : ''}
+                {selected.ledgerId ? ` · 账本 ID：${selected.ledgerId}` : ''}
+                {selected.lastError ? ` · ${selected.lastError}` : ''}
+              </span>
+            </div>
+            {connectionShare && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, alignItems: 'center', marginTop: 14, padding: 12, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface)' }}>
+                <img src={connectionShare.qrDataUrl} alt="服务器连接二维码" width={260} height={260} style={{ display: 'block', width: '100%', maxWidth: 260, height: 'auto', imageRendering: 'pixelated' }} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>无秘密连接信息</div>
+                  <div style={{ marginTop: 5, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', lineHeight: 1.6 }}>只包含应用入口、服务器完整 URL、serverId 和 OPAQUE 公钥指纹；扫码或导入后仍必须单独登录。</div>
+                  <textarea readOnly value={connectionShare.link} aria-label="无秘密连接链接" onFocus={(event) => event.currentTarget.select()} style={{ boxSizing: 'border-box', width: '100%', minHeight: 92, marginTop: 9, padding: 9, resize: 'vertical', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', color: 'var(--text-secondary)', fontSize: 'var(--fs-meta)', userSelect: 'text', WebkitUserSelect: 'text' }} />
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                    <button type="button" onClick={() => void copyTextToClipboard(connectionShare.link).then(() => setSyncNotice('连接链接已复制。')).catch((error) => setSyncNotice(`复制失败：${msg(error)}`))} style={outline}>复制链接</button>
+                    <button type="button" onClick={() => setConnectionShare(null)} style={outline}>关闭</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>}
+
+      <div style={card}>
+        <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>同步结果</div>
+            <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
+              本机设备 · <span style={{ fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>{deviceId}</span>
+              {lastSyncAt && <> · 上次同步 {lastSyncAt}</>}
+            </div>
+          </div>
+        </div>
+        {enabledProfiles.length === 0 && (
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 12 }}>
+            当前没有启用服务器；“同步账本”不会自动使用本地演示云。
+          </div>
+        )}
+        {removeTarget && <ConfirmDialog title="删除服务器连接" tone="danger" busy={busy}
+          cancelLabel="取消"
+          confirmLabel={removeWarning ? '仅删除本机连接' : '撤销会话并删除连接'}
+          onCancel={() => setRemoveTarget(undefined)}
+          onConfirm={() => removeProfile(removeTarget, Boolean(removeWarning))}>
+          <p>将移除“{profiles.find((row) => row.id === removeTarget)?.alias}”的本机连接和登录凭据，不删除本机账本，也不删除服务器上的账号或账本。</p>
+          {removeWarning && <p role="alert">{removeWarning}</p>}
+        </ConfirmDialog>}
+        {directoryError && <div role="alert">{directoryError}<button onClick={() => setDirectoryRetry((value) => value + 1)}>重新读取共享目录</button></div>}
+        {syncNotice && (
+          <div style={{ fontSize: 'var(--fs-caption)', color: syncNotice.includes('没有启用') ? 'var(--negative)' : 'var(--fg-muted)', marginTop: 10, fontWeight: 'var(--fw-medium)' }}>
+            {syncNotice}
+          </div>
+        )}
+        {migrationProgress && (migrationProgress.phase === 'checking' || migrationProgress.objectsTotal > 0) && (
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', marginTop: 10 }}>
+            {migrationProgress.phase === 'checking' ? '正在检查旧版附件…'
+              : <>旧版附件迁移：{migrationProgress.objectsMigrated}/{migrationProgress.objectsTotal} 个，
+                已处理 {(migrationProgress.bytesMigrated / 1024 / 1024).toFixed(1)} /
+                {(migrationProgress.bytesTotal / 1024 / 1024).toFixed(1)} MiB
+                {migrationProgress.objectsFailed > 0 && ` · ${migrationProgress.objectsFailed} 个失败，下次同步会重试`}
+                {migrationProgress.phase === 'copying' && ' · 请保持此网页打开'}
+                {migrationProgress.currentAlias && migrationProgress.phase === 'copying'
+                  && ` · 当前节点：${migrationProgress.currentAlias}`}</>}
+          </div>
+        )}
+        {autoSyncEnabled && attachmentBatch && (
+          <div style={{ fontSize: 'var(--fs-caption)', color: attachmentBatch.error ? 'var(--negative)' : 'var(--text-secondary)', marginTop: 10 }}>
+            后台附件：{profiles.find((row) => row.id === attachmentBatch.profileId)?.alias ?? attachmentBatch.profileId} ·
+            {' '}扫描 {attachmentBatch.scannedThrough}/{attachmentBatch.references} 个对象
+            {attachmentBatch.uploaded > 0 && ` · 本批上传 ${attachmentBatch.uploaded} 个（逻辑量 ${(attachmentBatch.bytesUploaded / 1024 / 1024).toFixed(1)} MiB）`}
+            {attachmentBatch.downloaded > 0 && ` · 取回 ${attachmentBatch.downloaded} 个`}
+            {attachmentBatch.migrated > 0 && `，其中旧版转存 ${attachmentBatch.migrated} 个`}
+            {attachmentBatch.sweepComplete && ' · 本轮完成'}
+            {attachmentBatch.error && ` · 失败：${attachmentBatch.error}`}
+          </div>
+        )}
+        {mergeNotice && (
+          <div style={{ fontSize: 'var(--fs-caption)', color: mergeNotice.includes('发现') ? 'var(--negative)' : 'var(--positive)', marginTop: 10, fontWeight: 'var(--fw-medium)' }}>
+            {mergeNotice}
+          </div>
+        )}
+        {result && (
+          <>
+            <div style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginTop: 12 }}>
+              本次同步：拉取 <b style={{ color: 'var(--text-primary)' }}>{result.pulled}</b> 个提交，推送 <b style={{ color: 'var(--text-primary)' }}>{result.pushed}</b> 个提交，应用 <b style={{ color: 'var(--text-primary)' }}>{result.applied}</b> 个聚合
+              {result.conflicts > 0 && <>，新增 <b style={{ color: 'var(--negative)' }}>{result.conflicts}</b> 个冲突提交</>}
+              {result.conflicts === 0 && <>，无新增冲突</>}；共 {result.rounds} 轮，
+              <b style={{ color: result.converged ? 'var(--positive)' : 'var(--negative)' }}>{result.converged ? '已收敛' : '未完全收敛'}</b>
+            </div>
+            <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 6 }}>
+              附件对象 {result.attachmentSync.references} 个 · 本机可用 {result.attachmentSync.localReady} 个 · 按需下载 {result.attachmentSync.localMissing} 个 · 本轮上传 {result.attachmentSync.endpoints.reduce((sum, row) => sum + row.uploaded, 0)} 个
+            </div>
+            {endpointRows.length > 0 && (
+              <div className="zc-sync-result-grid" style={{ display: 'grid', gridTemplateColumns: '110px 1fr 140px 60px 60px 90px 120px 70px', gap: 8, marginTop: 12, fontSize: 'var(--fs-caption)' }}>
+                <div className="zc-sync-result-head" style={gridHead}>别名</div><div className="zc-sync-result-head" style={gridHead}>端点</div><div className="zc-sync-result-head" style={gridHead}>副本 ID</div><div className="zc-sync-result-head" style={gridHead}>拉取</div><div className="zc-sync-result-head" style={gridHead}>推送</div><div className="zc-sync-result-head" style={gridHead}>游标 / Head</div><div className="zc-sync-result-head" style={gridHead}>附件</div><div className="zc-sync-result-head" style={gridHead}>延迟</div>
+                {endpointRows.map((row) => (
+                  <div key={row.id} className="zc-sync-result-row">
+                    <div data-label="别名" style={{ color: row.error ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 'var(--fw-bold)' }}>{row.alias}</div>
+                    <div data-label="端点" style={{ color: row.error || row.attachments?.error ? 'var(--negative)' : 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.url}{row.error ? ` · ${row.error}` : row.attachments?.error ? ` · ${row.attachments.error}` : ''}</div>
+                    <div data-label="副本 ID" style={{ color: 'var(--text-secondary)' }}>{row.identity?.replicaId ?? '—'}</div>
+                    <div data-label="拉取">{row.pulled}</div><div data-label="推送">{row.pushed}</div><div data-label="游标 / Head">{row.cursor} / {row.headSeq}</div><div data-label="附件">{row.attachments ? `${row.attachments.available}/${result.attachmentSync.references} · ↑${row.attachments.uploaded}` : '—'}</div><div data-label="延迟">{row.latencyMs}ms</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      <div style={card}>
+        <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>设备</div>
+        <div className="zc-scroll-x"><table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead><tr><th style={thStyle}>设备 ID</th><th style={thStyle}>上次同步</th><th style={thStyle}>上次应用</th></tr></thead>
+          <tbody>
+            {devices.map((d) => (
+              <tr key={d.deviceId}>
+                <td style={tdStyle}>{d.deviceId}{d.deviceId === deviceId && <span style={{ color: 'var(--accent)', marginLeft: 6 }}>· 本机</span>}</td>
+                <td style={tdStyle}>{new Date(d.lastSyncAt).toLocaleString()}</td>
+                <td style={tdStyle}>{d.applied} 条</td>
+              </tr>
+            ))}
+            {devices.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={3}>还没有设备同步过，点上方同步后这里会出现本机</td></tr>}
+          </tbody>
+        </table></div>
+      </div>
+
+      </SyncSection>
+
+    </>
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 980 }}>
-        <>
+        {section === 'server' && <>
           <div style={card}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
               <div>
-                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>同步状态</div>
+                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>当前设备 · 同步状态</div>
                 <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)', color: syncStatus.tone, marginTop: 6 }}>{syncStatus.label}</div>
                 <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4, lineHeight: 1.6 }}>{syncStatus.detail}</div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 <button onClick={() => void doSync()} disabled={busy || !ledgerKey.unlocked || enabledProfiles.length === 0} style={primary}>{busy ? '同步中…' : '同步账本'}</button>
+                <button type="button" onClick={() => onSelectSection('restore')} disabled={!ledgerKey.unlocked} style={outline}>恢复数据</button>
               </div>
             </div>
             {enabledProfiles.length === 0 && (
@@ -1568,7 +1952,7 @@ export function Sync() {
           {/*
             * locked ledger disables the sync button above, so the field that
             * unlocks it has to be reachable without opening a collapsed section.
-            * Once unlocked this same card moves under 高级设置 as key management.
+            * Once unlocked this same card moves under 解锁与恢复设置 as key management.
             */}
           {!accountProtection() && !ledgerKey.unlocked && ledgerKeyCard}
 
@@ -1703,396 +2087,26 @@ export function Sync() {
             </div>
           )}
 
-          <NodeReplicaPanel profiles={profiles} ledgerId={ledgerKey.ledgerId}
-            pinNodeIdentity={(id, nodePublicKey) => patchProfile(id, { nodePublicKey })}
-            onConfigureServers={() => {
-              setShowSettings(true);
-              requestAnimationFrame(() => document.getElementById('server-connections')
-                ?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-            }} />
-          {profiles.find((profile) => profile.id === accountProtection()?.profileId && profile.ledgerId === ledgerKey.ledgerId)
-            && ledgerKey.unlocked && <LedgerMembersPanel profile={profiles.find((profile) => profile.id === accountProtection()?.profileId)!} />}
-
-          {/* ===== 第 2 层：客户端同步与服务器连接 ===== */}
-          <SyncSection
-            id="server-connections"
-            title="客户端同步与服务器连接"
-            summary={settingsSummary}
-            open={showSettings}
-            onToggle={() => setShowSettings((value) => !value)}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>
-                <input type="checkbox" checked={autoSyncEnabled} onChange={(event) => setAutoSyncEnabled(event.target.checked)} />
-                自动同步
-              </label>
-              <select aria-label="自动同步间隔" className="zc-select" value={autoSyncMinutes} onChange={(event) => setAutoSyncMinutes(Number(event.target.value))} disabled={!autoSyncEnabled} style={{ width: 120 }}>
-                {[1, 5, 15, 30, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} 分钟</option>)}
-              </select>
-              <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>{autoSyncStatus}</span>
-            </div>
-            {selected && <ServerCustodyPanel key={`${selected.id}:${selected.username}:${selected.baseUrl}`} profile={selected} />}
-          {<div style={card}>
-            <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
-              <div>
-                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>服务器配置</div>
-                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
-                  每台服务器可以使用各自的账号密码和服务路径，和“账本密码”是两回事，互不影响。{vault.message}。
-                  {!isTauriRuntime() && '本站账号负责登录与缓存隔离，附加服务器独立使用令牌会话，保存在此标签页的 sessionStorage；关闭标签页后需重新登录，不覆盖本站 Cookie。'}
+        </>}
+          <Settings
+            theme={theme}
+            mode={mode}
+            resolvedMode={resolvedMode}
+            setTheme={setTheme}
+            setMode={setMode}
+            section={section}
+            serverPanel={serverPanel}
+            securityPanel={<>
+              {!accountProtection() && ledgerKey.unlocked && ledgerKeyCard}
+              {!isTauriRuntime() && (
+                <div style={card}>
+                  <h3 style={{ fontSize: 'var(--fs-title)', margin: 0 }}>本站登录账号</h3>
+                  <p>{primaryConnection?.username} · {primaryConnection?.accountId}</p>
+                  <p style={{ marginBottom: 0 }}>切换同步服务器不会切换本站账号。切换账号请退出后重新登录；不同账号的缓存独立保存。</p>
                 </div>
-              </div>
-              <button onClick={addProfile} style={primary}>新增服务器</button>
-            </div>
-
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '10px 0 14px', borderTop: '1px solid var(--border)' }}>
-              <input
-                aria-label="服务器连接链接"
-                className="zc-input"
-                style={{ flex: '1 1 420px' }}
-                value={connectionLinkDraft}
-                onChange={(event) => setConnectionLinkDraft(event.target.value)}
-                placeholder="粘贴不含秘密的连接链接"
-                spellCheck={false}
-              />
-              <button type="button" onClick={() => importConnectionLink(connectionLinkDraft)} disabled={!connectionLinkDraft.trim()} style={outline}>导入连接</button>
-            </div>
-
-            {vault.kind === 'native-stronghold' && (
-              <div style={{ display: 'flex', alignItems: 'end', gap: 10, flexWrap: 'wrap', padding: 12, marginBottom: 14, borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', background: 'var(--surface-2)' }}>
-                <div style={{ minWidth: 230, flex: '1 1 260px' }}>
-                  <label className="zc-label">Stronghold 本机密码</label>
-                  <input
-                    aria-label="Stronghold 本机密码"
-                    className="zc-input"
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={vaultPassword}
-                    onChange={(event) => setVaultPassword(event.target.value)}
-                    onKeyDown={(event) => { if (event.key === 'Enter' && !vault.unlocked) void unlockVault(); }}
-                    placeholder={vault.initialized ? '解锁安全密码库' : '至少 8 个字符，用于创建安全密码库'}
-                    disabled={vault.unlocked || vaultBusy}
-                  />
-                </div>
-                {!vault.initialized && !vault.unlocked && (
-                  <div style={{ minWidth: 230, flex: '1 1 260px' }}>
-                    <label className="zc-label">确认本机密码</label>
-                    <input aria-label="确认 Stronghold 本机密码" className="zc-input" type="password" autoComplete="off" spellCheck={false} value={vaultPasswordConfirm} onChange={(event) => setVaultPasswordConfirm(event.target.value)} placeholder="再次输入本机密码" disabled={vaultBusy} />
-                  </div>
-                )}
-                <button type="button" onClick={() => void unlockVault()} disabled={vault.unlocked || vaultBusy || vaultPassword.length < 8 || (!vault.initialized && vaultPassword !== vaultPasswordConfirm)} style={vault.unlocked ? outline : primary}>
-                  {vault.unlocked ? '已解锁' : vaultBusy ? '解锁中…' : vault.initialized ? '解锁' : '创建并解锁'}
-                </button>
-                <div style={{ flex: '1 1 240px', fontSize: 'var(--fs-caption)', color: vaultError ? 'var(--negative)' : vault.unlocked ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: 'var(--fw-medium)' }}>
-                  {vaultError || (vault.unlocked ? `Stronghold 已解锁 · ${vault.platform}` : '解锁后才能读取、保存和自动使用服务器账号密码')}
-                </div>
-              </div>
-            )}
-
-            {vault.kind === 'browser-session' && vaultError && (
-              <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>{vaultError}</div>
-            )}
-
-            {selected && !selectedIsPrimary && (
-              <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 12, background: 'var(--surface-2)', marginBottom: 14 }}>
-                <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 10 }}>
-                  <div>
-                    <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>首次配置向导</div>
-                    <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3 }}>选择服务器位置，先把地址和端口套到当前服务器，再填写账号密码。</div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    {WIZARD_MODES.map((item) => (
-                      <button key={item.mode} onClick={() => chooseWizardMode(item.mode)} style={tabBtn(wizardMode === item.mode)} title={item.hint}>{item.label}</button>
-                    ))}
-                  </div>
-                </div>
-                {(wizardMode === 'lan' || wizardMode === 'public') && (
-                  <div className="zc-sync-wizard-grid" style={{ display: 'grid', gridTemplateColumns: wizardMode === 'public' ? '1fr 180px' : '1fr', gap: 10, marginBottom: 10 }}>
-                    <div>
-                      <label className="zc-label">{wizardMode === 'public' ? '公网域名' : '局域网 IP / 主机名'}</label>
-                      <input className="zc-input" value={wizardHost} onChange={(e) => setWizardHost(e.target.value)} placeholder={wizardMode === 'public' ? 'ledger.example.com' : '192.168.1.100'} />
-                    </div>
-                    {wizardMode === 'public' && (
-                      <div>
-                        <label className="zc-label">安全路径</label>
-                        <input className="zc-input" value={wizardBasePath} onChange={(e) => setWizardBasePath(e.target.value)} placeholder="/zichan" />
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button onClick={applyWizard} style={outline}>套用到当前服务器</button>
-                  <button onClick={() => void applyWizardAndTest()} disabled={testingId === selected.id} style={outline}>{testingId === selected.id ? '测试中…' : '套用并测试连通性'}</button>
-                  <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>
-                    {buildBaseUrl({ ...selected, ...wizardPatch(wizardMode, wizardHost, wizardBasePath) })}
-                  </span>
-                </div>
-                {selectedRemoteLedgerId && (
-                  <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--negative)' }}>
-                    <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>此账号已绑定另一个账本</div>
-                    <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', marginTop: 4 }}>
-                      远端账本 {selectedRemoteLedgerId}。系统会先只读验证远端密码、提交和账本一致性，再保存本机保护备份并原子替换；任何一步失败都会保留本机账本。
-                    </div>
-                    {joinTarget?.profileId !== selected.id ? (
-                      <button type="button" disabled={busy} onClick={() => { setJoinTarget({ profileId: selected.id, ledgerId: selectedRemoteLedgerId }); setJoinConfirmation(''); setJoinLedgerPassword(''); }} style={{ ...danger, marginTop: 10 }}>加入远端账本</button>
-                    ) : (
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap', marginTop: 10 }}>
-                        <div style={{ minWidth: 240 }}>
-                          <label className="zc-label">输入“替换本机”确认</label>
-                          <input aria-label="确认替换本机账本" className="zc-input" value={joinConfirmation} onChange={(event) => setJoinConfirmation(event.target.value)} autoComplete="off" />
-                        </div>
-                        <div style={{ minWidth: 240 }}>
-                          <label className="zc-label">远端账本密码</label>
-                          <input aria-label="远端账本密码" className="zc-input" type="password" value={joinLedgerPassword} onChange={(event) => setJoinLedgerPassword(event.target.value)} autoComplete="off" />
-                        </div>
-                        <button type="button" disabled={busy || joinConfirmation !== '替换本机' || joinLedgerPassword.length < 8} onClick={() => void joinRemoteLedger(selected, selectedRemoteLedgerId)} style={danger}>验证、备份并加入</button>
-                        <button type="button" disabled={busy} onClick={() => { setJoinTarget(null); setJoinConfirmation(''); setJoinLedgerPassword(''); }} style={outline}>取消</button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div style={{ overflowX: 'auto', marginBottom: 14 }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={thStyle}>启用</th><th style={thStyle}>别名</th><th style={thStyle}>地址</th><th style={thStyle}>用户</th><th style={thStyle}>状态</th><th style={thStyle}>延迟</th><th style={thStyle}></th></tr></thead>
-                <tbody>
-                  {profiles.map((p) => (
-                    <tr key={p.id} onClick={() => setSelectedId(p.id)} style={{ cursor: 'pointer', background: selected?.id === p.id ? 'var(--accent-soft)' : 'transparent' }}>
-                      <td style={tdStyle}><span className="zc-check-target" onClick={(e) => e.stopPropagation()}><input aria-label={`启用 ${p.alias}`} type="checkbox" checked={p.enabled} disabled={isPrimaryWebConnection(p)} onChange={(e) => patchProfile(p.id, { enabled: e.target.checked })} onClick={(e) => e.stopPropagation()} /></span></td>
-                      <td style={tdStyle}>{p.alias}{isPrimaryWebConnection(p) && ' · 本站登录'}</td>
-                      <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{buildBaseUrl(p)}</td>
-                      <td style={tdStyle}>{p.username || '—'}</td>
-                      <td style={{ ...tdStyle, color: p.status === 'online' ? 'var(--positive)' : p.status === 'offline' || p.status === 'identity_changed' || p.status === 'replica_retired' ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 'var(--fw-bold)' }}>{statusText[p.status]}</td>
-                      <td style={tdStyle}>{p.lastLatencyMs !== undefined ? `${p.lastLatencyMs}ms` : '—'}</td>
-                      <td style={{ ...tdStyle, textAlign: 'right' }}>
-                        <button onClick={(e) => { e.stopPropagation(); void testProfile(p, 'health'); }} disabled={testingId === p.id} style={outline}>{testingId === p.id ? '测试中…' : '测试连通性'}</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {selected && (
-              <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 14, background: 'var(--surface-2)' }}>
-                <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', marginBottom: 10 }}>编辑服务器 · {selected.alias}</div>
-                <div style={{ marginBottom: 10 }}>
-                  <label className="zc-label">完整服务器地址</label>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <input
-                      aria-label="完整服务器地址"
-                      disabled={selectedIsPrimary}
-                      className="zc-input"
-                      style={{ flex: '1 1 420px' }}
-                      value={addressDraft}
-                      onChange={(event) => editAddressDraft(event.target.value)}
-                      placeholder="https://ledger.example.com/zichan"
-                      spellCheck={false}
-                    />
-                    <button type="button" onClick={() => setAdvancedAddress((value) => !value)} style={outline}>{advancedAddress ? '收起字段填写' : '按字段填写'}</button>
-                    <button type="button" onClick={saveAddress} disabled={selectedIsPrimary || Boolean(addressError) || addressDraft === selected.baseUrl} style={primary}>保存地址</button>
-                  </div>
-                  <div style={{ marginTop: 5, fontSize: 'var(--fs-meta)', color: addressError ? 'var(--negative)' : 'var(--fg-subtle)', fontWeight: addressError ? 'var(--fw-bold)' : 'var(--fw-regular)' }}>
-                    {addressError || '完整 URL 是唯一保存值；高级字段只是同一地址的编辑视图。公网必须使用 HTTPS。'}
-                  </div>
-                  <div style={{ marginTop: 4, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
-                    HTTPS 网站中的浏览器可能阻止普通 HTTP 局域网地址；可改用可信 HTTPS、服务器自带 Web，或 Windows 便携版。
-                  </div>
-                </div>
-                {selectedIsPrimary && <p>此连接属于本站登录账号，地址和用户名不可在此处替换。切换账号请先退出；其他服务器使用“新增服务器”配置。</p>}
-                {advancedAddress && !selectedIsPrimary && (
-                  <>
-                    <div className="zc-sync-input-grid" style={inputGrid}>
-                      <div><label className="zc-label">协议</label><select aria-label="协议" className="zc-select" value={addressParts.protocol} onChange={(e) => editAddressPart({ protocol: e.target.value as Protocol })}><option value="http">http</option><option value="https">https</option></select></div>
-                      <div><label className="zc-label">主机 / 域名</label><input aria-label="主机或域名" className="zc-input" value={addressParts.host} onChange={(e) => editAddressPart({ host: e.target.value })} /></div>
-                      <div><label className="zc-label">端口</label><input aria-label="端口" className="zc-input" value={addressParts.port} onChange={(e) => editAddressPart({ port: e.target.value })} placeholder="443" /></div>
-                      <div><label className="zc-label">服务路径</label><input aria-label="服务路径" className="zc-input" value={addressParts.path} onChange={(e) => editAddressPart({ path: e.target.value })} placeholder="/zichan" /></div>
-                    </div>
-                    <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', margin: '-2px 0 12px', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
-                      <input type="checkbox" checked={selected.sharedUrls.includes(selected.baseUrl)} onChange={(event) => setActiveAddressShared(event.target.checked)} />
-                      将此地址写入账本的加密服务器目录，供其他设备发现。公网 HTTPS 默认开启；localhost 或局域网地址默认仅当前设备，手动共享前请确认其他设备也能访问该地址。
-                    </label>
-                  </>
-                )}
-                <div className="zc-sync-input-grid" style={inputGrid}>
-                  <div><label className="zc-label">中文别名</label><input aria-label="中文别名" className="zc-input" value={selected.alias} onChange={(e) => patchProfile(selected.id, { alias: e.target.value })} /></div>
-                  <div><label className="zc-label">登录账号</label><input aria-label="用户名" disabled={selectedIsPrimary} className="zc-input" value={selected.username} onChange={(e) => patchProfile(selected.id, { username: e.target.value })} /><small>用于登录，注册后暂不能修改；支持中文，至少 2 个字符。</small></div>
-                  {!selectedIsPrimary && <div><label className="zc-label">昵称（仅注册需要）</label><input aria-label="注册昵称" className="zc-input" value={registerDisplayName} onChange={(e) => setRegisterDisplayName(e.target.value)} placeholder="例如：小明" /><small>显示名称，注册后可在账号设置修改。</small></div>}
-                  {!selectedIsPrimary && <div><label className="zc-label">服务器账号密码（仅本次登录使用，不保存密码）</label><input aria-label="服务器账号密码" className="zc-input" type="password" value={cred.password} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { password: e.target.value, accessToken: undefined, refreshToken: undefined, accessExpiresAt: undefined, sessionId: undefined, sessionTransport: undefined })} /></div>}
-                  {!selectedIsPrimary && <div><label className="zc-label">确认服务器账号密码（仅注册需要）</label><input aria-label="确认服务器账号密码" className="zc-input" type="password" value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} /></div>}
-                  {selectedHealth?.registrationMode === 'invite' && <div><label className="zc-label">邀请码</label><input aria-label="邀请码" className="zc-input" value={cred.inviteCode} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { inviteCode: e.target.value })} /></div>}
-                </div>
-                {selectedHealth && (
-                  <div style={{ margin: '-2px 0 10px', fontSize: 'var(--fs-meta)', color: !selectedHealth.claimed ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: !selectedHealth.claimed ? 'var(--fw-bold)' : 'var(--fw-regular)' }}>
-                    {!selectedHealth.claimed
-                      ? '尚未初始化：请联系部署者先完成独立管理后台设置。用户端不创建管理员。'
-                      : `注册策略：${selectedHealth.registrationMode === 'open' ? '开放注册' : selectedHealth.registrationMode === 'invite' ? '仅邀请码' : '已关闭'}${selected.role ? ` · 当前账号：${selected.role === 'owner' ? '所有者' : selected.role === 'admin' ? '管理员' : '成员'}` : ''}`}
-                  </div>
-                )}
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button onClick={() => void testProfile(selected, 'auth')} disabled={busy || testingId === selected.id} style={outline}>{testingId === selected.id ? '验证中…' : '验证账号密码'}</button>
-                  <button onClick={() => void registerProfile(selected)} disabled={selectedIsPrimary || busy || Boolean(testingId) || selectedHealth?.claimed === false || selectedHealth?.registrationMode === 'closed'} style={outline}>注册</button>
-                  <button onClick={() => void submitLogin(selected)} disabled={selectedIsPrimary || busy || Boolean(testingId)} style={outline}>登录</button>
-                  <button onClick={() => void doSync(selected)} disabled={busy || !ledgerKey.unlocked} style={primary}>{busy ? '同步中…' : '同步此服务器'}</button>
-                  <button type="button" onClick={() => void createConnectionShare(selected)} disabled={busy || !selected.serverId || !selected.serverPublicKey} style={outline}>连接链接 / 二维码</button>
-                  <button
-                    onClick={() => { operations.current.cancel(selected.id); setRemoveWarning(''); setRemoveTarget(selected.id); }}
-                    disabled={selectedIsPrimary || profiles.length <= 1 || busy || (vault.kind === 'native-stronghold' && vault.initialized && !vault.unlocked)}
-                    title={vault.kind === 'native-stronghold' && vault.initialized && !vault.unlocked ? '请先解锁 Stronghold，确保同步凭据一并删除' : '删除服务器'}
-                    style={danger}
-                  >删除</button>
-                  <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>
-                    {selected.serverId ? `服务器 ID：${selected.serverId}` : '尚未识别服务器 ID'}
-                    {selected.replicaId ? ` · 副本 ID：${selected.replicaId}` : ''}
-                    {selected.streamEpoch ? ` · 流世代：${selected.streamEpoch}` : ''}
-                    {selected.ledgerId ? ` · 账本 ID：${selected.ledgerId}` : ''}
-                    {selected.lastError ? ` · ${selected.lastError}` : ''}
-                  </span>
-                </div>
-                {connectionShare && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14, alignItems: 'center', marginTop: 14, padding: 12, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface)' }}>
-                    <img src={connectionShare.qrDataUrl} alt="服务器连接二维码" width={260} height={260} style={{ display: 'block', width: '100%', maxWidth: 260, height: 'auto', imageRendering: 'pixelated' }} />
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>无秘密连接信息</div>
-                      <div style={{ marginTop: 5, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', lineHeight: 1.6 }}>只包含应用入口、服务器完整 URL、serverId 和 OPAQUE 公钥指纹；扫码或导入后仍必须单独登录。</div>
-                      <textarea readOnly value={connectionShare.link} aria-label="无秘密连接链接" onFocus={(event) => event.currentTarget.select()} style={{ boxSizing: 'border-box', width: '100%', minHeight: 92, marginTop: 9, padding: 9, resize: 'vertical', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', color: 'var(--text-secondary)', fontSize: 'var(--fs-meta)', userSelect: 'text', WebkitUserSelect: 'text' }} />
-                      <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                        <button type="button" onClick={() => void copyTextToClipboard(connectionShare.link).then(() => setSyncNotice('连接链接已复制。')).catch((error) => setSyncNotice(`复制失败：${msg(error)}`))} style={outline}>复制链接</button>
-                        <button type="button" onClick={() => setConnectionShare(null)} style={outline}>关闭</button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>}
-
-          <div style={card}>
-            <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>同步结果</div>
-                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
-                  本机设备 · <span style={{ fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>{deviceId}</span>
-                  {lastSyncAt && <> · 上次同步 {lastSyncAt}</>}
-                </div>
-              </div>
-              <button onClick={() => void doSync()} disabled={busy || !ledgerKey.unlocked || enabledProfiles.length === 0} style={{ ...primary, padding: '10px 18px', fontSize: 'var(--fs-body)' }}>
-                {busy ? '同步中…' : '同步账本'}
-              </button>
-            </div>
-            {enabledProfiles.length === 0 && (
-              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 12 }}>
-                当前没有启用服务器；“同步账本”不会自动使用本地演示云。
-              </div>
-            )}
-            {removeTarget && <ConfirmDialog title="删除服务器连接" tone="danger" busy={busy}
-              cancelLabel="取消"
-              confirmLabel={removeWarning ? '仅删除本机连接' : '撤销会话并删除连接'}
-              onCancel={() => setRemoveTarget(undefined)}
-              onConfirm={() => removeProfile(removeTarget, Boolean(removeWarning))}>
-              <p>将移除“{profiles.find((row) => row.id === removeTarget)?.alias}”的本机连接和登录凭据，不删除本机账本，也不删除服务器上的账号或账本。</p>
-              {removeWarning && <p role="alert">{removeWarning}</p>}
-            </ConfirmDialog>}
-            {directoryError && <div role="alert">{directoryError}<button onClick={() => setDirectoryRetry((value) => value + 1)}>重新读取共享目录</button></div>}
-            {syncNotice && (
-              <div style={{ fontSize: 'var(--fs-caption)', color: syncNotice.includes('没有启用') ? 'var(--negative)' : 'var(--fg-muted)', marginTop: 10, fontWeight: 'var(--fw-medium)' }}>
-                {syncNotice}
-              </div>
-            )}
-            {migrationProgress && (migrationProgress.phase === 'checking' || migrationProgress.objectsTotal > 0) && (
-              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', marginTop: 10 }}>
-                {migrationProgress.phase === 'checking' ? '正在检查旧版附件…'
-                  : <>旧版附件迁移：{migrationProgress.objectsMigrated}/{migrationProgress.objectsTotal} 个，
-                    已处理 {(migrationProgress.bytesMigrated / 1024 / 1024).toFixed(1)} /
-                    {(migrationProgress.bytesTotal / 1024 / 1024).toFixed(1)} MiB
-                    {migrationProgress.objectsFailed > 0 && ` · ${migrationProgress.objectsFailed} 个失败，下次同步会重试`}
-                    {migrationProgress.phase === 'copying' && ' · 请保持此网页打开'}
-                    {migrationProgress.currentAlias && migrationProgress.phase === 'copying'
-                      && ` · 当前节点：${migrationProgress.currentAlias}`}</>}
-              </div>
-            )}
-            {autoSyncEnabled && attachmentBatch && (
-              <div style={{ fontSize: 'var(--fs-caption)', color: attachmentBatch.error ? 'var(--negative)' : 'var(--text-secondary)', marginTop: 10 }}>
-                后台附件：{profiles.find((row) => row.id === attachmentBatch.profileId)?.alias ?? attachmentBatch.profileId} ·
-                {' '}扫描 {attachmentBatch.scannedThrough}/{attachmentBatch.references} 个对象
-                {attachmentBatch.uploaded > 0 && ` · 本批上传 ${attachmentBatch.uploaded} 个（逻辑量 ${(attachmentBatch.bytesUploaded / 1024 / 1024).toFixed(1)} MiB）`}
-                {attachmentBatch.downloaded > 0 && ` · 取回 ${attachmentBatch.downloaded} 个`}
-                {attachmentBatch.migrated > 0 && `，其中旧版转存 ${attachmentBatch.migrated} 个`}
-                {attachmentBatch.sweepComplete && ' · 本轮完成'}
-                {attachmentBatch.error && ` · 失败：${attachmentBatch.error}`}
-              </div>
-            )}
-            {mergeNotice && (
-              <div style={{ fontSize: 'var(--fs-caption)', color: mergeNotice.includes('发现') ? 'var(--negative)' : 'var(--positive)', marginTop: 10, fontWeight: 'var(--fw-medium)' }}>
-                {mergeNotice}
-              </div>
-            )}
-            {result && (
-              <>
-                <div style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginTop: 12 }}>
-                  本次同步：拉取 <b style={{ color: 'var(--text-primary)' }}>{result.pulled}</b> 个提交，推送 <b style={{ color: 'var(--text-primary)' }}>{result.pushed}</b> 个提交，应用 <b style={{ color: 'var(--text-primary)' }}>{result.applied}</b> 个聚合
-                  {result.conflicts > 0 && <>，新增 <b style={{ color: 'var(--negative)' }}>{result.conflicts}</b> 个冲突提交</>}
-                  {result.conflicts === 0 && <>，无新增冲突</>}；共 {result.rounds} 轮，
-                  <b style={{ color: result.converged ? 'var(--positive)' : 'var(--negative)' }}>{result.converged ? '已收敛' : '未完全收敛'}</b>
-                </div>
-                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 6 }}>
-                  附件对象 {result.attachmentSync.references} 个 · 本机可用 {result.attachmentSync.localReady} 个 · 按需下载 {result.attachmentSync.localMissing} 个 · 本轮上传 {result.attachmentSync.endpoints.reduce((sum, row) => sum + row.uploaded, 0)} 个
-                </div>
-                {endpointRows.length > 0 && (
-                  <div className="zc-sync-result-grid" style={{ display: 'grid', gridTemplateColumns: '110px 1fr 140px 60px 60px 90px 120px 70px', gap: 8, marginTop: 12, fontSize: 'var(--fs-caption)' }}>
-                    <div className="zc-sync-result-head" style={gridHead}>别名</div><div className="zc-sync-result-head" style={gridHead}>端点</div><div className="zc-sync-result-head" style={gridHead}>副本 ID</div><div className="zc-sync-result-head" style={gridHead}>拉取</div><div className="zc-sync-result-head" style={gridHead}>推送</div><div className="zc-sync-result-head" style={gridHead}>游标 / Head</div><div className="zc-sync-result-head" style={gridHead}>附件</div><div className="zc-sync-result-head" style={gridHead}>延迟</div>
-                    {endpointRows.map((row) => (
-                      <div key={row.id} className="zc-sync-result-row">
-                        <div data-label="别名" style={{ color: row.error ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 'var(--fw-bold)' }}>{row.alias}</div>
-                        <div data-label="端点" style={{ color: row.error || row.attachments?.error ? 'var(--negative)' : 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.url}{row.error ? ` · ${row.error}` : row.attachments?.error ? ` · ${row.attachments.error}` : ''}</div>
-                        <div data-label="副本 ID" style={{ color: 'var(--text-secondary)' }}>{row.identity?.replicaId ?? '—'}</div>
-                        <div data-label="拉取">{row.pulled}</div><div data-label="推送">{row.pushed}</div><div data-label="游标 / Head">{row.cursor} / {row.headSeq}</div><div data-label="附件">{row.attachments ? `${row.attachments.available}/${result.attachmentSync.references} · ↑${row.attachments.uploaded}` : '—'}</div><div data-label="延迟">{row.latencyMs}ms</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
-          <div style={card}>
-            <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>设备</div>
-            <div className="zc-scroll-x"><table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead><tr><th style={thStyle}>设备 ID</th><th style={thStyle}>上次同步</th><th style={thStyle}>上次应用</th></tr></thead>
-              <tbody>
-                {devices.map((d) => (
-                  <tr key={d.deviceId}>
-                    <td style={tdStyle}>{d.deviceId}{d.deviceId === deviceId && <span style={{ color: 'var(--accent)', marginLeft: 6 }}>· 本机</span>}</td>
-                    <td style={tdStyle}>{new Date(d.lastSyncAt).toLocaleString()}</td>
-                    <td style={tdStyle}>{d.applied} 条</td>
-                  </tr>
-                ))}
-                {devices.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={3}>还没有设备同步过，点上方同步后这里会出现本机</td></tr>}
-              </tbody>
-            </table></div>
-          </div>
-
-          </SyncSection>
-
-          {/* ===== 第 3 层：高级设置 ===== */}
-          <SyncSection
-            title="高级设置"
-            summary="账本密码、登录账号与密钥诊断"
-            open={showAdvanced}
-            onToggle={() => setShowAdvanced((value) => !value)}
-          >
-            {accountProtection() ? <LedgerProtectionPanel store={store} /> : (ledgerKey.unlocked ? ledgerKeyCard : null)}
-            {!isTauriRuntime() && (
-              <div style={card}>
-                <h3 style={{ fontSize: 'var(--fs-title)', margin: 0 }}>本站登录账号</h3>
-                <p>{primaryConnection?.username} · {primaryConnection?.accountId}</p>
-                <p style={{ marginBottom: 0 }}>切换同步服务器不会切换本站账号。切换账号请到设置退出后重新登录；不同账号的缓存独立保存。</p>
-              </div>
-            )}
-          </SyncSection>
-        </>
+              )}
+            </>}
+          />
     </div>
   );
 }
@@ -2110,19 +2124,7 @@ const tabBtn = (active: boolean) => ({
 
 const gridHead = { color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' } as const;
 
-/**
- * A folded layer of the sync screen.
- *
- * This screen covers three different jobs - "is my data safe", "which servers do
- * I use" and "manage my encryption keys" - and used to present all three at once,
- * eight panels deep, to someone who owns one device and one server. Everything
- * below the summary is folded behind one of these, so the everyday answer stays
- * at the top and the controls are one click away.
- *
- * The toggle is a real button carrying `aria-expanded`, and it spells out
- * 展开 / 收起 instead of relying on a chevron, so the state is both announced and
- * visible.
- */
+/** Fold detailed server connection controls behind a labeled, accessible button. */
 function SyncSection({ id, title, summary, open, onToggle, children }: {
   id?: string;
   title: string;

@@ -21,7 +21,6 @@ const SCREENS = [
   { id: 'reports', label: '报表' },
   { id: 'history', label: '历史' },
   { id: 'manage', label: '管理' },
-  { id: 'sync', label: '同步' },
   { id: 'settings', label: '设置' },
 ];
 

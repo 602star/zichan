@@ -1,5 +1,5 @@
 import { accountSessionStorage } from '../account-storage.js';
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { checkConsistency, recomputeCaches, purgeTombstones, type BackupPreflight, type ConsistencyIssue } from '@zichan/db';
 import { type AsOfMode, type LotMethod, type Setting, localToday } from '@zichan/core';
 import { useStore } from '../db/store.js';
@@ -73,21 +73,7 @@ import {
 const METHODS: [LotMethod, string][] = [
   ['fifo', 'FIFO · 先进先出'], ['lifo', 'LIFO · 后进先出'], ['average', '平均成本'], ['manual', '手动选择批次'],
 ];
-type SettingsTab = 'ledger' | 'data' | 'appearance';
-/*
- * Settings used to be 13 groups / 95 controls / 7.3 phone screens tall, with
- * one-time maintenance (security, backup, self-check) sitting at the same level
- * as everyday preferences. Three in-page tabs keep the first screen to the four
- * ledger groups and leave the rest one tap away.
- *
- * The selected tab is deliberately component-local state: it is a view concern,
- * so it stays out of the URL, the router, and the global store.
- */
-const SETTINGS_TABS: [SettingsTab, string][] = [
-  ['ledger', '记账'],
-  ['data', '数据与安全'],
-  ['appearance', '外观'],
-];
+export type SettingsSection = 'ledger' | 'device' | 'server' | 'restore' | 'security' | 'appearance';
 type RemoteBackupRow = { profile: SyncConnection; backup: RemoteBackupArchive };
 type BackupPasswordRequest =
   | { kind: 'local'; entry: SavedBackup; action: 'rehearse' | 'merge' | 'replace' }
@@ -112,7 +98,7 @@ const ISSUE_LABELS: Record<string, string> = {
   attachment_file_invalid: '附件正文缺失或损坏',
 };
 
-export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
+export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section = 'ledger', serverPanel, securityPanel }: {
   theme: ThemeId;
   /** What the reader asked for; `system` follows the operating system. */
   mode: ThemeModePreference;
@@ -120,10 +106,12 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
   resolvedMode: ThemeMode;
   setTheme: (theme: ThemeId) => void;
   setMode: (mode: ThemeModePreference) => void;
+  section?: SettingsSection;
+  serverPanel?: ReactNode;
+  securityPanel?: ReactNode;
 }) {
   const { store, bump, storageBackend, dataLocation, firstUseMode, browserStoragePersistent, resetLocalData } = useStore();
   const snap = useSnapshot('settings');
-  const [tab, setTab] = useState<SettingsTab>('ledger');
   const [issues, setIssues] = useState<ConsistencyIssue[] | null>(null);
   const [lastCheck, setLastCheck] = useState<{ at: string; count: number } | null>(null);
   const [note, setNote] = useState('');
@@ -142,6 +130,9 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
   const [pendingRemoteDelete, setPendingRemoteDelete] = useState<{ profile: SyncConnection; backup: RemoteBackupArchive } | null>(null);
   const [backupPasswordRequest, setBackupPasswordRequest] = useState<BackupPasswordRequest | null>(null);
   const [backupPassphrase, setBackupPassphrase] = useState('');
+  const [restorePickerOpen, setRestorePickerOpen] = useState(false);
+  const [restoreSourceKey, setRestoreSourceKey] = useState('');
+  const [restoreMode, setRestoreMode] = useState<'merge' | 'replace'>('replace');
   const [externalStatus, setExternalStatus] = useState<ExternalBackupStatus>({ kind: 'none', configured: false, label: '检测中…' });
   const [storageEstimate, setStorageEstimate] = useState<{ usage: number; quota: number } | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
@@ -577,6 +568,20 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
     : backupFilter === 'all' ? backups : backups.filter((b) => b.reason === backupFilter);
   const latestBackup = backups[0];
   const latestAuto = backups.find((b) => b.reason === 'auto');
+  const selectedLocalBackup = backups.find((b) => restoreSourceKey === `local:${b.id}`);
+  const selectedRemoteBackup = remoteBackups.find((row) => restoreSourceKey === `remote:${row.profile.id}:${row.backup.archiveId}`);
+  function openRestorePicker(sourceKey = '') {
+    setRestoreSourceKey(sourceKey || (backups[0] ? `local:${backups[0].id}` : ''));
+    setRestoreMode('replace');
+    setRestorePickerOpen(true);
+    if (!remoteLoaded) void refreshRemoteBackups();
+  }
+  function startSelectedRestore() {
+    if (!selectedLocalBackup && !selectedRemoteBackup) return;
+    setRestorePickerOpen(false);
+    if (selectedLocalBackup) void restore(selectedLocalBackup, restoreMode);
+    else if (selectedRemoteBackup) void prepareRemoteRestore(selectedRemoteBackup, restoreMode);
+  }
   const warnings = safetyWarnings(backups, safetyState);
   const hasIndependentBackup = backups.some((backup) => backup.externalSaved) || Boolean(safetyState.lastExternalBackupAt);
   const usesAccounts = true;
@@ -602,22 +607,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)', maxWidth: 980 }}>
-      <div className="zc-tabs" role="tablist">
-        {SETTINGS_TABS.map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={tab === id}
-            className={tab === id ? 'zc-tab is-active' : 'zc-tab'}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'ledger' && (
+      {section === 'ledger' && (
         <>
           <div className="zc-card">
             <h2 className="zc-section-title">结算与偏好</h2>
@@ -840,253 +830,308 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
         </>
       )}
 
-      {tab === 'data' && (
+      {section !== 'ledger' && section !== 'appearance' && (
         <>
-          <DeviceSecurityPanel />
-          <LedgerProtectionPanel store={store} />
-
-          <PortableStoragePanel />
-
-          <div className="zc-card">
-            <section className="zc-section">
-              <div className="zc-section-head zc-responsive-header">
-                <div>
-                  <h2 className="zc-section-title">备份与恢复</h2>
-                  <p className="zc-meta" style={{ marginTop: 4 }}>自动备份按小时、日、周分层保留；手动和导入前备份固定保留。桌面端写入便携目录 data/backups，该目录随主数据一起移动，不属于独立副本。</p>
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <select aria-label="备份来源筛选" className="zc-select" value={backupFilter} onChange={(e) => setBackupFilter(e.target.value as typeof backupFilter)} style={{ width: 120 }}>
-                    <option value="important">重点备份</option>
-                    <option value="all">全部来源</option>
-                    <option value="auto">自动</option>
-                    <option value="manual">手动</option>
-                    <option value="pre-import">导入前</option>
-                  </select>
-                  {externalStatus.kind !== 'portable' && <button onClick={chooseExternalDirectory} disabled={backupBusy !== null} style={btnOutline}>{externalStatus.configured ? '更换外部目录' : '选择外部目录'}</button>}
-                  <button onClick={manualBackup} disabled={backupBusy !== null} style={btnPrimary}>创建手动备份</button>
-                </div>
-              </div>
-              {warnings.length > 0 && (
-                <div className="zc-section">
-                  <div className="zc-section-head zc-responsive-header">
-                    <div>
-                      <h2 className="zc-section-title" style={{ color: warnings.some((w) => w.tone === 'danger') ? 'var(--negative)' : 'var(--accent)' }}>数据安全提醒</h2>
-                      <p className="zc-caption">{warnings.map((w) => w.message).join('；')}</p>
-                    </div>
-                    <button onClick={quickSafetyCheck} disabled={backupBusy !== null} style={btnPrimary}>{backupBusy === 'safety' ? '检查中…' : '一键备份 + 自检'}</button>
+          {section === 'device' && <section aria-label="当前设备" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+            <div>
+              <h2 className="zc-section-title">当前设备</h2>
+              <p className="zc-caption">这里是当前浏览器或桌面应用正在使用的账本，以及保存在本机的备份。</p>
+            </div>
+            <PortableStoragePanel />
+            <DeviceSecurityPanel />
+            <div className="zc-card">
+              <section className="zc-section">
+                <div className="zc-section-head zc-responsive-header">
+                  <div>
+                    <h2 className="zc-section-title">本机备份</h2>
+                    <p className="zc-meta" style={{ marginTop: 4 }}>自动备份按小时、日、周分层保留；手动和导入前备份固定保留。桌面端写入便携目录 data/backups，该目录随主数据一起移动，不属于独立副本。</p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <select aria-label="备份来源筛选" className="zc-select" value={backupFilter} onChange={(e) => setBackupFilter(e.target.value as typeof backupFilter)} style={{ width: 120 }}>
+                      <option value="important">重点备份</option>
+                      <option value="all">全部来源</option>
+                      <option value="auto">自动</option>
+                      <option value="manual">手动</option>
+                      <option value="pre-import">导入前</option>
+                    </select>
+                    {externalStatus.kind !== 'portable' && <button onClick={chooseExternalDirectory} disabled={backupBusy !== null} style={btnOutline}>{externalStatus.configured ? '更换外部目录' : '选择外部目录'}</button>}
+                    <button onClick={manualBackup} disabled={backupBusy !== null} style={btnPrimary}>创建手动备份</button>
                   </div>
                 </div>
-              )}
-              {storageBackend !== 'native-sqlite' && firstUseMode === 'local' && (
-                <div className="zc-section">
-                  <h2 className="zc-section-title" style={{ color: hasIndependentBackup ? 'var(--positive)' : 'var(--negative)' }}>浏览器纯本地账本</h2>
-                  <p className="zc-caption">
-                    数据仅属于 Origin <code>{globalThis.location?.origin ?? '当前网站'}</code>；清理网站数据会删除账本，切换浏览器或 Origin 等同新设备。防自动清理保护：{browserStoragePersistent ? '已授予（不能防止手动清理）' : '未授予或未确认；普通本地存储仍可使用，请定期导出浏览器外备份'}。
-                    {!hasIndependentBackup && ' 请先使用下方“分享 / 下载”把一份加密 .zcbak 保存到浏览器外；完成前此安全提醒不会消失。'}
-                  </p>
+                {warnings.length > 0 && (
+                  <div className="zc-section">
+                    <div className="zc-section-head zc-responsive-header">
+                      <div>
+                        <h2 className="zc-section-title" style={{ color: warnings.some((w) => w.tone === 'danger') ? 'var(--negative)' : 'var(--accent)' }}>数据安全提醒</h2>
+                        <p className="zc-caption">{warnings.map((w) => w.message).join('；')}</p>
+                      </div>
+                      <button onClick={quickSafetyCheck} disabled={backupBusy !== null} style={btnPrimary}>{backupBusy === 'safety' ? '检查中…' : '一键备份 + 自检'}</button>
+                    </div>
+                  </div>
+                )}
+                {storageBackend !== 'native-sqlite' && firstUseMode === 'local' && (
+                  <div className="zc-section">
+                    <h2 className="zc-section-title" style={{ color: hasIndependentBackup ? 'var(--positive)' : 'var(--negative)' }}>浏览器纯本地账本</h2>
+                    <p className="zc-caption">
+                      数据仅属于 Origin <code>{globalThis.location?.origin ?? '当前网站'}</code>；清理网站数据会删除账本，切换浏览器或 Origin 等同新设备。防自动清理保护：{browserStoragePersistent ? '已授予（不能防止手动清理）' : '未授予或未确认；普通本地存储仍可使用，请定期导出浏览器外备份'}。
+                      {!hasIndependentBackup && ' 请先使用下方“分享 / 下载”把一份加密 .zcbak 保存到浏览器外；完成前此安全提醒不会消失。'}
+                    </p>
+                  </div>
+                )}
+                {storageBackend !== 'native-sqlite' && firstUseMode === 'server' && !browserStoragePersistent && (
+                  <div className="zc-section">
+                    <h2 className="zc-section-title" style={{ color: 'var(--accent)' }}>非持久本地缓存</h2>
+                    <p className="zc-caption">
+                      浏览器未保证保留当前 Origin 的 IndexedDB；服务器端加密副本是主要恢复来源。自动增量同步已默认开启，请保持至少一台服务器可用。
+                    </p>
+                  </div>
+                )}
+                <div className="zc-settings-health-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+                  <HealthTile label="最近备份" value={latestBackup ? new Date(latestBackup.createdAt).toLocaleString() : '暂无'} tone={latestBackup ? 'var(--positive)' : 'var(--negative)'} />
+                  <HealthTile label="自动备份" value={latestAuto ? new Date(latestAuto.createdAt).toLocaleString() : '暂无'} tone={latestAuto ? 'var(--positive)' : 'var(--fg-subtle)'} />
+                  <HealthTile label="最近演练" value={safetyState.lastRehearsalAt ? `${safetyState.lastRehearsalOk ? '通过' : '未通过'} · ${safetyState.lastRehearsalLabel ?? ''}` : '未运行'} tone={safetyState.lastRehearsalOk ? 'var(--positive)' : safetyState.lastRehearsalAt ? 'var(--negative)' : 'var(--fg-subtle)'} />
+                  <HealthTile label="备份数量" value={`${backups.length} 份`} tone={backups.length > 0 ? 'var(--positive)' : 'var(--fg-subtle)'} />
+                  <HealthTile label="独立副本最近成功" value={hasIndependentBackup ? (safetyState.lastExternalBackupAt ? new Date(safetyState.lastExternalBackupAt).toLocaleString() : '本次已写入') : '暂无'} tone={hasIndependentBackup ? 'var(--positive)' : 'var(--negative)'} />
+                  <HealthTile
+                    label={storageBackend === 'native-sqlite' ? '原生存储' : '浏览器存储'}
+                    value={storageBackend === 'native-sqlite' ? 'ledger.sqlite + 文件' : storageEstimate?.quota ? `${(storageEstimate.usage / 1024 / 1024).toFixed(1)} / ${(storageEstimate.quota / 1024 / 1024).toFixed(0)} MB` : '不可用'}
+                    tone={storageBackend === 'native-sqlite' ? 'var(--positive)' : storageEstimate?.quota && storageEstimate.usage / storageEstimate.quota > 0.8 ? 'var(--negative)' : 'var(--fg-muted)'}
+                  />
                 </div>
-              )}
-              {storageBackend !== 'native-sqlite' && firstUseMode === 'server' && !browserStoragePersistent && (
-                <div className="zc-section">
-                  <h2 className="zc-section-title" style={{ color: 'var(--accent)' }}>非持久本地缓存</h2>
-                  <p className="zc-caption">
-                    浏览器未保证保留当前 Origin 的 IndexedDB；服务器端加密副本是主要恢复来源。自动增量同步已默认开启，请保持至少一台服务器可用。
-                  </p>
-                </div>
-              )}
-              <div className="zc-settings-health-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
-                <HealthTile label="最近备份" value={latestBackup ? new Date(latestBackup.createdAt).toLocaleString() : '暂无'} tone={latestBackup ? 'var(--positive)' : 'var(--negative)'} />
-                <HealthTile label="自动备份" value={latestAuto ? new Date(latestAuto.createdAt).toLocaleString() : '暂无'} tone={latestAuto ? 'var(--positive)' : 'var(--fg-subtle)'} />
-                <HealthTile label="最近演练" value={safetyState.lastRehearsalAt ? `${safetyState.lastRehearsalOk ? '通过' : '未通过'} · ${safetyState.lastRehearsalLabel ?? ''}` : '未运行'} tone={safetyState.lastRehearsalOk ? 'var(--positive)' : safetyState.lastRehearsalAt ? 'var(--negative)' : 'var(--fg-subtle)'} />
-                <HealthTile label="备份数量" value={`${backups.length} 份`} tone={backups.length > 0 ? 'var(--positive)' : 'var(--fg-subtle)'} />
-                <HealthTile label="独立副本最近成功" value={hasIndependentBackup ? (safetyState.lastExternalBackupAt ? new Date(safetyState.lastExternalBackupAt).toLocaleString() : '本次已写入') : '暂无'} tone={hasIndependentBackup ? 'var(--positive)' : 'var(--negative)'} />
-                <HealthTile
-                  label={storageBackend === 'native-sqlite' ? '原生存储' : '浏览器存储'}
-                  value={storageBackend === 'native-sqlite' ? 'ledger.sqlite + 文件' : storageEstimate?.quota ? `${(storageEstimate.usage / 1024 / 1024).toFixed(1)} / ${(storageEstimate.quota / 1024 / 1024).toFixed(0)} MB` : '不可用'}
-                  tone={storageBackend === 'native-sqlite' ? 'var(--positive)' : storageEstimate?.quota && storageEstimate.usage / storageEstimate.quota > 0.8 ? 'var(--negative)' : 'var(--fg-muted)'}
-                />
-              </div>
-              <p className="zc-meta" style={{ overflowWrap: 'anywhere' }}>主数据位置：{dataLocation}</p>
-              {externalStatus.kind === 'portable' && <p className="zc-meta" style={{ overflowWrap: 'anywhere' }}>便携本地备份：{externalStatus.label}。请启用同步服务器备份，或用“分享 / 下载”复制到其他磁盘。</p>}
-              {backupNote && <p className="zc-caption" style={{ color: backupNote.includes('未通过') || backupNote.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 'var(--fw-bold)' }}>{backupNote}</p>}
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr><th style={thStyle}>时间</th><th style={thStyle}>来源</th><th style={thStyle}>大小</th><th style={thStyle}>校验</th><th style={thStyle}>操作</th></tr>
-                  </thead>
-                  <tbody>
-                    {visibleBackups.map((b) => (
-                      <tr key={b.id}>
-                        <td style={tdStyle}>
-                          <div style={{ fontWeight: 'var(--fw-bold)' }}>{b.label}</div>
-                          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>{new Date(b.createdAt).toLocaleString()}</div>
-                        </td>
-                        <td style={tdStyle}>
-                          <div>{reasonLabel(b.reason)} · {b.kind === 'device' ? '完整设备' : '可移植账本'} · {b.tier === 'pinned' ? '固定保留' : b.tier === 'hourly' ? '小时层' : b.tier === 'daily' ? '日层' : '周层'}</div>
-                          <div style={{ fontSize: 'var(--fs-meta)', color: b.externalSaved ? 'var(--positive)' : 'var(--fg-subtle)', marginTop: 3 }}>{b.externalSaved ? '创建时已写入远端 / 外部副本' : storageBackend === 'native-sqlite' ? '便携目录内本地备份；远端副本见服务器列表' : '仅本机存储'}</div>
-                        </td>
-                        <td style={tdStyle}>{backupSize(b)}</td>
-                        <td style={{ ...tdStyle, color: b.preflightKnown === false ? 'var(--text-secondary)' : b.preflight.ok ? 'var(--positive)' : 'var(--negative)' }}>
-                          {b.preflightKnown === false ? '待校验 · 点击演练' : describePreflight(b.preflight)}
-                        </td>
-                        <td style={tdStyle}>
-                          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                            <button onClick={() => rehearse(b)} disabled={backupBusy !== null} style={btnOutline}>{backupBusy === b.id ? '演练中…' : '演练'}</button>
-                            <button
-                              type="button"
-                              onClick={() => void shareOrDownloadBackup(b)}
-                              disabled={backupBusy !== null}
-                              style={btnOutline}
-                            >
-                              {backupBusy === `download-${b.id}` ? '保存中…' : storageBackend === 'native-sqlite' ? '另存为…' : '分享 / 下载'}
-                            </button>
-                            <button onClick={() => restore(b, 'merge')} disabled={backupBusy !== null} style={btnOutline}>合并</button>
-                            <button onClick={() => restore(b, 'replace')} disabled={backupBusy !== null} style={{ ...btnOutline, border: '1px solid var(--accent)', color: 'var(--accent)' }}>精确恢复</button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {visibleBackups.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={5}>{backups.length === 0 ? '还没有备份。保存任意数据后会自动创建，也可以手动创建。' : '当前筛选下没有备份。'}</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-            <section className="zc-section">
-              <div className="zc-section-head zc-responsive-header">
-                <div>
-                  <h2 className="zc-section-title">同步服务器备份</h2>
-                  <p className="zc-meta" style={{ marginTop: 4 }}>
-                    服务器保存加密归档；托管服务器具备解密能力。恢复前会下载、校验分块和归档头，再使用本机账本密钥解密预检。
-                  </p>
-                </div>
-                <button
-                  onClick={refreshRemoteBackups}
-                  disabled={backupBusy !== null}
-                  style={btnOutline}
-                >
-                  {backupBusy === 'remote-list' ? '读取中…' : '刷新服务器备份'}
-                </button>
-              </div>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead>
-                    <tr>
-                      <th style={thStyle}>时间</th>
-                      <th style={thStyle}>服务器</th>
-                      <th style={thStyle}>类型</th>
-                      <th style={thStyle}>大小</th>
-                      <th style={thStyle}>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {remoteBackups.map((row) => {
-                      const busyId = `remote-${row.profile.id}-${row.backup.archiveId}`;
-                      return (
-                        <tr key={`${row.profile.id}:${row.backup.archiveId}`}>
+                <p className="zc-meta" style={{ overflowWrap: 'anywhere' }}>主数据位置：{dataLocation}</p>
+                {externalStatus.kind === 'portable' && <p className="zc-meta" style={{ overflowWrap: 'anywhere' }}>便携本地备份：{externalStatus.label}。请启用同步服务器备份，或用“分享 / 下载”复制到其他磁盘。</p>}
+                {backupNote && <p className="zc-caption" style={{ color: backupNote.includes('未通过') || backupNote.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 'var(--fw-bold)' }}>{backupNote}</p>}
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr><th style={thStyle}>时间</th><th style={thStyle}>来源</th><th style={thStyle}>大小</th><th style={thStyle}>校验</th><th style={thStyle}>操作</th></tr>
+                    </thead>
+                    <tbody>
+                      {visibleBackups.map((b) => (
+                        <tr key={b.id}>
                           <td style={tdStyle}>
-                            <div style={{ fontWeight: 'var(--fw-bold)' }}>{row.backup.label}</div>
-                            <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>
-                              {new Date(row.backup.createdAt).toLocaleString()}
-                            </div>
+                            <div style={{ fontWeight: 'var(--fw-bold)' }}>{b.label}</div>
+                            <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>{new Date(b.createdAt).toLocaleString()}</div>
                           </td>
-                          <td style={tdStyle}>{row.profile.alias}</td>
-                          <td style={tdStyle}>{reasonLabel(row.backup.reason)} · {row.backup.kind === 'device' ? '完整设备' : '可移植账本'}</td>
-                          <td style={tdStyle}>{backupSize(row.backup)}</td>
+                          <td style={tdStyle}>
+                            <div>{reasonLabel(b.reason)} · {b.kind === 'device' ? '完整设备' : '可移植账本'} · {b.tier === 'pinned' ? '固定保留' : b.tier === 'hourly' ? '小时层' : b.tier === 'daily' ? '日层' : '周层'}</div>
+                            <div style={{ fontSize: 'var(--fs-meta)', color: b.externalSaved ? 'var(--positive)' : 'var(--fg-subtle)', marginTop: 3 }}>{b.externalSaved ? '创建时已写入远端 / 外部副本' : storageBackend === 'native-sqlite' ? '便携目录内本地备份；远端副本见服务器列表' : '仅本机存储'}</div>
+                          </td>
+                          <td style={tdStyle}>{backupSize(b)}</td>
+                          <td style={{ ...tdStyle, color: b.preflightKnown === false ? 'var(--text-secondary)' : b.preflight.ok ? 'var(--positive)' : 'var(--negative)' }}>
+                            {b.preflightKnown === false ? '待校验 · 点击演练' : describePreflight(b.preflight)}
+                          </td>
                           <td style={tdStyle}>
                             <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                              <button onClick={() => rehearse(b)} disabled={backupBusy !== null} style={btnOutline}>{backupBusy === b.id ? '演练中…' : '演练'}</button>
                               <button
-                                onClick={() => void prepareRemoteRestore(row, 'rehearse')}
+                                type="button"
+                                onClick={() => void shareOrDownloadBackup(b)}
                                 disabled={backupBusy !== null}
                                 style={btnOutline}
                               >
-                                {backupBusy === busyId ? '校验中…' : '演练'}
+                                {backupBusy === `download-${b.id}` ? '保存中…' : storageBackend === 'native-sqlite' ? '另存为…' : '分享 / 下载'}
                               </button>
-                              <button onClick={() => void prepareRemoteRestore(row, 'merge')} disabled={backupBusy !== null} style={btnOutline}>合并</button>
-                              <button
-                                onClick={() => void prepareRemoteRestore(row, 'replace')}
-                                disabled={backupBusy !== null}
-                                style={{ ...btnOutline, border: '1px solid var(--accent)', color: 'var(--accent)' }}
-                              >
-                                精确恢复
-                              </button>
-                              <button
-                                onClick={() => setPendingRemoteDelete(row)}
-                                disabled={backupBusy !== null}
-                                style={btnDanger}
-                              >
-                                删除
-                              </button>
+                              <button onClick={() => openRestorePicker(`local:${b.id}`)} disabled={backupBusy !== null} style={btnOutline}>恢复…</button>
                             </div>
                           </td>
                         </tr>
-                      );
-                    })}
-                    {remoteBackups.length === 0 && (
-                      <tr>
-                        <td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={5}>
-                          {remoteLoaded ? '已连接的同步服务器上没有备份。' : '点击“刷新服务器备份”读取已连接服务器的恢复点。'}
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="zc-section">
-              <div className="zc-section-head zc-responsive-header">
-                <h2 className="zc-section-title">数据自检</h2>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={runCheck} style={btnOutline}>运行自检</button>
-                  <button onClick={runRecompute} style={btnPrimary}>重算缓存</button>
+                      ))}
+                      {visibleBackups.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={5}>{backups.length === 0 ? '还没有备份。保存任意数据后会自动创建，也可以手动创建。' : '当前筛选下没有备份。'}</td></tr>}
+                    </tbody>
+                  </table>
                 </div>
-              </div>
-              {note && <p className="zc-caption" style={{ color: note.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 'var(--fw-medium)' }}>{note}</p>}
-              {lastCheck && (
+              </section>
+            </div>
+          </section>}
+
+          {section === 'server' && <section aria-label="服务器" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+            <div>
+              <h2 className="zc-section-title">服务器</h2>
+              <p className="zc-caption">账本副本用于日常双向同步；服务器备份是单独的加密恢复点。同步成功不代表副本组 READY，也不代表备份已校验。</p>
+            </div>
+            {serverPanel}
+            <div className="zc-card">
+              <section className="zc-section">
                 <div className="zc-section-head zc-responsive-header">
                   <div>
-                    <div className="zc-caption" style={{ fontWeight: 'var(--fw-bold)' }}>{lastCheck.count === 0 ? '自检通过' : `发现 ${lastCheck.count} 个问题`}</div>
-                    <p className="zc-meta">最近检查：{new Date(lastCheck.at).toLocaleString()}</p>
+                    <h2 className="zc-section-title">服务器备份</h2>
+                    <p className="zc-meta" style={{ marginTop: 4 }}>
+                      服务器保存加密归档；托管服务器具备解密能力。恢复前会下载、校验分块和归档头，再使用本机账本密钥解密预检。
+                    </p>
                   </div>
-                  <span style={{ color: lastCheck.count === 0 ? 'var(--positive)' : 'var(--negative)', fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{lastCheck.count === 0 ? '✓' : '!'}</span>
+                  <button
+                    onClick={refreshRemoteBackups}
+                    disabled={backupBusy !== null}
+                    style={btnOutline}
+                  >
+                    {backupBusy === 'remote-list' ? '读取中…' : '刷新服务器备份'}
+                  </button>
                 </div>
-              )}
-              {issues !== null && (
-                issues.length === 0
-                  ? <p className="zc-caption" style={{ color: 'var(--positive)', fontWeight: 'var(--fw-medium)' }}>✓ 未发现不一致</p>
-                  : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      {issueGroups.map(([kind, rows]) => (
-                        <div key={kind} className="zc-section">
-                          <div>
-                            <p className="zc-caption" style={{ color: 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{ISSUE_LABELS[kind] ?? kind} · {rows.length} 条</p>
-                            {kind === 'chain_cache_stale' && <p className="zc-meta">建议先点击“重算缓存”。</p>}
-                          </div>
-                          {rows.map((i, k) => (
-                            <div key={`${i.entityId}-${k}`} className="zc-caption">
-                              {i.entityType} {i.entityId.slice(0, 8)} — {i.detail}
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  )
-              )}
-            </section>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr>
+                        <th style={thStyle}>时间</th>
+                        <th style={thStyle}>服务器</th>
+                        <th style={thStyle}>类型</th>
+                        <th style={thStyle}>大小</th>
+                        <th style={thStyle}>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {remoteBackups.map((row) => {
+                        const busyId = `remote-${row.profile.id}-${row.backup.archiveId}`;
+                        return (
+                          <tr key={`${row.profile.id}:${row.backup.archiveId}`}>
+                            <td style={tdStyle}>
+                              <div style={{ fontWeight: 'var(--fw-bold)' }}>{row.backup.label}</div>
+                              <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>
+                                {new Date(row.backup.createdAt).toLocaleString()}
+                              </div>
+                            </td>
+                            <td style={tdStyle}>{row.profile.alias}</td>
+                            <td style={tdStyle}>{reasonLabel(row.backup.reason)} · {row.backup.kind === 'device' ? '完整设备' : '可移植账本'}</td>
+                            <td style={tdStyle}>{backupSize(row.backup)}</td>
+                            <td style={tdStyle}>
+                              <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                <button
+                                  onClick={() => void prepareRemoteRestore(row, 'rehearse')}
+                                  disabled={backupBusy !== null}
+                                  style={btnOutline}
+                                >
+                                  {backupBusy === busyId ? '校验中…' : '演练'}
+                                </button>
+                                <button onClick={() => openRestorePicker(`remote:${row.profile.id}:${row.backup.archiveId}`)} disabled={backupBusy !== null} style={btnOutline}>恢复…</button>
+                                <button
+                                  onClick={() => setPendingRemoteDelete(row)}
+                                  disabled={backupBusy !== null}
+                                  style={btnDanger}
+                                >
+                                  删除
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {remoteBackups.length === 0 && (
+                        <tr>
+                          <td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={5}>
+                            {remoteLoaded ? '已连接的同步服务器上没有备份。' : '点击“刷新服务器备份”读取已连接服务器的恢复点。'}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </section>}
 
-            <section className="zc-section">
-              <h2 className="zc-section-title">数据</h2>
-              <p className="zc-caption">
-                导出 / 导入加密 .zcbak 备份在顶栏。重置会清空本机数据并返回首次设置，可重新选择空账本、导入备份或演示账本。
-              </p>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button onClick={purgeOld} style={btnOutline}>清理已确认的删除记录</button>
-                <button onClick={() => setCleanupOpen(true)} disabled={backupBusy !== null} style={btnOutline}>清理测试流水</button>
-                <button onClick={() => setResetOpen(true)} style={btnDanger}>重置本机账本</button>
+          {section === 'restore' && <section id="data-restore" aria-label="恢复数据" className="zc-card">
+            <div className="zc-section-head zc-responsive-header">
+              <div>
+                <h2 className="zc-section-title">恢复数据</h2>
+                <p className="zc-caption">从本机或服务器备份选择恢复点。恢复前会校验归档并演练，再显示变更范围供确认；操作前会保存当前账本。</p>
               </div>
-            </section>
-          </div>
+              <button type="button" onClick={() => openRestorePicker()} disabled={backupBusy !== null} style={btnPrimary}>选择恢复点</button>
+            </div>
+            {backupNote && <p role="status" className="zc-caption" style={{ color: backupNote.includes('未通过') || backupNote.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 'var(--fw-bold)' }}>{backupNote}</p>}
+          </section>}
+
+          {section === 'security' && <section aria-label="解锁与安全" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+            <h2 className="zc-section-title">解锁与安全</h2>
+            <LedgerProtectionPanel store={store} />
+            {securityPanel}
+          </section>}
+
+          {section === 'device' && <details className="zc-card">
+            <summary style={{ cursor: 'pointer', fontWeight: 'var(--fw-bold)' }}>检查与维护</summary>
+            <div style={{ marginTop: 16 }}>
+              <section className="zc-section">
+                <div className="zc-section-head zc-responsive-header">
+                  <h2 className="zc-section-title">数据自检</h2>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={runCheck} style={btnOutline}>运行自检</button>
+                    <button onClick={runRecompute} style={btnPrimary}>重算缓存</button>
+                  </div>
+                </div>
+                {note && <p className="zc-caption" style={{ color: note.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 'var(--fw-medium)' }}>{note}</p>}
+                {lastCheck && (
+                  <div className="zc-section-head zc-responsive-header">
+                    <div>
+                      <div className="zc-caption" style={{ fontWeight: 'var(--fw-bold)' }}>{lastCheck.count === 0 ? '自检通过' : `发现 ${lastCheck.count} 个问题`}</div>
+                      <p className="zc-meta">最近检查：{new Date(lastCheck.at).toLocaleString()}</p>
+                    </div>
+                    <span style={{ color: lastCheck.count === 0 ? 'var(--positive)' : 'var(--negative)', fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{lastCheck.count === 0 ? '✓' : '!'}</span>
+                  </div>
+                )}
+                {issues !== null && (
+                  issues.length === 0
+                    ? <p className="zc-caption" style={{ color: 'var(--positive)', fontWeight: 'var(--fw-medium)' }}>✓ 未发现不一致</p>
+                    : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {issueGroups.map(([kind, rows]) => (
+                          <div key={kind} className="zc-section">
+                            <div>
+                              <p className="zc-caption" style={{ color: 'var(--negative)', fontWeight: 'var(--fw-bold)' }}>{ISSUE_LABELS[kind] ?? kind} · {rows.length} 条</p>
+                              {kind === 'chain_cache_stale' && <p className="zc-meta">建议先点击“重算缓存”。</p>}
+                            </div>
+                            {rows.map((i, k) => (
+                              <div key={`${i.entityId}-${k}`} className="zc-caption">
+                                {i.entityType} {i.entityId.slice(0, 8)} — {i.detail}
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )
+                )}
+              </section>
+
+              <section className="zc-section">
+                <h2 className="zc-section-title">数据</h2>
+                <p className="zc-caption">
+                  导出 / 导入加密 .zcbak 备份在顶栏。重置会清空本机数据并返回首次设置，可重新选择空账本、导入备份或演示账本。
+                </p>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button onClick={purgeOld} style={btnOutline}>清理已确认的删除记录</button>
+                  <button onClick={() => setCleanupOpen(true)} disabled={backupBusy !== null} style={btnOutline}>清理测试流水</button>
+                  <button onClick={() => setResetOpen(true)} style={btnDanger}>重置本机账本</button>
+                </div>
+              </section>
+            </div>
+          </details>}
         </>
+      )}
+      {restorePickerOpen && (
+        <ConfirmDialog
+          title="恢复数据"
+          confirmLabel="检查并继续"
+          cancelLabel="取消"
+          confirmDisabled={!selectedLocalBackup && !selectedRemoteBackup}
+          onCancel={() => setRestorePickerOpen(false)}
+          onConfirm={startSelectedRestore}
+        >
+          <p>选择本机或服务器上的备份。服务器列表需要联网读取；恢复操作会在下一步显示校验和演练结果。</p>
+          <label className="zc-label" htmlFor="restore-source">备份来源</label>
+          <select id="restore-source" className="zc-select" value={restoreSourceKey} onChange={(event) => setRestoreSourceKey(event.target.value)} style={{ width: '100%', marginTop: 6 }}>
+            <option value="">请选择备份</option>
+            <optgroup label="本机备份">
+              {backups.map((entry) => <option key={entry.id} value={`local:${entry.id}`}>{entry.label} · {new Date(entry.createdAt).toLocaleString()}</option>)}
+            </optgroup>
+            <optgroup label="服务器备份">
+              {remoteBackups.map((row) => <option key={`${row.profile.id}:${row.backup.archiveId}`} value={`remote:${row.profile.id}:${row.backup.archiveId}`}>{row.profile.alias} · {row.backup.label}</option>)}
+            </optgroup>
+          </select>
+          {backupBusy === 'remote-list' && <p className="zc-meta">正在读取服务器备份…</p>}
+          {!selectedLocalBackup && !selectedRemoteBackup && <p className="zc-meta">没有可用的恢复点时，请先创建本机备份或检查服务器连接。</p>}
+          <div role="radiogroup" aria-label="恢复方式" style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <label><input type="radio" name="restore-mode" checked={restoreMode === 'replace'} onChange={() => setRestoreMode('replace')} /> 精确恢复：账本变为备份时的状态，之后新增的数据会被标记删除并同步。</label>
+            <label><input type="radio" name="restore-mode" checked={restoreMode === 'merge'} onChange={() => setRestoreMode('merge')} /> 合并导入：加入备份中的数据，保留当前独有的数据。</label>
+          </div>
+        </ConfirmDialog>
       )}
       {backupPasswordRequest && (
         <ConfirmDialog
@@ -1169,7 +1214,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
         </ConfirmDialog>
       )}
 
-      {tab === 'appearance' && (
+      {section === 'appearance' && (
         <section className="zc-section" aria-label="视觉方案">
           <h2 className="zc-section-title">视觉方案</h2>
           <p className="zc-caption">切换配色与明暗。只影响本机显示，不改变账本数据、同步内容或其它设备上的外观。移动端抽屉不再单独提供入口。</p>

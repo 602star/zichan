@@ -203,10 +203,10 @@ export function Account() {
       {ledgers.length <= 1 && ledgerError && <p role="alert">账本列表读取失败：{ledgerError}</p>}
       <AccountEmailPanel quotaUnlimited={usage?.commits.quotaBytes === null && usage?.attachments.quotaBytes === null} />
       <AccountKeyPanel profile={profile} />
-      <section className="zc-card" aria-label="账本副本入口">
-        <h2 className="zc-section-title">账本副本</h2>
+      <section className="zc-card" aria-label="数据保护入口">
+        <h2 className="zc-section-title">数据保护</h2>
         <p className="zc-caption">查看当前账本在各服务器上的复制进度、完整性状态和节点授权；添加副本后由服务器在后台补齐数据。</p>
-        <button type="button" style={btnOutline} onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'sync' } }))}>查看账本副本与状态</button>
+        <button type="button" style={btnOutline} onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'settings', tab: 'server' } }))}>查看数据保护与副本状态</button>
       </section>
       <section className="zc-card" aria-label="存储配额">
         <div className="zc-section-head"><div><h2 className="zc-section-title">存储配额</h2><p className="zc-meta">当前服务器：{profile.alias || profile.baseUrl}。只统计此账号在这台服务器上的加密数据。</p></div><button type="button" style={btnOutline} disabled={busy} onClick={() => void refreshUsage()}>{busy ? '查询中…' : '刷新用量'}</button></div>
@@ -220,6 +220,6 @@ export function Account() {
       <AccountSecurityPanel onExit={exitAccount} />
       {exitAccount && <section className="zc-card" aria-label="退出账号"><h2 className="zc-section-title">退出账号</h2><p className="zc-caption">退出会锁定本机账本并撤销会话；加密缓存与未同步记录仍留在本机。</p><button type="button" style={btnOutline} onClick={() => setConfirmExit(true)}>退出记账账号</button></section>}
       {confirmExit && exitAccount && <ConfirmDialog title="退出记账账号" confirmLabel="确认退出" onCancel={() => setConfirmExit(false)} onConfirm={exitAccount}><p>退出前请确认重要记录已同步，或已导出加密备份。未同步数据会留在本机；请勿清除网站数据。</p></ConfirmDialog>}
-    </> : <section className="zc-card"><h2 className="zc-section-title">本地账本</h2><p>此账本当前没有登录中的服务器账号，因此没有服务器存储配额。</p><button type="button" style={btnOutline} onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'sync' } }))}>管理同步服务器</button></section>}
+    </> : <section className="zc-card"><h2 className="zc-section-title">本地账本</h2><p>此账本当前没有登录中的服务器账号，因此没有服务器存储配额。</p><button type="button" style={btnOutline} onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'settings', tab: 'device' } }))}>查看数据保护</button></section>}
   </div>;
 }

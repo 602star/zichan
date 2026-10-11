@@ -98,7 +98,7 @@ test('an administrator opens a user ledger as a read-only preview and can close 
     // 同步 and 设置 describe the operator's own machine, so a preview does not offer them.
     const sidebar = page.locator('.zc-sidebar');
     await expect(sidebar.getByRole('button', { name: /设置$/ })).toHaveCount(0);
-    await expect(sidebar.getByRole('button', { name: /同步$/ })).toHaveCount(0);
+    await expect(sidebar.getByRole('button', { name: /数据保护$/ })).toHaveCount(0);
     await sidebar.getByRole('button', { name: /日常收支$/ }).click();
     await expect(page.getByText('42.5', { exact: false }).first()).toBeVisible();
 

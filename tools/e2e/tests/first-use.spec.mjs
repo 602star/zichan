@@ -42,15 +42,14 @@ test('does not open a cached ledger after the account session is revoked', async
 test('keeps administration separate while allowing additional sync servers', async ({ page }) => {
   await openLedger(page);
   await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
-  await page.getByLabel('在侧边栏显示同步').click();
-  await expect(page.getByLabel('在侧边栏显示同步')).toBeChecked();
-  await page.locator('.zc-sidebar').getByRole('button', { name: /同步$/ }).click();
+  await expect(page.getByLabel('在侧边栏显示数据保护')).toHaveCount(0);
+  await page.getByRole('tab', { name: '服务器与同步' }).click();
   /*
    * The screen opens on the summary alone. Servers, keys and diagnostics live in
    * the two layers below it, so the server table must NOT be reachable yet.
    */
   await expect(page.getByRole('button', { name: '新增服务器', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: /^同步设置/ }).click();
+  await page.getByRole('button', { name: /^客户端同步与服务器连接/ }).click();
   await expect(page.getByRole('button', { name: '新增服务器', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '新增服务器', exact: true })).toBeVisible();
   await expect(page.getByLabel('完整服务器地址')).toBeDisabled();

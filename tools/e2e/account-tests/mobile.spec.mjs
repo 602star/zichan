@@ -20,18 +20,19 @@ for (const width of [360, 390]) test(`mobile ${width}px supports login, initiali
     await page.getByLabel('服务器账号密码').fill('account-test-password');
     await fits();
     await page.getByRole('button', { name: '登录已有账号', exact: true }).click();
-    await expect(page.getByRole('button', { name: '直接开始记支出', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '创建个人账本' })).toBeVisible();
     await fits();
-    await page.getByRole('button', { name: '直接开始记支出', exact: true }).click();
-    await expect(page.getByRole('dialog', { name: '记一笔支出' })).toBeVisible();
+    await page.getByRole('button', { name: '创建个人账本' }).click();
+    await page.getByRole('button', { name: '开始记账', exact: true }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
     await fits();
-    await page.getByRole('button', { name: '关闭快速记账' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
     const nav = page.getByRole('navigation', { name: '移动端主导航' });
-    // 设置 stays a pinned entry, but the three-slot phone bar now spends its
-    // slots on the daily modules, so the entry sits behind 更多.
+    // Data protection remains reachable from the account page on small screens.
     await nav.getByRole('button', { name: /更多$/ }).click();
-    await page.getByRole('dialog', { name: '更多功能' }).getByRole('button', { name: /设置$/ }).click();
-    await page.getByRole('tab', { name: '数据与安全' }).click();
+    await page.getByRole('dialog', { name: '更多功能' }).getByRole('button', { name: /我的账号$/ }).click();
+    await page.getByRole('button', { name: '查看数据保护与副本状态' }).click();
+    await page.getByRole('tab', { name: '解锁与安全' }).click();
     const panel = page.getByRole('region', { name: '账本保护' });
     await expect(panel).toBeVisible();
     await panel.getByText('此设备的离线访问', { exact: true }).click();
@@ -41,16 +42,11 @@ for (const width of [360, 390]) test(`mobile ${width}px supports login, initiali
     await expect(panel).toContainText('离线密码已设置');
     await fits();
     await panel.screenshot({ path: testInfo.outputPath('mobile-protection.png') });
-    await page.getByRole('tab', { name: '记账' }).click();
-    await page.getByRole('checkbox', { name: /显示同步/ }).click();
-    await expect(page.getByRole('checkbox', { name: /显示同步/ })).toBeChecked();
-    // The three-slot phone bar is already spent on the daily modules, so 同步
-    // joins 设置 behind 更多.
-    await nav.getByRole('button', { name: /更多$/ }).click();
-    await page.getByRole('dialog', { name: '更多功能' }).getByRole('button', { name: /同步$/ }).click();
-    /* 账本保护 moved into the 高级设置 layer; the summary renders on its own. */
-    await expect(page.getByRole('region', { name: '账本保护' })).toHaveCount(0);
-    await page.getByRole('button', { name: /^高级设置/ }).click();
+    await page.getByRole('tab', { name: '本机备份' }).click();
+    await expect(page.getByRole('region', { name: '当前设备' })).toBeVisible();
+    await page.getByRole('tab', { name: '服务器与同步' }).click();
+    await expect(page.getByRole('region', { name: '服务器' })).toBeVisible();
+    await page.getByRole('tab', { name: '解锁与安全' }).click();
     await expect(page.getByRole('region', { name: '账本保护' })).toBeVisible();
     await fits();
     await page.screenshot({ path: testInfo.outputPath('mobile-sync.png') });

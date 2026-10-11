@@ -23,9 +23,8 @@ export const NAVIGATION_ITEMS: readonly NavigationItem[] = [
   { id: 'reports', label: '报表', icon: '▦', description: '支出、成本与盈亏报表' },
   { id: 'history', label: '历史', icon: '◷', description: '操作记录与冲突处理' },
   { id: 'manage', label: '管理', icon: '⊞', description: '资产、分类和基础资料' },
-  { id: 'sync', label: '同步', icon: '⇅', description: '设备和同步服务器' },
   { id: 'account', label: '我的账号', icon: '☺', description: '个人资料、配额和账号安全' },
-  { id: 'settings', label: '设置', icon: '⚙', description: '记账、导航和数据设置' },
+  { id: 'settings', label: '设置', icon: '⚙', description: '记账、备份、同步、恢复和外观' },
 ] as const;
 
 export const REQUIRED_NAVIGATION_IDS = new Set<ScreenId>(['transactions', 'settings']);

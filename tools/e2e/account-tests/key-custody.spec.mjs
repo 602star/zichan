@@ -21,10 +21,11 @@ async function login(page, url, username) {
   await page.getByRole('button', { name: '登录已有账号', exact: true }).click();
 }
 async function openSettings(page) {
-  const close = page.getByRole('button', { name: '关闭快速记账' });
-  await close.click();
-  await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
-  await page.getByRole('tab', { name: '数据与安全' }).click();
+  const dialog = page.getByRole('dialog');
+  if (await dialog.count()) await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
+  await page.getByRole('button', { name: '查看数据保护与副本状态' }).click();
+  await page.getByRole('tab', { name: '解锁与安全' }).click();
 }
 
 test('managed account opens without a key prompt, restores a new device, and switches to private recovery', async ({ page, browser }, testInfo) => {
@@ -33,7 +34,8 @@ test('managed account opens without a key prompt, restores a new device, and swi
   try {
     await registerAccount(f.url, 'managed-user', 'account-test-password');
     await login(page, f.url, 'managed-user');
-    await page.getByRole('button', { name: '直接开始记支出', exact: true }).click();
+    await page.getByRole('button', { name: '创建个人账本' }).click();
+    await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await expect(page.getByLabel('账本密码', { exact: true })).toHaveCount(0);
     await openSettings(page);
@@ -58,8 +60,7 @@ test('managed account opens without a key prompt, restores a new device, and swi
     await page.getByLabel('账本恢复码', { exact: true }).fill(code);
     await page.getByRole('button', { name: '解锁账本', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
-    await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
-    await page.getByRole('tab', { name: '数据与安全' }).click();
+    await openSettings(page);
     const restoredPanel = page.getByRole('region', { name: '账本保护' });
     await restoredPanel.getByText('此设备的离线访问', { exact: true }).click();
     await restoredPanel.getByRole('button', { name: '记住此设备七天' }).click();
@@ -67,8 +68,7 @@ test('managed account opens without a key prompt, restores a new device, and swi
     await page.reload();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await expect(page.getByLabel('账本恢复码', { exact: true })).toHaveCount(0);
-    await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
-    await page.getByRole('tab', { name: '数据与安全' }).click();
+    await openSettings(page);
     await page.getByText('高级：更改保护方式', { exact: true }).click();
     await page.getByRole('button', { name: '准备切换到云端托管' }).click();
     await page.getByRole('checkbox', { name: '允许此服务器解密账本', exact: true }).check();
@@ -84,16 +84,18 @@ test('private registration saves a recovery code and offline access is opt-in', 
   try {
     await page.goto(`${f.url}/app/`);
     await page.getByRole('button', { name: '注册新账号', exact: true }).click();
+    await page.getByLabel('昵称', { exact: true }).fill('私密账本用户');
     await page.getByLabel('服务器用户名').fill('private-user');
     await page.getByLabel('服务器账号密码', { exact: true }).fill('account-test-password');
     await page.getByLabel('确认账号密码').fill('account-test-password');
     await page.getByText('高级：账本保护方式', { exact: true }).click();
     await page.getByRole('checkbox', { name: '创建私密账本，自己保存恢复码' }).check();
     await page.getByRole('button', { name: '注册并登录', exact: true }).click();
+    await page.getByRole('button', { name: '创建个人账本' }).click();
     await expect(page.getByRole('heading', { name: '创建私密账本', exact: true })).toBeVisible();
     await page.getByRole('checkbox', { name: '我已把恢复码保存在此设备以外' }).check();
     await page.getByRole('button', { name: '创建私密账本', exact: true }).click();
-    await page.getByRole('button', { name: '直接开始记支出', exact: true }).click();
+    await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await openSettings(page);
     await page.getByText('此设备的离线访问', { exact: true }).click();

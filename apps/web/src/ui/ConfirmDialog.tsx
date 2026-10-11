@@ -27,6 +27,7 @@ export function ConfirmDialog(props: {
   cancelLabel?: string;
   tone?: 'normal' | 'danger';
   busy?: boolean;
+  confirmDisabled?: boolean;
   onConfirm: () => void | Promise<void>;
   onCancel?: () => void;
 }) {
@@ -95,7 +96,7 @@ export function ConfirmDialog(props: {
           {props.cancelLabel !== undefined && props.onCancel && (
             <button data-dialog-initial-focus onClick={props.onCancel} disabled={busy} style={button}>{props.cancelLabel}</button>
           )}
-          <button data-dialog-initial-focus={!props.onCancel ? '' : undefined} onClick={confirm} disabled={busy} style={{ ...confirmStyle, opacity: busy ? 0.65 : 1 }}>
+          <button data-dialog-initial-focus={!props.onCancel ? '' : undefined} onClick={confirm} disabled={busy || props.confirmDisabled} style={{ ...confirmStyle, opacity: busy || props.confirmDisabled ? 0.65 : 1 }}>
             {busy ? '处理中…' : props.confirmLabel ?? '确定'}
           </button>
         </div>

@@ -27,7 +27,7 @@ describe('navigation preferences', () => {
       .map((item) => item.id)
       .filter((id) => !preferences.visible.includes(id));
 
-    expect(hidden).toEqual(['convert', 'game', 'reports', 'history', 'manage', 'sync']);
+    expect(hidden).toEqual(['convert', 'game', 'reports', 'history', 'manage']);
   });
 
   it('persists enabled modules and their order', () => {
@@ -70,5 +70,12 @@ describe('navigation preferences', () => {
   it('shows the new account page in previously saved navigation', () => {
     const saved = JSON.stringify({ version: 1, order: ['dashboard', 'transactions', 'settings'], visible: ['dashboard', 'transactions', 'settings'] });
     expect(parseNavigationPreferences(saved).visible).toContain('account');
+  });
+
+  it('removes the former sync module from saved navigation', () => {
+    const saved = JSON.stringify({ version: 1, order: ['dashboard', 'sync', 'settings'], visible: ['dashboard', 'sync', 'settings'] });
+    const parsed = parseNavigationPreferences(saved);
+    expect(parsed.order).not.toContain('sync');
+    expect(parsed.visible).not.toContain('sync');
   });
 });

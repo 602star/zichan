@@ -407,9 +407,12 @@ export function NodeReplicaPanel({ profiles, ledgerId, pinNodeIdentity, onConfig
       <button type="button" style={btnOutline} disabled={groupChecking} onClick={() => void refreshGroup()}>核对全部节点</button>
     </div>}
     <div style={{ fontWeight: 'var(--fw-bold)' }}>服务器后台复制</div>
+    <details style={{ marginBottom: 12 }}>
+      <summary style={{ cursor: 'pointer', color: 'var(--accent)', fontSize: 'var(--fs-caption)' }}>了解复制与核对方式</summary>
     <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', lineHeight: 1.6 }}>
       选择一台尚无此账本副本、且由节点管理员登录的服务器。管理员已有其他账本也可以加入；系统会为源节点统一账号创建独立账本账号，节点管理员不会因此获得此账本访问权。已启用成员控制的账号可用自己的账号密钥在新网站解锁；旧账本仍需账本密钥恢复码。创建后由服务器复制提交和新版附件，浏览器关闭也会继续。勾选自动续期后，有效节点活动会延长授权；停止链路后节点会持续尝试撤销源节点授权。旧版附件仍需客户端迁移。本节点 READY 与中继汇总的授权副本组状态分别显示；网页配置的可互换节点组仍需逐台核对。
     </p>
+    </details>
     <div style={{ display: 'flex', gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
       <label>加入节点<br /><select className="zc-select" value={target?.id ?? ''} onChange={(event) => setTargetId(event.target.value)}>
         {eligible.map((profile) => <option key={profile.id} value={profile.id}>{profile.alias}</option>)}
@@ -489,6 +492,8 @@ export function NodeReplicaPanel({ profiles, ledgerId, pinNodeIdentity, onConfig
         {link.inventoryMatchedAt ? ` · 上次目录一致 ${new Date(link.inventoryMatchedAt).toLocaleString()}` : ''}
         {link.physicalVerifiedAt ? ` · 上次本地分块校验 ${new Date(link.physicalVerifiedAt).toLocaleString()}` : ''}
       </div>
+      <details style={{ marginTop: 8 }}>
+        <summary style={{ cursor: 'pointer', color: 'var(--accent)', fontSize: 'var(--fs-caption)' }}>查看传输明细</summary>
       <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>
         提交拉取 {link.pullSeq}/{link.peerHeadSeq} · 推送 {link.pushSeq}/{link.localHeadSeq}；
         新版附件：对端 {link.peerBlobObjects}、本地 {link.localBlobObjects}；
@@ -502,6 +507,7 @@ export function NodeReplicaPanel({ profiles, ledgerId, pinNodeIdentity, onConfig
       <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', marginTop: 4 }}>
         页面打开时约每 3 秒刷新；大附件按块、小附件按页记录进度。累计量包含失败后的重试，不代表剩余字节数。
       </div>
+      </details>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
         <button type="button" style={btnOutline} disabled={busy} onClick={() => void rescan(link.linkId)}>重扫并补传</button>
         <button type="button" style={btnOutline} disabled={busy} onClick={() => void disable(link.linkId)}>停止这条链路</button>

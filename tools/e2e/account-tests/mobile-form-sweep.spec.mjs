@@ -42,7 +42,6 @@ const SCREENS = [
   ['报表', 'reports'],
   ['历史', 'history'],
   ['管理', 'manage'],
-  ['同步', 'sync'],
   ['设置', 'settings'],
 ];
 

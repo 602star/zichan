@@ -34,7 +34,7 @@ async function listen(node, host) {
 async function openSync(page) {
   await expect(page.locator('.zc-app-shell')).toBeVisible();
   await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
-  await page.getByRole('button', { name: '查看账本副本与状态' }).click();
+  await page.getByRole('button', { name: '查看数据保护与副本状态' }).click();
   const replica = page.getByRole('region', { name: '账本副本' });
   await expect(replica).toBeVisible();
   const settings = page.getByRole('button', { name: /^客户端同步与服务器连接/ });

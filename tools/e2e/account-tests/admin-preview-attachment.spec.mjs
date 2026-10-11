@@ -34,7 +34,7 @@ const fileName = '发票.pdf';
 const fileBody = '%PDF-1.4 preview attachment body';
 
 /** Every screen, in the order the app lists them; the preview hides the device-only ones. */
-const ALL_SCREENS = ['dashboard', 'convert', 'transactions', 'game', 'fixed', 'reports', 'history', 'manage', 'sync', 'settings'];
+const ALL_SCREENS = ['dashboard', 'convert', 'transactions', 'game', 'fixed', 'reports', 'history', 'manage', 'settings'];
 
 async function listen() {
   const instance = createSyncServer({

@@ -49,7 +49,7 @@ async function openAccount(page) {
 
 async function syncLedger(page) {
   await openAccount(page);
-  await page.getByRole('button', { name: '查看账本副本与状态' }).click();
+  await page.getByRole('button', { name: '查看数据保护与副本状态' }).click();
   const sync = page.getByRole('button', { name: '同步账本', exact: true }).first();
   await sync.click();
   await expect(sync).toBeEnabled();
@@ -139,7 +139,7 @@ test('switches personal and invited ledgers across three sites through a hub out
     await ownerKey.getByLabel('确认账号加密密钥密码').fill(memberKeyPassword);
     await ownerKey.getByRole('button', { name: '建立账号加密密钥' }).click();
     await expect(ownerKey.getByText(/已建立 · 身份节点/)).toBeVisible();
-    await page.getByRole('button', { name: '查看账本副本与状态' }).click();
+    await page.getByRole('button', { name: '查看数据保护与副本状态' }).click();
     const members = page.getByRole('region', { name: '账本成员' });
     await members.getByLabel('成员管理密钥密码').fill(memberKeyPassword);
     await members.getByRole('button', { name: '启用成员控制（试用）' }).click();

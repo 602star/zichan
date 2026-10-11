@@ -50,6 +50,7 @@ import {
 import { adoptUnlockedLedgerKeyEnvelope, runtimeLedgerCryptoSession } from './ledger-key-vault.js';
 import { accountProtection } from './account-protection.js';
 import { isTauriRuntime } from './tauri.js';
+import type { SettingsSection } from './screens/Settings.js';
 import {
   NAVIGATION_ITEMS,
   navigationLabel,
@@ -68,9 +69,8 @@ const Fixed = lazy(() => import('./screens/Fixed.js').then((module) => ({ defaul
 const Reports = lazy(() => import('./screens/Reports.js').then((module) => ({ default: module.Reports })));
 const Manage = lazy(() => import('./screens/Manage.js').then((module) => ({ default: module.Manage })));
 const Transactions = lazy(() => import('./screens/Transactions.js').then((module) => ({ default: module.Transactions })));
-const Settings = lazy(() => import('./screens/Settings.js').then((module) => ({ default: module.Settings })));
+const SettingsPage = lazy(() => import('./screens/SettingsPage.js').then((module) => ({ default: module.SettingsPage })));
 const Account = lazy(() => import('./screens/Account.js').then((module) => ({ default: module.Account })));
-const Sync = lazy(() => import('./screens/Sync.js').then((module) => ({ default: module.Sync })));
 const History = lazy(() => import('./screens/History.js').then((module) => ({ default: module.History })));
 
 const ACTIVE_SCREEN_KEY = 'zichan.activeScreen';
@@ -105,12 +105,14 @@ function initialScreen(preview: boolean): ScreenId {
     // A preview reads no session state: those keys belong to the operator's own ledger session,
     // and consuming them here would consume them for the ledger app they came back to.
     if (preview) return 'dashboard';
-    if (connectionLinkFromLocation()) return 'sync';
+    if (connectionLinkFromLocation()) return 'settings';
     if (['quick-expense', 'account-setup'].includes(accountSessionStorage.getItem('zichan.postFirstRun') ?? '')) return 'transactions';
     const stored = accountSessionStorage.getItem(RETRY_SCREEN_KEY);
     accountSessionStorage.removeItem(RETRY_SCREEN_KEY);
+    if (stored === 'sync') return 'settings';
     if (stored && SCREEN_IDS.has(stored as ScreenId)) return stored as ScreenId;
     const active = accountSessionStorage.getItem(ACTIVE_SCREEN_KEY);
+    if (active === 'sync') return 'settings';
     return active && SCREEN_IDS.has(active as ScreenId) ? active as ScreenId : 'dashboard';
   } catch {
     return 'dashboard';
@@ -126,9 +128,9 @@ const META: Record<ScreenId, [string, string]> = {
   reports: ['报表', '跨模块的成本与盈亏报表'],
   history: ['操作历史', '改前改后 · 批量操作 · 冲突解决记录'],
   manage: ['管理', '资产 · 分类 · 商户 · 价格'],
-  sync: ['同步', '账号同步 · 加密数据与冲突处理'],
+  sync: ['设置', '备份 · 同步 · 恢复'],
   account: ['我的账号', '个人资料 · 存储配额 · 账号安全'],
-  settings: ['设置', '记账模式 · 数据自检 · 备份'],
+  settings: ['设置', '记账 · 备份 · 同步 · 恢复 · 安全 · 外观'],
 };
 
 function formatAsOfDate(date?: string): string {
@@ -277,6 +279,13 @@ export function App() {
   const { store, bump, storageBackend, dataLocation, preview } = useStore();
   const snap = useSnapshot('shell');
   const [screen, setScreen] = useState<ScreenId>(() => initialScreen(Boolean(preview)));
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>(() => {
+    try {
+      return connectionLinkFromLocation() || accountSessionStorage.getItem(ACTIVE_SCREEN_KEY) === 'sync' ? 'server' : 'ledger';
+    } catch {
+      return 'ledger';
+    }
+  });
   // Appearance is a device preference, not ledger data: it is read from local
   // storage once and written back on change, never synced or exported.
   const [appearance, setAppearance] = useState(readAppearancePreference);
@@ -330,8 +339,9 @@ export function App() {
 
   useEffect(() => {
     const onNavigate = (event: Event) => {
-      const detail = (event as CustomEvent<{ screen?: ScreenId }>).detail;
-      if (detail?.screen) setScreen(detail.screen);
+      const detail = (event as CustomEvent<{ screen?: ScreenId; tab?: SettingsSection }>).detail;
+      if (detail?.tab) setSettingsSection(detail.tab);
+      if (detail?.screen) setScreen(detail.screen === 'sync' ? 'settings' : detail.screen);
     };
     window.addEventListener('zichan:navigate', onNavigate);
     return () => window.removeEventListener('zichan:navigate', onNavigate);
@@ -590,7 +600,7 @@ export function App() {
                 <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color: safety.some((w) => w.tone === 'danger') ? 'var(--negative)' : 'var(--accent)' }}>数据安全提醒</div>
                 <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', marginTop: 4 }}>{safety.slice(0, 3).map((w) => w.message).join('；')}</div>
               </div>
-              <button onClick={() => setScreen('settings')} style={ghostBtn}>去处理</button>
+              <button onClick={() => { setSettingsSection('device'); setScreen('settings'); }} style={ghostBtn}>去处理</button>
             </div>
           )}
           <Suspense fallback={<div role="status" style={{ minHeight: 240, padding: 24, color: 'var(--text-tertiary)' }}>正在载入…</div>}>
@@ -602,18 +612,17 @@ export function App() {
             {screen === 'reports' && <Reports />}
             {screen === 'history' && <History />}
             {screen === 'manage' && <Manage />}
-            {/* 同步 and 设置 describe this device, not the ledger. A deep link or a restored
-                `screen` value must not land on them in a preview, so they are refused here too
-                rather than only hidden from the navigation. */}
-            {screen === 'sync' && !preview && <Sync />}
+            {/* Settings describes this device, so an account preview cannot open it. */}
             {screen === 'account' && !preview && <Account />}
             {screen === 'settings' && !preview && (
-              <Settings
+              <SettingsPage
                 theme={theme}
                 mode={appearance.mode}
                 resolvedMode={themeMode}
                 setTheme={(next: ThemeId) => setAppearance(writeAppearancePreference({ theme: next }))}
                 setMode={(next: ThemeModePreference) => setAppearance(writeAppearancePreference({ mode: next }))}
+                section={settingsSection}
+                onSelectSection={setSettingsSection}
               />
             )}
           </Suspense>
