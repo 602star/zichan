@@ -3385,6 +3385,18 @@ export class SqlLedgerStore implements LedgerStore {
     return commits;
   }
 
+  /** Recover an explicitly reviewed repair after a browser reload before its owner decision is signed. */
+  async repairForReviewedCommit(originalCommitId: string): Promise<StoredSyncCommit | undefined> {
+    const row = await this.driver.get<Record<string, unknown>>(`SELECT commit_row.* FROM audit_batches batch
+      JOIN sync_commits commit_row ON commit_row.commit_id = batch.id
+      WHERE batch.source_commit_id = ? AND batch.type = 'system'
+        AND (batch.label LIKE '审核修复隔离提交%' OR batch.label LIKE '审核合并隔离提交%')
+        AND batch.outcome = 'applied'
+        AND commit_row.source = 'local' AND commit_row.state = 'applied'
+      ORDER BY batch.started_at DESC LIMIT 1`, [originalCommitId]);
+    return row ? this.commitFromRow(row) : undefined;
+  }
+
   async commitsPendingForReplica(key: string): Promise<StoredSyncCommit[]> {
     const rows = await this.driver.all<Record<string, unknown>>(
       `SELECT c.* FROM sync_commits c

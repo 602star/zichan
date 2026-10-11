@@ -15,6 +15,7 @@ export interface AccountActionTarget {
   commitBytes: number;
   commitQuotaBytes: number | null;
   activeDeviceCount: number;
+  blobQuotaOwnerUsername?: string;
 }
 
 export type AccountActionMode = '' | 'state' | 'commit' | 'blob' | 'role' | 'sessions';
@@ -73,7 +74,9 @@ export function AccountActions({ client, target, canManage, canEditQuota, onDone
       {!hideTriggers ? <div style={row}>
         <Button disabled={busy || !canManage} onClick={() => setMode(mode === 'state' ? '' : 'state')}>{target.disabled ? '启用账号' : '禁用账号'}</Button>
         {full ? <Button disabled={busy || !canEditQuota} onClick={() => setMode(mode === 'commit' ? '' : 'commit')}>调整提交配额</Button> : null}
-        {full ? <Button disabled={busy || !canEditQuota} onClick={() => setMode(mode === 'blob' ? '' : 'blob')}>调整附件配额</Button> : null}
+        {full ? <Button disabled={busy || !canEditQuota || Boolean(target.blobQuotaOwnerUsername)}
+          title={target.blobQuotaOwnerUsername ? `请调整账本宿主账号 ${target.blobQuotaOwnerUsername} 的附件配额` : undefined}
+          onClick={() => setMode(mode === 'blob' ? '' : 'blob')}>调整附件配额</Button> : null}
         {full ? <Button disabled={busy || !canManage} onClick={() => setMode(mode === 'role' ? '' : 'role')}>修改角色</Button> : null}
         <Button disabled={busy || !canManage} onClick={() => { setError(''); setNotice(''); setMode('sessions'); }}>撤销全部可管理会话</Button>
       </div> : null}

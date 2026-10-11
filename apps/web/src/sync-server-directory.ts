@@ -31,9 +31,11 @@ function normalizeServer(value: Partial<SharedSyncServer>): SharedSyncServer | u
   const alias = typeof value.alias === 'string' ? value.alias.trim() : '';
   const serverId = typeof value.serverId === 'string' ? value.serverId.trim() : '';
   const serverPublicKey = typeof value.serverPublicKey === 'string' ? value.serverPublicKey.trim() : '';
+  const nodePublicKey = typeof value.nodePublicKey === 'string' ? value.nodePublicKey.trim() : '';
   const sharedUrls = uniqueSharedUrls(Array.isArray(value.sharedUrls) ? value.sharedUrls : []);
   if (!id || !alias || !serverId || !serverPublicKey || sharedUrls.length === 0) return undefined;
-  return { id, alias, serverId, serverPublicKey, sharedUrls };
+  return { id, alias, serverId, serverPublicKey,
+    ...(nodePublicKey ? { nodePublicKey } : {}), sharedUrls };
 }
 
 export function sharedDirectoryFromConnections(connections: SyncConnection[]): SharedSyncServer[] {
@@ -44,12 +46,16 @@ export function sharedDirectoryFromConnections(connections: SyncConnection[]): S
       alias: connection.alias,
       serverId: connection.serverId,
       serverPublicKey: connection.serverPublicKey,
+      nodePublicKey: connection.nodePublicKey,
       sharedUrls: connection.sharedUrls,
     });
     if (!normalized) continue;
     const existing = servers.find((server) => server.serverId === normalized.serverId);
     if (existing) {
-      if (existing.serverPublicKey !== normalized.serverPublicKey) continue;
+      if (existing.serverPublicKey !== normalized.serverPublicKey
+        || existing.nodePublicKey && normalized.nodePublicKey
+          && existing.nodePublicKey !== normalized.nodePublicKey) continue;
+      if (!existing.nodePublicKey && normalized.nodePublicKey) existing.nodePublicKey = normalized.nodePublicKey;
       existing.sharedUrls = uniqueSharedUrls([...existing.sharedUrls, ...normalized.sharedUrls]);
     } else {
       servers.push(normalized);
@@ -116,12 +122,19 @@ export function mergeSharedSyncDirectory(
         };
         continue;
       }
+      if (existing.nodePublicKey && normalized.nodePublicKey
+        && existing.nodePublicKey !== normalized.nodePublicKey) {
+        rows[existingIndex] = { ...existing, status: 'identity_changed',
+          lastError: '账本共享目录中的节点签名公钥与本机信任记录不一致' };
+        continue;
+      }
       const candidates = [...new Set([...existing.sharedUrls, ...normalized.sharedUrls])];
       rows[existingIndex] = {
         ...existing,
         alias: normalized.alias,
         serverId: normalized.serverId,
         serverPublicKey: normalized.serverPublicKey,
+        nodePublicKey: normalized.nodePublicKey ?? existing.nodePublicKey,
         sharedUrls: candidates,
         alternateUrls: [...new Set([...existing.alternateUrls, ...candidates.filter((url) => url !== existing.baseUrl)])],
       };
@@ -135,6 +148,7 @@ export function mergeSharedSyncDirectory(
       alias: normalized.alias,
       serverId: normalized.serverId,
       serverPublicKey: normalized.serverPublicKey,
+      nodePublicKey: normalized.nodePublicKey,
       sharedUrls: normalized.sharedUrls,
       alternateUrls: normalized.sharedUrls.slice(1),
       enabled: false,

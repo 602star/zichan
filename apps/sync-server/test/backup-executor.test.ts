@@ -41,6 +41,9 @@ describe('durable backup executor', () => {
     const f = fixture();
     try {
       for (const [name, value] of [['server-id', f.plan.serverId], ['server.secret', 'a'.repeat(64)], ['opaque.server-setup', 'b'.repeat(64)]]) writeFileSync(join(f.dataDir, name!), value!);
+      const quarantine = join(f.dataDir, 'blobs', 'quarantine', 'damaged-object');
+      mkdirSync(quarantine, { recursive: true });
+      writeFileSync(join(quarantine, '0.chunk'), 'damaged ciphertext retained for diagnosis');
       let store = new SyncServerStore(join(f.dataDir, 'server.sqlite'), 'invite', f.plan.serverId); await store.ready;
       const stop = vi.fn(async () => { await store.close(); });
       const start = vi.fn(async () => { store = new SyncServerStore(join(f.dataDir, 'server.sqlite'), 'invite', f.plan.serverId); await store.ready; });
@@ -50,6 +53,8 @@ describe('durable backup executor', () => {
       const records = readMaintenanceRecords(f.dataDir);
       expect(records).toHaveLength(1); expect(records[0]).toMatchObject({ kind: 'scheduled', status: 'completed', verification: { ok: true } });
       expect((await verifyServerBackup(records[0]!.outputPath!)).ok).toBe(true);
+      expect(readFileSync(join(records[0]!.outputPath!, 'blobs', 'quarantine', 'damaged-object', '0.chunk'), 'utf8'))
+        .toBe('damaged ciphertext retained for diagnosis');
       expect(stop).toHaveBeenCalledTimes(1); expect(start).toHaveBeenCalledTimes(1);
       await executor.close();
       const restarted = createBackupExecutor(deps); await restarted.tick(f.plan);

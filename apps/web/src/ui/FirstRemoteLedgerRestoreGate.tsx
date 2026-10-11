@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { accountProtection } from '../account-protection.js';
 import { importLedger, type SqlLedgerStore } from '@zichan/db';
 import type { Setting } from '@zichan/core';
-import { adoptUnlockedLedgerKeyEnvelope } from '../ledger-key-vault.js';
-import { prepareRemoteLedgerJoin } from '../remote-ledger-join.js';
+import { adoptUnlockedLedgerKeyEnvelope, requireLedgerCryptoSession,
+  storedLedgerKeyEnvelope } from '../ledger-key-vault.js';
+import { prepareMemberRemoteLedgerJoin, prepareRemoteLedgerJoin } from '../remote-ledger-join.js';
 import { authenticateSyncProfile } from '../sync-auth.js';
 import {
   buildSyncBaseUrl,
@@ -23,7 +24,9 @@ export function FirstRemoteLedgerRestoreGate(props: {
   onUseDifferentAccount: () => void;
   onStartNew: () => Promise<void>;
 }) {
-  const automaticSecret = accountProtection()?.profileId === props.connection.id ? accountProtection()?.secret : undefined;
+  const protection = accountProtection();
+  const memberMode = protection?.profileId === props.connection.id && protection.info.mode === 'member';
+  const automaticSecret = protection?.profileId === props.connection.id ? protection.secret : undefined;
   const [passphrase, setPassphrase] = useState(automaticSecret ?? '');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -32,7 +35,7 @@ export function FirstRemoteLedgerRestoreGate(props: {
   const replacementFlight = useRef(false);
   const autoStarted = useRef(false);
   useEffect(() => {
-    if (automaticSecret && !autoStarted.current) { autoStarted.current = true; void restore(); }
+    if ((automaticSecret || memberMode) && !autoStarted.current) { autoStarted.current = true; void restore(); }
     // The initial restoration is a single operation; state updates must not replay it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -56,23 +59,30 @@ export function FirstRemoteLedgerRestoreGate(props: {
     if (busy || replacementFlight.current) return;
     const ledgerId = props.connection.ledgerId;
     if (!ledgerId) return;
-    if (passphrase.length < 8) {
+    if (!memberMode && passphrase.length < 8) {
       setMessage('请输入至少 8 个字符的账本密码');
       return;
     }
     setBusy(true);
-    setMessage('正在验证服务器身份、密钥封套和全部加密提交…');
+    setMessage('正在验证服务器身份、密钥封套和全部加密提交…附件在使用时按需下载。');
     try {
       // Authentication always performs an anonymous health identity check first. Cached
       // access/refresh tokens and the password are never sent to an unverified endpoint.
       const accessToken = await authenticateSyncProfile(props.connection);
-      const prepared = await prepareRemoteLedgerJoin({
-        baseUrl: buildSyncBaseUrl(props.connection),
-        token: accessToken,
-        ledgerId,
-        passphrase,
-        endpointLabel: props.connection.alias,
-        expectedServerId: props.connection.serverId,
+      const onProgress = (received: number, total: number) => {
+        setMessage(`已接收 ${received}/${total} 条加密提交，正在验证账本…附件在使用时按需下载。`);
+      };
+      const keyEnvelope = memberMode ? storedLedgerKeyEnvelope() : undefined;
+      if (memberMode && !keyEnvelope) throw new Error('本机没有已解锁的成员密钥包');
+      const prepared = memberMode ? await prepareMemberRemoteLedgerJoin({
+        baseUrl: buildSyncBaseUrl(props.connection), token: accessToken, ledgerId,
+        keyEnvelope: keyEnvelope!, cryptoSession: requireLedgerCryptoSession(ledgerId),
+        endpointLabel: props.connection.alias, expectedServerId: props.connection.serverId,
+        onProgress,
+      }) : await prepareRemoteLedgerJoin({
+        baseUrl: buildSyncBaseUrl(props.connection), token: accessToken, ledgerId, passphrase,
+        endpointLabel: props.connection.alias, expectedServerId: props.connection.serverId,
+        onProgress,
       });
       await props.store.transaction(async (transaction) => {
         await transaction.resetToLedger(prepared.ledgerId);
@@ -109,7 +119,7 @@ export function FirstRemoteLedgerRestoreGate(props: {
         <div style={{ color: 'var(--accent)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.1em' }}>发现已有远端账本</div>
         <h1 style={{ margin: '10px 0 8px', color: 'var(--text-primary)', fontSize: 'var(--fs-hero)' }}>从 {props.connection.alias} 恢复</h1>
         <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7 }}>账号 {props.connection.username} 已绑定账本 {props.connection.ledgerId}。系统会先在隔离数据库验证密钥、提交 DAG 与账本一致性，成功后才写入本机。</p>
-        {!automaticSecret && <label style={{ display: 'block', marginTop: 20, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
+        {!automaticSecret && !memberMode && <label style={{ display: 'block', marginTop: 20, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
           账本密码
           <input
             aria-label="远端账本密码"
@@ -123,9 +133,9 @@ export function FirstRemoteLedgerRestoreGate(props: {
           />
         </label>}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 20 }}>
-          <button type="button" onClick={() => void restore()} disabled={busy || passphrase.length < 8} style={primary}>{busy ? '验证并恢复中…' : '验证并恢复账本'}</button>
+          <button type="button" onClick={() => void restore()} disabled={busy || !memberMode && passphrase.length < 8} style={primary}>{busy ? '验证并恢复中…' : '验证并恢复账本'}</button>
           <button type="button" onClick={props.onUseDifferentAccount} disabled={busy} style={button}>改用其他账号或模式</button>
-          {!automaticSecret && <button type="button" onClick={() => { setReplacing(!replacing); setConfirmation(''); }} disabled={busy} style={button}>忘记账本密码，重新开账本</button>}
+          {!automaticSecret && !memberMode && <button type="button" onClick={() => { setReplacing(!replacing); setConfirmation(''); }} disabled={busy} style={button}>忘记账本密码，重新开账本</button>}
         </div>
         {replacing && <section aria-label="替换旧账本确认" style={{ marginTop: 20, padding: 16, border: '1px solid var(--negative)', borderRadius: 'var(--r-sm)' }}>
           <strong>使用账号 {props.connection.username} 创建新账本</strong>

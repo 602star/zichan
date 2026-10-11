@@ -55,6 +55,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
     accountId: account.accountId, username: account.username, role: account.role, revision: account.version,
     disabled: account.disabled, commitBytes: capacity.commitBytes, commitQuotaBytes: capacity.commitQuotaBytes,
     activeDeviceCount: detail.data.activeSessionCount,
+    blobQuotaOwnerUsername: capacity.blobQuotaOwnerUsername,
   };
 
   return (

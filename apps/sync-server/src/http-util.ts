@@ -143,7 +143,8 @@ export function errorStatus(error: unknown, blob = false): number {
   if (code === 'QUOTA_EXCEEDED') return 507;
   if (code === 'UPLOAD_NOT_FOUND') return 404;
   if (code === 'CHUNK_CHECKSUM_MISMATCH') return 422;
-  if (['UPLOAD_INCOMPLETE', 'BLOB_ID_COLLISION', 'UPLOAD_MANIFEST_MISMATCH'].includes(code)) return 409;
+  if (['UPLOAD_INCOMPLETE', 'BLOB_ID_COLLISION', 'UPLOAD_MANIFEST_MISMATCH',
+    'BLOB_MIGRATION_UNAVAILABLE'].includes(code)) return 409;
   return blob ? 400 : 500;
 }
 

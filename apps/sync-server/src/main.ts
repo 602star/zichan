@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { developmentDataDir } from './runtime-config.js';
 import { watchShutdownInput } from './shutdown-input.js';
 import { runBackupSupervisor } from './backup-supervisor.js';
+import { assertNoPendingLocalReplicaRetirement } from './replica-retirement-guard.js';
 
 /**
  * Invalid configuration stops the boot with a named error. Silently substituting a
@@ -51,6 +52,7 @@ const port = portEnv();
 const host = process.env.HOST?.trim() || '0.0.0.0';
 const configuredDataDir = process.env.DATA_DIR?.trim();
 const dataDir = configuredDataDir ? resolve(configuredDataDir) : developmentDataDir(import.meta.url);
+assertNoPendingLocalReplicaRetirement(dataDir);
 const listEnv = (name: string): string[] | undefined => {
   const values = process.env[name]?.split(',').map((value) => value.trim()).filter(Boolean);
   return values?.length ? values : undefined;

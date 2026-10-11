@@ -35,6 +35,7 @@ export interface PrepareRemoteLedgerJoinInput {
   passphrase: string;
   endpointLabel?: string;
   expectedServerId?: string;
+  onProgress?: (received: number, total: number) => void;
 }
 
 function validLedgerId(value: string): boolean {
@@ -70,6 +71,7 @@ export async function stageRemoteLedgerJoin(
   keyEnvelope: LedgerKeyEnvelope,
   cryptoSession: LedgerCryptoSession,
   endpointLabel = 'remote-preflight',
+  onProgress?: (received: number, total: number) => void,
 ): Promise<PreparedRemoteLedgerJoin> {
   if (!validLedgerId(ledgerId)) throw new Error('远端账本 ID 无效');
   if (keyEnvelope.ledgerId !== ledgerId || cryptoSession.ledgerId !== ledgerId
@@ -83,10 +85,19 @@ export async function stageRemoteLedgerJoin(
   });
   try {
     await temp.resetToLedger(ledgerId);
+    const observedTransport: CommitTransport = onProgress ? {
+      connect: (value) => transport.connect(value),
+      pullCommits: async (identity, afterSeq, limit) => {
+        const page = await transport.pullCommits(identity, afterSeq, limit);
+        onProgress(page.nextSeq, page.headSeq);
+        return page;
+      },
+      pushCommits: (identity, commits, capabilities) => transport.pushCommits(identity, commits, capabilities),
+    } : transport;
     const result = await syncReplicas(temp, [{
       id: 'remote-join',
       endpoint: endpointLabel,
-      transport,
+      transport: observedTransport,
     }], { maxRounds: 10 });
     const endpoint = result.endpoints[0];
     if (!endpoint) throw new Error('远端同步预检没有返回副本结果');
@@ -167,7 +178,33 @@ export async function prepareRemoteLedgerJoin(
     envelope,
     cryptoSession,
     input.endpointLabel ?? input.baseUrl,
+    input.onProgress,
   );
+  if (input.expectedServerId && prepared.identity.serverId !== input.expectedServerId) {
+    throw new Error('远端同步服务器身份在恢复预检期间发生变化');
+  }
+  return prepared;
+}
+
+/** Restore a member's first device from the already unlocked per-member keyring. */
+export async function prepareMemberRemoteLedgerJoin(input: Omit<PrepareRemoteLedgerJoinInput, 'passphrase'> & {
+  keyEnvelope: LedgerKeyEnvelope;
+  cryptoSession: LedgerCryptoSession;
+}): Promise<PreparedRemoteLedgerJoin> {
+  if (!validLedgerId(input.ledgerId)) throw new Error('远端账本 ID 无效');
+  assertSecureSyncUrl(input.baseUrl);
+  await requireBoundRemoteReplica(input.baseUrl, input.token, input.ledgerId);
+  const transport = httpCommitTransport({
+    baseUrl: input.baseUrl,
+    token: input.token,
+    cryptoSession: input.cryptoSession,
+    keyEnvelope: input.keyEnvelope,
+    memberKeyEnvelope: true,
+    requireExistingReplica: true,
+    clientIdentity: clientIdentity(),
+  });
+  const prepared = await stageRemoteLedgerJoin(input.ledgerId, transport, input.keyEnvelope,
+    input.cryptoSession, input.endpointLabel ?? input.baseUrl, input.onProgress);
   if (input.expectedServerId && prepared.identity.serverId !== input.expectedServerId) {
     throw new Error('远端同步服务器身份在恢复预检期间发生变化');
   }

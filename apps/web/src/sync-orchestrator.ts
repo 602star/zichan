@@ -19,11 +19,13 @@ import {
   syncAttachmentReplicas,
   type AttachmentReplicaSyncResult,
   type AttachmentSyncResult,
+  type LegacyAttachmentMigrationProgress,
 } from './attachment-sync.js';
 import { requireLedgerCryptoSession, storedLedgerKeyEnvelope } from './ledger-key-vault.js';
 import { accountProtection, protectionRequest } from './account-protection.js';
 import { withSyncLock } from './sync-lock.js';
 import { clientIdentity } from './client-identity.js';
+import { hasNodeReplicaGroup, preferredReplicaProfiles } from './node-replica-routing.js';
 
 export interface ConfiguredSyncEndpoint extends ReplicaSyncEndpointResult {
   alias: string;
@@ -35,6 +37,7 @@ export interface ConfiguredSyncEndpoint extends ReplicaSyncEndpointResult {
 export interface ConfiguredSyncResult extends Omit<MultiReplicaSyncResult, 'endpoints'> {
   endpoints: ConfiguredSyncEndpoint[];
   attachmentSync: AttachmentSyncResult;
+  syncMode: 'node-group' | 'legacy';
   finishedAt: string;
 }
 
@@ -72,9 +75,10 @@ function authenticatedTransport(profile: SyncConnection): MeteredTransport {
     const keyEnvelope = storedLedgerKeyEnvelope();
     if (!keyEnvelope) throw new Error('本机没有账本密钥包，请先在同步页创建或获取');
     const protection = accountProtection();
-    if (protection && protection.profileId !== profile.id) {
+    if (protection && protection.info.mode !== 'member' && protection.profileId !== profile.id) {
       const remote = await protectionRequest(candidate);
-      if (remote.mode === 'managed' && remote.envelope?.keyringId === keyEnvelope.keyringId && remote.envelope.generation < keyEnvelope.generation) {
+      if (!remote.controlled && remote.mode === 'managed'
+        && remote.envelope?.keyringId === keyEnvelope.keyringId && remote.envelope.generation < keyEnvelope.generation) {
         // Existing authorization follows managed rewrapping. Private transitions
         // revoke custody instead; a relay never receives a plaintext key.
         await protectionRequest(candidate, 'PUT', { version: remote.version, envelope: keyEnvelope,
@@ -87,6 +91,7 @@ function authenticatedTransport(profile: SyncConnection): MeteredTransport {
       token: accessToken,
       cryptoSession: requireLedgerCryptoSession(keyEnvelope.ledgerId),
       keyEnvelope,
+      memberKeyEnvelope: protection?.info.mode === 'member',
       clientIdentity: clientIdentity(),
     });
   };
@@ -166,13 +171,17 @@ function authenticatedTransport(profile: SyncConnection): MeteredTransport {
   };
 }
 
-export function syncConfiguredServers(store: SqlLedgerStore, profiles: SyncConnection[]): Promise<ConfiguredSyncResult> {
-  return withSyncLock(() => syncConfiguredServersNow(store, profiles));
+export function syncConfiguredServers(store: SqlLedgerStore, profiles: SyncConnection[],
+  onLegacyMigrationProgress?: (progress: LegacyAttachmentMigrationProgress) => void,
+  options: { deferAttachmentTransfers?: boolean; skipAttachmentSync?: boolean } = {}): Promise<ConfiguredSyncResult> {
+  return withSyncLock(() => syncConfiguredServersNow(store, profiles, onLegacyMigrationProgress, options));
 }
 
 async function syncConfiguredServersNow(
   store: SqlLedgerStore,
   profiles: SyncConnection[],
+  onLegacyMigrationProgress?: (progress: LegacyAttachmentMigrationProgress) => void,
+  options: { deferAttachmentTransfers?: boolean; skipAttachmentSync?: boolean } = {},
 ): Promise<ConfiguredSyncResult> {
   const selected = profiles.filter((profile) => profile.enabled);
   const meters = new Map<string, MeteredTransport>();
@@ -181,10 +190,33 @@ async function syncConfiguredServersNow(
     meters.set(profile.id, meter);
     return { id: profile.id, endpoint: buildSyncBaseUrl(profile), transport: meter.transport };
   });
-  const result = await syncReplicas(store, targets);
+  const ledgerId = typeof store.getLedgerId === 'function' ? await store.getLedgerId() : '';
+  const nodeGroup = ledgerId && await hasNodeReplicaGroup(selected, ledgerId);
+  let result: MultiReplicaSyncResult;
+  if (!nodeGroup) {
+    result = await syncReplicas(store, targets);
+  } else {
+    const attempts: MultiReplicaSyncResult[] = [];
+    for (const profile of preferredReplicaProfiles(selected)) {
+      const target = targets.find((item) => item.id === profile.id)!;
+      const attempt = await syncReplicas(store, [target]);
+      attempts.push(attempt);
+      if (!attempt.endpoints[0]?.error) break;
+    }
+    const latest = attempts.at(-1)!;
+    const total = (field: 'applied' | 'conflicts' | 'skipped' | 'invalid' | 'pulled' | 'pushed' | 'rounds') =>
+      attempts.reduce((sum, attempt) => sum + attempt[field], 0);
+    result = { ...latest, applied: total('applied'), conflicts: total('conflicts'),
+      skipped: total('skipped'), invalid: total('invalid'), pulled: total('pulled'),
+      pushed: total('pushed'), rounds: total('rounds'),
+      converged: latest.converged && total('invalid') === 0,
+      endpoints: attempts.flatMap((attempt) => attempt.endpoints) };
+  }
   let attachmentSync: AttachmentSyncResult;
   try {
-    attachmentSync = await syncAttachmentReplicas(store, result.endpoints.flatMap((endpoint) => {
+    attachmentSync = options.skipAttachmentSync ? {
+      endpoints: [], references: 0, localReady: 0, localMissing: 0,
+    } : await syncAttachmentReplicas(store, result.endpoints.flatMap((endpoint) => {
       const profile = selected.find((row) => row.id === endpoint.id);
       const meter = meters.get(endpoint.id);
       if (!profile || !meter || !endpoint.identity || endpoint.error) return [];
@@ -197,8 +229,9 @@ async function syncConfiguredServersNow(
           alternateUrls: [...new Set([profile.baseUrl, ...profile.alternateUrls])].filter((url) => url !== activeUrl),
         },
         identity: endpoint.identity,
+        headSeq: endpoint.headSeq,
       }];
-    }));
+    }), result.converged && result.invalid === 0, onLegacyMigrationProgress, options.deferAttachmentTransfers);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     attachmentSync = {
@@ -229,8 +262,10 @@ async function syncConfiguredServersNow(
     const attachments = attachmentSync.endpoints.find((row) => row.profileId === endpoint.id);
     if (endpoint.error) {
       const identityChanged = /身份|公钥|fingerprint|指纹/i.test(endpoint.error);
+      const replicaRetired = /\bREPLICA_RETIRED\b/.test(endpoint.error);
       patchSavedSyncConnection(profile.id, {
-        status: identityChanged ? 'identity_changed' : isUnauthorizedSyncError(endpoint.error) ? 'login_required' : 'offline',
+        status: identityChanged ? 'identity_changed' : replicaRetired ? 'replica_retired'
+          : isUnauthorizedSyncError(endpoint.error) ? 'login_required' : 'offline',
         lastLatencyMs: latencyMs,
         lastError: endpoint.error,
         lastSyncError: endpoint.error,
@@ -255,5 +290,5 @@ async function syncConfiguredServersNow(
     }
     return { ...endpoint, alias: profile.alias, url: activeUrl, latencyMs, attachments };
   });
-  return { ...result, endpoints, attachmentSync, finishedAt };
+  return { ...result, endpoints, attachmentSync, syncMode: nodeGroup ? 'node-group' : 'legacy', finishedAt };
 }

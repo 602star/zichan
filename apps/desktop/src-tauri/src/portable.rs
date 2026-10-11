@@ -1,3 +1,4 @@
+use crate::ledger_profile::{self, LedgerProfileBinding, LEGACY_PROFILE_ID};
 use fs2::FileExt;
 #[cfg(any(not(debug_assertions), test))]
 use serde::Deserialize;
@@ -27,6 +28,8 @@ pub struct PortablePaths {
     pub mode: &'static str,
     pub root: PathBuf,
     pub data: PathBuf,
+    pub ledger_profile_id: String,
+    pub ledger_profile_binding: Option<LedgerProfileBinding>,
     pub ledger_database: PathBuf,
     pub attachments: PathBuf,
     pub backups: PathBuf,
@@ -74,6 +77,9 @@ pub struct DesktopStorageStatus {
     format_version: u32,
     root_directory: String,
     data_directory: String,
+    ledger_profile_id: String,
+    ledger_profile_binding: Option<LedgerProfileBinding>,
+    ledger_profile_switch_supported: bool,
     filesystem: String,
     webview_runtime: &'static str,
     server_bind: &'static str,
@@ -156,6 +162,8 @@ impl PortablePaths {
         let paths = Self {
             mode: "platform",
             root: data.clone(),
+            ledger_profile_id: LEGACY_PROFILE_ID.into(),
+            ledger_profile_binding: None,
             ledger_database: data.join("ledger.sqlite"),
             attachments: data.join("attachments"),
             backups: data.join("backups"),
@@ -179,6 +187,9 @@ impl PortablePaths {
             format_version: PORTABLE_FORMAT_VERSION,
             root_directory: self.root.display().to_string(),
             data_directory: self.data.display().to_string(),
+            ledger_profile_id: self.ledger_profile_id.clone(),
+            ledger_profile_binding: self.ledger_profile_binding.clone(),
+            ledger_profile_switch_supported: cfg!(windows),
             filesystem: self.filesystem.clone(),
             webview_runtime: self.webview_runtime.as_str(),
             server_bind: "0.0.0.0",
@@ -239,16 +250,25 @@ fn prepare_layout() -> Result<(PortablePaths, Option<PathBuf>, bool), String> {
     ensure_existing_path_within(&root, &data, "数据目录")?;
     ensure_existing_path_within(&root, &data.join("runtime"), "运行目录")?;
 
+    let active_profile = ledger_profile::active_profile(&data)?;
+    let ledger_data = ledger_profile::profile_data_dir(&data, active_profile.as_ref());
+
     let paths = PortablePaths {
         mode: "portable",
         root: root.clone(),
-        ledger_database: data.join("ledger").join("ledger.sqlite"),
-        attachments: data.join("attachments"),
-        backups: data.join("backups"),
-        security: data.join("security"),
+        ledger_profile_id: active_profile
+            .as_ref()
+            .map_or(LEGACY_PROFILE_ID.to_string(), |profile| profile.id.clone()),
+        ledger_profile_binding: active_profile
+            .as_ref()
+            .map(|profile| profile.binding.clone()),
+        ledger_database: ledger_data.join("ledger").join("ledger.sqlite"),
+        attachments: ledger_data.join("attachments"),
+        backups: ledger_data.join("backups"),
+        security: ledger_data.join("security"),
         server: data.join("server"),
         server_resources,
-        webview: data.join("webview"),
+        webview: ledger_data.join("webview"),
         logs: data.join("logs"),
         runtime: data.join("runtime"),
         data,
@@ -355,8 +375,25 @@ fn acquire_instance_lock(runtime: &Path) -> Result<PortableInstanceLock, String>
 
 #[cfg(windows)]
 fn reject_reparse_points_recursively(path: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|error| format!("读取便携数据元数据 {} 失败：{error}", path.display()))?;
+    reject_reparse_points_recursively_inner(path, false)
+}
+
+#[cfg(windows)]
+fn reject_reparse_points_recursively_inner(path: &Path, may_disappear: bool) -> Result<(), String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        // WebView2 and upload staging remove temporary children while this scan is running.
+        // A vanished child cannot be followed as a reparse point; the data root must exist.
+        Err(error) if may_disappear && error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(format!(
+                "读取便携数据元数据 {} 失败：{error}",
+                path.display()
+            ));
+        }
+    };
     if metadata.file_type().is_symlink() || metadata_is_reparse_point(&metadata) {
         return Err(format!(
             "便携 data 目录中不允许链接或重解析点：{}",
@@ -364,13 +401,20 @@ fn reject_reparse_points_recursively(path: &Path) -> Result<(), String> {
         ));
     }
     if metadata.is_dir() {
-        for entry in fs::read_dir(path)
-            .map_err(|error| format!("读取便携数据目录 {} 失败：{error}", path.display()))?
-        {
+        let entries = match fs::read_dir(path) {
+            Ok(entries) => entries,
+            Err(error) if may_disappear && error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(());
+            }
+            Err(error) => {
+                return Err(format!("读取便携数据目录 {} 失败：{error}", path.display()));
+            }
+        };
+        for entry in entries {
             let child = entry
                 .map_err(|error| format!("读取便携数据项失败：{error}"))?
                 .path();
-            reject_reparse_points_recursively(&child)?;
+            reject_reparse_points_recursively_inner(&child, true)?;
         }
     } else if !metadata.is_file() {
         return Err(format!(

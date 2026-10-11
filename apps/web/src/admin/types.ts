@@ -51,7 +51,7 @@ export interface Snapshot {
   storage: {
     databaseBytes: number; walBytes: number; shmBytes: number;
     objectBytes: number; objectCount: number; trashBytes: number; trashCount: number;
-    stagingBytes: number; stagingCount: number;
+    stagingBytes: number; stagingCount: number; quarantineBytes: number;
     diskTotalBytes: number | null; diskFreeBytes: number | null;
   };
   cleanup: {
@@ -179,6 +179,7 @@ export interface AccountDetail {
     ledgerId: string | null; replicaId: string | null;
     blobUsedBytes: number; blobQuotaBytes: number | null; blobObjectCount: number;
     blobTrashBytes: number; blobStagingBytes: number; quotaNote: string;
+    blobQuotaOwnerUsername?: string;
   };
   sessions: SessionRow[];
   activeSessionCount: number;
@@ -284,12 +285,30 @@ export interface BackupsPayload {
 export interface Storage {
   databaseBytes: number; walBytes: number; shmBytes: number;
   objectBytes: number; objectCount: number; trashBytes: number; trashCount: number;
-  stagingBytes: number; stagingCount: number;
+  stagingBytes: number; stagingCount: number; quarantineBytes: number;
   diskTotalBytes: number | null; diskFreeBytes: number | null;
+  unowned?: { objects: number; states: number; uploads: number };
   cleanup: Snapshot['cleanup'];
   backupDirectory: string | null;
   diskFreeRatio: number | null;
   note: string;
+}
+
+export interface UnownedReplicaRecordsPayload {
+  records: {
+    kind: 'object' | 'state' | 'upload'; username: string; ledgerId: string;
+    blobId: string; recordId: string; replicaId: string | null;
+    candidateReplicaIds: string[]; namespaceMatches: string[];
+    state: string; formatVersion: number | null; cipherBytes: number | null; createdAt: string;
+  }[];
+  nextCursor?: string;
+}
+
+export interface BlobOwnershipDecision {
+  decisionId: string; kind: 'object' | 'state' | 'upload';
+  uploadId?: string; username: string; ledgerId: string; blobId: string;
+  fromReplicaId: string | null; toReplicaId: string; actorAccountId: string;
+  reason: string; decidedAt: string;
 }
 
 export interface AuditEntry {

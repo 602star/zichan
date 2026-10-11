@@ -55,6 +55,8 @@ export interface AdminRouterDeps {
   maintenance: { read: () => Promise<MaintenanceState | undefined> };
   /** Counts client writes in flight, so the console can say whether stopping is safe. */
   writeTracker: WriteTracker;
+  /** Quiesces background attachment replication around a manual ownership repair. */
+  replication: { pause: () => Promise<void>; resume: () => void };
   dataDir: string;
   databaseFile: string;
   serverId: string;
@@ -383,7 +385,13 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         });
       }
       if (req.method === 'GET' && parts[2] === 'usage') {
-        return send(res, 200, await blobStore.usage(target.username));
+        const replica = await store.getReplica(target.username);
+        const [usage, quotaOwner] = await Promise.all([
+          blobStore.usage(target.username, replica?.ledgerId),
+          store.replicaStorageOwner(target.username),
+        ]);
+        return send(res, 200, { ...usage,
+          ...(quotaOwner && quotaOwner !== target.username ? { quotaOwnerUsername: quotaOwner } : {}) });
       }
       const routes: Record<string, string> = { state: 'users', devices: 'users', blobs: 'quotas', commits: 'quotas' };
       const group = routes[parts[2]!];
@@ -556,7 +564,10 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const detail = await store.accountDetail(parts[1]!);
       if (!detail) return send(res, 404, { error: 'account not found' });
       const username = String((detail['account'] as JsonRecord)['username']);
-      const usage = await blobStore.usage(username);
+      const replica = await store.getReplica(username);
+      const [usage, quotaOwner] = await Promise.all([
+        blobStore.usage(username, replica?.ledgerId), store.replicaStorageOwner(username),
+      ]);
       return send(res, 200, {
         ...detail,
         capacity: {
@@ -566,7 +577,10 @@ export function createAdminRouter(deps: AdminRouterDeps) {
           blobObjectCount: usage.objectCount,
           blobTrashBytes: usage.trashBytes,
           blobStagingBytes: usage.stagingBytes,
-          quotaNote: usage.quotaBytes === null
+          ...(quotaOwner && quotaOwner !== username ? { blobQuotaOwnerUsername: quotaOwner } : {}),
+          quotaNote: quotaOwner && quotaOwner !== username
+            ? `此账号与账本宿主账号 ${quotaOwner} 共用附件容量和配额。`
+            : usage.quotaBytes === null
             ? '所有者和管理员无限额；单文件大小与服务器实际磁盘空间仍有限制。'
             : '提交、有效附件、回收站与暂存上传都计入各自配额；降低上限不会删除已有数据，只限制后续上传。',
         },
@@ -924,12 +938,91 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       return send(res, 200, { ok: true });
     }
 
+    if (req.method === 'GET' && suffix === '/storage/unowned') {
+      const kind = search.get('kind') ?? 'object';
+      const limit = Number(search.get('limit') ?? 50);
+      if (kind !== 'object' && kind !== 'state' && kind !== 'upload'
+        || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+        return send(res, 400, { code: 'INVALID_UNOWNED_QUERY', error: '未归属记录查询参数无效' });
+      }
+      try {
+        return send(res, 200, await blobStore.listUnownedReplicaRecords(kind, search.get('cursor') ?? '', limit));
+      } catch (error) {
+        if (error instanceof Error && error.message === 'invalid unowned attachment cursor') {
+          return send(res, 400, { code: 'INVALID_CURSOR', error: '未归属记录游标无效' });
+        }
+        throw error;
+      }
+    }
+
+    if (req.method === 'GET' && suffix === '/storage/unowned/decisions') {
+      return send(res, 200, { decisions: await blobStore.listOwnershipDecisions() });
+    }
+
+    if (req.method === 'POST' && suffix === '/storage/unowned/assign') {
+      if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '仅服务器所有者可以修复历史附件归属' });
+      await assertRecentLogin();
+      const body = await readBody(req, ADMIN_BODY_BYTES);
+      if ((body.kind !== 'object' && body.kind !== 'state' && body.kind !== 'upload')
+        || typeof body.username !== 'string'
+        || typeof body.ledgerId !== 'string' || typeof body.blobId !== 'string'
+        || typeof body.replicaId !== 'string' || typeof body.reason !== 'string'
+        || body.kind === 'upload' && typeof body.uploadId !== 'string'
+        || body.reason.trim().length < 12 || body.reason.trim().length > 500) {
+        return send(res, 400, { code: 'INVALID_OWNERSHIP_DECISION', error: '请选择对象和候选副本，并填写至少 12 字的核对依据' });
+      }
+      return void await withIdempotency(req, res, 'blob-ownership-assign', body, async () => {
+        const maintenance = resolveMaintenance(await deps.maintenance.read());
+        const counts = await store.countJobsByStatus();
+        const drain = drainView(deps.writeTracker, { running: counts['running'] ?? 0,
+          queued: counts['queued'] ?? 0 });
+        if (!maintenance.active || !drain.safeToStop) return { status: 409, body: {
+          code: 'MAINTENANCE_DRAIN_REQUIRED',
+          error: '请先声明维护窗口，并等待当前写入和后台任务结束后再修复归属',
+        } };
+        try {
+          await deps.replication.pause();
+          let decision;
+          try {
+            const input = { username: body.username as string,
+              ledgerId: body.ledgerId as string, blobId: body.blobId as string,
+              replicaId: body.replicaId as string, actorAccountId: auth.user.accountId,
+              reason: body.reason as string };
+            decision = body.kind === 'state'
+              ? await blobStore.assignUnownedState(input)
+              : body.kind === 'upload'
+                ? await blobStore.assignUnownedUpload({ ...input, uploadId: body.uploadId as string })
+                : await blobStore.assignUnownedObject(input);
+          } finally { deps.replication.resume(); }
+          await log('warn', 'blob_ownership_assigned', 'Historical attachment ownership assigned', {
+            username: auth.user.username, detail: { decisionId: decision.decisionId,
+              kind: decision.kind, ledgerId: decision.ledgerId,
+              blobId: decision.blobId, replicaId: decision.toReplicaId,
+              ...(decision.kind === 'upload' ? { uploadId: decision.uploadId } : {}) },
+          }).catch(() => undefined);
+          return { status: 200, body: { decision } };
+        } catch (error) {
+          const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+          if (['INVALID_OWNERSHIP_DECISION', 'REPLICA_CANDIDATE_REQUIRED', 'UNOWNED_OBJECT_NOT_FOUND',
+            'UNOWNED_STATE_NOT_FOUND', 'STATE_OWNERSHIP_CONFLICT', 'UNOWNED_UPLOAD_NOT_FOUND',
+            'UPLOAD_CATALOG_CONFLICT', 'UPLOAD_NAMESPACE_CONFLICT', 'UPLOAD_OWNERSHIP_CONFLICT',
+            'OBJECT_NAMESPACE_CONFLICT', 'OBJECT_CATALOG_CONFLICT', 'OBJECT_INTEGRITY_FAILED'].includes(code)) {
+            return { status: code === 'INVALID_OWNERSHIP_DECISION' ? 400 : 409, body: {
+              code, error: error instanceof Error ? error.message : '附件归属修复失败',
+            } };
+          }
+          throw error;
+        }
+      });
+    }
+
     if (req.method === 'GET' && suffix === '/storage') {
       const composition = await blobStore.storageComposition();
       const diskFree = composition.diskFreeBytes;
       const diskTotal = composition.diskTotalBytes;
       return send(res, 200, {
         ...composition,
+        unowned: await blobStore.unownedReplicaRecords(),
         cleanup: blobStore.cleanupStatus(),
         // Reported from the deployment record; the console never selects a backup path.
         backupDirectory: (await store.listBackupRecords(1)).backups[0]?.outputPath ?? null,
@@ -1186,10 +1279,15 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) return send(res, 400, { error: 'limit must be between 1 and 500' });
       const { users, nextCursor } = await store.listUsers(search.get('cursor') ?? '', limit);
       return send(res, 200, {
-        users: await Promise.all(users.map(async (user) => ({
-          username: user['username'],
-          ...await blobStore.usage(String(user['username'])),
-        }))),
+        users: await Promise.all(users.map(async (user) => {
+          const username = String(user['username']);
+          const replica = await store.getReplica(username);
+          const [usage, quotaOwner] = await Promise.all([
+            blobStore.usage(username, replica?.ledgerId), store.replicaStorageOwner(username),
+          ]);
+          return { username, ...usage,
+            ...(quotaOwner && quotaOwner !== username ? { quotaOwnerUsername: quotaOwner } : {}) };
+        })),
         dataDir: deps.dataDir,
         nextCursor,
       });
@@ -1214,6 +1312,11 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     if (req.method === 'POST' && parts[0] === 'quotas' && parts[2] === 'blobs') {
       const username = parts[1] ?? '';
       const target = await assertManageTarget(username, true);
+      const quotaOwner = await store.replicaStorageOwner(username);
+      if (quotaOwner && quotaOwner !== username) {
+        return send(res, 409, { code: 'REPLICA_QUOTA_OWNER',
+          error: `此账号使用共享账本副本配额，请调整宿主账号 ${quotaOwner} 的附件配额` });
+      }
       const body = await readBody(req, ADMIN_BODY_BYTES);
       if (body.quotaBytes !== null && (!Number.isSafeInteger(body.quotaBytes)
         || Number(body.quotaBytes) < 1024 * 1024 || Number(body.quotaBytes) > 1024 ** 4)) {

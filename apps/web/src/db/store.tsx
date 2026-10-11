@@ -29,6 +29,7 @@ import { FirstUseModeGate, BrowserStorageConsent } from '../ui/FirstUseModeGate.
 import { FirstServerConnectionGate } from '../ui/FirstServerConnectionGate.js';
 import { FirstRemoteLedgerRestoreGate } from '../ui/FirstRemoteLedgerRestoreGate.js';
 import { NativeAccountGate } from '../ui/NativeAccountGate.js';
+import { hasNativeLedgerBootstrap } from '../desktop-ledger-profile.js';
 import {
   lockDeviceStorage,
   refreshDeviceStorageState,
@@ -38,7 +39,7 @@ import {
 import { ensureLedgerKeyForStore } from '../ledger-key-lifecycle.js';
 import { replaceRemoteLedger } from '../replace-remote-ledger.js';
 import { ledgerKeyState, unlockLedgerKey, lockLedgerKey } from '../ledger-key-vault.js';
-import { accountProtection } from '../account-protection.js';
+import { accountProtection, clearAccountProtection } from '../account-protection.js';
 import { copyTextToClipboard, formatInitializationDiagnostic } from '../ui/diagnostics.js';
 import {
   browserStorageDisposition,
@@ -77,6 +78,7 @@ export interface StoreCtx {
   browserStoragePersistent: boolean;
   resetLocalData: () => Promise<void>;
   exitAccount?: () => Promise<void>;
+  prepareNativeLedgerSwitch?: () => Promise<() => void>;
   /**
    * Present only in the administrator preview. The ledger app reads it to replace the
    * ordinary header affordances (export, import, settings) with preview facts.
@@ -413,7 +415,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // WebAccountApp verifies identity before mounting this provider; old mode flags are irrelevant.
     if (!isTauriRuntime()) return 'server';
     const mode = loadFirstUseMode();
-    return mode === 'server' && !hasSavedSyncConnection() ? null : mode;
+    return mode === 'server' && !hasSavedSyncConnection() && !hasNativeLedgerBootstrap() ? null : mode;
   });
   const [serverSetupRequested, setServerSetupRequested] = useState(false);
   const [modeBusy, setModeBusy] = useState(false);
@@ -849,6 +851,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     window.location.reload();
   }, [store, pendingInitialization]);
 
+  const prepareNativeLedgerSwitch = useCallback(async (): Promise<() => void> => {
+    if (!isTauriRuntime()) throw new Error('此操作仅适用于桌面账本');
+    const backups = suspendAutomaticBackups();
+    try {
+      await backups.drain();
+      await storageLockFlight(async () => {
+        await closeStoresBeforeStorageLock([store, pendingInitialization?.store], () => {
+          setStore(null); setPendingInitialization(null); storagePassphrase.current = null;
+        }, lockDeviceStorage);
+        lockLedgerKey();
+        clearAccountProtection();
+        clearCredentialVaultRuntimeState();
+        setStorageProtection(await refreshDeviceStorageState());
+      });
+      return () => backups.resume();
+    } catch (reason) { backups.resume(); throw reason; }
+  }, [store, pendingInitialization, storageLockFlight]);
+
   useEffect(() => {
     if (isTauriRuntime()) return;
     const onExit = (event: StorageEvent) => {
@@ -986,7 +1006,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   if (pendingInitialization) {
     const boundConnection = firstUseMode === 'server'
       ? loadSyncConnections().find((connection) => Boolean(connection.enabled && connection.ledgerId
-        && !(accountProtection()?.profileId === connection.id && accountProtection()?.info.replica?.headSeq === 0)))
+        && !(accountProtection()?.profileId === connection.id
+          && accountProtection()?.info.replica?.headSeq === 0
+          && accountProtection()?.info.mode !== 'member')))
       : undefined;
     if (boundConnection) {
       return (
@@ -1037,6 +1059,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           await exitBrowserAccount();
           await closeForAccountExit();
         } : undefined,
+        prepareNativeLedgerSwitch: isTauriRuntime() ? prepareNativeLedgerSwitch : undefined,
       }}>
       {ledgerKind === 'demo' && (
         <div

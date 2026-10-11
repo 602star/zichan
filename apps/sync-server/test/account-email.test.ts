@@ -126,6 +126,7 @@ describe('account email verification and notifications', () => {
     try {
       await store.register('owner', 'opaque-record', undefined, true);
       await store.register('member', 'opaque-record');
+      await store.bindReplica('member', 'test-ledger');
       await store.startEmailVerification('member', 'member@example.com', 'a'.repeat(64));
       await store.completeEmailVerification('member', 'a'.repeat(64));
       await store.setQuotaEmailNotifications('member', true);

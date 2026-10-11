@@ -102,6 +102,19 @@ describe('shared sync server directory', () => {
     expect(result[0]?.baseUrl).toBe(local.baseUrl);
   });
 
+  it('shares the pinned node signing key and refuses a conflicting shared identity', () => {
+    const local = { ...trustedConnection(), nodePublicKey: 'trusted-node-key' };
+    expect(sharedDirectoryFromConnections([local])[0]?.nodePublicKey).toBe('trusted-node-key');
+    const conflicting = mergeSharedSyncDirectory([local], [{
+      id: local.serverRef, alias: local.alias, serverId: local.serverId!,
+      serverPublicKey: local.serverPublicKey!, nodePublicKey: 'changed-node-key',
+      sharedUrls: ['https://other.example.com'],
+    }]);
+    expect(conflicting[0]).toMatchObject({ status: 'identity_changed',
+      nodePublicKey: 'trusted-node-key' });
+    expect(conflicting[0]?.sharedUrls).toEqual(local.sharedUrls);
+  });
+
   it('preserves the device connection id when matching a shared server by identity', () => {
     const local = trustedConnection();
     const localId = local.id;

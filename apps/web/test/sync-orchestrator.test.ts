@@ -23,11 +23,50 @@ afterEach(() => {
     else Reflect.deleteProperty(globalThis, name);
   }
   vi.doUnmock('@zichan/db');
+  vi.doUnmock('../src/node-replica-routing.js');
+  vi.doUnmock('../src/attachment-sync.js');
   vi.restoreAllMocks();
   vi.resetModules();
 });
 
 describe('configured sync orchestrator', () => {
+  it('uses one certified node at a time and fails over without browser relaying to the third', async () => {
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: undefined });
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new MemoryStorage() });
+    Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: new MemoryStorage() });
+    const profiles = ['home', 'hub', 'office'].map((id) => ({ id, serverRef: id, alias: id,
+      baseUrl: `https://${id}.example.com`, activeUrl: `https://${id}.example.com`,
+      alternateUrls: [], sharedUrls: [], deviceUrls: [], username: 'owner', enabled: true,
+      status: 'online' as const, serverId: `server-${id}` }));
+    const syncReplicas = vi.fn(async (_store: unknown, targets: { id: string; endpoint: string }[]) => {
+      const target = targets[0]!;
+      const error = target.id === 'home' ? 'fetch failed: ECONNREFUSED' : undefined;
+      return { pulled: 0, pushed: 0, applied: 0, conflicts: 0, skipped: 0, invalid: 0,
+        pending: 0, rounds: 1, converged: !error,
+        endpoints: [{ id: target.id, endpoint: target.endpoint, pulled: 0, pushed: 0,
+          headSeq: 0, cursor: 0, pendingPush: 0, error,
+          ...(!error ? { identity: { serverId: 'server-hub', replicaId: 'replica-hub',
+            streamEpoch: 'epoch-hub', ledgerId: 'ledger-group-routing-0001' } } : {}) }],
+      };
+    });
+    vi.doMock('@zichan/db', () => ({ requestJson, HttpRequestError, syncReplicas,
+      assertSecureSyncUrl: vi.fn(), isLocalNetworkSyncUrl: vi.fn(() => false),
+      httpCommitTransport: vi.fn() }));
+    vi.doMock('../src/node-replica-routing.js', () => ({
+      hasNodeReplicaGroup: vi.fn().mockResolvedValue(true),
+      preferredReplicaProfiles: (items: typeof profiles) => items,
+    }));
+    const syncAttachmentReplicas = vi.fn().mockResolvedValue({ endpoints: [], references: 0,
+      localReady: 0, localMissing: 0 });
+    vi.doMock('../src/attachment-sync.js', () => ({ syncAttachmentReplicas }));
+    const { syncConfiguredServers } = await import('../src/sync-orchestrator.js');
+    const result = await syncConfiguredServers({ getLedgerId: async () => 'ledger-group-routing-0001' } as never, profiles);
+    expect(syncReplicas.mock.calls.map((call) => call[1].map((target) => target.id))).toEqual([['home'], ['hub']]);
+    expect(result.endpoints.map((endpoint) => endpoint.id)).toEqual(['home', 'hub']);
+    expect(result.converged).toBe(true);
+    expect(syncAttachmentReplicas.mock.calls[0]?.[1]).toMatchObject([{ profile: { id: 'hub' } }]);
+  });
+
   it('fails over to an identity-pinned alternate URL and persists the working address', async () => {
     const localStorage = new MemoryStorage();
     const sessionStorage = new MemoryStorage();
@@ -399,6 +438,7 @@ describe('configured sync orchestrator', () => {
       ['identity', '服务器身份已变化，已阻止发送会话或密码'],
       ['account', 'replica lookup failed: HTTP 401 unauthorized'],
       ['network', 'fetch failed: ECONNREFUSED'],
+      ['retired', 'commit push failed: HTTP 409 REPLICA_RETIRED 本节点已移出副本组'],
     ].map(([id, error]) => ({
       id: id!, serverRef: id!, alias: id!,
       baseUrl: `https://${id}.example.com`, activeUrl: `https://${id}.example.com`,
@@ -441,6 +481,7 @@ describe('configured sync orchestrator', () => {
       identity: 'identity_changed',
       account: 'login_required',
       network: 'offline',
+      retired: 'replica_retired',
     });
   });
 });

@@ -149,6 +149,7 @@ export async function unlockCredentialVault(password: string, profileIds: string
     }
 
     const loaded: Record<string, ServerCredential> = {};
+    const pendingSessions: Array<{ profileId: string; credential: ServerCredential }> = [];
     for (const profileId of profileIds) {
       const bytes = await requiredInvoke<number[] | null>('plugin:stronghold|get_store_record', {
         snapshotPath,
@@ -156,15 +157,19 @@ export async function unlockCredentialVault(password: string, profileIds: string
         key: recordKey(profileId),
       });
       const value = decodeCredential(bytes);
-      if (value) {
-        const runtime = runtimeCredentials[profileId];
-        loaded[profileId] = {
-          ...value,
-          accessToken: runtime?.accessToken,
-          refreshToken: runtime?.refreshToken ?? value.refreshToken,
-          accessExpiresAt: runtime?.accessExpiresAt,
-          sessionId: runtime?.sessionId ?? value.sessionId,
-        };
+      const runtime = runtimeCredentials[profileId];
+      if (!value && !runtime?.refreshToken) continue;
+      const credential: ServerCredential = {
+        ...value,
+        password: '', inviteCode: '', sessionTransport: 'token',
+        accessToken: runtime?.accessToken,
+        refreshToken: runtime?.refreshToken ?? value?.refreshToken,
+        accessExpiresAt: runtime?.accessExpiresAt,
+        sessionId: runtime?.sessionId ?? value?.sessionId,
+      };
+      loaded[profileId] = credential;
+      if (runtime?.refreshToken && runtime.refreshToken !== value?.refreshToken) {
+        pendingSessions.push({ profileId, credential });
       }
     }
     runtimeCredentials = loaded;
@@ -179,6 +184,11 @@ export async function unlockCredentialVault(password: string, profileIds: string
     };
     emit(VAULT_STATE_CHANGED_EVENT);
     emit(CREDENTIALS_CHANGED_EVENT);
+    // A user can log in before the Stronghold is unlocked for a new ledger profile.
+    // Preserve that live session and durably save its refresh token before opening the ledger.
+    for (const pending of pendingSessions) {
+      await persistCredential(pending.profileId, pending.credential);
+    }
     return runtimeCredentialMap();
   } catch (error) {
     if (strongholdLoaded) {

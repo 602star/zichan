@@ -33,7 +33,10 @@ export function createBrowserSessionCookies(basePath: string, requestOrigin: (re
   function write(req: IncomingMessage, res: ServerResponse, token?: string): void {
     const secure = requestOrigin(req)?.startsWith('https://') ? '; Secure' : '';
     // Session-only until a separate, explicit trusted-device enrollment is implemented.
-    res.setHeader('Set-Cookie', `${cookieName(req)}=${token ?? ''}; Path=${path}; HttpOnly; SameSite=Strict${secure}${token ? '' : '; Max-Age=0'}`);
+    // Ledger sessions allow a top-level redirect back from the trusted identity node.
+    // Mutating cookie requests still require the same-origin custom header and Origin check.
+    const sameSite = cookieName(req) === 'zichan_admin_session' ? 'Strict' : 'Lax';
+    res.setHeader('Set-Cookie', `${cookieName(req)}=${token ?? ''}; Path=${path}; HttpOnly; SameSite=${sameSite}${secure}${token ? '' : '; Max-Age=0'}`);
   }
 
   return { requested, read, write };

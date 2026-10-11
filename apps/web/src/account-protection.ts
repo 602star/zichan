@@ -5,10 +5,11 @@ import { buildSyncBaseUrl, patchSavedSyncConnection, type SyncConnection } from 
 import { adoptUnlockedLedgerKeyEnvelope } from './ledger-key-vault.js';
 
 export interface ProtectionInfo {
-  mode: 'managed' | 'private' | 'relay' | null;
+  mode: 'managed' | 'private' | 'relay' | 'member' | null;
   version: number;
   defaultMode: 'managed' | 'private';
   custodyEnabled: boolean;
+  controlled?: boolean;
   secret: string | null;
   envelope: LedgerKeyEnvelope | null;
   replica: { serverId: string; ledgerId: string; replicaId: string; streamEpoch: string; headSeq: number } | null;

@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
+import { randomInt } from 'node:crypto';
 import { buildSync } from 'esbuild';
 
 const root = mkdtempSync(join(tmpdir(), 'zichan-backup-supervisor-'));
@@ -18,8 +19,20 @@ async function until(read, message) {
 }
 function json(path) { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return undefined; } }
 async function unusedPort() {
-  const server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  const port = server.address().port; await new Promise((done) => server.close(done)); return port;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const server = createServer();
+    const port = randomInt(20_000, 49_000);
+    try {
+      server.listen(port, '127.0.0.1');
+      await once(server, 'listening');
+      await new Promise((done) => server.close(done));
+      return port;
+    } catch (error) {
+      server.close();
+      if (error?.code !== 'EADDRINUSE') throw error;
+    }
+  }
+  throw new Error('no free test HTTP port');
 }
 const now = new Date();
 const start = new Date(now.getTime() - 60_000); const end = new Date(now.getTime() + 5 * 60_000);

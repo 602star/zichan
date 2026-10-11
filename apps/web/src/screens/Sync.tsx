@@ -9,6 +9,9 @@ import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { accountProtection } from '../account-protection.js';
 import { LedgerProtectionPanel } from '../ui/LedgerProtectionPanel.js';
 import { ServerCustodyPanel } from '../ui/ServerCustodyPanel.js';
+import { NodeReplicaPanel } from '../ui/NodeReplicaPanel.js';
+import { assertNodeReplicaIdentity } from '../node-replica-identity.js';
+import { LedgerMembersPanel } from '../ui/LedgerMembersPanel.js';
 import { isDateInRange, localToday } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { useSnapshot, type Snapshot } from '../db/snapshot.js';
@@ -56,6 +59,7 @@ import {
 } from '../credential-vault.js';
 import { SYNC_LIFECYCLE_RESULT_EVENT, type LifecycleSyncResult } from '../background-sync.js';
 import { syncConfiguredServers, type ConfiguredSyncEndpoint, type ConfiguredSyncResult } from '../sync-orchestrator.js';
+import { ATTACHMENT_BATCH_EVENT, type AttachmentBatchResult, type LegacyAttachmentMigrationProgress } from '../attachment-sync.js';
 import {
   LEDGER_KEY_STATE_CHANGED_EVENT,
   adoptLedgerKeyEnvelope,
@@ -347,6 +351,7 @@ const statusText: Record<SyncConnectionStatus, string> = {
   login_required: '需要登录',
   offline: '离线',
   identity_changed: '身份已变化',
+  replica_retired: '已移出副本组',
 };
 
 const outline = btnOutline;
@@ -383,6 +388,8 @@ export function Sync() {
   const [branchChoices, setBranchChoices] = useState<Record<string, Record<string, string>>>({});
   const [fieldChoices, setFieldChoices] = useState<Record<string, Record<string, Record<string, string>>>>({});
   const [busy, setBusy] = useState(false);
+  const [migrationProgress, setMigrationProgress] = useState<LegacyAttachmentMigrationProgress>();
+  const [attachmentBatch, setAttachmentBatch] = useState<AttachmentBatchResult>();
   const [testingId, setTestingId] = useState('');
   const operations = useRef(new ProfileOperations());
   const activeOperation = useRef<ProfileOperation>();
@@ -908,6 +915,7 @@ export function Sync() {
       const body = (await health.json()) as {
         serverId?: string;
         serverPublicKey?: string;
+        nodePublicKey?: string;
         claimed?: boolean;
         registrationMode?: 'open' | 'invite' | 'closed';
         protocols?: number[];
@@ -933,7 +941,8 @@ export function Sync() {
         return;
       }
       if ((profile.serverId && profile.serverId !== body.serverId)
-        || (profile.serverPublicKey && profile.serverPublicKey !== serverPublicKey)) {
+        || (profile.serverPublicKey && profile.serverPublicKey !== serverPublicKey)
+        || (profile.nodePublicKey && profile.nodePublicKey !== body.nodePublicKey)) {
         patchProfile(profile.id, {
           status: 'identity_changed',
           lastLatencyMs: latencyMs,
@@ -954,12 +963,17 @@ export function Sync() {
       }
       const duplicate = profiles.find((row) => row.id !== profile.id && row.serverId === body.serverId && row.serverPublicKey === serverPublicKey);
       if (duplicate) {
+        if (profile.nodePublicKey && duplicate.nodePublicKey && profile.nodePublicKey !== duplicate.nodePublicKey) {
+          patchProfile(profile.id, { status: 'identity_changed', lastError: '节点签名公钥与现有连接不一致，已阻止合并' });
+          return;
+        }
         const candidates = [...new Set([duplicate.baseUrl, ...duplicate.alternateUrls, profile.baseUrl, ...profile.alternateUrls])];
         const { sharedUrls, deviceUrls } = mergeSyncUrlScopes(duplicate, profile, candidates);
         setProfiles((rows) => rows
           .filter((row) => row.id !== profile.id)
           .map((row) => row.id === duplicate.id ? {
-            ...row,
+              ...row,
+              nodePublicKey: row.nodePublicKey ?? profile.nodePublicKey,
             alternateUrls: candidates.filter((url) => url !== row.baseUrl),
             sharedUrls,
             deviceUrls,
@@ -1011,6 +1025,7 @@ export function Sync() {
     const body = await response.json() as {
       serverId?: string;
       serverPublicKey?: string;
+      nodePublicKey?: string;
       claimed?: boolean;
       registrationMode?: 'open' | 'invite' | 'closed';
       protocols?: number[];
@@ -1025,6 +1040,8 @@ export function Sync() {
     }
     if (profile.serverId && profile.serverId !== body.serverId) throw new Error('服务器 ID 与已信任记录不一致');
     if (profile.serverPublicKey && profile.serverPublicKey !== serverPublicKey) throw new Error('服务器 OPAQUE 公钥与已信任记录不一致');
+    if (profile.nodePublicKey) assertNodeReplicaIdentity(profile,
+      { serverId: body.serverId, nodePublicKey: body.nodePublicKey ?? '' });
     const fingerprint = await fingerprintServerPublicKey(serverPublicKey);
     operation.assertCurrent();
     if (profile.expectedServerPublicKeyFingerprint && profile.expectedServerPublicKeyFingerprint !== fingerprint) {
@@ -1126,6 +1143,7 @@ export function Sync() {
     }
     patchProfile(profile.id, {
       status: 'online', role: account.role, accountId: account.accountId,
+      enabled: account.ledgerId === ledgerKey.ledgerId && profile.enabled,
       ledgerId: account.ledgerId, replicaId: account.replicaId, streamEpoch: account.streamEpoch,
       lastError: verifyAttachments ? '账号、密码和附件能力验证通过' : '登录成功',
     });
@@ -1141,6 +1159,7 @@ export function Sync() {
 
   async function doSync(profile?: SyncConnection) {
     setBusy(true);
+    setMigrationProgress(undefined);
     try {
       if (!ledgerKey.unlocked) throw new Error('请先解锁账本加密密钥');
       const targets = profile ? [profile] : profiles.filter((p) => p.enabled);
@@ -1151,7 +1170,8 @@ export function Sync() {
         return;
       }
       setSyncNotice('');
-      const res = await syncConfiguredServers(store, targets.map((target) => ({ ...target, enabled: true })));
+      const res = await syncConfiguredServers(store, targets.map((target) => ({ ...target, enabled: true })),
+        setMigrationProgress);
       setEndpointRows(res.endpoints);
       const pending = await store.listConflicts();
       const invalid = await store.listSyncCommits({ state: 'invalid', includeInvalid: true });
@@ -1167,14 +1187,16 @@ export function Sync() {
       } else if (!res.converged) {
         setSyncNotice(`已完成 ${res.rounds} 轮同步，但仍有依赖等待收敛；下次同步会继续。`);
       } else if (res.attachmentSync.localMissing > 0) {
-        setSyncNotice(`数据已收敛；${res.attachmentSync.localMissing} 个大附件保留在服务器，查看或导出时按需下载。`);
+        setSyncNotice(`本机提交已与${res.syncMode === 'node-group' ? '当前节点' : '配置服务器'}收敛；${res.attachmentSync.localMissing} 个附件对象保留在服务器，查看或导出时按需下载。`);
       } else {
-        setSyncNotice(`全部服务器已在 ${res.rounds} 轮内收敛。`);
+        setSyncNotice(`本机提交已在 ${res.rounds} 轮内与${res.syncMode === 'node-group' ? '当前节点' : '配置服务器'}收敛；服务器后台副本状态请查看下方链路。`);
       }
       bump();
     } catch (error) {
       setSyncNotice(`同步失败：${msg(error)}`);
     } finally {
+      setMigrationProgress((current) => current && current.phase !== 'complete'
+        ? { ...current, phase: 'complete' } : current);
       setBusy(false);
     }
   }
@@ -1283,8 +1305,15 @@ export function Sync() {
         setInvalidCommits(invalidRows);
       });
     };
+    const onAttachmentBatch = (event: Event) => {
+      setAttachmentBatch((event as CustomEvent<AttachmentBatchResult>).detail);
+    };
     window.addEventListener(SYNC_LIFECYCLE_RESULT_EVENT, onResult);
-    return () => window.removeEventListener(SYNC_LIFECYCLE_RESULT_EVENT, onResult);
+    window.addEventListener(ATTACHMENT_BATCH_EVENT, onAttachmentBatch);
+    return () => {
+      window.removeEventListener(SYNC_LIFECYCLE_RESULT_EVENT, onResult);
+      window.removeEventListener(ATTACHMENT_BATCH_EVENT, onAttachmentBatch);
+    };
   }, [autoSyncEnabled, autoSyncMinutes, credentials, ledgerKey.unlocked, profiles, store, vault.kind, vault.unlocked]);
 
   async function checkAfterConflictResolution() {
@@ -1422,6 +1451,7 @@ export function Sync() {
    * account: they only ever restated what the user had just configured.
    */
   const unreachableProfiles = enabledProfiles.filter((p) => p.status === 'offline' || p.status === 'identity_changed');
+  const retiredProfiles = enabledProfiles.filter((p) => p.status === 'replica_retired');
   const filteredConflicts = conflicts.filter((conflict) => isDateInRange(localDateOfInstant(conflict.at), conflictRange));
   const selectedRemoteLedgerId = ledgerMismatchId(selected?.lastError);
   const exportInvalidCommits = () => {
@@ -1438,11 +1468,14 @@ export function Sync() {
   const unreachableNote = unreachableProfiles.length
     ? ` · ${unreachableProfiles.length} 台服务器暂时连不上`
     : '';
+  const retiredNote = retiredProfiles.length
+    ? ` · ${retiredProfiles.length} 台节点已移出副本组，请改用仍在组内的节点`
+    : '';
   const syncStatus = enabledProfiles.length === 0
     ? {
       label: '尚未配置同步',
       tone: 'var(--text-secondary)',
-      detail: '目前数据只保存在这台设备上。配置一台服务器后即可在多台设备之间同步；服务器只保存密文，读不到你的账目。',
+      detail: '目前账本只保存在这台设备上。连接服务器后可在其他设备登录并同步；托管账本的解密密钥由服务器代管。',
     }
     : needsAttention > 0
       ? {
@@ -1452,14 +1485,14 @@ export function Sync() {
       }
       : lastSyncAt
         ? {
-          label: '已同步',
-          tone: 'var(--positive)',
-          detail: `数据已加密并保存在 ${enabledProfiles.length} 台服务器上 · 上次同步 ${lastSyncAt}${unreachableNote}`,
+          label: unreachableProfiles.length ? `${unreachableProfiles.length} 台服务器暂时不可达` : '客户端同步完成',
+          tone: unreachableProfiles.length ? 'var(--negative)' : 'var(--positive)',
+          detail: `上次客户端同步 ${lastSyncAt} · 服务器副本与附件完整性请查看下方实时核对结果${unreachableNote}${retiredNote}`,
         }
         : {
           label: '等待首次同步',
           tone: unreachableProfiles.length ? 'var(--negative)' : 'var(--text-secondary)',
-          detail: `已配置 ${enabledProfiles.length} 台服务器。点“同步全部启用服务器”开始，之后会自动同步。${unreachableNote}`,
+          detail: `已配置 ${enabledProfiles.length} 台服务器。已核对的后台复制组只需连接当前节点；旧配置在迁移期间仍逐台同步。${unreachableNote}${retiredNote}`,
         };
 
   const settingsSummary = enabledProfiles.length
@@ -1478,7 +1511,7 @@ export function Sync() {
         <div>
           <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>账本密码</div>
           <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4, lineHeight: 1.6 }}>
-            这里要填的就是创建账本时设置的“账本密码”，它用于解锁账本数据密钥。服务器账号密码是另一个，填在“同步设置”里。密钥正文只保留在当前会话内存中。
+            这里要填的就是创建账本时设置的“账本密码”，它用于解锁账本数据密钥。服务器账号密码是另一个，填在“客户端同步与服务器连接”里。密钥正文只保留在当前会话内存中。
           </div>
         </div>
         <span style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: ledgerKey.unlocked ? 'var(--positive)' : 'var(--fg-subtle)' }}>
@@ -1522,12 +1555,12 @@ export function Sync() {
                 <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4, lineHeight: 1.6 }}>{syncStatus.detail}</div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                <button onClick={() => void doSync()} disabled={busy || !ledgerKey.unlocked || enabledProfiles.length === 0} style={primary}>{busy ? '同步中…' : '同步全部启用服务器'}</button>
+                <button onClick={() => void doSync()} disabled={busy || !ledgerKey.unlocked || enabledProfiles.length === 0} style={primary}>{busy ? '同步中…' : '同步账本'}</button>
               </div>
             </div>
             {enabledProfiles.length === 0 && (
               <div style={{ marginTop: 14 }}>
-                <button type="button" onClick={() => setShowSettings(true)} style={outline}>配置同步服务器</button>
+                <button type="button" onClick={() => setShowSettings(true)} style={outline}>配置服务器连接</button>
               </div>
             )}
           </div>
@@ -1670,9 +1703,20 @@ export function Sync() {
             </div>
           )}
 
-          {/* ===== 第 2 层：同步设置 ===== */}
+          <NodeReplicaPanel profiles={profiles} ledgerId={ledgerKey.ledgerId}
+            pinNodeIdentity={(id, nodePublicKey) => patchProfile(id, { nodePublicKey })}
+            onConfigureServers={() => {
+              setShowSettings(true);
+              requestAnimationFrame(() => document.getElementById('server-connections')
+                ?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+            }} />
+          {profiles.find((profile) => profile.id === accountProtection()?.profileId && profile.ledgerId === ledgerKey.ledgerId)
+            && ledgerKey.unlocked && <LedgerMembersPanel profile={profiles.find((profile) => profile.id === accountProtection()?.profileId)!} />}
+
+          {/* ===== 第 2 层：客户端同步与服务器连接 ===== */}
           <SyncSection
-            title="同步设置"
+            id="server-connections"
+            title="客户端同步与服务器连接"
             summary={settingsSummary}
             open={showSettings}
             onToggle={() => setShowSettings((value) => !value)}
@@ -1820,7 +1864,7 @@ export function Sync() {
                       <td style={tdStyle}>{p.alias}{isPrimaryWebConnection(p) && ' · 本站登录'}</td>
                       <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{buildBaseUrl(p)}</td>
                       <td style={tdStyle}>{p.username || '—'}</td>
-                      <td style={{ ...tdStyle, color: p.status === 'online' ? 'var(--positive)' : p.status === 'offline' || p.status === 'identity_changed' ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 'var(--fw-bold)' }}>{statusText[p.status]}</td>
+                      <td style={{ ...tdStyle, color: p.status === 'online' ? 'var(--positive)' : p.status === 'offline' || p.status === 'identity_changed' || p.status === 'replica_retired' ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 'var(--fw-bold)' }}>{statusText[p.status]}</td>
                       <td style={tdStyle}>{p.lastLatencyMs !== undefined ? `${p.lastLatencyMs}ms` : '—'}</td>
                       <td style={{ ...tdStyle, textAlign: 'right' }}>
                         <button onClick={(e) => { e.stopPropagation(); void testProfile(p, 'health'); }} disabled={testingId === p.id} style={outline}>{testingId === p.id ? '测试中…' : '测试连通性'}</button>
@@ -1857,7 +1901,7 @@ export function Sync() {
                     HTTPS 网站中的浏览器可能阻止普通 HTTP 局域网地址；可改用可信 HTTPS、服务器自带 Web，或 Windows 便携版。
                   </div>
                 </div>
-                {selectedIsPrimary && <p>此连接属于本站登录账号，地址和用户名不可在同步设置中替换。切换账号请先退出；其他服务器使用“新增服务器”配置。</p>}
+                {selectedIsPrimary && <p>此连接属于本站登录账号，地址和用户名不可在此处替换。切换账号请先退出；其他服务器使用“新增服务器”配置。</p>}
                 {advancedAddress && !selectedIsPrimary && (
                   <>
                     <div className="zc-sync-input-grid" style={inputGrid}>
@@ -1935,12 +1979,12 @@ export function Sync() {
                 </div>
               </div>
               <button onClick={() => void doSync()} disabled={busy || !ledgerKey.unlocked || enabledProfiles.length === 0} style={{ ...primary, padding: '10px 18px', fontSize: 'var(--fs-body)' }}>
-                {busy ? '同步中…' : '同步全部启用服务器'}
+                {busy ? '同步中…' : '同步账本'}
               </button>
             </div>
             {enabledProfiles.length === 0 && (
               <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 12 }}>
-                当前没有启用服务器；“同步全部启用服务器”不会自动使用本地演示云。
+                当前没有启用服务器；“同步账本”不会自动使用本地演示云。
               </div>
             )}
             {removeTarget && <ConfirmDialog title="删除服务器连接" tone="danger" busy={busy}
@@ -1955,6 +1999,29 @@ export function Sync() {
             {syncNotice && (
               <div style={{ fontSize: 'var(--fs-caption)', color: syncNotice.includes('没有启用') ? 'var(--negative)' : 'var(--fg-muted)', marginTop: 10, fontWeight: 'var(--fw-medium)' }}>
                 {syncNotice}
+              </div>
+            )}
+            {migrationProgress && (migrationProgress.phase === 'checking' || migrationProgress.objectsTotal > 0) && (
+              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', marginTop: 10 }}>
+                {migrationProgress.phase === 'checking' ? '正在检查旧版附件…'
+                  : <>旧版附件迁移：{migrationProgress.objectsMigrated}/{migrationProgress.objectsTotal} 个，
+                    已处理 {(migrationProgress.bytesMigrated / 1024 / 1024).toFixed(1)} /
+                    {(migrationProgress.bytesTotal / 1024 / 1024).toFixed(1)} MiB
+                    {migrationProgress.objectsFailed > 0 && ` · ${migrationProgress.objectsFailed} 个失败，下次同步会重试`}
+                    {migrationProgress.phase === 'copying' && ' · 请保持此网页打开'}
+                    {migrationProgress.currentAlias && migrationProgress.phase === 'copying'
+                      && ` · 当前节点：${migrationProgress.currentAlias}`}</>}
+              </div>
+            )}
+            {autoSyncEnabled && attachmentBatch && (
+              <div style={{ fontSize: 'var(--fs-caption)', color: attachmentBatch.error ? 'var(--negative)' : 'var(--text-secondary)', marginTop: 10 }}>
+                后台附件：{profiles.find((row) => row.id === attachmentBatch.profileId)?.alias ?? attachmentBatch.profileId} ·
+                {' '}扫描 {attachmentBatch.scannedThrough}/{attachmentBatch.references} 个对象
+                {attachmentBatch.uploaded > 0 && ` · 本批上传 ${attachmentBatch.uploaded} 个（逻辑量 ${(attachmentBatch.bytesUploaded / 1024 / 1024).toFixed(1)} MiB）`}
+                {attachmentBatch.downloaded > 0 && ` · 取回 ${attachmentBatch.downloaded} 个`}
+                {attachmentBatch.migrated > 0 && `，其中旧版转存 ${attachmentBatch.migrated} 个`}
+                {attachmentBatch.sweepComplete && ' · 本轮完成'}
+                {attachmentBatch.error && ` · 失败：${attachmentBatch.error}`}
               </div>
             )}
             {mergeNotice && (
@@ -2056,7 +2123,8 @@ const gridHead = { color: 'var(--text-tertiary)', fontWeight: 'var(--fw-bold)' }
  * 展开 / 收起 instead of relying on a chevron, so the state is both announced and
  * visible.
  */
-function SyncSection({ title, summary, open, onToggle, children }: {
+function SyncSection({ id, title, summary, open, onToggle, children }: {
+  id?: string;
   title: string;
   summary: string;
   open: boolean;
@@ -2064,7 +2132,7 @@ function SyncSection({ title, summary, open, onToggle, children }: {
   children: ReactNode;
 }) {
   return (
-    <section style={card}>
+    <section id={id} style={card}>
       <button
         type="button"
         aria-expanded={open}

@@ -44,11 +44,16 @@ describe('maintenance window', () => {
 
   it('gates client writes but never admin or auth traffic', () => {
     expect(isClientWrite('POST', '/api/v3/commits')).toBe(true);
+    expect(isClientWrite('POST', '/api/v4/replication/commits')).toBe(true);
+    expect(isClientWrite('POST', '/api/v4/replication/key-envelope')).toBe(true);
+    expect(isClientWrite('PUT', '/api/v4/replication/blobs/uploads/abc/chunks/0')).toBe(true);
     expect(isClientWrite('PUT', '/api/v3/key-envelope')).toBe(true);
     expect(isClientWrite('POST', '/api/v3/blobs/uploads')).toBe(true);
     expect(isClientWrite('DELETE', '/api/v3/blobs/abc')).toBe(true);
     // Reads stay open: a client that cannot pull has no way to learn why it is failing.
     expect(isClientWrite('GET', '/api/v3/commits')).toBe(false);
+    expect(isClientWrite('GET', '/api/v4/replication/commits')).toBe(false);
+    expect(isClientWrite('POST', '/api/v4/replication/blobs/status')).toBe(false);
     expect(isClientWrite('HEAD', '/api/v3/blobs/abc/chunks/0')).toBe(false);
     // The read-shaped POST is not a write; refusing it would break the diagnostics page for no gain.
     expect(isClientWrite('POST', '/api/v3/blobs/status')).toBe(false);

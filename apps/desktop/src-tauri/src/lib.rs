@@ -10,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::Manager;
+mod ledger_profile;
 mod native_attachments;
 mod native_backup_export;
 mod native_sql;
@@ -822,6 +823,9 @@ fn app_builder() -> tauri::Builder<tauri::Wry> {
         .manage(NativeSqlState::default())
         .invoke_handler(tauri::generate_handler![
             portable::desktop_storage_status,
+            ledger_profile::desktop_bind_legacy_profile,
+            ledger_profile::desktop_list_ledger_profiles,
+            ledger_profile::desktop_switch_ledger_profile,
             native_sql::native_sql_database_url,
             native_sql::native_sql_open,
             native_sql::native_sql_close,

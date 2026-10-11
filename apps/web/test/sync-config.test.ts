@@ -42,6 +42,7 @@ describe('sync configuration', () => {
       alias: '家里电脑',
       username: 'owner',
       enabled: true,
+      nodePublicKey: 'trusted-node-signing-key',
     };
     saveSyncConnections([profile]);
     const loaded = loadSyncConnections()[0]!;
@@ -52,6 +53,7 @@ describe('sync configuration', () => {
       sharedUrls: ['https://ledger.example.com:9443/family-ledger'],
       deviceUrls: [],
       enabled: true,
+      nodePublicKey: 'trusted-node-signing-key',
       status: 'unchecked',
     });
     expect(buildSyncBaseUrl(loaded)).toBe('https://ledger.example.com:9443/family-ledger');

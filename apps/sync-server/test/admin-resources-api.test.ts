@@ -6,10 +6,13 @@
  * accident, and a read-only operator must be able to see everything and change nothing.
  */
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loginAccount, registerAccount } from '@zichan/db';
+import { NodeSqliteDriver } from '@zichan/db/node';
+import { EncryptedBlobStore } from '../src/blob-store.js';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
 
 // Named so the identifier does not look like a credential: an assignment to a name ending in
@@ -40,6 +43,94 @@ async function fixture() {
 }
 
 describe('resource and database endpoints', () => {
+  it('requires owner maintenance and records an explicit unowned attachment assignment', async () => {
+    const f = await fixture();
+    try {
+      const ledgerId = 'ledger-admin-unowned-repair';
+      const blobId = '7'.repeat(64);
+      const uploadBlobId = '9'.repeat(64);
+      let uploadId = '';
+      const chunk = Buffer.alloc(32, 7);
+      const seed = new EncryptedBlobStore({ dataDir: f.dir });
+      try {
+        const plan = await seed.beginUpload('owner', ledgerId, { v: 2, blobId,
+          cipherBytes: chunk.byteLength, chunkCount: 1,
+          chunks: [{ index: 0, sizeBytes: chunk.byteLength,
+            ciphertextSha256: createHash('sha256').update(chunk).digest('hex'), iv: 'test-iv-123456' }] });
+        await seed.putChunk('owner', plan.uploadId!, 0, chunk);
+        await seed.completeUpload('owner', plan.uploadId!, 2);
+        const pending = await seed.beginUpload('owner', ledgerId, { v: 2, blobId: uploadBlobId,
+          cipherBytes: chunk.byteLength, chunkCount: 1,
+          chunks: [{ index: 0, sizeBytes: chunk.byteLength,
+            ciphertextSha256: createHash('sha256').update(chunk).digest('hex'), iv: 'test-iv-123456' }] });
+        uploadId = pending.uploadId!;
+        await seed.putChunk('owner', uploadId, 0, chunk);
+      } finally { await seed.close(); }
+      const oldReplicaId = 'rep-admin-unowned-old';
+      const stateBlobId = '8'.repeat(64);
+      const db = new NodeSqliteDriver(join(f.dir, 'server.sqlite'));
+      try {
+        const now = new Date().toISOString();
+        await db.run(`INSERT INTO sync_replicas
+          (username, ledger_id, replica_id, stream_epoch, head_seq, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 0, ?, ?)`,
+        ['owner', ledgerId, oldReplicaId, 'epoch-admin-unowned-old', now, now]);
+        await db.run(`INSERT INTO ledger_replacement_checkpoints
+          (checkpoint_id, username, replica_id, ledger_id, stream_epoch, head_seq, envelope_json, created_at)
+          VALUES (?, ?, ?, ?, ?, 0, '{}', ?)`,
+        ['checkpoint-' + 'e'.repeat(32), 'owner', oldReplicaId, ledgerId, 'epoch-admin-unowned-old', now]);
+        await db.run(`UPDATE sync_replicas SET replica_id = ?, stream_epoch = ?, updated_at = ?
+          WHERE username = ?`, ['rep-admin-unowned-new', 'epoch-admin-unowned-new', now, 'owner']);
+        await db.run(`INSERT INTO blob_replica_states
+          (username, ledger_id, replica_id, blob_id, state, counter, writer_node_id, changed_at)
+          VALUES (?, ?, NULL, ?, 'trash', 1, 'migration', ?)`,
+        ['owner', ledgerId, stateBlobId, now]);
+      } finally { await db.close(); }
+      const body = { kind: 'object', username: 'owner', ledgerId, blobId, replicaId: oldReplicaId,
+        reason: 'Verified the encrypted attachment against the original ledger key.' };
+      expect((await f.api(f.viewer.accessToken, '/storage/unowned/assign', body)).status).toBe(403);
+      const before = await f.api(f.owner.accessToken, '/storage/unowned/assign', body);
+      expect(before.status).toBe(409);
+      expect((await before.json() as { code: string }).code).toBe('MAINTENANCE_DRAIN_REQUIRED');
+      const maintenance = await f.api(f.owner.accessToken, '/maintenance', {
+        enabled: true, message: '核对历史附件归属', until: new Date(Date.now() + 10 * 60_000).toISOString(),
+      });
+      expect(maintenance.status).toBe(200);
+      const assigned = await f.api(f.owner.accessToken, '/storage/unowned/assign', body);
+      expect(assigned.status).toBe(200);
+      const decision = (await assigned.json() as { decision: { decisionId: string; toReplicaId: string } }).decision;
+      expect(decision.toReplicaId).toBe(oldReplicaId);
+      const history = await (await f.api(f.owner.accessToken, '/storage/unowned/decisions')).json() as {
+        decisions: { decisionId: string }[];
+      };
+      expect(history.decisions.map((entry) => entry.decisionId)).toContain(decision.decisionId);
+      const unowned = await (await f.api(f.owner.accessToken, '/storage/unowned?kind=object')).json() as {
+        records: { blobId: string }[];
+      };
+      expect(unowned.records.some((entry) => entry.blobId === blobId)).toBe(false);
+      const assignedState = await f.api(f.owner.accessToken, '/storage/unowned/assign', {
+        ...body, kind: 'state', blobId: stateBlobId,
+        reason: 'Verified the original deletion event belongs to this ledger replica.',
+      });
+      expect(assignedState.status).toBe(200);
+      expect((await assignedState.json() as { decision: { kind: string; toReplicaId: string } }).decision)
+        .toMatchObject({ kind: 'state', toReplicaId: oldReplicaId });
+      expect((await (await f.api(f.owner.accessToken, '/storage/unowned?kind=state')).json() as {
+        records: { blobId: string }[];
+      }).records.some((entry) => entry.blobId === stateBlobId)).toBe(false);
+      const assignedUpload = await f.api(f.owner.accessToken, '/storage/unowned/assign', {
+        ...body, kind: 'upload', blobId: uploadBlobId, uploadId,
+        reason: 'Verified the source ledger key and each saved encrypted upload chunk.',
+      });
+      expect(assignedUpload.status).toBe(200);
+      expect((await assignedUpload.json() as { decision: { kind: string; uploadId: string } }).decision)
+        .toMatchObject({ kind: 'upload', uploadId });
+      expect((await (await f.api(f.owner.accessToken, '/storage/unowned?kind=upload')).json() as {
+        records: { recordId: string }[];
+      }).records.some((entry) => entry.recordId === uploadId)).toBe(false);
+    } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+  });
+
   it('reports the process reading with the fields the page needs', async () => {
     const f = await fixture();
     try {
@@ -58,6 +149,15 @@ describe('resource and database endpoints', () => {
       expect(body.tables).toBeNull();
       // And the page is told what the numbers do not cover.
       expect(body.note).toContain('同步服务器进程');
+      const storage = await (await f.api(f.owner.accessToken, '/storage')).json() as {
+        unowned: { objects: number; states: number; uploads: number };
+      };
+      expect(storage.unowned).toEqual({ objects: 0, states: 0, uploads: 0 });
+      expect((await f.api(f.owner.accessToken, '/storage/unowned?kind=object')).status).toBe(200);
+      expect(await (await f.api(f.owner.accessToken, '/storage/unowned?kind=state')).json())
+        .toMatchObject({ records: [] });
+      expect((await f.api(f.owner.accessToken, '/storage/unowned?kind=object&cursor=%%%')).status).toBe(400);
+      expect((await f.api(f.viewer.accessToken, '/storage/unowned?kind=object')).status).toBe(403);
     } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
   });
 
@@ -138,6 +238,8 @@ describe('resource and database endpoints', () => {
       expect(scanned.status).toBe(200);
       const stats = await f.api(viewer.accessToken, '/database/stats');
       expect(stats.status).toBe(200);
+      const unowned = await f.api(viewer.accessToken, '/storage/unowned?kind=object');
+      expect(unowned.status).toBe(200);
 
       // The write path is refused with the same code every other task route uses.
       const refused = await f.api(viewer.accessToken, '/database/analyze', {});

@@ -5,6 +5,7 @@ import {
 import { credentialRevision, credentialVaultState, persistCredential, runtimeCredential, setRuntimeCredential } from './credential-vault.js';
 import { buildSyncBaseUrl, isUnauthorizedSyncError, patchSavedSyncConnection, type ServerCredential, type SyncConnection } from './sync-config.js';
 import { fingerprintServerPublicKey } from './connection-link.js';
+import { assertNodeReplicaIdentity } from './node-replica-identity.js';
 import { isTauriRuntime } from './tauri.js';
 
 const EXPIRY_MARGIN_MS = 30_000;
@@ -43,10 +44,12 @@ export async function assertSyncServerIdentity(profile: SyncConnection): Promise
   if (!profile.serverId || !profile.serverPublicKey) throw new Error('同步服务器身份尚未固定，请先测试连通性');
   const response = await requestJson(`${buildSyncBaseUrl(profile)}/api/health`, { redirect: 'error' });
   if (!response.ok) throw new Error(`同步服务器身份检查失败：HTTP ${response.status}`);
-  const body = await response.json() as { serverId?: string; serverPublicKey?: string };
+  const body = await response.json() as { serverId?: string; serverPublicKey?: string; nodePublicKey?: string };
   if (body.serverId !== profile.serverId || body.serverPublicKey !== profile.serverPublicKey) {
     throw new Error('同步服务器身份已变化，已阻止发送会话或密码');
   }
+  if (profile.nodePublicKey) assertNodeReplicaIdentity(profile,
+    { serverId: body.serverId ?? '', nodePublicKey: body.nodePublicKey ?? '' });
   if (profile.expectedServerPublicKeyFingerprint
     && await fingerprintServerPublicKey(body.serverPublicKey) !== profile.expectedServerPublicKeyFingerprint) {
     throw new Error('同步服务器公钥指纹与导入连接链接不一致');

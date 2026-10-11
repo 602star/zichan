@@ -8,7 +8,16 @@ const root = fileURLToPath(new URL('../../../', import.meta.url));
 const password = 'multi-server-account-password';
 const cachePassword = 'multi-server-cache-password';
 
+async function openSync(page) {
+  await expect(page.locator('.zc-app-shell')).toBeVisible();
+  await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
+  await page.getByRole('button', { name: '查看账本副本与状态' }).click();
+  const settings = page.getByRole('button', { name: /^客户端同步与服务器连接/ });
+  if (await settings.getAttribute('aria-expanded') !== 'true') await settings.click();
+}
+
 test('keeps Web login isolated while editing, syncing and restoring multiple servers', async ({ page, context }) => {
+  page.setDefaultTimeout(15_000);
   const servers = [];
   async function start(username) {
     const setup = 'test-multi-server-owner-secret-000000';
@@ -29,12 +38,11 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.getByLabel('服务器用户名').fill('home-user');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await page.getByRole('button', { name: '登录已有账号' }).click();
-    await page.getByRole('button', { name: '直接开始记支出', exact: true }).click();
-    await page.getByRole('button', { name: '关闭快速记账' }).click();
-    await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
-    await page.getByRole('tab', { name: '同步与账号' }).click();
-    await page.getByRole('button', { name: '管理同步服务器', exact: true }).click();
-    await page.getByRole('button', { name: /^同步设置/ }).click();
+    await page.getByRole('button', { name: '创建个人账本' }).click();
+    await page.getByRole('button', { name: '开始记账', exact: true }).click();
+    await expect(page.locator('.zc-app-shell')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await openSync(page);
     await expect(page.getByRole('button', { name: '新增服务器' })).toBeVisible();
     await expect(page.getByLabel('完整服务器地址')).toBeDisabled();
     await expect(page.getByLabel('用户名', { exact: true })).toBeDisabled();
@@ -49,6 +57,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.getByRole('button', { name: '保存地址', exact: true }).click();
     await page.getByLabel('中文别名').fill('本机副本');
     await page.getByLabel('用户名', { exact: true }).fill('remote-user');
+    await page.getByLabel('注册昵称').fill('远端用户');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await page.getByLabel('确认服务器账号密码', { exact: true }).fill('mismatch');
     await page.getByRole('button', { name: '注册', exact: true }).click();
@@ -98,7 +107,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.getByRole('button', { name: '登录', exact: true }).click();
     await expect(page.getByText(/登录未完成：/)).toHaveCount(0);
     await page.getByLabel('启用 本机副本', { exact: true }).check();
-    await page.getByRole('button', { name: '同步全部启用服务器', exact: true }).first().click();
+    await page.getByRole('button', { name: '同步此服务器', exact: true }).click();
     await expect.poll(async () => {
       const response = await fetch(`${secondary.url}/api/admin/users?search=remote-user`, { headers: { Authorization: `Bearer ${secondary.owner.accessToken}` } });
       return (await response.json()).users[0].commitCount;
@@ -120,10 +129,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.getByLabel('中文别名').fill('公网副本');
     await expect(page.getByLabel('启用 公网副本', { exact: true })).not.toBeChecked();
     await page.reload();
-    await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
-    await page.getByRole('tab', { name: '同步与账号' }).click();
-    await page.getByRole('button', { name: '管理同步服务器', exact: true }).click();
-    await page.getByRole('button', { name: /^同步设置/ }).click();
+    await openSync(page);
     await expect(page.getByLabel('启用 本机副本', { exact: true })).toBeChecked();
     await expect(page.getByLabel('启用 公网副本', { exact: true })).not.toBeChecked();
     const storage = await page.evaluate(() => ({ local: JSON.stringify({ ...localStorage }), session: JSON.stringify({ ...sessionStorage }) }));
@@ -133,8 +139,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     expect(storage.session).toContain(remoteSession.refreshToken);
     await page.getByLabel('启用 公网副本', { exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: test.info().outputPath('web-multi-server.png') });
-    await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
-    await page.getByRole('tab', { name: '同步与账号' }).click();
+    await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
     await page.getByRole('button', { name: '退出记账账号', exact: true }).click();
     await page.getByRole('button', { name: '确认退出', exact: true }).click();
     await expect(page.getByRole('heading', { name: '账号登录', exact: true })).toBeVisible();
@@ -142,10 +147,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.getByLabel('服务器用户名').fill('home-user');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await page.getByRole('button', { name: '登录已有账号' }).click();
-    await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
-    await page.getByRole('tab', { name: '同步与账号' }).click();
-    await page.getByRole('button', { name: '管理同步服务器', exact: true }).click();
-    await page.getByRole('button', { name: /^同步设置/ }).click();
+    await openSync(page);
     await expect(page.getByLabel('启用 本机副本', { exact: true })).toBeChecked();
     await expect(page.getByLabel('启用 公网副本', { exact: true })).not.toBeChecked();
     expect(await page.evaluate(() => JSON.stringify({ ...sessionStorage }))).not.toContain(remoteSession.refreshToken);

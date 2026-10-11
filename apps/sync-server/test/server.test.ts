@@ -129,7 +129,7 @@ describe('sync-server endpoints', () => {
       expect(login.refreshToken).toBeUndefined();
       expect(login.sessionTransport).toBe('cookie');
       const setCookie = loggedIn.headers.get('set-cookie')!;
-      expect(setCookie).toContain('Path=/ledger/api/auth; HttpOnly; SameSite=Strict');
+      expect(setCookie).toContain('Path=/ledger/api/auth; HttpOnly; SameSite=Lax');
       expect(setCookie).not.toContain('Max-Age');
       const cookie = setCookie.split(';')[0]!;
       const endpoint = '/ledger/api/auth/refresh';
@@ -225,6 +225,8 @@ describe('sync-server endpoints', () => {
       ledgerId,
       replicaId: replica.replicaId,
       streamEpoch: replica.streamEpoch,
+      session: { replicaId: replica.replicaId },
+      ledgers: [{ ledgerId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch }],
     });
 
     const commit = {
@@ -491,6 +493,44 @@ describe('sync-server endpoints', () => {
     }
   });
 
+  it('allows repeated authenticated account reads during replica browsing', async () => {
+    const app = createSyncServer();
+    await new Promise<void>((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+    try {
+      expect((await registerUser(base, 'account-read-user', 'account-read-password')).status).toBe(200);
+      const token = await accessToken(base, 'account-read-user', 'account-read-password');
+      for (let index = 0; index < 25; index += 1) {
+        const response = await fetch(`${base}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        expect(response.status).toBe(200);
+        await response.body?.cancel();
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('keeps ordinary replica API reads available through a busy signed-in session', async () => {
+    const app = createSyncServer();
+    await new Promise<void>((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+    try {
+      expect((await registerUser(base, 'replica-read-user', 'replica-read-password')).status).toBe(200);
+      const token = await accessToken(base, 'replica-read-user', 'replica-read-password');
+      for (let index = 0; index < 125; index += 1) {
+        const response = await fetch(`${base}/api/v3/replica`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        expect(response.status).toBe(200);
+        await response.body?.cancel();
+      }
+    } finally {
+      await app.close();
+    }
+  });
+
   it('requires HTTPS for a proxied public client and allows credential-free CORS from any origin', async () => {
     const s = createSyncServer({
       trustedProxies: ['loopback'],
@@ -749,6 +789,7 @@ describe('sync-server endpoints', () => {
       const csp = page.headers.get('content-security-policy') ?? '';
       expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'");
       expect(csp).toContain("connect-src 'self' https:");
+      expect(csp).not.toMatch(/connect-src[^;]*\shttp:(?:\s|;|$)/);
       expect(csp).not.toContain("script-src 'self' 'unsafe-eval'");
       expect(await page.text()).toContain('Zichan Web');
       expect((await post2(u, '/ledger/api/auth/login/start', { username: 'offline-user' })).status).toBe(503);
@@ -758,6 +799,23 @@ describe('sync-server endpoints', () => {
       expect((await fetch(u + '/ledger/app/')).status).toBe(200);
     } finally {
       await s.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('allows LAN HTTP endpoints in the hosted app when LAN HTTP is enabled', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zichan-web-lan-csp-'));
+    writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Zichan Web</title>');
+    const app = createSyncServer({ webDir: dir, enableWeb: true, enableSync: false,
+      allowInsecureHttp: true });
+    await new Promise<void>((resolve) => app.server.listen(0, resolve));
+    const base = `http://localhost:${(app.server.address() as AddressInfo).port}`;
+    try {
+      const csp = (await fetch(`${base}/app/`)).headers.get('content-security-policy') ?? '';
+      const connectSrc = csp.split('; ').find((directive) => directive.startsWith('connect-src')) ?? '';
+      expect(connectSrc).toMatch(/\shttp:$/);
+    } finally {
+      await app.close();
       rmSync(dir, { recursive: true, force: true });
     }
   });

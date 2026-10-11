@@ -1,6 +1,6 @@
 import { accountSessionStorage } from '../account-storage.js';
 import { useEffect, useState, type CSSProperties } from 'react';
-import { checkConsistency, recomputeCaches, purgeTombstones, type ConsistencyIssue } from '@zichan/db';
+import { checkConsistency, recomputeCaches, purgeTombstones, type BackupPreflight, type ConsistencyIssue } from '@zichan/db';
 import { type AsOfMode, type LotMethod, type Setting, localToday } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { useSnapshot } from '../db/snapshot.js';
@@ -135,6 +135,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
     entry: SavedBackup;
     mode: 'replace' | 'merge';
     opened: ParsedEncryptedBackup;
+    preflight: BackupPreflight;
   } | null>(null);
   const [remoteBackups, setRemoteBackups] = useState<RemoteBackupRow[]>([]);
   const [remoteLoaded, setRemoteLoaded] = useState(false);
@@ -330,7 +331,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
       if (!rehearsal.ok) {
         throw new Error(rehearsal.error ?? rehearsal.consistencyIssues.map((issue) => issue.detail).join('；'));
       }
-      setPendingRestore({ entry, mode: action, opened });
+      setPendingRestore({ entry, mode: action, opened, preflight: rehearsal.preflight });
     } catch (error) {
       if (error instanceof BackupPassphraseRequiredError) {
         setBackupPassphrase('');
@@ -400,6 +401,11 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
     try {
       const opened = await openVerifiedSavedBackup(entry, passphrase);
       const result = await rehearseRestore(opened.payload.ledger);
+      if (result.ok) {
+        setBackups((rows) => rows.map((row) => row.id === entry.id
+          ? { ...row, preflight: result.preflight, preflightKnown: true }
+          : row));
+      }
       await saveSafetyState({ lastRehearsalAt: new Date().toISOString(), lastRehearsalOk: result.ok, lastRehearsalLabel: entry.label });
       setBackupNote(result.ok
         ? `恢复演练通过：${describePreflight(result.preflight)}`
@@ -427,7 +433,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
         return;
       }
       await saveSafetyState({ lastRehearsalAt: new Date().toISOString(), lastRehearsalOk: true, lastRehearsalLabel: entry.label });
-      setPendingRestore({ entry, mode, opened });
+      setPendingRestore({ entry, mode, opened, preflight: rehearsal.preflight });
     } catch (error) {
       if (error instanceof BackupPassphraseRequiredError) {
         setBackupPassphrase('');
@@ -920,7 +926,9 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
                           <div style={{ fontSize: 'var(--fs-meta)', color: b.externalSaved ? 'var(--positive)' : 'var(--fg-subtle)', marginTop: 3 }}>{b.externalSaved ? '创建时已写入远端 / 外部副本' : storageBackend === 'native-sqlite' ? '便携目录内本地备份；远端副本见服务器列表' : '仅本机存储'}</div>
                         </td>
                         <td style={tdStyle}>{backupSize(b)}</td>
-                        <td style={{ ...tdStyle, color: b.preflight.ok ? 'var(--positive)' : 'var(--negative)' }}>{describePreflight(b.preflight)}</td>
+                        <td style={{ ...tdStyle, color: b.preflightKnown === false ? 'var(--text-secondary)' : b.preflight.ok ? 'var(--positive)' : 'var(--negative)' }}>
+                          {b.preflightKnown === false ? '待校验 · 点击演练' : describePreflight(b.preflight)}
+                        </td>
                         <td style={tdStyle}>
                           <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                             <button onClick={() => rehearse(b)} disabled={backupBusy !== null} style={btnOutline}>{backupBusy === b.id ? '演练中…' : '演练'}</button>
@@ -1116,7 +1124,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode }: {
           {pendingRestore.mode === 'replace'
             ? `将把当前活动账本精确恢复为“${pendingRestore.entry.label}”的状态，备份之外的数据会被标记删除并同步到其他设备。`
             : `将把“${pendingRestore.entry.label}”合并到当前账本，当前独有的数据会保留。`}
-          导入前会再保存一份当前账本备份；预检结果为：{describePreflight(pendingRestore.entry.preflight)}。
+          导入前会再保存一份当前账本备份；预检结果为：{describePreflight(pendingRestore.preflight)}。
         </ConfirmDialog>
       )}
       {pendingRemoteDelete && (

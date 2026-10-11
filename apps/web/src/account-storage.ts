@@ -1,11 +1,26 @@
 /** Web accounts use a new namespace. Legacy/native storage is never migrated. */
 let webAccounts = false;
 let namespace: string | undefined;
+export const WEB_ACCOUNT_BINDING_KEY = 'zichan.web-account.v2.binding';
+export const WEB_LEDGER_SWITCH_EVENT_KEY = 'zichan.web-account.v1.ledger-switch';
 
 export function enableWebAccounts(): void { webAccounts = true; }
-export function activateWebAccount(serverId: string, accountId: string): void {
-  const next = `zichan.account.v2:${encodeURIComponent(serverId)}:${encodeURIComponent(accountId)}:`;
-  if (namespace && namespace !== next) throw new Error('切换账号需要重新加载页面');
+export function legacyWebAccountNamespace(serverId: string, accountId: string): string {
+  return `zichan.account.v2:${encodeURIComponent(serverId)}:${encodeURIComponent(accountId)}:`;
+}
+
+/** Keep the existing encrypted cache for its original replica; isolate later replicas. */
+export function webLedgerNamespace(serverId: string, accountId: string,
+  replicaId?: string, primaryReplicaId?: string, legacyOccupied = false): string {
+  const legacy = legacyWebAccountNamespace(serverId, accountId);
+  if (!replicaId || replicaId === primaryReplicaId || !primaryReplicaId && !legacyOccupied) return legacy;
+  return `zichan.account.v3:${encodeURIComponent(serverId)}:${encodeURIComponent(accountId)}:${encodeURIComponent(replicaId)}:`;
+}
+
+export function activateWebAccount(serverId: string, accountId: string,
+  replicaId?: string, primaryReplicaId?: string, legacyOccupied = false): void {
+  const next = webLedgerNamespace(serverId, accountId, replicaId, primaryReplicaId, legacyOccupied);
+  if (namespace && namespace !== next) throw new Error('切换账号或账本需要重新加载页面');
   namespace = next;
 }
 export function accountStorageKey(key: string): string {

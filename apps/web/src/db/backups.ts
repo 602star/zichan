@@ -109,6 +109,8 @@ export interface SavedBackup {
   archive?: Blob;
   nativeFileName?: string;
   preflight: BackupPreflight;
+  /** Native file listings read only archive headers, so they cannot verify payload contents. */
+  preflightKnown?: boolean;
   checksum: string;
   sizeBytes: number;
   /** Local archive path. On Windows portable builds this remains inside data/backups. */
@@ -450,6 +452,7 @@ function savedFromArchive(
     pinned: header.reason !== 'auto',
     container: header,
     preflight: extra.preflight ?? emptyPreflight(),
+    preflightKnown: Boolean(extra.preflight),
     checksum: header.ledgerSha256,
     sizeBytes,
     ...extra,

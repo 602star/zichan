@@ -4,10 +4,24 @@ import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import * as opaque from '@serenity-kit/opaque';
-import { normalizeSyncUsername, createLedgerKeyEnvelope, unlockLedgerKeyEnvelope, newId, PLAIN_HTTP_HOST_ALLOWLIST, type LedgerKeyEnvelope } from '@zichan/core';
+import { normalizeSyncUsername, createLedgerKeyEnvelope, unlockLedgerKeyEnvelope, newId, PLAIN_HTTP_HOST_ALLOWLIST,
+  assertAccountEncryptionKeyEnvelope, type AccountEncryptionKeyEnvelope, type LedgerControlEvent,
+  type LedgerKeyEnvelope, type LedgerMemberKeyEnvelope } from '@zichan/core';
 import { loadCustodyKey, sealCustodySecret, openCustodySecret } from './key-custody.js';
+import { loadNodeIdentity, type NodeIdentity } from './node-identity.js';
+import { signNodeResponse, verifyNodeRequest, type NodeRequestProof } from './node-request-auth.js';
+import { confirmPeerGrantRevocation, createNodeReplicationWorker, normalizeNodePeerUrl, probeNodePeer, signedCall,
+  verifyNodeReplicaInventory } from './node-replication.js';
+import { assessReplicaReadiness } from './replica-readiness.js';
+import { assessForwardedReplicaGroupHealth, assessReplicaGroupHealth, assessReplicaGroupMember,
+  buildReplicaGroupDirectory,
+  parseNodeReplicaGroupSnapshot, parseNodeReplicaHealthReport } from './replica-group-health.js';
+import { createFederatedLoginIntent, decodeFederatedLoginIntent, encodeFederatedLoginIntent,
+  verifyFederatedLoginIntent } from './federated-login.js';
 import { LedgerPreviewRegistry } from './ledger-preview.js';
-import { EncryptedBlobStore } from './blob-store.js';
+import { EncryptedBlobStore, type BlobReplicaState } from './blob-store.js';
+import { assertNoPendingLocalReplicaRetirement } from './replica-retirement-guard.js';
+import { decodeBlobPack, encodeBlobPack, MAX_BLOB_PACK_CHUNK_BYTES, MAX_BLOB_PACK_OBJECTS } from './blob-pack.js';
 import { createAdminRouter } from './admin.js';
 import { createRequestOrigin } from './request-origin.js';
 import { createBrowserSessionCookies } from './browser-session.js';
@@ -40,10 +54,14 @@ import { createMfaService } from './mfa.js';
 import {
   ServerStoreError,
   SyncServerStore,
+  FEDERATED_ONLY_RECORD,
   type JsonRecord,
+  type LedgerControlRoot,
+  type NodeReplicationLink,
   type RegistrationMode,
   type ServerLog,
   type StoredCommit,
+  type SyncSession,
 } from './store.js';
 
 export type { RegistrationMode } from './store.js';
@@ -56,6 +74,15 @@ const REQUEST_ID_BYTES = 8;
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function publicCommitRow(commit: StoredCommit): StoredCommit | {
+  seq: number; commitId: string; ledgerId: string; contentHash: string; quarantined: true;
+} {
+  return commit.quarantined
+    ? { seq: commit.seq, commitId: commit.commitId, ledgerId: commit.ledgerId,
+      contentHash: commit.contentHash, quarantined: true }
+    : commit;
 }
 
 
@@ -96,15 +123,23 @@ function normalizeBasePath(raw?: string): string {
   return (value.startsWith('/') ? value : `/${value}`).replace(/\/+$/, '');
 }
 
-function initialEncryptedCommits(value: unknown, ledgerId: string): Omit<StoredCommit, 'seq' | 'cipherBytes' | 'createdAt'>[] {
-  if (!Array.isArray(value) || !value.length || value.length > 100) throw new ServerStoreError('INVALID_COMMIT', 400, 'initial encrypted commits required');
+function initialEncryptedCommits(value: unknown, ledgerId: string, requireEpoch = false): Omit<StoredCommit, 'seq' | 'cipherBytes' | 'createdAt'>[] {
+  if (!Array.isArray(value) || !requireEpoch && !value.length || value.length > 100) throw new ServerStoreError('INVALID_COMMIT', 400, 'initial encrypted commits required');
   const ids = new Set<string>();
   return value.map((row) => {
     if (!isRecord(row) || typeof row.commitId !== 'string' || !/^[A-Za-z0-9_-]{16,160}$/.test(row.commitId) || row.ledgerId !== ledgerId || typeof row.contentHash !== 'string' || !/^[a-f0-9]{64}$/.test(row.contentHash) || !isRecord(row.encCommit) || row.encCommit.v !== 3 || typeof row.encCommit.keyId !== 'string' || !/^[A-Za-z0-9_-]{16,160}$/.test(row.encCommit.keyId) || typeof row.encCommit.iv !== 'string' || typeof row.encCommit.ct !== 'string' || row.encCommit.iv.length > 256 || row.encCommit.ct.length > MAX_BODY_BYTES || ids.has(row.commitId)) {
       throw new ServerStoreError('INVALID_COMMIT', 400, 'invalid initial encrypted commit');
     }
+    if (requireEpoch && (!Number.isSafeInteger(row.keyEpoch) || Number(row.keyEpoch) < 0
+      || Number(row.keyEpoch) > 0 && (!isRecord(row.writer)
+        || typeof row.writer.issuerNodeId !== 'string' || typeof row.writer.accountId !== 'string'))) {
+      throw new ServerStoreError('INVALID_COMMIT_EPOCH', 400, 'node commit epoch or writer is missing');
+    }
     ids.add(row.commitId);
-    return { commitId: row.commitId, ledgerId, contentHash: row.contentHash, encCommit: row.encCommit };
+    return { commitId: row.commitId, ledgerId, contentHash: row.contentHash, encCommit: row.encCommit,
+      ...(requireEpoch ? { keyEpoch: Number(row.keyEpoch), ...(Number(row.keyEpoch) > 0 ? {
+        writer: row.writer as unknown as StoredCommit['writer'],
+      } : {}) } : {}) };
   });
 }
 
@@ -131,6 +166,8 @@ interface TokenClaims {
   passwordResetHash?: string;
   username?: string;
   sessionId?: string;
+  replicaId?: string | null;
+  selectionVersion?: number;
   purpose?: string;
   inviteCode?: string;
   exp?: number;
@@ -272,21 +309,27 @@ const CONNECT_SRC = [
   ...PLAIN_HTTP_HOST_ALLOWLIST.map((host) => `http://${host}:*`),
 ].join(' ');
 
-const WEB_APP_CSP = [
-  "default-src 'self'",
-  `connect-src ${CONNECT_SRC}`,
-  "img-src 'self' blob: data:",
-  "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'wasm-unsafe-eval'",
-  "font-src 'self' data:",
-  "worker-src 'self' blob:",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-].join('; ');
+function webAppCsp(allowInsecureHttp: boolean): string {
+  return [
+    "default-src 'self'",
+    // A local HTTP deployment may connect to any RFC1918 address chosen in the
+    // browser. CSP cannot express IP ranges; transport-policy still rejects
+    // unapproved public HTTP destinations before credentials are sent.
+    `connect-src ${CONNECT_SRC}${allowInsecureHttp ? ' http:' : ''}`,
+    "img-src 'self' blob: data:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self' 'wasm-unsafe-eval'",
+    "font-src 'self' data:",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
 
-function serveWeb(req: IncomingMessage, res: ServerResponse, path: string, webDir?: string): boolean {
+function serveWeb(req: IncomingMessage, res: ServerResponse, path: string, webDir?: string,
+  allowInsecureHttp = false): boolean {
   if (!webDir || (req.method !== 'GET' && req.method !== 'HEAD')) return false;
   if (path === '/api' || path.startsWith('/api/')) return false;
   const root = resolve(webDir);
@@ -300,7 +343,7 @@ function serveWeb(req: IncomingMessage, res: ServerResponse, path: string, webDi
   res.writeHead(200, {
     'Content-Type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
     'Cache-Control': file.endsWith('index.html') || file.endsWith('sw.js') ? 'no-cache' : 'public, max-age=31536000, immutable',
-    'Content-Security-Policy': WEB_APP_CSP,
+    'Content-Security-Policy': webAppCsp(allowInsecureHttp),
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
   });
@@ -345,6 +388,8 @@ export interface SyncServer {
   started: Promise<void>;
   /** Drain pending account mail immediately; the background worker also runs every minute. */
   flushAccountEmails: () => Promise<void>;
+  /** Run one outbound node replication pass immediately. */
+  flushNodeReplication: () => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -357,6 +402,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   const origin = createRequestOrigin(trustedProxies, allowInsecureHttp);
   const browserSession = createBrowserSessionCookies(basePath, origin.browserOrigin);
   const requestedDataDir = options.dataDir ? resolve(options.dataDir) : undefined;
+  if (requestedDataDir) assertNoPendingLocalReplicaRetirement(requestedDataDir);
   assertServerIdentityComplete(requestedDataDir);
   let store: SyncServerStore;
   const blobStore = new EncryptedBlobStore({
@@ -377,6 +423,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   const ownerSetupToken = loadPersistedValue(dataDir, 'owner-setup.secret', options.ownerSetupToken, () => randomBytes(32).toString('hex'));
   if (ownerSetupToken.length < 32) throw new Error('owner-setup.secret must contain at least 32 characters');
   const serverId = loadPersistedValue(dataDir, 'server-id', options.serverId, () => `srv-${randomBytes(8).toString('hex')}`);
+  blobStore.setReplicationNodeId(serverId);
   // Both stores use separate SQLite connections to the same file. Initialize
   // them in sequence so catalog recovery cannot hold a write transaction while
   // the server schema connection synchronously waits for that lock.
@@ -388,12 +435,25 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     blobStore.ready,
     options.attachmentQuotaBytes,
   );
+  blobStore.setReplicaIdResolver(async (username, ledgerId) => {
+    const replica = await store.getReplicaForLedger(username, ledgerId);
+    if (!replica) {
+      throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind this ledger before uploading an attachment');
+    }
+    return replica.replicaId;
+  });
   const custodyEnabled = options.custodyEnabled !== false;
   const defaultProtection = custodyEnabled ? options.accountProtection ?? 'managed' : 'private';
   let custodyKey: Buffer;
   let opaqueServerSetup = '';
   let opaqueServerPublicKey = '';
+  let nodePublicKey = '';
+  let nodeIdentity: NodeIdentity;
   const ready = Promise.all([blobStore.ready, store.ready, opaque.ready]).then(async () => {
+    await blobStore.reconcileReplicaOwnership();
+    nodeIdentity = loadNodeIdentity(dataDir, serverId, await store.nodePublicKey());
+    await store.bindNodePublicKey(nodeIdentity.publicKey);
+    nodePublicKey = nodeIdentity.publicKey;
     custodyKey = loadCustodyKey(options.custodyKeyPath ?? join(dataDir, 'custody.key'), await store.hasCustodySecrets());
     opaqueServerSetup = loadPersistedValue(
       dataDir,
@@ -403,6 +463,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     );
     opaqueServerPublicKey = opaque.server.getPublicKey(opaqueServerSetup);
   });
+  const nodeReplication = createNodeReplicationWorker(store, blobStore, () => nodeIdentity);
+  const nodeReplicationTimer = setInterval(() => { void ready.then(() => nodeReplication.run()).catch(() => undefined); }, 10_000);
   // A preview is only meaningful where the server holds a custody key, so a deployment with
   // custody disabled gets no registry and the route answers with a clear refusal.
   const ledgerPreview = custodyEnabled
@@ -450,12 +512,16 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     lastSeenAt: session.lastSeenAt,
     lastIp: session.lastIp ?? null,
     revokedAt: session.revokedAt ?? null,
+    replicaId: session.replicaId ?? null,
+    selectionVersion: session.selectionVersion,
     active: !session.revokedAt && session.expiresAt > nowIso(),
   } : undefined;
-  const issueAccessToken = (username: string, sessionId: string) => {
+  const issueAccessToken = (session: SyncSession) => {
     const expiresAtMs = Date.now() + ACCESS_TOKEN_TTL_MS;
     return {
-      accessToken: signToken(secret, { username, sessionId, exp: expiresAtMs }),
+      accessToken: signToken(secret, { username: session.username, sessionId: session.id,
+        replicaId: session.replicaId ?? null, selectionVersion: session.selectionVersion,
+        exp: expiresAtMs }),
       accessExpiresAt: new Date(expiresAtMs).toISOString(),
     };
   };
@@ -466,7 +532,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     const user = claims?.username ? await store.getUser(claims.username) : undefined;
     const session = claims?.sessionId ? await store.getSession(claims.sessionId) : undefined;
     if (!user || user.disabled || !session || session.username !== user.username
-      || session.revokedAt || session.expiresAt <= nowIso()) return undefined;
+      || session.revokedAt || session.expiresAt <= nowIso()
+      || (claims?.selectionVersion ?? 0) !== session.selectionVersion
+      || claims?.replicaId != null && claims.replicaId !== session.replicaId) return undefined;
     return { user, session, role: await store.roleForUser(user.username) };
   };
 
@@ -540,12 +608,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     const replica = await store.getReplica(input.user.username);
     if (cookieSession) browserSession.write(input.request, input.response, refreshToken);
     return {
-      ...issueAccessToken(input.user.username, session.id),
+      ...issueAccessToken(session),
       accountId: input.user.accountId,
       ...(cookieSession ? { sessionTransport: 'cookie' } : { refreshToken }),
       session: publicSession(session) as unknown as JsonRecord,
       role: await store.roleForUser(input.user.username),
-      ...(replica ? { ledgerId: replica.ledgerId } : {}),
+      ...(replica ? { ledgerId: replica.ledgerId, replicaId: replica.replicaId,
+        streamEpoch: replica.streamEpoch } : {}),
     };
   };
 
@@ -593,6 +662,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     log,
     maintenance,
     writeTracker,
+    replication: nodeReplication,
     dataDir,
     databaseFile: store.databaseFile,
     serverId,
@@ -702,6 +772,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           'server-management-v1',
           'password-reset-v1',
           'encrypted-blobs-v1',
+          'portable-blobs-v2',
+          'legacy-blob-routes-v1',
+          'node-replication-v1',
           'encrypted-commits-v3',
           'ledger-key-envelope-v1',
           'ledger-protection-v1',
@@ -720,6 +793,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           ok: true,
           serverId,
           serverPublicKey: opaqueServerPublicKey,
+          nodePublicKey,
           claimed,
           protocols: [3],
           capabilities,
@@ -743,8 +817,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         return send(res, probe.ok ? 200 : 503, { ok: probe.ok, serverId, mode: 'light', database: probe });
       }
       if (basePath && (path === '/api' || path.startsWith('/api/'))) return send(res, 404, { error: 'not found' });
-      if (routedPath && serveWeb(req, res, routedPath, enableWeb ? options.webDir : undefined)) return;
-      if (!routedPath && serveWeb(req, res, path, enableWeb ? options.webDir : undefined)) return;
+      if (routedPath && serveWeb(req, res, routedPath, enableWeb ? options.webDir : undefined, allowInsecureHttp)) return;
+      if (!routedPath && serveWeb(req, res, path, enableWeb ? options.webDir : undefined, allowInsecureHttp)) return;
       if (!routedPath) return send(res, 404, { error: 'not found' });
       const apiPath = routedPath;
       if (apiPath !== '/api' && !apiPath.startsWith('/api/')) return send(res, 404, { error: 'not found' });
@@ -769,17 +843,551 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       }
       if (!origin.secureTransport(req, allowInsecureHttp)) return send(res, 426, { code: 'HTTPS_REQUIRED', error: 'HTTPS is required for remote synchronization' });
       const isAuth = apiPath.startsWith('/api/auth/');
-      const isBlob = apiPath.startsWith('/api/v3/blobs');
+      // The signed-in UI reads its account identity during page restores and
+      // replica checks. Keep login attempts tight without locking out normal
+      // authenticated browsing after twenty such reads in a minute.
+      const isAccountRead = apiPath === '/api/auth/me' && req.method === 'GET';
+      const isBlob = apiPath.startsWith('/api/v3/blobs')
+        || apiPath.startsWith('/api/v4/ledger/attachment-promise');
+      const isNode = apiPath.startsWith('/api/v4/replication/') || apiPath === '/api/v4/identity/exchange';
       const rate = await allow(
         ip,
-        isAuth ? `auth:${apiPath}` : isAdmin ? 'admin' : isBlob ? 'blob' : 'api',
-        isAuth ? 20 : isBlob ? 600 : 120,
+        isAuth ? `auth:${apiPath}` : isAdmin ? 'admin' : isBlob ? 'blob' : isNode ? 'node' : 'api',
+        // Several trusted replicas can share one NAT address during initial copy.
+        // Keep an IP ceiling for unauthenticated traffic; verified grants get a separate quota below.
+        // A single signed-in ledger page reads several independent replica,
+        // member and sync endpoints; the former 120/min shared API bucket
+        // throttled normal three-node use. Auth, admin and node buckets remain
+        // separate and keep their tighter or protocol-specific ceilings.
+        isAccountRead ? 120 : isAuth ? 20 : isBlob ? 600 : isNode ? 12_000 : isAdmin ? 120 : 600,
         60_000,
       );
       if (!rate.allowed) {
         res.setHeader('Retry-After', String(rate.retryAfterSeconds));
         await log('warn', 'rate_limited', 'API request rate limited', { ip, status: 429 });
         return send(res, 429, { error: 'rate limited, slow down' });
+      }
+
+      const nodeBlobChunk = /^\/api\/v4\/replication\/blobs\/([a-f0-9]{64})\/chunks\/(\d+)$/.exec(apiPath);
+      const nodeUploadChunk = /^\/api\/v4\/replication\/blobs\/uploads\/([a-f0-9]{32})\/chunks\/(\d+)$/.exec(apiPath);
+      const nodeUploadComplete = /^\/api\/v4\/replication\/blobs\/uploads\/([a-f0-9]{32})\/complete$/.exec(apiPath);
+      const nodePromisePage = /^\/api\/v4\/replication\/attachment-promise\/uploads\/([a-f0-9]{32})\/pages$/.exec(apiPath);
+      const nodePromiseComplete = /^\/api\/v4\/replication\/attachment-promise\/uploads\/([a-f0-9]{32})\/complete$/.exec(apiPath);
+      const nodeRoute = (apiPath === '/api/v4/replication/commits' && (req.method === 'GET' || req.method === 'POST'))
+        || (apiPath === '/api/v4/replication/control' && (req.method === 'GET' || req.method === 'POST'))
+        || (apiPath === '/api/v4/replication/member-envelopes' && (req.method === 'GET' || req.method === 'POST'))
+        || (apiPath === '/api/v4/identity/exchange' && req.method === 'POST')
+        || (apiPath === '/api/v4/replication/key-envelope' && (req.method === 'GET' || req.method === 'POST'))
+        || (apiPath === '/api/v4/replication/account-identity' && req.method === 'GET')
+        || (apiPath === '/api/v4/replication/account-key' && req.method === 'GET')
+        || (apiPath === '/api/v4/replication/inventory' && req.method === 'GET')
+        || (apiPath === '/api/v4/replication/health-report' && req.method === 'POST')
+        || (apiPath === '/api/v4/replication/group-state' && req.method === 'GET')
+        || (apiPath === '/api/v4/replication/member-status' && req.method === 'GET')
+        || (apiPath === '/api/v4/replication/revoke' && req.method === 'POST')
+        || (apiPath === '/api/v4/replication/attachment-promise' && req.method === 'GET')
+        || (apiPath === '/api/v4/replication/attachment-promise/uploads' && req.method === 'POST')
+        || (nodePromisePage && req.method === 'POST') || (nodePromiseComplete && req.method === 'POST')
+        || (apiPath === '/api/v4/replication/blobs' && req.method === 'GET')
+        || (apiPath === '/api/v4/replication/blobs/states' && (req.method === 'GET' || req.method === 'POST'))
+        || (apiPath === '/api/v4/replication/blobs/status' && req.method === 'POST')
+        || (apiPath === '/api/v4/replication/blobs/pack' && req.method === 'POST')
+        || (apiPath === '/api/v4/replication/blobs/pack/read' && req.method === 'GET')
+        || (apiPath === '/api/v4/replication/blobs/uploads' && req.method === 'POST')
+        || (nodeBlobChunk && req.method === 'GET') || (nodeUploadChunk && req.method === 'PUT')
+        || (nodeUploadComplete && req.method === 'POST');
+      if (nodeRoute) {
+        const requestBytes = req.method === 'POST' || req.method === 'PUT' ? await readBinaryBody(req, MAX_BODY_BYTES) : new Uint8Array();
+        const rawProof = req.headers['x-zichan-node-proof'];
+        let proof: NodeRequestProof | undefined;
+        if (typeof rawProof === 'string' && rawProof.length <= 2048) {
+          try { proof = JSON.parse(rawProof) as NodeRequestProof; } catch { /* Refuse malformed proof below. */ }
+        }
+        if (!proof || typeof proof.grantId !== 'string' || typeof proof.nodeId !== 'string'
+          || typeof proof.signature !== 'string' || typeof proof.nonce !== 'string'
+          || typeof proof.issuedAt !== 'string' || typeof proof.bodySha256 !== 'string') {
+          return send(res, 401, { code: 'NODE_AUTH_REQUIRED', error: 'node authorization required' });
+        }
+        const signedJson = (result: unknown, status = 200) => {
+          res.setHeader('X-Zichan-Node-Response', signNodeResponse(nodeIdentity, proof.nonce, Buffer.from(JSON.stringify(result))));
+          return send(res, status, result);
+        };
+        const revocationRequest = apiPath === '/api/v4/replication/revoke' && req.method === 'POST';
+        const memberStatusRequest = apiPath === '/api/v4/replication/member-status' && req.method === 'GET';
+        const historicalRequest = revocationRequest || memberStatusRequest;
+        const grant = await store.getNodeReplicationGrant(proof.grantId, historicalRequest);
+        const replica = grant ? await store.getReplicaForLedger(grant.username, grant.ledgerId) : undefined;
+        if (!grant || !replica || grant.ledgerId !== replica.ledgerId || grant.peerNodeId !== proof.nodeId
+          || !historicalRequest && (grant.revokedAt || grant.expiresAt <= nowIso())
+          || !verifyNodeRequest(proof, grant.peerPublicKey, req.method ?? 'GET', `${apiPath}${url.search}`, requestBytes)
+          || !await (historicalRequest
+            ? store.consumeNodeRevocationNonce(grant.grantId, proof.nonce, proof.nodeId)
+            : store.consumeNodeReplicationNonce(grant.grantId, proof.nonce, proof.nodeId))) {
+          if (!grant && !historicalRequest) {
+            const oldGrant = await store.getNodeReplicationGrant(proof.grantId, true);
+            const oldReplica = oldGrant ? await store.getReplicaForLedger(oldGrant.username, oldGrant.ledgerId) : undefined;
+            const member = oldReplica && (await store.listReplicaGroupMembers(oldReplica.replicaId))
+              .find((item) => item.nodeId === proof.nodeId && item.publicKey === oldGrant?.peerPublicKey);
+            if (oldGrant && oldReplica && member?.retiredAt && oldGrant.peerNodeId === proof.nodeId
+              && verifyNodeRequest(proof, oldGrant.peerPublicKey, req.method ?? 'GET', `${apiPath}${url.search}`, requestBytes)
+              && await store.consumeNodeRevocationNonce(oldGrant.grantId, proof.nonce, proof.nodeId)) {
+              return signedJson({ code: 'REPLICA_MEMBER_RETIRED', serverId,
+                replicaId: oldReplica.replicaId, streamEpoch: oldReplica.streamEpoch,
+                ledgerId: oldGrant.ledgerId, grantId: oldGrant.grantId,
+                retiredNodeId: proof.nodeId, retiredAt: member.retiredAt }, 410);
+            }
+          }
+          return send(res, 403, { code: 'NODE_AUTH_REJECTED', error: 'node authorization rejected' });
+        }
+        const grantRate = await allow(`grant:${grant.grantId}`, 'node-grant', 6_000, 60_000);
+        if (!grantRate.allowed) {
+          res.setHeader('Retry-After', String(grantRate.retryAfterSeconds));
+          await log('warn', 'node_grant_rate_limited', 'Node grant request rate limited', {
+            ip, status: 429, detail: { grantId: grant.grantId, peerNodeId: proof.nodeId },
+          });
+          return send(res, 429, { error: 'rate limited, slow down' });
+        }
+        if (!revocationRequest && req.method !== 'GET'
+          && await store.replicaRetirement(replica.replicaId)) {
+          return signedJson({ code: 'REPLICA_RETIRED', error: '本节点已移出副本组，禁止继续写入' }, 409);
+        }
+        if (revocationRequest) {
+          if (Buffer.from(requestBytes).toString('utf8') !== '{}') {
+            return send(res, 400, { code: 'INVALID_REVOCATION', error: 'invalid revocation request' });
+          }
+          await store.revokeNodeReplicationGrant(grant.username, grant.grantId);
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            grantId: grant.grantId, revoked: true });
+        }
+        if (memberStatusRequest) {
+          const member = (await store.listReplicaGroupMembers(replica.replicaId))
+            .find((item) => item.nodeId === proof.nodeId && item.publicKey === grant.peerPublicKey);
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            ledgerId: grant.ledgerId, grantId: grant.grantId,
+            retiredNodeId: proof.nodeId, retiredAt: member?.retiredAt ?? null });
+        }
+        if (apiPath === '/api/v4/identity/exchange') {
+          let body: unknown;
+          try { body = JSON.parse(Buffer.from(requestBytes).toString('utf8')); } catch { /* Refuse below. */ }
+          if (!isRecord(body) || typeof body.code !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.code)
+            || typeof body.state !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.state)) {
+            return send(res, 400, { error: 'invalid identity exchange' });
+          }
+          const redeemed = await store.consumeFederatedLoginCode(grant.grantId, body.code, body.state);
+          if (!redeemed) return send(res, 403, { error: 'identity code expired or already used' });
+          if (await store.federatedAccount(redeemed.username)) {
+            return send(res, 403, { code: 'ISSUER_REQUIRED', error: '本节点不能替其他身份节点签发统一登录凭据' });
+          }
+          return signedJson({ issuerNodeId: serverId, subjectAccountId: redeemed.subjectAccountId,
+            ledgerId: grant.ledgerId, username: redeemed.username });
+        }
+        if (apiPath === '/api/v4/replication/account-identity') {
+          const account = await store.getUser(grant.username);
+          if (!account || account.disabled) return send(res, 403, { error: 'issuer account disabled' });
+          if (await store.federatedAccount(account.username)) {
+            return send(res, 403, { code: 'ISSUER_REQUIRED', error: '请向账号原始身份节点申请副本授权' });
+          }
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            ledgerId: grant.ledgerId, issuerNodeId: serverId, subjectAccountId: account.accountId,
+            username: account.username });
+        }
+        if (apiPath === '/api/v4/replication/account-key') {
+          const account = await store.getUser(grant.username);
+          if (!account || account.disabled) return send(res, 403, { error: 'issuer account disabled' });
+          const subjectAccountId = url.searchParams.get('subjectAccountId') ?? account.accountId;
+          if (!/^[A-Za-z0-9_-]{8,160}$/.test(subjectAccountId)) {
+            return send(res, 400, { error: 'invalid account identity' });
+          }
+          if (subjectAccountId !== account.accountId) {
+            const control = await store.ledgerControlState(grant.username, replica.replicaId);
+            const member = control?.members[`${serverId}/${subjectAccountId}`];
+            if (!member || member.removed) return send(res, 403, { error: 'account is not a ledger member' });
+          }
+          const record = await store.accountEncryptionKey(serverId, subjectAccountId) ?? null;
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            ledgerId: grant.ledgerId,
+            record });
+        }
+        if (apiPath === '/api/v4/replication/inventory') {
+          return signedJson(await store.replicaInventory(grant.username, grant.ledgerId, replica.replicaId));
+        }
+        if (apiPath === '/api/v4/replication/health-report' && req.method === 'POST') {
+          if (requestBytes.byteLength > 16 * 1024) {
+            return send(res, 413, { code: 'HEALTH_REPORT_TOO_LARGE', error: '节点健康报告过大' });
+          }
+          let body: unknown;
+          try { body = JSON.parse(Buffer.from(requestBytes).toString('utf8')); } catch { /* Refuse below. */ }
+          const report = parseNodeReplicaHealthReport(body, proof.nodeId, grant.ledgerId,
+            replica.replicaId, replica.streamEpoch);
+          if (!report) return send(res, 400, { code: 'INVALID_HEALTH_REPORT', error: '节点健康报告无效' });
+          const acceptedAt = await store.recordNodeReplicaHealthReport(grant.grantId, proof.nodeId, report);
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            ledgerId: grant.ledgerId, acceptedAt });
+        }
+        if (apiPath === '/api/v4/replication/group-state' && req.method === 'GET') {
+          const [inventory, physical, peers, links] = await Promise.all([
+            store.replicaInventory(grant.username, grant.ledgerId, replica.replicaId),
+            store.replicaPhysicalStatus(grant.username, grant.ledgerId),
+            store.listReplicaGroupMembers(replica.replicaId),
+            store.listNodeReplicationLinks(grant.username),
+          ]);
+          const localReadiness = assessReplicaReadiness({ inventory, physical,
+            links: links.filter((link) => link.ledgerId === grant.ledgerId && link.enabled),
+            verifiedLinkIds: new Set(), snapshotStable: true });
+          const health = assessReplicaGroupHealth({ local: inventory, localReadiness,
+            members: await store.listNodeGroupMemberReports(grant.username, grant.ledgerId) });
+          const directory = buildReplicaGroupDirectory({ nodeId: serverId,
+            publicKey: nodeIdentity.publicKey, joinedAt: replica.createdAt }, peers);
+          return signedJson({ serverId, replicaId: replica.replicaId,
+            streamEpoch: replica.streamEpoch, ledgerId: grant.ledgerId, directory, health });
+        }
+        if (apiPath === '/api/v4/replication/attachment-promise' && req.method === 'GET') {
+          const page = await store.attachmentPromisePage(grant.username,
+            url.searchParams.get('after') ?? '', Number(url.searchParams.get('limit') ?? 2000), replica.replicaId);
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            ledgerId: grant.ledgerId, ...page, current: await store.attachmentPromiseIsCurrent(grant.username, replica.replicaId) });
+        }
+        if (apiPath === '/api/v4/replication/attachment-promise/uploads' && req.method === 'POST') {
+          let body: unknown;
+          try { body = JSON.parse(Buffer.from(requestBytes).toString('utf8')); } catch { /* Refuse below. */ }
+          if (!isRecord(body) || !isRecord(body.catalog)) {
+            return send(res, 400, { code: 'INVALID_ATTACHMENT_PROMISE', error: 'invalid attachment promise' });
+          }
+          const upload = await store.beginReplicatedAttachmentPromise(grant.username, proof.nodeId,
+            body.catalog as unknown as { commitCount: number; commitHash: string; blobCount: number; blobHash: string },
+            replica.replicaId);
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            ledgerId: grant.ledgerId, upload: upload ?? null });
+        }
+        if (nodePromisePage && req.method === 'POST') {
+          let body: unknown;
+          try { body = JSON.parse(Buffer.from(requestBytes).toString('utf8')); } catch { /* Refuse below. */ }
+          if (!isRecord(body) || !Array.isArray(body.blobIds)) {
+            return send(res, 400, { code: 'INVALID_ATTACHMENT_PROMISE_PAGE', error: 'invalid attachment promise page' });
+          }
+          const upload = await store.appendAttachmentPromisePage(grant.username,
+            nodePromisePage[1]!, body.blobIds as string[], replica.replicaId, proof.nodeId);
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            ledgerId: grant.ledgerId, upload });
+        }
+        if (nodePromiseComplete && req.method === 'POST') {
+          const catalog = await store.completeAttachmentPromise(grant.username,
+            nodePromiseComplete[1]!, replica.replicaId, proof.nodeId);
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            ledgerId: grant.ledgerId, catalog });
+        }
+        if (apiPath === '/api/v4/replication/control') {
+          if (req.method === 'GET') {
+            const after = Number(url.searchParams.get('after') ?? 0);
+            const limit = Number(url.searchParams.get('limit') ?? 50);
+            const page = await store.ledgerControlPage(grant.username, after, limit, replica.replicaId);
+            return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+              ledgerId: grant.ledgerId, ...page });
+          }
+          let body: unknown;
+          try { body = JSON.parse(Buffer.from(requestBytes).toString('utf8')); } catch { /* Refuse below. */ }
+          if (!isRecord(body) || !Array.isArray(body.events) || body.events.length > 50
+            || body.root !== null && !isRecord(body.root)) {
+            return send(res, 400, { code: 'INVALID_CONTROL_PAGE', error: 'invalid ledger control page' });
+          }
+          const state = await store.importLedgerControlPage(grant.username, proof.nodeId,
+            body.root as LedgerControlRoot | null, body.events as LedgerControlEvent[], replica.replicaId);
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            ledgerId: grant.ledgerId, headSeq: state?.seq ?? 0, headHash: state?.headHash ?? null });
+        }
+        if (apiPath === '/api/v4/replication/member-envelopes') {
+          if (req.method === 'GET') {
+            const after = url.searchParams.get('after') ?? '';
+            const limit = Number(url.searchParams.get('limit') ?? 10);
+            const page = await store.ledgerMemberEnvelopePage(grant.username, after, limit, replica.replicaId);
+            return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+              ledgerId: grant.ledgerId, ...page });
+          }
+          let body: unknown;
+          try { body = JSON.parse(Buffer.from(requestBytes).toString('utf8')); } catch { /* Refuse below. */ }
+          if (!isRecord(body) || !Array.isArray(body.envelopes) || body.envelopes.length > 10) {
+            return send(res, 400, { code: 'INVALID_MEMBER_ENVELOPES', error: 'invalid member envelope page' });
+          }
+          await store.importLedgerMemberEnvelopes(grant.username, body.envelopes as LedgerMemberKeyEnvelope[], replica.replicaId);
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            ledgerId: grant.ledgerId, accepted: body.envelopes.length });
+        }
+        if (apiPath === '/api/v4/replication/key-envelope') {
+          if (req.method === 'GET') {
+            return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+              ledgerId: grant.ledgerId, envelope: await store.getKeyEnvelope(grant.username, grant.ledgerId, 'node', replica.replicaId) ?? null });
+          }
+          const body = JSON.parse(Buffer.from(requestBytes).toString('utf8')) as JsonRecord;
+          if (!isRecord(body) || !isLedgerKeyEnvelope(body.envelope) || body.envelope.ledgerId !== grant.ledgerId) {
+            return send(res, 400, { error: 'invalid ledger key envelope' });
+          }
+          await store.putKeyEnvelope(grant.username, grant.ledgerId, String(body.envelope.keyringId), Number(body.envelope.generation), body.envelope, 'node', replica.replicaId);
+          return signedJson({ ok: true, serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch });
+        }
+        if (req.method === 'GET' && apiPath === '/api/v4/replication/blobs') {
+          const after = url.searchParams.get('after') ?? '';
+          const requested = Number(url.searchParams.get('limit') ?? 20);
+          if (after && !/^[a-f0-9]{64}$/.test(after) || !Number.isSafeInteger(requested) || requested < 1 || requested > 100) {
+            return send(res, 400, { code: 'INVALID_CURSOR', error: 'invalid attachment cursor' });
+          }
+          return signedJson({ ledgerId: grant.ledgerId, serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            packV1: true, ...await blobStore.listPortableManifests(grant.username, grant.ledgerId, after, requested) });
+        }
+        if (apiPath === '/api/v4/replication/blobs/states') {
+          if (req.method === 'GET') {
+            const after = url.searchParams.get('after') ?? '';
+            const requested = Number(url.searchParams.get('limit') ?? 20);
+            if (after && !/^[a-f0-9]{64}$/.test(after) || !Number.isSafeInteger(requested) || requested < 1 || requested > 100) {
+              return send(res, 400, { code: 'INVALID_CURSOR', error: 'invalid attachment state cursor' });
+            }
+            return signedJson({ ledgerId: grant.ledgerId, serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+              ...await blobStore.listReplicaStates(grant.username, grant.ledgerId, after, requested) });
+          }
+          let body: unknown;
+          try { body = JSON.parse(Buffer.from(requestBytes).toString('utf8')); } catch { /* Refuse below. */ }
+          if (!isRecord(body) || !Array.isArray(body.states) || body.states.length > 100) {
+            return send(res, 400, { error: 'invalid attachment states' });
+          }
+          let changed = false;
+          try {
+            for (const value of body.states) {
+              if (await blobStore.applyReplicaState(grant.username, grant.ledgerId, value as BlobReplicaState)) changed = true;
+            }
+          } finally {
+            if (changed) await store.invalidateReplicaPhysicalStatus(grant.username, grant.ledgerId);
+          }
+          return signedJson({ ledgerId: grant.ledgerId, serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            accepted: body.states.length });
+        }
+        if (req.method === 'GET' && nodeBlobChunk) {
+          const manifest = await blobStore.manifest(grant.username, grant.ledgerId, nodeBlobChunk[1]!);
+          if (manifest?.v !== 2) return send(res, 404, { error: 'portable blob not found' });
+          const chunk = await blobStore.chunk(grant.username, grant.ledgerId, nodeBlobChunk[1]!, Number(nodeBlobChunk[2]));
+          if (!chunk) return send(res, 404, { error: 'blob chunk not found' });
+          res.setHeader('X-Zichan-Node-Response', signNodeResponse(nodeIdentity, proof.nonce, chunk));
+          return sendBinary(res, 200, chunk);
+        }
+        if (apiPath === '/api/v4/replication/blobs/status' && req.method === 'POST') {
+          const body = JSON.parse(Buffer.from(requestBytes).toString('utf8')) as JsonRecord;
+          if (!isRecord(body) || !Array.isArray(body.blobIds) || body.blobIds.length > 100
+            || body.blobIds.some((id) => typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id))) {
+            return send(res, 400, { error: 'invalid blob ids' });
+          }
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            packV1: true, objects: await blobStore.status(grant.username, grant.ledgerId, body.blobIds as string[]) });
+        }
+        if (apiPath === '/api/v4/replication/blobs/pack' && req.method === 'POST') {
+          let entries;
+          try { entries = decodeBlobPack(requestBytes); }
+          catch { return send(res, 400, { code: 'INVALID_BLOB_PACK', error: 'invalid encrypted attachment pack' }); }
+          let changed = false;
+          try {
+            for (const entry of entries) {
+              const plan = await blobStore.beginUpload(grant.username, grant.ledgerId, entry.manifest);
+              if (plan.status === 'available') continue;
+              if (!plan.uploadId) throw new Error('encrypted attachment pack upload session missing');
+              if (plan.missingChunks.includes(0)) {
+                await blobStore.putChunk(grant.username, plan.uploadId, 0, entry.chunk);
+              }
+              await blobStore.completeUpload(grant.username, plan.uploadId, 2);
+              changed = true;
+            }
+          } finally {
+            if (changed) await store.invalidateReplicaPhysicalStatus(grant.username, grant.ledgerId);
+          }
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            ledgerId: grant.ledgerId, accepted: entries.map((entry) => entry.manifest.blobId) });
+        }
+        if (apiPath === '/api/v4/replication/blobs/pack/read' && req.method === 'GET') {
+          const ids = url.searchParams.get('ids');
+          const blobIds = ids?.split(',') ?? [];
+          if (url.searchParams.size !== 1 || !ids || !blobIds.length
+            || blobIds.length > MAX_BLOB_PACK_OBJECTS
+            || blobIds.some((id) => !/^[a-f0-9]{64}$/.test(id))
+            || new Set(blobIds).size !== blobIds.length) {
+            return send(res, 400, { code: 'INVALID_BLOB_PACK_REQUEST', error: 'invalid encrypted attachment pack request' });
+          }
+          const states = await blobStore.status(grant.username, grant.ledgerId, blobIds);
+          const entries = [];
+          for (const blobId of blobIds) {
+            if (states[blobId] !== 'available') return send(res, 409, { error: 'encrypted attachment is not available' });
+            const manifest = await blobStore.manifest(grant.username, grant.ledgerId, blobId);
+            if (manifest?.v !== 2 || manifest.chunkCount !== 1
+              || manifest.cipherBytes > MAX_BLOB_PACK_CHUNK_BYTES) {
+              return send(res, 409, { error: 'encrypted attachment cannot be packed' });
+            }
+            const chunk = await blobStore.chunk(grant.username, grant.ledgerId, blobId, 0);
+            if (!chunk) return send(res, 409, { error: 'encrypted attachment chunk is not available' });
+            entries.push({ manifest, chunk });
+          }
+          const pack = encodeBlobPack(entries);
+          res.setHeader('X-Zichan-Node-Response', signNodeResponse(nodeIdentity, proof.nonce, pack));
+          return sendBinary(res, 200, pack);
+        }
+        if (apiPath === '/api/v4/replication/blobs/uploads' && req.method === 'POST') {
+          const body = JSON.parse(Buffer.from(requestBytes).toString('utf8')) as JsonRecord;
+          if (!isRecord(body) || !isRecord(body.manifest) || body.manifest.v !== 2) return send(res, 400, { error: 'portable blob manifest required' });
+          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            plan: await blobStore.beginUpload(grant.username, grant.ledgerId, body.manifest) });
+        }
+        if (req.method === 'PUT' && nodeUploadChunk) {
+          await blobStore.putChunk(grant.username, nodeUploadChunk[1]!, Number(nodeUploadChunk[2]), requestBytes);
+          return signedJson({ ok: true, serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch });
+        }
+        if (req.method === 'POST' && nodeUploadComplete) {
+          const manifest = await blobStore.completeUpload(grant.username, nodeUploadComplete[1]!, 2);
+          await store.invalidateReplicaPhysicalStatus(grant.username, grant.ledgerId);
+          return signedJson({ ok: true, blobId: manifest.blobId, serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch });
+        }
+        if (req.method === 'GET') {
+          const after = Number(url.searchParams.get('after') ?? 0);
+          const requested = Number(url.searchParams.get('limit') ?? 200);
+          if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(requested) || requested < 1 || requested > 200) {
+            return send(res, 400, { code: 'INVALID_CURSOR', error: 'invalid replication cursor' });
+          }
+          const page = await store.listCommits(grant.username, after, requested, 'node', replica.replicaId);
+          const selected: ReturnType<typeof publicCommitRow>[] = [];
+          let responseBytes = 0;
+          for (const commit of page.commits) {
+            const row = publicCommitRow(commit);
+            const bytes = Buffer.byteLength(JSON.stringify(row));
+            if (selected.length && responseBytes + bytes > 15 * 1024 * 1024) break;
+            selected.push(row);
+            responseBytes += bytes;
+          }
+          const result = { ledgerId: grant.ledgerId, serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
+            requiredCapabilities: await store.listLedgerRequirements(grant.username, grant.ledgerId, replica.replicaId),
+            commits: selected, headSeq: page.headSeq, nextSeq: selected.at(-1)?.seq ?? after,
+            hasMore: (selected.at(-1)?.seq ?? after) < page.headSeq };
+          return signedJson(result);
+        }
+        let body: JsonRecord;
+        try {
+          const parsed: unknown = JSON.parse(Buffer.from(requestBytes).toString('utf8'));
+          if (!isRecord(parsed)) throw new Error('invalid payload');
+          body = parsed;
+        } catch { return send(res, 400, { code: 'INVALID_COMMIT', error: 'invalid replication batch' }); }
+        const commits = initialEncryptedCommits(body.commits, grant.ledgerId, true);
+        const requiredCapabilities = body.requiredCapabilities;
+        if (!Array.isArray(requiredCapabilities) || requiredCapabilities.length > 32
+          || requiredCapabilities.some((value) => typeof value !== 'string' || value.length > 80)) {
+          return send(res, 400, { code: 'INVALID_CAPABILITY', error: 'invalid required capabilities' });
+        }
+        let pushed: Awaited<ReturnType<typeof store.pushCommits>>;
+        try {
+          pushed = await store.pushCommits(grant.username, commits, ['asset-cost-v2'], requiredCapabilities as string[], 'node', replica.replicaId);
+        } catch (error) {
+          if (error instanceof ServerStoreError && error.commitId
+            && ['STALE_COMMIT_EPOCH', 'STALE_COMMIT_WRITER', 'COMMIT_KEY_EPOCH_MISMATCH'].includes(error.code)) {
+            const rejected = commits.find((item) => item.commitId === error.commitId);
+            if (rejected) await store.recordRejectedNodeCommit(grant.username, proof.nodeId, rejected, error.code, replica.replicaId);
+          }
+          throw error;
+        }
+        const result = { serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch, assigned: pushed.assigned, headSeq: pushed.replica.headSeq };
+        return signedJson(result);
+      }
+
+      if (req.method === 'GET' && apiPath === '/api/auth/federation/providers') {
+        const links = await store.listNodeReplicationLinks();
+        const peers = links.map((link) => ({ issuerNodeId: link.peerNodeId,
+          issuerUrl: link.peerUrl, linkId: link.linkId, ledgerId: link.ledgerId }));
+        return send(res, 200, { providers: peers });
+      }
+      if (req.method === 'GET' && apiPath === '/api/auth/federation/start') {
+        const issuerNodeId = url.searchParams.get('issuer');
+        const selectedLinkId = url.searchParams.get('link');
+        const browserOrigin = origin.browserOrigin(req);
+        if (!browserOrigin || !issuerNodeId) return send(res, 400, { error: '统一登录来源无效' });
+        const links = (await store.listNodeReplicationLinks()).filter((link) => link.peerNodeId === issuerNodeId
+          && (!selectedLinkId || link.linkId === selectedLinkId));
+        if (links.length !== 1) return send(res, 409, { error: '统一登录节点不存在或账号不唯一' });
+        const link = links[0]!;
+        const callbackUrl = `${browserOrigin}${basePath}/api/auth/federation/callback`;
+        const intent = createFederatedLoginIntent(nodeIdentity, issuerNodeId, link.grantId, callbackUrl);
+        await store.createFederatedLoginState(intent.state, link.linkId);
+        const secure = browserOrigin.startsWith('https://') ? '; Secure' : '';
+        res.setHeader('Set-Cookie', `zichan_federation_state=${intent.state}; Path=${basePath || ''}/api/auth/federation; HttpOnly; SameSite=Lax; Max-Age=300${secure}`);
+        const destination = new URL(`${link.peerUrl}/api/auth/federation/authorize`);
+        destination.searchParams.set('request', encodeFederatedLoginIntent(intent));
+        res.writeHead(302, { Location: destination.toString(), 'Cache-Control': 'no-store' });
+        res.end();
+        return;
+      }
+      if (req.method === 'GET' && apiPath === '/api/auth/federation/authorize') {
+        const encoded = url.searchParams.get('request') ?? '';
+        const intent = decodeFederatedLoginIntent(encoded);
+        const grant = intent ? await store.getNodeReplicationGrant(intent.grantId) : undefined;
+        if (!intent || !grant || grant.peerNodeId !== intent.targetNodeId || grant.revokedAt
+          || grant.expiresAt <= nowIso() || !verifyFederatedLoginIntent(intent, grant.peerPublicKey, serverId, grant.grantId)) {
+          return send(res, 403, { error: '统一登录目标未获授权或请求已过期' });
+        }
+        const refreshToken = browserSession.read(req);
+        const sessionId = refreshToken?.split('.')[0];
+        const session = sessionId ? await store.getSession(sessionId) : undefined;
+        const account = session ? await store.getUser(session.username) : undefined;
+        if (!refreshToken || !session || !account || account.disabled || session.revokedAt || session.expiresAt <= nowIso()
+          || !safeEqual(session.refreshHash, opaqueHash(secret, refreshToken))) {
+          const login = `${basePath}/app/?federation=${encodeURIComponent(encoded)}`;
+          res.writeHead(302, { Location: login, 'Cache-Control': 'no-store' });
+          res.end();
+          return;
+        }
+        const code = await store.issueFederatedLoginCode(grant.grantId, account.username, account.accountId, intent.state);
+        const callback = new URL(intent.callbackUrl);
+        callback.searchParams.set('state', intent.state);
+        callback.searchParams.set('code', code);
+        res.writeHead(302, { Location: callback.toString(), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+        res.end();
+        return;
+      }
+      if (req.method === 'GET' && apiPath === '/api/auth/federation/callback') {
+        const state = url.searchParams.get('state') ?? '';
+        const code = url.searchParams.get('code') ?? '';
+        const stateCookie = (req.headers.cookie ?? '').split(';').map((part) => part.trim())
+          .find((part) => part.startsWith('zichan_federation_state='))?.slice('zichan_federation_state='.length);
+        if (!/^[A-Za-z0-9_-]{43}$/.test(state) || !/^[A-Za-z0-9_-]{43}$/.test(code) || stateCookie !== state) {
+          return send(res, 403, { error: '统一登录状态无效' });
+        }
+        const linkId = await store.consumeFederatedLoginState(state);
+        const link = linkId ? (await store.listNodeReplicationLinks()).find((item) => item.linkId === linkId) : undefined;
+        if (!link) return send(res, 403, { error: '统一登录状态已过期或链路已停用' });
+        const assertion = await signedCall(nodeIdentity, link, 'POST', '/api/v4/identity/exchange', JSON.stringify({ code, state }));
+        const binding = await store.federatedAccount(link.username);
+        if (assertion.issuerNodeId !== link.peerNodeId
+          || typeof assertion.subjectAccountId !== 'string'
+          || assertion.ledgerId !== link.ledgerId) {
+          return send(res, 403, { error: '统一账号映射不匹配' });
+        }
+        const memberUsername = binding?.issuerNodeId === link.peerNodeId
+          && binding.subjectAccountId === assertion.subjectAccountId
+          && binding.ledgerId === link.ledgerId
+          ? link.username
+          : await store.provisionFederatedMember(link, link.peerNodeId, assertion.subjectAccountId);
+        const user = await store.getUser(memberUsername);
+        if (!user || user.disabled) return send(res, 403, { error: '本地账号不可用' });
+        const linkedReplica = await store.getReplicaForLedger(link.username, link.ledgerId);
+        if (!linkedReplica || linkedReplica.ledgerId !== link.ledgerId) {
+          return send(res, 409, { error: '统一登录账本副本已改变' });
+        }
+        const newSessionId = `session-${randomBytes(16).toString('hex')}`;
+        const localRefreshToken = createRefreshToken(newSessionId);
+        await store.createSession({ expectedRegistrationRecord: user.opaqueRegistrationRecord,
+          id: newSessionId, username: user.username, deviceId: `federated-${randomBytes(12).toString('hex')}`,
+          deviceName: 'Federated Browser', refreshHash: opaqueHash(secret, localRefreshToken),
+          expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(), ip,
+          replicaId: linkedReplica.replicaId });
+        await store.noteLogin(user.username);
+        browserSession.write(req, res, localRefreshToken);
+        const sessionCookie = res.getHeader('Set-Cookie');
+        res.setHeader('Set-Cookie', [String(sessionCookie),
+          `zichan_federation_state=; Path=${basePath || ''}/api/auth/federation; HttpOnly; SameSite=Lax; Max-Age=0`]);
+        await log('info', 'federated_login_success', 'Federated identity created a node-local session', {
+          ip, username: user.username, detail: { issuerNodeId: link.peerNodeId, sessionId: newSessionId },
+        });
+        res.writeHead(303, { Location: `${basePath}/app/`, 'Cache-Control': 'no-store' });
+        res.end();
+        return;
       }
 
       if (req.method === 'POST' && (apiPath === '/api/auth/register/start' || apiPath === '/api/auth/password-reset/start')) {
@@ -880,11 +1488,15 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           return send(res, 400, { error: 'invalid login fields' });
         }
         const user = await store.getUser(username);
+        // A provisioned replica account has no password at this node. Use OPAQUE's
+        // unknown-user response so the password endpoint cannot open its sessions.
+        const loginRecord = user?.opaqueRegistrationRecord === FEDERATED_ONLY_RECORD
+          ? undefined : user?.opaqueRegistrationRecord;
         let login: ReturnType<typeof opaque.server.startLogin>;
         try {
           login = opaque.server.startLogin({
             serverSetup: opaqueServerSetup,
-            registrationRecord: user?.opaqueRegistrationRecord,
+            registrationRecord: loginRecord,
             startLoginRequest,
             userIdentifier: username,
             identifiers: { client: username, server: serverId },
@@ -894,7 +1506,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         }
         const loginState = await store.createOpaqueLoginState(
           username,
-          JSON.stringify({ state: login.serverLoginState, credentialHash: createHash('sha256').update(user?.opaqueRegistrationRecord ?? '').digest('hex') }),
+          JSON.stringify({ state: login.serverLoginState, credentialHash: createHash('sha256').update(loginRecord ?? '').digest('hex') }),
           ip,
           new Date(Date.now() + OPAQUE_LOGIN_TTL_MS).toISOString(),
         );
@@ -1024,15 +1636,16 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         const nextRefreshToken = createRefreshToken(session.id);
         const rotated = await store.rotateSessionRefresh(session.id, session.refreshHash, opaqueHash(secret, nextRefreshToken), ip);
         if (!rotated) return send(res, 401, { error: 'refresh token already used' });
-        const replica = await store.getReplica(user.username);
+        const replica = await store.getReplica(user.username, rotated.replicaId);
         if (cookieSession) browserSession.write(req, res, nextRefreshToken);
         return send(res, 200, {
-          ...issueAccessToken(user.username, session.id),
+          ...issueAccessToken(rotated),
           accountId: user.accountId,
           ...(cookieSession ? { sessionTransport: 'cookie' } : { refreshToken: nextRefreshToken }),
           session: publicSession(rotated),
           role: await store.roleForUser(user.username),
-          ...(replica ? { ledgerId: replica.ledgerId } : {}),
+          ...(replica ? { ledgerId: replica.ledgerId, replicaId: replica.replicaId,
+            streamEpoch: replica.streamEpoch } : {}),
         });
       }
 
@@ -1056,19 +1669,42 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       if (Date.now() - Date.parse(session.lastSeenAt) > 5 * 60 * 1000) await store.touchSession(session.id, ip);
 
       if (req.method === 'GET' && apiPath === '/api/auth/me') {
-        const replica = await store.getReplica(user.username);
+        const replica = await store.getReplica(user.username, session.replicaId);
+        const federatedIdentity = await store.federatedAccount(user.username);
+        const ledgers = await store.listAccountLedgers(user.username);
         return send(res, 200, {
           username: user.username,
           displayName: user.displayName,
           role: auth.role,
           accountId: user.accountId,
+          federatedIdentity: federatedIdentity ?? null,
           disabled: false,
           session: publicSession(session),
+          ledgers,
           ...(replica ? {
             ledgerId: replica.ledgerId,
             replicaId: replica.replicaId,
             streamEpoch: replica.streamEpoch,
           } : {}),
+        });
+      }
+      if (req.method === 'POST' && apiPath === '/api/auth/ledger/select') {
+        const body = await readBody(req, 1024);
+        if (typeof body.replicaId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(body.replicaId)) {
+          return send(res, 400, { code: 'INVALID_REPLICA_ID', error: '账本副本 ID 无效' });
+        }
+        const selected = await store.selectSessionReplica(user.username, session.id, body.replicaId);
+        const replica = await store.getReplica(user.username, selected.replicaId);
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 403, '当前账号没有此账本');
+        res.setHeader('Cache-Control', 'no-store');
+        return send(res, 200, {
+          ...issueAccessToken(selected),
+          accountId: user.accountId,
+          session: publicSession(selected),
+          ledgerId: replica.ledgerId,
+          replicaId: replica.replicaId,
+          streamEpoch: replica.streamEpoch,
+          ledgers: await store.listAccountLedgers(user.username),
         });
       }
       if (req.method === 'PUT' && apiPath === '/api/auth/profile') {
@@ -1081,9 +1717,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         return send(res, 200, { username: user.username, displayName });
       }
       if (req.method === 'GET' && apiPath === '/api/auth/usage') {
+        const currentReplica = await store.getReplica(user.username, session.replicaId);
+        const blobUsername = currentReplica
+          ? await store.replicaStorageOwner(user.username, currentReplica.replicaId) ?? user.username
+          : user.username;
         const [commits, attachments] = await Promise.all([
-          store.commitUsage(user.username),
-          blobStore.usage(user.username),
+          store.commitUsage(user.username, session.replicaId),
+          blobStore.usage(blobUsername, currentReplica?.ledgerId),
         ]);
         res.setHeader('Cache-Control', 'no-store');
         return send(res, 200, { commits, attachments });
@@ -1170,17 +1810,448 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         await log('info', 'logout', 'Sync session logged out', { ip, username: user.username, detail: { sessionId: session.id } });
         return send(res, 200, { ok: true });
       }
-      const replica = await store.getReplica(user.username);
+      if (apiPath === '/api/v4/account/encryption-key' && (req.method === 'GET' || req.method === 'PUT')) {
+        const binding = await store.federatedAccount(user.username);
+        const issuerNodeId = binding?.issuerNodeId ?? serverId;
+        const subjectAccountId = binding?.subjectAccountId ?? user.accountId;
+        if (req.method === 'GET') return send(res, 200, {
+          record: await store.accountEncryptionKey(issuerNodeId, subjectAccountId) ?? null,
+        });
+        if (binding) return send(res, 409, { code: 'IDENTITY_ISSUER_REQUIRED', error: '请在账号身份节点更新加密公钥' });
+        const body = await readBody(req, 64 * 1024);
+        const envelope = body.envelope as AccountEncryptionKeyEnvelope;
+        try { assertAccountEncryptionKeyEnvelope(envelope); }
+        catch { return send(res, 400, { error: '账号加密密钥包无效' }); }
+        if (envelope.issuerNodeId !== serverId || envelope.accountId !== user.accountId
+          || !Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0) {
+          return send(res, 400, { error: '账号加密密钥包身份或版本不匹配' });
+        }
+        const record = await store.putAccountEncryptionKey(serverId, user.accountId, envelope.publicKey,
+          envelope as unknown as JsonRecord, Number(body.expectedRevision));
+        return send(res, 200, { record });
+      }
+      const replica = await store.getReplica(user.username, session.replicaId);
+      const blobUsername = replica
+        ? await store.replicaStorageOwner(user.username, replica.replicaId) ?? user.username
+        : user.username;
+      if (!replica && session.replicaId && (apiPath === '/api/v3/commits'
+        || apiPath.startsWith('/api/v3/blobs/') || apiPath.startsWith('/api/v4/ledger/'))) {
+        throw new ServerStoreError('LEDGER_ACCESS_DENIED', 403, '当前账号已失去此账本的访问权限');
+      }
+      if (replica && req.method !== 'GET' && req.method !== 'HEAD'
+        && (isClientWrite(req.method ?? 'GET', apiPath) || apiPath.startsWith('/api/v4/ledger/'))
+        && await store.replicaRetirement(replica.replicaId)) {
+        return send(res, 409, { code: 'REPLICA_RETIRED',
+          error: '本节点已移出副本组，当前账本禁止继续写入；请改用仍在组内的节点', requestId });
+      }
+      let secondarySelected = false;
+      if (replica && session.replicaId) {
+        const primary = await store.getReplica(user.username);
+        secondarySelected = primary?.replicaId !== replica.replicaId;
+        const legacyScoped = apiPath.startsWith('/api/v3/protection') && req.method !== 'GET'
+          || apiPath === '/api/v3/key-envelope' && req.method !== 'GET'
+          || apiPath === '/api/v3/replica/bind'
+          || apiPath === '/api/v3/replica/replace'
+          || apiPath.startsWith('/api/v3/replica/recovery');
+        if (secondarySelected && legacyScoped) {
+          throw new ServerStoreError('REPLICA_SCOPE_PENDING', 409,
+            '此接口尚未完成多账本迁移，不能操作当前选择的第二账本');
+        }
+      }
 
+      if (apiPath === '/api/v4/ledger/control') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        res.setHeader('Cache-Control', 'no-store');
+        if (req.method === 'GET') {
+          await store.assertLedgerAccess(user.username, 'read', session.replicaId);
+          return send(res, 200, { state: await store.ledgerControlState(user.username, session.replicaId) ?? null });
+        }
+        if (req.method === 'POST') {
+          const body = await readBody(req, 64 * 1024);
+          if (!isRecord(body.event)) return send(res, 400, { code: 'INVALID_CONTROL_EVENT', error: '成员事件无效' });
+          const state = await store.initializeLedgerControl(user.username, body.event as unknown as LedgerControlEvent,
+            session.replicaId);
+          return send(res, 201, { state });
+        }
+      }
+      if (apiPath === '/api/v4/ledger/control/events' && req.method === 'POST') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        const body = await readBody(req, 2 * 1024 * 1024);
+        if (!isRecord(body.event)) return send(res, 400, { code: 'INVALID_CONTROL_EVENT', error: '成员事件无效' });
+        if (body.envelopes !== undefined && (!Array.isArray(body.envelopes) || body.envelopes.length > 100)) {
+          return send(res, 400, { code: 'INVALID_MEMBER_ENVELOPES', error: '成员密钥包列表无效' });
+        }
+        const state = await store.appendLedgerControlEvent(user.username, body.event as unknown as LedgerControlEvent,
+          body.envelopes as LedgerMemberKeyEnvelope[] | undefined, session.replicaId);
+        return send(res, 201, { state });
+      }
+      if (apiPath === '/api/v4/ledger/member-envelopes' && req.method === 'GET') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        await store.assertLedgerAccess(user.username, 'manage', session.replicaId);
+        res.setHeader('Cache-Control', 'no-store');
+        return send(res, 200, await store.ledgerMemberEnvelopePage(user.username,
+          url.searchParams.get('after') ?? '', Number(url.searchParams.get('limit') ?? 10), session.replicaId));
+      }
+      if (apiPath === '/api/v4/ledger/member-envelope') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        res.setHeader('Cache-Control', 'no-store');
+        if (req.method === 'GET') {
+          await store.assertLedgerAccess(user.username, 'read', session.replicaId);
+          return send(res, 200, { envelope: await store.currentLedgerMemberKeyEnvelope(user.username, session.replicaId) ?? null });
+        }
+        if (req.method === 'PUT') {
+          const body = await readBody(req, 2 * 1024 * 1024);
+          if (!isRecord(body.envelope)) return send(res, 400, { code: 'INVALID_MEMBER_ENVELOPE', error: '成员密钥包无效' });
+          await store.putLedgerMemberKeyEnvelope(user.username, body.envelope as unknown as LedgerMemberKeyEnvelope,
+            session.replicaId);
+          return send(res, 200, { ok: true });
+        }
+      }
+      if (apiPath === '/api/v4/ledger/rejected-commits' && req.method === 'GET') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        res.setHeader('Cache-Control', 'no-store');
+        return send(res, 200, { commits: await store.listRejectedNodeCommits(user.username, session.replicaId) });
+      }
+      const rejectedCiphertextPath = /^\/api\/v4\/ledger\/rejected-commits\/([A-Za-z0-9_-]{8,128})\/([A-Za-z0-9_-]{16,160})$/.exec(apiPath);
+      if (rejectedCiphertextPath && req.method === 'GET') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        res.setHeader('Cache-Control', 'no-store');
+        const commit = await store.rejectedNodeCommitCiphertext(user.username,
+          rejectedCiphertextPath[1]!, rejectedCiphertextPath[2]!, session.replicaId);
+        return commit ? send(res, 200, { commit }) : send(res, 404, { code: 'REJECTED_CIPHERTEXT_UNAVAILABLE', error: '隔离提交密文不可用，请保留并检查发送节点' });
+      }
+      if (apiPath === '/api/v4/ledger/group-members' && req.method === 'GET') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        await store.assertLedgerAccess(user.username, 'manage', session.replicaId);
+        res.setHeader('Cache-Control', 'no-store');
+        return send(res, 200, { members: await store.listReplicaGroupMembers(replica.replicaId) });
+      }
+      const retireGroupMember = /^\/api\/v4\/ledger\/group-members\/([A-Za-z0-9_-]{8,128})$/.exec(apiPath);
+      if (retireGroupMember && req.method === 'DELETE') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        await store.assertLedgerAccess(user.username, 'manage', session.replicaId);
+        const nodeId = retireGroupMember[1]!;
+        const activeMember = (await store.listReplicaGroupMembers(replica.replicaId))
+          .some((member) => member.nodeId === nodeId && !member.retiredAt);
+        if (!activeMember) return send(res, 404,
+          { code: 'GROUP_MEMBER_MISSING', error: '副本组成员不存在或已移出' });
+        const body = await readBody(req, 4096);
+        const before = await store.replicaInventory(blobUsername, replica.ledgerId);
+        const [physical, reports] = await Promise.all([
+          store.replicaPhysicalStatus(blobUsername, replica.ledgerId),
+          store.listNodeGroupMemberReports(blobUsername, replica.ledgerId),
+        ]);
+        const after = await store.replicaInventory(blobUsername, replica.ledgerId);
+        const member = reports.find((item) => item.peerNodeId === nodeId);
+        const memberHealth = member && assessReplicaGroupMember(after, member);
+        const survivors = reports.filter((item) => item.peerNodeId !== nodeId)
+          .map((item) => assessReplicaGroupMember(after, item));
+        const localHealth = assessReplicaReadiness({ inventory: after, physical, links: [],
+          verifiedLinkIds: new Set(), snapshotStable: JSON.stringify(before) === JSON.stringify(after) });
+        const unverified = memberHealth?.state !== 'READY' || localHealth.state !== 'READY'
+          || !survivors.length || survivors.some((item) => item.state !== 'READY');
+        if (unverified && (body.confirmUnverifiedRemoval !== true || body.nodeId !== nodeId)) {
+          return send(res, 409, { code: 'GROUP_MEMBER_NOT_VERIFIED',
+            error: '移出后的副本组尚未核实为完整且有冗余；可能有未同步写入。核查后明确确认才能移出。',
+            memberState: memberHealth?.state ?? 'MISSING', memberIssue: memberHealth?.issue,
+            localIssues: localHealth.issues,
+            survivingMembers: survivors });
+        }
+        const retired = await store.retireReplicaGroupMember(user.username, replica.replicaId, nodeId);
+        if (!retired) return send(res, 404, { code: 'GROUP_MEMBER_MISSING', error: '副本组成员不存在或已移出' });
+        await log('info', 'replica_group_member_retired', 'Ledger replica group member retired', {
+          ip, username: user.username, detail: { ledgerId: replica.ledgerId, nodeId,
+            unverified, memberState: memberHealth?.state ?? 'MISSING', localState: localHealth.state },
+        });
+        return send(res, 200, { ok: true, unverified });
+      }
+      if ((apiPath === '/api/v4/ledger/readiness' || apiPath === '/api/v4/ledger/group-health')
+        && req.method === 'GET') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        await store.assertLedgerAccess(user.username, 'read', session.replicaId);
+        res.setHeader('Cache-Control', 'no-store');
+        const before = await store.replicaInventory(blobUsername, replica.ledgerId);
+        const linksFor = () => store.listNodeReplicationLinks(blobUsername)
+          .then((rows) => rows.filter((link) => link.ledgerId === replica.ledgerId && link.enabled));
+        const links = await linksFor();
+        const verifiedLinkIds = new Set<string>();
+        const peerErrors = new Map<string, string>();
+        await Promise.all(links.map(async (link) => {
+          try {
+            if (await verifyNodeReplicaInventory(store, nodeIdentity, link, before)) verifiedLinkIds.add(link.linkId);
+          } catch (error) {
+            peerErrors.set(link.linkId, error instanceof Error ? error.message : String(error));
+          }
+        }));
+        const [after, physical, currentLinks] = await Promise.all([
+          store.replicaInventory(blobUsername, replica.ledgerId),
+          store.replicaPhysicalStatus(blobUsername, replica.ledgerId), linksFor(),
+        ]);
+        const topology = (rows: typeof links) => rows.map((link) =>
+          [link.linkId, link.grantId, link.peerNodeId, link.peerReplicaId,
+            link.localStreamEpoch, link.peerStreamEpoch]).sort((left, right) => String(left[0]).localeCompare(String(right[0])));
+        const localReadiness = assessReplicaReadiness({ inventory: after, physical, links: currentLinks,
+          verifiedLinkIds, peerErrors,
+          snapshotStable: JSON.stringify(before) === JSON.stringify(after)
+            && JSON.stringify(topology(links)) === JSON.stringify(topology(currentLinks)) });
+        if (await store.replicaRetirement(replica.replicaId)) {
+          localReadiness.state = 'VERIFYING';
+          localReadiness.issues.push('本节点已移出副本组，禁止继续写入');
+        }
+        if (apiPath === '/api/v4/ledger/readiness') return send(res, 200, localReadiness);
+        const members = await store.listNodeGroupMemberReports(blobUsername, replica.ledgerId);
+        if (members.length || currentLinks.length === 0) {
+          return send(res, 200, assessReplicaGroupHealth({ local: after, localReadiness, members }));
+        }
+        if (currentLinks.length === 1) {
+          const link = currentLinks[0]!;
+          const saved = await store.nodeGroupSnapshot(link.linkId);
+          const snapshot = saved && parseNodeReplicaGroupSnapshot(saved.snapshot, link.peerNodeId,
+            link.peerPublicKey, link.peerReplicaId, link.peerStreamEpoch, replica.ledgerId,
+            serverId, nodeIdentity.publicKey);
+          if (saved && snapshot) {
+            return send(res, 200, assessForwardedReplicaGroupHealth(snapshot,
+              saved.receivedAt, serverId, localReadiness));
+          }
+        }
+        return send(res, 200, { state: 'VERIFYING', checkedAt: nowIso(), ledgerId: replica.ledgerId,
+          coordinatorNodeId: currentLinks[0]?.peerNodeId ?? serverId,
+          memberCount: currentLinks.length + 1, readyCount: 0,
+          issues: [...localReadiness.issues, currentLinks.length > 1
+            ? '本节点存在多条出站链路，无法确认唯一的组目录来源'
+            : '尚未收到中继签名副本组目录'],
+          members: [{ nodeId: serverId, state: localReadiness.state },
+            ...currentLinks.map((link) => ({ nodeId: link.peerNodeId, state: 'MISSING' }))] });
+      }
+      if (apiPath === '/api/v4/ledger/attachment-promise' && req.method === 'GET') {
+        res.setHeader('Cache-Control', 'no-store');
+        return send(res, 200, await store.attachmentPromisePage(user.username,
+          url.searchParams.get('after') ?? '', Number(url.searchParams.get('limit') ?? 2000), session.replicaId));
+      }
+      if (apiPath === '/api/v4/ledger/attachment-promise/uploads' && req.method === 'POST') {
+        const body = await readBody(req, 4096);
+        return send(res, 201, await store.beginAttachmentPromise(user.username,
+          Number(body.expectedCount), session.replicaId));
+      }
+      const promiseUpload = /^\/api\/v4\/ledger\/attachment-promise\/uploads\/([a-f0-9]{32})$/.exec(apiPath);
+      if (promiseUpload && req.method === 'GET') {
+        res.setHeader('Cache-Control', 'no-store');
+        const upload = await store.attachmentPromiseUpload(user.username, promiseUpload[1]!, session.replicaId);
+        return upload ? send(res, 200, upload) : send(res, 404, { code: 'ATTACHMENT_PROMISE_UPLOAD_MISSING' });
+      }
+      const promisePage = /^\/api\/v4\/ledger\/attachment-promise\/uploads\/([a-f0-9]{32})\/pages$/.exec(apiPath);
+      if (promisePage && req.method === 'POST') {
+        const body = await readBody(req, 256 * 1024);
+        return send(res, 200, await store.appendAttachmentPromisePage(user.username,
+          promisePage[1]!, body.blobIds as string[], session.replicaId));
+      }
+      const promiseComplete = /^\/api\/v4\/ledger\/attachment-promise\/uploads\/([a-f0-9]{32})\/complete$/.exec(apiPath);
+      if (promiseComplete && req.method === 'POST') {
+        return send(res, 200, { catalog: await store.completeAttachmentPromise(user.username,
+          promiseComplete[1]!, session.replicaId) });
+      }
+
+      if (req.method === 'POST' && apiPath === '/api/v4/replication/join') {
+        const role = await store.roleForUser(user.username);
+        if (role !== 'owner' && role !== 'admin') return send(res, 403, { code: 'NODE_ADMIN_REQUIRED', error: '只有节点管理员可以加入账本副本' });
+        const body = await readBody(req, 4096);
+        if (typeof body.peerUrl !== 'string' || typeof body.peerNodeId !== 'string'
+          || typeof body.peerPublicKey !== 'string' || typeof body.grantId !== 'string'
+          || typeof body.ledgerId !== 'string' || body.peerNodeId === serverId
+          || !/^[A-Za-z0-9_-]{8,128}$/.test(body.peerNodeId)
+          || !/^[A-Za-z0-9_-]{16,160}$/.test(body.grantId)
+          || !/^[A-Za-z0-9_-]{16,128}$/.test(body.ledgerId)) {
+          return send(res, 400, { code: 'INVALID_JOIN', error: '副本加入参数无效' });
+        }
+        let peerUrl: string;
+        try { peerUrl = normalizeNodePeerUrl(body.peerUrl); }
+        catch (error) { return send(res, 400, { code: 'INVALID_PEER_URL', error: String(error) }); }
+        const input = { peerUrl, peerNodeId: body.peerNodeId, peerPublicKey: body.peerPublicKey,
+          grantId: body.grantId, ledgerId: body.ledgerId };
+        const peer = await probeNodePeer(nodeIdentity, input);
+        const [account, keyResponse] = await Promise.all([
+          signedCall(nodeIdentity, input, 'GET', '/api/v4/replication/account-identity'),
+          signedCall(nodeIdentity, input, 'GET', '/api/v4/replication/key-envelope'),
+        ]);
+        const peerMatches = (value: JsonRecord) => value.serverId === input.peerNodeId
+          && value.replicaId === peer.peerReplicaId && value.streamEpoch === peer.peerStreamEpoch
+          && value.ledgerId === input.ledgerId;
+        if (!peerMatches(account) || !peerMatches(keyResponse)
+          || account.issuerNodeId !== input.peerNodeId
+          || typeof account.subjectAccountId !== 'string'
+          || !/^[A-Za-z0-9_-]{8,160}$/.test(account.subjectAccountId)
+          || !isLedgerKeyEnvelope(keyResponse.envelope)
+          || keyResponse.envelope.ledgerId !== input.ledgerId) {
+          return send(res, 409, { code: 'PEER_BOOTSTRAP_MISMATCH', error: '源节点账本、账号或密钥包身份不匹配' });
+        }
+        const link = await store.provisionFederatedReplica({ ...input, ...peer,
+          issuerNodeId: input.peerNodeId, subjectAccountId: account.subjectAccountId,
+          envelope: keyResponse.envelope });
+        await log('info', 'node_replica_provisioned', 'Node administrator created a federated ledger replica', {
+          ip, username: user.username, detail: { linkId: link.linkId, ledgerId: link.ledgerId,
+            peerNodeId: link.peerNodeId, replicaUsername: link.username },
+        });
+        void nodeReplication.run().catch(() => undefined);
+        return send(res, 201, { link, replicaUsername: link.username });
+      }
+
+      if (req.method === 'GET' && apiPath === '/api/v4/replication/links') {
+        const role = await store.roleForUser(user.username);
+        const nodeAdmin = role === 'owner' || role === 'admin';
+        if (!nodeAdmin || secondarySelected) {
+          if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+          await store.assertLedgerAccess(user.username, 'manage', session.replicaId);
+        }
+        return send(res, 200, { links: await store.listNodeReplicationLinks(nodeAdmin && !secondarySelected
+          ? undefined : blobUsername, true) });
+      }
+      const renewNodeLink = /^\/api\/v4\/replication\/links\/([A-Za-z0-9_-]+)\/grant$/.exec(apiPath);
+      if (req.method === 'PUT' && renewNodeLink) {
+        const body = await readBody(req, 4096);
+        if (typeof body.grantId !== 'string' || !/^[A-Za-z0-9_-]{16,160}$/.test(body.grantId)) {
+          return send(res, 400, { error: '复制授权无效' });
+        }
+        const role = await store.roleForUser(user.username);
+        const nodeAdmin = role === 'owner' || role === 'admin';
+        if (!nodeAdmin || secondarySelected) {
+          if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+          await store.assertLedgerAccess(user.username, 'manage', session.replicaId);
+        }
+        const link = (await store.listNodeReplicationLinks(nodeAdmin && !secondarySelected
+          ? undefined : blobUsername, true))
+          .find((item) => item.linkId === renewNodeLink[1]);
+        const linkReplica = link ? await store.getReplicaForLedger(link.username, link.ledgerId) : undefined;
+        if (!link || !linkReplica || linkReplica.ledgerId !== link.ledgerId || linkReplica.streamEpoch !== link.localStreamEpoch) {
+          return send(res, 404, { error: '复制链路不存在或本地副本已改变' });
+        }
+        if (link.revocationPending) return send(res, 409, { code: 'REVOCATION_PENDING', error: '旧授权撤销尚未确认' });
+        if (body.grantId === link.grantId) return send(res, 409, { code: 'NEW_GRANT_REQUIRED', error: '续签须提供新授权' });
+        const peer = await probeNodePeer(nodeIdentity, { peerUrl: link.peerUrl, peerNodeId: link.peerNodeId,
+          peerPublicKey: link.peerPublicKey, grantId: body.grantId, ledgerId: link.ledgerId });
+        await confirmPeerGrantRevocation(nodeIdentity, link);
+        const updated = await store.renewNodeReplicationLink(link.username, link.linkId, body.grantId,
+          link.peerNodeId, link.peerPublicKey, peer.peerReplicaId, peer.peerStreamEpoch);
+        void nodeReplication.run().catch(() => undefined);
+        return send(res, 200, { link: updated });
+      }
+      if (req.method === 'POST' && apiPath === '/api/v4/replication/links') {
+        const body = await readBody(req, 4096);
+        if (!replica || typeof body.peerUrl !== 'string' || typeof body.peerNodeId !== 'string'
+          || typeof body.peerPublicKey !== 'string' || typeof body.grantId !== 'string'
+          || body.peerNodeId === serverId || !/^[A-Za-z0-9_-]{8,128}$/.test(body.peerNodeId)
+          || !/^[A-Za-z0-9_-]{16,160}$/.test(body.grantId)) {
+          return send(res, 400, { code: 'INVALID_LINK', error: '节点复制链路参数无效' });
+        }
+        await store.assertLedgerAccess(user.username, 'manage', session.replicaId);
+        let peerUrl: string;
+        try { peerUrl = normalizeNodePeerUrl(body.peerUrl); }
+        catch (error) { return send(res, 400, { code: 'INVALID_PEER_URL', error: String(error) }); }
+        const input = { peerUrl, peerNodeId: body.peerNodeId, peerPublicKey: body.peerPublicKey,
+          grantId: body.grantId, ledgerId: replica.ledgerId };
+        const peer = await probeNodePeer(nodeIdentity, input);
+        const link = await store.createNodeReplicationLink({ ...input, ...peer,
+          username: blobUsername, localStreamEpoch: replica.streamEpoch });
+        await log('info', 'node_replication_linked', 'Ledger replica linked to peer node', {
+          ip, username: user.username, detail: { linkId: link.linkId, ledgerId: link.ledgerId, peerNodeId: link.peerNodeId },
+        });
+        void nodeReplication.run().catch(() => undefined);
+        return send(res, 201, { link });
+      }
+      const rescanNodeLink = /^\/api\/v4\/replication\/links\/([A-Za-z0-9_-]+)\/rescan$/.exec(apiPath);
+      if (req.method === 'POST' && rescanNodeLink) {
+        const role = await store.roleForUser(user.username);
+        const nodeAdmin = role === 'owner' || role === 'admin';
+        if (!nodeAdmin || secondarySelected) {
+          if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+          await store.assertLedgerAccess(user.username, 'manage', session.replicaId);
+        }
+        const link = (await store.listNodeReplicationLinks(nodeAdmin && !secondarySelected
+          ? undefined : blobUsername, true))
+          .find((item) => item.linkId === rescanNodeLink[1]);
+        if (!link) return send(res, 404, { code: 'LINK_NOT_FOUND', error: '复制链路不存在' });
+        await nodeReplication.pause();
+        let updated: NodeReplicationLink;
+        try { updated = await store.rescanNodeReplicationLink(link.username, link.linkId); }
+        finally { nodeReplication.resume(); }
+        await log('info', 'node_replication_rescan_requested', 'Node replica full rescan requested', {
+          ip, username: user.username, detail: { linkId: link.linkId,
+            ledgerId: link.ledgerId, peerNodeId: link.peerNodeId },
+        });
+        void nodeReplication.run().catch(() => undefined);
+        return send(res, 202, { link: updated });
+      }
+      const disableNodeLink = /^\/api\/v4\/replication\/links\/([A-Za-z0-9_-]+)$/.exec(apiPath);
+      if (req.method === 'DELETE' && disableNodeLink) {
+        const role = await store.roleForUser(user.username);
+        const nodeAdmin = role === 'owner' || role === 'admin';
+        if (!nodeAdmin || secondarySelected) {
+          if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+          await store.assertLedgerAccess(user.username, 'manage', session.replicaId);
+        }
+        const link = (await store.listNodeReplicationLinks(nodeAdmin && !secondarySelected
+          ? undefined : blobUsername, true))
+          .find((item) => item.linkId === disableNodeLink[1]);
+        if (!link || !await store.disableNodeReplicationLink(link.username, link.linkId)) return send(res, 404, { error: '复制链路不存在' });
+        void nodeReplication.run().catch(() => undefined);
+        return send(res, 200, { ok: true, revocationPending: true });
+      }
+
+      if (req.method === 'GET' && apiPath === '/api/v4/replication/grants') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        await store.assertLedgerAccess(user.username, 'manage', session.replicaId);
+        return send(res, 200, { grants: await store.listNodeReplicationGrants(blobUsername) });
+      }
+      if (req.method === 'POST' && apiPath === '/api/v4/replication/grants') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        const body = await readBody(req, 4096);
+        if (typeof body.peerNodeId !== 'string' || typeof body.peerPublicKey !== 'string' || typeof body.expiresAt !== 'string'
+          || body.renewable !== undefined && typeof body.renewable !== 'boolean') {
+          return send(res, 400, { code: 'INVALID_GRANT', error: '节点授权参数无效' });
+        }
+        const grant = await store.createNodeReplicationGrant(user.username, body.peerNodeId, body.peerPublicKey,
+          body.expiresAt, body.renewable === true, session.replicaId);
+        await log('info', 'node_replication_granted', 'Ledger account authorized a replica node', {
+          ip, username: user.username, detail: { grantId: grant.grantId, ledgerId: grant.ledgerId,
+            peerNodeId: grant.peerNodeId, renewable: grant.renewable },
+        });
+        return send(res, 201, { grantId: grant.grantId, ledgerId: grant.ledgerId,
+          peerNodeId: grant.peerNodeId, expiresAt: grant.expiresAt, renewable: grant.renewable });
+      }
+      const revokeNodeGrant = /^\/api\/v4\/replication\/grants\/([A-Za-z0-9_-]+)$/.exec(apiPath);
+      if (req.method === 'DELETE' && revokeNodeGrant) {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        await store.assertLedgerAccess(user.username, 'manage', session.replicaId);
+        const revoked = await store.revokeNodeReplicationGrant(blobUsername, revokeNodeGrant[1]!);
+        if (!revoked) return send(res, 404, { error: '复制授权不存在或已撤销' });
+        await log('info', 'node_replication_revoked', 'Ledger account revoked a replica node', {
+          ip, username: user.username, detail: { grantId: revokeNodeGrant[1] },
+        });
+        return send(res, 200, { ok: true });
+      }
+
+      if (replica && apiPath.startsWith('/api/v3/')) {
+        const readOnly = req.method === 'GET' || req.method === 'HEAD'
+          || req.method === 'POST' && apiPath === '/api/v3/blobs/status';
+        const management = apiPath === '/api/v3/key-envelope'
+          || apiPath.startsWith('/api/v3/protection/')
+          || apiPath === '/api/v3/protection'
+          || apiPath === '/api/v3/replica/replace'
+          || apiPath.startsWith('/api/v3/replica/recovery');
+        await store.assertLedgerAccess(user.username, management ? 'manage' : readOnly ? 'read' : 'write', session.replicaId);
+      }
       const custodyScope = `${serverId}:${user.accountId}`;
       const protectionResponse = async () => {
-        const protection = await store.getLedgerProtection(user.username);
-        const bound = await store.getReplica(user.username);
+        const bound = await store.getReplica(user.username, session.replicaId);
+        const legacy = await store.getReplica(user.username);
+        const legacySelected = !bound || bound.replicaId === legacy?.replicaId;
+        const protection = legacySelected ? await store.getLedgerProtection(user.username) : undefined;
         return {
           mode: protection?.mode ?? (bound ? 'relay' : null), version: protection?.version ?? 0,
           defaultMode: defaultProtection, custodyEnabled,
+          controlled: bound ? Boolean(await store.ledgerControlState(user.username, session.replicaId)) : false,
           secret: protection?.mode === 'managed' && protection.sealedSecret ? openCustodySecret(custodyKey, custodyScope, protection.sealedSecret) : null,
-          envelope: bound ? await store.getKeyEnvelope(user.username, bound.ledgerId) ?? null : null,
+          envelope: bound && legacySelected
+            ? await store.getKeyEnvelope(user.username, bound.ledgerId, 'account', session.replicaId) ?? null : null,
           replica: bound ? { serverId, ...bound } : null,
         };
       };
@@ -1227,6 +2298,27 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         return send(res, 200, await protectionResponse());
       }
 
+      if (req.method === 'GET' && apiPath === '/api/v3/replica/recovery') {
+        const current = await store.getReplica(user.username, session.replicaId);
+        if (!current) throw new ServerStoreError('REPLICA_UNBOUND', 409, '当前账号没有可恢复的个人账本');
+        return send(res, 200, { current: { serverId, ...current },
+          checkpoints: await store.listReplacementCheckpoints(user.username) });
+      }
+      if (req.method === 'POST' && apiPath === '/api/v3/replica/recovery/restore') {
+        const { checkpointId, expectedLedgerId, expectedStreamEpoch, confirmation } = await readBody(req, 16 * 1024);
+        if (confirmation !== '恢复旧账本' || typeof checkpointId !== 'string'
+          || !/^checkpoint-[a-f0-9]{32}$/.test(checkpointId)
+          || typeof expectedLedgerId !== 'string' || typeof expectedStreamEpoch !== 'string') {
+          return send(res, 400, { code: 'INVALID_LEDGER_RECOVERY', error: '请确认恢复点和当前账本身份' });
+        }
+        const restored = await store.restoreReplacementCheckpoint(user.username, session.id,
+          { ledgerId: expectedLedgerId, streamEpoch: expectedStreamEpoch }, checkpointId);
+        await log('info', 'replica_restored', 'User restored an encrypted ledger checkpoint', {
+          ip, username: user.username, detail: { checkpointId, ledgerId: restored.ledgerId },
+        });
+        return send(res, 200, { serverId, ledgerId: restored.ledgerId, replicaId: restored.replicaId,
+          streamEpoch: restored.streamEpoch, headSeq: restored.headSeq });
+      }
       if (req.method === 'POST' && apiPath === '/api/v3/replica/replace') {
         const { expectedLedgerId, expectedStreamEpoch, confirmation, envelope, commits } = await readBody(req, MAX_BODY_BYTES);
         if (confirmation !== '替换旧账本' || typeof expectedLedgerId !== 'string' || typeof expectedStreamEpoch !== 'string' || !isLedgerKeyEnvelope(envelope) || envelope.ledgerId === expectedLedgerId) {
@@ -1237,7 +2329,25 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         await log('info', 'replica_replaced', 'User replaced encrypted ledger', { ip, username: user.username, detail: { previousLedgerId: expectedLedgerId, ledgerId: bound.ledgerId } });
         return send(res, 200, { serverId, ledgerId: bound.ledgerId, replicaId: bound.replicaId, streamEpoch: bound.streamEpoch });
       }
-      if (req.method === 'GET' && apiPath === '/api/v3/replica') return send(res, 200, replica ? { serverId, bound: true, ledgerId: replica.ledgerId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch, headSeq: replica.headSeq, capabilities: ['asset-cost-v2'] } : { serverId, bound: false, headSeq: 0, capabilities: ['asset-cost-v2'] });
+      if (req.method === 'GET' && apiPath === '/api/v3/replica') {
+        if (!replica) return send(res, 200, { serverId, bound: false, headSeq: 0,
+          serverManagedReplication: false, capabilities: ['asset-cost-v2'] });
+        const links = (await store.listNodeReplicationLinks(blobUsername))
+          .filter((link) => link.ledgerId === replica.ledgerId)
+          .map((link) => ({ peerNodeId: link.peerNodeId, localStreamEpoch: link.localStreamEpoch,
+            peerStreamEpoch: link.peerStreamEpoch, enabled: link.enabled,
+            lastSuccessAt: link.lastSuccessAt, lastError: link.lastError,
+            inventoryMatchedAt: link.inventoryMatchedAt, inventoryIssue: link.inventoryIssue }));
+        const groupMembers = await store.listReplicaGroupMembers(replica.replicaId);
+        return send(res, 200, {
+          serverId, bound: true, ledgerId: replica.ledgerId, replicaId: replica.replicaId,
+          streamEpoch: replica.streamEpoch, headSeq: replica.headSeq, capabilities: ['asset-cost-v2'],
+          // Preserve server-managed routing during bootstrap, outages and grant revocation.
+          serverManagedReplication: links.length > 0 || groupMembers.length > 0,
+          currentKeyEpoch: (await store.ledgerControlState(user.username, session.replicaId))?.keyEpoch ?? 0,
+          physical: await store.replicaPhysicalStatus(blobUsername, replica.ledgerId), links,
+        });
+      }
       if (req.method === 'POST' && apiPath === '/api/v3/replica/bind') {
         const { ledgerId } = await readBody(req, AUTH_BODY_BYTES);
         if (typeof ledgerId !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(ledgerId)) return send(res, 400, { code: 'INVALID_LEDGER_ID', error: 'invalid ledger id' });
@@ -1247,7 +2357,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       }
       if (req.method === 'GET' && apiPath === '/api/v3/key-envelope') {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-        return send(res, 200, { envelope: await store.getKeyEnvelope(user.username, replica.ledgerId) ?? null });
+        return send(res, 200, { envelope: await store.getKeyEnvelope(user.username, replica.ledgerId,
+          'account', session.replicaId) ?? null });
       }
       if (req.method === 'PUT' && apiPath === '/api/v3/key-envelope') {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
@@ -1258,7 +2369,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           try { await unlockLedgerKeyEnvelope(openCustodySecret(custodyKey, custodyScope, custody.sealedSecret), envelope as unknown as LedgerKeyEnvelope); }
           catch { return send(res, 409, { error: '托管凭据不匹配，请通过保护设置更新密钥' }); }
         }
-        await store.putKeyEnvelope(user.username, replica.ledgerId, String(envelope.keyringId), Number(envelope.generation), envelope);
+        await store.putKeyEnvelope(user.username, replica.ledgerId, String(envelope.keyringId),
+          Number(envelope.generation), envelope, 'account', session.replicaId);
         await log('info', 'key_envelope_updated', 'Updated encrypted ledger key envelope', { ip, username: user.username, detail: { ledgerId: replica.ledgerId, generation: envelope.generation } });
         return send(res, 200, { ok: true, generation: envelope.generation });
       }
@@ -1266,41 +2378,56 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
         const { blobIds } = await readBody(req, ADMIN_BODY_BYTES);
         if (!Array.isArray(blobIds) || blobIds.length > 500 || blobIds.some((value) => typeof value !== 'string')) return send(res, 400, { error: 'invalid blob ids' });
-        const [objects, usage] = await Promise.all([blobStore.status(user.username, replica.ledgerId, blobIds as string[]), blobStore.usage(user.username)]);
+        const [objects, usage] = await Promise.all([blobStore.status(blobUsername, replica.ledgerId, blobIds as string[]), blobStore.usage(blobUsername, replica.ledgerId)]);
         return send(res, 200, { objects, usage });
       }
-      if (req.method === 'GET' && apiPath === '/api/v3/blobs/usage') return send(res, 200, { usage: await blobStore.usage(user.username) });
+      if (req.method === 'GET' && apiPath === '/api/v3/blobs/legacy-routes') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        return send(res, 200, { usernames: await blobStore.listLegacyRoutes(blobUsername, replica.ledgerId) });
+      }
+      if (req.method === 'POST' && apiPath === '/api/v3/blobs/legacy-migrations') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        const body = await readBody(req, 1024);
+        await blobStore.markLegacyMigrated(blobUsername, replica.ledgerId,
+          String(body.legacyBlobId ?? ''), String(body.portableBlobId ?? ''), user.accountId);
+        return send(res, 200, { ok: true });
+      }
+      if (req.method === 'GET' && apiPath === '/api/v3/blobs/usage') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        return send(res, 200, { usage: await blobStore.usage(blobUsername, replica.ledgerId) });
+      }
       if (req.method === 'POST' && apiPath === '/api/v3/blobs/uploads') {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
         const { manifest } = await readBody(req, 2 * 1024 * 1024);
-        const plan = await blobStore.beginUpload(user.username, replica.ledgerId, manifest);
+        const plan = await blobStore.beginUpload(blobUsername, replica.ledgerId, manifest);
         await log('info', plan.status === 'available' ? 'blob_deduplicated' : 'blob_upload_started', 'Encrypted attachment upload initialized', { ip, username: user.username, detail: { status: plan.status, chunks: plan.missingChunks.length } });
         return send(res, plan.status === 'available' ? 200 : 201, plan);
       }
       const uploadChunk = /^\/api\/v3\/blobs\/uploads\/([a-f0-9]{32})\/chunks\/(\d+)$/.exec(apiPath);
-      if (req.method === 'PUT' && uploadChunk) { await blobStore.putChunk(user.username, uploadChunk[1]!, Number(uploadChunk[2]), await readBinaryBody(req)); return send(res, 200, { ok: true }); }
+      if (req.method === 'PUT' && uploadChunk) { await blobStore.putChunk(blobUsername, uploadChunk[1]!, Number(uploadChunk[2]), await readBinaryBody(req)); return send(res, 200, { ok: true }); }
       const uploadComplete = /^\/api\/v3\/blobs\/uploads\/([a-f0-9]{32})\/complete$/.exec(apiPath);
-      if (req.method === 'POST' && uploadComplete) { const manifest = await blobStore.completeUpload(user.username, uploadComplete[1]!); await log('info', 'blob_upload_completed', 'Encrypted attachment upload completed', { ip, username: user.username, detail: { chunks: manifest.chunkCount, bytes: manifest.cipherBytes } }); return send(res, 200, { ok: true, blobId: manifest.blobId }); }
+      if (req.method === 'POST' && uploadComplete) { const manifest = await blobStore.completeUpload(blobUsername, uploadComplete[1]!); if (replica && manifest.v === 2) await store.invalidateReplicaPhysicalStatus(blobUsername, replica.ledgerId); await log('info', 'blob_upload_completed', 'Encrypted attachment upload completed', { ip, username: user.username, detail: { chunks: manifest.chunkCount, bytes: manifest.cipherBytes } }); return send(res, 200, { ok: true, blobId: manifest.blobId }); }
       const blobManifest = /^\/api\/v3\/blobs\/([a-f0-9]{64})\/manifest$/.exec(apiPath);
-      if (req.method === 'GET' && blobManifest) { if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first'); const manifest = await blobStore.manifest(user.username, replica.ledgerId, blobManifest[1]!); return manifest ? send(res, 200, { manifest }) : send(res, 404, { error: 'blob not found' }); }
+      if (req.method === 'GET' && blobManifest) { if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first'); const manifest = await blobStore.manifest(blobUsername, replica.ledgerId, blobManifest[1]!); return manifest ? send(res, 200, { manifest }) : send(res, 404, { error: 'blob not found' }); }
       const blobChunk = /^\/api\/v3\/blobs\/([a-f0-9]{64})\/chunks\/(\d+)$/.exec(apiPath);
       if ((req.method === 'GET' || req.method === 'HEAD') && blobChunk) {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-        const chunk = await blobStore.chunk(user.username, replica.ledgerId, blobChunk[1]!, Number(blobChunk[2]));
+        const chunk = await blobStore.chunk(blobUsername, replica.ledgerId, blobChunk[1]!, Number(blobChunk[2]));
         if (!chunk) return send(res, 404, { error: 'blob chunk not found' });
         if (req.method === 'HEAD') { res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': String(chunk.byteLength) }); res.end(); return; }
         return sendBinary(res, 200, chunk);
       }
       const blobRestore = /^\/api\/v3\/blobs\/([a-f0-9]{64})\/restore$/.exec(apiPath);
-      if (req.method === 'POST' && blobRestore) { if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first'); const restored = await blobStore.restore(user.username, replica.ledgerId, blobRestore[1]!); return send(res, restored ? 200 : 404, restored ? { ok: true } : { error: 'blob not found in trash' }); }
+      if (req.method === 'POST' && blobRestore) { if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first'); const restored = await blobStore.restore(blobUsername, replica.ledgerId, blobRestore[1]!); if (restored) await store.invalidateReplicaPhysicalStatus(blobUsername, replica.ledgerId); return send(res, restored ? 200 : 404, restored ? { ok: true } : { error: 'blob not found in trash' }); }
       const blobObject = /^\/api\/v3\/blobs\/([a-f0-9]{64})$/.exec(apiPath);
-      if (req.method === 'DELETE' && blobObject) { if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first'); return send(res, 200, { ok: true, removed: await blobStore.remove(user.username, replica.ledgerId, blobObject[1]!) }); }
+      if (req.method === 'DELETE' && blobObject) { if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first'); const removed = await blobStore.remove(blobUsername, replica.ledgerId, blobObject[1]!); if (removed) await store.invalidateReplicaPhysicalStatus(blobUsername, replica.ledgerId); return send(res, 200, { ok: true, removed }); }
 
       if (req.method === 'GET' && apiPath === '/api/v3/backups') {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
         const requested = Number(url.searchParams.get('limit') ?? 100);
         const limit = Number.isSafeInteger(requested) ? Math.max(1, Math.min(500, requested)) : 100;
-        return send(res, 200, { backups: await store.listBackupArchives(user.username, replica.ledgerId, limit) });
+        return send(res, 200, { backups: await store.listBackupArchives(user.username, replica.ledgerId, limit,
+          session.replicaId) });
       }
       if (req.method === 'POST' && apiPath === '/api/v3/backups') {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
@@ -1318,7 +2445,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
               || !/^[A-Za-z0-9:_-]{1,256}$/.test(archive.sourceGeneration)))) {
           return send(res, 400, { code: 'INVALID_BACKUP', error: 'invalid encrypted backup metadata' });
         }
-        const manifest = await blobStore.manifest(user.username, replica.ledgerId, archive.blobId);
+        const manifest = await blobStore.manifest(blobUsername, replica.ledgerId, archive.blobId);
         if (!manifest || manifest.cipherBytes !== Number(archive.sizeBytes)) {
           return send(res, 409, { code: 'BACKUP_BLOB_MISSING', error: 'encrypted backup blob is missing or has a different size' });
         }
@@ -1331,7 +2458,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           label: archive.label,
           sizeBytes: Number(archive.sizeBytes),
           ...(archive.sourceGeneration ? { sourceGeneration: archive.sourceGeneration } : {}),
-        });
+        }, session.replicaId);
         await log('info', 'backup_uploaded', 'Encrypted backup archive registered', {
           ip,
           username: user.username,
@@ -1342,9 +2469,10 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       const backupObject = /^\/api\/v3\/backups\/([A-Za-z0-9_-]{16,160})$/.exec(apiPath);
       if (req.method === 'DELETE' && backupObject) {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-        const removed = await store.removeBackupArchive(user.username, replica.ledgerId, backupObject[1]!);
+        const removed = await store.removeBackupArchive(user.username, replica.ledgerId, backupObject[1]!,
+          session.replicaId);
         if (!removed) return send(res, 404, { error: 'backup not found' });
-        await blobStore.remove(user.username, replica.ledgerId, removed.blobId);
+        await blobStore.remove(blobUsername, replica.ledgerId, removed.blobId);
         await log('info', 'backup_deleted', 'Encrypted backup archive moved to trash', {
           ip,
           username: user.username,
@@ -1358,7 +2486,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         const after = Number(url.searchParams.get('after') ?? 0);
         const requested = Number(url.searchParams.get('limit') ?? 200);
         if (!Number.isSafeInteger(after) || after < 0) return send(res, 400, { error: 'invalid cursor' });
-        const page = await store.listCommits(user.username, after, Number.isSafeInteger(requested) ? Math.max(1, Math.min(200, requested)) : 200);
+        const page = await store.listCommits(user.username, after, Number.isSafeInteger(requested) ? Math.max(1, Math.min(200, requested)) : 200,
+          'account', session.replicaId);
         await store.recordSyncEvent({
           operation: 'pull',
           outcome: 'ok',
@@ -1370,7 +2499,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           requestId,
           ...(client ? { clientKind: client.kind, clientVersion: client.version, protocolVersion: client.protocol } : {}),
         });
-        return send(res, 200, { ...page, serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch });
+        return send(res, 200, { ...page, commits: page.commits.map(publicCommitRow), serverId, replicaId: replica.replicaId,
+          streamEpoch: replica.streamEpoch,
+          currentKeyEpoch: (await store.ledgerControlState(user.username, session.replicaId))?.keyEpoch ?? 0 });
       }
       if (req.method === 'POST' && apiPath === '/api/v3/commits') {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
@@ -1388,7 +2519,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           batchIds.set(row.commitId, row.contentHash);
           incoming.push({ commitId: row.commitId, ledgerId: row.ledgerId, contentHash: row.contentHash, encCommit: row.encCommit });
         }
-        const result = await store.pushCommits(user.username, incoming, capabilities as string[], requiredCapabilities as string[]);
+        const result = await store.pushCommits(user.username, incoming, capabilities as string[], requiredCapabilities as string[],
+          'account', session.replicaId);
         if (result.assigned.length) await log('info', 'commits_pushed', 'Received encrypted commits', { ip, username: user.username, detail: { count: result.assigned.length, requestId } });
         await store.recordSyncEvent({
           operation: 'push',
@@ -1443,14 +2575,18 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     ready,
     started,
     flushAccountEmails: async () => { processAccountEmails(); await accountEmailFlight; },
+    flushNodeReplication: async () => { await ready; await nodeReplication.drain(); await nodeReplication.run(); await nodeReplication.drain(); },
     backupPlan: async () => {
       await runtimeSettings.load();
       return { enabled: settings.effective('backupAutoEnabled') === 'on', directory: String(settings.effective('backupDirectory')),
         window: String(settings.effective('backupWindow')), serverId };
     },
     close: async () => {
+      nodeReplication.stop();
       clearInterval(queueWatchdog);
       clearInterval(accountEmailTimer);
+      clearInterval(nodeReplicationTimer);
+      await nodeReplication.drain();
       metrics.stop();
       await accountEmailFlight;
       // Workers keep the process alive and hold their own heap; a shutdown that leaves them running

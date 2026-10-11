@@ -3,7 +3,8 @@ import { prefixedId } from '@zichan/core';
 import { assertSecureSyncUrl, isLocalNetworkSyncUrl } from '@zichan/db';
 
 export type SyncProtocol = 'http' | 'https';
-export type SyncConnectionStatus = 'unchecked' | 'online' | 'offline' | 'identity_changed' | 'login_required';
+export type SyncConnectionStatus = 'unchecked' | 'online' | 'offline' | 'identity_changed'
+  | 'login_required' | 'replica_retired';
 /** Role of the signed-in account on a server. A read-only operator sees nothing writable. */
 export type SyncConnectionRole = 'owner' | 'admin' | 'viewer' | 'member';
 export type SyncAddressPreset = 'current' | 'local' | 'lan' | 'public';
@@ -14,6 +15,8 @@ export interface SharedSyncServer {
   alias: string;
   serverId?: string;
   serverPublicKey?: string;
+  /** Ed25519 signing identity used by node-to-node ledger replication. */
+  nodePublicKey?: string;
   sharedUrls: string[];
 }
 
@@ -50,6 +53,7 @@ export interface SyncConnection extends DeviceSyncConnection {
   sharedUrls: string[];
   serverId?: string;
   serverPublicKey?: string;
+  nodePublicKey?: string;
 }
 
 export interface SyncUrlParts {
@@ -240,7 +244,8 @@ export function newSyncConnection(baseUrl = syncAddressPresetUrl('current')): Sy
 }
 
 function parseStatus(value: unknown): SyncConnectionStatus {
-  return value === 'online' || value === 'offline' || value === 'identity_changed' || value === 'login_required'
+  return value === 'online' || value === 'offline' || value === 'identity_changed'
+    || value === 'login_required' || value === 'replica_retired'
     ? value
     : 'unchecked';
 }
@@ -276,6 +281,7 @@ function resolveDocument(document: SyncConnectionDocument): SyncConnection[] {
       role: parseRole(row.role),
       serverId: typeof server.serverId === 'string' && server.serverId ? server.serverId : undefined,
       serverPublicKey: typeof server.serverPublicKey === 'string' && server.serverPublicKey ? server.serverPublicKey : undefined,
+      nodePublicKey: typeof server.nodePublicKey === 'string' && server.nodePublicKey ? server.nodePublicKey : undefined,
       ledgerId: typeof row.ledgerId === 'string' ? row.ledgerId : undefined,
       replicaId: typeof row.replicaId === 'string' ? row.replicaId : undefined,
       streamEpoch: typeof row.streamEpoch === 'string' ? row.streamEpoch : undefined,
@@ -348,6 +354,7 @@ function toDocument(connections: SyncConnection[]): SyncConnectionDocument {
       alias: connection.alias.trim() || aliasForUrl(baseUrl),
       serverId: connection.serverId,
       serverPublicKey: connection.serverPublicKey,
+      nodePublicKey: connection.nodePublicKey,
       sharedUrls,
     });
     rows.push({

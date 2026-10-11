@@ -243,6 +243,40 @@ describe('application lifecycle sync', () => {
 });
 
 describe('Stronghold credential vault', () => {
+  it('keeps and saves a new ledger login when its Stronghold opens afterward', async () => {
+    vi.resetModules();
+    const records = new Map<string, number[]>();
+    const invoke = async <T>(command: string, args?: Record<string, unknown>): Promise<T> => {
+      if (command === 'native_security_status') {
+        return { platform: 'windows', mobile: false,
+          strongholdPath: 'C:/App/security/shared/sync-vault.hold', strongholdExists: false } as T;
+      }
+      if (command === 'plugin:stronghold|get_store_record') {
+        return (records.get(String(args?.key)) ?? null) as T;
+      }
+      if (command === 'plugin:stronghold|save_store_record') {
+        records.set(String(args?.key), args?.value as number[]);
+      }
+      return undefined as T;
+    };
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true, value: { __TAURI_INTERNALS__: { invoke } },
+    });
+    const vault = await import('../src/credential-vault.js');
+    vault.setRuntimeCredential('shared', { password: '', inviteCode: '',
+      sessionTransport: 'token', accessToken: 'current-access',
+      refreshToken: 'current-refresh', sessionId: 'current-session' });
+    await vault.unlockCredentialVault('local-password', ['shared']);
+    expect(vault.runtimeCredential('shared')).toMatchObject({
+      accessToken: 'current-access', refreshToken: 'current-refresh',
+    });
+    expect(new TextDecoder().decode(new Uint8Array(records.get('sync-server:shared')!)))
+      .toBe('{"refreshToken":"current-refresh","sessionId":"current-session"}');
+    await vault.lockCredentialVault();
+    expect((await vault.unlockCredentialVault('local-password', ['shared'])).shared)
+      .toMatchObject({ refreshToken: 'current-refresh', sessionId: 'current-session' });
+  });
+
   it('creates, writes, reads and locks through Stronghold without browser storage', async () => {
     vi.resetModules();
     const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];

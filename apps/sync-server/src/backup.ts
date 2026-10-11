@@ -17,9 +17,10 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { NodeSqliteDriver } from '@zichan/db/node';
 import { supportedServerSchema } from './store.js';
 import { loadCustodyKey, openCustodySecret } from './key-custody.js';
+import { loadNodeIdentity, NODE_SIGNING_KEY_FILE } from './node-identity.js';
 
 const BACKUP_VERSION = 1;
-const SIDE_CARS = ['server.secret', 'server-id', 'opaque.server-setup', 'custody.key'] as const;
+const SIDE_CARS = ['server.secret', 'server-id', 'opaque.server-setup', 'custody.key', NODE_SIGNING_KEY_FILE] as const;
 const REQUIRED_FILES = ['server.sqlite', 'server.secret', 'server-id', 'opaque.server-setup'] as const;
 
 export interface ServerBackupFile {
@@ -133,6 +134,12 @@ async function verifyDatabase(path: string): Promise<string> {
     if (migrations.length !== 1 || !migration || !supportedServerSchema(Number(migration.version), migration.name)) {
       return `schema:${migration?.version ?? 'missing'}:${migration?.name ?? 'missing'}`;
     }
+    const nodeKey = await driver.get<{ value: string }>("SELECT value FROM server_meta WHERE key = 'node_signing_public_key'");
+    if (nodeKey) {
+      const serverId = readFileSync(join(dirname(path), 'server-id'), 'utf8').trim();
+      try { loadNodeIdentity(dirname(path), serverId, nodeKey.value); }
+      catch { return 'node-identity:missing-or-invalid'; }
+    }
     const custodyTable = await driver.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sync_key_custody'");
     if (custodyTable) {
       const rows = await driver.all<{ account_id: string; sealed_secret: string }>('SELECT i.account_id, c.sealed_secret FROM sync_key_custody c JOIN sync_account_identities i ON i.username = c.username WHERE c.sealed_secret IS NOT NULL');
@@ -216,6 +223,7 @@ export async function createServerBackup(dataDirValue: string, outputValue: stri
     copyTree(join(dataDir, 'blobs', 'objects'), join(staging, 'blobs', 'objects'));
     copyTree(join(dataDir, 'blobs', 'trash'), join(staging, 'blobs', 'trash'));
     copyTree(join(dataDir, 'blobs', 'staging'), join(staging, 'blobs', 'staging'));
+    copyTree(join(dataDir, 'blobs', 'quarantine'), join(staging, 'blobs', 'quarantine'));
     const serverId = existsSync(join(staging, 'server-id')) ? readFileSync(join(staging, 'server-id'), 'utf8').trim() : '';
     if (!serverId) throw new Error('服务器 ID 文件缺失');
     if (!existsSync(join(staging, 'server.secret')) || !readFileSync(join(staging, 'server.secret'), 'utf8').trim()) throw new Error('服务器密钥文件缺失');

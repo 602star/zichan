@@ -99,6 +99,9 @@ const DATA_PLANE_READ_POSTS = new Set(['/api/v3/blobs/status']);
  *   Registration and session traffic do not touch the data being snapshotted.
  */
 export function isClientWrite(method: string, apiPath: string): boolean {
+  if (apiPath === '/api/v4/replication/commits') return method === 'POST';
+  if (apiPath === '/api/v4/replication/key-envelope') return method === 'POST';
+  if (apiPath.startsWith('/api/v4/replication/blobs/')) return method !== 'GET' && method !== 'HEAD' && apiPath !== '/api/v4/replication/blobs/status';
   if (!apiPath.startsWith('/api/v3/')) return false;
   if (method === 'GET' || method === 'HEAD') return false;
   return !DATA_PLANE_READ_POSTS.has(apiPath);

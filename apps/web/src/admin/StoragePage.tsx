@@ -1,9 +1,11 @@
 /** Storage and backups: physical usage, logical quota, the maintenance plan, records and drills. */
+import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
 import { PageHeader, Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Select, Stat, bytes, message, muted, row, useActionError, useCursorPager, useHiddenColumns, usePolling, useResource, when, canWrite } from './ui.js';
 import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
-import type { BackupsPayload, SettingsPayload, Storage } from './types.js';
+import type { BackupsPayload, BlobOwnershipDecision, SettingsPayload, Storage,
+  UnownedReplicaRecordsPayload } from './types.js';
 
 /** Sortable columns; only these have a server-side ordering behind them. */
 const SORTS: SortChoice[] = [
@@ -37,6 +39,18 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
   const writable = canWrite(role);
   const actionError = useActionError();
   const storage = useResource(() => client.request<Storage>('/storage'), []);
+  const [unownedKind, setUnownedKind] = useState<'object' | 'state' | 'upload'>('object');
+  const [unownedCursor, setUnownedCursor] = useState('');
+  const [unownedHistory, setUnownedHistory] = useState<string[]>([]);
+  const [repairTargets, setRepairTargets] = useState<Record<string, string>>({});
+  const [repairReasons, setRepairReasons] = useState<Record<string, string>>({});
+  const [repairing, setRepairing] = useState('');
+  const [repairNotice, setRepairNotice] = useState('');
+  const unowned = useResource(() => client.request<UnownedReplicaRecordsPayload>(
+    `/storage/unowned?kind=${unownedKind}${unownedCursor ? `&cursor=${encodeURIComponent(unownedCursor)}` : ''}`,
+  ), [unownedKind, unownedCursor]);
+  const ownershipDecisions = useResource(() => client.request<{ decisions: BlobOwnershipDecision[] }>(
+    '/storage/unowned/decisions'), []);
   const backupStatus = query.get('status') ?? '';
   const backupKind = query.get('kind') ?? '';
   const cursor = query.get('cursor') ?? '';
@@ -81,6 +95,29 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
     void client.request<{ job: { jobId: string } }>('/jobs', { type, ...(recordId ? { recordId } : {}) }, { idempotencyKey: adminIdempotencyKey(`${type}-${recordId ?? 'all'}`) })
       .then((result) => onJob(result.job.jobId))
       .catch((error) => actionError.setError(message(error)));
+  };
+
+  const assignOwnership = (entry: UnownedReplicaRecordsPayload['records'][number]) => {
+    const key = `${entry.username}\0${entry.ledgerId}\0${entry.recordId}`;
+    const replicaId = repairTargets[key] ?? '';
+    const reason = (repairReasons[key] ?? '').trim();
+    if (!replicaId || reason.length < 12 || repairing) return;
+    setRepairing(key);
+    setRepairNotice('');
+    actionError.clear();
+    void client.request<{ decision: BlobOwnershipDecision }>('/storage/unowned/assign', {
+      kind: entry.kind, username: entry.username, ledgerId: entry.ledgerId,
+      blobId: entry.blobId, ...(entry.kind === 'upload' ? { uploadId: entry.recordId } : {}),
+      replicaId, reason,
+    }, { idempotencyKey: adminIdempotencyKey('blob-ownership-assign') })
+      .then((result) => {
+        setRepairNotice(`已将${entry.kind === 'state' ? '删除状态' : entry.kind === 'upload' ? '暂存上传' : '附件对象'} ${entry.blobId} 归入 ${result.decision.toReplicaId}，决定 ${result.decision.decisionId} 已记录。`);
+        unowned.reload();
+        ownershipDecisions.reload();
+        storage.reload();
+      })
+      .catch((error) => actionError.setError(message(error)))
+      .finally(() => setRepairing(''));
   };
 
   return (
@@ -222,6 +259,9 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
             { item: '有效附件', size: bytes(composition?.objectBytes), detail: `对象 ${composition?.objectCount ?? 0} 个` },
             { item: '回收站', size: bytes(composition?.trashBytes), detail: `对象 ${composition?.trashCount ?? 0} 个；计入用户配额` },
             { item: '暂存上传', size: bytes(composition?.stagingBytes), detail: `上传 ${composition?.stagingCount ?? 0} 个；计入用户配额` },
+            { item: '未归属历史记录', size: `${composition?.unowned?.objects ?? 0} 个对象`,
+              detail: `删除状态 ${composition?.unowned?.states ?? 0} 条 · 暂存上传 ${composition?.unowned?.uploads ?? 0} 个；须核对旧账号与账本后处理` },
+            { item: '损坏附件隔离区', size: bytes(composition?.quarantineBytes), detail: '保留供排查与备份；占用物理磁盘空间' },
             { item: '备份目录', size: composition?.backupDirectory ?? '暂无数据', detail: '由部署侧维护程序写入选定位置' },
             {
               item: '磁盘可用空间',
@@ -237,6 +277,100 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
           <Button disabled={!writable} onClick={() => startJob('storage.cleanup')}>立即清理回收站与暂存上传</Button>
           <Button onClick={storage.reload}>刷新</Button>
         </div>
+      </Panel>
+
+      <Panel title="未归属附件清单" note="候选副本来自当前账号路由及替换检查点。未归属的回收站对象和暂存上传会跳过定时清理。修复 V2 对象或暂存上传须核对原账本密钥和密文；孤立删除状态须核对原始操作来源。请先在概览页声明维护窗口。暂存上传修复后需在新的有效期内续传。">
+        <Loading loading={unowned.loading} error={unowned.error} stale={unowned.stale} loadedAt={unowned.loadedAt} />
+        {repairNotice ? <Notice tone="info">{repairNotice}</Notice> : null}
+        <div style={{ ...row, marginBottom: 10 }}>
+          <Field label="记录类型">
+            <Select value={unownedKind} onChange={(event) => {
+              setUnownedKind(event.target.value as 'object' | 'state' | 'upload');
+              setUnownedCursor('');
+              setUnownedHistory([]);
+            }}>
+              <option value="object">附件对象</option>
+              <option value="state">删除与恢复状态</option>
+              <option value="upload">暂存上传</option>
+            </Select>
+          </Field>
+          <Button onClick={unowned.reload}>刷新清单</Button>
+        </div>
+        <DataTable
+          columns={[
+            { key: 'account', header: '账号 / 账本', render: (entry) => <span style={{ overflowWrap: 'anywhere' }}>
+              {entry.username}<br /><code>{entry.ledgerId}</code>
+            </span> },
+            { key: 'object', header: '密文对象', render: (entry) => <span style={{ overflowWrap: 'anywhere' }}>
+              <code>{entry.blobId}</code>{entry.kind === 'upload' ? <><br />上传 {entry.recordId}</> : null}
+            </span> },
+            { key: 'state', header: '状态 / 容量', render: (entry) => <span>
+              {entry.state}{entry.formatVersion === null ? '' : ` · V${entry.formatVersion}`}
+              {entry.cipherBytes === null ? '' : ` · ${bytes(entry.cipherBytes)}`}
+              <br />{when(entry.createdAt)}
+            </span> },
+            { key: 'candidates', header: '候选副本', render: (entry) => <span style={{ overflowWrap: 'anywhere' }}>
+              {entry.candidateReplicaIds.length ? entry.candidateReplicaIds.map((id) => <code key={id} style={{ display: 'block' }}>{id}</code>) : '无可验证候选'}
+              {entry.namespaceMatches.length ? `目录匹配 ${entry.namespaceMatches.join('、')}` : ''}
+              {entry.replicaId ? `原记录 ${entry.replicaId}` : ''}
+            </span> },
+            { key: 'repair', header: '人工核对', render: (entry) => {
+              if (entry.kind !== 'state' && entry.formatVersion !== 2
+                || role !== 'owner' || !entry.candidateReplicaIds.length) return '只读';
+              const key = `${entry.username}\0${entry.ledgerId}\0${entry.recordId}`;
+              return <div style={{ display: 'grid', gap: 6, minWidth: 210 }}>
+                <Select aria-label={`目标副本 ${entry.blobId}`} value={repairTargets[key] ?? ''}
+                  onChange={(event) => setRepairTargets({ ...repairTargets, [key]: event.target.value })}>
+                  <option value="">选择已核对副本</option>
+                  {entry.candidateReplicaIds.map((id) => <option key={id} value={id}>{id}</option>)}
+                </Select>
+                <input className="zc-input" aria-label={`核对依据 ${entry.blobId}`}
+                  placeholder={entry.kind === 'state' ? '填写删除状态来源核对依据（至少 12 字）'
+                    : '填写密钥与密文核对依据（至少 12 字）'} value={repairReasons[key] ?? ''}
+                  onChange={(event) => setRepairReasons({ ...repairReasons, [key]: event.target.value })} />
+                <Button disabled={Boolean(repairing) || !repairTargets[key]
+                  || (repairReasons[key] ?? '').trim().length < 12}
+                  onClick={() => assignOwnership(entry)}>确认归属</Button>
+              </div>;
+            } },
+          ]}
+          rows={!unowned.loading && !unowned.error ? unowned.data?.records ?? [] : []}
+          rowKey={(entry) => `${entry.kind}:${entry.username}:${entry.ledgerId}:${entry.recordId}`}
+          empty="此类记录暂无未归属项。"
+        />
+        <div style={{ ...row, marginTop: 10 }}>
+          <Button disabled={unownedHistory.length === 0} onClick={() => {
+            const previous = unownedHistory.at(-1) ?? '';
+            setUnownedHistory(unownedHistory.slice(0, -1));
+            setUnownedCursor(previous);
+          }}>上一页</Button>
+          <Button disabled={unowned.loading || Boolean(unowned.error) || !unowned.data?.nextCursor} onClick={() => {
+            if (!unowned.data?.nextCursor) return;
+            setUnownedHistory([...unownedHistory, unownedCursor]);
+            setUnownedCursor(unowned.data.nextCursor);
+          }}>下一页</Button>
+        </div>
+      </Panel>
+
+      <Panel title="附件归属修复记录" note="每次修复记录操作者账号 ID、记录类型、原归属、目标副本、依据和时间；对象侧写也保存对象归属决定。">
+        <Loading loading={ownershipDecisions.loading} error={ownershipDecisions.error}
+          stale={ownershipDecisions.stale} loadedAt={ownershipDecisions.loadedAt} />
+        <DataTable
+          columns={[
+            { key: 'at', header: '时间', render: (entry) => when(entry.decidedAt) },
+            { key: 'object', header: '记录', render: (entry) => <span style={{ overflowWrap: 'anywhere' }}>
+              {entry.kind === 'state' ? '删除状态' : entry.kind === 'upload' ? '暂存上传' : '附件对象'} · {entry.username}
+              <br /><code>{entry.blobId}</code>{entry.uploadId ? <><br />上传 {entry.uploadId}</> : null}
+            </span> },
+            { key: 'route', header: '归属', render: (entry) => `${entry.fromReplicaId ?? '未归属'} → ${entry.toReplicaId}` },
+            { key: 'actor', header: '操作者 / 依据', render: (entry) => <span style={{ overflowWrap: 'anywhere' }}>
+              {entry.actorAccountId}<br />{entry.reason}
+            </span> },
+          ]}
+          rows={ownershipDecisions.data?.decisions ?? []}
+          rowKey={(entry) => entry.decisionId}
+          empty="暂无人工归属修复记录。"
+        />
       </Panel>
 
       <Panel title="清理状态" note="定时清理不再静默处理失败：这里能看到最近一次运行、成功或失败，以及释放的空间。">

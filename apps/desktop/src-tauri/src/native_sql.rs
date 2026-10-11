@@ -41,6 +41,12 @@ pub struct NativeSqlState {
     next_transaction_id: AtomicU64,
 }
 
+impl NativeSqlState {
+    pub async fn has_open_database(&self) -> bool {
+        !self.pools.lock().await.is_empty() || !self.transactions.lock().await.is_empty()
+    }
+}
+
 async fn transaction_connection(
     state: &NativeSqlState,
     transaction_id: &str,

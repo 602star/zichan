@@ -29,13 +29,19 @@ export type { SyncConflictBranchRow, SyncConflictGroupRow, SyncReplicaIdentity }
 export interface ReplicaConnection extends SyncReplicaIdentity {
   headSeq: number;
   capabilities?: string[];
+  currentKeyEpoch?: number;
 }
 
-export interface PulledCommitRow {
+export type PulledCommitRow = {
   seq: number;
   commit: SyncCommitV2;
   contentHash: string;
-}
+} | {
+  seq: number;
+  commitId: string;
+  contentHash: string;
+  quarantined: true;
+};
 
 export interface CommitTransport {
   connect(ledgerId: string): Promise<ReplicaConnection>;
@@ -168,8 +174,15 @@ async function assertPulledPage(
   for (const row of page.commits) {
     expectedSeq += 1;
     if (!safeSequence(row.seq) || row.seq !== expectedSeq) throw new Error(`同步服务器提交序号不连续：期望 ${expectedSeq}，收到 ${row.seq}`);
-    if (ids.has(row.commit.commitId)) throw new Error(`同步服务器在同一分页重复返回提交 ${row.commit.commitId}`);
-    ids.add(row.commit.commitId);
+    const commitId = 'quarantined' in row ? row.commitId : row.commit.commitId;
+    if (ids.has(commitId)) throw new Error(`同步服务器在同一分页重复返回提交 ${commitId}`);
+    ids.add(commitId);
+    if ('quarantined' in row) {
+      if (!/^[A-Za-z0-9_-]{16,160}$/.test(row.commitId) || !/^[a-f0-9]{64}$/.test(row.contentHash)) {
+        throw new Error('同步服务器返回了无效的隔离提交标记');
+      }
+      continue;
+    }
     if (row.commit.protocol !== 2) throw new Error(`同步提交 ${row.commit.commitId} 协议版本无效`);
     if (row.commit.ledgerId !== identity.ledgerId) throw new Error(`LEDGER_MISMATCH:${row.commit.ledgerId}`);
     const actualHash = await sha256Json(wireSyncCommit(row.commit));
@@ -609,12 +622,14 @@ export async function pullReplica(
     await assertPulledPage(identity, state.cursor, page);
     await store.transaction(async (tx) => {
       for (const row of page.commits) {
+        if ('quarantined' in row) continue;
         await tx.storeSyncCommit(row.commit, { source: 'remote', sourceReplicaKey: key, state: 'pending', contentHash: row.contentHash });
       }
-      await tx.markCommitsAcknowledged(key, page.commits.map((row) => ({ commitId: row.commit.commitId, seq: row.seq, contentHash: row.contentHash })));
+      await tx.markCommitsAcknowledged(key, page.commits.flatMap((row) => 'quarantined' in row ? []
+        : [{ commitId: row.commit.commitId, seq: row.seq, contentHash: row.contentHash }]));
       await tx.saveReplicaState(identity, page.nextSeq, page.headSeq);
     });
-    pulled += page.commits.length;
+    pulled += page.commits.filter((row) => !('quarantined' in row)).length;
     headSeq = page.headSeq;
     state = { ...state, cursor: page.nextSeq, headSeq: page.headSeq };
     if (!page.hasMore) break;
@@ -630,6 +645,9 @@ export async function pushReplica(
   const identity: SyncReplicaIdentity = connection;
   const key = replicaKey(identity);
   const pending = await store.commitsPendingForReplica(key);
+  if (connection.currentKeyEpoch && pending.some((commit) => commit.source === 'remote')) {
+    throw new Error('受控账本的远端提交必须由节点后台复制；浏览器不会替旧节点重写提交身份和密钥代次');
+  }
   const requiresCostV2 = (await store.costBasisOpenings.count({ includeDeleted: true })) > 0
     || pending.some((commit) => commit.revisions.some((revision) => {
       const payload = revision.payload;
@@ -913,6 +931,156 @@ export async function resolveConflictGroup(
       outcome: 'invalid',
       summary: error instanceof Error ? error.message : String(error),
     });
+    throw error;
+  }
+  return commit;
+}
+
+/** Explicitly rebase a reviewed old-epoch write only when every touched aggregate is unchanged. */
+export async function replayReviewedCommit(store: SqlLedgerStore, original: SyncCommitV2): Promise<SyncCommitV2> {
+  await store.assertSyncReady();
+  if (original.protocol !== 2 || original.ledgerId !== await store.getLedgerId()
+    || !original.revisions.length || original.revisions.length > 1000) {
+    throw new Error('待修复提交格式或账本身份无效');
+  }
+  const graph = await store.syncGraph();
+  if (graph.commits.has(original.commitId)) throw new Error('本地已包含原提交，不能重复修复');
+  if (original.parentCommitIds.some((id) => graph.commits.get(id)?.state !== 'applied')) {
+    throw new Error('原提交的父提交尚未完整应用，不能自动修复');
+  }
+  const touched = new Set<string>();
+  for (const revision of original.revisions) {
+    const key = aggregateKey(revision.aggregateType, revision.aggregateId);
+    if (touched.has(key) || graph.revisions.has(revision.revisionId)) throw new Error('待修复提交包含重复修订');
+    touched.add(key);
+    if (JSON.stringify(unique(revision.parentRevisionIds)) !== JSON.stringify(unique(graph.entityHeads.get(key) ?? []))) {
+      throw new Error(`${revision.aggregateType}:${revision.aggregateId} 已被其他提交修改，须手动合并`);
+    }
+  }
+  const commitId = newId();
+  const revisions = original.revisions.map((revision) => ({ ...revision, revisionId: newId() }));
+  const commit: SyncCommitV2 = {
+    protocol: 2, ledgerId: original.ledgerId, commitId,
+    originDeviceId: store.syncDeviceId(), originDeviceName: '隔离提交审核修复',
+    createdAt: new Date().toISOString(), parentCommitIds: unique(graph.ledgerHeads), revisions,
+  };
+  await store.createAuditBatch({ id: commitId, type: 'system', label: `审核修复隔离提交 · ${original.commitId}`,
+    sourceCommitId: original.commitId, actorName: '账本所有者', entityCount: 0 });
+  try {
+    await store.withAuditContext(
+      { batchId: commitId, source: 'system', actorName: '账本所有者', suppressSync: true },
+      (scoped) => scoped.withBackupImportContext((historicalStore) => historicalStore.transaction(async (tx) => {
+        const current = await tx.syncGraph();
+        if (JSON.stringify(unique(current.ledgerHeads)) !== JSON.stringify(unique(graph.ledgerHeads))
+          || [...touched].some((key) => JSON.stringify(unique(current.entityHeads.get(key) ?? []))
+            !== JSON.stringify(unique(graph.entityHeads.get(key) ?? [])))) {
+          throw new Error('审核期间账本已变化，请重新同步并核对');
+        }
+        await tx.storeSyncCommit(commit, { source: 'local', state: 'applied' });
+        let conversionChanged = false;
+        for (const revision of [...revisions].sort(syncApplyOrder)) {
+          await tx.applySyncAggregate(revision.aggregateType, revision.aggregateId, revision.payload, revision.op);
+          await tx.setSyncEntityHeads(revision.aggregateType, revision.aggregateId, [revision.revisionId]);
+          if (revision.aggregateType === 'conversion') conversionChanged = true;
+        }
+        if (conversionChanged) await rebuildConversionDerivedInTransaction(tx);
+        await assertCommitReconciliationFinalState(tx, revisions);
+        await tx.setSyncLedgerHeads([commitId]);
+      })),
+    );
+    const entityCount = (await store.operationLog({ batchId: commitId })).length;
+    await store.finishAuditBatch(commitId, { entityCount, appliedCount: entityCount, outcome: 'applied' });
+  } catch (error) {
+    await store.finishAuditBatch(commitId, { entityCount: 0, outcome: 'invalid',
+      summary: error instanceof Error ? error.message : String(error) });
+    throw error;
+  }
+  return commit;
+}
+
+/** Create an owner-reviewed replacement when a quarantined write touched data that has since changed. */
+export async function mergeReviewedCommit(store: SqlLedgerStore, original: SyncCommitV2,
+  payloads: Record<string, Record<string, unknown> | null>,
+  reviewedState: { ledgerHeads: string[]; entityHeads: Record<string, string[]>;
+    currentPayloads: Record<string, Record<string, unknown> | null> }): Promise<SyncCommitV2> {
+  await store.assertSyncReady();
+  if (original.protocol !== 2 || original.ledgerId !== await store.getLedgerId()
+    || !original.revisions.length || original.revisions.length > 1000) {
+    throw new Error('待合并提交格式或账本身份无效');
+  }
+  const graph = await store.syncGraph();
+  if (graph.commits.has(original.commitId)) throw new Error('本地已包含原提交，不能重复合并');
+  const touched = new Set<string>();
+  for (const revision of original.revisions) {
+    const key = aggregateKey(revision.aggregateType, revision.aggregateId);
+    if (touched.has(key) || graph.revisions.has(revision.revisionId)) throw new Error('待合并提交包含重复修订');
+    touched.add(key);
+  }
+  if (JSON.stringify(unique(graph.ledgerHeads)) !== JSON.stringify(unique(reviewedState.ledgerHeads))
+    || [...touched].some((key) => JSON.stringify(unique(graph.entityHeads.get(key) ?? []))
+      !== JSON.stringify(unique(reviewedState.entityHeads[key] ?? [])))) {
+    throw new Error('审核期间账本已变化，请重新同步并核对');
+  }
+  for (const revision of original.revisions) {
+    const key = aggregateKey(revision.aggregateType, revision.aggregateId);
+    if (!Object.hasOwn(reviewedState.currentPayloads, key)
+      || JSON.stringify(await store.getSyncAggregate(revision.aggregateType, revision.aggregateId))
+        !== JSON.stringify(reviewedState.currentPayloads[key])) {
+      throw new Error('审核期间记录内容已变化，请重新核对');
+    }
+  }
+  if (Object.keys(payloads).length !== touched.size || Object.keys(payloads).some((key) => !touched.has(key))) {
+    throw new Error('手动合并必须为原提交的每项记录选择最终内容');
+  }
+  const commitId = newId();
+  const revisions: SyncRevisionV2[] = original.revisions.map((revision) => {
+    const payload = payloads[aggregateKey(revision.aggregateType, revision.aggregateId)];
+    if (payload !== null && (!payload || typeof payload !== 'object' || Array.isArray(payload))) {
+      throw new Error('手动合并的记录内容无效');
+    }
+    return { revisionId: newId(), aggregateType: revision.aggregateType, aggregateId: revision.aggregateId,
+      parentRevisionIds: unique(graph.entityHeads.get(aggregateKey(revision.aggregateType, revision.aggregateId)) ?? []),
+      op: payload === null ? 'delete' : 'put', payload };
+  });
+  const commit: SyncCommitV2 = { protocol: 2, ledgerId: original.ledgerId, commitId,
+    originDeviceId: store.syncDeviceId(), originDeviceName: '隔离提交手动合并',
+    createdAt: new Date().toISOString(), parentCommitIds: unique(graph.ledgerHeads), revisions };
+  await store.createAuditBatch({ id: commitId, type: 'system', label: `审核合并隔离提交 · ${original.commitId}`,
+    sourceCommitId: original.commitId, actorName: '账本所有者', entityCount: 0 });
+  try {
+    await store.withAuditContext(
+      { batchId: commitId, source: 'system', actorName: '账本所有者', suppressSync: true },
+      (scoped) => scoped.withBackupImportContext((historicalStore) => historicalStore.transaction(async (tx) => {
+        const current = await tx.syncGraph();
+        if (JSON.stringify(unique(current.ledgerHeads)) !== JSON.stringify(unique(graph.ledgerHeads))
+          || [...touched].some((key) => JSON.stringify(unique(current.entityHeads.get(key) ?? []))
+            !== JSON.stringify(unique(graph.entityHeads.get(key) ?? [])))) {
+          throw new Error('审核期间账本已变化，请重新同步并核对');
+        }
+        for (const revision of original.revisions) {
+          const key = aggregateKey(revision.aggregateType, revision.aggregateId);
+          if (JSON.stringify(await tx.getSyncAggregate(revision.aggregateType, revision.aggregateId))
+            !== JSON.stringify(reviewedState.currentPayloads[key])) {
+            throw new Error('审核期间记录内容已变化，请重新核对');
+          }
+        }
+        await tx.storeSyncCommit(commit, { source: 'local', state: 'applied' });
+        let conversionChanged = false;
+        for (const revision of [...revisions].sort(syncApplyOrder)) {
+          await tx.applySyncAggregate(revision.aggregateType, revision.aggregateId, revision.payload, revision.op);
+          await tx.setSyncEntityHeads(revision.aggregateType, revision.aggregateId, [revision.revisionId]);
+          if (revision.aggregateType === 'conversion') conversionChanged = true;
+        }
+        if (conversionChanged) await rebuildConversionDerivedInTransaction(tx);
+        await assertCommitReconciliationFinalState(tx, revisions);
+        await tx.setSyncLedgerHeads([commitId]);
+      })),
+    );
+    const entityCount = (await store.operationLog({ batchId: commitId })).length;
+    await store.finishAuditBatch(commitId, { entityCount, appliedCount: entityCount, outcome: 'applied' });
+  } catch (error) {
+    await store.finishAuditBatch(commitId, { entityCount: 0, outcome: 'invalid',
+      summary: error instanceof Error ? error.message : String(error) });
     throw error;
   }
   return commit;

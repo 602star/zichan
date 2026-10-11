@@ -51,7 +51,9 @@
     "build:server": "npm run build:api && npm run build:web",
     "build:desktop": "npm run build --workspace @zichan/desktop -- --no-bundle --ci",
     "test:scripts": "node --test tools/dev/tests/*.test.mjs",
-    "server:prune-backups": "npm run prune-backups --workspace @zichan/sync-server --"
+    "server:prune-backups": "npm run prune-backups --workspace @zichan/sync-server --",
+    "server:retire-node": "npm run retire-node --workspace @zichan/sync-server --",
+    "server:retire-local-replica": "npm run retire-local-replica --workspace @zichan/sync-server --"
   },
   "engines": {
     "node": ">=22.3"

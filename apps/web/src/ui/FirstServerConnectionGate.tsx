@@ -82,6 +82,9 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [identityProviders, setIdentityProviders] = useState<{
+    issuerNodeId: string; issuerUrl: string; linkId: string; ledgerId: string;
+  }[]>([]);
   useEffect(() => {
     if (!accountOnly) return;
     let active = true;
@@ -92,6 +95,12 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
       setMessage(checked.claimed ? '服务器在线，请登录账号。' : '服务器尚未初始化，请先进入管理后台设置管理员用户名和密码。');
     }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); })
       .finally(() => { if (active) setBusy(false); });
+    void fetch(`${initialUrl}/api/auth/federation/providers`, { redirect: 'error' })
+      .then(async (response) => response.ok ? response.json() as Promise<{
+        providers: { issuerNodeId: string; issuerUrl: string; linkId: string; ledgerId: string }[];
+      }> : { providers: [] })
+      .then((value) => { if (active) setIdentityProviders(value.providers); })
+      .catch(() => undefined);
     return () => { active = false; };
   }, [accountOnly, initialUrl]);
 
@@ -285,6 +294,14 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
           </div>
           </form>
           {accountOnly && <section aria-label="账号登录权限说明" style={{ marginTop: 18, fontSize: 'var(--fs-caption)', lineHeight: 1.7 }}><strong>登录会使用什么权限？</strong><p>仅验证本站账号并建立 HttpOnly 会话 Cookie，不保存账号密码。登录后在本浏览器保存该账号的加密离线缓存，不申请任意磁盘访问权限；不要求授予浏览器持久存储保护。托管账本登录后自动解锁；私密账本需要恢复码或此设备已有授权。</p></section>}
+          {accountOnly && identityProviders.length > 0 && <section style={{ marginTop: 18, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+            <strong>使用统一账号登录</strong>
+            <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>将在已授权的身份节点验证账号，再回到本站建立独立会话。</p>
+            {identityProviders.map((provider) => <button key={provider.linkId} type="button" style={{ ...button, marginRight: 8 }}
+              onClick={() => window.location.assign(`${initialUrl}/api/auth/federation/start?issuer=${encodeURIComponent(provider.issuerNodeId)}&link=${encodeURIComponent(provider.linkId)}`)}>
+              通过 {new URL(provider.issuerUrl).host} 登录账本 {provider.ledgerId}
+            </button>)}
+          </section>}
           {health?.claimed && <PasswordRecovery baseUrl={address} onComplete={(value) => { setUsername(value); setRegistering(false); }} />}
           {message && <div role="status" style={{ marginTop: 12, color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{message}</div>}
           {error && <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{error}</div>}

@@ -4,6 +4,9 @@ import { applyBackupRetention } from './backup-retention.js';
 import { developmentDataDir } from './runtime-config.js';
 import { issueOwnerRecovery } from './owner-recovery.js';
 import { writeMaintenanceRecord } from './maintenance-records.js';
+import { retireLegacyShadowPayload } from './retire-legacy-shadow.js';
+import { inspectNodeRetirement, retireNodeData } from './retire-node.js';
+import { inspectLocalReplicaRetirement, retireLocalReplica } from './retire-local-replica.js';
 
 function option(name: string, fallback?: string): string {
   const index = process.argv.indexOf(`--${name}`);
@@ -119,7 +122,51 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ ok: true, command, dataDir, ...result }, null, 2));
     return;
   }
-  throw new Error('用法：maintenance <backup|verify-backup|prune-backups|restore|owner-recovery> [--data-dir PATH] [--output PATH|--backup PATH] [--backup-dir PATH --keep N [--dry-run]] [--record-id ID]');
+  if (command === 'retire-legacy-shadow') {
+    const backupPath = resolve(option('output'));
+    const result = await retireLegacyShadowPayload(dataDir, backupPath, { vacuum: flag('vacuum') });
+    writeMaintenanceRecord(dataDir, {
+      recordId: `retire-shadow-${stamp()}`,
+      kind: 'manual', status: 'completed', createdAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(), outputPath: backupPath,
+      serverId: result.backupServerId, verifiedAt: new Date().toISOString(),
+      note: `已验证独立备份并清空旧影子载荷；提交 ${result.removed.commits} 条、密钥包 ${result.removed.keyEnvelopes} 条、能力 ${result.removed.requirements} 条、归档 ${result.removed.archives} 条。${result.vacuumed ? 'SQLite 已压缩。' : 'SQLite 尚未压缩。'}`,
+    });
+    console.log(JSON.stringify({ ok: true, command, ...result }, null, 2));
+    return;
+  }
+  if (command === 'retire-node') {
+    // This command removes the complete data directory; never accept the development default.
+    const explicitDataDir = resolve(option('data-dir'));
+    if (flag('dry-run')) {
+      const inspection = await inspectNodeRetirement(explicitDataDir);
+      console.log(JSON.stringify({ ok: true, command, dryRun: true, ...inspection,
+        eligible: inspection.ledgerIds.length <= 1 && inspection.replicaIds.length <= 1 }, null, 2));
+      return;
+    }
+    const output = resolve(option('output'));
+    const confirmedNodeId = option('confirm-node-id');
+    const result = await retireNodeData(explicitDataDir, output, confirmedNodeId);
+    console.log(JSON.stringify({ ok: true, command, dryRun: false, ...result,
+      note: '指定节点数据目录已清理；独立备份和其他副本不在本命令清理范围内。' }, null, 2));
+    return;
+  }
+  if (command === 'retire-local-replica') {
+    const explicitDataDir = resolve(option('data-dir'));
+    const replicaId = option('replica-id');
+    if (flag('dry-run')) {
+      const inspection = await inspectLocalReplicaRetirement(explicitDataDir, replicaId);
+      console.log(JSON.stringify({ ok: true, command, dryRun: true, ...inspection,
+        eligible: inspection.issues.length === 0 }, null, 2));
+      return;
+    }
+    const result = await retireLocalReplica(explicitDataDir, replicaId, resolve(option('output')),
+      option('confirm-node-id'), option('confirm-ledger-id'));
+    console.log(JSON.stringify({ ok: true, command, dryRun: false, ...result,
+      note: '指定账本副本已从此节点清理；其他账本、账号与独立备份保留。' }, null, 2));
+    return;
+  }
+  throw new Error('用法：maintenance <backup|verify-backup|prune-backups|restore|owner-recovery|retire-legacy-shadow|retire-node|retire-local-replica> [--data-dir PATH] [--output PATH|--backup PATH] [--replica-id ID] [--confirm-node-id ID --confirm-ledger-id ID] [--backup-dir PATH --keep N [--dry-run]] [--vacuum] [--record-id ID]');
 }
 
 main().catch((error) => {

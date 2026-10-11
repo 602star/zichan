@@ -53,7 +53,8 @@ describe('responsive shell contract', () => {
     expect(store).toContain('复制诊断信息');
     expect(store).toContain("userSelect: 'text'");
     expect(store).toContain('aria-live="polite"');
-    expect(main.indexOf('<AppErrorBoundary>')).toBeLessThan(main.indexOf('<LedgerApp />'));
+    expect(main.indexOf('<AppErrorBoundary>')).toBeLessThan(main.indexOf('<DesktopLedgerApp />'));
+    expect(main).toContain('return <LedgerApp />;');
     expect(ledgerEntry).toContain('<StoreProvider>');
     expect(main).not.toContain('<StoreProvider>');
   });

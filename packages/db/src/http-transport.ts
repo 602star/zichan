@@ -25,6 +25,8 @@ export interface HttpTransportOptions {
   cryptoSession: LedgerCryptoSession;
   /** Opaque password-wrapped keyring replicated to every configured server. */
   keyEnvelope: LedgerKeyEnvelope;
+  /** Member access uses a per-account envelope; the legacy ledger envelope is owner-only. */
+  memberKeyEnvelope?: boolean;
   /** Refuse to create a server-side binding; used by destructive join preflight. */
   requireExistingReplica?: boolean;
   /**
@@ -93,10 +95,13 @@ export interface SyncAuthSession {
     lastSeenAt: string;
     lastIp: string | null;
     revokedAt: string | null;
+    replicaId?: string | null;
+    selectionVersion?: number;
     active: boolean;
   };
   role?: 'owner' | 'admin' | 'viewer' | 'member';
   ledgerId?: string;
+  replicaId?: string;
 }
 
 export interface SyncAuthMe {
@@ -109,6 +114,19 @@ export interface SyncAuthMe {
   ledgerId?: string;
   replicaId?: string;
   streamEpoch?: string;
+  ledgers?: Array<{ ledgerId: string; replicaId: string; streamEpoch: string }>;
+  federatedIdentity?: { issuerNodeId: string; subjectAccountId: string; ledgerId: string } | null;
+}
+
+export interface SyncLedgerSelection {
+  accessToken: string;
+  accessExpiresAt: string;
+  accountId: string;
+  session: SyncAuthSession['session'];
+  ledgerId: string;
+  replicaId: string;
+  streamEpoch: string;
+  ledgers: Array<{ ledgerId: string; replicaId: string; streamEpoch: string }>;
 }
 
 function context(ledgerId: string, commitId: string, contentHash: string) {
@@ -195,6 +213,7 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
     replicaId?: string;
     streamEpoch?: string;
     headSeq?: number;
+    currentKeyEpoch?: number;
   }> => {
     const response = await fetch(`${opts.baseUrl}/api/v3/replica`, { headers, redirect: 'error' });
     if (!response.ok) throw await errorMessage('replica lookup failed', response);
@@ -206,6 +225,7 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
       replicaId?: string;
       streamEpoch?: string;
       headSeq?: number;
+      currentKeyEpoch?: number;
     }>;
   };
 
@@ -217,7 +237,7 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
       }
       let replica = await readReplica();
       if (!replica.bound) {
-        if (opts.requireExistingReplica) throw new Error('同步账号尚未绑定远端账本');
+        if (opts.requireExistingReplica || opts.memberKeyEnvelope) throw new Error('同步账号尚未绑定远端账本');
         const response = await fetch(`${opts.baseUrl}/api/v3/replica/bind`, {
           method: 'POST', headers, body: JSON.stringify({ ledgerId }), redirect: 'error',
         });
@@ -226,6 +246,8 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
       }
       if (replica.ledgerId !== ledgerId) throw new Error(`LEDGER_MISMATCH:${replica.ledgerId ?? 'unknown'}`);
       if (!replica.replicaId || !replica.streamEpoch || !replica.serverId) throw new Error('同步副本身份不完整');
+      if (opts.memberKeyEnvelope && (!Number.isSafeInteger(replica.currentKeyEpoch)
+        || Number(replica.currentKeyEpoch) < 1)) throw new Error('成员账本服务器缺少当前密钥代次，请先升级服务器');
       connection = {
         capabilities: replica.capabilities,
         serverId: replica.serverId,
@@ -233,24 +255,27 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
         streamEpoch: replica.streamEpoch,
         ledgerId,
         headSeq: Number(replica.headSeq ?? 0),
+        ...(Number.isSafeInteger(replica.currentKeyEpoch) ? { currentKeyEpoch: replica.currentKeyEpoch } : {}),
       };
       if (opts.cryptoSession.ledgerId !== ledgerId || opts.keyEnvelope.ledgerId !== ledgerId) {
         throw new Error('账本数据与已解锁密钥包不匹配');
       }
-      const remoteEnvelope = await fetchLedgerKeyEnvelope(opts.baseUrl, opts.token);
-      if (opts.requireExistingReplica) {
-        if (!remoteEnvelope) throw new Error('远端账本密钥封套在预检期间消失');
-        if (await sha256Json(remoteEnvelope) !== await sha256Json(opts.keyEnvelope)) {
-          throw new Error('远端账本密钥封套在预检期间发生变化');
+      if (!opts.memberKeyEnvelope) {
+        const remoteEnvelope = await fetchLedgerKeyEnvelope(opts.baseUrl, opts.token);
+        if (opts.requireExistingReplica) {
+          if (!remoteEnvelope) throw new Error('远端账本密钥封套在预检期间消失');
+          if (await sha256Json(remoteEnvelope) !== await sha256Json(opts.keyEnvelope)) {
+            throw new Error('远端账本密钥封套在预检期间发生变化');
+          }
+        } else if (!remoteEnvelope) {
+          await putLedgerKeyEnvelope(opts.baseUrl, opts.token, opts.keyEnvelope);
+        } else if (remoteEnvelope.keyringId !== opts.keyEnvelope.keyringId) {
+          throw new Error('同步服务器保存的是另一个账本密钥包');
+        } else if (remoteEnvelope.generation > opts.keyEnvelope.generation) {
+          throw new Error('同步服务器有更新的账本密钥包，请先获取并重新解锁');
+        } else if (remoteEnvelope.generation < opts.keyEnvelope.generation) {
+          await putLedgerKeyEnvelope(opts.baseUrl, opts.token, opts.keyEnvelope);
         }
-      } else if (!remoteEnvelope) {
-        await putLedgerKeyEnvelope(opts.baseUrl, opts.token, opts.keyEnvelope);
-      } else if (remoteEnvelope.keyringId !== opts.keyEnvelope.keyringId) {
-        throw new Error('同步服务器保存的是另一个账本密钥包');
-      } else if (remoteEnvelope.generation > opts.keyEnvelope.generation) {
-        throw new Error('同步服务器有更新的账本密钥包，请先获取并重新解锁');
-      } else if (remoteEnvelope.generation < opts.keyEnvelope.generation) {
-        await putLedgerKeyEnvelope(opts.baseUrl, opts.token, opts.keyEnvelope);
       }
       return connection;
     },
@@ -262,20 +287,36 @@ export function httpCommitTransport(opts: HttpTransportOptions): CommitTransport
       );
       if (!response.ok) throw await errorMessage('commit pull failed', response);
       const body = await response.json() as {
-        commits?: { seq: number; commitId: string; ledgerId: string; contentHash: string; encCommit: Encrypted }[];
+        commits?: { seq: number; commitId: string; ledgerId: string; contentHash: string;
+          encCommit?: Encrypted; keyEpoch?: number; quarantined?: boolean }[];
         nextSeq?: number;
         headSeq?: number;
         hasMore?: boolean;
         serverId?: string;
         replicaId?: string;
         streamEpoch?: string;
+        currentKeyEpoch?: number;
       };
       if (body.serverId !== identity.serverId || body.replicaId !== identity.replicaId || body.streamEpoch !== identity.streamEpoch) {
         throw new Error('同步副本身份在拉取期间发生变化');
       }
+      if (connection?.currentKeyEpoch !== undefined && body.currentKeyEpoch !== connection.currentKeyEpoch) {
+        throw new Error('账本密钥代次在同步期间已变化，请重新解锁并检查待处理写入');
+      }
       const commits = [];
       for (const row of body.commits ?? []) {
         if (row.ledgerId !== identity.ledgerId) throw new Error(`LEDGER_MISMATCH:${row.ledgerId}`);
+        if (row.quarantined === true) {
+          if (row.encCommit !== undefined || !/^[A-Za-z0-9_-]{16,160}$/.test(row.commitId)
+            || !/^[a-f0-9]{64}$/.test(row.contentHash)) throw new Error('服务器隔离提交标记无效');
+          commits.push({ seq: row.seq, commitId: row.commitId, contentHash: row.contentHash,
+            quarantined: true as const });
+          continue;
+        }
+        if (body.currentKeyEpoch && row.keyEpoch !== body.currentKeyEpoch) {
+          throw new Error(`源节点提交 ${row.commitId} 属于旧权限或密钥代次，需由账本所有者审核`);
+        }
+        if (!row.encCommit) throw new Error(`同步提交 ${row.commitId} 缺少密文`);
         const commit = await decryptJson<SyncCommitV2>(opts.cryptoSession, row.encCommit, context(row.ledgerId, row.commitId, row.contentHash));
         const actualHash = await sha256Json(commit);
         if (actualHash !== row.contentHash || commit.commitId !== row.commitId || commit.ledgerId !== row.ledgerId) {
@@ -553,6 +594,25 @@ export async function fetchAuthMe(baseUrl: string, accessToken: string, options:
   // The read-only operator is a valid role here: it is an administrator that may only read.
   if (!body.username || (body.role !== 'owner' && body.role !== 'admin' && body.role !== 'viewer' && body.role !== 'member') || !body.session?.id) {
     throw new Error('account lookup returned an incomplete response');
+  }
+  return body;
+}
+
+export async function selectAccountLedger(baseUrl: string, accessToken: string, replicaId: string,
+  options: HttpRequestOptions = {}): Promise<SyncLedgerSelection> {
+  assertSecureSyncUrl(baseUrl);
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(replicaId)) throw new Error('账本副本 ID 无效');
+  const response = await fetch(`${baseUrl}/api/auth/ledger/select`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ replicaId }), credentials: 'omit', redirect: 'error',
+  }, options);
+  if (!response.ok) throw await errorMessage('ledger selection failed', response);
+  const body = await response.json() as SyncLedgerSelection;
+  if (!body.accessToken || !body.accessExpiresAt || !body.session?.id
+    || body.session.replicaId !== replicaId || body.replicaId !== replicaId
+    || !body.ledgerId || !body.streamEpoch || !Array.isArray(body.ledgers)) {
+    throw new Error('账本选择响应不完整或副本身份不匹配');
   }
   return body;
 }

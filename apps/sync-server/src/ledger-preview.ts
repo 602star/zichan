@@ -374,7 +374,14 @@ export async function decryptPreviewAttachment(
   // Blob storage uses the authenticated account spelling; crypto uses the device's
   // original spelling. Never substitute one for the other, even with NOCASE SQL.
   let resolved: { context: Awaited<ReturnType<typeof deriveAttachmentCryptoContext>>; blobId: string; manifest: PreviewBlobManifest } | undefined;
+  for (const attachmentSecret of [session.crypto.attachmentSecret, ...(session.crypto.retiredAttachmentSecrets ?? [])]) {
+    const context = await deriveAttachmentCryptoContext({ ...session.crypto, attachmentSecret }, { v: 2, ledgerId: session.ledgerId });
+    const blobId = await attachmentRemoteBlobId(context, sha256);
+    const manifest = await readManifest({ username: session.username, ledgerId: session.ledgerId, blobId });
+    if (manifest) { resolved = { context, blobId, manifest }; break; }
+  }
   for (const username of session.attachmentUsernames) {
+    if (resolved) break;
     for (const attachmentSecret of [session.crypto.attachmentSecret, ...(session.crypto.retiredAttachmentSecrets ?? [])]) {
       const context = await deriveAttachmentCryptoContext({ ...session.crypto, attachmentSecret }, {
         serverId: options.serverId, ledgerId: session.ledgerId, username,
