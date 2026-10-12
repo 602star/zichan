@@ -26,6 +26,7 @@ import { accountProtection, protectionRequest } from './account-protection.js';
 import { withSyncLock } from './sync-lock.js';
 import { clientIdentity } from './client-identity.js';
 import { hasNodeReplicaGroup, preferredReplicaProfiles } from './node-replica-routing.js';
+import { reportSyncRuns } from './sync-run-reports.js';
 
 export interface ConfiguredSyncEndpoint extends ReplicaSyncEndpointResult {
   alias: string;
@@ -183,6 +184,8 @@ async function syncConfiguredServersNow(
   onLegacyMigrationProgress?: (progress: LegacyAttachmentMigrationProgress) => void,
   options: { deferAttachmentTransfers?: boolean; skipAttachmentSync?: boolean } = {},
 ): Promise<ConfiguredSyncResult> {
+  const startedAt = performance.now();
+  const runId = crypto.randomUUID();
   const selected = profiles.filter((profile) => profile.enabled);
   const meters = new Map<string, MeteredTransport>();
   const targets: SyncReplicaTarget[] = selected.map((profile) => {
@@ -290,5 +293,14 @@ async function syncConfiguredServersNow(
     }
     return { ...endpoint, alias: profile.alias, url: activeUrl, latencyMs, attachments };
   });
+  await reportSyncRuns(selected, endpoints.map((endpoint) => {
+    const outcome = endpoint.error ? 'failed'
+      : endpoint.pendingPush || endpoint.attachments?.pending || endpoint.attachments?.failed
+        || endpoint.attachments?.error || !result.converged ? 'partial' : 'converged';
+    return { profileId: endpoint.id, runId, outcome, pulled: endpoint.pulled, pushed: endpoint.pushed,
+      attachmentUploads: endpoint.attachments?.uploaded ?? 0,
+      attachmentDownloads: endpoint.attachments?.downloaded ?? 0,
+      durationMs: elapsedSince(startedAt) };
+  })).catch(() => undefined);
   return { ...result, endpoints, attachmentSync, syncMode: nodeGroup ? 'node-group' : 'legacy', finishedAt };
 }

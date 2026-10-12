@@ -7,6 +7,8 @@ import type { NodeIdentity } from './node-identity.js';
 import { signNodeRequest, verifyNodeResponse } from './node-request-auth.js';
 import { assessReplicaReadiness } from './replica-readiness.js';
 import { parseNodeReplicaGroupSnapshot } from './replica-group-health.js';
+import { parseFederatedCredential, signFederatedCredential,
+  verifyFederatedCredential, type FederatedCredentialBundle } from './federated-credential.js';
 import type { BlobManifest, BlobReplicaState, EncryptedBlobStore } from './blob-store.js';
 import { decodeBlobPack, encodeBlobPack, MAX_BLOB_PACK_CHUNK_BYTES, MAX_BLOB_PACK_OBJECTS } from './blob-pack.js';
 import { ServerStoreError, type AttachmentPromiseCatalog, type AttachmentPromiseUpload,
@@ -272,19 +274,86 @@ export async function replicateNodeEnvelope(store: SyncServerStore, identity: No
   }
 }
 
+export async function replicateNodePasswordEnvelope(store: SyncServerStore, identity: NodeIdentity,
+  link: NodeReplicationLink): Promise<void> {
+  const replica = await linkedReplica(store, link);
+  const remote = await signedCall(identity, link, 'GET', '/api/v4/replication/password-envelope');
+  checkPeer(remote, link);
+  if (remote.ledgerId !== link.ledgerId || remote.record !== null &&
+    (!record(remote.record) || !record(remote.record.envelope)
+      || !Number.isSafeInteger(remote.record.revision))) throw new Error('对端密码密钥包无效');
+  const local = await store.passwordKeyEnvelope(link.username, link.ledgerId, replica.replicaId, 'node');
+  const received = remote.record as { envelope: JsonRecord; revision: number } | null;
+  if (received && (!local || received.revision > local.revision)) {
+    await store.putPasswordKeyEnvelope(link.username, link.ledgerId, received.envelope,
+      local?.revision ?? 0, 'node', replica.replicaId, received.revision);
+  } else if (local && (!received || local.revision > received.revision)) {
+    const result = await signedCall(identity, link, 'POST', '/api/v4/replication/password-envelope',
+      JSON.stringify({ envelope: local.envelope, expectedRevision: received?.revision ?? 0,
+        revision: local.revision }));
+    checkPeer(result, link);
+    if (result.revision !== local.revision) throw new Error('对端密码密钥包版本未确认');
+  } else if (local && received && JSON.stringify(local.envelope) !== JSON.stringify(received.envelope)) {
+    throw new Error('同版本账本密码密钥包不一致；复制已停止');
+  }
+}
+
+export async function replicateNodeGroupPolicy(store: SyncServerStore, identity: NodeIdentity,
+  link: NodeReplicationLink): Promise<void> {
+  if (!await store.federatedAccount(link.username)) return;
+  const remote = await signedCall(identity, link, 'GET', '/api/v4/replication/group-policy');
+  checkPeer(remote, link);
+  if (remote.ledgerId !== link.ledgerId || !['open', 'invite', 'closed'].includes(String(remote.registrationMode))
+    || !Number.isSafeInteger(remote.revision) || Number(remote.revision) < 1) {
+    throw new Error('主节点注册策略无效');
+  }
+  await store.applyJoinedRegistrationPolicy(link.peerNodeId,
+    remote.registrationMode as 'open' | 'invite' | 'closed', Number(remote.revision));
+}
+
+async function replicateNodeProtection(identity: NodeIdentity, link: NodeReplicationLink,
+  apply: (link: NodeReplicationLink, mode: 'managed' | 'private', secret: string | null) => Promise<void>): Promise<void> {
+  let remote: JsonRecord;
+  try { remote = await signedCall(identity, link, 'GET', '/api/v4/replication/account-protection'); }
+  catch (error) {
+    if (String(error).includes('/api/v4/replication/account-protection 返回 HTTP 404')) return;
+    throw error;
+  }
+  checkPeer(remote, link);
+  if (remote.mode === null) return;
+  if (remote.mode !== 'managed' && remote.mode !== 'private'
+    || remote.mode === 'managed' && (typeof remote.secret !== 'string' || !remote.secret)
+    || remote.mode === 'private' && remote.secret !== null) {
+    throw new Error('对端账本保护资料无效');
+  }
+  await apply(link, remote.mode, remote.secret as string | null);
+}
+
 export async function replicateNodeAccountIdentity(store: SyncServerStore, identity: NodeIdentity, link: NodeReplicationLink): Promise<void> {
   const account = await signedCall(identity, link, 'GET', '/api/v4/replication/account-identity');
   checkPeer(account, link);
-  if (account.ledgerId !== link.ledgerId || account.issuerNodeId !== link.peerNodeId
+  if (account.ledgerId !== link.ledgerId || typeof account.issuerNodeId !== 'string'
+    || !/^[A-Za-z0-9_-]{8,128}$/.test(account.issuerNodeId)
     || typeof account.subjectAccountId !== 'string' || !/^[A-Za-z0-9_-]{8,160}$/.test(account.subjectAccountId)) {
     throw new Error('对端统一账号身份无效');
   }
-  await store.bindFederatedAccount(link.username, link.ledgerId, link.peerNodeId, account.subjectAccountId);
-  const keyResponse = await signedCall(identity, link, 'GET', '/api/v4/replication/account-key');
+  if (account.issuerNodeId !== link.peerNodeId) {
+    const group = await store.serverSyncGroup();
+    const issuer = (await store.serverSyncGroupMembers()).find((member) => member.nodeId === account.issuerNodeId);
+    if (group?.role !== 'member' || group.mainNodeId !== link.peerNodeId || !issuer) {
+      throw new Error('中继账本的账号签发节点不在同步组中');
+    }
+  }
+  await store.bindFederatedAccount(link.username, link.ledgerId, account.issuerNodeId, account.subjectAccountId);
+  await replicateNodeAccountCredential(store, identity, link, account.issuerNodeId,
+    account.subjectAccountId, link.username);
+  const keyResponse = await signedCall(identity, link, 'GET',
+    `/api/v4/replication/account-key?issuerNodeId=${encodeURIComponent(account.issuerNodeId)}`
+    + `&subjectAccountId=${encodeURIComponent(account.subjectAccountId)}`);
   checkPeer(keyResponse, link);
   if (keyResponse.record === null) return;
   const recordValue = keyResponse.record;
-  if (!record(recordValue) || recordValue.issuerNodeId !== link.peerNodeId
+  if (!record(recordValue) || recordValue.issuerNodeId !== account.issuerNodeId
     || recordValue.subjectAccountId !== account.subjectAccountId
     || typeof recordValue.publicKey !== 'string' || !Number.isSafeInteger(recordValue.revision)
     || Number(recordValue.revision) < 1 || typeof recordValue.updatedAt !== 'string'
@@ -293,12 +362,73 @@ export async function replicateNodeAccountIdentity(store: SyncServerStore, ident
   }
   const envelope = recordValue.envelope as unknown as AccountEncryptionKeyEnvelope;
   assertAccountEncryptionKeyEnvelope(envelope);
-  if (envelope.issuerNodeId !== link.peerNodeId || envelope.accountId !== account.subjectAccountId
+  if (envelope.issuerNodeId !== account.issuerNodeId || envelope.accountId !== account.subjectAccountId
     || envelope.publicKey !== recordValue.publicKey) throw new Error('对端账号加密公钥身份不匹配');
-  await store.importAccountEncryptionKey({ issuerNodeId: link.peerNodeId,
+  await store.importAccountEncryptionKey({ issuerNodeId: account.issuerNodeId,
     subjectAccountId: account.subjectAccountId as string, publicKey: recordValue.publicKey,
     envelope: recordValue.envelope as JsonRecord, revision: Number(recordValue.revision),
     updatedAt: recordValue.updatedAt });
+}
+
+async function replicateNodeAccountCredential(store: SyncServerStore, identity: NodeIdentity,
+  link: NodeReplicationLink, issuerNodeId: string, subjectAccountId: string,
+  localUsername: string): Promise<void> {
+  let remote: JsonRecord;
+  try {
+    remote = await signedCall(identity, link, 'GET',
+      `/api/v4/replication/account-credential?issuerNodeId=${encodeURIComponent(issuerNodeId)}`
+      + `&subjectAccountId=${encodeURIComponent(subjectAccountId)}`);
+  } catch (error) {
+    if (String(error).includes('/api/v4/replication/account-credential?')
+      && String(error).includes('返回 HTTP 404')) return;
+    throw error;
+  }
+  checkPeer(remote, link);
+  if (remote.bundle) {
+    const bundle = parseFederatedCredential(remote.bundle);
+    if (bundle.ledgerId !== link.ledgerId || bundle.issuerNodeId !== issuerNodeId
+      || bundle.subjectAccountId !== subjectAccountId
+      || typeof remote.issuerSignature !== 'string') {
+      throw new Error('对端账号密码凭据与统一身份不匹配');
+    }
+    let issuerPublicKey = link.peerPublicKey;
+    if (issuerNodeId !== link.peerNodeId) {
+      const stored = await store.nodeGroupSnapshot(link.linkId);
+      let snapshot = stored && parseNodeReplicaGroupSnapshot(stored.snapshot,
+        link.peerNodeId, link.peerPublicKey, link.peerReplicaId, link.peerStreamEpoch,
+        link.ledgerId, identity.nodeId, identity.publicKey);
+      if (!snapshot?.directory.members.some((item) => item.nodeId === issuerNodeId && !item.retiredAt)) {
+        const remoteGroup = await signedCall(identity, link, 'GET', '/api/v4/replication/group-state');
+        snapshot = parseNodeReplicaGroupSnapshot(remoteGroup,
+          link.peerNodeId, link.peerPublicKey, link.peerReplicaId, link.peerStreamEpoch,
+          link.ledgerId, identity.nodeId, identity.publicKey);
+        if (snapshot) {
+          await store.recordNodeGroupSnapshot(link.linkId, remoteGroup);
+        }
+      }
+      const member = snapshot?.directory.members.find((item) => item.nodeId === issuerNodeId && !item.retiredAt);
+      if (!member) throw new Error('尚未取得成员身份节点的已签名副本组目录');
+      issuerPublicKey = member.publicKey;
+    }
+    if (!verifyFederatedCredential(bundle, remote.issuerSignature, issuerPublicKey)) {
+      throw new Error('成员身份节点账号凭据签名无效');
+    }
+    await store.importFederatedPasswordCredential({ localUsername,
+      sourceUsername: bundle.username, displayName: bundle.displayName,
+      issuerNodeId, subjectAccountId, registrationRecord: bundle.registrationRecord,
+      serverSetup: bundle.serverSetup, disabled: bundle.disabled,
+      sourceRevision: bundle.revision });
+    return;
+  }
+  if (issuerNodeId !== link.peerNodeId || remote.issuerNodeId !== issuerNodeId
+    || remote.subjectAccountId !== subjectAccountId || typeof remote.username !== 'string'
+    || typeof remote.registrationRecord !== 'string' || typeof remote.serverSetup !== 'string'
+    || typeof remote.disabled !== 'boolean') throw new Error('对端账号密码凭据与统一身份不匹配');
+  await store.importFederatedPasswordCredential({ localUsername, sourceUsername: remote.username,
+    displayName: typeof remote.displayName === 'string' ? remote.displayName : remote.username,
+    issuerNodeId, subjectAccountId,
+    registrationRecord: remote.registrationRecord, serverSetup: remote.serverSetup,
+    disabled: remote.disabled, sourceRevision: 0 });
 }
 
 /** The identity issuer supplies each active member's encrypted account key; other peers cannot invent one. */
@@ -308,15 +438,16 @@ export async function replicateNodeMemberAccountKeys(store: SyncServerStore, ide
   const state = await store.ledgerControlState(link.username, replica.replicaId);
   if (!state) return;
   for (const member of Object.values(state.members)) {
-    if (member.removed || member.issuerNodeId !== link.peerNodeId) continue;
+    if (member.removed || member.issuerNodeId === identity.nodeId) continue;
     const remote = await signedCall(identity, link, 'GET',
-      `/api/v4/replication/account-key?subjectAccountId=${encodeURIComponent(member.accountId)}`);
+      `/api/v4/replication/account-key?issuerNodeId=${encodeURIComponent(member.issuerNodeId)}`
+      + `&subjectAccountId=${encodeURIComponent(member.accountId)}`);
     checkPeer(remote, link);
     if (remote.ledgerId !== link.ledgerId) throw new Error('对端成员账号密钥账本不匹配');
     if (remote.record === null) continue; // Inventory keeps this replica incomplete until the issuer publishes it.
     if (!record(remote.record)) throw new Error('对端成员账号密钥格式无效');
     const value = remote.record;
-    if (value.issuerNodeId !== link.peerNodeId || value.subjectAccountId !== member.accountId
+    if (value.issuerNodeId !== member.issuerNodeId || value.subjectAccountId !== member.accountId
       || value.publicKey !== member.encryptionPublicKey || !Number.isSafeInteger(value.revision)
       || Number(value.revision) < 1 || typeof value.updatedAt !== 'string'
       || !Number.isFinite(Date.parse(value.updatedAt)) || !record(value.envelope)) {
@@ -324,7 +455,7 @@ export async function replicateNodeMemberAccountKeys(store: SyncServerStore, ide
     }
     const envelope = value.envelope as unknown as AccountEncryptionKeyEnvelope;
     assertAccountEncryptionKeyEnvelope(envelope);
-    await store.importAccountEncryptionKey({ issuerNodeId: link.peerNodeId,
+    await store.importAccountEncryptionKey({ issuerNodeId: member.issuerNodeId,
       subjectAccountId: member.accountId, publicKey: value.publicKey as string,
       envelope: value.envelope as JsonRecord, revision: Number(value.revision),
       updatedAt: value.updatedAt as string });
@@ -332,20 +463,94 @@ export async function replicateNodeMemberAccountKeys(store: SyncServerStore, ide
 }
 
 /** Make issuer-backed members available for node-local login before they visit this site. */
-export async function provisionNodeMembers(store: SyncServerStore, link: NodeReplicationLink): Promise<void> {
+export async function provisionNodeMembers(store: SyncServerStore, identity: NodeIdentity, link: NodeReplicationLink): Promise<void> {
   const replica = await linkedReplica(store, link);
   const state = await store.ledgerControlState(link.username, replica.replicaId);
   if (!state) return;
   for (const member of Object.values(state.members)) {
-    if (member.removed || member.issuerNodeId !== link.peerNodeId) continue;
+    if (member.removed || member.issuerNodeId === identity.nodeId) continue;
     try {
-      await store.provisionFederatedMember(link, member.issuerNodeId, member.accountId);
+      const localUsername = await store.provisionFederatedMember(link, member.issuerNodeId, member.accountId);
+      await replicateNodeAccountCredential(store, identity, link,
+        member.issuerNodeId, member.accountId, localUsername);
     } catch (error) {
       if (error instanceof ServerStoreError
         && (error.code === 'MEMBER_ENVELOPE_REQUIRED' || error.code === 'MEMBER_ACCOUNT_KEY_REQUIRED')) continue;
       throw error;
     }
   }
+}
+
+/** A subsidiary sends its own ledger member identities to the coordinator over its existing grant. */
+export async function publishNativeMemberCredentials(store: SyncServerStore,
+  identity: NodeIdentity, link: NodeReplicationLink, legacyOpaqueSetup: string): Promise<void> {
+  if (!await store.federatedAccount(link.username)) return;
+  for (const source of await store.pendingNativeDirectoryUsers(link.linkId)) {
+    const accountKey = await store.accountEncryptionKey(identity.nodeId, source.accountId);
+    if (!accountKey) continue;
+    const bundle: FederatedCredentialBundle = {
+      v: 1, ledgerId: link.ledgerId, issuerNodeId: identity.nodeId,
+      subjectAccountId: source.accountId, username: source.username,
+      displayName: source.displayName, registrationRecord: source.opaqueRegistrationRecord,
+      serverSetup: await store.opaqueSetupForUser(source.username)
+        ?? legacyOpaqueSetup,
+      disabled: source.disabled, revision: source.revision * 1_000_000 + accountKey.revision, accountKey,
+    };
+    const result = await signedCall(identity, link, 'POST',
+      '/api/v4/replication/account-credential',
+      JSON.stringify({ bundle, issuerSignature: signFederatedCredential(identity, bundle) }));
+    checkPeer(result, link);
+    if (result.ledgerId !== link.ledgerId || typeof result.accepted !== 'boolean') {
+      throw new Error('中继账号凭据接收结果无效');
+    }
+    await store.markDirectoryUserExported(link.linkId, source.accountId, bundle.revision);
+  }
+}
+
+/** Pull group login identities independently of ledger membership; ledger access stays signed by its owner. */
+export async function replicateNodeAccountDirectory(store: SyncServerStore, identity: NodeIdentity,
+  link: NodeReplicationLink): Promise<boolean> {
+  if (!await store.federatedAccount(link.username)) return true;
+  const after = await store.nodeDirectoryCursor(link.linkId);
+  const remote = await signedCall(identity, link, 'GET',
+    `/api/v4/replication/account-directory?after=${after}&limit=50`);
+  checkPeer(remote, link);
+  if (remote.ledgerId !== link.ledgerId || !Number.isSafeInteger(remote.headSeq)
+    || !Number.isSafeInteger(remote.nextSeq) || Number(remote.nextSeq) < after
+    || !Array.isArray(remote.entries) || remote.entries.length > 50
+    || typeof remote.hasMore !== 'boolean') throw new Error('对端账号目录页无效');
+  const stored = await store.nodeGroupSnapshot(link.linkId);
+  const snapshot = stored && parseNodeReplicaGroupSnapshot(stored.snapshot,
+    link.peerNodeId, link.peerPublicKey, link.peerReplicaId, link.peerStreamEpoch,
+    link.ledgerId, identity.nodeId, identity.publicKey);
+  let nextSeq = after;
+  for (const item of remote.entries) {
+    if (!record(item) || !Number.isSafeInteger(item.seq) || Number(item.seq) <= nextSeq
+      || typeof item.signature !== 'string') throw new Error('账号目录事件顺序无效');
+    nextSeq = Number(item.seq);
+    const bundle = parseFederatedCredential(item.bundle);
+    if (bundle.ledgerId !== link.ledgerId) throw new Error('账号目录账本范围无效');
+    if (bundle.issuerNodeId === identity.nodeId) continue;
+    const issuer = snapshot?.directory.members.find((member) => member.nodeId === bundle.issuerNodeId);
+    const publicKey = bundle.issuerNodeId === link.peerNodeId ? link.peerPublicKey : issuer?.publicKey;
+    if (!publicKey || !verifyFederatedCredential(bundle, item.signature, publicKey)) {
+      throw new Error('账号目录签名无效');
+    }
+    // Old directory events remain auditable, but a retired issuer cannot refresh login credentials.
+    if (issuer?.retiredAt) continue;
+    if (bundle.accountKey) await store.importAccountEncryptionKey(bundle.accountKey);
+    const localUsername = await store.provisionFederatedDirectoryAccount(link.ledgerId,
+      bundle.issuerNodeId, bundle.subjectAccountId);
+    await store.importFederatedPasswordCredential({ localUsername,
+      sourceUsername: bundle.username, displayName: bundle.displayName,
+      issuerNodeId: bundle.issuerNodeId, subjectAccountId: bundle.subjectAccountId,
+      registrationRecord: bundle.registrationRecord, serverSetup: bundle.serverSetup,
+      disabled: bundle.disabled, sourceRevision: bundle.revision });
+  }
+  if (remote.nextSeq !== nextSeq || Number(remote.headSeq) < nextSeq
+    || remote.hasMore !== (nextSeq < Number(remote.headSeq))) throw new Error('账号目录游标不连续');
+  if (nextSeq > after) await store.advanceNodeDirectoryCursor(link.linkId, nextSeq);
+  return !remote.hasMore;
 }
 
 /** One bounded page per round; signed events are checked again before they enter SQLite. */
@@ -939,7 +1144,10 @@ export async function verifyReplicaPhysical(store: SyncServerStore, blobStore: E
     { replicaId: result.replicaId, streamEpoch: result.streamEpoch });
 }
 
-export function createNodeReplicationWorker(store: SyncServerStore, blobStore: EncryptedBlobStore, identity: () => NodeIdentity) {
+export function createNodeReplicationWorker(store: SyncServerStore, blobStore: EncryptedBlobStore,
+  identity: () => NodeIdentity,
+  applyProtection?: (link: NodeReplicationLink, mode: 'managed' | 'private', secret: string | null) => Promise<void>,
+  legacyOpaqueSetup: () => string = () => '') {
   let flight: Promise<void> | undefined;
   let stopped = false;
   let pauseCount = 0;
@@ -980,22 +1188,28 @@ export function createNodeReplicationWorker(store: SyncServerStore, blobStore: E
         }
       }));
       const failed = new Set<string>();
-      const stages = new Map<string, { identityDone: boolean; controlDone: boolean; envelopesDone: boolean; commitsDone: boolean;
+      const roundStarted = new Map<string, number>();
+      const stages = new Map<string, { identityDone: boolean; controlDone: boolean; envelopesDone: boolean;
+        credentialsDone: boolean; commitsDone: boolean;
         promiseDone: boolean; statePullDone: boolean; statePushDone: boolean; blobPullDone: boolean; blobPushDone: boolean }>();
       // Keep a large first copy moving without waiting for the ten-second scheduler
       // after every page. Each stream stops after its own full sweep; otherwise
       // a busy attachment stream repeatedly probes identity and completed streams.
       for (let round = 0; round < 32 && pauseCount === 0; round += 1) {
-        const links = (await store.listNodeReplicationLinks()).filter((link) => !failed.has(link.linkId));
+        const links = [];
+        for (const link of await store.listNodeReplicationLinks()) {
+          if (!failed.has(link.linkId) && !await store.passiveGroupSourceLink(link)) links.push(link);
+        }
         if (!links.length) break;
         for (const link of links) {
           if (pauseCount > 0) break;
+          if (!roundStarted.has(link.linkId)) roundStarted.set(link.linkId, Date.now());
           // A run stops after 32 pages. If one direction finished a sweep while
           // the other still has a cursor, keep the completed direction parked
           // across runs. Once both cursors are empty, start a fresh sweep so
           // newly added objects and states can still be discovered.
           const stage = stages.get(link.linkId) ?? { identityDone: false, controlDone: false,
-            envelopesDone: false, commitsDone: false, promiseDone: false,
+            envelopesDone: false, credentialsDone: false, commitsDone: false, promiseDone: false,
             statePullDone: Boolean(link.pushStateCursor && !link.pullStateCursor && link.pullStateSweepAt),
             statePushDone: Boolean(link.pullStateCursor && !link.pushStateCursor && link.pushStateSweepAt),
             blobPullDone: Boolean(link.pushBlobCursor && !link.pullBlobCursor && link.pullBlobSweepAt),
@@ -1003,16 +1217,26 @@ export function createNodeReplicationWorker(store: SyncServerStore, blobStore: E
           stages.set(link.linkId, stage);
           try {
             if (!stage.identityDone) {
-              await replicateNodeAccountIdentity(store, identity(), link);
+              const group = await store.serverSyncGroup();
+              const nativeSource = group?.role === 'member' && group.mainNodeId === link.peerNodeId
+                && !await store.federatedAccount(link.username);
+              if (!nativeSource) await replicateNodeAccountIdentity(store, identity(), link);
               await replicateNodeEnvelope(store, identity(), link);
+              await replicateNodePasswordEnvelope(store, identity(), link);
+              if (!nativeSource) await replicateNodeGroupPolicy(store, identity(), link);
+              if (!nativeSource && applyProtection) await replicateNodeProtection(identity(), link, applyProtection);
               stage.identityDone = true;
             }
             if (!stage.controlDone) stage.controlDone = await replicateNodeControl(store, identity(), link);
             if (stage.controlDone && !stage.envelopesDone) {
               await replicateNodeMemberAccountKeys(store, identity(), link);
               const envelopesDone = await replicateNodeMemberEnvelopes(store, identity(), link);
-              if (envelopesDone) await provisionNodeMembers(store, link);
+              if (envelopesDone) await provisionNodeMembers(store, identity(), link);
               stage.envelopesDone = envelopesDone;
+            }
+            if (stage.controlDone && stage.envelopesDone && !stage.credentialsDone) {
+              await publishNativeMemberCredentials(store, identity(), link, legacyOpaqueSetup());
+              stage.credentialsDone = await replicateNodeAccountDirectory(store, identity(), link);
             }
             if (stage.controlDone && stage.envelopesDone && !stage.commitsDone) {
               await replicateNodeLink(store, identity(), link);
@@ -1053,6 +1277,7 @@ export function createNodeReplicationWorker(store: SyncServerStore, blobStore: E
           stage.blobPullDone ||= !link.pullBlobCursor;
           stage.blobPushDone ||= !link.pushBlobCursor;
           pending ||= !stage.identityDone || !stage.controlDone || !stage.envelopesDone
+            || !stage.credentialsDone
             || !stage.commitsDone || !stage.promiseDone || !stage.statePullDone || !stage.statePushDone
             || !stage.blobPullDone || !stage.blobPushDone;
         }
@@ -1062,7 +1287,7 @@ export function createNodeReplicationWorker(store: SyncServerStore, blobStore: E
       for (const link of (await store.listNodeReplicationLinks()).filter((item) => !failed.has(item.linkId))) {
         if (pauseCount > 0) break;
         const stage = stages.get(link.linkId);
-        if (!stage?.identityDone || !stage.controlDone || !stage.envelopesDone
+        if (!stage?.identityDone || !stage.controlDone || !stage.envelopesDone || !stage.credentialsDone
           || !stage.commitsDone || !stage.promiseDone || !stage.statePullDone || !stage.statePushDone
           || !stage.blobPullDone || !stage.blobPushDone) {
           await store.recordNodeLinkLifecycle(link.linkId,
@@ -1085,6 +1310,14 @@ export function createNodeReplicationWorker(store: SyncServerStore, blobStore: E
             ? assessment.state : 'CATCHING_UP');
         }
         catch (error) { await store.updateNodeReplicationLink(link.linkId, { error: String(error).slice(0, 500) }); }
+      }
+      // Count one complete worker visit per link, including pages, inventory and failures.
+      for (const link of await store.listNodeReplicationLinks(undefined, true)) {
+        const started = roundStarted.get(link.linkId);
+        if (started === undefined) continue;
+        const outcome = failed.has(link.linkId) || Boolean(link.lastError) ? 'failed'
+          : link.lifecycleState === 'READY' ? 'converged' : 'partial';
+        await store.recordNodeReplicationRound(link.linkId, outcome, Date.now() - started);
       }
       // Every local slot is scanned, including one whose peer failed above.
       // Start after this copy round so bootstrap writes do not make the scan stale.

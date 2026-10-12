@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { fetchAuthMe, requestJson } from '@zichan/db';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { fetchAuthMe, loginAccount, requestJson } from '@zichan/db';
 import { accountSigningPublicKey, createAccountEncryptionKey, unlockAccountEncryptionKey,
   wrapAccountEncryptionKey,
   type AccountEncryptionKeyEnvelope } from '@zichan/core';
@@ -14,11 +14,11 @@ interface AccountKeyRecord {
   revision: number;
 }
 
-export function AccountKeyPanel({ profile }: { profile: SyncConnection }) {
+export function AccountKeyPanel({ profile, children }: { profile: SyncConnection; children?: ReactNode }) {
+  const [expanded, setExpanded] = useState(false);
   const [record, setRecord] = useState<AccountKeyRecord | null>();
   const [issuerNodeId, setIssuerNodeId] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmation, setConfirmation] = useState('');
   const [sharePassphrase, setSharePassphrase] = useState('');
   const [shareCard, setShareCard] = useState('');
   const [currentPassphrase, setCurrentPassphrase] = useState('');
@@ -53,7 +53,14 @@ export function AccountKeyPanel({ profile }: { profile: SyncConnection }) {
     setBusy(true); setError('');
     try {
       if (issuerNodeId !== profile.serverId) throw new Error('请在账号身份节点建立加密密钥');
-      if (password.length < 8 || password !== confirmation) throw new Error('密钥密码至少八位，且两次输入须一致');
+      if (password.length < 8) throw new Error('请输入账号密码');
+      const baseUrl = buildSyncBaseUrl(profile);
+      const verified = await loginAccount(baseUrl, profile.username, password, {
+        expectedServerId: profile.serverId, expectedServerPublicKey: profile.serverPublicKey,
+        sessionTransport: 'token', deviceName: '验证成员身份账号密码',
+      });
+      await requestJson(`${baseUrl}/api/auth/logout`, { method: 'POST', cache: 'no-store',
+        redirect: 'error', credentials: 'omit', headers: { Authorization: `Bearer ${verified.accessToken}` } });
       const created = await createAccountEncryptionKey(profile.serverId, profile.accountId, password);
       try {
         const token = await authenticateSyncProfile(profile);
@@ -65,7 +72,7 @@ export function AccountKeyPanel({ profile }: { profile: SyncConnection }) {
         const body = await response.json() as { record?: AccountKeyRecord; error?: string };
         if (!response.ok || !body.record) throw new Error(body.error ?? '无法保存账号加密密钥');
         setRecord(body.record);
-        setPassword(''); setConfirmation('');
+        setPassword('');
       } finally { created.privateKey.fill(0); }
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setBusy(false); }
@@ -95,6 +102,13 @@ export function AccountKeyPanel({ profile }: { profile: SyncConnection }) {
       if (nextPassphrase.length < 8 || nextPassphrase !== nextConfirmation) {
         throw new Error('新密钥密码至少八位，且两次输入须一致');
       }
+      const baseUrl = buildSyncBaseUrl(profile);
+      const verified = await loginAccount(baseUrl, profile.username, nextPassphrase, {
+        expectedServerId: profile.serverId, expectedServerPublicKey: profile.serverPublicKey,
+        sessionTransport: 'token', deviceName: '验证账号密码',
+      });
+      await requestJson(`${baseUrl}/api/auth/logout`, { method: 'POST', cache: 'no-store',
+        redirect: 'error', credentials: 'omit', headers: { Authorization: `Bearer ${verified.accessToken}` } });
       const privateKey = await unlockAccountEncryptionKey(currentPassphrase, record.envelope);
       try {
         const envelope = await wrapAccountEncryptionKey(privateKey, record.issuerNodeId,
@@ -115,43 +129,43 @@ export function AccountKeyPanel({ profile }: { profile: SyncConnection }) {
     finally { setBusy(false); }
   }
 
-  return <section className="zc-card" aria-label="账号加密密钥">
-    <h2 className="zc-section-title">账号加密密钥</h2>
-    <p className="zc-caption">用于接收账本所有者发放的成员密钥包。密钥密码只在本设备解锁账号私钥，服务器保存加密后的私钥包。</p>
+  return <details className="zc-card" aria-label="多人账本高级设置"
+    onToggle={(event) => setExpanded(event.currentTarget.open)}>
+    <summary>多人账本（高级）</summary>
+    <p className="zc-caption">用于接收账本所有者发放的成员密钥包。新账号登录时自动用账号密码建立；服务器只保存加密后的私钥包。</p>
     {record ? <>
       <p>已建立 · 身份节点 {record.issuerNodeId} · 公钥 {record.publicKey.slice(0, 16)}… · 版本 {record.revision}</p>
       <details><summary>提供给账本所有者的成员身份</summary>
-        <p>这里仅包含账号标识和公钥。所有者据此发放账本访问权；不要分享密钥密码。</p>
+        <p>这里仅包含账号标识和公钥。所有者据此发放账本访问权；不要分享账号密码。</p>
         <form onSubmit={(event) => { event.preventDefault(); void revealShareCard(); }}>
-          <label>账号加密密钥密码<input aria-label="查看成员身份的密钥密码" type="password" autoComplete="off"
+          <label>账号密码<input aria-label="查看成员身份的密钥密码" type="password" autoComplete="current-password"
             value={sharePassphrase} onChange={(event) => setSharePassphrase(event.target.value)} /></label>
           <button disabled={busy || sharePassphrase.length < 8}>显示成员身份</button>
         </form>
         {shareCard && <textarea aria-label="成员身份信息" readOnly value={shareCard}
           style={{ display: 'block', width: '100%', minHeight: 150, marginTop: 10 }} />}
       </details>
-      {record.issuerNodeId === profile.serverId && <details><summary>修改账号加密密钥密码</summary>
+      {record.issuerNodeId === profile.serverId && <details><summary>旧账号：迁移独立密钥密码</summary>
         <p>修改后公钥和现有成员授权保持不变。其他网站收到后台同步的新密钥包后使用新密码；已下载的旧密钥包不会因此失效。</p>
         <form onSubmit={(event) => { event.preventDefault(); void changePassword(); }}>
-          <label>当前密钥密码<input aria-label="当前账号加密密钥密码" type="password" autoComplete="off"
+          <label>旧密钥密码<input aria-label="当前账号加密密钥密码" type="password" autoComplete="off"
             value={currentPassphrase} onChange={(event) => setCurrentPassphrase(event.target.value)} /></label>
-          <label>新密钥密码<input aria-label="新账号加密密钥密码" type="password" autoComplete="new-password"
+          <label>当前账号密码<input aria-label="新账号加密密钥密码" type="password" autoComplete="current-password"
             value={nextPassphrase} onChange={(event) => setNextPassphrase(event.target.value)} /></label>
           <label>再次输入新密码<input aria-label="确认新账号加密密钥密码" type="password" autoComplete="new-password"
             value={nextConfirmation} onChange={(event) => setNextConfirmation(event.target.value)} /></label>
           <button disabled={busy || currentPassphrase.length < 8 || nextPassphrase.length < 8
-            || nextPassphrase !== nextConfirmation}>{busy ? '正在更新…' : '更新密钥密码'}</button>
+            || nextPassphrase !== nextConfirmation}>{busy ? '正在更新…' : '绑定账号密码'}</button>
         </form>
       </details>}
     </>
       : record === null && issuerNodeId !== profile.serverId ? <p>此账号的身份由 {issuerNodeId} 管理；请先在身份节点登录并建立账号加密密钥。</p>
         : record === null ? <form onSubmit={(event) => { event.preventDefault(); void create(); }}>
-          <label>账号加密密钥密码<input aria-label="创建账号加密密钥密码" type="password" autoComplete="new-password"
+          <label>账号密码<input aria-label="建立成员身份的账号密码" type="password" autoComplete="current-password"
             value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-          <label>再次输入<input aria-label="确认账号加密密钥密码" type="password" autoComplete="new-password"
-            value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
-          <button disabled={busy || password.length < 8 || password !== confirmation}>{busy ? '正在建立…' : '建立账号加密密钥'}</button>
+          <button disabled={busy || password.length < 8}>{busy ? '正在建立…' : '建立成员身份'}</button>
         </form> : <p role="status">正在读取账号加密密钥…</p>}
     {error && <p role="alert">{error}</p>}
-  </section>;
+    {expanded && children}
+  </details>;
 }

@@ -1,4 +1,5 @@
 export const SETTING_GROUPS = [
+  { id: 'sync-group', label: '服务器同步组', description: '在主节点创建同步组，其他服务器各加入一次。组内账号、账本和附件由服务器自动传播。' },
   { id: 'backup', label: '备份计划', description: '启用后会在维护窗口内自动短暂停服、备份校验并重启。保存前核对服务器路径和时区；到“存储与备份”查看执行器心跳与结果。' },
   { id: 'notifications', label: '告警通知', description: '需要站外提醒时配置。暂停某条通知不会修复问题；留空表示不向外发送。' },
   { id: 'security', label: '访问安全', description: '调整管理员登录要求。启用两步验证要求前，所有管理员需先在“账号安全”完成绑定。' },
@@ -9,7 +10,7 @@ export const SETTING_GROUPS = [
 export function settingGroup(name: string): string {
   if (name.startsWith('backup')) return 'backup';
   if (name === 'alertChannels' || name === 'alertWebhookUrl') return 'notifications';
-  if (name === 'requireAdminMfa') return 'security';
+  if (name === 'requireAdminMfa' || name === 'ledgerWebAccess') return 'security';
   if (name.toLowerCase().includes('retention')) return 'retention';
   return 'advanced';
 }

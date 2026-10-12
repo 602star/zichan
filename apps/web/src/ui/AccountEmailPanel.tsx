@@ -7,6 +7,7 @@ import { ConfirmDialog } from './ConfirmDialog.js';
 import { btnOutline } from './styles.js';
 
 interface EmailState {
+  federated?: boolean;
   email?: string;
   verifiedAt?: string;
   pendingEmail?: string;
@@ -57,6 +58,11 @@ export function AccountEmailPanel({ quotaUnlimited = false }: { quotaUnlimited?:
     catch (error) { setNotice(error instanceof Error ? error.message : String(error)); return false; }
     finally { setBusy(false); }
   }
+
+  if (state?.federated) return <section className="zc-card" aria-label="邮箱与通知">
+    <h2 className="zc-section-title">邮箱与通知</h2>
+    <p className="zc-caption">统一账号的邮箱由创建账号的身份源节点管理，请在该节点的网站验证或更换邮箱。本站不单独设置找回邮箱。</p>
+  </section>;
 
   return <section className="zc-card" aria-label="邮箱与通知">
     <h2 className="zc-section-title">邮箱与通知</h2>

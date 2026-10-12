@@ -6,6 +6,7 @@ import { settingNumber } from './number-input.js';
 import { PageHeader, Badge, Button, Field, Loading, Notice, Panel, Select, Stat, TextInput, message, muted, row, useResource } from './ui.js';
 import { SETTING_GROUPS, settingGroup, mergeSettingDrafts } from './setting-groups.js';
 import type { SettingsPayload } from './types.js';
+import { ServerGroupPanel } from './ServerGroupPanel.js';
 
 export function SettingsPage({ client, role, query, navigate }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (to: string) => void }) {
   const group = SETTING_GROUPS.find((entry) => entry.id === query.get('group')) ?? SETTING_GROUPS[0];
@@ -79,6 +80,7 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
           onClick={() => { setError(''); setNotice(''); navigate('/settings?group=' + entry.id); }}>{entry.label}</Button>)}
       </div>
       <p>{group.description}</p>
+      {group.id === 'sync-group' ? <ServerGroupPanel client={client} role={role} /> : <>
       <Panel title={group.label} note="环境变量优先于数据库设置；来源为“环境变量”的项不能在页面上修改。">
         <div className="zc-admin-savebar" style={{ ...row, marginTop: 10 }}>
           <Button disabled={saving || payload.loading || payload.stale || !changed.length || role !== 'owner'} onClick={() => { void save(); }}>{saving ? '正在保存…' : '保存本组设置'}</Button>
@@ -158,6 +160,7 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
         {role === 'owner' ? <Field label="注册策略（在“注册与邀请”页修改）"><Select disabled><option>{String(data.environment['registrationMode'])}</option></Select></Field> : null}
       </Panel>
       </div>
+      </>}
     </>
   );
 }

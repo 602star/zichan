@@ -26,6 +26,9 @@ export function FirstRemoteLedgerRestoreGate(props: {
 }) {
   const protection = accountProtection();
   const memberMode = protection?.profileId === props.connection.id && protection.info.mode === 'member';
+  const passwordUnlocked = protection?.profileId === props.connection.id
+    && protection.info.mode === 'private' && protection.secretKind === 'password';
+  const useUnlockedKey = memberMode || passwordUnlocked;
   const automaticSecret = protection?.profileId === props.connection.id ? protection.secret : undefined;
   const [passphrase, setPassphrase] = useState(automaticSecret ?? '');
   const [busy, setBusy] = useState(false);
@@ -59,7 +62,7 @@ export function FirstRemoteLedgerRestoreGate(props: {
     if (busy || replacementFlight.current) return;
     const ledgerId = props.connection.ledgerId;
     if (!ledgerId) return;
-    if (!memberMode && passphrase.length < 8) {
+    if (!useUnlockedKey && passphrase.length < 8) {
       setMessage('请输入至少 8 个字符的账本密码');
       return;
     }
@@ -72,14 +75,14 @@ export function FirstRemoteLedgerRestoreGate(props: {
       const onProgress = (received: number, total: number) => {
         setMessage(`已接收 ${received}/${total} 条加密提交，正在验证账本…附件在使用时按需下载。`);
       };
-      const keyEnvelope = memberMode ? storedLedgerKeyEnvelope() : undefined;
-      if (memberMode && !keyEnvelope) throw new Error('本机没有已解锁的成员密钥包');
-      const prepared = memberMode ? await prepareMemberRemoteLedgerJoin({
+      const keyEnvelope = useUnlockedKey ? storedLedgerKeyEnvelope() : undefined;
+      if (useUnlockedKey && !keyEnvelope) throw new Error('本机没有已解锁的账本密钥包');
+      const prepared = useUnlockedKey ? await prepareMemberRemoteLedgerJoin({
         baseUrl: buildSyncBaseUrl(props.connection), token: accessToken, ledgerId,
         keyEnvelope: keyEnvelope!, cryptoSession: requireLedgerCryptoSession(ledgerId),
         endpointLabel: props.connection.alias, expectedServerId: props.connection.serverId,
         onProgress,
-      }) : await prepareRemoteLedgerJoin({
+      }, memberMode) : await prepareRemoteLedgerJoin({
         baseUrl: buildSyncBaseUrl(props.connection), token: accessToken, ledgerId, passphrase,
         endpointLabel: props.connection.alias, expectedServerId: props.connection.serverId,
         onProgress,
@@ -133,7 +136,7 @@ export function FirstRemoteLedgerRestoreGate(props: {
           />
         </label>}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 20 }}>
-          <button type="button" onClick={() => void restore()} disabled={busy || !memberMode && passphrase.length < 8} style={primary}>{busy ? '验证并恢复中…' : '验证并恢复账本'}</button>
+          <button type="button" onClick={() => void restore()} disabled={busy || !useUnlockedKey && passphrase.length < 8} style={primary}>{busy ? '验证并恢复中…' : '验证并恢复账本'}</button>
           <button type="button" onClick={props.onUseDifferentAccount} disabled={busy} style={button}>改用其他账号或模式</button>
           {!automaticSecret && !memberMode && <button type="button" onClick={() => { setReplacing(!replacing); setConfirmation(''); }} disabled={busy} style={button}>忘记账本密码，重新开账本</button>}
         </div>

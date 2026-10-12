@@ -948,16 +948,30 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
           {section === 'server' && <section aria-label="服务器" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
             <div>
               <h2 className="zc-section-title">服务器</h2>
-              <p className="zc-caption">账本副本用于日常双向同步；服务器备份是单独的加密恢复点。同步成功不代表副本组 READY，也不代表备份已校验。</p>
+              <p className="zc-caption">这里管理日常同步和服务器副本。需要找回旧数据时，前往“恢复数据”查看本机与服务器的恢复点。</p>
             </div>
             {serverPanel}
+          </section>}
+
+          {section === 'restore' && <section id="data-restore" aria-label="恢复数据" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
             <div className="zc-card">
+              <div className="zc-section-head zc-responsive-header">
+                <div>
+                  <h2 className="zc-section-title">恢复数据</h2>
+                  <p className="zc-caption">从本机或服务器备份选择恢复点。恢复前会校验归档并演练，再显示变更范围供确认；操作前会保存当前账本。</p>
+                </div>
+                <button type="button" onClick={() => openRestorePicker()} disabled={backupBusy !== null} style={btnPrimary}>选择恢复点</button>
+              </div>
+              {backupNote && <p role="status" className="zc-caption" style={{ color: backupNote.includes('未通过') || backupNote.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 'var(--fw-bold)' }}>{backupNote}</p>}
+            </div>
+            <details className="zc-card">
+              <summary style={{ cursor: 'pointer', fontWeight: 'var(--fw-bold)' }}>管理服务器备份</summary>
               <section className="zc-section">
                 <div className="zc-section-head zc-responsive-header">
                   <div>
                     <h2 className="zc-section-title">服务器备份</h2>
                     <p className="zc-meta" style={{ marginTop: 4 }}>
-                      服务器保存加密归档；托管服务器具备解密能力。恢复前会下载、校验分块和归档头，再使用本机账本密钥解密预检。
+                      这里列出服务器上的恢复点。刷新列表不会下载归档；选择恢复点后才会下载并校验。
                     </p>
                   </div>
                   <button
@@ -1026,18 +1040,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   </table>
                 </div>
               </section>
-            </div>
-          </section>}
-
-          {section === 'restore' && <section id="data-restore" aria-label="恢复数据" className="zc-card">
-            <div className="zc-section-head zc-responsive-header">
-              <div>
-                <h2 className="zc-section-title">恢复数据</h2>
-                <p className="zc-caption">从本机或服务器备份选择恢复点。恢复前会校验归档并演练，再显示变更范围供确认；操作前会保存当前账本。</p>
-              </div>
-              <button type="button" onClick={() => openRestorePicker()} disabled={backupBusy !== null} style={btnPrimary}>选择恢复点</button>
-            </div>
-            {backupNote && <p role="status" className="zc-caption" style={{ color: backupNote.includes('未通过') || backupNote.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 'var(--fw-bold)' }}>{backupNote}</p>}
+            </details>
           </section>}
 
           {section === 'security' && <section aria-label="解锁与安全" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>

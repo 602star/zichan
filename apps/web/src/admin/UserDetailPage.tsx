@@ -158,6 +158,17 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
       </Panel>
 
       <Panel title="同步情况">
+        {sync.transfer && <div className="zc-admin-grid" style={{ marginBottom: 16 }}>
+          <Stat label="完整同步轮次" value={String(sync.transfer.syncRuns)} />
+          <Stat label="已收敛轮次" value={String(sync.transfer.convergedRuns)} />
+          <Stat label="待续轮次" value={String(sync.transfer.partialRuns)} />
+          <Stat label="失败轮次" value={String(sync.transfer.failedRuns)} />
+          <Stat label="提交上传请求" value={String(sync.transfer.commitPushRequests)} />
+          <Stat label="提交下载请求" value={String(sync.transfer.commitPullRequests)} />
+          <Stat label="本站客户端上传" value={bytes(sync.transfer.commitUploadBytes + sync.transfer.blobUploadBytes)} />
+          <Stat label="本站客户端下载" value={bytes(sync.transfer.commitDownloadBytes + sync.transfer.blobDownloadBytes)} />
+        </div>}
+        <p style={muted}>同步轮次由客户端完成后上报到本站；传输流量统计本站已记录的加密正文，重试计入流量。</p>
         <DataTable
           columns={[
             { key: 'at', header: '时间', render: (event) => when(event.at) },

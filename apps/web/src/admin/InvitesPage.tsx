@@ -41,7 +41,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
   const [error, setError] = useState('');
   const actionError = useActionError();
 
-  const mode = useResource(() => client.request<{ mode: string }>('/registration'), []);
+  const mode = useResource(() => client.request<{ mode: string; sourceNodeId: string | null }>('/registration'), []);
   const growth = useResource(() => client.request<RegistrationGrowth>(`/registration/growth?range=${range}`), [range]);
   const invites = useResource(() => client.request<{ invites: Invite[]; nextCursor?: string; sort?: { key: string; direction: string } }>(
     `/invites?${listParamsQuery(listParams)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${state ? `&state=${state}` : ''}`,
@@ -66,6 +66,14 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
       .catch((caught) => actionError.setError(message(caught)));
   };
 
+  if (mode.data?.sourceNodeId) return <>
+    <PageHeader title="注册与邀请" description="同步组统一注册策略" />
+    <Panel title="由主节点管理">
+      <Notice>本站使用主节点的“{mode.data.mode}”注册策略。邀请码在主节点创建，
+        组内任一网页注册都由主节点核销一次。请到主节点的“注册与邀请”页面管理。</Notice>
+    </Panel>
+  </>;
+
   return (
     <>
       <PageHeader title="注册与邀请" description="管理注册策略与邀请码，查看邀请使用情况。" actions={<><Button onClick={invites.reload}>刷新</Button></>} />
@@ -74,7 +82,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
         <Loading loading={mode.loading} error={mode.error} />
         <div style={{ ...row, alignItems: 'flex-end' }}>
           <Field label="当前策略">
-            <Select disabled={role !== 'owner' || !writable} value={mode.data?.mode ?? ''} onChange={(event) => setMode(event.target.value)}>
+            <Select disabled={role !== 'owner' || !writable || !!mode.data?.sourceNodeId} value={mode.data?.mode ?? ''} onChange={(event) => setMode(event.target.value)}>
               <option value="invite">仅邀请</option>
               <option value="open">开放注册</option>
               <option value="closed">关闭注册</option>
@@ -83,12 +91,13 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
           <span style={muted}>生效值直接来自服务器；保存前不会回显未确认的改动。</span>
         </div>
         {mode.data?.mode === 'closed' ? <Notice tone="warn">当前已关闭注册：即使持有邀请码也无法注册。</Notice> : null}
+        {mode.data?.sourceNodeId ? <Notice tone="warn">注册策略和邀请码由同步组主节点统一管理。请在主节点创建邀请码；组内任一网页注册都使用同一个码，核销一次。</Notice> : null}
       </Panel>
 
       <Panel title="生成邀请码">
         <div style={{ ...row, alignItems: 'flex-end' }}>
           <Field label="有效期（1–30 天）"><TextInput value={days} inputMode="numeric" onChange={(event) => setDays(event.target.value)} style={{ width: 90 }} /></Field>
-          <Button onClick={() => {
+          <Button disabled={!!mode.data?.sourceNodeId || !writable} onClick={() => {
             setError('');
             void client.request<{ invite: Invite }>('/invites', { days: Number(days) }, { idempotencyKey: adminIdempotencyKey('invite-create') })
               .then((result) => { setIssued(result.invite); invites.reload(); })
@@ -130,7 +139,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
             {
               key: 'actions', header: '操作', render: (invite) => (
                 <Button
-                  disabled={Boolean(invite.usedBy)}
+                  disabled={Boolean(invite.usedBy) || Boolean(mode.data?.sourceNodeId)}
                   onClick={() => {
                     void client.request(`/invites/${encodeURIComponent(invite.code)}/disable`, { disabled: !invite.disabled }, { idempotencyKey: adminIdempotencyKey(`invite-${invite.code}-${invite.disabled ? 'enable' : 'disable'}`) })
                       .then(() => invites.reload())

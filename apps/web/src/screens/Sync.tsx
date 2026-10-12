@@ -10,7 +10,6 @@ import { accountProtection } from '../account-protection.js';
 import { ServerCustodyPanel } from '../ui/ServerCustodyPanel.js';
 import { NodeReplicaPanel } from '../ui/NodeReplicaPanel.js';
 import { assertNodeReplicaIdentity } from '../node-replica-identity.js';
-import { LedgerMembersPanel } from '../ui/LedgerMembersPanel.js';
 import { Settings } from './Settings.js';
 import type { ThemeId, ThemeMode, ThemeModePreference } from '../theme.js';
 import { isDateInRange, localToday } from '@zichan/core';
@@ -1561,9 +1560,6 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
           requestAnimationFrame(() => document.getElementById('server-connections')
             ?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
         }} />
-      {profiles.find((profile) => profile.id === accountProtection()?.profileId && profile.ledgerId === ledgerKey.ledgerId)
-        && ledgerKey.unlocked && <LedgerMembersPanel profile={profiles.find((profile) => profile.id === accountProtection()?.profileId)!} />}
-
       {/* ===== 第 2 层：客户端同步与服务器连接 ===== */}
       <SyncSection
         id="server-connections"

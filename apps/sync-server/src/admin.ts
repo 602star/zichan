@@ -57,6 +57,10 @@ export interface AdminRouterDeps {
   writeTracker: WriteTracker;
   /** Quiesces background attachment replication around a manual ownership repair. */
   replication: { pause: () => Promise<void>; resume: () => void };
+  syncGroup: {
+    create: (mainUrl: string) => Promise<unknown>;
+    join: (mainUrl: string, localUrl: string, token: string) => Promise<unknown>;
+  };
   dataDir: string;
   databaseFile: string;
   serverId: string;
@@ -316,6 +320,35 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if ((!quota && role === 'owner') || auth.role !== 'owner' && role !== 'member') throw new ServerStoreError('PROTECTED_ACCOUNT', 403, 'cannot manage this privileged account');
       return target;
     };
+
+    if (suffix === '/sync-group' && req.method === 'GET') {
+      return send(res, 200, { group: await store.serverSyncGroup(),
+        members: await store.serverSyncGroupMembers(),
+        ledgerCount: (await store.listReplicaSlots()).length,
+        progress: await store.serverSyncGroupProgress() });
+    }
+    if (suffix === '/sync-group/create' && req.method === 'POST') {
+      if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '仅服务器所有者可以创建同步组' });
+      await assertRecentLogin();
+      const body = await readBody(req, 2048);
+      if (typeof body.mainUrl !== 'string') return send(res, 400, { error: '请填写本站访问地址' });
+      const group = await deps.syncGroup.create(body.mainUrl);
+      return send(res, 201, { group });
+    }
+    if (suffix === '/sync-group/join-token' && req.method === 'POST') {
+      if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '仅服务器所有者可以邀请节点' });
+      await assertRecentLogin();
+      return send(res, 201, await store.issueServerSyncGroupJoinToken());
+    }
+    if (suffix === '/sync-group/join' && req.method === 'POST') {
+      if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '仅服务器所有者可以加入同步组' });
+      await assertRecentLogin();
+      const body = await readBody(req, 4096);
+      if (typeof body.mainUrl !== 'string' || typeof body.localUrl !== 'string'
+        || typeof body.token !== 'string') return send(res, 400, { error: '同步组加入信息无效' });
+      const group = await deps.syncGroup.join(body.mainUrl, body.localUrl, body.token);
+      return send(res, 201, { group });
+    }
 
     /**
      * A preview needs a custody key the server may not have. Saying so plainly beats an
@@ -1714,7 +1747,9 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       });
     }
 
-    if (req.method === 'GET' && suffix === '/registration') return send(res, 200, { mode: await store.registrationMode() });
+    if (req.method === 'GET' && suffix === '/registration') return send(res, 200, {
+      mode: await store.registrationMode(), sourceNodeId: await store.registrationPolicySource(),
+    });
     if (req.method === 'POST' && suffix === '/registration') {
       const body = await readBody(req, ADMIN_BODY_BYTES);
       const mode = body.mode;

@@ -15,12 +15,17 @@ import { AccountProfilePanel } from '../ui/AccountProfilePanel.js';
 import { AccountEmailPanel } from '../ui/AccountEmailPanel.js';
 import { AccountSecurityPanel } from '../ui/AccountSecurityPanel.js';
 import { AccountKeyPanel } from '../ui/AccountKeyPanel.js';
+import { LedgerMembersPanel } from '../ui/LedgerMembersPanel.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { btnOutline } from '../ui/styles.js';
 
 interface AccountUsage {
   commits: { usedBytes: number; quotaBytes: number | null; commitCount: number };
   attachments: { usedBytes: number; quotaBytes: number | null; objectCount: number; trashBytes: number; stagingBytes: number };
+  transfer?: { commitPushRequests: number; commitPullRequests: number;
+    commitUploadBytes: number; commitDownloadBytes: number;
+    blobUploadBytes: number; blobDownloadBytes: number;
+    syncRuns: number; convergedRuns: number; partialRuns: number; failedRuns: number };
 }
 
 function bytes(value: number): string {
@@ -50,6 +55,7 @@ export function Account() {
   const profileId = accountProtection()?.profileId;
   const profile = loadSyncConnections().find((row) => row.id === profileId);
   const [usage, setUsage] = useState<AccountUsage>();
+  const [roleInfo, setRoleInfo] = useState<{ node: string; ledger: string }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirmExit, setConfirmExit] = useState(false);
@@ -68,6 +74,10 @@ export function Account() {
       fetchAuthMe(buildSyncBaseUrl(connection), token)).then((account) => {
       if (account.accountId !== connection.accountId) throw new Error('当前网站账号身份已变化');
       if (active) {
+        setRoleInfo({ node: ({ owner: '节点所有者', admin: '节点管理员', viewer: '只读管理员', member: '普通用户' })[account.role],
+          ledger: account.ledgerRole === 'OWNER' ? '账本所有者'
+            : account.ledgerRole === 'EDITOR' ? '可记账成员'
+              : account.ledgerRole === 'VIEWER' ? '只读成员' : '尚无账本权限' });
         setLedgers(account.ledgers ?? []);
         setCurrentReplicaId(account.replicaId ?? '');
         setSelectedReplicaId(account.replicaId ?? '');
@@ -202,7 +212,9 @@ export function Account() {
       </section>}
       {ledgers.length <= 1 && ledgerError && <p role="alert">账本列表读取失败：{ledgerError}</p>}
       <AccountEmailPanel quotaUnlimited={usage?.commits.quotaBytes === null && usage?.attachments.quotaBytes === null} />
-      <AccountKeyPanel profile={profile} />
+      <AccountKeyPanel profile={profile}>
+        {profile.ledgerId && <LedgerMembersPanel profile={profile} />}
+      </AccountKeyPanel>
       <section className="zc-card" aria-label="数据保护入口">
         <h2 className="zc-section-title">数据保护</h2>
         <p className="zc-caption">查看当前账本在各服务器上的复制进度、完整性状态和节点授权；添加副本后由服务器在后台补齐数据。</p>
@@ -210,11 +222,13 @@ export function Account() {
       </section>
       <section className="zc-card" aria-label="存储配额">
         <div className="zc-section-head"><div><h2 className="zc-section-title">存储配额</h2><p className="zc-meta">当前服务器：{profile.alias || profile.baseUrl}。只统计此账号在这台服务器上的加密数据。</p></div><button type="button" style={btnOutline} disabled={busy} onClick={() => void refreshUsage()}>{busy ? '查询中…' : '刷新用量'}</button></div>
+        {roleInfo && <p className="zc-caption">本站角色：{roleInfo.node} · 当前账本权限：{roleInfo.ledger}</p>}
         {usage && <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 14 }}>
           <QuotaCard title="加密记录" used={usage.commits.usedBytes} limit={usage.commits.quotaBytes} detail={`${usage.commits.commitCount} 条同步提交`} />
           <QuotaCard title="附件" used={usage.attachments.usedBytes} limit={usage.attachments.quotaBytes} detail={`${usage.attachments.objectCount} 个有效附件对象`} />
         </div>}
         {usage && <p className="zc-caption">附件用量包含有效附件、回收站（{bytes(usage.attachments.trashBytes)}）和暂存上传（{bytes(usage.attachments.stagingBytes)}）。{usage.attachments.quotaBytes === null ? '当前账号无限额，仍受单文件大小与服务器磁盘空间限制。' : '配额由服务器管理员设置；达到上限后，新数据可能无法上传。'}</p>}
+        {usage?.transfer && <p className="zc-caption">本站同步 {usage.transfer.syncRuns} 轮（已收敛 {usage.transfer.convergedRuns}、待续 {usage.transfer.partialRuns}、失败 {usage.transfer.failedRuns}）；上传 {bytes(usage.transfer.commitUploadBytes + usage.transfer.blobUploadBytes)}、下载 {bytes(usage.transfer.commitDownloadBytes + usage.transfer.blobDownloadBytes)}。只统计已记录的加密正文，重试计入流量。</p>}
         {error && <p role="alert">{error}</p>}
       </section>
       <AccountSecurityPanel onExit={exitAccount} />

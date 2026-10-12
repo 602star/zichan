@@ -49,9 +49,10 @@ export function LedgerProtectionPanel({ store }: { store: SqlLedgerStore }) {
   const primaryProfile = loadSyncConnections().find((row) => row.id === state.profileId);
   return <section className="zc-protection" style={{ padding: 20, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', marginBottom: 16 }} aria-label="账本保护">
     <h2 style={{ fontSize: 'var(--fs-title)' }}>账本保护 · {managed ? '云端托管' : '私密模式'}</h2>
-    <p>{managed ? '主服务器托管密钥，可以解密账本。登录新设备或找回账号密码后，可以恢复账本。附加服务器默认只保存密文。' : '恢复码由你保管，服务器只保存密文。账号密码找回不会恢复解密能力；过去曾被托管的历史数据不具有追溯保密性。'}</p>
-    <button disabled={busy} onClick={() => setShowRecovery(!showRecovery)}>{showRecovery ? '隐藏恢复码' : '查看备份恢复码'}</button>
-    {showRecovery && <><p>保存在本设备以外，可在服务器不可用时解锁导出的加密备份。此恢复码能解密账本，请妥善保存。</p><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{state.secret}</pre></>}
+    <p>{managed ? '获授权的同步节点会各自托管此账本密钥，均可解密账本。登录这些节点后可打开账本；找回账号密码后，待新凭据同步到节点即可重新登录。' : '恢复码由你保管，服务器只保存密文。账号密码找回不会恢复解密能力；过去曾被托管的历史数据不具有追溯保密性。'}</p>
+    {state.secretKind === 'password' ? <p>当前使用账号密码解锁。恢复码只在创建或用恢复码重新解锁时显示；请保管创建时保存的恢复码。</p>
+      : <><button disabled={busy} onClick={() => setShowRecovery(!showRecovery)}>{showRecovery ? '隐藏恢复码' : '查看备份恢复码'}</button>
+        {showRecovery && <><p>保存在本设备以外，可在服务器不可用时解锁导出的加密备份。此恢复码能解密账本，请妥善保存。</p><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{state.secret}</pre></>}</>}
     {state.info.controlled ? <p>此账本已启用成员密钥。请在成员管理中轮换密钥；旧保护接口不能再更改此账本的密钥。</p>
       : <details style={{ marginTop: 16 }}><summary>高级：更改保护方式</summary>
       <p>更改前自动保存保护备份，其他设备需要重新登录。切到私密模式会轮换数据、附件与备份密钥，已有历史副本仍可能被原托管方读取。</p>

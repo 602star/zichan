@@ -183,7 +183,12 @@ export interface AccountDetail {
   };
   sessions: SessionRow[];
   activeSessionCount: number;
-  sync: { recent: SyncEvent[] };
+  sync: { recent: SyncEvent[]; transfer?: {
+    commitPushRequests: number; commitPullRequests: number;
+    commitUploadBytes: number; commitDownloadBytes: number;
+    blobUploadBytes: number; blobDownloadBytes: number;
+    syncRuns: number; convergedRuns: number; partialRuns: number; failedRuns: number;
+  } };
   audit: { id: number; at: string; actorAccountId: string; targetAccountId: string | null; action: string; reason: string | null; requestId: string | null; before: unknown; after: unknown }[];
   jobs: Job[];
 }

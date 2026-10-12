@@ -84,6 +84,15 @@ export const SETTING_FIELDS: SettingField[] = [
     description: '可同时配置多个渠道：webhook（generic/slack/discord/feishu/dingtalk/wecom/text）与 email（SMTP）。留空则回退到上面的单一 Webhook 地址。每个渠道的投递结果分别记录，一个渠道失败不影响其它渠道。',
   },
   {
+    name: 'ledgerWebAccess',
+    label: '允许用户通过本站网页记账',
+    kind: 'select',
+    envVar: 'ADMIN_LEDGER_WEB_ACCESS',
+    default: 'on',
+    options: ['on', 'off'],
+    description: '关闭后普通记账账号不能在本站登录、续期或访问账本；节点间复制和管理后台继续运行。已有离线浏览器缓存不会被远程删除。',
+  },
+  {
     name: 'requireAdminMfa',
     label: '要求管理员启用两步验证',
     kind: 'select',

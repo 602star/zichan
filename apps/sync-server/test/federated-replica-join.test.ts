@@ -9,6 +9,7 @@ import { NodeSqliteDriver } from '@zichan/db/node';
 import { accountSigningPublicKey, changeLedgerPassphrase, createAccountEncryptionKey, encryptJson, rotateLedgerProtection,
   sha256Json, signLedgerControlEvent, unlockAccountEncryptionKey, unlockLedgerKeyEnvelope, unlockLedgerMemberKeyEnvelope,
   wrapAccountEncryptionKey,
+  wrapLedgerCryptoSession,
   wrapLedgerCryptoSessionForMember,
   type LedgerKeyEnvelope } from '@zichan/core';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
@@ -19,19 +20,27 @@ import { SyncServerStore } from '../src/store.js';
 describe('federated replica join', () => {
   it('creates a separate ledger account on a node with another ledger and logs in through the issuer', async () => {
     const root = mkdtempSync(join(tmpdir(), 'zichan-federated-join-'));
-    const source = createTestSyncServer({ dataDir: join(root, 'source') });
+    let recoveryEmail = '';
+    const source = createTestSyncServer({ dataDir: join(root, 'source'),
+      accountEmailSender: async (_to, _subject, body) => { recoveryEmail = body; } });
     const target = createTestSyncServer({ dataDir: join(root, 'target') });
+    const third = createTestSyncServer({ dataDir: join(root, 'third') });
     try {
-      await Promise.all([source.ready, target.ready]);
-      await Promise.all([source, target].map((instance) => new Promise<void>((resolve) => instance.server.listen(0, '127.0.0.1', resolve))));
+      await Promise.all([source.ready, target.ready, third.ready]);
+      await Promise.all([source, target, third].map((instance) => new Promise<void>((resolve) => instance.server.listen(0, '127.0.0.1', resolve))));
       const sourceUrl = `http://127.0.0.1:${(source.server.address() as AddressInfo).port}`;
       const targetUrl = `http://127.0.0.1:${(target.server.address() as AddressInfo).port}`;
+      const thirdUrl = `http://127.0.0.1:${(third.server.address() as AddressInfo).port}`;
       await registerAccount(sourceUrl, 'owner', 'source-password', { ownerSetupToken: OWNER_SETUP_TOKEN });
       await registerAccount(targetUrl, 'operator', 'target-password', { ownerSetupToken: OWNER_SETUP_TOKEN });
+      await registerAccount(thirdUrl, 'third-operator', 'third-password', { ownerSetupToken: OWNER_SETUP_TOKEN });
+      await registerAccount(targetUrl, 'owner', 'target-local-password');
       const sourceSession = await loginAccount(sourceUrl, 'owner', 'source-password');
       const targetSession = await loginAccount(targetUrl, 'operator', 'target-password');
+      const thirdSession = await loginAccount(thirdUrl, 'third-operator', 'third-password');
       const sourceAuth = { Authorization: `Bearer ${sourceSession.accessToken}`, 'Content-Type': 'application/json' };
       const targetAuth = { Authorization: `Bearer ${targetSession.accessToken}`, 'Content-Type': 'application/json' };
+      const thirdAuth = { Authorization: `Bearer ${thirdSession.accessToken}`, 'Content-Type': 'application/json' };
       const initialized = await fetch(`${sourceUrl}/api/v3/protection/initialize`, { method: 'POST', headers: sourceAuth,
         body: JSON.stringify({ mode: 'managed' }) });
       expect(initialized.status).toBe(200);
@@ -61,6 +70,19 @@ describe('federated replica join', () => {
       expect(joined.status).toBe(201);
       const { link, replicaUsername } = await joined.json() as { link: { username: string; ledgerId: string }; replicaUsername: string };
       expect(link).toMatchObject({ username: replicaUsername, ledgerId: protection.replica.ledgerId });
+      const thirdGrantResponse = await fetch(`${sourceUrl}/api/v4/replication/grants`, {
+        method: 'POST', headers: sourceAuth,
+        body: JSON.stringify({ peerNodeId: third.serverId,
+          peerPublicKey: loadNodeIdentity(third.dataDir, third.serverId).publicKey,
+          expiresAt: new Date(Date.now() + 86_400_000).toISOString() }),
+      });
+      expect(thirdGrantResponse.status).toBe(201);
+      const thirdGrant = await thirdGrantResponse.json() as { grantId: string };
+      const thirdJoin = await fetch(`${thirdUrl}/api/v4/replication/join`, {
+        method: 'POST', headers: thirdAuth,
+        body: JSON.stringify({ ...joinBody, grantId: thirdGrant.grantId }),
+      });
+      expect(thirdJoin.status).toBe(201);
       expect(replicaUsername).not.toBe('operator');
       expect((await joinReplica(targetAuth)).status).toBe(409);
       expect(await (await fetch(`${targetUrl}/api/v3/replica`, { headers: targetAuth })).json()).toMatchObject({
@@ -110,6 +132,35 @@ describe('federated replica join', () => {
       expect((await (await fetch(`${targetUrl}/api/v3/key-envelope`, { headers: federatedAuth }))
         .json() as { envelope: unknown }).envelope).toEqual(protection.envelope);
       const key = await unlockLedgerKeyEnvelope(protection.secret, protection.envelope);
+      const passwordEnvelope = await wrapLedgerCryptoSession(key, 'source-password');
+      expect((await fetch(`${sourceUrl}/api/v4/ledger/password-envelope`, {
+        method: 'PUT', headers: sourceAuth,
+        body: JSON.stringify({ envelope: passwordEnvelope, expectedRevision: 0 }),
+      })).status).toBe(200);
+      await target.flushNodeReplication();
+      const replicatedPasswordEnvelope = await (await fetch(`${targetUrl}/api/v4/ledger/password-envelope`,
+        { headers: federatedAuth })).json() as { record: { envelope: LedgerKeyEnvelope; revision: number } };
+      expect(replicatedPasswordEnvelope.record.revision).toBe(1);
+      expect(await unlockLedgerKeyEnvelope('source-password', replicatedPasswordEnvelope.record.envelope))
+        .toMatchObject({ ledgerId: protection.replica.ledgerId });
+      const policyStore = new SyncServerStore(join(source.dataDir, 'server.sqlite'), 'open', source.serverId);
+      try {
+        await policyStore.ready;
+        await policyStore.setRegistrationMode('closed');
+        await target.flushNodeReplication();
+        expect((await (await fetch(`${targetUrl}/api/health`)).json() as { registrationMode: string })
+          .registrationMode).toBe('closed');
+        await policyStore.setRegistrationMode('open');
+        await target.flushNodeReplication();
+      } finally { await policyStore.close(); }
+      expect((await fetch(`${targetUrl}/api/v4/sync-runs`, {
+        method: 'POST', headers: { ...federatedAuth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: '00000000-0000-4000-8000-000000000001', outcome: 'converged',
+          pulled: 1, pushed: 0, attachmentUploads: 0, attachmentDownloads: 0, durationMs: 42 }),
+      })).status).toBe(200);
+      const usageWithRun = await (await fetch(`${targetUrl}/api/auth/usage`,
+        { headers: federatedAuth })).json() as { transfer: { syncRuns: number; convergedRuns: number } };
+      expect(usageWithRun.transfer).toMatchObject({ syncRuns: 1, convergedRuns: 1 });
       const publish = async (url: string, auth: Record<string, string>, commitId: string) => {
         const commit = { protocol: 2, ledgerId: protection.replica.ledgerId, commitId,
           originDeviceId: 'federated-join-test', createdAt: new Date().toISOString(),
@@ -123,6 +174,37 @@ describe('federated replica join', () => {
       };
       await publish(sourceUrl, sourceAuth, 'issuer-commit-00000000001');
       await target.flushNodeReplication();
+      const localPasswordSession = await loginAccount(targetUrl, 'owner', 'source-password',
+        { sessionContext: 'ledger' });
+      expect(localPasswordSession.accountId).toBe(sourceMe.accountId);
+      const localIdentity = await (await fetch(`${targetUrl}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${localPasswordSession.accessToken}` },
+      })).json() as { loginUsername: string };
+      expect(localIdentity.loginUsername).toBe('owner');
+      expect((await fetch(`${targetUrl}/api/auth/profile`, { method: 'PUT',
+        headers: { Authorization: `Bearer ${localPasswordSession.accessToken}`,
+          'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName: 'wrong local nickname' }) })).status).toBe(403);
+      expect((await (await fetch(`${targetUrl}/api/auth/email`, {
+        headers: { Authorization: `Bearer ${localPasswordSession.accessToken}` },
+      })).json() as { federated: boolean }).federated).toBe(true);
+      expect((await fetch(`${sourceUrl}/api/auth/profile`, { method: 'PUT',
+        headers: sourceAuth, body: JSON.stringify({ displayName: '账本所有者' }) })).status).toBe(200);
+      await target.flushNodeReplication();
+      expect((await (await fetch(`${targetUrl}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${localPasswordSession.accessToken}` },
+      })).json() as { displayName: string }).displayName).toBe('账本所有者');
+      const nodeLocalAccount = await loginAccount(targetUrl, 'owner', 'target-local-password',
+        { sessionContext: 'admin' });
+      expect(nodeLocalAccount.accountId).not.toBe(sourceMe.accountId);
+      const localProtection = await (await fetch(`${targetUrl}/api/v3/protection`, {
+        headers: { Authorization: `Bearer ${localPasswordSession.accessToken}` },
+      })).json() as { mode: string; secret: string; envelope: LedgerKeyEnvelope };
+      expect(localProtection.mode).toBe('managed');
+      expect(localProtection.secret).toBe(protection.secret);
+      expect(await unlockLedgerKeyEnvelope(localProtection.secret, localProtection.envelope)).toBeTruthy();
+      await expect(loginAccount(targetUrl, 'owner', 'wrong-password',
+        { sessionContext: 'ledger' })).rejects.toThrow();
       const readIds = async (url: string, auth: Record<string, string>) => {
         const page = await (await fetch(`${url}/api/v3/commits?after=0`, { headers: auth }))
           .json() as { commits: { commitId: string }[] };
@@ -140,6 +222,9 @@ describe('federated replica join', () => {
       const database = new NodeSqliteDriver(join(target.dataDir, 'server.sqlite'));
       try {
         await diagnosticStore.ready;
+        expect(await diagnosticStore.accountTransfer(replicaUsername)).toMatchObject({
+          commitPushRequests: 1,
+        });
         const linkRecord = (await diagnosticStore.listNodeReplicationLinks())[0]!;
         const replicaId = (await diagnosticStore.getReplica(replicaUsername))!.replicaId;
         const original = await database.get<{ content_hash: string }>(
@@ -203,6 +288,64 @@ describe('federated replica join', () => {
           memberAccountCount: 2, missingMemberAccountCount: 0,
         });
       } finally { await provisioned.close(); }
+      const aliceDirectLogin = await loginAccount(targetUrl, 'alice', 'alice-password',
+        { sessionContext: 'ledger' });
+      expect(aliceDirectLogin.accountId).toBe(aliceMe.accountId);
+
+      await registerAccount(targetUrl, 'bob', 'bob-password');
+      const bobSession = await loginAccount(targetUrl, 'bob', 'bob-password');
+      const bobAuth = { Authorization: `Bearer ${bobSession.accessToken}`, 'Content-Type': 'application/json' };
+      const bobMe = await (await fetch(`${targetUrl}/api/auth/me`, { headers: bobAuth }))
+        .json() as { accountId: string };
+      const bobKey = await createAccountEncryptionKey(target.serverId, bobMe.accountId, 'bob key password');
+      expect((await fetch(`${targetUrl}/api/v4/account/encryption-key`, { method: 'PUT',
+        headers: bobAuth, body: JSON.stringify({ envelope: bobKey.envelope, expectedRevision: 0 }) })).status).toBe(200);
+      await target.flushNodeReplication();
+      await third.flushNodeReplication();
+      await third.flushNodeReplication();
+      const thirdDirectoryStore = new SyncServerStore(join(third.dataDir, 'server.sqlite'), 'open', third.serverId);
+      try {
+        await thirdDirectoryStore.ready;
+        const thirdLinks = await thirdDirectoryStore.listNodeReplicationLinks();
+        expect(thirdLinks[0]!.syncRounds).toBeGreaterThanOrEqual(1);
+        expect(thirdLinks[0]!.convergedRounds + thirdLinks[0]!.partialRounds
+          + thirdLinks[0]!.failedRounds).toBe(thirdLinks[0]!.syncRounds);
+        expect(await thirdDirectoryStore.federatedPasswordCredential('bob'),
+          JSON.stringify({ links: thirdLinks.map((item) => ({ error: item.lastError, linkId: item.linkId })),
+            members: await thirdDirectoryStore.listReplicaGroupMembers(
+              (await thirdDirectoryStore.getReplica(thirdLinks[0]!.username))!.replicaId) })).toBeTruthy();
+      } finally { await thirdDirectoryStore.close(); }
+      const bobHubDirectoryLogin = await loginAccount(sourceUrl, 'bob', 'bob-password',
+        { sessionContext: 'ledger' });
+      const bobThirdDirectoryLogin = await loginAccount(thirdUrl, 'bob', 'bob-password',
+        { sessionContext: 'ledger' });
+      expect(bobHubDirectoryLogin.accountId).toBe(bobMe.accountId);
+      expect(bobThirdDirectoryLogin.accountId).toBe(bobMe.accountId);
+      expect(bobHubDirectoryLogin.ledgerId).toBeUndefined();
+      expect(bobThirdDirectoryLogin.ledgerId).toBeUndefined();
+      const bobIdentity = { issuerNodeId: target.serverId, accountId: bobMe.accountId };
+      const bobHead = (await (await fetch(`${sourceUrl}/api/v4/ledger/control`,
+        { headers: sourceAuth })).json() as { state: { headHash: string } }).state.headHash;
+      const bobAdded = signLedgerControlEvent(ownerKey.privateKey,
+        { v: 1, ledgerId, seq: 3, previousHash: bobHead, keyEpoch: 1,
+          kind: 'MemberAdded', actor, target: bobIdentity, role: 'EDITOR',
+          signingPublicKey: accountSigningPublicKey(bobKey.privateKey),
+          encryptionPublicKey: bobKey.envelope.publicKey });
+      const bobEnvelope = await wrapLedgerCryptoSessionForMember(key,
+        { ...bobIdentity, recipientPublicKey: bobKey.envelope.publicKey, keyEpoch: 1 });
+      const bobAddResponse = await fetch(`${sourceUrl}/api/v4/ledger/control/events`, { method: 'POST',
+        headers: sourceAuth, body: JSON.stringify({ event: bobAdded,
+          envelopes: [bobEnvelope] }) });
+      expect(bobAddResponse.status, await bobAddResponse.text()).toBe(201);
+      await target.flushNodeReplication();
+      await third.flushNodeReplication();
+      await third.flushNodeReplication();
+      const bobHubLogin = await loginAccount(sourceUrl, 'bob', 'bob-password',
+        { sessionContext: 'ledger' });
+      const bobThirdLogin = await loginAccount(thirdUrl, 'bob', 'bob-password',
+        { sessionContext: 'ledger' });
+      expect(bobHubLogin.accountId).toBe(bobMe.accountId);
+      expect(bobThirdLogin.accountId).toBe(bobMe.accountId);
 
       const aliceStarted = opaque.client.startLogin({ password: 'alice-password' });
       const aliceLoginStart = await fetch(`${sourceUrl}/api/auth/login/start`, { method: 'POST',
@@ -268,16 +411,18 @@ describe('federated replica join', () => {
       await target.flushNodeReplication();
       expect(await readIds(sourceUrl, sourceAuth)).toContain('federated-member-commit-0001');
       const removed = signLedgerControlEvent(ownerKey.privateKey,
-        { v: 1, ledgerId, seq: 3, previousHash: (await (await fetch(`${sourceUrl}/api/v4/ledger/control`,
+        { v: 1, ledgerId, seq: 4, previousHash: (await (await fetch(`${sourceUrl}/api/v4/ledger/control`,
           { headers: sourceAuth })).json() as { state: { headHash: string } }).state.headHash,
           keyEpoch: 2, kind: 'MemberRemoved', actor, target: member });
       const rotated = await rotateLedgerProtection(key, protection.secret);
       expect(rotated.session.activeKeyId).not.toBe(key.activeKeyId);
       const nextOwnerEnvelope = await wrapLedgerCryptoSessionForMember(rotated.session,
         { ...actor, recipientPublicKey: ownerKey.envelope.publicKey, keyEpoch: 2 });
+      const nextBobEnvelope = await wrapLedgerCryptoSessionForMember(rotated.session,
+        { ...bobIdentity, recipientPublicKey: bobKey.envelope.publicKey, keyEpoch: 2 });
       expect((await fetch(`${sourceUrl}/api/v4/ledger/control/events`, { method: 'POST',
         headers: sourceAuth, body: JSON.stringify({ event: removed,
-          envelopes: [nextOwnerEnvelope] }) })).status).toBe(201);
+          envelopes: [nextOwnerEnvelope, nextBobEnvelope] }) })).status).toBe(201);
       await target.flushNodeReplication();
       await target.flushNodeReplication();
       expect((await fetch(`${targetUrl}/api/v3/commits`, { headers: aliceTargetAuth })).status).toBe(403);
@@ -287,8 +432,45 @@ describe('federated replica join', () => {
       const removedAuthorize = await fetch(removedFederation.headers.get('location')!,
         { redirect: 'manual', headers: { Cookie: aliceCookie } });
       expect(removedAuthorize.status).toBe(403);
+      const sourceStore = new SyncServerStore(join(source.dataDir, 'server.sqlite'), 'open', source.serverId);
+      try {
+        await sourceStore.ready;
+        await sourceStore.startEmailVerification('owner', 'owner@example.test', 'a'.repeat(64));
+        await sourceStore.completeEmailVerification('owner', 'a'.repeat(64));
+      } finally { await sourceStore.close(); }
+      const recoveryRequest = await fetch(`${sourceUrl}/api/auth/password-reset/email/request`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'owner' }),
+      });
+      expect(recoveryRequest.status).toBe(200);
+      const recoveryCode = /[A-Za-z0-9_-]{43}/.exec(recoveryEmail)?.[0];
+      expect(recoveryCode).toBeTruthy();
+      await registerAccount(sourceUrl, 'owner', 'new-source-password',
+        { passwordResetCode: recoveryCode });
+      await target.flushNodeReplication();
+      expect((await fetch(`${targetUrl}/api/v3/commits`, {
+        headers: { Authorization: `Bearer ${localPasswordSession.accessToken}` },
+      })).status).toBe(401);
+      await new Promise<void>((resolve, reject) => source.server.close((error) => error ? reject(error) : resolve()));
+      await expect(loginAccount(targetUrl, 'owner', 'source-password',
+        { sessionContext: 'ledger' })).rejects.toThrow();
+      const offlineLogin = await loginAccount(targetUrl, 'owner', 'new-source-password',
+        { sessionContext: 'ledger' });
+      expect(offlineLogin.accountId).toBe(sourceMe.accountId);
+      const targetStore = new SyncServerStore(join(target.dataDir, 'server.sqlite'), 'open', target.serverId);
+      try {
+        await targetStore.ready;
+        await targetStore.setMaintenanceState('setting:ledgerWebAccess', { value: 'off' });
+      } finally { await targetStore.close(); }
+      await new Promise((resolve) => setTimeout(resolve, 5_100));
+      expect((await (await fetch(`${targetUrl}/api/health`)).json() as { ledgerWebAccess: boolean }).ledgerWebAccess).toBe(false);
+      expect((await fetch(`${targetUrl}/api/v3/commits`, {
+        headers: { Authorization: `Bearer ${offlineLogin.accessToken}` },
+      })).status).toBe(403);
+      await expect(loginAccount(targetUrl, 'owner', 'new-source-password',
+        { sessionContext: 'ledger' })).rejects.toThrow();
     } finally {
-      await Promise.all([source.close(), target.close()]);
+      await Promise.all([source.close(), target.close(), third.close()]);
       rmSync(root, { recursive: true, force: true });
     }
   }, 30_000);

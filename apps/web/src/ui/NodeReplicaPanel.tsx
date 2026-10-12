@@ -45,6 +45,11 @@ interface NodeLink {
   physicalIssue?: string;
   lastSuccessAt?: string;
   lastError?: string;
+  syncRounds: number;
+  convergedRounds: number;
+  partialRounds: number;
+  failedRounds: number;
+  lastRoundDurationMs: number;
   enabled: boolean;
   revocationPending: boolean;
   remoteRevokedAt?: string;
@@ -120,12 +125,35 @@ async function nodeHealth(profile: SyncConnection): Promise<{ serverId: string; 
   return value;
 }
 
-export function NodeReplicaPanel({ profiles, ledgerId, pinNodeIdentity, onConfigureServers }: {
+interface NodeReplicaPanelProps {
   profiles: SyncConnection[];
   ledgerId?: string;
   pinNodeIdentity: (id: string, nodePublicKey: string) => void;
   onConfigureServers: () => void;
-}) {
+}
+
+export function NodeReplicaPanel(props: NodeReplicaPanelProps) {
+  const [group, setGroup] = useState<{ joined: boolean; memberCount?: number } | null>();
+  const profile = props.profiles.find((item) => item.enabled && item.serverId);
+  useEffect(() => {
+    if (!profile) { setGroup(null); return; }
+    let active = true;
+    setGroup(undefined);
+    void serverRequest<{ joined: boolean; memberCount?: number }>(profile, '/api/v4/group/status')
+      .then((result) => { if (active) setGroup(result); })
+      .catch(() => { if (active) setGroup(null); });
+    return () => { active = false; };
+  }, [profile?.id, profile?.serverId]);
+  if (group === undefined) return <p role="status">正在读取服务器同步组状态…</p>;
+  if (group?.joined) return <section aria-label="服务器同步组"
+    style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 14, marginBottom: 16 }}>
+    <strong>服务器同步组已启用</strong>
+    <p>组内 {group.memberCount ?? 1} 台服务器会自动同步账本和附件。节点加入与管理请前往管理后台的“系统设置 → 服务器同步组”。</p>
+  </section>;
+  return <LegacyNodeReplicaPanel {...props} />;
+}
+
+function LegacyNodeReplicaPanel({ profiles, ledgerId, pinNodeIdentity, onConfigureServers }: NodeReplicaPanelProps) {
   const groupProfiles = useMemo(() => profiles.filter((profile) => profile.enabled
     && profile.serverId && profile.ledgerId === ledgerId), [profiles, ledgerId]);
   const eligible = profiles.filter((profile) => profile.serverId
@@ -410,7 +438,7 @@ export function NodeReplicaPanel({ profiles, ledgerId, pinNodeIdentity, onConfig
     <details style={{ marginBottom: 12 }}>
       <summary style={{ cursor: 'pointer', color: 'var(--accent)', fontSize: 'var(--fs-caption)' }}>了解复制与核对方式</summary>
     <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', lineHeight: 1.6 }}>
-      选择一台尚无此账本副本、且由节点管理员登录的服务器。管理员已有其他账本也可以加入；系统会为源节点统一账号创建独立账本账号，节点管理员不会因此获得此账本访问权。已启用成员控制的账号可用自己的账号密钥在新网站解锁；旧账本仍需账本密钥恢复码。创建后由服务器复制提交和新版附件，浏览器关闭也会继续。勾选自动续期后，有效节点活动会延长授权；停止链路后节点会持续尝试撤销源节点授权。旧版附件仍需客户端迁移。本节点 READY 与中继汇总的授权副本组状态分别显示；网页配置的可互换节点组仍需逐台核对。
+      选择一台尚无此账本副本、且由节点管理员登录的服务器。管理员已有其他账本也可以加入；系统会为源节点统一账号创建独立账本账号，节点管理员不会因此获得此账本访问权。获授权的直连节点同步账号密码凭据，源节点暂时不可达时，凭据已复制的账号仍可在目标节点登录。托管账本在目标节点接收并重新封存密钥后可直接打开；私密账本仍需恢复码，成员账本仍需成员密钥密码。创建后由服务器复制提交和新版附件，浏览器关闭也会继续。勾选自动续期后，有效节点活动会延长授权；停止链路后节点会持续尝试撤销源节点授权。旧版附件仍需客户端迁移。本节点 READY 与中继汇总的授权副本组状态分别显示；网页配置的可互换节点组仍需逐台核对。
     </p>
     </details>
     <div style={{ display: 'flex', gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>
@@ -489,6 +517,8 @@ export function NodeReplicaPanel({ profiles, ledgerId, pinNodeIdentity, onConfig
                         ? '账本目录一致，本地新版附件分块校验中'
                         : '账本目录及本地新版附件分块已校验；请以本节点综合状态确认完整性'}
         {link.lastSuccessAt ? ` · 最近成功 ${new Date(link.lastSuccessAt).toLocaleString()}` : ''}
+        {` · 完整轮次 ${link.syncRounds ?? 0}（已就绪 ${link.convergedRounds ?? 0}、追赶中 ${link.partialRounds ?? 0}、失败 ${link.failedRounds ?? 0}）`}
+        {link.syncRounds ? ` · 最近一轮 ${(link.lastRoundDurationMs / 1000).toFixed(1)} 秒` : ''}
         {link.inventoryMatchedAt ? ` · 上次目录一致 ${new Date(link.inventoryMatchedAt).toLocaleString()}` : ''}
         {link.physicalVerifiedAt ? ` · 上次本地分块校验 ${new Date(link.physicalVerifiedAt).toLocaleString()}` : ''}
       </div>

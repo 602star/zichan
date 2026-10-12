@@ -14,7 +14,11 @@ export interface ProtectionInfo {
   envelope: LedgerKeyEnvelope | null;
   replica: { serverId: string; ledgerId: string; replicaId: string; streamEpoch: string; headSeq: number } | null;
 }
-export interface UnlockedProtection { profileId: string; secret: string; info: ProtectionInfo }
+export interface UnlockedProtection {
+  profileId: string; secret: string; info: ProtectionInfo;
+  unlockEnvelope?: LedgerKeyEnvelope;
+  secretKind?: 'password' | 'recovery' | 'managed' | 'member';
+}
 let unlocked: UnlockedProtection | undefined;
 let revision = 0;
 export const PROTECTION_CHANGED = 'zichan:protection-changed';
@@ -37,21 +41,30 @@ export async function protectionRequest(profile: SyncConnection, method = 'GET',
   return result;
 }
 
-export async function unlockAccountProtection(profile: SyncConnection, info: ProtectionInfo, recoveryCode?: string): Promise<void> {
+export async function unlockAccountProtection(profile: SyncConnection, info: ProtectionInfo,
+  recoveryCode?: string, unlockEnvelope?: LedgerKeyEnvelope): Promise<void> {
   const atRevision = revision;
   const secret = info.mode === 'managed' ? info.secret : recoveryCode;
   if (!secret || !info.envelope || !info.replica || info.envelope.ledgerId !== info.replica.ledgerId || info.replica.serverId !== profile.serverId) throw new Error('账本保护信息不完整');
-  const session = await unlockLedgerKeyEnvelope(secret.trim(), info.envelope);
+  const selectedEnvelope = unlockEnvelope ?? info.envelope;
+  if (selectedEnvelope.ledgerId !== info.replica.ledgerId
+    || selectedEnvelope.keyringId !== info.envelope.keyringId
+    || selectedEnvelope.generation !== info.envelope.generation) throw new Error('密码密钥包与当前账本不匹配');
+  const session = await unlockLedgerKeyEnvelope(secret.trim(), selectedEnvelope);
   if (atRevision !== revision) throw new Error('账号会话已退出');
-  adoptUnlockedLedgerKeyEnvelope(info.envelope, session, true);
+  adoptUnlockedLedgerKeyEnvelope(selectedEnvelope, session, true);
   // Secrets stay in memory. Only public replica identity is persisted.
-  unlocked = { profileId: profile.id, secret: secret.trim(), info: { ...info, secret: null } };
+  unlocked = { profileId: profile.id, secret: secret.trim(), info: { ...info, secret: null },
+    unlockEnvelope: unlockEnvelope ?? undefined,
+    secretKind: info.mode === 'managed' ? 'managed' : info.mode === 'member' ? 'member'
+      : unlockEnvelope ? 'password' : 'recovery' };
   patchSavedSyncConnection(profile.id, { ledgerId: info.replica.ledgerId, replicaId: info.replica.replicaId, streamEpoch: info.replica.streamEpoch });
   window.dispatchEvent(new Event(PROTECTION_CHANGED));
 }
 
 export function replaceProtectionRuntime(secret: string, info: ProtectionInfo): void {
   if (!unlocked) throw new Error('账号账本尚未解锁');
-  unlocked = { ...unlocked, secret, info: { ...info, secret: null } };
+  unlocked = { ...unlocked, secret, info: { ...info, secret: null }, unlockEnvelope: undefined,
+    secretKind: info.mode === 'managed' ? 'managed' : 'recovery' };
   window.dispatchEvent(new Event(PROTECTION_CHANGED));
 }

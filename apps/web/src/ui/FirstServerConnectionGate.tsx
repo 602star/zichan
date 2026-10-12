@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { fetchAuthMe, loginAccount, registerAccount, type SyncAuthSession } from '@zichan/db';
+import { fetchAuthMe, loginAccount, registerAccount, requestJson, type SyncAuthSession } from '@zichan/db';
+import { createAccountEncryptionKey } from '@zichan/core';
 import { getDeviceId } from '../db/cloud.js';
+import { rememberLoginPassword } from '../login-password.js';
 import { PasswordRecovery } from './PasswordRecovery.js';
 import { applySyncAuthSession, preferredSessionTransport } from '../sync-auth.js';
 import {
@@ -28,6 +30,7 @@ interface ServerHealth {
   serverPublicKey: string;
   claimed: boolean;
   registrationMode: 'open' | 'invite' | 'closed';
+  ledgerWebAccess?: boolean;
   protocols?: number[];
   capabilities?: string[];
 }
@@ -60,6 +63,7 @@ async function readHealth(baseUrl: string): Promise<ServerHealth> {
     serverPublicKey: body.serverPublicKey,
     claimed: body.claimed === true,
     registrationMode: body.registrationMode,
+    ledgerWebAccess: body.ledgerWebAccess !== false,
   };
 }
 
@@ -187,6 +191,7 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
     setMessage('正在校验服务器身份…');
     try {
       const checked = await checkServer();
+      if (checked.health.ledgerWebAccess === false) throw new Error('管理员已关闭通过这台服务器网页记账，请使用其他获准节点。');
       if (action === 'register') {
         if (checked.health.claimed && checked.health.registrationMode === 'closed') throw new Error('该服务器已关闭注册，请使用已有账号登录');
         if (!checked.health.claimed) throw new Error('请先进入管理后台初始化服务器，再注册个人账号');
@@ -202,12 +207,32 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
       }
       const session = await loginAccount(checked.baseUrl, username.trim(), password, {
         sessionTransport: preferredSessionTransport(checked.baseUrl),
+        sessionContext: 'ledger',
         deviceId: getDeviceId(),
         deviceName: 'Zichan · 首次连接',
         expectedServerPublicKey: checked.health.serverPublicKey,
         expectedServerId: checked.health.serverId,
       });
       const account = await fetchAuthMe(checked.baseUrl, session.accessToken);
+      if (!account.accountId) throw new Error('服务器未返回账号身份');
+      if (!account.federatedIdentity) {
+        const keyUrl = `${checked.baseUrl}/api/v4/account/encryption-key`;
+        const headers = { Authorization: `Bearer ${session.accessToken}` };
+        const keyResponse = await requestJson(keyUrl, { cache: 'no-store', redirect: 'error',
+          credentials: 'omit', headers });
+        if (keyResponse.ok) {
+          const keyBody = await keyResponse.json() as { record?: unknown };
+          if (!keyBody.record) {
+            const created = await createAccountEncryptionKey(checked.health.serverId, account.accountId, password);
+            try {
+              const saved = await requestJson(keyUrl, { method: 'PUT', cache: 'no-store', redirect: 'error',
+                credentials: 'omit', headers: { ...headers, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ envelope: created.envelope, expectedRevision: 0 }) });
+              if (!saved.ok) throw new Error('账号密钥初始化失败，请重试登录');
+            } finally { created.privateKey.fill(0); }
+          }
+        }
+      }
       const connection = {
         initialProtectionMode: privateMode ? 'private' as const : undefined,
         ...newSyncConnection(checked.baseUrl),
@@ -227,6 +252,7 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
         lastError: account.role !== 'member' ? '管理员登录成功' : '登录成功',
         expectedServerPublicKeyFingerprint: expectedLink?.serverPublicKeyFingerprint,
       };
+      rememberLoginPassword(checked.health.serverId, account.accountId, password);
       if (onAuthenticated) {
         setPassword(''); setConfirmation(''); setInviteCode('');
         await onAuthenticated(connection, session);
@@ -287,16 +313,17 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
           </div>
 
           {health && !health.claimed && <p>本站尚未开放，请联系部署者完成服务器初始化。</p>}
+          {health?.ledgerWebAccess === false && <p role="status">管理员已关闭通过本站网页记账。节点间复制仍可继续，请使用其他获准节点。</p>}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 18 }}>
             <button type="button" onClick={() => void inspectServer()} disabled={busy} style={button}>{accountOnly ? '重试连接' : '检查服务器'}</button>
-            <button type="submit" disabled={busy || health?.claimed === false} style={primary}>{busy ? '处理中…' : registering ? '注册并登录' : '登录已有账号'}</button>
+            <button type="submit" disabled={busy || health?.claimed === false || health?.ledgerWebAccess === false} style={primary}>{busy ? '处理中…' : registering ? '注册并登录' : '登录已有账号'}</button>
             <button type="button" onClick={() => setRegistering((value) => !value)} disabled={busy || !registering && (health?.claimed === false || health?.registrationMode === 'closed')} style={button}>{registering ? '返回登录' : '注册新账号'}</button>
           </div>
           </form>
           {accountOnly && <section aria-label="账号登录权限说明" style={{ marginTop: 18, fontSize: 'var(--fs-caption)', lineHeight: 1.7 }}><strong>登录会使用什么权限？</strong><p>仅验证本站账号并建立 HttpOnly 会话 Cookie，不保存账号密码。登录后在本浏览器保存该账号的加密离线缓存，不申请任意磁盘访问权限；不要求授予浏览器持久存储保护。托管账本登录后自动解锁；私密账本需要恢复码或此设备已有授权。</p></section>}
           {accountOnly && identityProviders.length > 0 && <section style={{ marginTop: 18, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
             <strong>使用统一账号登录</strong>
-            <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>将在已授权的身份节点验证账号，再回到本站建立独立会话。</p>
+            <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>账号资料已同步时，可直接在上方输入账号密码登录；首次开通尚未完成时，也可通过身份节点登录。</p>
             {identityProviders.map((provider) => <button key={provider.linkId} type="button" style={{ ...button, marginRight: 8 }}
               onClick={() => window.location.assign(`${initialUrl}/api/auth/federation/start?issuer=${encodeURIComponent(provider.issuerNodeId)}&link=${encodeURIComponent(provider.linkId)}`)}>
               通过 {new URL(provider.issuerUrl).host} 登录账本 {provider.ledgerId}

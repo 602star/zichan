@@ -36,7 +36,8 @@ test('opens backup, sync, recovery and security as settings tabs', async ({ page
     await page.getByRole('button', { name: '查看数据保护与副本状态' }).click();
     await expect(page.locator('.zc-header-title')).toContainText('设置');
     await expect(page.getByRole('tab', { name: '服务器与同步' })).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByRole('region', { name: '服务器', exact: true })).toContainText('服务器备份');
+    await expect(page.getByRole('region', { name: '服务器', exact: true })).toBeVisible();
+    await expect(page.getByRole('region', { name: '服务器', exact: true })).not.toContainText('刷新服务器备份');
     await expect(page.getByRole('region', { name: '当前设备' })).toHaveCount(0);
     await page.getByRole('tab', { name: '解锁与安全' }).click();
     await expect(page.getByRole('region', { name: '解锁与安全' })).toBeVisible();
@@ -46,6 +47,8 @@ test('opens backup, sync, recovery and security as settings tabs', async ({ page
     await page.getByRole('button', { name: '创建手动备份' }).click();
     await expect(page.getByRole('region', { name: '当前设备' })).toContainText('手动');
     await page.getByRole('tab', { name: '恢复数据' }).click();
+    await page.getByText('管理服务器备份', { exact: true }).click();
+    await expect(page.getByRole('button', { name: '刷新服务器备份' })).toBeVisible();
     await page.getByRole('button', { name: '选择恢复点' }).click();
     const restore = page.getByRole('dialog', { name: '恢复数据' });
     await expect(restore.getByLabel('备份来源')).toHaveValue(/^local:/);

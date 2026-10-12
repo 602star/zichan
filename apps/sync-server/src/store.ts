@@ -9,6 +9,7 @@ import { applyLedgerControlEvent, assertAccountEncryptionKeyEnvelope, assertLedg
   type LedgerControlState, type LedgerMemberIdentity, type LedgerMemberKeyEnvelope } from '@zichan/core';
 import { cursorValue, readCursor, resolveSort, type ResolvedSort, type SortOption } from './list-sort.js';
 import { MAINTENANCE_KEY } from './maintenance-mode.js';
+import { verifyFederatedCredential, type FederatedCredentialBundle } from './federated-credential.js';
 
 /**
  * Sortable columns of the account list.
@@ -631,6 +632,11 @@ export interface NodeReplicationLink {
   physicalIssue?: string;
   lastSuccessAt?: string;
   lastError?: string;
+  syncRounds: number;
+  convergedRounds: number;
+  partialRounds: number;
+  failedRounds: number;
+  lastRoundDurationMs: number;
   enabled: boolean;
   revocationPending: boolean;
   remoteRevokedAt?: string;
@@ -648,6 +654,22 @@ export interface NodeGroupMemberReport {
   identityConflict?: boolean;
   report?: JsonRecord;
   receivedAt?: string;
+}
+
+export interface ServerSyncGroup {
+  groupId: string;
+  mainNodeId: string;
+  mainPublicKey: string;
+  mainUrl: string;
+  role: 'main' | 'member';
+  createdAt: string;
+}
+
+export interface ServerSyncGroupMember {
+  nodeId: string;
+  publicKey: string;
+  nodeUrl: string;
+  joinedAt: string;
 }
 
 export interface ReplicaGroupMember {
@@ -921,6 +943,58 @@ CREATE TABLE IF NOT EXISTS sync_users (
   last_login_at TEXT,
   revision INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS server_sync_group (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  group_id TEXT NOT NULL,
+  main_node_id TEXT NOT NULL,
+  main_public_key TEXT NOT NULL,
+  main_url TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('main', 'member')),
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS server_sync_group_members (
+  group_id TEXT NOT NULL,
+  node_id TEXT NOT NULL,
+  public_key TEXT NOT NULL,
+  node_url TEXT NOT NULL,
+  joined_at TEXT NOT NULL,
+  PRIMARY KEY (group_id, node_id)
+);
+CREATE TABLE IF NOT EXISTS server_sync_group_join_tokens (
+  token_hash TEXT PRIMARY KEY,
+  group_id TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at TEXT
+);
+CREATE TABLE IF NOT EXISTS server_sync_group_nonces (
+  group_id TEXT NOT NULL,
+  node_id TEXT NOT NULL,
+  nonce TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  PRIMARY KEY (group_id, node_id, nonce)
+);
+CREATE TABLE IF NOT EXISTS server_sync_group_progress (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  last_attempt_at TEXT,
+  last_success_at TEXT,
+  last_error TEXT
+);
+CREATE TABLE IF NOT EXISTS server_sync_group_account_exports (
+  account_id TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL,
+  exported_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sync_user_opaque_setups (
+  username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
+  server_setup TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sync_opaque_registration_setups (
+  token_hash TEXT PRIMARY KEY,
+  username TEXT NOT NULL COLLATE NOCASE,
+  server_setup TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS server_ownership (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
   username TEXT NOT NULL COLLATE NOCASE UNIQUE REFERENCES sync_users(username) ON DELETE RESTRICT,
@@ -939,6 +1013,84 @@ CREATE TABLE IF NOT EXISTS federated_account_bindings (
   verified_at TEXT NOT NULL,
   UNIQUE (issuer_node_id, subject_account_id)
 );
+CREATE TABLE IF NOT EXISTS federated_password_credentials (
+  local_username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
+  source_username TEXT NOT NULL COLLATE NOCASE,
+  issuer_node_id TEXT NOT NULL,
+  subject_account_id TEXT NOT NULL,
+  registration_record TEXT NOT NULL,
+  server_setup TEXT NOT NULL,
+  disabled INTEGER NOT NULL DEFAULT 0,
+  source_revision INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  UNIQUE (source_username)
+);
+CREATE TABLE IF NOT EXISTS relayed_account_credentials (
+  ledger_id TEXT NOT NULL,
+  issuer_node_id TEXT NOT NULL,
+  subject_account_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  bundle_json TEXT NOT NULL,
+  issuer_signature TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (ledger_id, issuer_node_id, subject_account_id)
+);
+CREATE TABLE IF NOT EXISTS account_directory_log (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  ledger_id TEXT NOT NULL,
+  issuer_node_id TEXT NOT NULL,
+  subject_account_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  recorded_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_account_directory_log_ledger_seq ON account_directory_log(ledger_id, seq);
+CREATE TABLE IF NOT EXISTS node_directory_cursors (
+  link_id TEXT PRIMARY KEY REFERENCES node_replication_links(link_id) ON DELETE CASCADE,
+  cursor INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS native_directory_exports (
+  ledger_id TEXT NOT NULL,
+  subject_account_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  PRIMARY KEY (ledger_id, subject_account_id)
+);
+CREATE TABLE IF NOT EXISTS node_credential_exports (
+  link_id TEXT NOT NULL REFERENCES node_replication_links(link_id) ON DELETE CASCADE,
+  subject_account_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  exported_at TEXT NOT NULL,
+  PRIMARY KEY (link_id, subject_account_id)
+);
+CREATE TABLE IF NOT EXISTS account_transfer_counters (
+  username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
+  commit_push_requests INTEGER NOT NULL DEFAULT 0,
+  commit_pull_requests INTEGER NOT NULL DEFAULT 0,
+  commit_upload_bytes INTEGER NOT NULL DEFAULT 0,
+  commit_download_bytes INTEGER NOT NULL DEFAULT 0,
+  blob_upload_bytes INTEGER NOT NULL DEFAULT 0,
+  blob_download_bytes INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_sync_runs (
+  run_id TEXT NOT NULL,
+  username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
+  replica_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('converged', 'partial', 'failed')),
+  pulled INTEGER NOT NULL,
+  pushed INTEGER NOT NULL,
+  attachment_uploads INTEGER NOT NULL,
+  attachment_downloads INTEGER NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  finished_at TEXT NOT NULL,
+  PRIMARY KEY (username, run_id)
+);
+CREATE TABLE IF NOT EXISTS joined_group_registration_policy (
+  source_node_id TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  mode TEXT NOT NULL CHECK (mode IN ('open', 'invite', 'closed')),
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_account_sync_runs_user_at ON account_sync_runs(username, finished_at);
 CREATE TABLE IF NOT EXISTS account_encryption_keys (
   issuer_node_id TEXT NOT NULL,
   subject_account_id TEXT NOT NULL,
@@ -989,6 +1141,18 @@ CREATE TABLE IF NOT EXISTS account_password_resets (
   code_hash TEXT NOT NULL UNIQUE,
   expires_at TEXT NOT NULL,
   issued_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_password_email_codes (
+  code_hash TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES sync_account_identities(account_id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL,
+  issued_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS account_password_email_limits (
+  account_id TEXT PRIMARY KEY REFERENCES sync_account_identities(account_id) ON DELETE CASCADE,
+  window_started_at TEXT NOT NULL,
+  window_count INTEGER NOT NULL,
+  last_requested_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sync_opaque_login_states (
   login_id TEXT PRIMARY KEY,
@@ -1177,6 +1341,11 @@ CREATE TABLE IF NOT EXISTS node_replication_links (
   physical_issue TEXT,
   last_success_at TEXT,
   last_error TEXT,
+  sync_rounds INTEGER NOT NULL DEFAULT 0,
+  converged_rounds INTEGER NOT NULL DEFAULT 0,
+  partial_rounds INTEGER NOT NULL DEFAULT 0,
+  failed_rounds INTEGER NOT NULL DEFAULT 0,
+  last_round_duration_ms INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
   revocation_pending INTEGER NOT NULL DEFAULT 0,
   remote_revoked_at TEXT,
@@ -1350,6 +1519,15 @@ CREATE TABLE IF NOT EXISTS ledger_replica_key_envelopes (
   keyring_id TEXT NOT NULL,
   generation INTEGER NOT NULL,
   envelope_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ledger_replica_password_envelopes (
+  replica_id TEXT PRIMARY KEY REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
+  ledger_id TEXT NOT NULL,
+  keyring_id TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  envelope_json TEXT NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision >= 1),
   updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS ledger_control_roots (
@@ -1724,6 +1902,12 @@ CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challeng
     await this.ensureColumn('sync_events', 'client_kind', 'TEXT');
     await this.ensureColumn('sync_events', 'client_version', 'TEXT');
     await this.ensureColumn('sync_events', 'protocol_version', 'TEXT');
+    await this.ensureColumn('federated_password_credentials', 'source_revision', 'INTEGER NOT NULL DEFAULT 0');
+    await this.ensureColumn('node_replication_links', 'sync_rounds', 'INTEGER NOT NULL DEFAULT 0');
+    await this.ensureColumn('node_replication_links', 'converged_rounds', 'INTEGER NOT NULL DEFAULT 0');
+    await this.ensureColumn('node_replication_links', 'partial_rounds', 'INTEGER NOT NULL DEFAULT 0');
+    await this.ensureColumn('node_replication_links', 'failed_rounds', 'INTEGER NOT NULL DEFAULT 0');
+    await this.ensureColumn('node_replication_links', 'last_round_duration_ms', 'INTEGER NOT NULL DEFAULT 0');
     await this.ensureColumn('node_replication_links', 'pull_blob_cursor', "TEXT NOT NULL DEFAULT ''");
     await this.ensureColumn('node_replication_links', 'push_blob_cursor', "TEXT NOT NULL DEFAULT ''");
     await this.ensureColumn('node_replication_links', 'pull_state_cursor', "TEXT NOT NULL DEFAULT ''");
@@ -2044,6 +2228,7 @@ END;`);
     if (persistedServer && persistedServer.value !== this.serverId) throw new Error('server-id 与 SQLite 主库不匹配');
     await this.driver.run('INSERT OR IGNORE INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)', ['server_id', this.serverId, at]);
     await this.driver.run('INSERT OR IGNORE INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)', ['registration_mode', this.defaultRegistrationMode, at]);
+    await this.driver.run('INSERT OR IGNORE INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)', ['registration_policy_revision', '1', at]);
   }
 
   /** Additive column upgrades keep pre-v11 databases readable without a schema reset. */
@@ -2057,13 +2242,290 @@ END;`);
     await this.ready;
     const owner = await this.driver.get<{ singleton: number }>('SELECT singleton FROM server_ownership WHERE singleton = 1');
     if (!owner) return 'closed';
+    const group = await this.serverSyncGroup();
+    if (group?.role === 'member') {
+      const policy = await this.driver.get<{ mode: RegistrationMode }>(
+        'SELECT mode FROM joined_group_registration_policy WHERE source_node_id = ?', [group.mainNodeId]);
+      return policy?.mode ?? 'closed';
+    }
+    const joined = await this.driver.all<{ source_node_id: string; mode: RegistrationMode }>(`
+      SELECT p.source_node_id, p.mode FROM joined_group_registration_policy p
+      WHERE EXISTS (SELECT 1 FROM node_replication_links l
+        JOIN federated_account_bindings f ON f.local_username = l.username AND f.ledger_id = l.ledger_id
+        WHERE l.peer_node_id = p.source_node_id AND l.enabled = 1)
+      ORDER BY p.source_node_id`);
+    if (joined.length > 1) return 'closed';
+    if (joined[0]) return joined[0].mode;
+    return (await this.localRegistrationPolicy()).mode;
+  }
+
+  async serverSyncGroup(): Promise<ServerSyncGroup | undefined> {
+    await this.ready;
+    const row = await this.driver.get<Record<string, unknown>>(
+      'SELECT * FROM server_sync_group WHERE singleton = 1');
+    return row ? { groupId: String(row['group_id']), mainNodeId: String(row['main_node_id']),
+      mainPublicKey: String(row['main_public_key']), mainUrl: String(row['main_url']),
+      role: String(row['role']) as 'main' | 'member', createdAt: String(row['created_at']) } : undefined;
+  }
+
+  async serverSyncGroupMembers(): Promise<ServerSyncGroupMember[]> {
+    await this.ready;
+    const group = await this.serverSyncGroup();
+    if (!group) return [];
+    const rows = await this.driver.all<Record<string, unknown>>(`SELECT * FROM server_sync_group_members
+      WHERE group_id = ? ORDER BY joined_at, node_id`, [group.groupId]);
+    return rows.map((row) => ({ nodeId: String(row['node_id']), publicKey: String(row['public_key']),
+      nodeUrl: String(row['node_url']), joinedAt: String(row['joined_at']) }));
+  }
+
+  async consumeServerSyncGroupNonce(groupId: string, nodeId: string, nonce: string): Promise<boolean> {
+    await this.ready;
+    return this.driver.transaction(async (driver) => {
+      const at = nowIso();
+      await driver.run('DELETE FROM server_sync_group_nonces WHERE expires_at <= ?', [at]);
+      const member = await driver.get('SELECT 1 FROM server_sync_group_members WHERE group_id = ? AND node_id = ?',
+        [groupId, nodeId]);
+      if (!member || await driver.get('SELECT 1 FROM server_sync_group_nonces WHERE group_id = ? AND node_id = ? AND nonce = ?',
+        [groupId, nodeId, nonce])) return false;
+      await driver.run(`INSERT INTO server_sync_group_nonces (group_id, node_id, nonce, expires_at)
+        VALUES (?, ?, ?, ?)`, [groupId, nodeId, nonce, new Date(Date.now() + 5 * 60_000).toISOString()]);
+      return true;
+    });
+  }
+
+  async serverSyncGroupProgress(): Promise<{ lastAttemptAt?: string; lastSuccessAt?: string;
+    lastError?: string }> {
+    await this.ready;
+    const row = await this.driver.get<{ last_attempt_at: string | null;
+      last_success_at: string | null; last_error: string | null }>(
+      'SELECT last_attempt_at, last_success_at, last_error FROM server_sync_group_progress WHERE singleton = 1');
+    return { ...(row?.last_attempt_at ? { lastAttemptAt: row.last_attempt_at } : {}),
+      ...(row?.last_success_at ? { lastSuccessAt: row.last_success_at } : {}),
+      ...(row?.last_error ? { lastError: row.last_error } : {}) };
+  }
+
+  async recordServerSyncGroupProgress(error?: unknown): Promise<void> {
+    await this.ready;
+    const at = nowIso();
+    await this.driver.run(`INSERT INTO server_sync_group_progress
+      (singleton, last_attempt_at, last_success_at, last_error) VALUES (1, ?, ?, ?)
+      ON CONFLICT(singleton) DO UPDATE SET last_attempt_at = excluded.last_attempt_at,
+        last_success_at = COALESCE(excluded.last_success_at, server_sync_group_progress.last_success_at),
+        last_error = excluded.last_error`,
+    [at, error ? null : at, error ? String(error).slice(0, 500) : null]);
+  }
+
+  async groupAccountExportRevision(accountId: string): Promise<number> {
+    await this.ready;
+    const row = await this.driver.get<{ revision: number }>(
+      'SELECT revision FROM server_sync_group_account_exports WHERE account_id = ?', [accountId]);
+    return Number(row?.revision ?? 0);
+  }
+
+  async markGroupAccountExported(accountId: string, revision: number): Promise<void> {
+    await this.ready;
+    await this.driver.run(`INSERT INTO server_sync_group_account_exports
+      (account_id, revision, exported_at) VALUES (?, ?, ?)
+      ON CONFLICT(account_id) DO UPDATE SET revision = MAX(revision, excluded.revision),
+        exported_at = excluded.exported_at`, [accountId, revision, nowIso()]);
+  }
+
+  async applyServerSyncGroupMembers(members: ServerSyncGroupMember[]): Promise<void> {
+    await this.ready;
+    const group = await this.serverSyncGroup();
+    if (!group || group.role !== 'member' || members.length > 1000
+      || !members.some((member) => member.nodeId === group.mainNodeId
+        && member.publicKey === group.mainPublicKey && member.nodeUrl === group.mainUrl)) {
+      throw new ServerStoreError('INVALID_GROUP_DIRECTORY', 409, '同步组节点目录无效');
+    }
+    await this.driver.transaction(async (driver) => {
+      const seen = new Set<string>();
+      for (const member of members) {
+        if (!/^[A-Za-z0-9_-]{8,128}$/.test(member.nodeId) || seen.has(member.nodeId)
+          || typeof member.publicKey !== 'string' || typeof member.nodeUrl !== 'string'
+          || !Number.isFinite(Date.parse(member.joinedAt))) {
+          throw new ServerStoreError('INVALID_GROUP_DIRECTORY', 409, '同步组节点目录无效');
+        }
+        seen.add(member.nodeId);
+        const prior = await driver.get<{ public_key: string }>(`SELECT public_key FROM server_sync_group_members
+          WHERE group_id = ? AND node_id = ?`, [group.groupId, member.nodeId]);
+        if (prior && prior.public_key !== member.publicKey) {
+          throw new ServerStoreError('GROUP_NODE_CHANGED', 409, '节点签名身份变化，已停止同步');
+        }
+        await driver.run(`INSERT OR IGNORE INTO server_sync_group_members
+          (group_id, node_id, public_key, node_url, joined_at) VALUES (?, ?, ?, ?, ?)`,
+        [group.groupId, member.nodeId, member.publicKey, member.nodeUrl, member.joinedAt]);
+      }
+    });
+  }
+
+  async createServerSyncGroup(mainUrl: string, mainPublicKey: string): Promise<ServerSyncGroup> {
+    await this.ready;
+    return this.driver.transaction(async (driver) => {
+      if (await driver.get('SELECT 1 FROM server_sync_group WHERE singleton = 1')) {
+        throw new ServerStoreError('GROUP_EXISTS', 409, '本站已经加入同步组');
+      }
+      const groupId = `group-${randomBytes(16).toString('hex')}`;
+      const at = nowIso();
+      await driver.run(`INSERT INTO server_sync_group
+        (singleton, group_id, main_node_id, main_public_key, main_url, role, created_at)
+        VALUES (1, ?, ?, ?, ?, 'main', ?)`, [groupId, this.serverId, mainPublicKey, mainUrl, at]);
+      await driver.run(`INSERT INTO server_sync_group_members
+        (group_id, node_id, public_key, node_url, joined_at) VALUES (?, ?, ?, ?, ?)`,
+      [groupId, this.serverId, mainPublicKey, mainUrl, at]);
+      return { groupId, mainNodeId: this.serverId, mainPublicKey, mainUrl, role: 'main', createdAt: at };
+    });
+  }
+
+  async issueServerSyncGroupJoinToken(): Promise<{ token: string; expiresAt: string }> {
+    await this.ready;
+    const group = await this.serverSyncGroup();
+    if (!group || group.role !== 'main') throw new ServerStoreError('GROUP_MAIN_REQUIRED', 409, '请在同步组主节点操作');
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + 20 * 60_000).toISOString();
+    await this.driver.run(`INSERT INTO server_sync_group_join_tokens
+      (token_hash, group_id, expires_at) VALUES (?, ?, ?)`,
+    [createHash('sha256').update(token).digest('hex'), group.groupId, expiresAt]);
+    return { token, expiresAt };
+  }
+
+  async acceptServerSyncGroupMember(token: string, member: Omit<ServerSyncGroupMember, 'joinedAt'>):
+    Promise<{ group: ServerSyncGroup; member: ServerSyncGroupMember }> {
+    await this.ready;
+    if (!/^[A-Za-z0-9_-]{43}$/.test(token) || !/^[A-Za-z0-9_-]{8,128}$/.test(member.nodeId)
+      || member.nodeId === this.serverId) throw new ServerStoreError('INVALID_GROUP_JOIN', 400, '同步组加入参数无效');
+    try {
+      const key = createPublicKey({ key: Buffer.from(member.publicKey, 'base64url'), format: 'der', type: 'spki' });
+      if (key.asymmetricKeyType !== 'ed25519'
+        || key.export({ format: 'der', type: 'spki' }).toString('base64url') !== member.publicKey) throw new Error('key');
+    } catch { throw new ServerStoreError('INVALID_GROUP_JOIN', 400, '节点公钥无效'); }
+    return this.driver.transaction(async (driver) => {
+      const row = await driver.get<Record<string, unknown>>('SELECT * FROM server_sync_group WHERE singleton = 1');
+      if (!row || row['role'] !== 'main') throw new ServerStoreError('GROUP_MAIN_REQUIRED', 409, '请在同步组主节点操作');
+      const group: ServerSyncGroup = { groupId: String(row['group_id']), mainNodeId: this.serverId,
+        mainPublicKey: String(row['main_public_key']), mainUrl: String(row['main_url']),
+        role: 'main', createdAt: String(row['created_at']) };
+      const tokenHash = createHash('sha256').update(token).digest('hex');
+      const at = nowIso();
+      const issued = await driver.get<{ used_at: string | null; expires_at: string }>(`
+        SELECT used_at, expires_at FROM server_sync_group_join_tokens
+        WHERE token_hash = ? AND group_id = ?`, [tokenHash, group.groupId]);
+      const prior = await driver.get<{ public_key: string; node_url: string; joined_at: string }>(`
+        SELECT public_key, node_url, joined_at FROM server_sync_group_members
+        WHERE group_id = ? AND node_id = ?`, [group.groupId, member.nodeId]);
+      if (issued?.used_at && prior?.public_key === member.publicKey
+        && prior.node_url === member.nodeUrl) {
+        return { group, member: { ...member, joinedAt: prior.joined_at } };
+      }
+      const used = await driver.run(`UPDATE server_sync_group_join_tokens SET used_at = ?
+        WHERE token_hash = ? AND group_id = ? AND used_at IS NULL AND expires_at > ?`,
+      [at, tokenHash, group.groupId, at]);
+      if (used.changes !== 1) throw new ServerStoreError('INVALID_GROUP_JOIN', 403, '加入码无效、已使用或过期');
+      if (await driver.get('SELECT 1 FROM server_sync_group_members WHERE group_id = ? AND node_id = ?',
+        [group.groupId, member.nodeId])) throw new ServerStoreError('GROUP_NODE_EXISTS', 409, '节点已加入同步组');
+      await driver.run(`INSERT INTO server_sync_group_members
+        (group_id, node_id, public_key, node_url, joined_at) VALUES (?, ?, ?, ?, ?)`,
+      [group.groupId, member.nodeId, member.publicKey, member.nodeUrl, at]);
+      return { group, member: { ...member, joinedAt: at } };
+    });
+  }
+
+  async joinServerSyncGroup(group: ServerSyncGroup, localUrl: string,
+    localPublicKey: string): Promise<void> {
+    await this.ready;
+    if (group.role !== 'main' || group.mainNodeId === this.serverId
+      || !/^[A-Za-z0-9_-]{16,128}$/.test(group.groupId)) {
+      throw new ServerStoreError('INVALID_GROUP_JOIN', 400, '主节点组身份无效');
+    }
+    await this.driver.transaction(async (driver) => {
+      if (await driver.get('SELECT 1 FROM server_sync_group WHERE singleton = 1')) {
+        throw new ServerStoreError('GROUP_EXISTS', 409, '本站已经加入同步组');
+      }
+      const at = nowIso();
+      await driver.run(`INSERT INTO server_sync_group
+        (singleton, group_id, main_node_id, main_public_key, main_url, role, created_at)
+        VALUES (1, ?, ?, ?, ?, 'member', ?)`,
+      [group.groupId, group.mainNodeId, group.mainPublicKey, group.mainUrl, at]);
+      await driver.run(`INSERT INTO server_sync_group_members
+        (group_id, node_id, public_key, node_url, joined_at) VALUES (?, ?, ?, ?, ?)`,
+      [group.groupId, group.mainNodeId, group.mainPublicKey, group.mainUrl, group.createdAt]);
+      await driver.run(`INSERT INTO server_sync_group_members
+        (group_id, node_id, public_key, node_url, joined_at) VALUES (?, ?, ?, ?, ?)`,
+      [group.groupId, this.serverId, localPublicKey, localUrl, at]);
+    });
+  }
+
+  async localRegistrationPolicy(): Promise<{ mode: RegistrationMode; revision: number }> {
+    await this.ready;
     const row = await this.driver.get<{ value: string }>('SELECT value FROM server_meta WHERE key = ?', ['registration_mode']);
-    return row?.value === 'invite' || row?.value === 'closed' ? row.value : 'open';
+    const revision = await this.driver.get<{ value: string }>('SELECT value FROM server_meta WHERE key = ?', ['registration_policy_revision']);
+    return { mode: row?.value === 'invite' || row?.value === 'closed' ? row.value : 'open',
+      revision: Number(revision?.value ?? 1) };
+  }
+
+  async registrationPolicySource(): Promise<string | null> {
+    await this.ready;
+    const group = await this.serverSyncGroup();
+    if (group?.role === 'member') return group.mainNodeId;
+    const peers = await this.driver.all<{ source_node_id: string }>(`
+      SELECT DISTINCT p.source_node_id FROM joined_group_registration_policy p
+      JOIN node_replication_links l ON l.peer_node_id = p.source_node_id AND l.enabled = 1
+      JOIN federated_account_bindings f ON f.local_username = l.username AND f.ledger_id = l.ledger_id`);
+    return peers.length === 1 ? peers[0]!.source_node_id : peers.length ? 'conflict' : null;
+  }
+
+  async applyJoinedRegistrationPolicy(sourceNodeId: string, mode: RegistrationMode,
+    revision: number): Promise<void> {
+    await this.ready;
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(sourceNodeId) || !['open', 'invite', 'closed'].includes(mode)
+      || !Number.isSafeInteger(revision) || revision < 1) throw new Error('同步组注册策略无效');
+    await this.driver.transaction(async (driver) => {
+      const group = await driver.get<{ main_node_id: string; role: string }>(
+        'SELECT main_node_id, role FROM server_sync_group WHERE singleton = 1');
+      if (group?.role === 'member' && group.main_node_id !== sourceNodeId) {
+        throw new ServerStoreError('GROUP_POLICY_CONFLICT', 409, '注册策略来源不是同步组主节点');
+      }
+      await driver.run(`DELETE FROM joined_group_registration_policy WHERE source_node_id NOT IN (
+        SELECT DISTINCT l.peer_node_id FROM node_replication_links l
+        JOIN federated_account_bindings f ON f.local_username = l.username AND f.ledger_id = l.ledger_id
+        WHERE l.enabled = 1) AND source_node_id <> ?`,
+      [group?.role === 'member' ? group.main_node_id : '']);
+      const peers = await driver.all<{ source_node_id: string }>(
+        'SELECT source_node_id FROM joined_group_registration_policy');
+      if (peers.some((peer) => peer.source_node_id !== sourceNodeId)) {
+        throw new ServerStoreError('GROUP_POLICY_CONFLICT', 409, '本站已属于另一主节点的注册策略，请先由管理员拆组');
+      }
+      const current = await driver.get<{ revision: number; mode: RegistrationMode }>(
+        'SELECT revision, mode FROM joined_group_registration_policy WHERE source_node_id = ?', [sourceNodeId]);
+      if (current && current.revision > revision) throw new ServerStoreError('GROUP_POLICY_ROLLBACK', 409, '组策略版本回退');
+      if (current && current.revision === revision) {
+        if (current.mode !== mode) throw new ServerStoreError('GROUP_POLICY_COLLISION', 409, '同版本组策略内容不同');
+        return;
+      }
+      await driver.run(`INSERT INTO joined_group_registration_policy (source_node_id, revision, mode, updated_at)
+        VALUES (?, ?, ?, ?) ON CONFLICT(source_node_id) DO UPDATE SET
+          revision = excluded.revision, mode = excluded.mode, updated_at = excluded.updated_at`,
+      [sourceNodeId, revision, mode, nowIso()]);
+    });
   }
 
   async setRegistrationMode(mode: RegistrationMode): Promise<void> {
     await this.ready;
-    await this.driver.run('INSERT OR REPLACE INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)', ['registration_mode', mode, nowIso()]);
+    await this.driver.transaction(async (driver) => {
+      const group = await driver.get<{ role: string }>('SELECT role FROM server_sync_group WHERE singleton = 1');
+      if (group?.role === 'member') throw new ServerStoreError('GROUP_POLICY_OWNED', 409,
+        '本站注册策略由同步组主节点统一管理');
+      if (await driver.get(`SELECT 1 FROM joined_group_registration_policy p WHERE EXISTS (
+        SELECT 1 FROM node_replication_links l JOIN federated_account_bindings f
+          ON f.local_username = l.username AND f.ledger_id = l.ledger_id
+        WHERE l.peer_node_id = p.source_node_id AND l.enabled = 1) LIMIT 1`)) {
+        throw new ServerStoreError('GROUP_POLICY_OWNED', 409, '本站注册策略由同步组主节点统一管理');
+      }
+      const at = nowIso();
+      await driver.run('INSERT OR REPLACE INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)', ['registration_mode', mode, at]);
+      await driver.run(`UPDATE server_meta SET value = CAST(value AS INTEGER) + 1, updated_at = ?
+        WHERE key = 'registration_policy_revision'`, [at]);
+    });
   }
 
   async assertRegistrationAllowed(inviteCode?: string, claimOwner = false): Promise<void> {
@@ -2078,6 +2540,7 @@ END;`);
     if (mode === 'closed') throw new ServerStoreError('REGISTRATION_CLOSED', 403, 'registration closed');
     if (mode !== 'invite') return;
     if (!inviteCode) throw new ServerStoreError('INVITE_REQUIRED', 403, 'invite required');
+    if ((await this.serverSyncGroup())?.role === 'member') return;
     const invite = await this.driver.get<Record<string, unknown>>(
       'SELECT * FROM registration_invites WHERE code = ?',
       [inviteCode],
@@ -2098,6 +2561,34 @@ END;`);
     await this.ready;
     const row = await this.driver.get<{ value: string }>('SELECT value FROM server_meta WHERE key = ?', ['node_signing_public_key']);
     return row?.value;
+  }
+
+  async opaqueSetupForUser(username: string): Promise<string | undefined> {
+    await this.ready;
+    const row = await this.driver.get<{ server_setup: string }>(
+      'SELECT server_setup FROM sync_user_opaque_setups WHERE username = ?', [username]);
+    return row?.server_setup;
+  }
+
+  async savePendingOpaqueSetup(tokenHash: string, username: string, setup: string, expiresAt: string): Promise<void> {
+    await this.ready;
+    await this.driver.transaction(async (driver) => {
+      await driver.run('DELETE FROM sync_opaque_registration_setups WHERE expires_at <= ?', [nowIso()]);
+      await driver.run(`INSERT INTO sync_opaque_registration_setups
+        (token_hash, username, server_setup, expires_at) VALUES (?, ?, ?, ?)`,
+      [tokenHash, username, setup, expiresAt]);
+    });
+  }
+
+  async consumePendingOpaqueSetup(tokenHash: string, username: string): Promise<string | undefined> {
+    await this.ready;
+    return this.driver.transaction(async (driver) => {
+      const row = await driver.get<{ server_setup: string }>(
+        'SELECT server_setup FROM sync_opaque_registration_setups WHERE token_hash = ? AND username = ? AND expires_at > ?',
+        [tokenHash, username, nowIso()]);
+      if (row) await driver.run('DELETE FROM sync_opaque_registration_setups WHERE token_hash = ?', [tokenHash]);
+      return row?.server_setup;
+    });
   }
 
   async bindNodePublicKey(publicKey: string): Promise<void> {
@@ -2135,36 +2626,54 @@ END;`);
     inviteCode?: string,
     claimOwner = false,
     displayName?: string,
+    opaqueServerSetup?: string,
+    groupAccountId?: string,
   ): Promise<{ role: AccountRole }> {
     await this.ready;
     return this.driver.transaction(async (driver) => {
       const existingOwner = await driver.get<{ singleton: number }>('SELECT singleton FROM server_ownership WHERE singleton = 1');
       if (claimOwner && existingOwner) throw new ServerStoreError('OWNER_ALREADY_CLAIMED', 409, 'server owner has already been initialized');
       if (!claimOwner && !existingOwner) throw new ServerStoreError('OWNER_SETUP_REQUIRED', 403, 'server operator must initialize the owner with the setup secret');
+      const group = await driver.get<{ group_id: string; role: string }>(
+        'SELECT group_id, role FROM server_sync_group WHERE singleton = 1');
+      if (groupAccountId && (group?.role !== 'member' || claimOwner
+        || !/^[A-Za-z0-9_-]{8,160}$/.test(groupAccountId))) {
+        throw new ServerStoreError('INVALID_GROUP_ACCOUNT', 403, '同步组账号身份无效');
+      }
       const modeRow = await driver.get<{ value: string }>('SELECT value FROM server_meta WHERE key = ?', ['registration_mode']);
-      const mode = claimOwner
+      const groupPolicy = group?.role === 'member' ? await driver.get<{ mode: string }>(
+        'SELECT mode FROM joined_group_registration_policy WHERE source_node_id = (SELECT main_node_id FROM server_sync_group WHERE singleton = 1)') : undefined;
+      const mode = groupAccountId ? 'open' : claimOwner
         ? 'open'
-        : modeRow?.value === 'invite' || modeRow?.value === 'closed' ? modeRow.value : 'open';
+        : group?.role === 'member' ? groupPolicy?.mode ?? 'closed'
+          : modeRow?.value === 'invite' || modeRow?.value === 'closed' ? modeRow.value : 'open';
       if (mode === 'closed') throw new ServerStoreError('REGISTRATION_CLOSED', 403, 'registration closed');
       let invite: Record<string, unknown> | undefined;
-      if (mode === 'invite') {
+      if (mode === 'invite' && !groupAccountId) {
         if (!inviteCode) throw new ServerStoreError('INVITE_REQUIRED', 403, 'invite required');
         invite = await driver.get<Record<string, unknown>>('SELECT * FROM registration_invites WHERE code = ?', [inviteCode]);
         const policy = await driver.get<{ expires_at: string }>('SELECT expires_at FROM registration_invite_policy WHERE code = ?', [inviteCode]);
         if (!invite || bool(invite['disabled']) || invite['used_by'] != null || policy && policy.expires_at <= nowIso()) throw new ServerStoreError('INVALID_INVITE', 403, 'invalid invite');
       }
       if (await driver.get('SELECT username FROM sync_users WHERE username = ?', [username])) throw new ServerStoreError('USER_EXISTS', 409, 'user exists');
+      if (await driver.get('SELECT 1 FROM federated_password_credentials WHERE source_username = ?', [username])) {
+        throw new ServerStoreError('USER_EXISTS', 409, '该账号名已属于同步组内的统一账号');
+      }
       const at = nowIso();
       await driver.run(
         'INSERT INTO sync_users (username, display_name, opaque_registration_record, disabled, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)',
         [username, displayName ?? username, opaqueRegistrationRecord, at, at],
       );
-      await driver.run('INSERT INTO sync_account_identities (username, account_id) VALUES (?, ?)', [username, `account-${randomBytes(16).toString('hex')}`]);
+      await driver.run('INSERT INTO sync_account_identities (username, account_id) VALUES (?, ?)',
+        [username, groupAccountId ?? `account-${randomBytes(16).toString('hex')}`]);
+      if (opaqueServerSetup) await driver.run(
+        'INSERT INTO sync_user_opaque_setups (username, server_setup, updated_at) VALUES (?, ?, ?)',
+        [username, opaqueServerSetup, at]);
       if (claimOwner) await driver.run(
         'INSERT INTO server_ownership (singleton, username, created_at) VALUES (1, ?, ?)',
         [username, at],
       );
-      if (inviteCode) await driver.run('UPDATE registration_invites SET used_by = ?, used_at = ? WHERE code = ?', [username, at, inviteCode]);
+      if (inviteCode && !groupAccountId) await driver.run('UPDATE registration_invites SET used_by = ?, used_at = ? WHERE code = ?', [username, at, inviteCode]);
       const assignedOwner = await driver.get<{ username: string }>(
         'SELECT username FROM server_ownership WHERE singleton = 1',
       );
@@ -2174,7 +2683,8 @@ END;`);
 
   async setDisplayName(username: string, displayName: string): Promise<void> {
     await this.ready;
-    await this.driver.run('UPDATE sync_users SET display_name = ?, updated_at = ? WHERE username = ?', [displayName, nowIso(), username]);
+    await this.driver.run('UPDATE sync_users SET display_name = ?, revision = revision + 1, updated_at = ? WHERE username = ?',
+      [displayName, nowIso(), username]);
   }
 
   async accountEmail(username: string): Promise<{ email?: string; verifiedAt?: string; pendingEmail?: string; quotaNotifications: boolean }> {
@@ -2400,7 +2910,10 @@ END;`);
             'SELECT replica_id FROM account_ledger_index WHERE username = ? AND replica_id = ?',
             [session.username, input.replicaId])
           : await driver.get<{ replica_id: string }>(
-            'SELECT replica_id FROM ledger_account_routes WHERE username = ?', [session.username]);
+            'SELECT replica_id FROM ledger_account_routes WHERE username = ?', [session.username])
+            ?? await driver.get<{ replica_id: string }>(
+              'SELECT replica_id FROM account_ledger_index WHERE username = ? ORDER BY created_at, replica_id LIMIT 1',
+              [session.username]);
         if (input.replicaId && !route) throw new ServerStoreError('LEDGER_ACCESS_DENIED', 403,
           '当前账号没有此账本的访问权限');
         if (route) session.replicaId = route.replica_id;
@@ -2756,7 +3269,8 @@ END;`);
         }
       }
       const at = nowIso();
-      await driver.run('UPDATE sync_users SET disabled = ?, updated_at = ? WHERE username = ?', [disabled ? 1 : 0, at, username]);
+      await driver.run('UPDATE sync_users SET disabled = ?, revision = revision + 1, updated_at = ? WHERE username = ?',
+        [disabled ? 1 : 0, at, username]);
       if (disabled) await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE username = ?', [at, at, username]);
     });
     return this.getUser(username);
@@ -2766,6 +3280,75 @@ END;`);
     await this.ready;
     const row = await this.driver.get<{ username: string }>('SELECT username FROM sync_account_identities WHERE account_id = ?', [accountId]);
     return row ? this.getUser(row.username) : undefined;
+  }
+
+  async pendingNativeDirectoryUsers(linkId: string, limit = 50): Promise<SyncUser[]> {
+    await this.ready;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('账号目录批次无效');
+    const rows = await this.driver.all<{ username: string }>(`
+      SELECT u.username FROM sync_users u
+      JOIN sync_account_identities i ON i.username = u.username
+      JOIN account_encryption_keys k ON k.issuer_node_id = ? AND k.subject_account_id = i.account_id
+      LEFT JOIN federated_account_bindings f ON f.local_username = u.username
+      LEFT JOIN server_ownership o ON o.username = u.username
+      LEFT JOIN server_administrators a ON a.username = u.username
+      LEFT JOIN node_credential_exports e ON e.link_id = ? AND e.subject_account_id = i.account_id
+      WHERE f.local_username IS NULL AND o.username IS NULL AND a.username IS NULL
+        AND (e.revision IS NULL OR e.revision < u.revision * 1000000 + k.revision)
+      ORDER BY u.username LIMIT ?`, [this.serverId, linkId, limit]);
+    const users = await Promise.all(rows.map((row) => this.getUser(row.username)));
+    return users.filter((user): user is SyncUser => Boolean(user));
+  }
+
+  async pendingHubDirectoryUsers(ledgerId: string, limit = 50): Promise<SyncUser[]> {
+    await this.ready;
+    const rows = await this.driver.all<{ username: string }>(`
+      SELECT u.username FROM sync_users u
+      JOIN sync_account_identities i ON i.username = u.username
+      JOIN account_encryption_keys k ON k.issuer_node_id = ? AND k.subject_account_id = i.account_id
+      LEFT JOIN federated_account_bindings f ON f.local_username = u.username
+      LEFT JOIN server_ownership o ON o.username = u.username
+      LEFT JOIN server_administrators a ON a.username = u.username
+      LEFT JOIN native_directory_exports e ON e.ledger_id = ? AND e.subject_account_id = i.account_id
+      WHERE f.local_username IS NULL AND o.username IS NULL AND a.username IS NULL
+        AND (e.revision IS NULL OR e.revision < u.revision * 1000000 + k.revision)
+      ORDER BY u.username LIMIT ?`, [this.serverId, ledgerId, limit]);
+    const users = await Promise.all(rows.map((row) => this.getUser(row.username)));
+    return users.filter((user): user is SyncUser => Boolean(user));
+  }
+
+  async markHubDirectoryUserExported(ledgerId: string, accountId: string, revision: number): Promise<void> {
+    await this.ready;
+    await this.driver.run(`INSERT INTO native_directory_exports
+      (ledger_id, subject_account_id, revision) VALUES (?, ?, ?)
+      ON CONFLICT(ledger_id, subject_account_id) DO UPDATE SET
+        revision = MAX(native_directory_exports.revision, excluded.revision)`,
+    [ledgerId, accountId, revision]);
+  }
+
+  async nodeDirectoryCursor(linkId: string): Promise<number> {
+    await this.ready;
+    const row = await this.driver.get<{ cursor: number }>(
+      'SELECT cursor FROM node_directory_cursors WHERE link_id = ?', [linkId]);
+    return Number(row?.cursor ?? 0);
+  }
+
+  async advanceNodeDirectoryCursor(linkId: string, cursor: number): Promise<void> {
+    await this.ready;
+    if (!Number.isSafeInteger(cursor) || cursor < 0) throw new Error('账号目录游标无效');
+    await this.driver.run(`INSERT INTO node_directory_cursors (link_id, cursor) VALUES (?, ?)
+      ON CONFLICT(link_id) DO UPDATE SET cursor = MAX(node_directory_cursors.cursor, excluded.cursor)`,
+    [linkId, cursor]);
+  }
+
+  async markDirectoryUserExported(linkId: string, accountId: string, revision: number): Promise<void> {
+    await this.ready;
+    await this.driver.run(`INSERT INTO node_credential_exports
+      (link_id, subject_account_id, revision, exported_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(link_id, subject_account_id) DO UPDATE SET
+        revision = MAX(node_credential_exports.revision, excluded.revision),
+        exported_at = excluded.exported_at`,
+    [linkId, accountId, revision, nowIso()]);
   }
 
   /** Authorization, mutation, session invalidation and durable audit share one transaction. */
@@ -2843,6 +3426,12 @@ END;`);
       }
       let before: unknown = null;
       let after: unknown = null;
+      if (mutation.action === 'registration' || mutation.action === 'invite-create'
+        || mutation.action === 'invite-state') {
+        const group = await driver.get<{ role: string }>('SELECT role FROM server_sync_group WHERE singleton = 1');
+        if (group?.role === 'member') throw new ServerStoreError('GROUP_POLICY_OWNED', 409,
+          '同步组注册和邀请码只在主节点管理');
+      }
       if (mutation.action === 'password-reset-issue') {
         if (target!.disabled) throw new ServerStoreError('ACCOUNT_DISABLED', 409, 'enable the account before issuing a reset');
         if (!/^[a-f0-9]{64}$/.test(mutation.codeHash) || !Number.isFinite(Date.parse(mutation.expiresAt)) || mutation.expiresAt <= at || Date.parse(mutation.expiresAt) > Date.now() + 16 * 60_000) throw new ServerStoreError('INVALID_RESET', 400, 'invalid reset policy');
@@ -2897,9 +3486,17 @@ END;`);
         await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE session_id = ?', [at, at, mutation.sessionId]);
       } else if (mutation.action === 'registration') {
         if (!['open', 'invite', 'closed'].includes(mutation.mode)) throw new ServerStoreError('INVALID_MODE', 400, 'invalid registration mode');
+        if (await driver.get(`SELECT 1 FROM joined_group_registration_policy p WHERE EXISTS (
+          SELECT 1 FROM node_replication_links l JOIN federated_account_bindings f
+            ON f.local_username = l.username AND f.ledger_id = l.ledger_id
+          WHERE l.peer_node_id = p.source_node_id AND l.enabled = 1) LIMIT 1`)) {
+          throw new ServerStoreError('GROUP_POLICY_OWNED', 409, '本站注册策略由同步组主节点统一管理');
+        }
         before = await driver.get('SELECT value FROM server_meta WHERE key = ?', ['registration_mode']) ?? null;
         after = { mode: mutation.mode };
         await driver.run('INSERT OR REPLACE INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)', ['registration_mode', mutation.mode, at]);
+        await driver.run(`UPDATE server_meta SET value = CAST(value AS INTEGER) + 1, updated_at = ?
+          WHERE key = 'registration_policy_revision'`, [at]);
       } else if (mutation.action === 'invite-create') {
         if (!/^[A-Za-z0-9_-]{8,128}$/.test(mutation.code) || !Number.isFinite(Date.parse(mutation.expiresAt)) || mutation.expiresAt <= at) throw new ServerStoreError('INVALID_INVITE', 400, 'invalid invite or expiry');
         if (await driver.get('SELECT code FROM registration_invites WHERE code = ?', [mutation.code])) throw new ServerStoreError('INVITE_EXISTS', 409, 'invite exists');
@@ -3016,8 +3613,61 @@ END;`);
 
   async assertPasswordReset(username: string, codeHash: string): Promise<void> {
     await this.ready;
-    const row = await this.driver.get('SELECT r.account_id FROM account_password_resets r JOIN sync_account_identities i ON i.account_id = r.account_id JOIN sync_users u ON u.username = i.username WHERE i.username = ? AND r.code_hash = ? AND r.expires_at > ? AND u.disabled = 0', [username, codeHash, nowIso()]);
+    const row = await this.driver.get(`SELECT r.account_id FROM (
+      SELECT r.account_id, r.code_hash, r.expires_at FROM account_password_resets r
+      UNION ALL SELECT e.account_id, e.code_hash, e.expires_at FROM account_password_email_codes e
+    ) r JOIN sync_account_identities i ON i.account_id = r.account_id
+    JOIN sync_users u ON u.username = i.username
+    WHERE i.username = ? AND r.code_hash = ? AND r.expires_at > ? AND u.disabled = 0`,
+    [username, codeHash, nowIso()]);
     if (!row) throw new ServerStoreError('INVALID_PASSWORD_RESET', 403, '重置码无效、已使用或已过期，请联系管理员重新审核');
+  }
+
+  /** Returns no address for unknown, unverified, federated, disabled or rate-limited accounts. */
+  async issueEmailPasswordReset(username: string, codeHash: string, expiresAt: string): Promise<{
+    accountId: string; email: string;
+  } | null> {
+    await this.ready;
+    return this.driver.transaction(async (driver) => {
+      const at = nowIso();
+      const account = await driver.get<{ account_id: string; email: string }>(`
+        SELECT i.account_id, e.email FROM sync_users u
+        JOIN sync_account_identities i ON i.username = u.username
+        JOIN account_email_settings e ON e.username = u.username
+        LEFT JOIN federated_account_bindings f ON f.local_username = u.username
+        WHERE u.username = ? AND u.disabled = 0 AND f.local_username IS NULL
+          AND e.email IS NOT NULL AND e.verified_at IS NOT NULL`, [username]);
+      if (!account || !/^[a-f0-9]{64}$/.test(codeHash)
+        || Date.parse(expiresAt) > Date.now() + 16 * 60_000 || expiresAt <= at) return null;
+      const limit = await driver.get<{ window_started_at: string; window_count: number;
+        last_requested_at: string }>(
+        'SELECT * FROM account_password_email_limits WHERE account_id = ?', [account.account_id]);
+      if (limit && Date.parse(limit.last_requested_at) > Date.now() - 10 * 60_000) return null;
+      const sameWindow = limit && Date.parse(limit.window_started_at) > Date.now() - 24 * 60 * 60_000;
+      const count = sameWindow ? Number(limit.window_count) : 0;
+      if (count >= 5) return null;
+      await driver.run(`INSERT INTO account_password_email_limits
+        (account_id, window_started_at, window_count, last_requested_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT(account_id) DO UPDATE SET window_started_at = excluded.window_started_at,
+          window_count = excluded.window_count, last_requested_at = excluded.last_requested_at`,
+      [account.account_id, sameWindow ? limit.window_started_at : at, count + 1, at]);
+      await driver.run('DELETE FROM account_password_email_codes WHERE account_id = ? OR expires_at <= ?',
+        [account.account_id, at]);
+      await driver.run(`INSERT INTO account_password_email_codes
+        (code_hash, account_id, expires_at, issued_at) VALUES (?, ?, ?, ?)`,
+      [codeHash, account.account_id, expiresAt, at]);
+      await driver.run(`INSERT INTO server_admin_audit
+        (at, actor_account_id, target_account_id, action, before_json, after_json)
+        VALUES (?, ?, ?, 'password-reset-email-issued', '{}', ?)`,
+      [at, account.account_id, account.account_id, JSON.stringify({ expiresAt })]);
+      return { accountId: account.account_id, email: account.email };
+    });
+  }
+
+  async revokeEmailPasswordReset(accountId: string, codeHash: string): Promise<void> {
+    await this.ready;
+    await this.driver.run('DELETE FROM account_password_email_codes WHERE account_id = ? AND code_hash = ?',
+      [accountId, codeHash]);
   }
 
   /** Local operator recovery or a recently authenticated user's own password change. */
@@ -3039,25 +3689,39 @@ END;`);
     });
   }
 
-  async completePasswordReset(username: string, codeHash: string, registrationRecord: string): Promise<void> {
+  async completePasswordReset(username: string, codeHash: string, registrationRecord: string,
+    opaqueServerSetup?: string): Promise<void> {
     await this.ready;
     await this.driver.transaction(async (driver) => {
       const at = nowIso();
-      const row = await driver.get<{ account_id: string }>('SELECT r.account_id FROM account_password_resets r JOIN sync_account_identities i ON i.account_id = r.account_id JOIN sync_users u ON u.username = i.username WHERE i.username = ? AND r.code_hash = ? AND r.expires_at > ? AND u.disabled = 0', [username, codeHash, at]);
+      const row = await driver.get<{ account_id: string }>(`SELECT r.account_id FROM (
+        SELECT account_id, code_hash, expires_at FROM account_password_resets
+        UNION ALL SELECT account_id, code_hash, expires_at FROM account_password_email_codes
+      ) r JOIN sync_account_identities i ON i.account_id = r.account_id
+      JOIN sync_users u ON u.username = i.username
+      WHERE i.username = ? AND r.code_hash = ? AND r.expires_at > ? AND u.disabled = 0`,
+      [username, codeHash, at]);
       if (!row) throw new ServerStoreError('INVALID_PASSWORD_RESET', 403, '重置码无效、已使用或已过期，请联系管理员重新审核');
       if (await driver.get('SELECT 1 FROM federated_account_bindings WHERE local_username = ?', [username])) {
         throw new ServerStoreError('FEDERATED_IDENTITY_MANAGED', 409, '统一账号的密码必须在身份节点管理');
       }
-      await driver.run('UPDATE sync_users SET opaque_registration_record = ?, updated_at = ? WHERE username = ?', [registrationRecord, at, username]);
+      await driver.run('UPDATE sync_users SET opaque_registration_record = ?, revision = revision + 1, updated_at = ? WHERE username = ?',
+        [registrationRecord, at, username]);
+      if (opaqueServerSetup) await driver.run(`INSERT INTO sync_user_opaque_setups
+        (username, server_setup, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(username) DO UPDATE SET server_setup = excluded.server_setup, updated_at = excluded.updated_at`,
+      [username, opaqueServerSetup, at]);
       await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE username = ?', [at, at, username]);
       await driver.run('DELETE FROM sync_opaque_login_states WHERE username = ?', [username]);
       await driver.run('DELETE FROM account_password_resets WHERE account_id = ?', [row.account_id]);
+      await driver.run('DELETE FROM account_password_email_codes WHERE account_id = ?', [row.account_id]);
       await driver.run('INSERT INTO server_admin_audit (at, actor_account_id, target_account_id, action, before_json, after_json) VALUES (?, ?, ?, ?, ?, ?)', [at, row.account_id, row.account_id, 'password-reset-complete', '{}', '{"sessionsRevoked":true}']);
     });
   }
 
   async createNodeReplicationGrant(username: string, peerNodeId: string, peerPublicKey: string,
-    expiresAt: string, renewable = false, replicaId?: string): Promise<NodeReplicationGrant> {
+    expiresAt: string, renewable = false, replicaId?: string,
+    syncGroupId?: string): Promise<NodeReplicationGrant> {
     await this.ready;
     if (!/^[A-Za-z0-9_-]{8,128}$/.test(peerNodeId) || peerNodeId === this.serverId) {
       throw new ServerStoreError('INVALID_PEER', 400, '节点身份无效');
@@ -3075,11 +3739,18 @@ END;`);
     return this.driver.transaction(async (driver) => {
       const replica = await this.accountReplicaRow(driver, username, replicaId);
       if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, '账号尚未绑定账本');
-      await this.assertLedgerAccessOnReplica(driver, username, replica.replica_id, 'manage');
+      if (syncGroupId) {
+        const member = await driver.get<{ public_key: string }>(`SELECT m.public_key
+          FROM server_sync_group g JOIN server_sync_group_members m ON m.group_id = g.group_id
+          WHERE g.singleton = 1 AND g.role = 'main' AND g.group_id = ? AND m.node_id = ?`,
+        [syncGroupId, peerNodeId]);
+        if (member?.public_key !== peerPublicKey) throw new ServerStoreError('GROUP_MEMBER_REQUIRED', 403,
+          '节点不属于当前服务器同步组');
+      } else await this.assertLedgerAccessOnReplica(driver, username, replica.replica_id, 'manage');
       const owner = await driver.get<{ username: string }>(
         'SELECT username FROM sync_replicas WHERE replica_id = ?', [replica.replica_id]);
       if (!owner) throw new ServerStoreError('REPLICA_UNBOUND', 409, '账本副本不存在');
-      if (await driver.get('SELECT 1 FROM federated_account_bindings WHERE local_username = ?', [owner.username])) {
+      if (!syncGroupId && await driver.get('SELECT 1 FROM federated_account_bindings WHERE local_username = ?', [owner.username])) {
         throw new ServerStoreError('ISSUER_REQUIRED', 409, '请在统一账号身份节点签发副本授权');
       }
       const member = await driver.get<{ public_key: string; retired_at: string | null }>(`
@@ -3103,6 +3774,218 @@ END;`);
       await driver.run('INSERT INTO node_replication_grants (grant_id, username, ledger_id, peer_node_id, peer_public_key, created_at, expires_at, renewable) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         [grant.grantId, owner.username, grant.ledgerId, peerNodeId, peerPublicKey, at, expiresAt, renewable ? 1 : 0]);
       return grant;
+    });
+  }
+
+  async ensureGroupNodeReplicationGrant(groupId: string, username: string,
+    peerNodeId: string, peerPublicKey: string, replicaId: string): Promise<NodeReplicationGrant> {
+    await this.ready;
+    const replica = await this.getReplica(username, replicaId);
+    if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, '账本副本不存在');
+    const existing = (await this.listNodeReplicationGrants(username)).find((grant) =>
+      grant.ledgerId === replica.ledgerId && grant.peerNodeId === peerNodeId && grant.peerPublicKey === peerPublicKey
+      && grant.renewable && Date.parse(grant.expiresAt) > Date.now() + 86_400_000);
+    if (existing) return existing;
+    return this.createNodeReplicationGrant(username, peerNodeId, peerPublicKey,
+      new Date(Date.now() + 30 * 86_400_000).toISOString(), true, replicaId, groupId);
+  }
+
+  async ensureNativeGroupSourceGrant(username: string, replicaId: string,
+    peerNodeId: string, peerPublicKey: string): Promise<NodeReplicationGrant> {
+    await this.ready;
+    if (await this.federatedAccount(username)) throw new ServerStoreError('ISSUER_REQUIRED', 409,
+      '只能向主节点登记本站创建的账本');
+    const replica = await this.getReplica(username, replicaId);
+    if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, '账本副本不存在');
+    const existing = (await this.listNodeReplicationGrants(username)).find((grant) =>
+      grant.ledgerId === replica.ledgerId && grant.peerNodeId === peerNodeId
+      && grant.peerPublicKey === peerPublicKey && grant.renewable
+      && Date.parse(grant.expiresAt) > Date.now() + 86_400_000);
+    if (existing) return existing;
+    return this.createNodeReplicationGrant(username, peerNodeId, peerPublicKey,
+      new Date(Date.now() + 30 * 86_400_000).toISOString(), true, replicaId);
+  }
+
+  async groupLedgerCatalog(after: string, limit: number, peerNodeId: string,
+    peerPublicKey: string): Promise<{ ledgers: Array<{
+      ledgerId: string; issuerNodeId: string; subjectAccountId: string;
+      replicaId: string; streamEpoch: string; envelope: JsonRecord; grantId: string;
+    }>; next: string; hasMore: boolean }> {
+    await this.ready;
+    const group = await this.serverSyncGroup();
+    if (!group || group.role !== 'main' || !/^[A-Za-z0-9_-]{8,128}$/.test(peerNodeId)
+      || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new ServerStoreError('INVALID_GROUP_CATALOG', 400, '同步组账本目录请求无效');
+    }
+    const rows = await this.driver.all<{ username: string; ledger_id: string;
+      replica_id: string; stream_epoch: string; envelope_json: string }>(`
+      SELECT r.username, r.ledger_id, r.replica_id, r.stream_epoch, e.envelope_json
+      FROM sync_replicas r JOIN ledger_replica_key_envelopes e ON e.replica_id = r.replica_id
+      WHERE r.ledger_id > ? ORDER BY r.ledger_id LIMIT ?`, [after, limit + 1]);
+    const selected = rows.slice(0, limit);
+    const groupMembers = await this.serverSyncGroupMembers();
+    const ledgers = [];
+    for (const row of selected) {
+      const user = await this.getUser(row.username);
+      if (!user) continue;
+      const binding = await this.federatedAccount(row.username);
+      if (binding && !groupMembers.some((member) =>
+        member.nodeId === binding.issuerNodeId)) {
+        throw new ServerStoreError('GROUP_LEDGER_ISSUER_PENDING', 409,
+          `账本 ${row.ledger_id} 的原始身份节点尚未加入服务器同步组`);
+      }
+      const grant = await this.ensureGroupNodeReplicationGrant(group.groupId, row.username,
+        peerNodeId, peerPublicKey, row.replica_id);
+      ledgers.push({ ledgerId: row.ledger_id,
+        issuerNodeId: binding?.issuerNodeId ?? this.serverId,
+        subjectAccountId: binding?.subjectAccountId ?? user.accountId,
+        replicaId: row.replica_id, streamEpoch: row.stream_epoch,
+        envelope: jsonObject(row.envelope_json), grantId: grant.grantId });
+    }
+    return { ledgers, next: selected.at(-1)?.ledger_id ?? after, hasMore: rows.length > limit };
+  }
+
+  async groupAccountRows(after: string, limit: number): Promise<Array<{
+    user: SyncUser; issuerNodeId: string; subjectAccountId: string; key: string;
+  }>> {
+    await this.ready;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 101) throw new Error('账号目录页大小无效');
+    const rows = await this.driver.all<Record<string, unknown>>(`SELECT u.*, i.account_id,
+      COALESCE(f.issuer_node_id, ?) AS issuer_node_id,
+      COALESCE(f.subject_account_id, i.account_id) AS subject_account_id,
+      COALESCE(f.issuer_node_id, ?) || '/' || COALESCE(f.subject_account_id, i.account_id) AS account_key
+      FROM sync_users u JOIN sync_account_identities i ON i.username = u.username
+      LEFT JOIN federated_account_bindings f ON f.local_username = u.username
+      WHERE account_key > ? ORDER BY account_key LIMIT ?`,
+    [this.serverId, this.serverId, after, limit]);
+    return rows.map((row) => ({ user: userFromRow(row), issuerNodeId: String(row['issuer_node_id']),
+      subjectAccountId: String(row['subject_account_id']), key: String(row['account_key']) }));
+  }
+
+  async assertGroupUsernameAvailable(username: string, inviteCode?: string): Promise<void> {
+    await this.ready;
+    const group = await this.serverSyncGroup();
+    if (!group || group.role !== 'main') throw new ServerStoreError('GROUP_MAIN_REQUIRED', 409,
+      '仅主节点可以核准同步组注册');
+    await this.assertRegistrationAllowed(inviteCode);
+    if (await this.getUser(username) || await this.federatedPasswordCredential(username)) {
+      throw new ServerStoreError('USER_EXISTS', 409, '同步组内已有同名账号');
+    }
+  }
+
+  async acceptGroupAccount(bundle: FederatedCredentialBundle, signature: string,
+    issuerPublicKey: string, inviteCode?: string, preExistingAt?: string): Promise<string> {
+    await this.ready;
+    if (!verifyFederatedCredential(bundle, signature, issuerPublicKey)) {
+      throw new ServerStoreError('INVALID_ISSUER_SIGNATURE', 403, '账号签发方签名无效');
+    }
+    return this.driver.transaction(async (driver) => {
+      const group = await driver.get<{ group_id: string; role: string }>(
+        'SELECT group_id, role FROM server_sync_group WHERE singleton = 1');
+      const member = group && await driver.get<{ public_key: string }>(`
+        SELECT public_key FROM server_sync_group_members
+        WHERE group_id = ? AND node_id = ?`, [group.group_id, bundle.issuerNodeId]);
+      if (group?.role !== 'main' || bundle.ledgerId !== group.group_id
+        || member?.public_key !== issuerPublicKey || bundle.issuerNodeId === this.serverId) {
+        throw new ServerStoreError('INVALID_GROUP_ACCOUNT', 403, '账号签发节点不属于同步组');
+      }
+      const existing = await driver.get<{ local_username: string }>(`SELECT local_username
+        FROM federated_account_bindings WHERE issuer_node_id = ? AND subject_account_id = ?`,
+      [bundle.issuerNodeId, bundle.subjectAccountId]);
+      const username = existing?.local_username ?? `replica_${createHash('sha256')
+        .update(`${bundle.issuerNodeId}\0${bundle.subjectAccountId}`).digest('hex').slice(0, 40)}`;
+      const other = await driver.get<{ local_username: string }>(
+        'SELECT local_username FROM federated_password_credentials WHERE source_username = ?', [bundle.username]);
+      const native = await driver.get<{ username: string }>('SELECT username FROM sync_users WHERE username = ?',
+        [bundle.username]);
+      if (other && other.local_username !== username || native && native.username !== username) {
+        throw new ServerStoreError('GROUP_USERNAME_CONFLICT', 409, '同步组内已有同名账号');
+      }
+      const at = nowIso();
+      if (!existing) {
+        if (await driver.get('SELECT 1 FROM sync_users WHERE username = ?', [username])
+          || await driver.get('SELECT 1 FROM sync_account_identities WHERE account_id = ?',
+            [bundle.subjectAccountId])) throw new ServerStoreError('FEDERATED_IDENTITY_COLLISION', 409,
+          '同步组账号身份冲突');
+        // This path is signed by the already joined server. It imports accounts
+        // that predate group membership without comparing clocks across hosts.
+        const legacy = Boolean(preExistingAt && Number.isFinite(Date.parse(preExistingAt)));
+        if (!legacy) {
+          const policy = await driver.get<{ value: string }>('SELECT value FROM server_meta WHERE key = ?',
+            ['registration_mode']);
+          const mode = policy?.value === 'closed' || policy?.value === 'invite' ? policy.value : 'open';
+          if (mode === 'closed') throw new ServerStoreError('REGISTRATION_CLOSED', 403, '同步组已关闭注册');
+          if (mode === 'invite') {
+            if (!inviteCode) throw new ServerStoreError('INVITE_REQUIRED', 403, '需要主节点邀请码');
+            const invite = await driver.get<{ disabled: number; used_by: string | null }>(
+              'SELECT disabled, used_by FROM registration_invites WHERE code = ?', [inviteCode]);
+            const expiry = await driver.get<{ expires_at: string }>(
+              'SELECT expires_at FROM registration_invite_policy WHERE code = ?', [inviteCode]);
+            if (!invite || invite.disabled || invite.used_by || expiry && expiry.expires_at <= at) {
+              throw new ServerStoreError('INVALID_INVITE', 403, '邀请码无效或已使用');
+            }
+          }
+        }
+        await driver.run(`INSERT INTO sync_users (username, display_name, opaque_registration_record,
+          disabled, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)`,
+        [username, bundle.displayName, FEDERATED_ONLY_RECORD, at, at]);
+        await driver.run('INSERT INTO sync_account_identities (username, account_id) VALUES (?, ?)',
+          [username, bundle.subjectAccountId]);
+        await driver.run(`INSERT INTO federated_account_bindings
+          (local_username, issuer_node_id, subject_account_id, ledger_id, created_at, verified_at)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+        [username, bundle.issuerNodeId, bundle.subjectAccountId, group.group_id, at, at]);
+        if (!legacy && inviteCode) await driver.run(`UPDATE registration_invites
+          SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL`, [username, at, inviteCode]);
+      }
+      const previous = await driver.get<{ source_username: string; registration_record: string;
+        server_setup: string; disabled: number; source_revision: number }>(`
+        SELECT source_username, registration_record, server_setup, disabled, source_revision
+        FROM federated_password_credentials WHERE local_username = ?`, [username]);
+      if (previous && (previous.source_username !== bundle.username
+        || previous.source_revision > bundle.revision)) throw new ServerStoreError('FEDERATED_CREDENTIAL_ROLLBACK', 409,
+        '账号名或凭据版本回退');
+      const changed = previous && (previous.registration_record !== bundle.registrationRecord
+        || previous.server_setup !== bundle.serverSetup || Boolean(previous.disabled) !== bundle.disabled);
+      if (previous && previous.source_revision === bundle.revision && changed) {
+        throw new ServerStoreError('FEDERATED_CREDENTIAL_COLLISION', 409, '同版本账号凭据不同');
+      }
+      await driver.run(`INSERT INTO federated_password_credentials
+        (local_username, source_username, issuer_node_id, subject_account_id,
+         registration_record, server_setup, disabled, source_revision, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(local_username) DO UPDATE SET registration_record = excluded.registration_record,
+          server_setup = excluded.server_setup, disabled = excluded.disabled,
+          source_revision = excluded.source_revision, updated_at = excluded.updated_at`,
+      [username, bundle.username, bundle.issuerNodeId, bundle.subjectAccountId,
+        bundle.registrationRecord, bundle.serverSetup, bundle.disabled ? 1 : 0, bundle.revision, at]);
+      await driver.run('UPDATE sync_users SET display_name = ? WHERE username = ?',
+        [bundle.displayName, username]);
+      if (changed) {
+        await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE username = ?',
+          [at, at, username]);
+        await driver.run('DELETE FROM sync_opaque_login_states WHERE username = ?', [username]);
+      }
+      const encoded = canonicalJson(bundle);
+      const relayed = await driver.get<{ revision: number; bundle_json: string }>(`
+        SELECT revision, bundle_json FROM relayed_account_credentials
+        WHERE ledger_id = ? AND issuer_node_id = ? AND subject_account_id = ?`,
+      [group.group_id, bundle.issuerNodeId, bundle.subjectAccountId]);
+      if (relayed && (relayed.revision > bundle.revision
+        || relayed.revision === bundle.revision && relayed.bundle_json !== encoded)) {
+        throw new ServerStoreError('FEDERATED_CREDENTIAL_COLLISION', 409, '账号签名资料版本冲突');
+      }
+      if (!relayed || relayed.revision < bundle.revision) {
+        await driver.run(`INSERT INTO relayed_account_credentials
+          (ledger_id, issuer_node_id, subject_account_id, revision, bundle_json, issuer_signature, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(ledger_id, issuer_node_id, subject_account_id) DO UPDATE SET
+            revision = excluded.revision, bundle_json = excluded.bundle_json,
+            issuer_signature = excluded.issuer_signature, updated_at = excluded.updated_at`,
+        [group.group_id, bundle.issuerNodeId, bundle.subjectAccountId,
+          bundle.revision, encoded, signature, at]);
+      }
+      return username;
     });
   }
 
@@ -3314,6 +4197,12 @@ END;`);
         VALUES (?, ?, ?) ON CONFLICT (link_id) DO UPDATE SET
           snapshot_json = excluded.snapshot_json, received_at = excluded.received_at`,
       [linkId, canonicalJson(snapshot), at]);
+      const directory = snapshot['directory'] as { members: ReplicaGroupMember[] };
+      for (const member of directory.members) {
+        if (member.retiredAt && member.nodeId !== this.serverId) {
+          await this.disableFederatedIssuer(driver, link.ledger_id, member.nodeId, at);
+        }
+      }
       return at;
     });
   }
@@ -3347,8 +4236,20 @@ END;`);
       await driver.run(`UPDATE node_replication_grants SET revoked_at = COALESCE(revoked_at, ?)
         WHERE username = ? AND ledger_id = ? AND peer_node_id = ?`,
       [at, owner.username, replica.ledger_id, nodeId]);
+      await this.disableFederatedIssuer(driver, replica.ledger_id, nodeId, at);
       return true;
     });
+  }
+
+  private async disableFederatedIssuer(driver: SqlDriver, ledgerId: string,
+    issuerNodeId: string, at: string): Promise<void> {
+    await driver.run(`UPDATE sync_users SET disabled = 1, updated_at = ?
+      WHERE disabled = 0 AND username IN (
+        SELECT local_username FROM federated_account_bindings
+        WHERE ledger_id = ? AND issuer_node_id = ?)`, [at, ledgerId, issuerNodeId]);
+    await driver.run(`UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ?
+      WHERE username IN (SELECT local_username FROM federated_account_bindings
+        WHERE ledger_id = ? AND issuer_node_id = ?)`, [at, at, ledgerId, issuerNodeId]);
   }
 
   async consumeNodeReplicationNonce(grantId: string, nonce: string, peerNodeId: string): Promise<boolean> {
@@ -3455,6 +4356,11 @@ END;`);
       ...(row['physical_issue'] ? { physicalIssue: String(row['physical_issue']) } : {}),
       ...(row['last_success_at'] ? { lastSuccessAt: String(row['last_success_at']) } : {}),
       ...(row['last_error'] ? { lastError: String(row['last_error']) } : {}),
+      syncRounds: Number(row['sync_rounds'] ?? 0),
+      convergedRounds: Number(row['converged_rounds'] ?? 0),
+      partialRounds: Number(row['partial_rounds'] ?? 0),
+      failedRounds: Number(row['failed_rounds'] ?? 0),
+      lastRoundDurationMs: Number(row['last_round_duration_ms'] ?? 0),
       enabled,
       revocationPending: bool(row['revocation_pending']),
       ...(row['remote_revoked_at'] ? { remoteRevokedAt: String(row['remote_revoked_at']) } : {}),
@@ -3464,7 +4370,7 @@ END;`);
     };
   }
 
-  async createNodeReplicationLink(input: Omit<NodeReplicationLink, 'linkId' | 'pullSeq' | 'pushSeq' | 'pullBlobCursor' | 'pushBlobCursor' | 'pullStateCursor' | 'pushStateCursor' | 'pullMemberCursor' | 'pushMemberCursor' | 'memberEpoch' | 'peerHeadSeq' | 'localHeadSeq' | 'peerBlobObjects' | 'localBlobObjects' | 'peerBlobBytes' | 'localBlobBytes' | 'pullBlobScannedBytes' | 'pushBlobScannedBytes' | 'pullBlobTransferredBytes' | 'pushBlobTransferredBytes' | 'peerLegacyObjects' | 'localLegacyObjects' | 'peerTombstones' | 'localTombstones' | 'pullBlobSweepAt' | 'pushBlobSweepAt' | 'pullStateSweepAt' | 'pushStateSweepAt' | 'inventoryMatchedAt' | 'inventoryIssue' | 'inventoryBlobHash' | 'physicalBlobHash' | 'physicalVerifiedAt' | 'physicalScannedAt' | 'physicalIssue' | 'enabled' | 'lastSuccessAt' | 'lastError' | 'revocationPending' | 'remoteRevokedAt' | 'revocationError' | 'lifecycleState' | 'lifecycleCheckedAt'>): Promise<NodeReplicationLink> {
+  async createNodeReplicationLink(input: Omit<NodeReplicationLink, 'linkId' | 'pullSeq' | 'pushSeq' | 'pullBlobCursor' | 'pushBlobCursor' | 'pullStateCursor' | 'pushStateCursor' | 'pullMemberCursor' | 'pushMemberCursor' | 'memberEpoch' | 'peerHeadSeq' | 'localHeadSeq' | 'peerBlobObjects' | 'localBlobObjects' | 'peerBlobBytes' | 'localBlobBytes' | 'pullBlobScannedBytes' | 'pushBlobScannedBytes' | 'pullBlobTransferredBytes' | 'pushBlobTransferredBytes' | 'peerLegacyObjects' | 'localLegacyObjects' | 'peerTombstones' | 'localTombstones' | 'pullBlobSweepAt' | 'pushBlobSweepAt' | 'pullStateSweepAt' | 'pushStateSweepAt' | 'inventoryMatchedAt' | 'inventoryIssue' | 'inventoryBlobHash' | 'physicalBlobHash' | 'physicalVerifiedAt' | 'physicalScannedAt' | 'physicalIssue' | 'enabled' | 'lastSuccessAt' | 'lastError' | 'syncRounds' | 'convergedRounds' | 'partialRounds' | 'failedRounds' | 'lastRoundDurationMs' | 'revocationPending' | 'remoteRevokedAt' | 'revocationError' | 'lifecycleState' | 'lifecycleCheckedAt'>): Promise<NodeReplicationLink> {
     await this.ready;
     return this.driver.transaction(async (driver) => {
       const replica = await driver.get<{ ledger_id: string; replica_id: string; stream_epoch: string; head_seq: number }>(
@@ -3498,13 +4404,48 @@ END;`);
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [linkId, input.username, input.ledgerId, input.localStreamEpoch, input.peerUrl, input.peerNodeId,
         input.peerPublicKey, input.peerReplicaId, input.peerStreamEpoch, input.grantId, at, at]);
-      return { ...input, linkId, pullSeq: 0, pushSeq: 0, pullBlobCursor: '', pushBlobCursor: '', pullStateCursor: '', pushStateCursor: '',
-        pullMemberCursor: '', pushMemberCursor: '', memberEpoch: 0,
-        peerHeadSeq: 0, localHeadSeq: 0, peerBlobObjects: 0, localBlobObjects: 0,
-        peerBlobBytes: 0, localBlobBytes: 0, pullBlobScannedBytes: 0, pushBlobScannedBytes: 0,
-        pullBlobTransferredBytes: 0, pushBlobTransferredBytes: 0,
-        peerLegacyObjects: 0, localLegacyObjects: 0, peerTombstones: 0, localTombstones: 0, enabled: true,
-        revocationPending: false, lifecycleState: 'JOINING' };
+      const row = await driver.get<Record<string, unknown>>(
+        'SELECT * FROM node_replication_links WHERE link_id = ?', [linkId]);
+      return this.nodeLinkFromRow(row!);
+    });
+  }
+
+  async createNativeGroupSourceLink(username: string, ledgerId: string,
+    peer: { peerUrl: string; peerNodeId: string; peerPublicKey: string;
+      peerReplicaId: string; peerStreamEpoch: string; grantId: string }): Promise<NodeReplicationLink> {
+    await this.ready;
+    const group = await this.serverSyncGroup();
+    if (group?.role !== 'member' || group.mainNodeId !== peer.peerNodeId
+      || group.mainPublicKey !== peer.peerPublicKey || group.mainUrl !== peer.peerUrl
+      || await this.federatedAccount(username)) {
+      throw new ServerStoreError('GROUP_SOURCE_REQUIRED', 403, '仅本站原生账本可以主动同步到主节点');
+    }
+    return this.driver.transaction(async (driver) => {
+      const replica = await driver.get<{ replica_id: string; stream_epoch: string }>(
+        'SELECT replica_id, stream_epoch FROM sync_replicas WHERE username = ? AND ledger_id = ?',
+        [username, ledgerId]);
+      if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, '账本副本不存在');
+      const existing = await driver.get<Record<string, unknown>>(`SELECT * FROM node_replication_links
+        WHERE username = ? AND ledger_id = ? AND peer_node_id = ?`, [username, ledgerId, peer.peerNodeId]);
+      if (existing) {
+        const link = this.nodeLinkFromRow(existing);
+        if (link.peerReplicaId !== peer.peerReplicaId || link.peerStreamEpoch !== peer.peerStreamEpoch
+          || link.peerPublicKey !== peer.peerPublicKey) throw new ServerStoreError('PEER_CHANGED', 409,
+            '主节点副本身份已改变，不能自动覆盖旧链路');
+        if (link.grantId !== peer.grantId) await driver.run(`UPDATE node_replication_links
+          SET grant_id = ?, updated_at = ? WHERE link_id = ?`, [peer.grantId, nowIso(), link.linkId]);
+        return { ...link, grantId: peer.grantId };
+      }
+      const at = nowIso();
+      const linkId = `link-${randomBytes(16).toString('hex')}`;
+      await driver.run(`INSERT INTO node_replication_links
+        (link_id, username, ledger_id, local_stream_epoch, peer_url, peer_node_id, peer_public_key,
+         peer_replica_id, peer_stream_epoch, grant_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [linkId, username, ledgerId, replica.stream_epoch, peer.peerUrl, peer.peerNodeId,
+        peer.peerPublicKey, peer.peerReplicaId, peer.peerStreamEpoch, peer.grantId, at, at]);
+      const row = await driver.get<Record<string, unknown>>('SELECT * FROM node_replication_links WHERE link_id = ?', [linkId]);
+      return this.nodeLinkFromRow(row!);
     });
   }
 
@@ -3515,7 +4456,7 @@ END;`);
   }): Promise<NodeReplicationLink> {
     await this.ready;
     const { issuerNodeId, subjectAccountId, ledgerId, envelope } = input;
-    if (issuerNodeId !== input.peerNodeId || issuerNodeId === this.serverId
+    if (issuerNodeId === this.serverId
       || !/^[A-Za-z0-9_-]{8,128}$/.test(issuerNodeId)
       || !/^[A-Za-z0-9_-]{8,160}$/.test(subjectAccountId)
       || !/^[A-Za-z0-9_-]{16,128}$/.test(ledgerId)
@@ -3525,19 +4466,25 @@ END;`);
     }
     const username = `replica_${createHash('sha256').update(`${issuerNodeId}\0${subjectAccountId}`).digest('hex').slice(0, 40)}`;
     return this.driver.transaction(async (driver) => {
-      if (await driver.get('SELECT 1 FROM sync_users WHERE username = ?', [username])
-        || await driver.get('SELECT 1 FROM sync_account_identities WHERE account_id = ?', [subjectAccountId])
-        || await driver.get('SELECT 1 FROM federated_account_bindings WHERE issuer_node_id = ? AND subject_account_id = ?', [issuerNodeId, subjectAccountId])
-        || await driver.get('SELECT 1 FROM sync_replicas WHERE ledger_id = ?', [ledgerId])) {
+      const existing = await driver.get<{ local_username: string }>(`
+        SELECT local_username FROM federated_account_bindings
+        WHERE issuer_node_id = ? AND subject_account_id = ?`, [issuerNodeId, subjectAccountId]);
+      if (existing && existing.local_username !== username
+        || await driver.get('SELECT 1 FROM sync_replicas WHERE ledger_id = ?', [ledgerId])
+        || await driver.get('SELECT 1 FROM sync_replicas WHERE username = ?', [username])
+        || !existing && (await driver.get('SELECT 1 FROM sync_users WHERE username = ?', [username])
+          || await driver.get('SELECT 1 FROM sync_account_identities WHERE account_id = ?', [subjectAccountId]))) {
         throw new ServerStoreError('FEDERATED_REPLICA_EXISTS', 409, '此账本或统一账号已在本节点存在，请检查现有副本');
       }
       const at = nowIso();
       const replicaId = `rep-${randomBytes(12).toString('hex')}`;
       const streamEpoch = `epoch-${randomBytes(12).toString('hex')}`;
       const linkId = `link-${randomBytes(16).toString('hex')}`;
-      await driver.run('INSERT INTO sync_users (username, display_name, opaque_registration_record, disabled, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)',
-        [username, '统一账号', FEDERATED_ONLY_RECORD, at, at]);
-      await driver.run('INSERT INTO sync_account_identities (username, account_id) VALUES (?, ?)', [username, subjectAccountId]);
+      if (!existing) {
+        await driver.run('INSERT INTO sync_users (username, display_name, opaque_registration_record, disabled, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)',
+          [username, '统一账号', FEDERATED_ONLY_RECORD, at, at]);
+        await driver.run('INSERT INTO sync_account_identities (username, account_id) VALUES (?, ?)', [username, subjectAccountId]);
+      }
       await driver.run('INSERT INTO sync_replicas (username, ledger_id, replica_id, stream_epoch, head_seq, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)',
         [username, ledgerId, replicaId, streamEpoch, at, at]);
       await driver.run(`INSERT INTO ledger_replica_key_envelopes
@@ -3546,9 +4493,19 @@ END;`);
       [replicaId, ledgerId, String(envelope['keyringId']), Number(envelope['generation']), JSON.stringify(envelope), at]);
       await driver.run('INSERT INTO sync_key_custody (username, mode, version, sealed_secret, updated_at) VALUES (?, ?, 1, NULL, ?)',
         [username, 'relay', at]);
-      await driver.run(`INSERT INTO federated_account_bindings
+      if (!existing) await driver.run(`INSERT INTO federated_account_bindings
         (local_username, issuer_node_id, subject_account_id, ledger_id, created_at, verified_at)
         VALUES (?, ?, ?, ?, ?, ?)`, [username, issuerNodeId, subjectAccountId, ledgerId, at, at]);
+      const syncGroup = await driver.get<{ group_id: string }>(`SELECT group_id FROM server_sync_group
+        WHERE singleton = 1 AND role = 'main'`);
+      const sourceMember = syncGroup && await driver.get<{ public_key: string }>(`SELECT public_key
+        FROM server_sync_group_members WHERE group_id = ? AND node_id = ?`,
+      [syncGroup.group_id, input.peerNodeId]);
+      if (sourceMember?.public_key === input.peerPublicKey) {
+        await driver.run(`INSERT OR IGNORE INTO ledger_replica_group_members
+          (replica_id, node_id, public_key, joined_at) VALUES (?, ?, ?, ?)`,
+        [replicaId, input.peerNodeId, input.peerPublicKey, at]);
+      }
       await driver.run(`INSERT INTO node_replication_links
         (link_id, username, ledger_id, local_stream_epoch, peer_url, peer_node_id, peer_public_key,
          peer_replica_id, peer_stream_epoch, grant_id, created_at, updated_at)
@@ -3561,11 +4518,47 @@ END;`);
     });
   }
 
-  /** Bind an issuer-authenticated member to an existing ledger slot without granting node administration. */
-  async provisionFederatedMember(link: NodeReplicationLink, issuerNodeId: string,
+  /** A group account can log in locally before it receives any ledger membership. */
+  async provisionFederatedDirectoryAccount(ledgerId: string, issuerNodeId: string,
     subjectAccountId: string): Promise<string> {
     await this.ready;
-    if (issuerNodeId !== link.peerNodeId || !/^[A-Za-z0-9_-]{8,160}$/.test(subjectAccountId)) {
+    if (!/^[A-Za-z0-9_-]{16,128}$/.test(ledgerId)
+      || !/^[A-Za-z0-9_-]{8,128}$/.test(issuerNodeId)
+      || !/^[A-Za-z0-9_-]{8,160}$/.test(subjectAccountId)
+      || issuerNodeId === this.serverId) {
+      throw new ServerStoreError('FEDERATED_IDENTITY_CHANGED', 403, '统一账号身份无效');
+    }
+    return this.driver.transaction(async (driver) => {
+      const existing = await driver.get<{ local_username: string }>(`
+        SELECT local_username FROM federated_account_bindings
+        WHERE issuer_node_id = ? AND subject_account_id = ?`, [issuerNodeId, subjectAccountId]);
+      if (existing) return existing.local_username;
+      const username = `replica_${createHash('sha256')
+        .update(`${issuerNodeId}\0${subjectAccountId}`).digest('hex').slice(0, 40)}`;
+      if (await driver.get('SELECT 1 FROM sync_users WHERE username = ?', [username])
+        || await driver.get('SELECT 1 FROM sync_account_identities WHERE account_id = ?', [subjectAccountId])) {
+        throw new ServerStoreError('FEDERATED_IDENTITY_COLLISION', 409, '统一账号身份与本地账号冲突');
+      }
+      const at = nowIso();
+      await driver.run(`INSERT INTO sync_users (username, display_name, opaque_registration_record,
+        disabled, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)`,
+      [username, '同步组账号', FEDERATED_ONLY_RECORD, at, at]);
+      await driver.run('INSERT INTO sync_account_identities (username, account_id) VALUES (?, ?)',
+        [username, subjectAccountId]);
+      await driver.run(`INSERT INTO federated_account_bindings
+        (local_username, issuer_node_id, subject_account_id, ledger_id, created_at, verified_at)
+        VALUES (?, ?, ?, ?, ?, ?)`, [username, issuerNodeId, subjectAccountId, ledgerId, at, at]);
+      return username;
+    });
+  }
+
+  /** Bind an issuer-authenticated member to an existing ledger slot without granting node administration. */
+  async provisionFederatedMember(link: Pick<NodeReplicationLink, 'username' | 'ledgerId' | 'peerNodeId'>,
+    issuerNodeId: string,
+    subjectAccountId: string): Promise<string> {
+    await this.ready;
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(issuerNodeId)
+      || !/^[A-Za-z0-9_-]{8,160}$/.test(subjectAccountId)) {
       throw new ServerStoreError('FEDERATED_IDENTITY_CHANGED', 403, '统一身份节点不匹配');
     }
     return this.driver.transaction(async (driver) => {
@@ -3633,6 +4626,16 @@ END;`);
       username ? [username] : [],
     );
     return rows.map((row) => this.nodeLinkFromRow(row));
+  }
+
+  async passiveGroupSourceLink(link: NodeReplicationLink): Promise<boolean> {
+    await this.ready;
+    const group = await this.serverSyncGroup();
+    if (group?.role !== 'main') return false;
+    const binding = await this.federatedAccount(link.username);
+    if (binding?.issuerNodeId !== link.peerNodeId) return false;
+    return (await this.serverSyncGroupMembers()).some((member) =>
+      member.nodeId === link.peerNodeId && member.publicKey === link.peerPublicKey);
   }
 
   async pendingNodeRevocations(): Promise<NodeReplicationLink[]> {
@@ -4233,6 +5236,19 @@ END;`);
        lifecycleState, at, at, linkId]);
   }
 
+  async recordNodeReplicationRound(linkId: string, outcome: 'converged' | 'partial' | 'failed',
+    durationMs: number): Promise<void> {
+    await this.ready;
+    if (!Number.isSafeInteger(durationMs) || durationMs < 0) {
+      throw new ServerStoreError('INVALID_REPLICATION_STATUS', 400, '复制轮次耗时无效');
+    }
+    const column = outcome === 'converged' ? 'converged_rounds'
+      : outcome === 'partial' ? 'partial_rounds' : 'failed_rounds';
+    await this.driver.run(`UPDATE node_replication_links SET sync_rounds = sync_rounds + 1,
+      ${column} = ${column} + 1, last_round_duration_ms = ?, updated_at = ?
+      WHERE link_id = ?`, [durationMs, nowIso(), linkId]);
+  }
+
   /** Count acknowledged ciphertext chunks, including chunks of an unfinished object. */
   async recordNodeBlobTransfer(linkId: string, direction: 'pull' | 'push', bytes: number): Promise<void> {
     await this.ready;
@@ -4307,6 +5323,8 @@ END;`);
       [at, at, username, link.ledgerId, linkId]);
       await driver.run(`UPDATE node_replica_group_snapshots SET received_at = ? WHERE link_id = ?`,
         ['1970-01-01T00:00:00.000Z', linkId]);
+      await driver.run('DELETE FROM node_directory_cursors WHERE link_id = ?', [linkId]);
+      await driver.run('DELETE FROM node_credential_exports WHERE link_id = ?', [linkId]);
       const updated = await driver.get<Record<string, unknown>>(
         'SELECT * FROM node_replication_links WHERE link_id = ?', [linkId]);
       return this.nodeLinkFromRow(updated!);
@@ -4384,7 +5402,12 @@ END;`);
       : await this.driver.get<Record<string, unknown>>(`SELECT route.username, slot.ledger_id,
         slot.replica_id, slot.stream_epoch, slot.head_seq, slot.created_at, slot.updated_at
         FROM ledger_account_routes route JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-        WHERE route.username = ?`, [username]);
+        WHERE route.username = ?`, [username])
+        ?? await this.driver.get<Record<string, unknown>>(`SELECT membership.username, slot.ledger_id,
+          slot.replica_id, slot.stream_epoch, slot.head_seq, slot.created_at, slot.updated_at
+          FROM account_ledger_index membership JOIN ledger_replica_slots slot
+            ON slot.replica_id = membership.replica_id
+          WHERE membership.username = ? ORDER BY membership.created_at, slot.replica_id LIMIT 1`, [username]);
     return row ? replicaFromRow(row) : undefined;
   }
 
@@ -5033,8 +6056,7 @@ END;`);
       if (replica?.ledger_id !== ledgerId) throw new ServerStoreError('LEDGER_MISMATCH', 409, '统一账号账本不匹配');
       const existing = await driver.get<{ issuer_node_id: string; subject_account_id: string; ledger_id: string }>(
         'SELECT issuer_node_id, subject_account_id, ledger_id FROM federated_account_bindings WHERE local_username = ?', [username]);
-      if (existing && (existing.issuer_node_id !== issuerNodeId || existing.subject_account_id !== subjectAccountId
-        || existing.ledger_id !== ledgerId)) {
+      if (existing && (existing.issuer_node_id !== issuerNodeId || existing.subject_account_id !== subjectAccountId)) {
         throw new ServerStoreError('FEDERATED_IDENTITY_CHANGED', 409, '本地账号已绑定不同的统一身份');
       }
       const other = await driver.get<{ local_username: string }>(
@@ -5056,6 +6078,174 @@ END;`);
     const row = await this.driver.get<{ issuer_node_id: string; subject_account_id: string; ledger_id: string }>(
       'SELECT issuer_node_id, subject_account_id, ledger_id FROM federated_account_bindings WHERE local_username = ?', [username]);
     return row ? { issuerNodeId: row.issuer_node_id, subjectAccountId: row.subject_account_id, ledgerId: row.ledger_id } : undefined;
+  }
+
+  /** A signed replica grant carries a password credential only for an account bound to that ledger. */
+  async importFederatedPasswordCredential(input: {
+    localUsername: string; sourceUsername: string; displayName: string;
+    issuerNodeId: string; subjectAccountId: string;
+    registrationRecord: string; serverSetup: string; disabled: boolean; sourceRevision: number;
+  }): Promise<void> {
+    await this.ready;
+    if (!/^[\p{L}\p{N}_.-]{2,64}$/u.test(input.sourceUsername)
+      || !input.displayName || Array.from(input.displayName).length > 24
+      || /[\p{Cc}\p{Cf}]/u.test(input.displayName)
+      || !/^[A-Za-z0-9_-]{8,128}$/.test(input.issuerNodeId)
+      || !/^[A-Za-z0-9_-]{8,160}$/.test(input.subjectAccountId)
+      || !input.registrationRecord || input.registrationRecord === FEDERATED_ONLY_RECORD
+      || input.registrationRecord.length > 16_384 || !input.serverSetup
+      || input.serverSetup.length > 16_384 || !Number.isSafeInteger(input.sourceRevision)
+      || input.sourceRevision < 0) {
+      throw new ServerStoreError('INVALID_FEDERATED_CREDENTIAL', 400, '统一账号凭据格式无效');
+    }
+    await this.driver.transaction(async (driver) => {
+      const binding = await driver.get<{ issuer_node_id: string; subject_account_id: string }>(
+        'SELECT issuer_node_id, subject_account_id FROM federated_account_bindings WHERE local_username = ?',
+        [input.localUsername]);
+      if (!binding || binding.issuer_node_id !== input.issuerNodeId
+        || binding.subject_account_id !== input.subjectAccountId) {
+        throw new ServerStoreError('FEDERATED_IDENTITY_CHANGED', 409, '统一账号凭据与本地身份绑定不符');
+      }
+      const other = await driver.get<{ local_username: string }>(
+        'SELECT local_username FROM federated_password_credentials WHERE source_username = ?',
+        [input.sourceUsername]);
+      if (other && other.local_username !== input.localUsername) {
+        throw new ServerStoreError('GROUP_USERNAME_CONFLICT', 409,
+          `账号名 ${input.sourceUsername} 已被另一统一账号使用；请先由管理员处理冲突`);
+      }
+      const previous = await driver.get<{ source_username: string; registration_record: string;
+        server_setup: string; disabled: number; source_revision: number }>(
+        'SELECT source_username, registration_record, server_setup, disabled, source_revision FROM federated_password_credentials WHERE local_username = ?',
+        [input.localUsername]);
+      if (previous && previous.source_username !== input.sourceUsername) {
+        throw new ServerStoreError('FEDERATED_USERNAME_CHANGED', 409, '统一账号登录名发生变化，需管理员迁移身份');
+      }
+      if (previous && input.sourceRevision > 0 && previous.source_revision > input.sourceRevision) {
+        throw new ServerStoreError('FEDERATED_CREDENTIAL_ROLLBACK', 409, '统一账号凭据版本回退');
+      }
+      const changed = previous && (previous.registration_record !== input.registrationRecord
+        || previous.server_setup !== input.serverSetup
+        || Boolean(previous.disabled) !== input.disabled);
+      const local = await driver.get<{ display_name: string }>(
+        'SELECT display_name FROM sync_users WHERE username = ?', [input.localUsername]);
+      if (previous && !changed && local?.display_name === input.displayName
+        && previous.source_revision >= input.sourceRevision) return;
+      if (previous && input.sourceRevision > 0 && previous.source_revision === input.sourceRevision
+        && (changed || local?.display_name !== input.displayName)) {
+        throw new ServerStoreError('FEDERATED_CREDENTIAL_COLLISION', 409, '同版本统一账号凭据不一致');
+      }
+      const at = nowIso();
+      await driver.run(`INSERT INTO federated_password_credentials
+        (local_username, source_username, issuer_node_id, subject_account_id,
+          registration_record, server_setup, disabled, source_revision, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(local_username) DO UPDATE SET source_username = excluded.source_username,
+          registration_record = excluded.registration_record, server_setup = excluded.server_setup,
+          disabled = excluded.disabled, source_revision = excluded.source_revision,
+          updated_at = excluded.updated_at`,
+      [input.localUsername, input.sourceUsername, input.issuerNodeId, input.subjectAccountId,
+        input.registrationRecord, input.serverSetup, input.disabled ? 1 : 0,
+        Math.max(input.sourceRevision, previous?.source_revision ?? 0), at]);
+      await driver.run('UPDATE sync_users SET display_name = ? WHERE username = ?',
+        [input.displayName, input.localUsername]);
+      if (changed) {
+        await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE username = ?',
+          [at, at, input.localUsername]);
+        await driver.run('DELETE FROM sync_opaque_login_states WHERE username = ?', [input.localUsername]);
+      }
+    });
+  }
+
+  async federatedPasswordCredential(sourceUsername: string): Promise<{
+    localUsername: string; sourceUsername: string; issuerNodeId: string; subjectAccountId: string;
+    registrationRecord: string; serverSetup: string; disabled: boolean;
+  } | undefined> {
+    await this.ready;
+    const row = await this.driver.get<Record<string, unknown>>(
+      'SELECT * FROM federated_password_credentials WHERE source_username = ?', [sourceUsername]);
+    return row ? {
+      localUsername: String(row['local_username']), sourceUsername: String(row['source_username']),
+      issuerNodeId: String(row['issuer_node_id']), subjectAccountId: String(row['subject_account_id']),
+      registrationRecord: String(row['registration_record']), serverSetup: String(row['server_setup']),
+      disabled: bool(row['disabled']),
+    } : undefined;
+  }
+
+  async federatedSourceUsername(localUsername: string): Promise<string | undefined> {
+    await this.ready;
+    const row = await this.driver.get<{ source_username: string }>(
+      'SELECT source_username FROM federated_password_credentials WHERE local_username = ?', [localUsername]);
+    return row?.source_username;
+  }
+
+  async saveRelayedCredential(bundle: FederatedCredentialBundle, signature: string,
+    issuerPublicKey: string): Promise<void> {
+    await this.ready;
+    if (!verifyFederatedCredential(bundle, signature, issuerPublicKey)) {
+      throw new ServerStoreError('INVALID_ISSUER_SIGNATURE', 403, '账号凭据签发方签名无效');
+    }
+    await this.driver.transaction(async (driver) => {
+      const existing = await driver.get<{ revision: number; bundle_json: string; issuer_signature: string }>(`
+        SELECT revision, bundle_json, issuer_signature FROM relayed_account_credentials
+        WHERE ledger_id = ? AND issuer_node_id = ? AND subject_account_id = ?`,
+      [bundle.ledgerId, bundle.issuerNodeId, bundle.subjectAccountId]);
+      const encoded = canonicalJson(bundle);
+      if (existing && existing.revision > bundle.revision) {
+        throw new ServerStoreError('FEDERATED_CREDENTIAL_ROLLBACK', 409, '统一账号凭据版本回退');
+      }
+      if (existing && existing.revision === bundle.revision) {
+        if (existing.bundle_json !== encoded || existing.issuer_signature !== signature) {
+          throw new ServerStoreError('FEDERATED_CREDENTIAL_COLLISION', 409, '同版本统一账号凭据不一致');
+        }
+        return;
+      }
+      await driver.run(`INSERT INTO relayed_account_credentials
+        (ledger_id, issuer_node_id, subject_account_id, revision, bundle_json, issuer_signature, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(ledger_id, issuer_node_id, subject_account_id) DO UPDATE SET
+          revision = excluded.revision, bundle_json = excluded.bundle_json,
+          issuer_signature = excluded.issuer_signature, updated_at = excluded.updated_at`,
+      [bundle.ledgerId, bundle.issuerNodeId, bundle.subjectAccountId,
+        bundle.revision, encoded, signature, nowIso()]);
+      await driver.run(`INSERT INTO account_directory_log
+        (ledger_id, issuer_node_id, subject_account_id, revision, recorded_at)
+        VALUES (?, ?, ?, ?, ?)`,
+      [bundle.ledgerId, bundle.issuerNodeId, bundle.subjectAccountId, bundle.revision, nowIso()]);
+    });
+  }
+
+  async relayedCredential(ledgerId: string, issuerNodeId: string,
+    subjectAccountId: string): Promise<{ bundle: FederatedCredentialBundle; signature: string } | undefined> {
+    await this.ready;
+    const row = await this.driver.get<{ bundle_json: string; issuer_signature: string }>(`
+      SELECT bundle_json, issuer_signature FROM relayed_account_credentials
+      WHERE ledger_id = ? AND issuer_node_id = ? AND subject_account_id = ?`,
+    [ledgerId, issuerNodeId, subjectAccountId]);
+    return row ? { bundle: JSON.parse(row.bundle_json) as FederatedCredentialBundle,
+      signature: row.issuer_signature } : undefined;
+  }
+
+  async accountDirectoryPage(ledgerId: string, after: number, limit = 50): Promise<{
+    entries: Array<{ seq: number; bundle: FederatedCredentialBundle; signature: string }>;
+    nextSeq: number; headSeq: number; hasMore: boolean;
+  }> {
+    await this.ready;
+    if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit)
+      || limit < 1 || limit > 50) throw new ServerStoreError('INVALID_CURSOR', 400, '账号目录游标无效');
+    const head = await this.driver.get<{ seq: number }>(
+      'SELECT MAX(seq) AS seq FROM account_directory_log WHERE ledger_id = ?', [ledgerId]);
+    const rows = await this.driver.all<{ seq: number; bundle_json: string; issuer_signature: string }>(`
+      SELECT log.seq, credential.bundle_json, credential.issuer_signature
+      FROM account_directory_log log JOIN relayed_account_credentials credential
+        ON credential.ledger_id = log.ledger_id AND credential.issuer_node_id = log.issuer_node_id
+          AND credential.subject_account_id = log.subject_account_id
+      WHERE log.ledger_id = ? AND log.seq > ? ORDER BY log.seq LIMIT ?`,
+    [ledgerId, after, limit]);
+    const nextSeq = rows.at(-1)?.seq ?? after;
+    return { entries: rows.map((row) => ({ seq: row.seq,
+      bundle: JSON.parse(row.bundle_json) as FederatedCredentialBundle,
+      signature: row.issuer_signature })), nextSeq, headSeq: Number(head?.seq ?? 0),
+      hasMore: nextSeq < Number(head?.seq ?? 0) };
   }
 
   async accountEncryptionKey(issuerNodeId: string, subjectAccountId: string): Promise<AccountEncryptionKeyRecord | undefined> {
@@ -5088,7 +6278,7 @@ END;`);
       if (existing && existing.public_key !== publicKey) {
         throw new ServerStoreError('ACCOUNT_KEY_CHANGED', 409, '账号加密公钥已改变，需要专门的密钥轮换流程');
       }
-      if (existing?.envelope_json === encoded) return { issuerNodeId, subjectAccountId, publicKey,
+      if (existing && canonicalJson(JSON.parse(existing.envelope_json)) === canonicalJson(envelope)) return { issuerNodeId, subjectAccountId, publicKey,
         envelope, revision: Number(existing.revision), updatedAt: existing.updated_at };
       if (Number(existing?.revision ?? 0) !== expectedRevision) {
         throw new ServerStoreError('ACCOUNT_KEY_REVISION', 409, '账号加密密钥包已更新，请重新读取');
@@ -5101,6 +6291,10 @@ END;`);
         ON CONFLICT (issuer_node_id, subject_account_id) DO UPDATE SET envelope_json = excluded.envelope_json,
           revision = excluded.revision, updated_at = excluded.updated_at`,
       [issuerNodeId, subjectAccountId, publicKey, encoded, revision, at]);
+      if (issuerNodeId === this.serverId) await driver.run(`UPDATE sync_users
+        SET revision = revision + 1, updated_at = ?
+        WHERE username = (SELECT username FROM sync_account_identities WHERE account_id = ?)`,
+      [at, subjectAccountId]);
       return { issuerNodeId, subjectAccountId, publicKey, envelope, revision, updatedAt: at };
     });
   }
@@ -5127,7 +6321,9 @@ END;`);
         throw new ServerStoreError('ACCOUNT_KEY_ROLLBACK', 409, '身份节点账号密钥包版本倒退，复制已停止');
       }
       if (existing && Number(existing.revision) === record.revision) {
-        if (existing.envelope_json !== encoded) throw new ServerStoreError('ACCOUNT_KEY_COLLISION', 409, '账号密钥包同版本内容不一致');
+        if (canonicalJson(JSON.parse(existing.envelope_json)) !== canonicalJson(record.envelope)) {
+          throw new ServerStoreError('ACCOUNT_KEY_COLLISION', 409, '账号密钥包同版本内容不一致');
+        }
         return;
       }
       await driver.run(`INSERT INTO account_encryption_keys
@@ -5600,6 +6796,68 @@ END;`);
           (replica_id, peer_node_id, commit_id, enc_commit_json, cipher_bytes) VALUES (?, ?, ?, ?, ?)`,
         [replica.replicaId, peerNodeId, item.commitId, encoded, bytes]);
       }
+    });
+  }
+
+  async passwordKeyEnvelope(username: string, ledgerId: string, replicaId?: string,
+    access: 'account' | 'node' = 'account'): Promise<{
+    envelope: JsonRecord; revision: number
+  } | undefined> {
+    await this.ready;
+    const replica = await this.getReplica(username, replicaId);
+    if (!replica || replica.ledgerId !== ledgerId) return undefined;
+    if (access === 'account') {
+      await this.assertLedgerAccess(username, 'read', replica.replicaId);
+      const owner = await this.driver.get<{ username: string }>(
+        'SELECT username FROM sync_replicas WHERE replica_id = ?', [replica.replicaId]);
+      if (owner?.username !== username) throw new ServerStoreError('KEY_ENVELOPE_OWNER_REQUIRED', 403,
+        '只有账本所有者可读取账号密码密钥包');
+    }
+    const row = await this.driver.get<{ envelope_json: string; revision: number }>(
+      'SELECT envelope_json, revision FROM ledger_replica_password_envelopes WHERE replica_id = ?', [replica.replicaId]);
+    return row ? { envelope: jsonObject(row.envelope_json), revision: row.revision } : undefined;
+  }
+
+  async putPasswordKeyEnvelope(username: string, ledgerId: string, envelope: JsonRecord,
+    expectedRevision: number, access: 'account' | 'node' = 'account', replicaId?: string,
+    sourceRevision?: number): Promise<number> {
+    await this.ready;
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      throw new ServerStoreError('INVALID_REVISION', 400, '密码密钥包版本无效');
+    }
+    return this.driver.transaction(async (driver) => {
+      const replica = await this.accountReplicaRow(driver, username, replicaId);
+      if (!replica || replica.ledger_id !== ledgerId) throw new ServerStoreError('LEDGER_MISMATCH', 409, '账本身份不匹配');
+      if (access === 'account') {
+        await this.assertLedgerAccessOnReplica(driver, username, replica.replica_id, 'manage');
+        const owner = await driver.get<{ username: string }>(
+          'SELECT username FROM sync_replicas WHERE replica_id = ?', [replica.replica_id]);
+        if (owner?.username !== username) throw new ServerStoreError('KEY_ENVELOPE_OWNER_REQUIRED', 403, '仅账本所有者可维护密码密钥包');
+      }
+      const canonical = await driver.get<{ keyring_id: string; generation: number }>(
+        'SELECT keyring_id, generation FROM ledger_replica_key_envelopes WHERE replica_id = ?', [replica.replica_id]);
+      if (!canonical || canonical.keyring_id !== envelope['keyringId']
+        || Number(canonical.generation) !== envelope['generation']) {
+        throw new ServerStoreError('KEYRING_MISMATCH', 409, '密码密钥包与账本当前密钥版本不一致');
+      }
+      const current = await driver.get<{ envelope_json: string; revision: number }>(
+        'SELECT envelope_json, revision FROM ledger_replica_password_envelopes WHERE replica_id = ?', [replica.replica_id]);
+      if (current && current.envelope_json === JSON.stringify(envelope)) return current.revision;
+      if (Number(current?.revision ?? 0) !== expectedRevision) {
+        throw new ServerStoreError('PASSWORD_ENVELOPE_REVISION', 409, '密码密钥包已更新');
+      }
+      const revision = access === 'node' ? sourceRevision : expectedRevision + 1;
+      if (!Number.isSafeInteger(revision) || Number(revision) <= expectedRevision) {
+        throw new ServerStoreError('PASSWORD_ENVELOPE_REVISION', 409, '密码密钥包版本无效');
+      }
+      await driver.run(`INSERT INTO ledger_replica_password_envelopes
+        (replica_id, ledger_id, keyring_id, generation, envelope_json, revision, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(replica_id) DO UPDATE SET envelope_json = excluded.envelope_json,
+          generation = excluded.generation, revision = excluded.revision, updated_at = excluded.updated_at`,
+      [replica.replica_id, ledgerId, envelope['keyringId'], envelope['generation'], JSON.stringify(envelope),
+        Number(revision), nowIso()]);
+      return Number(revision);
     });
   }
 
@@ -6124,6 +7382,33 @@ END;`);
     await this.ready;
     const row = await this.driver.get<{ mode: LedgerProtection['mode']; version: number; sealed_secret: string | null }>('SELECT mode, version, sealed_secret FROM sync_key_custody WHERE username = ?', [username]);
     return row ? { mode: row.mode, version: Number(row.version), sealedSecret: row.sealed_secret } : undefined;
+  }
+
+  async importFederatedLedgerProtection(username: string, issuerNodeId: string,
+    ledgerId: string, mode: 'managed' | 'private', sealedSecret: string | null): Promise<void> {
+    await this.ready;
+    await this.driver.transaction(async (driver) => {
+      const bound = await driver.get<{ issuer_node_id: string; ledger_id: string }>(
+        'SELECT issuer_node_id, ledger_id FROM federated_account_bindings WHERE local_username = ?', [username]);
+      const replica = await driver.get('SELECT 1 FROM sync_replicas WHERE username = ? AND ledger_id = ?',
+        [username, ledgerId]);
+      if (!bound || bound.issuer_node_id !== issuerNodeId || !replica) {
+        throw new ServerStoreError('FEDERATED_IDENTITY_CHANGED', 409, '统一账号账本保护身份不匹配');
+      }
+      const current = await driver.get<{ mode: string; sealed_secret: string | null }>(
+        'SELECT mode, sealed_secret FROM sync_key_custody WHERE username = ?', [username]);
+      if (current?.mode === mode && current.sealed_secret === sealedSecret) return;
+      await driver.run(`INSERT INTO sync_key_custody (username, mode, version, sealed_secret, updated_at)
+        VALUES (?, ?, 1, ?, ?)
+        ON CONFLICT(username) DO UPDATE SET mode = excluded.mode,
+          version = sync_key_custody.version + 1, sealed_secret = excluded.sealed_secret,
+          updated_at = excluded.updated_at`, [username, mode, sealedSecret, nowIso()]);
+      if (current && current.mode !== 'relay') {
+        const at = nowIso();
+        await driver.run('UPDATE sync_sessions SET revoked_at = COALESCE(revoked_at, ?), updated_at = ? WHERE username = ?',
+          [at, at, username]);
+      }
+    });
   }
 
   /** Compare-and-swap custody and the matching envelope together, under the live session. */
@@ -6712,6 +7997,73 @@ END;`);
     );
   }
 
+  /** Encrypted payload bytes transferred by this account on this node; retries count as traffic. */
+  async recordAccountTransfer(username: string, kind: 'commit-push' | 'commit-pull' | 'blob-upload' | 'blob-download',
+    bytes: number): Promise<void> {
+    await this.ready;
+    if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error('invalid transfer byte count');
+    const fields = {
+      'commit-push': ['commit_push_requests', 'commit_upload_bytes'],
+      'commit-pull': ['commit_pull_requests', 'commit_download_bytes'],
+      'blob-upload': [null, 'blob_upload_bytes'],
+      'blob-download': [null, 'blob_download_bytes'],
+    } as const;
+    const [requestColumn, byteColumn] = fields[kind];
+    const requestUpdate = requestColumn ? `${requestColumn} = ${requestColumn} + 1,` : '';
+    await this.driver.run(`INSERT INTO account_transfer_counters (username, ${byteColumn},
+        ${requestColumn ? `${requestColumn}, ` : ''}updated_at)
+      VALUES (?, ?, ${requestColumn ? '1, ' : ''}?)
+      ON CONFLICT(username) DO UPDATE SET ${requestUpdate}
+        ${byteColumn} = ${byteColumn} + excluded.${byteColumn}, updated_at = excluded.updated_at`,
+    [username, bytes, nowIso()]);
+  }
+
+  async accountTransfer(username: string): Promise<{
+    commitPushRequests: number; commitPullRequests: number;
+    commitUploadBytes: number; commitDownloadBytes: number;
+    blobUploadBytes: number; blobDownloadBytes: number;
+    syncRuns: number; convergedRuns: number; partialRuns: number; failedRuns: number;
+  }> {
+    await this.ready;
+    const [row, runs] = await Promise.all([
+      this.driver.get<Record<string, unknown>>('SELECT * FROM account_transfer_counters WHERE username = ?', [username]),
+      this.driver.get<Record<string, unknown>>(`SELECT COUNT(*) AS total,
+        SUM(CASE WHEN outcome = 'converged' THEN 1 ELSE 0 END) AS converged,
+        SUM(CASE WHEN outcome = 'partial' THEN 1 ELSE 0 END) AS partial,
+        SUM(CASE WHEN outcome = 'failed' THEN 1 ELSE 0 END) AS failed
+        FROM account_sync_runs WHERE username = ?`, [username]),
+    ]);
+    return {
+      commitPushRequests: Number(row?.['commit_push_requests'] ?? 0),
+      commitPullRequests: Number(row?.['commit_pull_requests'] ?? 0),
+      commitUploadBytes: Number(row?.['commit_upload_bytes'] ?? 0),
+      commitDownloadBytes: Number(row?.['commit_download_bytes'] ?? 0),
+      blobUploadBytes: Number(row?.['blob_upload_bytes'] ?? 0),
+      blobDownloadBytes: Number(row?.['blob_download_bytes'] ?? 0),
+      syncRuns: Number(runs?.['total'] ?? 0),
+      convergedRuns: Number(runs?.['converged'] ?? 0),
+      partialRuns: Number(runs?.['partial'] ?? 0),
+      failedRuns: Number(runs?.['failed'] ?? 0),
+    };
+  }
+
+  async recordAccountSyncRun(username: string, replicaId: string, input: {
+    runId: string; outcome: 'converged' | 'partial' | 'failed'; pulled: number; pushed: number;
+    attachmentUploads: number; attachmentDownloads: number; durationMs: number;
+  }): Promise<void> {
+    await this.ready;
+    if (!/^[a-f0-9-]{36}$/.test(input.runId) || !['converged', 'partial', 'failed'].includes(input.outcome)
+      || [input.pulled, input.pushed, input.attachmentUploads, input.attachmentDownloads, input.durationMs]
+        .some((value) => !Number.isSafeInteger(value) || value < 0)) {
+      throw new ServerStoreError('INVALID_SYNC_RUN', 400, '同步轮次报告无效');
+    }
+    await this.driver.run(`INSERT OR IGNORE INTO account_sync_runs
+      (run_id, username, replica_id, outcome, pulled, pushed, attachment_uploads,
+        attachment_downloads, duration_ms, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [input.runId, username, replicaId, input.outcome, input.pulled, input.pushed,
+      input.attachmentUploads, input.attachmentDownloads, input.durationMs, nowIso()]);
+  }
+
   async listSyncEvents(options: {
     limit: number;
     cursor?: string;
@@ -7062,7 +8414,7 @@ END;`);
         active: session['revoked_at'] == null && String(session['expires_at']) > at,
       })),
       activeSessionCount: activeSessions,
-      sync: { recent: events.events },
+      sync: { recent: events.events, transfer: await this.accountTransfer(username) },
       audit: audit.map((entry) => ({
         id: Number(entry['id']),
         at: String(entry['at']),

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { aggregateKey, fetchAuthMe, mergeReviewedCommit, replayReviewedCommit, requestJson } from '@zichan/db';
-import { accountSigningPublicKey, canonicalJson, decryptJson, ledgerControlEventHash, rotateLedgerProtection,
+import { aggregateKey, fetchAuthMe, loginAccount, mergeReviewedCommit, replayReviewedCommit, requestJson } from '@zichan/db';
+import { accountSigningPublicKey, canonicalJson, createAccountEncryptionKey, decryptJson, ledgerControlEventHash, rotateLedgerProtection,
   sha256Json, wireSyncCommit,
   signLedgerControlEvent, unlockAccountEncryptionKey, wrapLedgerCryptoSessionForMember,
   type AccountEncryptionKeyEnvelope, type LedgerControlEvent, type LedgerControlState,
@@ -143,7 +143,7 @@ export function LedgerMembersPanel({ profile }: { profile: SyncConnection }) {
     setBusy(true); setError(''); setNotice('');
     try { await action(); await refresh(); setNotice(message); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { setBusy(false); }
+    finally { setPassword(''); setBusy(false); }
   }
 
   async function reviewRejected(item: View['rejected'][number]) {
@@ -278,13 +278,40 @@ export function LedgerMembersPanel({ profile }: { profile: SyncConnection }) {
     await signReviewedDecision('discard');
   }
 
-  async function ownerPrivateKey(): Promise<Uint8Array> {
-    if (!view?.accountKey || view.accountKey.issuerNodeId !== view.actor.issuerNodeId
-      || view.accountKey.subjectAccountId !== view.actor.accountId) {
-      throw new Error('请先在账号页建立此身份的加密密钥');
+  async function ensureAccountKey(): Promise<AccountKeyRecord> {
+    if (!view || !profile.accountId || !profile.serverId) throw new Error('账号身份尚未准备好');
+    if (password.length < 8) throw new Error('请输入账号密码');
+    if (view.accountKey) {
+      if (view.accountKey.issuerNodeId !== view.actor.issuerNodeId
+        || view.accountKey.subjectAccountId !== view.actor.accountId) throw new Error('账号密钥与当前身份不一致');
+      return view.accountKey;
     }
-    if (password.length < 8) throw new Error('请输入账号加密密钥密码');
-    return unlockAccountEncryptionKey(password, view.accountKey.envelope);
+    if (view.actor.issuerNodeId !== profile.serverId || view.actor.accountId !== profile.accountId) {
+      throw new Error('账号密钥尚未同步。请先在创建账号的网站登录一次，再刷新本站。');
+    }
+    const baseUrl = buildSyncBaseUrl(profile);
+    const verified = await loginAccount(baseUrl, profile.username, password, {
+      expectedServerId: profile.serverId, expectedServerPublicKey: profile.serverPublicKey,
+      sessionTransport: 'token', deviceName: '验证账本共享账号密码',
+    });
+    await requestJson(`${baseUrl}/api/auth/logout`, { method: 'POST', cache: 'no-store',
+      redirect: 'error', credentials: 'omit', headers: { Authorization: `Bearer ${verified.accessToken}` } });
+    const created = await createAccountEncryptionKey(profile.serverId, profile.accountId, password);
+    try {
+      const record = (await api<{ record: AccountKeyRecord }>(profile,
+        '/api/v4/account/encryption-key', 'PUT', { envelope: created.envelope, expectedRevision: 0 })).record;
+      if (!record || record.issuerNodeId !== view.actor.issuerNodeId
+        || record.subjectAccountId !== view.actor.accountId) throw new Error('账号密钥初始化失败');
+      setView((current) => current ? { ...current, accountKey: record } : current);
+      return record;
+    } finally { created.privateKey.fill(0); }
+  }
+
+  async function ownerPrivateKey(accountKey?: AccountKeyRecord): Promise<Uint8Array> {
+    if (password.length < 8) throw new Error('请输入账号密码');
+    const record = accountKey ?? await ensureAccountKey();
+    try { return await unlockAccountEncryptionKey(password, record.envelope); }
+    catch { throw new Error('账号密码无法解锁成员管理密钥。旧账号请到账号页迁移独立密钥密码。'); }
   }
 
   async function postEvent(event: LedgerControlEvent, envelopes?: LedgerMemberKeyEnvelope[]) {
@@ -304,22 +331,28 @@ export function LedgerMembersPanel({ profile }: { profile: SyncConnection }) {
     }
   }
 
-  async function initialize() {
-    if (!view || !profile.ledgerId || view.state) return;
-    const privateKey = await ownerPrivateKey();
+  async function initialize(): Promise<View> {
+    if (!view || !profile.ledgerId) throw new Error('账本尚未准备好');
+    if (view.state) return view;
+    const accountKey = await ensureAccountKey();
+    const privateKey = await ownerPrivateKey(accountKey);
     try {
       const event = signLedgerControlEvent(privateKey, {
         v: 1, ledgerId: profile.ledgerId, seq: 1, previousHash: null, keyEpoch: 1,
         kind: 'MemberGenesis', actor: view.actor, target: view.actor, role: 'OWNER',
         signingPublicKey: accountSigningPublicKey(privateKey),
-        encryptionPublicKey: view.accountKey!.publicKey,
+        encryptionPublicKey: accountKey.publicKey,
       });
       await api(profile, '/api/v4/ledger/control', 'POST', { event });
       const envelope = await wrapLedgerCryptoSessionForMember(requireLedgerCryptoSession(profile.ledgerId), {
-        ...view.actor, recipientPublicKey: view.accountKey!.publicKey, keyEpoch: 1,
+        ...view.actor, recipientPublicKey: accountKey.publicKey, keyEpoch: 1,
       });
       await api(profile, '/api/v4/ledger/member-envelope', 'PUT', { envelope });
     } finally { privateKey.fill(0); }
+    const updated = await loadView(profile);
+    if (!updated.state) throw new Error('账本共享权限尚未生效，请刷新后重试');
+    setView(updated);
+    return updated;
   }
 
   async function issueEnvelope(target: LedgerMemberIdentity) {
@@ -334,26 +367,28 @@ export function LedgerMembersPanel({ profile }: { profile: SyncConnection }) {
   }
 
   async function addMember() {
-    if (!view?.state || !profile.ledgerId) return;
+    if (!view || !profile.ledgerId) return;
     const replica = await api<{ headSeq: number }>(profile, '/api/v3/replica');
     if (!Number.isSafeInteger(replica.headSeq) || replica.headSeq < 1) {
       throw new Error('请先把当前账本同步到此服务器，再邀请成员');
     }
     const target = parseCard(card);
-    if (view.state.members[memberId(target)]?.removed === false) throw new Error('此账号已经是账本成员');
-    const privateKey = await ownerPrivateKey();
+    const current = await initialize();
+    const state = current.state!;
+    if (state.members[memberId(target)]?.removed === false) throw new Error('此账号已经是账本成员');
+    const privateKey = await ownerPrivateKey(current.accountKey ?? undefined);
     try {
       const event = signLedgerControlEvent(privateKey, {
-        v: 1, ledgerId: profile.ledgerId, seq: view.state.seq + 1,
-        previousHash: view.state.headHash, keyEpoch: view.state.keyEpoch,
-        kind: 'MemberAdded', actor: view.actor,
+        v: 1, ledgerId: profile.ledgerId, seq: state.seq + 1,
+        previousHash: state.headHash, keyEpoch: state.keyEpoch,
+        kind: 'MemberAdded', actor: current.actor,
         target: { issuerNodeId: target.issuerNodeId, accountId: target.accountId }, role,
         signingPublicKey: target.signingPublicKey,
         encryptionPublicKey: target.encryptionPublicKey,
       });
       const envelope = await wrapLedgerCryptoSessionForMember(requireLedgerCryptoSession(profile.ledgerId), {
         issuerNodeId: target.issuerNodeId, accountId: target.accountId,
-        recipientPublicKey: target.encryptionPublicKey, keyEpoch: view.state.keyEpoch,
+        recipientPublicKey: target.encryptionPublicKey, keyEpoch: state.keyEpoch,
       });
       await postEvent(event, [envelope]);
       setCard('');
@@ -409,15 +444,13 @@ export function LedgerMembersPanel({ profile }: { profile: SyncConnection }) {
   const manualChoicesComplete = (() => {
     try { selectedManualPayloads(); return true; } catch { return false; }
   })();
-  return <section className="zc-card" aria-label="账本成员">
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-      <div><h2 className="zc-section-title">账本成员</h2>
-        <p className="zc-caption">成员权限属于账本；服务器管理员不会自动获得账本访问权。公网身份节点不可用时，已登录的其他节点仍可继续记账；新设备首次登录需等待身份节点恢复。</p></div>
-      <button disabled={busy} onClick={() => void run(refresh, '成员状态已更新')}>刷新</button>
-    </div>
+  return <details className="zc-card" aria-label="账本共享">
+    <summary>账本共享{state ? ` · ${active.length} 人` : ''}</summary>
+    <p className="zc-caption">邀请其他账号一起记账，并设置可记账或只读权限。</p>
+    <button disabled={busy} onClick={() => void run(refresh, '成员状态已更新')}>刷新</button>
     {view ? <>
-      {state ? <p>控制版本 {state.seq} · 密钥代次 {state.keyEpoch} · 当前成员 {active.length} 人</p>
-        : <p>此账本尚未启用签名成员控制。先在账号页建立账号加密密钥，再启动成员管理。</p>}
+      {state ? <p>当前成员 {active.length} 人</p>
+        : <p>此账本尚未与其他账号共享。邀请第一位成员时会自动开通。</p>}
       {isOwner && <>
         {view.rejected.length > 0 && <div role="status" style={{ border: '1px solid var(--negative)', padding: 12, marginBottom: 12 }}>
           <strong>有 {unresolved.length} 条节点写入待处理</strong>
@@ -485,12 +518,9 @@ export function LedgerMembersPanel({ profile }: { profile: SyncConnection }) {
             {repairedCommit && <p>本机修复提交：{repairedCommit.commitId}。签名处置前请保留本机数据。</p>}
           </details>}
         </div>}
-        <label>账号加密密钥密码<input aria-label="成员管理密钥密码" type="password" autoComplete="off"
+        <label>账号密码<input aria-label="成员管理账号密码" type="password" autoComplete="current-password"
           value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-        {!state ? <p><button disabled={busy || !view.accountKey || password.length < 8}
-          onClick={() => void run(initialize, '已启用账本成员控制')}>启用成员控制（试用）</button></p>
-          : <>
-            {active.map((member) => <div key={memberId(member)} style={{ borderTop: '1px solid var(--border)', padding: '10px 0' }}>
+        {state && active.map((member) => <div key={memberId(member)} style={{ borderTop: '1px solid var(--border)', padding: '10px 0' }}>
               <strong>{memberId(member)}</strong> · {member.role}
               {!view.envelopes.has(memberId(member)) && <button disabled={busy} onClick={() => void run(() => issueEnvelope(member), '成员密钥已发放')}>补发密钥</button>}
               {memberId(member) !== memberId(view.actor) && <>
@@ -502,7 +532,7 @@ export function LedgerMembersPanel({ profile }: { profile: SyncConnection }) {
               </>}
             </div>)}
             <details><summary>邀请成员</summary>
-              <p>让对方先在身份节点建立账号加密密钥，并提供账号页的成员身份信息。邀请后会立即发放当前账本密钥。</p>
+              <p>让对方从账号页复制成员身份信息。加入后，对方可用自己的账号密码打开此账本。</p>
               <textarea aria-label="待邀请成员身份" value={card} onChange={(event) => setCard(event.target.value)}
                 style={{ width: '100%', minHeight: 130 }} />
               <label>权限<select value={role} onChange={(event) => setRole(event.target.value as 'EDITOR' | 'VIEWER')}>
@@ -511,11 +541,10 @@ export function LedgerMembersPanel({ profile }: { profile: SyncConnection }) {
               <button disabled={busy || password.length < 8 || !card.trim()}
                 onClick={() => void run(addMember, '成员已加入账本')}>加入账本</button>
             </details>
-          </>}
       </>}
       {!isOwner && state && <div>{active.map((member) => <p key={memberId(member)}>{memberId(member)} · {member.role}</p>)}</div>}
     </> : <p role="status">正在读取成员权限…</p>}
     {error && <p role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
-  </section>;
+  </details>;
 }

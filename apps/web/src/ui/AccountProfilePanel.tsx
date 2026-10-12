@@ -9,6 +9,8 @@ export function AccountProfilePanel() {
   const profile = loadSyncConnections().find((row) => row.id === profileId);
   const [displayName, setDisplayName] = useState('');
   const [savedName, setSavedName] = useState('');
+  const [loginUsername, setLoginUsername] = useState('');
+  const [federated, setFederated] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -17,7 +19,12 @@ export function AccountProfilePanel() {
     if (!selected) return;
     let active = true;
     void authenticateSyncProfile(selected).then((token) => fetchAuthMe(buildSyncBaseUrl(selected), token))
-      .then((me) => { if (active) { setDisplayName(me.displayName || me.username); setSavedName(me.displayName || me.username); } })
+      .then((me) => { if (active) {
+        setDisplayName(me.displayName || me.loginUsername || me.username);
+        setSavedName(me.displayName || me.loginUsername || me.username);
+        setLoginUsername(me.loginUsername || me.username);
+        setFederated(Boolean(me.federatedIdentity));
+      } })
       .catch((error) => { if (active) setMessage(error instanceof Error ? error.message : String(error)); });
     return () => { active = false; };
   }, [profileId]);
@@ -26,6 +33,7 @@ export function AccountProfilePanel() {
   const selected = profile;
   const avatarText = Array.from(savedName || selected.username)[0] || '?';
   async function save() {
+    if (federated) return;
     const next = displayName.trim();
     if (!next || Array.from(next).length > 24 || /[\p{Cc}\p{Cf}]/u.test(next)) { setMessage('昵称请填写 1 至 24 个字符，不能包含控制字符'); return; }
     setBusy(true); setMessage('');
@@ -51,11 +59,11 @@ export function AccountProfilePanel() {
       <span><strong>{savedName || selected.username}</strong><br /><small>当前使用昵称首字作为头像</small></span>
     </div>
     <form onSubmit={(event) => { event.preventDefault(); void save(); }} style={{ display: 'grid', gap: 12, maxWidth: 420 }}>
-      <label>昵称<input className="zc-input" aria-label="修改昵称" autoComplete="nickname" value={displayName} disabled={busy} onChange={(event) => setDisplayName(event.target.value)} /></label>
-      <small>支持中文，1 至 24 个字符，可随时修改。</small>
-      <label>登录账号<input className="zc-input" value={selected.username} readOnly aria-label="登录账号" /></label>
+      <label>昵称<input className="zc-input" aria-label="修改昵称" autoComplete="nickname" value={displayName} disabled={busy || federated} onChange={(event) => setDisplayName(event.target.value)} /></label>
+      <small>{federated ? '此昵称由身份源节点管理；请到创建账号的网站修改。' : '支持中文，1 至 24 个字符，可随时修改。'}</small>
+      <label>登录账号<input className="zc-input" value={loginUsername || selected.username} readOnly aria-label="登录账号" /></label>
       <small>登录账号用于登录，注册后暂不能修改。</small>
-      <button type="submit" disabled={busy || !displayName.trim() || displayName.trim() === savedName}>{busy ? '保存中…' : '保存昵称'}</button>
+      {!federated && <button type="submit" disabled={busy || !displayName.trim() || displayName.trim() === savedName}>{busy ? '保存中…' : '保存昵称'}</button>}
     </form>
     {selected.accountId && <details style={{ marginTop: 16 }}><summary>账号标识（排障时使用）</summary><code style={{ overflowWrap: 'anywhere' }}>{selected.accountId}</code></details>}
     {message && <p role="status">{message}</p>}

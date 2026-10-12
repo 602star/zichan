@@ -52,7 +52,7 @@ export interface RegisterAccountResult {
 }
 
 export interface LoginAccountOptions extends HttpRequestOptions {
-  sessionContext?: 'admin';
+  sessionContext?: 'admin' | 'ledger';
   sessionTransport?: 'cookie' | 'token';
   deviceId?: string;
   deviceName?: string;
@@ -107,8 +107,10 @@ export interface SyncAuthSession {
 export interface SyncAuthMe {
   accountId?: string;
   username: string;
+  loginUsername?: string;
   displayName?: string;
   role: 'owner' | 'admin' | 'viewer' | 'member';
+  ledgerRole?: 'OWNER' | 'EDITOR' | 'VIEWER' | null;
   disabled: boolean;
   session: SyncAuthSession['session'];
   ledgerId?: string;
@@ -412,6 +414,7 @@ export async function registerAccount(baseUrl: string, username: string, passwor
     registrationToken?: string;
     serverId?: string;
     serverPublicKey?: string;
+    credentialServerPublicKey?: string;
   };
   if (!startBody.registrationResponse || !startBody.registrationToken || !startBody.serverId || !startBody.serverPublicKey) {
     throw new Error('register start returned an incomplete OPAQUE response');
@@ -429,7 +432,7 @@ export async function registerAccount(baseUrl: string, username: string, passwor
     identifiers: { client: normalized, server: startBody.serverId },
     keyStretching: 'memory-constrained',
   });
-  if (finish.serverStaticPublicKey !== startBody.serverPublicKey) {
+  if (finish.serverStaticPublicKey !== (startBody.credentialServerPublicKey ?? startBody.serverPublicKey)) {
     throw new Error('同步服务器 OPAQUE 公钥校验失败');
   }
   const finishResponse = await fetch(`${baseUrl}/api/auth/${operation}/finish`, {
@@ -467,7 +470,8 @@ export async function loginAccount(
   const startResponse = await fetch(`${baseUrl}/api/auth/login/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: normalized, startLoginRequest: start.startLoginRequest }),
+    body: JSON.stringify({ username: normalized, startLoginRequest: start.startLoginRequest,
+      sessionContext: options.sessionContext }),
     redirect: 'error',
   }, options);
   if (!startResponse.ok) throw await errorMessage('login start failed', startResponse);
@@ -476,6 +480,9 @@ export async function loginAccount(
     loginResponse?: string;
     serverId?: string;
     serverPublicKey?: string;
+    credentialServerId?: string;
+    credentialClientId?: string;
+    credentialServerPublicKey?: string;
   };
   if (!startBody.loginId || !startBody.loginResponse || !startBody.serverId || !startBody.serverPublicKey) {
     throw new Error('login start returned an incomplete OPAQUE response');
@@ -490,11 +497,12 @@ export async function loginAccount(
     clientLoginState: start.clientLoginState,
     loginResponse: startBody.loginResponse,
     password,
-    identifiers: { client: normalized, server: startBody.serverId },
+    identifiers: { client: startBody.credentialClientId ?? normalized,
+      server: startBody.credentialServerId ?? startBody.serverId },
     keyStretching: 'memory-constrained',
   });
   if (!finish) throw new Error('同步用户名或密码错误');
-  if (finish.serverStaticPublicKey !== startBody.serverPublicKey) {
+  if (finish.serverStaticPublicKey !== (startBody.credentialServerPublicKey ?? startBody.serverPublicKey)) {
     throw new Error('同步服务器 OPAQUE 公钥校验失败');
   }
   const loginResponse = await fetch(`${baseUrl}/api/auth/login/finish`, {

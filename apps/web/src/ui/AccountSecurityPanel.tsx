@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { loginAccount, registerAccount, requestJson } from '@zichan/db';
+import { useEffect, useState } from 'react';
+import { fetchAuthMe, loginAccount, registerAccount, requestJson } from '@zichan/db';
 import { accountProtection } from '../account-protection.js';
 import { authenticateSyncProfile } from '../sync-auth.js';
 import { buildSyncBaseUrl, loadSyncConnections } from '../sync-config.js';
+import { rewrapAccountKeysForPasswordChange } from '../password-key-rotation.js';
 
 interface Device { id: string; deviceName: string; lastSeenAt: string; active: boolean }
 export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> }) {
@@ -14,6 +15,27 @@ export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> 
   const [confirmation, setConfirmation] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [identity, setIdentity] = useState<{ loginUsername: string; issuerNodeId?: string; issuerUrl?: string }>();
+  useEffect(() => {
+    if (!profile) return;
+    let active = true;
+    const baseUrl = buildSyncBaseUrl(profile);
+    void authenticateSyncProfile(profile).then((token) => fetchAuthMe(baseUrl, token)).then(async (me) => {
+      let issuerUrl: string | undefined;
+      if (me.federatedIdentity) {
+        try {
+          const response = await fetch(`${baseUrl}/api/auth/federation/providers`, { cache: 'no-store', redirect: 'error' });
+          if (response.ok) {
+            const body = await response.json() as { providers?: Array<{ issuerNodeId: string; issuerUrl: string }> };
+            issuerUrl = body.providers?.find((item) => item.issuerNodeId === me.federatedIdentity?.issuerNodeId)?.issuerUrl;
+          }
+        } catch { /* The issuer address is optional; the password owner still needs to be shown. */ }
+      }
+      if (active) setIdentity({ loginUsername: me.loginUsername ?? me.username,
+        issuerNodeId: me.federatedIdentity?.issuerNodeId, issuerUrl });
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [profile?.id]);
   if (!profile) return null;
   const selected = profile;
   async function api(path: string, token?: string) {
@@ -36,8 +58,10 @@ export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> 
     setDevices(result.devices); setCurrent(result.currentSessionId);
   }
   return <section className="zc-protection" aria-label="账号安全" style={{ padding: 20, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', marginBottom: 16 }}>
-    <h2 style={{ fontSize: 'var(--fs-title)' }}>账号安全 · {profile.username}</h2>
-    <details><summary>修改账号密码</summary>
+    <h2 style={{ fontSize: 'var(--fs-title)' }}>账号安全 · {identity?.loginUsername ?? profile.username}</h2>
+    {identity?.issuerNodeId ? <p>此账号由身份源节点 {identity.issuerNodeId} 管理密码。
+      {identity.issuerUrl ? <>请在 <a href={`${identity.issuerUrl}/app/`}>身份源网站</a> 修改或找回密码。</> : '请到创建此账号的网站修改或找回密码。'}
+      更新后本站会在后台同步新凭据。</p> : identity && <details><summary>修改账号密码</summary>
       <p>修改后所有设备都需要重新登录。账本、恢复码和保护方式保持不变；未同步数据保留在本机。</p>
       <form onSubmit={(event) => {
         event.preventDefault();
@@ -48,7 +72,11 @@ export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> 
           const verified = await loginAccount(baseUrl, selected.username, oldPassword, { ...identity, deviceName: '修改密码验证', sessionTransport: 'token' });
           try {
             const { code } = await api('password-change/authorize', verified.accessToken);
-            await registerAccount(baseUrl, selected.username, password, { ...identity, passwordResetCode: code });
+            const rollback = await rewrapAccountKeysForPasswordChange(baseUrl, verified.accessToken,
+              oldPassword, password);
+            try {
+              await registerAccount(baseUrl, selected.username, password, { ...identity, passwordResetCode: code });
+            } catch (error) { await rollback().catch(() => undefined); throw error; }
           } finally {
             setOldPassword(''); setPassword(''); setConfirmation('');
             await api('logout', verified.accessToken).catch(() => undefined);
@@ -63,7 +91,7 @@ export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> 
         <label>再次输入新密码<input aria-label="再次输入新密码" type="password" autoComplete="new-password" required value={confirmation} disabled={busy} onChange={(e) => setConfirmation(e.target.value)} /></label>
         <button disabled={busy || !oldPassword || password.length < 8 || password !== confirmation}>确认修改账号密码</button>
       </form>
-    </details>
+    </details>}
     <details style={{ marginTop: 16 }}><summary>登录设备</summary>
       <p>这里列出此账号的登录会话。撤销后，该会话不能继续访问服务器；其他设备上已有的离线副本不会远程删除。</p>
       <button disabled={busy} onClick={() => void run(refresh)}>刷新登录设备</button>
