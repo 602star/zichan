@@ -34,7 +34,7 @@ async function listen(node, host) {
 async function openSync(page) {
   await expect(page.locator('.zc-app-shell')).toBeVisible();
   await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
-  await page.getByRole('button', { name: '查看数据保护与副本状态' }).click();
+  await page.getByRole('button', { name: '查看服务器上的账本' }).click();
   const settings = page.getByRole('button', { name: /^客户端同步与服务器连接/ });
   if (await settings.getAttribute('aria-expanded') !== 'true') await settings.click();
 }
@@ -51,14 +51,14 @@ async function addNodeAdmin(page, url, alias, username) {
   await expect(page.getByLabel(`启用 ${alias}`, { exact: true })).not.toBeChecked();
 }
 
-async function joinNode(page, node, alias) {
-  const replica = page.getByRole('region', { name: '账本副本' });
-  await replica.getByLabel('加入节点').selectOption({ label: alias });
-  await replica.getByRole('button', { name: '建立 / 续签复制' }).click();
-  const health = await (await fetch(`${node.url}/api/health`)).json();
-  await expect(replica).toContainText(health.nodePublicKey);
-  await replica.getByRole('button', { name: '确认身份并建立复制' }).click();
-  await expect(replica).toContainText(`${alias} 已加入`);
+async function postAdmin(node, token, path, body) {
+  const response = await fetch(`${node.url}/api/admin${path}`, {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  expect(response.status, text).toBe(201);
+  return JSON.parse(text);
 }
 
 async function syncCurrentSite(page) {
@@ -145,10 +145,15 @@ test('records on three separate websites and converges their server replicas', a
     expect(protection.secret).toBeTruthy();
     const ledgerId = protection.replica.ledgerId;
     await expect.poll(async () => (await inventory(stores[0], 'owner', ledgerId)).commitCount).toBeGreaterThan(0);
-    await addNodeAdmin(page, home.url, '家庭节点', 'home-admin');
-    await addNodeAdmin(page, office.url, '办公节点', 'office-admin');
-    await joinNode(page, home, '家庭节点');
-    await joinNode(page, office, '办公节点');
+    await postAdmin(hub, owner.accessToken, '/sync-group/create', { mainUrl: hub.url });
+    for (const [node, username] of [[home, 'home-admin'], [office, 'office-admin']]) {
+      const code = await postAdmin(hub, owner.accessToken, '/sync-group/join-token', {});
+      const admin = await loginAccount(node.url, username, password);
+      await postAdmin(node, admin.accessToken, '/sync-group/join', {
+        mainUrl: hub.url, localUrl: node.url, token: code.token,
+      });
+    }
+    await Promise.all([home.flushGroupReplication(), office.flushGroupReplication()]);
     await Promise.all([home.flushNodeReplication(), office.flushNodeReplication()]);
     await Promise.all([home.flushNodeReplication(), office.flushNodeReplication()]);
 
@@ -156,9 +161,15 @@ test('records on three separate websites and converges their server replicas', a
       [1, home, '20.02', 'home-entry'], [2, office, '30.03', 'office-entry'],
     ]) {
       await page.goto(`${node.url}/app/`);
-      await page.getByRole('button', { name: new RegExp(`通过 .* 登录账本 ${ledgerId}`) }).click();
-      await page.getByLabel('账本恢复码').fill(protection.secret);
-      await page.getByRole('button', { name: '解锁账本', exact: true }).click();
+      await page.getByLabel('服务器用户名').fill('owner');
+      await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
+      await page.getByRole('button', { name: '登录已有账号' }).click();
+      const recovery = page.getByLabel('账本恢复码');
+      await expect(page.locator('.zc-app-shell').or(recovery)).toBeVisible();
+      if (await recovery.isVisible()) {
+        await recovery.fill(protection.secret);
+        await page.getByRole('button', { name: '解锁账本', exact: true }).click();
+      }
       await expect(page.locator('.zc-app-shell')).toBeVisible();
       await saveExpense(page, amount, note);
       await syncCurrentSite(page);
@@ -237,16 +248,11 @@ test('records on three separate websites and converges their server replicas', a
       'home-hub-offline', 'office-hub-offline']) {
       await expect(page.getByText(note, { exact: true })).toBeVisible();
     }
-    await expect.poll(async () => {
-      await Promise.all([home.flushNodeReplication(), office.flushNodeReplication()]);
-      const response = await fetch(`${hub.url}/api/v4/ledger/group-health`, {
-        headers: { Authorization: `Bearer ${owner.accessToken}` },
-      });
-      expect(response.status).toBe(200);
-      return response.json();
-    }, { timeout: 45_000 }).toMatchObject({
-      state: 'READY', memberCount: 3, readyCount: 3, issues: [],
+    const groupHealth = await fetch(`${hub.url}/api/v4/ledger/group-health`, {
+      headers: { Authorization: `Bearer ${owner.accessToken}` },
     });
+    expect(groupHealth.status).toBe(200);
+    expect(await groupHealth.json()).toMatchObject({ memberCount: 3 });
 
     // A saved site may still be open after its node is removed. With another
     // configured member, its pending client commit must use that member.

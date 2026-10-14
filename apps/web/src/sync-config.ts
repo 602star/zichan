@@ -29,6 +29,8 @@ export interface DeviceSyncConnection {
   deviceUrls: string[];
   username: string;
   enabled: boolean;
+  /** This independent server receives ledger changes only while this client is syncing. */
+  browserBridge?: boolean;
   role?: SyncConnectionRole;
   ledgerId?: string;
   replicaId?: string;
@@ -278,6 +280,7 @@ function resolveDocument(document: SyncConnectionDocument): SyncConnection[] {
       accountId: typeof row.accountId === 'string' ? row.accountId : undefined,
       initialProtectionMode: row.initialProtectionMode === 'private' ? 'private' : undefined,
       enabled: row.enabled === true,
+      browserBridge: row.browserBridge === true,
       role: parseRole(row.role),
       serverId: typeof server.serverId === 'string' && server.serverId ? server.serverId : undefined,
       serverPublicKey: typeof server.serverPublicKey === 'string' && server.serverPublicKey ? server.serverPublicKey : undefined,
@@ -365,6 +368,7 @@ function toDocument(connections: SyncConnection[]): SyncConnectionDocument {
       accountId: connection.accountId,
       initialProtectionMode: connection.initialProtectionMode,
       enabled: connection.enabled,
+      browserBridge: connection.browserBridge === true || undefined,
       role: connection.role,
       ledgerId: connection.ledgerId,
       replicaId: connection.replicaId,

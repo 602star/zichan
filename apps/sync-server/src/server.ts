@@ -2260,8 +2260,15 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       const { user, session } = auth;
       if (req.method === 'GET' && apiPath === '/api/v4/group/status') {
         const group = await store.serverSyncGroup();
+        const members = group ? await store.serverSyncGroupMembers() : [];
         return send(res, 200, { joined: Boolean(group),
-          ...(group ? { memberCount: (await store.serverSyncGroupMembers()).length } : {}) });
+          ...(group ? { localNodeId: serverId, memberCount: members.length,
+            members: members.map((member) => {
+              let label: string;
+              try { label = new URL(member.nodeUrl).host; }
+              catch { label = `服务器 ${member.nodeId.slice(0, 8)}`; }
+              return { nodeId: member.nodeId, label };
+            }) } : {}) });
       }
       if (!await ledgerWebAccess() && (session.kind !== 'admin'
         || apiPath.startsWith('/api/v3/') || apiPath.startsWith('/api/v4/'))) {
@@ -3009,6 +3016,17 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           currentKeyEpoch: (await store.ledgerControlState(user.username, session.replicaId))?.keyEpoch ?? 0,
           physical: await store.replicaPhysicalStatus(blobUsername, replica.ledgerId), links,
         });
+      }
+      if (req.method === 'GET' && apiPath === '/api/v4/ledger/browser-inventory') {
+        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
+        await store.assertLedgerAccess(user.username, 'read', session.replicaId);
+        const inventory = await store.replicaInventory(blobUsername, replica.ledgerId, replica.replicaId);
+        return send(res, 200, { serverId, replicaId: replica.replicaId,
+          streamEpoch: replica.streamEpoch, ledgerId: replica.ledgerId,
+          commitCount: inventory.commitCount, commitHash: inventory.commitHash,
+          promisedBlobCount: inventory.promisedBlobCount, promisedBlobHash: inventory.promisedBlobHash,
+          missingPromisedBlobCount: inventory.missingPromisedBlobCount,
+          attachmentPromiseCurrent: inventory.attachmentPromiseCurrent });
       }
       if (req.method === 'POST' && apiPath === '/api/v3/replica/bind') {
         const { ledgerId } = await readBody(req, AUTH_BODY_BYTES);

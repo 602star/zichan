@@ -217,8 +217,8 @@ export function Account() {
       </AccountKeyPanel>
       <section className="zc-card" aria-label="数据保护入口">
         <h2 className="zc-section-title">数据保护</h2>
-        <p className="zc-caption">查看当前账本在各服务器上的复制进度、完整性状态和节点授权；添加副本后由服务器在后台补齐数据。</p>
-        <button type="button" style={btnOutline} onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'settings', tab: 'server' } }))}>查看数据保护与副本状态</button>
+        <p className="zc-caption">查看当前账本连接了哪些服务器、各服务器的副本是否就绪；服务器同步组由管理员配置。</p>
+        <button type="button" style={btnOutline} onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'settings', tab: 'server' } }))}>查看服务器上的账本</button>
       </section>
       <section className="zc-card" aria-label="存储配额">
         <div className="zc-section-head"><div><h2 className="zc-section-title">存储配额</h2><p className="zc-meta">当前服务器：{profile.alias || profile.baseUrl}。只统计此账号在这台服务器上的加密数据。</p></div><button type="button" style={btnOutline} disabled={busy} onClick={() => void refreshUsage()}>{busy ? '查询中…' : '刷新用量'}</button></div>

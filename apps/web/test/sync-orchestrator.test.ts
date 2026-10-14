@@ -476,7 +476,7 @@ describe('configured sync orchestrator', () => {
     const { syncConfiguredServers } = await import('../src/sync-orchestrator.js');
     await expect(syncConfiguredServers({} as never,
       profiles.map(({ testError: _testError, ...profile }) => profile)))
-      .rejects.toThrow('多台服务器需要先由管理员组成同步组');
+      .rejects.toThrow('多台普通服务器需要先由管理员组成同步组');
     expect(syncReplicas).not.toHaveBeenCalled();
   });
 });

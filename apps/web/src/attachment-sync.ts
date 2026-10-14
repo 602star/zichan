@@ -32,6 +32,7 @@ import { runtimeCredential } from './credential-vault.js';
 import { requireLedgerCryptoSession } from './ledger-key-vault.js';
 import { authenticateSyncProfile, hasAccountSession } from './sync-auth.js';
 import { accountLocalStorage } from './account-storage.js';
+import { deleteKv, loadKv, saveKv } from './db/idb.js';
 import { withSyncLock } from './sync-lock.js';
 
 const CHUNK_BYTES = 4 * 1024 * 1024;
@@ -41,6 +42,24 @@ const ATTACHMENT_BATCH_BYTES = 64 * 1024 * 1024;
 const ATTACHMENT_BATCH_OBJECTS = 8;
 
 export const ATTACHMENT_SYNC_STATE_EVENT = 'zichan:attachment-sync-state';
+export const ATTACHMENT_TRANSFER_PROGRESS_EVENT = 'zichan:attachment-transfer-progress';
+
+export interface AttachmentTransferProgress {
+  profileId: string;
+  alias: string;
+  direction: 'upload' | 'download';
+  transferredBytes: number;
+  totalBytes: number;
+  resumedBytes: number;
+}
+
+function reportTransfer(runtime: TargetRuntime, direction: AttachmentTransferProgress['direction'],
+  transferredBytes: number, totalBytes: number, resumedBytes: number): void {
+  globalThis.dispatchEvent?.(new CustomEvent<AttachmentTransferProgress>(ATTACHMENT_TRANSFER_PROGRESS_EVENT, {
+    detail: { profileId: runtime.target.profile.id, alias: runtime.target.profile.alias,
+      direction, transferredBytes, totalBytes, resumedBytes },
+  }));
+}
 
 export type RemoteAttachmentState = 'available' | 'trash' | 'missing';
 
@@ -404,6 +423,10 @@ async function uploadReference(store: SqlLedgerStore, runtime: TargetRuntime, re
     }
     if (!plan.uploadId) throw new Error('服务器未返回附件上传会话');
     const uploaded = new Set<number>(manifest.chunks.map((chunk) => chunk.index).filter((index) => !plan.missingChunks.includes(index)));
+    const resumedBytes = manifest.chunks.filter((chunk) => uploaded.has(chunk.index))
+      .reduce((sum, chunk) => sum + chunk.sizeBytes, 0);
+    let transferredBytes = resumedBytes;
+    reportTransfer(runtime, 'upload', transferredBytes, manifest.cipherBytes, resumedBytes);
     await store.attachmentState.putReplicaBlob(replicaRow(profileId, ref, remoteBlobId, {
       state: 'uploading',
       uploadId: plan.uploadId,
@@ -418,6 +441,8 @@ async function uploadReference(store: SqlLedgerStore, runtime: TargetRuntime, re
       }
       await runtime.client.uploadChunk(plan.uploadId, index, encrypted.ciphertext);
       uploaded.add(index);
+      transferredBytes += expected.sizeBytes;
+      reportTransfer(runtime, 'upload', transferredBytes, manifest.cipherBytes, resumedBytes);
       await store.attachmentState.putReplicaBlob(replicaRow(profileId, ref, remoteBlobId, {
         state: 'uploading',
         uploadId: plan.uploadId,
@@ -457,20 +482,46 @@ function validateManifest(manifest: BlobManifest, remoteBlobId: string): void {
   if (cipherBytes !== manifest.cipherBytes) throw new Error('服务器附件清单大小不一致');
 }
 
+function downloadChunkKey(runtime: TargetRuntime, blobId: string, index: number): string {
+  const { serverId, replicaId, streamEpoch } = runtime.target.identity;
+  return `attachment.download.v2.${serverId}.${replicaId}.${streamEpoch}.${blobId}.${index}`;
+}
+
 async function downloadReference(store: SqlLedgerStore, runtime: TargetRuntime, ref: AttachmentBlobReference): Promise<void> {
   const previousSecret = runtime.previousSecret?.get(ref.sha256);
   if (previousSecret) runtime = { ...runtime, context: previousSecret.context, remoteIds: new Map(runtime.remoteIds).set(ref.sha256, previousSecret.remoteBlobId) };
   const profileId = runtime.target.profile.id;
   const remoteBlobId = runtime.remoteIds.get(ref.sha256)!;
+  reportTransfer(runtime, 'download', 0, 0, 0);
   await store.attachmentState.putReplicaBlob(replicaRow(profileId, ref, remoteBlobId, { state: 'downloading', error: undefined }));
   try {
     const manifest = await runtime.client.manifest(remoteBlobId);
     validateManifest(manifest, remoteBlobId);
     const parts: BlobPart[] = [];
+    const cached = new Map<number, Uint8Array>();
     for (const meta of manifest.chunks) {
-      const ciphertext = await runtime.client.chunk(remoteBlobId, meta.index);
+      const key = downloadChunkKey(runtime, remoteBlobId, meta.index);
+      const bytes = await loadKv<Uint8Array>(key).catch(() => null);
+      if (!bytes) continue;
+      if (bytes.byteLength === meta.sizeBytes && await sha256Bytes(bytes) === meta.ciphertextSha256) {
+        cached.set(meta.index, bytes);
+      } else {
+        await deleteKv(key).catch(() => undefined);
+      }
+    }
+    const resumedBytes = manifest.chunks.filter((chunk) => cached.has(chunk.index))
+      .reduce((sum, chunk) => sum + chunk.sizeBytes, 0);
+    let transferredBytes = resumedBytes;
+    reportTransfer(runtime, 'download', transferredBytes, manifest.cipherBytes, resumedBytes);
+    for (const meta of manifest.chunks) {
+      const ciphertext = cached.get(meta.index) ?? await runtime.client.chunk(remoteBlobId, meta.index);
       if (ciphertext.byteLength !== meta.sizeBytes || await sha256Bytes(ciphertext) !== meta.ciphertextSha256) {
         throw new Error(`附件密文分块 ${meta.index} 校验失败`);
+      }
+      if (!cached.has(meta.index)) {
+        await saveKv(downloadChunkKey(runtime, remoteBlobId, meta.index), ciphertext).catch(() => undefined);
+        transferredBytes += meta.sizeBytes;
+        reportTransfer(runtime, 'download', transferredBytes, manifest.cipherBytes, resumedBytes);
       }
       const plaintext = await decryptAttachmentChunk(runtime.context, ref.sha256, {
         index: meta.index,
@@ -484,6 +535,8 @@ async function downloadReference(store: SqlLedgerStore, runtime: TargetRuntime, 
     const check = await hashAttachmentBlob(blob);
     if (check.sha256 !== ref.sha256 || check.sizeBytes !== ref.sizeBytes) throw new Error(`附件 ${ref.sha256.slice(0, 12)} 解密后校验失败`);
     await installDownloadedAttachmentBlob(store, ref, blob);
+    await Promise.all(manifest.chunks.map((meta) => deleteKv(downloadChunkKey(runtime, remoteBlobId, meta.index))
+      .catch(() => undefined)));
     runtime.result.downloaded += 1;
     await store.attachmentState.putReplicaBlob(replicaRow(profileId, ref, remoteBlobId, {
       state: 'available',

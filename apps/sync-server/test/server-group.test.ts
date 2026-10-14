@@ -90,6 +90,15 @@ describe('server synchronization group', () => {
         expect(accepted.status).toBe(201);
       };
       await joinGroup(branch);
+      const groupStatus = await fetch(`${url(main)}/api/v4/group/status`, {
+        headers: { Authorization: `Bearer ${mainOwner.accessToken}` },
+      });
+      expect(groupStatus.status).toBe(200);
+      expect(await groupStatus.json()).toMatchObject({ joined: true, localNodeId: main.serverId,
+        memberCount: 2, members: expect.arrayContaining([
+          { nodeId: main.serverId, label: expect.any(String) },
+          { nodeId: branch.serverId, label: expect.any(String) },
+        ]) });
       await branch.flushGroupReplication();
       await branch.flushNodeReplication();
       expect((await mainStore.listReplicaSlots()).map((slot) => slot.ledgerId)).toHaveLength(3);

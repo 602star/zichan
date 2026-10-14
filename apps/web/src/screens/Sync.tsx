@@ -9,6 +9,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { accountProtection } from '../account-protection.js';
 import { ServerCustodyPanel } from '../ui/ServerCustodyPanel.js';
 import { NodeReplicaPanel } from '../ui/NodeReplicaPanel.js';
+import { attachBrowserReplica } from '../browser-replica.js';
 import { assertNodeReplicaIdentity } from '../node-replica-identity.js';
 import { Settings } from './Settings.js';
 import type { ThemeId, ThemeMode, ThemeModePreference } from '../theme.js';
@@ -59,7 +60,8 @@ import {
 } from '../credential-vault.js';
 import { SYNC_LIFECYCLE_RESULT_EVENT, type LifecycleSyncResult } from '../background-sync.js';
 import { syncConfiguredServers, type ConfiguredSyncEndpoint, type ConfiguredSyncResult } from '../sync-orchestrator.js';
-import { ATTACHMENT_BATCH_EVENT, type AttachmentBatchResult } from '../attachment-sync.js';
+import { ATTACHMENT_BATCH_EVENT, ATTACHMENT_TRANSFER_PROGRESS_EVENT,
+  type AttachmentBatchResult, type AttachmentTransferProgress } from '../attachment-sync.js';
 import {
   LEDGER_KEY_STATE_CHANGED_EVENT,
   adoptLedgerKeyEnvelope,
@@ -397,6 +399,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
   const [fieldChoices, setFieldChoices] = useState<Record<string, Record<string, Record<string, string>>>>({});
   const [busy, setBusy] = useState(false);
   const [attachmentBatch, setAttachmentBatch] = useState<AttachmentBatchResult>();
+  const [attachmentTransfer, setAttachmentTransfer] = useState<AttachmentTransferProgress>();
   const [testingId, setTestingId] = useState('');
   const operations = useRef(new ProfileOperations());
   const activeOperation = useRef<ProfileOperation>();
@@ -422,6 +425,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
   const [joinTarget, setJoinTarget] = useState<{ profileId: string; ledgerId: string } | null>(null);
   const [joinConfirmation, setJoinConfirmation] = useState('');
   const [joinLedgerPassword, setJoinLedgerPassword] = useState('');
+  const [browserReplicaPassword, setBrowserReplicaPassword] = useState('');
   const deviceId = getDeviceId();
   const [devices, setDevices] = useState(listDevices());
   const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -580,7 +584,8 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
       patch = safe;
     }
     if (patch.username !== undefined && latestProfiles.current.find((row) => row.id === id)?.username !== patch.username) {
-      patch = { ...patch, accountId: undefined, role: undefined, ledgerId: undefined, replicaId: undefined, streamEpoch: undefined, status: 'login_required' };
+      patch = { ...patch, accountId: undefined, role: undefined, ledgerId: undefined,
+        replicaId: undefined, streamEpoch: undefined, browserBridge: false, status: 'login_required' };
       patchCredential(id, { password: '', inviteCode: '', accessToken: undefined, refreshToken: undefined, accessExpiresAt: undefined, sessionId: undefined, sessionTransport: undefined });
     }
     const previous = latestProfiles.current.find((row) => row.id === id);
@@ -590,6 +595,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
       || patch.expectedServerPublicKeyFingerprint !== undefined && patch.expectedServerPublicKeyFingerprint !== previous.expectedServerPublicKeyFingerprint)) {
       loginFeedbackGeneration.current++;
       operations.current.cancel(id);
+      patch = { ...patch, browserBridge: false };
     }
     const next = latestProfiles.current.map((row) => row.id === id ? { ...row, ...patch } : row);
     latestProfiles.current = next;
@@ -1163,11 +1169,11 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
     return session.accessToken;
   }
 
-  async function doSync(profile?: SyncConnection) {
+  async function doSync(profile?: SyncConnection, configuredProfiles?: SyncConnection[]) {
     setBusy(true);
     try {
       if (!ledgerKey.unlocked) throw new Error('请先解锁账本加密密钥');
-      const targets = profile ? [profile] : profiles.filter((p) => p.enabled);
+      const targets = profile ? [profile] : (configuredProfiles ?? profiles).filter((p) => p.enabled);
       if (targets.length === 0) {
         setEndpointRows([]);
         setResult(null);
@@ -1186,18 +1192,44 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
       setInvalidCommits(invalid);
       setProfiles(mergeSharedSyncDirectory(loadSyncConnections(), await loadSharedSyncDirectory(store)));
       setLastSyncAt(new Date(res.finishedAt).toLocaleString());
-      if (res.endpoints.some((row) => row.error || row.attachments?.error)) {
-        setSyncNotice(res.endpoints.flatMap((row) => [row.error, row.attachments?.error].filter((value): value is string => Boolean(value)).map((value) => `${row.alias}：${value}`)).join('；'));
+      if (res.endpoints.some((row) => row.error || row.attachments?.error || row.verificationIssue)) {
+        setSyncNotice(res.endpoints.flatMap((row) => [row.error, row.attachments?.error,
+          row.verificationIssue].filter((value): value is string => Boolean(value)).map((value) => `${row.alias}：${value}`)).join('；'));
       } else if (!res.converged) {
         setSyncNotice(`已完成 ${res.rounds} 轮同步，但仍有依赖等待收敛；下次同步会继续。`);
       } else if (res.attachmentSync.localMissing > 0) {
         setSyncNotice(`本机提交已与当前节点收敛；${res.attachmentSync.localMissing} 个附件对象保留在服务器，查看或导出时按需下载。`);
       } else {
-        setSyncNotice(`本机提交已在 ${res.rounds} 轮内与当前节点收敛；服务器后台副本状态请查看下方链路。`);
+        setSyncNotice(res.syncMode === 'browser-bridge'
+          ? `当前浏览器已在 ${res.rounds} 轮内完成服务器间同步；关闭网页后会暂停。`
+          : `本机提交已在 ${res.rounds} 轮内与当前节点收敛；服务器后台副本状态请查看下方链路。`);
       }
       bump();
     } catch (error) {
       setSyncNotice(`同步失败：${msg(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function connectBrowserReplica() {
+    if (!selected || selectedIsPrimary || !ledgerKey.unlocked) return;
+    setBusy(true);
+    setSyncNotice('正在检查目标服务器并建立当前账本的浏览器同步副本…');
+    try {
+      const identity = await attachBrowserReplica(store, selected, browserReplicaPassword);
+      const updated: SyncConnection = { ...selected, ...identity, browserBridge: true,
+        enabled: true, status: 'online', lastError: undefined };
+      const next = latestProfiles.current.map((row) => row.id === selected.id ? updated : row);
+      saveSyncConnections(next);
+      latestProfiles.current = next;
+      setProfiles(next);
+      setAutoSyncEnabled(true);
+      setBrowserReplicaPassword('');
+      setSyncNotice('账本已在目标服务器建立，正在由当前浏览器传送账目与附件…');
+      await doSync(undefined, next);
+    } catch (error) {
+      setSyncNotice(`添加云服务器失败：${msg(error)}`);
     } finally {
       setBusy(false);
     }
@@ -1310,11 +1342,16 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
     const onAttachmentBatch = (event: Event) => {
       setAttachmentBatch((event as CustomEvent<AttachmentBatchResult>).detail);
     };
+    const onAttachmentTransfer = (event: Event) => {
+      setAttachmentTransfer((event as CustomEvent<AttachmentTransferProgress>).detail);
+    };
     window.addEventListener(SYNC_LIFECYCLE_RESULT_EVENT, onResult);
     window.addEventListener(ATTACHMENT_BATCH_EVENT, onAttachmentBatch);
+    window.addEventListener(ATTACHMENT_TRANSFER_PROGRESS_EVENT, onAttachmentTransfer);
     return () => {
       window.removeEventListener(SYNC_LIFECYCLE_RESULT_EVENT, onResult);
       window.removeEventListener(ATTACHMENT_BATCH_EVENT, onAttachmentBatch);
+      window.removeEventListener(ATTACHMENT_TRANSFER_PROGRESS_EVENT, onAttachmentTransfer);
     };
   }, [autoSyncEnabled, autoSyncMinutes, credentials, ledgerKey.unlocked, profiles, store, vault.kind, vault.unlocked]);
 
@@ -1548,8 +1585,10 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
 
   const serverPanel = (
     <>
-      <NodeReplicaPanel profiles={profiles} ledgerId={ledgerKey.ledgerId}
-        pinNodeIdentity={(id, nodePublicKey) => patchProfile(id, { nodePublicKey })}
+      <NodeReplicaPanel profile={(primaryConnection?.ledgerId === ledgerKey.ledgerId ? primaryConnection : undefined)
+        ?? profiles.find((item) => item.enabled && item.serverId && item.ledgerId === ledgerKey.ledgerId)
+        ?? primaryConnection ?? selected} profiles={profiles} ledgerId={ledgerKey.ledgerId}
+        onSyncBrowser={() => void doSync()}
         onConfigureServers={() => {
           setShowSettings(true);
           requestAnimationFrame(() => document.getElementById('server-connections')
@@ -1579,7 +1618,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
           <div>
             <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>服务器配置</div>
             <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
-              每台服务器可以使用各自的账号密码和服务路径，和“账本密码”是两回事，互不影响。{vault.message}。
+              在这里连接另一台服务器。若它不在管理员同步组中，登录后可让当前浏览器把这本账同步过去。{vault.message}。
               {!isTauriRuntime() && '本站账号负责登录与缓存隔离，附加服务器独立使用令牌会话，保存在此标签页的 sessionStorage；关闭标签页后需重新登录，不覆盖本站 Cookie。'}
             </div>
           </div>
@@ -1696,6 +1735,23 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
           </div>
         )}
 
+        {selected && !selectedIsPrimary && selected.status === 'online' && selected.accountId
+          && selected.ledgerId !== ledgerKey.ledgerId && (
+          <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 14, marginBottom: 14 }}>
+            <strong>让这台服务器保存当前账本</strong>
+            <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+              仅适用于目标账号尚未记账、尚未加入服务器同步组的情况。建立后会开启自动同步；账目和图片由当前浏览器在两台服务器之间传送，关闭网页时暂停。目标服务器的账号密码仍由它单独管理。
+            </p>
+            <div style={{ display: 'flex', alignItems: 'end', gap: 10, flexWrap: 'wrap' }}>
+              <label>这台服务器的账号密码<br /><input className="zc-input" type="password"
+                autoComplete="current-password" value={browserReplicaPassword}
+                onChange={(event) => setBrowserReplicaPassword(event.target.value)} /></label>
+              <button type="button" style={primary} disabled={busy || !ledgerKey.unlocked || browserReplicaPassword.length < 8}
+                onClick={() => void connectBrowserReplica()}>{busy ? '处理中…' : '添加为浏览器同步副本'}</button>
+            </div>
+          </div>
+        )}
+
         <div style={{ overflowX: 'auto', marginBottom: 14 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead><tr><th style={thStyle}>启用</th><th style={thStyle}>别名</th><th style={thStyle}>地址</th><th style={thStyle}>用户</th><th style={thStyle}>状态</th><th style={thStyle}>延迟</th><th style={thStyle}></th></tr></thead>
@@ -1703,7 +1759,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
               {profiles.map((p) => (
                 <tr key={p.id} onClick={() => setSelectedId(p.id)} style={{ cursor: 'pointer', background: selected?.id === p.id ? 'var(--accent-soft)' : 'transparent' }}>
                   <td style={tdStyle}><span className="zc-check-target" onClick={(e) => e.stopPropagation()}><input aria-label={`启用 ${p.alias}`} type="checkbox" checked={p.enabled} disabled={isPrimaryWebConnection(p)} onChange={(e) => patchProfile(p.id, { enabled: e.target.checked })} onClick={(e) => e.stopPropagation()} /></span></td>
-                  <td style={tdStyle}>{p.alias}{isPrimaryWebConnection(p) && ' · 本站登录'}</td>
+                  <td style={tdStyle}>{p.alias}{isPrimaryWebConnection(p) && ' · 本站登录'}{p.browserBridge && ' · 浏览器同步'}</td>
                   <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{buildBaseUrl(p)}</td>
                   <td style={tdStyle}>{p.username || '—'}</td>
                   <td style={{ ...tdStyle, color: p.status === 'online' ? 'var(--positive)' : p.status === 'offline' || p.status === 'identity_changed' || p.status === 'replica_retired' ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 'var(--fw-bold)' }}>{statusText[p.status]}</td>
@@ -1840,6 +1896,17 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
             {syncNotice}
           </div>
         )}
+        {attachmentTransfer && <div role="status" style={{ fontSize: 'var(--fs-caption)', marginTop: 10 }}>
+          <div>{attachmentTransfer.alias} · 附件{attachmentTransfer.direction === 'upload' ? '上传' : '下载'}
+            {' '}{attachmentTransfer.totalBytes > 0
+              ? `${Math.min(100, Math.round(attachmentTransfer.transferredBytes / attachmentTransfer.totalBytes * 100))}%`
+              : '准备中'} · {(attachmentTransfer.transferredBytes / 1024 / 1024).toFixed(1)} /
+            {' '}{(attachmentTransfer.totalBytes / 1024 / 1024).toFixed(1)} MiB
+            {attachmentTransfer.resumedBytes > 0
+              && ` · 已续传 ${(attachmentTransfer.resumedBytes / 1024 / 1024).toFixed(1)} MiB`}</div>
+          <progress aria-label="附件传输进度" max={attachmentTransfer.totalBytes || 1}
+            value={attachmentTransfer.transferredBytes} style={{ width: '100%', maxWidth: 420 }} />
+        </div>}
         {autoSyncEnabled && attachmentBatch && (
           <div style={{ fontSize: 'var(--fs-caption)', color: attachmentBatch.error ? 'var(--negative)' : 'var(--text-secondary)', marginTop: 10 }}>
             后台附件：{profiles.find((row) => row.id === attachmentBatch.profileId)?.alias ?? attachmentBatch.profileId} ·
@@ -1872,7 +1939,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
                 {endpointRows.map((row) => (
                   <div key={row.id} className="zc-sync-result-row">
                     <div data-label="别名" style={{ color: row.error ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 'var(--fw-bold)' }}>{row.alias}</div>
-                    <div data-label="端点" style={{ color: row.error || row.attachments?.error ? 'var(--negative)' : 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.url}{row.error ? ` · ${row.error}` : row.attachments?.error ? ` · ${row.attachments.error}` : ''}</div>
+                    <div data-label="端点" style={{ color: row.error || row.attachments?.error || row.verificationIssue ? 'var(--negative)' : 'var(--fg-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.url}{row.error ? ` · ${row.error}` : row.attachments?.error ? ` · ${row.attachments.error}` : row.verificationIssue ? ` · ${row.verificationIssue}` : ''}</div>
                     <div data-label="副本 ID" style={{ color: 'var(--text-secondary)' }}>{row.identity?.replicaId ?? '—'}</div>
                     <div data-label="拉取">{row.pulled}</div><div data-label="推送">{row.pushed}</div><div data-label="游标 / Head">{row.cursor} / {row.headSeq}</div><div data-label="附件">{row.attachments ? `${row.attachments.available}/${result.attachmentSync.references} · ↑${row.attachments.uploaded}` : '—'}</div><div data-label="延迟">{row.latencyMs}ms</div>
                   </div>

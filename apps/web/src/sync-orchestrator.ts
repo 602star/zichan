@@ -26,18 +26,21 @@ import { withSyncLock } from './sync-lock.js';
 import { clientIdentity } from './client-identity.js';
 import { hasNodeReplicaGroup, preferredReplicaProfiles } from './node-replica-routing.js';
 import { reportSyncRuns } from './sync-run-reports.js';
+import { readBrowserReplicaInventory } from './browser-replica.js';
+import { accountLocalStorage } from './account-storage.js';
 
 export interface ConfiguredSyncEndpoint extends ReplicaSyncEndpointResult {
   alias: string;
   url: string;
   latencyMs: number;
   attachments?: AttachmentReplicaSyncResult;
+  verificationIssue?: string;
 }
 
 export interface ConfiguredSyncResult extends Omit<MultiReplicaSyncResult, 'endpoints'> {
   endpoints: ConfiguredSyncEndpoint[];
   attachmentSync: AttachmentSyncResult;
-  syncMode: 'node-group' | 'single-node';
+  syncMode: 'node-group' | 'browser-bridge' | 'single-node';
   finishedAt: string;
 }
 
@@ -191,18 +194,22 @@ async function syncConfiguredServersNow(
     return { id: profile.id, endpoint: buildSyncBaseUrl(profile), transport: meter.transport };
   });
   const ledgerId = typeof store.getLedgerId === 'function' ? await store.getLedgerId() : '';
-  const nodeGroup = selected.length > 1 && Boolean(ledgerId) && await hasNodeReplicaGroup(selected, ledgerId);
-  if (!nodeGroup && selected.length > 1) throw new Error('多台服务器需要先由管理员组成同步组');
+  const groupProfiles = selected.filter((profile) => !profile.browserBridge);
+  const browserProfiles = selected.filter((profile) => profile.browserBridge);
+  const nodeGroup = groupProfiles.length > 1 && Boolean(ledgerId)
+    && await hasNodeReplicaGroup(groupProfiles, ledgerId);
+  if (!nodeGroup && groupProfiles.length > 1) throw new Error('多台普通服务器需要先由管理员组成同步组');
   let result: MultiReplicaSyncResult;
   if (!nodeGroup) {
     result = await syncReplicas(store, targets);
   } else {
     const attempts: MultiReplicaSyncResult[] = [];
-    for (const profile of preferredReplicaProfiles(selected)) {
-      const target = targets.find((item) => item.id === profile.id)!;
-      const attempt = await syncReplicas(store, [target]);
+    for (const profile of preferredReplicaProfiles(groupProfiles)) {
+      const groupTarget = targets.find((item) => item.id === profile.id)!;
+      const browserTargets = targets.filter((item) => browserProfiles.some((row) => row.id === item.id));
+      const attempt = await syncReplicas(store, [groupTarget, ...browserTargets]);
       attempts.push(attempt);
-      if (!attempt.endpoints[0]?.error) break;
+      if (!attempt.endpoints.find((endpoint) => endpoint.id === groupTarget.id)?.error) break;
     }
     const latest = attempts.at(-1)!;
     const total = (field: 'applied' | 'conflicts' | 'skipped' | 'invalid' | 'pulled' | 'pushed' | 'rounds') =>
@@ -253,6 +260,54 @@ async function syncConfiguredServersNow(
       localMissing: 0,
     };
   }
+  let verificationIssue: string | undefined;
+  const verificationScope = `${ledgerId}:${selected.map((profile) => profile.id).sort().join(',')}`;
+  const verificationKey = `zichan.browser-replica-verified:${verificationScope}`;
+  const rescanKey = `zichan.browser-replica-rescan:${verificationScope}`;
+  const lastVerification = Number(accountLocalStorage?.getItem(verificationKey) ?? 0);
+  const verificationDue = !lastVerification || Date.now() - lastVerification > 24 * 60 * 60_000;
+  if (browserProfiles.length && verificationDue && result.converged
+    && result.endpoints.length > 1 && result.endpoints.every((endpoint) => !endpoint.error)
+    && !attachmentSync.endpoints.some((endpoint) => endpoint.error || endpoint.pending || endpoint.failed)) {
+    try {
+      const checked = await Promise.all(result.endpoints.filter((endpoint) => !endpoint.error)
+        .map(async (endpoint) => {
+          const profile = selected.find((row) => row.id === endpoint.id)!;
+          const inventory = await readBrowserReplicaInventory(profile);
+          if (inventory.serverId !== endpoint.identity?.serverId
+            || inventory.replicaId !== endpoint.identity.replicaId
+            || inventory.streamEpoch !== endpoint.identity.streamEpoch
+            || inventory.ledgerId !== ledgerId) throw new Error(`${profile.alias} 的账本身份已变化`);
+          return inventory;
+        }));
+      const first = checked[0];
+      if (checked.length > 1 && first) {
+        const commitsDiffer = checked.some((row) => row.commitCount !== first.commitCount
+          || row.commitHash !== first.commitHash);
+        const attachmentsDiffer = checked.some((row) => row.attachmentPromiseCurrent !== 1
+          || row.missingPromisedBlobCount !== 0 || row.promisedBlobCount !== first.promisedBlobCount
+          || row.promisedBlobHash !== first.promisedBlobHash);
+        if (commitsDiffer) {
+          verificationIssue = '服务器账目目录不一致；请再次同步以重新核对';
+          const last = Number(accountLocalStorage?.getItem(rescanKey) ?? 0);
+          if (!last || Date.now() - last > 24 * 60 * 60_000) {
+            for (const endpoint of result.endpoints) if (!endpoint.error && endpoint.identity) {
+              await store.saveReplicaState(endpoint.identity, 0, endpoint.headSeq);
+            }
+            accountLocalStorage?.setItem(rescanKey, String(Date.now()));
+          }
+        } else if (attachmentsDiffer) {
+          verificationIssue = '服务器图片目录尚未一致；下次同步会继续补传';
+        } else {
+          accountLocalStorage?.removeItem(rescanKey);
+          accountLocalStorage?.setItem(verificationKey, String(Date.now()));
+        }
+      }
+    } catch (error) {
+      verificationIssue = `无法核对服务器目录：${error instanceof Error ? error.message : String(error)}`;
+    }
+    if (verificationIssue) result.converged = false;
+  }
   const finishedAt = new Date().toISOString();
   const endpoints = result.endpoints.map((endpoint): ConfiguredSyncEndpoint => {
     const profile = selected.find((row) => row.id === endpoint.id)!;
@@ -272,7 +327,7 @@ async function syncConfiguredServersNow(
         lastSyncError: endpoint.error,
       });
     } else {
-      const syncError = attachments?.error
+      const syncError = verificationIssue ?? attachments?.error
         ?? (result.converged ? undefined : '本轮尚未完全收敛，将在下次同步继续');
       patchSavedSyncConnection(profile.id, {
         baseUrl: activeUrl,
@@ -289,16 +344,18 @@ async function syncConfiguredServersNow(
         lastSyncError: syncError,
       });
     }
-    return { ...endpoint, alias: profile.alias, url: activeUrl, latencyMs, attachments };
+    return { ...endpoint, alias: profile.alias, url: activeUrl, latencyMs, attachments,
+      verificationIssue: endpoint.error ? undefined : verificationIssue };
   });
   await reportSyncRuns(selected, endpoints.map((endpoint) => {
     const outcome = endpoint.error ? 'failed'
       : endpoint.pendingPush || endpoint.attachments?.pending || endpoint.attachments?.failed
-        || endpoint.attachments?.error || !result.converged ? 'partial' : 'converged';
+      || endpoint.attachments?.error || endpoint.verificationIssue || !result.converged ? 'partial' : 'converged';
     return { profileId: endpoint.id, runId, outcome, pulled: endpoint.pulled, pushed: endpoint.pushed,
       attachmentUploads: endpoint.attachments?.uploaded ?? 0,
       attachmentDownloads: endpoint.attachments?.downloaded ?? 0,
       durationMs: elapsedSince(startedAt) };
   })).catch(() => undefined);
-  return { ...result, endpoints, attachmentSync, syncMode: nodeGroup ? 'node-group' : 'single-node', finishedAt };
+  return { ...result, endpoints, attachmentSync,
+    syncMode: browserProfiles.length ? 'browser-bridge' : nodeGroup ? 'node-group' : 'single-node', finishedAt };
 }
