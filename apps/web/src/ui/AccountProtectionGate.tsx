@@ -131,7 +131,7 @@ export function AccountProtectionGate({ connection, children }: { connection: Sy
   return <main className="zc-protection" style={{ maxWidth: 600, margin: '10vh auto', padding: 24 }}>
     <h1>{creating ? '创建私密账本' : info?.mode === 'managed' ? '正在解锁云端账本' : '解锁私密账本'}</h1>
     {info?.mode !== 'managed' && <>
-      <p>{creating ? '保存恢复码后即可开始记账。平时用账号密码解锁；忘记账号密码后仍需恢复码找回私密账本。' : passwordEnvelope ? '输入账号密码解锁；若密码已重设或密钥包尚未更新，请用恢复码重新绑定。' : '首次迁移请用恢复码解锁并绑定账号密码。恢复码不发送给服务器。'}</p>
+      <p>{creating ? '保存恢复码后即可开始记账。平时用账号密码解锁；忘记账号密码后仍需恢复码找回私密账本。' : passwordEnvelope ? '输入账号密码解锁；若密码已重设或密钥包尚未更新，请用恢复码重新绑定。' : '此账本尚无账号密码密钥包，请用恢复码解锁并绑定账号密码。恢复码不发送给服务器。'}</p>
       {creating ? <><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', padding: 16, background: 'var(--surface-2)' }}>{code}</pre>
         <label><input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />我已把恢复码保存在此设备以外</label></>
         : <><label>账号密码<input aria-label="私密账本账号密码" type="password" autoComplete="current-password" value={accountPassword} onChange={(e) => setAccountPassword(e.target.value)} style={{ display: 'block', width: '100%', margin: '12px 0' }} /></label>

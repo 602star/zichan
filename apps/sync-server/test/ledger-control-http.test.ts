@@ -134,9 +134,6 @@ describe('ledger member HTTP authorization', () => {
       const viewer = (await viewerResponse.json() as { state: { headHash: string } }).state;
       expect((await request('/api/v3/commits', 'GET')).status).toBe(200);
       expect((await request('/api/v3/commits', 'POST', { commits: [] })).status).toBe(403);
-      expect((await request('/api/v3/blobs/legacy-migrations', 'POST', {
-        legacyBlobId: 'a'.repeat(64), portableBlobId: 'b'.repeat(64),
-      })).status).toBe(403);
       expect((await request('/api/v3/key-envelope', 'GET')).status).toBe(403);
       expect((await request('/api/v3/protection', 'GET')).status).toBe(403);
       expect((await request('/api/v4/ledger/control', 'GET')).status).toBe(200);
@@ -159,9 +156,6 @@ describe('ledger member HTTP authorization', () => {
       expect((await request('/api/v4/ledger/member-envelope', 'GET')).status).toBe(403);
       expect((await request('/api/v3/key-envelope', 'GET')).status).toBe(403);
       expect((await request('/api/v3/blobs/status', 'POST', { blobIds: [] })).status).toBe(403);
-      expect((await request('/api/v3/blobs/legacy-migrations', 'POST', {
-        legacyBlobId: 'a'.repeat(64), portableBlobId: 'b'.repeat(64),
-      })).status).toBe(403);
     } finally {
       await store?.close();
       await server.close();

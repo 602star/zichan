@@ -6,7 +6,7 @@ import { NodeSqliteDriver } from '@zichan/db/node';
 import { assertServerStopped, createServerBackup, verifyServerBackup } from './backup.js';
 import { assertIndependentNodeBackupPath, inspectNodeRetirement } from './retire-node.js';
 import { LOCAL_REPLICA_RETIREMENT_MARKER } from './replica-retirement-guard.js';
-import { RETIRED_SERVER_SCHEMA, RETIRED_SERVER_SCHEMA_NAME } from './store.js';
+import { CURRENT_SERVER_SCHEMA, CURRENT_SERVER_SCHEMA_NAME } from './store.js';
 
 export { LOCAL_REPLICA_RETIREMENT_MARKER, assertNoPendingLocalReplicaRetirement } from './replica-retirement-guard.js';
 const ID = /^[A-Za-z0-9_-]{8,128}$/;
@@ -87,14 +87,14 @@ export async function inspectLocalReplicaRetirement(dataDirValue: string,
     const issues: string[] = [];
     const schema = await db.get<{ version: number; name: string }>(
       'SELECT version, name FROM server_schema_migrations');
-    if (schema?.version !== RETIRED_SERVER_SCHEMA || schema.name !== RETIRED_SERVER_SCHEMA_NAME) {
-      issues.push('须先在停服维护窗口完成 retire-legacy-shadow 并验证 schema 25');
+    if (schema?.version !== CURRENT_SERVER_SCHEMA || schema?.name !== CURRENT_SERVER_SCHEMA_NAME) {
+      issues.push('数据库版本与当前服务不一致');
     }
     const parallel = await db.get<{ count: number }>(
       'SELECT COUNT(*) AS count FROM ledger_replica_slots WHERE ledger_id = ? AND replica_id <> ?',
       [ledgerId, replicaId]);
     if (Number(parallel?.count ?? 0)) issues.push('同一账本 ID 还有独立副本槽位，归属不能自动判定');
-    for (const table of ['blob_objects', 'blob_replica_states', 'blob_uploads', 'blob_v1_migrations']) {
+    for (const table of ['blob_objects', 'blob_replica_states', 'blob_uploads']) {
       const row = await db.get<{ count: number }>(
         `SELECT COUNT(*) AS count FROM ${table} WHERE ledger_id = ?
           AND (replica_id IS NULL OR replica_id <> ?)`, [ledgerId, replicaId]);
@@ -150,7 +150,7 @@ async function removeReplicaRows(dataDir: string, pending: PendingRetirement): P
       const other = await tx.get('SELECT 1 FROM ledger_replica_slots WHERE ledger_id = ? AND replica_id <> ?',
         [pending.ledgerId, pending.replicaId]);
       if (other) throw new Error('同账本 ID 出现其他副本槽位；已停止清理');
-      for (const table of ['blob_objects', 'blob_replica_states', 'blob_uploads', 'blob_v1_migrations']) {
+      for (const table of ['blob_objects', 'blob_replica_states', 'blob_uploads']) {
         if (await tx.get(`SELECT 1 FROM ${table} WHERE ledger_id = ? AND (replica_id IS NULL OR replica_id <> ?) LIMIT 1`,
           [pending.ledgerId, pending.replicaId])) throw new Error(`${table} 归属已变化；已停止清理`);
       }
@@ -163,13 +163,9 @@ async function removeReplicaRows(dataDir: string, pending: PendingRetirement): P
       await tx.run(`DELETE FROM blob_upload_chunks WHERE upload_id IN
         (SELECT upload_id FROM blob_uploads WHERE ledger_id = ? AND replica_id = ?)`,
       [pending.ledgerId, pending.replicaId]);
-      for (const table of ['blob_uploads', 'blob_objects', 'blob_replica_states', 'blob_v1_migrations']) {
+      for (const table of ['blob_uploads', 'blob_objects', 'blob_replica_states']) {
         await tx.run(`DELETE FROM ${table} WHERE ledger_id = ? AND replica_id = ?`,
           [pending.ledgerId, pending.replicaId]);
-      }
-      for (const table of ['blob_ownership_decisions', 'blob_state_ownership_decisions',
-        'blob_upload_ownership_decisions']) {
-        await tx.run(`DELETE FROM ${table} WHERE ledger_id = ?`, [pending.ledgerId]);
       }
       await tx.run('DELETE FROM node_replication_links WHERE ledger_id = ?', [pending.ledgerId]);
       await tx.run('DELETE FROM node_replication_grants WHERE ledger_id = ?', [pending.ledgerId]);

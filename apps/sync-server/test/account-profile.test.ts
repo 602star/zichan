@@ -50,10 +50,13 @@ describe('account profile', () => {
       await registerAccount(url, 'member', 'account-password');
       const owner = await loginAccount(url, 'owner', 'account-password');
       const member = await loginAccount(url, 'member', 'account-password');
+      const catalog = new SyncServerStore(join(server.dataDir, 'server.sqlite'), 'open', server.serverId);
+      const replica = await catalog.bindReplica('owner', 'test-ledger');
+      await catalog.close();
       const driver = new NodeSqliteDriver(join(server.dataDir, 'server.sqlite'));
       try {
         await driver.run('INSERT INTO sync_user_quotas (username, commit_quota_bytes, updated_at) VALUES (?, ?, ?)', ['owner', 1024, new Date().toISOString()]);
-        await driver.run('INSERT INTO sync_server_commits (username, seq, commit_id, ledger_id, content_hash, enc_commit_json, cipher_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', ['owner', 1, 'test-commit', 'test-ledger', 'hash', '{}', 2048, new Date().toISOString()]);
+        await driver.run('INSERT INTO ledger_replica_commits (replica_id, seq, commit_id, ledger_id, content_hash, enc_commit_json, cipher_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [replica.replicaId, 1, 'test-commit', 'test-ledger', 'hash', '{}', 2048, new Date().toISOString()]);
       } finally { await driver.close(); }
 
       const read = async (token?: string, query = '') => fetch(`${url}/api/auth/usage${query}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });

@@ -17,6 +17,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { NodeSqliteDriver } from '@zichan/db/node';
+import { CURRENT_SERVER_SCHEMA, CURRENT_SERVER_SCHEMA_NAME } from './store.js';
 
 const BLOB_ID = /^[a-f0-9]{64}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -44,6 +45,8 @@ export interface BlobManifest {
 
 export interface BlobStoreOptions {
   dataDir?: string;
+  /** Reject unmarked server data before catalog recovery can write to it. */
+  enforceFreshServerSchema?: boolean;
   quotaBytes?: number;
   maxBlobBytes?: number;
   uploadTtlMs?: number;
@@ -76,21 +79,6 @@ export interface BlobUsage {
   trashCount: number;
   stagingBytes: number;
   stagingCount: number;
-}
-
-export interface UnownedReplicaRecord {
-  kind: 'object' | 'state' | 'upload';
-  username: string;
-  ledgerId: string;
-  blobId: string;
-  recordId: string;
-  replicaId: string | null;
-  candidateReplicaIds: string[];
-  namespaceMatches: string[];
-  state: string;
-  formatVersion: number | null;
-  cipherBytes: number | null;
-  createdAt: string;
 }
 
 export interface BlobVerificationResult {
@@ -159,42 +147,6 @@ interface ObjectCatalog {
   createdAt: string;
   deletedAt?: string;
   manifest: BlobManifest;
-  ownershipDecision?: BlobOwnershipDecision;
-}
-
-export interface BlobOwnershipDecision {
-  decisionId: string;
-  kind: 'object';
-  username: string;
-  ledgerId: string;
-  blobId: string;
-  fromReplicaId: string | null;
-  toReplicaId: string;
-  actorAccountId: string;
-  reason: string;
-  decidedAt: string;
-}
-
-export interface BlobStateOwnershipDecision extends Omit<BlobOwnershipDecision, 'kind'> {
-  kind: 'state';
-}
-
-export interface BlobUploadOwnershipDecision extends Omit<BlobOwnershipDecision, 'kind'> {
-  kind: 'upload';
-  uploadId: string;
-}
-
-function validOwnershipDecision(value: unknown): value is BlobOwnershipDecision {
-  if (!value || typeof value !== 'object') return false;
-  const row = value as Partial<BlobOwnershipDecision>;
-  return typeof row.decisionId === 'string' && /^[a-f0-9]{32}$/.test(row.decisionId)
-    && row.kind === 'object' && typeof row.username === 'string'
-    && typeof row.ledgerId === 'string' && typeof row.blobId === 'string' && BLOB_ID.test(row.blobId)
-    && (row.fromReplicaId === null || typeof row.fromReplicaId === 'string')
-    && typeof row.toReplicaId === 'string' && /^[A-Za-z0-9_-]{8,128}$/.test(row.toReplicaId)
-    && typeof row.actorAccountId === 'string' && row.actorAccountId.length > 0
-    && typeof row.reason === 'string' && row.reason.length >= 12 && row.reason.length <= 500
-    && typeof row.decidedAt === 'string' && Number.isFinite(Date.parse(row.decidedAt));
 }
 
 function nowIso(): string {
@@ -332,6 +284,7 @@ export class EncryptedBlobStore {
   private readonly uploadTtlMs: number;
   private readonly trashRetentionMs: number;
   private readonly isUnlimitedAccount?: (username: string) => Promise<boolean>;
+  private readonly enforceFreshServerSchema: boolean;
   private replicaIdResolver?: (username: string, ledgerId: string) => Promise<string>;
   private replicationNodeId = 'local';
   private uploadLock: Promise<void> = Promise.resolve();
@@ -348,6 +301,7 @@ export class EncryptedBlobStore {
     this.dataDir = resolve(options.dataDir ?? mkdtempSync(join(tmpdir(), 'zichan-sync-blobs-')));
     mkdirSync(this.dataDir, { recursive: true });
     this.driver = new NodeSqliteDriver(join(this.dataDir, 'server.sqlite'));
+    this.enforceFreshServerSchema = options.enforceFreshServerSchema ?? false;
     this.quotaBytes = options.quotaBytes ?? DEFAULT_QUOTA_BYTES;
     this.isUnlimitedAccount = options.isUnlimitedAccount;
     this.maxBlobBytes = options.maxBlobBytes ?? DEFAULT_MAX_BLOB_BYTES;
@@ -357,10 +311,36 @@ export class EncryptedBlobStore {
     void this.ready.then(() => {
       this.cleanupTimer = setInterval(() => { void this.runCleanup(); }, 60 * 60 * 1000);
       this.cleanupTimer.unref?.();
-    });
+    }, () => undefined);
   }
 
   private async initialize(): Promise<void> {
+    const existingTables = this.enforceFreshServerSchema ? (await this.driver.all<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+    )).map((row) => row.name) : [];
+    const hasServerSchema = await this.driver.get(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'server_schema_migrations'");
+    if (this.enforceFreshServerSchema && existingTables.length && !hasServerSchema) {
+      const allowed = new Set(['blob_objects', 'blob_replica_states', 'blob_uploads',
+        'blob_user_quotas', 'blob_upload_chunks']);
+      if (existingTables.some((table) => !allowed.has(table))) {
+        throw new Error('同步服务器数据库不是当前全新部署结构，请使用空数据目录重新部署');
+      }
+      for (const table of existingTables) {
+        const row = await this.driver.get<{ count: number }>(`SELECT COUNT(*) AS count FROM ${table}`);
+        if (Number(row?.count ?? 0)) {
+          throw new Error('同步服务器数据库已有旧数据，请使用空数据目录重新部署');
+        }
+      }
+    }
+    if (hasServerSchema) {
+      const marker = await this.driver.all<{ version: number; name: string }>(
+        'SELECT version, name FROM server_schema_migrations');
+      if (marker.length !== 1 || marker[0]?.version !== CURRENT_SERVER_SCHEMA
+        || marker[0]?.name !== CURRENT_SERVER_SCHEMA_NAME) {
+        throw new Error('同步服务器数据库版本不匹配；开发期不升级旧库，请使用空数据目录重新部署');
+      }
+    }
     await this.driver.exec(`
 PRAGMA temp_store = MEMORY;
 PRAGMA journal_mode = WAL;
@@ -385,17 +365,6 @@ CREATE TABLE IF NOT EXISTS blob_objects (
 );
 CREATE INDEX IF NOT EXISTS idx_blob_objects_usage ON blob_objects (username, state);
 CREATE INDEX IF NOT EXISTS idx_blob_objects_replication ON blob_objects (username, ledger_id, state, json_extract(manifest_json, '$.v'), blob_id);
-CREATE TABLE IF NOT EXISTS blob_v1_migrations (
-  replica_id TEXT NOT NULL,
-  ledger_id TEXT NOT NULL,
-  legacy_blob_id TEXT NOT NULL,
-  portable_blob_id TEXT NOT NULL,
-  actor_account_id TEXT,
-  migrated_at TEXT NOT NULL,
-  PRIMARY KEY (replica_id, legacy_blob_id)
-);
-CREATE INDEX IF NOT EXISTS idx_blob_v1_migrations_ledger_legacy
-  ON blob_v1_migrations (ledger_id, legacy_blob_id, replica_id);
 CREATE TABLE IF NOT EXISTS blob_replica_states (
   username TEXT NOT NULL,
   ledger_id TEXT NOT NULL,
@@ -437,47 +406,7 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (upload_id, chunk_index)
 );
-CREATE TABLE IF NOT EXISTS blob_ownership_decisions (
-  decision_id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind = 'object'),
-  username TEXT NOT NULL,
-  ledger_id TEXT NOT NULL,
-  blob_id TEXT NOT NULL,
-  from_replica_id TEXT,
-  to_replica_id TEXT NOT NULL,
-  actor_account_id TEXT NOT NULL,
-  reason TEXT NOT NULL,
-  decided_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS blob_state_ownership_decisions (
-  decision_id TEXT PRIMARY KEY,
-  username TEXT NOT NULL,
-  ledger_id TEXT NOT NULL,
-  blob_id TEXT NOT NULL,
-  from_replica_id TEXT,
-  to_replica_id TEXT NOT NULL,
-  actor_account_id TEXT NOT NULL,
-  reason TEXT NOT NULL,
-  decided_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
-  decision_id TEXT PRIMARY KEY,
-  upload_id TEXT NOT NULL,
-  username TEXT NOT NULL,
-  ledger_id TEXT NOT NULL,
-  blob_id TEXT NOT NULL,
-  from_replica_id TEXT,
-  to_replica_id TEXT NOT NULL,
-  actor_account_id TEXT NOT NULL,
-  reason TEXT NOT NULL,
-  decided_at TEXT NOT NULL,
-  resumed_at TEXT
-);`);
-    await this.ensureColumn('blob_objects', 'replica_id', 'TEXT');
-    await this.ensureColumn('blob_v1_migrations', 'actor_account_id', 'TEXT');
-    await this.ensureColumn('blob_replica_states', 'replica_id', 'TEXT');
-    await this.ensureColumn('blob_uploads', 'replica_id', 'TEXT');
-    await this.ensureColumn('blob_upload_ownership_decisions', 'resumed_at', 'TEXT');
+`);
     await this.driver.exec(`CREATE INDEX IF NOT EXISTS idx_blob_objects_slot ON blob_objects
       (replica_id, state, json_extract(manifest_json, '$.v'), blob_id);
       CREATE UNIQUE INDEX IF NOT EXISTS uq_blob_objects_slot_id ON blob_objects (replica_id, blob_id)
@@ -489,25 +418,12 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
       CREATE UNIQUE INDEX IF NOT EXISTS uq_blob_uploads_slot_id ON blob_uploads (replica_id, blob_id)
         WHERE replica_id IS NOT NULL;`);
     await this.recoverCatalog();
-    // Older V2 trash predates the replicated state log. Preserve its deletion
-    // before cleanup removes the recoverable ciphertext directory.
-    await this.driver.run(`INSERT OR IGNORE INTO blob_replica_states
-      (username, ledger_id, replica_id, blob_id, state, counter, writer_node_id, changed_at)
-      SELECT username, ledger_id, replica_id, blob_id, 'trash', 1, 'migration', COALESCE(deleted_at, updated_at)
-      FROM blob_objects WHERE state = 'trash' AND json_extract(manifest_json, '$.v') = 2`);
     await this.cleanup();
   }
 
   private objectDir(state: 'available' | 'trash', ns: string, blobId: string): string {
     if (!HASH.test(ns) || !BLOB_ID.test(blobId)) throw new Error('invalid attachment object path');
     return join(this.dataDir, 'blobs', state === 'available' ? 'objects' : 'trash', ns, blobId.slice(0, 2), blobId);
-  }
-
-  private async ensureColumn(table: string, column: string, definition: string): Promise<void> {
-    const columns = await this.driver.all<{ name: string }>(`PRAGMA table_info(${table})`);
-    if (!columns.some((row) => row.name === column)) {
-      await this.driver.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-    }
   }
 
   private uploadDir(ns: string, uploadId: string): string {
@@ -537,29 +453,7 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
               catalog.createdAt, at, catalog.deletedAt ?? null,
             ],
           );
-          const decision = catalog.ownershipDecision;
-          if (decision !== undefined) {
-            if (!validOwnershipDecision(decision) || decision.username !== catalog.username
-              || decision.ledgerId !== catalog.ledgerId || decision.blobId !== catalog.blobId
-              || decision.toReplicaId !== catalog.replicaId) {
-              throw new Error('附件归属决定与对象侧写不一致，已停止启动');
-            }
-            await driver.run(`INSERT OR IGNORE INTO blob_ownership_decisions
-              (decision_id, kind, username, ledger_id, blob_id, from_replica_id,
-                to_replica_id, actor_account_id, reason, decided_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [decision.decisionId, decision.kind, decision.username, decision.ledgerId,
-              decision.blobId, decision.fromReplicaId, decision.toReplicaId,
-              decision.actorAccountId, decision.reason, decision.decidedAt]);
-            const recorded = await driver.get(`SELECT 1 FROM blob_ownership_decisions
-              WHERE decision_id = ? AND kind = ? AND username = ? AND ledger_id = ?
-                AND blob_id = ? AND from_replica_id IS ? AND to_replica_id = ?
-                AND actor_account_id = ? AND reason = ? AND decided_at = ?`,
-            [decision.decisionId, decision.kind, decision.username, decision.ledgerId,
-              decision.blobId, decision.fromReplicaId, decision.toReplicaId,
-              decision.actorAccountId, decision.reason, decision.decidedAt]);
-            if (!recorded) throw new Error('附件归属决定与对象侧写不一致，已停止启动');
-          }
+
         }
       }
     });
@@ -586,21 +480,9 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
         'SELECT username FROM sync_replicas WHERE replica_id = ?', [replicaId]);
       quotaOwner = owner?.username ?? username;
     }
-    // A migrated V1 remains on disk for recovery, but its available V2 replaces
-    // it for logical quota accounting. Restoring or losing V2 charges V1 again.
-    const migratedLegacyFilter = ` AND NOT (
-      item.state = 'available' AND json_extract(item.manifest_json, '$.v') = 1
-      AND EXISTS (SELECT 1 FROM blob_v1_migrations migration
-        JOIN blob_objects portable ON portable.replica_id = migration.replica_id
-          AND portable.ledger_id = migration.ledger_id
-          AND portable.blob_id = migration.portable_blob_id
-        WHERE migration.ledger_id = item.ledger_id
-          AND migration.legacy_blob_id = item.blob_id
-          AND (item.replica_id IS NULL OR item.replica_id = migration.replica_id)
-          AND portable.state = 'available' AND json_extract(portable.manifest_json, '$.v') = 2))`;
     const rows = await this.driver.all<{ state: string; bytes: number; count: number }>(
       `SELECT state, COALESCE(SUM(cipher_bytes), 0) AS bytes, COUNT(*) AS count FROM blob_objects item
-        WHERE ${scope}${migratedLegacyFilter} GROUP BY state`,
+        WHERE ${scope} GROUP BY state`,
       params,
     );
     const staging = await this.driver.get<{ bytes: number; count: number }>(
@@ -650,476 +532,6 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
     return this.usage(username);
   }
 
-  /** Persist ownership inferred from a live route or a retained replacement checkpoint. */
-  async reconcileReplicaOwnership(): Promise<{
-    objectsUpdated: number; statesUpdated: number; uploadsUpdated: number;
-    unownedObjects: number; unownedStates: number; unownedUploads: number;
-  }> {
-    await this.ready;
-    const marker = await this.driver.get<{ value: string }>(
-      "SELECT value FROM server_meta WHERE key = 'blob_ownership_sidecars_v1'");
-    const fullPass = marker?.value !== 'complete';
-    const candidateCache = new Map<string, string[]>();
-    const candidates = async (username: string, ledgerId: string): Promise<string[]> => {
-      const key = `${username.toLowerCase()}\0${ledgerId}`;
-      const cached = candidateCache.get(key);
-      if (cached) return cached;
-      const rows = await this.driver.all<{ replica_id: string }>(`SELECT replica_id FROM (
-        SELECT route.replica_id FROM ledger_account_routes route
-          JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-          WHERE route.username = ? AND slot.ledger_id = ?
-        UNION
-        SELECT checkpoint.replica_id FROM ledger_replacement_checkpoints checkpoint
-          JOIN ledger_replica_slots slot ON slot.replica_id = checkpoint.replica_id
-          WHERE checkpoint.username = ? AND checkpoint.ledger_id = ?
-            AND slot.ledger_id = checkpoint.ledger_id
-      )`, [username, ledgerId, username, ledgerId]);
-      const ids = rows.map((row) => row.replica_id);
-      candidateCache.set(key, ids);
-      return ids;
-    };
-    const resolveReplica = async (username: string, ledgerId: string,
-      physicalNamespace?: string, sidecarReplicaId?: string): Promise<string | undefined> => {
-      const ids = await candidates(username, ledgerId);
-      if (sidecarReplicaId) return ids.includes(sidecarReplicaId) ? sidecarReplicaId : undefined;
-      if (physicalNamespace) {
-        const matches = ids.filter((id) => replicaNamespace(ledgerId, id) === physicalNamespace);
-        if (matches.length === 1) return matches[0];
-      }
-      return ids.length === 1 ? ids[0] : undefined;
-    };
-    let objectsUpdated = 0;
-    let cursor = ['', '', ''];
-    while (true) {
-      const rows = await this.driver.all<Record<string, unknown>>(`SELECT username, ledger_id,
-        replica_id, blob_id, namespace, state FROM blob_objects
-        WHERE (username, ledger_id, blob_id) > (?, ?, ?)
-          ${fullPass ? '' : 'AND replica_id IS NULL'}
-        ORDER BY username, ledger_id, blob_id LIMIT 200`, cursor);
-      for (const row of rows) {
-        const username = String(row['username']);
-        const ledgerId = String(row['ledger_id']);
-        const blobId = String(row['blob_id']);
-        cursor = [username, ledgerId, blobId];
-        const state = row['state'] === 'trash' ? 'trash' : 'available';
-        const physicalNamespace = String(row['namespace']);
-        const path = this.objectDir(state, physicalNamespace, blobId);
-        const catalog = catalogAt(path);
-        const replicaId = row['replica_id'] == null
-          ? await resolveReplica(username, ledgerId, physicalNamespace, catalog?.replicaId)
-          : String(row['replica_id']);
-        if (!replicaId) continue;
-        const slot = await this.driver.get<{ ledger_id: string }>(
-          'SELECT ledger_id FROM ledger_replica_slots WHERE replica_id = ?', [replicaId]);
-        if (!slot) continue; // Preserve an old sidecar until a verified backup restores its slot.
-        if (slot.ledger_id !== ledgerId) throw new Error('附件归属与账本副本槽位不一致，已停止启动');
-        if (!catalog || catalog.username !== username || catalog.ledgerId !== ledgerId
-          || catalog.blobId !== blobId || catalog.state !== state
-          || catalog.replicaId && catalog.replicaId !== replicaId) {
-          throw new Error('附件侧写与 SQLite 归属不一致，已停止启动');
-        }
-        if (catalog.replicaId !== replicaId) {
-          atomicJson(join(path, 'object.json'), { ...catalog, replicaId });
-          objectsUpdated += 1;
-        }
-        if (row['replica_id'] == null) await this.driver.run(`UPDATE blob_objects SET replica_id = ?
-          WHERE username = ? AND ledger_id = ? AND blob_id = ? AND replica_id IS NULL`,
-        [replicaId, username, ledgerId, blobId]);
-      }
-      if (rows.length < 200) break;
-    }
-    const updateMetadata = async (table: 'blob_replica_states' | 'blob_uploads'): Promise<number> => {
-      let updated = 0;
-      let afterRowId = 0;
-      while (true) {
-        const rows = await this.driver.all<{ rowid: number; username: string; ledger_id: string;
-          blob_id: string; namespace: string | null }>(
-          `SELECT rowid, username, ledger_id, blob_id,
-            ${table === 'blob_uploads' ? 'namespace' : 'NULL AS namespace'} FROM ${table}
-            WHERE replica_id IS NULL AND rowid > ? ORDER BY rowid LIMIT 200`, [afterRowId]);
-        for (const row of rows) {
-          afterRowId = Number(row.rowid);
-          const object = table === 'blob_replica_states' ? await this.driver.get<{ replica_id: string | null }>(
-            `SELECT replica_id FROM blob_objects WHERE username = ? AND ledger_id = ? AND blob_id = ?`,
-            [row.username, row.ledger_id, row.blob_id]) : undefined;
-          const replicaId = await resolveReplica(row.username, row.ledger_id,
-            row.namespace ?? undefined, object?.replica_id ?? undefined);
-          if (replicaId) {
-            await this.driver.run(`UPDATE ${table} SET replica_id = ? WHERE rowid = ? AND replica_id IS NULL`,
-              [replicaId, row.rowid]);
-            updated += 1;
-          }
-        }
-        if (rows.length < 200) break;
-      }
-      return updated;
-    };
-    const statesUpdated = await updateMetadata('blob_replica_states');
-    const uploadsUpdated = await updateMetadata('blob_uploads');
-    if (fullPass) await this.driver.run(`INSERT INTO server_meta (key, value, updated_at)
-      VALUES ('blob_ownership_sidecars_v1', 'complete', ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, [nowIso()]);
-    const count = async (table: 'blob_objects' | 'blob_replica_states' | 'blob_uploads'): Promise<number> =>
-      Number((await this.driver.get<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM ${table} object
-          LEFT JOIN ledger_replica_slots slot ON slot.replica_id = object.replica_id
-          WHERE object.replica_id IS NULL OR slot.replica_id IS NULL
-            OR slot.ledger_id <> object.ledger_id`))?.count ?? 0);
-    return { objectsUpdated, statesUpdated, uploadsUpdated,
-      unownedObjects: await count('blob_objects'),
-      unownedStates: await count('blob_replica_states'),
-      unownedUploads: await count('blob_uploads') };
-  }
-
-  async unownedReplicaRecords(): Promise<{ objects: number; states: number; uploads: number }> {
-    await this.ready;
-    const count = async (table: 'blob_objects' | 'blob_replica_states' | 'blob_uploads'): Promise<number> =>
-      Number((await this.driver.get<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM ${table} object
-          LEFT JOIN ledger_replica_slots slot ON slot.replica_id = object.replica_id
-          WHERE object.replica_id IS NULL OR slot.replica_id IS NULL
-            OR slot.ledger_id <> object.ledger_id`))?.count ?? 0);
-    return { objects: await count('blob_objects'), states: await count('blob_replica_states'),
-      uploads: await count('blob_uploads') };
-  }
-
-  /** Bounded inventory for a human to investigate; this never assigns ownership. */
-  async listUnownedReplicaRecords(kind: UnownedReplicaRecord['kind'], cursor = '', limit = 50): Promise<{
-    records: UnownedReplicaRecord[]; nextCursor?: string;
-  }> {
-    await this.ready;
-    if (!['object', 'state', 'upload'].includes(kind) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
-      throw new Error('invalid unowned attachment query');
-    }
-    let after = ['', '', ''];
-    if (cursor) {
-      if (cursor.length > 1024 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw new Error('invalid unowned attachment cursor');
-      try {
-        const decoded: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
-        if (!Array.isArray(decoded) || decoded.length !== 3 || !decoded.every((part) =>
-          typeof part === 'string' && part.length <= 256)) throw new Error('invalid cursor');
-        after = decoded as string[];
-      } catch { throw new Error('invalid unowned attachment cursor'); }
-    }
-    const source = kind === 'object'
-      ? { table: 'blob_objects', key: 'blob_id', state: 'record.state', namespace: 'record.namespace',
-        format: "json_extract(record.manifest_json, '$.v')",
-        bytes: 'record.cipher_bytes', at: 'record.created_at' }
-      : kind === 'state'
-        ? { table: 'blob_replica_states', key: 'blob_id', state: 'record.state', namespace: 'NULL',
-          format: 'NULL', bytes: 'NULL', at: 'record.changed_at' }
-        : { table: 'blob_uploads', key: 'upload_id', state: "'staging'", namespace: 'record.namespace',
-          format: "json_extract(record.manifest_json, '$.v')",
-          bytes: 'record.cipher_bytes', at: 'record.created_at' };
-    const rows = await this.driver.all<{ username: string; ledger_id: string; blob_id: string;
-      record_id: string; replica_id: string | null; namespace: string | null; state: string;
-      format_version: number | null; cipher_bytes: number | null; created_at: string }>(`SELECT record.username, record.ledger_id, record.blob_id,
-        record.${source.key} AS record_id, record.replica_id, ${source.namespace} AS namespace,
-        ${source.state} AS state, ${source.format} AS format_version,
-        ${source.bytes} AS cipher_bytes, ${source.at} AS created_at
-        FROM ${source.table} record LEFT JOIN ledger_replica_slots slot ON slot.replica_id = record.replica_id
-        WHERE (record.replica_id IS NULL OR slot.replica_id IS NULL OR slot.ledger_id <> record.ledger_id)
-          AND (record.username, record.ledger_id, record.${source.key}) > (?, ?, ?)
-        ORDER BY record.username, record.ledger_id, record.${source.key} LIMIT ?`,
-    [...after, limit + 1]);
-    const selected = rows.slice(0, limit);
-    const candidateCache = new Map<string, string[]>();
-    const records: UnownedReplicaRecord[] = [];
-    for (const row of selected) {
-      const candidateKey = `${row.username.toLowerCase()}\0${row.ledger_id}`;
-      let candidateReplicaIds = candidateCache.get(candidateKey);
-      if (!candidateReplicaIds) {
-        const candidates = await this.driver.all<{ replica_id: string }>(`SELECT replica_id FROM (
-          SELECT route.replica_id FROM ledger_account_routes route
-            JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-            WHERE route.username = ? AND slot.ledger_id = ?
-          UNION
-          SELECT checkpoint.replica_id FROM ledger_replacement_checkpoints checkpoint
-            JOIN ledger_replica_slots slot ON slot.replica_id = checkpoint.replica_id
-            WHERE checkpoint.username = ? AND checkpoint.ledger_id = ?
-        ) ORDER BY replica_id`, [row.username, row.ledger_id, row.username, row.ledger_id]);
-        candidateReplicaIds = candidates.map((candidate) => candidate.replica_id);
-        candidateCache.set(candidateKey, candidateReplicaIds);
-      }
-      records.push({ kind, username: row.username, ledgerId: row.ledger_id,
-        blobId: row.blob_id, recordId: row.record_id, replicaId: row.replica_id,
-        candidateReplicaIds, namespaceMatches: row.namespace
-          ? candidateReplicaIds.filter((id) => replicaNamespace(row.ledger_id, id) === row.namespace) : [],
-        state: row.state, formatVersion: row.format_version == null ? null : Number(row.format_version),
-        cipherBytes: row.cipher_bytes == null ? null : Number(row.cipher_bytes),
-        createdAt: row.created_at });
-    }
-    const last = selected.at(-1);
-    return { records, ...(rows.length > limit && last ? {
-      nextCursor: Buffer.from(JSON.stringify([last.username, last.ledger_id, last.record_id])).toString('base64url'),
-    } : {}) };
-  }
-
-  private async assertOwnershipCandidate(username: string, ledgerId: string, replicaId: string): Promise<void> {
-    const candidates = await this.driver.all<{ replica_id: string }>(`SELECT replica_id FROM (
-      SELECT route.replica_id FROM ledger_account_routes route
-        JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-        WHERE route.username = ? AND slot.ledger_id = ?
-      UNION
-      SELECT checkpoint.replica_id FROM ledger_replacement_checkpoints checkpoint
-        JOIN ledger_replica_slots slot ON slot.replica_id = checkpoint.replica_id
-        WHERE checkpoint.username = ? AND checkpoint.ledger_id = ?
-    )`, [username, ledgerId, username, ledgerId]);
-    if (!candidates.some((candidate) => candidate.replica_id === replicaId)) {
-      throw Object.assign(new Error('target is not a verified historical replica candidate'),
-        { code: 'REPLICA_CANDIDATE_REQUIRED' });
-    }
-  }
-
-  /** Explicit recovery of one V2 object; the sidecar survives SQLite catalog rebuilding. */
-  async assignUnownedObject(input: { username: string; ledgerId: string; blobId: string;
-    replicaId: string; actorAccountId: string; reason: string }): Promise<BlobOwnershipDecision> {
-    await this.ready;
-    const { username, ledgerId, blobId, replicaId, actorAccountId } = input;
-    const reason = input.reason.trim();
-    if (!username || !ledgerId || !BLOB_ID.test(blobId) || !/^[A-Za-z0-9_-]{8,128}$/.test(replicaId)
-      || !actorAccountId || reason.length < 12 || reason.length > 500) {
-      throw Object.assign(new Error('invalid attachment ownership decision'), { code: 'INVALID_OWNERSHIP_DECISION' });
-    }
-    return this.withUploadLock(async () => {
-      await this.assertOwnershipCandidate(username, ledgerId, replicaId);
-      const row = await this.driver.get<Record<string, unknown>>(`SELECT object.* FROM blob_objects object
-        LEFT JOIN ledger_replica_slots slot ON slot.replica_id = object.replica_id
-        WHERE object.username = ? AND object.ledger_id = ? AND object.blob_id = ?
-          AND (object.replica_id IS NULL OR slot.replica_id IS NULL OR slot.ledger_id <> object.ledger_id)`,
-      [username, ledgerId, blobId]);
-      if (!row || (JSON.parse(String(row['manifest_json'])) as BlobManifest).v !== 2) {
-        throw Object.assign(new Error('unowned V2 object no longer exists'), { code: 'UNOWNED_OBJECT_NOT_FOUND' });
-      }
-      const physicalNamespace = String(row['namespace']);
-      if (physicalNamespace !== namespace(username, ledgerId)
-        && physicalNamespace !== replicaNamespace(ledgerId, replicaId)) {
-        throw Object.assign(new Error('physical namespace points to another replica'),
-          { code: 'OBJECT_NAMESPACE_CONFLICT' });
-      }
-      const state = row['state'] === 'trash' ? 'trash' : 'available';
-      const path = this.objectDir(state, physicalNamespace, blobId);
-      const catalog = catalogAt(path);
-      const fromReplicaId = row['replica_id'] == null ? null : String(row['replica_id']);
-      if (!catalog || catalog.username !== username || catalog.ledgerId !== ledgerId
-        || catalog.blobId !== blobId || catalog.state !== state
-        || JSON.stringify(catalog.manifest) !== String(row['manifest_json'])
-        || catalog.replicaId && catalog.replicaId !== fromReplicaId) {
-        throw Object.assign(new Error('object sidecar does not match the catalog'),
-          { code: 'OBJECT_CATALOG_CONFLICT' });
-      }
-      try { await this.checkStoredObject(row, async (file) => sha256(readFileSync(file))); }
-      catch (error) {
-        throw Object.assign(new Error(`encrypted object failed physical verification: ${String(error)}`),
-          { code: 'OBJECT_INTEGRITY_FAILED' });
-      }
-      const decision: BlobOwnershipDecision = { decisionId: randomBytes(16).toString('hex'), kind: 'object',
-        username, ledgerId, blobId, fromReplicaId, toReplicaId: replicaId,
-        actorAccountId, reason, decidedAt: nowIso() };
-      atomicJson(join(path, 'object.json'), { ...catalog, replicaId, ownershipDecision: decision });
-      try {
-        await this.driver.transaction(async (driver) => {
-          const changed = await driver.run(`UPDATE blob_objects SET replica_id = ?
-            WHERE username = ? AND ledger_id = ? AND blob_id = ? AND replica_id IS ?`,
-          [replicaId, username, ledgerId, blobId, fromReplicaId]);
-          if (changed.changes !== 1) throw new Error('object ownership changed during review');
-          await driver.run(`UPDATE blob_replica_states SET replica_id = ?
-            WHERE username = ? AND ledger_id = ? AND blob_id = ? AND replica_id IS NULL`,
-          [replicaId, username, ledgerId, blobId]);
-          await driver.run(`UPDATE replica_physical_status SET blob_hash = NULL,
-            verified_at = NULL, scanned_at = NULL, issue = NULL
-            WHERE username = ? AND ledger_id = ?`, [username, ledgerId]);
-          await driver.run(`UPDATE node_replication_links SET physical_blob_hash = NULL,
-            physical_verified_at = NULL, physical_scanned_at = NULL,
-            physical_issue = NULL, push_state_sweep_at = NULL,
-            inventory_matched_at = NULL, updated_at = ?
-            WHERE username = ? AND ledger_id = ? AND enabled = 1`,
-          [nowIso(), username, ledgerId]);
-          await driver.run(`INSERT INTO blob_ownership_decisions
-            (decision_id, kind, username, ledger_id, blob_id, from_replica_id,
-              to_replica_id, actor_account_id, reason, decided_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [decision.decisionId, decision.kind, username, ledgerId, blobId, fromReplicaId,
-            replicaId, actorAccountId, reason, decision.decidedAt]);
-        });
-      } catch (error) {
-        atomicJson(join(path, 'object.json'), catalog);
-        throw error;
-      }
-      return decision;
-    });
-  }
-
-  /** Isolated V2 state has no ciphertext sidecar; preserve a durable manual decision. */
-  async assignUnownedState(input: { username: string; ledgerId: string; blobId: string;
-    replicaId: string; actorAccountId: string; reason: string }): Promise<BlobStateOwnershipDecision> {
-    await this.ready;
-    const { username, ledgerId, blobId, replicaId, actorAccountId } = input;
-    const reason = input.reason.trim();
-    if (!username || !ledgerId || !BLOB_ID.test(blobId) || !/^[A-Za-z0-9_-]{8,128}$/.test(replicaId)
-      || !actorAccountId || reason.length < 12 || reason.length > 500) {
-      throw Object.assign(new Error('invalid attachment state ownership decision'),
-        { code: 'INVALID_OWNERSHIP_DECISION' });
-    }
-    return this.withUploadLock(async () => {
-      await this.assertOwnershipCandidate(username, ledgerId, replicaId);
-      const state = await this.driver.get<{ replica_id: string | null; state: string }>(
-        `SELECT record.replica_id, record.state FROM blob_replica_states record
-         LEFT JOIN ledger_replica_slots slot ON slot.replica_id = record.replica_id
-         WHERE record.username = ? AND record.ledger_id = ? AND record.blob_id = ?
-           AND (record.replica_id IS NULL OR slot.replica_id IS NULL OR slot.ledger_id <> record.ledger_id)`,
-        [username, ledgerId, blobId]);
-      if (!state) throw Object.assign(new Error('unowned attachment state no longer exists'),
-        { code: 'UNOWNED_STATE_NOT_FOUND' });
-      const conflictingState = await this.driver.get(`SELECT 1 FROM blob_replica_states
-        WHERE replica_id = ? AND blob_id = ?`, [replicaId, blobId]);
-      if (conflictingState) throw Object.assign(new Error('target replica already has this attachment state'),
-        { code: 'STATE_OWNERSHIP_CONFLICT' });
-      const sameAccountObject = await this.driver.get<{ replica_id: string | null;
-        state: string; manifest_json: string }>(`SELECT replica_id, state, manifest_json FROM blob_objects
-        WHERE username = ? AND ledger_id = ? AND blob_id = ?`, [username, ledgerId, blobId]);
-      const targetObject = await this.driver.get<{ username: string }>(`SELECT username FROM blob_objects
-        WHERE replica_id = ? AND blob_id = ?`, [replicaId, blobId]);
-      if (targetObject && targetObject.username !== username
-        || sameAccountObject && (sameAccountObject.replica_id !== replicaId
-          || sameAccountObject.state !== state.state
-          || (JSON.parse(sameAccountObject.manifest_json) as BlobManifest).v !== 2)) {
-        throw Object.assign(new Error('attachment object conflicts with the proposed state owner'),
-          { code: 'STATE_OWNERSHIP_CONFLICT' });
-      }
-      const decision: BlobStateOwnershipDecision = {
-        decisionId: randomBytes(16).toString('hex'), kind: 'state', username, ledgerId, blobId,
-        fromReplicaId: state.replica_id, toReplicaId: replicaId,
-        actorAccountId, reason, decidedAt: nowIso(),
-      };
-      await this.driver.transaction(async (driver) => {
-        const changed = await driver.run(`UPDATE blob_replica_states SET replica_id = ?
-          WHERE username = ? AND ledger_id = ? AND blob_id = ? AND replica_id IS ?`,
-        [replicaId, username, ledgerId, blobId, state.replica_id]);
-        if (changed.changes !== 1) throw new Error('attachment state ownership changed during review');
-        await driver.run(`INSERT INTO blob_state_ownership_decisions
-          (decision_id, username, ledger_id, blob_id, from_replica_id,
-            to_replica_id, actor_account_id, reason, decided_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [decision.decisionId, username, ledgerId, blobId, decision.fromReplicaId,
-          replicaId, actorAccountId, reason, decision.decidedAt]);
-        await driver.run(`UPDATE node_replication_links SET push_state_sweep_at = NULL,
-          inventory_matched_at = NULL, updated_at = ?
-          WHERE username = ? AND ledger_id = ? AND enabled = 1`,
-        [nowIso(), username, ledgerId]);
-      });
-      return decision;
-    });
-  }
-
-  /** Resume one historical V2 upload after validating its manifest and every saved chunk. */
-  async assignUnownedUpload(input: { username: string; ledgerId: string; blobId: string;
-    uploadId: string; replicaId: string; actorAccountId: string; reason: string }): Promise<BlobUploadOwnershipDecision> {
-    await this.ready;
-    const { username, ledgerId, blobId, uploadId, replicaId, actorAccountId } = input;
-    const reason = input.reason.trim();
-    if (!username || !ledgerId || !BLOB_ID.test(blobId) || !UPLOAD_ID.test(uploadId)
-      || !/^[A-Za-z0-9_-]{8,128}$/.test(replicaId) || !actorAccountId
-      || reason.length < 12 || reason.length > 500) {
-      throw Object.assign(new Error('invalid upload ownership decision'),
-        { code: 'INVALID_OWNERSHIP_DECISION' });
-    }
-    return this.withUploadLock(async () => {
-      await this.assertOwnershipCandidate(username, ledgerId, replicaId);
-      const row = await this.driver.get<{ replica_id: string | null; namespace: string;
-        manifest_json: string }>(`SELECT upload.replica_id, upload.namespace, upload.manifest_json
-        FROM blob_uploads upload LEFT JOIN ledger_replica_slots slot ON slot.replica_id = upload.replica_id
-        WHERE upload.upload_id = ? AND upload.username = ? AND upload.ledger_id = ? AND upload.blob_id = ?
-          AND (upload.replica_id IS NULL OR slot.replica_id IS NULL OR slot.ledger_id <> upload.ledger_id)`,
-      [uploadId, username, ledgerId, blobId]);
-      if (!row) throw Object.assign(new Error('unowned upload no longer exists'),
-        { code: 'UNOWNED_UPLOAD_NOT_FOUND' });
-      let manifest: BlobManifest;
-      try { manifest = assertManifest(JSON.parse(row.manifest_json), this.maxBlobBytes); }
-      catch { throw Object.assign(new Error('staged upload manifest is invalid'),
-        { code: 'UPLOAD_CATALOG_CONFLICT' }); }
-      if (manifest.v !== 2 || row.namespace !== namespace(username, ledgerId)
-        && row.namespace !== replicaNamespace(ledgerId, replicaId)) {
-        throw Object.assign(new Error('staged upload format or physical namespace conflicts with the target replica'),
-          { code: 'UPLOAD_NAMESPACE_CONFLICT' });
-      }
-      const path = this.uploadDir(row.namespace, uploadId);
-      try {
-        const physical = assertManifest(JSON.parse(readFileSync(join(path, 'manifest.json'), 'utf8')),
-          this.maxBlobBytes);
-        if (JSON.stringify(physical) !== JSON.stringify(manifest)) throw new Error('manifest mismatch');
-        const saved = await this.driver.all<{ chunk_index: number; size_bytes: number;
-          ciphertext_sha256: string }>(`SELECT chunk_index, size_bytes, ciphertext_sha256
-          FROM blob_upload_chunks WHERE upload_id = ?`, [uploadId]);
-        for (const part of saved) {
-          const expected = manifest.chunks[part.chunk_index];
-          const file = join(path, `${part.chunk_index}.chunk`);
-          if (!expected || expected.sizeBytes !== part.size_bytes
-            || expected.ciphertextSha256 !== part.ciphertext_sha256
-            || fileSize(file) !== expected.sizeBytes || sha256(readFileSync(file)) !== expected.ciphertextSha256) {
-            throw new Error(`saved chunk ${part.chunk_index} failed verification`);
-          }
-        }
-      } catch (error) {
-        throw Object.assign(new Error(`staged upload failed physical verification: ${String(error)}`),
-          { code: 'UPLOAD_CATALOG_CONFLICT' });
-      }
-      const object = await this.driver.get(`SELECT 1 FROM blob_objects
-        WHERE (username = ? AND ledger_id = ? AND blob_id = ?) OR (replica_id = ? AND blob_id = ?)
-        LIMIT 1`, [username, ledgerId, blobId, replicaId, blobId]);
-      const state = await this.driver.get<{ replica_id: string | null; state: string }>(
-        'SELECT replica_id, state FROM blob_replica_states WHERE username = ? AND ledger_id = ? AND blob_id = ?',
-        [username, ledgerId, blobId]);
-      if (object || state && (state.replica_id !== replicaId || state.state === 'trash')) {
-        throw Object.assign(new Error('an object or deletion state conflicts with the staged upload'),
-          { code: 'UPLOAD_OWNERSHIP_CONFLICT' });
-      }
-      const decision: BlobUploadOwnershipDecision = { decisionId: randomBytes(16).toString('hex'),
-        kind: 'upload', username, ledgerId, blobId, uploadId, fromReplicaId: row.replica_id,
-        toReplicaId: replicaId, actorAccountId, reason, decidedAt: nowIso() };
-      const expiresAt = new Date(Date.now() + this.uploadTtlMs).toISOString();
-      await this.driver.transaction(async (driver) => {
-        const changed = await driver.run(`UPDATE blob_uploads SET replica_id = ?, updated_at = ?, expires_at = ?
-          WHERE upload_id = ? AND replica_id IS ?`,
-        [replicaId, decision.decidedAt, expiresAt, uploadId, row.replica_id]);
-        if (changed.changes !== 1) throw new Error('upload ownership changed during review');
-        await driver.run(`INSERT INTO blob_upload_ownership_decisions
-          (decision_id, upload_id, username, ledger_id, blob_id, from_replica_id,
-            to_replica_id, actor_account_id, reason, decided_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [decision.decisionId, uploadId, username, ledgerId, blobId, row.replica_id,
-          replicaId, actorAccountId, reason, decision.decidedAt]);
-      });
-      return decision;
-    });
-  }
-
-  async listOwnershipDecisions(limit = 50): Promise<(
-    BlobOwnershipDecision | BlobStateOwnershipDecision | BlobUploadOwnershipDecision)[]> {
-    await this.ready;
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('invalid decision limit');
-    const rows = await this.driver.all<{ decision_id: string; kind: 'object' | 'state' | 'upload';
-      upload_id: string | null; username: string;
-      ledger_id: string; blob_id: string; from_replica_id: string | null; to_replica_id: string;
-      actor_account_id: string; reason: string; decided_at: string }>(
-        `SELECT * FROM (
-          SELECT decision_id, kind, NULL AS upload_id, username, ledger_id, blob_id, from_replica_id,
-            to_replica_id, actor_account_id, reason, decided_at FROM blob_ownership_decisions
-          UNION ALL
-          SELECT decision_id, 'state' AS kind, NULL AS upload_id, username, ledger_id, blob_id, from_replica_id,
-            to_replica_id, actor_account_id, reason, decided_at FROM blob_state_ownership_decisions
-          UNION ALL
-          SELECT decision_id, 'upload' AS kind, upload_id, username, ledger_id, blob_id, from_replica_id,
-            to_replica_id, actor_account_id, reason, decided_at FROM blob_upload_ownership_decisions
-        ) ORDER BY decided_at DESC, decision_id DESC LIMIT ?`, [limit]);
-    return rows.map((row) => ({ decisionId: row.decision_id, kind: row.kind,
-      username: row.username, ledgerId: row.ledger_id, blobId: row.blob_id,
-      fromReplicaId: row.from_replica_id, toReplicaId: row.to_replica_id,
-      actorAccountId: row.actor_account_id, reason: row.reason, decidedAt: row.decided_at,
-      ...(row.kind === 'upload' && row.upload_id ? { uploadId: row.upload_id } : {}),
-    })) as (BlobOwnershipDecision | BlobStateOwnershipDecision | BlobUploadOwnershipDecision)[];
-  }
-
   async status(username: string, ledgerId: string, blobIds: string[]): Promise<Record<string, 'available' | 'trash' | 'missing'>> {
     await this.ready;
     const result: Record<string, 'available' | 'trash' | 'missing'> = {};
@@ -1167,8 +579,8 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
       : { sql: 'username = ? AND ledger_id = ?', params: [username, ledgerId] };
   }
 
-  /** Backups use V1 blob framing too, but they are not legacy ledger attachments. */
-  private async legacyAttachmentFilter(replicaId?: string): Promise<{ sql: string; params: string[] }> {
+  /** Encrypted backup archives still use V1 blob framing. */
+  private async backupBlobFilter(): Promise<string> {
     const catalog = await this.driver.get(
       "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ledger_backup_archives'");
     const backupFilter = catalog ? ` AND NOT EXISTS (SELECT 1 FROM ledger_backup_archives archive
@@ -1176,14 +588,7 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
         AND archive.ledger_id = blob_objects.ledger_id
         AND (blob_objects.replica_id IS NULL OR archive.replica_id = blob_objects.replica_id)
         AND archive.blob_id = blob_objects.blob_id)` : '';
-    const migrationFilter = replicaId ? ` AND NOT EXISTS (SELECT 1 FROM blob_v1_migrations migration
-      JOIN blob_objects portable ON portable.replica_id = migration.replica_id
-        AND portable.ledger_id = migration.ledger_id
-        AND portable.blob_id = migration.portable_blob_id
-      WHERE migration.replica_id = ? AND migration.ledger_id = blob_objects.ledger_id
-        AND migration.legacy_blob_id = blob_objects.blob_id
-        AND portable.state = 'available' AND json_extract(portable.manifest_json, '$.v') = 2)` : '';
-    return { sql: backupFilter + migrationFilter, params: replicaId ? [replicaId] : [] };
+    return backupFilter;
   }
 
   private async objectRow(username: string, ledgerId: string, blobId: string): Promise<Record<string, unknown> | undefined> {
@@ -1197,46 +602,6 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
     return replicaId ? this.driver.get<Record<string, unknown>>(
       'SELECT * FROM blob_objects WHERE replica_id = ? AND ledger_id = ? AND blob_id = ?',
       [replicaId, ledgerId, blobId]) : undefined;
-  }
-
-  /** V1 IDs include their original account name; return only names with live objects in this replica. */
-  async listLegacyRoutes(username: string, ledgerId: string): Promise<string[]> {
-    await this.ready;
-    const scope = await this.replicaReadScope(username, ledgerId);
-    const attachmentFilter = await this.legacyAttachmentFilter(await this.replicaIdResolver?.(username, ledgerId));
-    const rows = await this.driver.all<{ username: string }>(
-      `SELECT DISTINCT username FROM blob_objects WHERE ${scope.sql} AND state = 'available'
-       AND json_extract(manifest_json, '$.v') = 1${attachmentFilter.sql} ORDER BY username`,
-    [...scope.params, ...attachmentFilter.params]);
-    return rows.map((row) => row.username);
-  }
-
-  /** Keep the V1 ciphertext recoverable while a verified V2 object satisfies current replicas. */
-  async markLegacyMigrated(username: string, ledgerId: string, legacyBlobId: string,
-    portableBlobId: string, actorAccountId: string): Promise<void> {
-    await this.ready;
-    if (!BLOB_ID.test(legacyBlobId) || !BLOB_ID.test(portableBlobId) || legacyBlobId === portableBlobId
-      || !/^[A-Za-z0-9_-]{8,160}$/.test(actorAccountId)) {
-      throw Object.assign(new Error('invalid legacy attachment migration ids'), { code: 'INVALID_BLOB_MIGRATION' });
-    }
-    const replicaId = await this.replicaIdResolver?.(username, ledgerId);
-    const [legacy, portable] = await Promise.all([
-      this.objectRow(username, ledgerId, legacyBlobId), this.objectRow(username, ledgerId, portableBlobId),
-    ]);
-    if (!replicaId || !legacy || !portable || legacy['state'] !== 'available'
-      || portable['state'] !== 'available' || portable['replica_id'] !== replicaId
-      || (JSON.parse(String(legacy['manifest_json'])) as BlobManifest).v !== 1
-      || (JSON.parse(String(portable['manifest_json'])) as BlobManifest).v !== 2) {
-      throw Object.assign(new Error('legacy and portable attachments are not available in this replica'),
-        { code: 'BLOB_MIGRATION_UNAVAILABLE' });
-    }
-    await this.driver.run(`INSERT INTO blob_v1_migrations
-      (replica_id, ledger_id, legacy_blob_id, portable_blob_id, actor_account_id, migrated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(replica_id, legacy_blob_id) DO UPDATE SET
-        portable_blob_id = excluded.portable_blob_id,
-        actor_account_id = excluded.actor_account_id, migrated_at = excluded.migrated_at`,
-    [replicaId, ledgerId, legacyBlobId, portableBlobId, actorAccountId, new Date().toISOString()]);
   }
 
   private async replicaStateRow(username: string, ledgerId: string, blobId: string): Promise<Record<string, unknown> | undefined> {
@@ -1341,7 +706,7 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
     await this.ready;
     if (after && !BLOB_ID.test(after) || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('invalid attachment cursor');
     const scope = await this.replicaReadScope(username, ledgerId);
-    const attachmentFilter = await this.legacyAttachmentFilter(await this.replicaIdResolver?.(username, ledgerId));
+    const backupFilter = await this.backupBlobFilter();
     const rows = await this.driver.all<{ blob_id: string; manifest_json: string }>(
       `SELECT blob_id, manifest_json FROM blob_objects WHERE ${scope.sql} AND state = 'available'
        AND json_extract(manifest_json, '$.v') = 2 AND blob_id > ? ORDER BY blob_id LIMIT ?`,
@@ -1355,7 +720,7 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
       this.driver.get<{ objects: number }>(
         `SELECT COUNT(*) AS objects FROM blob_objects
          WHERE ${scope.sql} AND state = 'available' AND json_extract(manifest_json, '$.v') = 1
-           ${attachmentFilter.sql}`, [...scope.params, ...attachmentFilter.params]),
+           ${backupFilter}`, scope.params),
     ]);
     return { manifests: selected.map((row) => assertManifest(JSON.parse(row.manifest_json), this.maxBlobBytes)),
       nextId: selected.at(-1)?.blob_id ?? after, hasMore: rows.length > limit,
@@ -1493,8 +858,6 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
         [uploadId, index, contents.byteLength, expected.ciphertextSha256, at]);
         await driver.run(`UPDATE blob_uploads SET updated_at = ?, expires_at = ? WHERE upload_id = ?`,
           [at, new Date(Date.now() + this.uploadTtlMs).toISOString(), uploadId]);
-        await driver.run(`UPDATE blob_upload_ownership_decisions SET resumed_at = COALESCE(resumed_at, ?)
-          WHERE upload_id = ?`, [at, uploadId]);
       });
     });
   }
@@ -1641,10 +1004,8 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
     const source = this.objectDir('available', String(row['namespace']), blobId);
     const target = this.objectDir('trash', String(row['namespace']), blobId);
     mkdirSync(dirname(target), { recursive: true });
-    const previousDecision = catalogAt(source)?.ownershipDecision;
     const catalog: ObjectCatalog = { username: storedBy, ledgerId,
       ...(row['replica_id'] == null ? {} : { replicaId: String(row['replica_id']) }),
-      ...(validOwnershipDecision(previousDecision) ? { ownershipDecision: previousDecision } : {}),
       blobId, state: 'trash', createdAt: String(row['created_at']), deletedAt,
       manifest: JSON.parse(String(row['manifest_json'])) as BlobManifest };
     atomicJson(join(source, 'object.json'), catalog);
@@ -1672,10 +1033,8 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
     const source = this.objectDir('trash', String(row['namespace']), blobId);
     const target = this.objectDir('available', String(row['namespace']), blobId);
     mkdirSync(dirname(target), { recursive: true });
-    const previousDecision = catalogAt(source)?.ownershipDecision;
     const catalog: ObjectCatalog = { username: storedBy, ledgerId,
       ...(row['replica_id'] == null ? {} : { replicaId: String(row['replica_id']) }),
-      ...(validOwnershipDecision(previousDecision) ? { ownershipDecision: previousDecision } : {}),
       blobId, state: 'available', createdAt: String(row['created_at']),
       manifest: JSON.parse(String(row['manifest_json'])) as BlobManifest };
     atomicJson(join(source, 'object.json'), catalog);
@@ -1870,17 +1229,10 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
     let removedObjects = 0;
     let removedUploads = 0;
     let freedBytes = 0;
-    const hasReplicaSlots = Boolean(await this.driver.get(
-      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ledger_replica_slots'"));
-    // An unresolved historical row may be the only remaining copy of ciphertext.
-    // Keep it until an operator can prove its replica, even after normal TTLs.
-    const ownedUpload = hasReplicaSlots ? `AND u.replica_id IS NOT NULL AND EXISTS (
-      SELECT 1 FROM ledger_replica_slots slot
-      WHERE slot.replica_id = u.replica_id AND slot.ledger_id = u.ledger_id)` : '';
     for (const completed of await this.driver.all<{ upload_id: string; namespace: string }>(
       `SELECT u.upload_id, u.namespace FROM blob_uploads u
        JOIN blob_objects o ON o.username = u.username AND o.ledger_id = u.ledger_id AND o.blob_id = u.blob_id
-       WHERE o.replica_id IS u.replica_id ${ownedUpload}`,
+       WHERE o.replica_id IS u.replica_id`,
     )) {
       rmSync(this.uploadDir(completed.namespace, completed.upload_id), { recursive: true, force: true });
       await this.driver.run('DELETE FROM blob_upload_chunks WHERE upload_id = ?', [completed.upload_id]);
@@ -1888,9 +1240,7 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
       removedUploads += 1;
     }
     for (const upload of await this.driver.all<{ upload_id: string; namespace: string }>(
-      `SELECT u.upload_id, u.namespace FROM blob_uploads u WHERE u.expires_at <= ? ${ownedUpload}
-        AND NOT EXISTS (SELECT 1 FROM blob_upload_ownership_decisions decision
-          WHERE decision.upload_id = u.upload_id AND decision.resumed_at IS NULL)`,
+      `SELECT u.upload_id, u.namespace FROM blob_uploads u WHERE u.expires_at <= ?`,
       [nowValue])) {
       rmSync(this.uploadDir(upload.namespace, upload.upload_id), { recursive: true, force: true });
       await this.driver.run('DELETE FROM blob_upload_chunks WHERE upload_id = ?', [upload.upload_id]);
@@ -1911,12 +1261,9 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
       }
     }
     const cutoff = new Date(now.getTime() - this.trashRetentionMs).toISOString();
-    const ownedObject = hasReplicaSlots ? `AND object.replica_id IS NOT NULL AND EXISTS (
-      SELECT 1 FROM ledger_replica_slots slot
-      WHERE slot.replica_id = object.replica_id AND slot.ledger_id = object.ledger_id)` : '';
     for (const object of await this.driver.all<{ username: string; ledger_id: string; blob_id: string; namespace: string; cipher_bytes: number }>(
       `SELECT object.username, object.ledger_id, object.blob_id, object.namespace, object.cipher_bytes
-       FROM blob_objects object WHERE object.state = 'trash' AND object.deleted_at <= ? ${ownedObject}`,
+       FROM blob_objects object WHERE object.state = 'trash' AND object.deleted_at <= ?`,
       [cutoff],
     )) {
       // Measure before deleting so the report can say how much space came back.
@@ -1930,7 +1277,7 @@ CREATE TABLE IF NOT EXISTS blob_upload_ownership_decisions (
   }
 
   async close(): Promise<void> {
-    await this.ready;
+    await this.ready.catch(() => undefined);
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
     await this.uploadLock;
     await Promise.all(this.chunkWriters);

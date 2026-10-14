@@ -3,15 +3,13 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { attachmentRemoteBlobId, deriveAttachmentCryptoContext, encryptAttachmentChunk, newId,
+import { attachmentRemoteBlobId, deriveAttachmentCryptoContext, newId,
   rotateLedgerProtection, type LedgerCryptoSession, type LedgerKeyEnvelope } from '@zichan/core';
 import { httpCommitTransport, loginAccount, registerAccount } from '@zichan/db';
-import { NodeSqliteDriver, openLedger } from '@zichan/db/node';
+import { openLedger } from '@zichan/db/node';
 import type { SyncServer } from '../../sync-server/src/server.js';
 import { createTestSyncServer as createSyncServer, OWNER_SETUP_TOKEN } from '../../sync-server/test/support/server-fixture.js';
-import { SyncServerStore } from '../../sync-server/src/store.js';
-import { ensureAttachmentBlobAvailable, syncAttachmentBatch, syncAttachmentReplicas,
-  type LegacyAttachmentMigrationProgress } from '../src/attachment-sync.js';
+import { ensureAttachmentBlobAvailable, syncAttachmentBatch, syncAttachmentReplicas } from '../src/attachment-sync.js';
 import { runtimeCredential, setRuntimeCredential } from '../src/credential-vault.js';
 import {
   attachmentStorageStatus,
@@ -196,96 +194,8 @@ afterEach(async () => {
 });
 
 describe('attachment replica sync', () => {
-  it('recovers an old-account V1 object and uploads V2 after the profile username changes', async () => {
-    const files = installAttachmentMock();
-    const dataDir = mkdtempSync(join(tmpdir(), 'zichan-attachment-legacy-route-'));
-    const server = createSyncServer({ dataDir });
-    const url = await listen(server);
-    const store = await openLedger({ deviceId: 'attachment-legacy-route-test' });
-    try {
-      const ledgerId = await store.getLedgerId();
-      const owner = await store.assets.put({ id: newId(), code: 'DOC', name: '旧附件', type: 'fixed',
-        decimals: 2, isActive: true, createdAt: '', updatedAt: '', version: 1, isDeleted: false });
-      await initializeLedgerKey(ledgerId, 'attachment-ledger-passphrase');
-      const cryptoSession = requireLedgerCryptoSession(ledgerId);
-      const connection = profile('legacy-profile', '旧服务器', url, 'old-owner');
-      const identity = await bind(connection, 'old-owner-password', ledgerId,
-        cryptoSession, storedLedgerKeyEnvelope()!);
-      Object.assign(connection, identity);
-      const prepared = await prepareAttachmentDraft(store, newId(), { fileName: '旧发票.txt',
-        mimeType: 'text/plain', contentBlob: new Blob(['legacy attachment content'], { type: 'text/plain' }) });
-      const attachment = await store.transaction((tx) => commitPreparedAttachment(tx, prepared, 'asset', owner.id));
-      await finalizePreparedAttachment(store, prepared);
-      const plaintext = new Uint8Array(await (await readAttachmentBlob(attachment.sha256, attachment.mimeType)).arrayBuffer());
-      const legacyContext = await deriveAttachmentCryptoContext(cryptoSession,
-        { serverId: identity.serverId, ledgerId, username: 'old-owner' });
-      const legacyId = await attachmentRemoteBlobId(legacyContext, attachment.sha256);
-      const encrypted = await encryptAttachmentChunk(legacyContext, attachment.sha256,
-        plaintext, 0, 1, plaintext.byteLength);
-      const auth = { Authorization: `Bearer ${runtimeCredential(connection.id).accessToken}` };
-      const begun = await fetch(`${url}/api/v3/blobs/uploads`, { method: 'POST',
-        headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ manifest: {
-          v: 1, blobId: legacyId, cipherBytes: encrypted.ciphertext.byteLength, chunkCount: 1,
-          chunks: [{ index: 0, sizeBytes: encrypted.ciphertext.byteLength,
-            ciphertextSha256: encrypted.ciphertextSha256, iv: encrypted.iv }],
-        } }) });
-      expect(begun.status).toBe(201);
-      const { uploadId } = await begun.json() as { uploadId: string };
-      expect((await fetch(`${url}/api/v3/blobs/uploads/${uploadId}/chunks/0`, { method: 'PUT',
-        headers: auth, body: encrypted.ciphertext })).status).toBe(200);
-      expect((await fetch(`${url}/api/v3/blobs/uploads/${uploadId}/complete`, { method: 'POST',
-        headers: auth })).status).toBe(200);
-      files.delete(`objects:${attachment.sha256}`);
-      await reconcileAttachmentStorage(store);
-      connection.username = 'new-member';
-      const progress: LegacyAttachmentMigrationProgress[] = [];
-      const result = await syncAttachmentReplicas(store, [{ profile: connection, identity }], false,
-        (update) => progress.push(update));
-      expect(result.endpoints[0]).toMatchObject({ downloaded: 1, uploaded: 1, pending: 0, failed: 0 });
-      expect(progress[0]).toMatchObject({ phase: 'checking', objectsTotal: 0 });
-      expect(progress.some((update) => update.phase === 'copying' && update.objectsTotal === 1
-        && update.objectsMigrated === 0)).toBe(true);
-      expect(progress.at(-1)).toMatchObject({ phase: 'complete', objectsTotal: 1,
-        objectsMigrated: 1, objectsFailed: 0,
-        bytesTotal: plaintext.byteLength, bytesMigrated: plaintext.byteLength });
-      expect(await (await readAttachmentBlob(attachment.sha256, attachment.mimeType)).text())
-        .toBe('legacy attachment content');
-      const portableContext = await deriveAttachmentCryptoContext(cryptoSession, { v: 2, ledgerId });
-      const portableId = await attachmentRemoteBlobId(portableContext, attachment.sha256);
-      const status = await fetch(`${url}/api/v3/blobs/status`, { method: 'POST',
-        headers: { ...auth, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ blobIds: [legacyId, portableId] }) });
-      expect((await status.json() as { objects: Record<string, string> }).objects)
-        .toMatchObject({ [legacyId]: 'available', [portableId]: 'available' });
-      const catalog = new SyncServerStore(join(dataDir, 'server.sqlite'), 'open', server.serverId);
-      try {
-        await catalog.ready;
-        expect((await catalog.replicaInventory('old-owner', ledgerId)).legacyBlobCount).toBe(0);
-        const routes = await fetch(`${url}/api/v3/blobs/legacy-routes`, { headers: auth });
-        expect((await routes.json() as { usernames: string[] }).usernames).toEqual([]);
-        const database = new NodeSqliteDriver(join(dataDir, 'server.sqlite'));
-        try { await database.run('DELETE FROM blob_v1_migrations WHERE legacy_blob_id = ?', [legacyId]); }
-        finally { await database.close(); }
-        expect((await catalog.replicaInventory('old-owner', ledgerId)).legacyBlobCount).toBe(1);
-        const resumed = await syncAttachmentReplicas(store, [{ profile: connection, identity }]);
-        expect(resumed.endpoints[0]).toMatchObject({ uploaded: 0, pending: 0, failed: 0 });
-        expect((await catalog.replicaInventory('old-owner', ledgerId)).legacyBlobCount).toBe(0);
-        expect((await fetch(`${url}/api/v3/blobs/${portableId}`, { method: 'DELETE', headers: auth })).status).toBe(200);
-        expect((await catalog.replicaInventory('old-owner', ledgerId)).legacyBlobCount).toBe(1);
-        const fallbackRoutes = await fetch(`${url}/api/v3/blobs/legacy-routes`, { headers: auth });
-        expect((await fallbackRoutes.json() as { usernames: string[] }).usernames).toEqual(['old-owner']);
-        expect((await fetch(`${url}/api/v3/blobs/${portableId}/restore`, { method: 'POST', headers: auth })).status).toBe(200);
-        expect((await catalog.replicaInventory('old-owner', ledgerId)).legacyBlobCount).toBe(0);
-      } finally { await catalog.close(); }
-    } finally {
-      await store.close();
-      await server.close();
-      rmSync(dataDir, { recursive: true, force: true });
-    }
-  });
-
-  it('keeps automatic transfers bounded and resumes a mixed V1 and V2 attachment sweep', async () => {
-    const files = installAttachmentMock();
+  it('keeps automatic transfers bounded across a V2 attachment sweep', async () => {
+    installAttachmentMock();
     const dataDir = mkdtempSync(join(tmpdir(), 'zichan-attachment-batch-'));
     const server = createSyncServer({ dataDir });
     const url = await listen(server);
@@ -307,43 +217,19 @@ describe('attachment replica sync', () => {
         attachments.push(await store.transaction((tx) => commitPreparedAttachment(tx, prepared, 'asset', owner.id)));
         await finalizePreparedAttachment(store, prepared);
       }
-      const old = attachments[0]!;
-      const plaintext = new Uint8Array(await (await readAttachmentBlob(old.sha256, old.mimeType)).arrayBuffer());
-      const legacyContext = await deriveAttachmentCryptoContext(cryptoSession,
-        { serverId: identity.serverId, ledgerId, username: 'batch-owner' });
-      const legacyId = await attachmentRemoteBlobId(legacyContext, old.sha256);
-      const encrypted = await encryptAttachmentChunk(legacyContext, old.sha256,
-        plaintext, 0, 1, plaintext.byteLength);
-      const auth = { Authorization: `Bearer ${runtimeCredential(connection.id).accessToken}` };
-      const begun = await fetch(`${url}/api/v3/blobs/uploads`, { method: 'POST',
-        headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ manifest: {
-          v: 1, blobId: legacyId, cipherBytes: encrypted.ciphertext.byteLength, chunkCount: 1,
-          chunks: [{ index: 0, sizeBytes: encrypted.ciphertext.byteLength,
-            ciphertextSha256: encrypted.ciphertextSha256, iv: encrypted.iv }],
-        } }) });
-      expect(begun.status).toBe(201);
-      const { uploadId } = await begun.json() as { uploadId: string };
-      expect((await fetch(`${url}/api/v3/blobs/uploads/${uploadId}/chunks/0`, { method: 'PUT',
-        headers: auth, body: encrypted.ciphertext })).status).toBe(200);
-      expect((await fetch(`${url}/api/v3/blobs/uploads/${uploadId}/complete`, { method: 'POST',
-        headers: auth })).status).toBe(200);
-      files.delete(`objects:${old.sha256}`);
-      await reconcileAttachmentStorage(store);
-      connection.username = 'renamed-member';
-      const deferred = await syncAttachmentReplicas(store, [{ profile: connection, identity }], false, undefined, true);
+      const deferred = await syncAttachmentReplicas(store, [{ profile: connection, identity }], false, true);
       expect(deferred.endpoints[0]).toMatchObject({ uploaded: 0, pending: 9 });
       const first = await syncAttachmentBatch(store, { profile: connection, identity });
       expect(first).toMatchObject({ scanned: 8, failed: 0, sweepComplete: false });
       const second = await syncAttachmentBatch(store, { profile: connection, identity });
       expect(second).toMatchObject({ scanned: 1, failed: 0, sweepComplete: true });
       expect(first.uploaded + second.uploaded).toBe(9);
-      expect(first.migrated + second.migrated).toBe(1);
-      expect(await (await readAttachmentBlob(old.sha256, old.mimeType)).text()).toBe('batch attachment 0');
       const portableContext = await deriveAttachmentCryptoContext(cryptoSession, { v: 2, ledgerId });
       const portableIds = await Promise.all(attachments.map((attachment) =>
         attachmentRemoteBlobId(portableContext, attachment.sha256)));
       const status = await fetch(`${url}/api/v3/blobs/status`, { method: 'POST',
-        headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ blobIds: portableIds }) });
+        headers: { Authorization: `Bearer ${runtimeCredential(connection.id).accessToken}`,
+          'Content-Type': 'application/json' }, body: JSON.stringify({ blobIds: portableIds }) });
       const states = (await status.json() as { objects: Record<string, string> }).objects;
       expect(portableIds.every((id) => states[id] === 'available')).toBe(true);
     } finally {

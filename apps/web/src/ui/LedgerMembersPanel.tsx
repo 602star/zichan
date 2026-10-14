@@ -311,7 +311,7 @@ export function LedgerMembersPanel({ profile }: { profile: SyncConnection }) {
     if (password.length < 8) throw new Error('请输入账号密码');
     const record = accountKey ?? await ensureAccountKey();
     try { return await unlockAccountEncryptionKey(password, record.envelope); }
-    catch { throw new Error('账号密码无法解锁成员管理密钥。旧账号请到账号页迁移独立密钥密码。'); }
+    catch { throw new Error('账号密码无法解锁成员身份。请重新登录；若刚修改密码，等待账号信息同步后重试。'); }
   }
 
   async function postEvent(event: LedgerControlEvent, envelopes?: LedgerMemberKeyEnvelope[]) {

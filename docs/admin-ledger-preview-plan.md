@@ -33,7 +33,7 @@
 服务器自己的材料
   custody.key + sealed_secret   →  托管凭据
   托管凭据 + envelope_json       →  账本密钥包（dataKeys / attachmentSecret）
-  密钥包 + sync_server_commits   →  明文提交
+  密钥包 + ledger_replica_commits →  明文提交
   明文提交                       →  重放进内存库
   内存库                         →  exportLedger() → LedgerBackup JSON
   LedgerBackup JSON             →  importLedger()  →  前端直接渲染

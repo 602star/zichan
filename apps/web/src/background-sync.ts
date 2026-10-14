@@ -55,7 +55,7 @@ export function runLifecycleSync(store: SqlLedgerStore, reason: SyncLifecycleRea
       reason, attempted: profiles.length, succeeded: 0, pulled: 0, pushed: 0, applied: 0,
       conflicts: 0, rounds: 0, converged: false, errors: [], finishedAt: '',
     };
-    const synced = await syncConfiguredServers(store, profiles, undefined, {
+    const synced = await syncConfiguredServers(store, profiles, {
       deferAttachmentTransfers: true,
       skipAttachmentSync: reason !== 'attachment-catalog',
     });
@@ -162,7 +162,7 @@ export function installSyncLifecycle(
     } catch (error) {
       const failed: AttachmentBatchResult = {
         profileId: activeProfileId, references: 0, scannedThrough: 0,
-        scanned: 0, uploaded: 0, downloaded: 0, migrated: 0, failed: 1,
+        scanned: 0, uploaded: 0, downloaded: 0, failed: 1,
         bytesUploaded: 0, bytesDownloaded: 0,
         sweepComplete: false, error: error instanceof Error ? error.message : String(error),
       };

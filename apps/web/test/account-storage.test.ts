@@ -33,24 +33,24 @@ describe('new Web account storage', () => {
     expect(a.accountLocalStorage.getItem('envelope')).toBe('alice');
     expect(() => b.activateWebAccount('server-a', 'user-a')).toThrow('重新加载');
   });
-  it('keeps the original replica cache and separates another replica of the same account', async () => {
+  it('separates two replicas of the same account', async () => {
     vi.stubGlobal('localStorage', memoryStorage()); vi.stubGlobal('sessionStorage', memoryStorage());
     const first = await import('../src/account-storage.js');
     first.enableWebAccounts();
-    first.activateWebAccount('server-a', 'user-a', 'rep-primary', 'rep-primary', true);
+    first.activateWebAccount('server-a', 'user-a', 'rep-primary');
     first.accountLocalStorage.setItem('key', 'primary-key');
-    const legacyName = first.accountDatabaseName();
+    const primaryName = first.accountDatabaseName();
     vi.resetModules();
     const second = await import('../src/account-storage.js');
     second.enableWebAccounts();
-    second.activateWebAccount('server-a', 'user-a', 'rep-shared', 'rep-primary', true);
-    expect(second.accountDatabaseName()).not.toBe(legacyName);
+    second.activateWebAccount('server-a', 'user-a', 'rep-shared');
+    expect(second.accountDatabaseName()).not.toBe(primaryName);
     expect(second.accountLocalStorage.getItem('key')).toBeNull();
     second.accountLocalStorage.setItem('key', 'shared-key');
     expect(first.accountLocalStorage.getItem('key')).toBe('primary-key');
     expect(second.accountLocalStorage.getItem('key')).toBe('shared-key');
-    expect(second.webLedgerNamespace('server-a', 'user-a', 'rep-unknown', undefined, true))
-      .not.toBe(legacyName);
+    expect(second.webLedgerNamespace('server-a', 'user-a', 'rep-unknown'))
+      .not.toBe(primaryName);
   });
   it('keeps desktop storage names unchanged', async () => {
     vi.stubGlobal('localStorage', memoryStorage());

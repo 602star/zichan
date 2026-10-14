@@ -132,7 +132,7 @@ describe('account email verification and notifications', () => {
       await store.setQuotaEmailNotifications('member', true);
       const driver = new NodeSqliteDriver(join(dir, 'server.sqlite'));
       try {
-        await driver.run('INSERT INTO sync_server_commits (username, seq, commit_id, ledger_id, content_hash, enc_commit_json, cipher_bytes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', ['member', 1, 'test-commit', 'test-ledger', 'hash', '{}', 950, new Date().toISOString()]);
+        await driver.run('INSERT INTO ledger_replica_commits (replica_id, seq, commit_id, ledger_id, content_hash, enc_commit_json, cipher_bytes, created_at) VALUES ((SELECT replica_id FROM sync_replicas WHERE username = ?), ?, ?, ?, ?, ?, ?, ?)', ['member', 1, 'test-commit', 'test-ledger', 'hash', '{}', 950, new Date().toISOString()]);
       } finally { await driver.close(); }
       const { settings } = createSettings(store);
       const metrics = createMetricsService({

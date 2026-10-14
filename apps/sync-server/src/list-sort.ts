@@ -114,20 +114,14 @@ export function resolveSort(
 export interface ParsedCursor {
   value: string;
   id: string;
-  /** Absent for a cursor issued before cursors carried their sort. */
-  sort?: { key: string; direction: string };
+  sort: { key: string; direction: string };
 }
 
 /**
  * Splits a cursor into its parts.
  *
  * The id is taken after the *first* `|` so an id containing a pipe cannot truncate the cursor.
- * `sort~dir~value|id` is what this module writes; `value|id` is what cursors issued before it
- * carried a sort look like, and those are still accepted.
- *
- * Anything else is rejected rather than reinterpreted. A malformed cursor read as a legacy value
- * would be compared against the ordering expression and return a page that is stable, plausible
- * and wrong — the exact outcome rule 2 exists to prevent.
+ * `sort~dir~value|id` is the only supported shape. Anything else is rejected.
  */
 export function readCursor(cursor: string | undefined): ParsedCursor | undefined {
   if (!cursor) return undefined;
@@ -135,7 +129,6 @@ export function readCursor(cursor: string | undefined): ParsedCursor | undefined
   if (separator < 0) return undefined;
   const head = cursor.slice(0, separator);
   const id = cursor.slice(separator + 1);
-  if (!head.includes('~')) return { value: head, id };
   const parts = head.split('~');
   if (parts.length !== 3 || !parts[0] || !parts[1]) return undefined;
   return { sort: { key: parts[0], direction: parts[1] }, value: parts[2]!, id };
@@ -148,7 +141,6 @@ export function readCursor(cursor: string | undefined): ParsedCursor | undefined
  * it returns a page that is stable, plausible, and wrong.
  */
 export function cursorMatchesSort(cursor: ParsedCursor, sort: ResolvedSort): boolean {
-  if (!cursor.sort) return true;
   return cursor.sort.key === sort.key && cursor.sort.direction === sort.direction;
 }
 

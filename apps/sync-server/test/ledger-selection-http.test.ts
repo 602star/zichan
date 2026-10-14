@@ -14,44 +14,6 @@ import { CURRENT_SERVER_SCHEMA, SyncServerStore } from '../src/store.js';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
 
 describe('session ledger selection', () => {
-  it('upgrades schema 16 sessions without changing their ledger choice', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'zichan-session-selection-'));
-    const file = join(directory, 'server.sqlite');
-    const initial = new SyncServerStore(file, 'open', 'server-session-upgrade');
-    let upgraded: SyncServerStore | undefined;
-    try {
-      await initial.register('member', 'opaque-member', undefined, true);
-      const replica = await initial.bindReplica('member', 'ledger-session-upgrade-0001');
-      await initial.createSession({ id: 'session-upgrade-0001', username: 'member',
-        deviceId: 'device-upgrade-0001', deviceName: 'Old browser', refreshHash: 'hash',
-        expiresAt: new Date(Date.now() + 60_000).toISOString() });
-      await initial.close();
-      const sql = new NodeSqliteDriver(file);
-      try {
-        await sql.exec('ALTER TABLE sync_sessions DROP COLUMN selection_version');
-        await sql.run(`INSERT INTO sync_backup_archives
-          (username, ledger_id, archive_id, blob_id, created_at, reason, kind, label, size_bytes)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ['member', replica.ledgerId, 'backup-upgrade-0001', 'a'.repeat(64),
-          new Date().toISOString(), 'manual', 'portable', 'old backup', 128]);
-        await sql.run('UPDATE server_schema_migrations SET version = 16, name = ?',
-          ['account_ledger_index_v16']);
-      } finally { await sql.close(); }
-      upgraded = new SyncServerStore(file, 'open', 'server-session-upgrade');
-      expect((await upgraded.verify()).schemaVersion).toBe(CURRENT_SERVER_SCHEMA);
-      expect(await upgraded.getSession('session-upgrade-0001')).toMatchObject({
-        replicaId: replica.replicaId, selectionVersion: 0,
-      });
-      expect((await upgraded.getReplica('member'))?.replicaId).toBe(replica.replicaId);
-      expect(await upgraded.listBackupArchives('member', replica.ledgerId)).toMatchObject([
-        { archiveId: 'backup-upgrade-0001', label: 'old backup' },
-      ]);
-    } finally {
-      await (upgraded ?? initial).close();
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
   it('keeps two browser sessions on separate ledgers and invalidates the selected session old token', async () => {
     const server = createTestSyncServer();
     await new Promise<void>((resolve) => server.server.listen(0, resolve));

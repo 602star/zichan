@@ -86,21 +86,12 @@ describe('cursor list sorting', () => {
     expect(cursorMatchesSort(parsed, byCreated)).toBe(false);
   });
 
-  it('keeps accepting a cursor issued before cursors carried their sort', () => {
-    const parsed = readCursor('2026-01-01T00:00:00.000Z|rec-1')!;
-    expect(parsed).toEqual({ value: '2026-01-01T00:00:00.000Z', id: 'rec-1' });
-    expect(parsed.sort).toBeUndefined();
-    expect(cursorMatchesSort(parsed, resolveSort(options, 'created', 'created', 'desc'))).toBe(true);
-  });
-
   it('keeps the id after the first separator, so a pipe inside it cannot truncate the cursor', () => {
     expect(readCursor('name~asc~alice|weird|id')).toEqual({ value: 'alice', id: 'weird|id', sort: { key: 'name', direction: 'asc' } });
-    expect(readCursor('a|weird|id')).toEqual({ value: 'a', id: 'weird|id' });
   });
 
   it('rejects a malformed cursor instead of reinterpreting it', () => {
-    // Read as a legacy value it would be compared against the ordering expression and return a
-    // stable, plausible, wrong page. Refusing it is the only safe reading.
+    expect(readCursor('a|weird|id')).toBeUndefined();
     expect(readCursor('name~asc|no-value')).toBeUndefined();
     expect(readCursor('name~asc~too~many|x')).toBeUndefined();
     expect(readCursor('~asc~x|id')).toBeUndefined();

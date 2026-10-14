@@ -4,7 +4,6 @@ import { applyBackupRetention } from './backup-retention.js';
 import { developmentDataDir } from './runtime-config.js';
 import { issueOwnerRecovery } from './owner-recovery.js';
 import { writeMaintenanceRecord } from './maintenance-records.js';
-import { retireLegacyShadowPayload } from './retire-legacy-shadow.js';
 import { inspectNodeRetirement, retireNodeData } from './retire-node.js';
 import { inspectLocalReplicaRetirement, retireLocalReplica } from './retire-local-replica.js';
 
@@ -122,19 +121,6 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ ok: true, command, dataDir, ...result }, null, 2));
     return;
   }
-  if (command === 'retire-legacy-shadow') {
-    const backupPath = resolve(option('output'));
-    const result = await retireLegacyShadowPayload(dataDir, backupPath, { vacuum: flag('vacuum') });
-    writeMaintenanceRecord(dataDir, {
-      recordId: `retire-shadow-${stamp()}`,
-      kind: 'manual', status: 'completed', createdAt: new Date().toISOString(),
-      finishedAt: new Date().toISOString(), outputPath: backupPath,
-      serverId: result.backupServerId, verifiedAt: new Date().toISOString(),
-      note: `已验证独立备份并清空旧影子载荷；提交 ${result.removed.commits} 条、密钥包 ${result.removed.keyEnvelopes} 条、能力 ${result.removed.requirements} 条、归档 ${result.removed.archives} 条。${result.vacuumed ? 'SQLite 已压缩。' : 'SQLite 尚未压缩。'}`,
-    });
-    console.log(JSON.stringify({ ok: true, command, ...result }, null, 2));
-    return;
-  }
   if (command === 'retire-node') {
     // This command removes the complete data directory; never accept the development default.
     const explicitDataDir = resolve(option('data-dir'));
@@ -166,7 +152,7 @@ async function main(): Promise<void> {
       note: '指定账本副本已从此节点清理；其他账本、账号与独立备份保留。' }, null, 2));
     return;
   }
-  throw new Error('用法：maintenance <backup|verify-backup|prune-backups|restore|owner-recovery|retire-legacy-shadow|retire-node|retire-local-replica> [--data-dir PATH] [--output PATH|--backup PATH] [--replica-id ID] [--confirm-node-id ID --confirm-ledger-id ID] [--backup-dir PATH --keep N [--dry-run]] [--vacuum] [--record-id ID]');
+  throw new Error('用法：maintenance <backup|verify-backup|prune-backups|restore|owner-recovery|retire-node|retire-local-replica> [--data-dir PATH] [--output PATH|--backup PATH] [--replica-id ID] [--confirm-node-id ID --confirm-ledger-id ID] [--backup-dir PATH --keep N [--dry-run]] [--vacuum] [--record-id ID]');
 }
 
 main().catch((error) => {

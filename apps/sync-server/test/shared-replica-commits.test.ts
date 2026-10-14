@@ -50,43 +50,6 @@ describe('shared replica commit slot', () => {
     }
   });
 
-  it('keeps canonical commits when a historical account shadow is changed or removed', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'zichan-commit-shadow-'));
-    const file = join(dir, 'server.sqlite');
-    let store = new SyncServerStore(file, 'open', 'server-commit-shadow');
-    try {
-      await store.register('alice', 'opaque-alice', undefined, true);
-      const ledgerId = 'ledger-commit-shadow';
-      await store.bindReplica('alice', ledgerId);
-      const oldCiphertext = JSON.stringify({ v: 3, keyId: 'keyring-commit-shadow', iv: 'iv', ct: 'old' });
-      const sql = new NodeSqliteDriver(file);
-      try {
-        await sql.run(`INSERT INTO sync_server_commits
-          (username, seq, commit_id, ledger_id, content_hash, enc_commit_json, cipher_bytes, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        ['alice', 1, 'commit-shadow-old-0001', ledgerId, 'a'.repeat(64), oldCiphertext,
-          Buffer.byteLength(oldCiphertext), new Date().toISOString()]);
-        await sql.run('UPDATE sync_replicas SET head_seq = 1 WHERE username = ?', ['alice']);
-        await sql.run('UPDATE sync_server_commits SET enc_commit_json = ? WHERE username = ?',
-          [JSON.stringify({ v: 3, keyId: 'keyring-commit-shadow', iv: 'iv', ct: 'tampered' }), 'alice']);
-        expect((await sql.get<{ enc_commit_json: string }>(`SELECT enc_commit_json FROM ledger_replica_commits
-          WHERE seq = 1`))?.enc_commit_json).toBe(oldCiphertext);
-        await sql.run('DELETE FROM sync_server_commits WHERE username = ?', ['alice']);
-      } finally { await sql.close(); }
-      expect((await store.listCommits('alice', 0, 10)).commits.map((row) => row.commitId))
-        .toEqual(['commit-shadow-old-0001']);
-      await store.pushCommits('alice', [{ commitId: 'commit-shadow-new-0002', ledgerId,
-        contentHash: 'b'.repeat(64), encCommit: { v: 3, keyId: 'keyring-commit-shadow', iv: 'iv', ct: 'new' } }]);
-      await store.close();
-      store = new SyncServerStore(file, 'closed', 'server-commit-shadow');
-      expect((await store.listCommits('alice', 0, 10)).commits.map((row) => row.commitId))
-        .toEqual(['commit-shadow-old-0001', 'commit-shadow-new-0002']);
-    } finally {
-      await store.close();
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   it('gives routed members one sequence, deduplicates across accounts, and charges the slot owner', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zichan-shared-commits-'));
     const file = join(dir, 'server.sqlite');

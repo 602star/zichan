@@ -19,7 +19,6 @@ import {
   syncAttachmentReplicas,
   type AttachmentReplicaSyncResult,
   type AttachmentSyncResult,
-  type LegacyAttachmentMigrationProgress,
 } from './attachment-sync.js';
 import { requireLedgerCryptoSession, storedLedgerKeyEnvelope } from './ledger-key-vault.js';
 import { accountProtection, protectionRequest } from './account-protection.js';
@@ -38,7 +37,7 @@ export interface ConfiguredSyncEndpoint extends ReplicaSyncEndpointResult {
 export interface ConfiguredSyncResult extends Omit<MultiReplicaSyncResult, 'endpoints'> {
   endpoints: ConfiguredSyncEndpoint[];
   attachmentSync: AttachmentSyncResult;
-  syncMode: 'node-group' | 'legacy';
+  syncMode: 'node-group' | 'single-node';
   finishedAt: string;
 }
 
@@ -173,15 +172,13 @@ function authenticatedTransport(profile: SyncConnection): MeteredTransport {
 }
 
 export function syncConfiguredServers(store: SqlLedgerStore, profiles: SyncConnection[],
-  onLegacyMigrationProgress?: (progress: LegacyAttachmentMigrationProgress) => void,
   options: { deferAttachmentTransfers?: boolean; skipAttachmentSync?: boolean } = {}): Promise<ConfiguredSyncResult> {
-  return withSyncLock(() => syncConfiguredServersNow(store, profiles, onLegacyMigrationProgress, options));
+  return withSyncLock(() => syncConfiguredServersNow(store, profiles, options));
 }
 
 async function syncConfiguredServersNow(
   store: SqlLedgerStore,
   profiles: SyncConnection[],
-  onLegacyMigrationProgress?: (progress: LegacyAttachmentMigrationProgress) => void,
   options: { deferAttachmentTransfers?: boolean; skipAttachmentSync?: boolean } = {},
 ): Promise<ConfiguredSyncResult> {
   const startedAt = performance.now();
@@ -194,7 +191,8 @@ async function syncConfiguredServersNow(
     return { id: profile.id, endpoint: buildSyncBaseUrl(profile), transport: meter.transport };
   });
   const ledgerId = typeof store.getLedgerId === 'function' ? await store.getLedgerId() : '';
-  const nodeGroup = ledgerId && await hasNodeReplicaGroup(selected, ledgerId);
+  const nodeGroup = selected.length > 1 && Boolean(ledgerId) && await hasNodeReplicaGroup(selected, ledgerId);
+  if (!nodeGroup && selected.length > 1) throw new Error('多台服务器需要先由管理员组成同步组');
   let result: MultiReplicaSyncResult;
   if (!nodeGroup) {
     result = await syncReplicas(store, targets);
@@ -234,7 +232,7 @@ async function syncConfiguredServersNow(
         identity: endpoint.identity,
         headSeq: endpoint.headSeq,
       }];
-    }), result.converged && result.invalid === 0, onLegacyMigrationProgress, options.deferAttachmentTransfers);
+    }), result.converged && result.invalid === 0, options.deferAttachmentTransfers);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     attachmentSync = {
@@ -302,5 +300,5 @@ async function syncConfiguredServersNow(
       attachmentDownloads: endpoint.attachments?.downloaded ?? 0,
       durationMs: elapsedSince(startedAt) };
   })).catch(() => undefined);
-  return { ...result, endpoints, attachmentSync, syncMode: nodeGroup ? 'node-group' : 'legacy', finishedAt };
+  return { ...result, endpoints, attachmentSync, syncMode: nodeGroup ? 'node-group' : 'single-node', finishedAt };
 }

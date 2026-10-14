@@ -55,8 +55,6 @@ export interface AdminRouterDeps {
   maintenance: { read: () => Promise<MaintenanceState | undefined> };
   /** Counts client writes in flight, so the console can say whether stopping is safe. */
   writeTracker: WriteTracker;
-  /** Quiesces background attachment replication around a manual ownership repair. */
-  replication: { pause: () => Promise<void>; resume: () => void };
   syncGroup: {
     create: (mainUrl: string) => Promise<unknown>;
     join: (mainUrl: string, localUrl: string, token: string) => Promise<unknown>;
@@ -971,91 +969,12 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       return send(res, 200, { ok: true });
     }
 
-    if (req.method === 'GET' && suffix === '/storage/unowned') {
-      const kind = search.get('kind') ?? 'object';
-      const limit = Number(search.get('limit') ?? 50);
-      if (kind !== 'object' && kind !== 'state' && kind !== 'upload'
-        || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
-        return send(res, 400, { code: 'INVALID_UNOWNED_QUERY', error: '未归属记录查询参数无效' });
-      }
-      try {
-        return send(res, 200, await blobStore.listUnownedReplicaRecords(kind, search.get('cursor') ?? '', limit));
-      } catch (error) {
-        if (error instanceof Error && error.message === 'invalid unowned attachment cursor') {
-          return send(res, 400, { code: 'INVALID_CURSOR', error: '未归属记录游标无效' });
-        }
-        throw error;
-      }
-    }
-
-    if (req.method === 'GET' && suffix === '/storage/unowned/decisions') {
-      return send(res, 200, { decisions: await blobStore.listOwnershipDecisions() });
-    }
-
-    if (req.method === 'POST' && suffix === '/storage/unowned/assign') {
-      if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '仅服务器所有者可以修复历史附件归属' });
-      await assertRecentLogin();
-      const body = await readBody(req, ADMIN_BODY_BYTES);
-      if ((body.kind !== 'object' && body.kind !== 'state' && body.kind !== 'upload')
-        || typeof body.username !== 'string'
-        || typeof body.ledgerId !== 'string' || typeof body.blobId !== 'string'
-        || typeof body.replicaId !== 'string' || typeof body.reason !== 'string'
-        || body.kind === 'upload' && typeof body.uploadId !== 'string'
-        || body.reason.trim().length < 12 || body.reason.trim().length > 500) {
-        return send(res, 400, { code: 'INVALID_OWNERSHIP_DECISION', error: '请选择对象和候选副本，并填写至少 12 字的核对依据' });
-      }
-      return void await withIdempotency(req, res, 'blob-ownership-assign', body, async () => {
-        const maintenance = resolveMaintenance(await deps.maintenance.read());
-        const counts = await store.countJobsByStatus();
-        const drain = drainView(deps.writeTracker, { running: counts['running'] ?? 0,
-          queued: counts['queued'] ?? 0 });
-        if (!maintenance.active || !drain.safeToStop) return { status: 409, body: {
-          code: 'MAINTENANCE_DRAIN_REQUIRED',
-          error: '请先声明维护窗口，并等待当前写入和后台任务结束后再修复归属',
-        } };
-        try {
-          await deps.replication.pause();
-          let decision;
-          try {
-            const input = { username: body.username as string,
-              ledgerId: body.ledgerId as string, blobId: body.blobId as string,
-              replicaId: body.replicaId as string, actorAccountId: auth.user.accountId,
-              reason: body.reason as string };
-            decision = body.kind === 'state'
-              ? await blobStore.assignUnownedState(input)
-              : body.kind === 'upload'
-                ? await blobStore.assignUnownedUpload({ ...input, uploadId: body.uploadId as string })
-                : await blobStore.assignUnownedObject(input);
-          } finally { deps.replication.resume(); }
-          await log('warn', 'blob_ownership_assigned', 'Historical attachment ownership assigned', {
-            username: auth.user.username, detail: { decisionId: decision.decisionId,
-              kind: decision.kind, ledgerId: decision.ledgerId,
-              blobId: decision.blobId, replicaId: decision.toReplicaId,
-              ...(decision.kind === 'upload' ? { uploadId: decision.uploadId } : {}) },
-          }).catch(() => undefined);
-          return { status: 200, body: { decision } };
-        } catch (error) {
-          const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
-          if (['INVALID_OWNERSHIP_DECISION', 'REPLICA_CANDIDATE_REQUIRED', 'UNOWNED_OBJECT_NOT_FOUND',
-            'UNOWNED_STATE_NOT_FOUND', 'STATE_OWNERSHIP_CONFLICT', 'UNOWNED_UPLOAD_NOT_FOUND',
-            'UPLOAD_CATALOG_CONFLICT', 'UPLOAD_NAMESPACE_CONFLICT', 'UPLOAD_OWNERSHIP_CONFLICT',
-            'OBJECT_NAMESPACE_CONFLICT', 'OBJECT_CATALOG_CONFLICT', 'OBJECT_INTEGRITY_FAILED'].includes(code)) {
-            return { status: code === 'INVALID_OWNERSHIP_DECISION' ? 400 : 409, body: {
-              code, error: error instanceof Error ? error.message : '附件归属修复失败',
-            } };
-          }
-          throw error;
-        }
-      });
-    }
-
     if (req.method === 'GET' && suffix === '/storage') {
       const composition = await blobStore.storageComposition();
       const diskFree = composition.diskFreeBytes;
       const diskTotal = composition.diskTotalBytes;
       return send(res, 200, {
         ...composition,
-        unowned: await blobStore.unownedReplicaRecords(),
         cleanup: blobStore.cleanupStatus(),
         // Reported from the deployment record; the console never selects a backup path.
         backupDirectory: (await store.listBackupRecords(1)).backups[0]?.outputPath ?? null,
@@ -1711,9 +1630,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if (!guard.ok) return send(res, 400, { code: guard.code, error: guard.error });
       res.setHeader('Cache-Control', 'no-store');
       const page = await store.listInvitesPage(cursor, limit, state, sort);
-      // The cursor is `sort~dir~key|rowid`; the key is a date or a state, never the code. A
-      // legacy numeric cursor from before this list was sortable is still accepted, because it
-      // means the same thing the default ordering means.
+      // The cursor is `sort~dir~key|rowid`; the key is a date or a state, never the code.
       return send(res, 200, { ...page, sort: { key: sort.key, direction: sort.direction } });
     }
 

@@ -21,7 +21,6 @@
     "build:app": "tsc -p tsconfig.json && esbuild src/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/server.mjs",
     "start:built": "node dist/server.mjs",
     "prune-backups": "npm run maintenance -- prune-backups",
-    "retire-legacy-shadow": "npm run maintenance -- retire-legacy-shadow",
     "retire-node": "npm run maintenance -- retire-node",
     "retire-local-replica": "npm run maintenance -- retire-local-replica"
   },

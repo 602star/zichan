@@ -59,7 +59,7 @@ import {
 } from '../credential-vault.js';
 import { SYNC_LIFECYCLE_RESULT_EVENT, type LifecycleSyncResult } from '../background-sync.js';
 import { syncConfiguredServers, type ConfiguredSyncEndpoint, type ConfiguredSyncResult } from '../sync-orchestrator.js';
-import { ATTACHMENT_BATCH_EVENT, type AttachmentBatchResult, type LegacyAttachmentMigrationProgress } from '../attachment-sync.js';
+import { ATTACHMENT_BATCH_EVENT, type AttachmentBatchResult } from '../attachment-sync.js';
 import {
   LEDGER_KEY_STATE_CHANGED_EVENT,
   adoptLedgerKeyEnvelope,
@@ -396,7 +396,6 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
   const [branchChoices, setBranchChoices] = useState<Record<string, Record<string, string>>>({});
   const [fieldChoices, setFieldChoices] = useState<Record<string, Record<string, Record<string, string>>>>({});
   const [busy, setBusy] = useState(false);
-  const [migrationProgress, setMigrationProgress] = useState<LegacyAttachmentMigrationProgress>();
   const [attachmentBatch, setAttachmentBatch] = useState<AttachmentBatchResult>();
   const [testingId, setTestingId] = useState('');
   const operations = useRef(new ProfileOperations());
@@ -1166,7 +1165,6 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
 
   async function doSync(profile?: SyncConnection) {
     setBusy(true);
-    setMigrationProgress(undefined);
     try {
       if (!ledgerKey.unlocked) throw new Error('请先解锁账本加密密钥');
       const targets = profile ? [profile] : profiles.filter((p) => p.enabled);
@@ -1177,8 +1175,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
         return;
       }
       setSyncNotice('');
-      const res = await syncConfiguredServers(store, targets.map((target) => ({ ...target, enabled: true })),
-        setMigrationProgress);
+      const res = await syncConfiguredServers(store, targets.map((target) => ({ ...target, enabled: true })));
       setEndpointRows(res.endpoints);
       const pending = await store.listConflicts();
       const invalid = await store.listSyncCommits({ state: 'invalid', includeInvalid: true });
@@ -1194,16 +1191,14 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
       } else if (!res.converged) {
         setSyncNotice(`已完成 ${res.rounds} 轮同步，但仍有依赖等待收敛；下次同步会继续。`);
       } else if (res.attachmentSync.localMissing > 0) {
-        setSyncNotice(`本机提交已与${res.syncMode === 'node-group' ? '当前节点' : '配置服务器'}收敛；${res.attachmentSync.localMissing} 个附件对象保留在服务器，查看或导出时按需下载。`);
+        setSyncNotice(`本机提交已与当前节点收敛；${res.attachmentSync.localMissing} 个附件对象保留在服务器，查看或导出时按需下载。`);
       } else {
-        setSyncNotice(`本机提交已在 ${res.rounds} 轮内与${res.syncMode === 'node-group' ? '当前节点' : '配置服务器'}收敛；服务器后台副本状态请查看下方链路。`);
+        setSyncNotice(`本机提交已在 ${res.rounds} 轮内与当前节点收敛；服务器后台副本状态请查看下方链路。`);
       }
       bump();
     } catch (error) {
       setSyncNotice(`同步失败：${msg(error)}`);
     } finally {
-      setMigrationProgress((current) => current && current.phase !== 'complete'
-        ? { ...current, phase: 'complete' } : current);
       setBusy(false);
     }
   }
@@ -1499,7 +1494,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
         : {
           label: '等待首次同步',
           tone: unreachableProfiles.length ? 'var(--negative)' : 'var(--text-secondary)',
-          detail: `已配置 ${enabledProfiles.length} 台服务器。已核对的后台复制组只需连接当前节点；旧配置在迁移期间仍逐台同步。${unreachableNote}${retiredNote}`,
+          detail: `已配置 ${enabledProfiles.length} 台服务器。已核对的后台复制组只需连接当前节点；未组网的连接仍逐台同步。${unreachableNote}${retiredNote}`,
         };
 
   const settingsSummary = enabledProfiles.length
@@ -1845,25 +1840,12 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
             {syncNotice}
           </div>
         )}
-        {migrationProgress && (migrationProgress.phase === 'checking' || migrationProgress.objectsTotal > 0) && (
-          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', marginTop: 10 }}>
-            {migrationProgress.phase === 'checking' ? '正在检查旧版附件…'
-              : <>旧版附件迁移：{migrationProgress.objectsMigrated}/{migrationProgress.objectsTotal} 个，
-                已处理 {(migrationProgress.bytesMigrated / 1024 / 1024).toFixed(1)} /
-                {(migrationProgress.bytesTotal / 1024 / 1024).toFixed(1)} MiB
-                {migrationProgress.objectsFailed > 0 && ` · ${migrationProgress.objectsFailed} 个失败，下次同步会重试`}
-                {migrationProgress.phase === 'copying' && ' · 请保持此网页打开'}
-                {migrationProgress.currentAlias && migrationProgress.phase === 'copying'
-                  && ` · 当前节点：${migrationProgress.currentAlias}`}</>}
-          </div>
-        )}
         {autoSyncEnabled && attachmentBatch && (
           <div style={{ fontSize: 'var(--fs-caption)', color: attachmentBatch.error ? 'var(--negative)' : 'var(--text-secondary)', marginTop: 10 }}>
             后台附件：{profiles.find((row) => row.id === attachmentBatch.profileId)?.alias ?? attachmentBatch.profileId} ·
             {' '}扫描 {attachmentBatch.scannedThrough}/{attachmentBatch.references} 个对象
             {attachmentBatch.uploaded > 0 && ` · 本批上传 ${attachmentBatch.uploaded} 个（逻辑量 ${(attachmentBatch.bytesUploaded / 1024 / 1024).toFixed(1)} MiB）`}
             {attachmentBatch.downloaded > 0 && ` · 取回 ${attachmentBatch.downloaded} 个`}
-            {attachmentBatch.migrated > 0 && `，其中旧版转存 ${attachmentBatch.migrated} 个`}
             {attachmentBatch.sweepComplete && ' · 本轮完成'}
             {attachmentBatch.error && ` · 失败：${attachmentBatch.error}`}
           </div>

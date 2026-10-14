@@ -438,7 +438,7 @@ function LegacyNodeReplicaPanel({ profiles, ledgerId, pinNodeIdentity, onConfigu
     <details style={{ marginBottom: 12 }}>
       <summary style={{ cursor: 'pointer', color: 'var(--accent)', fontSize: 'var(--fs-caption)' }}>了解复制与核对方式</summary>
     <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', lineHeight: 1.6 }}>
-      选择一台尚无此账本副本、且由节点管理员登录的服务器。管理员已有其他账本也可以加入；系统会为源节点统一账号创建独立账本账号，节点管理员不会因此获得此账本访问权。获授权的直连节点同步账号密码凭据，源节点暂时不可达时，凭据已复制的账号仍可在目标节点登录。托管账本在目标节点接收并重新封存密钥后可直接打开；私密账本仍需恢复码，成员账本仍需成员密钥密码。创建后由服务器复制提交和新版附件，浏览器关闭也会继续。勾选自动续期后，有效节点活动会延长授权；停止链路后节点会持续尝试撤销源节点授权。旧版附件仍需客户端迁移。本节点 READY 与中继汇总的授权副本组状态分别显示；网页配置的可互换节点组仍需逐台核对。
+      服务器同步组会自动为个人账本建立节点副本。手动建立单本账的复制时，选择尚无此账本副本、且由节点管理员登录的服务器；管理员不会因此获得账本访问权。已同步账号凭据的节点可在身份节点断线期间接受本地登录。托管账本由获授权节点保存解锁资料；私密和成员账本平时用账号密码打开。建立链路后，服务器在后台复制提交和附件，浏览器关闭也会继续。节点状态与整组状态需要分别核对。
     </p>
     </details>
     <div style={{ display: 'flex', gap: 10, alignItems: 'end', flexWrap: 'wrap' }}>

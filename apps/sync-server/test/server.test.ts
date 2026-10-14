@@ -56,6 +56,7 @@ async function registerUser(base: string, username: string, password: string, in
     registrationToken: string;
     serverId: string;
     serverPublicKey: string;
+    credentialServerPublicKey?: string;
   };
   const finish = opaque.client.finishRegistration({
     password,
@@ -64,7 +65,7 @@ async function registerUser(base: string, username: string, password: string, in
     identifiers: { client: normalized, server: startBody.serverId },
     keyStretching: 'memory-constrained',
   });
-  expect(finish.serverStaticPublicKey).toBe(startBody.serverPublicKey);
+  expect(finish.serverStaticPublicKey).toBe(startBody.credentialServerPublicKey ?? startBody.serverPublicKey);
   return post2(base, `${prefix}/api/auth/register/finish`, {
     registrationToken: startBody.registrationToken,
     registrationRecord: finish.registrationRecord,
@@ -92,6 +93,7 @@ async function loginUser(
     loginResponse: string;
     serverId: string;
     serverPublicKey: string;
+    credentialServerPublicKey?: string;
   };
   const finish = opaque.client.finishLogin({
     clientLoginState: start.clientLoginState,
@@ -100,7 +102,7 @@ async function loginUser(
     identifiers: { client: normalized, server: startBody.serverId },
     keyStretching: 'memory-constrained',
   });
-  if (finish) expect(finish.serverStaticPublicKey).toBe(startBody.serverPublicKey);
+  if (finish) expect(finish.serverStaticPublicKey).toBe(startBody.credentialServerPublicKey ?? startBody.serverPublicKey);
   return post2(base, `${prefix}/api/auth/login/finish`, {
     loginId: startBody.loginId,
     finishLoginRequest: finish?.finishLoginRequest ?? 'invalid-opaque-login-finish',
@@ -1043,7 +1045,7 @@ describe('sync-server endpoints', () => {
       await driver.close();
       const s = createSyncServer({ dataDir: dir });
       try {
-        await expect(s.ready).rejects.toThrow(/结构不受支持.*不会自动重置/);
+        await expect(s.ready).rejects.toThrow(/数据库版本不匹配/);
       } finally {
         await s.close();
       }
@@ -1052,7 +1054,7 @@ describe('sync-server endpoints', () => {
     }
   });
 
-  it.each([7, 8, CURRENT_SERVER_SCHEMA])('creates, verifies, and restores a schema %i server backup', async (version) => {
+  it.each([CURRENT_SERVER_SCHEMA])('creates, verifies, and restores a schema %i server backup', async (_version) => {
     const root = mkdtempSync(join(tmpdir(), 'zichan-backup-'));
     const dataDir = join(root, 'source');
     const backupDir = join(root, 'backup-1');
@@ -1067,11 +1069,6 @@ describe('sync-server endpoints', () => {
       await source.close();
     }
     try {
-      if (version === 7 || version === 8) {
-        const previous = new NodeSqliteDriver(join(dataDir, 'server.sqlite'));
-        try { await previous.run('UPDATE server_schema_migrations SET version = ?, name = ?', [version, version === 7 ? 'server_account_identity_v7' : 'server_management_v8']); }
-        finally { await previous.close(); }
-      }
       const manifest = await createServerBackup(dataDir, backupDir);
       expect(manifest.files.some((file) => file.path === 'server.sqlite')).toBe(true);
       expect(await verifyServerBackup(backupDir)).toMatchObject({ ok: true, databaseResult: 'ok' });

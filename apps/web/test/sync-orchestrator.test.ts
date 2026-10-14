@@ -202,7 +202,7 @@ describe('configured sync orchestrator', () => {
     const result = await syncConfiguredServers({} as never, [profile]);
 
     expect(result.endpoints[0]?.error).toContain('同步服务器身份已变化');
-    expect(fetchHealth).toHaveBeenCalledTimes(1);
+    expect(fetchHealth).toHaveBeenCalledTimes(2);
     expect(fetchHealth).toHaveBeenCalledWith(`${primaryUrl}/api/health`, { redirect: 'error', signal: expect.any(AbortSignal) });
     expect(httpCommitTransport).not.toHaveBeenCalled();
   });
@@ -273,7 +273,7 @@ describe('configured sync orchestrator', () => {
     const result = await syncConfiguredServers({} as never, [profile]);
     expect(loginAccount).not.toHaveBeenCalled();
     expect(refreshAccountSession).toHaveBeenCalledTimes(1);
-    expect(fetchHealth).toHaveBeenCalledTimes(2);
+    expect(fetchHealth).toHaveBeenCalledTimes(4);
     expect(fetchHealth).toHaveBeenCalledWith('https://ledger.example.com/api/health', { redirect: 'error', signal: expect.any(AbortSignal) });
     expect(httpCommitTransport).toHaveBeenCalledTimes(2);
     expect(result.converged).toBe(true);
@@ -428,7 +428,7 @@ describe('configured sync orchestrator', () => {
     expect(refreshAccountSession).not.toHaveBeenCalled();
   });
 
-  it('persists identity, authorization, and network failures as distinct connection states', async () => {
+  it('requires an administrator sync group before configuring multiple servers', async () => {
     const localStorage = new MemoryStorage();
     const sessionStorage = new MemoryStorage();
     Object.defineProperty(globalThis, 'window', { configurable: true, value: undefined });
@@ -471,17 +471,12 @@ describe('configured sync orchestrator', () => {
       syncReplicas,
     }));
 
-    const { loadSyncConnections, saveSyncConnections } = await import('../src/sync-config.js');
+    const { saveSyncConnections } = await import('../src/sync-config.js');
     saveSyncConnections(profiles.map(({ testError: _testError, ...profile }) => profile));
     const { syncConfiguredServers } = await import('../src/sync-orchestrator.js');
-    const result = await syncConfiguredServers({} as never, profiles.map(({ testError: _testError, ...profile }) => profile));
-
-    expect(result.endpoints.map((endpoint) => endpoint.error)).toEqual(profiles.map((profile) => profile.testError));
-    expect(Object.fromEntries(loadSyncConnections().map((profile) => [profile.id, profile.status]))).toEqual({
-      identity: 'identity_changed',
-      account: 'login_required',
-      network: 'offline',
-      retired: 'replica_retired',
-    });
+    await expect(syncConfiguredServers({} as never,
+      profiles.map(({ testError: _testError, ...profile }) => profile)))
+      .rejects.toThrow('多台服务器需要先由管理员组成同步组');
+    expect(syncReplicas).not.toHaveBeenCalled();
   });
 });

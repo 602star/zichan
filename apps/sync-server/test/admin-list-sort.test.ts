@@ -222,18 +222,16 @@ describe('sortable admin lists', () => {
     } finally { await f.close(); }
   });
 
-  it('keeps accepting a cursor issued before the list was sortable', async () => {
+  it('rejects a cursor issued before the list was sortable', async () => {
     const f = await fixture();
     try {
       await seed(f, [
         ["INSERT INTO server_logs (id, at, level, action, message) VALUES ('l-1', '2026-01-01T00:00:00.000Z', 'info', 'zeta', 'one')", []],
         ["INSERT INTO server_logs (id, at, level, action, message) VALUES ('l-2', '2026-01-02T00:00:00.000Z', 'warn', 'alpha', 'two')", []],
       ]);
-      // The old shape is `value|id` with no sort prefix, and it means the default ordering.
       const legacy = encodeURIComponent('2026-01-02T00:00:00.000Z|l-2');
       const page = await f.api(`/logs?limit=10&cursor=${legacy}`);
-      expect(page.status).toBe(200);
-      expect(((await page.json()) as { logs: { id: string }[] }).logs.map((row) => row.id)).toEqual(['l-1']);
+      expect(page.status).toBe(400);
     } finally { await f.close(); }
   });
 });

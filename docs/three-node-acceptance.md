@@ -32,7 +32,7 @@ npm test -w @zichan/sync-server -- --run test/large-three-node-replica.test.ts
 node scripts/three-node-preflight.mjs https://public.example.com https://home.example.com https://office.example.com
 ```
 
-它读取每台的 `/api/health` 与 `/api/ready`，检查节点 ID 和 Ed25519 公钥互不相同、协议能力、Web 与同步开关、部署路径及数据库就绪；报告 schema 差异供人工核对，因为显式退役旧影子数据的节点可以使用 schema 25，其他同版本节点仍可使用 schema 24。输出包含完整公钥，管理员需与各节点可信本机来源逐一核对。它不登录、不读取账本，也不证明三站记账或副本 `READY`。输入节点根地址或部署前缀，不要附 `/app/`。仅本机回环演练可加 `--allow-local-http` 并把第一个地址设为 `localhost`、`127.*` 或 `::1`；真正的公网节点必须使用 HTTPS。
+它读取每台的 `/api/health` 与 `/api/ready`，检查节点 ID 和 Ed25519 公钥互不相同、协议能力、Web 与同步开关、部署路径及数据库就绪；核对各节点均为当前 schema 26。输出包含完整公钥，管理员需与各节点可信本机来源逐一核对。它不登录、不读取账本，也不证明三站记账或副本 `READY`。输入节点根地址或部署前缀，不要附 `/app/`。仅本机回环演练可加 `--allow-local-http` 并把第一个地址设为 `localhost`、`127.*` 或 `::1`；真正的公网节点必须使用 HTTPS。
 
 ## 部署准备
 
@@ -69,7 +69,7 @@ npm run server:retire-node -- --data-dir D:\old-ledger-node --output D:\retired-
 
 ### 多账本节点只清理一本账的副本
 
-同机还有其他账本时，先完成上述替换、停服与副本组移出，再在该节点数据目录完成 `retire-legacy-shadow`，使旧账号影子表在独立备份和逐项核对后退役至 schema 25。随后预检目标 `replicaId`：
+同机还有其他账本时，先完成上述替换、停服与副本组移出，再预检目标 `replicaId`：
 
 ```powershell
 npm run server:retire-local-replica -- --data-dir D:\multi-ledger-node --replica-id rep-example-id --dry-run

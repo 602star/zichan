@@ -1,9 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { fetchAuthMe, refreshAccountSession, requestJson, HttpRequestError, type SyncAuthSession } from '@zichan/db';
 import { canOfferOfflineCache } from './account-restore-error.js';
-import { activateWebAccount, accountLocalStorage, accountStorageKey,
+import { activateWebAccount, accountLocalStorage, accountStorageKey, webLedgerNamespace,
   WEB_ACCOUNT_BINDING_KEY, WEB_LEDGER_SWITCH_EVENT_KEY } from './account-storage.js';
-import { resolveWebLedgerNamespace } from './web-ledger-storage.js';
 import { FirstServerConnectionGate } from './ui/FirstServerConnectionGate.js';
 import { applySyncAuthSession } from './sync-auth.js';
 import { restoreBrowserCredentialRuntimeState, setRuntimeCredential } from './credential-vault.js';
@@ -39,10 +38,7 @@ export function WebAccountApp() {
   const restoreFlight = useRef<Promise<{ session: SyncAuthSession; serverId: string; serverPublicKey: string }>>();
 
   const enter = useCallback(async (connection: WebBinding, session?: SyncAuthSession) => {
-    const choice = await resolveWebLedgerNamespace(connection.serverId!, connection.accountId!,
-      { ledgerId: connection.ledgerId, replicaId: connection.replicaId }, binding);
-    activateWebAccount(connection.serverId!, connection.accountId!, connection.replicaId,
-      choice.primaryReplicaId, choice.legacyOccupied);
+    activateWebAccount(connection.serverId!, connection.accountId!, connection.replicaId);
     // Settings, keys, encrypted SQLite and attachment blobs share this replica namespace.
     connection = { ...connection, ...restoreWebSyncConnections(connection) };
     restoreBrowserCredentialRuntimeState();
@@ -71,9 +67,8 @@ export function WebAccountApp() {
     async function restore() {
       if (sessionStorage.getItem(REQUIRE_LOGIN_KEY)) { if (active) setChecking(false); return; }
       if (binding) {
-        const choice = await resolveWebLedgerNamespace(binding.serverId!, binding.accountId!,
-          { ledgerId: binding.ledgerId, replicaId: binding.replicaId }, binding);
-        const exit = localStorage.getItem(`${choice.namespace}${ACCOUNT_EXIT_KEY}`);
+        const namespace = webLedgerNamespace(binding.serverId!, binding.accountId!, binding.replicaId);
+        const exit = localStorage.getItem(`${namespace}${ACCOUNT_EXIT_KEY}`);
         if (exit) { if (active) { setNotice(exit === 'confirmed' ? '已退出账号，服务器会话已撤销。可以登录其他账号，本机缓存分别保存。' : '已退出账号，服务器会话撤销尚未确认，请联网后登录。'); setChecking(false); } return; }
       }
       if (!restoreFlight.current) restoreFlight.current = (async () => {

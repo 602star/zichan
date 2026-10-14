@@ -63,7 +63,7 @@ describe('background sync lifecycle', () => {
     const { runLifecycleSync } = await import('../src/background-sync.js');
     const result = await runLifecycleSync({} as never, 'startup');
     expect(syncConfiguredServers).toHaveBeenCalledTimes(1);
-    expect(syncConfiguredServers).toHaveBeenCalledWith(expect.anything(), expect.anything(), undefined,
+    expect(syncConfiguredServers).toHaveBeenCalledWith(expect.anything(), expect.anything(),
       { deferAttachmentTransfers: true, skipAttachmentSync: true });
     expect(result).toMatchObject({ attempted: 1, succeeded: 1, pulled: 4, pushed: 2, applied: 3, conflicts: 0, rounds: 1, converged: true, errors: [] });
   });
@@ -112,9 +112,9 @@ describe('background sync lifecycle', () => {
       finishedAt: '2026-10-08T10:00:00.000Z',
     });
     const syncAttachmentBatch = vi.fn().mockRejectedValueOnce(new Error('fetch failed'))
-      .mockResolvedValueOnce({ profileId: 'home', scanned: 8, uploaded: 8, migrated: 0, failed: 0,
+      .mockResolvedValueOnce({ profileId: 'home', scanned: 8, uploaded: 8, failed: 0,
         bytesUploaded: 8, references: 9, scannedThrough: 8, sweepComplete: false })
-      .mockResolvedValueOnce({ profileId: 'home', scanned: 1, uploaded: 1, migrated: 1, failed: 0,
+      .mockResolvedValueOnce({ profileId: 'home', scanned: 1, uploaded: 1, failed: 0,
         bytesUploaded: 1, references: 9, scannedThrough: 9, sweepComplete: true });
     vi.doMock('../src/sync-orchestrator.js', () => ({ syncConfiguredServers }));
     vi.doMock('../src/attachment-sync.js', () => ({ syncAttachmentBatch, ATTACHMENT_BATCH_EVENT: 'zichan:attachment-batch' }));
@@ -135,8 +135,8 @@ describe('background sync lifecycle', () => {
       await vi.waitFor(() => expect(fakeWindow.pending()).toBeGreaterThan(0));
       fakeWindow.fireTimers();
       await vi.waitFor(() => expect(syncConfiguredServers).toHaveBeenCalledTimes(2));
-      expect(syncConfiguredServers.mock.calls[0]?.[3]).toMatchObject({ skipAttachmentSync: true });
-      expect(syncConfiguredServers.mock.calls[1]?.[3]).toMatchObject({ skipAttachmentSync: false });
+      expect(syncConfiguredServers.mock.calls[0]?.[2]).toMatchObject({ skipAttachmentSync: true });
+      expect(syncConfiguredServers.mock.calls[1]?.[2]).toMatchObject({ skipAttachmentSync: false });
       const saved = JSON.parse(localStorage.getItem('zichan.sync.connections.v1')!) as {
         connections: Array<Record<string, unknown>>;
       };

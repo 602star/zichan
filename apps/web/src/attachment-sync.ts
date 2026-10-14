@@ -80,16 +80,6 @@ export interface AttachmentSyncResult {
   localMissing: number;
 }
 
-export interface LegacyAttachmentMigrationProgress {
-  phase: 'checking' | 'copying' | 'complete';
-  objectsTotal: number;
-  objectsMigrated: number;
-  objectsFailed: number;
-  bytesTotal: number;
-  bytesMigrated: number;
-  currentAlias?: string;
-}
-
 export interface AttachmentBatchResult {
   profileId: string;
   references: number;
@@ -97,7 +87,6 @@ export interface AttachmentBatchResult {
   scanned: number;
   uploaded: number;
   downloaded: number;
-  migrated: number;
   failed: number;
   bytesUploaded: number;
   bytesDownloaded: number;
@@ -154,8 +143,7 @@ interface UploadPlan {
 }
 
 interface TargetRuntime {
-  historical?: Map<string, { context: AttachmentCryptoContext; remoteBlobId: string }>;
-  legacyUsernames: string[];
+  previousSecret?: Map<string, { context: AttachmentCryptoContext; remoteBlobId: string }>;
   target: AttachmentSyncTarget;
   client: AttachmentBlobClient;
   context: AttachmentCryptoContext;
@@ -276,15 +264,6 @@ class AttachmentBlobClient {
     return (await this.json<{ usage: AttachmentServerUsage }>('/api/v3/blobs/usage')).usage;
   }
 
-  async legacyRoutes(): Promise<string[]> {
-    return (await this.json<{ usernames: string[] }>('/api/v3/blobs/legacy-routes')).usernames;
-  }
-
-  async markLegacyMigrated(legacyBlobId: string, portableBlobId: string): Promise<void> {
-    await this.json('/api/v3/blobs/legacy-migrations', { method: 'POST',
-      body: JSON.stringify({ legacyBlobId, portableBlobId }) });
-  }
-
   async beginUpload(manifest: BlobManifest): Promise<UploadPlan> {
     return this.json<UploadPlan>('/api/v3/blobs/uploads', { method: 'POST', body: JSON.stringify({ manifest }) });
   }
@@ -392,7 +371,7 @@ async function buildManifest(
     });
   }
   return {
-    v: 'serverId' in context.routing ? 1 : 2,
+    v: 2,
     blobId: remoteBlobId,
     cipherBytes: chunks.reduce((sum, chunk) => sum + chunk.sizeBytes, 0),
     chunkCount,
@@ -455,21 +434,18 @@ async function uploadReference(store: SqlLedgerStore, runtime: TargetRuntime, re
       error: undefined,
     }));
   } catch (error) {
-    const failure = runtime.historical?.has(ref.sha256) && errorMessage(error).includes('QUOTA_EXCEEDED')
-      ? new Error('旧附件迁移需要临时配额空余；请让节点管理员提高附件配额，并确认磁盘可容纳旧版与新版密文后重试')
-      : error;
     runtime.result.failed += 1;
     await store.attachmentState.putReplicaBlob(replicaRow(profileId, ref, remoteBlobId, {
       state: 'error',
       retryAt: retryAt(),
-      error: errorMessage(failure),
+      error: errorMessage(error),
     }));
-    throw failure;
+    throw error;
   }
 }
 
 function validateManifest(manifest: BlobManifest, remoteBlobId: string): void {
-  if ((manifest.v !== 1 && manifest.v !== 2) || manifest.blobId !== remoteBlobId || !Number.isSafeInteger(manifest.chunkCount)
+  if (manifest.v !== 2 || manifest.blobId !== remoteBlobId || !Number.isSafeInteger(manifest.chunkCount)
     || manifest.chunkCount < 1 || manifest.chunks.length !== manifest.chunkCount) throw new Error('服务器附件清单无效');
   let cipherBytes = 0;
   for (let index = 0; index < manifest.chunks.length; index += 1) {
@@ -482,15 +458,14 @@ function validateManifest(manifest: BlobManifest, remoteBlobId: string): void {
 }
 
 async function downloadReference(store: SqlLedgerStore, runtime: TargetRuntime, ref: AttachmentBlobReference): Promise<void> {
-  const historical = runtime.historical?.get(ref.sha256);
-  if (historical) runtime = { ...runtime, context: historical.context, remoteIds: new Map(runtime.remoteIds).set(ref.sha256, historical.remoteBlobId) };
+  const previousSecret = runtime.previousSecret?.get(ref.sha256);
+  if (previousSecret) runtime = { ...runtime, context: previousSecret.context, remoteIds: new Map(runtime.remoteIds).set(ref.sha256, previousSecret.remoteBlobId) };
   const profileId = runtime.target.profile.id;
   const remoteBlobId = runtime.remoteIds.get(ref.sha256)!;
   await store.attachmentState.putReplicaBlob(replicaRow(profileId, ref, remoteBlobId, { state: 'downloading', error: undefined }));
   try {
     const manifest = await runtime.client.manifest(remoteBlobId);
     validateManifest(manifest, remoteBlobId);
-    if (manifest.v !== ('serverId' in runtime.context.routing ? 1 : 2)) throw new Error('服务器附件加密格式与密钥范围不一致');
     const parts: BlobPart[] = [];
     for (const meta of manifest.chunks) {
       const ciphertext = await runtime.client.chunk(remoteBlobId, meta.index);
@@ -534,10 +509,9 @@ async function createRuntime(target: AttachmentSyncTarget, refs: AttachmentBlobR
   if (!healthResponse.ok) throw new Error('附件同步无法检查服务器能力');
   const health = await healthResponse.json() as { serverId?: string; capabilities?: string[] };
   if (health.serverId !== target.identity.serverId) throw new Error('附件同步服务器身份已改变');
+  if (!health.capabilities?.includes('portable-blobs-v2')) throw new Error('服务器不支持当前附件格式');
   const session = requireLedgerCryptoSession(target.identity.ledgerId);
-  const context = await deriveAttachmentCryptoContext(session, health.capabilities?.includes('portable-blobs-v2')
-    ? { v: 2, ledgerId: target.identity.ledgerId }
-    : { serverId: target.identity.serverId, ledgerId: target.identity.ledgerId, username: target.profile.username.trim() });
+  const context = await deriveAttachmentCryptoContext(session, { v: 2, ledgerId: target.identity.ledgerId });
   const remoteIds = new Map<string, string>();
   for (const ref of refs) remoteIds.set(ref.sha256, await attachmentRemoteBlobId(context, ref.sha256));
   const client = new AttachmentBlobClient(target.profile);
@@ -545,8 +519,6 @@ async function createRuntime(target: AttachmentSyncTarget, refs: AttachmentBlobR
     target,
     client,
     context,
-    legacyUsernames: health.capabilities?.includes('legacy-blob-routes-v1')
-      ? await client.legacyRoutes() : [],
     remoteIds,
     states: new Map(),
     result: {
@@ -568,7 +540,7 @@ function rememberError(runtime: TargetRuntime, error: unknown): void {
   runtime.result.error = runtime.result.error ? `${runtime.result.error}；${message}` : message;
 }
 
-async function loadRemoteStates(runtime: TargetRuntime, refs: AttachmentBlobReference[], scanHistorical = true): Promise<void> {
+async function loadRemoteStates(runtime: TargetRuntime, refs: AttachmentBlobReference[], scanPreviousSecrets = true): Promise<void> {
   const response = await runtime.client.status([...runtime.remoteIds.values()]);
   runtime.result.usage = response.usage;
   for (const ref of refs) {
@@ -581,43 +553,27 @@ async function loadRemoteStates(runtime: TargetRuntime, refs: AttachmentBlobRefe
     }
     runtime.states.set(ref.sha256, state);
   }
-  if (!scanHistorical) return;
-  // A protection change uses fresh attachment keys. Old objects remain readable;
-  // new content is always uploaded with the current secret and object IDs.
+  if (!scanPreviousSecrets) return;
+  // A protection change uses fresh attachment keys. Previous V2 objects remain
+  // readable while current uploads use the active secret and object IDs.
   const session = requireLedgerCryptoSession(runtime.target.identity.ledgerId);
-  const legacyRoutings = [...new Set([runtime.target.profile.username.trim(), ...runtime.legacyUsernames])]
-    .map((username) => ({ serverId: runtime.target.identity.serverId,
-      ledgerId: runtime.target.identity.ledgerId, username }));
-  for (const { secret, routing } of [
-    ...legacyRoutings.map((routing) => ({ secret: session.attachmentSecret, routing })),
-    ...(session.retiredAttachmentSecrets ?? []).flatMap((secret) => [
-      { secret, routing: runtime.context.routing },
-      ...legacyRoutings.map((routing) => ({ secret, routing })),
-    ]),
-  ]) {
-    const auditV1 = 'serverId' in routing && runtime.legacyUsernames.includes(routing.username);
-    const missing = refs.filter((ref) => !runtime.historical?.has(ref.sha256)
-      && (runtime.states.get(ref.sha256) !== 'available' || auditV1));
+  for (const secret of session.retiredAttachmentSecrets ?? []) {
+    const missing = refs.filter((ref) => !runtime.previousSecret?.has(ref.sha256)
+      && runtime.states.get(ref.sha256) !== 'available');
     if (!missing.length) continue;
-    const context = await deriveAttachmentCryptoContext({ ...session, attachmentSecret: secret }, routing);
+    const context = await deriveAttachmentCryptoContext({ ...session, attachmentSecret: secret },
+      { v: 2, ledgerId: runtime.target.identity.ledgerId });
     const ids = await Promise.all(missing.map((ref) => attachmentRemoteBlobId(context, ref.sha256)));
     const old = await runtime.client.status(ids);
     for (const [index, ref] of missing.entries()) {
       const id = ids[index]!;
       if (old.objects[id] !== 'available' && old.objects[id] !== 'trash') continue;
       if (old.objects[id] === 'trash') await runtime.client.restore(id);
-      runtime.historical ??= new Map();
-      runtime.historical.set(ref.sha256, { context, remoteBlobId: id });
+      runtime.previousSecret ??= new Map();
+      runtime.previousSecret.set(ref.sha256, { context, remoteBlobId: id });
       runtime.states.set(ref.sha256, 'available');
     }
   }
-}
-
-async function markLegacyMigration(runtime: TargetRuntime, ref: AttachmentBlobReference): Promise<void> {
-  const historical = runtime.historical?.get(ref.sha256);
-  if (!historical || !('serverId' in historical.context.routing)
-    || 'serverId' in runtime.context.routing) return;
-  await runtime.client.markLegacyMigrated(historical.remoteBlobId, runtime.remoteIds.get(ref.sha256)!);
 }
 
 async function cleanupRemoteTrash(store: SqlLedgerStore, runtime: TargetRuntime, activeHashes: Set<string>): Promise<void> {
@@ -686,14 +642,10 @@ export async function syncAttachmentReplicas(
   store: SqlLedgerStore,
   targets: AttachmentSyncTarget[],
   publishPromises = false,
-  onLegacyMigrationProgress?: (progress: LegacyAttachmentMigrationProgress) => void,
   deferAttachmentTransfers = false,
 ): Promise<AttachmentSyncResult> {
-  onLegacyMigrationProgress?.({ phase: 'checking', objectsTotal: 0, objectsMigrated: 0,
-    objectsFailed: 0, bytesTotal: 0, bytesMigrated: 0 });
   if (!deferAttachmentTransfers) await reconcileAttachmentStorage(store);
   const refs = await listAttachmentBlobReferences(store);
-  const refByHash = new Map(refs.map((ref) => [ref.sha256, ref]));
   const activeHashes = new Set(refs.map((ref) => ref.sha256));
   const localReady = new Set<string>();
   if (deferAttachmentTransfers) {
@@ -730,7 +682,6 @@ export async function syncAttachmentReplicas(
         target,
         client: new AttachmentBlobClient(target.profile),
         context: {} as AttachmentCryptoContext,
-        legacyUsernames: [],
         remoteIds: new Map(),
         states: new Map(),
         result,
@@ -739,50 +690,16 @@ export async function syncAttachmentReplicas(
   }
 
   const healthy = runtimes.filter((runtime) => !runtime.result.error && runtime.remoteIds.size === refs.length);
-  const legacyTasks = new Map<string, { sizeBytes: number; state: 'pending' | 'migrated' | 'failed' }>();
-  const legacyKey = (runtime: TargetRuntime, ref: AttachmentBlobReference) =>
-    `${runtime.target.profile.id}:${ref.sha256}`;
-  for (const runtime of healthy) for (const hash of runtime.historical?.keys() ?? []) {
-    const ref = refByHash.get(hash);
-    if (ref) legacyTasks.set(legacyKey(runtime, ref), { sizeBytes: ref.sizeBytes, state: 'pending' });
-  }
-  const legacyBytesTotal = [...legacyTasks.values()].reduce((sum, task) => sum + task.sizeBytes, 0);
-  let legacyMigrated = 0;
-  let legacyFailed = 0;
-  let legacyBytesMigrated = 0;
-  const reportMigration = (phase: LegacyAttachmentMigrationProgress['phase'], currentAlias?: string) => {
-    if (!onLegacyMigrationProgress) return;
-    onLegacyMigrationProgress({ phase, objectsTotal: legacyTasks.size,
-      objectsMigrated: legacyMigrated, objectsFailed: legacyFailed,
-      bytesTotal: legacyBytesTotal, bytesMigrated: legacyBytesMigrated,
-      ...(currentAlias ? { currentAlias } : {}),
-    });
-  };
-  reportMigration(legacyTasks.size ? 'copying' : 'complete');
-  const markMigration = (runtime: TargetRuntime, ref: AttachmentBlobReference, state: 'migrated' | 'failed') => {
-    const task = legacyTasks.get(legacyKey(runtime, ref));
-    if (!task) return;
-    if (task.state === 'migrated') { legacyMigrated -= 1; legacyBytesMigrated -= task.sizeBytes; }
-    if (task.state === 'failed') legacyFailed -= 1;
-    task.state = state;
-    if (state === 'migrated') { legacyMigrated += 1; legacyBytesMigrated += task.sizeBytes; }
-    else legacyFailed += 1;
-    reportMigration('copying', runtime.target.profile.alias);
-  };
-  // A legacy object can still restore a missing local file, but new uploads use the portable ID.
+  // Previous V2 objects can restore a missing local file. New uploads use the active secret.
   for (const runtime of healthy) for (const ref of refs) {
-    if (localReady.has(ref.sha256) && runtime.historical?.has(ref.sha256)) runtime.states.set(ref.sha256, 'missing');
+    if (localReady.has(ref.sha256) && runtime.previousSecret?.has(ref.sha256)) runtime.states.set(ref.sha256, 'missing');
   }
   if (!deferAttachmentTransfers) for (const runtime of healthy) {
     for (const ref of refs) {
       if (!localReady.has(ref.sha256) || runtime.states.get(ref.sha256) === 'available') continue;
       try {
-        if (runtime.historical?.has(ref.sha256)) reportMigration('copying', runtime.target.profile.alias);
         await uploadReference(store, runtime, ref);
-        await markLegacyMigration(runtime, ref);
-        markMigration(runtime, ref, 'migrated');
       } catch (error) {
-        markMigration(runtime, ref, 'failed');
         rememberError(runtime, error);
       }
     }
@@ -794,15 +711,14 @@ export async function syncAttachmentReplicas(
       .filter((runtime) => runtime.states.get(ref.sha256) === 'available')
       .sort((left, right) => (left.target.profile.lastLatencyMs ?? Number.MAX_SAFE_INTEGER) - (right.target.profile.lastLatencyMs ?? Number.MAX_SAFE_INTEGER));
     const needsRelay = available.length > 0 && healthy.some((runtime) => runtime.states.get(ref.sha256) !== 'available'
-      || runtime.historical?.has(ref.sha256));
+      || runtime.previousSecret?.has(ref.sha256));
     // Remote copies already satisfy replica durability. Fetch both content and thumbnails
     // only when another endpoint needs this browser to relay; previews fetch on demand.
     if (!available.length || !needsRelay) continue;
     try {
-      if (available[0]!.historical?.has(ref.sha256)) reportMigration('copying', available[0]!.target.profile.alias);
       await downloadReference(store, available[0]!, ref);
       localReady.add(ref.sha256);
-      for (const runtime of healthy) if (runtime.historical?.has(ref.sha256)) runtime.states.set(ref.sha256, 'missing');
+      for (const runtime of healthy) if (runtime.previousSecret?.has(ref.sha256)) runtime.states.set(ref.sha256, 'missing');
     } catch (error) {
       rememberError(available[0]!, error);
     }
@@ -812,12 +728,8 @@ export async function syncAttachmentReplicas(
     if (!deferAttachmentTransfers) for (const ref of refs) {
       if (!localReady.has(ref.sha256) || runtime.states.get(ref.sha256) === 'available') continue;
       try {
-        if (runtime.historical?.has(ref.sha256)) reportMigration('copying', runtime.target.profile.alias);
         await uploadReference(store, runtime, ref);
-        await markLegacyMigration(runtime, ref);
-        markMigration(runtime, ref, 'migrated');
       } catch (error) {
-        markMigration(runtime, ref, 'failed');
         rememberError(runtime, error);
       }
     }
@@ -831,9 +743,7 @@ export async function syncAttachmentReplicas(
     runtime.result.pending = refs.length - runtime.result.available;
   }
 
-  reportMigration('complete');
   if (publishPromises) for (const runtime of healthy) {
-    if ('serverId' in runtime.context.routing) continue;
     if (deferAttachmentTransfers && refs.some((ref) => runtime.states.get(ref.sha256) !== 'available')) continue;
     try { await publishAttachmentPromise(runtime, refs); }
     catch (error) { rememberError(runtime, error); }
@@ -876,7 +786,7 @@ async function syncAttachmentBatchNow(
   }
   const result: AttachmentBatchResult = {
     profileId: target.profile.id, references: 0, scannedThrough: 0,
-    scanned: 0, uploaded: 0, downloaded: 0, migrated: 0, failed: 0,
+    scanned: 0, uploaded: 0, downloaded: 0, failed: 0,
     bytesUploaded: 0, bytesDownloaded: 0, sweepComplete: false,
   };
   const refs = (await listAttachmentBlobReferences(store))
@@ -904,12 +814,12 @@ async function syncAttachmentBatchNow(
   await loadRemoteStates(runtime, selected);
   for (const ref of selected) {
     try {
-      if (runtime.states.get(ref.sha256) !== 'available' || runtime.historical?.has(ref.sha256)) {
+      if (runtime.states.get(ref.sha256) !== 'available' || runtime.previousSecret?.has(ref.sha256)) {
         const previous = await store.attachmentState.getReplicaBlob(target.profile.id, ref.sha256);
         if (!(previous?.state === 'error' && previous.retryAt && Date.parse(previous.retryAt) > Date.now())) {
           let local = await attachmentStorageStatus(ref.sha256);
           if (local === 'trash' && await restoreAttachmentBlobFromTrash(store, ref)) local = 'ready';
-          if (local !== 'ready' && runtime.historical?.has(ref.sha256)) {
+          if (local !== 'ready' && runtime.previousSecret?.has(ref.sha256)) {
             await downloadReference(store, runtime, ref);
             local = 'ready';
             result.downloaded += 1;
@@ -918,10 +828,8 @@ async function syncAttachmentBatchNow(
           if (local === 'ready') {
             const uploadedBefore = runtime.result.uploaded;
             await uploadReference(store, runtime, ref);
-            await markLegacyMigration(runtime, ref);
             const uploaded = runtime.result.uploaded - uploadedBefore;
             result.uploaded += uploaded;
-            if (runtime.historical?.has(ref.sha256) && !('serverId' in runtime.context.routing)) result.migrated += 1;
             result.bytesUploaded += uploaded ? ref.sizeBytes : 0;
           }
         }

@@ -491,31 +491,10 @@ export class ServerStoreError extends Error {
   }
 }
 
-export const CURRENT_SERVER_SCHEMA = 24;
-export const CURRENT_SERVER_SCHEMA_NAME = 'replica_blob_quotas_v24';
-export const RETIRED_SERVER_SCHEMA = 25;
-export const RETIRED_SERVER_SCHEMA_NAME = 'canonical_replica_storage_v25';
+export const CURRENT_SERVER_SCHEMA = 26;
+export const CURRENT_SERVER_SCHEMA_NAME = 'fresh_replica_storage_v26';
 export function supportedServerSchema(version: number, name: string): boolean {
-  return version === RETIRED_SERVER_SCHEMA && name === RETIRED_SERVER_SCHEMA_NAME
-    || version === CURRENT_SERVER_SCHEMA && name === CURRENT_SERVER_SCHEMA_NAME
-    || version === 23 && name === 'ledger_replacement_checkpoints_v23'
-    || version === 22 && name === 'durable_node_grant_revocation_v22'
-    || version === 21 && name === 'signed_rejected_commit_resolution_v21'
-    || version === 20 && name === 'rejected_commit_ciphertext_v20'
-    || version === 19 && name === 'attachment_promise_catalog_v19'
-    || version === 18 && name === 'replica_backup_catalog_v18'
-    || version === 17 && name === 'session_selection_v17'
-    || version === 16 && name === 'account_ledger_index_v16'
-    || version === 15 && name === 'commit_epoch_v15'
-    || version === 14 && name === 'ledger_control_events_v14'
-    || version === 13 && name === 'ledger_replica_slots_v13'
-    || version === 12 && name === 'server_asset_cost_capabilities_v12'
-    || version === 11 && name === 'server_management_ops_v11'
-    || version === 10 && name === 'server_key_custody_v10'
-    || version === 9 && name === 'server_password_recovery_v9'
-    || version === 8 && name === 'server_management_v8'
-    || version === 7 && name === 'server_account_identity_v7'
-    || version === 6 && name === 'server_account_owner_v6';
+  return version === CURRENT_SERVER_SCHEMA && name === CURRENT_SERVER_SCHEMA_NAME;
 }
 const DEFAULT_COMMIT_QUOTA_BYTES = 20 * 1024 * 1024 * 1024;
 const DEFAULT_BLOB_QUOTA_BYTES = 20 * 1024 * 1024 * 1024;
@@ -895,7 +874,6 @@ function backupFromRow(row: Record<string, unknown>): ServerBackupArchive {
 export class SyncServerStore {
   readonly ready: Promise<void>;
   private readonly driver: NodeSqliteDriver;
-  private legacyShadowRetired = false;
   private logWrites = 0;
   private lastLogPruneAt = 0;
 
@@ -922,6 +900,32 @@ PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 PRAGMA wal_autocheckpoint = 1000;
 PRAGMA journal_size_limit = 67108864;`);
+    const existingTables = (await this.driver.all<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+    )).map((row) => row.name);
+    const hasServerSchema = existingTables.includes('server_schema_migrations');
+    if (existingTables.length && !hasServerSchema) {
+      const emptyBlobTables = new Set(['blob_objects', 'blob_replica_states',
+        'blob_uploads', 'blob_user_quotas', 'blob_upload_chunks']);
+      if (existingTables.some((table) => !emptyBlobTables.has(table))) {
+        throw new Error('同步服务器数据库不是当前全新部署结构，请使用空数据目录重新部署');
+      }
+      for (const table of existingTables) {
+        const count = await this.driver.get<{ count: number }>(`SELECT COUNT(*) AS count FROM ${table}`);
+        if (Number(count?.count ?? 0) > 0) {
+          throw new Error('同步服务器数据库已有旧数据，请使用空数据目录重新部署');
+        }
+      }
+    }
+    if (hasServerSchema) {
+      const marker = await this.driver.all<{ version: number; name: string }>(
+        'SELECT version, name FROM server_schema_migrations',
+      );
+      if (marker.length !== 1 || marker[0]?.version !== CURRENT_SERVER_SCHEMA
+        || marker[0]?.name !== CURRENT_SERVER_SCHEMA_NAME) {
+        throw new Error('同步服务器数据库版本不匹配；开发期不升级旧库，请使用空数据目录重新部署');
+      }
+    }
     await this.driver.exec(`
 CREATE TABLE IF NOT EXISTS server_schema_migrations (
   version INTEGER PRIMARY KEY,
@@ -1118,6 +1122,7 @@ CREATE TABLE IF NOT EXISTS federated_login_codes (
 );
 CREATE INDEX IF NOT EXISTS idx_federated_login_codes_expiry ON federated_login_codes (expires_at);
 CREATE TABLE IF NOT EXISTS server_administrators (
+  read_only INTEGER NOT NULL DEFAULT 0,
   username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
   granted_at TEXT NOT NULL
 );
@@ -1165,6 +1170,7 @@ CREATE TABLE IF NOT EXISTS sync_opaque_login_states (
 );
 CREATE INDEX IF NOT EXISTS idx_opaque_login_states_expiry ON sync_opaque_login_states (expires_at);
 CREATE TABLE IF NOT EXISTS sync_sessions (
+  replica_id TEXT,
   session_id TEXT PRIMARY KEY,
   username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
   device_id TEXT NOT NULL,
@@ -1366,12 +1372,6 @@ CREATE TABLE IF NOT EXISTS replica_physical_status (
   issue TEXT,
   PRIMARY KEY (username, ledger_id)
 );
-CREATE TABLE IF NOT EXISTS sync_ledger_requirements (
-  username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
-  ledger_id TEXT NOT NULL,
-  capability TEXT NOT NULL,
-  PRIMARY KEY (username, ledger_id, capability)
-);
 CREATE TABLE IF NOT EXISTS ledger_replica_requirements (
   replica_id TEXT NOT NULL REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
   capability TEXT NOT NULL,
@@ -1382,40 +1382,6 @@ CREATE TABLE IF NOT EXISTS ledger_replica_blob_quotas (
   quota_bytes INTEGER NOT NULL CHECK (quota_bytes >= 1048576),
   updated_at TEXT NOT NULL
 );
-CREATE TRIGGER IF NOT EXISTS sync_ledger_requirements_slot_insert AFTER INSERT ON sync_ledger_requirements BEGIN
-  INSERT OR IGNORE INTO ledger_replica_requirements (replica_id, capability)
-    SELECT route.replica_id, NEW.capability FROM ledger_account_routes route
-    WHERE route.username = NEW.username;
-END;
-CREATE TRIGGER IF NOT EXISTS sync_ledger_requirements_slot_update AFTER UPDATE ON sync_ledger_requirements BEGIN
-  DELETE FROM ledger_replica_requirements WHERE replica_id =
-    (SELECT replica_id FROM ledger_account_routes WHERE username = OLD.username)
-    AND capability = OLD.capability;
-  INSERT OR IGNORE INTO ledger_replica_requirements (replica_id, capability)
-    SELECT route.replica_id, NEW.capability FROM ledger_account_routes route
-    WHERE route.username = NEW.username;
-END;
-CREATE TRIGGER IF NOT EXISTS sync_ledger_requirements_slot_delete AFTER DELETE ON sync_ledger_requirements BEGIN
-  DELETE FROM ledger_replica_requirements WHERE replica_id =
-    (SELECT replica_id FROM ledger_account_routes WHERE username = OLD.username)
-    AND capability = OLD.capability;
-END;
-CREATE TABLE IF NOT EXISTS sync_server_commits (
-  username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
-  seq INTEGER NOT NULL,
-  commit_id TEXT NOT NULL,
-  ledger_id TEXT NOT NULL,
-  content_hash TEXT NOT NULL,
-  enc_commit_json TEXT NOT NULL,
-  key_epoch INTEGER NOT NULL DEFAULT 0,
-  writer_issuer_node_id TEXT,
-  writer_account_id TEXT,
-  cipher_bytes INTEGER NOT NULL,
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (username, seq),
-  UNIQUE (username, commit_id)
-);
-CREATE INDEX IF NOT EXISTS idx_server_commits_cursor ON sync_server_commits (username, seq);
 CREATE TABLE IF NOT EXISTS ledger_replica_commits (
   replica_id TEXT NOT NULL REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
   seq INTEGER NOT NULL,
@@ -1505,14 +1471,6 @@ CREATE TABLE IF NOT EXISTS ledger_control_resolutions (
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_control_resolutions_replacement
   ON ledger_control_resolutions (replica_id, replacement_commit_id);
-CREATE TABLE IF NOT EXISTS sync_key_envelopes (
-  username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
-  ledger_id TEXT NOT NULL,
-  keyring_id TEXT NOT NULL,
-  generation INTEGER NOT NULL,
-  envelope_json TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS ledger_replica_key_envelopes (
   replica_id TEXT PRIMARY KEY REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
   ledger_id TEXT NOT NULL,
@@ -1558,22 +1516,6 @@ CREATE TABLE IF NOT EXISTS ledger_member_key_envelopes (
   PRIMARY KEY (replica_id, issuer_node_id, account_id, key_epoch)
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_member_key_envelopes_epoch ON ledger_member_key_envelopes (replica_id, key_epoch);
-CREATE TRIGGER IF NOT EXISTS sync_key_envelopes_slot_insert AFTER INSERT ON sync_key_envelopes BEGIN
-  INSERT OR REPLACE INTO ledger_replica_key_envelopes
-    (replica_id, ledger_id, keyring_id, generation, envelope_json, updated_at)
-    SELECT route.replica_id, NEW.ledger_id, NEW.keyring_id, NEW.generation, NEW.envelope_json, NEW.updated_at
-    FROM ledger_account_routes route WHERE route.username = NEW.username;
-END;
-CREATE TRIGGER IF NOT EXISTS sync_key_envelopes_slot_update AFTER UPDATE ON sync_key_envelopes BEGIN
-  INSERT OR REPLACE INTO ledger_replica_key_envelopes
-    (replica_id, ledger_id, keyring_id, generation, envelope_json, updated_at)
-    SELECT route.replica_id, NEW.ledger_id, NEW.keyring_id, NEW.generation, NEW.envelope_json, NEW.updated_at
-    FROM ledger_account_routes route WHERE route.username = NEW.username;
-END;
-CREATE TRIGGER IF NOT EXISTS sync_key_envelopes_slot_delete AFTER DELETE ON sync_key_envelopes BEGIN
-  DELETE FROM ledger_replica_key_envelopes WHERE replica_id =
-    (SELECT replica_id FROM ledger_account_routes WHERE username = OLD.username);
-END;
 CREATE TABLE IF NOT EXISTS sync_key_custody (
   username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
   mode TEXT NOT NULL CHECK (mode IN ('managed', 'private', 'relay')),
@@ -1633,23 +1575,6 @@ CREATE TABLE IF NOT EXISTS account_email_outbox (
   sent_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_account_email_outbox_due ON account_email_outbox (state, next_attempt_at);
-CREATE TABLE IF NOT EXISTS sync_backup_archives (
-  username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
-  ledger_id TEXT NOT NULL,
-  archive_id TEXT NOT NULL,
-  blob_id TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  reason TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  label TEXT NOT NULL,
-  size_bytes INTEGER NOT NULL,
-  source_generation TEXT,
-  deleted_at TEXT,
-  PRIMARY KEY (username, ledger_id, archive_id),
-  UNIQUE (username, ledger_id, blob_id)
-);
-CREATE INDEX IF NOT EXISTS idx_backup_archives_created
-  ON sync_backup_archives (username, ledger_id, deleted_at, created_at DESC);
 CREATE TABLE IF NOT EXISTS ledger_backup_archives (
   username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
   replica_id TEXT NOT NULL REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
@@ -1669,8 +1594,8 @@ CREATE TABLE IF NOT EXISTS ledger_backup_archives (
 CREATE INDEX IF NOT EXISTS idx_ledger_backup_archives_created
   ON ledger_backup_archives (username, replica_id, deleted_at, created_at DESC);
 -- A replacement keeps the previous encrypted replica addressable for explicit
--- recovery. The legacy bridge deletes its commit rows, so ciphertext is copied
--- into this checkpoint in the same SQLite transaction as the replacement.
+-- recovery. Ciphertext is copied into this checkpoint in the same SQLite
+-- transaction as the replacement.
 CREATE TABLE IF NOT EXISTS ledger_replacement_checkpoints (
   checkpoint_id TEXT PRIMARY KEY,
   username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
@@ -1779,6 +1704,11 @@ CREATE TABLE IF NOT EXISTS admin_idempotency (
 );
 CREATE INDEX IF NOT EXISTS idx_admin_idempotency_expiry ON admin_idempotency (expires_at);
 CREATE TABLE IF NOT EXISTS server_metric_buckets (
+  event_loop_max_ms REAL NOT NULL DEFAULT 0,
+  cpu_percent REAL NOT NULL DEFAULT 0,
+  external_bytes INTEGER NOT NULL DEFAULT 0,
+  heap_used_bytes INTEGER NOT NULL DEFAULT 0,
+  rss_bytes INTEGER NOT NULL DEFAULT 0,
   granularity TEXT NOT NULL,
   bucket_at TEXT NOT NULL,
   requests INTEGER NOT NULL DEFAULT 0,
@@ -1814,6 +1744,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_events_at ON sync_events (at DESC);
 CREATE INDEX IF NOT EXISTS idx_sync_events_username ON sync_events (username, at DESC);
 CREATE INDEX IF NOT EXISTS idx_sync_events_category ON sync_events (category, at DESC);
 CREATE TABLE IF NOT EXISTS server_backup_records (
+  retention_json TEXT,
   record_id TEXT PRIMARY KEY,
   kind TEXT NOT NULL,
   status TEXT NOT NULL,
@@ -1860,97 +1791,6 @@ CREATE TABLE IF NOT EXISTS admin_mfa_challenges (
   consumed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_admin_mfa_challenges_expiry ON admin_mfa_challenges (expires_at);`);
-    // Additive column upgrades keep pre-v11 databases readable without a schema reset.
-    await this.ensureColumn('sync_users', 'revision', 'INTEGER NOT NULL DEFAULT 1');
-    await this.ensureColumn('sync_sessions', 'kind', "TEXT NOT NULL DEFAULT 'ledger'");
-    await this.ensureColumn('sync_sessions', 'replica_id', 'TEXT');
-    await this.ensureColumn('sync_sessions', 'selection_version', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('server_admin_audit', 'reason', 'TEXT');
-    await this.ensureColumn('server_admin_audit', 'request_id', 'TEXT');
-    // Alerts keep a consecutive-bad counter apart from the cumulative occurrence count, so
-    // "bad → healthy → bad" cannot be reported as two consecutive failures.
-    await this.ensureColumn('admin_alerts', 'bad_streak', 'INTEGER NOT NULL DEFAULT 0');
-    // Silence and notification state are additive columns: an existing alert keeps its history.
-    await this.ensureColumn('admin_alerts', 'silenced_until', 'TEXT');
-    await this.ensureColumn('admin_alerts', 'silenced_by', 'TEXT');
-    await this.ensureColumn('admin_alerts', 'silence_reason', 'TEXT');
-    await this.ensureColumn('admin_alerts', 'notified_at', 'TEXT');
-    await this.ensureColumn('admin_alerts', 'notify_state', 'TEXT');
-    await this.ensureColumn('admin_alerts', 'notify_error', 'TEXT');
-    // Idempotency records are claimed before the work runs and carry the requesting operator.
-    await this.ensureColumn('admin_idempotency', 'actor_account_id', 'TEXT');
-    await this.ensureColumn('admin_idempotency', 'state', "TEXT NOT NULL DEFAULT 'complete'");
-    // Retention runs are recorded next to the backups they kept or removed.
-    await this.ensureColumn('server_backup_records', 'retention_json', 'TEXT');
-    // Read-only operators are administrators with this flag set; granting one is a role change.
-    await this.ensureColumn('server_administrators', 'read_only', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('sync_users', 'display_name', 'TEXT');
-    // Resource readings ride along with the request counters. They are peaks per bucket, not
-    // counters, so an existing bucket simply keeps 0 for ranges recorded before this column.
-    await this.ensureColumn('server_metric_buckets', 'rss_bytes', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('server_metric_buckets', 'heap_used_bytes', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('server_metric_buckets', 'external_bytes', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('server_metric_buckets', 'cpu_percent', 'REAL NOT NULL DEFAULT 0');
-    await this.ensureColumn('server_metric_buckets', 'event_loop_max_ms', 'REAL NOT NULL DEFAULT 0');
-    // Rate-limit buckets record what they are for and who hit them, so the console can show
-    // "which address is being throttled" without splitting the opaque key on a colon (an
-    // IPv6 source contains colons, so parsing the key would mis-attribute it).
-    await this.ensureColumn('server_rate_limits', 'scope', 'TEXT');
-    await this.ensureColumn('server_rate_limits', 'source', 'TEXT');
-    // Client identification on diagnostic events. Additive and nullable: events recorded before
-    // this column simply have no client information, which reads as "unknown", not "old".
-    await this.ensureColumn('sync_events', 'client_kind', 'TEXT');
-    await this.ensureColumn('sync_events', 'client_version', 'TEXT');
-    await this.ensureColumn('sync_events', 'protocol_version', 'TEXT');
-    await this.ensureColumn('federated_password_credentials', 'source_revision', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'sync_rounds', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'converged_rounds', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'partial_rounds', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'failed_rounds', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'last_round_duration_ms', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'pull_blob_cursor', "TEXT NOT NULL DEFAULT ''");
-    await this.ensureColumn('node_replication_links', 'push_blob_cursor', "TEXT NOT NULL DEFAULT ''");
-    await this.ensureColumn('node_replication_links', 'pull_state_cursor', "TEXT NOT NULL DEFAULT ''");
-    await this.ensureColumn('node_replication_links', 'push_state_cursor', "TEXT NOT NULL DEFAULT ''");
-    await this.ensureColumn('node_replication_links', 'pull_member_cursor', "TEXT NOT NULL DEFAULT ''");
-    await this.ensureColumn('node_replication_links', 'push_member_cursor', "TEXT NOT NULL DEFAULT ''");
-    await this.ensureColumn('node_replication_links', 'member_epoch', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'peer_head_seq', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'local_head_seq', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'peer_blob_objects', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'local_blob_objects', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'peer_blob_bytes', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'local_blob_bytes', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'pull_blob_scanned_bytes', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'push_blob_scanned_bytes', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'pull_blob_transferred_bytes', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'push_blob_transferred_bytes', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'peer_legacy_objects', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'local_legacy_objects', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'peer_tombstones', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'local_tombstones', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'pull_blob_sweep_at', 'TEXT');
-    await this.ensureColumn('node_replication_links', 'push_blob_sweep_at', 'TEXT');
-    await this.ensureColumn('node_replication_links', 'pull_state_sweep_at', 'TEXT');
-    await this.ensureColumn('node_replication_links', 'push_state_sweep_at', 'TEXT');
-    await this.ensureColumn('node_replication_grants', 'renewable', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'inventory_matched_at', 'TEXT');
-    await this.ensureColumn('node_replication_links', 'inventory_issue', 'TEXT');
-    await this.ensureColumn('node_replication_links', 'inventory_blob_hash', 'TEXT');
-    await this.ensureColumn('node_replication_links', 'physical_blob_hash', 'TEXT');
-    await this.ensureColumn('node_replication_links', 'physical_verified_at', 'TEXT');
-    await this.ensureColumn('node_replication_links', 'physical_scanned_at', 'TEXT');
-    await this.ensureColumn('node_replication_links', 'physical_issue', 'TEXT');
-    await this.ensureColumn('node_replication_links', 'revocation_pending', 'INTEGER NOT NULL DEFAULT 0');
-    await this.ensureColumn('node_replication_links', 'remote_revoked_at', 'TEXT');
-    await this.ensureColumn('node_replication_links', 'revocation_error', 'TEXT');
-    await this.ensureColumn('node_replication_links', 'lifecycle_state', "TEXT NOT NULL DEFAULT 'JOINING'");
-    await this.ensureColumn('node_replication_links', 'lifecycle_checked_at', 'TEXT');
-    for (const table of ['sync_server_commits', 'ledger_replica_commits']) {
-      await this.ensureColumn(table, 'key_epoch', 'INTEGER NOT NULL DEFAULT 0');
-      await this.ensureColumn(table, 'writer_issuer_node_id', 'TEXT');
-      await this.ensureColumn(table, 'writer_account_id', 'TEXT');
-    }
     // Rebuild the slot update trigger after checkpoint storage exists. Replacing a
     // personal ledger must not cascade-delete its attachment and backup catalogs.
     await this.driver.exec(`
@@ -1968,213 +1808,22 @@ CREATE TRIGGER sync_replicas_slot_update AFTER UPDATE ON sync_replicas BEGIN
     AND NOT EXISTS (SELECT 1 FROM ledger_account_routes WHERE replica_id = OLD.replica_id)
     AND NOT EXISTS (SELECT 1 FROM ledger_replacement_checkpoints WHERE replica_id = OLD.replica_id);
 END;`);
-    // Old owner inserts may still be imported, but historical shadow updates and
-    // deletes must not mutate a replica commit that has since become authoritative.
-    await this.driver.exec(`
-DROP TRIGGER IF EXISTS sync_server_commits_slot_insert;
-DROP TRIGGER IF EXISTS sync_server_commits_slot_update;
-DROP TRIGGER IF EXISTS sync_server_commits_slot_delete;
-CREATE TRIGGER sync_server_commits_slot_insert AFTER INSERT ON sync_server_commits BEGIN
-  INSERT OR IGNORE INTO ledger_replica_commits
-    (replica_id, seq, commit_id, ledger_id, content_hash, enc_commit_json,
-      key_epoch, writer_issuer_node_id, writer_account_id, cipher_bytes, created_at)
-    SELECT route.replica_id, NEW.seq, NEW.commit_id, NEW.ledger_id, NEW.content_hash,
-      NEW.enc_commit_json, NEW.key_epoch, NEW.writer_issuer_node_id, NEW.writer_account_id,
-      NEW.cipher_bytes, NEW.created_at
-    FROM ledger_account_routes route JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-    WHERE route.username = NEW.username AND slot.ledger_id = NEW.ledger_id;
-END;`);
-    // Legacy rows are retained for migration and rollback. Canonical replica rows
-    // may have advanced independently, so deleting or changing an old shadow must
-    // never remove a current key envelope or lower a required capability.
-    await this.driver.exec(`
-DROP TRIGGER IF EXISTS sync_key_envelopes_slot_insert;
-DROP TRIGGER IF EXISTS sync_key_envelopes_slot_update;
-DROP TRIGGER IF EXISTS sync_key_envelopes_slot_delete;
-CREATE TRIGGER sync_key_envelopes_slot_insert AFTER INSERT ON sync_key_envelopes BEGIN
-  INSERT INTO ledger_replica_key_envelopes
-    (replica_id, ledger_id, keyring_id, generation, envelope_json, updated_at)
-    SELECT route.replica_id, NEW.ledger_id, NEW.keyring_id, NEW.generation, NEW.envelope_json, NEW.updated_at
-    FROM ledger_account_routes route JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-    WHERE route.username = NEW.username AND slot.ledger_id = NEW.ledger_id
-    ON CONFLICT(replica_id) DO UPDATE SET generation = excluded.generation,
-      envelope_json = excluded.envelope_json, updated_at = excluded.updated_at
-    WHERE ledger_replica_key_envelopes.ledger_id = excluded.ledger_id
-      AND ledger_replica_key_envelopes.keyring_id = excluded.keyring_id
-      AND ledger_replica_key_envelopes.generation < excluded.generation;
-END;
-CREATE TRIGGER sync_key_envelopes_slot_update AFTER UPDATE ON sync_key_envelopes BEGIN
-  INSERT INTO ledger_replica_key_envelopes
-    (replica_id, ledger_id, keyring_id, generation, envelope_json, updated_at)
-    SELECT route.replica_id, NEW.ledger_id, NEW.keyring_id, NEW.generation, NEW.envelope_json, NEW.updated_at
-    FROM ledger_account_routes route JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-    WHERE route.username = NEW.username AND slot.ledger_id = NEW.ledger_id
-    ON CONFLICT(replica_id) DO UPDATE SET generation = excluded.generation,
-      envelope_json = excluded.envelope_json, updated_at = excluded.updated_at
-    WHERE ledger_replica_key_envelopes.ledger_id = excluded.ledger_id
-      AND ledger_replica_key_envelopes.keyring_id = excluded.keyring_id
-      AND ledger_replica_key_envelopes.generation < excluded.generation;
-END;
-DROP TRIGGER IF EXISTS sync_ledger_requirements_slot_insert;
-DROP TRIGGER IF EXISTS sync_ledger_requirements_slot_update;
-DROP TRIGGER IF EXISTS sync_ledger_requirements_slot_delete;
-CREATE TRIGGER sync_ledger_requirements_slot_insert AFTER INSERT ON sync_ledger_requirements BEGIN
-  INSERT OR IGNORE INTO ledger_replica_requirements (replica_id, capability)
-    SELECT route.replica_id, NEW.capability FROM ledger_account_routes route
-    JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-    WHERE route.username = NEW.username AND slot.ledger_id = NEW.ledger_id;
-END;
-CREATE TRIGGER sync_ledger_requirements_slot_update AFTER UPDATE ON sync_ledger_requirements BEGIN
-  INSERT OR IGNORE INTO ledger_replica_requirements (replica_id, capability)
-    SELECT route.replica_id, NEW.capability FROM ledger_account_routes route
-    JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-    WHERE route.username = NEW.username AND slot.ledger_id = NEW.ledger_id;
-END;`);
-    const migrations = await this.driver.all<{ version: number; name: string }>('SELECT version, name FROM server_schema_migrations ORDER BY version');
-    const retired = migrations.length === 1
-      && Number(migrations[0]!.version) === RETIRED_SERVER_SCHEMA
-      && migrations[0]!.name === RETIRED_SERVER_SCHEMA_NAME;
-    const previous = migrations.length === 1
-      && Number(migrations[0]!.version) < CURRENT_SERVER_SCHEMA
-      && supportedServerSchema(Number(migrations[0]!.version), migrations[0]!.name);
-    if (!migrations.length || previous) {
-      if (!migrations.length || Number(migrations[0]!.version) < 13) {
-        const commitSize = await this.driver.get<{ bytes: number; count: number }>(
-          `SELECT COALESCE(SUM(MAX(cipher_bytes, LENGTH(CAST(enc_commit_json AS BLOB)))), 0) AS bytes,
-            COUNT(*) AS count FROM sync_server_commits`,
-        );
-        const required = requiredReplicaMigrationBytes(Number(commitSize?.bytes ?? 0), Number(commitSize?.count ?? 0));
-        if (required > 0n) {
-          let available: bigint;
-          try {
-            const disk = statfsSync(dirname(this.databaseFile), { bigint: true });
-            available = disk.bavail * disk.bsize;
-          } catch {
-            throw new Error('无法检查 SQLite 所在磁盘的剩余空间，已停止账本副本迁移；请检查数据目录');
-          }
-          if (available < required) {
-            throw new Error(`账本副本迁移需要约 ${required} 字节可用空间，当前只有 ${available} 字节；旧数据未迁移，请先扩容并验证备份`);
-          }
-        }
-      }
-      // Copy legacy bindings into independent slots without touching ledger
-      // bytes or merging accounts that happen to use the same ledger ID.
-      await this.driver.transaction(async (driver) => {
-        const users = await driver.all<{ username: string }>('SELECT username FROM sync_users');
-        for (const user of users) {
-          await driver.run('INSERT OR IGNORE INTO sync_account_identities (username, account_id) VALUES (?, ?)', [user.username, `account-${randomBytes(16).toString('hex')}`]);
-        }
-        await driver.run(`INSERT OR IGNORE INTO ledger_replica_slots
-          (replica_id, ledger_id, stream_epoch, head_seq, created_at, updated_at)
-          SELECT replica_id, ledger_id, stream_epoch, head_seq, created_at, updated_at FROM sync_replicas`);
-        await driver.run(`INSERT OR IGNORE INTO ledger_account_routes (username, replica_id, created_at)
-          SELECT username, replica_id, created_at FROM sync_replicas`);
-        await driver.run(`INSERT OR IGNORE INTO ledger_replica_commits
-          (replica_id, seq, commit_id, ledger_id, content_hash, enc_commit_json, cipher_bytes, created_at)
-          SELECT route.replica_id, legacy.seq, legacy.commit_id, legacy.ledger_id,
-            legacy.content_hash, legacy.enc_commit_json, legacy.cipher_bytes, legacy.created_at
-          FROM sync_server_commits legacy JOIN ledger_account_routes route ON route.username = legacy.username`);
-        await driver.run(`INSERT INTO ledger_replica_key_envelopes
-          (replica_id, ledger_id, keyring_id, generation, envelope_json, updated_at)
-          SELECT route.replica_id, legacy.ledger_id, legacy.keyring_id, legacy.generation,
-            legacy.envelope_json, legacy.updated_at
-          FROM sync_key_envelopes legacy JOIN ledger_account_routes route ON route.username = legacy.username
-          JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-          WHERE slot.ledger_id = legacy.ledger_id
-          ON CONFLICT(replica_id) DO UPDATE SET generation = excluded.generation,
-            envelope_json = excluded.envelope_json, updated_at = excluded.updated_at
-          WHERE ledger_replica_key_envelopes.ledger_id = excluded.ledger_id
-            AND ledger_replica_key_envelopes.keyring_id = excluded.keyring_id
-            AND ledger_replica_key_envelopes.generation < excluded.generation`);
-        await driver.run(`INSERT OR IGNORE INTO ledger_replica_requirements (replica_id, capability)
-          SELECT route.replica_id, legacy.capability FROM sync_ledger_requirements legacy
-          JOIN ledger_account_routes route ON route.username = legacy.username
-          JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-            AND slot.ledger_id = legacy.ledger_id`);
-        await driver.run(`INSERT OR IGNORE INTO ledger_backup_archives
-          (username, replica_id, ledger_id, archive_id, blob_id, created_at,
-            reason, kind, label, size_bytes, source_generation, deleted_at)
-          SELECT legacy.username, route.replica_id, legacy.ledger_id, legacy.archive_id,
-            legacy.blob_id, legacy.created_at, legacy.reason, legacy.kind,
-            legacy.label, legacy.size_bytes, legacy.source_generation, legacy.deleted_at
-          FROM sync_backup_archives legacy JOIN ledger_account_routes route
-            ON route.username = legacy.username JOIN ledger_replica_slots slot
-            ON slot.replica_id = route.replica_id AND slot.ledger_id = legacy.ledger_id`);
-        await driver.run('DELETE FROM server_schema_migrations');
-        await driver.run('INSERT INTO server_schema_migrations (version, name, applied_at) VALUES (?, ?, ?)', [CURRENT_SERVER_SCHEMA, CURRENT_SERVER_SCHEMA_NAME, nowIso()]);
-      });
-    } else if (!retired && (migrations.length !== 1
-      || Number(migrations[0]?.version) !== CURRENT_SERVER_SCHEMA
-      || migrations[0]?.name !== CURRENT_SERVER_SCHEMA_NAME)) {
-      throw new Error('同步服务器数据库结构不受支持，已停止启动；请先保护现有数据，不会自动重置');
+    if (!hasServerSchema) {
+      await this.driver.run('INSERT INTO server_schema_migrations (version, name, applied_at) VALUES (?, ?, ?)',
+        [CURRENT_SERVER_SCHEMA, CURRENT_SERVER_SCHEMA_NAME, nowIso()]);
     }
-    this.legacyShadowRetired = retired;
-    const slotDrift = await this.driver.get(`SELECT 1 FROM sync_replicas legacy
-      LEFT JOIN ledger_account_routes route ON route.username = legacy.username
+    const slotDrift = await this.driver.get(`SELECT 1 FROM sync_replicas owner
+      LEFT JOIN ledger_account_routes route ON route.username = owner.username
       LEFT JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
       WHERE route.replica_id IS NULL OR slot.replica_id IS NULL
-        OR slot.replica_id <> legacy.replica_id OR slot.ledger_id <> legacy.ledger_id
-        OR slot.stream_epoch <> legacy.stream_epoch OR slot.head_seq <> legacy.head_seq
+        OR slot.replica_id <> owner.replica_id OR slot.ledger_id <> owner.ledger_id
+        OR slot.stream_epoch <> owner.stream_epoch OR slot.head_seq <> owner.head_seq
       LIMIT 1`);
-    if (slotDrift) throw new Error('账本副本槽位与旧账号绑定不一致，已停止启动；请从验证过的备份恢复');
-    // An upgrade has no independent membership history. Seed only currently
-    // authorized peers; after this point revoking a grant never erases membership.
-    await this.driver.run(`INSERT OR IGNORE INTO ledger_replica_group_members
-      (replica_id, node_id, public_key, joined_at)
-      SELECT r.replica_id, g.peer_node_id, g.peer_public_key, MIN(g.created_at)
-      FROM node_replication_grants g JOIN sync_replicas r
-        ON r.username = g.username AND r.ledger_id = g.ledger_id
-      WHERE g.revoked_at IS NULL AND g.expires_at > ?
-      GROUP BY r.replica_id, g.peer_node_id`, [nowIso()]);
-    const canonicalEnvelopeDrift = await this.driver.get(`SELECT 1 FROM ledger_replica_key_envelopes envelope
+    if (slotDrift) throw new Error('账本副本槽位与账号绑定不一致，已停止启动');
+    const envelopeDrift = await this.driver.get(`SELECT 1 FROM ledger_replica_key_envelopes envelope
       LEFT JOIN ledger_replica_slots slot ON slot.replica_id = envelope.replica_id
       WHERE slot.replica_id IS NULL OR slot.ledger_id <> envelope.ledger_id LIMIT 1`);
-    if (canonicalEnvelopeDrift) throw new Error('账本副本密钥包与副本槽位账本不一致，已停止启动；请从验证过的备份恢复');
-    if (!this.legacyShadowRetired) {
-    const commitDrift = await this.driver.get(`SELECT 1 FROM sync_server_commits legacy
-      JOIN ledger_account_routes route ON route.username = legacy.username
-      LEFT JOIN ledger_replica_commits commit_row ON commit_row.replica_id = route.replica_id AND commit_row.seq = legacy.seq
-      WHERE commit_row.commit_id IS NULL OR commit_row.commit_id <> legacy.commit_id
-        OR commit_row.ledger_id <> legacy.ledger_id OR commit_row.content_hash <> legacy.content_hash
-        OR commit_row.enc_commit_json <> legacy.enc_commit_json OR commit_row.cipher_bytes <> legacy.cipher_bytes
-        OR commit_row.key_epoch <> legacy.key_epoch
-        OR commit_row.writer_issuer_node_id IS NOT legacy.writer_issuer_node_id
-        OR commit_row.writer_account_id IS NOT legacy.writer_account_id
-      LIMIT 1`);
-    if (commitDrift) throw new Error('账本副本提交与旧账号分区不一致，已停止启动；请从验证过的备份恢复');
-    const envelopeDrift = await this.driver.get(`SELECT 1 FROM sync_key_envelopes legacy
-      JOIN ledger_account_routes route ON route.username = legacy.username
-      JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-        AND slot.ledger_id = legacy.ledger_id
-      LEFT JOIN ledger_replica_key_envelopes envelope ON envelope.replica_id = route.replica_id
-      WHERE envelope.replica_id IS NULL OR envelope.ledger_id <> legacy.ledger_id
-        OR envelope.keyring_id <> legacy.keyring_id OR envelope.generation < legacy.generation
-        OR envelope.generation = legacy.generation AND envelope.envelope_json <> legacy.envelope_json
-      LIMIT 1`);
-    if (envelopeDrift) throw new Error('账本副本密钥包与旧账号分区不一致，已停止启动；请从验证过的备份恢复');
-    const requirementDrift = await this.driver.get(`SELECT 1 FROM sync_ledger_requirements legacy
-      JOIN ledger_account_routes route ON route.username = legacy.username
-      JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-        AND slot.ledger_id = legacy.ledger_id
-      LEFT JOIN ledger_replica_requirements requirement ON requirement.replica_id = route.replica_id
-        AND requirement.capability = legacy.capability
-      WHERE requirement.replica_id IS NULL LIMIT 1`);
-    if (requirementDrift) throw new Error('账本副本所需能力与旧账号分区不一致，已停止启动；请从验证过的备份恢复');
-    } else {
-      // The old schema is created above for upgrades, then removed for a
-      // database whose verified maintenance run has already retired it.
-      for (const table of ['sync_server_commits', 'sync_key_envelopes',
-        'sync_ledger_requirements', 'sync_backup_archives']) {
-        const rows = await this.driver.get<{ count: number }>(`SELECT COUNT(*) AS count FROM ${table}`);
-        if (Number(rows?.count ?? 0) > 0) {
-          throw new Error(`已退役的旧影子表 ${table} 含有数据，已停止启动；请保留并核对`);
-        }
-      }
-      await this.driver.exec(`DROP TABLE IF EXISTS sync_server_commits;
-        DROP TABLE IF EXISTS sync_key_envelopes;
-        DROP TABLE IF EXISTS sync_ledger_requirements;
-        DROP TABLE IF EXISTS sync_backup_archives;`);
-    }
+    if (envelopeDrift) throw new Error('账本副本密钥包与副本槽位账本不一致，已停止启动');
     const controlRoots = await this.driver.all<{ replica_id: string }>('SELECT replica_id FROM ledger_control_roots');
     for (const root of controlRoots) {
       try {
@@ -2184,7 +1833,6 @@ END;`);
       catch (error) { throw new Error(`账本成员控制链校验失败，已停止启动：${String(error)}`); }
     }
     // The index is a cache of verified membership, never an independent grant.
-    // Reconcile after legacy slots and control chains pass their migration checks.
     await this.driver.transaction(async (driver) => {
       const slots = await driver.all<{ replica_id: string }>('SELECT replica_id FROM ledger_replica_slots');
       for (const slot of slots) await this.rebuildAccountLedgerIndex(driver, slot.replica_id);
@@ -2192,50 +1840,12 @@ END;`);
         (SELECT route.replica_id FROM ledger_account_routes route WHERE route.username = sync_sessions.username)
         WHERE replica_id IS NULL AND kind = 'ledger'`);
     });
-    // The blob catalog is rebuilt from sidecars before this store starts. Old
-    // sidecars have no replica ID, so associate only objects whose account is
-    // still bound to the same ledger. No ciphertext files are copied here.
-    const blobTables = await this.driver.all<{ name: string }>(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('blob_objects', 'blob_replica_states', 'blob_uploads')",
-    );
-    for (const table of blobTables.map((row) => row.name)) {
-      await this.ensureColumn(table, 'replica_id', 'TEXT');
-      const assigned = await this.driver.run(`UPDATE ${table} SET replica_id = (
-        SELECT route.replica_id FROM ledger_account_routes route
-        JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-        WHERE route.username = ${table}.username AND slot.ledger_id = ${table}.ledger_id
-      ) WHERE replica_id IS NULL AND EXISTS (
-        SELECT 1 FROM ledger_account_routes route
-        JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-        WHERE route.username = ${table}.username AND slot.ledger_id = ${table}.ledger_id
-      )`);
-      if (table === 'blob_objects' && assigned.changes > 0) {
-        // Its sidecar still lacks the inferred replica ID. Re-run the durable
-        // sidecar pass before the server begins accepting requests.
-        await this.driver.run("DELETE FROM server_meta WHERE key = 'blob_ownership_sidecars_v1'");
-      }
-    }
-    const legacyBlobQuotaTable = await this.driver.get(
-      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'blob_user_quotas'");
-    if (legacyBlobQuotaTable) {
-      await this.driver.run(`INSERT OR IGNORE INTO ledger_replica_blob_quotas
-        (replica_id, quota_bytes, updated_at)
-        SELECT replica.replica_id, legacy.quota_bytes, legacy.updated_at
-        FROM blob_user_quotas legacy JOIN sync_replicas replica ON replica.username = legacy.username`);
-    }
     const at = nowIso();
     const persistedServer = await this.driver.get<{ value: string }>('SELECT value FROM server_meta WHERE key = ?', ['server_id']);
     if (persistedServer && persistedServer.value !== this.serverId) throw new Error('server-id 与 SQLite 主库不匹配');
     await this.driver.run('INSERT OR IGNORE INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)', ['server_id', this.serverId, at]);
     await this.driver.run('INSERT OR IGNORE INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)', ['registration_mode', this.defaultRegistrationMode, at]);
     await this.driver.run('INSERT OR IGNORE INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)', ['registration_policy_revision', '1', at]);
-  }
-
-  /** Additive column upgrades keep pre-v11 databases readable without a schema reset. */
-  private async ensureColumn(table: string, column: string, definition: string): Promise<void> {
-    const columns = await this.driver.all<{ name: string }>(`PRAGMA table_info(${table})`);
-    if (columns.some((row) => String(row.name) === column)) return;
-    await this.driver.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
   async registrationMode(): Promise<RegistrationMode> {
@@ -4790,18 +4400,11 @@ END;`);
           WHERE ${blobScope} AND state = 'trash'`, blobParams),
         driver.get<{ count: number }>(`SELECT COUNT(*) AS count FROM blob_objects
           WHERE ${blobScope} AND state = 'available' AND json_extract(manifest_json, '$.v') = 1
-            AND NOT EXISTS (SELECT 1 FROM blob_v1_migrations migration
-              JOIN blob_objects portable ON portable.replica_id = migration.replica_id
-                AND portable.ledger_id = migration.ledger_id
-                AND portable.blob_id = migration.portable_blob_id
-              WHERE migration.replica_id = ? AND migration.ledger_id = blob_objects.ledger_id
-                AND migration.legacy_blob_id = blob_objects.blob_id
-                AND portable.state = 'available' AND json_extract(portable.manifest_json, '$.v') = 2)
             AND NOT EXISTS (SELECT 1 FROM ledger_backup_archives archive
               WHERE archive.username = blob_objects.username
                 AND archive.ledger_id = blob_objects.ledger_id
                 AND (blob_objects.replica_id IS NULL OR archive.replica_id = blob_objects.replica_id)
-                AND archive.blob_id = blob_objects.blob_id)`, [...blobParams, replica.replica_id]),
+                AND archive.blob_id = blob_objects.blob_id)`, blobParams),
       ]);
       const rejected = await driver.get<{ count: number }>(`SELECT COUNT(*) AS count
         FROM ledger_replica_rejected_commits rejected LEFT JOIN ledger_control_resolutions resolution
@@ -5552,11 +5155,6 @@ END;`);
   /** Before genesis there is only one account writer; tag its legacy history before member writes exist. */
   private async attributePreControlCommits(driver: SqlDriver, replicaId: string,
     owner: LedgerMemberIdentity): Promise<void> {
-    if (!this.legacyShadowRetired) await driver.run(`UPDATE sync_server_commits SET key_epoch = 1,
-      writer_issuer_node_id = ?, writer_account_id = ?
-      WHERE key_epoch = 0 AND username IN
-        (SELECT username FROM ledger_account_routes WHERE replica_id = ?)`,
-    [owner.issuerNodeId, owner.accountId, replicaId]);
     await driver.run(`UPDATE ledger_replica_commits SET key_epoch = 1,
       writer_issuer_node_id = ?, writer_account_id = ?
       WHERE replica_id = ? AND key_epoch = 0`,
@@ -6459,32 +6057,17 @@ END;`);
       [replica.replicaId, replica.ledgerId]);
     if (!activeEnvelope) throw new ServerStoreError('REPLACEMENT_BACKUP_INCOMPLETE', 409,
       '账本密钥包缺失，不能建立可恢复的替换检查点');
-    const legacyEnvelope = this.legacyShadowRetired ? undefined
-      : await driver.get<{ keyring_id: string; generation: number; envelope_json: string }>(
-      'SELECT keyring_id, generation, envelope_json FROM sync_key_envelopes WHERE username = ? AND ledger_id = ?',
-      [username, replica.ledgerId]);
     const commitSize = await driver.get<{ bytes: number; count: number; first_seq: number | null;
       last_seq: number | null; wrong_ledger: number }>(`SELECT COALESCE(SUM(cipher_bytes), 0) AS bytes,
         COUNT(*) AS count, MIN(seq) AS first_seq, MAX(seq) AS last_seq,
         COALESCE(SUM(CASE WHEN ledger_id <> ? THEN 1 ELSE 0 END), 0) AS wrong_ledger
         FROM ledger_replica_commits WHERE replica_id = ?`, [replica.ledgerId, replica.replicaId]);
-    const drift = this.legacyShadowRetired ? undefined : await driver.get(`SELECT 1 FROM sync_server_commits legacy
-      LEFT JOIN ledger_replica_commits slot ON slot.replica_id = ? AND slot.seq = legacy.seq
-      WHERE legacy.username = ? AND (slot.commit_id IS NULL OR slot.commit_id <> legacy.commit_id
-        OR slot.ledger_id <> legacy.ledger_id OR slot.content_hash <> legacy.content_hash
-        OR slot.enc_commit_json <> legacy.enc_commit_json OR slot.cipher_bytes <> legacy.cipher_bytes
-        OR slot.key_epoch <> legacy.key_epoch
-        OR slot.writer_issuer_node_id IS NOT legacy.writer_issuer_node_id
-        OR slot.writer_account_id IS NOT legacy.writer_account_id) LIMIT 1`, [replica.replicaId, username]);
     if (Number(commitSize?.count) !== replica.headSeq || Number(commitSize?.wrong_ledger) !== 0
       || replica.headSeq > 0 && (Number(commitSize?.first_seq) !== 1
         || Number(commitSize?.last_seq) !== replica.headSeq)
-      || drift || legacyEnvelope && (legacyEnvelope.keyring_id !== activeEnvelope.keyring_id
-        || Number(legacyEnvelope.generation) > Number(activeEnvelope.generation)
-        || Number(legacyEnvelope.generation) === Number(activeEnvelope.generation)
-          && legacyEnvelope.envelope_json !== activeEnvelope.envelope_json)) {
+    ) {
       throw new ServerStoreError('REPLACEMENT_BACKUP_INCOMPLETE', 409,
-        '旧账本提交副本尚未核对一致，不能安全替换');
+        '原账本提交副本尚未核对一致，不能安全替换');
     }
     const required = requiredReplicaMigrationBytes(Number(commitSize?.bytes ?? 0), Number(commitSize?.count ?? 0));
     if (required > 0n) {
@@ -6556,10 +6139,7 @@ END;`);
       const bytes = commits.reduce((sum, commit) => sum + Buffer.byteLength(JSON.stringify(commit.encCommit)), 0);
       if (!unlimitedQuotaRole(quotaRole?.role) && bytes > Number(quota?.commit_quota_bytes ?? this.defaultCommitQuotaBytes)) throw new ServerStoreError('COMMIT_QUOTA_EXCEEDED', 507, 'encrypted commit quota exceeded');
       const oldProtection = await this.saveReplacementCheckpoint(driver, username, current, at);
-      // Remove any remaining compatibility rows before changing the account route.
-      if (!this.legacyShadowRetired) await driver.run('DELETE FROM sync_server_commits WHERE username = ?', [username]);
       await driver.run('DELETE FROM ledger_replica_commits WHERE replica_id = ?', [current.replicaId]);
-      if (!this.legacyShadowRetired) await driver.run('DELETE FROM sync_key_envelopes WHERE username = ?', [username]);
       await driver.run('DELETE FROM ledger_replica_key_envelopes WHERE replica_id = ?', [current.replicaId]);
       const next = { ...current, ledgerId, replicaId: `rep-${randomBytes(12).toString('hex')}`, streamEpoch: `epoch-${randomBytes(12).toString('hex')}`, headSeq: commits.length, updatedAt: at };
       await driver.run('UPDATE sync_replicas SET ledger_id = ?, replica_id = ?, stream_epoch = ?, head_seq = ?, updated_at = ? WHERE username = ?', [ledgerId, next.replicaId, next.streamEpoch, next.headSeq, at, username]);
@@ -6941,9 +6521,7 @@ END;`);
         throw new ServerStoreError('CHECKPOINT_INCOMPLETE', 409, '旧账本密钥包检查失败');
       }
       await this.saveReplacementCheckpoint(driver, username, current, at);
-      if (!this.legacyShadowRetired) await driver.run('DELETE FROM sync_server_commits WHERE username = ?', [username]);
       await driver.run('DELETE FROM ledger_replica_commits WHERE replica_id = ?', [current.replicaId]);
-      if (!this.legacyShadowRetired) await driver.run('DELETE FROM sync_key_envelopes WHERE username = ?', [username]);
       await driver.run('DELETE FROM ledger_replica_key_envelopes WHERE replica_id = ?', [current.replicaId]);
       await driver.run(`UPDATE sync_replicas SET ledger_id = ?, replica_id = ?, stream_epoch = ?,
          head_seq = ?, updated_at = ? WHERE username = ?`,
@@ -7218,13 +6796,11 @@ END;`);
     if (replicaId && !replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, '账本不属于当前账号');
     const owner = replica ? await this.driver.get<{ username: string }>('SELECT username FROM sync_replicas WHERE replica_id = ?', [replica.replicaId]) : undefined;
     const billingUsername = owner?.username ?? username;
-    const usageTable = replica || this.legacyShadowRetired ? 'ledger_replica_commits' : 'sync_server_commits';
-    const usageColumn = replica || this.legacyShadowRetired ? 'replica_id' : 'username';
-    const usageKey = replica?.replicaId ?? (this.legacyShadowRetired ? '' : username);
+    const usageKey = replica?.replicaId ?? '';
     const row = await this.driver.get<{ used_bytes: number; quota_bytes: number; commit_count: number }>(
       `SELECT
-        (SELECT COALESCE(SUM(cipher_bytes), 0) FROM ${usageTable} WHERE ${usageColumn} = ?) AS used_bytes,
-        (SELECT COUNT(*) FROM ${usageTable} WHERE ${usageColumn} = ?) AS commit_count,
+        (SELECT COALESCE(SUM(cipher_bytes), 0) FROM ledger_replica_commits WHERE replica_id = ?) AS used_bytes,
+        (SELECT COUNT(*) FROM ledger_replica_commits WHERE replica_id = ?) AS commit_count,
         COALESCE((SELECT commit_quota_bytes FROM sync_user_quotas WHERE username = ?), ?) AS quota_bytes`,
       [usageKey, usageKey, billingUsername, this.defaultCommitQuotaBytes],
     );

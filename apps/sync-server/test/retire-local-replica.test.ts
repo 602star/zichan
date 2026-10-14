@@ -10,7 +10,6 @@ import { createServerBackup, verifyServerBackup } from '../src/backup.js';
 import { EncryptedBlobStore } from '../src/blob-store.js';
 import { assertNoPendingLocalReplicaRetirement, inspectLocalReplicaRetirement,
   LOCAL_REPLICA_RETIREMENT_MARKER, retireLocalReplica } from '../src/retire-local-replica.js';
-import { retireLegacyShadowPayload } from '../src/retire-legacy-shadow.js';
 import { SyncServerStore } from '../src/store.js';
 import { createTestSyncServer } from './support/server-fixture.js';
 
@@ -82,9 +81,6 @@ describe('one ledger replica retirement on a multi-ledger node', () => {
         await upload('first', firstLedger, firstBlob, 1);
         await upload('second', secondLedger, secondBlob, 2);
       } finally { await store.close(); await blob.close(); }
-      const before = await inspectLocalReplicaRetirement(dataDir, firstReplicaId);
-      expect(before.issues).toContain('须先在停服维护窗口完成 retire-legacy-shadow 并验证 schema 25');
-      await retireLegacyShadowPayload(dataDir, join(root, 'shadow-backup'), { vacuum: true });
       const custodyDb = new NodeSqliteDriver(join(dataDir, 'server.sqlite'));
       try {
         await custodyDb.run(`INSERT INTO server_meta (key, value, updated_at) VALUES (?, ?, ?)`,
@@ -145,7 +141,7 @@ describe('one ledger replica retirement on a multi-ledger node', () => {
           deviceName: 'Retirement Test', refreshHash: 'test-hash',
           expiresAt: new Date(Date.now() + 60_000).toISOString(),
         });
-        expect(newSession.replicaId).toBeUndefined();
+        expect(newSession.replicaId).toBe(secondReplicaId);
       } finally { await reopenedStore.close(); await reopened.close(); }
     } finally {
       if (!serverClosed) await server.close();
@@ -171,7 +167,6 @@ describe('one ledger replica retirement on a multi-ledger node', () => {
         await store.register('other', 'opaque-other');
         await store.bindReplica('other', 'ledger-retire-resume-other');
       } finally { await store.close(); }
-      await retireLegacyShadowPayload(dataDir, join(root, 'shadow-backup'));
       const foreignNamespace = 'd'.repeat(64);
       const catalog = new NodeSqliteDriver(join(dataDir, 'server.sqlite'));
       try {

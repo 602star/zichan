@@ -410,6 +410,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   let store: SyncServerStore;
   const blobStore = new EncryptedBlobStore({
     dataDir: requestedDataDir,
+    enforceFreshServerSchema: true,
     quotaBytes: options.attachmentQuotaBytes,
     maxBlobBytes: options.attachmentMaxFileBytes,
     trashRetentionMs: options.attachmentTrashRetentionMs,
@@ -453,7 +454,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   let nodePublicKey = '';
   let nodeIdentity: NodeIdentity;
   const ready = Promise.all([blobStore.ready, store.ready, opaque.ready]).then(async () => {
-    await blobStore.reconcileReplicaOwnership();
     nodeIdentity = loadNodeIdentity(dataDir, serverId, await store.nodePublicKey());
     await store.bindNodePublicKey(nodeIdentity.publicKey);
     nodePublicKey = nodeIdentity.publicKey;
@@ -734,7 +734,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     log,
     maintenance,
     writeTracker,
-    replication: nodeReplication,
     syncGroup: {
       create: async (mainUrl) => store.createServerSyncGroup(normalizeNodePeerUrl(mainUrl), nodeIdentity.publicKey),
       join: async (mainUrl, localUrl, token) => {
@@ -887,7 +886,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           ...(accountEmailAvailable() ? ['password-reset-email-v1'] : []),
           'encrypted-blobs-v1',
           'portable-blobs-v2',
-          'legacy-blob-routes-v1',
           'node-replication-v1',
           'encrypted-commits-v3',
           'ledger-key-envelope-v1',
@@ -3044,17 +3042,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         if (!Array.isArray(blobIds) || blobIds.length > 500 || blobIds.some((value) => typeof value !== 'string')) return send(res, 400, { error: 'invalid blob ids' });
         const [objects, usage] = await Promise.all([blobStore.status(blobUsername, replica.ledgerId, blobIds as string[]), blobStore.usage(blobUsername, replica.ledgerId)]);
         return send(res, 200, { objects, usage });
-      }
-      if (req.method === 'GET' && apiPath === '/api/v3/blobs/legacy-routes') {
-        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-        return send(res, 200, { usernames: await blobStore.listLegacyRoutes(blobUsername, replica.ledgerId) });
-      }
-      if (req.method === 'POST' && apiPath === '/api/v3/blobs/legacy-migrations') {
-        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-        const body = await readBody(req, 1024);
-        await blobStore.markLegacyMigrated(blobUsername, replica.ledgerId,
-          String(body.legacyBlobId ?? ''), String(body.portableBlobId ?? ''), user.accountId);
-        return send(res, 200, { ok: true });
       }
       if (req.method === 'GET' && apiPath === '/api/v3/blobs/usage') {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
