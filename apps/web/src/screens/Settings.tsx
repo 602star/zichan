@@ -98,7 +98,7 @@ const ISSUE_LABELS: Record<string, string> = {
   attachment_file_invalid: '附件正文缺失或损坏',
 };
 
-export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section = 'ledger', serverPanel, securityPanel }: {
+export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section = 'ledger', serverPanel, securityPanel, onExportBackup, onImportBackup }: {
   theme: ThemeId;
   /** What the reader asked for; `system` follows the operating system. */
   mode: ThemeModePreference;
@@ -109,6 +109,8 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   section?: SettingsSection;
   serverPanel?: ReactNode;
   securityPanel?: ReactNode;
+  onExportBackup: () => Promise<void>;
+  onImportBackup: () => void;
 }) {
   const { store, bump, storageBackend, dataLocation, firstUseMode, browserStoragePersistent, resetLocalData } = useStore();
   const snap = useSnapshot('settings');
@@ -142,9 +144,12 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   const [safetyState, setSafetyState] = useState(readSafetyState);
   const storedSafetyStateJson = snap?.setting?.dataSafetyStateJson;
   useEffect(() => {
-    void listSavedBackups().then(setBackups);
+    const refresh = () => { void listSavedBackups().then(setBackups); };
+    refresh();
+    window.addEventListener('zichan:safety-updated', refresh);
     void externalBackupStatus().then(setExternalStatus).catch((error) => setExternalStatus({ kind: 'none', configured: false, label: error instanceof Error ? error.message : String(error) }));
     void navigator.storage?.estimate().then((estimate) => setStorageEstimate({ usage: estimate.usage ?? 0, quota: estimate.quota ?? 0 }));
+    return () => window.removeEventListener('zichan:safety-updated', refresh);
   }, []);
   useEffect(() => {
     setSafetyState(safetyStateFromStoredJson(storedSafetyStateJson));
@@ -363,6 +368,19 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
       const message = error instanceof Error ? error.message : String(error);
       setBackupNote(`手动备份失败：${message}`);
       await saveSafetyState({ lastBackupError: message, lastBackupErrorAt: new Date().toISOString() });
+    } finally {
+      setBackupBusy(null);
+    }
+  }
+
+  async function exportBackupFile() {
+    if (backupBusy !== null) return;
+    setBackupBusy('export-file');
+    setBackupNote('');
+    try {
+      await onExportBackup();
+    } catch (error) {
+      setBackupNote(`导出备份文件失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setBackupBusy(null);
     }
@@ -858,6 +876,10 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                     <button onClick={manualBackup} disabled={backupBusy !== null} style={btnPrimary}>创建手动备份</button>
                   </div>
                 </div>
+                <div className="zc-section-head zc-responsive-header">
+                  <p className="zc-caption">要把当前账本带出此设备，请导出加密 .zcbak 文件并保存到其他位置。下方“创建手动备份”会保存在本机备份列表中。</p>
+                  <button type="button" onClick={() => void exportBackupFile()} disabled={backupBusy !== null} style={btnOutline}>{backupBusy === 'export-file' ? '导出中…' : '导出加密备份文件'}</button>
+                </div>
                 {warnings.length > 0 && (
                   <div className="zc-section">
                     <div className="zc-section-head zc-responsive-header">
@@ -958,9 +980,12 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
               <div className="zc-section-head zc-responsive-header">
                 <div>
                   <h2 className="zc-section-title">恢复数据</h2>
-                  <p className="zc-caption">从本机或服务器备份选择恢复点。恢复前会校验归档并演练，再显示变更范围供确认；操作前会保存当前账本。</p>
+                  <p className="zc-caption">从加密 .zcbak 文件导入，或选择本机和服务器上的恢复点。恢复前会校验并演练，再显示变更范围供确认。</p>
                 </div>
-                <button type="button" onClick={() => openRestorePicker()} disabled={backupBusy !== null} style={btnPrimary}>选择恢复点</button>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button type="button" onClick={onImportBackup} disabled={backupBusy !== null} style={btnOutline}>从文件导入</button>
+                  <button type="button" onClick={() => openRestorePicker()} disabled={backupBusy !== null} style={btnPrimary}>选择恢复点</button>
+                </div>
               </div>
               {backupNote && <p role="status" className="zc-caption" style={{ color: backupNote.includes('未通过') || backupNote.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 'var(--fw-bold)' }}>{backupNote}</p>}
             </div>
@@ -1096,7 +1121,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
               <section className="zc-section">
                 <h2 className="zc-section-title">数据</h2>
                 <p className="zc-caption">
-                  导出 / 导入加密 .zcbak 备份在顶栏。重置会清空本机数据并返回首次设置，可重新选择空账本、导入备份或演示账本。
+                  重置会清空本机数据并返回首次设置，可重新选择空账本、导入备份或演示账本。加密备份文件的导出和导入分别位于“本机备份”和“恢复数据”。
                 </p>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <button onClick={purgeOld} style={btnOutline}>清理已确认的删除记录</button>

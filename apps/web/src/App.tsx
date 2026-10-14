@@ -556,17 +556,6 @@ export function App() {
             <div className="zc-header-subtitle" style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginTop: 3 }}>{sub}</div>
           </div>
           <div className="zc-header-meta" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            {/* Export and import act on this device's storage and on a .zcbak file. In a preview
-                there is neither: the data came from the server, and "exporting" it would write a
-                user's plaintext ledger onto the administrator's disk. The banner owns the only
-                action a preview has. */}
-            {preview ? null : (
-              <div className="zc-header-actions" style={{ display: 'flex', gap: 8 }}>
-                <button onClick={doExport} style={ghostBtn} title="导出加密 .zcbak 备份">导出</button>
-                <button onClick={() => fileRef.current?.click()} style={ghostBtn} title="从加密归档导入">导入</button>
-                <input ref={fileRef} type="file" accept="application/x-zichan-backup,.zcbak" onChange={doImport} style={{ display: 'none' }} />
-              </div>
-            )}
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface)',
               border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '8px 15px',
@@ -623,6 +612,8 @@ export function App() {
                 setMode={(next: ThemeModePreference) => setAppearance(writeAppearancePreference({ mode: next }))}
                 section={settingsSection}
                 onSelectSection={setSettingsSection}
+                onExportBackup={doExport}
+                onImportBackup={() => fileRef.current?.click()}
               />
             )}
           </Suspense>
@@ -634,8 +625,6 @@ export function App() {
         onMoreOpen={setMobileMoreOpen}
         onNavigate={(next) => { setScreen(next); setMobileMoreOpen(false); }}
         onQuickTransaction={quickTransaction}
-        onExport={() => void doExport()}
-        onImport={() => fileRef.current?.click()}
         storageLabel={storageBackend === 'native-sqlite' ? '原生 SQLite' : '浏览器 IndexedDB'}
         dataLocation={dataLocation}
         reportCurrency={base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}
@@ -646,6 +635,7 @@ export function App() {
         onEnableModule={(id) => void enableModule(id)}
       />
       <div id="zc-dialog-portal" />
+      {!preview && <input ref={fileRef} type="file" accept="application/x-zichan-backup,.zcbak" onChange={doImport} style={{ display: 'none' }} />}
       {importDialog?.kind === 'password' && (
         <ConfirmDialog
           title="解锁加密备份"
@@ -896,8 +886,6 @@ function MobileNavigation(props: {
   onMoreOpen: (open: boolean) => void;
   onNavigate: (screen: ScreenId) => void;
   onQuickTransaction: () => void;
-  onExport: () => void;
-  onImport: () => void;
   storageLabel: string;
   dataLocation: string;
   reportCurrency: string;
@@ -1007,10 +995,6 @@ function MobileNavigation(props: {
               <span>基准日 <b>{props.asOf}</b></span>
               <span>数据引擎 <b>{props.storageLabel}</b></span>
               <small title={props.dataLocation}>{props.dataLocation}</small>
-            </div>
-            <div className="zc-mobile-drawer-actions">
-              <button onClick={() => { props.onMoreOpen(false); props.onExport(); }}>导出备份</button>
-              <button onClick={() => { props.onMoreOpen(false); props.onImport(); }}>导入备份</button>
             </div>
         </DialogShell>
       )}

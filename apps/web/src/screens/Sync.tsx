@@ -360,7 +360,7 @@ const primary = btnPrimary;
 const danger = btnDanger;
 const inputGrid = { display: 'grid', gridTemplateColumns: '1fr 120px 1fr 100px', gap: 10, marginBottom: 10 } as const;
 
-export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, onSelectSection }: {
+export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, onSelectSection, onExportBackup, onImportBackup }: {
   theme: ThemeId;
   mode: ThemeModePreference;
   resolvedMode: ThemeMode;
@@ -368,6 +368,8 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
   setMode: (mode: ThemeModePreference) => void;
   section: 'device' | 'server' | 'restore' | 'security';
   onSelectSection: (section: 'device' | 'server' | 'restore' | 'security') => void;
+  onExportBackup: () => Promise<void>;
+  onImportBackup: () => void;
 }) {
   const { store, bump } = useStore();
   const snap = useSnapshot('sync');
@@ -2141,6 +2143,8 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
             setTheme={setTheme}
             setMode={setMode}
             section={section}
+            onExportBackup={onExportBackup}
+            onImportBackup={onImportBackup}
             serverPanel={serverPanel}
             securityPanel={<>
               {!accountProtection() && ledgerKey.unlocked && ledgerKeyCard}

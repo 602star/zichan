@@ -11,7 +11,7 @@ const TABS: readonly [SettingsSection, string][] = [
   ['appearance', '外观'],
 ];
 
-export function SettingsPage({ theme, mode, resolvedMode, setTheme, setMode, section, onSelectSection }: {
+export function SettingsPage({ theme, mode, resolvedMode, setTheme, setMode, section, onSelectSection, onExportBackup, onImportBackup }: {
   theme: ThemeId;
   mode: ThemeModePreference;
   resolvedMode: ThemeMode;
@@ -19,8 +19,11 @@ export function SettingsPage({ theme, mode, resolvedMode, setTheme, setMode, sec
   setMode: (mode: ThemeModePreference) => void;
   section: SettingsSection;
   onSelectSection: (section: SettingsSection) => void;
+  onExportBackup: () => Promise<void>;
+  onImportBackup: () => void;
 }) {
   const appearance = { theme, mode, resolvedMode, setTheme, setMode };
+  const backupActions = { onExportBackup, onImportBackup };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
       <div className="zc-tabs" role="tablist" aria-label="设置分类">
@@ -38,8 +41,8 @@ export function SettingsPage({ theme, mode, resolvedMode, setTheme, setMode, sec
         ))}
       </div>
       {section === 'ledger' || section === 'appearance'
-        ? <Settings {...appearance} section={section} />
-        : <Sync {...appearance} section={section} onSelectSection={onSelectSection} />}
+        ? <Settings {...appearance} {...backupActions} section={section} />
+        : <Sync {...appearance} {...backupActions} section={section} onSelectSection={onSelectSection} />}
     </div>
   );
 }
