@@ -1281,6 +1281,137 @@ input[type="radio"] {
   }
 }
 
+.zc-card-table[data-history-table] th:first-child,
+.zc-card-table[data-history-table] td:first-child {
+  width: 170px;
+  white-space: nowrap;
+}
+
+.zc-card-table[data-history-table] td:last-child {
+  overflow-wrap: anywhere;
+}
+
+.zc-history-event-line {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+  line-height: 1.5;
+}
+
+.zc-history-event-line time {
+  color: var(--text-tertiary);
+  font-size: var(--fs-meta);
+  white-space: nowrap;
+}
+
+.zc-history-event-line > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.zc-history-detail-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+}
+
+.zc-history-detail-toolbar button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+}
+
+.zc-history-detail {
+  max-height: calc(100vh - 110px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  scroll-margin-top: 20px;
+}
+
+.zc-history-detail > div:last-child {
+  min-width: 0;
+}
+
+.zc-history-expand {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 10px;
+  min-width: 0;
+}
+
+.zc-history-expand > summary {
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  overflow-wrap: anywhere;
+}
+
+.zc-history-batch-logs {
+  max-height: 55vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.zc-history-diff-row {
+  border-top: 1px solid var(--border);
+  padding: 10px 0;
+}
+
+.zc-history-diff-label {
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  overflow-wrap: anywhere;
+}
+
+.zc-history-diff-values {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 5px;
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+}
+
+.zc-history-diff-values > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.zc-history-diff-values > span:first-child {
+  color: var(--text-tertiary);
+}
+
+@media (max-width: 1199px) {
+  .zc-history-detail {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 767px) {
+  .zc-card-table[data-history-table] td:first-child {
+    width: auto;
+  }
+
+  .zc-card-table[data-history-table] td:last-child::before {
+    display: none;
+  }
+
+  .zc-card-table[data-history-table] td:last-child {
+    justify-content: flex-start;
+  }
+}
+
 /* Sync endpoint summary: one grid row per endpoint on desktop. */
 .zc-sync-result-row {
   display: contents;

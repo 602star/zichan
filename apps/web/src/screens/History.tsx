@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { addDays, isDateInRange, localToday, type AuditBatch, type OperationLogEntry, type OperationType, type SyncConflictResolution, type Transaction } from '@zichan/core';
 import {
   restoreConversion,
@@ -176,6 +176,8 @@ export function History() {
   const [compensations, setCompensations] = useState<BusinessCompensationRecord[]>([]);
   const [resolutions, setResolutions] = useState<SyncConflictResolution[]>([]);
   const [selectedId, setSelectedId] = useState('');
+  const [detailOpen, setDetailOpen] = useState(false);
+  const detailRef = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState<DateRangeValue>(() => ({ preset: 'custom', from: addDays(localToday(), -29), to: localToday() }));
   const [view, setView] = useState<TimelineViewMode>('list');
   const [focusDate, setFocusDate] = useState(localToday);
@@ -352,11 +354,22 @@ export function History() {
     return true;
   }), [entityType, events, initializationBurstSeconds, kind, op, range, search, source]);
 
-  const selected = filtered.find((e) => e.id === selectedId) ?? filtered[0];
+  const selected = filtered.find((e) => e.id === selectedId);
+
+  function openDetail(event: HistoryEvent) {
+    setSelectedId(event.id);
+    setDetailOpen(true);
+  }
+
+  useEffect(() => {
+    if (detailOpen && selected && window.matchMedia('(max-width: 1199px)').matches) {
+      detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [detailOpen, selectedId, selected]);
 
   return (
     <>
-    <div className="zc-history-layout" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.05fr) minmax(360px, .95fr)', gap: 18, alignItems: 'start' }}>
+    <div className="zc-history-layout" style={{ display: 'grid', gridTemplateColumns: detailOpen && selected ? 'minmax(0, 1fr) minmax(360px, 420px)' : 'minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
         <div style={card}>
           <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
@@ -402,21 +415,18 @@ export function History() {
 
         {view === 'list' ? <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}>
-            <table className="zc-card-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <table className="zc-card-table" data-history-table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
               <thead>
-                <tr><th style={thStyle}>时间</th><th style={thStyle}>类型</th><th style={thStyle}>对象</th><th style={thStyle}>摘要</th><th style={thStyle}>字段</th></tr>
+                <tr><th style={thStyle}>时间</th><th style={thStyle}>操作</th></tr>
               </thead>
               <tbody>
                 {filtered.map((event) => (
-                  <tr key={event.id} onClick={() => setSelectedId(event.id)} style={{ cursor: 'pointer', background: selected?.id === event.id ? 'var(--surface-2)' : undefined }}>
-                    <td data-label="时间" style={tdStyle}>{formatTime(event.at)}</td>
-                    <td data-label="类型" style={tdStyle}>{eventKindLabel(event)}</td>
-                    <td data-label="对象" style={tdStyle}>{eventObjectLabel(event)}</td>
-                    <td data-label="摘要" style={{ ...tdStyle, whiteSpace: 'normal', minWidth: 220 }}>{eventSummary(event)}</td>
-                    <td data-label="字段" style={tdStyle}>{eventChangedKeys(event).slice(0, 4).map(fieldLabel).join(', ') || '—'}</td>
+                  <tr key={event.id} role="button" tabIndex={0} aria-label={`查看详情：${historyListSummary(event, snap)}`} aria-expanded={detailOpen && selected?.id === event.id} onClick={() => openDetail(event)} onKeyDown={(keyEvent) => { if (keyEvent.key === 'Enter' || keyEvent.key === ' ') { keyEvent.preventDefault(); openDetail(event); } }} style={{ cursor: 'pointer', background: detailOpen && selected?.id === event.id ? 'var(--surface-2)' : undefined }}>
+                    <td data-label="时间" style={tdStyle}>{formatHistoryListTime(event.at)}</td>
+                    <td data-label="操作" style={{ ...tdStyle, whiteSpace: 'normal', minWidth: 220 }}>{historyListSummary(event, snap)}</td>
                   </tr>
                 ))}
-                {filtered.length === 0 && <tr><td className="zc-card-table-empty" style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={5}>暂无匹配的历史记录</td></tr>}
+                {filtered.length === 0 && <tr><td className="zc-card-table-empty" style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={2}>暂无匹配的历史记录</td></tr>}
               </tbody>
             </table>
           </div>
@@ -429,16 +439,18 @@ export function History() {
             onViewChange={setView}
             dateOf={(event) => localDateOfInstant(event.at)}
             keyOf={(event) => event.id}
-            renderCompact={(event) => <>{formatTime(event.at).slice(11, 16)} · <b>{eventKindLabel(event)}</b> · {eventSummary(event)}</>}
-            renderEntry={(event) => <div className="zc-history-entry" style={{ display: 'grid', gridTemplateColumns: '150px 110px 120px minmax(0, 1fr)', gap: 12, alignItems: 'center' }}><span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' }}>{formatTime(event.at)}</span><b>{eventKindLabel(event)}</b><span>{eventObjectLabel(event)}</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{eventSummary(event)}</span></div>}
+            timeOf={(event) => event.at}
+            renderCompact={(event) => <>{formatHistoryClock(event.at)} · {historyListSummary(event, snap)}</>}
+            renderEntry={(event) => <div className="zc-history-event-line"><time dateTime={event.at}>{formatHistoryClock(event.at)}</time><span>{historyListSummary(event, snap)}</span></div>}
             renderSummary={(rows) => <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>操作 {rows.filter((event) => event.kind === 'operation').length} · 批量 {rows.filter((event) => event.kind === 'batch').length} · 冲突 {rows.filter((event) => event.kind === 'resolution').length}</span>}
-            onOpen={(event) => setSelectedId(event.id)}
+            onOpen={openDetail}
             emptyText="该时间范围内没有操作历史。"
           />
         )}
       </div>
 
-      <div className="zc-history-detail" style={{ position: 'sticky', top: 92 }}>
+      {detailOpen && selected && <div ref={detailRef} className="zc-history-detail" style={{ position: 'sticky', top: 92, minWidth: 0 }}>
+        <div className="zc-history-detail-toolbar"><span>记录详情</span><button type="button" onClick={() => setDetailOpen(false)} aria-label="收起记录详情">收起 ×</button></div>
         <HistoryDetail
           event={selected}
           snap={snap}
@@ -448,7 +460,7 @@ export function History() {
           onReverse={reverseOperation}
           onReverseBatch={prepareReverseBatch}
         />
-      </div>
+      </div>}
     </div>
     {pendingReverseBatch && (
       <ConfirmDialog
@@ -506,14 +518,18 @@ function HistoryDetail({
 
 function OperationDetail({ log, snap, actionBusy, actionMessage, onReverse }: { log: OperationLogEntry; snap: Snapshot | null; actionBusy: boolean; actionMessage: string; onReverse: (log: OperationLogEntry) => Promise<void> }) {
   const diff = parseDiff(log);
+  const visibleDiff = Object.fromEntries(Object.entries(diff).filter(([key]) => key in FIELD_LABELS && !['id', 'createdAt', 'updatedAt', 'version'].includes(key)).slice(0, 3));
+  const hasMoreDiff = Object.keys(diff).length > Object.keys(visibleDiff).length;
   const reversible = (log.source ?? 'local') === 'local' && (log.entityType === 'transaction' || (log.entityType === 'conversion_chain' && Object.hasOwn(diff, 'recordState')));
   return (
     <div style={card}>
-      <DetailHeader title={`${OP_LABEL[log.op]} ${entityLabel(log.entityType)}`} sub={`${formatTime(log.at)} · ${log.deviceId ?? '未知设备'} · ${SOURCE_LABEL[log.source ?? 'local'] ?? log.source ?? '本地'}`} />
+      <DetailHeader title={`${OP_LABEL[log.op]}「${historyObjectName(log)}」`} sub={`${formatTime(log.at)} · ${SOURCE_LABEL[log.source ?? 'local'] ?? log.source ?? '本地'}`} />
       {reversible && <button type="button" disabled={actionBusy} onClick={() => void onReverse(log)} style={{ ...button, borderColor: 'var(--accent)', color: 'var(--accent)', marginBottom: 12 }}>{actionBusy ? '处理中…' : '撤销此操作'}</button>}
       {actionMessage && <div style={{ color: actionMessage === '已完成反向操作。' ? 'var(--positive)' : 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>{actionMessage}</div>}
-      <KeyTags keys={log.changedKeys ?? Object.keys(diff)} />
-      <DiffTable diff={diff} snap={snap} />
+      {Object.keys(visibleDiff).length > 0 && <DiffTable diff={visibleDiff} snap={snap} />}
+      {hasMoreDiff && <details className="zc-history-expand"><summary>查看全部 {Object.keys(diff).length} 项字段变化</summary><DiffTable diff={diff} snap={snap} /></details>}
+      {Object.keys(diff).length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>没有记录到字段变化</div>}
+      <details className="zc-history-expand"><summary>技术信息</summary><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', overflowWrap: 'anywhere' }}>设备：{log.deviceId ?? '未知设备'} · 对象：{entityLabel(log.entityType)}</div></details>
       <JsonBlock title="操作后快照" value={log.afterPayload ?? log.payload} />
     </div>
   );
@@ -534,9 +550,10 @@ function BatchDetail({
   compensation?: BusinessCompensationRecord;
   onReverse: (compensation: BusinessCompensationRecord) => Promise<void>;
 }) {
+  const changeCount = event.logs.length || event.batch.entityCount;
   return (
     <div style={card}>
-      <DetailHeader title={event.batch.label} sub={`${formatTime(event.batch.startedAt)} · ${event.batch.deviceId ?? '未知设备'} · ${event.logs.length || event.batch.entityCount} 条变更`} />
+      <DetailHeader title={historyBatchLabel(event.batch)} sub={`${formatTime(event.batch.startedAt)} · ${changeCount} 条变更`} />
       {compensation?.status === 'pending' && (
         <button
           type="button"
@@ -555,20 +572,17 @@ function BatchDetail({
         : actionMessage.includes('已经提交')
           ? 'var(--warning)'
           : 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>{actionMessage}</div>}
-      {event.batch.summary && <div style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginBottom: 12 }}>{event.batch.summary}</div>}
+      {event.batch.summary && <div style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginBottom: 12, overflowWrap: 'anywhere' }}>{event.batch.summary}</div>}
       {compensation && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginBottom: 12 }}>影响范围：{affectedEntitySummary(compensation)}</div>}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {event.logs.map((log) => (
-          <div key={log.id} style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
-              <span>{OP_LABEL[log.op]} {entityLabel(log.entityType)} · {objectName(log)}</span>
-              <span style={{ color: 'var(--text-tertiary)' }}>{(log.changedKeys ?? []).map(fieldLabel).join(', ') || '—'}</span>
-            </div>
-            <DiffTable diff={parseDiff(log)} compact snap={snap} />
-          </div>
-        ))}
-        {event.logs.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>这个批次暂无可展开的操作日志</div>}
-      </div>
+      {event.logs.length > 0 && <details className="zc-history-expand"><summary>查看 {event.logs.length} 条具体变更</summary>
+        <div className="zc-history-batch-logs">
+          {event.logs.map((log) => (
+            <details key={log.id} className="zc-history-expand"><summary>{historyListSummary({ kind: 'operation', id: `op:${log.id}`, at: log.at, log }, snap)}</summary><DiffTable diff={parseDiff(log)} compact snap={snap} /></details>
+          ))}
+        </div>
+      </details>}
+      {event.logs.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>这个批次暂无可展开的操作日志</div>}
+      <details className="zc-history-expand"><summary>技术信息</summary><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', overflowWrap: 'anywhere' }}>设备：{event.batch.deviceId ?? '未知设备'}</div></details>
     </div>
   );
 }
@@ -579,12 +593,12 @@ function ResolutionDetail({ resolution }: { resolution: SyncConflictResolution }
   return (
     <div style={card}>
       <DetailHeader title={`冲突解决 · ${resolutionActionLabel(resolution.action)}`} sub={`${formatTime(resolution.resolvedAt)} · ${resolution.resolverDeviceId ?? '未知设备'} · 冲突组 ${resolution.groupId.slice(0, 8)}`} />
-      <KeyTags keys={changedPaths} />
       <div className="zc-history-resolution-facts" style={{ display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr)', gap: '8px 12px', fontSize: 'var(--fs-caption)' }}>
         <span style={{ color: 'var(--text-tertiary)' }}>合并提交</span><code>{resolution.resolvedCommitId ?? '仅记录，未生成提交'}</code>
         <span style={{ color: 'var(--text-tertiary)' }}>影响聚合</span><span>{aggregates.map((row) => `${entityLabel(row.type)} ${row.id.slice(0, 8)}`).join('；') || '未记录'}</span>
         {resolution.note && <><span style={{ color: 'var(--text-tertiary)' }}>备注</span><span>{resolution.note}</span></>}
       </div>
+      {changedPaths.length > 0 && <details className="zc-history-expand"><summary>查看 {changedPaths.length} 项受影响字段</summary><KeyTags keys={changedPaths} /></details>}
       <JsonBlock title="解决详情" value={resolution.detailJson} />
     </div>
   );
@@ -612,19 +626,13 @@ function DiffTable({ diff, compact = false, snap }: { diff: Record<string, { bef
   const rows = Object.entries(diff);
   if (!rows.length) return <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>没有业务字段变化</div>;
   return (
-    <div style={{ overflowX: 'auto', marginTop: compact ? 8 : 0 }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        {!compact && <thead><tr><th style={thStyle}>字段</th><th style={thStyle}>改前</th><th style={thStyle}>改后</th></tr></thead>}
-        <tbody>
-          {rows.map(([key, value]) => (
-            <tr key={key}>
-              <td style={tdStyle}>{fieldLabel(key)}</td>
-              <td style={{ ...tdStyle, color: 'var(--text-tertiary)', whiteSpace: 'normal' }}>{shortValue(value.before, key, snap)}</td>
-              <td style={{ ...tdStyle, whiteSpace: 'normal' }}>{shortValue(value.after, key, snap)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="zc-history-diff-list" style={{ marginTop: compact ? 8 : 0 }}>
+      {rows.map(([key, value]) => (
+        <div className="zc-history-diff-row" key={key}>
+          <div className="zc-history-diff-label">{fieldLabel(key)}</div>
+          <div className="zc-history-diff-values"><span>{shortValue(value.before, key, snap)}</span><span aria-hidden="true">→</span><span>{shortValue(value.after, key, snap)}</span></div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -756,6 +764,50 @@ function eventSummary(event: HistoryEvent): string {
   if (event.kind === 'batch') return event.batch.summary ?? event.batch.label;
   if (event.kind === 'resolution') return `${resolutionActionLabel(event.resolution.action)}，${resolutionAggregates(event.resolution).length} 个聚合`;
   return `${OP_LABEL[event.log.op]} ${entityLabel(event.log.entityType)} ${objectName(event.log)}`;
+}
+
+function historyListSummary(event: HistoryEvent, snap: Snapshot | null): string {
+  if (event.kind === 'batch') return `${historyBatchLabel(event.batch)} · ${event.logs.length || event.batch.entityCount} 条变更`;
+  if (event.kind === 'resolution') return `解决同步冲突 · ${resolutionActionLabel(event.resolution.action)}`;
+
+  const { log } = event;
+  const action = `${OP_LABEL[log.op]}「${historyObjectName(log)}」`;
+  if (log.op !== 'update') return action;
+
+  const diff = parseDiff(log);
+  const preferred = ['amount', 'transferAmount', 'name', 'title', 'description', 'date', 'category', 'accountId', 'assetId', 'status', 'note'];
+  const key = [...preferred, ...Object.keys(diff)].find((candidate) => {
+    const change = diff[candidate];
+    return change && candidate in FIELD_LABELS
+      && !['id', 'createdAt', 'updatedAt', 'version'].includes(candidate)
+      && [change.before, change.after].every((value) => value === null || ['string', 'number', 'boolean'].includes(typeof value));
+  });
+  if (!key) return action;
+  const change = diff[key]!;
+  const before = shortValue(change.before, key, snap).slice(0, 24);
+  const after = shortValue(change.after, key, snap).slice(0, 24);
+  return `${action} · ${fieldLabel(key)} ${before} → ${after}`;
+}
+
+function historyBatchLabel(batch: AuditBatch): string {
+  return batch.type === 'sync' ? '同步提交' : batch.label;
+}
+
+function historyObjectName(log: OperationLogEntry): string {
+  if (log.entityType === 'setting') return '账本设置';
+  const name = objectName(log);
+  return name === log.entityId || name === log.entityId.slice(0, 8) ? entityLabel(log.entityType) : name;
+}
+
+function formatHistoryClock(iso: string): string {
+  const date = new Date(iso);
+  return Number.isFinite(date.getTime()) ? date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) : iso;
+}
+
+function formatHistoryListTime(iso: string): string {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return iso;
+  return `${date.toLocaleDateString('zh-CN')} ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}`;
 }
 
 function objectName(log: OperationLogEntry): string {
