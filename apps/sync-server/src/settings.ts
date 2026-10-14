@@ -7,6 +7,7 @@
  */
 import { ServerStoreError, type SyncServerStore } from './store.js';
 import { parseBackupWindow } from './backup-schedule.js';
+import { parseAlertChannels } from './alert-channels.js';
 import { isAbsolute } from 'node:path';
 
 export interface SettingField {
@@ -75,13 +76,13 @@ export const SETTING_FIELDS: SettingField[] = [
   },
   {
     name: 'alertChannels',
-    label: '告警通知渠道（JSON 数组）',
+    label: '邮件与 Webhook 通知渠道',
     kind: 'text',
     textFormat: 'json',
     envVar: 'ADMIN_ALERT_CHANNELS',
     default: '',
     maxLength: 8000,
-    description: '可同时配置多个渠道：webhook（generic/slack/discord/feishu/dingtalk/wecom/text）与 email（SMTP）。留空则回退到上面的单一 Webhook 地址。每个渠道的投递结果分别记录，一个渠道失败不影响其它渠道。',
+    description: '可同时配置 SMTP 邮件与 Webhook（包括 Bark）。留空则回退到单一 Webhook 地址。邮件渠道也用于账号验证和密码找回。',
   },
   {
     name: 'ledgerWebAccess',
@@ -282,6 +283,10 @@ export function parseSettingValue(field: SettingField, value: unknown): number |
           ? `（需为 http(s) 地址，留空表示不通知；最多 ${String(field.maxLength ?? 500)} 个字符）`
           : `（最多 ${String(field.maxLength ?? 500)} 个字符，留空表示未配置）`;
     throw new ServerStoreError('INVALID_SETTING', 400, `${field.label} 取值无效${bounds}`);
+  }
+  if (field.name === 'alertChannels') {
+    try { parseAlertChannels(coerced); }
+    catch (error) { throw new ServerStoreError('INVALID_SETTING', 400, error instanceof Error ? error.message : String(error)); }
   }
   return coerced;
 }

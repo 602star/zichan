@@ -138,14 +138,14 @@ function cursorGuard(search: URLSearchParams, sort: ResolvedSort): { ok: true } 
  * Masks any SMTP password inside a stored channel list.
  *
  * Operates on the raw string so it can be applied both to the stored value and to the resolved
- * one, and returns the input unchanged when it does not parse — the save path reports that as a
- * validation error, and the read path must not turn it into one.
+ * one. An invalid list is hidden rather than returned verbatim because it may still contain a
+ * password or device key.
  */
 export function maskChannelList(value: unknown): string {
   if (typeof value !== 'string' || !value.trim()) return typeof value === 'string' ? value : '';
   try {
     return JSON.stringify(parseAlertChannels(value).map(maskChannel));
-  } catch { return value; }
+  } catch { return ''; }
 }
 
 function bytes(value: number): string {
@@ -1054,7 +1054,8 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         const saved = await settings.settings.save(incoming as Record<string, unknown>);
         await store.mutateAdmin(auth.session.id, { action: 'settings-save', keys: Object.keys(updates as JsonRecord) }, { requestId });
         await log('info', 'settings_updated', 'Runtime settings updated', { username: auth.user.username, detail: { keys: Object.keys(updates as JsonRecord) } });
-        return { status: 200, body: { settings: saved } };
+        return { status: 200, body: { settings: saved.map((field) => field.name === 'alertChannels'
+          ? { ...field, value: maskChannelList(field.value) } : field) } };
       });
     }
 

@@ -26,7 +26,7 @@
 /** Placeholder returned instead of a stored credential. Saving it back means "unchanged". */
 export const SECRET_PLACEHOLDER = '********';
 
-export const WEBHOOK_FORMATS = ['generic', 'slack', 'discord', 'feishu', 'dingtalk', 'wecom', 'text'] as const;
+export const WEBHOOK_FORMATS = ['generic', 'slack', 'discord', 'feishu', 'dingtalk', 'wecom', 'text', 'bark'] as const;
 export type WebhookFormat = (typeof WEBHOOK_FORMATS)[number];
 
 export interface WebhookChannel {
@@ -34,6 +34,9 @@ export interface WebhookChannel {
   name: string;
   url: string;
   format: WebhookFormat;
+  /** Bark device key is stored separately so it can be masked in the admin response. */
+  deviceKey?: string;
+  group?: string;
   enabled: boolean;
 }
 
@@ -46,6 +49,8 @@ export interface EmailChannel {
   secure: boolean;
   /** Whether to attempt STARTTLS when the server advertises it. Off is only sensible on a trusted LAN. */
   requireTls: boolean;
+  /** Allow an untrusted or mismatched SMTP certificate while keeping the TLS connection encrypted. */
+  ignoreTlsErrors: boolean;
   user: string;
   password: string;
   from: string;
@@ -124,6 +129,19 @@ export function parseAlertChannels(raw: unknown): AlertChannel[] {
       if (url.length > 500) throw new Error(`告警渠道 ${name} 的地址过长`);
       const format = (asString(row['format']) || 'generic') as WebhookFormat;
       if (!WEBHOOK_FORMATS.includes(format)) throw new Error(`告警渠道 ${name} 的格式无效（可选：${WEBHOOK_FORMATS.join('、')}）`);
+      if (format === 'bark') {
+        let endpoint: URL;
+        try { endpoint = new URL(url); } catch { throw new Error(`告警渠道 ${name} 的 Bark 地址无效`); }
+        if (!endpoint.pathname.endsWith('/push') || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+          throw new Error(`告警渠道 ${name} 的 Bark 地址应以 /push 结尾，设备密钥请单独填写`);
+        }
+        const deviceKey = asString(row['deviceKey']);
+        if (!deviceKey || deviceKey.length > 256 || /\s/.test(deviceKey)) throw new Error(`告警渠道 ${name} 缺少有效的 Bark 设备密钥`);
+        const group = asString(row['group']);
+        if (group.length > 80) throw new Error(`告警渠道 ${name} 的 Bark 分组过长`);
+        channels.push({ kind: 'webhook', name, url, format, deviceKey, ...(group ? { group } : {}), enabled });
+        return;
+      }
       channels.push({ kind: 'webhook', name, url, format, enabled });
       return;
     }
@@ -135,7 +153,6 @@ export function parseAlertChannels(raw: unknown): AlertChannel[] {
       const from = asString(row['from']);
       if (!ADDRESS_PATTERN.test(from)) throw new Error(`告警渠道 ${name} 的发件地址无效`);
       const to = asAddresses(row['to']);
-      if (!to.length) throw new Error(`告警渠道 ${name} 缺少收件地址`);
       if (to.length > 20) throw new Error(`告警渠道 ${name} 的收件人最多 20 个`);
       const bad = to.find((address) => !ADDRESS_PATTERN.test(address));
       if (bad) throw new Error(`告警渠道 ${name} 的收件地址无效：${bad}`);
@@ -148,6 +165,7 @@ export function parseAlertChannels(raw: unknown): AlertChannel[] {
         secure: row['secure'] === true,
         // Default on: silently sending credentials or content in the clear is the wrong default.
         requireTls: row['requireTls'] === undefined ? true : row['requireTls'] === true,
+        ignoreTlsErrors: row['ignoreTlsErrors'] === true,
         user, password, from, to, enabled,
       });
       return;
@@ -171,10 +189,11 @@ export function summarize(notification: AlertNotification): string {
  * chat service produces a 400 that looks like a network problem, which is why the format is an
  * explicit choice rather than something guessed from the URL.
  */
-export function webhookPayload(format: WebhookFormat, notification: AlertNotification): { contentType: string; body: string } {
+export function webhookPayload(format: WebhookFormat, notification: AlertNotification, channel?: WebhookChannel): { contentType: string; body: string } {
   const text = summarize(notification);
   const json = (value: unknown): { contentType: string; body: string } => ({ contentType: 'application/json', body: JSON.stringify(value) });
   switch (format) {
+    case 'bark': return json({ device_key: channel?.deviceKey, title: notification.state === 'active' ? `账本告警：${notification.rule}` : `账本告警已恢复：${notification.rule}`, body: text, ...(channel?.group ? { group: channel.group } : {}) });
     case 'slack': return json({ text });
     case 'discord': return json({ content: text });
     case 'feishu': return json({ msg_type: 'text', content: { text } });
@@ -187,6 +206,7 @@ export function webhookPayload(format: WebhookFormat, notification: AlertNotific
 
 /** Redacts the credential from a channel before it is returned to a browser. */
 export function maskChannel(channel: AlertChannel): AlertChannel {
+  if (channel.kind === 'webhook' && channel.format === 'bark') return { ...channel, deviceKey: channel.deviceKey ? SECRET_PLACEHOLDER : '' };
   if (channel.kind !== 'email') return channel;
   return { ...channel, password: channel.password ? SECRET_PLACEHOLDER : '' };
 }
@@ -200,6 +220,12 @@ export function maskChannel(channel: AlertChannel): AlertChannel {
 export function mergeChannelSecrets(next: AlertChannel[], stored: AlertChannel[]): AlertChannel[] {
   const byName = new Map(stored.map((channel) => [channel.name, channel]));
   return next.map((channel) => {
+    if (channel.kind === 'webhook' && channel.format === 'bark' && channel.deviceKey === SECRET_PLACEHOLDER) {
+      const previous = byName.get(channel.name);
+      return previous?.kind === 'webhook' && previous.format === 'bark'
+        ? { ...channel, deviceKey: previous.deviceKey }
+        : { ...channel, deviceKey: '' };
+    }
     if (channel.kind !== 'email' || channel.password !== SECRET_PLACEHOLDER) return channel;
     const previous = byName.get(channel.name);
     return previous && previous.kind === 'email' ? { ...channel, password: previous.password } : { ...channel, password: '' };

@@ -125,7 +125,7 @@ export interface SmtpOptions {
 async function openSocket(channel: EmailChannel, timeoutMs: number): Promise<Socket | TLSSocket> {
   return new Promise((resolve, reject) => {
     const socket = channel.secure
-      ? connectTls({ host: channel.host, port: channel.port, servername: channel.host })
+      ? connectTls({ host: channel.host, port: channel.port, servername: channel.host, rejectUnauthorized: !channel.ignoreTlsErrors })
       : connectTcp({ host: channel.host, port: channel.port });
     const timer = setTimeout(() => { socket.destroy(); reject(new Error('连接邮件服务器超时')); }, timeoutMs);
     const fail = (error: Error): void => { clearTimeout(timer); socket.destroy(); reject(error); };
@@ -136,7 +136,7 @@ async function openSocket(channel: EmailChannel, timeoutMs: number): Promise<Soc
 
 function upgradeToTls(socket: Socket, channel: EmailChannel, timeoutMs: number): Promise<TLSSocket> {
   return new Promise((resolve, reject) => {
-    const secure = connectTls({ socket, servername: channel.host });
+    const secure = connectTls({ socket, servername: channel.host, rejectUnauthorized: !channel.ignoreTlsErrors });
     const timer = setTimeout(() => { secure.destroy(); reject(new Error('STARTTLS 握手超时')); }, timeoutMs);
     secure.once('secureConnect', () => { clearTimeout(timer); resolve(secure); });
     secure.once('error', (error: Error) => { clearTimeout(timer); reject(error); });

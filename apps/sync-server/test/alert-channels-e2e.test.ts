@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EncryptedBlobStore } from '../src/blob-store.js';
 import { createMetricsService, type BackupRecordSummary } from '../src/metrics.js';
-import { createSettings, type SettingsReader } from '../src/settings.js';
+import { createSettings, parseSettingValue, SETTING_FIELDS, type SettingsReader } from '../src/settings.js';
 import { SyncServerStore } from '../src/store.js';
 
 interface Captured {
@@ -26,7 +26,7 @@ interface Captured {
 }
 
 /** A real HTTP endpoint that records what it was sent. */
-async function capture(status = 200): Promise<Captured> {
+async function capture(status = 200, result: Record<string, unknown> = {}): Promise<Captured> {
   const bodies: Record<string, unknown>[] = [];
   const server: Server = createServer((req, res) => {
     let body = '';
@@ -34,7 +34,7 @@ async function capture(status = 200): Promise<Captured> {
     req.on('end', () => {
       try { bodies.push(JSON.parse(body) as Record<string, unknown>); } catch { /* not JSON */ }
       res.writeHead(status, { 'Content-Type': 'application/json' });
-      res.end('{}');
+      res.end(JSON.stringify(result));
     });
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -71,8 +71,8 @@ interface Harness {
 async function harness(input: { alertChannels?: string; alertWebhookUrl?: string; settings?: SettingsReader } = {}): Promise<Harness> {
   const dir = mkdtempSync(join(tmpdir(), 'zichan-alert-channels-'));
   const store = new SyncServerStore(join(dir, 'server.sqlite'), 'invite', 'srv-alert-channels');
-  const blobStore = new EncryptedBlobStore({ dataDir: dir });
   await store.ready;
+  const blobStore = new EncryptedBlobStore({ dataDir: dir });
   await blobStore.ready;
   const { settings: facade } = createSettings(store);
   const settings = input.settings ?? facade;
@@ -103,6 +103,20 @@ const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { while (cleanup.length) await cleanup.pop()!(); });
 
 describe('multi-channel alert delivery', () => {
+  it('sends Bark JSON and treats an application error as a failed delivery', async () => {
+    const good = await capture(200, { code: 200, message: 'success' });
+    const bad = await capture(200, { code: 400, message: 'invalid device key' });
+    cleanup.push(good.close, bad.close);
+    const f = await harness({ alertChannels: JSON.stringify([
+      channel({ name: 'bark-ok', url: `${good.url}/push`, format: 'bark', deviceKey: 'device-1', group: 'ledger' }),
+      channel({ name: 'bark-bad', url: `${bad.url}/push`, format: 'bark', deviceKey: 'device-2' }),
+    ]) });
+    cleanup.push(f.close);
+    await f.sample();
+    await f.sample();
+    expect(good.bodies[0]).toMatchObject({ device_key: 'device-1', group: 'ledger', title: expect.any(String), body: expect.any(String) });
+    expect((await f.store.getAlert('backup:failure'))?.notifyError).toContain('bark-bad');
+  });
   it('delivers to every configured channel, not just the first', async () => {
     const first = await capture();
     const second = await capture();
@@ -177,17 +191,9 @@ describe('multi-channel alert delivery', () => {
     expect(alert?.notifyError).toContain('two');
   });
 
-  it('refuses a non-http channel instead of treating it as configured', async () => {
-    const f = await harness({ alertChannels: JSON.stringify([channel({ name: 'bad', url: 'file:///etc/passwd' })]) });
-    cleanup.push(f.close);
-
-    await f.sample();
-    await f.sample();
-
-    // A channel that is configured but unreachable must not read as "sent".
-    const alert = await f.store.getAlert('backup:failure');
-    expect(alert?.notifyState).toBe('failed');
-    expect(alert?.notifyError).toContain('bad');
+  it('refuses a non-http channel when the configuration is saved', () => {
+    const field = SETTING_FIELDS.find((entry) => entry.name === 'alertChannels')!;
+    expect(() => parseSettingValue(field, JSON.stringify([channel({ name: 'bad', url: 'file:///etc/passwd' })]))).toThrow(/http\(s\) 地址/);
   });
 
   it('reports an unparseable channel list instead of silently not notifying', async () => {

@@ -176,18 +176,22 @@ export function createMetricsService(deps: MetricsServiceDeps) {
   const deliver = async (channel: AlertChannel, notification: AlertNotification): Promise<ChannelResult> => {
     try {
       if (channel.kind === 'email') {
+        if (!channel.to.length) return { name: channel.name, kind: 'email', state: 'skipped' };
         await sendAlertEmail(channel, notification);
         return { name: channel.name, kind: 'email', state: 'sent' };
       }
-      const payload = webhookPayload(channel.format, notification);
+      const payload = webhookPayload(channel.format, notification, channel);
       const response = await fetch(channel.url, {
         method: 'POST',
         headers: { 'Content-Type': payload.contentType },
         body: payload.body,
       });
-      return response.ok
-        ? { name: channel.name, kind: 'webhook', state: 'sent' }
-        : { name: channel.name, kind: 'webhook', state: 'failed', error: `HTTP ${String(response.status)}` };
+      if (!response.ok) return { name: channel.name, kind: 'webhook', state: 'failed', error: `HTTP ${String(response.status)}` };
+      if (channel.format === 'bark') {
+        const result = await response.json() as { code?: unknown; message?: unknown };
+        if (result.code !== 200) return { name: channel.name, kind: 'webhook', state: 'failed', error: `Bark ${String(result.code ?? '响应无效')}: ${String(result.message ?? '')}` };
+      }
+      return { name: channel.name, kind: 'webhook', state: 'sent' };
     } catch (error) {
       return {
         name: channel.name,

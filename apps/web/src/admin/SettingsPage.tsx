@@ -7,6 +7,7 @@ import { PageHeader, Badge, Button, Field, Loading, Notice, Panel, Select, Stat,
 import { SETTING_GROUPS, settingGroup, mergeSettingDrafts } from './setting-groups.js';
 import type { SettingsPayload } from './types.js';
 import { ServerGroupPanel } from './ServerGroupPanel.js';
+import { NotificationChannelsEditor } from './NotificationChannelsEditor.js';
 
 export function SettingsPage({ client, role, query, navigate }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (to: string) => void }) {
   const group = SETTING_GROUPS.find((entry) => entry.id === query.get('group')) ?? SETTING_GROUPS[0];
@@ -91,10 +92,20 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
           <Button disabled={saving} onClick={payload.reload}>刷新生效值</Button>
         </div>
         <div className="zc-admin-settings-fields">
-          {fields.map((field) => <div className="zc-admin-setting" key={field.name}>
+          {fields.filter((field) => group.id !== 'notifications' || field.name !== 'alertWebhookUrl' || Boolean(draft[field.name] || field.value)).map((field) => field.name === 'alertChannels'
+            ? <div key={field.name}>
+              <h3>邮件与推送渠道</h3>
+              <NotificationChannelsEditor value={draft[field.name] ?? String(field.value)}
+                disabled={saving || !field.editable || role !== 'owner'}
+                onChange={(value) => setDraft((current) => ({ ...current, [field.name]: value }))} />
+              <p style={muted}><Badge tone="muted">{field.source === 'env' ? '由部署配置管理' : field.source === 'database' ? '已保存设置' : '默认值'}</Badge>
+                {field.source === 'env' ? <span> {field.envVar} 覆盖此项，需在部署环境修改</span> : null}</p>
+              {fieldErrors[field.name] ? <Notice tone="bad">{fieldErrors[field.name]}</Notice> : null}
+            </div>
+            : <div className="zc-admin-setting" key={field.name}>
             <div>
               <label htmlFor={'setting-' + field.name} style={{ fontWeight: 'var(--fw-medium)' }}>{field.label}</label>
-              <p id={'setting-help-' + field.name} style={muted}>{field.description}</p>
+              <p id={'setting-help-' + field.name} style={muted}>{field.name === 'alertWebhookUrl' ? '旧版单一 Webhook 地址；仅在上方没有配置渠道时生效。清空后保存即可停用。' : field.description}</p>
               <div className="zc-admin-setting-reference">
                 <p style={muted}>默认：{field.defaultValue === undefined ? '未提供' : field.defaultValue === '' ? '空' : String(field.defaultValue)}；
                   范围：{field.kind === 'number' ? String(field.minimum ?? '') + '–' + String(field.maximum ?? '') : field.kind === 'text' ? textRange(field.textFormat, field.maxLength) : (field.options ?? []).map((option) => selectLabel(field.name, option)).join('、')}</p>
@@ -123,7 +134,7 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
         </div>
         {changed.length ? <div aria-label="本组变更预览" style={{ marginTop: 12 }}>
           <strong>将修改 {changed.length} 项</strong>
-          <ul>{changed.map((field) => <li key={field.name}>{field.label}：{String(field.value) || '空'} → {draft[field.name] || '空'}</li>)}</ul>
+          <ul>{changed.map((field) => <li key={field.name}>{field.name === 'alertChannels' ? `${field.label}已修改（密钥已隐藏）` : `${field.label}：${String(field.value) || '空'} → ${draft[field.name] || '空'}`}</li>)}</ul>
         </div> : <p style={muted}>本组没有未保存的修改。</p>}
 
         {notice ? <Notice>{notice}</Notice> : null}

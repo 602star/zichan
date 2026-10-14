@@ -9,6 +9,7 @@ import {
   type EmailChannel,
 } from '../src/alert-channels.js';
 import { summarizeChannelResults } from '../src/metrics.js';
+import { maskChannelList } from '../src/admin.js';
 
 const notification = {
   key: 'disk-low',
@@ -27,6 +28,7 @@ const emailChannel = (overrides: Partial<EmailChannel> = {}): EmailChannel => ({
   port: 587,
   secure: false,
   requireTls: true,
+  ignoreTlsErrors: false,
   user: 'alerts@example.com',
   password: 'relay-password',
   from: 'alerts@example.com',
@@ -51,7 +53,7 @@ describe('alert channels', () => {
   });
 
   it('rejects an email channel that would fail at delivery time', () => {
-    expect(() => parseAlertChannels('[{"name":"m","kind":"email","host":"smtp.example.com","from":"a@b.c","to":[]}]')).toThrow(/收件地址/);
+    expect(parseAlertChannels('[{"name":"m","kind":"email","host":"smtp.example.com","from":"a@b.c","to":[]}]')).toMatchObject([{ kind: 'email', to: [] }]);
     expect(() => parseAlertChannels('[{"name":"m","kind":"email","host":"smtp.example.com","from":"nope","to":["a@b.c"]}]')).toThrow(/发件地址/);
     expect(() => parseAlertChannels('[{"name":"m","kind":"email","host":"smtp.example.com","from":"a@b.c","to":["a@b.c"],"user":"u"}]')).toThrow(/没有密码/);
     expect(() => parseAlertChannels('[{"name":"m","kind":"email","host":"smtp.example.com","from":"a@b.c","to":["a@b.c"],"password":"p"}]')).toThrow(/没有用户名/);
@@ -60,7 +62,8 @@ describe('alert channels', () => {
 
   it('accepts a comma-separated recipient list and defaults a new channel to enabled', () => {
     const [channel] = parseAlertChannels('[{"name":"m","kind":"email","host":"smtp.example.com","from":"a@b.c","to":"x@y.z, p@q.r"}]');
-    expect(channel).toMatchObject({ kind: 'email', enabled: true, to: ['x@y.z', 'p@q.r'], port: 587 });
+    expect(channel).toMatchObject({ kind: 'email', enabled: true, to: ['x@y.z', 'p@q.r'], port: 587, ignoreTlsErrors: false });
+    expect(parseAlertChannels('[{"name":"m","kind":"email","host":"smtp.example.com","from":"a@b.c","to":[],"ignoreTlsErrors":true}]')).toMatchObject([{ ignoreTlsErrors: true }]);
   });
 
   it('never returns a stored password to the browser, and keeps it when the mask is saved back', () => {
@@ -75,6 +78,19 @@ describe('alert channels', () => {
     // A channel that was renamed loses the old password rather than inheriting it by position.
     const renamed = mergeChannelSecrets([{ ...masked, name: 'other' }], stored) as EmailChannel[];
     expect(renamed[0]?.password).toBe('');
+  });
+
+  it('validates and masks Bark device keys separately from the endpoint', () => {
+    const [stored] = parseAlertChannels(JSON.stringify([{ kind: 'webhook', name: 'phone', format: 'bark', url: 'https://api.day.app/push', deviceKey: 'private-key', group: 'ledger' }]));
+    expect(stored).toMatchObject({ format: 'bark', deviceKey: 'private-key', group: 'ledger' });
+    const masked = maskChannel(stored!);
+    expect(masked).toMatchObject({ deviceKey: SECRET_PLACEHOLDER });
+    expect(mergeChannelSecrets([masked], [stored!])).toMatchObject([{ deviceKey: 'private-key' }]);
+    expect(() => parseAlertChannels(JSON.stringify([{ kind: 'webhook', name: 'phone', format: 'bark', url: 'https://api.day.app/private-key' }]))).toThrow(/\/push/);
+    expect(() => parseAlertChannels(JSON.stringify([{ kind: 'webhook', name: 'phone', format: 'bark', url: 'https://api.day.app/push' }]))).toThrow(/设备密钥/);
+    expect(JSON.parse(webhookPayload('bark', notification, stored?.kind === 'webhook' ? stored : undefined).body)).toMatchObject({ device_key: 'private-key', group: 'ledger', title: expect.any(String), body: expect.any(String) });
+    expect(maskChannelList(JSON.stringify([stored]))).not.toContain('private-key');
+    expect(maskChannelList('[{"kind":"email","password":"secret"}]')).not.toContain('secret');
   });
 
   it('builds the envelope each chat service actually expects', () => {

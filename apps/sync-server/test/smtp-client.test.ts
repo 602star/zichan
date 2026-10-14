@@ -94,6 +94,7 @@ const channelFor = (port: number, overrides: Partial<EmailChannel> = {}): EmailC
   secure: false,
   // The fake server has no TLS, so the handshake test below turns this off explicitly.
   requireTls: false,
+  ignoreTlsErrors: false,
   user: 'alerts@example.com',
   password: 'relay-password',
   from: 'alerts@example.com',
