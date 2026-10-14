@@ -19,6 +19,7 @@ export default defineConfig(({ mode }) => {
   // sql.js is CJS: let Vite pre-bundle it (CJS→ESM). The .wasm is handled
   // separately via `?url` in sqljs-driver.ts and copied to the build output.
   optimizeDeps: { include: ['sql.js'] },
+  worker: { format: 'es' },
   build: {
     rollupOptions: {
       output: {

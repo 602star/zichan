@@ -20,6 +20,7 @@ import {
 import { runLedgerMaintenance } from './maintenance.js';
 import { successfulBackupSafetyPatch, writeSafetyState } from './safety.js';
 import { openPlatformDriver, resetPlatformData, type StorageBackend } from './platform-driver.js';
+import { withSharedBrowserTaskLock } from './shared-browser-driver.js';
 import { recoverAttachmentStorage } from './attachment-storage.js';
 import { isInitializationResetRequiredError } from './initialization-error.js';
 import { initializedLedgerSetting } from './ledger-initialization.js';
@@ -513,8 +514,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!firstUseMode || !storageProtection?.unlocked || storageDisposition === 'pending' || storageDisposition === 'blocked') return;
     let cancelled = false;
     let openedStore: SqlLedgerStore | null = null;
+    let unsubscribeExternalChanges: (() => void) | undefined;
     let published = false;
     const closeOpenedStore = async () => {
+      unsubscribeExternalChanges?.();
+      unsubscribeExternalChanges = undefined;
       const current = openedStore;
       openedStore = null;
       published = false;
@@ -549,6 +553,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           throw error;
         }
         openedStore = s;
+        unsubscribeExternalChanges = platform.subscribeChanges?.(() => s.invalidate(['*']));
         if (await closeStoreWhenCancelled(s, () => cancelled)) {
           openedStore = null;
           return;
@@ -597,9 +602,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
         }
         if (!browserLocalRecovery) {
-          await recoverAttachmentStorage(s);
-          await runLedgerMaintenance(s);
-          await runDueScheduledTransactions(s);
+          await withSharedBrowserTaskLock('sync', async () => {
+            await recoverAttachmentStorage(s);
+            await runLedgerMaintenance(s);
+            await runDueScheduledTransactions(s);
+          });
         }
         if (await closeStoreWhenCancelled(s, () => cancelled)) {
           openedStore = null;
@@ -758,9 +765,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const passphrase = storagePassphrase.current;
       if (!passphrase) throw new Error('账本密码会话已经失效，请返回解锁页后重试');
       await ensureLedgerKeyForStore(pending.store, passphrase);
-      await recoverAttachmentStorage(pending.store);
-      await runLedgerMaintenance(pending.store);
-      await runDueScheduledTransactions(pending.store);
+      await withSharedBrowserTaskLock('sync', async () => {
+        await recoverAttachmentStorage(pending.store);
+        await runLedgerMaintenance(pending.store);
+        await runDueScheduledTransactions(pending.store);
+      });
       if (firstUseMode === 'server') {
         const connections = isTauriRuntime() ? mergeSharedSyncDirectory(
           loadSyncConnections(), await loadSharedSyncDirectory(pending.store),

@@ -19,6 +19,7 @@ import {
   storedLedgerKeyEnvelope,
 } from '../ledger-key-vault.js';
 import { isTauriRuntime, tauriInvoke } from '../tauri.js';
+import { withSharedBrowserTaskLock } from './shared-browser-driver.js';
 import {
   downloadRemoteBackup,
   saveEncryptedBackupToSyncServers,
@@ -500,7 +501,17 @@ async function writeBackups(rows: SavedBackup[]): Promise<void> {
   window.dispatchEvent(new CustomEvent('zichan:safety-updated'));
 }
 
-export async function saveLedgerBackup(
+export function saveLedgerBackup(
+  store: SqlLedgerStore,
+  reason: SavedBackup['reason'],
+  label?: string,
+  kind: BackupKind = 'device',
+  options?: BackupArchiveOptions,
+): Promise<SavedBackup> {
+  return withSharedBrowserTaskLock('backup', () => saveLedgerBackupNow(store, reason, label, kind, options));
+}
+
+async function saveLedgerBackupNow(
   store: SqlLedgerStore,
   reason: SavedBackup['reason'],
   label?: string,
@@ -582,15 +593,15 @@ export function maybeAutoBackup(store: SqlLedgerStore): Promise<SavedBackup | nu
   if (automaticBackupSuspensions > 0) return Promise.resolve(null);
   const active = automaticBackupFlights.get(store);
   if (active) return active;
-  const flight = (async () => {
+  const flight = withSharedBrowserTaskLock('backup', async () => {
     if (!runtimeLedgerCryptoSession()) return null;
     const rows = await listSavedBackups();
     const latestAuto = rows.find((row) => row.reason === 'auto');
     if (latestAuto && Date.now() - Date.parse(latestAuto.createdAt) < AUTO_MIN_INTERVAL_MS) return null;
     const sourceGeneration = await store.backupGeneration();
     if (latestAuto?.container.sourceGeneration === sourceGeneration) return null;
-    return saveLedgerBackup(store, 'auto', undefined, 'device', { sourceGeneration });
-  })();
+    return saveLedgerBackupNow(store, 'auto', undefined, 'device', { sourceGeneration });
+  });
   automaticBackupFlights.set(store, flight);
   pendingAutomaticBackupFlights.add(flight);
   void flight.then(

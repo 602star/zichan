@@ -74,7 +74,7 @@ Windows 也可双击 `scripts\windows\start-sync-server.cmd`。该开发入口�
 - `TRUSTED_PROXIES`：允许提供 `X-Forwarded-*` 的代理 IP 或 CIDR（IPv4/IPv6），兼容显式的 `loopback/private`；优先限定到实际代理地址，不要在直接暴露 8787 时信任任意来源。代理链从右向左检查，到首个不受信任的地址为止。代理必须覆盖 `X-Forwarded-Proto` 为单一的 `https`；经代理的请求不能依靠 `X-Forwarded-For: 127.0.0.1` 获得本机 HTTP 豁免。
 - `ALLOW_INSECURE_HTTP`：默认 `0`。设为 `1` 时，私有局域网的明文 HTTP 也可用于账号登录、同步、浏览器 Cookie 会话与管理后台（Cookie 不设置 Secure）；公网部署仍必须使用 HTTPS。仓库开发启动器默认设为 `1`，仅面向可信家庭局域网，切勿在公网暴露时开启。
 
-明文 HTTP 下的能力与边界：浏览器把 `crypto.subtle` 与 Web Locks 限制在安全上下文。本应用在缺少它们时改用随包提供的纯 JavaScript 后端（`@noble/ciphers` / `@noble/hashes`）与 IndexedDB 事务租约，因此局域网 HTTP 可以正常解锁、记账、附件、备份与多标签互斥。AES-GCM（16 字节 tag）、SHA-256 和 HMAC-SHA256 在两个后端逐字节一致，现有账本与新写入可双向互读。Argon2id 仍由 `hash-wasm` 提供，是唯一没有回退的能力，缺少 WebAssembly 时明确拒绝解锁并说明原因。两点必须如实知悉：其一，明文 HTTP 无法保证传输中的页面代码和托管凭据不被截取或篡改，账本静态存储虽仍加密，但请仅在可信内网开启；其二，该退化路径下「记住设备七天」存不了不可导出的原生密钥，只能落原始密钥字节，保护强度低于原生路径，界面不得把它当作同等保护。另外局域网 HTTP 不是安全上下文，Service Worker 不可用，关闭浏览器后完全断网重新打开网页不受保证。
+明文 HTTP 下的能力与边界：浏览器把 `crypto.subtle` 与 Web Locks 限制在安全上下文。本应用在缺少它们时改用随包提供的纯 JavaScript 后端（`@noble/ciphers` / `@noble/hashes`）与 IndexedDB 事务租约，因此局域网 HTTP 可以正常解锁、记账、附件、备份；支持 SharedWorker 的浏览器还可共用一份数据库同时打开多个标签页，缺少 SharedWorker 时退回单标签页互斥。AES-GCM（16 字节 tag）、SHA-256 和 HMAC-SHA256 在两个后端逐字节一致，现有账本与新写入可双向互读。Argon2id 仍由 `hash-wasm` 提供，是唯一没有回退的能力，缺少 WebAssembly 时明确拒绝解锁并说明原因。两点必须如实知悉：其一，明文 HTTP 无法保证传输中的页面代码和托管凭据不被截取或篡改，账本静态存储虽仍加密，但请仅在可信内网开启；其二，该退化路径下「记住设备七天」存不了不可导出的原生密钥，只能落原始密钥字节，保护强度低于原生路径，界面不得把它当作同等保护。另外局域网 HTTP 不是安全上下文，Service Worker 不可用，关闭浏览器后完全断网重新打开网页不受保证。
 
 有效对象、回收区和未完成上传都计入配额。上传会话 24 小时过期；服务启动及每小时清理过期暂存和到期回收对象。
 同一账本副本的 V2 附件由所有成员共用容量和账本宿主账号的附件配额；管理后台的账号详情显示实际共享用量。

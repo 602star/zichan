@@ -223,7 +223,11 @@ export function installSyncLifecycle(
     credentialTimer = window.setTimeout(() => run('credentials'), 1_500);
   };
   const unsubscribeWrites = typeof store.subscribe === 'function'
-    ? store.subscribe(() => {
+    ? store.subscribe((change) => {
+      // SharedWorker invalidation means another tab already wrote the same local
+      // database. Its own sync lifecycle will send that write; echoing it here
+      // turns ordinary sync metadata into an endless cross-tab sync cycle.
+      if (change.entityTypes.length === 1 && change.entityTypes[0] === '*') return;
       attachmentRescanNeeded = true;
       if (running) { pendingWrite = true; return; }
       window.clearTimeout(writeTimer);

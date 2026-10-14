@@ -109,12 +109,12 @@ export async function decodeDatabaseStorageValue(
   }
 }
 
-export async function loadDbBytes(session: LedgerCryptoSession): Promise<Uint8Array | null> {
-  return decodeDatabaseStorageValue(session, await loadKv<unknown>(KEY));
+export async function loadDbBytes(session: LedgerCryptoSession, databaseName = accountDatabaseName()): Promise<Uint8Array | null> {
+  return decodeDatabaseStorageValue(session, await loadKv<unknown>(KEY, databaseName));
 }
 
-export async function saveDbBytes(bytes: Uint8Array, session: LedgerCryptoSession): Promise<void> {
-  await saveKv(KEY, await encryptDatabaseSnapshot(session, bytes));
+export async function saveDbBytes(bytes: Uint8Array, session: LedgerCryptoSession, databaseName = accountDatabaseName()): Promise<void> {
+  await saveKv(KEY, await encryptDatabaseSnapshot(session, bytes), databaseName);
 }
 
 export async function loadKv<T>(key: string, databaseName = accountDatabaseName()): Promise<T | null> {

@@ -147,10 +147,9 @@ function ledgerLeaseTabId(): string {
   }
 }
 
-function indexedDbLeaseBackend(): LedgerLeaseBackend {
+function indexedDbLeaseBackend(databaseName = accountDatabaseName(), recordKey = accountStorageKey(BROWSER_LEDGER_LOCK_NAME)): LedgerLeaseBackend {
   const storeName = 'lease';
-  const recordKey = accountStorageKey(BROWSER_LEDGER_LOCK_NAME);
-  const databaseName = `${accountDatabaseName()}:ledger-lease`;
+  databaseName = `${databaseName}:ledger-lease`;
   const open = () => new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName, 1);
     request.onupgradeneeded = () => { request.result.createObjectStore(storeName); };
@@ -188,6 +187,7 @@ export type BrowserLedgerLeaseHandle = (() => Promise<void>) & {
 
 async function acquireWebLockLease(
   manager: BrowserLockManager,
+  lockName = accountStorageKey(BROWSER_LEDGER_LOCK_NAME),
 ): Promise<{ release: () => Promise<void>; assertHeld: () => Promise<void> }> {
   let acquiredSettled = false;
   let resolveAcquired!: (value: boolean) => void;
@@ -199,7 +199,7 @@ async function acquireWebLockLease(
     rejectAcquired = reject;
   });
   const requestFlight = Promise.resolve().then(() => manager.request(
-    accountStorageKey(BROWSER_LEDGER_LOCK_NAME),
+    lockName,
     { mode: 'exclusive', ifAvailable: true },
     async (lock) => {
       if (!lock) {
@@ -241,12 +241,12 @@ async function acquireWebLockLease(
   };
 }
 
-async function acquireIndexedDbLease(): Promise<{ release: () => Promise<void>; assertHeld: () => Promise<void> }> {
+async function acquireIndexedDbLease(databaseName?: string, lockName?: string, ownerId?: string): Promise<{ release: () => Promise<void>; assertHeld: () => Promise<void> }> {
   if (typeof globalThis.indexedDB?.open !== 'function') {
     throw new Error('当前浏览器既不支持 Web Locks 也无法使用 IndexedDB，无法建立跨标签页账本锁。请升级浏览器或使用桌面版。');
   }
-  const backend = indexedDbLeaseBackend();
-  const owner = ledgerLeaseTabId();
+  const backend = indexedDbLeaseBackend(databaseName, lockName);
+  const owner = ownerId ?? ledgerLeaseTabId();
   const version = await claimLedgerLease(backend, owner, Date.now());
   if (version === null) throw new BrowserLedgerAlreadyOpenError();
   heldIndexedDbLease = { backend, owner, version };
@@ -291,6 +291,7 @@ export async function acquireBrowserLedgerLock(
       ? undefined
       : navigator.locks as unknown as BrowserLockManager | undefined
   ),
+  scope?: { databaseName: string; lockName: string; ownerId?: string },
 ): Promise<BrowserLedgerLeaseHandle> {
   const previousLocalLease = localLeaseTail;
   let resolveLocalLease!: () => void;
@@ -300,7 +301,9 @@ export async function acquireBrowserLedgerLock(
 
   let handle: { release: () => Promise<void>; assertHeld: () => Promise<void> };
   try {
-    handle = providedManager ? await acquireWebLockLease(providedManager) : await acquireIndexedDbLease();
+    handle = providedManager
+      ? await acquireWebLockLease(providedManager, scope?.lockName)
+      : await acquireIndexedDbLease(scope?.databaseName, scope?.lockName, scope?.ownerId);
   } catch (error) {
     if (localLeaseTail === currentLocalLease) localLeaseTail = null;
     resolveLocalLease();

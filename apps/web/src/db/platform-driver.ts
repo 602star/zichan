@@ -4,6 +4,7 @@ import { deleteWebDatabase, loadDbBytes, saveDbBytes } from './idb.js';
 import { SqlJsDriver } from './sqljs-driver.js';
 import { TauriSqlDriver } from './tauri-sql-driver.js';
 import { acquireBrowserLedgerLock } from './browser-ledger-lock.js';
+import { SharedBrowserSqlDriver } from './shared-browser-driver.js';
 import {
   clearDeviceStorageState,
   requireDeviceStorageSession,
@@ -21,6 +22,7 @@ export interface PlatformDriver {
   driver: SqlDriver;
   backend: StorageBackend;
   dataLocation: string;
+  subscribeChanges?: (listener: () => void) => () => void;
 }
 
 export async function openPlatformDriver(
@@ -39,6 +41,15 @@ export async function openPlatformDriver(
       await driver.close().catch(() => undefined);
       throw error;
     }
+  }
+  if (typeof SharedWorker !== 'undefined') {
+    const driver = await SharedBrowserSqlDriver.open(protection.cryptoSession);
+    return {
+      driver,
+      backend: 'browser-indexeddb',
+      dataLocation: 'IndexedDB · 加密 ledger.sqlite（多标签页共享）',
+      subscribeChanges: (listener) => driver.subscribeChanges(listener),
+    };
   }
   const releaseLock = await acquireBrowserLedgerLock();
   try {
@@ -64,28 +75,35 @@ export async function openPlatformDriver(
 }
 
 export async function resetPlatformData(): Promise<void> {
-  const { forgetOfflineAccess } = await import('../offline-access.js');
-  const { clearAccountProtection } = await import('../account-protection.js');
-  clearAccountProtection();
-  await forgetOfflineAccess().catch(() => undefined);
-  if (isTauriRuntime()) {
-    const databaseUrl = tauriInvoke<string>('native_sql_database_url');
-    if (!databaseUrl) throw new Error('原生数据库路径命令不可用');
-    const close = tauriInvoke<void>('native_sql_close', { db: await databaseUrl });
-    if (close) await close.catch(() => false);
-    const removeDatabase = tauriInvoke('native_sql_delete_database');
-    const clearAttachments = tauriInvoke('native_attachment_clear');
-    if (!removeDatabase || !clearAttachments) throw new Error('原生数据清理命令不可用');
-    await removeDatabase;
-    await clearAttachments;
-    await resetCredentialVault();
-  }
-  await deleteWebDatabase();
+  // A different tab may still be using the shared worker. Refuse to delete its
+  // IndexedDB snapshot until all browser connections have closed.
+  const releaseResetLock = isTauriRuntime() ? null : await acquireBrowserLedgerLock();
+  try {
+    const { forgetOfflineAccess } = await import('../offline-access.js');
+    const { clearAccountProtection } = await import('../account-protection.js');
+    clearAccountProtection();
+    await forgetOfflineAccess().catch(() => undefined);
+    if (isTauriRuntime()) {
+      const databaseUrl = tauriInvoke<string>('native_sql_database_url');
+      if (!databaseUrl) throw new Error('原生数据库路径命令不可用');
+      const close = tauriInvoke<void>('native_sql_close', { db: await databaseUrl });
+      if (close) await close.catch(() => false);
+      const removeDatabase = tauriInvoke('native_sql_delete_database');
+      const clearAttachments = tauriInvoke('native_attachment_clear');
+      if (!removeDatabase || !clearAttachments) throw new Error('原生数据清理命令不可用');
+      await removeDatabase;
+      await clearAttachments;
+      await resetCredentialVault();
+    }
+    await deleteWebDatabase();
 
-  clearDeviceStorageState();
-  clearLedgerKey();
-  clearSyncConfiguration();
-  clearCredentialVaultRuntimeState();
-  clearCloudIdentity();
-  clearSafetyState();
+    clearDeviceStorageState();
+    clearLedgerKey();
+    clearSyncConfiguration();
+    clearCredentialVaultRuntimeState();
+    clearCloudIdentity();
+    clearSafetyState();
+  } finally {
+    await releaseResetLock?.();
+  }
 }

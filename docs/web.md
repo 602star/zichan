@@ -21,8 +21,7 @@ Chrome、Edge 通常自动决定是否授予持久保护，不弹授权窗口；
 
 服务器模式先显示“当前网站 / 本机 / 局域网 / 公网”地址向导、完整 URL 与高级拆分字段；完成服务器身份检查和账号注册/登录后才创建本机加密存储。账号已绑定远端账本时，首次流程要求账本加密密码，在隔离数据库完整验证提交图后直接恢复；未绑定账号才进入“直接开始记支出 / 导入备份 / 体验演示 / 高级创建”。主入口一键创建人民币轻量支出账本、系统分类和 10 个无金额支出模板，随后直接打开快速支出弹窗；不会创建账户、余额、持仓或业务流水。其他币种和更深的录入深度留在高级创建中；该处的「记账模式 · 录入深度」与设置页同名同义，只改变录入表单的深度与用词，不决定显示哪些模块。演示数据只在用户显式选择时由 `src/db/seed.ts` 创建，并持久显示“演示账本”标识。
 
-浏览器数据保留在当前 Origin 的 IndexedDB；清理网站数据会删除纯本地账本，切换 Origin 或浏览器等同新设备。由于 sql.js 会整体导出 SQLite 快照，浏览器从打开数据库到关闭期间持有独占 Web Lock，
-同一账本只允许一个标签页运行，避免两个内存副本先后覆盖。缺少 Web Locks API 或检测到其他标签页占用时会拒绝打开并给出明确提示。
+浏览器数据保留在当前 Origin 的 IndexedDB；清理网站数据会删除纯本地账本，切换 Origin 或浏览器等同新设备。同一账号的多个标签页连接到一个 SharedWorker，共用一份 sql.js 数据库；各页可同时记账，写入按顺序落盘并通知其他页面刷新。SharedWorker 持有跨标签页独占锁；缺少 Web Locks API 时使用 IndexedDB 租约。浏览器不支持 SharedWorker 时退回单标签页模式，第二个标签页会收到占用提示。
 Windows 便携桌面直接使用 EXE 同级 `data/ledger` 中的原生 SQLite；移动端使用平台应用目录。
 
 ## 数据链路（本地优先，按平台选择 SQLite 驱动）
@@ -33,15 +32,12 @@ React 组件
   └─ 选择器/派生    ── 计算 ──────────▶  @zichan/core (traceChain / seasonSummary / …)
                                           │ SqlDriver 端口
                       ┌───────────────────┴────────────────────┐
-              SqlJsDriver (browser)                   TauriSqlDriver
+       SharedWorker → SqlJsDriver (browser)           TauriSqlDriver
              sql.js → IndexedDB                 Rust SQLCipher 命令桥
                                                    → ledger.sqlite
 ```
 
-- **`SqlJsDriver`**（`src/db/sqljs-driver.ts`）—— 用 sql.js（SQLite 编译成 WASM）实现
-  `@zichan/db` 的 `SqlDriver` 端口，于是浏览器**复用同一套 schema 与仓储**。数据库在内存中，
-  顶层写入或事务提交后按顺序导出为字节，并等待 IndexedDB 落盘完成（`src/db/idb.ts`）；
-  `src/db/browser-ledger-lock.ts` 在驱动整个生命周期内持有跨标签页独占锁，驱动关闭后才释放。
+- **`SharedBrowserSqlDriver` / `SqlJsDriver`**（`src/db/shared-browser-driver.ts`、`src/db/browser-ledger-worker.ts`、`src/db/sqljs-driver.ts`）—— 多个浏览器标签页通过 SharedWorker 共用一个 sql.js 实例，复用 `@zichan/db` 的 schema 与仓储。顶层写入或事务提交后按顺序导出为字节，并等待 IndexedDB 落盘完成（`src/db/idb.ts`）；其他标签页收到变更通知后刷新数据。Worker 在数据库生命周期内持有跨标签页独占锁（`src/db/browser-ledger-lock.ts`），最后一个页面关闭后释放。不支持 SharedWorker 时沿用单标签页驱动。
 - **`TauriSqlDriver`**（`src/db/tauri-sql-driver.ts`）—— 桌面与移动端走原生
   `ledger.sqlite`，支持绑定到同一原生连接的事务和嵌套 savepoint；不会读取 WebView IndexedDB 旧库。
 - **设备桥接**（`src/device-capabilities.ts`）—— 移动 Tauri 调用生物识别、扫码、定位和原生文件分享；浏览器保留 Web Share / Geolocation 回退。通知只使用运行环境实际提供的标准 Web Notification 接口，不授予未使用的原生通知插件权限。

@@ -11,7 +11,7 @@ type Persist = (bytes: Uint8Array) => void | Promise<void>;
 type CloseHook = () => void | Promise<void>;
 
 function runtimeWasmUrl(): string {
-  if (typeof window === 'undefined') {
+  if (typeof window === 'undefined' && typeof self === 'undefined') {
     const local = new URL('../../../../node_modules/sql.js/dist/sql-wasm.wasm', import.meta.url);
     const path = decodeURIComponent(local.pathname);
     return /^\/[A-Za-z]:\//.test(path) ? path.slice(1) : path;
