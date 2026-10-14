@@ -26,9 +26,7 @@ export function userSupport(detail: AccountDetail) {
     sync: !latest ? '暂无同步记录' : latest.outcome === 'ok' ? '最近请求成功' : '最近请求失败',
     quotaExceeded: capacity.commitQuotaBytes !== null && capacity.commitBytes >= capacity.commitQuotaBytes
       || capacity.blobQuotaBytes !== null && capacity.blobUsedBytes >= capacity.blobQuotaBytes,
-    preview: account.protection?.mode === 'private'
-      ? '私密模式：服务器没有解密凭据'
-      : !account.protection ? '尚未设置账本保护'
+    preview: !account.protection ? '尚未设置账本保护'
         : !capacity.ledgerId ? '尚未绑定远端账本'
           : account.protection.mode === 'managed' ? '托管模式：可申请只读预览，打开时检查服务器凭据'
             : '保护模式未知，请先检查账号配置',

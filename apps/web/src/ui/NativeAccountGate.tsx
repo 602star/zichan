@@ -63,7 +63,7 @@ export function NativeAccountGate({ onReady, onCancel }: { onReady: () => Promis
     <OfflineAccountGate connection={saved}><Ready onReady={onReady} /></OfflineAccountGate></>;
   return profile ? <>{switchError && <p role="alert">上次切换账本失败：{switchError}</p>}
     <MemberAccountProtectionGate connection={profile}><Ready onReady={onReady} /></MemberAccountProtectionGate></>
-    : <>{offlineAvailable && saved && <div className="zc-protection" style={{ padding: 16 }}><p>主服务器暂时不可用，可使用本设备事先设置的离线授权打开加密账本。</p><button onClick={() => setOffline(true)}>离线打开 {saved.username} 的本机账本</button></div>}
+    : <>{offlineAvailable && saved && <div className="zc-protection" style={{ padding: 16 }}><p>主服务器暂时不可用，可用账号密码打开此设备已有的账本缓存。</p><button onClick={() => setOffline(true)}>离线打开 {saved.username} 的本机账本</button></div>}
       {switchError && <p role="alert">上次切换账本失败：{switchError}</p>}
       {activeDesktopLedgerProfile()?.ledgerProfileId !== 'legacy'
         && activeDesktopLedgerProfile()?.ledgerProfileSwitchSupported && <div className="zc-protection">

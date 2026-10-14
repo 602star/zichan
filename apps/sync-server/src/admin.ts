@@ -1013,7 +1013,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         secrets: {
           syncSecret: 'configured',
           ownerSetupToken: 'configured',
-          custodyKey: deps.custodyEnabled ? 'configured' : 'not-configured',
+          custodyKey: 'configured',
         },
         version: { server: deps.version, schema: (await store.status()).schemaVersion },
         security: { accessTokenMinutes: deps.accessTokenMinutes, sessionDays: deps.sessionDays },
@@ -1421,7 +1421,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const protection = search.get('protection') ?? '';
       const quota = search.get('quota') ?? '';
       if (!['', 'owner', 'admin', 'viewer', 'member'].includes(role) || !['', 'enabled', 'disabled'].includes(state)) return send(res, 400, { error: 'invalid filter' });
-      if (!['', 'managed', 'private', 'relay', 'none'].includes(protection) || !['', 'ok', 'warning', 'over'].includes(quota)) return send(res, 400, { error: 'invalid filter' });
+      if (!['', 'managed', 'relay', 'none'].includes(protection) || !['', 'ok', 'warning', 'over'].includes(quota)) return send(res, 400, { error: 'invalid filter' });
       const { sort, error } = readListSort(search, USER_SORT_OPTIONS, 'created');
       if (error) return send(res, 400, { error });
       const guard = cursorGuard(search, sort);

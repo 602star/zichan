@@ -1,4 +1,4 @@
-import { encryptJson, sha256Json, wireSyncCommit, wrapLedgerCryptoSession } from '@zichan/core';
+import { encryptJson, sha256Json, wireSyncCommit } from '@zichan/core';
 import { loginAccount, type SqlLedgerStore, type SyncReplicaIdentity } from '@zichan/db';
 import { accountProtection, protectionRequest } from './account-protection.js';
 import { requireLedgerCryptoSession, storedLedgerKeyEnvelope } from './ledger-key-vault.js';
@@ -51,6 +51,8 @@ export async function attachBrowserReplica(store: SqlLedgerStore, profile: SyncC
   const envelope = storedLedgerKeyEnvelope();
   if (!envelope) throw new Error('请先解锁当前账本');
   const session = requireLedgerCryptoSession(envelope.ledgerId);
+  const source = accountProtection();
+  if (!source || source.info.mode !== 'managed' || source.info.controlled) throw new Error('仅个人账本可连接独立服务器');
   const group = await request<{ joined: boolean }>(profile, '/api/v4/group/status');
   if (group.joined) throw new Error('这台服务器已加入管理员同步组，请直接在该组内登录账本');
   const protection = await protectionRequest(profile);
@@ -59,7 +61,8 @@ export async function attachBrowserReplica(store: SqlLedgerStore, profile: SyncC
   if (remote.serverId !== profile.serverId) throw new Error('目标服务器身份已变化，请重新登录');
   if (remote.serverManagedReplication) throw new Error('目标账本已有服务器复制链路，不能改为浏览器同步');
   if (!remote.bound) {
-    const initialized = await protectionRequest(profile, 'POST', { mode: 'private', envelope }, '/initialize');
+    const initialized = await protectionRequest(profile, 'POST', { mode: 'managed', envelope,
+      secret: source.secret }, '/initialize');
     if (initialized.replica?.ledgerId !== envelope.ledgerId) throw new Error('目标服务器未能建立当前账本');
   } else if (!remote.replicaId || !remote.streamEpoch) {
     throw new Error('目标服务器账本身份不完整，请重新登录');
@@ -77,7 +80,7 @@ export async function attachBrowserReplica(store: SqlLedgerStore, profile: SyncC
         commitId: commit.commitId, contentHash }) };
     const result = await request<SyncReplicaIdentity>(profile, '/api/v3/replica/replace', 'POST', {
       expectedLedgerId: remote.ledgerId, expectedStreamEpoch: remote.streamEpoch,
-      confirmation: '替换旧账本', envelope, commits: [initial],
+      confirmation: '替换旧账本', envelope, commits: [initial], secret: source.secret,
     });
     if (result.serverId !== profile.serverId || result.ledgerId !== envelope.ledgerId
       || !result.replicaId || !result.streamEpoch) throw new Error('目标服务器返回的账本身份不一致，请重新登录检查');
@@ -86,15 +89,10 @@ export async function attachBrowserReplica(store: SqlLedgerStore, profile: SyncC
     throw new Error('目标服务器虽有同名账本，但加密密钥不同，已拒绝连接');
   }
   const current = await protectionRequest(profile);
-  if (current.mode !== 'private') {
-    await protectionRequest(profile, 'PUT', { mode: 'private', version: current.version, envelope });
+  if (current.mode !== 'managed') {
+    await protectionRequest(profile, 'PUT', { mode: 'managed', version: current.version, envelope,
+      secret: source.secret, confirmation: '允许此服务器解密账本' });
   }
-  const passwordRecord = await request<{ record: { revision: number } | null }>(profile,
-    '/api/v4/ledger/password-envelope');
-  const passwordEnvelope = await wrapLedgerCryptoSession(session, accountPassword);
-  await request(profile, '/api/v4/ledger/password-envelope', 'PUT', {
-    envelope: passwordEnvelope, expectedRevision: passwordRecord.record?.revision ?? 0,
-  });
   const bound = await request<RemoteReplica>(profile, '/api/v3/replica');
   if (!bound.bound || bound.ledgerId !== envelope.ledgerId || !bound.replicaId || !bound.streamEpoch) {
     throw new Error('目标服务器未完成账本绑定，请刷新后重试');

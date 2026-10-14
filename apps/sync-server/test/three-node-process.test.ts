@@ -137,7 +137,8 @@ describe('independent three-node processes', () => {
       const ledgerId = (initialized['replica'] as { ledgerId: string }).ledgerId;
       const key = await unlockLedgerKeyEnvelope(initialized['secret'] as string, envelope);
       for (const [node, auth] of [[home, homeAuth], [office, officeAuth]] as const) {
-        await request(node, auth, '/api/v3/protection/initialize', { mode: 'private', envelope });
+        await request(node, auth, '/api/v3/protection/initialize', { mode: 'managed', envelope,
+          secret: initialized['secret'] });
         const grant = await request(hub, hubAuth, '/api/v4/replication/grants', {
           peerNodeId: node.identity.serverId, peerPublicKey: node.identity.nodePublicKey,
           expiresAt: new Date(Date.now() + 86_400_000).toISOString(),

@@ -38,7 +38,7 @@ export function hasOfflinePassword(): boolean { return !!accountLocalStorage.get
 export async function enableOfflinePassword(password: string): Promise<void> {
   const state = accountProtection();
   if (!state) throw new Error('请先在线解锁账号账本');
-  if (password.length < 8) throw new Error('离线密码至少需要 8 个字符');
+  if (password.length < 8) throw new Error('账号密码至少需要 8 个字符');
   const created = await createLedgerKeyEnvelope(newId(), password);
   const payload = await encryptJson(created.session, state, AAD);
   accountLocalStorage.setItem(OFFLINE_KEY, JSON.stringify({ envelope: created.envelope, payload }));
@@ -71,13 +71,13 @@ export async function forgetOfflineAccess(): Promise<void> {
 async function restore(profile: SyncConnection, state: UnlockedProtection): Promise<void> {
   if (state.profileId !== profile.id || state.info.replica?.serverId !== profile.serverId) throw new Error('离线授权不属于当前账号');
   await unlockAccountProtection(profile, { ...state.info, secret: state.info.mode === 'managed' ? state.secret : null },
-    state.secret, state.unlockEnvelope);
+    state.secret);
   await unlockDeviceStorage(state.secret, true);
 }
 
 export async function unlockOffline(profile: SyncConnection, password: string): Promise<void> {
   const record = JSON.parse(accountLocalStorage.getItem(OFFLINE_KEY) ?? 'null') as OfflineRecord | null;
-  if (!record) throw new Error('此设备未设置离线密码，请联网登录');
+  if (!record) throw new Error('此设备尚未准备离线访问，请联网登录');
   const session = await unlockLedgerKeyEnvelope(password, record.envelope);
   await restore(profile, await decryptJson<UnlockedProtection>(session, record.payload, AAD));
 }

@@ -1,6 +1,6 @@
 # 多资产生命周期记账系统 (Multi-Asset Lifecycle Ledger)
 
-账号默认支持云端托管、登录后自动解锁；高级设置可选择私密恢复码和附加服务器保护方式，详见[账本保护](docs/ledger-protection.md)。
+账号登录后自动打开服务器托管的账本，并在本设备准备使用同一账号密码的离线访问，详见[账本保护](docs/ledger-protection.md)。
 
 
 Local-first ledger for the full lifecycle of many asset kinds — fiat, stablecoins,
@@ -62,9 +62,9 @@ apps/
   `.zcbak` import/export with preflight + restore rehearsal, automatic local backups, system backup sharing, multi-branch sync conflict box
   with JSON export, tested pure selectors per screen. `npm run dev -w @zichan/web`.
   [docs/web.md](docs/web.md).
-- **`@zichan/sync-server`** — unified server for Web UI, encrypted sync with managed or private keys, and admin
+- **`@zichan/sync-server`** — unified server for Web UI, encrypted sync, managed ledger keys, and admin
   metadata APIs. HTTP v3 carries ciphertext commit-DAG envelopes plus encrypted, resumable attachment chunks;
-  managed servers hold escrowed credentials and can decrypt ledger content. In private mode, servers receive ciphertext without recovery credentials.
+  authorized servers hold escrowed credentials and can decrypt ledger content.
   `npm start -w @zichan/sync-server`.
   [docs/cloud-sync.md](docs/cloud-sync.md).
 - **`@zichan/desktop`** — **Tauri 2** desktop shell wrapping the web build; compiles to a native

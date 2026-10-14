@@ -31,10 +31,11 @@ describe('ledger replica readiness HTTP', () => {
         headers: sourceAuth, body: JSON.stringify({ mode: 'managed' }) });
       expect(initialized.status).toBe(200);
       const sourceReplica = await initialized.json() as {
-        replica: { ledgerId: string }; envelope: Record<string, unknown>;
+        replica: { ledgerId: string }; envelope: Record<string, unknown>; secret: string;
       };
       expect((await fetch(`${url(peer)}/api/v3/protection/initialize`, { method: 'POST',
-        headers: peerAuth, body: JSON.stringify({ mode: 'private', envelope: sourceReplica.envelope }) })).status).toBe(200);
+        headers: peerAuth, body: JSON.stringify({ mode: 'managed', envelope: sourceReplica.envelope,
+          secret: sourceReplica.secret }) })).status).toBe(200);
       const peerIdentity = loadNodeIdentity(peer.dataDir, peer.serverId);
       const grant = await fetch(`${url(source)}/api/v4/replication/grants`, { method: 'POST',
         headers: sourceAuth, body: JSON.stringify({ peerNodeId: peer.serverId,

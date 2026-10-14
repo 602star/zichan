@@ -9,6 +9,7 @@ import { unlockDeviceStorage } from '../device-storage-key.js';
 import { AccountProtectionGate } from './AccountProtectionGate.js';
 import { AccountKeyPanel } from './AccountKeyPanel.js';
 import { takeLoginPassword } from '../login-password.js';
+import { enableOfflinePassword } from '../offline-access.js';
 
 interface MemberAccess {
   state: LedgerControlState;
@@ -118,11 +119,12 @@ export function MemberAccountProtectionGate({ connection, children }: {
       finally { privateKey.fill(0); }
       const local = await changeLedgerPassphrase(session, password);
       const info: ProtectionInfo = {
-        mode: 'member', version: 0, defaultMode: 'private', custodyEnabled: false,
+        mode: 'member', version: 0, defaultMode: 'managed', custodyEnabled: true,
         secret: null, envelope: local.envelope, replica: access.replica,
       };
       await unlockAccountProtection(connection, info, password);
       await unlockDeviceStorage(password, true);
+      await enableOfflinePassword(password).catch(() => undefined);
       setPassphrase('');
       setReady(true);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }

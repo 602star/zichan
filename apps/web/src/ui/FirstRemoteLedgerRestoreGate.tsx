@@ -26,9 +26,7 @@ export function FirstRemoteLedgerRestoreGate(props: {
 }) {
   const protection = accountProtection();
   const memberMode = protection?.profileId === props.connection.id && protection.info.mode === 'member';
-  const passwordUnlocked = protection?.profileId === props.connection.id
-    && protection.info.mode === 'private' && protection.secretKind === 'password';
-  const useUnlockedKey = memberMode || passwordUnlocked;
+  const useUnlockedKey = memberMode;
   const automaticSecret = protection?.profileId === props.connection.id ? protection.secret : undefined;
   const [passphrase, setPassphrase] = useState(automaticSecret ?? '');
   const [busy, setBusy] = useState(false);

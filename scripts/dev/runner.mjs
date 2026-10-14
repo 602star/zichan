@@ -14,7 +14,7 @@ const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 /** Only configuration that changes the running service participates; npm invocation variables do not. */
 function fingerprint(unit) {
   const names = ['DATA_DIR', 'WEB_DIST', 'ENABLE_WEB', 'ENABLE_SYNC', 'BASE_PATH', 'REGISTRATION_MODE',
-    'ALLOW_INSECURE_HTTP', 'TRUSTED_PROXIES', 'ACCOUNT_PROTECTION', 'CUSTODY_ENABLED', 'CUSTODY_KEY_PATH',
+    'ALLOW_INSECURE_HTTP', 'TRUSTED_PROXIES', 'CUSTODY_KEY_PATH',
     'SYNC_SECRET', 'SERVER_ID', 'COMMIT_QUOTA_BYTES', 'ATTACHMENT_QUOTA_BYTES', 'ATTACHMENT_MAX_FILE_BYTES',
     'ATTACHMENT_TRASH_RETENTION_MS', 'ZICHAN_DEV_API_TARGET', ...Object.keys(unit.env).filter((name) => name.startsWith('ADMIN_'))];
   const env = Object.fromEntries([...new Set(names)].sort().map((name) => [name, unit.env[name] ?? '']));

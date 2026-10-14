@@ -45,11 +45,12 @@ describe('ledger member HTTP authorization', () => {
       expect(initialResponse.status).toBe(201);
       const first = (await initialResponse.json() as { state: { headHash: string } }).state;
       expect((await aliceRequest('/api/v4/ledger/control', 'GET')).status).toBe(200);
-      const legacyEnvelope = (await createLedgerKeyEnvelope(ledgerId, 'legacy-recovery-password')).envelope;
+      const legacyEnvelope = (await createLedgerKeyEnvelope(ledgerId, 'legacy-managed-secret-000000000000000')).envelope;
       const protection = await aliceRequest('/api/v3/protection', 'GET');
       expect((await protection.json() as { controlled: boolean }).controlled).toBe(true);
       const legacyChange = await aliceRequest('/api/v3/protection', 'PUT', {
-        mode: 'private', version: 0, envelope: legacyEnvelope,
+        mode: 'managed', version: 0, envelope: legacyEnvelope,
+        secret: 'legacy-managed-secret-000000000000000', confirmation: '允许此服务器解密账本',
       });
       expect(legacyChange.status).toBe(409);
       expect((await legacyChange.json() as { code: string }).code).toBe('PROTECTION_CONTROLLED');
@@ -57,10 +58,11 @@ describe('ledger member HTTP authorization', () => {
       const legacyKeyUpdate = await aliceRequest('/api/v3/key-envelope', 'PUT', { envelope: legacyEnvelope });
       expect(legacyKeyUpdate.status).toBe(409);
       expect((await legacyKeyUpdate.json() as { code: string }).code).toBe('KEY_ENVELOPE_CONTROLLED');
-      const replacement = await createLedgerKeyEnvelope('ledger-control-replaced-0001', 'replacement-password');
+      const replacementSecret = 'replacement-managed-secret-000000000000000';
+      const replacement = await createLedgerKeyEnvelope('ledger-control-replaced-0001', replacementSecret);
       const legacyReplace = await aliceRequest('/api/v3/replica/replace', 'POST', {
         expectedLedgerId: ledgerId, expectedStreamEpoch: (await store.getReplica('alice'))!.streamEpoch,
-        confirmation: '替换旧账本', envelope: replacement.envelope, commits: [{
+        confirmation: '替换旧账本', envelope: replacement.envelope, secret: replacementSecret, commits: [{
           commitId: 'commit-replacement-0001', ledgerId: replacement.envelope.ledgerId,
           contentHash: 'a'.repeat(64), encCommit: { v: 3, keyId: replacement.session.activeKeyId,
             iv: 'test-iv', ct: 'test-ciphertext' },

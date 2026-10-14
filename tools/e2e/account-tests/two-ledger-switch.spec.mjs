@@ -13,7 +13,7 @@ import { SyncServerStore } from '../../../apps/sync-server/dist/store.js';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const setupToken = 'two-ledger-owner-setup-secret-000000';
 const accountPassword = 'two-ledger-account-password';
-const memberKeyPassword = 'two-ledger-member-key-password';
+const accountPassword = 'two-ledger-member-key-password';
 const photo = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64');
 
 function largePng() {
@@ -49,7 +49,7 @@ async function openAccount(page) {
 
 async function syncLedger(page) {
   await openAccount(page);
-  await page.getByRole('button', { name: '查看数据保护与副本状态' }).click();
+  await page.getByRole('button', { name: '查看服务器上的账本' }).click();
   const sync = page.getByRole('button', { name: '同步账本', exact: true }).first();
   await sync.click();
   await expect(sync).toBeEnabled();
@@ -88,7 +88,7 @@ async function selectLedger(page, ledgerId) {
 
 async function unlockMemberLedger(page) {
   await expect(page.getByRole('heading', { name: '解锁成员账本' })).toBeVisible();
-  await page.getByLabel('账号加密密钥密码', { exact: true }).fill(memberKeyPassword);
+  await page.getByLabel('成员账本账号密码', { exact: true }).fill(accountPassword);
   await page.getByRole('button', { name: '解锁账本', exact: true }).click();
   await expect(page.locator('.zc-app-shell')).toBeVisible();
 }
@@ -115,7 +115,7 @@ test('switches personal and invited ledgers across three sites through a hub out
     await store.ready;
     const owner = await store.getUser('owner');
     const alice = await store.getUser('alice');
-    const memberKey = await createAccountEncryptionKey(node.serverId, alice.accountId, memberKeyPassword);
+    const memberKey = await createAccountEncryptionKey(node.serverId, alice.accountId, accountPassword);
     const identityCard = JSON.stringify({ issuerNodeId: node.serverId, accountId: alice.accountId,
       encryptionPublicKey: memberKey.envelope.publicKey,
       signingPublicKey: accountSigningPublicKey(memberKey.privateKey) });
@@ -135,13 +135,13 @@ test('switches personal and invited ledgers across three sites through a hub out
       .toBeGreaterThan(0);
     await openAccount(page);
     const ownerKey = page.getByRole('region', { name: '账号加密密钥' });
-    await ownerKey.getByLabel('创建账号加密密钥密码').fill(memberKeyPassword);
-    await ownerKey.getByLabel('确认账号加密密钥密码').fill(memberKeyPassword);
+    await ownerKey.getByLabel('创建账号加密密钥密码').fill(accountPassword);
+    await ownerKey.getByLabel('确认账号加密密钥密码').fill(accountPassword);
     await ownerKey.getByRole('button', { name: '建立账号加密密钥' }).click();
     await expect(ownerKey.getByText(/已建立 · 身份节点/)).toBeVisible();
-    await page.getByRole('button', { name: '查看数据保护与副本状态' }).click();
+    await page.getByRole('button', { name: '查看服务器上的账本' }).click();
     const members = page.getByRole('region', { name: '账本成员' });
-    await members.getByLabel('成员管理密钥密码').fill(memberKeyPassword);
+    await members.getByLabel('成员管理密钥密码').fill(accountPassword);
     await members.getByRole('button', { name: '启用成员控制（试用）' }).click();
     await expect(members.getByText(/控制版本 1 · 密钥代次 1/)).toBeVisible();
 
@@ -166,8 +166,7 @@ test('switches personal and invited ledgers across three sites through a hub out
       headers: { Authorization: `Bearer ${aliceApi.accessToken}` },
     })).json();
     expect(personalProtection).toMatchObject({ mode: 'managed', replica: { ledgerId: personalLedgerId } });
-    const personalSecret = personalProtection.secret;
-    expect(personalSecret).toBeTruthy();
+    expect(personalProtection.secret).toBeTruthy();
 
     await members.getByText('邀请成员').click();
     await members.getByLabel('待邀请成员身份').fill(identityCard);
@@ -270,9 +269,6 @@ test('switches personal and invited ledgers across three sites through a hub out
     await expect(alicePage.getByText('personal-alice-entry', { exact: true })).toHaveCount(0);
     await expectAttachmentPreview(alicePage, 'shared-alice-entry', 'shared-receipt.png');
     await selectLedger(alicePage, personalLedgerId);
-    await expect(alicePage.getByRole('heading', { name: '解锁私密账本' })).toBeVisible();
-    await alicePage.getByLabel('账本恢复码').fill(personalSecret);
-    await alicePage.getByRole('button', { name: '解锁账本', exact: true }).click();
     await expect(alicePage.locator('.zc-app-shell')).toBeVisible();
     await alicePage.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
     await expect(alicePage.getByText('personal-alice-entry', { exact: true })).toBeVisible();
@@ -298,9 +294,6 @@ test('switches personal and invited ledgers across three sites through a hub out
     await saveExpense(alicePage, '55.55', 'shared-office-entry');
     await syncLedger(alicePage);
     await selectLedger(alicePage, personalLedgerId);
-    await expect(alicePage.getByRole('heading', { name: '解锁私密账本' })).toBeVisible();
-    await alicePage.getByLabel('账本恢复码').fill(personalSecret);
-    await alicePage.getByRole('button', { name: '解锁账本', exact: true }).click();
     await expect(alicePage.locator('.zc-app-shell')).toBeVisible();
     await alicePage.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
     for (const description of ['personal-alice-entry', 'personal-home-entry']) {
@@ -317,12 +310,6 @@ test('switches personal and invited ledgers across three sites through a hub out
     await saveExpense(alicePage, '77.77', 'shared-office-hub-offline');
     await syncLedger(alicePage);
     await alicePage.goto(`${home.url}/app/`);
-    const unlockPersonal = alicePage.getByRole('heading', { name: '解锁私密账本' });
-    await expect(alicePage.locator('.zc-app-shell').or(unlockPersonal)).toBeVisible();
-    if (await unlockPersonal.isVisible()) {
-      await alicePage.getByLabel('账本恢复码').fill(personalSecret);
-      await alicePage.getByRole('button', { name: '解锁账本', exact: true }).click();
-    }
     await expect(alicePage.locator('.zc-app-shell')).toBeVisible();
     await saveExpense(alicePage, '88.88', 'personal-home-hub-offline');
     await syncLedger(alicePage);

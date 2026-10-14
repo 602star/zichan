@@ -274,30 +274,6 @@ export async function replicateNodeEnvelope(store: SyncServerStore, identity: No
   }
 }
 
-export async function replicateNodePasswordEnvelope(store: SyncServerStore, identity: NodeIdentity,
-  link: NodeReplicationLink): Promise<void> {
-  const replica = await linkedReplica(store, link);
-  const remote = await signedCall(identity, link, 'GET', '/api/v4/replication/password-envelope');
-  checkPeer(remote, link);
-  if (remote.ledgerId !== link.ledgerId || remote.record !== null &&
-    (!record(remote.record) || !record(remote.record.envelope)
-      || !Number.isSafeInteger(remote.record.revision))) throw new Error('对端密码密钥包无效');
-  const local = await store.passwordKeyEnvelope(link.username, link.ledgerId, replica.replicaId, 'node');
-  const received = remote.record as { envelope: JsonRecord; revision: number } | null;
-  if (received && (!local || received.revision > local.revision)) {
-    await store.putPasswordKeyEnvelope(link.username, link.ledgerId, received.envelope,
-      local?.revision ?? 0, 'node', replica.replicaId, received.revision);
-  } else if (local && (!received || local.revision > received.revision)) {
-    const result = await signedCall(identity, link, 'POST', '/api/v4/replication/password-envelope',
-      JSON.stringify({ envelope: local.envelope, expectedRevision: received?.revision ?? 0,
-        revision: local.revision }));
-    checkPeer(result, link);
-    if (result.revision !== local.revision) throw new Error('对端密码密钥包版本未确认');
-  } else if (local && received && JSON.stringify(local.envelope) !== JSON.stringify(received.envelope)) {
-    throw new Error('同版本账本密码密钥包不一致；复制已停止');
-  }
-}
-
 export async function replicateNodeGroupPolicy(store: SyncServerStore, identity: NodeIdentity,
   link: NodeReplicationLink): Promise<void> {
   if (!await store.federatedAccount(link.username)) return;
@@ -312,7 +288,7 @@ export async function replicateNodeGroupPolicy(store: SyncServerStore, identity:
 }
 
 async function replicateNodeProtection(identity: NodeIdentity, link: NodeReplicationLink,
-  apply: (link: NodeReplicationLink, mode: 'managed' | 'private', secret: string | null) => Promise<void>): Promise<void> {
+  apply: (link: NodeReplicationLink, mode: 'managed', secret: string) => Promise<void>): Promise<void> {
   let remote: JsonRecord;
   try { remote = await signedCall(identity, link, 'GET', '/api/v4/replication/account-protection'); }
   catch (error) {
@@ -321,12 +297,10 @@ async function replicateNodeProtection(identity: NodeIdentity, link: NodeReplica
   }
   checkPeer(remote, link);
   if (remote.mode === null) return;
-  if (remote.mode !== 'managed' && remote.mode !== 'private'
-    || remote.mode === 'managed' && (typeof remote.secret !== 'string' || !remote.secret)
-    || remote.mode === 'private' && remote.secret !== null) {
+  if (remote.mode !== 'managed' || typeof remote.secret !== 'string' || !remote.secret) {
     throw new Error('对端账本保护资料无效');
   }
-  await apply(link, remote.mode, remote.secret as string | null);
+  await apply(link, 'managed', remote.secret);
 }
 
 export async function replicateNodeAccountIdentity(store: SyncServerStore, identity: NodeIdentity, link: NodeReplicationLink): Promise<void> {
@@ -1146,7 +1120,7 @@ export async function verifyReplicaPhysical(store: SyncServerStore, blobStore: E
 
 export function createNodeReplicationWorker(store: SyncServerStore, blobStore: EncryptedBlobStore,
   identity: () => NodeIdentity,
-  applyProtection?: (link: NodeReplicationLink, mode: 'managed' | 'private', secret: string | null) => Promise<void>,
+  applyProtection?: (link: NodeReplicationLink, mode: 'managed', secret: string) => Promise<void>,
   legacyOpaqueSetup: () => string = () => '') {
   let flight: Promise<void> | undefined;
   let stopped = false;
@@ -1222,7 +1196,6 @@ export function createNodeReplicationWorker(store: SyncServerStore, blobStore: E
                 && !await store.federatedAccount(link.username);
               if (!nativeSource) await replicateNodeAccountIdentity(store, identity(), link);
               await replicateNodeEnvelope(store, identity(), link);
-              await replicateNodePasswordEnvelope(store, identity(), link);
               if (!nativeSource) await replicateNodeGroupPolicy(store, identity(), link);
               if (!nativeSource && applyProtection) await replicateNodeProtection(identity(), link, applyProtection);
               stage.identityDone = true;

@@ -33,7 +33,7 @@ test('opens backup, sync, recovery and security as settings tabs', async ({ page
     await expect(page.getByRole('tab', { name: '记账' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('.zc-sidebar').getByRole('button', { name: /数据保护$/ })).toHaveCount(0);
     await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
-    await page.getByRole('button', { name: '查看数据保护与副本状态' }).click();
+    await page.getByRole('button', { name: '查看服务器上的账本' }).click();
     await expect(page.locator('.zc-header-title')).toContainText('设置');
     await expect(page.getByRole('tab', { name: '服务器与同步' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('region', { name: '服务器', exact: true })).toBeVisible();

@@ -4,8 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { loginAccount, registerAccount } from '@zichan/db';
-import { createLedgerKeyEnvelope, encryptJson, newId, sha256Json, unlockLedgerKeyEnvelope,
-  wrapLedgerCryptoSession } from '@zichan/core';
+import { createLedgerKeyEnvelope, encryptJson, newId, sha256Json, unlockLedgerKeyEnvelope } from '@zichan/core';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
 import { SyncServerStore } from '../src/store.js';
 
@@ -24,7 +23,7 @@ describe('server synchronization group', () => {
       await registerAccount(url(main), 'main-owner', 'main-password', { ownerSetupToken: OWNER_SETUP_TOKEN });
       await registerAccount(url(branch), 'branch-owner', 'branch-password', { ownerSetupToken: OWNER_SETUP_TOKEN });
       await registerAccount(url(later), 'later-owner', 'later-password', { ownerSetupToken: OWNER_SETUP_TOKEN });
-      await registerAccount(url(branch), 'private-user', 'private-password');
+      await registerAccount(url(branch), 'branch-user', 'branch-password-user');
       for (const node of [main, branch]) {
         const session = await loginAccount(url(node), node === main ? 'main-owner' : 'branch-owner',
           node === main ? 'main-password' : 'branch-password');
@@ -34,30 +33,25 @@ describe('server synchronization group', () => {
         });
         expect(response.status).toBe(200);
       }
-      const privateSession = await loginAccount(url(branch), 'private-user', 'private-password');
-      const recovery = 'private-recovery-code';
-      const privateKey = await createLedgerKeyEnvelope(newId(), recovery);
-      const privateAuth = { Authorization: `Bearer ${privateSession.accessToken}`,
+      const branchSession = await loginAccount(url(branch), 'branch-user', 'branch-password-user');
+      const recovery = 'branch-ledger-secret-00000000000000000000';
+      const branchKey = await createLedgerKeyEnvelope(newId(), recovery);
+      const branchAuth = { Authorization: `Bearer ${branchSession.accessToken}`,
         'Content-Type': 'application/json' };
       expect((await fetch(`${url(branch)}/api/v3/protection/initialize`, {
-        method: 'POST', headers: privateAuth,
-        body: JSON.stringify({ mode: 'private', envelope: privateKey.envelope }),
+        method: 'POST', headers: branchAuth,
+        body: JSON.stringify({ mode: 'managed', envelope: branchKey.envelope, secret: recovery }),
       })).status).toBe(200);
-      const unlockedPrivate = await unlockLedgerKeyEnvelope(recovery, privateKey.envelope);
-      const passwordEnvelope = await wrapLedgerCryptoSession(unlockedPrivate, 'private-password');
-      expect((await fetch(`${url(branch)}/api/v4/ledger/password-envelope`, {
-        method: 'PUT', headers: privateAuth,
-        body: JSON.stringify({ envelope: passwordEnvelope, expectedRevision: 0 }),
-      })).status).toBe(200);
-      const commitId = 'group-private-commit-0001';
-      const commit = { protocol: 2, ledgerId: privateKey.envelope.ledgerId, commitId,
+      const unlockedBranch = await unlockLedgerKeyEnvelope(recovery, branchKey.envelope);
+      const commitId = 'group-branch-commit-0001';
+      const commit = { protocol: 2, ledgerId: branchKey.envelope.ledgerId, commitId,
         originDeviceId: 'group-local-test', createdAt: new Date().toISOString(),
         parentCommitIds: [], revisions: [] };
       const contentHash = await sha256Json(commit);
-      const encCommit = await encryptJson(unlockedPrivate, commit,
+      const encCommit = await encryptJson(unlockedBranch, commit,
         { protocol: 2, ledgerId: commit.ledgerId, commitId, contentHash });
       expect((await fetch(`${url(branch)}/api/v3/commits`, {
-        method: 'POST', headers: privateAuth,
+        method: 'POST', headers: branchAuth,
         body: JSON.stringify({ commits: [{ commitId, ledgerId: commit.ledgerId,
           contentHash, encCommit }] }),
       })).status).toBe(200);
@@ -143,18 +137,15 @@ describe('server synchronization group', () => {
         };
       expect(protection.mode).toBe('managed');
       expect(protection.secret).toEqual(expect.any(String));
-      const privateOnLater = await loginAccount(url(later), 'private-user', 'private-password',
+      const branchOnLaterUser = await loginAccount(url(later), 'branch-user', 'branch-password-user',
         { sessionContext: 'ledger' });
-      const privateHeaders = { Authorization: `Bearer ${privateOnLater.accessToken}` };
-      const privateProtection = await (await fetch(`${url(later)}/api/v3/protection`,
-        { headers: privateHeaders })).json() as { mode: string };
-      expect(privateProtection.mode).toBe('private');
-      const replicatedPassword = await (await fetch(`${url(later)}/api/v4/ledger/password-envelope`,
-        { headers: privateHeaders })).json() as { record: { envelope: typeof passwordEnvelope } };
-      expect(await unlockLedgerKeyEnvelope('private-password', replicatedPassword.record.envelope))
-        .toMatchObject({ ledgerId: privateKey.envelope.ledgerId });
+      const branchHeaders = { Authorization: `Bearer ${branchOnLaterUser.accessToken}` };
+      const branchProtection = await (await fetch(`${url(later)}/api/v3/protection`,
+        { headers: branchHeaders })).json() as { mode: string };
+      expect(branchProtection.mode).toBe('managed');
+      expect((branchProtection as { secret: string }).secret).toBe(recovery);
       const replicatedCommits = await (await fetch(`${url(later)}/api/v3/commits?after=0&limit=10`,
-        { headers: privateHeaders })).json() as { commits: { commitId: string }[] };
+        { headers: branchHeaders })).json() as { commits: { commitId: string }[] };
       expect(replicatedCommits.commits.map((entry) => entry.commitId)).toContain(commitId);
       const groupOnLater = await loginAccount(url(later), 'group-user', 'group-password',
         { sessionContext: 'ledger' });

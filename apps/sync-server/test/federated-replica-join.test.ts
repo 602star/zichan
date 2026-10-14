@@ -9,7 +9,6 @@ import { NodeSqliteDriver } from '@zichan/db/node';
 import { accountSigningPublicKey, changeLedgerPassphrase, createAccountEncryptionKey, encryptJson, rotateLedgerProtection,
   sha256Json, signLedgerControlEvent, unlockAccountEncryptionKey, unlockLedgerKeyEnvelope, unlockLedgerMemberKeyEnvelope,
   wrapAccountEncryptionKey,
-  wrapLedgerCryptoSession,
   wrapLedgerCryptoSessionForMember,
   type LedgerKeyEnvelope } from '@zichan/core';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
@@ -131,18 +130,6 @@ describe('federated replica join', () => {
         role: 'member', ledgerId: protection.replica.ledgerId });
       expect((await (await fetch(`${targetUrl}/api/v3/key-envelope`, { headers: federatedAuth }))
         .json() as { envelope: unknown }).envelope).toEqual(protection.envelope);
-      const key = await unlockLedgerKeyEnvelope(protection.secret, protection.envelope);
-      const passwordEnvelope = await wrapLedgerCryptoSession(key, 'source-password');
-      expect((await fetch(`${sourceUrl}/api/v4/ledger/password-envelope`, {
-        method: 'PUT', headers: sourceAuth,
-        body: JSON.stringify({ envelope: passwordEnvelope, expectedRevision: 0 }),
-      })).status).toBe(200);
-      await target.flushNodeReplication();
-      const replicatedPasswordEnvelope = await (await fetch(`${targetUrl}/api/v4/ledger/password-envelope`,
-        { headers: federatedAuth })).json() as { record: { envelope: LedgerKeyEnvelope; revision: number } };
-      expect(replicatedPasswordEnvelope.record.revision).toBe(1);
-      expect(await unlockLedgerKeyEnvelope('source-password', replicatedPasswordEnvelope.record.envelope))
-        .toMatchObject({ ledgerId: protection.replica.ledgerId });
       const policyStore = new SyncServerStore(join(source.dataDir, 'server.sqlite'), 'open', source.serverId);
       try {
         await policyStore.ready;
@@ -161,6 +148,7 @@ describe('federated replica join', () => {
       const usageWithRun = await (await fetch(`${targetUrl}/api/auth/usage`,
         { headers: federatedAuth })).json() as { transfer: { syncRuns: number; convergedRuns: number } };
       expect(usageWithRun.transfer).toMatchObject({ syncRuns: 1, convergedRuns: 1 });
+      const key = await unlockLedgerKeyEnvelope(protection.secret, protection.envelope);
       const publish = async (url: string, auth: Record<string, string>, commitId: string) => {
         const commit = { protocol: 2, ledgerId: protection.replica.ledgerId, commitId,
           originDeviceId: 'federated-join-test', createdAt: new Date().toISOString(),

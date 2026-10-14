@@ -67,8 +67,6 @@ if (process.env.ZICHAN_SERVER_WORKER !== '1') {
   process.exit(0);
 }
 const service = createSyncServer({
-  accountProtection: enumEnv('ACCOUNT_PROTECTION', ['managed', 'private'] as const, 'managed'),
-  custodyEnabled: boolEnv('CUSTODY_ENABLED', true),
   custodyKeyPath: process.env.CUSTODY_KEY_PATH?.trim() || undefined,
   dataDir,
   commitQuotaBytes: positiveNumber('COMMIT_QUOTA_BYTES'),
@@ -104,7 +102,7 @@ server.listen(port, host, () => {
   console.log(`account-admin=owner-session${webDir ? ` webDir=${webDir}` : ''}`);
   console.log(`First use: open ${basePath || ''}/admin/ and set your administrator username and password.`);
   console.log(`transport=${boolEnv('ALLOW_INSECURE_HTTP', false) ? 'explicit HTTP allowed' : 'HTTPS required outside loopback'} trustedProxies=${listEnv('TRUSTED_PROXIES')?.join(',') || 'none'}`);
-  console.log('Ledger payloads are encrypted. Managed accounts authorize server decryption; private accounts retain their recovery keys.');
+  console.log('Ledger payloads are encrypted. Authorized servers hold the keys needed to open managed ledgers.');
 });
 
 let shutdownPromise: Promise<void> | undefined;

@@ -31,12 +31,12 @@ describe('three node replica group health', () => {
       const initialized = await fetch(`${url(hub)}/api/v3/protection/initialize`, { method: 'POST',
         headers: hubAuth, body: JSON.stringify({ mode: 'managed' }) });
       expect(initialized.status).toBe(200);
-      const { replica, envelope } = await initialized.json() as {
-        replica: { ledgerId: string }; envelope: Record<string, unknown>;
+      const { replica, envelope, secret } = await initialized.json() as {
+        replica: { ledgerId: string }; envelope: Record<string, unknown>; secret: string;
       };
       for (const [node, headers] of [[home, homeAuth], [office, officeAuth]] as const) {
         expect((await fetch(`${url(node)}/api/v3/protection/initialize`, { method: 'POST', headers,
-          body: JSON.stringify({ mode: 'private', envelope }) })).status).toBe(200);
+          body: JSON.stringify({ mode: 'managed', envelope, secret }) })).status).toBe(200);
       }
       const hubIdentity = loadNodeIdentity(hub.dataDir, hub.serverId);
       const grants: string[] = [];
@@ -198,18 +198,6 @@ describe('three node replica group health', () => {
           peerPublicKey: loadNodeIdentity(home.dataDir, home.serverId).publicKey,
           expiresAt: new Date(Date.now() + 86_400_000).toISOString() }) });
       expect(retiredKey.status).toBe(409);
-      const database = new NodeSqliteDriver(join(hub.dataDir, 'server.sqlite'));
-      try {
-        // Model a pre-directory database: the next store initialization must
-        // enroll an existing active grant without changing that grant.
-        await database.run('DELETE FROM ledger_replica_group_members WHERE node_id = ?', [office.serverId]);
-      } finally { await database.close(); }
-      expect(await hubStore.getNodeReplicationGrant(grants[1]!)).toBeUndefined();
-      const upgraded = new SyncServerStore(join(hub.dataDir, 'server.sqlite'), 'open', hub.serverId);
-      stores.push(upgraded);
-      await upgraded.ready;
-      expect((await upgraded.getNodeReplicationGrant(grants[1]!))?.peerNodeId).toBe(office.serverId);
-      expect(await group()).toMatchObject({ memberCount: 2, state: 'READY' });
     } finally {
       await Promise.all(stores.map((store) => store.close()));
       await Promise.all([hub, home, office].map((node) => node.close()));

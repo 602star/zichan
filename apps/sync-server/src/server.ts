@@ -356,8 +356,6 @@ function serveWeb(req: IncomingMessage, res: ServerResponse, path: string, webDi
 
 export interface SyncServerOptions {
   /** Explicit deployment policy; a same-origin address is not an official-server identity. */
-  accountProtection?: 'managed' | 'private';
-  custodyEnabled?: boolean;
   custodyKeyPath?: string;
   /** Deployment-only secret. Never include it in health, logs or connection links. */
   ownerSetupToken?: string;
@@ -446,8 +444,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     }
     return replica.replicaId;
   });
-  const custodyEnabled = options.custodyEnabled !== false;
-  const defaultProtection = custodyEnabled ? options.accountProtection ?? 'managed' : 'private';
+  const custodyEnabled = true;
+  const defaultProtection = 'managed';
   let custodyKey: Buffer;
   let opaqueServerSetup = '';
   let opaqueServerPublicKey = '';
@@ -500,7 +498,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       }
       let sealed: string | null = null;
       if (mode === 'managed') {
-        if (!custodyEnabled || !secretValue) throw new Error('本站未启用托管密钥，无法接收托管账本');
+        if (!secretValue) throw new Error('同步账本缺少托管密钥');
         const envelope = await store.getKeyEnvelope(link.username, link.ledgerId, 'node');
         if (!envelope) throw new Error('账本密钥包尚未复制，拒绝导入托管密钥');
         await unlockLedgerKeyEnvelope(secretValue, envelope as unknown as LedgerKeyEnvelope);
@@ -516,13 +514,12 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         sealed ??= sealCustodySecret(custodyKey, scope, secretValue);
       }
       await store.importFederatedLedgerProtection(link.username, binding.issuerNodeId,
-        link.ledgerId, mode, sealed);
+        link.ledgerId, mode, sealed!);
     }, () => opaqueServerSetup);
   const groupReconciler = createGroupReconciler(store, () => nodeIdentity, () => opaqueServerSetup,
     async (username, accountId) => {
       const protection = await store.getLedgerProtection(username);
-      if (protection?.mode !== 'managed' && protection?.mode !== 'private') return null;
-      if (protection.mode === 'private') return { mode: 'private', secret: null };
+      if (protection?.mode !== 'managed') return null;
       if (!protection.sealedSecret) throw new Error('本站托管账本没有可复制的密钥');
       return { mode: 'managed', secret: openCustodySecret(custodyKey,
         `${serverId}:${accountId}`, protection.sealedSecret) };
@@ -530,10 +527,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   const nodeReplicationTimer = setInterval(() => {
     void ready.then(() => Promise.allSettled([groupReconciler.run(), nodeReplication.run()])).catch(() => undefined);
   }, 10_000);
-  // A preview is only meaningful where the server holds a custody key, so a deployment with
-  // custody disabled gets no registry and the route answers with a clear refusal.
-  const ledgerPreview = custodyEnabled
-    ? new LedgerPreviewRegistry({
+  const ledgerPreview = new LedgerPreviewRegistry({
         store,
         serverId,
         custodyKey: () => custodyKey,
@@ -543,8 +537,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           blobStore.manifest(username, ledgerId, blobId),
         readChunk: async ({ username, ledgerId, blobId, index }) =>
           blobStore.chunk(username, ledgerId, blobId, index),
-      })
-    : undefined;
+      });
   const log = async (level: ServerLog['level'], action: string, message: string, meta: Omit<ServerLog, 'id' | 'at' | 'level' | 'action' | 'message'> = {}) => {
     await store.appendLog({ id: randomBytes(12).toString('hex'), at: nowIso(), level, action, message, ...meta });
   };
@@ -890,7 +883,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           'encrypted-commits-v3',
           'ledger-key-envelope-v1',
           'ledger-protection-v1',
-          ...(custodyEnabled ? ['managed-key-custody-v1'] : []),
+          'managed-key-custody-v1',
           'ledger-replacement-v1',
           'multi-origin-web-v1',
           'opaque-pake-v1',
@@ -1112,9 +1105,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           || !/^[A-Za-z0-9_-]{16,160}$/.test(body.grantId)
           || !isLedgerKeyEnvelope(body.envelope) || body.envelope.ledgerId !== body.ledgerId
           || !isRecord(body.protection)
-          || body.protection.mode !== 'private' && body.protection.mode !== 'managed'
-          || body.protection.mode === 'private' && body.protection.secret !== null
-          || body.protection.mode === 'managed' && (typeof body.protection.secret !== 'string'
+          || body.protection.mode !== 'managed'
+          || (typeof body.protection.secret !== 'string'
             || !body.protection.secret)
           || typeof body.issuerSignature !== 'string') {
           return send(res, 400, { code: 'INVALID_GROUP_ANNOUNCEMENT', error: '账本登记参数无效' });
@@ -1151,15 +1143,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         if (!replica) throw new Error('同步组账本副本丢失');
         let sealedProtection: string | null = null;
         if (body.protection.mode === 'managed') {
-          if (!custodyEnabled) throw new ServerStoreError('CUSTODY_REQUIRED', 409,
-            '主节点未启用托管密钥，无法接收托管账本');
           await unlockLedgerKeyEnvelope(body.protection.secret as string,
             body.envelope as unknown as LedgerKeyEnvelope);
           sealedProtection = sealCustodySecret(custodyKey,
             `${serverId}:${bundle.subjectAccountId}`, body.protection.secret as string);
         }
         await store.importFederatedLedgerProtection(owner.username, member.nodeId,
-          body.ledgerId, body.protection.mode, sealedProtection);
+          body.ledgerId, 'managed', sealedProtection!);
         if (bundle.accountKey) await store.importAccountEncryptionKey(bundle.accountKey);
         await store.importFederatedPasswordCredential({ localUsername: owner.username,
           sourceUsername: bundle.username, displayName: bundle.displayName,
@@ -1183,7 +1173,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         || (apiPath === '/api/v4/replication/member-envelopes' && (req.method === 'GET' || req.method === 'POST'))
         || (apiPath === '/api/v4/identity/exchange' && req.method === 'POST')
         || (apiPath === '/api/v4/replication/key-envelope' && (req.method === 'GET' || req.method === 'POST'))
-        || (apiPath === '/api/v4/replication/password-envelope' && (req.method === 'GET' || req.method === 'POST'))
         || (apiPath === '/api/v4/replication/account-identity' && req.method === 'GET')
         || (apiPath === '/api/v4/replication/account-credential' && (req.method === 'GET' || req.method === 'POST'))
         || (apiPath === '/api/v4/replication/account-directory' && req.method === 'GET')
@@ -1445,8 +1434,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
             return send(res, 403, { code: 'ISSUER_REQUIRED', error: '账本保护资料不属于此身份节点' });
           }
           const protection = await store.getLedgerProtection(account.username);
-          const mode = protection?.mode === 'managed' || protection?.mode === 'private'
-            ? protection.mode : null;
+          const mode = protection?.mode === 'managed' ? protection.mode : null;
           const secretValue = mode === 'managed' && protection?.sealedSecret
             ? openCustodySecret(custodyKey, `${serverId}:${account.accountId}`, protection.sealedSecret)
             : null;
@@ -1595,21 +1583,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           }
           await store.putKeyEnvelope(grant.username, grant.ledgerId, String(body.envelope.keyringId), Number(body.envelope.generation), body.envelope, 'node', replica.replicaId);
           return signedJson({ ok: true, serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch });
-        }
-        if (apiPath === '/api/v4/replication/password-envelope') {
-          if (req.method === 'GET') return signedJson({ serverId, replicaId: replica.replicaId,
-            streamEpoch: replica.streamEpoch, ledgerId: grant.ledgerId,
-            record: await store.passwordKeyEnvelope(grant.username, grant.ledgerId, replica.replicaId, 'node') ?? null });
-          const body = JSON.parse(Buffer.from(requestBytes).toString('utf8')) as JsonRecord;
-          if (!isRecord(body) || !isLedgerKeyEnvelope(body.envelope)
-            || body.envelope.ledgerId !== grant.ledgerId
-            || !Number.isSafeInteger(body.expectedRevision) || !Number.isSafeInteger(body.revision)) {
-            return send(res, 400, { code: 'INVALID_PASSWORD_ENVELOPE', error: '密码密钥包无效' });
-          }
-          const revision = await store.putPasswordKeyEnvelope(grant.username, grant.ledgerId,
-            body.envelope, Number(body.expectedRevision), 'node', replica.replicaId, Number(body.revision));
-          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
-            ledgerId: grant.ledgerId, revision });
         }
         if (req.method === 'GET' && apiPath === '/api/v4/replication/blobs') {
           const after = url.searchParams.get('after') ?? '';
@@ -2499,25 +2472,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         }
       }
 
-      if (apiPath === '/api/v4/ledger/password-envelope' && (req.method === 'GET' || req.method === 'PUT')) {
-        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-        await store.assertLedgerAccess(user.username, 'read', replica.replicaId);
-        res.setHeader('Cache-Control', 'no-store');
-        if (req.method === 'GET') return send(res, 200, {
-          record: await store.passwordKeyEnvelope(user.username, replica.ledgerId, replica.replicaId) ?? null,
-        });
-        if (await store.federatedAccount(user.username)) return send(res, 409,
-          { code: 'IDENTITY_ISSUER_REQUIRED', error: '请在账号身份节点更新账本密码密钥包' });
-        const body = await readBody(req, 64 * 1024);
-        if (!isLedgerKeyEnvelope(body.envelope) || body.envelope.ledgerId !== replica.ledgerId
-          || !Number.isSafeInteger(body.expectedRevision)) {
-          return send(res, 400, { code: 'INVALID_PASSWORD_ENVELOPE', error: '密码密钥包无效' });
-        }
-        const revision = await store.putPasswordKeyEnvelope(user.username, replica.ledgerId,
-          body.envelope, Number(body.expectedRevision), 'account', replica.replicaId);
-        return send(res, 200, { revision });
-      }
-
       if (apiPath === '/api/v4/ledger/control') {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
         res.setHeader('Cache-Control', 'no-store');
@@ -2928,26 +2882,30 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       if (req.method === 'POST' && apiPath === '/api/v3/protection/replace') {
         const body = await readBody(req, 512 * 1024);
         if (!replica || body.confirmation !== '替换旧账本' || body.expectedLedgerId !== replica.ledgerId || body.expectedStreamEpoch !== replica.streamEpoch) return send(res, 409, { error: '请确认当前旧账本后重试' });
-        const mode = body.mode;
-        if ((mode !== 'managed' && mode !== 'private') || mode === 'managed' && !custodyEnabled) return send(res, 400, { error: '此服务器不支持所选保护方式' });
-        const secretValue = mode === 'managed' ? randomBytes(32).toString('base64url') : null;
-        const envelope = secretValue ? (await createLedgerKeyEnvelope(newId(), secretValue)).envelope : body.envelope;
+        if (body.mode !== undefined && body.mode !== 'managed') return send(res, 400, { error: '保护方式无效' });
+        const secretValue = randomBytes(32).toString('base64url');
+        const envelope = (await createLedgerKeyEnvelope(newId(), secretValue)).envelope;
         if (!isLedgerKeyEnvelope(envelope) || envelope.ledgerId === replica.ledgerId) return send(res, 400, { error: '新账本密钥包无效' });
-        await store.replaceReplica(user.username, session.id, { ledgerId: replica.ledgerId, streamEpoch: replica.streamEpoch }, envelope as unknown as JsonRecord, [], { mode, sealedSecret: secretValue ? sealCustodySecret(custodyKey, custodyScope, secretValue) : null });
-        await log('info', 'replica_replaced', 'User replaced ledger and custody policy', { ip, username: user.username, detail: { mode } });
+        await store.replaceReplica(user.username, session.id, { ledgerId: replica.ledgerId, streamEpoch: replica.streamEpoch }, envelope as unknown as JsonRecord, [], { mode: 'managed', sealedSecret: sealCustodySecret(custodyKey, custodyScope, secretValue) });
+        await log('info', 'replica_replaced', 'User replaced ledger and custody policy', { ip, username: user.username, detail: { mode: 'managed' } });
         return send(res, 200, await protectionResponse());
       }
       if (req.method === 'POST' && apiPath === '/api/v3/protection/initialize') {
         const body = await readBody(req, 512 * 1024);
         if (await store.getLedgerProtection(user.username)) return send(res, 200, await protectionResponse());
         if (replica) throw new ServerStoreError('ALREADY_BOUND', 409, '已有账本请使用保护设置接口');
-        const mode = body.mode ?? defaultProtection;
-        if (mode !== 'managed' && mode !== 'private' || mode === 'managed' && !custodyEnabled) return send(res, 400, { error: '此服务器不支持所选保护方式' });
-        const secretValue = mode === 'managed' ? randomBytes(32).toString('base64url') : null;
-        const envelope = secretValue ? (await createLedgerKeyEnvelope(newId(), secretValue)).envelope : body.envelope;
-        if (!isLedgerKeyEnvelope(envelope)) return send(res, 400, { error: '私密模式需要恢复码保护的密钥包' });
+        if (body.mode !== undefined && body.mode !== 'managed') return send(res, 400, { error: '保护方式无效' });
+        const importing = body.envelope !== undefined || body.secret !== undefined;
+        if (importing && (!isLedgerKeyEnvelope(body.envelope) || typeof body.secret !== 'string'
+          || body.secret.length < 32 || body.secret.length > 256)) return send(res, 400, { error: '账本密钥包无效' });
+        const secretValue = importing ? body.secret as string : randomBytes(32).toString('base64url');
+        const envelope = importing ? body.envelope : (await createLedgerKeyEnvelope(newId(), secretValue)).envelope;
+        if (importing) {
+          try { await unlockLedgerKeyEnvelope(secretValue, envelope as unknown as LedgerKeyEnvelope); }
+          catch { return send(res, 400, { error: '托管凭据无法解锁此账本' }); }
+        }
         try {
-          await store.setLedgerProtection(user.username, session.id, 0, { mode, sealedSecret: secretValue ? sealCustodySecret(custodyKey, custodyScope, secretValue) : null }, envelope as unknown as JsonRecord);
+          await store.setLedgerProtection(user.username, session.id, 0, { mode: 'managed', sealedSecret: sealCustodySecret(custodyKey, custodyScope, secretValue) }, envelope as unknown as JsonRecord);
         } catch (error) {
           if (!(error instanceof ServerStoreError) || error.code !== 'PROTECTION_CHANGED') throw error;
         }
@@ -2956,13 +2914,11 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       if (req.method === 'PUT' && apiPath === '/api/v3/protection') {
         const { mode, version, envelope, secret: secretValue, confirmation } = await readBody(req, 512 * 1024);
         if (!replica || !isLedgerKeyEnvelope(envelope) || envelope.ledgerId !== replica.ledgerId || !Number.isSafeInteger(version)
-          || (mode !== 'managed' && mode !== 'private' && mode !== 'relay')) return send(res, 400, { error: '保护设置无效' });
-        if (mode === 'managed') {
-          if (!custodyEnabled || confirmation !== '允许此服务器解密账本' || typeof secretValue !== 'string' || secretValue.length < 32 || secretValue.length > 256) return send(res, 400, { error: '请确认托管授权并提供有效密钥' });
-          try { await unlockLedgerKeyEnvelope(secretValue, envelope as unknown as LedgerKeyEnvelope); }
-          catch { return send(res, 400, { error: '托管凭据无法解锁此密钥包' }); }
-        }
-        await store.setLedgerProtection(user.username, session.id, Number(version), { mode, sealedSecret: mode === 'managed' ? sealCustodySecret(custodyKey, custodyScope, secretValue as string) : null }, envelope);
+          || mode !== 'managed') return send(res, 400, { error: '保护设置无效' });
+        if (confirmation !== '允许此服务器解密账本' || typeof secretValue !== 'string' || secretValue.length < 32 || secretValue.length > 256) return send(res, 400, { error: '请确认托管授权并提供有效密钥' });
+        try { await unlockLedgerKeyEnvelope(secretValue, envelope as unknown as LedgerKeyEnvelope); }
+        catch { return send(res, 400, { error: '托管凭据无法解锁此密钥包' }); }
+        await store.setLedgerProtection(user.username, session.id, Number(version), { mode: 'managed', sealedSecret: sealCustodySecret(custodyKey, custodyScope, secretValue) }, envelope);
         await log('info', 'ledger_protection_updated', 'Updated ledger custody policy', { username: user.username, ip, detail: { mode } });
         return send(res, 200, await protectionResponse());
       }
@@ -2989,12 +2945,16 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           streamEpoch: restored.streamEpoch, headSeq: restored.headSeq });
       }
       if (req.method === 'POST' && apiPath === '/api/v3/replica/replace') {
-        const { expectedLedgerId, expectedStreamEpoch, confirmation, envelope, commits } = await readBody(req, MAX_BODY_BYTES);
+        const { expectedLedgerId, expectedStreamEpoch, confirmation, envelope, commits, secret: secretValue } = await readBody(req, MAX_BODY_BYTES);
         if (confirmation !== '替换旧账本' || typeof expectedLedgerId !== 'string' || typeof expectedStreamEpoch !== 'string' || !isLedgerKeyEnvelope(envelope) || envelope.ledgerId === expectedLedgerId) {
           return send(res, 400, { code: 'INVALID_LEDGER_REPLACEMENT', error: '请明确确认旧账本并提供完整的新账本密钥和初始数据' });
         }
         const initial = initialEncryptedCommits(commits, String(envelope.ledgerId));
-        const bound = await store.replaceReplica(user.username, session.id, { ledgerId: expectedLedgerId, streamEpoch: expectedStreamEpoch }, envelope, initial);
+        if (typeof secretValue !== 'string' || secretValue.length < 32 || secretValue.length > 256) return send(res, 400, { error: '缺少账本托管密钥' });
+        try { await unlockLedgerKeyEnvelope(secretValue, envelope as unknown as LedgerKeyEnvelope); }
+        catch { return send(res, 400, { error: '托管凭据无法解锁此账本' }); }
+        const bound = await store.replaceReplica(user.username, session.id, { ledgerId: expectedLedgerId, streamEpoch: expectedStreamEpoch }, envelope, initial,
+          { mode: 'managed', sealedSecret: sealCustodySecret(custodyKey, custodyScope, secretValue) });
         await log('info', 'replica_replaced', 'User replaced encrypted ledger', { ip, username: user.username, detail: { previousLedgerId: expectedLedgerId, ledgerId: bound.ledgerId } });
         return send(res, 200, { serverId, ledgerId: bound.ledgerId, replicaId: bound.replicaId, streamEpoch: bound.streamEpoch });
       }

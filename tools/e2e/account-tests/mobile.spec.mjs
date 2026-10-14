@@ -31,15 +31,11 @@ for (const width of [360, 390]) test(`mobile ${width}px supports login, initiali
     // Data protection remains reachable from the account page on small screens.
     await nav.getByRole('button', { name: /更多$/ }).click();
     await page.getByRole('dialog', { name: '更多功能' }).getByRole('button', { name: /我的账号$/ }).click();
-    await page.getByRole('button', { name: '查看数据保护与副本状态' }).click();
+    await page.getByRole('button', { name: '查看服务器上的账本' }).click();
     await page.getByRole('tab', { name: '解锁与安全' }).click();
     const panel = page.getByRole('region', { name: '账本保护' });
     await expect(panel).toBeVisible();
-    await panel.getByText('此设备的离线访问', { exact: true }).click();
-    await panel.getByLabel('设置离线密码').fill('mobile-offline-password');
-    await panel.getByLabel('确认离线密码').fill('mobile-offline-password');
-    await panel.getByRole('button', { name: '设置离线密码', exact: true }).click();
-    await expect(panel).toContainText('离线密码已设置');
+    await expect(panel).toContainText('本机离线访问已准备好');
     await fits();
     await panel.screenshot({ path: testInfo.outputPath('mobile-protection.png') });
     await page.getByRole('tab', { name: '本机备份' }).click();

@@ -127,7 +127,7 @@ export const ROLE_SQL = "CASE WHEN o.username IS NOT NULL THEN 'owner' WHEN a.us
 export type ServerLogLevel = 'info' | 'warn' | 'error';
 export type JsonRecord = Record<string, unknown>;
 export interface LedgerProtection {
-  mode: 'managed' | 'private' | 'relay';
+  mode: 'managed' | 'relay';
   version: number;
   sealedSecret: string | null;
 }
@@ -1479,15 +1479,6 @@ CREATE TABLE IF NOT EXISTS ledger_replica_key_envelopes (
   envelope_json TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS ledger_replica_password_envelopes (
-  replica_id TEXT PRIMARY KEY REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
-  ledger_id TEXT NOT NULL,
-  keyring_id TEXT NOT NULL,
-  generation INTEGER NOT NULL,
-  envelope_json TEXT NOT NULL,
-  revision INTEGER NOT NULL CHECK (revision >= 1),
-  updated_at TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS ledger_control_roots (
   replica_id TEXT PRIMARY KEY REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
   issuer_node_id TEXT NOT NULL,
@@ -1518,7 +1509,7 @@ CREATE TABLE IF NOT EXISTS ledger_member_key_envelopes (
 CREATE INDEX IF NOT EXISTS idx_ledger_member_key_envelopes_epoch ON ledger_member_key_envelopes (replica_id, key_epoch);
 CREATE TABLE IF NOT EXISTS sync_key_custody (
   username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
-  mode TEXT NOT NULL CHECK (mode IN ('managed', 'private', 'relay')),
+  mode TEXT NOT NULL CHECK (mode IN ('managed', 'relay')),
   version INTEGER NOT NULL,
   sealed_secret TEXT,
   updated_at TEXT NOT NULL
@@ -6155,8 +6146,7 @@ END;`);
       if (protection) {
         await driver.run('INSERT INTO sync_key_custody (username, mode, version, sealed_secret, updated_at) VALUES (?, ?, 1, ?, ?) ON CONFLICT(username) DO UPDATE SET mode = excluded.mode, version = sync_key_custody.version + 1, sealed_secret = excluded.sealed_secret, updated_at = excluded.updated_at', [username, protection.mode, protection.sealedSecret, at]);
       } else if (oldProtection) {
-        await driver.run(`UPDATE sync_key_custody SET mode = 'private', version = version + 1,
-          sealed_secret = NULL, updated_at = ? WHERE username = ?`, [at, username]);
+        throw new ServerStoreError('CUSTODY_REQUIRED', 409, '替换账本必须提供托管密钥');
       }
       for (const [index, commit] of commits.entries()) {
         if (commit.ledgerId !== ledgerId) throw new ServerStoreError('LEDGER_MISMATCH', 409, 'initial commit belongs to another ledger');
@@ -6376,68 +6366,6 @@ END;`);
           (replica_id, peer_node_id, commit_id, enc_commit_json, cipher_bytes) VALUES (?, ?, ?, ?, ?)`,
         [replica.replicaId, peerNodeId, item.commitId, encoded, bytes]);
       }
-    });
-  }
-
-  async passwordKeyEnvelope(username: string, ledgerId: string, replicaId?: string,
-    access: 'account' | 'node' = 'account'): Promise<{
-    envelope: JsonRecord; revision: number
-  } | undefined> {
-    await this.ready;
-    const replica = await this.getReplica(username, replicaId);
-    if (!replica || replica.ledgerId !== ledgerId) return undefined;
-    if (access === 'account') {
-      await this.assertLedgerAccess(username, 'read', replica.replicaId);
-      const owner = await this.driver.get<{ username: string }>(
-        'SELECT username FROM sync_replicas WHERE replica_id = ?', [replica.replicaId]);
-      if (owner?.username !== username) throw new ServerStoreError('KEY_ENVELOPE_OWNER_REQUIRED', 403,
-        '只有账本所有者可读取账号密码密钥包');
-    }
-    const row = await this.driver.get<{ envelope_json: string; revision: number }>(
-      'SELECT envelope_json, revision FROM ledger_replica_password_envelopes WHERE replica_id = ?', [replica.replicaId]);
-    return row ? { envelope: jsonObject(row.envelope_json), revision: row.revision } : undefined;
-  }
-
-  async putPasswordKeyEnvelope(username: string, ledgerId: string, envelope: JsonRecord,
-    expectedRevision: number, access: 'account' | 'node' = 'account', replicaId?: string,
-    sourceRevision?: number): Promise<number> {
-    await this.ready;
-    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-      throw new ServerStoreError('INVALID_REVISION', 400, '密码密钥包版本无效');
-    }
-    return this.driver.transaction(async (driver) => {
-      const replica = await this.accountReplicaRow(driver, username, replicaId);
-      if (!replica || replica.ledger_id !== ledgerId) throw new ServerStoreError('LEDGER_MISMATCH', 409, '账本身份不匹配');
-      if (access === 'account') {
-        await this.assertLedgerAccessOnReplica(driver, username, replica.replica_id, 'manage');
-        const owner = await driver.get<{ username: string }>(
-          'SELECT username FROM sync_replicas WHERE replica_id = ?', [replica.replica_id]);
-        if (owner?.username !== username) throw new ServerStoreError('KEY_ENVELOPE_OWNER_REQUIRED', 403, '仅账本所有者可维护密码密钥包');
-      }
-      const canonical = await driver.get<{ keyring_id: string; generation: number }>(
-        'SELECT keyring_id, generation FROM ledger_replica_key_envelopes WHERE replica_id = ?', [replica.replica_id]);
-      if (!canonical || canonical.keyring_id !== envelope['keyringId']
-        || Number(canonical.generation) !== envelope['generation']) {
-        throw new ServerStoreError('KEYRING_MISMATCH', 409, '密码密钥包与账本当前密钥版本不一致');
-      }
-      const current = await driver.get<{ envelope_json: string; revision: number }>(
-        'SELECT envelope_json, revision FROM ledger_replica_password_envelopes WHERE replica_id = ?', [replica.replica_id]);
-      if (current && current.envelope_json === JSON.stringify(envelope)) return current.revision;
-      if (Number(current?.revision ?? 0) !== expectedRevision) {
-        throw new ServerStoreError('PASSWORD_ENVELOPE_REVISION', 409, '密码密钥包已更新');
-      }
-      const revision = access === 'node' ? sourceRevision : expectedRevision + 1;
-      if (!Number.isSafeInteger(revision) || Number(revision) <= expectedRevision) {
-        throw new ServerStoreError('PASSWORD_ENVELOPE_REVISION', 409, '密码密钥包版本无效');
-      }
-      await driver.run(`INSERT INTO ledger_replica_password_envelopes
-        (replica_id, ledger_id, keyring_id, generation, envelope_json, revision, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(replica_id) DO UPDATE SET envelope_json = excluded.envelope_json,
-          generation = excluded.generation, revision = excluded.revision, updated_at = excluded.updated_at`,
-      [replica.replica_id, ledgerId, envelope['keyringId'], envelope['generation'], JSON.stringify(envelope),
-        Number(revision), nowIso()]);
-      return Number(revision);
     });
   }
 
@@ -6961,7 +6889,7 @@ END;`);
   }
 
   async importFederatedLedgerProtection(username: string, issuerNodeId: string,
-    ledgerId: string, mode: 'managed' | 'private', sealedSecret: string | null): Promise<void> {
+    ledgerId: string, mode: 'managed', sealedSecret: string): Promise<void> {
     await this.ready;
     await this.driver.transaction(async (driver) => {
       const bound = await driver.get<{ issuer_node_id: string; ledger_id: string }>(

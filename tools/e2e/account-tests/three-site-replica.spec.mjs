@@ -87,14 +87,8 @@ async function inventory(store, username, ledgerId) {
   return store.replicaInventory(username, ledgerId);
 }
 
-async function revisitSite(page, url, recoveryCode) {
+async function revisitSite(page, url) {
   await page.goto(`${url}/app/`);
-  const recovery = page.getByLabel('账本恢复码');
-  await expect(page.locator('.zc-app-shell').or(recovery)).toBeVisible();
-  if (await recovery.isVisible()) {
-    await recovery.fill(recoveryCode);
-    await page.getByRole('button', { name: '解锁账本', exact: true }).click();
-  }
   await expect(page.locator('.zc-app-shell')).toBeVisible();
 }
 
@@ -164,12 +158,6 @@ test('records on three separate websites and converges their server replicas', a
       await page.getByLabel('服务器用户名').fill('owner');
       await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
       await page.getByRole('button', { name: '登录已有账号' }).click();
-      const recovery = page.getByLabel('账本恢复码');
-      await expect(page.locator('.zc-app-shell').or(recovery)).toBeVisible();
-      if (await recovery.isVisible()) {
-        await recovery.fill(protection.secret);
-        await page.getByRole('button', { name: '解锁账本', exact: true }).click();
-      }
       await expect(page.locator('.zc-app-shell')).toBeVisible();
       await saveExpense(page, amount, note);
       await syncCurrentSite(page);
@@ -199,7 +187,7 @@ test('records on three separate websites and converges their server replicas', a
       await expect(page.getByText(note, { exact: true })).toBeVisible();
     }
 
-    await revisitSite(page, home.url, protection.secret);
+    await revisitSite(page, home.url);
     const hubAddress = new URL(hub.url);
     hub.server.closeAllConnections();
     await new Promise((done, fail) => hub.server.close((error) => error ? fail(error) : done()));
@@ -211,7 +199,7 @@ test('records on three separate websites and converges their server replicas', a
     await syncCurrentSite(page);
     await expect.poll(async () => (await inventory(stores[1], homeUsername, ledgerId)).commitCount)
       .toBeGreaterThan(homeBefore);
-    await revisitSite(page, office.url, protection.secret);
+    await revisitSite(page, office.url);
     const officeBefore = (await inventory(stores[2], officeUsername, ledgerId)).commitCount;
     await saveExpense(page, '50.05', 'office-hub-offline');
     await syncCurrentSite(page);
@@ -241,7 +229,7 @@ test('records on three separate websites and converges their server replicas', a
       'home-hub-offline', 'office-hub-offline']) {
       await expect(page.getByText(note, { exact: true })).toBeVisible();
     }
-    await revisitSite(page, hub.url, protection.secret);
+    await revisitSite(page, hub.url);
     await syncCurrentSite(page);
     await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
     for (const note of ['hub-entry', 'home-entry', 'office-entry',
@@ -256,7 +244,7 @@ test('records on three separate websites and converges their server replicas', a
 
     // A saved site may still be open after its node is removed. With another
     // configured member, its pending client commit must use that member.
-    await revisitSite(page, home.url, protection.secret);
+    await revisitSite(page, home.url);
     await openSync(page);
     await addNodeAdmin(page, hub.url, '公网节点', 'owner');
     await page.getByLabel('启用 公网节点', { exact: true }).check();
@@ -288,7 +276,7 @@ test('records on three separate websites and converges their server replicas', a
         && publicInventory.commitHash === officeInventory.commitHash
         ? publicInventory.commitCount : 0;
     }, { timeout: 30_000 }).toBeGreaterThan(hubCount);
-    await revisitSite(page, hub.url, protection.secret);
+    await revisitSite(page, hub.url);
     await syncCurrentSite(page);
     await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
     await expect(page.getByText('home-site-after-retirement', { exact: true })).toBeVisible();

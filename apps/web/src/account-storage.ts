@@ -16,6 +16,32 @@ export function activateWebAccount(serverId: string, accountId: string,
   if (namespace && namespace !== next) throw new Error('切换账号或账本需要重新加载页面');
   namespace = next;
 }
+/** First personal-ledger binding happens before the ledger database is opened. */
+export function adoptFirstWebLedgerReplica(serverId: string, accountId: string,
+  ledgerId: string, replicaId: string, streamEpoch: string): void {
+  if (!webAccounts) return;
+  const old = webLedgerNamespace(serverId, accountId);
+  const next = webLedgerNamespace(serverId, accountId, replicaId);
+  if (namespace === next) return;
+  if (namespace !== old) throw new Error('当前账本身份与浏览器账号不一致');
+  for (const storage of [localStorage, sessionStorage]) {
+    const entries = Array.from({ length: storage.length }, (_, index) => storage.key(index))
+      .filter((key): key is string => Boolean(key?.startsWith(old)));
+    for (const key of entries) {
+      const value = storage.getItem(key);
+      if (value !== null && storage.getItem(`${next}${key.slice(old.length)}`) === null) {
+        storage.setItem(`${next}${key.slice(old.length)}`, value);
+      }
+    }
+    try {
+      const binding = JSON.parse(storage.getItem(WEB_ACCOUNT_BINDING_KEY) ?? 'null') as Record<string, unknown> | null;
+      if (binding?.serverId === serverId && binding.accountId === accountId && !binding.replicaId) {
+        storage.setItem(WEB_ACCOUNT_BINDING_KEY, JSON.stringify({ ...binding, ledgerId, replicaId, streamEpoch }));
+      }
+    } catch { /* Invalid bindings are handled by the account gate. */ }
+  }
+  namespace = next;
+}
 export function accountStorageKey(key: string): string {
   return webAccounts ? `${namespace ?? 'zichan.account.v3:guest:'}${key}` : key;
 }

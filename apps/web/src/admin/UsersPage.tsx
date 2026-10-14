@@ -132,7 +132,7 @@ export function UsersPage({ client, query, navigate, role }: {
     // page first. The value stays on screen — a column headed 账号 ID that only offers a button
     // labelled the same thing shows nothing to read.
     { key: 'accountId', header: '账号 ID', optional: true, secondary: true, render: (user: AccountRow) => <span style={row}><code style={{ fontSize: 'var(--fs-sm)' }}>{user.accountId}</code><CopyValue value={user.accountId} /></span> },
-    { key: 'protection', header: '保护模式', optional: true, render: (user: AccountRow) => user.protectionMode === 'managed' ? '云端托管' : user.protectionMode === 'private' ? '私密' : user.protectionMode === 'relay' ? '中继' : '未设置' },
+    { key: 'protection', header: '保护模式', optional: true, render: (user: AccountRow) => user.protectionMode === 'managed' ? '云端托管' : user.protectionMode === 'relay' ? '中继' : '未设置' },
     {
       key: 'quota', header: '容量使用率', ...sortHeader('usage', '容量使用率'), render: (user: AccountRow) => (
         <span>
@@ -184,7 +184,7 @@ export function UsersPage({ client, query, navigate, role }: {
           </Field>
           <Field label="保护模式">
             <Select value={protection} onChange={(event) => update({ protection: event.target.value })}>
-              <option value="">全部</option><option value="managed">云端托管</option><option value="private">私密</option><option value="relay">中继</option><option value="none">未设置</option>
+              <option value="">全部</option><option value="managed">云端托管</option><option value="relay">中继</option><option value="none">未设置</option>
             </Select>
           </Field>
           <Field label="配额状态">

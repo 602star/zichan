@@ -97,7 +97,7 @@ export function WebAccountApp() {
         if (active) {
           if (!binding && error instanceof HttpRequestError && error.status === 401) return;
           const available = canOfferOfflineCache(error);
-          setNotice(available ? '暂时无法连接账号服务器。可用此设备已设置的离线密码或记住设备授权解锁已有缓存；联网后继续验证账号并同步。'
+          setNotice(available ? '暂时无法连接账号服务器。可用账号密码或记住设备授权解锁此设备已有的账本缓存；联网后继续同步。'
             : `${error instanceof Error ? error.message : '账号验证失败'} 请重新登录或联系部署者。`);
           setOffline(available);
         }

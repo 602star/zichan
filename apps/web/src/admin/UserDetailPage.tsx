@@ -109,7 +109,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
           <Stat label="创建时间" value={when(account.createdAt)} />
           <Stat label="角色" value={roleLabel(account.role)} />
           <Stat label="状态" value={account.disabled ? <Badge tone="bad">已禁用</Badge> : <Badge tone="ok">正常</Badge>} />
-          <Stat label="保护模式" value={account.protection ? (account.protection.mode === 'managed' ? '云端托管' : account.protection.mode === 'private' ? '私密' : account.protection.mode) : '未设置'}
+          <Stat label="保护模式" value={account.protection ? (account.protection.mode === 'managed' ? '云端托管' : account.protection.mode) : '未设置'}
             hint={account.protection ? `版本 ${account.protection.version}` : '用户尚未设置账本保护'} />
           <Stat label="数据版本" value={String(account.version)} hint="用于并发修改检测" />
           <Stat label="最近登录" value={when(account.lastLoginAt)} />
@@ -220,7 +220,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
             </ul>
           </>
         ) : null}
-        <Notice>托管账本可通过上方只读预览查看，查看原因会写入审计；私密账本无法由服务器解密。这里不显示用户密钥。</Notice>
+        <Notice>托管账本可通过上方只读预览查看，查看原因会写入审计。这里不显示用户密钥。</Notice>
       </Panel>
       </div>
     </>

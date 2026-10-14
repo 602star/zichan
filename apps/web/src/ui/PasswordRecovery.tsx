@@ -10,7 +10,7 @@ export function PasswordRecovery({ baseUrl, onComplete }: { baseUrl: string; onC
   const [emailBusy, setEmailBusy] = useState(false);
   const [notice, setNotice] = useState('');
   return <details style={{ marginTop: 20 }}><summary>忘记账号密码</summary>
-    <p>可向已验证邮箱发送重置码，或联系管理员核实身份后取得一次性重置码。两种方式修改同一个账号密码；在附属节点登录的统一账号，请到创建账号的身份源网站申请找回。托管账本可在资料同步后使用新密码登录，私密账本仍需原恢复码。</p>
+    <p>可向已验证邮箱发送重置码，或联系管理员核实身份后取得一次性重置码。两种方式修改同一个账号密码；在附属节点登录的统一账号，请到创建账号的身份源网站申请找回。</p>
     <form onSubmit={(event) => {
       event.preventDefault();
       if (busy) return;
@@ -23,7 +23,7 @@ export function PasswordRecovery({ baseUrl, onComplete }: { baseUrl: string; onC
           const health = await response.json();
           if (!health.serverId || !health.serverPublicKey || !health.capabilities?.includes('password-reset-v1')) throw new Error('服务器尚未支持账号密码重置，请联系部署者更新。');
           await registerAccount(baseUrl, username.trim(), password, { passwordResetCode: code.trim(), expectedServerId: health.serverId, expectedServerPublicKey: health.serverPublicKey });
-          setCode(''); setNotice('账号密码已重置，旧登录会话已撤销。请使用新密码登录；私密账本仍需恢复码。');
+          setCode(''); setNotice('账号密码已重置，旧登录会话已撤销。请使用新密码登录。');
           onComplete(username.trim());
         } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); }
         finally { setPassword(''); setConfirmation(''); setBusy(false); }

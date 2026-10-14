@@ -21,14 +21,6 @@ for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`un
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
-    await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
-    await page.getByRole('button', { name: '查看数据保护与副本状态' }).click();
-    await page.getByRole('tab', { name: '解锁与安全' }).click();
-    await page.getByText('此设备的离线访问', { exact: true }).click();
-    await page.getByLabel('设置离线密码').fill('offline-cache-password');
-    await page.getByLabel('确认离线密码').fill('offline-cache-password');
-    await page.getByRole('button', { name: '设置离线密码', exact: true }).click();
-    await expect(page.getByRole('status').filter({ hasText: '离线密码已设置' })).toBeVisible();
     if (backendFailure === 'cold-start') {
       await page.evaluate(async () => { await navigator.serviceWorker.ready; });
       await context.setOffline(true);
@@ -36,13 +28,14 @@ for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`un
       page = await context.newPage();
       await page.goto(`${url}/app/`);
       await page.getByRole('button', { name: '离线解锁 offline-user 的缓存' }).click();
-      await page.getByLabel('离线密码', { exact: true }).fill('offline-cache-password');
+      await page.getByLabel('账号密码', { exact: true }).fill('account-test-password');
       await page.getByRole('button', { name: '解锁缓存', exact: true }).click();
       await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 15_000 });
       const cachedUrls = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async (key) => (await (await caches.open(key)).keys()).map((r) => r.url)))).flat());
       expect(cachedUrls.length).toBeGreaterThan(5);
       expect(cachedUrls.some((value) => value.includes('/api/'))).toBe(false);
       await context.setOffline(false);
+      await expect.poll(async () => (await page.request.get(`${url}/api/health`)).status()).toBe(200);
       await page.reload();
       await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 15_000 });
       return;
@@ -53,7 +46,7 @@ for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`un
       : route.abort('internetdisconnected'));
     await page.reload();
     await page.getByRole('button', { name: '离线解锁 offline-user 的缓存' }).click();
-    await page.getByLabel('离线密码', { exact: true }).fill('offline-cache-password');
+    await page.getByLabel('账号密码', { exact: true }).fill('account-test-password');
     await page.getByRole('button', { name: '解锁缓存', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await page.unroute('**/api/**');

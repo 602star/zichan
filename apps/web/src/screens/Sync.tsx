@@ -7,7 +7,6 @@ import { ProfileOperations, type ProfileOperation } from '../profile-operation.j
 import { revokeConnectionSession } from '../revoke-connection-session.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { accountProtection } from '../account-protection.js';
-import { ServerCustodyPanel } from '../ui/ServerCustodyPanel.js';
 import { NodeReplicaPanel } from '../ui/NodeReplicaPanel.js';
 import { attachBrowserReplica } from '../browser-replica.js';
 import { assertNodeReplicaIdentity } from '../node-replica-identity.js';
@@ -1174,6 +1173,9 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
     try {
       if (!ledgerKey.unlocked) throw new Error('请先解锁账本加密密钥');
       const targets = profile ? [profile] : (configuredProfiles ?? profiles).filter((p) => p.enabled);
+      if (accountProtection() && targets.some((target) => target.ledgerId !== ledgerKey.ledgerId)) {
+        throw new Error('请先使用“添加为浏览器同步副本”把当前账本绑定到目标服务器');
+      }
       if (targets.length === 0) {
         setEndpointRows([]);
         setResult(null);
@@ -1612,7 +1614,6 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
           </select>
           <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>{autoSyncStatus}</span>
         </div>
-        {selected && <ServerCustodyPanel key={`${selected.id}:${selected.username}:${selected.baseUrl}`} profile={selected} />}
       {<div style={card}>
         <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
           <div>

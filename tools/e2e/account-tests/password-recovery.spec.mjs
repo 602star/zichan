@@ -38,7 +38,7 @@ test('administrator reviews and issues a code, user resets only account credenti
     await user.getByLabel('新账号密码', { exact: true }).fill('new-user-test-password');
     await user.getByLabel('确认新账号密码', { exact: true }).fill('new-user-test-password');
     await user.getByRole('button', { name: '重置账号密码', exact: true }).click();
-    await expect(user.getByText('账号密码已重置，旧登录会话已撤销。请使用新密码登录；私密账本仍需恢复码。')).toBeVisible();
+    await expect(user.getByText('账号密码已重置，旧登录会话已撤销。请使用新密码登录。')).toBeVisible();
     expect((await loginAccount(url, 'recover-user', 'new-user-test-password')).accountId).toBe(original.accountId);
     await expect(loginAccount(url, 'recover-user', 'old-user-test-password')).rejects.toThrow();
     expect((await fetch(`${url}/api/auth/me`, { headers: { Authorization: `Bearer ${original.accessToken}` } })).status).toBe(401);

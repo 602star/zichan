@@ -89,7 +89,7 @@ describe('one ledger replica retirement on a multi-ledger node', () => {
               observedAt: new Date().toISOString() }), new Date().toISOString()]);
         for (const username of ['first', 'second']) {
           await custodyDb.run(`INSERT INTO sync_key_custody
-            (username, mode, version, sealed_secret, updated_at) VALUES (?, 'private', 1, NULL, ?)`,
+            (username, mode, version, sealed_secret, updated_at) VALUES (?, 'relay', 1, NULL, ?)`,
           [username, new Date().toISOString()]);
         }
       } finally { await custodyDb.close(); }

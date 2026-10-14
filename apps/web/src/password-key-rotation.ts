@@ -1,9 +1,8 @@
 import { requestJson } from '@zichan/db';
-import { unlockAccountEncryptionKey, unlockLedgerKeyEnvelope, wrapAccountEncryptionKey,
-  wrapLedgerCryptoSession, type AccountEncryptionKeyEnvelope, type LedgerKeyEnvelope } from '@zichan/core';
+import { unlockAccountEncryptionKey, wrapAccountEncryptionKey,
+  type AccountEncryptionKeyEnvelope } from '@zichan/core';
 
 interface AccountRecord { envelope: AccountEncryptionKeyEnvelope; revision: number }
-interface LedgerRecord { envelope: LedgerKeyEnvelope; revision: number }
 
 async function request<T>(baseUrl: string, token: string, path: string, method = 'GET', body?: unknown): Promise<T> {
   const response = await requestJson(`${baseUrl}${path}`, { method, cache: 'no-store',
@@ -32,17 +31,6 @@ export async function rewrapAccountKeysForPasswordChange(baseUrl: string, token:
         rollbacks.push(async () => { await request(baseUrl, token, '/api/v4/account/encryption-key', 'PUT',
           { envelope: current.envelope, expectedRevision: current.revision + 1 }); });
       } finally { privateKey.fill(0); }
-    }
-    const ledger = await request<{ record: LedgerRecord | null }>(baseUrl, token, '/api/v4/ledger/password-envelope')
-      .catch(() => ({ record: null }));
-    if (ledger.record) {
-      const current = ledger.record;
-      const session = await unlockLedgerKeyEnvelope(oldPassword, current.envelope);
-      const next = await wrapLedgerCryptoSession(session, nextPassword);
-      await request(baseUrl, token, '/api/v4/ledger/password-envelope', 'PUT',
-        { envelope: next, expectedRevision: current.revision });
-      rollbacks.push(async () => { await request(baseUrl, token, '/api/v4/ledger/password-envelope', 'PUT',
-        { envelope: current.envelope, expectedRevision: current.revision + 1 }); });
     }
   } catch (error) {
     for (const rollback of rollbacks.reverse()) await rollback().catch(() => undefined);

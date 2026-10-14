@@ -22,7 +22,6 @@ export interface SharedSyncServer {
 
 /** Device-local account, endpoints, replica identity and operational state. */
 export interface DeviceSyncConnection {
-  initialProtectionMode?: 'managed' | 'private';
   accountId?: string;
   serverRef: string;
   activeUrl: string;
@@ -278,7 +277,6 @@ function resolveDocument(document: SyncConnectionDocument): SyncConnection[] {
       deviceUrls,
       username: typeof row.username === 'string' ? row.username : '',
       accountId: typeof row.accountId === 'string' ? row.accountId : undefined,
-      initialProtectionMode: row.initialProtectionMode === 'private' ? 'private' : undefined,
       enabled: row.enabled === true,
       browserBridge: row.browserBridge === true,
       role: parseRole(row.role),
@@ -366,7 +364,6 @@ function toDocument(connections: SyncConnection[]): SyncConnectionDocument {
       deviceUrls,
       username: connection.username.trim(),
       accountId: connection.accountId,
-      initialProtectionMode: connection.initialProtectionMode,
       enabled: connection.enabled,
       browserBridge: connection.browserBridge === true || undefined,
       role: connection.role,

@@ -13,7 +13,7 @@ function record(value: unknown): value is JsonRecord {
 export function createGroupReconciler(store: SyncServerStore, identity: () => NodeIdentity,
   opaqueSetup: () => string,
   readProtection: (username: string, accountId: string) => Promise<{
-    mode: 'managed' | 'private'; secret: string | null;
+    mode: 'managed'; secret: string;
   } | null>) {
   let flight: Promise<void> | undefined;
   const run = (): Promise<void> => {

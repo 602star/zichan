@@ -11,7 +11,7 @@ const cachePassword = 'multi-server-cache-password';
 async function openSync(page) {
   await expect(page.locator('.zc-app-shell')).toBeVisible();
   await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
-  await page.getByRole('button', { name: '查看数据保护与副本状态' }).click();
+  await page.getByRole('button', { name: '查看服务器上的账本' }).click();
   const settings = page.getByRole('button', { name: /^客户端同步与服务器连接/ });
   if (await settings.getAttribute('aria-expanded') !== 'true') await settings.click();
 }
@@ -106,22 +106,22 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.unroute(`${secondary.url}/api/health`);
     await page.getByRole('button', { name: '登录', exact: true }).click();
     await expect(page.getByText(/登录未完成：/)).toHaveCount(0);
-    await page.getByLabel('启用 本机副本', { exact: true }).check();
     await page.getByRole('button', { name: '同步此服务器', exact: true }).click();
+    await expect(page.getByText(/请先使用“添加为浏览器同步副本”/)).toBeVisible();
+    await page.getByLabel('这台服务器的账号密码').fill(password);
+    await page.getByRole('button', { name: '添加为浏览器同步副本' }).click();
+    await expect(page.getByLabel('启用 本机副本', { exact: true })).toBeChecked();
     await expect.poll(async () => {
       const response = await fetch(`${secondary.url}/api/admin/users?search=remote-user`, { headers: { Authorization: `Bearer ${secondary.owner.accessToken}` } });
       return (await response.json()).users[0].commitCount;
     }).toBeGreaterThan(0);
 
-    const protectionPanel = page.getByRole('region', { name: '服务器保护方式' });
-    await protectionPanel.getByRole('button', { name: '检查保护方式' }).click();
-    await expect(protectionPanel).toContainText('此服务器仅保存密文');
-    await expect(protectionPanel.getByRole('button', { name: '启用此服务器托管' })).toBeDisabled();
-    await protectionPanel.getByRole('checkbox', { name: '允许此服务器解密账本' }).check();
-    await protectionPanel.getByRole('button', { name: '启用此服务器托管' }).click();
-    await expect(protectionPanel).toContainText('此服务器已获授权，可以解密账本');
-    await protectionPanel.getByRole('button', { name: '撤销此服务器托管' }).click();
-    await expect(protectionPanel).toContainText('此服务器仅保存密文');
+    const targetLogin = await loginAccount(secondary.url, 'remote-user', password);
+    const targetProtection = await (await fetch(`${secondary.url}/api/v3/protection`, {
+      headers: { Authorization: `Bearer ${targetLogin.accessToken}` },
+    })).json();
+    expect(targetProtection.mode).toBe('managed');
+    expect(targetProtection.secret).toEqual(expect.any(String));
 
     await page.getByRole('button', { name: '新增服务器' }).click();
     await page.getByLabel('完整服务器地址').fill('https://ledger.example.com/zichan');
