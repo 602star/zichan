@@ -198,11 +198,13 @@ export function Account() {
         <p className="zc-caption">此账号可进入 {ledgers.length} 个账本。{isTauriRuntime()
           ? '桌面版切换时会关闭当前加密数据库并重启，目标账本使用独立的本机文件和安全库；首次进入需再次登录并解锁。'
           : '切换会保存并关闭当前设备缓存，然后打开所选账本。'}</p>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-          <select aria-label="账本副本" value={selectedReplicaId}
-            onChange={(event) => setSelectedReplicaId(event.target.value)} disabled={switchBusy}>
-            {ledgers.map((item) => <option key={item.replicaId} value={item.replicaId}>{item.ledgerId}</option>)}
-          </select>
+        <div className="zc-account-ledger-switch">
+          <label className="zc-field">要进入的账本
+            <select className="zc-select" aria-label="账本副本" value={selectedReplicaId}
+              onChange={(event) => setSelectedReplicaId(event.target.value)} disabled={switchBusy}>
+              {ledgers.map((item) => <option key={item.replicaId} value={item.replicaId}>{item.ledgerId}{item.replicaId === currentReplicaId ? ' · 当前账本' : ''}</option>)}
+            </select>
+          </label>
           <button type="button" style={btnOutline} disabled={switchBusy || !selectedReplicaId
             || selectedReplicaId === currentReplicaId} onClick={() => void switchLedger()}>
             {switchBusy ? '正在切换…' : '进入账本'}

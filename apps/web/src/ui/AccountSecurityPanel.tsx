@@ -63,7 +63,7 @@ export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> 
       {identity.issuerUrl ? <>请在 <a href={`${identity.issuerUrl}/app/`}>身份源网站</a> 修改或找回密码。</> : '请到创建此账号的网站修改或找回密码。'}
       更新后本站会在后台同步新凭据。</p> : identity && <details><summary>修改账号密码</summary>
       <p>修改后所有设备都需要重新登录。账本、恢复码和保护方式保持不变；未同步数据保留在本机。</p>
-      <form onSubmit={(event) => {
+      <form className="zc-account-form" onSubmit={(event) => {
         event.preventDefault();
         void run(async () => {
           if (password.length < 8 || password !== confirmation) throw new Error('新密码至少八位，且两次输入须一致');
@@ -86,10 +86,10 @@ export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> 
           else window.location.reload();
         });
       }}>
-        <label>当前账号密码<input aria-label="当前账号密码" type="password" autoComplete="current-password" required value={oldPassword} disabled={busy} onChange={(e) => setOldPassword(e.target.value)} /></label>
-        <label>新账号密码<input aria-label="修改后的账号密码" type="password" autoComplete="new-password" required minLength={8} value={password} disabled={busy} onChange={(e) => setPassword(e.target.value)} /></label>
-        <label>再次输入新密码<input aria-label="再次输入新密码" type="password" autoComplete="new-password" required value={confirmation} disabled={busy} onChange={(e) => setConfirmation(e.target.value)} /></label>
-        <button disabled={busy || !oldPassword || password.length < 8 || password !== confirmation}>确认修改账号密码</button>
+        <label className="zc-field">当前账号密码<input className="zc-input" aria-label="当前账号密码" type="password" autoComplete="current-password" required value={oldPassword} disabled={busy} onChange={(e) => setOldPassword(e.target.value)} /></label>
+        <label className="zc-field">新账号密码<input className="zc-input" aria-label="修改后的账号密码" type="password" autoComplete="new-password" required minLength={8} value={password} disabled={busy} onChange={(e) => setPassword(e.target.value)} /></label>
+        <label className="zc-field">再次输入新密码<input className="zc-input" aria-label="再次输入新密码" type="password" autoComplete="new-password" required value={confirmation} disabled={busy} onChange={(e) => setConfirmation(e.target.value)} /></label>
+        <button className="zc-btn zc-btn--primary" disabled={busy || !oldPassword || password.length < 8 || password !== confirmation}>确认修改账号密码</button>
       </form>
     </details>}
     <details style={{ marginTop: 16 }}><summary>登录设备</summary>

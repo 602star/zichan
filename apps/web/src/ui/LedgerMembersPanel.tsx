@@ -446,8 +446,10 @@ export function LedgerMembersPanel({ profile }: { profile: SyncConnection }) {
   })();
   return <details className="zc-card" aria-label="账本共享">
     <summary>账本共享{state ? ` · ${active.length} 人` : ''}</summary>
-    <p className="zc-caption">邀请其他账号一起记账，并设置可记账或只读权限。</p>
-    <button disabled={busy} onClick={() => void run(refresh, '成员状态已更新')}>刷新</button>
+    <div className="zc-section-head" style={{ marginTop: 12 }}>
+      <p className="zc-caption">邀请其他账号一起记账，并设置可记账或只读权限。</p>
+      <button className="zc-btn zc-btn--sm" type="button" disabled={busy} onClick={() => void run(refresh, '成员状态已更新')}>{busy ? '刷新中…' : '刷新成员'}</button>
+    </div>
     {view ? <>
       {state ? <p>当前成员 {active.length} 人</p>
         : <p>此账本尚未与其他账号共享。邀请第一位成员时会自动开通。</p>}
@@ -461,7 +463,7 @@ export function LedgerMembersPanel({ profile }: { profile: SyncConnection }) {
               {item.writer ? ` · 写入者 ${memberId(item.writer)}` : ''} · {item.reason}
               {' · '}{new Date(item.lastSeenAt).toLocaleString()}
               {item.resolution && ` · 已签名处置：${item.resolution.decision === 'replay' ? `新提交 ${item.resolution.replacementCommitId}` : '放弃原提交'}`}
-              {!item.resolution && item.archived && <button disabled={busy} onClick={() => void run(
+              {!item.resolution && item.archived && <button className="zc-btn zc-btn--sm" type="button" disabled={busy} onClick={() => void run(
                 () => reviewRejected(item), '隔离提交已解密并校验，请核对内容')}>查看待审核内容</button>}
               {!item.resolution && !item.archived && ' · 密文未归档，请检查发送节点'}
             </p>)}
@@ -503,42 +505,42 @@ export function LedgerMembersPanel({ profile }: { profile: SyncConnection }) {
                 </div>;
               })}
               <p>合并会以当前账本为基础创建新提交。若审核期间账本变化，系统会要求重新核对。</p>
-              <button disabled={busy || !repairConfirmed || !manualChoicesComplete || password.length < 8}
+              <button className="zc-btn" type="button" disabled={busy || !repairConfirmed || !manualChoicesComplete || password.length < 8}
                 onClick={() => void run(mergeReviewed, '已签名记录手动合并决定，节点将在后台收敛')}>
                 创建手动合并提交并签名处置</button>
             </details>}
             <label><input type="checkbox" checked={repairConfirmed} onChange={(event) => setRepairConfirmed(event.target.checked)} />
               我已核对上述业务内容，并确认选择处置方式</label>
-            <button disabled={busy || !repairConfirmed || password.length < 8}
+            <button className="zc-btn" type="button" disabled={busy || !repairConfirmed || password.length < 8}
               onClick={() => void run(repairReviewed, '已签名记录修复决定，节点将在后台收敛')}>
               {repairedCommit ? '继续上传并签名处置' : '创建修复提交并签名处置'}</button>
-            {!repairedCommit && <button disabled={busy || !repairConfirmed || password.length < 8}
+            {!repairedCommit && <button className="zc-btn zc-btn--danger" type="button" disabled={busy || !repairConfirmed || password.length < 8}
               onClick={() => void run(discardReviewed, '已签名放弃原提交，节点将在后台收敛')}>
               放弃此原提交</button>}
             {repairedCommit && <p>本机修复提交：{repairedCommit.commitId}。签名处置前请保留本机数据。</p>}
           </details>}
         </div>}
-        <label>账号密码<input aria-label="成员管理账号密码" type="password" autoComplete="current-password"
+        <label className="zc-field" style={{ maxWidth: 480 }}>账号密码<input className="zc-input" aria-label="成员管理账号密码" type="password" autoComplete="current-password"
           value={password} onChange={(event) => setPassword(event.target.value)} /></label>
         {state && active.map((member) => <div key={memberId(member)} style={{ borderTop: '1px solid var(--border)', padding: '10px 0' }}>
               <strong>{memberId(member)}</strong> · {member.role}
-              {!view.envelopes.has(memberId(member)) && <button disabled={busy} onClick={() => void run(() => issueEnvelope(member), '成员密钥已发放')}>补发密钥</button>}
+              {!view.envelopes.has(memberId(member)) && <button className="zc-btn zc-btn--sm" type="button" disabled={busy} onClick={() => void run(() => issueEnvelope(member), '成员密钥已发放')}>补发密钥</button>}
               {memberId(member) !== memberId(view.actor) && <>
-                <button disabled={busy || password.length < 8} onClick={() => void run(() => changeRole(member,
+                <button className="zc-btn zc-btn--sm" type="button" disabled={busy || password.length < 8} onClick={() => void run(() => changeRole(member,
                   member.role === 'VIEWER' ? 'EDITOR' : 'VIEWER'), '成员角色已更新')}>
                   改为{member.role === 'VIEWER' ? '可记账' : '只读'}</button>
-                <button disabled={busy || password.length < 8} onClick={() => void run(() => removeMember(member),
+                <button className="zc-btn zc-btn--sm zc-btn--danger" type="button" disabled={busy || password.length < 8} onClick={() => void run(() => removeMember(member),
                   '成员已移除，账本密钥已轮换')}>移除并轮换密钥</button>
               </>}
             </div>)}
             <details><summary>邀请成员</summary>
               <p>让对方从账号页复制成员身份信息。加入后，对方可用自己的账号密码打开此账本。</p>
-              <textarea aria-label="待邀请成员身份" value={card} onChange={(event) => setCard(event.target.value)}
-                style={{ width: '100%', minHeight: 130 }} />
-              <label>权限<select value={role} onChange={(event) => setRole(event.target.value as 'EDITOR' | 'VIEWER')}>
+              <textarea className="zc-input" aria-label="待邀请成员身份" value={card} onChange={(event) => setCard(event.target.value)}
+                style={{ minHeight: 130, maxWidth: 600 }} />
+              <label className="zc-field" style={{ maxWidth: 480 }}>权限<select className="zc-select" value={role} onChange={(event) => setRole(event.target.value as 'EDITOR' | 'VIEWER')}>
                 <option value="EDITOR">可记账</option><option value="VIEWER">只读</option>
               </select></label>
-              <button disabled={busy || password.length < 8 || !card.trim()}
+              <button className="zc-btn zc-btn--primary" type="button" disabled={busy || password.length < 8 || !card.trim()}
                 onClick={() => void run(addMember, '成员已加入账本')}>加入账本</button>
             </details>
       </>}

@@ -96,20 +96,20 @@ export function AccountKeyPanel({ profile, children }: { profile: SyncConnection
       <p>已建立 · 身份节点 {record.issuerNodeId} · 公钥 {record.publicKey.slice(0, 16)}… · 版本 {record.revision}</p>
       <details><summary>提供给账本所有者的成员身份</summary>
         <p>这里仅包含账号标识和公钥。所有者据此发放账本访问权；不要分享账号密码。</p>
-        <form onSubmit={(event) => { event.preventDefault(); void revealShareCard(); }}>
-          <label>账号密码<input aria-label="查看成员身份的密钥密码" type="password" autoComplete="current-password"
+        <form className="zc-account-form" onSubmit={(event) => { event.preventDefault(); void revealShareCard(); }}>
+          <label className="zc-field">账号密码<input className="zc-input" aria-label="查看成员身份的密钥密码" type="password" autoComplete="current-password"
             value={sharePassphrase} onChange={(event) => setSharePassphrase(event.target.value)} /></label>
-          <button disabled={busy || sharePassphrase.length < 8}>显示成员身份</button>
+          <button className="zc-btn" disabled={busy || sharePassphrase.length < 8}>显示成员身份</button>
         </form>
-        {shareCard && <textarea aria-label="成员身份信息" readOnly value={shareCard}
-          style={{ display: 'block', width: '100%', minHeight: 150, marginTop: 10 }} />}
+        {shareCard && <textarea className="zc-input" aria-label="成员身份信息" readOnly value={shareCard}
+          style={{ display: 'block', minHeight: 150, marginTop: 10 }} />}
       </details>
     </>
       : record === null && issuerNodeId !== profile.serverId ? <p>此账号的身份由 {issuerNodeId} 管理；请先在身份节点登录并建立账号加密密钥。</p>
-        : record === null ? <form onSubmit={(event) => { event.preventDefault(); void create(); }}>
-          <label>账号密码<input aria-label="建立成员身份的账号密码" type="password" autoComplete="current-password"
+        : record === null ? <form className="zc-account-form" onSubmit={(event) => { event.preventDefault(); void create(); }}>
+          <label className="zc-field">账号密码<input className="zc-input" aria-label="建立成员身份的账号密码" type="password" autoComplete="current-password"
             value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-          <button disabled={busy || password.length < 8}>{busy ? '正在建立…' : '建立成员身份'}</button>
+          <button className="zc-btn zc-btn--primary" disabled={busy || password.length < 8}>{busy ? '正在建立…' : '建立成员身份'}</button>
         </form> : <p role="status">正在读取账号加密密钥…</p>}
     {error && <p role="alert">{error}</p>}
     {expanded && children}

@@ -10,7 +10,7 @@ export function PasswordRecovery({ baseUrl, onComplete }: { baseUrl: string; onC
   const [emailBusy, setEmailBusy] = useState(false);
   const [notice, setNotice] = useState('');
   return <details style={{ marginTop: 20 }}><summary>忘记账号密码</summary>
-    <p>可向已验证邮箱发送重置码，或联系管理员核实身份后取得一次性重置码。两种方式修改同一个账号密码；在附属节点登录的统一账号，请到创建账号的身份源网站申请找回。</p>
+    <p className="zc-caption" style={{ marginTop: 10 }}>可向已验证邮箱发送重置码，或联系管理员核实身份后取得一次性重置码。两种方式修改同一个账号密码；在附属节点登录的统一账号，请到创建账号的身份源网站申请找回。</p>
     <form onSubmit={(event) => {
       event.preventDefault();
       if (busy) return;
@@ -28,9 +28,9 @@ export function PasswordRecovery({ baseUrl, onComplete }: { baseUrl: string; onC
         } catch (error) { setNotice(error instanceof Error ? error.message : String(error)); }
         finally { setPassword(''); setConfirmation(''); setBusy(false); }
       })();
-    }} style={{ display: 'grid', gap: 10 }}>
-      <label>账号用户名<input aria-label="找回账号用户名" required autoComplete="username" value={username} disabled={busy} onChange={(event) => setUsername(event.target.value)} /></label>
-      <button type="button" disabled={busy || emailBusy || username.trim().length < 2} onClick={() => {
+    }} className="zc-account-form">
+      <label className="zc-field">账号用户名<input className="zc-input" aria-label="找回账号用户名" required autoComplete="username" value={username} disabled={busy} onChange={(event) => setUsername(event.target.value)} /></label>
+      <button className="zc-btn" type="button" disabled={busy || emailBusy || username.trim().length < 2} onClick={() => {
         setEmailBusy(true); setNotice('正在申请邮件重置码…');
         void fetch(`${baseUrl}/api/auth/password-reset/email/request`, {
           method: 'POST', cache: 'no-store', redirect: 'error',
@@ -43,10 +43,10 @@ export function PasswordRecovery({ baseUrl, onComplete }: { baseUrl: string; onC
         }).catch((reason) => setNotice(reason instanceof Error ? reason.message : String(reason)))
           .finally(() => setEmailBusy(false));
       }}>{emailBusy ? '发送中…' : '发送到已验证邮箱'}</button>
-      <label>一次性重置码<input aria-label="一次性重置码" type="password" required autoComplete="off" value={code} disabled={busy} onChange={(event) => setCode(event.target.value)} /></label>
-      <label>新账号密码<input aria-label="新账号密码" type="password" required minLength={8} autoComplete="new-password" value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} /></label>
-      <label>确认新账号密码<input aria-label="确认新账号密码" type="password" required minLength={8} autoComplete="new-password" value={confirmation} disabled={busy} onChange={(event) => setConfirmation(event.target.value)} /></label>
-      <button disabled={busy} type="submit">{busy ? '重置中…' : '重置账号密码'}</button>
+      <label className="zc-field">一次性重置码<input className="zc-input" aria-label="一次性重置码" type="password" required autoComplete="off" value={code} disabled={busy} onChange={(event) => setCode(event.target.value)} /></label>
+      <label className="zc-field">新账号密码<input className="zc-input" aria-label="新账号密码" type="password" required minLength={8} autoComplete="new-password" value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} /></label>
+      <label className="zc-field">确认新账号密码<input className="zc-input" aria-label="确认新账号密码" type="password" required minLength={8} autoComplete="new-password" value={confirmation} disabled={busy} onChange={(event) => setConfirmation(event.target.value)} /></label>
+      <button className="zc-btn zc-btn--primary" disabled={busy} type="submit">{busy ? '重置中…' : '重置账号密码'}</button>
     </form>{notice && <p role="status">{notice}</p>}
   </details>;
 }

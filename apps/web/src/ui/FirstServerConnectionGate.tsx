@@ -37,7 +37,6 @@ interface ServerHealth {
 
 const button = btnOutline;
 
-const primary = btnPrimary;
 const input: CSSProperties = { boxSizing: 'border-box', width: '100%', minHeight: 42, padding: '0 11px', border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', color: 'var(--text-primary)' };
 
 const PRESETS: { id: SyncAddressPreset; label: string }[] = [
@@ -273,12 +272,12 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
 
   return (
     <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(20px, 5vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif' }}>
-      <section style={{ width: 'min(780px, 100%)', margin: '0 auto' }}>
+      <section style={{ width: accountOnly ? 'min(440px, 100%)' : 'min(780px, 100%)', margin: '0 auto' }}>
         {!accountOnly && <button type="button" onClick={onCancel} disabled={busy} style={{ ...button, minHeight: 34, padding: '0 11px' }}>返回模式选择</button>}
         <h1 style={{ margin: '18px 0 6px', color: 'var(--text-primary)', fontSize: 'var(--fs-hero)' }}>{accountOnly ? registering ? '注册账号' : '账号登录' : '连接同步服务器'}</h1>
         <p style={{ margin: '0 0 22px', color: 'var(--text-secondary)', lineHeight: 1.7 }}>{accountOnly ? '使用账号密码登录并打开账本。本机自动准备离线访问，联网后继续同步。' : '先验证服务器身份并登录。服务器地址可以来自当前网站、本机、局域网或公网。'}</p>
 
-        <div style={{ padding: 20, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', background: 'var(--surface-2)' }}>
+        <div style={{ padding: 'clamp(20px, 4vw, 28px)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', background: 'var(--surface)' }}>
           {!accountOnly && <><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
             {PRESETS.map((item) => <button key={item.id} type="button" disabled={busy} onClick={() => selectPreset(item.id)} style={{ ...button, background: preset === item.id ? 'var(--accent-soft)' : 'var(--surface)' }}>{item.label}</button>)}
           </div>
@@ -300,23 +299,28 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
           )}
 
           </>}
-          <form onSubmit={(event) => { event.preventDefault(); void authenticate(registering ? 'register' : 'login'); }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginTop: 18 }}>
-            {registering && <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>昵称</label><input aria-label="昵称" value={displayName} onChange={(event) => { setDisplayName(event.target.value); setError(''); }} disabled={busy} autoComplete="nickname" required maxLength={48} placeholder="例如：小明" style={{ ...input, marginTop: 6 }} /><small style={{ color: 'var(--text-secondary)' }}>显示给自己看的名称，之后可以修改，支持中文。</small></div>}
-            <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>登录账号</label><input aria-label="服务器用户名" value={username} onChange={(event) => { setUsername(event.target.value); setError(''); }} disabled={busy} autoComplete="username" required placeholder={registering ? '例如：xiaoming 或 小明' : '输入注册时的登录账号'} style={{ ...input, marginTop: 6 }} />{registering && <small style={{ color: 'var(--text-secondary)' }}>用于登录，注册后暂不能修改；支持 2 至 64 个中文、字母、数字或 _ . -。</small>}</div>
-            <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>账号密码</label><input aria-label="服务器账号密码" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} disabled={busy} autoComplete={registering ? 'new-password' : 'current-password'} required minLength={8} style={{ ...input, marginTop: 6 }} /></div>
-            {registering && <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>确认账号密码</label><input aria-label="确认账号密码" type="password" required minLength={8} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy} autoComplete="new-password" style={{ ...input, marginTop: 6 }} /></div>}
-            {health?.registrationMode === 'invite' && (!accountOnly || registering) && <div><label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>邀请码</label><input aria-label="邀请码" value={inviteCode} onChange={(event) => { setInviteCode(event.target.value); setError(''); }} disabled={busy} style={{ ...input, marginTop: 6 }} /></div>}
+          <form className="zc-login-form" onSubmit={(event) => { event.preventDefault(); void authenticate(registering ? 'register' : 'login'); }}>
+          <div className="zc-login-fields">
+            {registering && <label className="zc-field">昵称<input className="zc-input" aria-label="昵称" value={displayName} onChange={(event) => { setDisplayName(event.target.value); setError(''); }} disabled={busy} autoComplete="nickname" required maxLength={48} placeholder="例如：小明" style={input} /><small className="zc-caption">显示给自己看的名称，之后可以修改，支持中文。</small></label>}
+            <label className="zc-field">登录账号<input className="zc-input" aria-label="服务器用户名" value={username} onChange={(event) => { setUsername(event.target.value); setError(''); }} disabled={busy} autoComplete="username" required autoFocus={accountOnly} placeholder={registering ? '例如：xiaoming 或 小明' : '输入注册时的登录账号'} style={input} />{registering && <small className="zc-caption">用于登录，注册后暂不能修改；支持 2 至 64 个中文、字母、数字或 _ . -。</small>}</label>
+            <label className="zc-field">账号密码<input className="zc-input" aria-label="服务器账号密码" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} disabled={busy} autoComplete={registering ? 'new-password' : 'current-password'} required minLength={8} style={input} /></label>
+            {registering && <label className="zc-field">确认账号密码<input className="zc-input" aria-label="确认账号密码" type="password" required minLength={8} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy} autoComplete="new-password" style={input} /></label>}
+            {health?.registrationMode === 'invite' && (!accountOnly || registering) && <label className="zc-field">邀请码<input className="zc-input" aria-label="邀请码" value={inviteCode} onChange={(event) => { setInviteCode(event.target.value); setError(''); }} disabled={busy} style={input} /></label>}
           </div>
 
           {health && !health.claimed && <p>本站尚未开放，请联系部署者完成服务器初始化。</p>}
           {health?.ledgerWebAccess === false && <p role="status">管理员已关闭通过本站网页记账。节点间复制仍可继续，请使用其他获准节点。</p>}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 18 }}>
-            <button type="button" onClick={() => void inspectServer()} disabled={busy} style={button}>{accountOnly ? '重试连接' : '检查服务器'}</button>
-            <button type="submit" disabled={busy || health?.claimed === false || health?.ledgerWebAccess === false} style={primary}>{busy ? '处理中…' : registering ? '注册并登录' : '登录已有账号'}</button>
-            <button type="button" onClick={() => setRegistering((value) => !value)} disabled={busy || !registering && (health?.claimed === false || health?.registrationMode === 'closed')} style={button}>{registering ? '返回登录' : '注册新账号'}</button>
+          <div className="zc-login-actions">
+            <button className="zc-btn zc-btn--primary" type="submit" disabled={busy || health?.claimed === false || health?.ledgerWebAccess === false}>{busy ? '处理中…' : registering ? '注册并登录' : '登录'}</button>
+            <div className="zc-login-secondary-actions">
+              <button className="zc-btn" type="button" onClick={() => setRegistering((value) => !value)} disabled={busy || !registering && (health?.claimed === false || health?.registrationMode === 'closed')}>{registering ? '返回登录' : '注册新账号'}</button>
+              <button className="zc-btn zc-btn--ghost" type="button" onClick={() => void inspectServer()} disabled={busy}>{accountOnly ? '重试连接' : '检查服务器'}</button>
+            </div>
           </div>
           </form>
+          {error && <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{error}</div>}
+          {message && <div role="status" style={{ marginTop: 12, color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{message}</div>}
+          {health?.claimed && !registering && <div style={{ maxWidth: 440 }}><PasswordRecovery baseUrl={address} onComplete={(value) => { setUsername(value); setRegistering(false); }} /></div>}
           {accountOnly && <section aria-label="账号登录权限说明" style={{ marginTop: 18, fontSize: 'var(--fs-caption)', lineHeight: 1.7 }}><strong>登录会使用什么权限？</strong><p>验证本站账号并建立 HttpOnly 会话 Cookie。登录后用账号密码加密本浏览器的离线解锁资料，不保存明文密码。</p></section>}
           {accountOnly && identityProviders.length > 0 && <section style={{ marginTop: 18, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
             <strong>使用统一账号登录</strong>
@@ -326,13 +330,10 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
               通过 {new URL(provider.issuerUrl).host} 登录账本 {provider.ledgerId}
             </button>)}
           </section>}
-          {health?.claimed && <PasswordRecovery baseUrl={address} onComplete={(value) => { setUsername(value); setRegistering(false); }} />}
-          {message && <div role="status" style={{ marginTop: 12, color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{message}</div>}
-          {error && <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{error}</div>}
         </div>
       </section>
     </main>
   );
 }
 
-import { btnOutline, btnPrimary } from './styles.js';
+import { btnOutline } from './styles.js';
