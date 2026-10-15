@@ -51,15 +51,19 @@ for (const width of [1280, 390]) {
     try {
       await clickAdminLink(page, '用户管理');
       const user = page.getByRole('row').filter({ hasText: 'sample-user' }).first();
-      await expect(user.getByRole('button', { name: '禁用账号', exact: true })).toBeVisible();
+      const userAction = async (label) => {
+        const button = user.getByRole('button', { name: label, exact: true, includeHidden: true });
+        if (!(await button.isVisible())) await user.locator('summary').click();
+        await button.click();
+      };
+      await expect(user.locator('summary')).toHaveText('更多操作');
       await expect(page.getByRole('button', { name: '快捷处理', exact: true })).toHaveCount(0);
-      await user.getByRole('button', { name: '禁用账号', exact: true }).click();
+      await userAction('禁用账号');
       await expect(page.getByRole('button', { name: '确认禁用', exact: true })).toBeVisible();
       await page.getByRole('button', { name: '确认禁用', exact: true }).click();
-      await expect(user.getByRole('button', { name: '启用账号', exact: true })).toBeVisible();
-      await user.getByRole('button', { name: '启用账号', exact: true }).click();
+      await userAction('启用账号');
       await page.getByRole('button', { name: '确认启用', exact: true }).click();
-      await user.getByRole('button', { name: '调整提交配额', exact: true }).click();
+      await userAction('调整提交配额');
       await page.getByLabel('新的上限（GiB）').fill('1');
       await page.getByRole('button', { name: '保存', exact: true }).click();
       await expect(page.getByText('操作已完成。')).toBeVisible();
@@ -125,7 +129,8 @@ for (const width of [1280, 390]) {
         if (name === 'sync') expect(await page.locator('#section-诊断记录').evaluate((element) => element.offsetTop)).toBeLessThan(await page.locator('#section-错误分类').evaluate((element) => element.offsetTop));
         await capture(name);
       }
-      await page.getByRole('link', { name: '账号安全', exact: true }).click();
+      if (width === 390) await clickAdminLink(page, '账号安全');
+      else await page.getByRole('link', { name: '账号安全', exact: true }).click();
       await expect(page.getByRole('button', { name: '确认修改账号密码', exact: true })).toBeVisible();
       await capture('security');
     } finally { await f.close(); }

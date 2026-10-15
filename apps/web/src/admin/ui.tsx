@@ -2,7 +2,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { AdminError } from './client.js';
 
-export const panel: CSSProperties = { padding: 16, borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', marginTop: 12 };
+export const panel: CSSProperties = { padding: 'var(--sp-5)', borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)', marginTop: 12 };
 /** Keeps a jumped-to section clear of the sticky page header. */
 export const anchorOffset: CSSProperties = { scrollMarginTop: 16 };
 export const row: CSSProperties = { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' };
@@ -235,9 +235,9 @@ export function FilterBar({ children, note }: { children: ReactNode; note?: stri
 export function Panel({ title, id, action, children, note, className }: { title?: string; id?: string; action?: ReactNode; children: ReactNode; note?: string; className?: string }) {
   const anchor = id ?? (title ? sectionId(title) : undefined);
   return (
-    <section className={['zc-admin-panel', className].filter(Boolean).join(' ')} id={anchor} style={{ ...panel, ...(anchor ? anchorOffset : {}) }}>
+    <section className={['zc-admin-panel', className].filter(Boolean).join(' ')} id={anchor} style={anchor ? anchorOffset : undefined}>
       {(title || action) && (
-        <div style={{ ...row, justifyContent: 'space-between', marginBottom: 12 }}>
+        <div className="zc-admin-panel-header">
           {title ? <strong>{title}</strong> : <span />}
           {action}
         </div>
@@ -304,12 +304,11 @@ export function PanelIndex({ sections }: { sections: PageSection[] }) {
 }
 
 export function Stat({ label, value, hint, tone }: { label: string; value: ReactNode; hint?: string; tone?: 'warn' | 'bad' }) {
-  const color = tone === 'bad' ? 'var(--danger)' : tone === 'warn' ? 'var(--warning)' : undefined;
   return (
-    <div className="zc-admin-stat" style={{ padding: 14, borderRadius: 'var(--r-md)', background: 'var(--surface)', border: '1px solid var(--border)' }}>
-      <div style={muted}>{label}</div>
-      <div style={{ fontSize: 'var(--fs-display)', fontWeight: 'var(--fw-bold)', color }}>{value}</div>
-      {hint ? <div style={muted}>{hint}</div> : null}
+    <div className="zc-admin-stat" data-tone={tone}>
+      <div className="zc-admin-stat-label">{label}</div>
+      <div className="zc-admin-stat-value">{value}</div>
+      {hint ? <div className="zc-admin-stat-hint">{hint}</div> : null}
     </div>
   );
 }
@@ -379,11 +378,7 @@ export function Button({ children, ...props }: React.ButtonHTMLAttributes<HTMLBu
     <button
       type="button"
       {...props}
-      style={{
-        minHeight: 36, padding: '0 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)',
-        background: props.disabled ? 'var(--surface-muted)' : 'var(--surface)', cursor: props.disabled ? 'default' : 'pointer',
-        ...props.style,
-      }}
+      className={['zc-admin-button', props.className].filter(Boolean).join(' ')}
     >{children}</button>
   );
 }
@@ -615,7 +610,7 @@ export function DataTable<T>({ columns, rows, rowKey, empty, onRowClick, activeK
                   style={{ cursor: onRowClick ? 'pointer' : undefined, background: activeKey === key ? 'var(--surface-muted)' : undefined }}
                 >
                   {selection ? (
-                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', verticalAlign: 'top' }}>
+                    <td className="zc-admin-selection-cell" style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)', verticalAlign: 'top' }}>
                       <input
                         type="checkbox"
                         aria-label={`选择 ${key}`}

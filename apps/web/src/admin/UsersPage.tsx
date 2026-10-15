@@ -147,17 +147,22 @@ export function UsersPage({ client, query, navigate, role }: {
     { key: 'devices', header: '有效会话', ...sortHeader('devices', '有效会话'), optional: true, secondary: true, render: (user: AccountRow) => String(user.activeDeviceCount) },
     {
       key: 'actions', header: '操作', render: (user: AccountRow) => (
-        <div style={row}>
+        <div className="zc-admin-row-actions">
           <Button onClick={() => navigate(`/users/${user.accountId}`)}>详情</Button>
           {/* Reading a ledger is allowed on any account, so this needs no permission check —
               the server refuses only where it holds no key to decrypt with. */}
           <Button onClick={() => navigate(`/preview?username=${encodeURIComponent(user.username)}`)}>预览</Button>
-          {([
-            ['state', user.disabled ? '启用账号' : '禁用账号'], ['commit', '调整提交配额'],
-            ['blob', '调整附件配额'], ['role', '修改角色'], ['sessions', '撤销全部可管理会话'],
-          ] as const).map(([mode, label]) => <Button key={mode}
-            disabled={rowBusy || (mode === 'commit' || mode === 'blob' ? !canEditAccountQuota(role, user.role) : !canManage(user))}
-            onClick={() => { setRowNotice(''); setRowMode(mode); setOpenRow(user.accountId); }}>{label}</Button>)}
+          <details>
+            <summary>更多操作</summary>
+            <div className="zc-admin-row-menu">
+              {([
+                ['state', user.disabled ? '启用账号' : '禁用账号'], ['commit', '调整提交配额'],
+                ['blob', '调整附件配额'], ['role', '修改角色'], ['sessions', '撤销全部可管理会话'],
+              ] as const).map(([mode, label]) => <Button key={mode}
+                disabled={rowBusy || (mode === 'commit' || mode === 'blob' ? !canEditAccountQuota(role, user.role) : !canManage(user))}
+                onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); setRowNotice(''); setRowMode(mode); setOpenRow(user.accountId); }}>{label}</Button>)}
+            </div>
+          </details>
         </div>
       ),
     },

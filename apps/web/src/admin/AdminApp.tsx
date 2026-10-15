@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Activity, Bell, ExternalLink, HardDrive, LayoutDashboard, ListTodo, LogOut, Menu, Monitor, RefreshCw, ScrollText, Settings, ShieldCheck, Ticket, Users, X, type LucideIcon } from 'lucide-react';
 import { MfaRequiredError, type SyncAuthMe } from '@zichan/db';
 import {
   appearanceTokens,
@@ -29,8 +30,25 @@ import { PreviewPage } from './PreviewPage.js';
 import { UsersPage } from './UsersPage.js';
 import './admin.css';
 import { PasswordRecovery } from '../ui/PasswordRecovery.js';
+import { useBodyScrollLock } from '../ui/body-scroll-lock.js';
 import { Breadcrumbs, roleLabel } from './ui.js';
 import { adminNavigation } from './navigation.js';
+
+const navigationIcons: Record<string, LucideIcon> = {
+  '/overview': LayoutDashboard,
+  '/users': Users,
+  '/sessions': Monitor,
+  '/invites': Ticket,
+  '/storage': HardDrive,
+  '/monitor': Activity,
+  '/sync': RefreshCw,
+  '/jobs': ListTodo,
+  '/alerts': Bell,
+  '/logs': ScrollText,
+  '/audit': ShieldCheck,
+  '/security-events': ShieldCheck,
+  '/settings': Settings,
+};
 
 export function AdminApp({ baseUrl }: { baseUrl: string }) {
   const route = useRoute();
@@ -52,11 +70,13 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
   const themeMode = resolveThemeMode(appearance.mode, prefersDark);
   useEffect(() => subscribeSystemMode(() => setPrefersDark(systemPrefersDark())), []);
   useEffect(() => {
-    const tokens = appearanceTokens(appearance.theme, themeMode);
+    // The management console uses the same sage palette as the green ledger theme.
+    // Keep the device's light/dark preference while giving the console a stable identity.
+    const tokens = appearanceTokens('sage', themeMode);
     const restore = applyThemeTokens(document.documentElement, tokens, themeMode);
     applyBrowserChrome(tokens);
     return restore;
-  }, [appearance.theme, themeMode]);
+  }, [themeMode]);
   useEffect(() => {
     let active = true;
     const client = new AdminClient(baseUrl, (note) => { if (active) { setAccount(undefined); setPassword(''); setMfaChallenge(undefined); setMfaCode(''); setMessage(note); } });
@@ -169,25 +189,22 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
 
   return <main className="zc-admin-root" data-mode={themeMode}>
     <div className="zc-admin-frame">
-      <header className="zc-admin-topbar">
-        <div>
-          <div className="zc-admin-brand"><span aria-hidden="true">Z</span><h1>服务器管理后台</h1></div>
-          <p className="zc-admin-server">{baseUrl}</p>
+      <header className="zc-admin-topbar" data-authenticated={Boolean(account)}>
+        <div className="zc-admin-brand">
+          <span className="zc-admin-brand-mark" aria-hidden="true">资</span>
+          <div className="zc-admin-brand-copy">
+            <h1>资产生命周期</h1>
+            <span>服务器管理</span>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          {health ? (
-            <span title={`服务器 ${health.serverId}`}>
-              {health.claimed ? '已初始化' : '未初始化'}
-            </span>
-          ) : null}
-          <a href={`${baseUrl}/app/`}>打开记账应用</a>
-          {/* The console follows the device's light/dark mode, with its own operational palette. */}
-          <span style={{ color: 'var(--text-secondary)' }}>{themeMode === 'dark' ? '深色' : '浅色'}</span>
+        <div className="zc-admin-topbar-actions">
+          {health ? <span className="zc-admin-connection" title={`服务器 ${health.serverId}`}><span aria-hidden="true" />{health.claimed ? '管理服务已连接' : '等待初始化'}</span> : null}
+          <a className="zc-admin-app-link" href={`${baseUrl}/app/`}>打开记账应用</a>
           {account ? (
             <>
-              <span>{account.username} · {roleLabel(account.role)}</span>
-              <a href={adminHref(adminBasePath(window.location), '/security')} onClick={(event) => { event.preventDefault(); navigateRoute(adminHref(adminBasePath(window.location), '/security')); }}>账号安全</a>
-              <button onClick={() => void logout()}>退出管理后台</button>
+              <span className="zc-admin-operator"><strong>{account.username}</strong><small>{roleLabel(account.role)}</small></span>
+              <a className="zc-admin-security-link" href={adminHref(adminBasePath(window.location), '/security')} onClick={(event) => { event.preventDefault(); navigateRoute(adminHref(adminBasePath(window.location), '/security')); }}>账号安全</a>
+              <button className="zc-admin-logout" onClick={() => void logout()}><LogOut size={16} aria-hidden="true" />退出</button>
             </>
           ) : null}
         </div>
@@ -238,6 +255,8 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
   onSignedOut: (note: string) => void;
 }) {
   const route = useRoute();
+  const [navOpen, setNavOpen] = useState(false);
+  useBodyScrollLock(navOpen);
   const basePath = baseUrl.replace(/^https?:\/\/[^/]+/, '');
   const go = (to: string) => { navigateRoute(adminHref(basePath, to)); };
   const role = account.role;
@@ -267,6 +286,19 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
   useEffect(() => {
     if (/\/admin\/?$/.test(window.location.pathname)) navigateRoute(adminHref(basePath, '/overview'), { replace: true });
   }, [basePath]);
+  useEffect(() => { setNavOpen(false); }, [route.path]);
+  useEffect(() => {
+    if (!navOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setNavOpen(false); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [navOpen]);
+  useEffect(() => {
+    const mobileViewport = window.matchMedia('(max-width: 767px)');
+    const closeOnDesktop = () => { if (!mobileViewport.matches) setNavOpen(false); };
+    mobileViewport.addEventListener('change', closeOnDesktop);
+    return () => mobileViewport.removeEventListener('change', closeOnDesktop);
+  }, []);
 
   const page = (() => {
     const [first, second] = route.segments;
@@ -299,22 +331,37 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
 
   return (
     <div className="zc-admin-shell">
-      <nav className="zc-admin-nav" aria-label="管理后台导航">
+      <div className="zc-admin-mobile-bar">
+        <button type="button" aria-expanded={navOpen} aria-controls="zc-admin-navigation" onClick={() => setNavOpen((open) => !open)}>
+          {navOpen ? <X size={20} aria-hidden="true" /> : <Menu size={20} aria-hidden="true" />}<span>菜单</span>
+        </button>
+        <strong>{current.label}</strong>
+      </div>
+      {navOpen ? <button type="button" className="zc-admin-nav-scrim" aria-label="关闭管理导航" onClick={() => setNavOpen(false)} /> : null}
+      <nav id="zc-admin-navigation" className="zc-admin-nav" data-open={navOpen} aria-label="管理后台导航">
+        <div className="zc-admin-nav-intro"><span>工作台</span><small>{baseUrl}</small></div>
         {groups.map((group) => {
-          const link = (item: { path: string; label: string }) => (
+          const link = (item: { path: string; label: string }) => {
+          const Icon = navigationIcons[item.path];
+          return (
           <a
             key={item.path}
             href={adminHref(basePath, item.path)}
             aria-current={item === current ? 'page' : undefined}
             data-active={item === current ? 'true' : undefined}
-            onClick={(event) => { event.preventDefault(); go(item.path); }}
-          >{item.label}</a>
+            onClick={(event) => { event.preventDefault(); setNavOpen(false); go(item.path); }}
+          >{Icon ? <Icon size={17} strokeWidth={1.8} aria-hidden="true" /> : null}<span>{item.label}</span></a>
           );
+          };
           return <div className="zc-admin-nav-group" key={group.label}>
             <span className="zc-admin-nav-heading">{group.label}</span>
             {group.pages.map(link)}
           </div>;
         })}
+        <div className="zc-admin-nav-footer">
+          <a href={adminHref(basePath, '/security')} onClick={(event) => { event.preventDefault(); setNavOpen(false); go('/security'); }}><ShieldCheck size={17} strokeWidth={1.8} aria-hidden="true" /><span>账号安全</span></a>
+          <a href={`${baseUrl}/app/`}><ExternalLink size={17} strokeWidth={1.8} aria-hidden="true" /><span>打开记账应用</span></a>
+        </div>
       </nav>
       <section className="zc-admin-content">
         <Breadcrumbs

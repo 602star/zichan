@@ -39,7 +39,9 @@ for (const width of [1280, 390]) {
       await expect(page.locator('#section-核心指标')).toBeVisible();
       await expect(page.locator('.zc-admin-nav details')).toHaveCount(0);
       const navigation = page.getByRole('navigation', { name: '管理后台导航' });
+      if (width <= 767) await page.getByRole('button', { name: '菜单' }).click();
       for (const link of await navigation.getByRole('link').all()) await expect(link).toBeVisible();
+      if (width <= 767) await page.getByRole('button', { name: '关闭管理导航' }).click();
       await expect(page.locator('.zc-admin-dashboard details')).toHaveCount(0);
       await expect(page.locator('#section-维护窗口')).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath(`overview-${width}.png`), fullPage: true });
@@ -112,6 +114,7 @@ test('dark console keeps direct navigation and returns to the same page', async 
     await page.goBack();
     await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
     await clickAdminLink(page, '系统设置');
+    await page.getByRole('tab', { name: '备份计划' }).click();
     await expect(page.locator('.zc-admin-deployment')).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('settings-dark.png'), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

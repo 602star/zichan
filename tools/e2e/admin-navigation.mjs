@@ -4,6 +4,11 @@ import { expect } from '@playwright/test';
 export async function clickAdminLink(page, name) {
   const nav = page.getByRole('navigation', { name: '管理后台导航' });
   const link = nav.getByRole('link', { name, exact: true, includeHidden: true });
+  const menu = page.getByRole('button', { name: '菜单' });
+  if (await menu.isVisible() && await menu.getAttribute('aria-expanded') !== 'true') {
+    await menu.click();
+    await expect(nav).toHaveAttribute('data-open', 'true');
+  }
   await expect(link).toBeVisible();
   await link.click();
 }

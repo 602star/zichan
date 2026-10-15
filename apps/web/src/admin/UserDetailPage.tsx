@@ -100,7 +100,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
       </Panel>
 
       <Panel title="账号信息">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+        <div className="zc-admin-grid zc-admin-detail-stats">
           <Stat label="accountId" value={<span style={row}><code style={{ fontSize: 'var(--fs-sm)' }}>{account.accountId}</code><CopyValue value={account.accountId} /></span>} />
           <Stat label="登录账号" value={account.username} />
           <Stat label="昵称" value={account.displayName || '未设置'} />
@@ -118,7 +118,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
       </Panel>
 
       <Panel title="容量与配额" note={capacity.quotaNote}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+        <div className="zc-admin-grid zc-admin-detail-stats">
           <Stat label="加密提交用量" value={bytes(capacity.commitBytes)} hint={`上限 ${quotaLimit(capacity.commitQuotaBytes)}`} />
           <Stat label="提交条数" value={String(capacity.commitCount)} hint={`headSeq ${capacity.headSeq}`} />
           <Stat label="附件用量" value={bytes(capacity.blobUsedBytes)} hint={`上限 ${quotaLimit(capacity.blobQuotaBytes)}；对象 ${capacity.blobObjectCount}`} />
