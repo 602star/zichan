@@ -31,10 +31,9 @@ function seriesValue(bucket: Metrics['buckets'][number], key: SeriesKey): number
 
 /** Silence windows offered in the console: one shift, one day, one week. */
 
-export function OverviewPage({ client, navigate, accountName, role }: {
+export function OverviewPage({ client, navigate, role }: {
   client: AdminClient;
   navigate: (to: string) => void;
-  accountName: string;
   role: string;
 }) {
   const [range, setRange] = useState<(typeof RANGES)[number]>('24h');
@@ -176,10 +175,6 @@ export function OverviewPage({ client, navigate, accountName, role }: {
             </li>)}</ul>
           </div>
         ) : null}
-        <p style={{ marginTop: 8 }}>
-          <Button onClick={() => navigate('/users?quota=over')}>查看超额账号</Button>
-          <span style={muted}> 当前管理员：{accountName}</span>
-        </p>
       </Panel>
 
       <Panel title="常用操作">

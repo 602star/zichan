@@ -322,7 +322,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
       // instead of leaving a dead session on screen that fails on the next click.
       case 'security': return <SecurityPage client={client} username={account.username} role={role} onPasswordChanged={() => { onSignedOut('账号密码已修改，请用新密码重新登录。'); }} />;
       case 'settings': return <SettingsPage client={client} role={role} query={route.query} navigate={go} />;
-      default: return <OverviewPage client={client} navigate={go} accountName={account.username} role={role} />;
+      default: return <OverviewPage client={client} navigate={go} role={role} />;
     }
   })();
 
