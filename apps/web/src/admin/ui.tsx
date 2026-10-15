@@ -519,17 +519,18 @@ export function useRowSelection(rows: { accountId: string }[]): {
 }
 
 /** The column-visibility control, rendered next to a table's other controls. */
-export function ColumnPicker({ columns, hidden, onToggle, onReset }: {
+export function ColumnPicker({ columns, hidden, onToggle, onReset, label = '列显示' }: {
   columns: { key: string; header: string; optional?: boolean }[];
   hidden: string[];
   onToggle: (key: string) => void;
   onReset: () => void;
+  label?: string;
 }) {
   const optional = columns.filter((column) => column.optional);
   if (!optional.length) return null;
   return (
     <details style={{ display: 'inline-block' }}>
-      <summary style={{ cursor: 'pointer', ...muted }}>列显示{hidden.length ? `（已隐藏 ${hidden.length} 列）` : ''}</summary>
+      <summary style={{ cursor: 'pointer', ...muted }}>{label}{hidden.length ? `（已隐藏 ${hidden.length} 项）` : ''}</summary>
       <div style={{ ...row, marginTop: 6, maxWidth: 420 }}>
         {optional.map((column) => (
           <label key={column.key} style={{ ...muted, display: 'inline-flex', gap: 4, alignItems: 'center' }}>

@@ -2,20 +2,14 @@
 import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { AccountActions, type AccountActionMode } from './AccountActions.js';
-import { PageHeader, FilterBar, Badge, Button, ColumnPicker, CopyValue, DataTable, Field, Loading, Notice, Panel, Pager, Select, TextInput, bytes, canEditAccountQuota, canManageAccount, muted, quotaLimit, roleLabel, row, useCursorPager, useHiddenColumns, useResource, useRowSelection, when } from './ui.js';
-import { PageSizeSelect, listParamsQuery, readListParams, sortableHeader, type SortChoice } from './list-controls.js';
+import { PageHeader, FilterBar, Badge, Button, ColumnPicker, CopyValue, Field, Loading, Notice, Panel, Pager, Select, TextInput, bytes, canEditAccountQuota, canManageAccount, muted, quotaLimit, roleLabel, row, useCursorPager, useHiddenColumns, useResource, useRowSelection, when } from './ui.js';
+import { PageSizeSelect, listParamsQuery, readListParams } from './list-controls.js';
 import { BULK_LABELS, partitionSelection, runBulkAction, type BulkAction, type BulkOutcome } from './bulk-actions.js';
 import type { AccountRow } from './types.js';
 
 /**
- * The columns this list can be ordered by. Anything not listed here has no server-side ordering,
- * and a header that sorts in the browser would reorder the current page only.
- */
-/**
- * Columns that may be turned off, listed separately from the render functions so the visibility
- * hook can prune keys this table no longer has. Keeping it next to the table would work too, but
- * then the hook would have to run after the columns are built — and a stale hidden key would come
- * back as a phantom the first time a column is renamed.
+ * Optional facts stay in the existing visibility preference when the list switches from a table
+ * to cards, so operators do not lose the information choices they already made.
  */
 const OPTIONAL_COLUMNS = [
   { key: 'protection', header: '保护模式', optional: true },
@@ -25,17 +19,11 @@ const OPTIONAL_COLUMNS = [
   { key: 'devices', header: '有效会话', optional: true },
 ];
 
-const SORTS: SortChoice[] = [
-  { key: 'created', label: '创建时间' },
-  { key: 'name', label: '用户名', first: 'asc' },
-  { key: 'lastLogin', label: '最近登录' },
-  { key: 'lastSync', label: '最近成功同步' },
-  { key: 'devices', label: '有效会话' },
-  { key: 'usage', label: '容量占用' },
-];
-
 const quotaTone = (state: AccountRow['quotaState']) => state === 'over' ? 'bad' as const : state === 'warning' ? 'warn' as const : 'ok' as const;
 const quotaLabel = (state: AccountRow['quotaState']) => state === 'over' ? '已超额' : state === 'warning' ? '接近上限' : '正常';
+const protectionLabel = (mode: AccountRow['protectionMode']) => mode === 'managed' ? '云端托管' : mode === 'relay' ? '中继' : '未设置';
+const quotaPercent = (user: AccountRow): number | undefined => user.commitQuotaBytes === null
+  ? undefined : user.commitQuotaBytes <= 0 ? 100 : Math.min(100, Math.max(0, user.commitBytes / user.commitQuotaBytes * 100));
 
 /**
  * States the scope of a bulk action before it runs.
@@ -113,67 +101,17 @@ export function UsersPage({ client, query, navigate, role }: {
   // The sort the server actually used, which is not always the one that was asked for: a page
   // built against an older server must show what it got rather than what it wanted.
   const appliedSort = list.data?.sort ?? { key: listParams.sort, direction: listParams.direction };
-  // One spreadable value per column, so the clickable header and the announced sort state cannot
-  // drift apart.
-  const sortHeader = (key: string, label: string) => sortableHeader(
-    SORTS.find((entry) => entry.key === key) ?? { key, label },
-    appliedSort.key,
-    appliedSort.direction,
-    (next) => update({ sort: next.sort, dir: next.dir }),
-  );
-
   const canManage = (user: AccountRow) => canManageAccount(role, user.role);
-  const columns = [
-    { key: 'username', header: '登录账号 / 昵称', ...sortHeader('name', '登录账号'), render: (user: AccountRow) => <span><button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => navigate(`/users/${user.accountId}`)}>{user.username}</button>{user.displayName && <span style={{ display: 'block', ...muted }}>{user.displayName}</span>}</span> },
-    { key: 'role', header: '角色', render: (user: AccountRow) => roleLabel(user.role) },
-    { key: 'state', header: '启用状态', render: (user: AccountRow) => user.disabled ? <Badge tone="bad">已禁用</Badge> : <Badge tone="ok">正常</Badge> },
-    // The account id is what appears in logs, audit rows and support tickets, but the list only
-    // ever showed it as a link target: an operator who needed to quote it had to open the detail
-    // page first. The value stays on screen — a column headed 账号 ID that only offers a button
-    // labelled the same thing shows nothing to read.
-    { key: 'accountId', header: '账号 ID', optional: true, secondary: true, render: (user: AccountRow) => <span style={row}><code style={{ fontSize: 'var(--fs-sm)' }}>{user.accountId}</code><CopyValue value={user.accountId} /></span> },
-    { key: 'protection', header: '保护模式', optional: true, render: (user: AccountRow) => user.protectionMode === 'managed' ? '云端托管' : user.protectionMode === 'relay' ? '中继' : '未设置' },
-    {
-      key: 'quota', header: '容量使用率', ...sortHeader('usage', '容量使用率'), render: (user: AccountRow) => (
-        <span>
-          <Badge tone={quotaTone(user.quotaState)}>{user.commitQuotaBytes === null ? '无限' : quotaLabel(user.quotaState)}</Badge>{' '}
-          <span style={muted}>{bytes(user.commitBytes)} / {quotaLimit(user.commitQuotaBytes)}</span>
-        </span>
-      ),
-    },
-    { key: 'created', header: '创建时间', ...sortHeader('created', '创建时间'), optional: true, secondary: true, render: (user: AccountRow) => when(user.createdAt) },
-    { key: 'sync', header: '最近成功同步', ...sortHeader('lastSync', '最近成功同步'), optional: true, secondary: true, render: (user: AccountRow) => when(user.lastSyncAt) },
-    { key: 'login', header: '最近登录', ...sortHeader('lastLogin', '最近登录'), optional: true, secondary: true, render: (user: AccountRow) => when(user.lastLoginAt) },
-    { key: 'devices', header: '有效会话', ...sortHeader('devices', '有效会话'), optional: true, secondary: true, render: (user: AccountRow) => String(user.activeDeviceCount) },
-    {
-      key: 'actions', header: '操作', render: (user: AccountRow) => (
-        <div className="zc-admin-row-actions">
-          <Button onClick={() => navigate(`/users/${user.accountId}`)}>详情</Button>
-          {/* Reading a ledger is allowed on any account, so this needs no permission check —
-              the server refuses only where it holds no key to decrypt with. */}
-          <Button onClick={() => navigate(`/preview?username=${encodeURIComponent(user.username)}`)}>预览</Button>
-          <details>
-            <summary>更多操作</summary>
-            <div className="zc-admin-row-menu">
-              {([
-                ['state', user.disabled ? '启用账号' : '禁用账号'], ['commit', '调整提交配额'],
-                ['blob', '调整附件配额'], ['role', '修改角色'], ['sessions', '撤销全部可管理会话'],
-              ] as const).map(([mode, label]) => <Button key={mode}
-                disabled={rowBusy || (mode === 'commit' || mode === 'blob' ? !canEditAccountQuota(role, user.role) : !canManage(user))}
-                onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); setRowNotice(''); setRowMode(mode); setOpenRow(user.accountId); }}>{label}</Button>)}
-            </div>
-          </details>
-        </div>
-      ),
-    },
-  ];
+  const selectableKeys = rows.filter(canManage).map((user) => user.accountId);
+  const allSelected = selectableKeys.length > 0 && selectableKeys.every((key) => selection.selected.includes(key));
+  const showActivity = ['protection', 'created', 'sync', 'login', 'devices'].some((key) => !hidden.includes(key));
 
   return (
     <>
-      <PageHeader title="用户管理" description="查找账号、预览记账，或直接处理访问与配额。" actions={<><Button onClick={list.reload}>刷新</Button></>} />
+      <PageHeader title="用户管理" description="查找账号，查看容量和近期活动，或处理访问权限与配额。" actions={<><Button onClick={list.reload}>刷新</Button></>} />
       <FilterBar note="筛选条件会写入地址栏；分享或刷新链接会保留当前视图。">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-          <Field label="登录账号、昵称或 accountId">
+          <Field label="登录账号、昵称或账号 ID">
             <TextInput value={searchDraft} maxLength={128} onChange={(event) => setSearchDraft(event.target.value)}
               onKeyDown={(event) => { if (event.key === 'Enter') update({ search: searchDraft }); }} />
           </Field>
@@ -204,11 +142,29 @@ export function UsersPage({ client, query, navigate, role }: {
         </div>
       </FilterBar>
 
-      <Panel title="用户列表" className="zc-admin-user-records">
+      <Panel title="用户列表" className="zc-admin-user-records" note="账号卡片按当前排序展示；批量操作只作用于当前页已选账号。">
         {rowNotice ? <Notice>{rowNotice}</Notice> : null}
-        <div style={{ ...row, marginBottom: 8 }}>
+        <div className="zc-admin-user-toolbar">
+          <Field label="排序">
+            <Select value={`${appliedSort.key}:${appliedSort.direction}`} onChange={(event) => {
+              const [sort, dir] = event.target.value.split(':');
+              update({ sort, dir });
+            }}>
+              <option value="created:desc">创建时间：最新在前</option><option value="created:asc">创建时间：最早在前</option>
+              <option value="name:asc">登录账号：正序</option><option value="name:desc">登录账号：倒序</option>
+              <option value="lastLogin:desc">最近登录：最新在前</option><option value="lastLogin:asc">最近登录：最早在前</option>
+              <option value="lastSync:desc">最近同步：最新在前</option><option value="lastSync:asc">最近同步：最早在前</option>
+              <option value="devices:desc">有效会话：多到少</option><option value="devices:asc">有效会话：少到多</option>
+              <option value="usage:desc">容量占用：多到少</option><option value="usage:asc">容量占用：少到多</option>
+            </Select>
+          </Field>
           <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} />
-          <ColumnPicker columns={columns} hidden={hidden} onToggle={toggle} onReset={reset} />
+          <ColumnPicker columns={OPTIONAL_COLUMNS} hidden={hidden} onToggle={toggle} onReset={reset} label="卡片信息" />
+          <label className="zc-admin-user-select-all">
+            <input type="checkbox" checked={allSelected} disabled={!selectableKeys.length}
+              aria-label="选择本页可管理的账号" onChange={() => selection.setAll(allSelected ? [] : selectableKeys)} />
+            选择本页可管理账号
+          </label>
         </div>
         {selection.selected.length ? (
           <div style={{ ...row, marginBottom: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}>
@@ -244,37 +200,75 @@ export function UsersPage({ client, query, navigate, role }: {
         ) : null}
         {bulkOutcome ? <Notice tone={bulkOutcome.failed.length ? 'warn' : undefined}><span style={{ whiteSpace: 'pre-wrap' }}>{bulkOutcome.lines.join('\n')}</span></Notice> : null}
         <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
-        <DataTable
-          columns={columns}
-          hiddenColumns={hidden}
-          rows={rows}
-          rowKey={(user) => user.accountId}
-          activeKey={openRow || undefined}
-          selection={{
-            selected: selection.selected,
-            onToggle: selection.toggle,
-            onToggleAll: selection.setAll,
-            selectable: canManage,
-            reason: (user) => user.role === 'owner' ? '所有者账号不可批量处理' : '你的角色不能管理该账号',
-            label: '选择本页可管理的账号',
-          }}
-          renderExpanded={(user) => (
-            <div><Button disabled={rowBusy} onClick={() => setOpenRow('')}>关闭处理面板</Button><AccountActions
-              key={user.accountId + rowMode} initialMode={rowMode} hideTriggers
-              onBusyChange={setRowBusy}
-              client={client}
-              target={{
-                accountId: user.accountId, username: user.username, role: user.role, revision: user.revision,
-                disabled: user.disabled, commitBytes: user.commitBytes, commitQuotaBytes: user.commitQuotaBytes,
-                activeDeviceCount: user.activeDeviceCount,
-              }}
-              canManage={canManage(user)}
-              canEditQuota={canEditAccountQuota(role, user.role)}
-              onDone={() => { setOpenRow(''); setRowNotice(`${user.username}：操作已完成。`); list.reload(); }}
-            /></div>
-          )}
-          empty="没有符合条件的账号。"
-        />
+        {rows.length ? <div className={`zc-admin-user-card-grid${rows.some((user) => user.accountId === openRow) ? ' is-editing' : ''}`}>
+          {rows.map((user) => {
+            const active = openRow === user.accountId;
+            const percent = quotaPercent(user);
+            const allowed = canManage(user);
+            return <article key={user.accountId} className="zc-admin-user-card"
+              data-disabled={user.disabled} data-quota={user.quotaState} data-active={active}>
+              <div className="zc-admin-user-card-head">
+                <input type="checkbox" checked={selection.selected.includes(user.accountId)} disabled={!allowed}
+                  aria-label={`选择 ${user.username}`} title={!allowed ? user.role === 'owner' ? '所有者账号不可批量处理' : '你的角色不能管理该账号' : undefined}
+                  onChange={() => selection.toggle(user.accountId)} />
+                <div className="zc-admin-user-identity">
+                  <button type="button" className="zc-admin-user-name" onClick={() => navigate(`/users/${user.accountId}`)}>{user.username}</button>
+                  {user.displayName ? <span>{user.displayName}</span> : null}
+                </div>
+                <div className="zc-admin-user-badges">
+                  <Badge tone="muted">{roleLabel(user.role)}</Badge>
+                  <Badge tone={user.disabled ? 'bad' : 'ok'}>{user.disabled ? '已禁用' : '正常'}</Badge>
+                </div>
+              </div>
+              <div className="zc-admin-user-quota">
+                <div className="zc-admin-user-quota-top">
+                  <span>加密记录容量</span>
+                  <Badge tone={quotaTone(user.quotaState)}>{user.commitQuotaBytes === null ? '无限额' : quotaLabel(user.quotaState)}</Badge>
+                </div>
+                <strong>{bytes(user.commitBytes)} <span>/ {quotaLimit(user.commitQuotaBytes)}</span></strong>
+                {percent !== undefined ? <div className="zc-admin-user-meter" role="meter" aria-label={`${user.username} 容量使用率`}
+                  aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent)}>
+                  <span style={{ width: `${percent}%` }} />
+                </div> : null}
+              </div>
+              {showActivity ? <dl className="zc-admin-user-facts">
+                {!hidden.includes('protection') ? <div><dt>保护模式</dt><dd>{protectionLabel(user.protectionMode)}</dd></div> : null}
+                {!hidden.includes('sync') ? <div><dt>最近成功同步</dt><dd>{when(user.lastSyncAt)}</dd></div> : null}
+                {!hidden.includes('login') ? <div><dt>最近登录</dt><dd>{when(user.lastLoginAt)}</dd></div> : null}
+                {!hidden.includes('devices') ? <div><dt>有效会话</dt><dd>{user.activeDeviceCount}</dd></div> : null}
+                {!hidden.includes('created') ? <div><dt>创建时间</dt><dd>{when(user.createdAt)}</dd></div> : null}
+              </dl> : null}
+              <div className="zc-admin-user-card-footer">
+                <div className="zc-admin-user-id"><span>账号 ID</span><code>{user.accountId}</code><CopyValue value={user.accountId} /></div>
+                <div className="zc-admin-row-actions">
+                  <Button onClick={() => navigate(`/users/${user.accountId}`)}>账号详情</Button>
+                  <Button onClick={() => navigate(`/preview?username=${encodeURIComponent(user.username)}`)}>预览账本</Button>
+                  <details>
+                    <summary>更多操作</summary>
+                    <div className="zc-admin-row-menu">
+                      {([
+                        ['state', user.disabled ? '启用账号' : '禁用账号'], ['commit', '调整提交配额'],
+                        ['blob', '调整附件配额'], ['role', '修改角色'], ['sessions', '撤销全部可管理会话'],
+                      ] as const).map(([mode, label]) => <Button key={mode}
+                        disabled={rowBusy || (mode === 'commit' || mode === 'blob' ? !canEditAccountQuota(role, user.role) : !allowed)}
+                        onClick={(event) => { event.currentTarget.closest('details')?.removeAttribute('open'); setRowNotice(''); setRowMode(mode); setOpenRow(user.accountId); }}>{label}</Button>)}
+                    </div>
+                  </details>
+                </div>
+              </div>
+              {active ? <div className="zc-admin-user-action-panel">
+                <Button disabled={rowBusy} onClick={() => setOpenRow('')}>关闭处理面板</Button>
+                <AccountActions key={user.accountId + rowMode} initialMode={rowMode} hideTriggers
+                  onBusyChange={setRowBusy} client={client}
+                  target={{ accountId: user.accountId, username: user.username, role: user.role, revision: user.revision,
+                    disabled: user.disabled, commitBytes: user.commitBytes, commitQuotaBytes: user.commitQuotaBytes,
+                    activeDeviceCount: user.activeDeviceCount }}
+                  canManage={allowed} canEditQuota={canEditAccountQuota(role, user.role)}
+                  onDone={() => { setOpenRow(''); setRowNotice(`${user.username}：操作已完成。`); list.reload(); }} />
+              </div> : null}
+            </article>;
+          })}
+        </div> : !list.loading && !list.error ? <p style={muted}>没有符合条件的账号。</p> : null}
         <Pager
           page={pager.page}
           hasNext={Boolean(list.data?.nextCursor)}
