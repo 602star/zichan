@@ -223,6 +223,38 @@
 .zc-admin-monitor-event { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .zc-admin-monitor-event > span { min-width: 0; overflow-wrap: anywhere; }
 .zc-admin-chart-title { font-size: var(--fs-body); margin: 16px 0 4px; }
+.zc-admin-log-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 12px 18px; margin: 0 0 16px; }
+.zc-admin-log-toolbar > * { min-width: min(100%, 210px); }
+.zc-admin-log-toolbar select { width: 100%; }
+.zc-admin-log-list { display: grid; gap: 12px; }
+.zc-admin-log-card { min-width: 0; padding: 16px 18px; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--r-md); background: var(--surface-2); }
+.zc-admin-log-card[data-level="warn"] { border-left-color: var(--warning); }
+.zc-admin-log-card[data-level="error"] { border-left-color: var(--danger); }
+.zc-admin-log-head, .zc-admin-log-bottom { display: flex; align-items: start; justify-content: space-between; gap: 10px 18px; }
+.zc-admin-log-head time { flex: none; color: var(--text-secondary); font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
+.zc-admin-log-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 11px; min-width: 0; }
+.zc-admin-log-title strong { font-size: var(--fs-body); overflow-wrap: anywhere; }
+.zc-admin-log-summary { margin: 9px 0 14px; line-height: 1.55; }
+.zc-admin-log-bottom { align-items: center; }
+.zc-admin-log-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.zc-admin-log-chips span { max-width: 100%; padding: 4px 9px; border-radius: var(--r-pill); background: var(--surface); color: var(--text-secondary); font-size: var(--fs-caption); overflow-wrap: anywhere; }
+.zc-admin-log-bottom > button { flex: none; }
+.zc-admin-log-detail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.zc-admin-log-detail > * { min-width: 0; }
+.zc-admin-log-detail h4 { margin: 0 0 10px; font-size: var(--fs-body); }
+.zc-admin-log-detail dl { display: grid; gap: 7px; margin: 0; }
+.zc-admin-log-detail dl > div { display: grid; grid-template-columns: minmax(84px, 30%) minmax(0, 1fr); gap: 10px; }
+.zc-admin-log-detail dt { color: var(--text-secondary); font-size: var(--fs-caption); }
+.zc-admin-log-detail dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: var(--fs-caption); }
+.zc-admin-log-request p { margin: 0 0 10px; overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: var(--fs-caption); }
+.zc-admin-log-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.zc-admin-log-raw { grid-column: 1 / -1; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); }
+.zc-admin-log-raw summary { cursor: pointer; font-size: var(--fs-caption); font-weight: var(--fw-medium); }
+.zc-admin-log-raw[open] summary { margin-bottom: 12px; }
+.zc-admin-log-raw pre { max-height: 300px; overflow: auto; margin: 12px 0 0; padding: 12px; border-radius: var(--r-sm); background: var(--surface-2); font-size: var(--fs-caption); }
+.zc-admin-log-empty { margin: 18px 0; color: var(--text-secondary); }
+.zc-admin-log-pager { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.zc-admin-log-pager span { margin-right: 4px; color: var(--text-secondary); font-size: var(--fs-caption); }
 @media (min-width: 768px) {
   /* Keep every user field readable and every action visible without a horizontal scroll. */
   .zc-admin-user-records table, .zc-admin-user-records tbody { display: block; min-width: 0; }
@@ -244,6 +276,11 @@
 }
 @media (max-width: 767px) {
   .zc-admin-page-header { margin-bottom: 12px; }
+  .zc-admin-log-card { padding: 13px; }
+  .zc-admin-log-head, .zc-admin-log-bottom { flex-wrap: wrap; }
+  .zc-admin-log-head time { width: 100%; }
+  .zc-admin-log-detail { grid-template-columns: minmax(0, 1fr); }
+  .zc-admin-log-toolbar > * { flex: 1 1 100%; }
   .zc-admin-monitor-stats, .zc-admin-monitor-mini-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .zc-admin-monitor-stats > button:first-child { grid-column: 1 / -1; }
   .zc-admin-two-column, .zc-admin-security-workspace, .zc-admin-resource-workspace, .zc-admin-monitor-grid { display: block; }

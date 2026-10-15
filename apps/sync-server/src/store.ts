@@ -39,6 +39,7 @@ export const SESSION_SORT_OPTIONS: Record<string, SortOption> = {
 export const LOG_SORT_OPTIONS: Record<string, SortOption> = {
   at: { expr: 'at', tiebreaker: 'id', column: 'at' },
   level: { expr: 'level', tiebreaker: 'id', column: 'level' },
+  severity: { expr: "CASE level WHEN 'error' THEN 3 WHEN 'warn' THEN 2 WHEN 'info' THEN 1 ELSE 0 END", tiebreaker: 'id', column: 'level_rank', numeric: true },
   action: { expr: 'action COLLATE NOCASE', tiebreaker: 'id', column: 'action' },
   username: { expr: "COALESCE(username, '') COLLATE NOCASE", tiebreaker: 'id', column: 'username' },
 };
@@ -6853,7 +6854,7 @@ END;`);
     if (cursorClause) clauses.push(cursorClause.sql);
     // Lets an operator jump from an error message straight to the request log line.
     if (options.requestId) { clauses.push("instr(COALESCE(detail_json, ''), ?) > 0"); params.push(options.requestId); }
-    let sql = 'SELECT * FROM server_logs';
+    let sql = "SELECT *, CASE level WHEN 'error' THEN 3 WHEN 'warn' THEN 2 WHEN 'info' THEN 1 ELSE 0 END AS level_rank FROM server_logs";
     if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
     sql += ` ORDER BY ${sort.orderBy} LIMIT ?`;
     params.push(...(cursorClause ? cursorClause.params : []), options.limit + 1);

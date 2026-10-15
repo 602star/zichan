@@ -3,24 +3,10 @@ import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { TrendChart } from './chart.js';
 import { AccountFilter, TimeRangeFilter } from './filters.js';
+import { logActionGroup, logActionOption, logActionTitle, logDetailLabel, logDetailValue, logLevelLabel, logRequestId, logSummary } from './log-presentation.js';
 import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Pager, PageHeader, FilterBar, Select, Stat, TextInput, message, muted, row, useActionError, useHiddenColumns, useResource, when } from './ui.js';
 import { PageSizeSelect, SortHeader, listParamsQuery, readListParams, type SortChoice } from './list-controls.js';
 import type { AuditEntry, LogEntry } from './types.js';
-
-/** Sortable columns of the run log; only these have a server-side ordering. */
-const LOG_SORTS: SortChoice[] = [
-  { key: 'at', label: '时间' },
-  { key: 'level', label: '级别', first: 'asc' },
-  { key: 'action', label: '动作', first: 'asc' },
-  { key: 'username', label: '用户', first: 'asc' },
-];
-
-/** Optional columns of the run log, listed once so the picker and the table cannot disagree. */
-const LOG_OPTIONAL_COLUMNS = [
-  { key: 'status', header: '状态码', optional: true },
-  { key: 'user', header: '用户', optional: true },
-  { key: 'request', header: '请求 ID', optional: true },
-];
 
 /** Sortable columns of the management audit. */
 const AUDIT_SORTS: SortChoice[] = [
@@ -55,8 +41,9 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
   const [requestDraft, setRequestDraft] = useState(requestId);
   const [cursor, setCursor] = useState('');
   const [stack, setStack] = useState<string[]>(['']);
-  const listParams = readListParams(query, { sort: 'at', dir: 'desc', limit: 100 });
-  const { hidden, toggle, reset } = useHiddenColumns('logs', LOG_OPTIONAL_COLUMNS);
+  const [expanded, setExpanded] = useState<string>();
+  const [copiedRequestId, setCopiedRequestId] = useState('');
+  const listParams = readListParams(query, { sort: 'at', dir: 'desc', limit: 100 }, [50, 100, 200, 500]);
   // An export that silently does nothing is worse than one that says why it failed, so a
   // failed download is reported in-page like every other action on this console.
   // Named `exportError` because `action` is already the URL action filter on this page.
@@ -78,40 +65,40 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
     for (const [key, value] of Object.entries(patch)) { if (!value) next.delete(key); else next.set(key, value); }
     next.delete('cursor');
     setCursor(''); setStack(['']);
+    setExpanded(undefined);
     navigate(`/logs${next.toString() ? `?${next.toString()}` : ''}`);
   };
-  // The sort the server actually used, which is not always the one that was asked for.
   const appliedSort = list.data?.sort ?? { key: listParams.sort, direction: listParams.direction };
-  const sortHeader = (key: string, label: string) => (
-    <SortHeader
-      choice={LOG_SORTS.find((entry) => entry.key === key) ?? { key, label }}
-      sort={appliedSort.key}
-      direction={appliedSort.direction}
-      onSort={(next) => update({ sort: next.sort, dir: next.dir })}
-    />
-  );
+  const actionOptions = [...new Set([...(list.data?.actions ?? []), ...(action ? [action] : [])])].sort((a, b) =>
+    logActionGroup(a).localeCompare(logActionGroup(b), 'zh-CN') || logActionTitle(a).localeCompare(logActionTitle(b), 'zh-CN'));
+  const actionGroups = [...new Set(actionOptions.map(logActionGroup))];
+  const rangeLabel = { '1h': '近 1 小时', '24h': '近 24 小时', '7d': '近 7 天' }[summaryRange];
+  const copyRequestId = (value: string): void => {
+    if (!navigator.clipboard?.writeText) { exportError.setError('当前浏览器无法复制请求 ID，请从详情中手动复制。'); return; }
+    void navigator.clipboard.writeText(value).then(() => { setCopiedRequestId(value); exportError.clear(); }).catch((caught) => exportError.setError(`复制请求 ID 失败：${message(caught)}`));
+  };
 
   return (
     <>
-      <PageHeader title="运行日志" description="按账号、请求和时间定位问题；导出遵循当前筛选并脱敏。" actions={<><Button onClick={() => { list.reload(); summary.reload(); }}>刷新</Button><Button onClick={() => void exportLogs(client, 'json', exportQuery.toString()).then(exportError.clear).catch((caught) => exportError.setError(message(caught)))}>导出 JSON</Button><Button onClick={() => void exportLogs(client, 'csv', exportQuery.toString()).then(exportError.clear).catch((caught) => exportError.setError(message(caught)))}>导出 CSV</Button></>} />
+      <PageHeader title="运行日志" description="先看发生了什么，再展开查看请求和技术信息。可按账号、时间、事件或请求定位问题。" actions={<><Button onClick={() => { list.reload(); summary.reload(); }}>刷新</Button><Button onClick={() => void exportLogs(client, 'json', exportQuery.toString()).then(exportError.clear).catch((caught) => exportError.setError(message(caught)))}>导出 JSON</Button><Button onClick={() => void exportLogs(client, 'csv', exportQuery.toString()).then(exportError.clear).catch((caught) => exportError.setError(message(caught)))}>导出 CSV</Button></>} />
       {exportError.error ? <Notice tone="warn">{exportError.error}</Notice> : null}
       {requestId ? <Notice>正在按请求 {requestId} 关联日志。</Notice> : null}
 
-      <Panel title="日志趋势" note={summary.data?.note ?? '趋势统计服务端保留的全部日志，不受下方明细筛选和分页影响。'}
+      <Panel title="日志概况" note={`${summary.data?.note ?? '仅统计服务端当前保留的日志。'} 下方筛选和分页不影响此统计；普通记录不等于操作成功，需关注也不一定代表服务故障。`}
         action={<div className="zc-admin-view-switch" aria-label="日志趋势时间范围">
-          {(['1h', '24h', '7d'] as const).map((range) => <Button key={range} disabled={summaryRange === range} aria-pressed={summaryRange === range} onClick={() => setSummaryRange(range)}>{range}</Button>)}
+          {(['1h', '24h', '7d'] as const).map((range) => <Button key={range} disabled={summaryRange === range} aria-pressed={summaryRange === range} onClick={() => setSummaryRange(range)}>{{ '1h': '近 1 小时', '24h': '近 24 小时', '7d': '近 7 天' }[range]}</Button>)}
         </div>}>
         <Loading loading={summary.loading} error={summary.error} stale={summary.stale} loadedAt={summary.loadedAt} />
         <div className="zc-admin-monitor-mini-stats">
-          <Stat label="INFO" value={summary.data ? String(summary.data.totals.info) : '暂无数据'} />
-          <Stat label="WARN" value={summary.data ? String(summary.data.totals.warn) : '暂无数据'} tone={summary.data?.totals.warn ? 'warn' : undefined} />
-          <Stat label="ERROR" value={summary.data ? String(summary.data.totals.error) : '暂无数据'} tone={summary.data?.totals.error ? 'bad' : undefined} />
+          <Stat label="普通记录" value={summary.data ? String(summary.data.totals.info) : '暂无数据'} />
+          <Stat label="需关注" value={summary.data ? String(summary.data.totals.warn) : '暂无数据'} tone={summary.data?.totals.warn ? 'warn' : undefined} />
+          <Stat label="错误" value={summary.data ? String(summary.data.totals.error) : '暂无数据'} tone={summary.data?.totals.error ? 'bad' : undefined} />
         </div>
-        <h3 className="zc-admin-chart-title">错误日志 · 近 {summaryRange}</h3>
+        <h3 className="zc-admin-chart-title">错误记录趋势 · {rangeLabel}</h3>
         {(summary.data?.buckets.length ?? 0) >= 2 ? (
           <TrendChart points={summary.data!.buckets.map((bucket) => ({ at: bucket.bucketAt, value: bucket.error }))}
-            label={`错误日志趋势，近 ${summaryRange}`} formatValue={String}
-            granularityNote={summary.data?.granularity === 'minute' ? '分钟分桶' : summary.data?.granularity === 'day' ? '天分桶' : '小时分桶'} tone="bad" />
+            label={`错误记录趋势，${rangeLabel}`} formatValue={String}
+            granularityNote={summary.data?.granularity === 'minute' ? '每分钟统计' : summary.data?.granularity === 'day' ? '每天统计' : '每小时统计'} tone="bad" />
         ) : <p style={muted}>当前只有 {summary.data?.buckets.length ?? 0} 个日志分桶；至少需要 2 个才能展示趋势。</p>}
       </Panel>
 
@@ -121,14 +108,16 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
           <AccountFilter client={client} accountId={accountId} username={username} onApply={(next) => update({ accountId: next.accountId, username: next.username })} />
           <Field label="级别">
             <Select value={level} onChange={(event) => update({ level: event.target.value })}>
-              <option value="">全部</option><option value="info">info</option><option value="warn">warn</option><option value="error">error</option>
+              <option value="">全部级别</option><option value="info">普通记录</option><option value="warn">需关注</option><option value="error">错误</option>
             </Select>
           </Field>
           <Field label="请求 ID"><TextInput value={requestDraft} onChange={(event) => setRequestDraft(event.target.value)} placeholder="req-..." /></Field>
-          <Field label="动作">
+          <Field label="事件">
             <Select value={action} onChange={(event) => update({ action: event.target.value })}>
-              <option value="">全部</option>
-              {(list.data?.actions ?? [action].filter(Boolean)).map((value) => <option key={value} value={value}>{value}</option>)}
+              <option value="">全部事件</option>
+              {actionGroups.map((group) => <optgroup key={group} label={group}>
+                {actionOptions.filter((value) => logActionGroup(value) === group).map((value) => <option key={value} value={value}>{logActionOption(value)}</option>)}
+              </optgroup>)}
             </Select>
           </Field>
         </div>
@@ -143,35 +132,86 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
         </p>
       </FilterBar>
 
-      <Panel title="日志">
-        <div style={{ ...row, marginTop: 10 }}>
+      <Panel title="日志记录" note="每条记录显示事件、简述和关键线索；展开后可查看原始英文内容。">
+        <div className="zc-admin-log-toolbar">
+          <Field label="排序">
+            <Select value={`${appliedSort.key}:${appliedSort.direction}`} onChange={(event) => {
+              const [sort, dir] = event.target.value.split(':');
+              update({ sort, dir });
+            }}>
+              <option value="at:desc">时间：最新在前</option><option value="at:asc">时间：最早在前</option>
+              <option value="severity:asc">级别：普通记录在前</option><option value="severity:desc">级别：错误在前</option>
+              {appliedSort.key === 'level' ? <option value={`level:${appliedSort.direction}`}>旧版级别排序</option> : null}
+              <option value="action:asc">事件：正序</option><option value="action:desc">事件：倒序</option>
+              <option value="username:asc">账号：正序</option><option value="username:desc">账号：倒序</option>
+            </Select>
+          </Field>
           <PageSizeSelect value={listParams.limit} onApply={(size) => update({ limit: String(size) })} sizes={[50, 100, 200, 500]} />
-          <ColumnPicker columns={LOG_OPTIONAL_COLUMNS} hidden={hidden} onToggle={toggle} onReset={reset} />
         </div>
         <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
-        <DataTable
-          columns={[
-            { key: 'at', header: '时间', headerNode: sortHeader('at', '时间'), render: (entry) => when(entry.at) },
-            { key: 'level', header: '级别', headerNode: sortHeader('level', '级别'), render: (entry) => <Badge tone={entry.level === 'error' ? 'bad' : entry.level === 'warn' ? 'warn' : 'muted'}>{entry.level}</Badge> },
-            { key: 'action', header: '动作', headerNode: sortHeader('action', '动作'), render: (entry) => entry.action },
-            { key: 'message', header: '说明', render: (entry) => entry.message },
-            { key: 'status', header: '状态码', secondary: true, optional: true, render: (entry) => entry.status === undefined ? '—' : String(entry.status) },
-            { key: 'user', header: '用户', secondary: true, optional: true, headerNode: sortHeader('username', '用户'), render: (entry) => entry.username ?? '—' },
-            {
-              key: 'request', header: '请求 ID', optional: true, render: (entry) => {
-                const value = typeof entry.detail?.['requestId'] === 'string' ? entry.detail['requestId'] : '';
-                return value ? <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => update({ requestId: value })}>{value}</button> : '—';
-              },
-            },
-          ]}
-          rows={list.data?.logs ?? []}
-          rowKey={(entry) => entry.id}
-          hiddenColumns={hidden}
-          empty="没有符合条件的日志。"
-        />
-        <div style={{ ...row, marginTop: 10, justifyContent: 'flex-end' }}>
-          <Button disabled={stack.length <= 1} onClick={() => { const next = stack.slice(0, -1); setStack(next); setCursor(next.at(-1) ?? ''); }}>较新记录</Button>
-          <Button disabled={!list.data?.nextCursor} onClick={() => { if (list.data?.nextCursor) { setStack((rows) => [...rows, list.data!.nextCursor!]); setCursor(list.data!.nextCursor!); } }}>更早记录</Button>
+        {list.data?.logs.length ? <div className="zc-admin-log-list">
+          {list.data.logs.map((entry) => {
+            const request = logRequestId(entry);
+            const isExpanded = expanded === entry.id;
+            return <article key={entry.id} className="zc-admin-log-card" data-level={entry.level}>
+              <div className="zc-admin-log-head">
+                <div className="zc-admin-log-title">
+                  <Badge tone={entry.level === 'error' ? 'bad' : entry.level === 'warn' ? 'warn' : 'muted'}>{logLevelLabel(entry.level)}</Badge>
+                  <strong>{logActionTitle(entry.action)}</strong>
+                </div>
+                <time dateTime={entry.at}>{when(entry.at)}</time>
+              </div>
+              <p className="zc-admin-log-summary">{logSummary(entry)}</p>
+              <div className="zc-admin-log-bottom">
+                <div className="zc-admin-log-chips">
+                  {entry.username ? <span>账号：{entry.username}</span> : <span>系统事件</span>}
+                  {entry.status !== undefined ? <span>HTTP {entry.status}</span> : null}
+                  {request ? <span>请求：{request}</span> : null}
+                </div>
+                <Button aria-expanded={isExpanded} aria-controls={isExpanded ? `log-detail-${entry.id}` : undefined} onClick={() => setExpanded(isExpanded ? undefined : entry.id)}>{isExpanded ? '收起详情' : '查看详情'}</Button>
+              </div>
+              {isExpanded ? <div className="zc-admin-log-detail" id={`log-detail-${entry.id}`}>
+                <section>
+                  <h4>基本信息</h4>
+                  <dl>
+                    <div><dt>发生时间</dt><dd>{when(entry.at)}</dd></div>
+                    <div><dt>日志级别</dt><dd>{logLevelLabel(entry.level)}</dd></div>
+                    <div><dt>事件类别</dt><dd>{logActionGroup(entry.action)}</dd></div>
+                    <div><dt>账号</dt><dd>{entry.username ?? '未关联账号'}</dd></div>
+                    <div><dt>来源 IP</dt><dd>{entry.ip ?? '未记录'}</dd></div>
+                    <div><dt>HTTP 状态码</dt><dd>{entry.status ?? '未记录'}</dd></div>
+                  </dl>
+                </section>
+                {request ? <section className="zc-admin-log-request">
+                  <h4>关联请求</h4>
+                  <p>{request}</p>
+                  <div className="zc-admin-log-actions">
+                    <Button onClick={() => update({ requestId: request })}>查看同一请求</Button>
+                    <Button onClick={() => copyRequestId(request)}>{copiedRequestId === request ? '已复制请求 ID' : '复制请求 ID'}</Button>
+                  </div>
+                </section> : null}
+                {entry.detail && Object.keys(entry.detail).some((key) => key !== 'requestId') ? <section>
+                  <h4>补充信息</h4>
+                  <dl>{Object.entries(entry.detail).filter(([key]) => key !== 'requestId').map(([key, value]) =>
+                    <div key={key}><dt>{logDetailLabel(key)}</dt><dd>{logDetailValue(value)}</dd></div>)}</dl>
+                </section> : null}
+                <details className="zc-admin-log-raw">
+                  <summary>技术详情 · 原始字段与英文消息</summary>
+                  <dl>
+                    <div><dt>事件代码</dt><dd><code>{entry.action}</code></dd></div>
+                    <div><dt>原始级别</dt><dd><code>{entry.level}</code></dd></div>
+                    <div><dt>原始消息</dt><dd>{entry.message}</dd></div>
+                  </dl>
+                  {entry.detail ? <pre>{JSON.stringify(entry.detail, null, 2)}</pre> : null}
+                </details>
+              </div> : null}
+            </article>;
+          })}
+        </div> : !list.loading && !list.error ? <p className="zc-admin-log-empty">没有符合条件的日志。可调整筛选条件后重试。</p> : null}
+        <div className="zc-admin-log-pager">
+          <span>第 {stack.length} 页</span>
+          <Button disabled={stack.length <= 1} onClick={() => { const next = stack.slice(0, -1); setExpanded(undefined); setStack(next); setCursor(next.at(-1) ?? ''); }}>较新记录</Button>
+          <Button disabled={!list.data?.nextCursor} onClick={() => { if (list.data?.nextCursor) { setExpanded(undefined); setStack((rows) => [...rows, list.data!.nextCursor!]); setCursor(list.data!.nextCursor!); } }}>更早记录</Button>
         </div>
       </Panel>
     </>

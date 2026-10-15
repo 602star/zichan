@@ -100,6 +100,13 @@ describe('sortable admin lists', () => {
       // Newest first, which for the seeded rows is the reverse of the alphabetical ordering.
       expect(seeded(byTime.logs)).toEqual(['l-3', 'l-2', 'l-1']);
 
+      const bySeverity = await (await f.api('/logs?sort=severity&dir=desc&limit=100')).json() as Paged<{ logs: { id: string }[] }>;
+      expect(seeded(bySeverity.logs)).toEqual(['l-3', 'l-2', 'l-1']);
+      expect(bySeverity.sort).toEqual({ key: 'severity', direction: 'desc' });
+      // The visible "错误在前" option must keep that order across cursor pages too.
+      const severityPages = await walk(f.api, '/logs?sort=severity&dir=desc', (body) => (body['logs'] as { id: string }[]), 2);
+      expect(seeded(severityPages.map((id) => ({ id })))).toEqual(['l-3', 'l-2', 'l-1']);
+
       // Paging follows the ordering, so nothing repeats and nothing is skipped.
       const walked = await walk(f.api, '/logs?sort=action&dir=asc', (body) => (body['logs'] as { id: string }[]), 2);
       expect(seeded(walked.map((id) => ({ id })))).toEqual(['l-3', 'l-2', 'l-1']);
