@@ -25,6 +25,7 @@ import { EncryptedBlobStore, type BlobReplicaState } from './blob-store.js';
 import { assertNoPendingLocalReplicaRetirement } from './replica-retirement-guard.js';
 import { decodeBlobPack, encodeBlobPack, MAX_BLOB_PACK_CHUNK_BYTES, MAX_BLOB_PACK_OBJECTS } from './blob-pack.js';
 import { createAdminRouter } from './admin.js';
+import { createSystemMonitor } from './system-monitor.js';
 import { createRequestOrigin } from './request-origin.js';
 import { createBrowserSessionCookies } from './browser-session.js';
 import {
@@ -693,6 +694,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   const hashOffload = createHashOffload();
   const jobHandlers = createJobHandlers({ store, blobStore, dataDir, settings, log, hashOffload });
   const jobs = createJobRunner({ store, log, handlers: jobHandlers });
+  const systemMonitor = createSystemMonitor();
   const metrics = createMetricsService({
     store,
     blobStore,
@@ -716,12 +718,14 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       return lastAttempt ? [lastAttempt] : [];
     },
     startedAt,
+    systemMonitor,
   });
   const admin = createAdminRouter({
     store,
     blobStore,
     settings: runtimeSettings,
     metrics,
+    systemMonitor,
     jobs,
     mfa,
     log,

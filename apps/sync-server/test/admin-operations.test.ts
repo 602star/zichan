@@ -321,6 +321,13 @@ describe('management console operations', () => {
       expect(Array.isArray(metrics.buckets)).toBe(true);
       expect(metrics.note).toContain('上线开始积累');
       expect((await f.api(f.owner.accessToken, '/metrics?range=99d')).status).toBe(400);
+      const logSummaryResponse = await f.api(f.owner.accessToken, '/logs/summary?range=24h');
+      expect(logSummaryResponse.status).toBe(200);
+      const logSummary = await logSummaryResponse.json() as { buckets: { info: number; warn: number; error: number }[]; totals: { info: number; warn: number; error: number }; note: string };
+      expect(logSummary.totals.info + logSummary.totals.warn + logSummary.totals.error)
+        .toBe(logSummary.buckets.reduce((count, bucket) => count + bucket.info + bucket.warn + bucket.error, 0));
+      expect(logSummary.note).toContain('保留');
+      expect((await f.api(f.owner.accessToken, '/logs/summary?range=99d')).status).toBe(400);
       const storage = await (await f.api(f.owner.accessToken, '/storage')).json() as Record<string, unknown>;
       expect(storage).toMatchObject({ databaseBytes: expect.any(Number), objectBytes: expect.any(Number) });
       expect(String(storage['note'])).toContain('备份目录不在 Web 静态服务范围内');

@@ -376,6 +376,24 @@ export interface MetricBucket {
   eventLoopMaxMs: number;
 }
 
+export interface SystemMetricSample {
+  scope: 'host' | 'container';
+  cpuPercent: number | null;
+  memoryUsedBytes: number | null;
+  memoryTotalBytes: number | null;
+  diskUsedBytes: number | null;
+  diskTotalBytes: number | null;
+  diskReadBytesPerSecond: number | null;
+  diskWriteBytesPerSecond: number | null;
+  networkRxBytesPerSecond: number | null;
+  networkTxBytesPerSecond: number | null;
+}
+
+export interface SystemMetricBucket extends SystemMetricSample {
+  bucketAt: string;
+  sampledAt: string;
+}
+
 /** Point-in-time database structure readings; the expensive per-table breakdown is not here. */
 export interface DatabaseStats {
   pageCount: number;
@@ -1712,6 +1730,22 @@ CREATE TABLE IF NOT EXISTS server_metric_buckets (
   blob_ok INTEGER NOT NULL DEFAULT 0,
   blob_failed INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (granularity, bucket_at)
+);
+CREATE TABLE IF NOT EXISTS system_metric_buckets (
+  scope TEXT NOT NULL,
+  granularity TEXT NOT NULL,
+  bucket_at TEXT NOT NULL,
+  sampled_at TEXT NOT NULL,
+  cpu_percent REAL,
+  memory_used_bytes INTEGER,
+  memory_total_bytes INTEGER,
+  disk_used_bytes INTEGER,
+  disk_total_bytes INTEGER,
+  disk_read_bytes_per_second REAL,
+  disk_write_bytes_per_second REAL,
+  network_rx_bytes_per_second REAL,
+  network_tx_bytes_per_second REAL,
+  PRIMARY KEY (scope, granularity, bucket_at)
 );
 CREATE TABLE IF NOT EXISTS sync_events (
   id TEXT PRIMARY KEY,
@@ -6841,6 +6875,29 @@ END;`);
     };
   }
 
+  /** Aggregate the retained log, not the current cursor page, for an honest error trend. */
+  async logLevelTrend(from: string, until: string, granularity: 'minute' | 'hour' | 'day'): Promise<{
+    bucketAt: string; info: number; warn: number; error: number;
+  }[]> {
+    await this.ready;
+    const bucket = granularity === 'minute'
+      ? "substr(at, 1, 16) || ':00.000Z'"
+      : granularity === 'hour'
+        ? "substr(at, 1, 13) || ':00:00.000Z'"
+        : "substr(at, 1, 10) || 'T00:00:00.000Z'";
+    const rows = await this.driver.all<Record<string, unknown>>(
+      `SELECT ${bucket} AS bucket_at,
+        SUM(CASE WHEN level = 'info' THEN 1 ELSE 0 END) AS info,
+        SUM(CASE WHEN level = 'warn' THEN 1 ELSE 0 END) AS warn,
+        SUM(CASE WHEN level = 'error' THEN 1 ELSE 0 END) AS error
+       FROM server_logs WHERE at >= ? AND at < ?
+       GROUP BY bucket_at ORDER BY bucket_at`, [from, until]);
+    return rows.map((row) => ({
+      bucketAt: String(row['bucket_at']),
+      info: Number(row['info'] ?? 0), warn: Number(row['warn'] ?? 0), error: Number(row['error'] ?? 0),
+    }));
+  }
+
 
   /** Distinct actions seen in the retained log, for the console filter. */
   async listLogActions(limit = 200): Promise<string[]> {
@@ -7405,6 +7462,60 @@ END;`);
     };
   }
 
+  /** Last observed system reading per bucket; null remains missing data, never a fabricated zero. */
+  async recordSystemMetricSample(sample: SystemMetricSample, at = new Date()): Promise<void> {
+    await this.ready;
+    const buckets: [string, string][] = [
+      ['minute', new Date(Math.floor(at.getTime() / 60_000) * 60_000).toISOString()],
+      ['hour', new Date(Math.floor(at.getTime() / 3_600_000) * 3_600_000).toISOString()],
+    ];
+    await this.driver.transaction(async (driver) => {
+      for (const [granularity, bucketAt] of buckets) {
+        await driver.run(
+          `INSERT INTO system_metric_buckets
+           (scope, granularity, bucket_at, sampled_at, cpu_percent, memory_used_bytes, memory_total_bytes,
+            disk_used_bytes, disk_total_bytes, disk_read_bytes_per_second, disk_write_bytes_per_second,
+            network_rx_bytes_per_second, network_tx_bytes_per_second)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(scope, granularity, bucket_at) DO UPDATE SET
+             sampled_at = excluded.sampled_at,
+             cpu_percent = excluded.cpu_percent,
+             memory_used_bytes = excluded.memory_used_bytes,
+             memory_total_bytes = excluded.memory_total_bytes,
+             disk_used_bytes = excluded.disk_used_bytes,
+             disk_total_bytes = excluded.disk_total_bytes,
+             disk_read_bytes_per_second = excluded.disk_read_bytes_per_second,
+             disk_write_bytes_per_second = excluded.disk_write_bytes_per_second,
+             network_rx_bytes_per_second = excluded.network_rx_bytes_per_second,
+             network_tx_bytes_per_second = excluded.network_tx_bytes_per_second`,
+          [sample.scope, granularity, bucketAt, at.toISOString(), sample.cpuPercent,
+            sample.memoryUsedBytes, sample.memoryTotalBytes, sample.diskUsedBytes, sample.diskTotalBytes,
+            sample.diskReadBytesPerSecond, sample.diskWriteBytesPerSecond,
+            sample.networkRxBytesPerSecond, sample.networkTxBytesPerSecond],
+        );
+      }
+    });
+  }
+
+  async listSystemMetricBuckets(scope: SystemMetricSample['scope'], granularity: 'minute' | 'hour', from: string, until: string): Promise<SystemMetricBucket[]> {
+    await this.ready;
+    const rows = await this.driver.all<Record<string, unknown>>(
+      'SELECT * FROM system_metric_buckets WHERE scope = ? AND granularity = ? AND bucket_at >= ? AND bucket_at < ? ORDER BY bucket_at',
+      [scope, granularity, from, until],
+    );
+    const optional = (row: Record<string, unknown>, key: string): number | null => row[key] == null ? null : Number(row[key]);
+    return rows.map((row) => ({
+      scope, bucketAt: String(row['bucket_at']), sampledAt: String(row['sampled_at']),
+      cpuPercent: optional(row, 'cpu_percent'),
+      memoryUsedBytes: optional(row, 'memory_used_bytes'), memoryTotalBytes: optional(row, 'memory_total_bytes'),
+      diskUsedBytes: optional(row, 'disk_used_bytes'), diskTotalBytes: optional(row, 'disk_total_bytes'),
+      diskReadBytesPerSecond: optional(row, 'disk_read_bytes_per_second'),
+      diskWriteBytesPerSecond: optional(row, 'disk_write_bytes_per_second'),
+      networkRxBytesPerSecond: optional(row, 'network_rx_bytes_per_second'),
+      networkTxBytesPerSecond: optional(row, 'network_tx_bytes_per_second'),
+    }));
+  }
+
   /** One sample per request is aggregated into a minute and an hour bucket. */
   async recordServiceSample(sample: Partial<Omit<MetricBucket, 'bucketAt'>>, at = new Date()): Promise<void> {
     await this.ready;
@@ -7481,7 +7592,9 @@ END;`);
     const hourCutoff = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString();
     const minutes = await this.driver.run("DELETE FROM server_metric_buckets WHERE granularity = 'minute' AND bucket_at < ?", [minuteCutoff]);
     const hours = await this.driver.run("DELETE FROM server_metric_buckets WHERE granularity = 'hour' AND bucket_at < ?", [hourCutoff]);
-    return { removed: Number(minutes.changes ?? 0) + Number(hours.changes ?? 0) };
+    const systemMinutes = await this.driver.run("DELETE FROM system_metric_buckets WHERE granularity = 'minute' AND bucket_at < ?", [minuteCutoff]);
+    const systemHours = await this.driver.run("DELETE FROM system_metric_buckets WHERE granularity = 'hour' AND bucket_at < ?", [hourCutoff]);
+    return { removed: Number(minutes.changes ?? 0) + Number(hours.changes ?? 0) + Number(systemMinutes.changes ?? 0) + Number(systemHours.changes ?? 0) };
   }
 
   /** Diagnostic events get their own retention so log trimming cannot erase them. */

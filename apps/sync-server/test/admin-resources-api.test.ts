@@ -6,13 +6,10 @@
  * accident, and a read-only operator must be able to see everything and change nothing.
  */
 import { describe, expect, it } from 'vitest';
-import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loginAccount, registerAccount } from '@zichan/db';
-import { NodeSqliteDriver } from '@zichan/db/node';
-import { EncryptedBlobStore } from '../src/blob-store.js';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
 
 // Named so the identifier does not look like a credential: an assignment to a name ending in
@@ -49,6 +46,9 @@ describe('resource and database endpoints', () => {
       const body = await (await f.api(f.owner.accessToken, '/resources')).json() as {
         process: Record<string, unknown>; database: Record<string, unknown> | null;
         identity: Record<string, unknown>; thresholds: Record<string, number>; note: string; tables: unknown;
+        system: { mode: string; scope: string; sampledAt: string; memoryUsedBytes: number | null;
+          diskReadBytesPerSecond: number | null; diskWriteBytesPerSecond: number | null;
+          unavailable: string[]; topProcesses: Record<string, unknown>[] };
       };
       expect(body.process['pid']).toBe(process.pid);
       expect(body.process['available']).toBe(true);
@@ -61,6 +61,29 @@ describe('resource and database endpoints', () => {
       expect(body.tables).toBeNull();
       // And the page is told what the numbers do not cover.
       expect(body.note).toContain('同步服务器进程');
+      expect(['windows', 'linux', 'docker', 'other']).toContain(body.system.mode);
+      expect(body.system.scope).toBe(body.system.mode === 'docker' ? 'container' : 'host');
+      expect(Date.parse(body.system.sampledAt)).toBeGreaterThan(0);
+      expect(body.system.memoryUsedBytes).toBeGreaterThan(0);
+      if (process.platform === 'win32') {
+        expect(body.system.diskReadBytesPerSecond).toBeGreaterThanOrEqual(0);
+        expect(body.system.diskWriteBytesPerSecond).toBeGreaterThanOrEqual(0);
+      }
+      expect(Array.isArray(body.system.unavailable)).toBe(true);
+      for (const item of body.system.topProcesses) {
+        expect(item).toEqual(expect.objectContaining({ pid: expect.any(Number), name: expect.any(String), rssBytes: expect.any(Number) }));
+        expect(item).not.toHaveProperty('command');
+        expect(item).not.toHaveProperty('params');
+      }
+      const systemOnly = await (await f.api(f.owner.accessToken, '/system')).json() as typeof body.system;
+      expect(systemOnly.mode).toBe(body.system.mode);
+      expect(systemOnly.scope).toBe(body.system.scope);
+      const trend = await (await f.api(f.owner.accessToken, '/system/metrics?range=1h')).json() as {
+        scope: string; buckets: { bucketAt: string; memoryUsedBytes: number | null }[];
+      };
+      expect(trend.scope).toBe(body.system.scope);
+      expect(trend.buckets.length).toBeGreaterThan(0);
+      expect(trend.buckets.at(-1)?.memoryUsedBytes).toBeGreaterThan(0);
     } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
   });
 

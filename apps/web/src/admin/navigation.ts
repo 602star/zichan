@@ -8,8 +8,8 @@ export const ADMIN_NAVIGATION = [
   ] },
   { label: '数据与备份', pages: [{ path: '/storage', label: '存储与备份' }] },
   { label: '运行与维护', pages: [
+    { path: '/monitor', label: '监控中心' },
     { path: '/sync', label: '同步诊断' },
-    { path: '/resources', label: '进程与数据库' },
     { path: '/jobs', label: '任务中心' },
   ] },
   { label: '事件与记录', pages: [

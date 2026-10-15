@@ -18,7 +18,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:app": "tsc -p tsconfig.json && esbuild src/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/server.mjs",
+    "build:app": "tsc -p tsconfig.json && node scripts/build-server.mjs",
     "start:built": "node dist/server.mjs",
     "prune-backups": "npm run maintenance -- prune-backups",
     "retire-node": "npm run maintenance -- retire-node",
@@ -33,6 +33,7 @@
     "vitest": "^2.1.8"
   },
   "dependencies": {
-    "@serenity-kit/opaque": "^1.1.0"
+    "@serenity-kit/opaque": "^1.1.0",
+    "systeminformation": "^5.33.15"
   }
 }

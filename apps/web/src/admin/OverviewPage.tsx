@@ -80,6 +80,7 @@ export function OverviewPage({ client, navigate, accountName, role }: {
         <a href="#section-核心指标">请求趋势</a>
         <a href="#section-最近管理员登录">管理员登录</a>
         <a href="#section-维护窗口">维护窗口</a>
+        <button type="button" onClick={() => navigate('/monitor')}>监控中心</button>
       </nav>
       <Loading loading={overview.loading} error={overview.error} stale={overview.stale} loadedAt={overview.loadedAt} />
 
@@ -253,7 +254,7 @@ export function OverviewPage({ client, navigate, accountName, role }: {
         {metrics.loadedAt ? <p style={muted}>最后读取：{new Date(metrics.loadedAt).toLocaleTimeString()}（与「服务状态」一起每 30 秒刷新）</p> : null}
       </Panel>
 
-      <Panel title="进程与数据库" action={<Button onClick={() => navigate('/resources')}>查看详情与趋势</Button>}
+      <Panel title="进程与数据库" action={<Button onClick={() => navigate('/monitor')}>查看监控中心</Button>}
         note="这一节的数字只是同步服务器进程本身；数据库页缓存之外的部分不在此列。">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
           <Stat label="常驻内存" tone={memoryRatio !== null && memoryRatio >= 0.85 ? 'warn' : undefined}

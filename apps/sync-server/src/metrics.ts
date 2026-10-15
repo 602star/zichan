@@ -12,6 +12,7 @@ import type { SettingsReader } from './settings.js';
 import type { AdminAlert, DatabaseStats, JsonRecord, ServerLogLevel, SyncServerStore } from './store.js';
 import { parseAlertChannels, webhookPayload, type AlertChannel, type ChannelResult } from './alert-channels.js';
 import { sendAlertEmail } from './smtp-client.js';
+import type { SystemMonitorReading } from './system-monitor.js';
 
 const SAMPLE_INTERVAL_MS = 30_000;
 const HOUSEKEEPING_INTERVAL_MS = 60 * 60 * 1000;
@@ -142,6 +143,8 @@ export interface MetricsServiceDeps {
   intervalMs?: number;
   /** Injected in tests; the default reads `process` and `perf_hooks` directly. */
   runtime?: RuntimeStats;
+  /** Optional host/container probe; sampled with the same 30-second cadence as process metrics. */
+  systemMonitor?: { read: () => Promise<SystemMonitorReading> };
   /** Injected in tests; the default posts to the configured webhook when one is set. */
   notify?: AlertNotifier;
   onCapacityActive?: (warning: { username: string; scope: 'commit' | 'blobs'; usedBytes: number; quotaBytes: number }, episode: string) => Promise<void>;
@@ -693,6 +696,29 @@ export function createMetricsService(deps: MetricsServiceDeps) {
     snapshot = next;
     snapshotAt = Date.now();
     await recordResourceSample(reading);
+    if (deps.systemMonitor) {
+      try {
+        const system = await deps.systemMonitor.read();
+        const diskTotal = storage.diskTotalBytes;
+        const diskFree = storage.diskFreeBytes;
+        await store.recordSystemMetricSample({
+          scope: system.scope,
+          cpuPercent: system.cpuPercent,
+          memoryUsedBytes: system.memoryUsedBytes,
+          memoryTotalBytes: system.memoryTotalBytes,
+          diskUsedBytes: diskTotal !== null && diskFree !== null ? diskTotal - diskFree : null,
+          diskTotalBytes: diskTotal,
+          diskReadBytesPerSecond: system.diskReadBytesPerSecond,
+          diskWriteBytesPerSecond: system.diskWriteBytesPerSecond,
+          networkRxBytesPerSecond: system.networkRxBytesPerSecond,
+          networkTxBytesPerSecond: system.networkTxBytesPerSecond,
+        }, new Date(system.sampledAt));
+      } catch (error) {
+        await log('warn', 'system_sample_failed', 'System resource sample failed', {
+          error: error instanceof Error ? error.message : String(error),
+        }).catch(() => undefined);
+      }
+    }
     await store.setMaintenanceState('snapshot:service', next as unknown as JsonRecord);
     return next;
   };

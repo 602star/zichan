@@ -1,8 +1,9 @@
 /** Run log and management audit: different purposes, retention and failure handling. */
 import { useEffect, useState } from 'react';
 import type { AdminClient } from './client.js';
+import { TrendChart } from './chart.js';
 import { AccountFilter, TimeRangeFilter } from './filters.js';
-import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Pager, PageHeader, FilterBar, Select, TextInput, message, muted, row, useActionError, useHiddenColumns, useResource, when } from './ui.js';
+import { Badge, Button, ColumnPicker, DataTable, Field, Loading, Notice, Panel, Pager, PageHeader, FilterBar, Select, Stat, TextInput, message, muted, row, useActionError, useHiddenColumns, useResource, when } from './ui.js';
 import { PageSizeSelect, SortHeader, listParamsQuery, readListParams, type SortChoice } from './list-controls.js';
 import type { AuditEntry, LogEntry } from './types.js';
 
@@ -37,6 +38,13 @@ const AUDIT_OPTIONAL_COLUMNS = [
 ];
 
 export function LogsPage({ client, query, navigate }: { client: AdminClient; query: URLSearchParams; navigate: (to: string) => void }) {
+  const [summaryRange, setSummaryRange] = useState<'1h' | '24h' | '7d'>('24h');
+  const summary = useResource(() => client.request<{
+    range: string; granularity: string;
+    buckets: { bucketAt: string; info: number; warn: number; error: number }[];
+    totals: { info: number; warn: number; error: number };
+    note: string;
+  }>(`/logs/summary?range=${summaryRange}`), [summaryRange]);
   const level = query.get('level') ?? '';
   const requestId = query.get('requestId') ?? '';
   const action = query.get('action') ?? '';
@@ -85,9 +93,27 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
 
   return (
     <>
-      <PageHeader title="运行日志" description="按账号、请求和时间定位问题；导出遵循当前筛选并脱敏。" actions={<><Button onClick={list.reload}>刷新</Button><Button onClick={() => void exportLogs(client, 'json', exportQuery.toString()).then(exportError.clear).catch((caught) => exportError.setError(message(caught)))}>导出 JSON</Button><Button onClick={() => void exportLogs(client, 'csv', exportQuery.toString()).then(exportError.clear).catch((caught) => exportError.setError(message(caught)))}>导出 CSV</Button></>} />
+      <PageHeader title="运行日志" description="按账号、请求和时间定位问题；导出遵循当前筛选并脱敏。" actions={<><Button onClick={() => { list.reload(); summary.reload(); }}>刷新</Button><Button onClick={() => void exportLogs(client, 'json', exportQuery.toString()).then(exportError.clear).catch((caught) => exportError.setError(message(caught)))}>导出 JSON</Button><Button onClick={() => void exportLogs(client, 'csv', exportQuery.toString()).then(exportError.clear).catch((caught) => exportError.setError(message(caught)))}>导出 CSV</Button></>} />
       {exportError.error ? <Notice tone="warn">{exportError.error}</Notice> : null}
       {requestId ? <Notice>正在按请求 {requestId} 关联日志。</Notice> : null}
+
+      <Panel title="日志趋势" note={summary.data?.note ?? '趋势统计服务端保留的全部日志，不受下方明细筛选和分页影响。'}
+        action={<div className="zc-admin-view-switch" aria-label="日志趋势时间范围">
+          {(['1h', '24h', '7d'] as const).map((range) => <Button key={range} disabled={summaryRange === range} aria-pressed={summaryRange === range} onClick={() => setSummaryRange(range)}>{range}</Button>)}
+        </div>}>
+        <Loading loading={summary.loading} error={summary.error} stale={summary.stale} loadedAt={summary.loadedAt} />
+        <div className="zc-admin-monitor-mini-stats">
+          <Stat label="INFO" value={summary.data ? String(summary.data.totals.info) : '暂无数据'} />
+          <Stat label="WARN" value={summary.data ? String(summary.data.totals.warn) : '暂无数据'} tone={summary.data?.totals.warn ? 'warn' : undefined} />
+          <Stat label="ERROR" value={summary.data ? String(summary.data.totals.error) : '暂无数据'} tone={summary.data?.totals.error ? 'bad' : undefined} />
+        </div>
+        <h3 className="zc-admin-chart-title">错误日志 · 近 {summaryRange}</h3>
+        {(summary.data?.buckets.length ?? 0) >= 2 ? (
+          <TrendChart points={summary.data!.buckets.map((bucket) => ({ at: bucket.bucketAt, value: bucket.error }))}
+            label={`错误日志趋势，近 ${summaryRange}`} formatValue={String}
+            granularityNote={summary.data?.granularity === 'minute' ? '分钟分桶' : summary.data?.granularity === 'day' ? '天分桶' : '小时分桶'} tone="bad" />
+        ) : <p style={muted}>当前只有 {summary.data?.buckets.length ?? 0} 个日志分桶；至少需要 2 个才能展示趋势。</p>}
+      </Panel>
 
 
       <FilterBar note="按账号查日志需要该账号名同时出现在日志行上（登录、同步、管理操作都带账号名）；纯系统事件没有账号。">

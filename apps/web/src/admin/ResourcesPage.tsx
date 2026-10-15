@@ -60,7 +60,7 @@ function Meter({ ratio, tone, label }: { ratio: number | null; tone?: 'warn' | '
   );
 }
 
-export function ResourcesPage({ client, role, onJob }: { client: AdminClient; role: string; onJob: (jobId: string) => void }) {
+export function ResourcesPage({ client, role, onJob, embedded = false }: { client: AdminClient; role: string; onJob: (jobId: string) => void; embedded?: boolean }) {
   const writable = canWrite(role);
   const [range, setRange] = useState<(typeof RANGES)[number]>('1h');
   const [series, setSeries] = useState<SeriesKey>('rss');
@@ -109,7 +109,7 @@ export function ResourcesPage({ client, role, onJob }: { client: AdminClient; ro
 
   return (
     <>
-      <PageHeader title="进程与数据库" description="检查资源瓶颈与数据库占用，按需执行维护。" actions={<><Button onClick={resources.reload}>刷新</Button></>} />
+      {!embedded ? <PageHeader title="进程与数据库" description="检查资源瓶颈与数据库占用，按需执行维护。" actions={<><Button onClick={resources.reload}>刷新</Button></>} /> : null}
       <Loading loading={resources.loading} error={resources.error} stale={resources.stale} loadedAt={resources.loadedAt} />
       {actionError.error ? <Notice tone="bad">{actionError.error}</Notice> : null}
 
@@ -151,7 +151,7 @@ export function ResourcesPage({ client, role, onJob }: { client: AdminClient; ro
         ) : null}
       </Panel>
 
-      <Panel
+      {!embedded ? <Panel
         title="资源趋势"
         action={<div style={row}>{RANGES.map((value) => <Button key={value} disabled={value === range} onClick={() => setRange(value)}>{value}</Button>)}</div>}
         note="每 30 秒采样一次；分桶内保存的是峰值，因此这张图显示的是「这段时间里最坏的一刻」，不是平均值。"
@@ -180,7 +180,7 @@ export function ResourcesPage({ client, role, onJob }: { client: AdminClient; ro
             </p>
           </>
         ) : null}
-      </Panel>
+      </Panel> : null}
 
       <Panel title="数据库状态" note="全部来自常量时间的 PRAGMA 读数，可以随页面一起刷新。"
         action={<div style={row}>

@@ -20,6 +20,8 @@ await build({
   format: 'esm',
   sourcemap: false,
   minify: true,
+  // The bundled systeminformation CommonJS code requires Node builtins at runtime.
+  banner: { js: "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);" },
 });
 await copyFile(process.execPath, resolve(resources, runtimeName));
 await copyFile(resolve(dirname(process.execPath), 'LICENSE'), resolve(resources, 'node-LICENSE.txt'));

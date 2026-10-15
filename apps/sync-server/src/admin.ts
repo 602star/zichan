@@ -39,6 +39,7 @@ import {
 } from './store.js';
 import type { MfaService } from './mfa.js';
 import type { LedgerPreviewRegistry, LedgerPreviewSession } from './ledger-preview.js';
+import type { createSystemMonitor } from './system-monitor.js';
 
 /** Task types that only the server owner may create, re-run or cancel. */
 const JOB_OWNER_ONLY: AdminJobType[] = ['backup.verify', 'restore.drill'];
@@ -48,6 +49,7 @@ export interface AdminRouterDeps {
   blobStore: EncryptedBlobStore;
   settings: SettingsFacade;
   metrics: MetricsService;
+  systemMonitor: ReturnType<typeof createSystemMonitor>;
   mfa: MfaService;
   jobs: JobRunner;
   log: (level: ServerLog['level'], action: string, message: string, meta?: Omit<ServerLog, 'id' | 'at' | 'level' | 'action' | 'message'>) => Promise<void>;
@@ -230,6 +232,7 @@ export function describeAudit(
 
 export function createAdminRouter(deps: AdminRouterDeps) {
   const { store, blobStore, settings, metrics, jobs, log } = deps;
+  const systemMonitor = deps.systemMonitor;
 
   const accountLabel = async (accountId: string | null | undefined, cache: Map<string, string>): Promise<string> => {
     if (!accountId) return '';
@@ -469,10 +472,33 @@ export function createAdminRouter(deps: AdminRouterDeps) {
      * (`dbstat` walks the whole file, ~250 ms on a 125 MiB database). It is opt-in so the
      * page can poll cheaply and ask for the breakdown only when someone wants it.
      */
+    if (req.method === 'GET' && suffix === '/system/metrics') {
+      const range = search.get('range') ?? '24h';
+      if (!['1h', '24h', '7d'].includes(range)) return send(res, 400, { error: 'range must be 1h, 24h or 7d' });
+      const spanMs = range === '1h' ? 3_600_000 : range === '24h' ? 86_400_000 : 7 * 86_400_000;
+      const granularity = range === '1h' ? 'minute' : 'hour';
+      const bucketMs = granularity === 'minute' ? 60_000 : 3_600_000;
+      const until = new Date();
+      const from = new Date(until.getTime() - spanMs);
+      const system = await systemMonitor.read();
+      const buckets = await store.listSystemMetricBuckets(system.scope, granularity,
+        new Date(Math.floor(from.getTime() / bucketMs) * bucketMs).toISOString(), until.toISOString());
+      return send(res, 200, {
+        range, granularity, from: from.toISOString(), until: until.toISOString(),
+        scope: system.scope, buckets,
+        note: '每个分桶保存最后一次采样；缺失读数保持空白。服务重启前的同范围历史仍从 SQLite 读取。',
+      });
+    }
+
+    if (req.method === 'GET' && suffix === '/system') {
+      return send(res, 200, await systemMonitor.read());
+    }
+
     if (req.method === 'GET' && suffix === '/resources') {
       const snapshot = await metrics.current();
       const wantTables = search.get('tables') === '1';
       const tables = wantTables ? await store.databaseTableUsage() : null;
+      const system = wantTables ? null : await systemMonitor.read();
       // A fresh reading on demand: an operator opening the page should not see a 30-second-old
       // number and wonder whether it is current.
       const reading = wantTables ? undefined : metrics.runtime.sample();
@@ -507,6 +533,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
           diskFreeBytes: snapshot.storage.diskFreeBytes,
         },
         tables,
+        system,
         identity,
         thresholds: {
           memoryWarnBytes: Number(settings.settings.effective('memoryWarnBytes')) * 1024 * 1024,
@@ -1385,6 +1412,23 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const escapeCsv = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
       const csv = [headers.join(','), ...collected.map((row) => headers.map((header) => escapeCsv(row[header])).join(','))].join('\n');
       return sendText(res, 200, 'text/csv; charset=utf-8', `${csv}\n`, 'run-log.csv');
+    }
+
+    if (req.method === 'GET' && suffix === '/logs/summary') {
+      const range = search.get('range') ?? '24h';
+      if (!['1h', '24h', '7d'].includes(range)) return send(res, 400, { error: 'range must be 1h, 24h or 7d' });
+      const spanMs = range === '1h' ? 3_600_000 : range === '24h' ? 86_400_000 : 7 * 86_400_000;
+      const granularity = range === '1h' ? 'minute' : range === '24h' ? 'hour' : 'day';
+      const until = new Date();
+      const from = new Date(until.getTime() - spanMs);
+      const buckets = await store.logLevelTrend(from.toISOString(), until.toISOString(), granularity);
+      const totals = buckets.reduce((sum, bucket) => ({
+        info: sum.info + bucket.info, warn: sum.warn + bucket.warn, error: sum.error + bucket.error,
+      }), { info: 0, warn: 0, error: 0 });
+      return send(res, 200, {
+        range, granularity, from: from.toISOString(), until: until.toISOString(), buckets, totals,
+        note: '趋势只统计当前保留的运行日志；早于保留上限的记录已经裁剪，空白分桶不等于服务没有运行。',
+      });
     }
 
     if (req.method === 'GET' && suffix === '/logs') {

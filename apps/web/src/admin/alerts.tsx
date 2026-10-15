@@ -73,7 +73,7 @@ export function alertNextStep(alert: Alert): { label: string; to: string } | und
   if (alert.rule === 'disk-space') return { label: '查看存储', to: '/storage' };
   // Resource and database alerts all live on one page, so every one of them leads there.
   if (alert.rule.startsWith('process-') || alert.rule.startsWith('database-') || alert.rule === 'event-loop-lag') {
-    return { label: '查看进程与数据库', to: '/resources' };
+    return { label: '查看监控中心', to: '/monitor' };
   }
   return undefined;
 }

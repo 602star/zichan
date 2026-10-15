@@ -36,9 +36,40 @@ export interface ResourcesPayload {
   storage: { databaseBytes: number; walBytes: number; shmBytes: number; diskTotalBytes: number | null; diskFreeBytes: number | null };
   /** Only present when the request asked for the per-table scan. */
   tables: { tables: DatabaseTableUsage[]; scannedAt: string; durationMs: number } | null;
+  system?: SystemMonitorReading | null;
   identity: { pid: number; nodeVersion: string; uptimeSeconds: number; heapLimitBytes: number | null; constrainedBytes: number | null; availableBytes: number | null };
   thresholds: { memoryWarnBytes: number; eventLoopLagWarnMs: number; cpuWarnPercent: number };
   note: string;
+}
+
+export interface SystemMonitorReading {
+  sampledAt: string;
+  mode: 'windows' | 'linux' | 'docker' | 'other';
+  scope: 'host' | 'container';
+  cpuPercent: number | null;
+  memoryUsedBytes: number | null;
+  memoryTotalBytes: number | null;
+  networkRxBytesPerSecond: number | null;
+  networkTxBytesPerSecond: number | null;
+  diskReadBytesPerSecond: number | null;
+  diskWriteBytesPerSecond: number | null;
+  processCount: number | null;
+  topProcesses: { pid: number; name: string; cpuPercent: number; rssBytes: number }[];
+  unavailable: string[];
+}
+
+export interface SystemMetrics {
+  range: string;
+  granularity: 'minute' | 'hour';
+  from: string;
+  until: string;
+  scope: 'host' | 'container';
+  note: string;
+  buckets: ({ bucketAt: string; sampledAt: string } & Pick<SystemMonitorReading,
+    'scope' | 'cpuPercent' | 'memoryUsedBytes' | 'memoryTotalBytes' | 'diskReadBytesPerSecond' |
+    'diskWriteBytesPerSecond' | 'networkRxBytesPerSecond' | 'networkTxBytesPerSecond'> & {
+      diskUsedBytes: number | null; diskTotalBytes: number | null;
+    })[];
 }
 
 export interface Snapshot {

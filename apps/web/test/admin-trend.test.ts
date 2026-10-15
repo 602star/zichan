@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { TrendChart } from '../src/admin/chart.js';
 import { trendGeometry, trendSummary } from '../src/admin/trend.js';
 
 /**
@@ -52,5 +55,17 @@ describe('admin trend geometry', () => {
     expect(summary.peak).toBe(12);
     expect(summary.peakAt).toBe('2026-09-17T11:00:00.000Z');
     expect(summary.average).toBe(7.3);
+  });
+
+  it('labels a counter chart with its total and a resource chart with its peak', () => {
+    const points = [
+      { at: '2026-09-17T10:00:00.000Z', value: 4 },
+      { at: '2026-09-17T11:00:00.000Z', value: 12 },
+    ];
+    const counter = renderToStaticMarkup(createElement(TrendChart, { points, label: '请求', formatValue: String }));
+    const resource = renderToStaticMarkup(createElement(TrendChart, { points, label: 'CPU', formatValue: String, summaryMode: 'peak' }));
+    expect(counter).toContain('合计 16');
+    expect(counter).toContain('峰值 12');
+    expect(resource).toContain('最高 12');
   });
 });

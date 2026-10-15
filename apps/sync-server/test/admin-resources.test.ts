@@ -18,8 +18,9 @@ import { SyncServerStore } from '../src/store.js';
 
 async function harness(options: { intervalMs?: number } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'zichan-resources-'));
-  const store = new SyncServerStore(join(dir, 'server.sqlite'), 'invite', 'srv-resources');
   const blobStore = new EncryptedBlobStore({ dataDir: dir });
+  // Both stores open the same SQLite file. Match server startup: initialize blob tables first.
+  const store = new SyncServerStore(join(dir, 'server.sqlite'), 'invite', 'srv-resources', undefined, blobStore.ready);
   await store.ready;
   await blobStore.ready;
   const { settings } = createSettings(store, {});
@@ -167,6 +168,26 @@ describe('database statistics', () => {
 });
 
 describe('resource readings in metric buckets', () => {
+  it('keeps system trends scoped and preserves unavailable readings as null', async () => {
+    const h = await harness();
+    try {
+      const sample = {
+        scope: 'host' as const, cpuPercent: 42, memoryUsedBytes: 200, memoryTotalBytes: 400,
+        diskUsedBytes: 300, diskTotalBytes: 1000, diskReadBytesPerSecond: null,
+        diskWriteBytesPerSecond: 10, networkRxBytesPerSecond: 20, networkTxBytesPerSecond: 30,
+      };
+      await h.store.recordSystemMetricSample(sample, new Date('2026-09-19T10:00:05.000Z'));
+      await h.store.recordSystemMetricSample({ ...sample, cpuPercent: null, diskReadBytesPerSecond: 0 }, new Date('2026-09-19T10:00:30.000Z'));
+      const host = await h.store.listSystemMetricBuckets('host', 'minute', '2026-09-19T10:00:00.000Z', '2026-09-19T10:01:00.000Z');
+      const container = await h.store.listSystemMetricBuckets('container', 'minute', '2026-09-19T10:00:00.000Z', '2026-09-19T10:01:00.000Z');
+      expect(host).toHaveLength(1);
+      expect(host[0]?.sampledAt).toBe('2026-09-19T10:00:30.000Z');
+      expect(host[0]?.cpuPercent).toBeNull();
+      expect(host[0]?.diskReadBytesPerSecond).toBe(0);
+      expect(container).toEqual([]);
+    } finally { await h.close(); }
+  });
+
   it('keeps the peak inside a bucket instead of summing readings', async () => {
     const h = await harness();
     try {
