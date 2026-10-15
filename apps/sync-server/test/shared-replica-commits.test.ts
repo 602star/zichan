@@ -10,8 +10,8 @@ describe('shared replica commit slot', () => {
   it('scopes node reads and writes to a secondary ledger instead of the account default', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zichan-secondary-node-scope-'));
     const file = join(dir, 'server.sqlite');
-    const store = new SyncServerStore(file, 'open', 'server-secondary-scope');
     const blobStore = new EncryptedBlobStore({ dataDir: dir });
+    const store = new SyncServerStore(file, 'open', 'server-secondary-scope', undefined, blobStore.ready);
     try {
       await Promise.all([store.ready, blobStore.ready]);
       await store.register('alice', 'opaque-alice', undefined, true);

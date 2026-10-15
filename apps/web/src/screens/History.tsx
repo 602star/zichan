@@ -807,7 +807,7 @@ function formatHistoryClock(iso: string): string {
 function formatHistoryListTime(iso: string): string {
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return iso;
-  return `${date.toLocaleDateString('zh-CN')} ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}`;
+  return `${localDateOfInstant(iso)} ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}`;
 }
 
 function objectName(log: OperationLogEntry): string {

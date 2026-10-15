@@ -3,10 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { NodeSqliteDriver } from '@zichan/db/node';
-import { CURRENT_SERVER_SCHEMA, SyncServerStore } from '../src/store.js';
+import { SyncServerStore } from '../src/store.js';
 
 describe('rejected commit ciphertext migration', () => {
-  it('upgrades a v19 database while preserving rejected metadata', async () => {
+  it('rejects a v19 database without changing rejected metadata', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'zichan-rejected-payload-upgrade-'));
     const file = join(directory, 'server.sqlite');
     const initial = new SyncServerStore(file, 'open', 'server-rejected-upgrade');
@@ -27,19 +27,19 @@ describe('rejected commit ciphertext migration', () => {
           ['attachment_promise_catalog_v19']);
       } finally { await sql.close(); }
       upgraded = new SyncServerStore(file, 'open', 'server-rejected-upgrade');
-      expect((await upgraded.verify()).schemaVersion).toBe(CURRENT_SERVER_SCHEMA);
-      expect(await upgraded.listRejectedNodeCommits('owner')).toMatchObject([{
-        commitId: 'commit-rejected-upgrade-0001', archived: false,
-      }]);
-      expect(await upgraded.rejectedNodeCommitCiphertext('owner', 'peer-rejected-upgrade',
-        'commit-rejected-upgrade-0001')).toBeUndefined();
+      await expect(upgraded.ready).rejects.toThrow('数据库版本不匹配');
+      const unchanged = new NodeSqliteDriver(file);
+      try {
+        expect((await unchanged.get<{ version: number }>('SELECT version FROM server_schema_migrations'))?.version).toBe(19);
+        expect((await unchanged.get<{ commit_id: string }>('SELECT commit_id FROM ledger_replica_rejected_commits'))?.commit_id).toBe('commit-rejected-upgrade-0001');
+      } finally { await unchanged.close(); }
     } finally {
       await (upgraded ?? initial).close();
       rmSync(directory, { recursive: true, force: true });
     }
   });
 
-  it('upgrades a v20 database without losing archived rejected ciphertext', async () => {
+  it('rejects a v20 database without losing archived rejected ciphertext', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'zichan-rejected-resolution-upgrade-'));
     const file = join(directory, 'server.sqlite');
     const initial = new SyncServerStore(file, 'open', 'server-resolution-upgrade');
@@ -60,12 +60,12 @@ describe('rejected commit ciphertext migration', () => {
           ['rejected_commit_ciphertext_v20']);
       } finally { await sql.close(); }
       upgraded = new SyncServerStore(file, 'open', 'server-resolution-upgrade');
-      expect((await upgraded.verify()).schemaVersion).toBe(CURRENT_SERVER_SCHEMA);
-      expect(await upgraded.listRejectedNodeCommits('owner')).toMatchObject([{
-        commitId: 'commit-resolution-upgrade-0001', archived: true,
-      }]);
-      expect((await upgraded.rejectedNodeCommitCiphertext('owner', 'peer-resolution-upgrade',
-        'commit-resolution-upgrade-0001'))?.encCommit).toMatchObject({ ct: 'cipher' });
+      await expect(upgraded.ready).rejects.toThrow('数据库版本不匹配');
+      const unchanged = new NodeSqliteDriver(file);
+      try {
+        expect((await unchanged.get<{ version: number }>('SELECT version FROM server_schema_migrations'))?.version).toBe(20);
+        expect((await unchanged.get<{ enc_commit_json: string }>('SELECT enc_commit_json FROM ledger_replica_rejected_payloads'))?.enc_commit_json).toContain('cipher');
+      } finally { await unchanged.close(); }
     } finally {
       await (upgraded ?? initial).close();
       rmSync(directory, { recursive: true, force: true });

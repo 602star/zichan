@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { installSyncLifecycle } from '../src/background-sync.js';
+import type { StoreChange } from '@zichan/db';
 
 vi.mock('../src/sync-config.js', async (importOriginal) => ({
   ...await importOriginal<typeof import('../src/sync-config.js')>(),
@@ -13,14 +14,14 @@ describe('writes during lifecycle synchronization', () => {
     vi.useFakeTimers();
     vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout, setInterval, clearInterval }));
     vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible' }));
-    let write = () => {};
+    let write = (_change: StoreChange) => {};
     let finish!: (value: null) => void;
     const first = new Promise<null>((resolve) => { finish = resolve; });
     const runner = vi.fn().mockReturnValueOnce(first).mockResolvedValue(null);
     const applied = vi.fn();
-    const dispose = installSyncLifecycle({ subscribe: (listener: () => void) => { write = listener; return () => {}; } } as never, applied, runner);
+    const dispose = installSyncLifecycle({ subscribe: (listener: (change: StoreChange) => void) => { write = listener; return () => {}; } } as never, applied, runner);
     await Promise.resolve();
-    return { write: () => write(), finish: () => finish(null), runner, dispose, applied };
+    return { write: () => write({ entityTypes: ['transaction'] }), finish: () => finish(null), runner, dispose, applied };
   }
 
   it('coalesces multiple writes into one follow-up without overlapping runs', async () => {

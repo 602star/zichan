@@ -45,7 +45,7 @@ export async function replaceRemoteLedger(store: SqlLedgerStore, connection: Syn
       const response = await requestJson(`${baseUrl}/api/v3/replica/replace`, {
         method: 'POST', redirect: 'error', credentials: 'omit',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expectedLedgerId: connection.ledgerId, expectedStreamEpoch: connection.streamEpoch, confirmation: '替换旧账本', envelope: keys.envelope, commits }),
+        body: JSON.stringify({ expectedLedgerId: connection.ledgerId, expectedStreamEpoch: connection.streamEpoch, confirmation: '替换旧账本', envelope: keys.envelope, commits, secret: passphrase }),
       });
       const result = await response.json() as SyncReplicaIdentity & { error?: string };
       if (!response.ok) {

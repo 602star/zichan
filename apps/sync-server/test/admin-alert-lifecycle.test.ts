@@ -52,8 +52,8 @@ interface Harness {
 async function alertHarness(records: BackupRecordSummary[]): Promise<Harness> {
   const dir = mkdtempSync(join(tmpdir(), 'zichan-alert-lifecycle-'));
   const dbPath = join(dir, 'server.sqlite');
-  const store = new SyncServerStore(dbPath, 'invite', 'srv-alert-lifecycle');
   const blobStore = new EncryptedBlobStore({ dataDir: dir });
+  const store = new SyncServerStore(dbPath, 'invite', 'srv-alert-lifecycle', undefined, blobStore.ready);
   await store.ready;
   await blobStore.ready;
   const { settings } = createSettings(store, { ADMIN_BACKUP_INTERVAL_HOURS: '24' });

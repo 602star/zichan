@@ -38,7 +38,7 @@ describe('responsive shell contract', () => {
   it('releases the mobile drawer lock when leaving the phone breakpoint', () => {
     expect(app).toContain("window.matchMedia('(max-width: 767px)')");
     expect(app).toContain("mobileViewport.addEventListener('change', closeOnDesktop)");
-    expect(app).toContain('props.onMoreOpen(false); props.onImport();');
+    expect(app).toContain('if (!mobileViewport.matches) onMoreOpen(false);');
   });
 
   it('uses one accessible portal dialog foundation and a root recovery boundary', () => {

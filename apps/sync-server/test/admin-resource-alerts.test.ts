@@ -43,8 +43,8 @@ function fakeRuntime(samples: Partial<RuntimeSample>[]): RuntimeStats {
 
 async function harness(samples: Partial<RuntimeSample>[], env: Record<string, string> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'zichan-resource-alerts-'));
-  const store = new SyncServerStore(join(dir, 'server.sqlite'), 'invite', 'srv-resource-alerts');
   const blobStore = new EncryptedBlobStore({ dataDir: dir });
+  const store = new SyncServerStore(join(dir, 'server.sqlite'), 'invite', 'srv-resource-alerts', undefined, blobStore.ready);
   await store.ready;
   await blobStore.ready;
   const { settings } = createSettings(store, env);

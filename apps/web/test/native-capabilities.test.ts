@@ -84,9 +84,9 @@ describe('application lifecycle sync', () => {
       reasons.push(reason);
       return null;
     };
-    let writeListener: (() => void) | undefined;
+    let writeListener: ((change: { entityTypes: string[] }) => void) | undefined;
     const store = {
-      subscribe(listener: () => void) {
+      subscribe(listener: (change: { entityTypes: string[] }) => void) {
         writeListener = listener;
         return () => { writeListener = undefined; };
       },
@@ -106,7 +106,7 @@ describe('application lifecycle sync', () => {
     fakeWindow.dispatchEvent(new Event('zichan:credentials-changed'));
     fakeWindow.timeout?.();
     await settle();
-    writeListener?.();
+    writeListener?.({ entityTypes: ['transaction'] });
     fakeWindow.timeout?.();
     expect(reasons).toEqual(['startup', 'interval', 'online', 'foreground', 'credentials', 'write']);
 

@@ -353,8 +353,8 @@ describe('backup health and alert streaks', () => {
 
   async function sampleAlerts(records: BackupRecordSummary[]): Promise<Map<string, AlertView>> {
     const dir = mkdtempSync(join(tmpdir(), 'zichan-backup-health-'));
-    const store = new SyncServerStore(join(dir, 'server.sqlite'), 'invite', 'srv-backup-health');
     const blobStore = new EncryptedBlobStore({ dataDir: dir });
+    const store = new SyncServerStore(join(dir, 'server.sqlite'), 'invite', 'srv-backup-health', undefined, blobStore.ready);
     try {
       await store.ready;
       await blobStore.ready;

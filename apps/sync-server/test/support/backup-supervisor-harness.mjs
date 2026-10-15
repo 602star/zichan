@@ -59,7 +59,8 @@ async function stop(child) {
   const [code] = await closed; assert.equal(code, 0);
 }
 try {
-  buildSync({ entryPoints: [resolve('apps/sync-server/src/main.ts')], outfile: entry, bundle: true, platform: 'node', target: 'node22', format: 'esm' });
+  buildSync({ entryPoints: [resolve('apps/sync-server/src/main.ts')], outfile: entry, bundle: true, platform: 'node', target: 'node22', format: 'esm',
+    banner: { js: "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);" } });
   const data = join(root, 'data'); const backups = join(root, 'backups');
   const first = await launch(data, backups);
   await until(() => json(join(data, 'backup-executor.json'))?.lastResult === 'completed', first.output());

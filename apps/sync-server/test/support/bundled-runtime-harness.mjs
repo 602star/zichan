@@ -27,6 +27,7 @@ try {
     platform: 'node',
     target: 'node22',
     format: 'esm',
+    banner: { js: "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);" },
   });
 
   const missingEnv = { ...process.env };

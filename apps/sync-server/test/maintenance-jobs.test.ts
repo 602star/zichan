@@ -9,7 +9,7 @@ import { createServerBackup } from '../src/backup.js';
 import { writeMaintenanceRecord } from '../src/maintenance-records.js';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
 import { objectDirectory, objectNamespace, seedObjects } from './support/blob-fixtures.js';
-import { CURRENT_SERVER_SCHEMA, SyncServerStore } from '../src/store.js';
+import { SyncServerStore } from '../src/store.js';
 
 const password = 'correct horse battery staple';
 
@@ -217,7 +217,7 @@ describe('maintenance jobs', () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
-  it('keeps accounts, roles, quotas, bindings and protection across the schema upgrade', async () => {
+  it('rejects an old schema without changing account and protection data', async () => {
     const f = await fixture();
     try {
       await f.api(f.owner.accessToken, `/accounts/${f.member.accountId}/commits`, { commitQuotaBytes: 64 * 1024 ** 2 });
@@ -238,26 +238,14 @@ describe('maintenance jobs', () => {
 
       const store = new SyncServerStore(join(f.dir, 'server.sqlite'), 'invite', f.server.serverId);
       try {
-        await store.ready;
-        expect((await store.probe()).schemaVersion).toBe(CURRENT_SERVER_SCHEMA);
-        const member = await store.getUser('member');
-        expect(member).toBeTruthy();
-        expect(await store.roleForUser('owner')).toBe('owner');
-        expect(await store.roleForUser('member')).toBe('member');
-        const quotas = await store.listUsers('', 10);
-        const row = quotas.users.find((entry) => entry['username'] === 'member')!;
-        expect(row['commitQuotaBytes']).toBe(64 * 1024 ** 2);
-        // The additive column restarts at its default on upgrade: the token only has to
-        // detect conflicts between reads and writes inside one console session.
-        expect(row['revision']).toBe(1);
-        expect(row['protectionMode']).toBe('managed');
-        const replica = await store.getReplica('member');
-        expect(replica).toMatchObject({ ledgerId: initialized.replica.ledgerId, replicaId: initialized.replica.replicaId, streamEpoch: initialized.replica.streamEpoch });
-        expect(await store.getLedgerProtection('member')).toMatchObject({ mode: 'managed', version: initialized.version });
-        // Upgraded databases get the new tables back and can run maintenance immediately.
-        const job = await store.createJob({ type: 'metrics.prune', params: {}, createdBy: 'owner' });
-        expect((await store.getJob(job.jobId))?.status).toBe('queued');
+        await expect(store.ready).rejects.toThrow('数据库版本不匹配');
       } finally { await store.close(); }
+      const unchanged = new NodeSqliteDriver(join(f.dir, 'server.sqlite'));
+      try {
+        expect((await unchanged.get<{ version: number }>('SELECT version FROM server_schema_migrations'))?.version).toBe(10);
+        expect((await unchanged.get<{ commit_quota_bytes: number }>('SELECT commit_quota_bytes FROM sync_user_quotas WHERE username = ?', ['member']))?.commit_quota_bytes).toBe(64 * 1024 ** 2);
+        expect((await unchanged.get<{ ledger_id: string }>('SELECT s.ledger_id FROM ledger_replica_slots s JOIN ledger_account_routes r ON r.replica_id = s.replica_id WHERE r.username = ?', ['member']))?.ledger_id).toBe(initialized.replica.ledgerId);
+      } finally { await unchanged.close(); }
     } finally {
       if (existsSync(join(f.dir, 'server.pid'))) rmSync(join(f.dir, 'server.pid'), { force: true });
       rmSync(f.dir, { recursive: true, force: true });

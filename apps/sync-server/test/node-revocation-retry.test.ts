@@ -6,11 +6,11 @@ import { describe, expect, it } from 'vitest';
 import { NodeSqliteDriver } from '@zichan/db/node';
 import { loadNodeIdentity } from '../src/node-identity.js';
 import { signedCall } from '../src/node-replication.js';
-import { CURRENT_SERVER_SCHEMA, SyncServerStore } from '../src/store.js';
+import { SyncServerStore } from '../src/store.js';
 import { createTestSyncServer } from './support/server-fixture.js';
 
 describe('durable node grant revocation', () => {
-  it('upgrades a v21 stopped link without claiming its old grant was revoked', async () => {
+  it('refuses a v21 stopped link without claiming its old grant was revoked', async () => {
     const root = mkdtempSync(join(tmpdir(), 'zichan-node-revoke-upgrade-'));
     const file = join(root, 'server.sqlite');
     const initial = new SyncServerStore(file, 'open', 'node-revoke-upgrade');
@@ -35,11 +35,12 @@ describe('durable node grant revocation', () => {
           ['signed_rejected_commit_resolution_v21']);
       } finally { await sql.close(); }
       upgraded = new SyncServerStore(file, 'open', 'node-revoke-upgrade');
-      expect((await upgraded.verify()).schemaVersion).toBe(CURRENT_SERVER_SCHEMA);
-      expect((await upgraded.listNodeReplicationLinks('owner'))[0]).toMatchObject({
-        linkId: link.linkId, enabled: false, revocationPending: false,
-        lifecycleState: 'STOPPED',
-      });
+      await expect(upgraded.ready).rejects.toThrow('数据库版本不匹配');
+      const unchanged = new NodeSqliteDriver(file);
+      try {
+        expect((await unchanged.get<{ version: number }>('SELECT version FROM server_schema_migrations'))?.version).toBe(21);
+        expect((await unchanged.get<{ enabled: number }>('SELECT enabled FROM node_replication_links WHERE link_id = ?', [link.linkId]))?.enabled).toBe(0);
+      } finally { await unchanged.close(); }
     } finally {
       await (upgraded ?? initial).close();
       rmSync(root, { recursive: true, force: true });

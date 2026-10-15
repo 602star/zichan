@@ -116,7 +116,8 @@ describe('independent three-node processes', () => {
     const ports = new Set<number>();
     try {
       buildSync({ entryPoints: [fileURLToPath(new URL('../src/main.ts', import.meta.url))],
-        outfile: entry, bundle: true, platform: 'node', target: 'node22', format: 'esm' });
+        outfile: entry, bundle: true, platform: 'node', target: 'node22', format: 'esm',
+        banner: { js: "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);" } });
       const locations = ['hub', 'home', 'office'];
       for (const location of locations) {
         nodes.push(await startNode(entry, join(root, location), await availablePort(ports)));

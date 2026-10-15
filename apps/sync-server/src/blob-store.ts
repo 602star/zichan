@@ -454,6 +454,14 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
             ],
           );
 
+          if (catalog.manifest.v === 2) {
+            await driver.run(`INSERT OR IGNORE INTO blob_replica_states
+              (username, ledger_id, replica_id, blob_id, state, counter, writer_node_id, changed_at)
+              VALUES (?, ?, ?, ?, ?, 1, 'migration', ?)`,
+            [catalog.username, catalog.ledgerId, catalog.replicaId ?? null, catalog.blobId,
+              state, catalog.deletedAt ?? catalog.createdAt]);
+          }
+
         }
       }
     });

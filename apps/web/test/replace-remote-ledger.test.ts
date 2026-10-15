@@ -15,6 +15,8 @@ import { runtimeLedgerCryptoSession, clearLedgerKey, storedLedgerKeyEnvelope } f
 import { loadSyncConnections, newSyncConnection, saveSyncConnections } from '../src/sync-config.js';
 
 const auth = vi.hoisted(() => ({ token: '' }));
+const NEW_LEDGER_SECRET = 'new-ledger-managed-secret-0000000000000000';
+const ANOTHER_LEDGER_SECRET = 'another-managed-secret-000000000000000000';
 vi.mock('../src/sync-auth.js', () => ({ authenticateSyncProfile: async () => auth.token }));
 
 afterEach(() => { clearLedgerKey(); vi.unstubAllGlobals(); });
@@ -43,14 +45,14 @@ describe('replace a forgotten encrypted ledger using an existing account', () =>
         await operation(transaction);
         throw new Error('simulated local commit failure');
       }));
-      await expect(replaceRemoteLedger(local, connection, 'new-ledger-password'))
+      await expect(replaceRemoteLedger(local, connection, NEW_LEDGER_SECRET))
         .rejects.toThrow('服务器已完成替换，但本机初始化未完成');
       expect(await local.settings.count()).toBe(0);
       const after = await fetchAuthMe(baseUrl, auth.token);
       expect(after.ledgerId).toBe(await local.getLedgerId());
       expect(after.ledgerId).not.toBe(before.ledgerId);
       const recovered = await prepareRemoteLedgerJoin({ baseUrl, token: auth.token,
-        ledgerId: after.ledgerId!, passphrase: 'new-ledger-password', expectedServerId: health.serverId });
+        ledgerId: after.ledgerId!, passphrase: NEW_LEDGER_SECRET, expectedServerId: health.serverId });
       expect(recovered.ledger.settings).toHaveLength(1);
     } finally {
       await Promise.all([old.close(), local.close()]);
@@ -81,7 +83,7 @@ describe('replace a forgotten encrypted ledger using an existing account', () =>
       }));
       const connection = { ...newSyncConnection(baseUrl), id: 'controlled-owner', username: 'controlled-owner',
         serverId: server.serverId, ledgerId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch };
-      await expect(replaceRemoteLedger(local, connection, 'new-ledger-password'))
+      await expect(replaceRemoteLedger(local, connection, NEW_LEDGER_SECRET))
         .rejects.toThrow('成员账本不能通过单账号替换');
       expect(await local.settings.count()).toBe(0);
       expect(await local.listSyncCommits()).toEqual([]);
@@ -128,13 +130,13 @@ describe('replace a forgotten encrypted ledger using an existing account', () =>
       const connection = { ...newSyncConnection(baseUrl), ...before, serverId: health.serverId, serverPublicKey: health.serverPublicKey };
       saveSyncConnections([connection]);
 
-      await expect(replaceRemoteLedger(local, { ...connection, streamEpoch: 'stale-epoch' }, 'new-ledger-password')).rejects.toThrow('服务器账本已变化');
+      await expect(replaceRemoteLedger(local, { ...connection, streamEpoch: 'stale-epoch' }, NEW_LEDGER_SECRET)).rejects.toThrow('服务器账本已变化');
       expect(await local.settings.count()).toBe(0);
       expect(await local.listSyncCommits()).toEqual([]);
       expect((await fetchAuthMe(baseUrl, auth.token)).ledgerId).toBe(before.ledgerId);
       expect(storedLedgerKeyEnvelope()).toBeUndefined();
 
-      const setting = await replaceRemoteLedger(local, connection, 'new-ledger-password');
+      const setting = await replaceRemoteLedger(local, connection, NEW_LEDGER_SECRET);
       expect(setting.ledgerMode).toBe('spending');
       const after = await fetchAuthMe(baseUrl, auth.token);
       expect(after.accountId).toBe(before.accountId);
@@ -162,7 +164,7 @@ describe('replace a forgotten encrypted ledger using an existing account', () =>
       await expect(fetchAuthMe(baseUrl, other)).rejects.toThrow();
       const headers = { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json' };
       const page = await (await fetch(`${baseUrl}/api/v3/commits?after=0`, { headers })).json();
-      const replacement = { expectedLedgerId: before.ledgerId, expectedStreamEpoch: before.streamEpoch, confirmation: '替换旧账本', envelope: storedLedgerKeyEnvelope(), commits: page.commits };
+      const replacement = { expectedLedgerId: before.ledgerId, expectedStreamEpoch: before.streamEpoch, confirmation: '替换旧账本', envelope: storedLedgerKeyEnvelope(), commits: page.commits, secret: NEW_LEDGER_SECRET };
       const repeat = () => fetch(`${baseUrl}/api/v3/replica/replace`, { method: 'POST', headers, body: JSON.stringify(replacement) });
       expect((await Promise.all([repeat(), repeat()])).map((response) => response.status)).toEqual([200, 200]);
       expect(await fetchAuthMe(baseUrl, auth.token)).toEqual(after);
@@ -170,10 +172,10 @@ describe('replace a forgotten encrypted ledger using an existing account', () =>
       expect((await fetch(`${baseUrl}/api/v3/replica/replace`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(replacement) })).status).toBe(401);
       // Even a newly authenticated old device cannot put its old key or commits into the new stream.
       await expect(syncReplica(old, httpCommitTransport({ baseUrl, token: auth.token, cryptoSession: oldKeys.session, keyEnvelope: oldKeys.envelope }), baseUrl)).rejects.toThrow('LEDGER_MISMATCH');
-      await expect(replaceRemoteLedger(rejected, connection, 'another-password')).rejects.toThrow('服务器账本已变化');
+      await expect(replaceRemoteLedger(rejected, connection, ANOTHER_LEDGER_SECRET)).rejects.toThrow('服务器账本已变化');
       expect(await rejected.settings.count()).toBe(0);
 
-      const restored = await prepareRemoteLedgerJoin({ baseUrl, token: auth.token, ledgerId: after.ledgerId!, passphrase: 'new-ledger-password', expectedServerId: health.serverId });
+      const restored = await prepareRemoteLedgerJoin({ baseUrl, token: auth.token, ledgerId: after.ledgerId!, passphrase: NEW_LEDGER_SECRET, expectedServerId: health.serverId });
       expect(restored.ledger.settings[0]!.id).toBe(setting.id);
       expect(restored.ledger.assets.map((asset) => asset.code)).toEqual(['CNY']);
       await syncReplica(local, httpCommitTransport({ baseUrl, token: auth.token, cryptoSession: runtimeLedgerCryptoSession()!, keyEnvelope: storedLedgerKeyEnvelope()! }), baseUrl);
