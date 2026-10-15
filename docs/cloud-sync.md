@@ -69,6 +69,8 @@ Windows 也可双击 `scripts\windows\start-sync-server.cmd`。该开发入口�
 - `ATTACHMENT_QUOTA_BYTES`：普通用户与只读运维的默认附件配额，默认 20 GiB；管理员可逐用户覆盖。所有者和管理员的两类配额均无限，仍受单文件大小和服务器实际磁盘空间限制。
 - `ATTACHMENT_MAX_FILE_BYTES`：单个明文附件上限，默认 100 MiB。
 - `ATTACHMENT_TRASH_RETENTION_MS`：回收区保留期，默认 30 天。
+- 上述四项是管理后台「系统设置」的部署初始值；所有者在页面保存后，以数据库中的设置为准。普通账号的专属配额优先于默认配额。监控中心的分钟级与小时级指标保留天数也可在「记录保留」中调整。
+- 设置保存在当前服务器。加入服务器同步组后，应在各节点配置相同的默认配额与附件上限，避免不同节点对同一账号采用不同的上传边界。
 - `REGISTRATION_MODE`：`open`、`invite` 或 `closed`，新服务器默认 `invite`；仅所有者可在管理页动态修改。已有库的策略不被部署默认值覆盖。
 - `SYNC_SECRET`、`SERVER_ID`：访问令牌签名和服务器身份配置；生产部署必须稳定保存。
 - `TRUSTED_PROXIES`：允许提供 `X-Forwarded-*` 的代理 IP 或 CIDR（IPv4/IPv6），兼容显式的 `loopback/private`；优先限定到实际代理地址，不要在直接暴露 8787 时信任任意来源。代理链从右向左检查，到首个不受信任的地址为止。代理必须覆盖 `X-Forwarded-Proto` 为单一的 `https`；经代理的请求不能依靠 `X-Forwarded-For: 127.0.0.1` 获得本机 HTTP 豁免。

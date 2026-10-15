@@ -1,9 +1,8 @@
 /**
  * Effective runtime settings.
  *
- * Only an explicit allow-list is editable online. Secrets are never returned, and a
- * value coming from the environment is shown as such instead of being silently
- * overridden by, or overriding, the stored one.
+ * Only an explicit allow-list is editable online. Saved settings take precedence
+ * over deployment defaults, and secrets are never returned.
  */
 import { ServerStoreError, type SyncServerStore } from './store.js';
 import { parseBackupWindow } from './backup-schedule.js';
@@ -35,6 +34,30 @@ export interface SettingField {
 }
 
 export const SETTING_FIELDS: SettingField[] = [
+  {
+    name: 'defaultCommitQuotaBytes', label: '默认加密提交配额', kind: 'number', unit: 'bytes',
+    envVar: 'COMMIT_QUOTA_BYTES', default: 20 * 1024 ** 3,
+    min: 1024 ** 2, max: 1024 ** 4,
+    description: '未单独设置配额的普通账号和只读运维账号使用此上限；所有者与管理员无限额。调低后不会删除已有数据。',
+  },
+  {
+    name: 'defaultBlobQuotaBytes', label: '默认附件配额', kind: 'number', unit: 'bytes',
+    envVar: 'ATTACHMENT_QUOTA_BYTES', default: 20 * 1024 ** 3,
+    min: 1024 ** 2, max: 1024 ** 4,
+    description: '未单独设置配额的普通账号和只读运维账号使用此上限；附件回收区和暂存上传也计入用量。',
+  },
+  {
+    name: 'attachmentMaxFileBytes', label: '单文件附件上限', kind: 'number', unit: 'bytes',
+    envVar: 'ATTACHMENT_MAX_FILE_BYTES', default: 100 * 1024 ** 2,
+    min: 1024 ** 2, max: 1024 ** 3,
+    description: '服务器接受的单个附件大小；网页端同时使用此值校验。已保存的附件不受影响。',
+  },
+  {
+    name: 'attachmentTrashRetentionMs', label: '附件回收区保留时间', kind: 'number', unit: 'ms',
+    envVar: 'ATTACHMENT_TRASH_RETENTION_MS', default: 30 * 24 * 60 * 60 * 1000,
+    min: 24 * 60 * 60 * 1000, max: 3650 * 24 * 60 * 60 * 1000,
+    description: '超过此时间的回收区附件在后续清理时删除；缩短时间可能使已有回收内容到期。',
+  },
   {
     name: 'backupAutoEnabled',
     label: '自动备份',
@@ -190,7 +213,12 @@ export const SETTING_FIELDS: SettingField[] = [
     default: 7,
     min: 1,
     max: 90,
-    description: '更早的分钟级分桶会被清理；小时级分桶保留 90 天。',
+    description: '更早的分钟级监控指标会在下一次例行清理时删除。',
+  },
+  {
+    name: 'metricsHourRetentionDays', label: '小时级指标保留天数', kind: 'number',
+    envVar: 'ADMIN_METRICS_HOUR_DAYS', default: 90, min: 7, max: 730,
+    description: '更早的小时级监控指标会在下一次例行清理时删除。',
   },
   {
     name: 'memoryWarnBytes',
@@ -237,6 +265,7 @@ export interface EffectiveSetting {
   stored: number | string | null;
   envVar: string;
   source: 'env' | 'database' | 'default';
+  overridesEnv?: boolean;
   value: number | string;
   minimum?: number;
   maximum?: number;
@@ -266,6 +295,7 @@ function coerce(field: SettingField, value: unknown): number | string | undefine
   }
   const numeric = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(numeric)) return undefined;
+  if ((field.unit === 'bytes' || field.unit === 'ms' || field.name.endsWith('RetentionDays')) && !Number.isSafeInteger(numeric)) return undefined;
   if (field.min !== undefined && numeric < field.min) return undefined;
   if (field.max !== undefined && numeric > field.max) return undefined;
   return numeric;
@@ -317,16 +347,21 @@ export function assertMaintenancePlan(next: Record<string, number | string>, val
   throw new ServerStoreError('INVALID_SETTING', 400, `启用自动备份前必须先配置${missing}`);
 }
 
-export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = process.env) {
+export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = process.env, options: {
+  defaults?: Record<string, number | string>;
+  onChange?: (values: Record<string, number | string>) => void;
+} = {}) {
   let cache: Record<string, number | string> | undefined;
   let cachedAt = 0;
-  /**
-   * Effective values including environment overrides. The cross-field rules have to see what
-   * the service will actually run with, not only what is stored.
-   */
+  /** Saved values override deployment values, which only seed the initial effective policy. */
   const effectiveFrom = (stored: Record<string, number | string>): Record<string, number | string> => {
     const values: Record<string, number | string> = {};
     for (const field of SETTING_FIELDS) {
+      const saved = stored[field.name];
+      if (saved !== undefined) {
+        values[field.name] = saved;
+        continue;
+      }
       const fromEnv = env[field.envVar];
       if (fromEnv !== undefined && fromEnv !== '') {
         const parsed = coerce(field, fromEnv);
@@ -334,7 +369,7 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
         values[field.name] = parsed;
         continue;
       }
-      values[field.name] = stored[field.name] ?? field.default;
+      values[field.name] = options.defaults?.[field.name] ?? field.default;
     }
     return values;
   };
@@ -350,9 +385,11 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
         if (parsed !== undefined) loaded[field.name] = parsed;
       }
     }
-    assertMaintenancePlan(effectiveFrom(loaded), false);
+    const effective = effectiveFrom(loaded);
+    assertMaintenancePlan(effective, false);
     cache = loaded;
     cachedAt = Date.now();
+    options.onChange?.(effective);
     return loaded;
   };
 
@@ -360,10 +397,10 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
 
     const fromEnv = env[field.envVar];
     const storedValue = stored[field.name] ?? null;
-    let value: number | string = field.default;
+    const fallback = options.defaults?.[field.name] ?? field.default;
+    let value: number | string = fallback;
     let source: EffectiveSetting['source'] = 'default';
-    if (storedValue !== null) { value = storedValue; source = 'database'; }
-    if (fromEnv !== undefined && fromEnv !== '') {
+    if (storedValue === null && fromEnv !== undefined && fromEnv !== '') {
       const parsed = coerce(field, fromEnv);
       if (parsed === undefined) {
         throw new Error(`环境变量 ${field.envVar} 取值无效：${fromEnv}（${field.label}）；请修正或删除该变量，不会静默回退默认值`);
@@ -371,23 +408,25 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
       value = parsed;
       source = 'env';
     }
+    if (storedValue !== null) { value = storedValue; source = 'database'; }
     return {
       name: field.name,
       label: field.label,
       kind: field.kind,
       ...(field.unit ? { unit: field.unit } : {}),
       description: field.description,
-      defaultValue: field.default,
+      defaultValue: fallback,
       stored: storedValue,
       envVar: field.envVar,
       source,
+      overridesEnv: storedValue !== null && fromEnv !== undefined && fromEnv !== '',
       value,
       ...(field.min === undefined ? {} : { minimum: field.min }),
       ...(field.max === undefined ? {} : { maximum: field.max }),
       ...(field.options ? { options: field.options } : {}),
       ...(field.maxLength === undefined ? {} : { maxLength: field.maxLength }),
       ...(field.textFormat === undefined ? {} : { textFormat: field.textFormat }),
-      editable: source !== 'env',
+      editable: true,
     };
   };
 
@@ -400,17 +439,20 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
       return resolve(field, cache ?? {}).value;
     },
     async save(updates) {
-      const validated: [SettingField, number | string][] = [];
+      const validated: [SettingField, number | string | null][] = [];
       for (const [name, value] of Object.entries(updates)) {
         const field = FIELD_BY_NAME.get(name);
         if (!field) throw new ServerStoreError('UNKNOWN_SETTING', 400, `不支持的设置项：${name}`);
-        validated.push([field, parseSettingValue(field, value)]);
+        validated.push([field, value === null ? null : parseSettingValue(field, value)]);
       }
       const next = { ...(cache ?? await load()) };
-      for (const [field, value] of validated) next[field.name] = value;
-      assertMaintenancePlan(next);
       for (const [field, value] of validated) {
-        await store.setMaintenanceState(`${SETTING_PREFIX}${field.name}`, { value });
+        if (value === null) delete next[field.name];
+        else next[field.name] = value;
+      }
+      assertMaintenancePlan(effectiveFrom(next));
+      for (const [field, value] of validated) {
+        await store.setMaintenanceState(`${SETTING_PREFIX}${field.name}`, value === null ? {} : { value });
       }
       cache = undefined;
       cachedAt = 0;

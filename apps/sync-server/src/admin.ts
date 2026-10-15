@@ -33,6 +33,7 @@ import {
   type AdminJob,
   type AdminJobType,
   type JsonRecord,
+  type MetricBucket,
   type RegistrationMode,
   type ServerLog,
   type SyncServerStore,
@@ -474,15 +475,22 @@ export function createAdminRouter(deps: AdminRouterDeps) {
      */
     if (req.method === 'GET' && suffix === '/system/metrics') {
       const range = search.get('range') ?? '24h';
-      if (!['1h', '24h', '7d'].includes(range)) return send(res, 400, { error: 'range must be 1h, 24h or 7d' });
-      const spanMs = range === '1h' ? 3_600_000 : range === '24h' ? 86_400_000 : 7 * 86_400_000;
-      const granularity = range === '1h' ? 'minute' : 'hour';
+      if (!['1h', '24h', '7d', '30d', '90d'].includes(range)) return send(res, 400, { error: 'range must be 1h, 24h, 7d, 30d or 90d' });
+      const spanMs = range === '1h' ? 3_600_000 : range === '24h' ? 86_400_000
+        : (range === '7d' ? 7 : range === '30d' ? 30 : 90) * 86_400_000;
+      const granularity = range === '1h' ? 'minute' : range === '30d' || range === '90d' ? 'day' : 'hour';
       const bucketMs = granularity === 'minute' ? 60_000 : 3_600_000;
       const until = new Date();
       const from = new Date(until.getTime() - spanMs);
       const system = await systemMonitor.read();
-      const buckets = await store.listSystemMetricBuckets(system.scope, granularity,
+      const rawBuckets = await store.listSystemMetricBuckets(system.scope, granularity === 'minute' ? 'minute' : 'hour',
         new Date(Math.floor(from.getTime() / bucketMs) * bucketMs).toISOString(), until.toISOString());
+      const daily = new Map<string, (typeof rawBuckets)[number]>();
+      if (granularity === 'day') for (const bucket of rawBuckets) {
+        const day = `${bucket.bucketAt.slice(0, 10)}T00:00:00.000Z`;
+        daily.set(day, { ...bucket, bucketAt: day });
+      }
+      const buckets = granularity === 'day' ? [...daily.values()] : rawBuckets;
       return send(res, 200, {
         range, granularity, from: from.toISOString(), until: until.toISOString(),
         scope: system.scope, buckets,
@@ -573,14 +581,36 @@ export function createAdminRouter(deps: AdminRouterDeps) {
 
     if (req.method === 'GET' && suffix === '/metrics') {
       const range = search.get('range') ?? '24h';
-      if (!['1h', '24h', '7d'].includes(range)) return send(res, 400, { error: 'range must be 1h, 24h or 7d' });
-      const spanMs = range === '1h' ? 3_600_000 : range === '24h' ? 86_400_000 : 7 * 86_400_000;
-      const granularity = range === '1h' ? 'minute' : range === '7d' ? 'hour' : 'hour';
+      if (!['1h', '24h', '7d', '30d', '90d'].includes(range)) return send(res, 400, { error: 'range must be 1h, 24h, 7d, 30d or 90d' });
+      const spanMs = range === '1h' ? 3_600_000 : range === '24h' ? 86_400_000
+        : (range === '7d' ? 7 : range === '30d' ? 30 : 90) * 86_400_000;
+      const granularity = range === '1h' ? 'minute' : range === '30d' || range === '90d' ? 'day' : 'hour';
       const until = new Date();
       const from = new Date(until.getTime() - spanMs);
-      const buckets = granularity === 'minute'
+      const rawBuckets = granularity === 'minute'
         ? await store.listMetricBuckets('minute', from.toISOString(), until.toISOString())
         : await store.listMetricBuckets('hour', from.toISOString(), until.toISOString());
+      const daily = new Map<string, MetricBucket>();
+      if (granularity === 'day') for (const bucket of rawBuckets) {
+        const day = `${bucket.bucketAt.slice(0, 10)}T00:00:00.000Z`;
+        const current = daily.get(day);
+        if (!current) { daily.set(day, { ...bucket, bucketAt: day }); continue; }
+        current.requests += bucket.requests;
+        current.errors += bucket.errors;
+        current.slowRequests += bucket.slowRequests;
+        current.durationMs += bucket.durationMs;
+        current.syncPushOk += bucket.syncPushOk;
+        current.syncPushFailed += bucket.syncPushFailed;
+        current.syncPullOk += bucket.syncPullOk;
+        current.blobOk += bucket.blobOk;
+        current.blobFailed += bucket.blobFailed;
+        current.rssBytes = Math.max(current.rssBytes, bucket.rssBytes);
+        current.heapUsedBytes = Math.max(current.heapUsedBytes, bucket.heapUsedBytes);
+        current.externalBytes = Math.max(current.externalBytes, bucket.externalBytes);
+        current.cpuPercent = Math.max(current.cpuPercent, bucket.cpuPercent);
+        current.eventLoopMaxMs = Math.max(current.eventLoopMaxMs, bucket.eventLoopMaxMs);
+      }
+      const buckets = granularity === 'day' ? [...daily.values()] : rawBuckets;
       const totals = buckets.reduce((accumulator, bucket) => ({
         requests: accumulator.requests + bucket.requests,
         errors: accumulator.errors + bucket.errors,
@@ -1054,7 +1084,8 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if (typeof updates !== 'object' || updates === null || Array.isArray(updates)) return send(res, 400, { code: 'INVALID_SETTINGS', error: 'settings 必须是一个对象' });
       // Requiring a second factor is only safe if every administrator already has one: with the
       // policy on and a missing factor, that account can no longer sign in at all.
-      if ((updates as JsonRecord)['requireAdminMfa'] === 'on') {
+      if ((updates as JsonRecord)['requireAdminMfa'] === 'on'
+        || (updates as JsonRecord)['requireAdminMfa'] === null && process.env.ADMIN_REQUIRE_MFA?.trim() === 'on') {
         const missing = await deps.mfa.administratorsWithoutMfa();
         if (missing.length) {
           return send(res, 409, {
@@ -1068,8 +1099,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         // A masked password coming back means "unchanged": keeping it verbatim would store the
         // placeholder as the real password and silently break the relay.
         if (typeof incoming['alertChannels'] === 'string' && incoming['alertChannels'].includes(SECRET_PLACEHOLDER)) {
-          const previous = await store.maintenanceState('setting:alertChannels');
-          const storedValue = typeof previous?.['value'] === 'string' ? previous['value'] as string : '';
+          const storedValue = String(settings.settings.effective('alertChannels'));
           try {
             const next = parseAlertChannels(incoming['alertChannels']);
             const kept = mergeChannelSecrets(next, storedValue ? parseAlertChannels(storedValue) : []);
@@ -1416,8 +1446,9 @@ export function createAdminRouter(deps: AdminRouterDeps) {
 
     if (req.method === 'GET' && suffix === '/logs/summary') {
       const range = search.get('range') ?? '24h';
-      if (!['1h', '24h', '7d'].includes(range)) return send(res, 400, { error: 'range must be 1h, 24h or 7d' });
-      const spanMs = range === '1h' ? 3_600_000 : range === '24h' ? 86_400_000 : 7 * 86_400_000;
+      if (!['1h', '24h', '7d', '30d', '90d'].includes(range)) return send(res, 400, { error: 'range must be 1h, 24h, 7d, 30d or 90d' });
+      const spanMs = range === '1h' ? 3_600_000 : range === '24h' ? 86_400_000
+        : (range === '7d' ? 7 : range === '30d' ? 30 : 90) * 86_400_000;
       const granularity = range === '1h' ? 'minute' : range === '24h' ? 'hour' : 'day';
       const until = new Date();
       const from = new Date(until.getTime() - spanMs);

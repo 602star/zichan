@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loginAccount, registerAccount } from '@zichan/db';
+import { NodeSqliteDriver } from '@zichan/db/node';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
 import { describeAudit } from '../src/admin.js';
 import { SyncServerStore, CURRENT_SERVER_SCHEMA } from '../src/store.js';
@@ -307,6 +308,123 @@ describe('management console operations', () => {
       const manager = await loginAccount(f.url, 'manager', password);
       expect((await f.api(manager.accessToken, '/settings', { settings: { quotaWarnRatio: 0.8 } })).status).toBe(403);
     } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+  });
+
+  it('applies saved default quotas and the attachment limit to live reads', async () => {
+    const f = await fixture();
+    try {
+      const updated = await f.api(f.owner.accessToken, '/settings', { settings: {
+        defaultCommitQuotaBytes: 32 * 1024 ** 2,
+        defaultBlobQuotaBytes: 48 * 1024 ** 2,
+        attachmentMaxFileBytes: 64 * 1024 ** 2,
+        metricsHourRetentionDays: 120,
+      } });
+      expect(updated.status).toBe(200);
+      const listed = await (await f.api(f.owner.accessToken, '/users')).json() as {
+        users: { accountId: string; commitQuotaBytes: number | null }[];
+      };
+      expect(listed.users.find((user) => user.accountId === f.member.accountId)?.commitQuotaBytes).toBe(32 * 1024 ** 2);
+      const detail = await (await f.api(f.owner.accessToken, `/accounts/${f.member.accountId}`)).json() as {
+        capacity: { commitQuotaBytes: number; blobQuotaBytes: number };
+      };
+      expect(detail.capacity.commitQuotaBytes).toBe(32 * 1024 ** 2);
+      expect(detail.capacity.blobQuotaBytes).toBe(48 * 1024 ** 2);
+      const health = await (await fetch(`${f.url}/api/health`)).json() as { attachmentMaxFileBytes: number };
+      expect(health.attachmentMaxFileBytes).toBe(64 * 1024 ** 2);
+    } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+  });
+
+  it('allows the owner to override a deployment setting from the console', async () => {
+    const previous = process.env.ADMIN_QUOTA_WARN_RATIO;
+    process.env.ADMIN_QUOTA_WARN_RATIO = '0.75';
+    let f: Awaited<ReturnType<typeof fixture>> | undefined;
+    try {
+      f = await fixture();
+      const before = await (await f.api(f.owner.accessToken, '/settings')).json() as {
+        settings: { name: string; value: number; source: string; editable: boolean; overridesEnv: boolean }[];
+      };
+      expect(before.settings.find((field) => field.name === 'quotaWarnRatio'))
+        .toMatchObject({ source: 'env', value: 0.75, editable: true });
+      expect((await f.api(f.owner.accessToken, '/settings', { settings: { quotaWarnRatio: 0.8 } })).status).toBe(200);
+      const after = await (await f.api(f.owner.accessToken, '/settings')).json() as typeof before;
+      expect(after.settings.find((field) => field.name === 'quotaWarnRatio'))
+        .toMatchObject({ source: 'database', value: 0.8, overridesEnv: true });
+      expect((await f.api(f.owner.accessToken, '/settings', { settings: { quotaWarnRatio: null } })).status).toBe(200);
+      const restored = await (await f.api(f.owner.accessToken, '/settings')).json() as typeof before;
+      expect(restored.settings.find((field) => field.name === 'quotaWarnRatio'))
+        .toMatchObject({ source: 'env', value: 0.75, editable: true });
+    } finally {
+      if (f) { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+      if (previous === undefined) delete process.env.ADMIN_QUOTA_WARN_RATIO;
+      else process.env.ADMIN_QUOTA_WARN_RATIO = previous;
+    }
+  });
+
+  it('keeps a deployment channel secret when saving its masked form', async () => {
+    const previous = process.env.ADMIN_ALERT_CHANNELS;
+    process.env.ADMIN_ALERT_CHANNELS = JSON.stringify([{ kind: 'webhook', name: 'phone',
+      url: 'https://example.com/push', format: 'bark', deviceKey: 'private-device-key', enabled: true }]);
+    let f: Awaited<ReturnType<typeof fixture>> | undefined;
+    try {
+      f = await fixture();
+      const before = await (await f.api(f.owner.accessToken, '/settings')).json() as {
+        settings: { name: string; value: string; editable: boolean }[];
+      };
+      const masked = before.settings.find((field) => field.name === 'alertChannels')!;
+      expect(masked).toMatchObject({ editable: true });
+      expect(masked.value).toContain('********');
+      const channels = JSON.parse(masked.value) as { enabled: boolean }[];
+      channels[0]!.enabled = false;
+      expect((await f.api(f.owner.accessToken, '/settings', { settings: { alertChannels: JSON.stringify(channels) } })).status).toBe(200);
+      const driver = new NodeSqliteDriver(join(f.dir, 'server.sqlite'));
+      try {
+        const row = await driver.get<{ value_json: string }>(
+          "SELECT value_json FROM server_maintenance_state WHERE key = 'setting:alertChannels'");
+        const saved = JSON.parse(String(JSON.parse(row!.value_json)['value'])) as { deviceKey: string; enabled: boolean }[];
+        expect(saved[0]).toMatchObject({ deviceKey: 'private-device-key', enabled: false });
+      } finally { await driver.close(); }
+    } finally {
+      if (f) { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+      if (previous === undefined) delete process.env.ADMIN_ALERT_CHANNELS;
+      else process.env.ADMIN_ALERT_CHANNELS = previous;
+    }
+  });
+
+  it('shows 30 and 90 day monitoring history as daily buckets', async () => {
+    const f = await fixture();
+    const driver = new NodeSqliteDriver(join(f.dir, 'server.sqlite'));
+    try {
+      const day = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
+      await driver.run('INSERT INTO server_metric_buckets (granularity, bucket_at, requests, rss_bytes) VALUES (?, ?, ?, ?)',
+        ['hour', `${day}T00:00:00.000Z`, 2, 100]);
+      await driver.run('INSERT INTO server_metric_buckets (granularity, bucket_at, requests, rss_bytes) VALUES (?, ?, ?, ?)',
+        ['hour', `${day}T01:00:00.000Z`, 3, 200]);
+      const system = await (await f.api(f.owner.accessToken, '/system')).json() as { scope: string };
+      for (const [hour, cpu] of [['00', 10], ['01', 20]] as const) {
+        await driver.run('INSERT INTO system_metric_buckets (scope, granularity, bucket_at, sampled_at, cpu_percent) VALUES (?, ?, ?, ?, ?)',
+          [system.scope, 'hour', `${day}T${hour}:00:00.000Z`, `${day}T${hour}:30:00.000Z`, cpu]);
+      }
+      for (const range of ['30d', '90d']) {
+        const response = await (await f.api(f.owner.accessToken, `/metrics?range=${range}`)).json() as {
+          granularity: string; buckets: { bucketAt: string; requests: number; rssBytes: number }[];
+        };
+        expect(response.granularity).toBe('day');
+        expect(response.buckets.find((bucket) => bucket.bucketAt.startsWith(day)))
+          .toMatchObject({ requests: 5, rssBytes: 200 });
+        const systemHistory = await (await f.api(f.owner.accessToken, `/system/metrics?range=${range}`)).json() as {
+          granularity: string; buckets: { bucketAt: string; cpuPercent: number }[];
+        };
+        expect(systemHistory.granularity).toBe('day');
+        expect(systemHistory.buckets.find((bucket) => bucket.bucketAt.startsWith(day)))
+          .toMatchObject({ cpuPercent: 20 });
+        const logHistory = await (await f.api(f.owner.accessToken, `/logs/summary?range=${range}`)).json() as {
+          granularity: string;
+        };
+        expect(logHistory.granularity).toBe('day');
+      }
+    } finally {
+      await driver.close(); await f.server.close(); rmSync(f.dir, { recursive: true, force: true });
+    }
   });
 
   it('summarises the overview from a cached snapshot and reports storage composition', async () => {

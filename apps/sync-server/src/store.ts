@@ -900,14 +900,19 @@ export class SyncServerStore {
     readonly databaseFile: string,
     private readonly defaultRegistrationMode: RegistrationMode,
     private readonly serverId: string,
-    private readonly defaultCommitQuotaBytes = DEFAULT_COMMIT_QUOTA_BYTES,
+    private defaultCommitQuotaBytes = DEFAULT_COMMIT_QUOTA_BYTES,
     initializeAfter?: Promise<unknown>,
-    private readonly defaultBlobQuotaBytes = DEFAULT_BLOB_QUOTA_BYTES,
+    private defaultBlobQuotaBytes = DEFAULT_BLOB_QUOTA_BYTES,
   ) {
     this.driver = new NodeSqliteDriver(databaseFile);
     this.ready = initializeAfter
       ? initializeAfter.then(() => this.initialize())
       : this.initialize();
+  }
+
+  setDefaultQuotas(commitBytes: number, blobBytes: number): void {
+    this.defaultCommitQuotaBytes = commitBytes;
+    this.defaultBlobQuotaBytes = blobBytes;
   }
 
   private async initialize(): Promise<void> {
@@ -7587,10 +7592,10 @@ END;`);
     }));
   }
 
-  async pruneMetrics(now = new Date()): Promise<{ removed: number }> {
+  async pruneMetrics(now = new Date(), minuteDays = 7, hourDays = 90): Promise<{ removed: number }> {
     await this.ready;
-    const minuteCutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const hourCutoff = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const minuteCutoff = new Date(now.getTime() - minuteDays * 24 * 60 * 60 * 1000).toISOString();
+    const hourCutoff = new Date(now.getTime() - hourDays * 24 * 60 * 60 * 1000).toISOString();
     const minutes = await this.driver.run("DELETE FROM server_metric_buckets WHERE granularity = 'minute' AND bucket_at < ?", [minuteCutoff]);
     const hours = await this.driver.run("DELETE FROM server_metric_buckets WHERE granularity = 'hour' AND bucket_at < ?", [hourCutoff]);
     const systemMinutes = await this.driver.run("DELETE FROM system_metric_buckets WHERE granularity = 'minute' AND bucket_at < ?", [minuteCutoff]);

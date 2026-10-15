@@ -732,7 +732,8 @@ export function createMetricsService(deps: MetricsServiceDeps) {
       await store.pruneAdminAudit(Number(settings.effective('auditRetention')));
       await store.pruneAdminFailures(Number(settings.effective('auditFailureRetention')));
       const minuteDays = Number(settings.effective('metricsMinuteRetentionDays'));
-      await store.pruneMetrics(new Date(Date.now() - (7 - minuteDays) * 24 * 60 * 60 * 1000));
+      const hourDays = Number(settings.effective('metricsHourRetentionDays'));
+      await store.pruneMetrics(new Date(), minuteDays, hourDays);
       await store.recordServiceSample(emptyCounters());
       await log('info', 'housekeeping_completed', 'Retention housekeeping completed', {});
     } catch (error) {

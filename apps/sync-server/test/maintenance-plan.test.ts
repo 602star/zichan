@@ -4,11 +4,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createSettings, SETTING_FIELDS } from '../src/settings.js';
 import { SyncServerStore } from '../src/store.js';
+import { NodeSqliteDriver } from '@zichan/db/node';
 
 /**
  * The maintenance plan is checked across fields: automatic backup without a declared location
  * and window is a schedule nobody can keep, so it is refused at save time and at boot (the
- * environment can override any single field).
+ * deployment values seed fields until an owner saves them in the console).
  */
 async function store(): Promise<{ store: SyncServerStore; dir: string }> {
   const dir = mkdtempSync(join(tmpdir(), 'zichan-settings-'));
@@ -18,6 +19,39 @@ async function store(): Promise<{ store: SyncServerStore; dir: string }> {
 }
 
 describe('maintenance plan settings', () => {
+  it('lets a saved value override the deployment value and validates integer storage policies', async () => {
+    const { store: instance, dir } = await store();
+    try {
+      const { settings, load } = createSettings(instance, { COMMIT_QUOTA_BYTES: String(64 * 1024 ** 2) });
+      await load();
+      expect(settings.resolve(SETTING_FIELDS.find((field) => field.name === 'defaultCommitQuotaBytes')!))
+        .toMatchObject({ source: 'env', value: 64 * 1024 ** 2, editable: true });
+      await settings.save({ defaultCommitQuotaBytes: 32 * 1024 ** 2 });
+      expect(settings.effective('defaultCommitQuotaBytes')).toBe(32 * 1024 ** 2);
+      expect(settings.resolve(SETTING_FIELDS.find((field) => field.name === 'defaultCommitQuotaBytes')!))
+        .toMatchObject({ source: 'database', editable: true });
+      await expect(settings.save({ attachmentMaxFileBytes: 1.5 })).rejects.toThrow(/取值无效/);
+      await expect(settings.save({ metricsHourRetentionDays: 0 })).rejects.toThrow(/取值无效/);
+    } finally { await instance.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+  it('prunes minute and hourly monitoring records using separate day limits', async () => {
+    const { store: instance, dir } = await store();
+    const driver = new NodeSqliteDriver(join(dir, 'server.sqlite'));
+    try {
+      const now = new Date('2026-01-01T00:00:00.000Z');
+      const at = (days: number) => new Date(now.getTime() - days * 86_400_000).toISOString();
+      for (const [granularity, days] of [['minute', 3], ['minute', 10], ['hour', 10], ['hour', 150]] as const) {
+        await driver.run('INSERT INTO server_metric_buckets (granularity, bucket_at) VALUES (?, ?)', [granularity, at(days)]);
+      }
+      expect(await instance.pruneMetrics(now, 5, 120)).toEqual({ removed: 2 });
+      const rows = await driver.all<{ granularity: string; bucket_at: string }>(
+        'SELECT granularity, bucket_at FROM server_metric_buckets ORDER BY granularity, bucket_at');
+      expect(rows).toEqual([
+        { granularity: 'hour', bucket_at: at(10) },
+        { granularity: 'minute', bucket_at: at(3) },
+      ]);
+    } finally { await driver.close(); await instance.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
   it('keeps legacy free-text schedules readable while refusing newly enabled ambiguous schedules', async () => {
     const { store: instance, dir } = await store();
     try {

@@ -7,6 +7,25 @@ import { NodeSqliteDriver } from '@zichan/db/node';
 import { EncryptedBlobStore } from '../src/blob-store.js';
 
 describe('portable attachment replica state', () => {
+  it('keeps existing attachments readable after lowering the upload limit', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'zichan-blob-limit-'));
+    const store = new EncryptedBlobStore({ dataDir: root });
+    const chunk = Buffer.alloc(32 * 1024, 8);
+    const manifest = { v: 2 as const, blobId: 'd'.repeat(64), cipherBytes: chunk.byteLength, chunkCount: 1,
+      chunks: [{ index: 0, sizeBytes: chunk.byteLength,
+        ciphertextSha256: createHash('sha256').update(chunk).digest('hex'), iv: 'test-iv-123456' }] };
+    try {
+      const plan = await store.beginUpload('owner', 'ledger-limit', manifest);
+      await store.putChunk('owner', plan.uploadId!, 0, chunk);
+      await store.completeUpload('owner', plan.uploadId!, 2);
+      store.setStoragePolicy(20 * 1024 ** 3, 16, 30 * 86_400_000);
+      expect(await store.manifest('owner', 'ledger-limit', manifest.blobId)).toMatchObject({ blobId: manifest.blobId });
+      expect(Buffer.from((await store.chunk('owner', 'ledger-limit', manifest.blobId, 0))!)).toEqual(chunk);
+      expect((await store.beginUpload('owner', 'ledger-limit', manifest)).status).toBe('available');
+      await expect(store.beginUpload('owner', 'ledger-limit', { ...manifest, blobId: 'e'.repeat(64) }))
+        .rejects.toThrow(/single-file limit/);
+    } finally { await store.close(); rmSync(root, { recursive: true, force: true }); }
+  });
   it('renews an active staged upload when a chunk arrives', async () => {
     const root = mkdtempSync(join(tmpdir(), 'zichan-blob-upload-renew-'));
     const store = new EncryptedBlobStore({ dataDir: root, uploadTtlMs: 60_000 });

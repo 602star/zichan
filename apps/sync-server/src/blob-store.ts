@@ -27,6 +27,7 @@ const DEFAULT_MAX_BLOB_BYTES = 100 * 1024 * 1024;
 const DEFAULT_UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CHUNKS = 512;
 export const MAX_ENCRYPTED_CHUNK_BYTES = 4 * 1024 * 1024 + 32;
+const MAX_PROTOCOL_BLOB_BYTES = MAX_CHUNKS * MAX_ENCRYPTED_CHUNK_BYTES;
 
 export interface BlobManifestChunk {
   index: number;
@@ -279,10 +280,10 @@ export class EncryptedBlobStore {
   readonly ready: Promise<void>;
   private readonly driver: NodeSqliteDriver;
   private readonly ephemeral: boolean;
-  private readonly quotaBytes: number;
-  private readonly maxBlobBytes: number;
+  private quotaBytes: number;
+  private maxBlobBytes: number;
   private readonly uploadTtlMs: number;
-  private readonly trashRetentionMs: number;
+  private trashRetentionMs: number;
   private readonly isUnlimitedAccount?: (username: string) => Promise<boolean>;
   private readonly enforceFreshServerSchema: boolean;
   private replicaIdResolver?: (username: string, ledgerId: string) => Promise<string>;
@@ -312,6 +313,12 @@ export class EncryptedBlobStore {
       this.cleanupTimer = setInterval(() => { void this.runCleanup(); }, 60 * 60 * 1000);
       this.cleanupTimer.unref?.();
     }, () => undefined);
+  }
+
+  setStoragePolicy(quotaBytes: number, maxBlobBytes: number, trashRetentionMs: number): void {
+    this.quotaBytes = quotaBytes;
+    this.maxBlobBytes = maxBlobBytes;
+    this.trashRetentionMs = trashRetentionMs;
   }
 
   private async initialize(): Promise<void> {
@@ -730,14 +737,14 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
          WHERE ${scope.sql} AND state = 'available' AND json_extract(manifest_json, '$.v') = 1
            ${backupFilter}`, scope.params),
     ]);
-    return { manifests: selected.map((row) => assertManifest(JSON.parse(row.manifest_json), this.maxBlobBytes)),
+    return { manifests: selected.map((row) => assertManifest(JSON.parse(row.manifest_json), MAX_PROTOCOL_BLOB_BYTES)),
       nextId: selected.at(-1)?.blob_id ?? after, hasMore: rows.length > limit,
       totalObjects: Number(portable?.objects ?? 0), totalBytes: Number(portable?.bytes ?? 0), legacyObjects: Number(legacy?.objects ?? 0) };
   }
 
   async beginUpload(username: string, ledgerId: string, value: unknown): Promise<BlobUploadPlan> {
     await this.ready;
-    const manifest = assertManifest(value, this.maxBlobBytes);
+    const manifest = assertManifest(value, MAX_PROTOCOL_BLOB_BYTES);
     return this.withUploadLock(async () => {
       const manifestJson = JSON.stringify(manifest);
       const selectedReplicaId = await this.replicaIdResolver?.(username, ledgerId);
@@ -783,6 +790,7 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
         return { status: 'upload', uploadId: active.upload_id, missingChunks: manifest.chunks.map((chunk) => chunk.index).filter((index) => !done.has(index)), quotaBytes: usage.quotaBytes, usedBytes: usage.usedBytes };
       }
       const usage = await this.usage(username, manifest.v === 2 ? ledgerId : undefined);
+      if (manifest.cipherBytes > this.maxBlobBytes + MAX_CHUNKS * 32) throw new Error('attachment exceeds current single-file limit');
       if (usage.quotaBytes !== null && usage.usedBytes + manifest.cipherBytes > usage.quotaBytes) throw Object.assign(new Error('attachment quota exceeded'), { code: 'QUOTA_EXCEEDED' });
       const uploadId = randomBytes(16).toString('hex');
       const ns = replicaId ? replicaNamespace(ledgerId, replicaId) : namespace(username, ledgerId);
@@ -851,7 +859,7 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
     return this.withChunkWrite(async () => {
       const upload = await this.authorizedUpload(username, uploadId);
       if (!upload) throw Object.assign(new Error('upload not found'), { code: 'UPLOAD_NOT_FOUND' });
-      const manifest = assertManifest(JSON.parse(String(upload['manifest_json'])), this.maxBlobBytes);
+      const manifest = assertManifest(JSON.parse(String(upload['manifest_json'])), MAX_PROTOCOL_BLOB_BYTES);
       const expected = manifest.chunks[index];
       if (!expected || contents.byteLength !== expected.sizeBytes || sha256(contents) !== expected.ciphertextSha256) {
         throw Object.assign(new Error('encrypted chunk checksum mismatch'), { code: 'CHUNK_CHECKSUM_MISMATCH' });
@@ -875,7 +883,7 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
     return this.withUploadLock(async () => {
       const upload = await this.authorizedUpload(username, uploadId);
       if (!upload) throw Object.assign(new Error('upload not found'), { code: 'UPLOAD_NOT_FOUND' });
-      const manifest = assertManifest(JSON.parse(String(upload['manifest_json'])), this.maxBlobBytes);
+      const manifest = assertManifest(JSON.parse(String(upload['manifest_json'])), MAX_PROTOCOL_BLOB_BYTES);
       if (expectedVersion && manifest.v !== expectedVersion) throw Object.assign(new Error('blob upload version mismatch'), { code: 'INVALID_BLOB_VERSION' });
       if (manifest.v === 2) {
         const replicaState = await this.replicaStateRow(username, String(upload['ledger_id']), manifest.blobId);
@@ -939,14 +947,14 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
     await this.ready;
     const row = await this.objectRow(username, ledgerId, blobId);
     return row?.['state'] === 'available'
-      ? assertManifest(JSON.parse(String(row['manifest_json'])), this.maxBlobBytes) : undefined;
+      ? assertManifest(JSON.parse(String(row['manifest_json'])), MAX_PROTOCOL_BLOB_BYTES) : undefined;
   }
 
   async chunk(username: string, ledgerId: string, blobId: string, index: number): Promise<Uint8Array | undefined> {
     await this.ready;
     const row = await this.objectRow(username, ledgerId, blobId);
     const manifest = row?.['state'] === 'available'
-      ? assertManifest(JSON.parse(String(row['manifest_json'])), this.maxBlobBytes) : undefined;
+      ? assertManifest(JSON.parse(String(row['manifest_json'])), MAX_PROTOCOL_BLOB_BYTES) : undefined;
     const expected = manifest?.chunks[index];
     if (!manifest || !expected || !row) return undefined;
     const path = join(this.objectDir('available', String(row['namespace']), blobId), `${index}.chunk`);
@@ -1063,7 +1071,7 @@ CREATE TABLE IF NOT EXISTS blob_upload_chunks (
     const ledgerId = String(row['ledger_id']);
     const blobId = String(row['blob_id']);
     const state = String(row['state']) as 'available' | 'trash';
-    const manifest = assertManifest(JSON.parse(String(row['manifest_json'])), this.maxBlobBytes);
+    const manifest = assertManifest(JSON.parse(String(row['manifest_json'])), MAX_PROTOCOL_BLOB_BYTES);
     const directory = this.objectDir(state, String(row['namespace']), blobId);
     const catalog = catalogAt(directory);
     if (!catalog || catalog.username !== username || catalog.ledgerId !== ledgerId

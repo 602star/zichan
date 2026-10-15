@@ -60,7 +60,7 @@ export interface SystemMonitorReading {
 
 export interface SystemMetrics {
   range: string;
-  granularity: 'minute' | 'hour';
+  granularity: 'minute' | 'hour' | 'day';
   from: string;
   until: string;
   scope: 'host' | 'container';
@@ -351,7 +351,7 @@ export interface SettingsField {
   name: string; label: string; kind: 'number' | 'select' | 'text'; unit?: string; description: string; maxLength?: number;
   /** Only for text fields: `url` is an http(s) address, `json` a channel list, `free` anything. */
   textFormat?: 'url' | 'free' | 'json';
-  stored: number | string | null; envVar: string; source: 'env' | 'database' | 'default';
+  stored: number | string | null; envVar: string; source: 'env' | 'database' | 'default'; overridesEnv?: boolean;
   value: number | string; minimum?: number; maximum?: number; options?: string[]; editable: boolean;
 }
 

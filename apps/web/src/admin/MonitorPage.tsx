@@ -7,7 +7,7 @@ import { ResourcesPage } from './ResourcesPage.js';
 import type { Metrics, Overview, SystemMetrics, SystemMonitorReading } from './types.js';
 import { Badge, Button, Loading, Notice, PageHeader, Panel, Stat, bytes, muted, usePolling, useResource, when } from './ui.js';
 
-const RANGES = ['1h', '24h', '7d'] as const;
+const RANGES = ['1h', '24h', '7d', '30d', '90d'] as const;
 type Range = (typeof RANGES)[number];
 
 export function MonitorPage({ client, role }: { client: AdminClient; role: string }) {
@@ -30,7 +30,7 @@ export function MonitorPage({ client, role }: { client: AdminClient; role: strin
   const buckets = metrics.data?.buckets ?? [];
   const systemBuckets = systemMetrics.data?.buckets ?? [];
   const logBuckets = logs.data?.buckets ?? [];
-  const bucketMs = range === '1h' ? 60_000 : 3_600_000;
+  const bucketMs = range === '1h' ? 60_000 : range === '30d' || range === '90d' ? 86_400_000 : 3_600_000;
   const logBucketMs = range === '7d' ? 86_400_000 : bucketMs;
   const asSeries = <T extends { bucketAt: string }>(rows: T[], value: (row: T) => number | null) => rows.map((row) => ({ at: row.bucketAt, value: value(row) }));
   const percent = (part: number | null, total: number | null) => part === null || total === null || total <= 0 ? null : part / total * 100;

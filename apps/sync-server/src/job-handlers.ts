@@ -120,7 +120,8 @@ export function createJobHandlers(deps: JobHandlerDeps): Partial<Record<AdminJob
 
     'metrics.prune': async (job) => {
       await job.progress({ phase: 'pruning' });
-      const metrics = await store.pruneMetrics();
+      const metrics = await store.pruneMetrics(new Date(), Number(settings.effective('metricsMinuteRetentionDays')),
+        Number(settings.effective('metricsHourRetentionDays')));
       const events = await store.pruneSyncEvents(Number(settings.effective('syncEventRetention')));
       await job.note('info', `指标与诊断事件裁剪完成：指标 ${metrics.removed} 条、诊断事件 ${events.removed} 条`);
       return { metricsRemoved: metrics.removed, syncEventsRemoved: events.removed };

@@ -98,9 +98,9 @@
 .zc-admin-issues > li { padding: 14px 0; border-bottom: 1px solid var(--border); }
 .zc-admin-issues > li:last-child { border-bottom: 0; }
 .zc-admin-issues p { margin: 6px 0; }
-.zc-admin-setting { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 32%); gap: 24px; padding: 18px 0; border-bottom: 1px solid var(--border); }
-.zc-admin-setting:first-child { padding-top: 0; }
-.zc-admin-setting:last-child { border-bottom: 0; }
+.zc-admin-settings-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 14px; align-items: stretch; }
+.zc-admin-setting { display: flex; flex-direction: column; justify-content: space-between; gap: 16px; min-width: 0; padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: 0 4px 18px #1e51320a; }
+.zc-admin-setting:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .zc-admin-setting p { margin: 6px 0; }
 .zc-admin-setting-reference { margin-top: 8px; font-size: var(--fs-caption); color: var(--text-secondary); }
 

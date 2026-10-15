@@ -2,10 +2,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { adminIdempotencyKey } from './idempotency.js';
-import { settingNumber } from './number-input.js';
-import { PageHeader, Badge, Button, Field, Loading, Notice, Panel, Select, Stat, TextInput, message, muted, row, useResource } from './ui.js';
+import { quotaBytesFromGiB, settingNumber } from './number-input.js';
+import { PageHeader, Badge, Button, Loading, Notice, Panel, Select, Stat, TextInput, message, muted, row, useResource } from './ui.js';
 import { SETTING_GROUPS, settingGroup, mergeSettingDrafts } from './setting-groups.js';
-import type { SettingsPayload } from './types.js';
+import type { SettingsField, SettingsPayload } from './types.js';
 import { ServerGroupPanel } from './ServerGroupPanel.js';
 import { NotificationChannelsEditor } from './NotificationChannelsEditor.js';
 
@@ -21,7 +21,7 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
 
   useEffect(() => {
     if (!payload.data) return;
-    const incoming = Object.fromEntries(payload.data.settings.map((field) => [field.name, String(field.value)]));
+    const incoming = Object.fromEntries(payload.data.settings.map((field) => [field.name, settingEditorValue(field)]));
     const previous = baseline.current;
     setDraft((current) => mergeSettingDrafts(current, previous, incoming));
     baseline.current = incoming;
@@ -33,7 +33,7 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
 
   const data = payload.data;
   const fields = data.settings.filter((field) => settingGroup(field.name) === group.id);
-  const changed = fields.filter((field) => field.editable && draft[field.name] !== undefined && draft[field.name] !== String(field.value));
+  const changed = fields.filter((field) => field.editable && draft[field.name] !== undefined && draft[field.name] !== settingEditorValue(field));
   const save = async (): Promise<void> => {
     setNotice(''); setError('');
     // Numbers and text fields travel in one payload, each in its own type: coercing a URL
@@ -46,11 +46,11 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
       // Text and select fields travel as typed strings: coercing "on" through Number() would
       // silently drop every non-numeric setting instead of saving it.
       if (field.kind === 'text' || field.kind === 'select') {
-        if (raw !== String(field.value)) updates[field.name] = raw;
+        if (raw !== settingEditorValue(field)) updates[field.name] = raw;
         continue;
       }
       try {
-        const value = settingNumber(raw, field.minimum, field.maximum);
+        const value = settingEditorNumber(field, raw);
         if (value !== field.value) updates[field.name] = value;
       } catch (caught) { problems[field.name] = message(caught); }
     }
@@ -69,6 +69,22 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
       setError(message(caught));
     } finally { setSaving(false); }
   };
+  const restoreInitial = async (field: SettingsField): Promise<void> => {
+    setNotice(''); setError(''); setSaving(true);
+    try {
+      const result = await client.request<{ settings: SettingsField[] }>('/settings',
+        { settings: { [field.name]: null } }, { idempotencyKey: adminIdempotencyKey(`settings-reset-${field.name}`) });
+      const effective = result.settings.find((entry) => entry.name === field.name);
+      if (effective) {
+        const next = settingEditorValue(effective);
+        baseline.current = { ...baseline.current, [field.name]: next };
+        setDraft((current) => ({ ...current, [field.name]: next }));
+      }
+      setNotice(`${field.label}已恢复${field.overridesEnv ? '部署初始值' : '内置默认值'}。`);
+      payload.reload();
+    } catch (caught) { setError(message(caught)); }
+    finally { setSaving(false); }
+  };
 
   return (
     <>
@@ -81,25 +97,41 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
           onClick={() => { setError(''); setNotice(''); navigate('/settings?group=' + entry.id); }}>{entry.label}</Button>)}
       </div>
       <p>{group.description}</p>
+      {group.id === 'capacity' ? <div style={{ ...row, marginBottom: 16 }}>
+        <Button onClick={() => navigate('/users')}>查看单用户配额</Button>
+        <Button onClick={() => navigate('/storage')}>查看存储用量</Button>
+      </div> : null}
+      {group.id === 'retention' ? <div style={{ ...row, marginBottom: 16 }}>
+        <Button onClick={() => navigate('/monitor')}>查看监控中心</Button>
+        <Button onClick={() => navigate('/logs')}>查看运行日志</Button>
+      </div> : null}
+      {group.id === 'security' && role === 'owner' ? <div style={{ ...row, marginBottom: 16 }}>
+        <Button onClick={() => navigate('/invites')}>管理注册策略与邀请</Button>
+      </div> : null}
       {group.id === 'sync-group' ? <ServerGroupPanel client={client} role={role} /> : <>
-      <Panel title={group.label} note="环境变量优先于数据库设置；来源为“环境变量”的项不能在页面上修改。">
+      <Panel title={group.label} note="页面保存值优先；尚未保存时使用部署环境值，最后使用内置默认值。">
         <div className="zc-admin-savebar" style={{ ...row, marginTop: 10 }}>
           <Button disabled={saving || payload.loading || payload.stale || !changed.length || role !== 'owner'} onClick={() => { void save(); }}>{saving ? '正在保存…' : '保存本组设置'}</Button>
           <Button disabled={saving} onClick={() => {
-            setDraft((current) => ({ ...current, ...Object.fromEntries(fields.map((field) => [field.name, String(field.value)])) }));
+            setDraft((current) => ({ ...current, ...Object.fromEntries(fields.map((field) => [field.name, settingEditorValue(field)])) }));
             setFieldErrors({}); setError(''); setNotice('已放弃本组改动。');
           }}>放弃本组改动</Button>
           <Button disabled={saving} onClick={payload.reload}>刷新生效值</Button>
         </div>
         <div className="zc-admin-settings-fields">
           {fields.filter((field) => group.id !== 'notifications' || field.name !== 'alertWebhookUrl' || Boolean(draft[field.name] || field.value)).map((field) => field.name === 'alertChannels'
-            ? <div key={field.name}>
+            ? <div className="zc-admin-setting" key={field.name}>
               <h3>邮件与推送渠道</h3>
               <NotificationChannelsEditor value={draft[field.name] ?? String(field.value)}
                 disabled={saving || !field.editable || role !== 'owner'}
                 onChange={(value) => setDraft((current) => ({ ...current, [field.name]: value }))} />
-              <p style={muted}><Badge tone="muted">{field.source === 'env' ? '由部署配置管理' : field.source === 'database' ? '已保存设置' : '默认值'}</Badge>
-                {field.source === 'env' ? <span> {field.envVar} 覆盖此项，需在部署环境修改</span> : null}</p>
+              <p style={muted}><Badge tone="muted">{field.source === 'env' ? '部署初始值' : field.source === 'database' ? '已保存设置' : '默认值'}</Badge>
+                {field.source === 'env' ? <span> 来自 {field.envVar}；保存后以页面设置为准</span> : null}</p>
+              {field.overridesEnv ? <p style={muted}>已覆盖部署初始值 {field.envVar}</p> : null}
+              {field.source === 'database' && role === 'owner' ? <Button disabled={saving || payload.stale}
+                onClick={() => { void restoreInitial(field); }}>
+                恢复{field.overridesEnv ? '部署初始值' : '内置默认值'}
+              </Button> : null}
               {fieldErrors[field.name] ? <Notice tone="bad">{fieldErrors[field.name]}</Notice> : null}
             </div>
             : <div className="zc-admin-setting" key={field.name}>
@@ -107,34 +139,39 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
               <label htmlFor={'setting-' + field.name} style={{ fontWeight: 'var(--fw-medium)' }}>{field.label}</label>
               <p id={'setting-help-' + field.name} style={muted}>{field.name === 'alertWebhookUrl' ? '旧版单一 Webhook 地址；仅在上方没有配置渠道时生效。清空后保存即可停用。' : field.description}</p>
               <div className="zc-admin-setting-reference">
-                <p style={muted}>默认：{field.defaultValue === undefined ? '未提供' : field.defaultValue === '' ? '空' : String(field.defaultValue)}；
-                  范围：{field.kind === 'number' ? String(field.minimum ?? '') + '–' + String(field.maximum ?? '') : field.kind === 'text' ? textRange(field.textFormat, field.maxLength) : (field.options ?? []).map((option) => selectLabel(field.name, option)).join('、')}</p>
+                <p style={muted}>默认：{field.defaultValue === undefined ? '未提供' : field.defaultValue === '' ? '空' : settingDisplayValue(field, field.defaultValue)}；
+                  范围：{field.kind === 'number' ? settingRange(field) : field.kind === 'text' ? textRange(field.textFormat, field.maxLength) : (field.options ?? []).map((option) => selectLabel(field.name, option)).join('、')}</p>
               </div>
             </div>
             <div>
               {field.kind === 'select' ? <Select
                 id={'setting-' + field.name} aria-label={field.label} aria-describedby={'setting-help-' + field.name}
-                value={draft[field.name] ?? String(field.value)} disabled={saving || !field.editable || role !== 'owner'}
+                value={draft[field.name] ?? settingEditorValue(field)} disabled={saving || !field.editable || role !== 'owner'}
                 onChange={(event) => setDraft((current) => ({ ...current, [field.name]: event.target.value }))}>
                 {(field.options ?? []).map((option) => <option key={option} value={option}>{selectLabel(field.name, option)}</option>)}
               </Select> : <TextInput
                 id={'setting-' + field.name} aria-label={field.label} aria-invalid={Boolean(fieldErrors[field.name])}
                 aria-describedby={'setting-help-' + field.name + (fieldErrors[field.name] ? ' setting-error-' + field.name : '')}
-                value={draft[field.name] ?? String(field.value)} disabled={saving || !field.editable || role !== 'owner'}
+                value={draft[field.name] ?? settingEditorValue(field)} disabled={saving || !field.editable || role !== 'owner'}
                 onChange={(event) => setDraft((current) => ({ ...current, [field.name]: event.target.value }))}
-                placeholder={field.kind === 'text' ? textPlaceholder(field.textFormat) : undefined}
+                placeholder={field.kind === 'text' ? textPlaceholder(field.textFormat) : settingInputUnit(field)}
                 style={{ width: '100%' }} />}
               {fieldErrors[field.name] ? <div id={'setting-error-' + field.name} role="alert" style={{ color: 'var(--negative)' }}>{fieldErrors[field.name]}</div> : null}
               <p style={{ ...muted, margin: '6px 0 0', overflowWrap: 'anywhere' }}>
-                <Badge tone="muted">{field.source === 'env' ? '由部署配置管理' : field.source === 'database' ? '已保存设置' : '默认值'}</Badge>
-                {field.source === 'env' ? <span> {field.envVar} 覆盖此项，需在部署环境修改</span> : null}
+                <Badge tone="muted">{field.source === 'env' ? '部署初始值' : field.source === 'database' ? '已保存设置' : '默认值'}</Badge>
+                {field.source === 'env' ? <span> 来自 {field.envVar}；保存后以页面设置为准</span> : null}
+                {field.overridesEnv ? <span> 已覆盖部署初始值 {field.envVar}</span> : null}
               </p>
+              {field.source === 'database' && role === 'owner' ? <Button disabled={saving || payload.stale}
+                onClick={() => { void restoreInitial(field); }}>
+                恢复{field.overridesEnv ? '部署初始值' : '内置默认值'}
+              </Button> : null}
             </div>
           </div>)}
         </div>
         {changed.length ? <div aria-label="本组变更预览" style={{ marginTop: 12 }}>
           <strong>将修改 {changed.length} 项</strong>
-          <ul>{changed.map((field) => <li key={field.name}>{field.name === 'alertChannels' ? `${field.label}已修改（密钥已隐藏）` : `${field.label}：${String(field.value) || '空'} → ${draft[field.name] || '空'}`}</li>)}</ul>
+          <ul>{changed.map((field) => <li key={field.name}>{field.name === 'alertChannels' ? `${field.label}已修改（密钥已隐藏）` : `${field.label}：${settingDisplayValue(field, field.value) || '空'} → ${draft[field.name] || '空'}${settingInputUnit(field) ? ' ' + settingInputUnit(field) : ''}`}</li>)}</ul>
         </div> : <p style={muted}>本组没有未保存的修改。</p>}
 
         {notice ? <Notice>{notice}</Notice> : null}
@@ -168,7 +205,6 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
           <li>账号保护：{String(data.environment['accountProtection'])}</li>
           <li>托管密钥：{data.environment['custodyEnabled'] ? '启用' : '未启用'}</li>
         </ul>
-        {role === 'owner' ? <Field label="注册策略（在“注册与邀请”页修改）"><Select disabled><option>{String(data.environment['registrationMode'])}</option></Select></Field> : null}
       </Panel>
       </div>
       </>}
@@ -180,6 +216,44 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
 function selectLabel(name: string, option: string): string {
   const labels: Record<string, string> = { on: '开启', off: '关闭' };
   return labels[option] ?? option;
+}
+
+function settingInputUnit(field: SettingsField): string {
+  if (field.name === 'defaultCommitQuotaBytes' || field.name === 'defaultBlobQuotaBytes') return 'GiB';
+  if (field.name === 'attachmentMaxFileBytes') return 'MiB';
+  if (field.name === 'attachmentTrashRetentionMs') return '天';
+  return '';
+}
+
+function settingDisplayValue(field: SettingsField, value: number | string): string {
+  const unit = settingInputUnit(field);
+  const divisor = unit === 'GiB' ? 1024 ** 3 : unit === 'MiB' ? 1024 ** 2 : unit === '天' ? 86_400_000 : 1;
+  return `${typeof value === 'number' ? value / divisor : value}${unit ? ' ' + unit : ''}`;
+}
+
+function settingEditorValue(field: SettingsField): string {
+  const unit = settingInputUnit(field);
+  const divisor = unit === 'GiB' ? 1024 ** 3 : unit === 'MiB' ? 1024 ** 2 : unit === '天' ? 86_400_000 : 1;
+  return String(typeof field.value === 'number' ? field.value / divisor : field.value);
+}
+
+function settingRange(field: SettingsField): string {
+  const unit = settingInputUnit(field);
+  const divisor = unit === 'GiB' ? 1024 ** 3 : unit === 'MiB' ? 1024 ** 2 : unit === '天' ? 86_400_000 : 1;
+  return `${Number(field.minimum ?? 0) / divisor}–${Number(field.maximum ?? 0) / divisor}${unit ? ' ' + unit : ''}`;
+}
+
+function settingEditorNumber(field: SettingsField, raw: string): number {
+  const unit = settingInputUnit(field);
+  if (unit === 'GiB') return quotaBytesFromGiB(raw);
+  if (unit === 'MiB' || unit === '天') {
+    const count = settingNumber(raw, Number(field.minimum) / (unit === 'MiB' ? 1024 ** 2 : 86_400_000),
+      Number(field.maximum) / (unit === 'MiB' ? 1024 ** 2 : 86_400_000));
+    const value = count * (unit === 'MiB' ? 1024 ** 2 : 86_400_000);
+    if (!Number.isSafeInteger(value)) throw new Error('请输入可精确保存的整数单位。');
+    return value;
+  }
+  return settingNumber(raw, field.minimum, field.maximum);
 }
 
 /**

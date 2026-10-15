@@ -16,7 +16,7 @@ import { TrendChart } from './chart.js';
 import type { Metrics, Overview, ResourcesPayload } from './types.js';
 import type { TrendPoint as ChartPoint } from './trend.js';
 
-const RANGES = ['1h', '24h', '7d'] as const;
+const RANGES = ['1h', '24h', '7d', '30d', '90d'] as const;
 
 /** Series the resource chart can draw. All of them are peaks per bucket, not totals. */
 const SERIES = [
@@ -169,7 +169,7 @@ export function ResourcesPage({ client, role, onJob, embedded = false }: { clien
               label={`${SERIES.find((entry) => entry.key === series)?.label ?? ''}趋势（近 ${range}）`}
               formatValue={seriesFormat(series)}
               tone={series === 'lag' || series === 'cpu' ? 'warn' : 'ok'}
-              granularityNote={metrics.data.granularity === 'minute' ? '分钟分桶' : '小时分桶'}
+              granularityNote={metrics.data.granularity === 'minute' ? '分钟分桶' : metrics.data.granularity === 'day' ? '每日分桶' : '小时分桶'}
               // These series are peaks, so the summary reports the highest reading.
               summaryMode="peak"
             />

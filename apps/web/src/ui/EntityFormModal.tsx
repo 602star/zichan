@@ -13,6 +13,7 @@ import { AttachmentPreview } from './AttachmentPreview.js';
 import { readAttachmentBlob, type AttachmentDraftData } from '../db/attachment-storage.js';
 import { useStore } from '../db/store.js';
 import { ensureAttachmentBlobAvailable } from '../attachment-sync.js';
+import { buildSyncBaseUrl, loadSyncConnections } from '../sync-config.js';
 import { barcodeScannerAvailable, currentDevicePosition, scanBarcode } from '../device-capabilities.js';
 import {
   type FormDraft,
@@ -151,13 +152,38 @@ const MAX_ATTACHMENT_COUNT = 8;
 const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 type FileRow = AttachmentDraftData;
 
+let fileLimitCache: { expiresAt: number; bytes: number } | undefined;
+
+async function attachmentFileLimit(): Promise<number> {
+  if (fileLimitCache && fileLimitCache.expiresAt > Date.now()) return fileLimitCache.bytes;
+  const connections = loadSyncConnections().filter((connection) => connection.enabled);
+  const urls = [...new Set(connections.length ? connections.flatMap((connection) => {
+    try { return [buildSyncBaseUrl(connection)]; } catch { return []; }
+  }) : [window.location.origin])];
+  const limits = await Promise.all(urls.map(async (baseUrl) => {
+    try {
+      const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/health`, { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+      if (!response.ok) return undefined;
+      const body = await response.json() as { serverId?: string; attachmentMaxFileBytes?: number };
+      const expected = connections.find((connection) => buildSyncBaseUrl(connection) === baseUrl)?.serverId;
+      if (expected && body.serverId !== expected) return undefined;
+      const bytes = body.attachmentMaxFileBytes;
+      return typeof bytes === 'number' && Number.isSafeInteger(bytes) && bytes >= 1024 ** 2 && bytes <= 1024 ** 3 ? bytes : undefined;
+    } catch { return undefined; }
+  }));
+  const known = limits.filter((value): value is number => value !== undefined);
+  const bytes = known.length ? Math.min(...known, ...(limits.some((value) => value === undefined) ? [MAX_ATTACHMENT_BYTES] : [])) : MAX_ATTACHMENT_BYTES;
+  fileLimitCache = { expiresAt: Date.now() + 30_000, bytes };
+  return bytes;
+}
+
 function serializableFile(row: FileRow): Omit<FileRow, 'contentBlob' | 'thumbnailBlob'> {
   const { contentBlob: _content, thumbnailBlob: _thumbnail, ...metadata } = row;
   return metadata;
 }
 
-async function prepareFile(file: File): Promise<FileRow> {
-  if (file.size > MAX_ATTACHMENT_BYTES) throw new Error(`${file.name} 超过 100 MB 限制`);
+async function prepareFile(file: File, maxBytes: number): Promise<FileRow> {
+  if (file.size > maxBytes) throw new Error(`${file.name} 超过 ${(maxBytes / 1024 ** 2).toLocaleString()} MiB 限制`);
   if (!file.type.startsWith('image/') || file.type === 'image/svg+xml') {
     return { fileName: file.name, contentBlob: file, mimeType: file.type || 'application/octet-stream', sizeBytes: file.size };
   }
@@ -401,7 +427,8 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
       if (estimate?.quota && (estimate.usage ?? 0) + incomingBytes * 2 > estimate.quota * 0.9) {
         throw new Error('剩余本地存储空间不足，请先导出备份或减少附件大小');
       }
-      const next = await Promise.all([...files].map(prepareFile));
+      const maxBytes = await attachmentFileLimit();
+      const next = await Promise.all([...files].map((file) => prepareFile(file, maxBytes)));
       const combined = [...current, ...next];
       touched.current = true;
       setFileValues((rows) => ({ ...rows, [key]: combined }));

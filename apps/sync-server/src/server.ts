@@ -597,7 +597,19 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     return { user, session, role: await store.roleForUser(user.username) };
   };
 
-  const runtimeSettings = createSettings(store);
+  const runtimeSettings = createSettings(store, process.env, {
+    defaults: {
+      ...(options.commitQuotaBytes === undefined ? {} : { defaultCommitQuotaBytes: options.commitQuotaBytes }),
+      ...(options.attachmentQuotaBytes === undefined ? {} : { defaultBlobQuotaBytes: options.attachmentQuotaBytes }),
+      ...(options.attachmentMaxFileBytes === undefined ? {} : { attachmentMaxFileBytes: options.attachmentMaxFileBytes }),
+      ...(options.attachmentTrashRetentionMs === undefined ? {} : { attachmentTrashRetentionMs: options.attachmentTrashRetentionMs }),
+    },
+    onChange: (values) => {
+      store.setDefaultQuotas(Number(values['defaultCommitQuotaBytes']), Number(values['defaultBlobQuotaBytes']));
+      blobStore.setStoragePolicy(Number(values['defaultBlobQuotaBytes']), Number(values['attachmentMaxFileBytes']),
+        Number(values['attachmentTrashRetentionMs']));
+    },
+  });
   const settings = runtimeSettings.settings;
   const accountEmailChannel = (): EmailChannel | undefined => parseAlertChannels(settings.effective('alertChannels'))
     .find((channel): channel is EmailChannel => channel.kind === 'email' && channel.enabled);
@@ -910,6 +922,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           webEnabled: enableWeb && Boolean(options.webDir),
           registrationMode: await store.registrationMode(),
           ledgerWebAccess: await ledgerWebAccess(),
+          attachmentMaxFileBytes: Number(settings.effective('attachmentMaxFileBytes')),
           accountProtection: defaultProtection,
           basePath,
           security: {
