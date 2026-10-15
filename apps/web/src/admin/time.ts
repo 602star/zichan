@@ -1,8 +1,8 @@
 /**
  * Time-range helpers for the management filters.
  *
- * The URL and the API keep talking ISO-8601 UTC; only the `<input type="datetime-local">`
- * speaks local wall-clock time. Keeping that conversion in two pure functions means the
+ * The URL and the API keep talking ISO-8601 UTC; the calendar and clock controls
+ * speak local wall-clock time. Keeping that conversion in two pure functions means the
  * console can show local time without ever sending a timezone-less string to the server,
  * and the round trip can be asserted without a DOM.
  */
@@ -18,15 +18,16 @@ export function localInputToIso(value: string): string | undefined {
 
 const pad = (value: number) => String(value).padStart(2, '0');
 
-/** ISO-8601 (or any parseable timestamp) to a `datetime-local` value in local time. */
-export function isoToLocalInput(value: string): string {
+/** ISO-8601 (or any parseable timestamp) to a local wall-clock value. */
+export function isoToLocalInput(value: string, preserveSeconds = false): string {
   const trimmed = value.trim();
   if (!trimmed) return '';
   const date = new Date(trimmed);
   if (!Number.isFinite(date.getTime())) return '';
   // `toISOString()` is UTC; shifting by the offset first gives the local wall clock.
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return `${String(local.getUTCFullYear())}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}T${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}`;
+  const minute = `${String(local.getUTCFullYear())}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}T${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}`;
+  return preserveSeconds ? `${minute}:${pad(local.getUTCSeconds())}.${String(local.getUTCMilliseconds()).padStart(3, '0')}` : minute;
 }
 
 export interface TrendWindow {

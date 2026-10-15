@@ -126,6 +126,28 @@
 .zc-admin-filterbar input, .zc-admin-filterbar select { width: 100%; }
 .zc-admin-filterbar input[type="checkbox"] { width: auto; }
 .zc-admin-filterbar input[type="datetime-local"] { width: auto; max-width: 100%; }
+.zc-admin-time-boundary { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.zc-admin-time-boundary > span { color: var(--text-secondary); font-size: var(--fs-sm); }
+.zc-admin-time-boundary input[type="time"] { width: 108px; max-width: 100%; }
+.zc-calendar-picker { position: relative; min-width: 0; }
+.zc-calendar-trigger { min-height: 36px; min-width: 145px; display: inline-flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 9px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text-primary); cursor: pointer; }
+.zc-calendar-trigger[aria-expanded="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
+.zc-calendar-popover { position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; width: min(300px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 12px 32px rgb(0 0 0 / 18%); }
+.zc-calendar-nav, .zc-calendar-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.zc-calendar-nav button, .zc-calendar-actions button { border: 0; background: transparent; color: var(--text-primary); cursor: pointer; padding: 5px 8px; }
+.zc-calendar-nav button { font-size: 22px; line-height: 1; }
+.zc-calendar-tabs { display: flex; gap: 4px; margin: 9px 0; }
+.zc-calendar-tabs button { flex: 1; min-height: 32px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text-primary); cursor: pointer; }
+.zc-calendar-tabs button[aria-selected="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.zc-calendar-grid { display: grid; gap: 3px; }
+.zc-calendar-grid-period { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.zc-calendar-grid-day { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.zc-calendar-grid button { min-height: 35px; padding: 3px; border: 0; border-radius: 4px; background: transparent; color: var(--text-primary); cursor: pointer; }
+.zc-calendar-grid button:hover, .zc-calendar-grid button.today { background: var(--accent-soft); }
+.zc-calendar-grid button.selected { background: var(--accent); color: var(--on-accent); }
+.zc-calendar-grid .weekday { text-align: center; color: var(--text-secondary); font-size: var(--fs-sm); }
+.zc-calendar-actions { margin-top: 9px; border-top: 1px solid var(--border); padding-top: 7px; }
+.zc-calendar-actions button:last-child { color: var(--danger); }
 .zc-admin-table td { overflow-wrap: anywhere; }
 .zc-admin-table td[data-column="actions"] { min-width: 170px; }
 .zc-admin-inline-form { padding: 12px; margin: 8px 0 0; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; display: grid; gap: 8px; }

@@ -101,10 +101,25 @@ for (const width of [1280, 390]) {
       const entry = page.locator('#section-审计记录 tbody tr').first();
       await entry.getByRole('button', { name: '展开', exact: true }).click();
       await expect(entry.locator('xpath=following-sibling::tr[1]').locator('pre')).toBeVisible();
-      await expect(page.getByLabel('起始时间', { exact: true })).toHaveAttribute('type', 'datetime-local');
+      const timeRange = page.getByRole('group', { name: '时间范围' });
+      await timeRange.getByRole('button', { name: '起始日期' }).click();
+      const calendar = page.getByRole('dialog', { name: '起始日期' });
+      await capture('audit-calendar');
+      await calendar.getByRole('tab', { name: '年', exact: true }).click();
+      await calendar.locator('.zc-calendar-grid-period button.selected').click();
+      await calendar.locator('.zc-calendar-grid-period button.selected').click();
+      await calendar.getByRole('button', { name: /^\d{4}-\d{2}-01$/ }).click();
+      await expect(timeRange.getByLabel('起始时分')).toBeEnabled();
+      await timeRange.getByLabel('起始时分').fill('00:00');
+      await timeRange.getByRole('button', { name: '应用' }).click();
+      await expect(page).toHaveURL(/from=/);
+      await timeRange.getByRole('button', { name: '结束日期' }).click();
+      await page.getByRole('dialog', { name: '结束日期' }).getByRole('button', { name: '今天' }).click();
+      await timeRange.getByRole('button', { name: '应用' }).click();
+      expect(new URL(page.url()).searchParams.get('until')).toMatch(/\.999Z$/);
       await capture('audit');
 
-      for (const [label, name] of [['设备与会话', 'sessions'], ['同步诊断', 'sync'], ['运行日志', 'logs'], ['登录安全', 'security-events'], ['进程与数据库', 'resources']]) {
+      for (const [label, name] of [['设备与会话', 'sessions'], ['同步诊断', 'sync'], ['运行日志', 'logs'], ['登录安全', 'security-events'], ['监控中心', 'monitor']]) {
         await clickAdminLink(page, label);
         await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible();
         if (name === 'sync') expect(await page.locator('#section-诊断记录').evaluate((element) => element.offsetTop)).toBeLessThan(await page.locator('#section-错误分类').evaluate((element) => element.offsetTop));

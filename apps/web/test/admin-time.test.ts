@@ -31,6 +31,11 @@ describe('admin time-range helpers', () => {
     expect(value).not.toContain('Z');
   });
 
+  it('preserves the final millisecond when a selected end date covers the full day', () => {
+    const localEnd = '2026-09-17T23:59:59.999';
+    expect(isoToLocalInput(localInputToIso(localEnd)!, true)).toBe(localEnd);
+  });
+
   it('builds an open-ended preset window so later records still appear', () => {
     const now = new Date('2026-09-17T12:00:00.000Z');
     const window = presetWindow(24, now);
