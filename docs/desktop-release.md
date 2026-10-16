@@ -19,7 +19,7 @@ v0.1 只发布 Windows x64 ZIP，不构建 MSI/NSIS，不安装服务、启动�
    └─ webview2/
 ```
 
-空白发行物不得包含 `data/`、数据库、附件、`.hold`、账号会话、服务器身份、PDB、更新签名或安装器。首次启动后才在 EXE 同级创建 `data/`。`portable-files.json` 固定记录版本、x64、WebView2 版本和除清单自身外每个文件的字节数与 SHA-256。
+空白发行物不得包含 `data/`、数据库、附件、`.hold`、账号会话、服务器身份、PDB、更新签名或安装器。首次启动后才在 EXE 同级创建 `data/`。`portable-files.json` 记录版本、x64、WebView2 与 Node.js 版本，以及除清单自身外每个文件的字节数与 SHA-256。
 
 最终输出为：
 
@@ -41,6 +41,7 @@ ZIP 含一个同名顶层目录；`.sha256` 使用 `<64 位十六进制>  <ZIP �
 - Tauri 禁用 bundle，WebView 安装模式为 `skip`。
 - Windows 主窗口配置 `create=false`，由 Rust 完成便携路径检查后再创建。
 - 当前开发 schema 文档与运行时契约存在。
+- `.node-version` 固定一个精确的发行版 Node.js 版本；组包时核对内置 `node.exe` 的实际版本。
 - WebView2 runtime lock 的固定版本、x64、微软来源 URL 和 SHA-256 合法。
 - 便携 README 与 NOTICE 存在。
 
@@ -68,7 +69,7 @@ scripts\windows\setup-webview2-runtime.cmd
 
 ## 本地构建
 
-前置条件：Node.js 22.3+、npm 依赖、Rust/MSVC C++ 工具、`perl.exe` 和已经准备的 WebView2 固定版。SQLCipher 的 vendored OpenSSL release 构建需要 Perl。
+前置条件：`.node-version` 指定的精确 Node.js 版本、npm 依赖、Rust/MSVC C++ 工具、`perl.exe` 和已经准备的 WebView2 固定版。SQLCipher 的 vendored OpenSSL release 构建需要 Perl；一般开发命令仍允许根 `package.json` 中的 Node.js 范围。
 
 ```cmd
 scripts\windows\build-desktop.cmd
@@ -76,14 +77,16 @@ scripts\windows\build-desktop.cmd
 
 入口按顺序执行：
 
-1. 检查 Node、npm、Rust、Perl和锁定 WebView2。
-2. 运行 `npm run release:check`、`npm run test:release`、`npm run typecheck`、`npm test`。
-3. 运行 `npm run build -w @zichan/desktop -- --no-bundle --ci`。
-4. 验证桌面、Node 和 WebView2 都是 x64 PE，组装便携目录并逐文件校验，使用 PowerShell `Compress-Archive` 创建 ZIP。
-5. 校验 ZIP 中央目录的单一顶层和安全路径，解压到受控临时目录后重跑必需/禁止项与每项哈希，再验证外层 SHA-256 旁车。
+1. 检查 Node、npm、Rust、Perl 和锁定 WebView2。
+2. 运行 `npm run release:check`、`npm run test:release`、`npm run test:scripts`、`npm run build:server`、`npm run typecheck`、`npm test`。
+3. 使用锁定的 Cargo 依赖运行 `tauri build --no-bundle --ci -- --locked`。
+4. 验证桌面、Node 和 WebView2 都是 x64 PE，核对内置 Node.js 版本，在独立暂存目录组装便携包并逐文件校验，使用 PowerShell `Compress-Archive` 创建 ZIP。
+5. 发布前校验暂存 ZIP 的中央目录、安全路径与外层 SHA-256，并解压复验每项哈希；全部通过后才替换输出 ZIP 与校验文件。
 
 普通 `tauri build` 不是 v0.1 发布入口；发布脚本显式 `--no-bundle`，不会产生安装器或 updater payload。
-若默认输出中同名便携目录已经存在 `data/`，打包器会拒绝覆盖而不是删除账本；请将发布 ZIP 解压到独立测试目录运行，不要把 `target/release/portable/` 当作长期数据目录。
+打包器不会删除已有的同名便携目录；使用 `--no-archive` 或 `--keep-directory` 时，目录已存在会直接失败。请将发布 ZIP 解压到独立测试目录运行，不要把 `target/release/portable/` 当作长期数据目录。并发打包同一输出目录会被锁文件拒绝；异常终止留下锁文件时，确认没有构建进程后再移除。
+
+`.github/workflows/windows-portable-release.yml` 在版本标签或手动触发时，从干净检出执行完整 Windows 构建和 ZIP 验证。Windows 10 NTFS、Windows 10 exFAT 与 Windows 11 的实际界面和迁移验收仍按下方矩阵执行。
 
 ## Windows Sandbox / VM 验收
 
@@ -102,7 +105,8 @@ scripts\windows\build-desktop.cmd
 Get-FileHash -Algorithm SHA256 .\资产生命周期_0.1.0_windows-x64_portable.zip
 node scripts/release/verify-artifacts.mjs `
   --artifact .\资产生命周期_0.1.0_windows-x64_portable.zip `
-  --version 0.1.0
+  --version 0.1.0 `
+  --node-version (Get-Content .node-version).Trim()
 ```
 
 ## 延后到 1.0

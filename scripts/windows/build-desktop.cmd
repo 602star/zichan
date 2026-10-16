@@ -22,6 +22,15 @@ if /i not "%NODE_ARCH%"=="x64" (
 )
 echo [OK] Node.js architecture is x64.
 
+set /p "RELEASE_NODE_VERSION="<".node-version"
+for /f "delims=" %%V in ('node.exe -p "process.versions.node"') do set "ACTUAL_NODE_VERSION=%%V"
+if not "%ACTUAL_NODE_VERSION%"=="%RELEASE_NODE_VERSION%" (
+  echo [ERROR] Windows releases require Node.js %RELEASE_NODE_VERSION%, but PATH provides %ACTUAL_NODE_VERSION%.
+  echo         Install the pinned version from .node-version before building.
+  goto :finish
+)
+echo [OK] Release Node.js version is pinned to %RELEASE_NODE_VERSION%.
+
 cargo.exe --version >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] cargo.exe was not found in PATH. Install the Rust toolchain first.
@@ -78,7 +87,8 @@ echo.
 echo Building the desktop executable without MSI, NSIS, or updater bundles...
 echo The first build may take a long time while Cargo compiles dependencies.
 set "ZICHAN_BUILD_PREPARED=1"
-call npm.cmd run build --workspace @zichan/desktop -- --no-bundle --ci
+set "ZICHAN_RELEASE_BUILD=1"
+call npm.cmd run build --workspace @zichan/desktop -- --no-bundle --ci -- --locked
 if errorlevel 1 goto :finish
 
 if not exist "apps\desktop\src-tauri\target\release\zichan.exe" (
@@ -91,16 +101,11 @@ echo Creating the Windows x64 portable ZIP...
 node.exe scripts\release\create-windows-portable.mjs
 if errorlevel 1 goto :finish
 
-for /f "delims=" %%V in ('node.exe -p "require('./package.json').version"') do set "APP_VERSION=%%V"
-set "PORTABLE_ZIP=apps\desktop\src-tauri\target\release\portable\资产生命周期_%APP_VERSION%_windows-x64_portable.zip"
-node.exe scripts\release\verify-artifacts.mjs --artifact "%PORTABLE_ZIP%" --version "%APP_VERSION%"
-if errorlevel 1 goto :finish
-
 set "EXIT_CODE=0"
 echo.
 echo [OK] Windows portable build completed.
-echo ZIP: %PORTABLE_ZIP%
-echo SHA-256: %PORTABLE_ZIP%.sha256
+echo Output directory: apps\desktop\src-tauri\target\release\portable
+echo The verified ZIP and its .sha256 sidecar are in this directory.
 echo The release contains no user data, MSI, NSIS, service, registry installer, or updater payload.
 
 :finish

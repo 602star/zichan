@@ -168,6 +168,34 @@ describe('database statistics', () => {
 });
 
 describe('resource readings in metric buckets', () => {
+  it('waits for an active scheduled sample before stopping', async () => {
+    const h = await harness({ intervalMs: 10 });
+    let entered!: () => void;
+    let resume!: () => void;
+    const sampleEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const sampleMayFinish = new Promise<void>((resolve) => { resume = resolve; });
+    const originalSet = h.store.setMaintenanceState.bind(h.store);
+    h.store.setMaintenanceState = async (...args) => {
+      entered();
+      await sampleMayFinish;
+      return originalSet(...args);
+    };
+    try {
+      h.metrics.start();
+      await sampleEntered;
+      let stopped = false;
+      const stopping = h.metrics.stop().then(() => { stopped = true; });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(stopped).toBe(false);
+      resume();
+      await stopping;
+    } finally {
+      resume();
+      await h.metrics.stop();
+      await h.close();
+    }
+  });
+
   it('keeps system trends scoped and preserves unavailable readings as null', async () => {
     const h = await harness();
     try {

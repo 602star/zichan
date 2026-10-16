@@ -6,14 +6,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { compressPortablePaths, createWindowsPortable, validatePortableDirectory } from '../../../scripts/release/create-windows-portable.mjs';
+import { compressPortablePaths, createWindowsPortable as createWindowsPortableActual, validatePortableDirectory } from '../../../scripts/release/create-windows-portable.mjs';
 import { verifyReleaseArtifacts } from '../../../scripts/release/verify-artifacts.mjs';
 import { runtimeTreeDigest } from '../../../scripts/release/setup-webview2-runtime.mjs';
 
 const VERSION = '0.1.0';
 const RUNTIME_VERSION = '151.0.4129.101';
+const NODE_VERSION = '22.23.3';
 const HASH = 'a'.repeat(64);
 const execFile = promisify(execFileCallback);
+const createWindowsPortable = (options) => createWindowsPortableActual({ inspectNodeVersion: () => NODE_VERSION, ...options });
 
 async function rewriteOuterHash(archive) {
   const bytes = await readFile(archive);
@@ -42,6 +44,7 @@ async function fixture() {
   await mkdir(runtime, { recursive: true });
   await mkdir(docs, { recursive: true });
   await writeFile(join(root, 'package.json'), `${JSON.stringify({ version: VERSION })}\n`);
+  await writeFile(join(root, '.node-version'), `${NODE_VERSION}\n`);
   await writeFile(executable, pe());
   await writeFile(join(resources, 'node.exe'), pe());
   await writeFile(join(resources, 'node-LICENSE.txt'), 'Node.js license');
@@ -87,10 +90,30 @@ test('stages a complete portable directory with marker and exact file hashes but
     });
     assert.equal(result.marker.dataDirectory, 'data');
     assert.equal(result.manifest.webview2RuntimeVersion, RUNTIME_VERSION);
+    assert.equal(result.manifest.nodeVersion, NODE_VERSION);
     assert.ok(result.fileCount >= 11);
     const marker = JSON.parse(await readFile(join(result.directory, 'portable-mode.json'), 'utf8'));
     assert.deepEqual(marker, { formatVersion: 1, appVersion: VERSION, architecture: 'x64', dataDirectory: 'data' });
     await validatePortableDirectory(result.directory, { version: VERSION, runtimeVersion: RUNTIME_VERSION });
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects a bundled Node.js version that differs from the release pin', async () => {
+  const value = await fixture();
+  try {
+    await assert.rejects(createWindowsPortable({
+      repositoryRoot: value.root,
+      resources: value.resources,
+      runtime: value.runtime,
+      docsDirectory: value.docs,
+      executable: value.executable,
+      outputDirectory: value.output,
+      lockPath: value.lock,
+      archive: false,
+      inspectNodeVersion: () => '26.3.0',
+    }), /Bundled Node\.js runtime is 26\.3\.0, expected 22\.23\.3/);
   } finally {
     await rm(value.root, { recursive: true, force: true });
   }
@@ -209,7 +232,7 @@ test('detects files altered after manifest generation', async () => {
   }
 });
 
-test('refuses to replace a portable directory that contains user data', async () => {
+test('refuses to replace any existing portable directory, preserving user data and other files', async () => {
   const value = await fixture();
   try {
     const options = {
@@ -224,15 +247,98 @@ test('refuses to replace a portable directory that contains user data', async ()
     };
     const first = await createWindowsPortable(options);
     const database = join(first.directory, 'data', 'ledger', 'ledger.sqlite');
+    const note = join(first.directory, 'personal-note.txt');
     await mkdir(join(first.directory, 'data', 'ledger'), { recursive: true });
     await writeFile(database, 'user ledger');
+    await writeFile(note, 'keep this');
 
     await assert.rejects(
       createWindowsPortable(options),
-      /Refusing to replace a portable directory that contains user data/,
+      /Refusing to replace an existing portable directory/,
     );
     assert.equal(await readFile(database, 'utf8'), 'user ledger');
+    assert.equal(await readFile(note, 'utf8'), 'keep this');
   } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test('a failed compression leaves an existing ZIP and sidecar untouched', async () => {
+  const value = await fixture();
+  try {
+    await mkdir(value.output, { recursive: true });
+    const archive = join(value.output, `资产生命周期_${VERSION}_windows-x64_portable.zip`);
+    await writeFile(archive, 'previous release');
+    await writeFile(`${archive}.sha256`, 'previous sidecar');
+    await assert.rejects(createWindowsPortable({
+      repositoryRoot: value.root,
+      resources: value.resources,
+      runtime: value.runtime,
+      docsDirectory: value.docs,
+      executable: value.executable,
+      outputDirectory: value.output,
+      lockPath: value.lock,
+      compress: async () => { throw new Error('compression failed'); },
+    }), /compression failed/);
+    assert.equal(await readFile(archive, 'utf8'), 'previous release');
+    assert.equal(await readFile(`${archive}.sha256`, 'utf8'), 'previous sidecar');
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test('a ZIP that fails content verification cannot replace an existing release', async () => {
+  const value = await fixture();
+  try {
+    await mkdir(value.output, { recursive: true });
+    const archive = join(value.output, `资产生命周期_${VERSION}_windows-x64_portable.zip`);
+    await writeFile(archive, 'previous release');
+    await writeFile(`${archive}.sha256`, 'previous sidecar');
+    await assert.rejects(createWindowsPortable({
+      repositoryRoot: value.root,
+      resources: value.resources,
+      runtime: value.runtime,
+      docsDirectory: value.docs,
+      executable: value.executable,
+      outputDirectory: value.output,
+      lockPath: value.lock,
+      compress: async (_directory, destination) => writeFile(destination, 'invalid ZIP'),
+    }), /content verification failed/);
+    assert.equal(await readFile(archive, 'utf8'), 'previous release');
+    assert.equal(await readFile(`${archive}.sha256`, 'utf8'), 'previous sidecar');
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test('concurrent builds cannot share one output directory', async () => {
+  const value = await fixture();
+  let enterCompression;
+  let releaseCompression;
+  const compressionStarted = new Promise((resolvePromise) => { enterCompression = resolvePromise; });
+  const compressionGate = new Promise((resolvePromise) => { releaseCompression = resolvePromise; });
+  try {
+    const options = {
+      repositoryRoot: value.root,
+      resources: value.resources,
+      runtime: value.runtime,
+      docsDirectory: value.docs,
+      executable: value.executable,
+      outputDirectory: value.output,
+      lockPath: value.lock,
+      compress: async () => {
+        enterCompression();
+        await compressionGate;
+        throw new Error('first build stopped');
+      },
+    };
+    const first = createWindowsPortable(options);
+    await compressionStarted;
+    await assert.rejects(createWindowsPortable(options), /Another portable build may be using/);
+    releaseCompression();
+    await assert.rejects(first, /first build stopped/);
+  } finally {
+    releaseCompression();
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -297,6 +403,29 @@ test('creates a ZIP with one portable top-level directory and a valid outer hash
     const normalized = entries.map((entry) => entry.replaceAll('\\', '/'));
     assert.equal(new Set(normalized.map((entry) => entry.split('/')[0])).size, 1);
     assert.ok(normalized.every((entry) => entry.includes(`_${VERSION}_windows-x64_portable/`)));
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test('a verified ZIP can replace an older ZIP of the same version on Windows', { skip: process.platform !== 'win32' }, async () => {
+  const value = await fixture();
+  try {
+    const options = {
+      repositoryRoot: value.root,
+      resources: value.resources,
+      runtime: value.runtime,
+      docsDirectory: value.docs,
+      executable: value.executable,
+      outputDirectory: value.output,
+      lockPath: value.lock,
+    };
+    const first = await createWindowsPortable(options);
+    await writeFile(join(value.resources, 'server.mjs'), 'updated server');
+    const second = await createWindowsPortable(options);
+    assert.notEqual(second.sha256, first.sha256);
+    const verified = await verifyReleaseArtifacts({ artifact: second.archive, version: VERSION, runtimeVersion: RUNTIME_VERSION });
+    assert.equal(verified.sha256, second.sha256);
   } finally {
     await rm(value.root, { recursive: true, force: true });
   }

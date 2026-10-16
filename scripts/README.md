@@ -43,7 +43,7 @@ Vite 开发页面（默认 5173）将 `/api/*` 同源代理到后端（默认 87
 
 ## 便携发布流程
 
-发布门禁现在包含启动脚本测试，并在全量测试前完成服务器与 Web 构建，避免干净检出时测试缺少产物。Windows 发布入口在同次构建成功后设置内部标记 `ZICHAN_BUILD_PREPARED=1`，让 Tauri 只准备资源、不重复构建；不要手工长期设置此变量。直接运行 `npm run build:desktop` 仍会完整构建依赖，但不替代下面的便携发布门禁。
+发布门禁包含启动脚本测试，并在全量测试前完成服务器与 Web 构建，避免干净检出时测试缺少产物。Windows 发布入口在同次构建成功后设置内部标记 `ZICHAN_BUILD_PREPARED=1`，让 Tauri 只准备资源、不重复构建；不要手工长期设置此变量。`npm run build:desktop` 执行完整便携发布门禁；只需要裸 EXE 时使用 `npm run build:desktop:binary`。
 
 固定版 WebView2 不在普通构建中静默下载。首次准备或升级锁定版本时运行：
 
@@ -63,7 +63,7 @@ scripts\windows\setup-webview2-runtime.cmd --cab D:\Downloads\Microsoft.WebView2
 scripts\windows\build-desktop.cmd
 ```
 
-它依次验证固定运行时，运行版本一致性、便携发布测试、类型检查和全量测试，以 `tauri build --no-bundle --ci` 只生成 `zichan.exe`，随后由 `create-windows-portable.mjs` 组装 ZIP。打包器解析桌面 EXE、Node 和 WebView2 的 PE Machine，确保三者都是 x64；拒绝 `data/`、数据库、账号会话、服务器身份、开发目录、source map、PDB 和 updater 产物，生成 `portable-mode.json`、逐文件 SHA-256 清单、ZIP 及 `.zip.sha256`。若同名输出目录已有 `data/`，打包器会停止而不是覆盖用户数据；请先退出应用并将该目录移到安全位置，或用其他 `--output` 目录构建。最终验证会检查 ZIP 中央目录、解压到临时目录并重跑完整清单，不能用重新计算外层哈希掩盖包内篡改。
+它依次验证固定运行时和 `.node-version`，运行版本一致性、便携发布测试、类型检查和全量测试，以 `tauri build --no-bundle --ci -- --locked` 只生成 `zichan.exe`，随后由 `create-windows-portable.mjs` 组装 ZIP。打包器解析桌面 EXE、Node 和 WebView2 的 PE Machine，确保三者都是 x64，并核对内置 Node.js 版本；拒绝 `data/`、数据库、账号会话、服务器身份、开发目录、source map、PDB 和 updater 产物，生成 `portable-mode.json`、逐文件 SHA-256 清单、ZIP 及 `.zip.sha256`。构建先在独立暂存目录完成 ZIP 解压与完整清单复验，成功后才替换同名 ZIP；已有便携目录一律不会被删除。
 
 ## 目录职责
 

@@ -3243,11 +3243,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     },
     close: async () => {
       nodeReplication.stop();
+      groupReconciler.stop();
       clearInterval(queueWatchdog);
       clearInterval(accountEmailTimer);
       clearInterval(nodeReplicationTimer);
       await nodeReplication.drain();
-      metrics.stop();
+      await groupReconciler.drain();
+      await metrics.stop();
       await accountEmailFlight;
       // Workers keep the process alive and hold their own heap; a shutdown that leaves them running
       // would make the process appear to hang after the server has closed.

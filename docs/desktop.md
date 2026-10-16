@@ -37,7 +37,7 @@ npm run start:desktop                # 从根目录启动桌面开发壳，并�
 
 Windows 首次先运行 `scripts\windows\setup-webview2-runtime.cmd` 准备锁定的固定版 WebView2，随后双击
 `scripts\windows\build-desktop.cmd` 完成本地正式构建。该入口检查 Node、npm、依赖、Rust 与 Perl，运行
-发布门禁，以 `--no-bundle` 构建并生成 ZIP。SQLCipher 使用 vendored OpenSSL，release 构建需要
+发布门禁，并要求 Node.js 与 `.node-version` 完全一致，以 `--no-bundle` 和 Cargo `--locked` 构建并生成 ZIP。SQLCipher 使用 vendored OpenSSL，release 构建需要
 `perl.exe` 位于 `PATH`。产物位于 `apps\desktop\src-tauri\target\release\portable`。
 
 首次 `dev`/`build` 会用 cargo 拉取并编译 Tauri 依赖树（数百个 crate），耗时较久；之后走缓存很快。

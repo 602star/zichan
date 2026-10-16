@@ -291,6 +291,11 @@ export function createMetricsService(deps: MetricsServiceDeps) {
   let timer: ReturnType<typeof setInterval> | undefined;
   let housekeepingTimer: ReturnType<typeof setInterval> | undefined;
   let running = false;
+  const scheduledWork = new Set<Promise<void>>();
+  const trackScheduledWork = (work: Promise<void>): void => {
+    scheduledWork.add(work);
+    void work.then(() => { scheduledWork.delete(work); }, () => { scheduledWork.delete(work); });
+  };
 
   const observeRequest = (request: {
     durationMs: number;
@@ -786,16 +791,17 @@ export function createMetricsService(deps: MetricsServiceDeps) {
     runtime,
     start(): void {
       if (timer) return;
-      timer = setInterval(() => { void tick(); }, intervalMs);
+      timer = setInterval(() => { trackScheduledWork(tick()); }, intervalMs);
       timer.unref?.();
-      housekeepingTimer = setInterval(() => { void housekeeping(); }, HOUSEKEEPING_INTERVAL_MS);
+      housekeepingTimer = setInterval(() => { trackScheduledWork(housekeeping()); }, HOUSEKEEPING_INTERVAL_MS);
       housekeepingTimer.unref?.();
     },
-    stop(): void {
+    async stop(): Promise<void> {
       if (timer) clearInterval(timer);
       if (housekeepingTimer) clearInterval(housekeepingTimer);
       timer = undefined;
       housekeepingTimer = undefined;
+      await Promise.allSettled([...scheduledWork]);
       runtime.stop();
     },
   };

@@ -16,7 +16,9 @@ export function createGroupReconciler(store: SyncServerStore, identity: () => No
     mode: 'managed'; secret: string;
   } | null>) {
   let flight: Promise<void> | undefined;
+  let stopped = false;
   const run = (): Promise<void> => {
+    if (stopped) return Promise.resolve();
     if (flight) return flight;
     flight = (async () => {
       const group = await store.serverSyncGroup();
@@ -203,5 +205,5 @@ export function createGroupReconciler(store: SyncServerStore, identity: () => No
     }).finally(() => { flight = undefined; });
     return flight;
   };
-  return { run };
+  return { run, stop: () => { stopped = true; }, drain: async () => { await flight?.catch(() => undefined); } };
 }

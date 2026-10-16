@@ -1,0 +1,55 @@
+name: Windows portable release verification
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  portable:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: npm ci
+      - run: npm ci --prefix tools/eslint
+      - run: npm run lint
+      - run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
+      - name: Verify release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: node scripts/release/check-consistency.mjs --tag '${{ github.ref_name }}'
+      - name: Restore pinned WebView2 runtime
+        uses: actions/cache@v4
+        with:
+          path: .tools/webview2-fixed
+          key: webview2-fixed-${{ runner.os }}-${{ hashFiles('scripts/release/webview2-runtime.lock.json') }}
+      - name: Prepare and verify pinned WebView2 runtime
+        run: npm run release:webview2:setup
+      - name: Build and verify the portable ZIP
+        shell: pwsh
+        env:
+          ZICHAN_NO_PAUSE: '1'
+        run: |
+          & .\scripts\windows\build-desktop.cmd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload verified portable release
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-portable
+          path: |
+            apps/desktop/src-tauri/target/release/portable/*.zip
+            apps/desktop/src-tauri/target/release/portable/*.zip.sha256
+          if-no-files-found: error

@@ -111,12 +111,14 @@ async function replaceArchiveHeaderText(blob: Blob, from: string, to: string): P
 describe('encrypted backup archives', () => {
   beforeEach(() => {
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: new MemoryStorage() });
+    Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: new MemoryStorage() });
     lockLedgerKey();
   });
 
   afterEach(() => {
     lockLedgerKey();
     Reflect.deleteProperty(globalThis, 'localStorage');
+    Reflect.deleteProperty(globalThis, 'sessionStorage');
     Reflect.deleteProperty(globalThis, 'window');
   });
 

@@ -16,7 +16,7 @@ function escapeRegex(value) {
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'zichan-release-check-'));
-  for (const path of ['package.json', 'package-lock.json', 'apps/desktop/package.json', 'apps/web/package.json', 'apps/sync-server/package.json', 'packages/core/package.json', 'packages/db/package.json', 'packages/logger/package.json', 'apps/desktop/src-tauri/tauri.conf.json', 'apps/desktop/src-tauri/tauri.windows.conf.json', 'apps/desktop/src-tauri/Cargo.toml', 'apps/desktop/src-tauri/Cargo.lock', 'apps/desktop/src-tauri/src/portable.rs', 'packages/db/src/migrations.ts', 'packages/db/test/schema-baseline.test.ts', 'apps/web/test/sqljs-driver.test.ts', 'apps/web/test/tauri-sql-driver.test.ts', 'scripts/release/webview2-runtime.lock.json', 'docs/portable/README-便携版.txt', 'docs/portable/NOTICE.txt', 'docs/db.md', 'docs/release-notes.md']) {
+  for (const path of ['.node-version', 'package.json', 'package-lock.json', 'apps/desktop/package.json', 'apps/web/package.json', 'apps/sync-server/package.json', 'packages/core/package.json', 'packages/db/package.json', 'packages/logger/package.json', 'apps/desktop/src-tauri/tauri.conf.json', 'apps/desktop/src-tauri/tauri.windows.conf.json', 'apps/desktop/src-tauri/Cargo.toml', 'apps/desktop/src-tauri/Cargo.lock', 'apps/desktop/src-tauri/src/portable.rs', 'packages/db/src/migrations.ts', 'packages/db/test/schema-baseline.test.ts', 'apps/web/test/sqljs-driver.test.ts', 'apps/web/test/tauri-sql-driver.test.ts', 'scripts/release/webview2-runtime.lock.json', 'docs/portable/README-便携版.txt', 'docs/portable/NOTICE.txt', 'docs/db.md', 'docs/release-notes.md']) {
     await cp(join(repositoryRoot, ...path.split('/')), join(root, ...path.split('/')), { recursive: true });
   }
   const migrations = await readFile(join(root, 'packages', 'db', 'src', 'migrations.ts'), 'utf8');
@@ -34,6 +34,17 @@ test('accepts the repository release metadata and exact version tag', async () =
     assert.ok(Number.isSafeInteger(result.schemaVersion) && result.schemaVersion > 0);
     assert.equal(result.webview2RuntimeVersion, '151.0.4129.101');
     assert.equal(result.webview2LockComplete, true);
+    assert.equal(result.releaseNodeVersion, '22.23.3');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects a floating release Node.js version', async () => {
+  const root = await fixture();
+  try {
+    await writeFile(join(root, '.node-version'), '22\n');
+    await assert.rejects(checkReleaseConsistency(root), /\.node-version must pin an exact Node\.js version/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

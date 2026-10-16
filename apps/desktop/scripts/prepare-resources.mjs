@@ -1,4 +1,4 @@
-import { cp, copyFile, mkdir, rm } from 'node:fs/promises';
+import { cp, copyFile, mkdir, readFile, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -8,6 +8,13 @@ const desktopRoot = resolve(here, '..');
 const repoRoot = resolve(desktopRoot, '../..');
 const resources = resolve(desktopRoot, 'resources');
 const runtimeName = process.platform === 'win32' ? 'node.exe' : 'node';
+
+if (process.env.ZICHAN_RELEASE_BUILD === '1') {
+  const expected = (await readFile(resolve(repoRoot, '.node-version'), 'utf8')).trim();
+  if (process.versions.node !== expected) {
+    throw new Error(`Windows releases require Node.js ${expected}, received ${process.versions.node}`);
+  }
+}
 
 await rm(resources, { recursive: true, force: true });
 await mkdir(resolve(resources, 'web'), { recursive: true });

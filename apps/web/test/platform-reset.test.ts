@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LedgerCryptoSession, LedgerKeyEnvelope } from '@zichan/core';
 import {
   clearCredentialVaultRuntimeState,
@@ -148,6 +148,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   clearDeviceStorageState();
   clearLedgerKey();
   clearSyncConfiguration();
@@ -162,6 +163,13 @@ afterEach(() => {
 
 describe('resetPlatformData', () => {
   it('clears browser database keys, sync configuration, identities and safety state', async () => {
+    vi.stubGlobal('navigator', {
+      locks: {
+        async request(_name: string, _options: unknown, callback: (lock: object) => Promise<void>) {
+          await callback({});
+        },
+      },
+    });
     const request: DeleteRequestStub = { error: null, onsuccess: null, onerror: null, onblocked: null };
     (globalThis as unknown as { indexedDB: { deleteDatabase(name: string): DeleteRequestStub } }).indexedDB = {
       deleteDatabase(name) {

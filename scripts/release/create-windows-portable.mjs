@@ -1,12 +1,13 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { access, cp, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, copyFile, cp, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readWebView2RuntimeLock } from './webview2-runtime.mjs';
 import { verifyPreparedRuntime } from './setup-webview2-runtime.mjs';
+import { verifyReleaseArtifacts } from './verify-artifacts.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRepositoryRoot = resolve(dirname(scriptPath), '..', '..');
@@ -60,6 +61,16 @@ async function exists(path) {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function pathExists(path) {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
   }
 }
 
@@ -166,6 +177,18 @@ async function requirePeX64(path, label) {
   if (machine !== 0x8664) throw new Error(`${label} PE Machine is 0x${machine.toString(16)}, expected x64 0x8664`);
 }
 
+function inspectNodeVersion(executable) {
+  const result = spawnSync(executable, ['--version'], {
+    encoding: 'utf8',
+    timeout: 10_000,
+    windowsHide: true,
+  });
+  if (result.error || result.status !== 0) {
+    throw new Error(`Bundled Node.js runtime could not report its version: ${result.error?.message ?? result.stderr?.trim() ?? result.status}`);
+  }
+  return result.stdout.trim().replace(/^v/, '');
+}
+
 async function copySafeTree(source, destination, label, options = {}) {
   await filesUnder(source, { label, ...options });
   await cp(source, destination, { recursive: true, errorOnExist: true });
@@ -185,6 +208,7 @@ async function generateFileManifest(directory, metadata) {
     appVersion: metadata.version,
     architecture: 'x64',
     webview2RuntimeVersion: metadata.runtimeVersion,
+    nodeVersion: metadata.nodeVersion,
     files: rows,
   }, null, 2)}\n`, 'utf8');
   return manifestPath;
@@ -224,6 +248,8 @@ export async function validatePortableDirectory(directory, expected) {
     || manifest.appVersion !== expected.version
     || manifest.architecture !== 'x64'
     || manifest.webview2RuntimeVersion !== expected.runtimeVersion
+    || (expected.nodeVersion && manifest.nodeVersion !== expected.nodeVersion)
+    || (manifest.nodeVersion !== undefined && !/^\d+\.\d+\.\d+$/.test(manifest.nodeVersion))
     || !Array.isArray(manifest.files)) {
     throw new Error('portable-files.json metadata does not match the portable release.');
   }
@@ -284,6 +310,8 @@ export async function createWindowsPortable(options = {}) {
   const rootPackage = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
   const version = options.version ?? rootPackage.version;
   if (version !== rootPackage.version) throw new Error(`Requested version ${version} does not match package.json ${rootPackage.version}`);
+  const nodeVersion = (await readFile(join(root, '.node-version'), 'utf8')).trim();
+  if (!/^\d+\.\d+\.\d+$/.test(nodeVersion)) throw new Error(`Invalid release Node.js version: ${nodeVersion}`);
 
   const lockPath = resolve(options.lockPath ?? join(root, 'scripts', 'release', 'webview2-runtime.lock.json'));
   const runtimeLock = await readWebView2RuntimeLock(lockPath, { requireDownload: options.allowIncompleteLock !== true });
@@ -294,7 +322,6 @@ export async function createWindowsPortable(options = {}) {
   const docsDirectory = resolve(options.docsDirectory ?? join(root, 'docs', 'portable'));
   const folderName = `资产生命周期_${version}_windows-x64_portable`;
   const finalDirectory = join(outputDirectory, folderName);
-  const staging = join(outputDirectory, `.${folderName}.staging-${process.pid}`);
   const archive = join(outputDirectory, `${folderName}.zip`);
 
   await requireFile(executable, 'Desktop executable');
@@ -308,43 +335,79 @@ export async function createWindowsPortable(options = {}) {
   await requirePeX64(executable, 'Desktop executable');
   await requirePeX64(join(resources, 'node.exe'), 'Bundled Node.js runtime');
   await requirePeX64(join(runtime, 'msedgewebview2.exe'), 'Bundled WebView2 runtime');
+  const bundledNodeVersion = await (options.inspectNodeVersion ?? inspectNodeVersion)(join(resources, 'node.exe'));
+  if (bundledNodeVersion !== nodeVersion) {
+    throw new Error(`Bundled Node.js runtime is ${bundledNodeVersion}, expected ${nodeVersion} from .node-version`);
+  }
   for (const file of ['README-便携版.txt', 'NOTICE.txt']) await requireFile(join(docsDirectory, file), `Portable documentation ${file}`);
 
   await mkdir(outputDirectory, { recursive: true });
-  await rm(staging, { recursive: true, force: true });
+  const buildLockPath = join(outputDirectory, '.zichan-portable-build.lock');
+  let lock;
   try {
-    await mkdir(join(staging, 'server'), { recursive: true });
-    await mkdir(join(staging, 'runtime'), { recursive: true });
-    await cp(executable, join(staging, 'zichan.exe'), { errorOnExist: true });
-    await copySafeTree(resources, join(staging, 'server'), 'Desktop server resources');
-    await copySafeTree(runtime, join(staging, 'runtime', 'webview2'), 'WebView2 runtime', { allowRuntimeSignatures: true });
-    for (const file of ['README-便携版.txt', 'NOTICE.txt']) await cp(join(docsDirectory, file), join(staging, file), { errorOnExist: true });
-    await writeFile(join(staging, 'portable-mode.json'), `${JSON.stringify({
+    lock = await open(buildLockPath, 'wx');
+  } catch (error) {
+    if (error.code === 'EEXIST') throw new Error(`Another portable build may be using ${outputDirectory}; remove ${buildLockPath} only after confirming it has stopped.`);
+    throw error;
+  }
+  let staging;
+  try {
+    if ((options.archive === false || options.keepDirectory === true) && await pathExists(finalDirectory)) {
+      throw new Error(`Refusing to replace an existing portable directory: ${finalDirectory}. Preserve it and choose another --output directory.`);
+    }
+    staging = await mkdtemp(join(outputDirectory, `.${folderName}.staging-`));
+    const packageDirectory = join(staging, folderName);
+    const stagedArchive = join(staging, `${folderName}.zip`);
+    await mkdir(join(packageDirectory, 'server'), { recursive: true });
+    await mkdir(join(packageDirectory, 'runtime'), { recursive: true });
+    await cp(executable, join(packageDirectory, 'zichan.exe'), { errorOnExist: true });
+    await copySafeTree(resources, join(packageDirectory, 'server'), 'Desktop server resources');
+    await copySafeTree(runtime, join(packageDirectory, 'runtime', 'webview2'), 'WebView2 runtime', { allowRuntimeSignatures: true });
+    for (const file of ['README-便携版.txt', 'NOTICE.txt']) await cp(join(docsDirectory, file), join(packageDirectory, file), { errorOnExist: true });
+    await writeFile(join(packageDirectory, 'portable-mode.json'), `${JSON.stringify({
       formatVersion: 1,
       appVersion: version,
       architecture: 'x64',
       dataDirectory: 'data',
     }, null, 2)}\n`, 'utf8');
-    await generateFileManifest(staging, { version, runtimeVersion: runtimeLock.runtimeVersion });
-    const validation = await validatePortableDirectory(staging, { version, runtimeVersion: runtimeLock.runtimeVersion });
+    await generateFileManifest(packageDirectory, { version, runtimeVersion: runtimeLock.runtimeVersion, nodeVersion });
+    const validation = await validatePortableDirectory(packageDirectory, { version, runtimeVersion: runtimeLock.runtimeVersion, nodeVersion });
 
-    if (await exists(join(finalDirectory, 'data'))) {
-      throw new Error(`Refusing to replace a portable directory that contains user data: ${finalDirectory}. Exit the app and preserve or move its data/ directory before rebuilding, or choose another --output directory.`);
+    if (options.archive === false) {
+      await rename(packageDirectory, finalDirectory);
+      return { directory: finalDirectory, archive: null, sha256: null, ...validation };
     }
-    await rm(finalDirectory, { recursive: true, force: true });
-    await rename(staging, finalDirectory);
-    if (options.archive === false) return { directory: finalDirectory, archive: null, sha256: null, ...validation };
 
-    await rm(archive, { force: true });
-    await rm(`${archive}.sha256`, { force: true });
-    await (options.compress ?? compressDirectory)(finalDirectory, archive);
-    await requireFile(archive, 'Portable ZIP');
-    const archiveHash = await sha256(archive);
-    await writeFile(`${archive}.sha256`, `${archiveHash}  ${basename(archive)}\n`, 'utf8');
-    if (options.keepDirectory !== true) await rm(finalDirectory, { recursive: true, force: true });
+    await (options.compress ?? compressDirectory)(packageDirectory, stagedArchive);
+    await requireFile(stagedArchive, 'Portable ZIP');
+    const archiveHash = await sha256(stagedArchive);
+    await writeFile(`${stagedArchive}.sha256`, `${archiveHash}  ${basename(archive)}\n`, 'utf8');
+    await verifyReleaseArtifacts({ artifact: stagedArchive, version, runtimeVersion: runtimeLock.runtimeVersion, nodeVersion });
+
+    if (options.keepDirectory === true) await rename(packageDirectory, finalDirectory);
+    const sidecar = `${archive}.sha256`;
+    const previousSidecar = join(staging, 'previous.zip.sha256');
+    const hadSidecar = await pathExists(sidecar);
+    if (hadSidecar) await copyFile(sidecar, previousSidecar);
+    await rename(`${stagedArchive}.sha256`, sidecar);
+    try {
+      await rename(stagedArchive, archive);
+    } catch (error) {
+      if (hadSidecar) await rename(previousSidecar, sidecar);
+      else await rm(sidecar, { force: true });
+      throw error;
+    }
     return { directory: options.keepDirectory === true ? finalDirectory : null, archive, sha256: archiveHash, ...validation };
   } finally {
-    await rm(staging, { recursive: true, force: true });
+    try {
+      if (staging) await rm(staging, { recursive: true, force: true });
+    } finally {
+      try {
+        await lock.close();
+      } finally {
+        await rm(buildLockPath, { force: true });
+      }
+    }
   }
 }
 

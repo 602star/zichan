@@ -106,6 +106,8 @@ npm run start:desktop # Tauri dev shell
 npm run server -w @zichan/desktop  # fixed-PC all-in-one server
 npm run start:server # same fixed-PC server through the root startup wrapper
 npm run release:webview2:setup # explicitly download/verify the pinned fixed WebView2 runtime
+npm run build:desktop # run the complete Windows portable release build and checks
+npm run build:desktop:binary # build only the desktop EXE for development
 npm run release:portable # package an already-built Windows executable as the portable ZIP
 npm run mobile:init:android # one-time Android project generation (requires Android SDK/JDK 17+)
 npm run mobile:dev:android  # run the shared Tauri app on Android

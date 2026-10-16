@@ -184,9 +184,9 @@ describe('large three-node replica recovery', () => {
         expect(Buffer.concat(plaintextChunks)).toEqual(sample!.contents);
       }
     } finally {
+      await Promise.all(nodes().map((node) => node.close()));
       await Promise.all(blobs.map((blob) => blob.close()));
       await Promise.all(stores.map((store) => store.close()));
-      await Promise.all(nodes().map((node) => node.close()));
       rmSync(root, { recursive: true, force: true });
     }
   }, process.env['ZICHAN_REPLICA_STRESS'] === '1'

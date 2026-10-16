@@ -154,6 +154,8 @@ export async function checkReleaseConsistency(rootDirectory, options = {}) {
   const rootPackage = await json(rootPackagePath);
   const version = rootPackage.version;
   if (typeof version !== 'string' || !SEMVER.test(version)) failures.push(`package.json has invalid SemVer version: ${String(version)}`);
+  const releaseNodeVersion = (await readFile(join(root, '.node-version'), 'utf8')).trim();
+  if (!/^\d+\.\d+\.\d+$/.test(releaseNodeVersion)) failures.push(`.node-version must pin an exact Node.js version, received ${releaseNodeVersion}`);
 
   const workspaceFiles = await workspacePackageFiles(root, rootPackage.workspaces ?? []);
   for (const packageFile of workspaceFiles) {
@@ -264,6 +266,7 @@ export async function checkReleaseConsistency(rootDirectory, options = {}) {
     workspaceCount: workspaceFiles.length,
     webview2RuntimeVersion: runtimeLock.runtimeVersion,
     webview2LockComplete: runtimeLock.complete,
+    releaseNodeVersion,
   };
 }
 
@@ -288,5 +291,5 @@ if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
   const options = parseArgs(process.argv.slice(2));
   const root = options.root ?? resolve(dirname(scriptPath), '..', '..');
   const result = await checkReleaseConsistency(root, { tag: options.tag });
-  console.log(`release consistency ok: version=${result.version} schema=${result.schemaVersion} workspaces=${result.workspaceCount} webview2=${result.webview2RuntimeVersion}`);
+  console.log(`release consistency ok: version=${result.version} schema=${result.schemaVersion} workspaces=${result.workspaceCount} node=${result.releaseNodeVersion} webview2=${result.webview2RuntimeVersion}`);
 }

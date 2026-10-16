@@ -170,7 +170,7 @@ export async function verifyReleaseArtifacts(options) {
     try {
       const runtimeVersion = options.runtimeVersion
         ?? (await readWebView2RuntimeLock(options.lockPath ?? join(repositoryRoot, 'scripts', 'release', 'webview2-runtime.lock.json'))).runtimeVersion;
-      contents = await verifyPortableZipContents(artifact, { version, runtimeVersion });
+      contents = await verifyPortableZipContents(artifact, { version, runtimeVersion, nodeVersion: options.nodeVersion });
     } catch (error) {
       failures.push(`portable ZIP content verification failed: ${error.message}`);
     }
@@ -201,6 +201,7 @@ if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
     sha256File: args.sha256,
     version: args.version,
     runtimeVersion: args['runtime-version'],
+    nodeVersion: args['node-version'],
   });
   console.log(`portable artifact ok: bytes=${result.bytes} sha256=${result.sha256}`);
 }
