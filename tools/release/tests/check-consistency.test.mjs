@@ -113,6 +113,7 @@ test('rejects non-portable bundling, automatic WebView installation, early windo
       portablePath,
       portable
         .replace('../../../../scripts/release/webview2-runtime.lock.json', 'duplicated-runtime-version.json')
+        .replace('../../../../.node-version', 'duplicated-node-version')
         .replace('PORTABLE_FORMAT_VERSION: u32 = 1;', 'PORTABLE_FORMAT_VERSION: u32 = 2;'),
     );
 
@@ -124,6 +125,7 @@ test('rejects non-portable bundling, automatic WebView installation, early windo
         assert.match(error.message, /main window with create=false/);
         assert.match(error.message, /downloadUrl and sha256 must either both be filled/);
         assert.match(error.message, /must embed the tracked WebView2 runtime lock/);
+        assert.match(error.message, /must accept and verify the pinned Node\.js version/);
         assert.match(error.message, /portable format version 1/);
         return true;
       },

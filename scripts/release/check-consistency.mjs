@@ -250,6 +250,10 @@ export async function checkReleaseConsistency(rootDirectory, options = {}) {
   if (!portableRust.includes('include_str!("../../../../scripts/release/webview2-runtime.lock.json")')) {
     failures.push('apps/desktop/src-tauri/src/portable.rs must embed the tracked WebView2 runtime lock instead of duplicating its version');
   }
+  if (!portableRust.includes('node_version: String')
+    || !portableRust.includes('manifest.node_version != include_str!("../../../../.node-version")')) {
+    failures.push('apps/desktop/src-tauri/src/portable.rs must accept and verify the pinned Node.js version in portable-files.json');
+  }
   if (!/pub const PORTABLE_FORMAT_VERSION:\s*u32\s*=\s*1\s*;/.test(portableRust)) {
     failures.push('apps/desktop/src-tauri/src/portable.rs must keep portable format version 1 aligned with portable-mode.json');
   }

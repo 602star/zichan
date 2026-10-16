@@ -104,6 +104,7 @@ struct PortableFileManifest {
     app_version: String,
     architecture: String,
     webview2_runtime_version: String,
+    node_version: String,
     files: Vec<PortableFileEntry>,
 }
 
@@ -541,6 +542,7 @@ fn validate_resource_manifest(root: &Path) -> Result<(), String> {
         || manifest.app_version != env!("CARGO_PKG_VERSION")
         || manifest.architecture != "x64"
         || manifest.webview2_runtime_version != runtime_lock.runtime_version
+        || manifest.node_version != include_str!("../../../../.node-version").trim()
     {
         return Err("便携文件清单的产品、版本、架构或 WebView2 版本不匹配".into());
     }
@@ -1164,6 +1166,7 @@ mod tests {
             "appVersion": env!("CARGO_PKG_VERSION"),
             "architecture": "x64",
             "webview2RuntimeVersion": lock.runtime_version,
+            "nodeVersion": include_str!("../../../../.node-version").trim(),
             "files": [
                 {
                     "path": "runtime/webview2/msedgewebview2.exe",
@@ -1183,6 +1186,20 @@ mod tests {
         )
         .expect("write manifest fixture");
         assert!(validate_resource_manifest(&root).is_ok());
+
+        let mut wrong_node_manifest = manifest.clone();
+        wrong_node_manifest["nodeVersion"] = serde_json::json!("0.0.0");
+        fs::write(
+            root.join("portable-files.json"),
+            serde_json::to_vec(&wrong_node_manifest).unwrap(),
+        )
+        .expect("write wrong Node.js version");
+        assert!(validate_resource_manifest(&root).is_err());
+        fs::write(
+            root.join("portable-files.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .expect("restore manifest fixture");
 
         fs::write(&server_file, b"tampered").expect("tamper resource fixture");
         assert!(validate_resource_manifest(&root).is_err());
