@@ -294,7 +294,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
     return () => window.removeEventListener('keydown', closeOnEscape);
   }, [navOpen]);
   useEffect(() => {
-    const mobileViewport = window.matchMedia('(max-width: 767px)');
+    const mobileViewport = window.matchMedia('(max-width: 1023px)');
     const closeOnDesktop = () => { if (!mobileViewport.matches) setNavOpen(false); };
     mobileViewport.addEventListener('change', closeOnDesktop);
     return () => mobileViewport.removeEventListener('change', closeOnDesktop);

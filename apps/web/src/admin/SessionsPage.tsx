@@ -149,7 +149,7 @@ export function SessionsPage({ client, query, navigate, role, selfAccountId }: {
         <DataTable
           columns={[
             { key: 'user', header: '用户', ...sortHeader('name', '用户名'), render: (session) => (
-              <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}
+              <button type="button" className="zc-admin-inline-link"
                 onClick={() => navigate(`/users/${encodeURIComponent(session.accountId ?? '')}${session.accountId ? '' : `?search=${encodeURIComponent(session.username)}`}`)}>{session.username}</button>
             ) },
             { key: 'device', header: '设备名称', render: (session) => session.deviceName },

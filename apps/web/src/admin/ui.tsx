@@ -334,11 +334,11 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 }
 
 export function TextInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} style={{ minHeight: 36, padding: '0 8px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', ...props.style }} />;
+  return <input {...props} style={{ padding: '0 8px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', ...props.style }} />;
 }
 
 export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select {...props} style={{ minHeight: 36, padding: '0 8px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', ...props.style }} />;
+  return <select {...props} style={{ padding: '0 8px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', ...props.style }} />;
 }
 
 /**
@@ -401,7 +401,7 @@ export function Breadcrumbs({ crumbs, onNavigate }: {
   // A single crumb is just the page title, which the page already shows.
   if (crumbs.length < 2) return null;
   return (
-    <nav aria-label="面包屑" style={{ ...row, gap: 6, marginBottom: 10, fontSize: 'var(--fs-sm)' }}>
+    <nav aria-label="面包屑" className="zc-admin-breadcrumbs" style={{ ...row, gap: 6, marginBottom: 10, fontSize: 'var(--fs-sm)' }}>
       {crumbs.map((crumb, index) => {
         const last = index === crumbs.length - 1;
         return (

@@ -96,7 +96,7 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
                 // Empty rather than '—': '—' is a sentinel that short-circuits every fallback.
                 if (!event.username) return '暂无数据';
                 return (
-                  <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}
+                  <button type="button" className="zc-admin-inline-link"
                     onClick={() => navigate(`/users/${encodeURIComponent(event.accountId ?? '')}${event.accountId ? '' : `?search=${encodeURIComponent(event.username ?? '')}`}`)}>
                     {event.username}
                   </button>
@@ -118,7 +118,7 @@ export function SyncPage({ client, query, navigate }: { client: AdminClient; que
             { key: 'reason', header: '原因', render: (event) => SYNC_CATEGORIES.find((entry) => entry.value === event.category)?.label ?? '暂无数据' },
             {
               key: 'request', header: '关联请求', render: (event) => event.requestId
-                ? <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => navigate(`/logs?requestId=${event.requestId}`)}>{event.requestId}</button>
+                ? <button type="button" className="zc-admin-inline-link" onClick={() => navigate(`/logs?requestId=${encodeURIComponent(event.requestId ?? '')}`)}>{event.requestId}</button>
                 : '暂无数据',
             },
           ]}

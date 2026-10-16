@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
 import { registerAccount } from '../../../packages/db/dist/index.js';
+import { openSpendingLedger } from './mobile-onboarding.mjs';
 
 /*
  * The desktop sweep walks the sidebar and a page-level scroll container. On a
@@ -30,13 +31,15 @@ const VIEWPORTS = [
    */
   { name: '844x390', width: 844, height: 390 },
   { name: '768x1024', width: 768, height: 1024 },
+  { name: '820x1180', width: 820, height: 1180 },
   { name: '1024x768', width: 1024, height: 768 },
+  { name: '1180x820', width: 1180, height: 820 },
 ];
 
 const SCREENS = [
   ['总览', 'dashboard'],
   ['资产转换', 'convert'],
-  ['日常支出', 'transactions'],
+  ['日常收支', 'transactions'],
   ['游戏赛季', 'game'],
   ['物品资产', 'fixed'],
   ['报表', 'reports'],
@@ -170,7 +173,7 @@ async function assertEveryModuleReachable(page) {
 }
 
 /** Open every "+ …" create action in the current view and empty-submit it. */
-async function sweepCurrentView(page, scope, report) {
+async function sweepCurrentView(page, scope, report, visitedActions) {
   const buttons = page.locator('.zc-page-content button');
   const total = await buttons.count();
   const labels = new Set();
@@ -179,13 +182,21 @@ async function sweepCurrentView(page, scope, report) {
     if (text.startsWith('+') || text === '开始记录') labels.add(text);
   }
   for (const label of labels) {
+    // Page-level create actions open the same form across that page's tabs.
+    if (visitedActions.has(label)) continue;
     const button = page.locator('.zc-page-content button').filter({ hasText: label }).first();
     if (!(await button.isVisible().catch(() => false))) continue;
     if (await button.isDisabled().catch(() => false)) { report.push(`${scope} / ${label}: disabled`); continue; }
     await button.click();
+    const draftRecovery = page.getByRole('dialog', { name: '发现未完成的转换草稿' });
+    if (await draftRecovery.isVisible().catch(() => false)) {
+      await draftRecovery.getByRole('button', { name: '新建' }).click();
+      await expect(draftRecovery).toBeHidden();
+    }
     const dialog = page.getByRole('dialog').last();
     await expect(dialog).toBeVisible({ timeout: 10_000 });
     report.push(`${scope} / ${label}: ${await saveAndCheckRecovery(page, `${scope} / ${label}`, dialog)}`);
+    visitedActions.add(label);
   }
 }
 
@@ -209,7 +220,9 @@ async function saveAndCheckRecovery(page, label, dialog) {
       return 'not-an-entity-form';
     }
     await conversionSave.click();
-    const refused = dialog.getByRole('alert');
+    // The step also shows an inline field warning; the footer alert is the
+    // message next to the save action and the one whose visibility matters here.
+    const refused = dialog.getByRole('alert').last();
     await expect(refused, `${label}：被拒后没有可朗读的提示`).toBeVisible({ timeout: 15_000 });
     const seen = await refused.evaluate((node) => {
       const panel = node.closest('[role="dialog"]');
@@ -326,20 +339,22 @@ async function dismissDialog(page, dialog) {
 /** Screens that group their forms behind tabs (管理 has four) must all be visited. */
 async function sweepScreen(page, label, report) {
   report[label] = report[label] ?? [];
+  const visitedActions = new Set();
   const tabs = page.locator('.zc-page-content [role="tab"]');
   const tabCount = await tabs.count();
-  if (!tabCount) return sweepCurrentView(page, label, report[label]);
+  if (!tabCount) return sweepCurrentView(page, label, report[label], visitedActions);
   const tabLabels = [];
   for (let i = 0; i < tabCount; i += 1) tabLabels.push(((await tabs.nth(i).innerText()) || '').trim());
   for (const tabLabel of tabLabels) {
     await page.locator('.zc-page-content [role="tab"]').filter({ hasText: tabLabel }).first().click();
     await page.waitForTimeout(200);
-    await sweepCurrentView(page, `${label}/${tabLabel}`, report[label]);
+    await sweepCurrentView(page, `${label}/${tabLabel}`, report[label], visitedActions);
   }
 }
 
 for (const vp of VIEWPORTS) {
   test(`${vp.name}: with every module on, no create form blocks on a field that cannot be reached`, async ({ page }) => {
+    test.setTimeout(300_000);
     const ownerSetupToken = 'test-mobile-sweep-owner-000000000000';
     const server = createSyncServer({
       enableWeb: true,
@@ -359,14 +374,7 @@ for (const vp of VIEWPORTS) {
       await registerAccount(base, 'sweep-user', 'sweep-user-password');
 
       await page.setViewportSize({ width: vp.width, height: vp.height });
-      await page.goto(`${base}/app/`);
-      await page.getByLabel('服务器用户名').fill('sweep-user');
-      await page.getByLabel('服务器账号密码').fill('sweep-user-password');
-      await page.getByRole('button', { name: '登录已有账号', exact: true }).click();
-      await page.getByRole('button', { name: '直接开始记支出', exact: true }).click({ timeout: 30_000 });
-      await page.getByRole('dialog', { name: '记一笔支出' }).waitFor({ timeout: 30_000 });
-      await page.getByRole('button', { name: '关闭快速记账' }).click();
-      await page.getByRole('dialog', { name: '记一笔支出' }).waitFor({ state: 'hidden' });
+      await openSpendingLedger(page, base, 'sweep-user', 'sweep-user-password');
 
       const enabled = await enableAllModules(page);
       expect(enabled.length, `启用全部模块后应点过若干次“启用”`).toBeGreaterThan(0);
@@ -374,17 +382,18 @@ for (const vp of VIEWPORTS) {
 
       const report = {};
       for (const [label] of SCREENS) {
+        console.log(`MOBILE_SWEEP_PROGRESS ${vp.name} ${label}`);
         await clickNav(page, label);
         await sweepScreen(page, label, report);
       }
       console.log(`MOBILE_SWEEP ${vp.name} enabled=${enabled.length} ${JSON.stringify(report)}`);
-      expect(Object.keys(report), '每个模块都要真的走一遍').toHaveLength(10);
+      expect(Object.keys(report), '每个模块都要真的走一遍').toHaveLength(SCREENS.length);
       const flat = Object.values(report).flat();
       expect(flat.filter((line) => /blocked/.test(line)).length).toBeGreaterThan(15);
-      // Lightweight mode has no accounts at all, at any width.
-      expect(flat.join('\n')).not.toContain('新增账户');
+      expect(flat.join('\n'), '管理页面的账户表单也应可打开').toContain('新增账户');
       expect(flat.filter((line) => /没有焦点|不可见|面板滚动区之外|被底部导航遮住|触控高度|没有任何可见提示/.test(line))).toEqual([]);
     } finally {
+      await page.close();
       server.server.closeAllConnections();
       await server.close();
     }
@@ -392,6 +401,7 @@ for (const vp of VIEWPORTS) {
 }
 
 test(`phone 390x844: a record-keeping pass fills and saves at phone size`, async ({ page }) => {
+  test.setTimeout(300_000);
   const ownerSetupToken = 'test-mobile-save-owner-000000000000';
   const server = createSyncServer({
     enableWeb: true,
@@ -411,23 +421,16 @@ test(`phone 390x844: a record-keeping pass fills and saves at phone size`, async
     await registerAccount(base, 'save-user', 'save-user-password');
 
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`${base}/app/`);
-    await page.getByLabel('服务器用户名').fill('save-user');
-    await page.getByLabel('服务器账号密码').fill('save-user-password');
-    await page.getByRole('button', { name: '登录已有账号', exact: true }).click();
-    await page.getByRole('button', { name: '直接开始记支出', exact: true }).click({ timeout: 30_000 });
-    await page.getByRole('dialog', { name: '记一笔支出' }).waitFor({ timeout: 30_000 });
-    await page.getByRole('button', { name: '关闭快速记账' }).click();
-    await page.getByRole('dialog', { name: '记一笔支出' }).waitFor({ state: 'hidden' });
+    await openSpendingLedger(page, base, 'save-user', 'save-user-password');
 
     await enableAllModules(page);
 
     // 1. A daily expense whose only must-type field is the amount.
-    await clickNav(page, '日常支出');
-    await page.getByRole('button', { name: '+ 记支出' }).click();
-    const expense = page.getByRole('dialog', { name: '新增 · 日常支出' });
+    await clickNav(page, '日常收支');
+    await page.getByRole('button', { name: '+ 记账' }).click();
+    const expense = page.getByRole('dialog', { name: '新增 · 日常收支' });
     await expect(expense).toBeVisible();
-    await expect(expense.getByLabel('账户')).toHaveCount(0);
+    await expect(expense.getByLabel('收付款账户')).toBeVisible();
     await expense.getByRole('textbox', { name: /^金额/ }).fill('18.8');
     await expense.getByLabel('描述').fill('手机午餐');
     await expense.getByRole('button', { name: '保存', exact: true }).click();
@@ -443,7 +446,10 @@ test(`phone 390x844: a record-keeping pass fills and saves at phone size`, async
     await page.getByRole('button', { name: '+ 记录' }).click();
     const record = page.getByRole('dialog').last();
     await expect(record).toBeVisible();
-    await expect(record.getByLabel('实际收支币种')).toHaveValue('');
+    await record.getByLabel('记录类型').selectOption('produce');
+    await record.getByLabel('新游戏币名称').fill('游戏金币');
+    await record.getByLabel('游戏币数量').fill('20');
+    await expect(record.getByLabel('实际收支币种')).toHaveCount(0);
     await record.getByRole('button', { name: '保存', exact: true }).click();
     await expect(record, '无现金流的游戏记录在手机上也要能存下来').toBeHidden({ timeout: 15_000 });
 
@@ -459,9 +465,9 @@ test(`phone 390x844: a record-keeping pass fills and saves at phone size`, async
 
     // 4. The base records the other modules lean on, through the 管理 tabs.
     await clickNav(page, '管理');
-    await page.locator('.zc-page-content [role="tab"]').filter({ hasText: '标签与商户' }).first().click();
+    await page.locator('.zc-page-content [role="tab"]').filter({ hasText: '标签与交易对象' }).first().click();
     for (const [action, value] of [
-      ['+ 新增商户', '手机商户'],
+      ['+ 新增交易对象', '手机商户'],
       ['+ 新增标签', '手机标签'],
       ['+ 新增地点', '手机地点'],
     ]) {
@@ -476,6 +482,7 @@ test(`phone 390x844: a record-keeping pass fills and saves at phone size`, async
 
     // 资产转换 is covered by the sweep above, which runs it at every viewport.
   } finally {
+    await page.close();
     server.server.closeAllConnections();
     await server.close();
   }

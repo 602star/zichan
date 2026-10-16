@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
 import { registerAccount } from '../../../packages/db/dist/index.js';
 import { mobileLayoutProbe, scrollToPageBottom } from './mobile-layout-probe.mjs';
+import { enableEveryNavigationModule, openSpendingLedger } from './mobile-onboarding.mjs';
 
 // A touch device is what these rules are written for, so the whole file runs
 // with coarse-pointer emulation; a mouse-driven context would never match
@@ -33,7 +34,9 @@ const VIEWPORTS = [
   { name: '414x896', width: 414, height: 896 },
   { name: '844x390', width: 844, height: 390 },
   { name: '768x1024', width: 768, height: 1024 },
+  { name: '820x1180', width: 820, height: 1180 },
   { name: '1024x768', width: 1024, height: 768 },
+  { name: '1180x820', width: 1180, height: 820 },
 ];
 
 async function clickNav(page, label) {
@@ -93,6 +96,7 @@ function violationsFor(data, viewport, screen) {
 }
 
 test('every screen keeps the phone/tablet layout contract across the device matrix', async ({ page }) => {
+  test.setTimeout(360_000);
   const ownerSetupToken = 'e2e-mobile-layout-owner-setup-00000000';
   const server = createSyncServer({
     enableWeb: true,
@@ -111,26 +115,18 @@ test('every screen keeps the phone/tablet layout contract across the device matr
     await registerAccount(base, 'layout-owner', 'layout-owner-password', { ownerSetupToken });
     await registerAccount(base, 'layout-user', 'layout-user-password');
 
-    await page.goto(`${base}/app/`);
-    await page.getByLabel('服务器用户名').fill('layout-user');
-    await page.getByLabel('服务器账号密码').fill('layout-user-password');
-    await page.getByRole('button', { name: '登录已有账号', exact: true }).click();
-    await page.getByRole('button', { name: '直接开始记支出', exact: true }).waitFor({ timeout: 30_000 });
-    await page.getByRole('button', { name: '直接开始记支出', exact: true }).click();
-    await page.getByRole('dialog', { name: '记一笔支出' }).waitFor({ timeout: 30_000 });
-    await page.getByRole('button', { name: '关闭快速记账' }).click();
-    await page.getByRole('dialog', { name: '记一笔支出' }).waitFor({ state: 'hidden' });
+    await openSpendingLedger(page, base, 'layout-user', 'layout-user-password');
 
     // Empty ledgers hide most layout bugs, so seed through the real UI. The
     // 7-figure amount is deliberate: it is what pushed the dashboard date off screen.
-    await clickNav(page, '日常支出');
+    await clickNav(page, '日常收支');
     const samples = [
       ['午餐', '38.50'], ['地铁通勤', '6'], ['超市采购', '236.80'], ['咖啡', '28'],
       ['房租', '3200'], ['手机话费', '99'], ['宽带年付', '1280'], ['年终奖金', '1280246.79'],
     ];
     for (const [text, amount] of samples) {
-      await page.getByRole('button', { name: '+ 记支出' }).click();
-      const form = page.getByRole('dialog', { name: '新增 · 日常支出' });
+      await page.getByRole('button', { name: '+ 记账' }).click();
+      const form = page.getByRole('dialog', { name: '新增 · 日常收支' });
       await form.waitFor({ timeout: 20_000 });
       await page.getByRole('textbox', { name: /^金额/ }).fill(amount);
       await page.getByLabel('描述').fill(text);
@@ -138,17 +134,10 @@ test('every screen keeps the phone/tablet layout contract across the device matr
       await page.waitForTimeout(650);
     }
 
-    // Full asset mode so every module is reachable from the shell.
-    await clickNav(page, '设置');
-    await page.getByLabel('记账模式').selectOption('assets');
-    await page.waitForTimeout(600);
-    const toggles = await page.evaluate(() => [...document.querySelectorAll('input[type="checkbox"]')]
-      .map((box) => box.getAttribute('aria-label'))
-      .filter((label) => (label || '').startsWith('在侧边栏显示')));
-    for (const label of toggles) {
-      const box = page.getByRole('checkbox', { name: label });
-      if (!(await box.isChecked().catch(() => true))) await box.check().catch(() => undefined);
-    }
+    // Enable every module through the phone drawer, which is the first-run
+    // navigation path and avoids a settings write racing a checkbox click.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await enableEveryNavigationModule(page);
 
     // Gate: with `overflow-x: hidden` on <body>, the viewport could not scroll at
     // all, which is what made every earlier occlusion measurement meaningless.
@@ -341,6 +330,7 @@ test('every screen keeps the phone/tablet layout contract across the device matr
         const button = document.querySelector('.zc-sidebar-quick-rail');
         const sidebar = document.querySelector('.zc-sidebar');
         if (!button || !sidebar) return null;
+        const label = document.querySelector('.zc-sidebar-nav-label');
         const rect = button.getBoundingClientRect();
         return {
           width: Math.round(rect.width),
@@ -348,6 +338,7 @@ test('every screen keeps the phone/tablet layout contract across the device matr
           radius: getComputedStyle(button).borderRadius,
           offset: Math.round((rect.left + rect.right) / 2
             - (sidebar.getBoundingClientRect().left + sidebar.getBoundingClientRect().right) / 2),
+          labelVisible: !!label && getComputedStyle(label).display !== 'none' && label.getBoundingClientRect().width > 0,
         };
       });
       expect(rail, 'the tablet rail must render its quick action').not.toBeNull();
@@ -356,6 +347,7 @@ test('every screen keeps the phone/tablet layout contract across the device matr
       // 44px is the minimum touch target the rail is built around.
       if (rail.height < 44) railFailures.push(`${width}px: rail quick action is only ${rail.height}px tall`);
       if (Math.abs(rail.offset) > 2) railFailures.push(`${width}px: rail quick action sits ${rail.offset}px off centre`);
+      if (!rail.labelVisible) railFailures.push(`${width}px: navigation label is hidden`);
     }
     expect(railFailures.join('\n')).toBe('');
 
@@ -404,7 +396,24 @@ test('every screen keeps the phone/tablet layout contract across the device matr
      */
     expect(desktopQuick.markOffsetX).toBeLessThanOrEqual(0.5);
     expect(desktopQuick.markOffsetY).toBeLessThanOrEqual(0.5);
+
+    for (const viewport of [{ width: 1920, height: 1080 }, { width: 2560, height: 1440 }, { width: 3840, height: 2160 }]) {
+      await page.setViewportSize(viewport);
+      for (const screen of SCREENS) {
+        await clickNav(page, screen.label);
+        const wide = await page.evaluate(() => {
+          const main = document.querySelector('.zc-app-main');
+          const rect = main.getBoundingClientRect();
+          return { overflow: document.documentElement.scrollWidth - innerWidth,
+            mainWidth: rect.width, bodyFont: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--fs-body')) };
+        });
+        expect(wide.overflow, `${viewport.width}px ${screen.id} overflow`).toBeLessThanOrEqual(1);
+        if (viewport.width >= 2560) expect(wide.mainWidth).toBeLessThanOrEqual(2081);
+        if (viewport.width >= 3840) expect(wide.bodyFont).toBeGreaterThanOrEqual(17);
+      }
+    }
   } finally {
+    await page.close();
     server.server.closeAllConnections();
     await server.close();
   }

@@ -2003,12 +2003,12 @@ input[type="radio"] {
 }
 
 /*
- * Tablet portrait (768-1023px). The icon-only rail is hard to learn because the
+ * Tablets (768-1199px). The icon-only rail is hard to learn because the
  * glyphs are abstract (◈ ⇄ ≋ ◆ ▤ ▦ ◷ ⊞ ⇅ ⚙), and the quick-add badge was only
  * 24x24. Widen the rail just enough to stack a 10px label under each icon and
  * give the quick action a full-width 44px row.
  */
-@media (min-width: 768px) and (max-width: 1023px) {
+@media (min-width: 768px) and (max-width: 1199px) {
   .zc-app-shell {
     grid-template-columns: 96px minmax(0, 1fr);
   }
@@ -3403,4 +3403,30 @@ input[type="radio"] {
   .zc-conversion-fact-list dd { text-align: left; }
   .zc-conversion-modal { max-width: none; }
   .zc-cost-opening { width: 100vw; height: 100dvh; max-height: 100dvh; padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); border: 0; border-radius: 0; }
+}
+
+/* Keep content readable as physical desktop viewports grow beyond 1080p. */
+@media (min-width: 2200px) {
+  .zc-app-main { width: 100%; max-width: 2080px; margin-inline: auto; }
+}
+@media (min-width: 2560px) {
+  :root {
+    --fs-meta: 12px;
+    --fs-caption: 13px;
+    --fs-body: 15px;
+    --fs-title: 17px;
+    --fs-heading: 22px;
+    --fs-display: 30px;
+  }
+}
+@media (min-width: 3200px) {
+  :root {
+    --fs-meta: 14px;
+    --fs-caption: 15px;
+    --fs-body: 17px;
+    --fs-title: 20px;
+    --fs-heading: 26px;
+    --fs-display: 36px;
+    --fs-input: 18px;
+  }
 }

@@ -208,9 +208,11 @@ export function UsersPage({ client, query, navigate, role }: {
             return <article key={user.accountId} className="zc-admin-user-card"
               data-disabled={user.disabled} data-quota={user.quotaState} data-active={active}>
               <div className="zc-admin-user-card-head">
-                <input type="checkbox" checked={selection.selected.includes(user.accountId)} disabled={!allowed}
-                  aria-label={`选择 ${user.username}`} title={!allowed ? user.role === 'owner' ? '所有者账号不可批量处理' : '你的角色不能管理该账号' : undefined}
-                  onChange={() => selection.toggle(user.accountId)} />
+                <label className="zc-admin-user-select">
+                  <input type="checkbox" checked={selection.selected.includes(user.accountId)} disabled={!allowed}
+                    aria-label={`选择 ${user.username}`} title={!allowed ? user.role === 'owner' ? '所有者账号不可批量处理' : '你的角色不能管理该账号' : undefined}
+                    onChange={() => selection.toggle(user.accountId)} />
+                </label>
                 <div className="zc-admin-user-identity">
                   <button type="button" className="zc-admin-user-name" onClick={() => navigate(`/users/${user.accountId}`)}>{user.username}</button>
                   {user.displayName ? <span>{user.displayName}</span> : null}

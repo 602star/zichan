@@ -22,7 +22,7 @@ export function PasswordResetIssuer({ client, accountId, username, onDone }: { c
     return () => { window.clearTimeout(timer); document.removeEventListener('visibilitychange', expire); };
   }, [issued]);
   return <section aria-label="账号密码恢复" style={{ marginTop: 16 }}><h4>账号密码恢复</h4>
-    <label><input type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} />我已通过可信渠道核实 {username} 的身份和恢复请求</label>
+    <label className="zc-admin-password-reset-confirm"><input type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} />我已通过可信渠道核实 {username} 的身份和恢复请求</label>
     <button disabled={!reviewed || busy} onClick={() => setConfirm(true)}>发放一次性重置码</button>
     {confirm && <ConfirmDialog title={`为 ${username} 发放重置码`} confirmLabel="确认发放" onCancel={() => setConfirm(false)} onConfirm={async () => {
       const result = await client.request<{ code: string; expiresAt: string }>(`/accounts/${accountId}/password-reset`, {}, { idempotencyKey: adminIdempotencyKey(`password-reset-issue-${accountId}`) });

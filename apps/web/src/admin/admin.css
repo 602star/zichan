@@ -33,6 +33,9 @@
   cursor: pointer; white-space: nowrap; font-size: var(--fs-body); font-weight: var(--fw-medium);
 }
 .zc-admin-root button:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.zc-admin-root .zc-admin-inline-link { min-height: 0; padding: 0; border: 0; background: none; color: var(--accent); white-space: normal; text-align: left; text-decoration: underline; font-weight: var(--fw-regular); cursor: pointer; }
+.zc-admin-root .zc-admin-inline-link:hover:not(:disabled) { border: 0; background: none; }
+.zc-admin-password-reset-confirm { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
 .zc-admin-root button:disabled { opacity: .45; cursor: not-allowed; }
 .zc-admin-root .zc-admin-button { min-height: 36px; padding: 6px 12px; }
 .zc-admin-root :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
@@ -67,7 +70,7 @@
 .zc-admin-nav a svg { flex: none; }
 .zc-admin-nav a:hover { background: var(--surface-2); color: var(--text-primary); }
 .zc-admin-nav a[data-active="true"] { background: var(--accent-soft); color: var(--accent); font-weight: var(--fw-bold); }
-.zc-admin-content { min-width: 0; padding: 28px clamp(20px, 3vw, 42px) 56px; max-width: 1540px; width: 100%; margin: 0 auto; box-sizing: border-box; }
+.zc-admin-content { min-width: 0; padding: 28px clamp(20px, 3vw, 42px) 56px; max-width: clamp(1540px, 78vw, 2200px); width: 100%; margin: 0 auto; box-sizing: border-box; }
 .zc-admin-nav-heading { display: block; padding: 0 12px 5px; color: var(--text-tertiary); font-size: var(--fs-meta); font-weight: var(--fw-medium); }
 .zc-admin-nav-footer { display: none; }
 .zc-admin-mobile-bar, .zc-admin-nav-scrim { display: none; }
@@ -152,12 +155,12 @@
 /* Every management page shares the same heading, actions and always-visible filters. */
 .zc-admin-page-header { display: flex; align-items: start; justify-content: space-between; gap: 12px 24px; flex-wrap: wrap; margin-bottom: 18px; }
 .zc-admin-page-header h2 { margin: 0 0 6px; font-size: var(--fs-heading); }
-.zc-admin-page-header p { margin: 0; font-size: 13px; }
+.zc-admin-page-header p { margin: 0; font-size: var(--fs-body); }
 .zc-admin-page-actions, .zc-admin-view-switch { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .zc-admin-root [aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .zc-admin-filterbar { padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); box-shadow: 0 3px 18px rgb(21 50 30 / 3%); }
 .zc-admin-filterbar + .zc-admin-panel { margin-top: 16px !important; }
-.zc-admin-filter-note { font-size: 12px; margin: 8px 0 0; }
+.zc-admin-filter-note { font-size: var(--fs-caption); margin: 8px 0 0; }
 .zc-admin-filterbar input, .zc-admin-filterbar select { width: 100%; }
 .zc-admin-filterbar input[type="checkbox"] { width: auto; }
 .zc-admin-filterbar input[type="datetime-local"] { width: auto; max-width: 100%; }
@@ -167,7 +170,7 @@
 .zc-calendar-picker { position: relative; min-width: 0; }
 .zc-calendar-trigger { min-height: 36px; min-width: 145px; display: inline-flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 9px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text-primary); cursor: pointer; }
 .zc-calendar-trigger[aria-expanded="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
-.zc-calendar-popover { position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; width: min(300px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 12px 32px rgb(0 0 0 / 18%); }
+.zc-calendar-popover { position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; width: min(360px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 12px 32px rgb(0 0 0 / 18%); }
 .zc-calendar-nav, .zc-calendar-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .zc-calendar-nav button, .zc-calendar-actions button { border: 0; background: transparent; color: var(--text-primary); cursor: pointer; padding: 5px 8px; }
 .zc-calendar-nav button { font-size: 22px; line-height: 1; }
@@ -269,7 +272,8 @@
 .zc-admin-user-card[data-quota="warning"]:not([data-disabled="true"]) { border-left-color: var(--warning); }
 .zc-admin-user-card[data-active="true"] { grid-column: 1 / -1; border-color: var(--accent); }
 .zc-admin-user-card-head { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 10px 12px; }
-.zc-admin-user-card-head > input[type="checkbox"] { margin: 7px 0 0; }
+.zc-admin-user-select { display: grid; place-items: center; flex: none; width: 44px; height: 44px; cursor: pointer; }
+.zc-admin-user-select:has(input:disabled) { cursor: not-allowed; }
 .zc-admin-user-identity { display: grid; gap: 3px; min-width: 0; flex: 1 1 150px; }
 .zc-admin-root .zc-admin-user-name { width: fit-content; max-width: 100%; min-height: 0; padding: 0; border: 0; background: none; color: var(--text-primary); text-align: left; font-size: var(--fs-title); font-weight: var(--fw-bold); white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
 .zc-admin-root .zc-admin-user-name:hover { background: none; color: var(--accent); text-decoration: underline; }
@@ -301,12 +305,23 @@
   .zc-admin-dashboard > * { grid-column: 1 / -1 !important; grid-row: auto !important; }
   .zc-admin-dashboard > #section-常用操作 button { width: auto; }
 }
-@media (max-width: 767px) {
+/* iPad portrait and landscape phones keep the whole width for content. */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .zc-admin-shell { display: block; }
+  .zc-admin-mobile-bar { display: flex; align-items: center; gap: 14px; position: sticky; top: 0; z-index: 12; padding: 8px 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .zc-admin-mobile-bar button { display: inline-flex; align-items: center; gap: 7px; }
+  .zc-admin-nav-scrim { display: block; position: fixed; inset: 0; z-index: 29; width: 100%; height: 100dvh; padding: 0; border: 0; border-radius: 0; background: var(--scrim) !important; }
+  .zc-admin-nav { position: fixed; inset: 0 auto 0 0; z-index: 30; width: min(320px, 86vw); height: 100dvh; max-height: 100dvh; min-height: 0; padding: 22px 14px; border-right: 1px solid var(--border); box-shadow: var(--shadow-lg); transform: translateX(-105%); visibility: hidden; transition: transform .2s ease, visibility .2s ease; }
+  .zc-admin-nav[data-open="true"] { transform: translateX(0); visibility: visible; }
+  .zc-admin-nav-footer { display: grid; gap: 3px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .zc-admin-content { padding: 24px; }
+}
+@media (max-width: 799px) {
   .zc-admin-page-header { margin-bottom: 12px; }
   .zc-admin-user-toolbar > label:first-child, .zc-admin-user-toolbar > label:nth-child(2) { flex: 1 1 100%; }
   .zc-admin-user-select-all { margin-left: 0; }
   .zc-admin-user-card { padding: 14px; }
-  .zc-admin-user-badges { justify-content: flex-start; padding-left: 30px; }
+  .zc-admin-user-badges { justify-content: flex-start; padding-left: 0; }
   .zc-admin-log-card { padding: 13px; }
   .zc-admin-log-head, .zc-admin-log-bottom { flex-wrap: wrap; }
   .zc-admin-log-head time { width: 100%; }
@@ -331,9 +346,40 @@
   .zc-admin-row-menu { position: static; width: 100%; min-width: 0; margin-top: 6px; box-shadow: none; }
 }
 @media (max-width: 767px) {
-  .zc-admin-root button, .zc-admin-root input, .zc-admin-root select { min-height: 44px; }
-  .zc-admin-root input, .zc-admin-root select { font-size: var(--fs-input); }
   .zc-admin-root header { align-items: flex-start; }
+}
+@media (max-width: 767px), (max-height: 600px) {
+  .zc-calendar-popover { position: fixed; top: 50%; left: 50%; width: min(360px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow-y: auto; transform: translate(-50%, -50%); box-sizing: border-box; }
+}
+@media (max-width: 375px) {
+  .zc-calendar-popover { left: 0; width: 100vw; padding: 5px; transform: translateY(-50%); }
+  .zc-calendar-grid-day { gap: 0; }
+  .zc-calendar-grid-day button { min-width: 0; width: 100%; }
+}
+@media (pointer: coarse) {
+  .zc-admin-root button,
+  .zc-admin-root input:not([type="checkbox"]):not([type="radio"]),
+  .zc-admin-root select,
+  .zc-admin-root textarea,
+  .zc-admin-root summary,
+  .zc-admin-root [role="tab"],
+  .zc-admin-root .zc-admin-button,
+  .zc-admin-root .zc-admin-row-actions summary,
+  .zc-admin-root .zc-calendar-grid button,
+  .zc-admin-root .zc-calendar-trigger,
+  .zc-admin-root .zc-admin-user-name { min-height: 44px; }
+  .zc-admin-root .zc-admin-inline-link { min-height: 44px; }
+  .zc-admin-root input:not([type="checkbox"]):not([type="radio"]),
+  .zc-admin-root select,
+  .zc-admin-root textarea { font-size: var(--fs-input); }
+  .zc-admin-root .zc-admin-nav a,
+  .zc-admin-root .zc-admin-app-link,
+  .zc-admin-root .zc-admin-security-link,
+  .zc-admin-root .zc-admin-overview-jumps a,
+  .zc-admin-root .zc-admin-overview-jumps button,
+  .zc-admin-root .zc-admin-panel-index a,
+  .zc-admin-root .zc-admin-breadcrumbs a { display: inline-flex; align-items: center; min-height: 44px; }
+  .zc-admin-root .zc-admin-user-select-all { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .zc-admin-nav { transition: none; }

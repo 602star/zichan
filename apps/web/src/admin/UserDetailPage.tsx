@@ -178,7 +178,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
             { key: 'next', header: '下一步', secondary: true, render: (event) => SYNC_CATEGORIES.find((entry) => entry.value === event.category)?.next ?? '暂无数据' },
             {
               key: 'request', header: '请求 ID', secondary: true, render: (event) => event.requestId ? (
-                <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}
+                <button type="button" className="zc-admin-inline-link"
                   onClick={() => navigate(`/logs?requestId=${encodeURIComponent(event.requestId ?? '')}`)}>{event.requestId}</button>
               ) : '暂无数据',
             },
@@ -198,7 +198,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
                 {when(entry.at)} · {entry.action}{entry.reason ? `（原因：${entry.reason}）` : ''}
                 {entry.requestId ? (
                   <span style={muted}> · 请求{' '}
-                    <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}
+                    <button type="button" className="zc-admin-inline-link"
                       onClick={() => navigate(`/logs?requestId=${encodeURIComponent(entry.requestId ?? '')}`)}>{entry.requestId}</button>
                   </span>
                 ) : null}
@@ -212,7 +212,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
             <ul style={{ margin: 0, paddingLeft: 18 }}>
               {jobs.map((job) => (
                 <li key={job.jobId}>
-                  <button type="button" style={{ all: 'unset', cursor: 'pointer', textDecoration: 'underline' }}
+                  <button type="button" className="zc-admin-inline-link"
                     onClick={() => navigate(`/jobs?job=${encodeURIComponent(job.jobId)}`)}>{job.type}</button>
                   {' '}· {job.status} · {when(job.createdAt)}
                 </li>

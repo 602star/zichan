@@ -19,7 +19,7 @@ for (const width of [360, 390]) test(`mobile ${width}px supports login, initiali
     await page.getByLabel('服务器用户名').fill('mobile-user');
     await page.getByLabel('服务器账号密码').fill('account-test-password');
     await fits();
-    await page.getByRole('button', { name: '登录已有账号', exact: true }).click();
+    await page.getByRole('button', { name: '登录', exact: true }).click();
     await expect(page.getByRole('button', { name: '创建个人账本' })).toBeVisible();
     await fits();
     await page.getByRole('button', { name: '创建个人账本' }).click();
@@ -41,7 +41,7 @@ for (const width of [360, 390]) test(`mobile ${width}px supports login, initiali
     await page.getByRole('tab', { name: '本机备份' }).click();
     await expect(page.getByRole('region', { name: '当前设备' })).toBeVisible();
     await page.getByRole('tab', { name: '服务器与同步' }).click();
-    await expect(page.getByRole('region', { name: '服务器' })).toBeVisible();
+    await expect(page.getByRole('region', { name: '服务器', exact: true })).toBeVisible();
     await page.getByRole('tab', { name: '解锁与安全' }).click();
     await expect(page.getByRole('region', { name: '账本保护' })).toBeVisible();
     await fits();
