@@ -50,6 +50,7 @@
     "build:api": "npm run build && npm run build:app --workspace @zichan/sync-server",
     "build:server": "npm run build:api && npm run build:web",
     "build:desktop": "cmd /c scripts\\windows\\build-desktop.cmd",
+    "build:desktop:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/build-installer.ps1",
     "build:desktop:binary": "npm run build --workspace @zichan/desktop -- --no-bundle --ci",
     "test:scripts": "node --test tools/dev/tests/*.test.mjs",
     "server:prune-backups": "npm run prune-backups --workspace @zichan/sync-server --",

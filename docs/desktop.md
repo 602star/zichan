@@ -2,7 +2,7 @@
 
 一个供桌面与移动端共用的 **Tauri 2** 外壳。UI、业务计算和仓储仍复用
 `@zichan/web` + `@zichan/core` + `@zichan/db`。桌面端由自有 Rust 命令桥管理
-SQLCipher/SQLite 和附件；Windows v0.1 只提供数据随 ZIP 移动的完全便携模式。
+SQLCipher/SQLite 和附件；Windows 有数据随 ZIP 移动的便携模式，以及数据留在当前用户目录的安装模式。
 
 ## 结构
 
@@ -24,7 +24,7 @@ apps/desktop/
 - `beforeDevCommand` / `beforeBuildCommand` 会自动先跑 `@zichan/web` 的 dev/build，所以桌面端
   与 web 永远同源，无需手动构建前端。
 
-## 开发 / 便携打包
+## 开发 / Windows 打包
 
 ```bash
 # 前置：Rust 工具链（rustup）+ 平台依赖（Windows 为 MSVC/C++ 工具、WebView2、Perl）
@@ -39,6 +39,7 @@ Windows 首次先运行 `scripts\windows\setup-webview2-runtime.cmd` 准备锁�
 `scripts\windows\build-desktop.cmd` 完成本地正式构建。该入口检查 Node、npm、依赖、Rust 与 Perl，运行
 发布门禁，并要求 Node.js 与 `.node-version` 完全一致，以 `--no-bundle` 和 Cargo `--locked` 构建并生成 ZIP。SQLCipher 使用 vendored OpenSSL，release 构建需要
 `perl.exe` 位于 `PATH`。产物位于 `apps\desktop\src-tauri\target\release\portable`。
+MSI/NSIS 使用独立的 `npm run build:desktop:installer` 入口，布局、签名和 VM 验收见 [windows-installer.md](windows-installer.md)。
 
 首次 `dev`/`build` 会用 cargo 拉取并编译 Tauri 依赖树（数百个 crate），耗时较久；之后走缓存很快。
 Debug 模式只写仓库内被忽略的 `.runtime/desktop/`；自动化测试可用绝对路径
@@ -49,7 +50,7 @@ Debug 模式只写仓库内被忽略的 `.runtime/desktop/`；自动化测试可
 - 应用名：`资产生命周期`；窗口标题：`资产生命周期 · Lifecycle Ledger`。
 - 版本号：`apps/desktop/package.json` 与 `src-tauri/tauri.conf.json` 同步为 `0.1.0`。
 - Bundle ID：`com.zichan.ledger`；图标来自 `src-tauri/icons/icon.png`，改图后运行 `npm run icon -w @zichan/desktop`。
-- Windows Release 根目录唯一来自 `zichan.exe` 所在位置；缺少/损坏 `portable-mode.json`、路径不可写或处于网络盘时，启动失败且不回退 AppData。
+- 便携版根目录来自 `zichan.exe` 所在位置；缺少/损坏 `portable-mode.json`、路径不可写或处于网络盘时，启动失败且不回退 AppData。安装版用 `installed-mode.json` 标记，并将用户数据写入 `%LOCALAPPDATA%\com.zichan.ledger`。
 - 主库：`data/ledger/ledger.sqlite`；附件：`data/attachments/{staging,objects,trash,quarantine}`；加密 `.zcbak`：`data/backups`。
 - Stronghold 位于 `data/security`；WebView 的 localStorage、IndexedDB 和缓存固定在 `data/webview`；一体服务器状态位于 `data/server`。
 
@@ -59,8 +60,7 @@ Debug 模式只写仓库内被忽略的 `.runtime/desktop/`；自动化测试可
 - 完整 ZIP 契约、WebView2 准备和 Windows Sandbox 验收见 [desktop-release.md](desktop-release.md)。
 
 原生 SQL、Stronghold 和本地 system-share 依赖均已写入 `Cargo.lock`。Windows 主窗口在配置中
-`create=false`，只有便携目录、磁盘、实例锁和 WebView2 预检全部成功后才手动创建。v0.1 不注册 updater，
-不生成 MSI/NSIS，也不写服务、启动项、文件关联或卸载信息；PFX、updater 和安装验收推迟至 1.0。
+`create=false`，只有当前模式的目录、磁盘、实例锁和 WebView2 预检全部成功后才手动创建。自动更新仍未启用；安装版生成 MSI/NSIS，便携版保持 ZIP 独立交付。
 
 ## 备份另存为
 

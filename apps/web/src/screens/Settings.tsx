@@ -921,7 +921,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   />
                 </div>
                 <p className="zc-meta" style={{ overflowWrap: 'anywhere' }}>主数据位置：{dataLocation}</p>
-                {externalStatus.kind === 'portable' && <p className="zc-meta" style={{ overflowWrap: 'anywhere' }}>便携本地备份：{externalStatus.label}。请启用同步服务器备份，或用“分享 / 下载”复制到其他磁盘。</p>}
+                {externalStatus.kind === 'portable' && <p className="zc-meta" style={{ overflowWrap: 'anywhere' }}>{externalStatus.desktopMode === 'installed' ? '安装版本地备份' : '便携本地备份'}：{externalStatus.label}。请启用同步服务器备份，或用“分享 / 下载”复制到其他磁盘。</p>}
                 {backupNote && <p className="zc-caption" style={{ color: backupNote.includes('未通过') || backupNote.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 'var(--fw-bold)' }}>{backupNote}</p>}
                 <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>

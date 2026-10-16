@@ -171,9 +171,30 @@ export async function checkReleaseConsistency(rootDirectory, options = {}) {
   if (tauriConfig.mainBinaryName !== 'zichan') {
     failures.push(`apps/desktop/src-tauri/tauri.conf.json mainBinaryName is ${String(tauriConfig.mainBinaryName)}, expected zichan`);
   }
-  if (tauriConfig.bundle?.active !== false) failures.push('apps/desktop/src-tauri/tauri.conf.json must disable Tauri bundling for v0.1 portable-only releases');
+  if (tauriConfig.bundle?.active !== false) failures.push('apps/desktop/src-tauri/tauri.conf.json must disable Tauri bundling for the portable ZIP build');
   if (tauriConfig.bundle?.windows?.webviewInstallMode?.type !== 'skip') {
     failures.push('apps/desktop/src-tauri/tauri.conf.json must set bundle.windows.webviewInstallMode.type to skip');
+  }
+  const installerConfig = await json(join(root, 'apps', 'desktop', 'src-tauri', 'tauri.installer.conf.json'));
+  const installerMarker = await json(join(root, 'apps', 'desktop', 'src-tauri', 'installer', 'installed-mode.json'));
+  if (installerMarker.formatVersion !== 1 || installerMarker.appVersion !== version || installerMarker.architecture !== 'x64') {
+    failures.push('installed-mode.json must match the app version and x64 installed-mode format');
+  }
+  if (installerConfig.bundle?.active !== true
+    || JSON.stringify(installerConfig.bundle?.targets) !== JSON.stringify(['msi', 'nsis'])
+    || installerConfig.bundle?.windows?.webviewInstallMode?.type !== 'offlineInstaller'
+    || installerConfig.bundle?.windows?.allowDowngrades !== false
+    || installerConfig.bundle?.windows?.wix?.upgradeCode !== '687bf6a9-bf19-505b-81cc-864ac03395d5'
+    || installerConfig.bundle?.windows?.wix?.language !== 'zh-CN'
+    || installerConfig.bundle?.windows?.nsis?.installMode !== 'currentUser'
+    || installerConfig.bundle?.windows?.nsis?.installerHooks !== 'installer/upgrade.nsh') {
+    failures.push('tauri.installer.conf.json must enable MSI/NSIS, offline WebView2, stable Chinese MSI upgrades, current-user NSIS, and block downgrades');
+  }
+  const resources = installerConfig.bundle?.resources;
+  if (resources?.['../resources/'] !== 'server/'
+    || resources?.['installer/installed-mode.json'] !== 'installed-mode.json'
+    || resources?.['installer/installed-files.json'] !== 'installed-files.json') {
+    failures.push('tauri.installer.conf.json must place server resources and installed markers beside the installed executable');
   }
   const windowsConfigPath = join(root, 'apps', 'desktop', 'src-tauri', 'tauri.windows.conf.json');
   const windowsConfig = await json(windowsConfigPath);

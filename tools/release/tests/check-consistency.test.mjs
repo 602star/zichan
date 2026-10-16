@@ -16,7 +16,7 @@ function escapeRegex(value) {
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'zichan-release-check-'));
-  for (const path of ['.node-version', 'package.json', 'package-lock.json', 'apps/desktop/package.json', 'apps/web/package.json', 'apps/sync-server/package.json', 'packages/core/package.json', 'packages/db/package.json', 'packages/logger/package.json', 'apps/desktop/src-tauri/tauri.conf.json', 'apps/desktop/src-tauri/tauri.windows.conf.json', 'apps/desktop/src-tauri/Cargo.toml', 'apps/desktop/src-tauri/Cargo.lock', 'apps/desktop/src-tauri/src/portable.rs', 'packages/db/src/migrations.ts', 'packages/db/test/schema-baseline.test.ts', 'apps/web/test/sqljs-driver.test.ts', 'apps/web/test/tauri-sql-driver.test.ts', 'scripts/release/webview2-runtime.lock.json', 'docs/portable/README-便携版.txt', 'docs/portable/NOTICE.txt', 'docs/db.md', 'docs/release-notes.md']) {
+  for (const path of ['.node-version', 'package.json', 'package-lock.json', 'apps/desktop/package.json', 'apps/web/package.json', 'apps/sync-server/package.json', 'packages/core/package.json', 'packages/db/package.json', 'packages/logger/package.json', 'apps/desktop/src-tauri/tauri.conf.json', 'apps/desktop/src-tauri/tauri.installer.conf.json', 'apps/desktop/src-tauri/installer/installed-mode.json', 'apps/desktop/src-tauri/tauri.windows.conf.json', 'apps/desktop/src-tauri/Cargo.toml', 'apps/desktop/src-tauri/Cargo.lock', 'apps/desktop/src-tauri/src/portable.rs', 'packages/db/src/migrations.ts', 'packages/db/test/schema-baseline.test.ts', 'apps/web/test/sqljs-driver.test.ts', 'apps/web/test/tauri-sql-driver.test.ts', 'scripts/release/webview2-runtime.lock.json', 'docs/portable/README-便携版.txt', 'docs/portable/NOTICE.txt', 'docs/db.md', 'docs/release-notes.md']) {
     await cp(join(repositoryRoot, ...path.split('/')), join(root, ...path.split('/')), { recursive: true });
   }
   const migrations = await readFile(join(root, 'packages', 'db', 'src', 'migrations.ts'), 'utf8');
@@ -35,6 +35,23 @@ test('accepts the repository release metadata and exact version tag', async () =
     assert.equal(result.webview2RuntimeVersion, '151.0.4129.101');
     assert.equal(result.webview2LockComplete, true);
     assert.equal(result.releaseNodeVersion, '22.23.3');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('rejects installer marker and upgrade configuration drift', async () => {
+  const root = await fixture();
+  try {
+    const markerPath = join(root, 'apps/desktop/src-tauri/installer/installed-mode.json');
+    const marker = JSON.parse(await readFile(markerPath, 'utf8'));
+    marker.appVersion = driftVersion;
+    await writeFile(markerPath, `${JSON.stringify(marker)}\n`);
+    const configPath = join(root, 'apps/desktop/src-tauri/tauri.installer.conf.json');
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    config.bundle.windows.wix.upgradeCode = '00000000-0000-0000-0000-000000000000';
+    await writeFile(configPath, `${JSON.stringify(config)}\n`);
+    await assert.rejects(checkReleaseConsistency(root), /installed-mode\.json must match[\s\S]*stable Chinese MSI upgrades/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -113,7 +130,7 @@ test('rejects non-portable bundling, automatic WebView installation, early windo
       portablePath,
       portable
         .replace('../../../../scripts/release/webview2-runtime.lock.json', 'duplicated-runtime-version.json')
-        .replace('../../../../.node-version', 'duplicated-node-version')
+        .replaceAll('../../../../.node-version', 'duplicated-node-version')
         .replace('PORTABLE_FORMAT_VERSION: u32 = 1;', 'PORTABLE_FORMAT_VERSION: u32 = 2;'),
     );
 

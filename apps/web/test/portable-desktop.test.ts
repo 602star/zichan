@@ -52,4 +52,21 @@ describe('portable desktop storage status', () => {
     });
     await expect(readDesktopStorageStatus()).resolves.toBeNull();
   });
+
+  it('exposes installed mode and its separate user data directory', async () => {
+    const status = {
+      mode: 'installed' as const,
+      formatVersion: 1 as const,
+      rootDirectory: 'C:\\Users\\Alice\\AppData\\Local\\com.zichan.ledger',
+      dataDirectory: 'C:\\Users\\Alice\\AppData\\Local\\com.zichan.ledger',
+      filesystem: 'NTFS' as const,
+      webviewRuntime: 'system-evergreen' as const,
+      serverBind: '0.0.0.0' as const,
+    };
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { __TAURI_INTERNALS__: { invoke: async () => status } },
+    });
+    await expect(readDesktopStorageStatus()).resolves.toEqual(status);
+  });
 });

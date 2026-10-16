@@ -1,0 +1,25 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "resources": {
+      "../resources/": "server/",
+      "installer/installed-mode.json": "installed-mode.json",
+      "installer/installed-files.json": "installed-files.json"
+    },
+    "windows": {
+      "allowDowngrades": false,
+      "webviewInstallMode": { "type": "offlineInstaller" },
+      "wix": {
+        "upgradeCode": "687bf6a9-bf19-505b-81cc-864ac03395d5",
+        "language": "zh-CN"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "installerHooks": "installer/upgrade.nsh"
+      }
+    }
+  }
+}

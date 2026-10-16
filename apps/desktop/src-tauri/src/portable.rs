@@ -17,8 +17,12 @@ use std::{
 pub const PORTABLE_FORMAT_VERSION: u32 = 1;
 #[cfg(not(debug_assertions))]
 const PORTABLE_MARKER_FILE: &str = "portable-mode.json";
+#[cfg(not(debug_assertions))]
+const INSTALLED_MARKER_FILE: &str = "installed-mode.json";
 #[cfg(any(not(debug_assertions), test))]
 const PORTABLE_FILES_MANIFEST: &str = "portable-files.json";
+#[cfg(any(not(debug_assertions), test))]
+const INSTALLED_FILES_MANIFEST: &str = "installed-files.json";
 #[cfg(any(not(debug_assertions), test))]
 const WEBVIEW2_RUNTIME_LOCK_JSON: &str =
     include_str!("../../../../scripts/release/webview2-runtime.lock.json");
@@ -47,6 +51,7 @@ pub struct PortablePaths {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WebviewRuntime {
     Fixed,
+    SystemEvergreen,
     SystemEvergreenFallback,
 }
 
@@ -54,6 +59,7 @@ impl WebviewRuntime {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Fixed => "fixed",
+            Self::SystemEvergreen => "system-evergreen",
             Self::SystemEvergreenFallback => "system-evergreen-fallback",
         }
     }
@@ -98,6 +104,27 @@ struct PortableMarker {
 #[cfg(any(not(debug_assertions), test))]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InstalledMarker {
+    format_version: u32,
+    app_version: String,
+    architecture: String,
+}
+
+#[cfg(any(not(debug_assertions), test))]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InstalledFileManifest {
+    format_version: u32,
+    product: String,
+    app_version: String,
+    architecture: String,
+    node_version: String,
+    files: Vec<ResourceFileEntry>,
+}
+
+#[cfg(any(not(debug_assertions), test))]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PortableFileManifest {
     format_version: u32,
     product: String,
@@ -105,13 +132,13 @@ struct PortableFileManifest {
     architecture: String,
     webview2_runtime_version: String,
     node_version: String,
-    files: Vec<PortableFileEntry>,
+    files: Vec<ResourceFileEntry>,
 }
 
 #[cfg(any(not(debug_assertions), test))]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct PortableFileEntry {
+struct ResourceFileEntry {
     path: String,
     bytes: u64,
     sha256: String,
@@ -133,11 +160,16 @@ impl PortablePaths {
         write_probe(&prepared.runtime)?;
         let lock = acquire_instance_lock(&prepared.runtime)?;
         reject_reparse_points_recursively(&prepared.data)?;
-        prepared.webview_runtime = select_runtime(
+        let selected_runtime = select_runtime(
             &prepared.filesystem,
             fixed_runtime.as_deref(),
             strict_resources,
         )?;
+        prepared.webview_runtime = if prepared.mode == "installed" {
+            WebviewRuntime::SystemEvergreen
+        } else {
+            selected_runtime
+        };
         create_managed_directories(&prepared)?;
         Ok(PortableRuntime {
             paths: prepared,
@@ -206,7 +238,7 @@ pub fn desktop_storage_status(paths: tauri::State<'_, PortablePaths>) -> Desktop
 #[cfg(windows)]
 fn prepare_layout() -> Result<(PortablePaths, Option<PathBuf>, bool), String> {
     #[cfg(debug_assertions)]
-    let (root, server_resources, fixed_runtime, strict_resources) = {
+    let (mode, root, data, server_resources, fixed_runtime, strict_resources) = {
         let repo = find_repo_root()
             .ok_or_else(|| "无法定位项目根目录；请从项目目录运行桌面开发命令".to_string())?;
         let root = debug_runtime_root(
@@ -214,13 +246,14 @@ fn prepare_layout() -> Result<(PortablePaths, Option<PathBuf>, bool), String> {
             std::env::var_os("ZICHAN_PORTABLE_TEST_ROOT").map(PathBuf::from),
         )?;
         let server_resources = repo.join("apps").join("desktop").join("resources");
-        (root, server_resources, None, false)
+        let data = root.join("data");
+        ("portable", root, data, server_resources, None, false)
     };
 
     #[cfg(not(debug_assertions))]
-    let (root, server_resources, fixed_runtime, strict_resources) = {
+    let (mode, root, data, server_resources, fixed_runtime, strict_resources) = {
         if !cfg!(target_arch = "x86_64") {
-            return Err("v0.1 便携版只支持 Windows x64".into());
+            return Err("Windows 发行版只支持 x64".into());
         }
         let executable =
             std::env::current_exe().map_err(|error| format!("无法读取程序路径：{error}"))?;
@@ -229,25 +262,51 @@ fn prepare_layout() -> Result<(PortablePaths, Option<PathBuf>, bool), String> {
             .ok_or("程序路径没有父目录")?
             .to_path_buf();
         reject_reparse_point(&executable_root, "程序目录")?;
-        let root = canonicalize_directory(&executable_root, "程序目录")?;
-        validate_marker(&root.join(PORTABLE_MARKER_FILE))?;
-        let server_resources = root.join("server");
-        let fixed_runtime = root.join("runtime").join("webview2");
-        validate_release_resources(&root, &server_resources, &fixed_runtime)?;
-        (root, server_resources, Some(fixed_runtime), true)
+        let installation_root = canonicalize_directory(&executable_root, "程序目录")?;
+        let portable = installation_root.join(PORTABLE_MARKER_FILE).exists();
+        let installed = installation_root.join(INSTALLED_MARKER_FILE).exists();
+        if portable == installed {
+            return Err("程序目录必须且只能包含 portable-mode.json 或 installed-mode.json".into());
+        }
+        let server_resources = installation_root.join("server");
+        if portable {
+            validate_marker(&installation_root.join(PORTABLE_MARKER_FILE))?;
+            let fixed_runtime = installation_root.join("runtime").join("webview2");
+            validate_release_resources(&installation_root, &server_resources, &fixed_runtime)?;
+            let data = installation_root.join("data");
+            (
+                "portable",
+                installation_root,
+                data,
+                server_resources,
+                Some(fixed_runtime),
+                true,
+            )
+        } else {
+            validate_installed_marker(&installation_root.join(INSTALLED_MARKER_FILE))?;
+            validate_installed_resources(&installation_root, &server_resources)?;
+            let data = installed_data_root(&installation_root)?;
+            (
+                "installed",
+                data.clone(),
+                data,
+                server_resources,
+                None,
+                false,
+            )
+        }
     };
 
     #[cfg(debug_assertions)]
     fs::create_dir_all(&root)
         .map_err(|error| format!("创建开发便携目录 {} 失败：{error}", root.display()))?;
-    let root = canonicalize_directory(&root, "便携根目录")?;
+    let root = canonicalize_directory(&root, "数据根目录")?;
     let filesystem = local_filesystem(&root)?;
-    let data = root.join("data");
     if data.exists() {
         ensure_existing_path_within(&root, &data, "数据目录")?;
     }
     fs::create_dir_all(data.join("runtime"))
-        .map_err(|error| format!("创建便携运行目录失败：{error}"))?;
+        .map_err(|error| format!("创建运行目录失败：{error}"))?;
     ensure_existing_path_within(&root, &data, "数据目录")?;
     ensure_existing_path_within(&root, &data.join("runtime"), "运行目录")?;
 
@@ -255,7 +314,7 @@ fn prepare_layout() -> Result<(PortablePaths, Option<PathBuf>, bool), String> {
     let ledger_data = ledger_profile::profile_data_dir(&data, active_profile.as_ref());
 
     let paths = PortablePaths {
-        mode: "portable",
+        mode,
         root: root.clone(),
         ledger_profile_id: active_profile
             .as_ref()
@@ -300,9 +359,9 @@ fn create_managed_directories(paths: &PortablePaths) -> Result<(), String> {
     ];
     for directory in directories {
         fs::create_dir_all(&directory)
-            .map_err(|error| format!("创建便携目录 {} 失败：{error}", directory.display()))?;
+            .map_err(|error| format!("创建桌面数据目录 {} 失败：{error}", directory.display()))?;
         #[cfg(windows)]
-        ensure_existing_path_within(&paths.root, &directory, "便携数据子目录")?;
+        ensure_existing_path_within(&paths.root, &directory, "桌面数据子目录")?;
     }
     Ok(())
 }
@@ -318,7 +377,7 @@ fn ensure_existing_path_within(root: &Path, path: &Path, label: &str) -> Result<
         .map_err(|error| format!("无法解析{label} {}：{error}", path.display()))?;
     if !resolved.starts_with(root) {
         return Err(format!(
-            "{label}通过链接指向便携目录之外：{}",
+            "{label}通过链接指向数据根目录之外：{}",
             path.display()
         ));
     }
@@ -333,14 +392,14 @@ fn write_probe(runtime: &Path) -> Result<(), String> {
             .write(true)
             .create_new(true)
             .open(&source)
-            .map_err(|error| format!("便携目录不可写：{error}"))?;
+            .map_err(|error| format!("数据目录不可写：{error}"))?;
         file.write_all(b"zichan-portable-write-probe")
-            .map_err(|error| format!("便携目录写入失败：{error}"))?;
+            .map_err(|error| format!("数据目录写入失败：{error}"))?;
         file.sync_all()
-            .map_err(|error| format!("便携目录同步失败：{error}"))?;
+            .map_err(|error| format!("数据目录同步失败：{error}"))?;
         drop(file);
-        fs::rename(&source, &target).map_err(|error| format!("便携目录原子重命名失败：{error}"))?;
-        fs::remove_file(&target).map_err(|error| format!("便携目录清理失败：{error}"))?;
+        fs::rename(&source, &target).map_err(|error| format!("数据目录原子重命名失败：{error}"))?;
+        fs::remove_file(&target).map_err(|error| format!("数据目录清理失败：{error}"))?;
         Ok(())
     })();
     if source.exists() {
@@ -360,15 +419,15 @@ fn acquire_instance_lock(runtime: &Path) -> Result<PortableInstanceLock, String>
         .create(true)
         .truncate(false)
         .open(&path)
-        .map_err(|error| format!("打开便携实例锁失败：{error}"))?;
+        .map_err(|error| format!("打开桌面实例锁失败：{error}"))?;
     file.try_lock_exclusive().map_err(|error| {
         let contended = fs2::lock_contended_error();
         if error.kind() == std::io::ErrorKind::WouldBlock
             || error.raw_os_error() == contended.raw_os_error()
         {
-            "这个便携目录已经由另一个资产生命周期实例打开；请先关闭它".to_string()
+            "这个数据目录已经由另一个资产生命周期实例打开；请先关闭它".to_string()
         } else {
-            format!("锁定便携目录失败：{error}")
+            format!("锁定数据目录失败：{error}")
         }
     })?;
     Ok(PortableInstanceLock { _file: file })
@@ -390,14 +449,14 @@ fn reject_reparse_points_recursively_inner(path: &Path, may_disappear: bool) -> 
         }
         Err(error) => {
             return Err(format!(
-                "读取便携数据元数据 {} 失败：{error}",
+                "读取桌面数据元数据 {} 失败：{error}",
                 path.display()
             ));
         }
     };
     if metadata.file_type().is_symlink() || metadata_is_reparse_point(&metadata) {
         return Err(format!(
-            "便携 data 目录中不允许链接或重解析点：{}",
+            "桌面数据目录中不允许链接或重解析点：{}",
             path.display()
         ));
     }
@@ -408,18 +467,18 @@ fn reject_reparse_points_recursively_inner(path: &Path, may_disappear: bool) -> 
                 return Ok(());
             }
             Err(error) => {
-                return Err(format!("读取便携数据目录 {} 失败：{error}", path.display()));
+                return Err(format!("读取桌面数据目录 {} 失败：{error}", path.display()));
             }
         };
         for entry in entries {
             let child = entry
-                .map_err(|error| format!("读取便携数据项失败：{error}"))?
+                .map_err(|error| format!("读取桌面数据项失败：{error}"))?
                 .path();
             reject_reparse_points_recursively_inner(&child, true)?;
         }
     } else if !metadata.is_file() {
         return Err(format!(
-            "便携 data 中包含不支持的文件类型：{}",
+            "桌面数据中包含不支持的文件类型：{}",
             path.display()
         ));
     }
@@ -459,6 +518,50 @@ fn validate_marker(path: &Path) -> Result<(), String> {
             std::env::consts::ARCH
         },
     )
+}
+
+#[cfg(all(windows, not(debug_assertions)))]
+fn validate_installed_marker(path: &Path) -> Result<(), String> {
+    checked_regular_file(path, INSTALLED_MARKER_FILE)?;
+    let bytes = fs::read(path).map_err(|error| format!("读取安装标记失败：{error}"))?;
+    let marker: InstalledMarker =
+        serde_json::from_slice(&bytes).map_err(|error| format!("安装标记格式无效：{error}"))?;
+    validate_installed_marker_value(&marker)
+}
+
+#[cfg(any(not(debug_assertions), test))]
+fn validate_installed_marker_value(marker: &InstalledMarker) -> Result<(), String> {
+    if marker.format_version != 1
+        || marker.app_version != env!("CARGO_PKG_VERSION")
+        || marker.architecture != "x64"
+    {
+        return Err("安装标记的格式、版本或架构与程序不匹配".into());
+    }
+    Ok(())
+}
+
+#[cfg(all(windows, not(debug_assertions)))]
+fn installed_data_root(installation_root: &Path) -> Result<PathBuf, String> {
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .filter(|value| !value.is_empty())
+        .ok_or("缺少 LOCALAPPDATA；无法确定安装版数据目录")?;
+    let parent = PathBuf::from(local_app_data);
+    validate_windows_disk_path(&parent)?;
+    let parent = canonicalize_directory(&parent, "用户本地数据目录")?;
+    let data = parent.join("com.zichan.ledger");
+    if data.starts_with(installation_root) || installation_root.starts_with(&data) {
+        return Err("安装目录与用户数据目录不能相互包含".into());
+    }
+    if data.exists() {
+        reject_reparse_point(&data, "安装版数据目录")?;
+    }
+    fs::create_dir_all(&data).map_err(|error| format!("创建安装版数据目录失败：{error}"))?;
+    reject_reparse_point(&data, "安装版数据目录")?;
+    let resolved = canonicalize_directory(&data, "安装版数据目录")?;
+    if resolved != data {
+        return Err("安装版数据目录不能通过链接重定向".into());
+    }
+    Ok(data)
 }
 
 #[cfg(any(not(debug_assertions), test))]
@@ -514,6 +617,69 @@ fn validate_release_resources(
     }
     ensure_existing_path_within(root, server, "服务器资源目录")?;
     ensure_existing_path_within(root, fixed_runtime, "WebView2 资源目录")?;
+    Ok(())
+}
+
+#[cfg(all(windows, not(debug_assertions)))]
+fn validate_installed_resources(root: &Path, server: &Path) -> Result<(), String> {
+    validate_installed_resource_manifest(root)?;
+    for (path, label) in [
+        (server.join("node.exe"), "内置 Node.js"),
+        (server.join("server.mjs"), "同步服务器入口"),
+        (server.join("web").join("index.html"), "内置 Web 页面"),
+    ] {
+        checked_regular_file(&path, label)?;
+        ensure_existing_path_within(root, &path, label)?;
+    }
+    ensure_existing_path_within(root, server, "服务器资源目录")?;
+    Ok(())
+}
+
+#[cfg(any(not(debug_assertions), test))]
+fn validate_installed_resource_manifest(root: &Path) -> Result<(), String> {
+    let path = root.join(INSTALLED_FILES_MANIFEST);
+    checked_regular_file(&path, INSTALLED_FILES_MANIFEST)?;
+    let manifest: InstalledFileManifest = serde_json::from_slice(
+        &fs::read(&path).map_err(|error| format!("读取安装资源清单失败：{error}"))?,
+    )
+    .map_err(|error| format!("安装资源清单格式无效：{error}"))?;
+    if manifest.format_version != 1
+        || manifest.product != "资产生命周期"
+        || manifest.app_version != env!("CARGO_PKG_VERSION")
+        || manifest.architecture != "x64"
+        || manifest.node_version != include_str!("../../../../.node-version").trim()
+    {
+        return Err("安装资源清单的产品、版本、架构或 Node.js 版本不匹配".into());
+    }
+    let mut expected = HashSet::new();
+    for entry in &manifest.files {
+        let relative = safe_manifest_path(&entry.path)?;
+        if !entry.path.to_ascii_lowercase().starts_with("server/") {
+            return Err(format!("安装资源清单包含非法范围：{}", entry.path));
+        }
+        let key = entry.path.to_lowercase();
+        if !expected.insert(key) {
+            return Err(format!("安装资源清单包含重复路径：{}", entry.path));
+        }
+        if entry.sha256.len() != 64
+            || !entry
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(format!("安装资源 SHA-256 无效：{}", entry.path));
+        }
+        let file = root.join(relative);
+        let metadata = checked_regular_file(&file, &entry.path)?;
+        if metadata.len() != entry.bytes || sha256_file(&file)? != entry.sha256 {
+            return Err(format!("安装资源大小或哈希不匹配：{}", entry.path));
+        }
+    }
+    let mut actual = HashSet::new();
+    collect_protected_files(root, &root.join("server"), &mut actual)?;
+    if actual != expected {
+        return Err("安装资源清单与 server/ 文件内容不一致".into());
+    }
     Ok(())
 }
 
@@ -775,7 +941,9 @@ fn select_runtime(
         WebviewRuntime::Fixed => {
             std::env::set_var("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", fixed_runtime);
         }
-        WebviewRuntime::SystemEvergreenFallback => ensure_system_webview2()?,
+        WebviewRuntime::SystemEvergreen | WebviewRuntime::SystemEvergreenFallback => {
+            ensure_system_webview2()?
+        }
     }
     Ok(selected)
 }
@@ -805,17 +973,17 @@ fn normalize_supported_filesystem(name: &str) -> Result<&'static str, String> {
     } else if name.eq_ignore_ascii_case("exFAT") {
         Ok("exFAT")
     } else {
-        Err(format!("便携版仅支持 NTFS 或 exFAT，当前文件系统为 {name}"))
+        Err(format!(
+            "桌面数据目录仅支持 NTFS 或 exFAT，当前文件系统为 {name}"
+        ))
     }
 }
 
 #[cfg(windows)]
 fn ensure_system_webview2() -> Result<(), String> {
-    tauri::webview_version().map(|_| ()).map_err(|error| {
-        format!(
-            "当前磁盘无法使用内置 WebView2，且系统未安装 Microsoft Edge WebView2 Runtime：{error}"
-        )
-    })
+    tauri::webview_version()
+        .map(|_| ())
+        .map_err(|error| format!("系统未安装 Microsoft Edge WebView2 Runtime：{error}"))
 }
 
 #[cfg(windows)]
@@ -958,9 +1126,10 @@ mod tests {
     use super::{
         acquire_instance_lock, debug_runtime_root, local_filesystem,
         normalize_supported_filesystem, runtime_decision, safe_manifest_path, sha256_file,
+        validate_installed_marker_value, validate_installed_resource_manifest,
         validate_marker_value, validate_resource_manifest, validate_windows_disk_path,
-        PortableMarker, WebviewRuntime, WebviewRuntimeLock, PORTABLE_FORMAT_VERSION,
-        WEBVIEW2_RUNTIME_LOCK_JSON,
+        InstalledMarker, PortableMarker, WebviewRuntime, WebviewRuntimeLock,
+        INSTALLED_FILES_MANIFEST, PORTABLE_FORMAT_VERSION, WEBVIEW2_RUNTIME_LOCK_JSON,
     };
     #[cfg(windows)]
     use super::{reject_reparse_point, reject_reparse_points_recursively};
@@ -977,6 +1146,19 @@ mod tests {
             architecture: "x64".into(),
             data_directory: "data".into(),
         }
+    }
+
+    #[test]
+    fn installed_marker_requires_exact_version_and_architecture() {
+        let marker = InstalledMarker {
+            format_version: 1,
+            app_version: env!("CARGO_PKG_VERSION").into(),
+            architecture: "x64".into(),
+        };
+        assert!(validate_installed_marker_value(&marker).is_ok());
+        let mut wrong_arch = marker;
+        wrong_arch.architecture = "arm64".into();
+        assert!(validate_installed_marker_value(&wrong_arch).is_err());
     }
 
     #[test]
@@ -1208,5 +1390,44 @@ mod tests {
             .expect("write extra resource fixture");
         assert!(validate_resource_manifest(&root).is_err());
         fs::remove_dir_all(root).expect("remove manifest fixture");
+    }
+
+    #[test]
+    fn installed_manifest_covers_only_server_resources() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "zichan-installed-manifest-{}-{nonce}",
+            std::process::id()
+        ));
+        let server_file = root.join("server").join("server.mjs");
+        fs::create_dir_all(server_file.parent().unwrap()).expect("create server fixture");
+        fs::write(&server_file, b"server").expect("write server fixture");
+        let manifest = serde_json::json!({
+            "formatVersion": 1,
+            "product": "资产生命周期",
+            "appVersion": env!("CARGO_PKG_VERSION"),
+            "architecture": "x64",
+            "nodeVersion": include_str!("../../../../.node-version").trim(),
+            "files": [{
+                "path": "server/server.mjs",
+                "bytes": 6,
+                "sha256": sha256_file(&server_file).unwrap()
+            }]
+        });
+        fs::write(
+            root.join(INSTALLED_FILES_MANIFEST),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .expect("write manifest fixture");
+        assert!(validate_installed_resource_manifest(&root).is_ok());
+        fs::write(root.join("server").join("extra.js"), b"extra").unwrap();
+        assert!(validate_installed_resource_manifest(&root).is_err());
+        fs::remove_file(root.join("server").join("extra.js")).unwrap();
+        fs::write(&server_file, b"tampered").unwrap();
+        assert!(validate_installed_resource_manifest(&root).is_err());
+        fs::remove_dir_all(root).expect("remove fixture");
     }
 }

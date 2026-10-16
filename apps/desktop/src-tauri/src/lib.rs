@@ -48,6 +48,7 @@ struct DesktopServerStatus {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopBackupStatus {
+    mode: &'static str,
     directory: String,
     available_bytes: u64,
 }
@@ -407,6 +408,7 @@ fn desktop_backup_status(
     let directory = backup_dir(&paths);
     fs::create_dir_all(&directory).map_err(|error| format!("创建备份目录失败：{error}"))?;
     Ok(DesktopBackupStatus {
+        mode: paths.mode,
         available_bytes: fs2::available_space(&directory)
             .map_err(|error| format!("读取备份目录剩余空间失败：{error}"))?,
         directory: directory.display().to_string(),
@@ -909,7 +911,7 @@ fn run_windows() {
             Ok(())
         })();
         if let Err(error) = result {
-            portable::show_native_error(&format!("初始化便携桌面失败：{error}"));
+            portable::show_native_error(&format!("初始化桌面失败：{error}"));
             app.handle().exit(1);
         }
         Ok(())

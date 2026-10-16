@@ -94,6 +94,7 @@ export class BackupPassphraseRequiredError extends Error {
 
 export interface ExternalBackupStatus {
   kind: 'portable' | 'directory' | 'none';
+  desktopMode?: 'portable' | 'installed';
   configured: boolean;
   label: string;
 }
@@ -130,6 +131,7 @@ interface NativeBackupFile {
 }
 
 interface DesktopBackupStatus {
+  mode?: 'portable' | 'installed';
   directory: string;
   availableBytes: number;
 }
@@ -315,8 +317,11 @@ export async function externalBackupStatus(): Promise<ExternalBackupStatus> {
     const status = await desktop;
     return {
       kind: 'portable',
+      ...(status.mode ? { desktopMode: status.mode } : {}),
       configured: false,
-      label: `${status.directory}（便携目录内，非独立副本）`,
+      label: status.mode === 'installed'
+        ? `${status.directory}（当前用户数据目录内，非独立副本）`
+        : `${status.directory}（便携目录内，非独立副本）`,
     };
   }
   const handle = await externalDirectory();
@@ -327,7 +332,7 @@ export async function externalBackupStatus(): Promise<ExternalBackupStatus> {
 
 export async function configureExternalBackupDirectory(): Promise<ExternalBackupStatus> {
   const desktop = await externalBackupStatus();
-  if (desktop.kind === 'portable') throw new Error('便携桌面的 data/backups 是本地恢复点；请使用同步服务器或“分享 / 下载”保存到其他磁盘');
+  if (desktop.kind === 'portable') throw new Error('桌面应用的本机 backups 是本地恢复点；请使用同步服务器或“分享 / 下载”保存到其他磁盘');
   const picker = (window as BackupWindow).showDirectoryPicker;
   if (!picker) throw new Error('当前浏览器不支持选择外部备份目录');
   const handle = await picker({ mode: 'readwrite' });
@@ -746,7 +751,7 @@ export async function downloadBackup(
     const request = tauriInvoke<{ path: string } | null>('desktop_export_backup_file', {
       fileName: entry.nativeFileName,
     });
-    if (!request) throw new Error('当前桌面版本不支持原生备份另存为；请更新便携包');
+    if (!request) throw new Error('当前桌面版本不支持原生备份另存为；请更新应用');
     return (await request) ? 'downloaded' : 'cancelled';
   }
   const created = 'container' in entry

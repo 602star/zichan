@@ -643,6 +643,23 @@ describe('encrypted backup archives', () => {
     });
   });
 
+  it('describes installed desktop backups as user-local recovery points', async () => {
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { __TAURI_INTERNALS__: { invoke: async () => ({
+        mode: 'installed',
+        directory: 'C:/Users/Alice/AppData/Local/com.zichan.ledger/backups',
+        availableBytes: 1024 * 1024,
+      }) } },
+    });
+    await expect(externalBackupStatus()).resolves.toEqual({
+      kind: 'portable',
+      desktopMode: 'installed',
+      configured: false,
+      label: 'C:/Users/Alice/AppData/Local/com.zichan.ledger/backups（当前用户数据目录内，非独立副本）',
+    });
+  });
+
   it('blocks new automatic backups and drains an existing flight before reset continues', async () => {
     await initializeLedgerKey('ledger-auto-backup-drain-1234', 'backup-password');
     let releaseCommit!: () => void;

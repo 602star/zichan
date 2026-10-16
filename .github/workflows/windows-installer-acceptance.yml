@@ -1,0 +1,97 @@
+name: Windows installer acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      signed:
+        description: Require a trusted, timestamped code-signing certificate
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: npm ci
+      - name: Import signing certificate
+        if: inputs.signed
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          if (-not $env:WINDOWS_SIGNING_PFX_BASE64 -or -not $env:WINDOWS_SIGNING_PFX_PASSWORD -or -not $env:WINDOWS_TIMESTAMP_URL) {
+            throw 'Signed build requires PFX, password, and HTTPS timestamp URL secrets'
+          }
+          $path = Join-Path $env:RUNNER_TEMP 'zichan-signing.pfx'
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:WINDOWS_SIGNING_PFX_BASE64))
+          try {
+            $password = ConvertTo-SecureString $env:WINDOWS_SIGNING_PFX_PASSWORD -AsPlainText -Force
+            $certificate = Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $password -Exportable:$false |
+              Where-Object HasPrivateKey | Select-Object -First 1
+            if (-not $certificate) { throw 'PFX import did not provide a signing private key' }
+            "ZICHAN_SIGNING_THUMBPRINT=$($certificate.Thumbprint)" >> $env:GITHUB_ENV
+            "ZICHAN_TIMESTAMP_URL=$env:WINDOWS_TIMESTAMP_URL" >> $env:GITHUB_ENV
+          } finally {
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+          }
+      - name: Build MSI and NSIS
+        shell: pwsh
+        env:
+          SIGNED: ${{ inputs.signed }}
+        run: |
+          if ($env:SIGNED -eq 'true') {
+            ./scripts/windows/build-installer.ps1 -RequireSignature
+          } else {
+            ./scripts/windows/build-installer.ps1
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-candidates
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/release/bundle/msi/*.sha256
+            apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.sha256
+          if-no-files-found: error
+
+  smoke:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        format: [msi, nsis]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-installer-candidates
+          path: ci-artifacts/windows-installer
+      - name: Fresh install and uninstall
+        shell: pwsh
+        env:
+          ZICHAN_INSTALLER_VM: '1'
+          SIGNED: ${{ inputs.signed }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $pattern = if ('${{ matrix.format }}' -eq 'msi') { '*.msi' } else { '*-setup.exe' }
+          $installer = @(Get-ChildItem ci-artifacts/windows-installer -Recurse -Filter $pattern -File)
+          if ($installer.Count -ne 1) { throw "Expected one $pattern installer" }
+          ./scripts/windows/test-installer-vm.ps1 -Format '${{ matrix.format }}' -CurrentInstaller $installer[0].FullName -CurrentVersion $version -SkipLaunch -RequireSignature:($env:SIGNED -eq 'true')

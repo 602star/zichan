@@ -31,6 +31,8 @@ apps/sync-server/*.server-id
 # Tauri
 target/
 apps/desktop/resources/
+apps/desktop/src-tauri/installer/installed-files.json
+apps/desktop/src-tauri/tauri.installer.signing.generated.json
 # editor / local tooling
 .vscode/
 .idea/

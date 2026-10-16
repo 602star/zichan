@@ -1,6 +1,6 @@
-# Windows v0.1 完全便携版发布与验收
+# Windows 便携版发布与验收
 
-v0.1 只发布 Windows x64 ZIP，不构建 MSI/NSIS，不安装服务、启动项、文件关联或卸载项，也不启用桌面自动更新。ZIP 解压后直接运行，所有应用持久状态随根目录下的 `data/` 移动。
+便携通道只构建 Windows x64 ZIP，不安装服务、启动项、文件关联或卸载项，也不启用桌面自动更新。ZIP 解压后直接运行，所有应用持久状态随根目录下的 `data/` 移动。独立的 MSI/NSIS 通道见 [Windows 安装版布局与验收](windows-installer.md)。
 
 ## 发布物契约
 
@@ -45,7 +45,7 @@ ZIP 含一个同名顶层目录；`.sha256` 使用 `<64 位十六进制>  <ZIP �
 - WebView2 runtime lock 的固定版本、x64、微软来源 URL 和 SHA-256 合法。
 - 便携 README 与 NOTICE 存在。
 
-`npm run test:release` 覆盖版本漂移、错误 Tauri 配置、runtime lock、x64 PE Machine、便携目录清单、敏感文件禁入以及 ZIP 内外层校验。v0.1 不再运行 updater manifest 或安装包门禁。
+`npm run test:release` 覆盖版本漂移、错误 Tauri 配置、runtime lock、x64 PE Machine、便携目录清单、敏感文件禁入以及 ZIP 内外层校验。安装包使用独立配置与门禁。
 
 ## WebView2 固定版准备
 
