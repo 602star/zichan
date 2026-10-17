@@ -65,6 +65,8 @@ scripts\windows\build-desktop.cmd
 
 它依次验证固定运行时和 `.node-version`，运行版本一致性、便携发布测试、类型检查和全量测试，以 `tauri build --no-bundle --ci -- --locked` 只生成 `zichan.exe`，随后由 `create-windows-portable.mjs` 组装 ZIP。打包器解析桌面 EXE、Node 和 WebView2 的 PE Machine，确保三者都是 x64，并核对内置 Node.js 版本；拒绝 `data/`、数据库、账号会话、服务器身份、开发目录、source map、PDB 和 updater 产物，生成 `portable-mode.json`、逐文件 SHA-256 清单、ZIP 及 `.zip.sha256`。构建先在独立暂存目录完成 ZIP 解压与完整清单复验，成功后才替换同名 ZIP；已有便携目录一律不会被删除。
 
+Linux x64 发布由 `.github/workflows/linux-desktop-release.yml` 在 Ubuntu 22.04 上运行 `npm run build:desktop:linux`，产出 `.deb`、AppImage 及 SHA-256 旁车，并执行安装、升级、卸载和图形启动验收。详见 `docs/linux-desktop-release.md`。
+
 ## 目录职责
 
 ```text

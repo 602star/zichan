@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Zichan",
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "appimage"],
+    "resources": {
+      "../resources/": "server/",
+      "installer/installed-files.json": "installed-files.json"
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import { cp, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, cp, copyFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +13,10 @@ const runtimeName = process.platform === 'win32' ? 'node.exe' : 'node';
 if (process.env.ZICHAN_RELEASE_BUILD === '1') {
   const expected = (await readFile(resolve(repoRoot, '.node-version'), 'utf8')).trim();
   if (process.versions.node !== expected) {
-    throw new Error(`Windows releases require Node.js ${expected}, received ${process.versions.node}`);
+    throw new Error(`Desktop releases require Node.js ${expected}, received ${process.versions.node}`);
+  }
+  if (process.arch !== 'x64' || !['win32', 'linux'].includes(process.platform)) {
+    throw new Error(`Desktop releases require Windows or Linux x64, received ${process.platform}/${process.arch}`);
   }
 }
 
@@ -32,7 +35,18 @@ await build({
   banner: { js: "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);" },
 });
 await copyFile(process.execPath, resolve(resources, runtimeName));
-await copyFile(resolve(dirname(process.execPath), 'LICENSE'), resolve(resources, 'node-LICENSE.txt'));
+if (process.platform === 'linux') await chmod(resolve(resources, runtimeName), 0o755);
+let copiedLicense = false;
+for (const path of [resolve(dirname(process.execPath), 'LICENSE'), resolve(dirname(process.execPath), '..', 'LICENSE')]) {
+  try {
+    await copyFile(path, resolve(resources, 'node-LICENSE.txt'));
+    copiedLicense = true;
+    break;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
+if (!copiedLicense) throw new Error(`Bundled Node.js LICENSE not found beside ${process.execPath}`);
 await cp(resolve(repoRoot, 'apps/web/dist'), resolve(resources, 'web'), { recursive: true });
 const files = [];
 async function addFiles(directory, relative = '') {

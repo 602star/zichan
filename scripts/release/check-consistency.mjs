@@ -196,6 +196,14 @@ export async function checkReleaseConsistency(rootDirectory, options = {}) {
     || resources?.['installer/installed-files.json'] !== 'installed-files.json') {
     failures.push('tauri.installer.conf.json must place server resources and installed markers beside the installed executable');
   }
+  const linuxConfig = await json(join(root, 'apps', 'desktop', 'src-tauri', 'tauri.linux-release.conf.json'));
+  if (linuxConfig.productName !== 'Zichan'
+    || linuxConfig.bundle?.active !== true
+    || JSON.stringify(linuxConfig.bundle?.targets) !== JSON.stringify(['deb', 'appimage'])
+    || linuxConfig.bundle?.resources?.['../resources/'] !== 'server/'
+    || linuxConfig.bundle?.resources?.['installer/installed-files.json'] !== 'installed-files.json') {
+    failures.push('tauri.linux-release.conf.json must build DEB/AppImage with an ASCII package name and verified bundled server resources');
+  }
   const windowsConfigPath = join(root, 'apps', 'desktop', 'src-tauri', 'tauri.windows.conf.json');
   const windowsConfig = await json(windowsConfigPath);
   const mainWindow = windowsConfig.app?.windows?.find((window) => window.label === 'main');

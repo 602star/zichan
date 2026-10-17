@@ -94,7 +94,7 @@ export class BackupPassphraseRequiredError extends Error {
 
 export interface ExternalBackupStatus {
   kind: 'portable' | 'directory' | 'none';
-  desktopMode?: 'portable' | 'installed';
+  desktopMode?: 'portable' | 'installed' | 'platform';
   configured: boolean;
   label: string;
 }
@@ -131,7 +131,7 @@ interface NativeBackupFile {
 }
 
 interface DesktopBackupStatus {
-  mode?: 'portable' | 'installed';
+  mode?: 'portable' | 'installed' | 'platform';
   directory: string;
   availableBytes: number;
 }
@@ -319,7 +319,7 @@ export async function externalBackupStatus(): Promise<ExternalBackupStatus> {
       kind: 'portable',
       ...(status.mode ? { desktopMode: status.mode } : {}),
       configured: false,
-      label: status.mode === 'installed'
+      label: status.mode === 'installed' || status.mode === 'platform'
         ? `${status.directory}（当前用户数据目录内，非独立副本）`
         : `${status.directory}（便携目录内，非独立副本）`,
     };

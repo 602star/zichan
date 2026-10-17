@@ -192,6 +192,26 @@ impl PortablePaths {
             .path()
             .resource_dir()
             .map_err(|error| error.to_string())?;
+        #[cfg(all(target_os = "linux", not(debug_assertions)))]
+        {
+            if !cfg!(target_arch = "x86_64") {
+                return Err("Linux 发行版只支持 x64".into());
+            }
+            validate_installed_resource_manifest(&resources)?;
+            let node = resources.join("server").join("node");
+            checked_regular_file(&node, "内置 Node.js")?;
+            use std::os::unix::fs::PermissionsExt;
+            if node
+                .metadata()
+                .map_err(|error| format!("读取内置 Node.js 权限失败：{error}"))?
+                .permissions()
+                .mode()
+                & 0o111
+                == 0
+            {
+                return Err("内置 Node.js 缺少执行权限".into());
+            }
+        }
         let paths = Self {
             mode: "platform",
             root: data.clone(),
