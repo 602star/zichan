@@ -818,6 +818,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           },
           lockDeviceStorage,
         );
+        if (!isTauriRuntime() && firstUseMode === 'server') {
+          // Browser accounts are unlocked by their authenticated account gate.
+          // Returning to the legacy device-password form asks for the wrong secret.
+          window.location.reload();
+          return;
+        }
         setStorageProtection(await refreshDeviceStorageState());
       } catch (reason) {
         setError({
@@ -922,6 +928,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       storagePassphrase.current = accountProtection()?.secret ?? null;
       setStorageProtection(await refreshDeviceStorageState());
     }} onCancel={() => { clearFirstUseMode(); setFirstUseMode(null); }} />;
+    if (!isTauriRuntime() && firstUseMode === 'server') return (
+      <div style={{ minHeight: '100dvh', display: 'grid', placeItems: 'center', padding: 24, background: 'var(--bg)', color: 'var(--text-primary)' }}>
+        <div style={{ width: 'min(420px, 100%)', padding: 24, border: '1px solid var(--border)', background: 'var(--surface)' }}>
+          <h1 style={{ fontSize: 'var(--fs-heading)' }}>重新验证账号</h1>
+          <p>此网站的账本由账号登录流程解锁。请重新打开账本，无需输入另一套本机密码。</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            <button type="button" className="zc-btn zc-btn--primary" onClick={() => window.location.reload()}>重新打开账本</button>
+            <button type="button" className="zc-btn" onClick={() => void exitBrowserAccount().then(closeForAccountExit).catch((reason) => setUnlockError(String(reason)))}>退出并切换账号</button>
+          </div>
+          {unlockError && <p role="alert">{unlockError}</p>}
+        </div>
+      </div>
+    );
     return (
       <>
       {!isTauriRuntime() && <div style={{ padding: 12, background: 'var(--surface-2)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}><span>当前账号：{loadSyncConnections()[0]?.username}</span><button disabled={unlockBusy || resetting} onClick={() => void exitBrowserAccount().then(closeForAccountExit).catch((reason) => setUnlockError(String(reason)))}>退出并切换账号</button></div>}
@@ -998,7 +1017,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               onClick={() => void returnToStorageUnlock()}
               style={{ minHeight: 44, padding: '0 16px', border: 0, borderRadius: 'var(--r-sm)', background: 'transparent', color: 'var(--text-primary)', fontWeight: 'var(--fw-bold)' }}
             >
-              返回解锁
+              {!isTauriRuntime() && firstUseMode === 'server' ? '重新验证账号' : '返回解锁'}
             </button>
           </div>
           {errorCopyStatus !== 'idle' && (

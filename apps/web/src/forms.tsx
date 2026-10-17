@@ -583,6 +583,7 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
     modalWidth: 880,
     moreInitiallyOpen: false,
     progressiveFields: true,
+    compactNewFieldKeys: ['time', 'attachmentDrafts'],
     confirmNewDraft: true,
     refreshDefaults: (values, manual) => manual.has('accountId') || values.type === 'transfer' ? values : { ...values, accountId: defaultTransactionAccount(snap.accounts, snap.setting, values.type ?? 'expense') ?? '' },
     summary: (values) => {

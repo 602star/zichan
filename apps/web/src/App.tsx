@@ -1,7 +1,7 @@
 import { accountSessionStorage } from './account-storage.js';
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
 import type { LedgerBackup } from '@zichan/db';
-import { type LedgerMode, localToday } from '@zichan/core';
+import { type LedgerMode, localToday, newId } from '@zichan/core';
 import { useStore } from './db/store.js';
 import { loadSnapshot, useSnapshot, type Snapshot } from './db/snapshot.js';
 import { baseAsset } from './db/derive.js';
@@ -487,7 +487,7 @@ export function App() {
         writeSafetyState(successfulBackupSafetyPatch(protection));
       }
       const batch = await store.createAuditBatch({
-        id: crypto.randomUUID(),
+        id: newId(),
         type: 'import',
         label: mode === 'replace' ? `精确恢复：${opened.container.label}` : `合并导入：${opened.container.label}`,
         summary: mode === 'replace' ? '从外部备份替换当前活动账本' : '将外部备份合并到当前账本',

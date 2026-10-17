@@ -1,5 +1,6 @@
 import { withCashflowPayee } from '../payee-recording.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCompactView } from '../ui/useCompactView.js';
 import {
   localToday,
   newId,
@@ -135,6 +136,8 @@ function gameRecordEntity(value: GameRecordFormValue): GameRecord {
 }
 
 export function Game() {
+  const compactView = useCompactView();
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const snap = useSnapshot('game');
   const { store, bump } = useStore();
   const undo = useUndo(store, bump);
@@ -277,8 +280,11 @@ export function Game() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         {(['overview', 'list', 'year', 'month', 'day'] as const).map((mode) => <button key={mode} onClick={() => setView(mode)} style={pillBtn(view === mode)}>{mode === 'overview' ? '赛季概览' : mode === 'list' ? '记录流' : mode === 'year' ? '年度' : mode === 'month' ? '月历' : '单日'}</button>)}
         <div style={{ flex: 1 }} />
+        {compactView && <button type="button" className="zc-btn zc-btn--outline" aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}>{filtersOpen ? '收起筛选' : accountFilter || recordTypeFilter !== 'all' ? '筛选 · 已启用' : '筛选'}</button>}
+        {(!compactView || filtersOpen) && <>
         {accountOptions.length > 0 && <select aria-label="游戏账号筛选" className="zc-select" value={accountFilter} onChange={(event) => setAccountFilter(event.target.value)} style={{ width: 150 }}><option value="">全部账号</option>{accountOptions.map((account) => <option key={account.id} value={account.id}>{account.accountName}</option>)}</select>}
         <select aria-label="游戏记录类型筛选" className="zc-select" value={recordTypeFilter} onChange={(event) => setRecordTypeFilter(event.target.value as typeof recordTypeFilter)} style={{ width: 150 }}><option value="all">全部记录类型</option>{Object.entries(REC_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+        </>}
       </div>
       <DateRangeBar value={dateRange} onChange={setDateRange} />
       {(accountFilter || recordTypeFilter !== 'all') && <button style={{ ...outlineBtn, alignSelf: 'flex-start' }} onClick={() => { setAccountFilter(''); setRecordTypeFilter('all'); }}>清除其他筛选</button>}

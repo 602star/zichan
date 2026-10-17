@@ -89,15 +89,16 @@ export function emptyOptionHint(field: FormFieldLike, optionCount: number): stri
 }
 
 /** Only transaction forms opt into progressive placement; preferences never hide data. */
-export function progressiveFieldGroups<T extends FormFieldLike>(fields: T[], values: Record<string, string>, prefilled: Record<string, string>, preferred: string[]) {
+export function progressiveFieldGroups<T extends FormFieldLike>(fields: T[], values: Record<string, string>, prefilled: Record<string, string>, preferred: string[], compactKeys: readonly string[] = []) {
   const pinned = new Set(preferred);
+  const compact = new Set(compactKeys);
   const core: T[] = [];
   const more: T[] = [];
   for (const field of fields) {
     if (!isFieldVisible(field, values)) continue;
     const value = [field.key, ...(field.relatedValueKeys ?? [])].map((key) => prefilled[key]?.trim()).find(Boolean) ?? '';
     const hasData = value !== '' && value !== '[]' && value !== '{}' && value !== (field.defaultValue ?? '');
-    (field.section !== 'more' || field.required || field.lockedVisible || pinned.has(field.key) || hasData ? core : more).push(field);
+    ((field.section !== 'more' && !compact.has(field.key)) || (field.required && !compact.has(field.key)) || (field.lockedVisible && !compact.has(field.key)) || pinned.has(field.key) || hasData ? core : more).push(field);
   }
   return { core, more };
 }

@@ -1,5 +1,6 @@
 import { withCashflowPayee } from '../payee-recording.js';
 import { useMemo, useState } from 'react';
+import { useCompactView } from '../ui/useCompactView.js';
 import {
   isDateInRange,
   componentHostAt,
@@ -520,6 +521,8 @@ function Overview(props: {
 }
 
 function ItemCard({ item, onEdit, onEvent, onAddComponent, onPlacement, onConvertUpgrade, onMetric, onUsage, onConsumable, onGoal, onTimeline }: Omit<Parameters<typeof Overview>[0], 'cards'> & { item: FixedCardVM }) {
+  const compactView = useCompactView();
+  const [expanded, setExpanded] = useState(false);
   const cash = (value: string) => money(value, item.currencySymbol);
   const canPlaceComponent = !item.sold && canPlaceFixedComponent(item.raw);
   return <article style={card}>
@@ -532,6 +535,9 @@ function ItemCard({ item, onEdit, onEvent, onAddComponent, onPlacement, onConver
       </div>
       <button onClick={() => onEdit(item.raw)} style={linkButton}>编辑</button>
     </div>
+    {compactView && <div className="zc-fixed-mobile-summary"><span>累计净投入 <b>{cash(item.net)}</b></span>{item.referenceValue && <span>参考现值 {cash(item.referenceValue)}</span>}</div>}
+    {compactView && <button type="button" className="zc-fixed-mobile-expand zc-btn zc-btn--outline" aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>{expanded ? '收起详情' : '查看指标与操作'}</button>}
+    {(!compactView || expanded) && <>
     <div className="zc-fixed-card-metrics" style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr 1fr', gap: 18, marginTop: 16, padding: '14px 0', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
       <div><div style={smallLabel}>累计净投入</div><div style={{ fontSize: 'var(--fs-display)', fontWeight: 'var(--fw-bold)', marginTop: 4 }}>{cash(item.net)}</div><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>累计支出 {cash(item.invested)} · 累计回款 {cash(item.recovered)}</div>{item.referenceValue && <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>参考现值 {cash(item.referenceValue)}（不参与净投入）</div>}</div>
       <div><div style={smallLabel}>日均净投入</div><div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)', marginTop: 7 }}>{cash(item.perDay)}<small style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}> / 天</small></div><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 5 }}>{item.days} 天</div></div>
@@ -544,6 +550,7 @@ function ItemCard({ item, onEdit, onEvent, onAddComponent, onPlacement, onConver
     {item.isComponent && item.costOwner && <div style={{ marginTop: 7, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>配件金额已计入 {item.costOwner}，请勿与整机金额相加。</div>}
     <div style={{ display: 'flex', gap: 14, marginTop: 14, flexWrap: 'wrap' }}><button onClick={() => onEvent(item.id)} style={linkButton}>+ 生命周期事件</button>{canPlaceComponent && (item.isComponent ? <button onClick={() => onPlacement(item.id)} style={linkButton}>+ {item.installedIn ? '拆下／转装' : '安装'}配件</button> : <><button onClick={() => onAddComponent(item.id, false)} style={linkButton}>+ 购入配件</button><button onClick={() => onAddComponent(item.id, true)} style={linkButton}>+ 登记原配件</button></>)}<button onClick={() => onMetric(item.id)} style={linkButton}>+ 使用指标</button><button onClick={() => onConsumable(item.id)} style={linkButton}>+ 耗材</button><button onClick={() => onGoal(item.id)} style={linkButton}>+ 成本目标</button></div>
     <details style={{ marginTop: 13 }}><summary style={{ cursor: 'pointer', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>完整时间线 ({item.timeline.length})</summary><div style={{ marginTop: 8 }}>{item.timeline.slice(0, 20).map((entry) => <button className="zc-fixed-timeline-entry" key={`${entry.kind}:${entry.id}`} onClick={() => onTimeline(item, entry)} style={timelineRow}><span style={{ width: 8, height: 8, background: entry.color, borderRadius: 'var(--r-round)' }} /><b>{entry.label}</b><span>{entry.date}</span><span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.detail}</span><TimelineAmount entry={entry} /></button>)}</div>{canPlaceComponent && !item.isComponent && item.timeline.filter((entry) => entry.kind === 'event' && canConvertFixedUpgrade(item.raw, entry.raw as FixedAssetEvent)).map((entry) => <button key={`convert:${entry.id}`} onClick={() => onConvertUpgrade(item.raw, entry.raw as FixedAssetEvent)} style={{ ...linkButton, marginTop: 8, display: 'block' }}>将 {entry.date} 的升级支出转为配件</button>)}</details>
+    </>}
   </article>;
 }
 

@@ -33,6 +33,7 @@ import {
 } from '../selectors/report-analysis.js';
 import { ReportSummaryStrip, TransactionReportInsights } from '../ui/TransactionReportInsights.js';
 import { LedgerCutoffNotice } from '../ui/LedgerCutoffNotice.js';
+import { useCompactView } from '../ui/useCompactView.js';
 import { CATEGORY_COLORS, OTHER_CATEGORY_COLOR } from '../theme.js';
 
 /** 空构成：非日常收支页签也要给图一个合法形状，免得再写一遍内联字面量。 */
@@ -50,6 +51,8 @@ const TABS: [TabId, string][] = [['transactions', '日常收支'], ['dca', '定�
 const GRANULARITIES: readonly (readonly ['day' | 'month' | 'year', string])[] = [['day', '按日'], ['month', '按月'], ['year', '按年']];
 
 export function Reports() {
+  const compactView = useCompactView();
+  const [showAllRows, setShowAllRows] = useState(false);
   const baseSnap = useSnapshot('reports');
   const { store } = useStore();
   const [tab, setTab] = useState<TabId>('transactions');
@@ -546,7 +549,7 @@ export function Reports() {
               <tr>{table.headers.map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr>
             </thead>
             <tbody>
-              {table.rows.map((row, i) => {
+              {(compactView && !showAllRows && tab === 'transactions' ? table.rows.slice(0, 5) : table.rows).map((row, i) => {
                 const rowCategory = row[1]?.data?.category ?? '';
                 const clickable = tab === 'transactions' && !!rowCategory;
                 /* 表格行是二级行，所以点它也自带归属：板块与细分一起设，保持两级一致。 */
@@ -579,6 +582,7 @@ export function Reports() {
           </table>
         </div>
       </div>
+      {compactView && tab === 'transactions' && table.rows.length > 5 && <button type="button" className="zc-btn zc-btn--outline" aria-expanded={showAllRows} onClick={() => setShowAllRows((open) => !open)}>{showAllRows ? '收起分类' : `查看全部 ${table.rows.length} 个分类`}</button>}
       {tab === 'transactions' && (
         <TransactionDetailTable
           rows={details}
@@ -718,7 +722,12 @@ function TransactionDetailTable(props: {
   error: string;
   onLoadMore: () => void;
 }) {
+  const compactView = useCompactView();
+  const [expanded, setExpanded] = useState(false);
   const { rows, range, selectedParent, selectedChild, drillLabel, loadedCount, hasMore, busy, error, onLoadMore } = props;
+  useEffect(() => {
+    if (selectedParent || selectedChild) setExpanded(true);
+  }, [selectedParent, selectedChild]);
   const openInTransactions = () => {
     /* 把两级都带过去：只带二级的话，回到流水页后面包屑会缺一层归属。 */
     accountSessionStorage.setItem('zichan.transactions.filterPreset', JSON.stringify({
@@ -741,6 +750,8 @@ function TransactionDetailTable(props: {
         </div>
         <button onClick={openInTransactions} style={pillBtn(false)}>在流水页整理</button>
       </div>
+      {compactView && <button type="button" className="zc-report-detail-toggle zc-btn zc-btn--outline" aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>{expanded ? '收起流水明细' : `查看 ${rows.length} 条流水明细`}</button>}
+      {(!compactView || expanded) && <>
       <div style={{ overflowX: 'auto' }}>
         <table className="zc-card-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr>{['报表归属日', '实际发生时间', '类型', '分类', '交易对象', '描述', '金额', '折算'].map((h) => <th key={h} style={thStyle}>{h}</th>)}</tr></thead>
@@ -767,6 +778,7 @@ function TransactionDetailTable(props: {
           {error && <span role="alert" style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)' }}>{error}</span>}
         </div>
       )}
+      </>}
     </div>
   );
 }

@@ -28,6 +28,19 @@ describe('transaction form presentation', () => {
     expect(keys(groups.core)).toContain('note');
     expect(keys(groups.more)).toContain('payeeId');
   });
+  it('moves phone extras below the fold while retaining populated and required fields', () => {
+    const spec = transactionForm(makeSnapshot());
+    const compactKeys = spec.compactNewFieldKeys!;
+    const empty = progressiveFieldGroups(spec.fields, { type: 'expense' }, {}, [], compactKeys);
+    expect(keys(empty.more)).toEqual(expect.arrayContaining(['time', 'attachmentDrafts', 'note']));
+    expect(keys(empty.core)).toEqual(expect.arrayContaining(['amount', 'assetId', 'date', 'category']));
+
+    const populated = progressiveFieldGroups(spec.fields, { type: 'expense' }, { time: '13:45', attachmentDrafts: '[{"fileName":"receipt.jpg"}]' }, [], compactKeys);
+    expect(keys(populated.core)).toEqual(expect.arrayContaining(['time', 'attachmentDrafts']));
+
+    const transfer = progressiveFieldGroups(spec.fields, { type: 'transfer' }, {}, [], compactKeys);
+    expect(keys(transfer.core)).toEqual(expect.arrayContaining(['transferAccountId', 'transferAssetId', 'transferAmount']));
+  });
   it('migrates obsolete preference keys while retaining valid choices', () => {
     const snap = makeSnapshot();
     snap.setting!.transactionFormOptionalFields = 'accountId,note,transferAccountId,tagIds,refundForId';

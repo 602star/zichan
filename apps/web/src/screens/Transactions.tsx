@@ -82,6 +82,7 @@ import { resolveTransactionTags } from '../transaction-tags.js';
 import { rememberTransactionPayee, withRememberedPayee } from '../payee-recording.js';
 import { ReconciliationModal } from './ReconciliationModal.js';
 import { DialogShell } from '../ui/DialogShell.js';
+import { useCompactView } from '../ui/useCompactView.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { QuickExpenseModal, type QuickExpenseDraft } from '../ui/QuickExpenseModal.js';
 
@@ -193,6 +194,7 @@ function initialTransactionTab(): Tab {
 }
 
 export function Transactions() {
+  const compactView = useCompactView();
   const { store, bump, rev } = useStore();
   const undo = useUndo(store, bump);
   const snap = useSnapshot('transactions');
@@ -1668,7 +1670,8 @@ export function Transactions() {
           })}
           initial={editingTx === 'new' ? refundDraft ?? templateDraft ?? undefined : editingTx}
           isNew={editingTx === 'new'}
-          optionalFieldKeys={optionalTransactionFields(snap.setting, usesAccounts)}
+          optionalFieldKeys={compactView && editingTx === 'new' && snap.setting?.transactionFormOptionalFields === undefined
+            ? [] : optionalTransactionFields(snap.setting, usesAccounts)}
           optionalFieldPresets={[
             { label: '仅核心', keys: transactionFormPresetKeys('core', usesAccounts) },
             { label: '常用', keys: transactionFormPresetKeys('common', usesAccounts) },
@@ -2379,6 +2382,13 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
                 files ? `附件 ${files}` : undefined,
                 item.splitSummary || undefined,
               ].filter(Boolean).join(' · ');
+              const mobileDetails = [
+                usesAccounts ? item.accountName : undefined,
+                tx.type !== 'expense' ? item.typeLabel : undefined,
+                usesAccounts && item.statusLabel !== '已记录' ? item.statusLabel : undefined,
+                item.splitSummary || undefined,
+                files ? `附件 ${files}` : undefined,
+              ].filter(Boolean).join(' · ');
               return (
                 <div
                   className={`zc-transaction-row${setSelectedIds ? ' has-selection' : ''}${usesAccounts ? ' has-account' : ''}`}
@@ -2406,7 +2416,7 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
                       />
                     </span>
                   )}
-                  <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{tx.date}{tx.time ? <><br />{tx.time}</> : null}</span>
+                  <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{tx.date}{tx.time ? <span className="zc-transaction-time"><br />{tx.time}</span> : null}</span>
                   {/*
                     分类列宽屏能给到 200px（内置标签最长约 139px，写全了），但自建的超长名仍会
                     触到天花板，那时在这里省略；完整的「一级 / 二级」留在 hover 的 title 里，
@@ -2421,9 +2431,10 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
                   <span style={{ minWidth: 0 }}>
                     <span style={{ display: 'block', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...(settled ? { textDecoration: 'line-through', color: 'var(--text-tertiary)' } : {}) }}>{title}</span>
                     <span style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
-                      <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
+                      <span className="zc-transaction-details-desktop" style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
                         {details}
                       </span>
+                      {mobileDetails && <span className="zc-transaction-details-mobile" style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{mobileDetails}</span>}
                       {refundChip && (
                         <button
                           type="button"

@@ -12,6 +12,7 @@ import { btnOutline } from './styles.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
 import { readAttachmentBlob, type AttachmentDraftData } from '../db/attachment-storage.js';
 import { useStore } from '../db/store.js';
+import { useCompactView } from './useCompactView.js';
 import { ensureAttachmentBlobAvailable } from '../attachment-sync.js';
 import { buildSyncBaseUrl, loadSyncConnections } from '../sync-config.js';
 import { barcodeScannerAvailable, currentDevicePosition, scanBarcode } from '../device-capabilities.js';
@@ -99,6 +100,8 @@ export interface EntityFormSpec<T> {
   modalWidth?: number;
   moreInitiallyOpen?: boolean;
   progressiveFields?: boolean;
+  /** Optional fields that move behind “更多信息” on a narrow screen when creating. */
+  compactNewFieldKeys?: string[];
   confirmNewDraft?: boolean;
   refreshDefaults?: (values: Record<string, string>, manual: ReadonlySet<string>) => Record<string, string>;
   summary?: (values: Record<string, string>) => string | undefined;
@@ -250,6 +253,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   onOptionalFieldKeysChange?: (keys: string[]) => Promise<void> | void;
   optionalFieldPresets?: { label: string; keys: string[] }[];
 }) {
+  const compactView = useCompactView();
   const { store } = useStore();
   const [duplicates, setDuplicates] = useState<DuplicateMasterDataError | null>(null);
   const [existingChoice, setExistingChoice] = useState<T | undefined>();
@@ -347,7 +351,11 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   };
   const allMoreFields = spec.fields.filter((f) => f.section === 'more' && !f.hidden);
   const allMoreFieldKeys = allMoreFields.map((f) => f.key);
-  const groups = spec.progressiveFields ? progressiveFieldGroups(spec.fields, values, prefilledValues, optionalFieldKeys ?? []) : undefined;
+  const compactKeys = useMemo(
+    () => compactView && (!initial || isNew) ? spec.compactNewFieldKeys ?? [] : [],
+    [compactView, initial, isNew, spec.compactNewFieldKeys],
+  );
+  const groups = spec.progressiveFields ? progressiveFieldGroups(spec.fields, values, prefilledValues, optionalFieldKeys ?? [], compactKeys) : undefined;
   const moreFields = groups?.more ?? allMoreFields.filter((f) => isFieldVisible(f, values));
   const coreFields = groups?.core ?? spec.fields.filter((f) => f.section !== 'more' && isFieldVisible(f, values));
   const visibleOptional = new Set(optionalFieldKeys ?? moreFields.map((f) => f.key));
@@ -363,7 +371,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   const revealField = async (key: string) => {
     const field = spec.fields.find((f) => f.key === key);
     if (!field || !isFieldVisible(field, values)) return;
-    if (field.section !== 'more') return;
+    if (field.section !== 'more' && !compactKeys.includes(key)) return;
     setMoreOpen(true);
     if (spec.progressiveFields || isMoreFieldVisible(field, values, optionalFieldKeys, allMoreFieldKeys)) return;
     const current = new Set(optionalFieldKeys ?? moreFields.map((f) => f.key));
@@ -382,7 +390,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
       setPendingFocus(null);
       return;
     }
-    if (field?.section === 'more') setMoreOpen(true);
+    if (field?.section === 'more' || compactKeys.includes(pendingFocus)) setMoreOpen(true);
     const node = focusTarget(`${formId}-${pendingFocus}`);
     if (!node) {
       if (focusAttempts.current < 4) {
@@ -397,7 +405,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     node.focus?.({ preventScroll: true });
     setPendingFocus(null);
     return undefined;
-  }, [pendingFocus, formId, spec.fields, values]);
+  }, [pendingFocus, formId, spec.fields, values, compactKeys]);
   /** Required pickers with nothing to pick yet explain themselves up front. */
   const optionHint = (field: FieldDef, optionCount: number) => {
     if (field.type !== 'select' && field.type !== 'category' && field.type !== 'multiselect') return undefined;

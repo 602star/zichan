@@ -8,6 +8,7 @@ import {
   type SqlLedgerStore,
   type SyncReplicaTarget,
 } from '@zichan/db';
+import { newId } from '@zichan/core';
 import {
   buildSyncBaseUrl,
   isUnauthorizedSyncError,
@@ -185,7 +186,7 @@ async function syncConfiguredServersNow(
   options: { deferAttachmentTransfers?: boolean; skipAttachmentSync?: boolean } = {},
 ): Promise<ConfiguredSyncResult> {
   const startedAt = performance.now();
-  const runId = crypto.randomUUID();
+  const runId = newId();
   const selected = profiles.filter((profile) => profile.enabled);
   const meters = new Map<string, MeteredTransport>();
   const targets: SyncReplicaTarget[] = selected.map((profile) => {

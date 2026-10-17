@@ -1,4 +1,4 @@
-import type { LedgerCryptoSession } from '@zichan/core';
+import { newId, type LedgerCryptoSession } from '@zichan/core';
 import { SerialTaskQueue, type SqlDriver, type SqlParam, type SqlRunResult } from '@zichan/db';
 import { accountDatabaseName, accountStorageKey } from '../account-storage.js';
 import { BROWSER_LEDGER_LOCK_NAME, BrowserLedgerAlreadyOpenError } from './browser-ledger-lock.js';
@@ -56,7 +56,7 @@ let activeConnection: ConnectionState | null = null;
 export async function withSharedBrowserTaskLock<T>(taskName: string, operation: () => Promise<T>): Promise<T> {
   const state = activeConnection;
   if (!state || state.closed) return operation();
-  const taskToken = crypto.randomUUID();
+  const taskToken = newId();
   await request(state, { op: 'task-lock', taskName, taskToken });
   try { return await operation(); }
   finally { await request(state, { op: 'task-unlock', taskName, taskToken }); }
@@ -152,7 +152,7 @@ export class SharedBrowserSqlDriver implements SqlDriver {
 
   transaction<T>(fn: (driver: SqlDriver) => Promise<T>): Promise<T> {
     const run = async () => {
-      const txId = crypto.randomUUID();
+      const txId = newId();
       await request(this.state, { op: 'begin', txId, parentTxId: this.txId });
       try {
         const result = await fn(new SharedBrowserSqlDriver(this.state, txId));

@@ -30,6 +30,7 @@ import { card, th as thStyle, td as tdStyle } from '../ui/styles.js';
 import { AccountSetupPanel } from '../ui/AccountSetupPanel.js';
 import { QuickCategorySettings } from '../ui/QuickCategorySettings.js';
 import { DateRangeBar, dateRangeValue } from '../ui/DateRangeBar.js';
+import { useCompactView } from '../ui/useCompactView.js';
 import { allCategories, availableExtensionCategories, CATEGORY_PACKS, categoryIsHidden, categoryLabel, categoryPackMemberState, categoryPackState, categoryPacksContaining, TYPE_LABEL, type CatalogCategory, type CategoryPack, type CategoryPackMemberState, type CategoryPackState } from '../transactionMeta.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { attachmentStorageStatus, reconcileAttachmentStorage } from '../db/attachment-storage.js';
@@ -1064,6 +1065,7 @@ function Section<T extends { id: string; version: number }>(props: {
   masterKind?: MasterDataKind;
   lifecycleCandidates?: { id: string; label: string }[];
 }) {
+  const compactView = useCompactView();
   const { store } = useStore();
   const { title, headers, items, row, dateOf, duplicateKey, makeSpec, put, bump, masterKind, lifecycleCandidates = [] } = props;
   const [editing, setEditing] = useState<T | 'new' | null>(null);
@@ -1105,7 +1107,25 @@ function Section<T extends { id: string; version: number }>(props: {
         <button onClick={() => props.onAdd ? props.onAdd() : setEditing('new')} style={{ padding: '7px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-body)', cursor: 'pointer', whiteSpace: 'nowrap' }}>+ 新增{title}</button>
       </div>
       {dateOf && <div style={{ marginBottom: 12 }}><DateRangeBar value={dateRange} onChange={setDateRange} compact /></div>}
-      <div style={{ overflowX: 'auto' }}>
+      {compactView ? <div className="zc-manage-mobile-list">
+        {filteredItems.map((item) => {
+          const cells = row(item);
+          const edit = () => props.onEdit ? props.onEdit(item) : setEditing(item);
+          const label = props.itemLabel?.(item) ?? (typeof cells[0] === 'string' ? cells[0] : item.id);
+          return <article className="zc-manage-mobile-item" key={item.id}>
+            <button type="button" className="zc-manage-mobile-main" aria-label={`编辑${title} ${label}`} onClick={edit}>
+              <span>{cells[0]}</span>
+              {cells.length > 1 && <small>{cells[1]}</small>}
+            </button>
+            {(cells.length > 2 || masterKind) && <details>
+              <summary>更多资料与操作</summary>
+              {cells.slice(2).map((cell, index) => <div className="zc-manage-mobile-fact" key={headers[index + 2] ?? index}><span>{headers[index + 2]}</span><span>{cell}</span></div>)}
+              {masterKind && <button type="button" className="zc-btn zc-btn--outline" onClick={() => setLifecycle(item)}>归档/合并</button>}
+            </details>}
+          </article>;
+        })}
+        {filteredItems.length === 0 && <div className="zc-meta">{items.length === 0 ? '暂无数据' : '没有匹配的记录'}</div>}
+      </div> : <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr>{headers.map((h) => <th key={h} style={thStyle}>{h}</th>)}<th style={thStyle}></th></tr></thead>
           <tbody>
@@ -1121,7 +1141,7 @@ function Section<T extends { id: string; version: number }>(props: {
             {filteredItems.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={headers.length + 1}>{items.length === 0 ? '暂无数据' : '没有匹配的记录'}</td></tr>}
           </tbody>
         </table>
-      </div>
+      </div>}
       {open && (
         <EntityFormModal
           spec={spec}

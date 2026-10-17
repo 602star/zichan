@@ -180,15 +180,14 @@ test('every screen keeps the phone/tablet layout contract across the device matr
     // Density budget. The complaint this addresses was not a broken layout but
     // the sheer amount of it. Measured on the phone viewport, before -> after:
     //   settings: 7.3 -> 3.9 screens, 95 -> 62 controls, 65% -> 17% bold text
-    //   reports:  4.8 -> 4.2 screens
+    //   reports:  4.38 -> 2.45 screens after the detail table is collapsed
     // The ceilings sit just above the current values so the next feature cannot
     // quietly spend the gain, while still being far below the pre-change state.
     const DENSITY_BUDGET = {
       settings: { screens: 4.5, controls: 70, surfaces: 16, boldShare: 0.3 },
-      // Reports is a figures-first screen: its headline metrics are the content,
-      // so they stay bold and its ceiling is the measured 32% rather than the
-      // 17% Settings now reaches. Recorded here so the difference is deliberate.
-      reports: { screens: 4.5, controls: 24, surfaces: 14, boldShare: 0.35 },
+      // Collapsing the detail table removes many regular-weight cells, raising
+      // the bold percentage even though there is less emphasized text overall.
+      reports: { screens: 2.8, controls: 26, surfaces: 12, boldCount: 45 },
       /*
        * The spending ledger, measured on the same phone viewport. Before the
        * trend and composition charts existed it was 3.95 screens / 61 controls;
@@ -250,6 +249,7 @@ test('every screen keeps the phone/tablet layout contract across the device matr
           screens: scroller.scrollHeight / window.innerHeight,
           controls,
           surfaces,
+          boldCount: bold,
           boldShare: textBlocks.length ? bold / textBlocks.length : 0,
         };
       });
@@ -258,7 +258,8 @@ test('every screen keeps the phone/tablet layout contract across the device matr
       if (measured.screens > budget.screens) overBudget.push(`${screen}: ${round(measured.screens)} screens > ${budget.screens}`);
       if (measured.controls > budget.controls) overBudget.push(`${screen}: ${measured.controls} controls > ${budget.controls}`);
       if (measured.surfaces > budget.surfaces) overBudget.push(`${screen}: ${measured.surfaces} bordered surfaces > ${budget.surfaces}`);
-      if (measured.boldShare > budget.boldShare) overBudget.push(`${screen}: ${round(measured.boldShare * 100)}% of text bold > ${budget.boldShare * 100}%`);
+      if (budget.boldCount !== undefined && measured.boldCount > budget.boldCount) overBudget.push(`${screen}: ${measured.boldCount} bold text blocks > ${budget.boldCount}`);
+      if (budget.boldShare !== undefined && measured.boldShare > budget.boldShare) overBudget.push(`${screen}: ${round(measured.boldShare * 100)}% of text bold > ${budget.boldShare * 100}%`);
       console.log(`density ${screen}: ${JSON.stringify(measured)}`);
     }
 

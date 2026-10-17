@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCompactView } from '../ui/useCompactView.js';
 import { addDays, isDateInRange, localToday, type AuditBatch, type OperationLogEntry, type OperationType, type SyncConflictResolution, type Transaction } from '@zichan/core';
 import {
   restoreConversion,
@@ -169,6 +170,8 @@ const button = btnOutline;
 const selectStyle = selectBase;
 
 export function History() {
+  const compactView = useCompactView();
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const { store, rev, bump } = useStore();
   const snap = useSnapshot('history');
   const [logs, setLogs] = useState<OperationLogEntry[]>([]);
@@ -377,13 +380,15 @@ export function History() {
               <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>操作历史</div>
               <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3 }}>共 {filtered.length} 条记录，默认隐藏系统初始化和无业务变化的技术日志；批量操作会折叠显示。</div>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            {(!compactView || advancedOpen) && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <button onClick={() => downloadText('zichan-audit-history.json', JSON.stringify({ exportedAt: new Date().toISOString(), events: filtered }, null, 2), 'application/json')} style={button}>导出 JSON</button>
               <button onClick={() => downloadText('zichan-audit-history.csv', eventsToCsv(filtered), 'text/csv;charset=utf-8')} style={button}>导出 CSV</button>
-            </div>
+            </div>}
           </div>
           <div style={{ marginBottom: 12 }}><DateRangeBar value={range} onChange={setRange} view={view} onViewChange={setView} /></div>
-          <div className="zc-history-filters" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(120px, 1fr))', gap: 10 }}>
+          <input aria-label="历史搜索" className="zc-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索摘要、对象、字段、设备" style={{ width: '100%', marginBottom: 10 }} />
+          {compactView && <button type="button" className="zc-btn zc-btn--outline" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((open) => !open)}>{advancedOpen ? '收起筛选与导出' : `筛选与导出${kind !== 'all' || op !== 'all' || entityType !== 'all' || source !== 'user' ? ' · 已筛选' : ''}`}</button>}
+          {(!compactView || advancedOpen) && <div className="zc-history-filters" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(120px, 1fr))', gap: 10, marginTop: 10 }}>
             <select aria-label="历史记录类型" style={selectStyle} value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
               <option value="all">全部记录</option>
               <option value="operation">实体操作</option>
@@ -409,8 +414,7 @@ export function History() {
               <option value="system">系统</option>
               <option value="conflict_resolution">冲突解决</option>
             </select>
-            <input aria-label="历史搜索" className="zc-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索摘要、对象、字段、设备" style={{ gridColumn: 'span 3' }} />
-          </div>
+          </div>}
         </div>
 
         {view === 'list' ? <div style={{ ...card, padding: 0, overflow: 'hidden' }}>

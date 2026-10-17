@@ -15,12 +15,15 @@ import { loadSyncConnections, SYNC_CONFIG_CHANGED_EVENT, type SyncConnection } f
 import { SYNC_LIFECYCLE_RESULT_EVENT, type LifecycleSyncResult } from '../background-sync.js';
 import { buildTaskCenter, type TaskCenterItem } from '../selectors/task-center.js';
 import { LedgerCutoffNotice } from '../ui/LedgerCutoffNotice.js';
+import { useCompactView } from '../ui/useCompactView.js';
 
 function fmtDate(d: string) {
   return d.slice(5); // MM-DD
 }
 
 export function Dashboard() {
+  const compactView = useCompactView();
+  const [showAllMetrics, setShowAllMetrics] = useState(false);
   const snap = useSnapshot('dashboard');
   const [dateRange, setDateRange] = useState<DateRangeValue>(() => dateRangeValue('this_month'));
   const [dcaPlanToRecord, setDcaPlanToRecord] = useState<string | null>(null);
@@ -109,7 +112,7 @@ export function Dashboard() {
             汇总金融账户、加密持仓与物品资产现状残值；模块原币仅在存在价格标记时参与折算。
           </div>
         </div>
-        <div className="zc-hero-snapshot" style={{ ...card, padding: 'clamp(14px, 3.4vw, 24px)', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2 }}>
+        {(!compactView || showAllMetrics) && <div className="zc-hero-snapshot" style={{ ...card, padding: 'clamp(14px, 3.4vw, 24px)', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2 }}>
           <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', letterSpacing: 0, marginBottom: 6 }}>资产快照</div>
           {[
             ['所选期间投入', partialText('investedFiat', money(vm.investedFiat)), 'var(--fg)'],
@@ -123,17 +126,19 @@ export function Dashboard() {
               <span style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color, textAlign: 'right' }}>{v}</span>
             </div>
           ))}
-        </div>
+        </div>}
       </div>
 
-      <div className="zc-dashboard-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 16 }}>
+      {compactView && <button type="button" className="zc-dashboard-more-metrics-toggle zc-btn zc-btn--outline" aria-expanded={showAllMetrics} onClick={() => setShowAllMetrics((open) => !open)}>{showAllMetrics ? '收起完整指标' : '查看完整指标'}</button>}
+
+      <div className={`zc-dashboard-kpi-grid${compactView && !showAllMetrics ? ' is-compact' : ''}`} style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 16 }}>
         {[
           ['期间法币投入', partialText('investedFiat', money(vm.investedFiat)), '买入与定投链路', 'var(--fg)'],
           ['未实现盈亏', partialText('unrealized', signedMoney(vm.unrealized)), '加密资产持仓', vm.unrealized.isNegative() ? 'var(--negative)' : 'var(--positive)'],
           ['期间已实现盈亏', partialText('realizedCrypto', signedMoney(vm.realizedCrypto)), '所选日期内卖出链路', vm.realizedCrypto.isNegative() ? 'var(--negative)' : 'var(--positive)'],
           ['期间游戏净收益', partialText('seasonNet', signedMoney(vm.seasonNet)), '所选日期内游戏记录', vm.seasonNet.isNegative() ? 'var(--negative)' : 'var(--positive)'],
           ['期间日常收支', partialText('transactions', signedMoney(vm.txNet)), `收入 ${money(vm.txIncome)} · 支出 ${money(vm.txExpense)}${partial('transactions') ? ' · 均为已知部分' : ''}`, vm.txNet.isNegative() ? 'var(--negative)' : 'var(--positive)'],
-        ].map(([label, value, subv, color]) => (
+        ].filter((_, index) => !compactView || showAllMetrics || index === 1 || index === 4).map(([label, value, subv, color]) => (
           <div key={label} style={cardTight}>
             <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>{label}</div>
             <div style={{ fontSize: 'var(--fs-display)', fontWeight: 'var(--fw-bold)', marginTop: 10, letterSpacing: 0, overflowWrap: 'anywhere', color }}>{value}</div>
@@ -142,7 +147,7 @@ export function Dashboard() {
         ))}
       </div>
 
-      <div style={card}>
+      {(!compactView || tasks.length > 0) && <div className="zc-dashboard-tasks" style={card}>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 14 }}>
           <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>任务中心</div>
           <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>
@@ -168,7 +173,7 @@ export function Dashboard() {
             })}
           </div>
         )}
-      </div>
+      </div>}
 
       <div className="zc-dashboard-detail-grid" style={{ display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: 18 }}>
         <div style={card}>
