@@ -935,8 +935,7 @@ fn run_platform() {
             app.manage(paths);
             #[cfg(mobile)]
             {
-                app.handle()
-                    .plugin(tauri_plugin_biometric::Builder::new().build())?;
+                app.handle().plugin(tauri_plugin_biometric::init())?;
                 app.handle().plugin(tauri_plugin_barcode_scanner::init())?;
                 app.handle().plugin(tauri_plugin_geolocation::init())?;
             }

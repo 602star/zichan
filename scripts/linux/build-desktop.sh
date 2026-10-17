@@ -25,4 +25,5 @@ export ZICHAN_RELEASE_BUILD=1
 npm run build --workspace @zichan/desktop -- \
   --config src-tauri/tauri.linux-release.conf.json \
   --bundles deb appimage --ci -- --locked
+node scripts/linux/finalize-appimage.mjs
 node scripts/release/verify-linux-artifacts.mjs

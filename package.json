@@ -15,7 +15,7 @@
     "start:desktop": "node scripts/dev/runner.mjs start desktop",
     "mobile:init:android": "npm run android:init --workspace @zichan/desktop",
     "mobile:dev:android": "npm run android:dev --workspace @zichan/desktop",
-    "mobile:build:android": "npm run android:build --workspace @zichan/desktop",
+    "mobile:build:android": "npm run android:build --workspace @zichan/desktop --",
     "mobile:init:ios": "npm run ios:init --workspace @zichan/desktop",
     "mobile:dev:ios": "npm run ios:dev --workspace @zichan/desktop",
     "mobile:build:ios": "npm run ios:build --workspace @zichan/desktop",

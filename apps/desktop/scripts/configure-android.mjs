@@ -10,14 +10,16 @@ if (!existsSync(gradlePath)) {
 }
 
 const source = readFileSync(gradlePath, 'utf8');
-const disabled = 'manifestPlaceholders["usesCleartextTraffic"] = "false"';
 const enabled = 'manifestPlaceholders["usesCleartextTraffic"] = "true"';
+const releaseHeader = 'getByName("release") {';
+const newline = source.includes('\r\n') ? '\r\n' : '\n';
+const releaseSetting = `${releaseHeader}${newline}            ${enabled}`;
 
-if (source.includes(enabled)) {
+if (source.includes(releaseSetting)) {
   console.log('Android 局域网 HTTP 已启用。');
-} else if (source.includes(disabled)) {
-  writeFileSync(gradlePath, source.replace(disabled, enabled));
+} else if (source.includes(releaseHeader)) {
+  writeFileSync(gradlePath, source.replace(releaseHeader, releaseSetting));
   console.log('已允许 Android 发布包访问局域网 HTTP 同步服务器；公网服务器仍应使用 HTTPS。');
 } else {
-  throw new Error(`无法定位 usesCleartextTraffic 配置，请检查 ${gradlePath}`);
+  throw new Error(`无法定位 Android release 配置，请检查 ${gradlePath}`);
 }

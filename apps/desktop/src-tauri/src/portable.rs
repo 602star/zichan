@@ -1144,15 +1144,17 @@ pub fn show_native_error(message: &str) {
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_instance_lock, debug_runtime_root, local_filesystem,
-        normalize_supported_filesystem, runtime_decision, safe_manifest_path, sha256_file,
-        validate_installed_marker_value, validate_installed_resource_manifest,
-        validate_marker_value, validate_resource_manifest, validate_windows_disk_path,
+        acquire_instance_lock, normalize_supported_filesystem, runtime_decision,
+        safe_manifest_path, sha256_file, validate_installed_marker_value,
+        validate_installed_resource_manifest, validate_marker_value, validate_resource_manifest,
         InstalledMarker, PortableMarker, WebviewRuntime, WebviewRuntimeLock,
         INSTALLED_FILES_MANIFEST, PORTABLE_FORMAT_VERSION, WEBVIEW2_RUNTIME_LOCK_JSON,
     };
     #[cfg(windows)]
-    use super::{reject_reparse_point, reject_reparse_points_recursively};
+    use super::{
+        debug_runtime_root, local_filesystem, reject_reparse_point,
+        reject_reparse_points_recursively, validate_windows_disk_path,
+    };
     use std::{
         fs,
         path::Path,
@@ -1297,6 +1299,7 @@ mod tests {
         fs::remove_dir_all(root).expect("remove reparse fixture");
     }
 
+    #[cfg(windows)]
     #[test]
     fn windows_path_classifier_accepts_verbatim_local_but_rejects_unc() {
         assert!(validate_windows_disk_path(Path::new(r"C:\portable")).is_ok());
@@ -1309,6 +1312,7 @@ mod tests {
         assert!(local_filesystem(&canonical_temp).is_ok());
     }
 
+    #[cfg(windows)]
     #[test]
     fn debug_test_root_override_must_be_absolute() {
         let repo = Path::new(r"C:\repo");
