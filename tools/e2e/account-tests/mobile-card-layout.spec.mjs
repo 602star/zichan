@@ -59,6 +59,14 @@ test('populated mobile cards keep amounts and actions within the phone viewport'
       for (const screen of ['dashboard', 'transactions', 'reports', 'convert', 'fixed', 'history', 'manage']) {
         await navigate(screen);
         await viewportFit(width, screen);
+        if (width === 320 && ['dashboard', 'reports', 'history'].includes(screen)) {
+          const [from, to] = await page.locator('.zc-date-range-bar').first().locator('.zc-date-boundary').evaluateAll((nodes) =>
+            nodes.slice(0, 2).map((node) => Math.round(node.getBoundingClientRect().top)));
+          expect(to, `320px ${screen} date inputs should be stacked`).toBeGreaterThan(from);
+        }
+        if (screen === 'transactions') {
+          await expect(page.locator('#transaction-records .zc-date-boundary').first(), `${width}px transaction preset dates stay tucked away`).toBeHidden();
+        }
         if (screen === 'transactions') {
           const clipped = await page.locator('.zc-transaction-summary-metric > div:nth-child(2)').evaluateAll((nodes) =>
             nodes.filter((node) => node.scrollWidth > node.clientWidth + 1).map((node) => node.textContent));
@@ -68,10 +76,21 @@ test('populated mobile cards keep amounts and actions within the phone viewport'
           const clipped = await page.locator('.zc-summary-value').evaluateAll((nodes) =>
             nodes.filter((node) => node.scrollWidth > node.clientWidth + 1).map((node) => node.textContent));
           expect(clipped, `${width}px report amounts`).toEqual([]);
-          if (width === 320) {
-            const [from, to] = await page.locator('.zc-date-boundary').evaluateAll((nodes) =>
-              nodes.slice(0, 2).map((node) => Math.round(node.getBoundingClientRect().top)));
-            expect(to, '320px date inputs should be stacked').toBeGreaterThan(from);
+        }
+        if (screen === 'reports' || screen === 'transactions') {
+          const totals = await page.locator('.zc-donut-total').evaluateAll((nodes) => nodes.map((node) => {
+            const visual = node.parentElement.getBoundingClientRect();
+            const ring = node.parentElement.querySelector('.zc-donut-ring').getBoundingClientRect();
+            const amount = node.getBoundingClientRect();
+            return { text: node.textContent, left: amount.left, right: amount.right, top: amount.top, visualLeft: visual.left, visualRight: visual.right, ringBottom: ring.bottom, scrollWidth: node.scrollWidth, clientWidth: node.clientWidth, scrollHeight: node.scrollHeight, clientHeight: node.clientHeight };
+          }));
+          expect(totals.length, `${width}px ${screen} donut totals`).toBeGreaterThan(0);
+          for (const total of totals) {
+            expect(total.left, `${width}px ${screen} ${total.text} left edge`).toBeGreaterThanOrEqual(total.visualLeft - 1);
+            expect(total.right, `${width}px ${screen} ${total.text} right edge`).toBeLessThanOrEqual(total.visualRight + 1);
+            expect(total.top, `${width}px ${screen} ${total.text} stays below the ring`).toBeGreaterThanOrEqual(total.ringBottom);
+            expect(total.scrollWidth, `${width}px ${screen} ${total.text} full width`).toBeLessThanOrEqual(total.clientWidth + 1);
+            expect(total.scrollHeight, `${width}px ${screen} ${total.text} full text`).toBeLessThanOrEqual(total.clientHeight + 1);
           }
         }
         if (screen === 'manage') {
@@ -83,6 +102,43 @@ test('populated mobile cards keep amounts and actions within the phone viewport'
         }
       }
     }
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await navigate('transactions');
+    const filterToggle = page.getByRole('button', { name: /筛选与搜索/ });
+    await expect(filterToggle).toBeVisible();
+    await expect(filterToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByRole('textbox', { name: '流水搜索' })).toBeHidden();
+    await filterToggle.click();
+    await expect(page.getByRole('textbox', { name: '流水搜索' })).toBeVisible();
+    await page.getByRole('textbox', { name: '流水搜索' }).fill('没有这笔流水');
+    await filterToggle.click();
+    await expect(filterToggle).toContainText('已启用 1 项');
+    await expect(page.getByRole('textbox', { name: '流水搜索' })).toBeHidden();
+    await page.getByRole('combobox', { name: '快捷时间范围' }).first().selectOption('custom');
+    await expect(page.locator('#transaction-records .zc-date-boundary').first()).toBeVisible();
+
+    await navigate('settings');
+    await expect(page.getByRole('combobox', { name: '默认卖出匹配方式' })).toBeHidden();
+    await expect(page.getByRole('combobox', { name: '记账弹窗默认分类范围' })).toBeHidden();
+    await expect(page.getByRole('button', { name: '恢复推荐布局' })).toBeHidden();
+    await page.getByRole('button', { name: /更多结算选项/ }).click();
+    await expect(page.getByRole('combobox', { name: '默认卖出匹配方式' })).toBeVisible();
+    await page.getByRole('button', { name: /分类设置/ }).click();
+    await expect(page.getByRole('combobox', { name: '记账弹窗默认分类范围' })).toBeVisible();
+    await page.getByRole('button', { name: /字段设置/ }).click();
+    await expect(page.getByRole('button', { name: '仅核心' })).toBeVisible();
+    await page.getByRole('button', { name: /模块设置/ }).click();
+    await expect(page.getByRole('button', { name: '恢复推荐布局' })).toBeVisible();
+    await page.getByRole('button', { name: /更多结算选项/ }).click();
+    await page.getByRole('button', { name: /分类设置/ }).click();
+    await page.getByRole('button', { name: /字段设置/ }).click();
+    await page.getByRole('button', { name: /模块设置/ }).click();
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await expect(page.getByRole('button', { name: /更多结算选项/ })).toBeHidden();
+    await expect(page.getByRole('combobox', { name: '默认卖出匹配方式' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '进入分类中心' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '恢复推荐布局' })).toBeVisible();
   } finally {
     await page.close();
     server.server.closeAllConnections();

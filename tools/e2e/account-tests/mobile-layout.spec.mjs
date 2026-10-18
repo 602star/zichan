@@ -177,30 +177,17 @@ test('every screen keeps the phone/tablet layout contract across the device matr
 
     expect(failures.join('\n')).toBe('');
 
-    // Density budget. The complaint this addresses was not a broken layout but
-    // the sheer amount of it. Measured on the phone viewport, before -> after:
-    //   settings: 7.3 -> 3.9 screens, 95 -> 62 controls, 65% -> 17% bold text
-    //   reports:  4.38 -> 2.45 screens after the detail table is collapsed
-    // The ceilings sit just above the current values so the next feature cannot
-    // quietly spend the gain, while still being far below the pre-change state.
+    // Phone density after compacting the ledger settings and transaction filters:
+    //   settings:    4.19 -> 1.71 screens, 65 -> 21 visible controls
+    //   transactions: 4.64 -> 3.74 screens, 71 -> 56 visible controls
+    // Keep ceilings near those measured values so later fields do not silently
+    // restore the long first-run pages.
     const DENSITY_BUDGET = {
-      settings: { screens: 4.5, controls: 70, surfaces: 16, boldShare: 0.3 },
+      settings: { screens: 2.0, controls: 25, surfaces: 6, boldShare: 0.3 },
       // Collapsing the detail table removes many regular-weight cells, raising
       // the bold percentage even though there is less emphasized text overall.
       reports: { screens: 2.8, controls: 26, surfaces: 12, boldCount: 45 },
-      /*
-       * The spending ledger, measured on the same phone viewport. Before the
-       * trend and composition charts existed it was 3.95 screens / 61 controls;
-       * the charts cost 0.5 screens and 9 controls, all of them the charts' own
-       * hit targets (six month columns, the window select, the 「趋势与构成」
-       * anchor and the donut legend rows) rather than new chrome.
-       *
-       * Ceilings are the measured values plus a small margin, so the next feature
-       * cannot quietly spend the room the charts just took. Note this measures
-       * 轻量模式 (the fixture's mode); the accounts-mode ledger has its own filter
-       * row and saved views on top, so it is deliberately not bounded here.
-       */
-      transactions: { screens: 4.7, controls: 72, surfaces: 12, boldShare: 0.25 },
+      transactions: { screens: 4.0, controls: 60, surfaces: 7, boldShare: 0.25 },
     };
 
     await page.setViewportSize({ width: 390, height: 844 });

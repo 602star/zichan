@@ -232,6 +232,7 @@ export function Transactions() {
   const [accountId, setAccountId] = useState('');
   const [assetId, setAssetId] = useState('all');
   const [filters, setFilters] = useState<TransactionFilters>(DEFAULT_FILTERS);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [categoryDrill, setCategoryDrill] = useState<CategoryDrill | null>(null);
   const [savedViewName, setSavedViewName] = useState('本月常用查询');
   const [savedViewError, setSavedViewError] = useState('');
@@ -566,6 +567,18 @@ export function Transactions() {
   const asOf = ledgerAsOfDate(readySnap);
   const activeDateRange = transactionDateRange(asOf, viewFilters);
   const activeDateValue: DateRangeValue = { preset: viewFilters.range, from: activeDateRange.from, to: activeDateRange.to };
+  const activeFilterCount = [
+    viewFilters.type !== 'all',
+    viewFilters.category !== 'all' || Boolean(viewFilters.parentCategory && viewFilters.parentCategory !== 'all'),
+    viewFilters.accountId !== 'all',
+    Boolean(viewFilters.payeeId && viewFilters.payeeId !== 'all'),
+    Boolean(viewFilters.tagId && viewFilters.tagId !== 'all'),
+    Boolean(viewFilters.status && viewFilters.status !== 'all'),
+    Boolean(viewFilters.amountMin),
+    Boolean(viewFilters.amountMax),
+    Boolean(viewFilters.search.trim()),
+    Boolean(viewFilters.advanced?.groups.length),
+  ].filter(Boolean).length;
   const selectedAccountId = selectedAccountForRead;
   const selectedAssetId = assetId === 'all' ? undefined : assetId;
   const ledger = (accountLedgerPage?.rows ?? []).map((row) => {
@@ -1263,8 +1276,9 @@ export function Transactions() {
                 onChange={(next) => setFilters((current) => ({ ...current, range: next.preset, dateFrom: next.from, dateTo: next.to }))}
                 view={recordView}
                 onViewChange={setRecordView}
+                collapseDatesOnMobile
               />
-              <button type="button" onClick={clearOtherFilters} style={button}>清除其他筛选</button>
+              <button type="button" className="zc-transaction-clear-desktop" onClick={clearOtherFilters} style={button}>清除其他筛选</button>
               {/* 下钻是环写进筛选的，所以在环能到的地方必须能退出去：轻量模式没有
                   筛选行，这条面包屑是那两级筛选唯一的出口，也顺便把「现在在看哪一层」
                   写在屏上——图表本身不随筛选变化，不说清楚就只能靠猜。 */}
@@ -1290,19 +1304,29 @@ export function Transactions() {
                 </nav>
               )}
             </div>
-            {usesAccounts && <Filters snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} onCategoryChange={changeCategoryFilter} />}
-            {usesAccounts && <SavedViews
-              views={savedViews}
-              name={savedViewName}
-              error={savedViewError}
-              onNameChange={setSavedViewName}
-              onApply={applySavedView}
-              onSave={() => void saveCurrentView(savedViewName)}
-              onRename={(v, name) => void renameSavedView(v, name)}
-              onTogglePin={(v) => void toggleSavedViewPin(v)}
-              onRemove={(v) => void removeSavedView(v)}
-            />}
-            {usesAccounts && <AdvancedQueryBuilder snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} />}
+            {usesAccounts && (
+              <button type="button" className="zc-transaction-filter-toggle" aria-expanded={mobileFiltersOpen} aria-controls="transaction-filter-panel" onClick={() => setMobileFiltersOpen((open) => !open)}>
+                筛选与搜索{activeFilterCount > 0 ? ` · 已启用 ${activeFilterCount} 项` : ''}<span aria-hidden="true">{mobileFiltersOpen ? '收起' : '展开'} ▾</span>
+              </button>
+            )}
+            {usesAccounts && (
+              <div id="transaction-filter-panel" className={`zc-transaction-filter-panel${mobileFiltersOpen ? ' is-open' : ''}`}>
+                <Filters snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} onCategoryChange={changeCategoryFilter} />
+                <SavedViews
+                  views={savedViews}
+                  name={savedViewName}
+                  error={savedViewError}
+                  onNameChange={setSavedViewName}
+                  onApply={applySavedView}
+                  onSave={() => void saveCurrentView(savedViewName)}
+                  onRename={(v, name) => void renameSavedView(v, name)}
+                  onTogglePin={(v) => void toggleSavedViewPin(v)}
+                  onRemove={(v) => void removeSavedView(v)}
+                />
+                <AdvancedQueryBuilder snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} />
+                <button type="button" className="zc-transaction-clear-mobile" onClick={clearOtherFilters} style={button}>清除其他筛选</button>
+              </div>
+            )}
             {showVoided && (
               <div style={{ borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
                 <div style={{ padding: '10px 0', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>已作废流水</div>

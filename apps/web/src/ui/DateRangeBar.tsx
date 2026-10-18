@@ -56,8 +56,9 @@ export function DateRangeBar(props: {
   onViewChange?: (view: TimelineViewMode) => void;
   views?: { value: TimelineViewMode; label: string }[];
   compact?: boolean;
+  collapseDatesOnMobile?: boolean;
 }) {
-  const { value, onChange, anchor = localToday(), view, onViewChange, views = TIMELINE_VIEWS, compact = false } = props;
+  const { value, onChange, anchor = localToday(), view, onViewChange, views = TIMELINE_VIEWS, compact = false, collapseDatesOnMobile = false } = props;
   const changePreset = (preset: DateRangePreset) => {
     onChange(preset === 'custom' ? { ...value, preset } : dateRangeValue(preset, anchor));
   };
@@ -69,7 +70,7 @@ export function DateRangeBar(props: {
   };
 
   return (
-    <div className="zc-date-range-bar" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+    <div className={`zc-date-range-bar${collapseDatesOnMobile ? ' zc-date-range-compact' : ''}${value.preset === 'custom' ? ' is-custom' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
       {view && onViewChange && (
         <div className="zc-date-view-tabs" role="tablist" aria-label="时间视图" style={{ display: 'flex', gap: 4, marginRight: compact ? 0 : 6 }}>
           {views.map((item) => (

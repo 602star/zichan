@@ -140,6 +140,8 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   const [resetOpen, setResetOpen] = useState(false);
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [navigationBusy, setNavigationBusy] = useState(false);
+  const [mobileLedgerMoreOpen, setMobileLedgerMoreOpen] = useState(false);
+  const [mobileSectionOpen, setMobileSectionOpen] = useState({ categories: false, fields: false, navigation: false });
   const [pendingAsOf, setPendingAsOf] = useState<{ date: string; warning: string } | null>(null);
   const [safetyState, setSafetyState] = useState(readSafetyState);
   const storedSafetyStateJson = snap?.setting?.dataSafetyStateJson;
@@ -627,8 +629,11 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)', maxWidth: 980 }}>
       {section === 'ledger' && (
         <>
-          <div className="zc-card">
+          <div className={`zc-card zc-settings-ledger-card${mobileLedgerMoreOpen ? ' is-expanded' : ''}`}>
             <h2 className="zc-section-title">结算与偏好</h2>
+            <button type="button" className="zc-settings-mobile-toggle" aria-expanded={mobileLedgerMoreOpen} onClick={() => setMobileLedgerMoreOpen((open) => !open)}>
+              更多结算选项<span aria-hidden="true">{mobileLedgerMoreOpen ? '收起' : '展开'} ▾</span>
+            </button>
             <div className="zc-settings-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
               <div className="zc-field">
                 <label className="zc-label">全局报表币种</label>
@@ -649,7 +654,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                     : module === 'fixed' ? setting?.fixedAssetDefaultCurrencyAssetId
                       : setting?.gameDefaultSettlementAssetId;
                 return (
-                  <div key={module} className="zc-field">
+                  <div key={module} className={`zc-field${module === 'transaction' ? '' : ' zc-settings-advanced-field'}`}>
                     <label className="zc-label">{label}</label>
                     <select aria-label={label} className="zc-select" value={fieldValue ?? ''} onChange={(e) => void onModuleCurrency(module, e.target.value)}>
                       <option value="">沿用全局 · {snap.assets.find((a) => a.id === moduleCurrencyId(setting, module))?.code ?? '未设置'}</option>
@@ -658,7 +663,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   </div>
                 );
               })}
-              <div className="zc-field">
+              <div className="zc-field zc-settings-advanced-field">
                 <label className="zc-label">默认卖出匹配方式</label>
                 <select aria-label="默认卖出匹配方式" className="zc-select" value={setting?.defaultLotMethod ?? 'fifo'} onChange={(e) => saveSetting({ defaultLotMethod: e.target.value as LotMethod })}>
                   {METHODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -707,7 +712,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   当前生效：{cutoffState.asOf} · {asOfSummary(cutoffState)}
                 </p>
               </div>
-              <div className="zc-field">
+              <div className="zc-field zc-settings-advanced-field">
                 <label className="zc-label">退款统计归属</label>
                 <select aria-label="退款统计归属" className="zc-select" value={setting?.refundAttributionMode ?? 'original_date'} onChange={(e) => saveSetting({ refundAttributionMode: e.target.value as 'original_date' | 'refund_date' })}>
                   <option value="original_date">冲减原消费日期</option>
@@ -730,119 +735,131 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                 <p>{pendingAsOf.warning}</p>
               </ConfirmDialog>
             )}
-            <p className="zc-meta" style={{ marginTop: 10 }}>
+            <p className="zc-meta zc-settings-advanced-note" style={{ marginTop: 10 }}>
               模块币种只预填新记录，不改写历史币种或金额；新预算默认使用日常记账币种并在保存后冻结。退款默认回冲原消费与原预算，也可改为按退款到账日期统计。
             </p>
           </div>
 
-          <div className="zc-card">
+          <div className={`zc-card zc-settings-collapsible-card${mobileSectionOpen.categories ? ' is-open' : ''}`}>
             <div className="zc-section-head zc-responsive-header">
               <div>
                 <h2 className="zc-section-title">记账分类</h2>
                 <p className="zc-meta" style={{ marginTop: 4 }}>高频 {frequentCategoryCount} 项 · 隐藏 {hiddenCategoryCount} 项</p>
               </div>
-              <button type="button" onClick={openCategoryCenter} style={btnOutline}>进入分类中心</button>
+              <button type="button" className="zc-settings-card-action" onClick={openCategoryCenter} style={btnOutline}>进入分类中心</button>
+              <button type="button" className="zc-settings-mobile-toggle" aria-expanded={mobileSectionOpen.categories} aria-controls="zc-settings-categories-body" onClick={() => setMobileSectionOpen((open) => ({ ...open, categories: !open.categories }))}>
+                分类设置<span aria-hidden="true">{mobileSectionOpen.categories ? '收起' : '展开'} ▾</span>
+              </button>
             </div>
-            <div className="zc-settings-category-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 320px) 1fr', gap: 14, alignItems: 'end', marginTop: 14 }}>
-              <div className="zc-field">
-                <label className="zc-label">记账弹窗默认分类范围</label>
-                <select
-                  aria-label="记账弹窗默认分类范围"
-                  className="zc-select"
-                  value={setting?.categoryPickerDefaultScope ?? 'frequent'}
-                  onChange={(event) => void saveSetting({ categoryPickerDefaultScope: event.target.value as 'frequent' | 'all' })}
-                >
-                  <option value="frequent">仅高频分类</option>
-                  <option value="all">全部分类</option>
-                </select>
+            <div id="zc-settings-categories-body" className="zc-settings-collapsible-body">
+              <div className="zc-settings-category-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 320px) 1fr', gap: 14, alignItems: 'end', marginTop: 14 }}>
+                <div className="zc-field">
+                  <label className="zc-label">记账弹窗默认分类范围</label>
+                  <select
+                    aria-label="记账弹窗默认分类范围"
+                    className="zc-select"
+                    value={setting?.categoryPickerDefaultScope ?? 'frequent'}
+                    onChange={(event) => void saveSetting({ categoryPickerDefaultScope: event.target.value as 'frequent' | 'all' })}
+                  >
+                    <option value="frequent">仅高频分类</option>
+                    <option value="all">全部分类</option>
+                  </select>
+                </div>
+                <p className="zc-caption">
+                  “仅高频”保持记账选择器简洁，搜索仍会匹配隐藏分类。新增、改名、隐藏和排序统一在分类中心处理。
+                </p>
               </div>
-              <p className="zc-caption">
-                “仅高频”保持记账选择器简洁，搜索仍会匹配隐藏分类。新增、改名、隐藏和排序统一在分类中心处理。
+            </div>
+          </div>
+
+          <div className={`zc-card zc-settings-collapsible-card${mobileSectionOpen.fields ? ' is-open' : ''}`}>
+            <div className="zc-section-head zc-responsive-header">
+              <h2 className="zc-section-title">常用附加字段</h2>
+              <button type="button" className="zc-settings-mobile-toggle" aria-expanded={mobileSectionOpen.fields} aria-controls="zc-settings-fields-body" onClick={() => setMobileSectionOpen((open) => ({ ...open, fields: !open.fields }))}>
+                字段设置<span aria-hidden="true">{mobileSectionOpen.fields ? '收起' : '展开'} ▾</span>
+              </button>
+            </div>
+            <div id="zc-settings-fields-body" className="zc-settings-collapsible-body">
+              <p className="zc-caption" style={{ marginTop: 6 }}>
+                勾选的字段在新增记账时直接展开。其他字段可在更多信息中填写；编辑时已有内容会自动显示。账户、转账和退款必需信息由当前操作决定，无需在这里勾选。
               </p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '12px 0 10px' }}>
+                {[
+                  ['仅核心', transactionFormPresetKeys('core', usesAccounts)],
+                  ['常用', transactionFormPresetKeys('common', usesAccounts)],
+                  ['完整', transactionFormPresetKeys('full', usesAccounts)],
+                ].map(([label, keys]) => (
+                  <button key={String(label)} onClick={() => void saveFormFields(keys as string[])} style={btnOutline}>{String(label)}</button>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {formFieldOptions.map(({ key, label }) => (
+                  <label key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '7px 11px', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)', background: formFields.has(key) ? 'var(--accent-soft)' : 'var(--surface-2)' }}>
+                    <input
+                      type="checkbox"
+                      checked={formFields.has(key)}
+                      onChange={(e) => {
+                        const next = new Set(formFields);
+                        if (e.target.checked) next.add(key);
+                        else next.delete(key);
+                        void saveFormFields([...next]);
+                      }}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
             </div>
           </div>
 
-          <div className="zc-card">
-            <h2 className="zc-section-title">常用附加字段</h2>
-            <p className="zc-caption" style={{ marginTop: 6 }}>
-              勾选的字段在新增记账时直接展开。其他字段可在更多信息中填写；编辑时已有内容会自动显示。账户、转账和退款必需信息由当前操作决定，无需在这里勾选。
-            </p>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '12px 0 10px' }}>
-              {[
-                ['仅核心', transactionFormPresetKeys('core', usesAccounts)],
-                ['常用', transactionFormPresetKeys('common', usesAccounts)],
-                ['完整', transactionFormPresetKeys('full', usesAccounts)],
-              ].map(([label, keys]) => (
-                <button key={String(label)} onClick={() => void saveFormFields(keys as string[])} style={btnOutline}>{String(label)}</button>
-              ))}
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {formFieldOptions.map(({ key, label }) => (
-                <label key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '7px 11px', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)', background: formFields.has(key) ? 'var(--accent-soft)' : 'var(--surface-2)' }}>
-                  <input
-                    type="checkbox"
-                    checked={formFields.has(key)}
-                    onChange={(e) => {
-                      const next = new Set(formFields);
-                      if (e.target.checked) next.add(key);
-                      else next.delete(key);
-                      void saveFormFields([...next]);
-                    }}
-                  />
-                  {label}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          <div className="zc-card">
+          <div className={`zc-card zc-settings-collapsible-card${mobileSectionOpen.navigation ? ' is-open' : ''}`}>
             <div className="zc-section-head zc-responsive-header">
               <div>
                 <h2 className="zc-section-title">侧边栏与模块</h2>
-                <p className="zc-meta" style={{ marginTop: 4 }}>
+                <p className="zc-meta zc-settings-card-description" style={{ marginTop: 4 }}>
                   勾选的模块会按下方顺序直接显示在桌面和平板侧栏；手机底栏显示前 3 项，其余已启用项进入“更多”。隐藏入口不会删除模块数据。
                 </p>
               </div>
-              <button
-                type="button"
-                disabled={navigationBusy}
-                onClick={() => void saveNavigation(defaultNavigationPreferences())}
-                style={btnOutline}
-              >
+              <button className="zc-settings-card-action" type="button" disabled={navigationBusy} onClick={() => void saveNavigation(defaultNavigationPreferences())} style={btnOutline}>
                 恢复推荐布局
               </button>
+              <button type="button" className="zc-settings-mobile-toggle" aria-expanded={mobileSectionOpen.navigation} aria-controls="zc-settings-navigation-body" onClick={() => setMobileSectionOpen((open) => ({ ...open, navigation: !open.navigation }))}>
+                模块设置<span aria-hidden="true">{mobileSectionOpen.navigation ? '收起' : '展开'} ▾</span>
+              </button>
             </div>
-            <div className="zc-navigation-settings-list" style={{ display: 'grid', gap: 8, marginTop: 14 }}>
-              {orderedNavigationItems(navigation, true).map((item, index, items) => {
-                const required = REQUIRED_NAVIGATION_IDS.has(item.id);
-                const visible = navigation.visible.includes(item.id);
-                return (
-                  <div
-                    key={item.id}
-                    className="zc-navigation-settings-row"
-                    style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', gap: 12, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '10px 12px', background: visible ? 'var(--surface)' : 'var(--surface-2)' }}
-                  >
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, cursor: required ? 'default' : 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        aria-label={`在侧边栏显示${navigationLabel(item.id, ledgerMode)}`}
-                        checked={visible}
-                        disabled={required || navigationBusy}
-                        onChange={(event) => setNavigationVisible(item.id, event.target.checked)}
-                      />
-                      <span style={{ width: 22, textAlign: 'center', color: 'var(--accent)', fontSize: 'var(--fs-title)' }}>{item.icon}</span>
-                      <span style={{ minWidth: 0 }}>
-                        <b style={{ display: 'block', fontSize: 'var(--fs-body)' }}>{navigationLabel(item.id, ledgerMode)}{required ? ' · 固定入口' : ''}</b>
-                        <small className="zc-meta">{item.description}</small>
-                      </span>
-                    </label>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button type="button" aria-label={`上移${navigationLabel(item.id, ledgerMode)}`} disabled={navigationBusy || index === 0} onClick={() => moveNavigation(item.id, -1)} style={navigationOrderButton(!navigationBusy && index > 0)}>↑</button>
-                      <button type="button" aria-label={`下移${navigationLabel(item.id, ledgerMode)}`} disabled={navigationBusy || index === items.length - 1} onClick={() => moveNavigation(item.id, 1)} style={navigationOrderButton(!navigationBusy && index < items.length - 1)}>↓</button>
+            <div id="zc-settings-navigation-body" className="zc-settings-collapsible-body">
+              <div className="zc-navigation-settings-list" style={{ display: 'grid', gap: 8, marginTop: 14 }}>
+                {orderedNavigationItems(navigation, true).map((item, index, items) => {
+                  const required = REQUIRED_NAVIGATION_IDS.has(item.id);
+                  const visible = navigation.visible.includes(item.id);
+                  return (
+                    <div
+                      key={item.id}
+                      className="zc-navigation-settings-row"
+                      style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', gap: 12, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '10px 12px', background: visible ? 'var(--surface)' : 'var(--surface-2)' }}
+                    >
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, cursor: required ? 'default' : 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          aria-label={`在侧边栏显示${navigationLabel(item.id, ledgerMode)}`}
+                          checked={visible}
+                          disabled={required || navigationBusy}
+                          onChange={(event) => setNavigationVisible(item.id, event.target.checked)}
+                        />
+                        <span style={{ width: 22, textAlign: 'center', color: 'var(--accent)', fontSize: 'var(--fs-title)' }}>{item.icon}</span>
+                        <span style={{ minWidth: 0 }}>
+                          <b style={{ display: 'block', fontSize: 'var(--fs-body)' }}>{navigationLabel(item.id, ledgerMode)}{required ? ' · 固定入口' : ''}</b>
+                          <small className="zc-meta">{item.description}</small>
+                        </span>
+                      </label>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button type="button" aria-label={`上移${navigationLabel(item.id, ledgerMode)}`} disabled={navigationBusy || index === 0} onClick={() => moveNavigation(item.id, -1)} style={navigationOrderButton(!navigationBusy && index > 0)}>↑</button>
+                        <button type="button" aria-label={`下移${navigationLabel(item.id, ledgerMode)}`} disabled={navigationBusy || index === items.length - 1} onClick={() => moveNavigation(item.id, 1)} style={navigationOrderButton(!navigationBusy && index < items.length - 1)}>↓</button>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </div>
         </>

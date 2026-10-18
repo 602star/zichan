@@ -77,7 +77,7 @@ export function CompositionDonut(props: {
   }
 
   const normalised = (weight: number) => (total > 0 ? Math.max(0, weight) / total : 0);
-  const summary = `${ariaLabel}：${slices.map((slice) => `${slice.label} ${slice.amountText} ${shareText(normalised(slice.weight))}`).join('、')}`;
+  const summary = `${ariaLabel}，合计 ${totalText}：${slices.map((slice) => `${slice.label} ${slice.amountText} ${shareText(normalised(slice.weight))}`).join('、')}`;
 
   /*
    * Clicking the ring picks the slice under the pointer, so the drawn shape is
@@ -108,17 +108,19 @@ export function CompositionDonut(props: {
 
   return (
     <div className="zc-donut" data-testid={testId}>
-      <div
-        className="zc-donut-ring"
-        role="img"
-        aria-label={summary}
-        onClick={selectSliceAt}
-        style={{ background: arcs.length > 0 ? `conic-gradient(${arcs.join(', ')})` : 'var(--surface-2)' }}
-      >
-        <div className="zc-donut-hole">
-          <span style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{totalText}</span>
-          <span title={totalCaption} style={{ width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{totalCaption}</span>
+      <div className="zc-donut-visual">
+        <div
+          className="zc-donut-ring"
+          role="img"
+          aria-label={summary}
+          onClick={selectSliceAt}
+          style={{ background: arcs.length > 0 ? `conic-gradient(${arcs.join(', ')})` : 'var(--surface-2)' }}
+        >
+          <div className="zc-donut-hole">
+            <span title={totalCaption} style={{ width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{totalCaption}</span>
+          </div>
         </div>
+        <span className="zc-donut-total">{totalText}</span>
       </div>
       <div className="zc-donut-legend">
         {slices.length === 0 && (

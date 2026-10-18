@@ -998,6 +998,16 @@ button,
   min-width: 0;
 }
 
+.zc-donut-visual {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 180px;
+  max-width: 100%;
+  min-width: 0;
+}
+
 .zc-donut-ring {
   position: relative;
   flex: 0 0 auto;
@@ -1017,6 +1027,18 @@ button,
   padding: 4px;
   border-radius: var(--r-round);
   background: var(--surface);
+  text-align: center;
+}
+
+.zc-donut-total {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  font-size: var(--fs-body);
+  font-weight: var(--fw-bold);
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
   text-align: center;
 }
 
@@ -1080,6 +1102,12 @@ button,
 
 .zc-donut-legend-share {
   color: var(--text-tertiary);
+}
+
+.zc-transaction-filter-toggle,
+.zc-transaction-clear-mobile,
+.zc-settings-mobile-toggle {
+  display: none;
 }
 
 .zc-game-season-tabs {
@@ -2466,6 +2494,11 @@ input[type="radio"] {
     width: 100% !important;
   }
 
+  .zc-date-range-compact:not(.is-custom) > .zc-date-boundary,
+  .zc-date-range-compact:not(.is-custom) > button:last-child {
+    display: none !important;
+  }
+
   .zc-date-boundary {
     min-width: 0;
     display: grid !important;
@@ -2620,6 +2653,50 @@ input[type="radio"] {
   .zc-fixed-filter-grid {
     grid-template-columns: minmax(0, 1fr) !important;
   }
+
+  .zc-transaction-clear-desktop { display: none !important; }
+  .zc-transaction-filter-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--surface-2);
+    color: var(--text-primary);
+    font-weight: var(--fw-medium);
+    text-align: left;
+  }
+  .zc-transaction-filter-toggle > span { color: var(--accent); white-space: nowrap; }
+  .zc-transaction-filter-panel:not(.is-open) { display: none; }
+  .zc-transaction-clear-mobile { display: block; width: 100%; margin-bottom: 14px; }
+
+  .zc-settings-mobile-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--surface-2);
+    color: var(--text-primary);
+    font-weight: var(--fw-medium);
+    text-align: left;
+  }
+  .zc-settings-mobile-toggle > span { color: var(--accent); white-space: nowrap; }
+  .zc-settings-collapsible-card .zc-settings-mobile-toggle { order: 1; }
+  .zc-settings-card-action { order: 2; width: 100%; }
+  .zc-settings-ledger-card:not(.is-expanded) .zc-settings-advanced-field,
+  .zc-settings-ledger-card:not(.is-expanded) .zc-settings-advanced-note,
+  .zc-settings-collapsible-card:not(.is-open) .zc-settings-card-description,
+  .zc-settings-collapsible-card:not(.is-open) > .zc-settings-collapsible-body { display: none; }
+  .zc-settings-collapsible-card:not(.is-open) .zc-settings-card-action { display: none !important; }
 
   .zc-transaction-filters > *,
   .zc-history-filters > * {
