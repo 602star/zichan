@@ -185,9 +185,9 @@ export function Dashboard() {
             {vm.alloc.map((a) => (
               <div key={a.name}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 7 }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                  <div className="zc-dashboard-allocation-name" style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
                     <span style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{a.name}</span>
-                    <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>{a.note}</span>
+                    <span className="zc-dashboard-allocation-note" style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>{a.note}</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
                     <span style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{money(a.value)}</span>

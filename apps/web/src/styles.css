@@ -2589,6 +2589,9 @@ input[type="radio"] {
   .zc-dashboard-kpi-grid { order: 3; }
   .zc-dashboard-kpi-grid.is-compact > :last-child { grid-column: auto; }
   .zc-dashboard-detail-grid { order: 4; }
+  .zc-dashboard-allocation-name { flex: 0 0 auto; }
+  .zc-dashboard-allocation-name > span:first-child { white-space: nowrap; }
+  .zc-dashboard-allocation-note { display: none; }
 
   .zc-transaction-time,
   .zc-transaction-details-desktop {
@@ -2716,6 +2719,20 @@ input[type="radio"] {
   .zc-manage-mobile-item summary { color: var(--text-secondary); font-size: var(--fs-caption); }
   .zc-manage-mobile-fact { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid var(--border); font-size: var(--fs-caption); }
   .zc-manage-mobile-fact > span:first-child { color: var(--text-tertiary); }
+
+  .zc-category-group-summary { flex-wrap: wrap; gap: 7px 9px; padding: 10px 4px; }
+  .zc-category-group-summary > .zc-category-group-name { flex: 1 0 80px; min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .zc-category-group-summary > .zc-category-summary-spacer { display: none; }
+  .zc-category-group-summary > button { flex: 1 1 110px; min-width: max-content; min-height: 44px; margin-left: 0 !important; padding: 5px 8px !important; border: 1px solid var(--border) !important; border-radius: var(--r-sm); white-space: nowrap; text-align: center; }
+  .zc-manage-category-list { padding: 4px 0 10px; }
+  .zc-manage-category-item { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .zc-manage-category-head { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+  .zc-manage-category-head > strong { flex: 1; min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .zc-manage-category-more > summary { min-height: 44px; display: flex; align-items: center; color: var(--text-secondary); font-size: var(--fs-caption); cursor: pointer; }
+  .zc-manage-category-more > div:not(.zc-manage-category-actions) { padding: 4px 0; color: var(--text-secondary); font-size: var(--fs-meta); }
+  .zc-manage-category-id { overflow-wrap: anywhere; }
+  .zc-manage-category-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 0; }
+  .zc-manage-category-actions > button { min-height: 44px; min-width: max-content; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--accent); white-space: nowrap; }
 
   .zc-fixed-card-header.has-image {
     grid-template-columns: 72px minmax(0, 1fr) !important;

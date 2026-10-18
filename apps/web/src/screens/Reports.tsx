@@ -1028,7 +1028,7 @@ function ReportChart(props: {
           <CompositionDonut
             ariaLabel={`${rangeLabel(dateRange)}分类支出构成（一级分类）`}
             totalText={report.formatReport(D(composition.total))}
-            totalCaption="分类支出合计"
+            totalCaption="分类支出"
             selectedKey={selectedParent || undefined}
             testId="composition-parent"
             slices={slices}

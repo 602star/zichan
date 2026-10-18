@@ -435,6 +435,7 @@ function CategorySection({ snap, store, bump }: {
   store: SqlLedgerStore;
   bump: () => void;
 }) {
+  const compactView = useCompactView();
   const categories = allCategories(snap.categories, { includeInactive: true });
   const parents = categories.filter((category) => !category.parentId);
   const undo = useUndo(store, () => bump());
@@ -621,17 +622,38 @@ function CategorySection({ snap, store, bump }: {
             >
               <summary className="zc-category-group-summary">
                 <CategoryMark id={parent.id} categories={snap.categories} />
-                <span style={{ fontWeight: 'var(--fw-bold)', color: 'var(--text-primary)' }}>{parent.name}</span>
+                <span className="zc-category-group-name" title={parent.name} style={{ fontWeight: 'var(--fw-bold)', color: 'var(--text-primary)' }}>{parent.name}</span>
                 <span style={typeBadge(parent.type)}>{parent.type === 'income' ? '收入' : '支出'}</span>
                 <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{visibleChildren.length}/{children.length} 项</span>
                 {hiddenCount > 0 && <span style={stateBadge('hidden')}>隐藏 {hiddenCount}</span>}
                 {inactiveCount > 0 && <span style={stateBadge('inactive')}>停用 {inactiveCount}</span>}
                 {availableChildren.length > 0 && <span style={stateBadge('available')}>可添加 {availableChildren.length}</span>}
-                <span style={{ flex: '1 1 auto' }} />
+                <span className="zc-category-summary-spacer" style={{ flex: '1 1 auto' }} />
                 <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setLifecycle(parent); }} style={editLinkButton}>归档/合并</button>
                 <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setEditing(parent); }} style={{ ...editLinkButton, marginLeft: 12 }}>编辑一级分类</button>
               </summary>
-              <div style={{ overflowX: 'auto' }}>
+              {compactView ? <div className="zc-manage-category-list">
+                {visibleChildren.map((category) => <article className="zc-manage-category-item" key={category.id}>
+                  <div className="zc-manage-category-head">
+                    <CategoryMark id={category.id} categories={snap.categories} />
+                    <strong>{category.name}</strong>
+                    {category.isActive === false
+                      ? <span style={stateBadge('inactive')}>已停用</span>
+                      : categoryIsHidden(category) ? <span style={stateBadge('hidden')}>隐藏</span> : <span style={stateBadge('frequent')}>高频</span>}
+                  </div>
+                  <details className="zc-manage-category-more">
+                    <summary>资料与操作</summary>
+                    <div>预算：{category.budgetable ? '纳入' : '不纳入'} · 排序：{category.sortOrder ?? '—'}</div>
+                    <div className="zc-manage-category-id">分类 ID：{category.id}</div>
+                    <div className="zc-manage-category-actions">
+                      <button type="button" onClick={() => void toggleHidden(category)}>{categoryIsHidden(category) ? '设为高频' : '设为隐藏'}</button>
+                      <button type="button" onClick={() => setLifecycle(category)}>归档/合并</button>
+                      <button type="button" onClick={() => setEditing(category)}>编辑</button>
+                    </div>
+                  </details>
+                </article>)}
+                {visibleChildren.length === 0 && <div className="zc-meta">{availableChildren.length > 0 ? '该一级分类下没有匹配的已有分类' : '该一级分类下没有匹配的二级分类'}</div>}
+              </div> : <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead><tr><th style={thStyle}>二级分类</th><th style={thStyle}>显示状态</th><th style={thStyle}>预算</th><th style={thStyle}>排序</th><th style={{ ...thStyle, textAlign: 'right' }}>操作</th></tr></thead>
                   <tbody>
@@ -666,7 +688,7 @@ function CategorySection({ snap, store, bump }: {
                     {visibleChildren.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={5}>{availableChildren.length > 0 ? '该一级分类下没有匹配的已有分类' : '该一级分类下没有匹配的二级分类'}</td></tr>}
                   </tbody>
                 </table>
-              </div>
+              </div>}
               {availableChildren.length > 0 && (
                 <div style={{ padding: '0 8px 12px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
@@ -763,6 +785,7 @@ function FixedCategorySection({ snap, store, bump }: {
   store: SqlLedgerStore;
   bump: () => void;
 }) {
+  const compactView = useCompactView();
   const categories = snap.fixedAssetCategories.filter((category) => !category.isDeleted);
   const parents = categories.filter((category) => !category.parentId).sort((a, b) => (a.sortOrder ?? 100) - (b.sortOrder ?? 100));
   const [editing, setEditing] = useState<FixedAssetCategory | 'new' | null>(null);
@@ -826,10 +849,28 @@ function FixedCategorySection({ snap, store, bump }: {
             <details key={parent.id} open={open} onToggle={(event) => { if (!forceOpen) toggleExpanded(parent.id, event.currentTarget.open); }} style={{ borderTop: '1px solid var(--border)' }}>
               <summary className="zc-category-group-summary">
                 <span style={{ width: 10, height: 10, borderRadius: 'var(--r-sm)', background: parent.color ?? 'var(--accent)' }} />
-                <b>{parent.name}</b><span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{shown.length}/{children.length} 项</span>
-                <span style={{ flex: 1 }} /><button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setLifecycle(parent); }} style={editLinkButton}>归档/合并</button><button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setEditing(parent); }} style={{ ...editLinkButton, marginLeft: 12 }}>编辑一级分类</button>
+                <b className="zc-category-group-name" title={parent.name}>{parent.name}</b><span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{shown.length}/{children.length} 项</span>
+                <span className="zc-category-summary-spacer" style={{ flex: 1 }} /><button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setLifecycle(parent); }} style={editLinkButton}>归档/合并</button><button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setEditing(parent); }} style={{ ...editLinkButton, marginLeft: 12 }}>编辑一级分类</button>
               </summary>
-              <div className="zc-scroll-x"><table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              {compactView ? <div className="zc-manage-category-list">
+                {shown.map((category) => <article className="zc-manage-category-item" key={category.id}>
+                  <div className="zc-manage-category-head">
+                    <strong>{category.name}</strong>
+                    {!category.isActive ? <span style={stateBadge('inactive')}>停用</span> : category.isHidden ? <span style={stateBadge('hidden')}>隐藏</span> : <span style={stateBadge('frequent')}>高频</span>}
+                  </div>
+                  <details className="zc-manage-category-more">
+                    <summary>资料与操作</summary>
+                    <div>排序：{category.sortOrder ?? 100}</div>
+                    <div className="zc-manage-category-id">分类 ID：{category.id}</div>
+                    <div className="zc-manage-category-actions">
+                      <button type="button" onClick={() => void toggleHidden(category)}>{category.isHidden ? '设为高频' : '设为隐藏'}</button>
+                      <button type="button" onClick={() => setLifecycle(category)}>归档/合并</button>
+                      <button type="button" onClick={() => setEditing(category)}>编辑</button>
+                    </div>
+                  </details>
+                </article>)}
+                {shown.length === 0 && <div className="zc-meta">没有匹配的二级分类</div>}
+              </div> : <div className="zc-scroll-x"><table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr><th style={thStyle}>二级分类</th><th style={thStyle}>显示</th><th style={thStyle}>排序</th><th style={{ ...thStyle, textAlign: 'right' }}>操作</th></tr></thead>
                 <tbody>
                   {shown.map((category) => <tr key={category.id}>
@@ -840,7 +881,7 @@ function FixedCategorySection({ snap, store, bump }: {
                   </tr>)}
                   {shown.length === 0 && <tr><td colSpan={4} style={{ ...tdStyle, color: 'var(--text-tertiary)' }}>没有匹配的二级分类</td></tr>}
                 </tbody>
-              </table></div>
+              </table></div>}
             </details>
           );
         })}

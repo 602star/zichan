@@ -13,13 +13,15 @@ export function mobileLayoutProbe(options) {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
 
-  // A closed <details> keeps laying out its content (so find-in-page can reach
-  // it), which means geometry queries still return boxes for content that is
-  // never painted. Exclude it from every check.
+  // A closed <details> can still return geometry for unpainted descendants.
+  // Check every ancestor: an inner summary is hidden when its outer details is closed.
   const hiddenByClosedDetails = (el) => {
-    const details = el.closest('details');
-    if (!details || details.open) return false;
-    return !el.closest('summary');
+    for (let ancestor = el.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (!(ancestor instanceof HTMLDetailsElement) || ancestor.open) continue;
+      const summary = [...ancestor.children].find((child) => child.tagName === 'SUMMARY');
+      if (!summary?.contains(el)) return true;
+    }
+    return false;
   };
 
   const visible = (el) => {

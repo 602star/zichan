@@ -117,7 +117,7 @@ export function CompositionDonut(props: {
       >
         <div className="zc-donut-hole">
           <span style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{totalText}</span>
-          <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{totalCaption}</span>
+          <span title={totalCaption} style={{ width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{totalCaption}</span>
         </div>
       </div>
       <div className="zc-donut-legend">
