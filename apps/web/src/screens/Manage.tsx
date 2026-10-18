@@ -629,8 +629,10 @@ function CategorySection({ snap, store, bump }: {
                 {inactiveCount > 0 && <span style={stateBadge('inactive')}>停用 {inactiveCount}</span>}
                 {availableChildren.length > 0 && <span style={stateBadge('available')}>可添加 {availableChildren.length}</span>}
                 <span className="zc-category-summary-spacer" style={{ flex: '1 1 auto' }} />
-                <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setLifecycle(parent); }} style={editLinkButton}>归档/合并</button>
-                <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setEditing(parent); }} style={{ ...editLinkButton, marginLeft: 12 }}>编辑一级分类</button>
+                <span className="zc-category-summary-actions">
+                  <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setLifecycle(parent); }} style={editLinkButton}>归档/合并</button>
+                  <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setEditing(parent); }} style={editLinkButton}>编辑一级分类</button>
+                </span>
               </summary>
               {compactView ? <div className="zc-manage-category-list">
                 {visibleChildren.map((category) => <article className="zc-manage-category-item" key={category.id}>
@@ -850,7 +852,11 @@ function FixedCategorySection({ snap, store, bump }: {
               <summary className="zc-category-group-summary">
                 <span style={{ width: 10, height: 10, borderRadius: 'var(--r-sm)', background: parent.color ?? 'var(--accent)' }} />
                 <b className="zc-category-group-name" title={parent.name}>{parent.name}</b><span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{shown.length}/{children.length} 项</span>
-                <span className="zc-category-summary-spacer" style={{ flex: 1 }} /><button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setLifecycle(parent); }} style={editLinkButton}>归档/合并</button><button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setEditing(parent); }} style={{ ...editLinkButton, marginLeft: 12 }}>编辑一级分类</button>
+                <span className="zc-category-summary-spacer" style={{ flex: 1 }} />
+                <span className="zc-category-summary-actions">
+                  <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setLifecycle(parent); }} style={editLinkButton}>归档/合并</button>
+                  <button type="button" onClick={(event) => { event.preventDefault(); event.stopPropagation(); setEditing(parent); }} style={editLinkButton}>编辑一级分类</button>
+                </span>
               </summary>
               {compactView ? <div className="zc-manage-category-list">
                 {shown.map((category) => <article className="zc-manage-category-item" key={category.id}>

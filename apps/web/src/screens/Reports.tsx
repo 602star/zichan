@@ -1015,7 +1015,9 @@ function ReportChart(props: {
   return (
     <div style={card}>
       <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
-        <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', minWidth: 0 }}>{title}</div>
+        <div className={isComposition ? 'zc-report-composition-title' : undefined} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', minWidth: 0 }}>
+          {isComposition ? <><span>{rangeLabel(dateRange)}</span>{parentLabel && <span>{parentLabel}</span>}<span>分类支出</span></> : title}
+        </div>
         {isComposition && (
           <div role="group" aria-label="分类图形态" style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
             <button type="button" aria-pressed={shape === 'donut'} onClick={() => setShape('donut')} style={pillBtn(shape === 'donut')}>环形</button>

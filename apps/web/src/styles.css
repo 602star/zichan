@@ -537,6 +537,12 @@ button,
   line-height: 1.15;
 }
 
+@media (max-width: 767px) {
+  .zc-summary-bar { grid-template-columns: minmax(0, 1fr); }
+  .zc-summary-metric { min-width: 0; }
+  .zc-summary-value { font-size: clamp(22px, 6vw, 28px); overflow-wrap: anywhere; }
+}
+
 /* Overflow menu, so exports stop being a wall of buttons. */
 .zc-menu {
   position: relative;
@@ -794,6 +800,15 @@ button,
 .zc-report-tabs > button {
   flex: 0 0 auto;
 }
+
+.zc-report-composition-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 5px;
+}
+.zc-report-composition-title > span:first-child { white-space: nowrap; }
+.zc-report-composition-title > span:not(:first-child):not(:last-child) { min-width: 0; overflow-wrap: anywhere; }
+.zc-report-composition-title > span:last-child { white-space: nowrap; }
 
 /*
  * Chart vocabulary.
@@ -1685,6 +1700,12 @@ input[type="radio"] {
   background: var(--surface-2);
 }
 
+.zc-category-summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .zc-category-pref-head {
   display: flex;
   align-items: flex-start;
@@ -2558,6 +2579,42 @@ input[type="radio"] {
     grid-column: 1 / -1;
   }
 
+  .zc-transaction-summary-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 0 !important;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--surface);
+  }
+  .zc-transaction-summary-grid > div {
+    min-width: 0;
+    padding: 10px 14px !important;
+    border: 0 !important;
+    border-bottom: 1px solid var(--border) !important;
+    border-radius: 0 !important;
+  }
+  .zc-transaction-summary-grid > div:last-child { border-bottom: 0 !important; }
+  .zc-transaction-summary-metric {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 3px 8px;
+  }
+  .zc-transaction-summary-metric > div:nth-child(2) {
+    max-width: 100%;
+    margin-top: 0 !important;
+    font-size: clamp(18px, 4.7vw, 20px) !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+    text-align: right;
+  }
+  .zc-transaction-summary-metric > div:nth-child(3) {
+    grid-column: 1 / -1;
+    margin-top: 0 !important;
+    overflow-wrap: anywhere;
+  }
+
   .zc-transaction-filters,
   .zc-history-filters,
   .zc-fixed-filter-grid {
@@ -2723,7 +2780,8 @@ input[type="radio"] {
   .zc-category-group-summary { flex-wrap: wrap; gap: 7px 9px; padding: 10px 4px; }
   .zc-category-group-summary > .zc-category-group-name { flex: 1 0 80px; min-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .zc-category-group-summary > .zc-category-summary-spacer { display: none; }
-  .zc-category-group-summary > button { flex: 1 1 110px; min-width: max-content; min-height: 44px; margin-left: 0 !important; padding: 5px 8px !important; border: 1px solid var(--border) !important; border-radius: var(--r-sm); white-space: nowrap; text-align: center; }
+  .zc-category-group-summary > .zc-category-summary-actions { flex: 1 0 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .zc-category-summary-actions > button { min-width: 0; min-height: 44px; padding: 5px 8px !important; border: 1px solid var(--border) !important; border-radius: var(--r-sm); white-space: nowrap; text-align: center; }
   .zc-manage-category-list { padding: 4px 0 10px; }
   .zc-manage-category-item { padding: 8px 0; border-bottom: 1px solid var(--border); }
   .zc-manage-category-head { display: flex; align-items: center; gap: 8px; min-height: 32px; }
@@ -3447,6 +3505,11 @@ input[type="radio"] {
   .zc-conversion-fact-list dd { text-align: left; }
   .zc-conversion-modal { max-width: none; }
   .zc-cost-opening { width: 100vw; height: 100dvh; max-height: 100dvh; padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom)); border: 0; border-radius: 0; }
+}
+
+@media (max-width: 359px) {
+  .zc-date-range-bar { grid-template-columns: minmax(0, 1fr); }
+  .zc-date-boundary { grid-column: 1 / -1; }
 }
 
 /* Keep content readable as physical desktop viewports grow beyond 1080p. */

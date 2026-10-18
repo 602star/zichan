@@ -2273,8 +2273,8 @@ function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof b
   if (!usesAccounts) {
     return (
       <div className="zc-transaction-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
-        <div style={cardTight}><Kpi label={`${vm.month} 本月支出`} value={money(vm.expense)} tone="var(--negative)" sub="自动汇总全部支出" /></div>
-        <div style={cardTight}><Kpi label="当前范围" value={`${vm.count} 笔`} tone="var(--accent)" sub={`合计支出 ${money(vm.filteredExpense)}`} /></div>
+        <div className="zc-transaction-summary-metric" style={cardTight}><Kpi label={`${vm.month} 本月支出`} value={money(vm.expense)} tone="var(--negative)" sub="自动汇总全部支出" /></div>
+        <div className="zc-transaction-summary-metric" style={cardTight}><Kpi label="当前范围" value={`${vm.count} 笔`} tone="var(--accent)" sub={`合计支出 ${money(vm.filteredExpense)}`} /></div>
         <div style={cardTight}>
           <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>常用支出分类</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 11 }}>
@@ -2291,10 +2291,10 @@ function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof b
   }
   return (
     <div className="zc-transaction-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16 }}>
-      <div style={cardTight}><Kpi label={`${vm.month} 本月收入`} value={money(vm.income)} tone="var(--positive)" sub="不受筛选影响" /></div>
-      <div style={cardTight}><Kpi label={`${vm.month} 本月支出`} value={money(vm.expense)} tone="var(--negative)" sub={usesAccounts ? '转账不计入支出' : '只统计收入和支出'} /></div>
-      <div style={cardTight}><Kpi label="本月结余" value={signedMoney(vm.net)} tone={Number(vm.net) >= 0 ? 'var(--positive)' : 'var(--negative)'} sub="收入 - 支出" /></div>
-      <div style={cardTight}><Kpi label="当前筛选" value={`${vm.count} 条`} tone="var(--accent)" sub={`收 ${money(vm.filteredIncome)} · 支 ${money(vm.filteredExpense)} · ${signedMoney(vm.filteredNet)}`} /></div>
+      <div className="zc-transaction-summary-metric" style={cardTight}><Kpi label={`${vm.month} 本月收入`} value={money(vm.income)} tone="var(--positive)" sub="不受筛选影响" /></div>
+      <div className="zc-transaction-summary-metric" style={cardTight}><Kpi label={`${vm.month} 本月支出`} value={money(vm.expense)} tone="var(--negative)" sub={usesAccounts ? '转账不计入支出' : '只统计收入和支出'} /></div>
+      <div className="zc-transaction-summary-metric" style={cardTight}><Kpi label="本月结余" value={signedMoney(vm.net)} tone={Number(vm.net) >= 0 ? 'var(--positive)' : 'var(--negative)'} sub="收入 - 支出" /></div>
+      <div className="zc-transaction-summary-metric" style={cardTight}><Kpi label="当前筛选" value={`${vm.count} 条`} tone="var(--accent)" sub={`收 ${money(vm.filteredIncome)} · 支 ${money(vm.filteredExpense)} · ${signedMoney(vm.filteredNet)}`} /></div>
       <div style={cardTight}>
         <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>Top 支出分类</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 11 }}>
