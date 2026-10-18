@@ -200,6 +200,7 @@ export function Transactions() {
   const snap = useSnapshot('transactions');
   const [tab, setTab] = useState<Tab>(initialTransactionTab);
   const [editingTx, setEditingTx] = useState<Transaction | 'new' | null>(null);
+  const [showFirstEntryGuide, setShowFirstEntryGuide] = useState(false);
   const [refundDraft, setRefundDraft] = useState<Transaction | null>(null);
   /** The expense whose refunds the user asked to inspect. */
   const [refundHistoryFor, setRefundHistoryFor] = useState<Transaction | null>(null);
@@ -315,6 +316,7 @@ export function Transactions() {
   useEffect(() => {
     const openQuickTransaction = () => {
       setTab('records');
+      setShowFirstEntryGuide(false);
       setEditingTx(null);
       setRefundDraft(null);
       setTemplateDraft(null);
@@ -330,14 +332,19 @@ export function Transactions() {
       }
       if (accountSessionStorage.getItem('zichan.postFirstRun') === 'quick-expense') {
         accountSessionStorage.removeItem('zichan.postFirstRun');
-        openQuickTransaction();
+        if (compactView) {
+          setTab('records');
+          setShowFirstEntryGuide(true);
+        } else {
+          openQuickTransaction();
+        }
       }
     } catch {
       // Ignore storage failures; the live event below still works.
     }
     window.addEventListener('zichan:quick-transaction', openQuickTransaction);
     return () => window.removeEventListener('zichan:quick-transaction', openQuickTransaction);
-  }, [ledgerMode]);
+  }, [compactView, ledgerMode]);
   const visibleTabs: [Tab, string][] = usesAccounts
     ? [['records', '流水'], ['accounts', '账户'], ['budget', '预算'], ['bills', '账单']]
     : [['records', '支出']];
@@ -665,6 +672,7 @@ export function Transactions() {
     .sort((a, b) => Number(b.isPinned ?? false) - Number(a.isPinned ?? false) || (a.sortOrder ?? 100) - (b.sortOrder ?? 100) || a.name.localeCompare(b.name));
 
   function openNewTransaction() {
+    setShowFirstEntryGuide(false);
     setQuickExpenseOpen(false);
     setQuickTemplate(null);
     setRefundDraft(null);
@@ -1251,6 +1259,18 @@ export function Transactions() {
 
       {activeTab === 'records' && (
         <>
+          {compactView && showFirstEntryGuide && (
+            <section className="zc-first-entry-guide" aria-label="首次记账引导">
+              <div>
+                <h2>账本已准备好</h2>
+                <p>先看看收支概览。准备好时再记第一笔；以后也能用<span className="zc-nowrap">底部“快记”</span>。</p>
+              </div>
+              <div className="zc-first-entry-actions">
+                <button type="button" style={primary} onClick={openNewTransaction}>记第一笔</button>
+                <button type="button" style={button} onClick={() => setShowFirstEntryGuide(false)}>先看看</button>
+              </div>
+            </section>
+          )}
           <SummaryGrid vm={vm} usesAccounts={usesAccounts} />
           <div id="transaction-records" style={{ ...card, scrollMarginTop: 16 }}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>

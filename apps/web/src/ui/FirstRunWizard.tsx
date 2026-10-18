@@ -177,7 +177,7 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
     <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(22px, 5vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif' }}>
       <section style={{ width: 'min(920px, 100%)', margin: '0 auto' }}>
         <div style={{ color: 'var(--accent)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.12em' }}>ZICHAN · 首次设置</div>
-        <h1 style={{ margin: '10px 0', fontSize: 'var(--fs-hero)' }}>你希望怎样开始记账？</h1>
+        <h1 className="zc-first-run-title" style={{ margin: '10px 0' }}>你希望怎样开始记账？</h1>
         <p>先决定要不要分开记录银行卡、微信和支付宝。以后随时可以添加账户。</p>
         <label>记账币种 <select aria-label="记账币种" value={baseCurrencyCode} onChange={(e) => setBaseCurrencyCode(e.target.value as BaseCurrencyChoice['code'])} style={field}>{BASE_CURRENCY_CHOICES.map((c) => <option key={c.code} value={c.code}>{c.name}（{c.code}）</option>)}</select></label>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 18, marginTop: 24 }}>

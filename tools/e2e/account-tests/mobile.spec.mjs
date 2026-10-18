@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
 import { registerAccount } from '../../../packages/db/dist/index.js';
 
-for (const width of [360, 390]) test(`mobile ${width}px supports login, initialization, entry, protection and sync`, async ({ page }, testInfo) => {
+test.use({ hasTouch: true, isMobile: true });
+
+for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, initialization, entry, protection and sync`, async ({ page }, testInfo) => {
   await page.setViewportSize({ width, height: 844 });
   const setup = 'test-mobile-owner-00000000000000000';
   const server = createSyncServer({ webDir: resolve(fileURLToPath(new URL('../../../', import.meta.url)), 'apps/web/dist'), enableWeb: true, registrationMode: 'open', ownerSetupToken: setup });
@@ -23,10 +25,25 @@ for (const width of [360, 390]) test(`mobile ${width}px supports login, initiali
     await expect(page.getByRole('button', { name: '创建个人账本' })).toBeVisible();
     await fits();
     await page.getByRole('button', { name: '创建个人账本' }).click();
-    await page.getByRole('button', { name: '开始记账', exact: true }).click();
-    await expect(page.getByRole('dialog')).toBeVisible();
+    const firstRunTitle = page.getByRole('heading', { name: '你希望怎样开始记账？' });
+    await expect(firstRunTitle).toBeVisible();
+    const titleLines = await firstRunTitle.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size;
+    });
+    expect(titleLines).toBe(1);
     await fits();
-    await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
+    await page.screenshot({ path: testInfo.outputPath('mobile-first-run.png') });
+    await page.getByRole('button', { name: '开始记账', exact: true }).click();
+    await expect(page.getByRole('region', { name: '首次记账引导' })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: '新增 · 日常收支' })).toBeHidden();
+    await fits();
+    await page.screenshot({ path: testInfo.outputPath('mobile-first-entry-guide.png') });
+    await page.getByRole('button', { name: '记第一笔' }).click();
+    const entry = page.getByRole('dialog', { name: '新增 · 日常收支' });
+    await expect(entry).toBeVisible();
+    await entry.getByRole('button', { name: '取消', exact: true }).click();
     const nav = page.getByRole('navigation', { name: '移动端主导航' });
     // Data protection remains reachable from the account page on small screens.
     await nav.getByRole('button', { name: /更多$/ }).click();

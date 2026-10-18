@@ -45,7 +45,8 @@ test('new account opens its ledger over plain LAN HTTP without a device password
     await page.getByRole('button', { name: '创建个人账本' }).click();
     await expect(page.getByRole('button', { name: '开始记账', exact: true })).toBeVisible();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
-    await expect(page.getByRole('dialog', { name: '新增 · 日常收支' })).toBeVisible();
+    await expect(page.getByRole('region', { name: '首次记账引导' })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: '新增 · 日常收支' })).toBeHidden();
     await page.reload();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await expect(page.getByText('数据库初始化失败')).toHaveCount(0);

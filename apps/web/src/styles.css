@@ -2132,8 +2132,46 @@ input[type="radio"] {
   }
 }
 
+.zc-first-run-title {
+  font-size: var(--fs-hero);
+}
+
 /* Phone: one content column, bottom navigation, safe areas, and keyboard-safe sheets. */
+.zc-first-entry-guide {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md);
+  background: var(--accent-soft);
+}
+
+.zc-first-entry-guide h2 {
+  margin: 0;
+  font-size: var(--fs-heading);
+}
+
+.zc-first-entry-guide p {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.zc-first-entry-guide .zc-nowrap {
+  white-space: nowrap;
+}
+
+.zc-first-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 @media (max-width: 767px) {
+  .zc-first-run-title {
+    font-size: clamp(24px, 7vw, var(--fs-hero));
+  }
+
   input:not([type="checkbox"]):not([type="radio"]), select, textarea {
     font-size: var(--fs-input) !important;
   }
@@ -2193,12 +2231,18 @@ input[type="radio"] {
   }
 
   .zc-safety-banner {
-    align-items: flex-start !important;
-    flex-direction: column;
+    align-items: center !important;
+    flex-direction: row;
+    gap: 8px !important;
+  }
+
+  .zc-safety-banner > div {
+    min-width: 0;
   }
 
   .zc-safety-banner button {
-    width: 100%;
+    flex: none;
+    padding-inline: 8px;
   }
 
   .zc-navigation-settings-row {
