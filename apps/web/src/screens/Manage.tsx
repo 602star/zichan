@@ -3,6 +3,7 @@ import { PayeeDirectory } from '../ui/PayeeDirectory.js';
 import { withRememberedPayee } from '../payee-recording.js';
 import { CategoryMark, EntityIcon } from '../ui/EntityIcon.js';
 import { accountSessionStorage } from '../account-storage.js';
+import { readOnboarding, updateOnboarding } from '../onboarding.js';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { isDateInRange, nextUnhandledScheduleOccurrence, type Attachment, type Category, type FixedAssetCategory } from '@zichan/core';
 import {
@@ -53,7 +54,7 @@ const norm = (value: unknown) => String(value ?? '').trim().toLowerCase();
 type ManageTab = 'transactionCategories' | 'fixedCategories' | 'labels' | 'assets' | 'other';
 type OtherDataTab = 'accounts' | 'templates' | 'prices' | 'plans' | 'games' | 'attachments';
 type CategoryCenterMode = 'structure' | 'quick';
-type ManageTarget = { tab?: ManageTab; categoryMode?: CategoryCenterMode };
+type ManageTarget = { tab?: ManageTab; categoryMode?: CategoryCenterMode; otherTab?: OtherDataTab };
 
 const MANAGE_TARGET_KEY = 'zichan.manage.target';
 
@@ -74,7 +75,7 @@ export function Manage() {
   const [payeeView, setPayeeView] = useState<'mine' | 'catalog'>('mine');
   const [initialTarget] = useState(readManageTarget);
   const [tab, setTab] = useState<ManageTab>(initialTarget.tab ?? 'transactionCategories');
-  const [otherTab, setOtherTab] = useState<OtherDataTab>('accounts');
+  const [otherTab, setOtherTab] = useState<OtherDataTab>(initialTarget.otherTab ?? 'accounts');
   const [categoryMode, setCategoryMode] = useState<CategoryCenterMode>(initialTarget.categoryMode ?? 'structure');
   const [categoryPackBusy, setCategoryPackBusy] = useState('');
   const [categoryPackNotice, setCategoryPackNotice] = useState('');
@@ -91,6 +92,7 @@ export function Manage() {
     }
   }, []);
   if (!snap) return null;
+  const onboardingGuide = snap.setting?.id ? readOnboarding(snap.setting.id) : null;
 
   const codeOf = (id: string) => assetById(snap).get(id)?.code ?? id;
   const gameName = (id: string) => snap.games.find((g) => g.id === id)?.name ?? id;
@@ -183,6 +185,12 @@ export function Manage() {
       <div>
         <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>资产与资料中心</div>
         <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4 }}>在资产标签管理货币与资产的加入、停用和归档；其他标签维护分类与基础资料。</div>
+        {onboardingGuide && (
+          <button type="button" style={{ marginTop: 8, padding: 0, border: 0, background: 'transparent', color: 'var(--accent)', cursor: 'pointer' }} onClick={() => {
+            updateOnboarding(onboardingGuide, { dismissed: false });
+            window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'transactions' } }));
+          }}>返回新手指南</button>
+        )}
       </div>
 
       <div role="tablist" aria-label="资产与资料中心" className="zc-manage-primary-tabs" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', overflowX: 'auto' }}>

@@ -2157,17 +2157,66 @@ input[type="radio"] {
   line-height: 1.55;
 }
 
-.zc-first-entry-guide .zc-nowrap {
-  white-space: nowrap;
-}
-
 .zc-first-entry-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
+.zc-onboarding-steps {
+  display: grid;
+  gap: 8px;
+}
+
+.zc-onboarding-step {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+}
+
+.zc-onboarding-step > div:first-child { min-width: 0; }
+.zc-onboarding-step p { margin: 4px 0 0; font-size: var(--fs-caption); }
+.zc-onboarding-step button { flex-shrink: 0; }
+.zc-onboarding-reopen {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.zc-first-entry-guide-mobile { gap: 12px; padding: 16px; }
+.zc-mobile-guide-header,
+.zc-mobile-guide-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.zc-mobile-guide-header { color: var(--text-secondary); font-size: var(--fs-caption); font-weight: var(--fw-medium); }
+.zc-mobile-guide-header button,
+.zc-mobile-guide-nav button {
+  min-height: 36px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.zc-mobile-guide-progress { display: flex; gap: 5px; }
+.zc-mobile-guide-progress span { flex: 1; height: 4px; border-radius: var(--r-sm); background: var(--border-strong); }
+.zc-mobile-guide-progress span.is-active { background: var(--accent); }
+.zc-mobile-guide-content { display: grid; gap: 10px; }
+.zc-mobile-guide-content p { margin: 0; font-size: var(--fs-caption); }
+.zc-mobile-guide-content .zc-first-entry-actions button { min-height: 40px; }
+.zc-mobile-guide-nav { padding-top: 4px; border-top: 1px solid var(--border); }
+.zc-mobile-guide-nav button:first-child:last-child { margin-left: auto; }
+
 @media (max-width: 767px) {
+  .zc-onboarding-step { display: grid; }
+  .zc-onboarding-step > button { justify-self: start; }
   .zc-first-run-title {
     font-size: clamp(24px, 7vw, var(--fs-hero));
   }

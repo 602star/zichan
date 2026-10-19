@@ -9,13 +9,7 @@ export async function openSpendingLedger(page, base, username, password) {
   await page.getByRole('button', { name: '创建个人账本' }).click();
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
   const firstEntry = page.getByRole('dialog', { name: '新增 · 日常收支' });
-  if ((page.viewportSize()?.width ?? 1280) <= 767) {
-    await expect(page.getByRole('region', { name: '首次记账引导' })).toBeVisible();
-    await expect(firstEntry).toBeHidden();
-    return;
-  }
-  await expect(firstEntry).toBeVisible();
-  await firstEntry.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(page.getByRole('region', { name: '首次记账引导' })).toBeVisible();
   await expect(firstEntry).toBeHidden();
 }
 

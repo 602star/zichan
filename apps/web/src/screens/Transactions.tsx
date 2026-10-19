@@ -3,12 +3,13 @@ import { EarlierBalancePanel } from '../ui/EarlierBalancePanel.js';
 import { AccountSetupPanel } from '../ui/AccountSetupPanel.js';
 import { AccountHistoryPanel } from '../ui/AccountHistoryPanel.js';
 import { accountSessionStorage } from '../account-storage.js';
+import { readOnboarding, updateOnboarding, type OnboardingState } from '../onboarding.js';
 import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { QueryGeneration } from '../query-generation.js';
 import {
   D, accountBalanceTiming, isDefaultAccount, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, newId,
   type BudgetCategory, type Category, type Payee, type ReconciliationSession,
-  type LedgerMode, type ScheduledTransaction, type Setting, type Transaction, type TransactionSavedView, type TransactionSplit, type TransactionTemplate, type TransactionType,
+  type ScheduledTransaction, type Setting, type Transaction, type TransactionSavedView, type TransactionSplit, type TransactionTemplate, type TransactionType,
 } from '@zichan/core';
 import {
   archiveMasterData,
@@ -40,13 +41,13 @@ import { useSnapshot, type Snapshot } from '../db/snapshot.js';
 import { CategoryPicker, EntityFormModal } from '../ui/EntityFormModal.js';
 import {
   budgetCategoryForm, categoryForm, payeeForm, scheduledTransactionForm,
-  transactionForm, transactionSplitForm, type AttachmentDraft, type TransactionFormValue,
+  transactionForm, transactionSplitForm, transactionTemplateForm, type AttachmentDraft, type TransactionFormValue,
 } from '../forms.js';
 import { amount as fmtAmount, money, signedMoney } from '../format.js';
 import { amountColor, btnOutline, btnPrimary, card, cardTight, selectBase, tag as tagStyle, td as tdStyle, th as thStyle } from '../ui/styles.js';
 import { ChartLegend, CompositionDonut, TrendBars, type ChartSlice } from '../ui/charts.js';
 import { CATEGORY_COLORS, OTHER_CATEGORY_COLOR } from '../theme.js';
-import { categoryLabel, categoryName, categoryOptions, categoryType as metaCategoryType, rootCategoryId, transactionSummaryTitle, TYPE_LABEL } from '../transactionMeta.js';
+import { CATEGORY_PACKS, categoryPackState, categoryLabel, categoryName, categoryOptions, categoryType as metaCategoryType, rootCategoryId, transactionSummaryTitle, TYPE_LABEL } from '../transactionMeta.js';
 import {
   buildBudgetMonth,
   buildBudgetMonthFromAggregates,
@@ -201,6 +202,8 @@ export function Transactions() {
   const [tab, setTab] = useState<Tab>(initialTransactionTab);
   const [editingTx, setEditingTx] = useState<Transaction | 'new' | null>(null);
   const [showFirstEntryGuide, setShowFirstEntryGuide] = useState(false);
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
+  const [creatingOwnTemplate, setCreatingOwnTemplate] = useState<TransactionTemplate | null>(null);
   const [refundDraft, setRefundDraft] = useState<Transaction | null>(null);
   /** The expense whose refunds the user asked to inspect. */
   const [refundHistoryFor, setRefundHistoryFor] = useState<Transaction | null>(null);
@@ -265,8 +268,13 @@ export function Transactions() {
   const [accountBalanceAggregates, setAccountBalanceAggregates] = useState<AccountBalanceAggregateRow[]>([]);
   const [accountLedgerPage, setAccountLedgerPage] = useState<AccountLedgerPage | null>(null);
   const [accountLedgerBusy, setAccountLedgerBusy] = useState(false);
-  const ledgerMode: LedgerMode = snap?.setting?.ledgerMode ?? 'spending';
   const usesAccounts = true;
+  useEffect(() => {
+    if (!snap?.setting?.id) return;
+    const state = readOnboarding(snap.setting.id);
+    setOnboarding(state);
+    setShowFirstEntryGuide(Boolean(state && !state.dismissed));
+  }, [snap?.setting?.id]);
   const [accountSetupOpen, setAccountSetupOpen] = useState(false);
   const [accountHistoryOpen, setAccountHistoryOpen] = useState(false);
   const [earlierBalanceAccount, setEarlierBalanceAccount] = useState<import('@zichan/core').Account | null>(null);
@@ -316,7 +324,6 @@ export function Transactions() {
   useEffect(() => {
     const openQuickTransaction = () => {
       setTab('records');
-      setShowFirstEntryGuide(false);
       setEditingTx(null);
       setRefundDraft(null);
       setTemplateDraft(null);
@@ -327,24 +334,17 @@ export function Transactions() {
         accountSessionStorage.removeItem('zichan.quickTransaction');
         openQuickTransaction();
       }
-      if (accountSessionStorage.getItem('zichan.postFirstRun') === 'account-setup') {
-        accountSessionStorage.removeItem('zichan.postFirstRun'); setTab('accounts'); setAccountSetupOpen(true);
-      }
-      if (accountSessionStorage.getItem('zichan.postFirstRun') === 'quick-expense') {
+      const firstRun = accountSessionStorage.getItem('zichan.postFirstRun');
+      if (firstRun === 'account-setup' || firstRun === 'quick-expense') {
         accountSessionStorage.removeItem('zichan.postFirstRun');
-        if (compactView) {
-          setTab('records');
-          setShowFirstEntryGuide(true);
-        } else {
-          openQuickTransaction();
-        }
+        setTab(firstRun === 'account-setup' ? 'accounts' : 'records');
       }
     } catch {
       // Ignore storage failures; the live event below still works.
     }
     window.addEventListener('zichan:quick-transaction', openQuickTransaction);
     return () => window.removeEventListener('zichan:quick-transaction', openQuickTransaction);
-  }, [compactView, ledgerMode]);
+  }, []);
   const visibleTabs: [Tab, string][] = usesAccounts
     ? [['records', '流水'], ['accounts', '账户'], ['budget', '预算'], ['bills', '账单']]
     : [['records', '支出']];
@@ -659,6 +659,7 @@ export function Transactions() {
   const activeTemplates = readySnap.transactionTemplates
     .filter((t) => !t.isDeleted && t.isActive && (usesAccounts || t.type === 'expense'))
     .sort((a, b) => (a.sortOrder ?? 100) - (b.sortOrder ?? 100) || a.name.localeCompare(b.name));
+  const firstTemplate = activeTemplates[0];
   const tagName = (id: string) => {
     const t = readySnap.transactionTags.find((x) => x.id === id);
     return t ? (t.groupName ? `${t.groupName}/${t.name}` : t.name) : id;
@@ -672,7 +673,6 @@ export function Transactions() {
     .sort((a, b) => Number(b.isPinned ?? false) - Number(a.isPinned ?? false) || (a.sortOrder ?? 100) - (b.sortOrder ?? 100) || a.name.localeCompare(b.name));
 
   function openNewTransaction() {
-    setShowFirstEntryGuide(false);
     setQuickExpenseOpen(false);
     setQuickTemplate(null);
     setRefundDraft(null);
@@ -1024,6 +1024,7 @@ export function Transactions() {
     if (refresh) {
       bump();
       if (!before) {
+        setOnboarding((current) => current ? updateOnboarding(current, { firstTransactionRecorded: true }) : current);
         undo.offer(`已保存${saved.type === 'refund' ? '退款' : '流水'}`, async () => {
           await voidTransaction(store, saved.id, '撤销刚才的新增');
           bump();
@@ -1071,6 +1072,43 @@ export function Transactions() {
     setRefundDraft(null);
     setTemplateDraft(tx);
     setEditingTx('new');
+  }
+
+  function openCategoryPacks() {
+    try {
+      accountSessionStorage.setItem('zichan.manage.target', JSON.stringify({ tab: 'transactionCategories', categoryMode: 'quick' }));
+    } catch { /* Navigation remains available without session storage. */ }
+    window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'manage' } }));
+  }
+
+  function openTemplateCenter() {
+    try {
+      accountSessionStorage.setItem('zichan.manage.target', JSON.stringify({ tab: 'other', otherTab: 'templates' }));
+    } catch { /* Navigation remains available without session storage. */ }
+    window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'manage' } }));
+  }
+
+  function openOwnTemplate() {
+    const recent = readyTransactionRead.recommendationTransactions.find((transaction) => isTransactionActive(transaction) && transaction.type !== 'refund' && transaction.type !== 'adjustment' && transaction.type !== 'transfer')
+      ?? readySnap.transactions.find((transaction) => isTransactionActive(transaction) && transaction.type !== 'refund' && transaction.type !== 'adjustment' && transaction.type !== 'transfer');
+    if (!recent) return;
+    setCreatingOwnTemplate({
+      id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false,
+      name: recent.description?.trim() || categoryLabel(recent.category, readySnap.categories),
+      type: recent.type, category: recent.category, assetId: recent.assetId,
+      accountId: recent.accountId, payeeId: recent.payeeId, merchant: recent.merchant,
+      description: recent.description, tagIds: recent.tagIds, locationId: recent.locationId,
+      sortOrder: 100, isActive: true,
+    });
+  }
+
+  function dismissOnboarding() {
+    setOnboarding((current) => current ? updateOnboarding(current, { dismissed: true }) : current);
+    setShowFirstEntryGuide(false);
+  }
+
+  function showMobileGuideStep(step: number) {
+    setOnboarding((current) => current ? updateOnboarding(current, { mobileStep: step }) : current);
   }
 
   async function saveQuickExpense(draft: QuickExpenseDraft) {
@@ -1244,6 +1282,13 @@ export function Transactions() {
     else drillTo(parent, child);
   }
 
+  const mobileGuideSteps = onboarding?.path === 'accounts'
+    ? (['accounts', 'entry', 'categories', 'templates'] as const)
+    : (['entry', 'categories', 'templates'] as const);
+  const mobileGuideStep = Math.min(Math.max(onboarding?.mobileStep ?? 0, 0), mobileGuideSteps.length - 1);
+  const mobileGuideKind = mobileGuideSteps[mobileGuideStep];
+  const hasEnabledCategoryPack = CATEGORY_PACKS.some((pack) => categoryPackState(pack, readySnap.categories).enabledCount > 0);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       {vm.missingRateAssetCodes.length > 0 && (
@@ -1257,20 +1302,99 @@ export function Transactions() {
         ))}
       </div>
 
+      {onboarding && !showFirstEntryGuide && (
+        <button type="button" className="zc-onboarding-reopen" onClick={() => { setOnboarding(updateOnboarding(onboarding, { dismissed: false })); setShowFirstEntryGuide(true); }}>
+          查看新手指南
+        </button>
+      )}
+      {onboarding && showFirstEntryGuide && !compactView && (
+        <section className="zc-first-entry-guide" aria-label="首次记账引导">
+          <div>
+            <h2>账本已准备好</h2>
+            <p>按自己的节奏完成以下步骤。分类和模板都可以以后再设置。</p>
+          </div>
+          <div className="zc-onboarding-steps">
+            {onboarding.path === 'accounts' && (
+              <div className="zc-onboarding-step">
+                <div><strong>设置常用账户</strong><p>添加银行卡或钱包，再填写当前余额。</p></div>
+                <button type="button" style={button} onClick={() => { setTab('accounts'); setAccountSetupOpen(true); }}>添加账户</button>
+              </div>
+            )}
+            <div className="zc-onboarding-step">
+              <div><strong>记第一笔{onboarding.firstTransactionRecorded ? ' · 已完成' : ''}</strong><p>先记金额和分类，其他信息可稍后补充。</p></div>
+              <button type="button" style={onboarding.firstTransactionRecorded ? button : primary} onClick={openNewTransaction}>{onboarding.firstTransactionRecorded ? '再记一笔' : '记第一笔'}</button>
+            </div>
+            <div className="zc-onboarding-step">
+              <div><strong>按场景补充分类{hasEnabledCategoryPack ? ' · 已启用' : onboarding.categorySkipped ? ' · 已跳过' : ''}</strong><p>养宠、旅行等分类按需启用，已有记录不会改变。</p></div>
+              <div className="zc-first-entry-actions"><button type="button" style={button} onClick={openCategoryPacks}>查看扩展包</button>{!onboarding.categorySkipped && <button type="button" style={button} onClick={() => setOnboarding(updateOnboarding(onboarding, { categorySkipped: true }))}>暂不需要</button>}</div>
+            </div>
+            <div className="zc-onboarding-step">
+              <div><strong>用模板快速记账{onboarding.templateUsed ? ' · 已体验' : ''}</strong><p>先试用自带模板；记过一笔后，也能保存自己的常用交易。</p></div>
+              <div className="zc-first-entry-actions">
+                {firstTemplate && <button type="button" style={button} onClick={() => { setTab('records'); createFromTemplate(firstTemplate); }}>试用{firstTemplate.name}模板</button>}
+                {onboarding.firstTransactionRecorded && <button type="button" style={button} onClick={openOwnTemplate}>创建自己的模板</button>}
+                <button type="button" style={button} onClick={openTemplateCenter}>查看全部模板</button>
+              </div>
+            </div>
+          </div>
+          <div className="zc-first-entry-actions"><button type="button" style={button} onClick={dismissOnboarding}>暂时收起</button></div>
+        </section>
+      )}
+      {onboarding && showFirstEntryGuide && compactView && (
+        <section className="zc-first-entry-guide zc-first-entry-guide-mobile" aria-label="首次记账引导">
+          <div className="zc-mobile-guide-header">
+            <span>新手引导 · {mobileGuideStep + 1}/{mobileGuideSteps.length}</span>
+            <button type="button" onClick={dismissOnboarding}>收起</button>
+          </div>
+          <div className="zc-mobile-guide-progress" aria-hidden="true">
+            {mobileGuideSteps.map((step, index) => <span key={step} className={index <= mobileGuideStep ? 'is-active' : ''} />)}
+          </div>
+          {mobileGuideKind === 'accounts' && (
+            <div className="zc-mobile-guide-content">
+              <h2>设置常用账户</h2>
+              <p>需要分清银行卡、微信和支付宝余额时，先添加常用账户。也可以稍后再做。</p>
+              <div className="zc-first-entry-actions"><button type="button" style={primary} onClick={() => { setTab('accounts'); setAccountSetupOpen(true); }}>添加账户</button></div>
+            </div>
+          )}
+          {mobileGuideKind === 'entry' && (
+            <div className="zc-mobile-guide-content">
+              <h2>记第一笔{onboarding.firstTransactionRecorded ? ' · 已完成' : ''}</h2>
+              <p>先填金额和分类，其他信息以后可以补充。准备好时再开始。</p>
+              <div className="zc-first-entry-actions"><button type="button" style={primary} onClick={openNewTransaction}>{onboarding.firstTransactionRecorded ? '再记一笔' : '记第一笔'}</button></div>
+            </div>
+          )}
+          {mobileGuideKind === 'categories' && (
+            <div className="zc-mobile-guide-content">
+              <h2>按场景补充分类{hasEnabledCategoryPack ? ' · 已启用' : onboarding.categorySkipped ? ' · 已跳过' : ''}</h2>
+              <p>养宠、旅行等分类按需启用，原有记录不会改变。</p>
+              <div className="zc-first-entry-actions">
+                <button type="button" style={primary} onClick={openCategoryPacks}>查看扩展包</button>
+                {!onboarding.categorySkipped && <button type="button" style={button} onClick={() => setOnboarding(updateOnboarding(onboarding, { categorySkipped: true, mobileStep: mobileGuideStep + 1 }))}>暂不需要</button>}
+              </div>
+            </div>
+          )}
+          {mobileGuideKind === 'templates' && (
+            <div className="zc-mobile-guide-content">
+              <h2>用模板快速记账{onboarding.templateUsed ? ' · 已体验' : ''}</h2>
+              <p>试用自带模板；记过一笔后，也能从它保存自己的常用交易。</p>
+              <div className="zc-first-entry-actions">
+                {firstTemplate && <button type="button" style={primary} onClick={() => { setTab('records'); createFromTemplate(firstTemplate); }}>试用{firstTemplate.name}模板</button>}
+                {onboarding.firstTransactionRecorded && <button type="button" style={button} onClick={openOwnTemplate}>创建自己的模板</button>}
+                <button type="button" style={button} onClick={openTemplateCenter}>查看全部模板</button>
+              </div>
+            </div>
+          )}
+          <div className="zc-mobile-guide-nav">
+            {mobileGuideStep > 0 && <button type="button" onClick={() => showMobileGuideStep(mobileGuideStep - 1)}>上一步</button>}
+            {mobileGuideStep < mobileGuideSteps.length - 1
+              ? <button type="button" onClick={() => showMobileGuideStep(mobileGuideStep + 1)}>下一步</button>
+              : <button type="button" onClick={dismissOnboarding}>完成引导</button>}
+          </div>
+        </section>
+      )}
+
       {activeTab === 'records' && (
         <>
-          {compactView && showFirstEntryGuide && (
-            <section className="zc-first-entry-guide" aria-label="首次记账引导">
-              <div>
-                <h2>账本已准备好</h2>
-                <p>先看看收支概览。准备好时再记第一笔；以后也能用<span className="zc-nowrap">底部“快记”</span>。</p>
-              </div>
-              <div className="zc-first-entry-actions">
-                <button type="button" style={primary} onClick={openNewTransaction}>记第一笔</button>
-                <button type="button" style={button} onClick={() => setShowFirstEntryGuide(false)}>先看看</button>
-              </div>
-            </section>
-          )}
           <SummaryGrid vm={vm} usesAccounts={usesAccounts} />
           <div id="transaction-records" style={{ ...card, scrollMarginTop: 16 }}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
@@ -1704,6 +1828,16 @@ export function Transactions() {
         />
       )}
 
+      {creatingOwnTemplate && (
+        <EntityFormModal
+          spec={transactionTemplateForm(readySnap, { usesAccounts })}
+          initial={creatingOwnTemplate}
+          isNew
+          onSave={async (entity) => { await store.transactionTemplates.put(entity); bump(); }}
+          onClose={() => setCreatingOwnTemplate(null)}
+        />
+      )}
+
       {editingTx && (
         <EntityFormModal
           spec={transactionForm(readySnap, {
@@ -1722,7 +1856,11 @@ export function Transactions() {
             { label: '完整', keys: transactionFormPresetKeys('full', usesAccounts) },
           ]}
           onOptionalFieldKeysChange={(keys) => saveTransactionFormFields(keys)}
-          onSave={async (entity) => { await saveTx(entity); setTemplateDraft(null); }}
+          onSave={async (entity) => {
+            await saveTx(entity);
+            if (templateDraft) setOnboarding((current) => current ? updateOnboarding(current, { templateUsed: true }) : current);
+            setTemplateDraft(null);
+          }}
           onDelete={editingTx !== 'new' ? async () => voidTx(editingTx) : undefined}
           deleteLabel="作废"
           onClose={() => { setEditingTx(null); setRefundDraft(null); setTemplateDraft(null); }}
