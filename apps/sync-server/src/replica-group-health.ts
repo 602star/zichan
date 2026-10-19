@@ -5,25 +5,20 @@ import type { JsonRecord, NodeGroupMemberReport, NodeReplicaInventory,
 import type { ReplicaReadiness, ReplicaReadinessState } from './replica-readiness.js';
 
 const NUMERIC_INVENTORY_FIELDS = new Set<keyof NodeReplicaInventory>([
-  'keyGeneration', 'controlSeq', 'keyEpoch', 'memberEnvelopeCount', 'missingMemberEnvelopeCount',
-  'memberAccountKeyCount', 'missingMemberAccountKeyCount', 'memberAccountCount', 'missingMemberAccountCount',
+  'keyGeneration',
   'commitCount', 'commitStreamComplete', 'attachmentPromisePresent', 'attachmentPromiseCurrent',
-  'promisedBlobCount', 'missingPromisedBlobCount', 'rejectedCommitCount', 'blobCount',
+  'promisedBlobCount', 'missingPromisedBlobCount', 'blobCount',
   'tombstoneCount', 'legacyBlobCount',
 ]);
 const INVENTORY_FIELDS: (keyof NodeReplicaInventory)[] = [
   'serverId', 'replicaId', 'streamEpoch', 'ledgerId', 'issuerNodeId', 'subjectAccountId',
-  'accountKeyHash', 'keyringId', 'keyGeneration', 'keyEnvelopeHash', 'controlSeq', 'controlHash',
-  'keyEpoch', 'memberEnvelopeCount', 'memberEnvelopeHash', 'missingMemberEnvelopeCount',
-  'memberAccountKeyCount', 'memberAccountKeyHash', 'missingMemberAccountKeyCount',
-  'memberAccountCount', 'missingMemberAccountCount', 'requirementsHash', 'commitCount',
+  'keyringId', 'keyGeneration', 'keyEnvelopeHash', 'requirementsHash', 'commitCount',
   'commitHash', 'commitStreamComplete', 'attachmentPromisePresent', 'attachmentPromiseCurrent',
-  'promisedBlobCount', 'promisedBlobHash', 'missingPromisedBlobCount', 'rejectedCommitCount',
+  'promisedBlobCount', 'promisedBlobHash', 'missingPromisedBlobCount',
   'blobCount', 'blobHash', 'tombstoneCount', 'stateHash', 'legacyBlobCount',
 ];
 const HASH_FIELDS = new Set<keyof NodeReplicaInventory>([
-  'accountKeyHash', 'keyEnvelopeHash', 'controlHash', 'memberEnvelopeHash',
-  'memberAccountKeyHash', 'requirementsHash', 'commitHash', 'promisedBlobHash',
+  'keyEnvelopeHash', 'requirementsHash', 'commitHash', 'promisedBlobHash',
   'blobHash', 'stateHash',
 ]);
 const LIFECYCLE_STATES = new Set(['JOINING', 'BOOTSTRAPPING', 'CATCHING_UP', 'VERIFYING', 'READY']);

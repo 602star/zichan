@@ -1,8 +1,6 @@
 /** End-to-end encryption primitives shared by sync, attachments and backups. */
 
 import { aesGcmDecrypt, aesGcmEncrypt, hmacSha256, randomBytes, sha256Bytes as digestSha256 } from './crypto-provider.js';
-import { x25519 } from '@noble/curves/ed25519.js';
-import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
 declare const TextEncoder: { new (): { encode(s: string): Uint8Array } };
@@ -35,39 +33,6 @@ export interface LedgerKeyEnvelope {
   memoryKiB: number;
   iterations: number;
   parallelism: number;
-  iv: string;
-  ct: string;
-}
-
-/** Account-private encryption key, wrapped with a password separate from login. */
-export interface AccountEncryptionKeyEnvelope {
-  v: 1;
-  kdf: 'argon2id';
-  issuerNodeId: string;
-  accountId: string;
-  publicKey: string;
-  salt: string;
-  memoryKiB: number;
-  iterations: number;
-  parallelism: number;
-  iv: string;
-  ct: string;
-}
-
-/** Full ledger keyring encrypted to one member's X25519 public key. */
-export interface LedgerMemberKeyEnvelope {
-  v: 1;
-  alg: 'X25519-HKDF-SHA256-AES-256-GCM';
-  ledgerId: string;
-  issuerNodeId: string;
-  accountId: string;
-  keyringId: string;
-  generation: number;
-  keyEpoch: number;
-  activeKeyId: string;
-  recipientPublicKey: string;
-  ephemeralPublicKey: string;
-  salt: string;
   iv: string;
   ct: string;
 }
@@ -271,134 +236,6 @@ function deserializeSession(payload: SerializedKeyring): LedgerCryptoSession {
     attachmentSecret: unb64(payload.attachmentSecret),
     backupSecret: unb64(payload.backupSecret),
   };
-}
-
-function validIdentity(issuerNodeId: string, accountId: string): boolean {
-  return /^[A-Za-z0-9_-]{8,128}$/.test(issuerNodeId) && /^[A-Za-z0-9_-]{8,160}$/.test(accountId);
-}
-
-export async function wrapAccountEncryptionKey(privateKey: Uint8Array, issuerNodeId: string,
-  accountId: string, passphrase: string): Promise<AccountEncryptionKeyEnvelope> {
-  if (!validIdentity(issuerNodeId, accountId) || privateKey.length !== 32) throw new Error('账号加密身份无效');
-  const publicKey = x25519.getPublicKey(privateKey);
-  const header = { v: 1 as const, kdf: 'argon2id' as const, issuerNodeId, accountId,
-    publicKey: b64(publicKey), salt: b64(randomBytes(16)), memoryKiB: ARGON_MEMORY_KIB,
-    iterations: ARGON_ITERATIONS, parallelism: ARGON_PARALLELISM };
-  const iv = randomBytes(12);
-  const ct = await aesGcmEncrypt(await wrappingKey(passphrase, header), iv, privateKey,
-    te.encode(canonicalJson(header)));
-  return { ...header, iv: b64(iv), ct: b64(ct) };
-}
-
-export async function createAccountEncryptionKey(issuerNodeId: string, accountId: string,
-  passphrase: string): Promise<{ envelope: AccountEncryptionKeyEnvelope; privateKey: Uint8Array }> {
-  const privateKey = randomBytes(32);
-  return { envelope: await wrapAccountEncryptionKey(privateKey, issuerNodeId, accountId, passphrase), privateKey };
-}
-
-export function assertAccountEncryptionKeyEnvelope(envelope: AccountEncryptionKeyEnvelope): void {
-  if (!envelope || envelope.v !== 1 || envelope.kdf !== 'argon2id'
-    || !validIdentity(envelope.issuerNodeId, envelope.accountId)
-    || !Number.isSafeInteger(envelope.memoryKiB) || envelope.memoryKiB < 8 * 1024 || envelope.memoryKiB > 64 * 1024
-    || !Number.isSafeInteger(envelope.iterations) || envelope.iterations < 1 || envelope.iterations > 6
-    || !Number.isSafeInteger(envelope.parallelism) || envelope.parallelism < 1 || envelope.parallelism > 4) {
-    throw new Error('账号加密密钥包无效');
-  }
-  const publicKey = unb64(envelope.publicKey);
-  const salt = unb64(envelope.salt);
-  const iv = unb64(envelope.iv);
-  const ct = unb64(envelope.ct);
-  if (publicKey.length !== 32 || salt.length !== 16 || iv.length !== 12 || ct.length !== 48) {
-    throw new Error('账号加密密钥包长度无效');
-  }
-}
-
-export async function unlockAccountEncryptionKey(passphrase: string,
-  envelope: AccountEncryptionKeyEnvelope): Promise<Uint8Array> {
-  assertAccountEncryptionKeyEnvelope(envelope);
-  const iv = unb64(envelope.iv);
-  const ct = unb64(envelope.ct);
-  const { iv: _iv, ct: _ct, ...header } = envelope;
-  const privateKey = await aesGcmDecrypt(await wrappingKey(passphrase, envelope), iv, ct,
-    te.encode(canonicalJson(header)));
-  if (privateKey.length !== 32 || b64(x25519.getPublicKey(privateKey)) !== envelope.publicKey) {
-    throw new Error('账号加密公钥不匹配');
-  }
-  return privateKey;
-}
-
-function memberEnvelopeHeader(envelope: LedgerMemberKeyEnvelope): Omit<LedgerMemberKeyEnvelope, 'iv' | 'ct'> {
-  const { iv: _iv, ct: _ct, ...header } = envelope;
-  return header;
-}
-
-function memberEnvelopeKey(shared: Uint8Array, header: Omit<LedgerMemberKeyEnvelope, 'iv' | 'ct'>): Uint8Array {
-  return hkdf(sha256, shared, unb64(header.salt), te.encode(canonicalJson(header)), 32);
-}
-
-export async function wrapLedgerCryptoSessionForMember(session: LedgerCryptoSession, input: {
-  issuerNodeId: string; accountId: string; recipientPublicKey: string; keyEpoch: number;
-}): Promise<LedgerMemberKeyEnvelope> {
-  if (!validIdentity(input.issuerNodeId, input.accountId)
-    || !Number.isSafeInteger(input.keyEpoch) || input.keyEpoch < 1) throw new Error('成员密钥授权无效');
-  const recipientPublicKey = unb64(input.recipientPublicKey);
-  if (recipientPublicKey.length !== 32) throw new Error('成员加密公钥无效');
-  const ephemeralPrivateKey = randomBytes(32);
-  const header = { v: 1 as const, alg: 'X25519-HKDF-SHA256-AES-256-GCM' as const,
-    ledgerId: session.ledgerId, issuerNodeId: input.issuerNodeId, accountId: input.accountId,
-    keyringId: session.keyringId, generation: session.generation, keyEpoch: input.keyEpoch,
-    activeKeyId: session.activeKeyId, recipientPublicKey: input.recipientPublicKey,
-    ephemeralPublicKey: b64(x25519.getPublicKey(ephemeralPrivateKey)), salt: b64(randomBytes(32)) };
-  const iv = randomBytes(12);
-  const shared = x25519.getSharedSecret(ephemeralPrivateKey, recipientPublicKey);
-  const ct = await aesGcmEncrypt(memberEnvelopeKey(shared, header), iv,
-    te.encode(canonicalJson(serializeSession(session))), te.encode(canonicalJson(header)));
-  ephemeralPrivateKey.fill(0);
-  shared.fill(0);
-  return { ...header, iv: b64(iv), ct: b64(ct) };
-}
-
-export async function unlockLedgerMemberKeyEnvelope(privateKey: Uint8Array,
-  envelope: LedgerMemberKeyEnvelope): Promise<LedgerCryptoSession> {
-  assertLedgerMemberKeyEnvelope(envelope);
-  if (privateKey.length !== 32) throw new Error('成员私钥长度无效');
-  const header = memberEnvelopeHeader(envelope);
-  const ephemeral = unb64(header.ephemeralPublicKey);
-  const iv = unb64(envelope.iv);
-  const ct = unb64(envelope.ct);
-  if (b64(x25519.getPublicKey(privateKey)) !== header.recipientPublicKey) {
-    throw new Error('成员密钥包收件人不匹配');
-  }
-  const shared = x25519.getSharedSecret(privateKey, ephemeral);
-  const plaintext = await aesGcmDecrypt(memberEnvelopeKey(shared, header), iv, ct,
-    te.encode(canonicalJson(header)));
-  shared.fill(0);
-  const session = deserializeSession(JSON.parse(td.decode(plaintext)) as SerializedKeyring);
-  if (session.ledgerId !== envelope.ledgerId || session.keyringId !== envelope.keyringId
-    || session.generation !== envelope.generation || session.activeKeyId !== envelope.activeKeyId) {
-    throw new Error('成员密钥包内容与元数据不匹配');
-  }
-  return session;
-}
-
-export function assertLedgerMemberKeyEnvelope(envelope: LedgerMemberKeyEnvelope): void {
-  if (!envelope || envelope.v !== 1 || envelope.alg !== 'X25519-HKDF-SHA256-AES-256-GCM'
-    || !validIdentity(envelope.issuerNodeId, envelope.accountId)
-    || !/^[A-Za-z0-9_-]{16,128}$/.test(envelope.ledgerId)
-    || !/^[A-Za-z0-9_-]{16,128}$/.test(envelope.keyringId)
-    || !/^[A-Za-z0-9_-]{16,128}$/.test(envelope.activeKeyId)
-    || !Number.isSafeInteger(envelope.generation) || envelope.generation < 1
-    || !Number.isSafeInteger(envelope.keyEpoch) || envelope.keyEpoch < 1) throw new Error('成员密钥包身份无效');
-  const header = memberEnvelopeHeader(envelope);
-  const recipient = unb64(header.recipientPublicKey);
-  const ephemeral = unb64(header.ephemeralPublicKey);
-  const salt = unb64(header.salt);
-  const iv = unb64(envelope.iv);
-  const ct = unb64(envelope.ct);
-  if (recipient.length !== 32 || ephemeral.length !== 32 || salt.length !== 32 || iv.length !== 12
-    || ct.length < 17 || ct.length > 1024 * 1024) {
-    throw new Error('成员密钥包编码无效');
-  }
 }
 
 export function createLedgerCryptoSession(ledgerId: string): LedgerCryptoSession {

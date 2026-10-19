@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { fetchAuthMe, refreshAccountSession, requestJson, HttpRequestError, type SyncAuthSession } from '@zichan/db';
 import { canOfferOfflineCache } from './account-restore-error.js';
 import { activateWebAccount, accountLocalStorage, accountStorageKey, webLedgerNamespace,
-  WEB_ACCOUNT_BINDING_KEY, WEB_LEDGER_SWITCH_EVENT_KEY } from './account-storage.js';
+  WEB_ACCOUNT_BINDING_KEY } from './account-storage.js';
 import { FirstServerConnectionGate } from './ui/FirstServerConnectionGate.js';
 import { applySyncAuthSession } from './sync-auth.js';
 import { restoreBrowserCredentialRuntimeState, setRuntimeCredential } from './credential-vault.js';
@@ -10,7 +10,7 @@ import { ACCOUNT_EXIT_KEY, ACCOUNT_LOCK_REQUEST_EVENT, hasAccountCloseHandler } 
 import { clearAccountProtection } from './account-protection.js';
 import { newSyncConnection, syncAddressPresetUrl, type SyncConnection } from './sync-config.js';
 import { restoreWebSyncConnections } from './web-sync-connections.js';
-import { MemberAccountProtectionGate } from './ui/MemberAccountProtectionGate.js';
+import { AccountLedgerGate } from './ui/AccountLedgerGate.js';
 import { OfflineAccountGate } from './ui/OfflineAccountGate.js';
 
 const LedgerApp = lazy(() => import('./LedgerApp.js').then((module) => ({ default: module.LedgerApp })));
@@ -34,7 +34,6 @@ export function WebAccountApp() {
   const [activeConnection, setActiveConnection] = useState<SyncConnection>();
   const [offlineEntry, setOfflineEntry] = useState(false);
   const activeAccount = useRef<string>();
-  const activeLedger = useRef<{ serverId?: string; replicaId?: string }>();
   const restoreFlight = useRef<Promise<{ session: SyncAuthSession; serverId: string; serverPublicKey: string }>>();
 
   const enter = useCallback(async (connection: WebBinding, session?: SyncAuthSession) => {
@@ -56,11 +55,10 @@ export function WebAccountApp() {
     sessionStorage.setItem(WEB_ACCOUNT_BINDING_KEY, JSON.stringify(remembered));
     localStorage.setItem(WEB_ACCOUNT_BINDING_KEY, JSON.stringify(remembered));
     activeAccount.current = connection.accountId;
-    activeLedger.current = { serverId: connection.serverId, replicaId: connection.replicaId };
     setActiveConnection(connection);
     setOfflineEntry(!session);
     setReady(true);
-  }, [binding]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -126,20 +124,6 @@ export function WebAccountApp() {
         if (!hasAccountCloseHandler()) window.location.reload();
         return;
       }
-      if (event.key === WEB_LEDGER_SWITCH_EVENT_KEY && event.newValue) {
-        try {
-          const selected = JSON.parse(event.newValue) as { serverId?: string;
-            accountId?: string; replicaId?: string };
-          if (selected.accountId === activeAccount.current
-            && selected.serverId === activeLedger.current?.serverId
-            && selected.replicaId !== activeLedger.current?.replicaId) {
-            clearAccountProtection();
-            if (hasAccountCloseHandler()) window.dispatchEvent(new Event(ACCOUNT_LOCK_REQUEST_EVENT));
-            else window.location.reload();
-          }
-        } catch { /* Ignore malformed cross-tab notifications. */ }
-        return;
-      }
       if (event.key !== LOGIN_EVENT_KEY || !event.newValue) return;
       try {
         if (JSON.parse(event.newValue).accountId !== activeAccount.current) {
@@ -157,7 +141,7 @@ export function WebAccountApp() {
   if (checking) return <p role="status">正在验证账号会话…</p>;
   if (ready && activeConnection) {
     const app = <Suspense fallback={<p role="status">正在加载账号账本…</p>}><LedgerApp /></Suspense>;
-    return offlineEntry ? <OfflineAccountGate connection={activeConnection}>{app}</OfflineAccountGate> : <MemberAccountProtectionGate connection={activeConnection}>{app}</MemberAccountProtectionGate>;
+    return offlineEntry ? <OfflineAccountGate connection={activeConnection}>{app}</OfflineAccountGate> : <AccountLedgerGate connection={activeConnection}>{app}</AccountLedgerGate>;
   }
   return <>
     {notice && <p role="status">{notice}</p>}

@@ -31,11 +31,6 @@ export function assessReplicaReadiness(input: {
   const issues: string[] = [];
   let bootstrap = false;
   let catchingUp = false;
-  if (inventory.missingMemberEnvelopeCount || inventory.missingMemberAccountKeyCount
-    || inventory.missingMemberAccountCount) {
-    bootstrap = true;
-    issues.push('有效成员账号或当前代次密钥包尚未补齐');
-  }
   if (inventory.legacyBlobCount) {
     bootstrap = true;
     issues.push(`${inventory.legacyBlobCount} 个旧版附件待迁移`);
@@ -45,7 +40,6 @@ export function assessReplicaReadiness(input: {
     issues.push(`${inventory.missingPromisedBlobCount} 个承诺附件尚未保存到本节点`);
   }
   if (!inventory.commitStreamComplete) issues.push('本地加密提交序号或账本归属不完整');
-  if (inventory.rejectedCommitCount) issues.push(`${inventory.rejectedCommitCount} 条过期或无效写入待处理`);
   if (!inventory.attachmentPromisePresent || !inventory.attachmentPromiseCurrent) {
     issues.push(inventory.attachmentPromisePresent ? '附件承诺目录落后于当前提交'
       : '尚未发布当前账本的附件承诺目录');

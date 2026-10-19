@@ -2,7 +2,6 @@
 let webAccounts = false;
 let namespace: string | undefined;
 export const WEB_ACCOUNT_BINDING_KEY = 'zichan.web-account.v2.binding';
-export const WEB_LEDGER_SWITCH_EVENT_KEY = 'zichan.web-account.v1.ledger-switch';
 
 export function enableWebAccounts(): void { webAccounts = true; }
 export function webLedgerNamespace(serverId: string, accountId: string,

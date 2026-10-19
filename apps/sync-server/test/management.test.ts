@@ -29,31 +29,6 @@ async function fixture() {
 }
 
 describe('server management authorization', () => {
-  it('shows shared replica attachment usage and rejects quotas on a member alias', async () => {
-    const f = await fixture();
-    const db = new NodeSqliteDriver(join(f.server.dataDir, 'server.sqlite'));
-    const store = new SyncServerStore(join(f.server.dataDir, 'server.sqlite'), 'open', f.server.serverId);
-    try {
-      await store.ready;
-      const replica = await store.bindReplica('owner', 'ledger-admin-shared-quota-0001');
-      await db.run('INSERT INTO ledger_account_routes (username, replica_id, created_at) VALUES (?, ?, ?)',
-        ['member', replica.replicaId, new Date().toISOString()]);
-      await db.run('INSERT INTO account_ledger_index (username, replica_id, created_at) VALUES (?, ?, ?)',
-        ['member', replica.replicaId, new Date().toISOString()]);
-      const detailResponse = await f.api(f.owner.accessToken, `/accounts/${f.member.accountId}`);
-      const detail = await detailResponse.json();
-      expect(detailResponse.status, JSON.stringify(detail)).toBe(200);
-      expect(detail.capacity).toMatchObject({ blobQuotaOwnerUsername: 'owner',
-        quotaNote: expect.stringContaining('共用附件容量') });
-      const response = await f.api(f.owner.accessToken,
-        `/accounts/${f.member.accountId}/blobs`, { quotaBytes: 4 * 1024 ** 2 });
-      expect(response.status).toBe(409);
-      expect((await response.json()).code).toBe('REPLICA_QUOTA_OWNER');
-    } finally {
-      await Promise.all([store.close(), db.close(), f.server.close()]);
-    }
-  });
-
   it('paginates invitations newest first and applies exclusive state filters before pagination', async () => {
     const f = await fixture();
     const db = new NodeSqliteDriver(join(f.server.dataDir, 'server.sqlite'));

@@ -19,9 +19,7 @@ export function LedgerProtectionPanel({ store }: { store: SqlLedgerStore }) {
   const primaryProfile = loadSyncConnections().find((row) => row.id === state.profileId);
   return <section className="zc-protection" style={{ padding: 20, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', marginBottom: 16 }} aria-label="账本保护">
     <h2 style={{ fontSize: 'var(--fs-title)' }}>账本与离线访问</h2>
-    <p>{state.info.mode === 'member'
-      ? '共享账本通过账号密钥解锁。'
-      : '获授权的同步服务器托管账本密钥，可以在登录后打开账本。'}</p>
+    <p>获授权的同步服务器托管账本密钥，可以在登录后打开账本。</p>
     <p>{hasOfflinePassword()
       ? '本机离线访问已准备好。服务器暂时不可用时，可用账号密码打开此设备已有的账本缓存；离线新增的记录会在恢复连接后同步。'
       : '使用账号密码在线登录后，本机会自动准备离线访问。当前会话可能是自动续期登录；如需离线访问，请退出后用账号密码重新登录。'}</p>
@@ -35,7 +33,7 @@ export function LedgerProtectionPanel({ store }: { store: SqlLedgerStore }) {
           .finally(() => setBusy(false));
       }}>记住此设备</button>
     </details>
-    {state.info.mode !== 'member' && primaryProfile?.serverId && <ReplacementRecoveryPanel store={store} profile={primaryProfile} />}
+    {primaryProfile?.serverId && <ReplacementRecoveryPanel store={store} profile={primaryProfile} />}
     {notice && <p role="status">{notice}</p>}
   </section>;
 }

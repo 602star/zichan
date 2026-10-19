@@ -33,9 +33,9 @@ describe('node replica commit inventory', () => {
       const secondCiphertext = await encryptJson(session, commit, aad);
       expect(firstCiphertext).not.toEqual(secondCiphertext);
       await stores[0]!.pushCommits('owner', [{ commitId, ledgerId, contentHash,
-        encCommit: firstCiphertext, keyEpoch: 0 }]);
+        encCommit: firstCiphertext }]);
       await stores[1]!.pushCommits('owner', [{ commitId, ledgerId, contentHash,
-        encCommit: secondCiphertext, keyEpoch: 0 }]);
+        encCommit: secondCiphertext }]);
 
       const first = await stores[0]!.replicaInventory('owner', ledgerId);
       const second = await stores[1]!.replicaInventory('owner', ledgerId);
@@ -46,7 +46,7 @@ describe('node replica commit inventory', () => {
       const changedCommit = { ...commit, originDeviceId: 'different-device-01' };
       const changedHash = await sha256Json(changedCommit);
       await stores[2]!.pushCommits('owner', [{ commitId, ledgerId, contentHash: changedHash,
-        encCommit: await encryptJson(session, changedCommit, { ...aad, contentHash: changedHash }), keyEpoch: 0 }]);
+        encCommit: await encryptJson(session, changedCommit, { ...aad, contentHash: changedHash }) }]);
       const different = await stores[2]!.replicaInventory('owner', ledgerId);
       expect(different.commitCount).toBe(first.commitCount);
       expect(different.commitHash).not.toBe(first.commitHash);

@@ -228,7 +228,6 @@ describe('sync-server endpoints', () => {
       replicaId: replica.replicaId,
       streamEpoch: replica.streamEpoch,
       session: { replicaId: replica.replicaId },
-      ledgers: [{ ledgerId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch }],
     });
 
     const commit = {

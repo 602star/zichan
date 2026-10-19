@@ -33,7 +33,7 @@ interface ConnectionState {
 }
 
 function request<T>(state: ConnectionState, data: Omit<Request, 'id'>): Promise<T> {
-  if (state.closed) return Promise.reject(new Error('共享账本连接已关闭，请刷新页面'));
+  if (state.closed) return Promise.reject(new Error('账本连接已关闭，请刷新页面'));
   const id = ++state.nextRequest;
   return new Promise<T>((resolve, reject) => {
     state.pending.set(id, { resolve: (value) => resolve(value as T), reject });
@@ -106,8 +106,8 @@ export class SharedBrowserSqlDriver implements SqlDriver {
         pending.reject(error);
       }
     };
-    port.onmessageerror = () => rejectPending(state, new Error('共享账本通信失败，请刷新页面'));
-    worker.onerror = () => rejectPending(state, new Error('共享账本进程停止，请刷新页面'));
+    port.onmessageerror = () => rejectPending(state, new Error('账本通信失败，请刷新页面'));
+    worker.onerror = () => rejectPending(state, new Error('账本进程停止，请刷新页面'));
     port.start();
     try {
       await request(state, {
@@ -176,7 +176,7 @@ export class SharedBrowserSqlDriver implements SqlDriver {
         window.removeEventListener('pagehide', this.state.onPageHide);
         window.removeEventListener('pageshow', this.state.onPageShow);
         if (activeConnection === this.state) activeConnection = null;
-        rejectPending(this.state, new Error('共享账本连接已关闭'));
+        rejectPending(this.state, new Error('账本连接已关闭'));
         this.state.port.close();
       }
     });

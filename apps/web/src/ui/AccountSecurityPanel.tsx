@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { fetchAuthMe, loginAccount, registerAccount, requestJson } from '@zichan/db';
 import { accountProtection } from '../account-protection.js';
 import { authenticateSyncProfile } from '../sync-auth.js';
 import { buildSyncBaseUrl, loadSyncConnections } from '../sync-config.js';
-import { rewrapAccountKeysForPasswordChange } from '../password-key-rotation.js';
 
 interface Device { id: string; deviceName: string; lastSeenAt: string; active: boolean }
 export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> }) {
-  const profile = loadSyncConnections().find((row) => row.id === accountProtection()?.profileId);
+  const profileId = accountProtection()?.profileId;
+  const profile = useMemo(() => loadSyncConnections().find((row) => row.id === profileId), [profileId]);
   const [devices, setDevices] = useState<Device[]>();
   const [current, setCurrent] = useState('');
   const [oldPassword, setOldPassword] = useState('');
@@ -35,7 +35,7 @@ export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> 
         issuerNodeId: me.federatedIdentity?.issuerNodeId, issuerUrl });
     }).catch(() => undefined);
     return () => { active = false; };
-  }, [profile?.id]);
+  }, [profile]);
   if (!profile) return null;
   const selected = profile;
   async function api(path: string, token?: string) {
@@ -72,11 +72,7 @@ export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> 
           const verified = await loginAccount(baseUrl, selected.username, oldPassword, { ...identity, deviceName: '修改密码验证', sessionTransport: 'token' });
           try {
             const { code } = await api('password-change/authorize', verified.accessToken);
-            const rollback = await rewrapAccountKeysForPasswordChange(baseUrl, verified.accessToken,
-              oldPassword, password);
-            try {
-              await registerAccount(baseUrl, selected.username, password, { ...identity, passwordResetCode: code });
-            } catch (error) { await rollback().catch(() => undefined); throw error; }
+            await registerAccount(baseUrl, selected.username, password, { ...identity, passwordResetCode: code });
           } finally {
             setOldPassword(''); setPassword(''); setConfirmation('');
             await api('logout', verified.accessToken).catch(() => undefined);

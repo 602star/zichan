@@ -3,7 +3,6 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
-import * as opaque from '@serenity-kit/opaque';
 import { loginAccount, registerAccount } from '@zichan/db';
 import { NodeSqliteDriver } from '@zichan/db/node';
 import { encryptJson, sha256Json, unlockLedgerKeyEnvelope, type LedgerKeyEnvelope } from '@zichan/core';
@@ -112,7 +111,7 @@ describe('node signing identity', () => {
         { protocol: 2, ledgerId: replica.ledgerId, commitId: commit.commitId, contentHash });
       const postPath = '/api/v4/replication/commits';
       const postBody = JSON.stringify({ commits: [{ commitId: commit.commitId, ledgerId: replica.ledgerId,
-        contentHash, encCommit, keyEpoch: 0 }], requiredCapabilities: [] });
+        contentHash, encCommit }], requiredCapabilities: [] });
       const postProof = signNodeRequest(identity, grantId, 'POST', postPath, Buffer.from(postBody));
       const pushed = await fetch(`${url}${postPath}`, { method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Zichan-Node-Proof': JSON.stringify(postProof) }, body: postBody });

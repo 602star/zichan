@@ -17,8 +17,7 @@ export async function replaceRemoteLedger(store: SqlLedgerStore, connection: Syn
     redirect: 'error', cache: 'no-store', headers: { Authorization: `Bearer ${token}` },
   });
   if (!protectionResponse.ok) throw new Error(`无法核对旧账本保护状态：HTTP ${protectionResponse.status}`);
-  const protection = await protectionResponse.json() as { controlled?: boolean; replica?: SyncReplicaIdentity | null };
-  if (protection.controlled) throw new Error('成员账本不能通过单账号替换，请使用成员管理和备份恢复流程');
+  const protection = await protectionResponse.json() as { replica?: SyncReplicaIdentity | null };
   const replica = protection.replica;
   if (!replica || replica.serverId !== connection.serverId
     || replica.ledgerId !== connection.ledgerId

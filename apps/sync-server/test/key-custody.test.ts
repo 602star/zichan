@@ -52,8 +52,7 @@ describe('account key custody', () => {
       expect(a.mode).toBe('managed'); expect(retry.secret).toBe(a.secret); expect(retry.replica.ledgerId).toBe(a.replica.ledgerId);
       const account = await (await f.request(f.alice.accessToken, '/api/auth/me')).json();
       expect(account.session.replicaId).toBe(a.replica.replicaId);
-      expect(account.ledgers).toEqual([{ ledgerId: a.replica.ledgerId,
-        replicaId: a.replica.replicaId, streamEpoch: a.replica.streamEpoch }]);
+      expect(account.ledgerId).toBe(a.replica.ledgerId);
       await expect(unlockLedgerKeyEnvelope(a.secret, a.envelope)).resolves.toMatchObject({ ledgerId: a.replica.ledgerId });
       const b = await (await f.request(f.bob.accessToken, '/api/v3/protection')).json();
       expect(b.secret).toBeNull(); expect(b.envelope).toBeNull();

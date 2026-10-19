@@ -829,39 +829,6 @@ describe('sync protocol v2', () => {
     await store.close();
   });
 
-  it('advances across a signed quarantine marker without applying or counting the old write', async () => {
-    const store = await openLedger({ deviceId: 'A' });
-    const ledgerId = await store.getLedgerId();
-    const identity = { serverId: 'reviewed-server', replicaId: 'reviewed-replica',
-      streamEpoch: 'reviewed-epoch', ledgerId };
-    const newAsset = asset('REPAIRED');
-    const commit: SyncCommitV2 = {
-      protocol: 2, ledgerId, commitId: newId(), originDeviceId: 'owner',
-      createdAt: new Date().toISOString(), parentCommitIds: [],
-      revisions: [{ revisionId: newId(), aggregateType: 'asset', aggregateId: newAsset.id,
-        parentRevisionIds: [], op: 'put', payload: newAsset as unknown as Record<string, unknown> }],
-    };
-    const contentHash = await sha256Json(wireSyncCommit(commit));
-    const transport: CommitTransport = {
-      async connect() { return { ...identity, headSeq: 2 }; },
-      async pullCommits(_identity, afterSeq) {
-        if (afterSeq === 2) return { commits: [], nextSeq: 2, headSeq: 2, hasMore: false };
-        return { commits: [
-          { seq: 1, commitId: 'commit-rejected-old-0001', contentHash: 'a'.repeat(64), quarantined: true },
-          { seq: 2, commit, contentHash },
-        ], nextSeq: 2, headSeq: 2, hasMore: false };
-      },
-      async pushCommits() { return { assigned: [], headSeq: 2 }; },
-    };
-
-    const result = await syncReplica(store, transport, 'reviewed');
-    expect(result.pulled).toBe(1);
-    expect((await store.getReplicaState(identity)).cursor).toBe(2);
-    expect((await store.listSyncCommits()).map((row) => row.commitId)).toEqual([commit.commitId]);
-    expect((await store.assets.get(newAsset.id))?.code).toBe('REPAIRED');
-    await store.close();
-  });
-
   it('does not acknowledge a push response with a mismatched content hash', async () => {
     const store = await openLedger({ deviceId: 'A' });
     await store.assets.put(asset('LOCAL'));
@@ -967,19 +934,5 @@ describe('sync protocol v2', () => {
     await store.close();
   });
 
-  it('does not browser-bridge a remote commit into a controlled ledger as a new member write', async () => {
-    const store = await openLedger({ deviceId: 'current-device' });
-    try {
-      const ledgerId = await store.getLedgerId();
-      await store.storeSyncCommit({ protocol: 2, ledgerId, commitId: newId(),
-        originDeviceId: 'old-device', createdAt: new Date().toISOString(),
-        parentCommitIds: [], revisions: [] }, { source: 'remote', state: 'applied' });
-      const relay = memoryCommitTransport();
-      const transport: CommitTransport = { ...relay,
-        async connect(id) { return { ...await relay.connect(id), currentKeyEpoch: 2 }; } };
-      const result = await syncReplicas(store, [{ id: 'controlled', endpoint: 'memory', transport }]);
-      expect(result.endpoints[0]?.error).toContain('远端提交必须由节点后台复制');
-      expect(relay.log).toEqual([]);
-    } finally { await store.close(); }
-  });
+
 });

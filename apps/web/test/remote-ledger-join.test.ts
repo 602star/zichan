@@ -1,4 +1,4 @@
-import { createLedgerKeyEnvelope, encryptJson, newId, sha256Json, wireSyncCommit,
+import { createLedgerKeyEnvelope, newId, sha256Json,
   type SyncCommitV2 } from '@zichan/core';
 import { memoryCommitTransport, syncReplicas, type CommitTransport } from '@zichan/db';
 import { openLedger } from '@zichan/db/node';
@@ -6,59 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initializeEmptyLedger } from '../src/db/ledger-initialization.js';
 import {
   commitRemoteLedgerJoin,
-  prepareMemberRemoteLedgerJoin,
   stageRemoteLedgerJoin,
 } from '../src/remote-ledger-join.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('safe remote ledger join', () => {
-  it('restores a member using the current member key without reading the owner key envelope', async () => {
-    const remote = await openLedger({ deviceId: 'member-restore-owner' });
-    try {
-      await initializeEmptyLedger(remote, { baseCurrencyCode: 'CNY', ledgerMode: 'spending' });
-      const ledgerId = await remote.getLedgerId();
-      const key = await createLedgerKeyEnvelope(ledgerId, 'member local password');
-      const rows = await remote.listSyncCommits({ includeInvalid: true });
-      const commits = await Promise.all(rows.map(async (row, index) => {
-        const wire = wireSyncCommit(row);
-        const contentHash = await sha256Json(wire);
-        return { seq: index + 1, commitId: row.commitId, ledgerId, contentHash, keyEpoch: 1,
-          encCommit: await encryptJson(key.session, wire,
-            { protocol: 2, ledgerId, commitId: row.commitId, contentHash }) };
-      }));
-      const requested: string[] = [];
-      const progress: { received: number; total: number }[] = [];
-      vi.stubGlobal('fetch', vi.fn(async (input: string) => {
-        requested.push(input);
-        if (input.includes('/api/v3/key-envelope')) return Response.json({ error: 'owner only' }, { status: 403 });
-        if (input.endsWith('/api/v3/replica')) return Response.json({
-          bound: true, serverId: 'server-member-restore', replicaId: 'replica-member-restore',
-          streamEpoch: 'epoch-member-restore', ledgerId, headSeq: commits.length,
-          capabilities: ['asset-cost-v2'], currentKeyEpoch: 1,
-        });
-        if (input.includes('/api/v3/commits?')) {
-          const after = Number(new URL(input).searchParams.get('after') ?? 0);
-          return Response.json({ serverId: 'server-member-restore', replicaId: 'replica-member-restore',
-            streamEpoch: 'epoch-member-restore', ledgerId, commits: commits.filter((row) => row.seq > after),
-            nextSeq: commits.length, headSeq: commits.length, hasMore: false,
-            currentKeyEpoch: 1 });
-        }
-        throw new Error(`Unexpected request ${input}`);
-      }));
-      const prepared = await prepareMemberRemoteLedgerJoin({
-        baseUrl: 'https://ledger.example', token: 'member-token', ledgerId,
-        keyEnvelope: key.envelope, cryptoSession: key.session,
-        expectedServerId: 'server-member-restore',
-        onProgress: (received, total) => progress.push({ received, total }),
-      });
-      expect(prepared.pulled).toBe(commits.length);
-      expect(progress.at(-1)).toEqual({ received: commits.length, total: commits.length });
-      expect(prepared.ledger.settings).toHaveLength(1);
-      expect(requested.some((url) => url.includes('/api/v3/key-envelope'))).toBe(false);
-    } finally { await remote.close(); }
-  }, 30_000);
-
   it('stages and validates the complete remote ledger before replacing local data', async () => {
     const remote = await openLedger({ deviceId: 'remote-owner' });
     const local = await openLedger({ deviceId: 'local-device' });

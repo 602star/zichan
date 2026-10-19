@@ -215,7 +215,6 @@ export {
   MfaRequiredError,
   refreshAccountSession,
   fetchAuthMe,
-  selectAccountLedger,
   fetchLedgerKeyEnvelope,
   putLedgerKeyEnvelope,
   type HttpTransportOptions,
@@ -225,7 +224,6 @@ export {
   type MfaChallenge,
   type SyncAuthSession,
   type SyncAuthMe,
-  type SyncLedgerSelection,
 } from './http-transport.js';
 export {
   applyPendingCommits,
@@ -235,8 +233,6 @@ export {
   syncReplica,
   syncReplicas,
   resolveConflictGroup,
-  replayReviewedCommit,
-  mergeReviewedCommit,
   memoryCommitTransport,
   type CommitTransport,
   type CommitSyncResult,

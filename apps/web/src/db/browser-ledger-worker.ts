@@ -143,7 +143,7 @@ function requireTransaction(port: MessagePort, txId: string | undefined): Transa
 
 function beginTransaction(port: MessagePort, request: Request): void {
   if (!database || request.txId === undefined) throw new Error('账本数据库尚未打开');
-  if (!ports.has(port)) throw new Error('共享账本连接尚未打开');
+  if (!ports.has(port)) throw new Error('账本连接尚未打开');
   if (transactions.has(request.txId)) throw new Error('账本事务编号重复');
   const base = request.parentTxId === undefined
     ? database.driver
@@ -211,7 +211,7 @@ async function dispatch(port: MessagePort, request: Request): Promise<unknown> {
     ports.add(port);
     return undefined;
   }
-  if (!ports.has(port) || !database) throw new Error('共享账本连接已关闭，请刷新页面');
+  if (!ports.has(port) || !database) throw new Error('账本连接已关闭，请刷新页面');
   if (request.op === 'close') return closePort(port);
   if (request.op === 'task-unlock') return releaseTaskLock(port, request.taskName, request.taskToken);
   if (request.op === 'commit' || request.op === 'rollback') return finishTransaction(port, request, request.op === 'rollback');

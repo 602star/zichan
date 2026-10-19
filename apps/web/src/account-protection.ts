@@ -5,11 +5,10 @@ import { buildSyncBaseUrl, patchSavedSyncConnection, type SyncConnection } from 
 import { adoptUnlockedLedgerKeyEnvelope } from './ledger-key-vault.js';
 
 export interface ProtectionInfo {
-  mode: 'managed' | 'relay' | 'member' | null;
+  mode: 'managed' | 'relay' | null;
   version: number;
   defaultMode: 'managed';
   custodyEnabled: boolean;
-  controlled?: boolean;
   secret: string | null;
   envelope: LedgerKeyEnvelope | null;
   replica: { serverId: string; ledgerId: string; replicaId: string; streamEpoch: string; headSeq: number } | null;
@@ -36,10 +35,9 @@ export async function protectionRequest(profile: SyncConnection, method = 'GET',
   return result;
 }
 
-export async function unlockAccountProtection(profile: SyncConnection, info: ProtectionInfo,
-  memberPassword?: string): Promise<void> {
+export async function unlockAccountProtection(profile: SyncConnection, info: ProtectionInfo): Promise<void> {
   const atRevision = revision;
-  const secret = info.mode === 'managed' ? info.secret : memberPassword;
+  const secret = info.mode === 'managed' ? info.secret : null;
   if (!secret || !info.envelope || !info.replica || info.envelope.ledgerId !== info.replica.ledgerId || info.replica.serverId !== profile.serverId) throw new Error('账本保护信息不完整');
   const session = await unlockLedgerKeyEnvelope(secret, info.envelope);
   if (atRevision !== revision) throw new Error('账号会话已退出');

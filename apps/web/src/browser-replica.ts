@@ -52,11 +52,10 @@ export async function attachBrowserReplica(store: SqlLedgerStore, profile: SyncC
   if (!envelope) throw new Error('请先解锁当前账本');
   const session = requireLedgerCryptoSession(envelope.ledgerId);
   const source = accountProtection();
-  if (!source || source.info.mode !== 'managed' || source.info.controlled) throw new Error('仅个人账本可连接独立服务器');
+  if (!source || source.info.mode !== 'managed') throw new Error('仅个人账本可连接独立服务器');
   const group = await request<{ joined: boolean }>(profile, '/api/v4/group/status');
   if (group.joined) throw new Error('这台服务器已加入管理员同步组，请直接在该组内登录账本');
   const protection = await protectionRequest(profile);
-  if (protection.controlled) throw new Error('目标服务器已有共享账本，不能用当前账本覆盖');
   const remote = await request<RemoteReplica>(profile, '/api/v3/replica');
   if (remote.serverId !== profile.serverId) throw new Error('目标服务器身份已变化，请重新登录');
   if (remote.serverManagedReplication) throw new Error('目标账本已有服务器复制链路，不能改为浏览器同步');
@@ -70,7 +69,6 @@ export async function attachBrowserReplica(store: SqlLedgerStore, profile: SyncC
     if (remote.headSeq !== 0) throw new Error('目标服务器已有记账数据，请使用一个尚未记账的新账号');
     const usage = await request<{ objectCount: number; stagingCount?: number }>(profile, '/api/v3/blobs/usage');
     if (usage.objectCount || usage.stagingCount) throw new Error('目标服务器已有附件，不能覆盖');
-    if (accountProtection()?.info.controlled) throw new Error('成员账本不能由个人账号复制到独立服务器');
     const first = (await store.listSyncCommits())[0];
     if (!first) throw new Error('当前账本还没有可同步的记录，请先完成首次记账');
     const commit = wireSyncCommit(first);

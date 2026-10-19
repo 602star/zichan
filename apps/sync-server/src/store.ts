@@ -4,9 +4,7 @@ import { statfsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { SqlDriver } from '@zichan/db';
 import { NodeSqliteDriver } from '@zichan/db/node';
-import { applyLedgerControlEvent, assertAccountEncryptionKeyEnvelope, assertLedgerMemberKeyEnvelope, canonicalJson,
-  ledgerControlEventHash, type AccountEncryptionKeyEnvelope, type LedgerControlEvent,
-  type LedgerControlState, type LedgerMemberIdentity, type LedgerMemberKeyEnvelope } from '@zichan/core';
+import { canonicalJson } from '@zichan/core';
 import { cursorValue, readCursor, resolveSort, type ResolvedSort, type SortOption } from './list-sort.js';
 import { MAINTENANCE_KEY } from './maintenance-mode.js';
 import { verifyFederatedCredential, type FederatedCredentialBundle } from './federated-credential.js';
@@ -172,8 +170,6 @@ export interface SyncSession {
   kind: string;
   /** Selected ledger slot for this node-local session. Admin sessions have none. */
   replicaId?: string;
-  /** Incremented only when this session explicitly switches ledgers. */
-  selectionVersion: number;
 }
 
 export interface UserReplica {
@@ -192,13 +188,9 @@ export interface StoredCommit {
   ledgerId: string;
   contentHash: string;
   encCommit: JsonRecord;
-  /** Zero means a commit persisted before signed member control was enabled. */
-  keyEpoch?: number;
-  writer?: LedgerMemberIdentity;
   cipherBytes: number;
   createdAt: string;
-  /** Historical ciphertext suppressed by a signed owner decision. */
-  quarantined?: boolean;
+
 }
 
 export interface Invite {
@@ -510,8 +502,8 @@ export class ServerStoreError extends Error {
   }
 }
 
-export const CURRENT_SERVER_SCHEMA = 26;
-export const CURRENT_SERVER_SCHEMA_NAME = 'fresh_replica_storage_v26';
+export const CURRENT_SERVER_SCHEMA = 27;
+export const CURRENT_SERVER_SCHEMA_NAME = 'single_user_replica_storage_v27';
 export function supportedServerSchema(version: number, name: string): boolean {
   return version === CURRENT_SERVER_SCHEMA && name === CURRENT_SERVER_SCHEMA_NAME;
 }
@@ -546,18 +538,10 @@ async function commitCatalogDigest(driver: SqlDriver, replicaId: string): Promis
   let after = '';
   let count = 0;
   while (true) {
-    const rows = await driver.all<Record<string, unknown>>(`SELECT commit_row.commit_id,
-      commit_row.ledger_id, commit_row.content_hash, commit_row.key_epoch,
-      commit_row.writer_issuer_node_id, commit_row.writer_account_id
-      FROM ledger_replica_commits commit_row LEFT JOIN ledger_control_resolutions resolution
-        ON resolution.replica_id = commit_row.replica_id
-          AND resolution.rejected_commit_id = commit_row.commit_id
-          AND resolution.rejected_content_hash = commit_row.content_hash
-      WHERE commit_row.replica_id = ? AND commit_row.commit_id > ?
-        AND resolution.rejected_commit_id IS NULL ORDER BY commit_row.commit_id LIMIT 500`, [replicaId, after]);
+    const rows = await driver.all<Record<string, unknown>>(`SELECT commit_id, ledger_id, content_hash FROM ledger_replica_commits
+      WHERE replica_id = ? AND commit_id > ? ORDER BY commit_id LIMIT 500`, [replicaId, after]);
     for (const row of rows) {
-      hash.update(JSON.stringify([row['commit_id'], row['ledger_id'], row['content_hash'],
-        row['key_epoch'], row['writer_issuer_node_id'], row['writer_account_id']]));
+      hash.update(JSON.stringify([row['commit_id'], row['ledger_id'], row['content_hash']]));
       hash.update('\n');
       after = String(row['commit_id']);
       count += 1;
@@ -600,9 +584,6 @@ export interface NodeReplicationLink {
   pushBlobCursor: string;
   pullStateCursor: string;
   pushStateCursor: string;
-  pullMemberCursor: string;
-  pushMemberCursor: string;
-  memberEpoch: number;
   peerHeadSeq: number;
   localHeadSeq: number;
   peerBlobObjects: number;
@@ -677,35 +658,6 @@ export interface ReplicaGroupMember {
   retiredAt?: string;
 }
 
-export interface AccountEncryptionKeyRecord {
-  issuerNodeId: string;
-  subjectAccountId: string;
-  publicKey: string;
-  envelope: JsonRecord;
-  revision: number;
-  updatedAt: string;
-}
-
-export interface LedgerControlRoot extends LedgerMemberIdentity {
-  signingPublicKey: string;
-}
-
-export interface LedgerControlPage {
-  root: LedgerControlRoot | null;
-  events: LedgerControlEvent[];
-  headSeq: number;
-  headHash: string | null;
-  nextSeq: number;
-  hasMore: boolean;
-}
-
-export interface LedgerMemberEnvelopePage {
-  keyEpoch: number;
-  envelopes: LedgerMemberKeyEnvelope[];
-  nextCursor: string;
-  hasMore: boolean;
-}
-
 export interface NodeReplicaInventory {
   serverId: string;
   replicaId: string;
@@ -713,21 +665,9 @@ export interface NodeReplicaInventory {
   ledgerId: string;
   issuerNodeId: string;
   subjectAccountId: string;
-  accountKeyHash: string;
   keyringId: string;
   keyGeneration: number;
   keyEnvelopeHash: string;
-  controlSeq: number;
-  controlHash: string;
-  keyEpoch: number;
-  memberEnvelopeCount: number;
-  memberEnvelopeHash: string;
-  missingMemberEnvelopeCount: number;
-  memberAccountKeyCount: number;
-  memberAccountKeyHash: string;
-  missingMemberAccountKeyCount: number;
-  memberAccountCount: number;
-  missingMemberAccountCount: number;
   requirementsHash: string;
   commitCount: number;
   commitHash: string;
@@ -737,7 +677,6 @@ export interface NodeReplicaInventory {
   promisedBlobCount: number;
   promisedBlobHash: string;
   missingPromisedBlobCount: number;
-  rejectedCommitCount: number;
   blobCount: number;
   blobHash: string;
   tombstoneCount: number;
@@ -843,7 +782,6 @@ function sessionFromRow(row: Record<string, unknown>): SyncSession {
     ...(row['revoked_at'] == null ? {} : { revokedAt: String(row['revoked_at']) }),
     kind: String(row['kind'] ?? 'ledger'),
     ...(row['replica_id'] == null ? {} : { replicaId: String(row['replica_id']) }),
-    selectionVersion: Number(row['selection_version'] ?? 0),
   };
 }
 
@@ -1119,15 +1057,6 @@ CREATE TABLE IF NOT EXISTS joined_group_registration_policy (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_account_sync_runs_user_at ON account_sync_runs(username, finished_at);
-CREATE TABLE IF NOT EXISTS account_encryption_keys (
-  issuer_node_id TEXT NOT NULL,
-  subject_account_id TEXT NOT NULL,
-  public_key TEXT NOT NULL,
-  envelope_json TEXT NOT NULL,
-  revision INTEGER NOT NULL CHECK (revision >= 1),
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (issuer_node_id, subject_account_id)
-);
 CREATE TABLE IF NOT EXISTS federated_login_intents (
   state_hash TEXT PRIMARY KEY,
   link_id TEXT NOT NULL REFERENCES node_replication_links(link_id) ON DELETE CASCADE,
@@ -1206,8 +1135,7 @@ CREATE TABLE IF NOT EXISTS sync_sessions (
   last_seen_at TEXT NOT NULL,
   last_ip TEXT,
   revoked_at TEXT,
-  kind TEXT NOT NULL DEFAULT 'ledger',
-  selection_version INTEGER NOT NULL DEFAULT 0
+  kind TEXT NOT NULL DEFAULT 'ledger'
 );
 CREATE INDEX IF NOT EXISTS idx_sync_sessions_user ON sync_sessions (username, revoked_at, expires_at);
 CREATE TABLE IF NOT EXISTS server_rate_limits (
@@ -1247,15 +1175,6 @@ CREATE TABLE IF NOT EXISTS ledger_account_routes (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_account_routes_slot ON ledger_account_routes (replica_id);
--- Derived from the signed member chain. A legacy slot without a chain keeps
--- its original account route until the ledger has initialized membership.
-CREATE TABLE IF NOT EXISTS account_ledger_index (
-  username TEXT NOT NULL COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
-  replica_id TEXT NOT NULL REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (username, replica_id)
-);
-CREATE INDEX IF NOT EXISTS idx_account_ledger_index_slot ON account_ledger_index (replica_id);
 CREATE TRIGGER IF NOT EXISTS sync_replicas_slot_insert AFTER INSERT ON sync_replicas BEGIN
   INSERT INTO ledger_replica_slots (replica_id, ledger_id, stream_epoch, head_seq, created_at, updated_at)
     VALUES (NEW.replica_id, NEW.ledger_id, NEW.stream_epoch, NEW.head_seq, NEW.created_at, NEW.updated_at)
@@ -1341,9 +1260,6 @@ CREATE TABLE IF NOT EXISTS node_replication_links (
   push_blob_cursor TEXT NOT NULL DEFAULT '',
   pull_state_cursor TEXT NOT NULL DEFAULT '',
   push_state_cursor TEXT NOT NULL DEFAULT '',
-  pull_member_cursor TEXT NOT NULL DEFAULT '',
-  push_member_cursor TEXT NOT NULL DEFAULT '',
-  member_epoch INTEGER NOT NULL DEFAULT 0,
   peer_head_seq INTEGER NOT NULL DEFAULT 0,
   local_head_seq INTEGER NOT NULL DEFAULT 0,
   peer_blob_objects INTEGER NOT NULL DEFAULT 0,
@@ -1413,9 +1329,6 @@ CREATE TABLE IF NOT EXISTS ledger_replica_commits (
   ledger_id TEXT NOT NULL,
   content_hash TEXT NOT NULL,
   enc_commit_json TEXT NOT NULL,
-  key_epoch INTEGER NOT NULL DEFAULT 0,
-  writer_issuer_node_id TEXT,
-  writer_account_id TEXT,
   cipher_bytes INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   PRIMARY KEY (replica_id, seq),
@@ -1456,45 +1369,6 @@ CREATE TABLE IF NOT EXISTS ledger_attachment_promise_upload_items (
   blob_id TEXT NOT NULL,
   PRIMARY KEY (upload_id, blob_id)
 );
-CREATE TABLE IF NOT EXISTS ledger_replica_rejected_commits (
-  replica_id TEXT NOT NULL REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
-  peer_node_id TEXT NOT NULL,
-  commit_id TEXT NOT NULL,
-  content_hash TEXT NOT NULL,
-  key_epoch INTEGER NOT NULL,
-  writer_issuer_node_id TEXT,
-  writer_account_id TEXT,
-  reason TEXT NOT NULL,
-  first_seen_at TEXT NOT NULL,
-  last_seen_at TEXT NOT NULL,
-  PRIMARY KEY (replica_id, peer_node_id, commit_id)
-);
-CREATE TABLE IF NOT EXISTS ledger_replica_rejected_payloads (
-  replica_id TEXT NOT NULL,
-  peer_node_id TEXT NOT NULL,
-  commit_id TEXT NOT NULL,
-  enc_commit_json TEXT NOT NULL,
-  cipher_bytes INTEGER NOT NULL,
-  PRIMARY KEY (replica_id, peer_node_id, commit_id),
-  FOREIGN KEY (replica_id, peer_node_id, commit_id)
-    REFERENCES ledger_replica_rejected_commits (replica_id, peer_node_id, commit_id) ON DELETE CASCADE
-);
-CREATE TABLE IF NOT EXISTS ledger_control_resolutions (
-  replica_id TEXT NOT NULL REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
-  rejected_commit_id TEXT NOT NULL,
-  rejected_content_hash TEXT NOT NULL,
-  decision TEXT NOT NULL CHECK (decision IN ('replay', 'discard')),
-  replacement_commit_id TEXT,
-  replacement_content_hash TEXT,
-  actor_issuer_node_id TEXT NOT NULL,
-  actor_account_id TEXT NOT NULL,
-  key_epoch INTEGER NOT NULL,
-  event_seq INTEGER NOT NULL,
-  PRIMARY KEY (replica_id, rejected_commit_id),
-  FOREIGN KEY (replica_id, event_seq) REFERENCES ledger_control_events(replica_id, seq)
-);
-CREATE INDEX IF NOT EXISTS idx_ledger_control_resolutions_replacement
-  ON ledger_control_resolutions (replica_id, replacement_commit_id);
 CREATE TABLE IF NOT EXISTS ledger_replica_key_envelopes (
   replica_id TEXT PRIMARY KEY REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
   ledger_id TEXT NOT NULL,
@@ -1503,34 +1377,6 @@ CREATE TABLE IF NOT EXISTS ledger_replica_key_envelopes (
   envelope_json TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS ledger_control_roots (
-  replica_id TEXT PRIMARY KEY REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
-  issuer_node_id TEXT NOT NULL,
-  account_id TEXT NOT NULL,
-  signing_public_key TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS ledger_control_events (
-  replica_id TEXT NOT NULL REFERENCES ledger_control_roots(replica_id) ON DELETE CASCADE,
-  seq INTEGER NOT NULL CHECK (seq >= 1),
-  event_hash TEXT NOT NULL,
-  event_json TEXT NOT NULL,
-  stored_at TEXT NOT NULL,
-  PRIMARY KEY (replica_id, seq),
-  UNIQUE (replica_id, event_hash)
-);
-CREATE TABLE IF NOT EXISTS ledger_member_key_envelopes (
-  replica_id TEXT NOT NULL REFERENCES ledger_replica_slots(replica_id) ON DELETE CASCADE,
-  issuer_node_id TEXT NOT NULL,
-  account_id TEXT NOT NULL,
-  key_epoch INTEGER NOT NULL CHECK (key_epoch >= 1),
-  keyring_id TEXT NOT NULL,
-  generation INTEGER NOT NULL CHECK (generation >= 1),
-  envelope_json TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (replica_id, issuer_node_id, account_id, key_epoch)
-);
-CREATE INDEX IF NOT EXISTS idx_ledger_member_key_envelopes_epoch ON ledger_member_key_envelopes (replica_id, key_epoch);
 CREATE TABLE IF NOT EXISTS sync_key_custody (
   username TEXT PRIMARY KEY COLLATE NOCASE REFERENCES sync_users(username) ON DELETE CASCADE,
   mode TEXT NOT NULL CHECK (mode IN ('managed', 'relay')),
@@ -1634,9 +1480,6 @@ CREATE TABLE IF NOT EXISTS ledger_replacement_checkpoint_commits (
   ledger_id TEXT NOT NULL,
   content_hash TEXT NOT NULL,
   enc_commit_json TEXT NOT NULL,
-  key_epoch INTEGER NOT NULL,
-  writer_issuer_node_id TEXT,
-  writer_account_id TEXT,
   cipher_bytes INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   PRIMARY KEY (checkpoint_id, seq),
@@ -1855,18 +1698,7 @@ END;`);
       LEFT JOIN ledger_replica_slots slot ON slot.replica_id = envelope.replica_id
       WHERE slot.replica_id IS NULL OR slot.ledger_id <> envelope.ledger_id LIMIT 1`);
     if (envelopeDrift) throw new Error('账本副本密钥包与副本槽位账本不一致，已停止启动');
-    const controlRoots = await this.driver.all<{ replica_id: string }>('SELECT replica_id FROM ledger_control_roots');
-    for (const root of controlRoots) {
-      try {
-        await this.readLedgerControlState(this.driver, root.replica_id);
-        await this.verifyControlResolutionIndex(this.driver, root.replica_id);
-      }
-      catch (error) { throw new Error(`账本成员控制链校验失败，已停止启动：${String(error)}`); }
-    }
-    // The index is a cache of verified membership, never an independent grant.
     await this.driver.transaction(async (driver) => {
-      const slots = await driver.all<{ replica_id: string }>('SELECT replica_id FROM ledger_replica_slots');
-      for (const slot of slots) await this.rebuildAccountLedgerIndex(driver, slot.replica_id);
       await driver.run(`UPDATE sync_sessions SET replica_id =
         (SELECT route.replica_id FROM ledger_account_routes route WHERE route.username = sync_sessions.username)
         WHERE replica_id IS NULL AND kind = 'ledger'`);
@@ -2532,7 +2364,6 @@ END;`);
       expiresAt: input.expiresAt,
       lastSeenAt: at,
       kind: input.kind === 'admin' ? 'admin' : 'ledger',
-      selectionVersion: 0,
       ...(input.ip ? { lastIp: input.ip } : {}),
     };
     await this.driver.transaction(async (driver) => {
@@ -2548,13 +2379,10 @@ END;`);
       if (session.kind === 'ledger') {
         const route = input.replicaId
           ? await driver.get<{ replica_id: string }>(
-            'SELECT replica_id FROM account_ledger_index WHERE username = ? AND replica_id = ?',
+            'SELECT replica_id FROM ledger_account_routes WHERE username = ? AND replica_id = ?',
             [session.username, input.replicaId])
           : await driver.get<{ replica_id: string }>(
-            'SELECT replica_id FROM ledger_account_routes WHERE username = ?', [session.username])
-            ?? await driver.get<{ replica_id: string }>(
-              'SELECT replica_id FROM account_ledger_index WHERE username = ? ORDER BY created_at, replica_id LIMIT 1',
-              [session.username]);
+            'SELECT replica_id FROM ledger_account_routes WHERE username = ?', [session.username]);
         if (input.replicaId && !route) throw new ServerStoreError('LEDGER_ACCESS_DENIED', 403,
           '当前账号没有此账本的访问权限');
         if (route) session.replicaId = route.replica_id;
@@ -2577,51 +2405,6 @@ END;`);
     await this.ready;
     const row = await this.driver.get<Record<string, unknown>>('SELECT * FROM sync_sessions WHERE session_id = ?', [id]);
     return row ? sessionFromRow(row) : undefined;
-  }
-
-  /** Select only a verified membership for one node-local browser session. */
-  async selectSessionReplica(username: string, sessionId: string, replicaId: string): Promise<SyncSession> {
-    await this.ready;
-    return this.driver.transaction(async (driver) => {
-      const at = nowIso();
-      const session = await driver.get<Record<string, unknown>>(`SELECT * FROM sync_sessions
-        WHERE session_id = ? AND username = ? AND kind = 'ledger'
-          AND revoked_at IS NULL AND expires_at > ?`, [sessionId, username, at]);
-      if (!session) throw new ServerStoreError('SESSION_REVOKED', 401, '账本会话已失效，请重新登录');
-      const replica = await this.accountReplicaRow(driver, username, replicaId);
-      if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 403, '当前账号没有此账本');
-      const control = await this.readLedgerControlState(driver, replicaId);
-      const primary = await driver.get<{ replica_id: string }>(
-        'SELECT replica_id FROM ledger_account_routes WHERE username = ?', [username]);
-      if (primary?.replica_id !== replicaId && !control) {
-        throw new ServerStoreError('LEDGER_MEMBER_REQUIRED', 403, '此账本尚无成员控制链');
-      }
-      await this.assertLedgerAccessOnReplica(driver, username, replicaId, 'read');
-      if (primary?.replica_id !== replicaId && control) {
-        const identity = await driver.get<{ account_id: string; issuer_node_id: string | null;
-          subject_account_id: string | null }>(`
-          SELECT local.account_id, binding.issuer_node_id, binding.subject_account_id
-          FROM sync_account_identities local LEFT JOIN federated_account_bindings binding
-            ON binding.local_username = local.username WHERE local.username = ?`, [username]);
-        const issuerNodeId = identity?.issuer_node_id ?? this.serverId;
-        const accountId = identity?.subject_account_id ?? identity?.account_id;
-        const envelope = accountId ? await driver.get(`SELECT 1 FROM ledger_member_key_envelopes
-          WHERE replica_id = ? AND issuer_node_id = ? AND account_id = ? AND key_epoch = ?`,
-        [replicaId, issuerNodeId, accountId, control.keyEpoch]) : undefined;
-        if (!envelope) throw new ServerStoreError('MEMBER_ENVELOPE_REQUIRED', 409,
-          '当前账本代次的成员密钥包尚未同步');
-      }
-      const selectionVersion = Number(session['selection_version'] ?? 0);
-      if (!Number.isSafeInteger(selectionVersion) || selectionVersion < 0
-        || selectionVersion >= Number.MAX_SAFE_INTEGER) {
-        throw new ServerStoreError('SESSION_SELECTION_INVALID', 409, '账本会话选择版本无效');
-      }
-      const nextVersion = selectionVersion + 1;
-      await driver.run(`UPDATE sync_sessions SET replica_id = ?, selection_version = ?, updated_at = ?
-        WHERE session_id = ?`, [replicaId, nextVersion, at, sessionId]);
-      return sessionFromRow({ ...session, replica_id: replicaId,
-        selection_version: nextVersion, updated_at: at });
-    });
   }
 
   async rotateSessionRefresh(id: string, expectedHash: string, nextHash: string, ip?: string): Promise<SyncSession | undefined> {
@@ -2929,14 +2712,13 @@ END;`);
     const rows = await this.driver.all<{ username: string }>(`
       SELECT u.username FROM sync_users u
       JOIN sync_account_identities i ON i.username = u.username
-      JOIN account_encryption_keys k ON k.issuer_node_id = ? AND k.subject_account_id = i.account_id
       LEFT JOIN federated_account_bindings f ON f.local_username = u.username
       LEFT JOIN server_ownership o ON o.username = u.username
       LEFT JOIN server_administrators a ON a.username = u.username
       LEFT JOIN node_credential_exports e ON e.link_id = ? AND e.subject_account_id = i.account_id
       WHERE f.local_username IS NULL AND o.username IS NULL AND a.username IS NULL
-        AND (e.revision IS NULL OR e.revision < u.revision * 1000000 + k.revision)
-      ORDER BY u.username LIMIT ?`, [this.serverId, linkId, limit]);
+        AND (e.revision IS NULL OR e.revision < u.revision)
+      ORDER BY u.username LIMIT ?`, [linkId, limit]);
     const users = await Promise.all(rows.map((row) => this.getUser(row.username)));
     return users.filter((user): user is SyncUser => Boolean(user));
   }
@@ -2946,14 +2728,13 @@ END;`);
     const rows = await this.driver.all<{ username: string }>(`
       SELECT u.username FROM sync_users u
       JOIN sync_account_identities i ON i.username = u.username
-      JOIN account_encryption_keys k ON k.issuer_node_id = ? AND k.subject_account_id = i.account_id
       LEFT JOIN federated_account_bindings f ON f.local_username = u.username
       LEFT JOIN server_ownership o ON o.username = u.username
       LEFT JOIN server_administrators a ON a.username = u.username
       LEFT JOIN native_directory_exports e ON e.ledger_id = ? AND e.subject_account_id = i.account_id
       WHERE f.local_username IS NULL AND o.username IS NULL AND a.username IS NULL
-        AND (e.revision IS NULL OR e.revision < u.revision * 1000000 + k.revision)
-      ORDER BY u.username LIMIT ?`, [this.serverId, ledgerId, limit]);
+        AND (e.revision IS NULL OR e.revision < u.revision)
+      ORDER BY u.username LIMIT ?`, [ledgerId, limit]);
     const users = await Promise.all(rows.map((row) => this.getUser(row.username)));
     return users.filter((user): user is SyncUser => Boolean(user));
   }
@@ -3973,8 +3754,6 @@ END;`);
       grantId: String(row['grant_id']), pullSeq: Number(row['pull_seq']), pushSeq: Number(row['push_seq']),
       pullBlobCursor: String(row['pull_blob_cursor'] ?? ''), pushBlobCursor: String(row['push_blob_cursor'] ?? ''),
       pullStateCursor: String(row['pull_state_cursor'] ?? ''), pushStateCursor: String(row['push_state_cursor'] ?? ''),
-      pullMemberCursor: String(row['pull_member_cursor'] ?? ''), pushMemberCursor: String(row['push_member_cursor'] ?? ''),
-      memberEpoch: Number(row['member_epoch'] ?? 0),
       peerHeadSeq: Number(row['peer_head_seq'] ?? 0), localHeadSeq: Number(row['local_head_seq'] ?? 0),
       peerBlobObjects: Number(row['peer_blob_objects'] ?? 0), localBlobObjects: Number(row['local_blob_objects'] ?? 0),
       peerBlobBytes: Number(row['peer_blob_bytes'] ?? 0), localBlobBytes: Number(row['local_blob_bytes'] ?? 0),
@@ -4011,7 +3790,7 @@ END;`);
     };
   }
 
-  async createNodeReplicationLink(input: Omit<NodeReplicationLink, 'linkId' | 'pullSeq' | 'pushSeq' | 'pullBlobCursor' | 'pushBlobCursor' | 'pullStateCursor' | 'pushStateCursor' | 'pullMemberCursor' | 'pushMemberCursor' | 'memberEpoch' | 'peerHeadSeq' | 'localHeadSeq' | 'peerBlobObjects' | 'localBlobObjects' | 'peerBlobBytes' | 'localBlobBytes' | 'pullBlobScannedBytes' | 'pushBlobScannedBytes' | 'pullBlobTransferredBytes' | 'pushBlobTransferredBytes' | 'peerLegacyObjects' | 'localLegacyObjects' | 'peerTombstones' | 'localTombstones' | 'pullBlobSweepAt' | 'pushBlobSweepAt' | 'pullStateSweepAt' | 'pushStateSweepAt' | 'inventoryMatchedAt' | 'inventoryIssue' | 'inventoryBlobHash' | 'physicalBlobHash' | 'physicalVerifiedAt' | 'physicalScannedAt' | 'physicalIssue' | 'enabled' | 'lastSuccessAt' | 'lastError' | 'syncRounds' | 'convergedRounds' | 'partialRounds' | 'failedRounds' | 'lastRoundDurationMs' | 'revocationPending' | 'remoteRevokedAt' | 'revocationError' | 'lifecycleState' | 'lifecycleCheckedAt'>): Promise<NodeReplicationLink> {
+  async createNodeReplicationLink(input: Omit<NodeReplicationLink, 'linkId' | 'pullSeq' | 'pushSeq' | 'pullBlobCursor' | 'pushBlobCursor' | 'pullStateCursor' | 'pushStateCursor' | 'peerHeadSeq' | 'localHeadSeq' | 'peerBlobObjects' | 'localBlobObjects' | 'peerBlobBytes' | 'localBlobBytes' | 'pullBlobScannedBytes' | 'pushBlobScannedBytes' | 'pullBlobTransferredBytes' | 'pushBlobTransferredBytes' | 'peerLegacyObjects' | 'localLegacyObjects' | 'peerTombstones' | 'localTombstones' | 'pullBlobSweepAt' | 'pushBlobSweepAt' | 'pullStateSweepAt' | 'pushStateSweepAt' | 'inventoryMatchedAt' | 'inventoryIssue' | 'inventoryBlobHash' | 'physicalBlobHash' | 'physicalVerifiedAt' | 'physicalScannedAt' | 'physicalIssue' | 'enabled' | 'lastSuccessAt' | 'lastError' | 'syncRounds' | 'convergedRounds' | 'partialRounds' | 'failedRounds' | 'lastRoundDurationMs' | 'revocationPending' | 'remoteRevokedAt' | 'revocationError' | 'lifecycleState' | 'lifecycleCheckedAt'>): Promise<NodeReplicationLink> {
     await this.ready;
     return this.driver.transaction(async (driver) => {
       const replica = await driver.get<{ ledger_id: string; replica_id: string; stream_epoch: string; head_seq: number }>(
@@ -4030,11 +3809,6 @@ END;`);
           if (occupied) throw new ServerStoreError('TARGET_NOT_EMPTY', 409,
             '加入节点的账本副本仍有附件、删除状态或未完成上传，不能自动合并');
         }
-      }
-      if (await driver.get('SELECT 1 FROM ledger_control_roots WHERE replica_id = ?', [replica.replica_id])
-        || await driver.get('SELECT 1 FROM ledger_replica_rejected_commits WHERE replica_id = ?', [replica.replica_id])) {
-        throw new ServerStoreError('TARGET_NOT_EMPTY', 409,
-          '加入节点的账本副本已有成员控制或待处理写入，不能自动合并');
       }
       const existing = await driver.get('SELECT 1 FROM node_replication_links WHERE username = ? AND ledger_id = ? AND peer_node_id = ?', [input.username, input.ledgerId, input.peerNodeId]);
       if (existing) throw new ServerStoreError('LINK_EXISTS', 409, '此账本与节点已有复制链路');
@@ -4153,13 +3927,12 @@ END;`);
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [linkId, username, ledgerId, streamEpoch, input.peerUrl, input.peerNodeId, input.peerPublicKey,
         input.peerReplicaId, input.peerStreamEpoch, input.grantId, at, at]);
-      await this.rebuildAccountLedgerIndex(driver, replicaId);
       const row = await driver.get<Record<string, unknown>>('SELECT * FROM node_replication_links WHERE link_id = ?', [linkId]);
       return this.nodeLinkFromRow(row!);
     });
   }
 
-  /** A group account can log in locally before it receives any ledger membership. */
+  /** A group account can log in locally before its own ledger arrives. */
   async provisionFederatedDirectoryAccount(ledgerId: string, issuerNodeId: string,
     subjectAccountId: string): Promise<string> {
     await this.ready;
@@ -4189,71 +3962,6 @@ END;`);
       await driver.run(`INSERT INTO federated_account_bindings
         (local_username, issuer_node_id, subject_account_id, ledger_id, created_at, verified_at)
         VALUES (?, ?, ?, ?, ?, ?)`, [username, issuerNodeId, subjectAccountId, ledgerId, at, at]);
-      return username;
-    });
-  }
-
-  /** Bind an issuer-authenticated member to an existing ledger slot without granting node administration. */
-  async provisionFederatedMember(link: Pick<NodeReplicationLink, 'username' | 'ledgerId' | 'peerNodeId'>,
-    issuerNodeId: string,
-    subjectAccountId: string): Promise<string> {
-    await this.ready;
-    if (!/^[A-Za-z0-9_-]{8,128}$/.test(issuerNodeId)
-      || !/^[A-Za-z0-9_-]{8,160}$/.test(subjectAccountId)) {
-      throw new ServerStoreError('FEDERATED_IDENTITY_CHANGED', 403, '统一身份节点不匹配');
-    }
-    return this.driver.transaction(async (driver) => {
-      const route = await driver.get<{ replica_id: string; ledger_id: string }>(`
-        SELECT slot.replica_id, slot.ledger_id FROM ledger_account_routes route
-        JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-        WHERE route.username = ?`, [link.username]);
-      if (!route || route.ledger_id !== link.ledgerId) {
-        throw new ServerStoreError('REPLICA_CHANGED', 409, '统一登录账本副本已改变');
-      }
-      const control = await this.readLedgerControlState(driver, route.replica_id);
-      const member = control?.members[`${issuerNodeId}/${subjectAccountId}`];
-      if (!member || member.removed) {
-        throw new ServerStoreError('LEDGER_MEMBER_REQUIRED', 403, '统一账号没有当前账本访问权');
-      }
-      const envelope = await driver.get('SELECT 1 FROM ledger_member_key_envelopes WHERE replica_id = ? AND issuer_node_id = ? AND account_id = ? AND key_epoch = ?',
-        [route.replica_id, issuerNodeId, subjectAccountId, control.keyEpoch]);
-      if (!envelope) throw new ServerStoreError('MEMBER_ENVELOPE_REQUIRED', 409, '成员密钥包尚未同步到此副本');
-      const accountKey = await driver.get<{ public_key: string }>(
-        'SELECT public_key FROM account_encryption_keys WHERE issuer_node_id = ? AND subject_account_id = ?',
-        [issuerNodeId, subjectAccountId]);
-      if (accountKey?.public_key !== member.encryptionPublicKey) {
-        throw new ServerStoreError('MEMBER_ACCOUNT_KEY_REQUIRED', 409, '成员账号密钥尚未同步到此副本');
-      }
-      const existing = await driver.get<{ local_username: string }>(`
-        SELECT local_username FROM federated_account_bindings
-        WHERE issuer_node_id = ? AND subject_account_id = ?`, [issuerNodeId, subjectAccountId]);
-      if (existing) {
-        await this.rebuildAccountLedgerIndex(driver, route.replica_id, control);
-        const existingRoute = await driver.get<{ replica_id: string }>(
-          'SELECT replica_id FROM account_ledger_index WHERE username = ? AND replica_id = ?',
-          [existing.local_username, route.replica_id]);
-        const user = await driver.get<{ disabled: number }>(
-          'SELECT disabled FROM sync_users WHERE username = ?', [existing.local_username]);
-        if (!existingRoute || !user || Number(user.disabled)) {
-          throw new ServerStoreError('FEDERATED_IDENTITY_CHANGED', 409, '统一账号已绑定其他副本或不可用');
-        }
-        return existing.local_username;
-      }
-      const username = `replica_${createHash('sha256').update(`${issuerNodeId}\0${subjectAccountId}`).digest('hex').slice(0, 40)}`;
-      if (await driver.get('SELECT 1 FROM sync_users WHERE username = ?', [username])
-        || await driver.get('SELECT 1 FROM sync_account_identities WHERE account_id = ?', [subjectAccountId])) {
-        throw new ServerStoreError('FEDERATED_IDENTITY_COLLISION', 409, '统一账号身份与本地账号冲突');
-      }
-      const at = nowIso();
-      await driver.run('INSERT INTO sync_users (username, display_name, opaque_registration_record, disabled, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)',
-        [username, '统一账本成员', FEDERATED_ONLY_RECORD, at, at]);
-      await driver.run('INSERT INTO sync_account_identities (username, account_id) VALUES (?, ?)', [username, subjectAccountId]);
-      await driver.run('INSERT INTO ledger_account_routes (username, replica_id, created_at) VALUES (?, ?, ?)',
-        [username, route.replica_id, at]);
-      await driver.run(`INSERT INTO federated_account_bindings
-        (local_username, issuer_node_id, subject_account_id, ledger_id, created_at, verified_at)
-        VALUES (?, ?, ?, ?, ?, ?)`, [username, issuerNodeId, subjectAccountId, route.ledger_id, at, at]);
-      await this.rebuildAccountLedgerIndex(driver, route.replica_id, control);
       return username;
     });
   }
@@ -4374,7 +4082,7 @@ END;`);
       const replica = await driver.get<{ replica_id: string; stream_epoch: string; head_seq: number;
         account_id: string }>(`
         SELECT slot.replica_id, slot.stream_epoch, slot.head_seq, i.account_id
-        FROM account_ledger_index route
+        FROM ledger_account_routes route
         JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
         JOIN sync_account_identities i ON i.username = route.username
         WHERE route.username = ? AND slot.ledger_id = ? AND slot.replica_id = ?`,
@@ -4388,9 +4096,6 @@ END;`);
         'SELECT issuer_node_id, subject_account_id FROM federated_account_bindings WHERE local_username = ? AND ledger_id = ?', [username, ledgerId]);
       const issuerNodeId = binding?.issuer_node_id ?? this.serverId;
       const subjectAccountId = binding?.subject_account_id ?? replica.account_id;
-      const accountKey = await driver.get<{ public_key: string; envelope_json: string; revision: number }>(
-        'SELECT public_key, envelope_json, revision FROM account_encryption_keys WHERE issuer_node_id = ? AND subject_account_id = ?',
-        [issuerNodeId, subjectAccountId]);
       const requirements = await driver.all<{ capability: string }>(
         `SELECT capability FROM ledger_replica_requirements
          WHERE replica_id = ? ORDER BY capability`, [replica.replica_id]);
@@ -4437,23 +4142,6 @@ END;`);
                 AND (blob_objects.replica_id IS NULL OR archive.replica_id = blob_objects.replica_id)
                 AND archive.blob_id = blob_objects.blob_id)`, blobParams),
       ]);
-      const rejected = await driver.get<{ count: number }>(`SELECT COUNT(*) AS count
-        FROM ledger_replica_rejected_commits rejected LEFT JOIN ledger_control_resolutions resolution
-          ON resolution.replica_id = rejected.replica_id
-            AND resolution.rejected_commit_id = rejected.commit_id
-            AND resolution.rejected_content_hash = rejected.content_hash
-        WHERE rejected.replica_id = ? AND resolution.rejected_commit_id IS NULL`,
-      [replica.replica_id]);
-      const pendingRepairs = await driver.get<{ count: number }>(`SELECT COUNT(*) AS count
-        FROM ledger_control_resolutions resolution LEFT JOIN ledger_replica_commits replacement
-          ON replacement.replica_id = resolution.replica_id
-            AND replacement.commit_id = resolution.replacement_commit_id
-            AND replacement.content_hash = resolution.replacement_content_hash
-            AND replacement.key_epoch = resolution.key_epoch
-            AND replacement.writer_issuer_node_id = resolution.actor_issuer_node_id
-            AND replacement.writer_account_id = resolution.actor_account_id
-        WHERE resolution.replica_id = ? AND resolution.decision = 'replay'
-          AND replacement.commit_id IS NULL`, [replica.replica_id]);
       const promise = await driver.get<{ commit_count: number; commit_hash: string;
         blob_count: number; blob_hash: string }>(
         'SELECT commit_count, commit_hash, blob_count, blob_hash FROM ledger_attachment_promises WHERE replica_id = ?',
@@ -4466,74 +4154,11 @@ END;`);
             AND json_extract(object.manifest_json, '$.v') = 2
             AND (object.replica_id = ? OR (object.replica_id IS NULL AND object.username = ?))
         )`, [replica.replica_id, ledgerId, replica.replica_id, username]) : undefined;
-      const control = await this.readLedgerControlState(driver, replica.replica_id);
-      const memberRows = control ? await driver.all<{ issuer_node_id: string; account_id: string; envelope_json: string }>(`
-        SELECT issuer_node_id, account_id, envelope_json FROM ledger_member_key_envelopes
-        WHERE replica_id = ? AND key_epoch = ? ORDER BY issuer_node_id, account_id`,
-      [replica.replica_id, control.keyEpoch]) : [];
-      const memberHash = createHash('sha256');
-      let memberEnvelopeCount = 0;
-      const covered = new Set<string>();
-      for (const row of memberRows) {
-        const id = `${row.issuer_node_id}/${row.account_id}`;
-        const member = control?.members[id];
-        if (!member || member.removed) continue;
-        const envelope = JSON.parse(row.envelope_json) as LedgerMemberKeyEnvelope;
-        if (envelope.recipientPublicKey !== member.encryptionPublicKey
-          || envelope.ledgerId !== ledgerId || envelope.keyringId !== key.keyring_id) continue;
-        memberHash.update(canonicalJson(envelope));
-        memberHash.update('\n');
-        covered.add(id);
-        memberEnvelopeCount += 1;
-      }
-      const activeMemberCount = control ? Object.values(control.members).filter((member) => !member.removed).length : 0;
-      const memberKeyHash = createHash('sha256');
-      let memberAccountKeyCount = 0;
-      let missingMemberAccountKeyCount = 0;
-      let memberAccountCount = 0;
-      for (const member of Object.values(control?.members ?? {})
-        .filter((entry) => !entry.removed)
-        .sort((left, right) => `${left.issuerNodeId}/${left.accountId}`.localeCompare(`${right.issuerNodeId}/${right.accountId}`))) {
-        const account = await driver.get(`SELECT 1 FROM account_ledger_index membership
-          JOIN sync_account_identities identity ON identity.username = membership.username
-          JOIN sync_users user ON user.username = membership.username AND user.disabled = 0
-          LEFT JOIN federated_account_bindings binding ON binding.local_username = membership.username
-          WHERE membership.replica_id = ? AND (
-            binding.issuer_node_id = ? AND binding.subject_account_id = ?
-            OR binding.local_username IS NULL AND ? = ? AND identity.account_id = ?)
-          LIMIT 1`, [replica.replica_id, member.issuerNodeId, member.accountId,
-          member.issuerNodeId, this.serverId, member.accountId]);
-        if (account) memberAccountCount += 1;
-        const record = await driver.get<{ public_key: string; envelope_json: string; revision: number }>(
-          'SELECT public_key, envelope_json, revision FROM account_encryption_keys WHERE issuer_node_id = ? AND subject_account_id = ?',
-          [member.issuerNodeId, member.accountId]);
-        if (!record || record.public_key !== member.encryptionPublicKey) {
-          missingMemberAccountKeyCount += 1;
-          continue;
-        }
-        memberKeyHash.update(canonicalJson({ issuerNodeId: member.issuerNodeId,
-          accountId: member.accountId, publicKey: record.public_key,
-          revision: Number(record.revision), envelope: JSON.parse(record.envelope_json) }));
-        memberKeyHash.update('\n');
-        memberAccountKeyCount += 1;
-      }
       return {
         serverId: this.serverId, replicaId: replica.replica_id, streamEpoch: replica.stream_epoch, ledgerId,
         issuerNodeId, subjectAccountId,
-        accountKeyHash: createHash('sha256').update(canonicalJson(accountKey ? {
-          publicKey: accountKey.public_key, revision: Number(accountKey.revision),
-          envelope: JSON.parse(accountKey.envelope_json),
-        } : null)).digest('hex'),
         keyringId: key.keyring_id, keyGeneration: Number(key.generation),
         keyEnvelopeHash: createHash('sha256').update(canonicalJson(JSON.parse(key.envelope_json))).digest('hex'),
-        controlSeq: control?.seq ?? 0,
-        controlHash: control?.headHash ?? createHash('sha256').update('no-ledger-control-v1').digest('hex'),
-        keyEpoch: control?.keyEpoch ?? 0,
-        memberEnvelopeCount, memberEnvelopeHash: memberHash.digest('hex'),
-        missingMemberEnvelopeCount: activeMemberCount - covered.size,
-        memberAccountKeyCount, memberAccountKeyHash: memberKeyHash.digest('hex'),
-        missingMemberAccountKeyCount,
-        memberAccountCount, missingMemberAccountCount: activeMemberCount - memberAccountCount,
         requirementsHash: createHash('sha256').update(canonicalJson(requirements.map((row) => row.capability))).digest('hex'),
         commitCount: commits.count, commitHash: commits.digest,
         commitStreamComplete: Number(storedCommits?.count) === Number(replica.head_seq)
@@ -4546,7 +4171,6 @@ END;`);
         promisedBlobCount: promise?.blob_count ?? 0,
         promisedBlobHash: promise?.blob_hash ?? createHash('sha256').digest('hex'),
         missingPromisedBlobCount: Number(missingPromise?.count ?? 0),
-        rejectedCommitCount: Number(rejected?.count ?? 0) + Number(pendingRepairs?.count ?? 0),
         blobCount: blobs.count, blobHash: blobs.digest,
         tombstoneCount: Number(trash?.count ?? 0), stateHash: states.digest,
         legacyBlobCount: Number(legacy?.count ?? 0),
@@ -4799,7 +4423,6 @@ END;`);
 
   async updateNodeReplicationLink(linkId: string, update: { pullSeq?: number; pushSeq?: number; pullBlobCursor?: string; pushBlobCursor?: string;
     pullStateCursor?: string; pushStateCursor?: string; pullStateSwept?: boolean; pushStateSwept?: boolean;
-    pullMemberCursor?: string; pushMemberCursor?: string; memberEpoch?: number;
     peerHeadSeq?: number; localHeadSeq?: number; peerBlobObjects?: number; localBlobObjects?: number;
     peerBlobBytes?: number; localBlobBytes?: number; pullBlobScannedBytes?: number; pushBlobScannedBytes?: number;
     pullBlobTransferredBytes?: number; pushBlobTransferredBytes?: number;
@@ -4820,16 +4443,8 @@ END;`);
     const pushBlobCursor = update.pushBlobCursor ?? link.pushBlobCursor;
     const pullStateCursor = update.pullStateCursor ?? link.pullStateCursor;
     const pushStateCursor = update.pushStateCursor ?? link.pushStateCursor;
-    const memberEpoch = update.memberEpoch ?? link.memberEpoch;
-    const pullMemberCursor = update.pullMemberCursor ?? (memberEpoch > link.memberEpoch ? '' : link.pullMemberCursor);
-    const pushMemberCursor = update.pushMemberCursor ?? (memberEpoch > link.memberEpoch ? '' : link.pushMemberCursor);
     if ([pullBlobCursor, pushBlobCursor, pullStateCursor, pushStateCursor].some((cursor) => cursor && !/^[a-f0-9]{64}$/.test(cursor))) {
       throw new ServerStoreError('INVALID_CURSOR', 400, '附件复制游标无效');
-    }
-    if (!Number.isSafeInteger(memberEpoch) || memberEpoch < link.memberEpoch
-      || [pullMemberCursor, pushMemberCursor].some((cursor) => cursor
-        && !/^[A-Za-z0-9_-]{8,160}\/[A-Za-z0-9_-]{8,160}$/.test(cursor))) {
-      throw new ServerStoreError('INVALID_CURSOR', 400, '成员密钥复制游标无效');
     }
     const at = nowIso();
     const lifecycleState = link.lifecycleState === 'JOINING'
@@ -4845,7 +4460,7 @@ END;`);
       update.peerTombstones ?? link.peerTombstones, update.localTombstones ?? link.localTombstones];
     if (counters.some((value) => !Number.isSafeInteger(value) || value < 0)) throw new ServerStoreError('INVALID_REPLICATION_STATUS', 400, '复制进度无效');
     await this.driver.run(`UPDATE node_replication_links SET pull_seq = ?, push_seq = ?, pull_blob_cursor = ?, push_blob_cursor = ?,
-      pull_state_cursor = ?, push_state_cursor = ?, pull_member_cursor = ?, push_member_cursor = ?, member_epoch = ?,
+      pull_state_cursor = ?, push_state_cursor = ?,
       peer_head_seq = ?, local_head_seq = ?, peer_blob_objects = ?, local_blob_objects = ?,
       peer_blob_bytes = ?, local_blob_bytes = ?, pull_blob_scanned_bytes = ?, push_blob_scanned_bytes = ?,
       pull_blob_transferred_bytes = COALESCE(?, pull_blob_transferred_bytes),
@@ -4857,7 +4472,7 @@ END;`);
        last_error = ?, last_success_at = ?, lifecycle_state = ?, lifecycle_checked_at = ?,
        updated_at = ? WHERE link_id = ? AND enabled = 1`,
     [pullSeq, pushSeq, pullBlobCursor, pushBlobCursor, pullStateCursor, pushStateCursor,
-      pullMemberCursor, pushMemberCursor, memberEpoch, ...counters.slice(0, 8),
+      ...counters.slice(0, 8),
       update.pullBlobTransferredBytes ?? null, update.pushBlobTransferredBytes ?? null,
       ...counters.slice(10),
       update.pullBlobSwept ? at : link.pullBlobSweepAt ?? null, update.pushBlobSwept ? at : link.pushBlobSweepAt ?? null,
@@ -4931,7 +4546,6 @@ END;`);
       await driver.run(`UPDATE node_replication_links SET
         pull_seq = 0, push_seq = 0, pull_blob_cursor = '', push_blob_cursor = '',
         pull_state_cursor = '', push_state_cursor = '',
-        pull_member_cursor = '', push_member_cursor = '', member_epoch = 0,
         peer_head_seq = 0, local_head_seq = 0,
         peer_blob_objects = 0, local_blob_objects = 0,
         peer_blob_bytes = 0, local_blob_bytes = 0,
@@ -5031,291 +4645,43 @@ END;`);
     const row = replicaId
       ? await this.driver.get<Record<string, unknown>>(`SELECT membership.username, slot.ledger_id,
         slot.replica_id, slot.stream_epoch, slot.head_seq, slot.created_at, slot.updated_at
-        FROM account_ledger_index membership JOIN ledger_replica_slots slot ON slot.replica_id = membership.replica_id
+        FROM ledger_account_routes membership JOIN ledger_replica_slots slot ON slot.replica_id = membership.replica_id
         WHERE membership.username = ? AND membership.replica_id = ?`, [username, replicaId])
       : await this.driver.get<Record<string, unknown>>(`SELECT route.username, slot.ledger_id,
         slot.replica_id, slot.stream_epoch, slot.head_seq, slot.created_at, slot.updated_at
         FROM ledger_account_routes route JOIN ledger_replica_slots slot ON slot.replica_id = route.replica_id
-        WHERE route.username = ?`, [username])
-        ?? await this.driver.get<Record<string, unknown>>(`SELECT membership.username, slot.ledger_id,
-          slot.replica_id, slot.stream_epoch, slot.head_seq, slot.created_at, slot.updated_at
-          FROM account_ledger_index membership JOIN ledger_replica_slots slot
-            ON slot.replica_id = membership.replica_id
-          WHERE membership.username = ? ORDER BY membership.created_at, slot.replica_id LIMIT 1`, [username]);
+        WHERE route.username = ?`, [username]);
     return row ? replicaFromRow(row) : undefined;
   }
 
   async getReplicaForLedger(username: string, ledgerId: string): Promise<UserReplica | undefined> {
     await this.ready;
-    const rows = await this.driver.all<Record<string, unknown>>(`SELECT membership.username, slot.ledger_id,
+    const row = await this.driver.get<Record<string, unknown>>(`SELECT membership.username, slot.ledger_id,
       slot.replica_id, slot.stream_epoch, slot.head_seq, slot.created_at, slot.updated_at
-      FROM account_ledger_index membership JOIN ledger_replica_slots slot ON slot.replica_id = membership.replica_id
-      WHERE membership.username = ? AND slot.ledger_id = ? LIMIT 2`, [username, ledgerId]);
-    if (rows.length > 1) throw new ServerStoreError('AMBIGUOUS_LEDGER', 409,
-      '账号拥有多个同 ID 的独立账本副本，必须指定副本 ID');
-    return rows[0] ? replicaFromRow(rows[0]) : undefined;
+      FROM ledger_account_routes membership JOIN ledger_replica_slots slot ON slot.replica_id = membership.replica_id
+      WHERE membership.username = ? AND slot.ledger_id = ?`, [username, ledgerId]);
+    return row ? replicaFromRow(row) : undefined;
   }
 
   private accountReplicaRow(driver: SqlDriver, username: string, replicaId?: string): Promise<{
     replica_id: string; ledger_id: string; account_id: string;
   } | undefined> {
-    const table = replicaId ? 'account_ledger_index' : 'ledger_account_routes';
     return driver.get<{ replica_id: string; ledger_id: string; account_id: string }>(`
       SELECT slot.replica_id, slot.ledger_id, identity.account_id
-      FROM ${table} membership JOIN ledger_replica_slots slot ON slot.replica_id = membership.replica_id
+      FROM ledger_account_routes membership JOIN ledger_replica_slots slot ON slot.replica_id = membership.replica_id
       JOIN sync_account_identities identity ON identity.username = membership.username
       WHERE membership.username = ?${replicaId ? ' AND membership.replica_id = ?' : ''}`,
     replicaId ? [username, replicaId] : [username]);
   }
 
-  /** The original slot account owns node-level attachment quota for all ledger members. */
-  async replicaStorageOwner(username: string, replicaId?: string): Promise<string | undefined> {
-    await this.ready;
-    if (replicaId) {
-      if (!await this.accountReplicaRow(this.driver, username, replicaId)) {
-        throw new ServerStoreError('REPLICA_UNBOUND', 403, '当前账号没有此账本');
-      }
-      const owner = await this.driver.get<{ username: string }>(
-        'SELECT username FROM sync_replicas WHERE replica_id = ?', [replicaId]);
-      return owner?.username;
-    }
-    const row = await this.driver.get<{ username: string }>(`
-      SELECT owner.username FROM ledger_account_routes route
-      JOIN sync_replicas owner ON owner.replica_id = route.replica_id
-      WHERE route.username = ?`, [username]);
-    return row?.username;
-  }
-
-  private async readLedgerControlState(driver: SqlDriver, replicaId: string): Promise<LedgerControlState | undefined> {
-    const root = await driver.get<{ issuer_node_id: string; account_id: string; signing_public_key: string; ledger_id: string }>(`
-      SELECT root.issuer_node_id, root.account_id, root.signing_public_key, slot.ledger_id
-      FROM ledger_control_roots root JOIN ledger_replica_slots slot ON slot.replica_id = root.replica_id
-      WHERE root.replica_id = ?`, [replicaId]);
-    if (!root) return undefined;
-    const pinnedOwner = { issuerNodeId: root.issuer_node_id, accountId: root.account_id,
-      signingPublicKey: root.signing_public_key };
-    const events = await driver.all<{ seq: number; event_hash: string; event_json: string }>(
-      'SELECT seq, event_hash, event_json FROM ledger_control_events WHERE replica_id = ? ORDER BY seq', [replicaId]);
-    if (!events.length) throw new Error('账本成员控制根没有初始事件');
-    let state: LedgerControlState | undefined;
-    for (const row of events) {
-      const event = JSON.parse(row.event_json) as LedgerControlEvent;
-      if (Number(row.seq) !== event.seq || row.event_hash !== ledgerControlEventHash(event)) {
-        throw new Error('账本成员事件哈希不一致');
-      }
-      state = applyLedgerControlEvent(state, event, pinnedOwner);
-    }
-    if (state?.ledgerId !== root.ledger_id) throw new Error('账本成员控制链指向其他账本');
-    return state;
-  }
-
-  /** A deleted or altered derived decision must never resurrect an archived write. */
-  private async verifyControlResolutionIndex(driver: SqlDriver, replicaId: string): Promise<void> {
-    const events = await driver.all<{ seq: number; event_json: string }>(`SELECT seq, event_json
-      FROM ledger_control_events WHERE replica_id = ? ORDER BY seq`, [replicaId]);
-    const expected = events.flatMap((row) => {
-      const event = JSON.parse(row.event_json) as LedgerControlEvent;
-      return event.kind === 'RejectedCommitResolved' ? [{
-        rejectedCommitId: event.rejectedCommitId, rejectedContentHash: event.rejectedContentHash,
-        decision: event.decision, replacementCommitId: event.replacementCommitId ?? null,
-        replacementContentHash: event.replacementContentHash ?? null,
-        actorIssuerNodeId: event.actor.issuerNodeId, actorAccountId: event.actor.accountId,
-        keyEpoch: event.keyEpoch, eventSeq: Number(row.seq),
-      }] : [];
-    });
-    const actual = (await driver.all<Record<string, unknown>>(`SELECT * FROM ledger_control_resolutions
-      WHERE replica_id = ? ORDER BY event_seq`, [replicaId])).map((row) => ({
-      rejectedCommitId: row['rejected_commit_id'], rejectedContentHash: row['rejected_content_hash'],
-      decision: row['decision'], replacementCommitId: row['replacement_commit_id'],
-      replacementContentHash: row['replacement_content_hash'],
-      actorIssuerNodeId: row['actor_issuer_node_id'], actorAccountId: row['actor_account_id'],
-      keyEpoch: Number(row['key_epoch']), eventSeq: Number(row['event_seq']),
-    }));
-    if (canonicalJson(actual) !== canonicalJson(expected)) {
-      throw new Error('签名隔离提交处置索引与成员控制链不一致');
-    }
-  }
-
-  private async rebuildAccountLedgerIndex(driver: SqlDriver, replicaId: string,
-    knownState?: LedgerControlState): Promise<void> {
-    const state = knownState ?? await this.readLedgerControlState(driver, replicaId);
-    const desired = new Set<string>();
-    if (!state) {
-      const routes = await driver.all<{ username: string }>(
-        'SELECT username FROM ledger_account_routes WHERE replica_id = ?', [replicaId]);
-      for (const route of routes) desired.add(route.username);
-    } else {
-      const identities = await driver.all<{ username: string; account_id: string;
-        issuer_node_id: string | null; subject_account_id: string | null }>(`
-        SELECT identity.username, identity.account_id, binding.issuer_node_id, binding.subject_account_id
-        FROM sync_account_identities identity LEFT JOIN federated_account_bindings binding
-          ON binding.local_username = identity.username`);
-      for (const identity of identities) {
-        const memberId = `${identity.issuer_node_id ?? this.serverId}/${identity.subject_account_id ?? identity.account_id}`;
-        if (state.members[memberId]?.removed === false) desired.add(identity.username);
-      }
-    }
-    const existing = await driver.all<{ username: string }>(
-      'SELECT username FROM account_ledger_index WHERE replica_id = ?', [replicaId]);
-    const present = new Set(existing.map((row) => row.username));
-    const at = nowIso();
-    for (const username of desired) {
-      if (!present.has(username)) {
-        await driver.run('INSERT INTO account_ledger_index (username, replica_id, created_at) VALUES (?, ?, ?)',
-          [username, replicaId, at]);
-      }
-    }
-    for (const username of present) {
-      if (!desired.has(username)) await driver.run(
-        'DELETE FROM account_ledger_index WHERE username = ? AND replica_id = ?', [username, replicaId]);
-    }
-  }
-
-  async listAccountLedgers(username: string): Promise<Array<{ ledgerId: string; replicaId: string;
-    streamEpoch: string }>> {
-    await this.ready;
-    const rows = await this.driver.all<{ ledger_id: string; replica_id: string; stream_epoch: string }>(`
-      SELECT slot.ledger_id, slot.replica_id, slot.stream_epoch
-      FROM account_ledger_index membership JOIN ledger_replica_slots slot
-        ON slot.replica_id = membership.replica_id
-      WHERE membership.username = ? ORDER BY membership.created_at, slot.replica_id`, [username]);
-    return rows.map((row) => ({ ledgerId: row.ledger_id, replicaId: row.replica_id,
-      streamEpoch: row.stream_epoch }));
-  }
-
-  /** Before genesis there is only one account writer; tag its legacy history before member writes exist. */
-  private async attributePreControlCommits(driver: SqlDriver, replicaId: string,
-    owner: LedgerMemberIdentity): Promise<void> {
-    await driver.run(`UPDATE ledger_replica_commits SET key_epoch = 1,
-      writer_issuer_node_id = ?, writer_account_id = ?
-      WHERE replica_id = ? AND key_epoch = 0`,
-    [owner.issuerNodeId, owner.accountId, replicaId]);
-  }
-
-  async ledgerControlState(username: string, replicaId?: string): Promise<LedgerControlState | undefined> {
-    await this.ready;
-    const replica = await this.getReplica(username, replicaId);
-    return replica ? this.readLedgerControlState(this.driver, replica.replicaId) : undefined;
-  }
-
-  async ledgerControlPage(username: string, after: number, limit: number, replicaId?: string): Promise<LedgerControlPage> {
-    await this.ready;
-    if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
-      throw new ServerStoreError('INVALID_CURSOR', 400, '成员事件游标无效');
-    }
-    const replica = await this.getReplica(username, replicaId);
-    if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-    const rootRow = await this.driver.get<{ issuer_node_id: string; account_id: string; signing_public_key: string }>(
-      'SELECT issuer_node_id, account_id, signing_public_key FROM ledger_control_roots WHERE replica_id = ?', [replica.replicaId]);
-    if (!rootRow) return { root: null, events: [], headSeq: 0, headHash: null, nextSeq: after, hasMore: false };
-    const state = (await this.readLedgerControlState(this.driver, replica.replicaId))!;
-    const rows = await this.driver.all<{ event_json: string }>(
-      'SELECT event_json FROM ledger_control_events WHERE replica_id = ? AND seq > ? ORDER BY seq LIMIT ?',
-      [replica.replicaId, after, limit]);
-    const events = rows.map((row) => JSON.parse(row.event_json) as LedgerControlEvent);
-    const nextSeq = events.at(-1)?.seq ?? after;
-    return {
-      root: { issuerNodeId: rootRow.issuer_node_id, accountId: rootRow.account_id,
-        signingPublicKey: rootRow.signing_public_key },
-      events, headSeq: state.seq, headHash: state.headHash, nextSeq, hasMore: nextSeq < state.seq,
-    };
-  }
-
-  /** A signed node grant authenticates the sender; the genesis anchor must still be the issuer account. */
-  async importLedgerControlPage(username: string, peerNodeId: string, root: LedgerControlRoot | null,
-    events: LedgerControlEvent[], replicaId?: string): Promise<LedgerControlState | undefined> {
-    await this.ready;
-    if (!Array.isArray(events) || events.length > 50) throw new ServerStoreError('INVALID_CONTROL_PAGE', 400, '成员事件页无效');
-    return this.driver.transaction(async (driver) => {
-      const route = await this.accountReplicaRow(driver, username, replicaId);
-      if (!route) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-      const existingRoot = await driver.get<{ issuer_node_id: string; account_id: string; signing_public_key: string }>(
-        'SELECT issuer_node_id, account_id, signing_public_key FROM ledger_control_roots WHERE replica_id = ?', [route.replica_id]);
-      if (!root) {
-        if (events.length) throw new ServerStoreError('INVALID_CONTROL_PAGE', 400, '成员事件缺少初始所有者');
-        return existingRoot ? this.readLedgerControlState(driver, route.replica_id) : undefined;
-      }
-      if (typeof root.issuerNodeId !== 'string' || typeof root.accountId !== 'string'
-        || typeof root.signingPublicKey !== 'string'
-        || Object.keys(root).sort().join(',') !== 'accountId,issuerNodeId,signingPublicKey') {
-        throw new ServerStoreError('INVALID_CONTROL_ROOT', 400, '成员控制根无效');
-      }
-      if (existingRoot) {
-        if (existingRoot.issuer_node_id !== root.issuerNodeId || existingRoot.account_id !== root.accountId
-          || existingRoot.signing_public_key !== root.signingPublicKey) {
-          throw new ServerStoreError('CONTROL_ROOT_CHANGED', 409, '账本初始所有者锚点已改变');
-        }
-      } else {
-        const binding = await driver.get<{ issuer_node_id: string; subject_account_id: string }>(
-          'SELECT issuer_node_id, subject_account_id FROM federated_account_bindings WHERE local_username = ?', [username]);
-        if (peerNodeId !== root.issuerNodeId || binding?.issuer_node_id !== root.issuerNodeId
-          || binding.subject_account_id !== root.accountId) {
-          throw new ServerStoreError('CONTROL_ROOT_UNTRUSTED', 403, '初始所有者不是已固定身份节点的账号');
-        }
-        const genesis = events[0];
-        const accountKey = await driver.get<{ public_key: string }>(
-          'SELECT public_key FROM account_encryption_keys WHERE issuer_node_id = ? AND subject_account_id = ?',
-          [root.issuerNodeId, root.accountId]);
-        if (!genesis || !accountKey || genesis.encryptionPublicKey !== accountKey.public_key) {
-          throw new ServerStoreError('CONTROL_ROOT_UNTRUSTED', 403, '初始所有者的账号公钥未被身份节点确认');
-        }
-      }
-      let state = existingRoot ? await this.readLedgerControlState(driver, route.replica_id) : undefined;
-      for (const event of events) {
-        let eventHash: string;
-        try { eventHash = ledgerControlEventHash(event); }
-        catch { throw new ServerStoreError('INVALID_CONTROL_EVENT', 400, '成员事件格式无效'); }
-        if (state && event.seq <= state.seq) {
-          const existing = await driver.get<{ event_hash: string }>(
-            'SELECT event_hash FROM ledger_control_events WHERE replica_id = ? AND seq = ?',
-            [route.replica_id, event.seq]);
-          if (existing?.event_hash !== eventHash) {
-            throw new ServerStoreError('CONTROL_FORK', 409, '成员控制链同序号出现不同事件');
-          }
-          continue;
-        }
-        let next: LedgerControlState;
-        try { next = applyLedgerControlEvent(state, event, root); }
-        catch (error) { throw new ServerStoreError('INVALID_CONTROL_EVENT', 409, String(error)); }
-        if (next.ledgerId !== route.ledger_id) throw new ServerStoreError('LEDGER_MISMATCH', 409, '成员事件属于其他账本');
-        const at = nowIso();
-        if (!existingRoot && !state) {
-          await driver.run(`INSERT INTO ledger_control_roots
-            (replica_id, issuer_node_id, account_id, signing_public_key, created_at) VALUES (?, ?, ?, ?, ?)`,
-          [route.replica_id, root.issuerNodeId, root.accountId, root.signingPublicKey, at]);
-          await this.attributePreControlCommits(driver, route.replica_id, root);
-        }
-        await driver.run(`INSERT INTO ledger_control_events
-          (replica_id, seq, event_hash, event_json, stored_at) VALUES (?, ?, ?, ?, ?)`,
-        [route.replica_id, event.seq, next.headHash, canonicalJson(event), at]);
-        await this.persistControlResolution(driver, route.replica_id, event, false);
-        state = next;
-      }
-      if (state) await this.rebuildAccountLedgerIndex(driver, route.replica_id, state);
-      return state;
-    });
-  }
-
   private async assertLedgerAccessOnReplica(driver: SqlDriver, username: string, replicaId: string,
     mode: 'read' | 'write' | 'manage'): Promise<void> {
+    const route = await driver.get('SELECT 1 FROM ledger_account_routes WHERE username = ? AND replica_id = ?',
+      [username, replicaId]);
+    if (!route) throw new ServerStoreError('REPLICA_UNBOUND', 403, '当前账号没有此账本');
     if (mode !== 'read' && await driver.get('SELECT 1 FROM server_meta WHERE key = ?',
       [`replica_retired:${replicaId}`])) {
       throw new ServerStoreError('REPLICA_RETIRED', 409, '本节点已移出副本组，当前账本禁止继续写入');
-    }
-    const state = await this.readLedgerControlState(driver, replicaId);
-    if (!state) return; // Legacy single-account replicas have no member control chain.
-    const identity = await driver.get<{ account_id: string; issuer_node_id: string | null; subject_account_id: string | null }>(`
-      SELECT local.account_id, federated.issuer_node_id, federated.subject_account_id
-      FROM sync_account_identities local LEFT JOIN federated_account_bindings federated
-        ON federated.local_username = local.username WHERE local.username = ?`, [username]);
-    const memberId = `${identity?.issuer_node_id ?? this.serverId}/${identity?.subject_account_id ?? identity?.account_id ?? ''}`;
-    const member = state.members[memberId];
-    if (!member || member.removed) throw new ServerStoreError('LEDGER_MEMBER_REQUIRED', 403, '当前账号没有账本访问权');
-    if (mode === 'write' && member.role === 'VIEWER') {
-      throw new ServerStoreError('LEDGER_WRITE_REQUIRED', 403, '当前账本角色只允许读取');
-    }
-    if (mode === 'manage' && member.role !== 'OWNER') {
-      throw new ServerStoreError('LEDGER_OWNER_REQUIRED', 403, '只有账本所有者可以管理授权');
     }
   }
 
@@ -5324,355 +4690,6 @@ END;`);
     const replica = await this.getReplica(username, replicaId);
     if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
     await this.assertLedgerAccessOnReplica(this.driver, username, replica.replicaId, mode);
-  }
-
-  private async persistControlResolution(driver: SqlDriver, replicaId: string,
-    event: LedgerControlEvent, requireLocalReview: boolean): Promise<void> {
-    if (event.kind !== 'RejectedCommitResolved') return;
-    const oldId = event.rejectedCommitId!;
-    const oldHash = event.rejectedContentHash!;
-    const prior = await driver.get(`SELECT 1 FROM ledger_control_resolutions
-      WHERE replica_id = ? AND rejected_commit_id = ?`, [replicaId, oldId]);
-    if (prior) throw new ServerStoreError('REJECTED_COMMIT_ALREADY_RESOLVED', 409, '隔离提交已有签名处置决定');
-    const rejected = await driver.all<{ content_hash: string }>(`SELECT content_hash
-      FROM ledger_replica_rejected_commits WHERE replica_id = ? AND commit_id = ?`, [replicaId, oldId]);
-    const oldCommit = await driver.get<{ content_hash: string }>(`SELECT content_hash
-      FROM ledger_replica_commits WHERE replica_id = ? AND commit_id = ?`, [replicaId, oldId]);
-    if (rejected.some((row) => row.content_hash !== oldHash)
-      || oldCommit && oldCommit.content_hash !== oldHash) {
-      throw new ServerStoreError('REJECTED_COMMIT_COLLISION', 409, '处置决定中的原提交内容哈希不匹配');
-    }
-    if (requireLocalReview && !rejected.length) {
-      throw new ServerStoreError('REJECTED_COMMIT_NOT_FOUND', 409, '此节点没有待审核的隔离提交');
-    }
-    if (event.decision === 'replay') {
-      const replacement = await driver.get<{ content_hash: string; key_epoch: number;
-        writer_issuer_node_id: string; writer_account_id: string }>(`SELECT content_hash, key_epoch,
-          writer_issuer_node_id, writer_account_id FROM ledger_replica_commits
-          WHERE replica_id = ? AND commit_id = ?`, [replicaId, event.replacementCommitId!]);
-      if (replacement && (replacement.content_hash !== event.replacementContentHash
-        || Number(replacement.key_epoch) !== event.keyEpoch
-        || replacement.writer_issuer_node_id !== event.actor.issuerNodeId
-        || replacement.writer_account_id !== event.actor.accountId)) {
-        throw new ServerStoreError('REPAIR_COMMIT_MISMATCH', 409, '修复提交内容、代次或写入者不匹配');
-      }
-      if (requireLocalReview && !replacement) {
-        throw new ServerStoreError('REPAIR_COMMIT_REQUIRED', 409, '须先将审核后的新提交上传到当前节点');
-      }
-    }
-    await driver.run(`INSERT INTO ledger_control_resolutions
-      (replica_id, rejected_commit_id, rejected_content_hash, decision,
-        replacement_commit_id, replacement_content_hash, actor_issuer_node_id,
-        actor_account_id, key_epoch, event_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [replicaId, oldId, oldHash, event.decision!, event.replacementCommitId ?? null,
-      event.replacementContentHash ?? null, event.actor.issuerNodeId, event.actor.accountId,
-      event.keyEpoch, event.seq]);
-  }
-
-  /** Bootstrap is tied to an authenticated account and its published encryption key. */
-  async initializeLedgerControl(username: string, event: LedgerControlEvent,
-    replicaId?: string): Promise<LedgerControlState> {
-    await this.ready;
-    return this.driver.transaction(async (driver) => {
-      const route = await this.accountReplicaRow(driver, username, replicaId);
-      if (!route || event.ledgerId !== route.ledger_id) throw new ServerStoreError('LEDGER_MISMATCH', 409, '账本副本身份不匹配');
-      const binding = await driver.get<{ issuer_node_id: string; subject_account_id: string }>(
-        'SELECT issuer_node_id, subject_account_id FROM federated_account_bindings WHERE local_username = ?', [username]);
-      const owner: LedgerMemberIdentity = { issuerNodeId: binding?.issuer_node_id ?? this.serverId,
-        accountId: binding?.subject_account_id ?? route.account_id };
-      const accountKey = await driver.get<{ public_key: string }>(
-        'SELECT public_key FROM account_encryption_keys WHERE issuer_node_id = ? AND subject_account_id = ?',
-        [owner.issuerNodeId, owner.accountId]);
-      if (!accountKey || accountKey.public_key !== event.encryptionPublicKey) {
-        throw new ServerStoreError('ACCOUNT_KEY_REQUIRED', 409, '初始所有者必须先登记账号加密公钥');
-      }
-      const pinnedOwner = { ...owner, signingPublicKey: event.signingPublicKey ?? '' };
-      let state: LedgerControlState;
-      try { state = applyLedgerControlEvent(undefined, event, pinnedOwner); }
-      catch (error) { throw new ServerStoreError('INVALID_CONTROL_EVENT', 409, String(error)); }
-      const existing = await this.readLedgerControlState(driver, route.replica_id);
-      if (existing) {
-        if (existing.seq === 1 && existing.headHash === state.headHash) return existing;
-        throw new ServerStoreError('CONTROL_ALREADY_INITIALIZED', 409, '账本成员控制链已经建立');
-      }
-      const at = nowIso();
-      await driver.run(`INSERT INTO ledger_control_roots
-        (replica_id, issuer_node_id, account_id, signing_public_key, created_at) VALUES (?, ?, ?, ?, ?)`,
-      [route.replica_id, owner.issuerNodeId, owner.accountId, pinnedOwner.signingPublicKey, at]);
-      await this.attributePreControlCommits(driver, route.replica_id, owner);
-      await driver.run(`INSERT INTO ledger_control_events
-        (replica_id, seq, event_hash, event_json, stored_at) VALUES (?, ?, ?, ?, ?)`,
-      [route.replica_id, event.seq, state.headHash, canonicalJson(event), at]);
-      await this.rebuildAccountLedgerIndex(driver, route.replica_id, state);
-      return state;
-    });
-  }
-
-  async appendLedgerControlEvent(username: string, event: LedgerControlEvent,
-    envelopes: LedgerMemberKeyEnvelope[] = [], replicaId?: string): Promise<LedgerControlState> {
-    await this.ready;
-    return this.driver.transaction(async (driver) => {
-      const replica = await this.accountReplicaRow(driver, username, replicaId);
-      if (!replica || event.ledgerId !== replica.ledger_id) throw new ServerStoreError('LEDGER_MISMATCH', 409, '账本副本身份不匹配');
-      const binding = await driver.get<{ issuer_node_id: string; subject_account_id: string }>(
-        'SELECT issuer_node_id, subject_account_id FROM federated_account_bindings WHERE local_username = ?', [username]);
-      const actor = { issuerNodeId: binding?.issuer_node_id ?? this.serverId,
-        accountId: binding?.subject_account_id ?? replica.account_id };
-      if (event.actor.issuerNodeId !== actor.issuerNodeId || event.actor.accountId !== actor.accountId) {
-        throw new ServerStoreError('CONTROL_ACTOR_MISMATCH', 403, '成员事件签名者与当前账号不符');
-      }
-      if (event.kind === 'MemberAdded') {
-        const targetKey = await driver.get<{ public_key: string }>(
-          'SELECT public_key FROM account_encryption_keys WHERE issuer_node_id = ? AND subject_account_id = ?',
-          [event.target.issuerNodeId, event.target.accountId]);
-        if (!targetKey || targetKey.public_key !== event.encryptionPublicKey) {
-          throw new ServerStoreError('ACCOUNT_KEY_REQUIRED', 409, '目标成员的账号加密公钥未登记或不匹配');
-        }
-      }
-      const current = await this.readLedgerControlState(driver, replica.replica_id);
-      if (!current) throw new ServerStoreError('CONTROL_UNINITIALIZED', 409, '账本成员控制链尚未建立');
-      if (event.seq === current.seq && ledgerControlEventHash(event) === current.headHash) {
-        for (const envelope of envelopes) {
-          const stored = await driver.get<{ envelope_json: string }>(`
-            SELECT envelope_json FROM ledger_member_key_envelopes
-            WHERE replica_id = ? AND issuer_node_id = ? AND account_id = ? AND key_epoch = ?`,
-          [replica.replica_id, envelope.issuerNodeId, envelope.accountId, envelope.keyEpoch]);
-          if (!stored || stored.envelope_json !== canonicalJson(envelope)) {
-            throw new ServerStoreError('MEMBER_ENVELOPE_REQUIRED', 409,
-              '成员事件已存在，但对应密钥包尚未完整保存');
-          }
-        }
-        return current;
-      }
-      let next: LedgerControlState;
-      try { next = applyLedgerControlEvent(current, event); }
-      catch (error) { throw new ServerStoreError('INVALID_CONTROL_EVENT', 409, String(error)); }
-      if (envelopes.length) {
-        if (event.kind !== 'MemberAdded' && event.kind !== 'MemberRemoved' || envelopes.length > 100) {
-          throw new ServerStoreError('INVALID_MEMBER_ENVELOPES', 400, '成员事件密钥包数量或类型无效');
-        }
-        const requiredIds = event.kind === 'MemberRemoved'
-          ? Object.values(next.members).filter((member) => !member.removed)
-            .map((member) => `${member.issuerNodeId}/${member.accountId}`)
-          : [`${event.target.issuerNodeId}/${event.target.accountId}`];
-        const submittedIds = envelopes.map((envelope) => `${envelope.issuerNodeId}/${envelope.accountId}`);
-        if (new Set(submittedIds).size !== submittedIds.length
-          || requiredIds.length !== submittedIds.length
-          || requiredIds.some((id) => !submittedIds.includes(id))) {
-          throw new ServerStoreError('MEMBER_ENVELOPE_COVERAGE', 409, '成员事件没有覆盖全部应获密钥的成员');
-        }
-        const keyring = await driver.get<{ keyring_id: string }>(
-          'SELECT keyring_id FROM ledger_replica_key_envelopes WHERE replica_id = ?', [replica.replica_id]);
-        const activeKeyId = envelopes[0]!.activeKeyId;
-        const keyringId = envelopes[0]!.keyringId;
-        for (const envelope of envelopes) {
-          try { assertLedgerMemberKeyEnvelope(envelope); }
-          catch (error) { throw new ServerStoreError('INVALID_MEMBER_ENVELOPE', 400, String(error)); }
-          const target = next.members[`${envelope.issuerNodeId}/${envelope.accountId}`];
-          if (!target || target.removed || target.encryptionPublicKey !== envelope.recipientPublicKey
-            || envelope.ledgerId !== replica.ledger_id || envelope.keyEpoch !== next.keyEpoch
-            || envelope.activeKeyId !== activeKeyId || envelope.keyringId !== keyringId
-            || keyring && keyring.keyring_id !== envelope.keyringId) {
-            throw new ServerStoreError('MEMBER_ENVELOPE_MISMATCH', 409, '成员事件密钥包与当前权限或密钥不一致');
-          }
-          await this.assertMemberEnvelopeKeyEpoch(driver, replica.replica_id, envelope);
-        }
-      }
-      if (event.kind === 'MemberAdded' && event.target.issuerNodeId === this.serverId) {
-        const target = await driver.get<{ username: string; disabled: number }>(`
-          SELECT identity.username, user.disabled FROM sync_account_identities identity
-          JOIN sync_users user ON user.username = identity.username WHERE identity.account_id = ?`,
-        [event.target.accountId]);
-        if (!target || Number(target.disabled)) {
-          throw new ServerStoreError('MEMBER_ACCOUNT_UNAVAILABLE', 409, '目标账号未注册或已停用');
-        }
-        const route = await driver.get<{ replica_id: string }>(
-          'SELECT replica_id FROM ledger_account_routes WHERE username = ?', [target.username]);
-        // Keep an existing personal ledger as the legacy default. Membership in
-        // this ledger is indexed separately and selected by a node-local session.
-        if (!route) await driver.run(`INSERT INTO ledger_account_routes (username, replica_id, created_at)
-          VALUES (?, ?, ?)`, [target.username, replica.replica_id, nowIso()]);
-      }
-      await driver.run(`INSERT INTO ledger_control_events
-        (replica_id, seq, event_hash, event_json, stored_at) VALUES (?, ?, ?, ?, ?)`,
-      [replica.replica_id, event.seq, next.headHash, canonicalJson(event), nowIso()]);
-      await this.persistControlResolution(driver, replica.replica_id, event, true);
-      for (const envelope of envelopes) await driver.run(`INSERT INTO ledger_member_key_envelopes
-        (replica_id, issuer_node_id, account_id, key_epoch, keyring_id, generation, envelope_json, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [replica.replica_id, envelope.issuerNodeId, envelope.accountId, envelope.keyEpoch,
-        envelope.keyringId, envelope.generation, canonicalJson(envelope), nowIso()]);
-      await this.rebuildAccountLedgerIndex(driver, replica.replica_id, next);
-      return next;
-    });
-  }
-
-  async putLedgerMemberKeyEnvelope(username: string, envelope: LedgerMemberKeyEnvelope,
-    replicaId?: string): Promise<void> {
-    await this.ready;
-    try { assertLedgerMemberKeyEnvelope(envelope); }
-    catch (error) { throw new ServerStoreError('INVALID_MEMBER_ENVELOPE', 400, String(error)); }
-    await this.driver.transaction(async (driver) => {
-      const route = await this.accountReplicaRow(driver, username, replicaId);
-      if (!route || route.ledger_id !== envelope.ledgerId) throw new ServerStoreError('LEDGER_MISMATCH', 409, '账本副本身份不匹配');
-      const binding = await driver.get<{ issuer_node_id: string; subject_account_id: string }>(
-        'SELECT issuer_node_id, subject_account_id FROM federated_account_bindings WHERE local_username = ?', [username]);
-      const actorId = `${binding?.issuer_node_id ?? this.serverId}/${binding?.subject_account_id ?? route.account_id}`;
-      const state = await this.readLedgerControlState(driver, route.replica_id);
-      if (!state) throw new ServerStoreError('CONTROL_UNINITIALIZED', 409, '账本成员控制链尚未建立');
-      if (state.members[actorId]?.removed !== false || state.members[actorId]?.role !== 'OWNER') {
-        throw new ServerStoreError('LEDGER_OWNER_REQUIRED', 403, '只有账本所有者可以发放成员密钥');
-      }
-      const target = state.members[`${envelope.issuerNodeId}/${envelope.accountId}`];
-      if (!target || target.removed || target.encryptionPublicKey !== envelope.recipientPublicKey
-        || envelope.keyEpoch !== state.keyEpoch) {
-        throw new ServerStoreError('MEMBER_ENVELOPE_MISMATCH', 409, '目标成员、公钥或密钥代次不匹配');
-      }
-      const keyring = await driver.get<{ keyring_id: string }>(
-        'SELECT keyring_id FROM ledger_replica_key_envelopes WHERE replica_id = ?', [route.replica_id]);
-      if (keyring && keyring.keyring_id !== envelope.keyringId) {
-        throw new ServerStoreError('KEYRING_MISMATCH', 409, '成员密钥包属于另一个账本密钥环');
-      }
-      await this.assertMemberEnvelopeKeyEpoch(driver, route.replica_id, envelope);
-      const current = await driver.get<{ keyring_id: string; generation: number; envelope_json: string }>(`
-        SELECT keyring_id, generation, envelope_json FROM ledger_member_key_envelopes
-        WHERE replica_id = ? AND issuer_node_id = ? AND account_id = ? AND key_epoch = ?`,
-      [route.replica_id, envelope.issuerNodeId, envelope.accountId, envelope.keyEpoch]);
-      const encoded = canonicalJson(envelope);
-      if (current) {
-        if (current.keyring_id !== envelope.keyringId || Number(current.generation) > envelope.generation) {
-          throw new ServerStoreError('STALE_MEMBER_ENVELOPE', 409, '已有更新的成员密钥包');
-        }
-        if (Number(current.generation) === envelope.generation) {
-          if (current.envelope_json !== encoded) throw new ServerStoreError('MEMBER_ENVELOPE_COLLISION', 409, '同代次成员密钥包不一致');
-          return;
-        }
-      }
-      await driver.run(`INSERT INTO ledger_member_key_envelopes
-        (replica_id, issuer_node_id, account_id, key_epoch, keyring_id, generation, envelope_json, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (replica_id, issuer_node_id, account_id, key_epoch)
-        DO UPDATE SET generation = excluded.generation, envelope_json = excluded.envelope_json,
-          updated_at = excluded.updated_at`,
-      [route.replica_id, envelope.issuerNodeId, envelope.accountId, envelope.keyEpoch,
-        envelope.keyringId, envelope.generation, encoded, nowIso()]);
-    });
-  }
-
-  async currentLedgerMemberKeyEnvelope(username: string, replicaId?: string): Promise<LedgerMemberKeyEnvelope | undefined> {
-    await this.ready;
-    const replica = await this.getReplica(username, replicaId);
-    if (!replica) return undefined;
-    const state = await this.readLedgerControlState(this.driver, replica.replicaId);
-    if (!state) return undefined;
-    const user = await this.getUser(username);
-    if (!user) return undefined;
-    const binding = await this.federatedAccount(username);
-    const identity = { issuerNodeId: binding?.issuerNodeId ?? this.serverId,
-      accountId: binding?.subjectAccountId ?? user.accountId };
-    if (state.members[`${identity.issuerNodeId}/${identity.accountId}`]?.removed !== false) return undefined;
-    const row = await this.driver.get<{ envelope_json: string }>(`
-      SELECT envelope_json FROM ledger_member_key_envelopes
-      WHERE replica_id = ? AND issuer_node_id = ? AND account_id = ? AND key_epoch = ?`,
-    [replica.replicaId, identity.issuerNodeId, identity.accountId, state.keyEpoch]);
-    return row ? JSON.parse(row.envelope_json) as LedgerMemberKeyEnvelope : undefined;
-  }
-
-  async ledgerMemberEnvelopePage(username: string, after: string, limit: number,
-    replicaId?: string): Promise<LedgerMemberEnvelopePage> {
-    await this.ready;
-    if (after && !/^[A-Za-z0-9_-]{8,160}\/[A-Za-z0-9_-]{8,160}$/.test(after)
-      || !Number.isSafeInteger(limit) || limit < 1 || limit > 10) {
-      throw new ServerStoreError('INVALID_CURSOR', 400, '成员密钥游标无效');
-    }
-    const replica = await this.getReplica(username, replicaId);
-    if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-    const state = await this.readLedgerControlState(this.driver, replica.replicaId);
-    if (!state) return { keyEpoch: 0, envelopes: [], nextCursor: '', hasMore: false };
-    const rows = await this.driver.all<{ issuer_node_id: string; account_id: string; envelope_json: string }>(`
-      SELECT issuer_node_id, account_id, envelope_json FROM ledger_member_key_envelopes
-      WHERE replica_id = ? AND key_epoch = ? AND (issuer_node_id || '/' || account_id) > ?
-      ORDER BY issuer_node_id, account_id LIMIT ?`, [replica.replicaId, state.keyEpoch, after, limit + 1]);
-    const page = rows.slice(0, limit);
-    const nextCursor = page.length ? `${page.at(-1)!.issuer_node_id}/${page.at(-1)!.account_id}` : after;
-    const envelopes = page.filter((row) => state.members[`${row.issuer_node_id}/${row.account_id}`]?.removed === false)
-      .map((row) => JSON.parse(row.envelope_json) as LedgerMemberKeyEnvelope);
-    return { keyEpoch: state.keyEpoch, envelopes, nextCursor, hasMore: rows.length > limit };
-  }
-
-  async importLedgerMemberEnvelopes(username: string, envelopes: LedgerMemberKeyEnvelope[], replicaId?: string): Promise<void> {
-    await this.ready;
-    if (!Array.isArray(envelopes) || envelopes.length > 10) {
-      throw new ServerStoreError('INVALID_MEMBER_ENVELOPES', 400, '成员密钥页无效');
-    }
-    await this.driver.transaction(async (driver) => {
-      const route = await this.accountReplicaRow(driver, username, replicaId);
-      if (!route) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-      const state = await this.readLedgerControlState(driver, route.replica_id);
-      if (!state) {
-        if (envelopes.length) throw new ServerStoreError('CONTROL_UNINITIALIZED', 409, '成员密钥缺少控制链');
-        return;
-      }
-      const keyring = await driver.get<{ keyring_id: string }>(
-        'SELECT keyring_id FROM ledger_replica_key_envelopes WHERE replica_id = ?', [route.replica_id]);
-      for (const envelope of envelopes) {
-        try { assertLedgerMemberKeyEnvelope(envelope); }
-        catch (error) { throw new ServerStoreError('INVALID_MEMBER_ENVELOPE', 400, String(error)); }
-        const target = state.members[`${envelope.issuerNodeId}/${envelope.accountId}`];
-        if (envelope.ledgerId !== route.ledger_id || envelope.keyEpoch !== state.keyEpoch
-          || !target || target.removed || target.encryptionPublicKey !== envelope.recipientPublicKey
-          || keyring && keyring.keyring_id !== envelope.keyringId) {
-          throw new ServerStoreError('MEMBER_ENVELOPE_MISMATCH', 409, '对端成员密钥包与控制链不匹配');
-        }
-        await this.assertMemberEnvelopeKeyEpoch(driver, route.replica_id, envelope);
-        const current = await driver.get<{ keyring_id: string; generation: number; envelope_json: string }>(`
-          SELECT keyring_id, generation, envelope_json FROM ledger_member_key_envelopes
-          WHERE replica_id = ? AND issuer_node_id = ? AND account_id = ? AND key_epoch = ?`,
-        [route.replica_id, envelope.issuerNodeId, envelope.accountId, envelope.keyEpoch]);
-        const encoded = canonicalJson(envelope);
-        if (current) {
-          if (current.keyring_id !== envelope.keyringId || Number(current.generation) > envelope.generation) {
-            throw new ServerStoreError('STALE_MEMBER_ENVELOPE', 409, '对端成员密钥包版本倒退');
-          }
-          if (Number(current.generation) === envelope.generation) {
-            if (current.envelope_json !== encoded) {
-              throw new ServerStoreError('MEMBER_ENVELOPE_COLLISION', 409, '同代次成员密钥包不一致');
-            }
-            continue;
-          }
-        }
-        await driver.run(`INSERT INTO ledger_member_key_envelopes
-          (replica_id, issuer_node_id, account_id, key_epoch, keyring_id, generation, envelope_json, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT (replica_id, issuer_node_id, account_id, key_epoch)
-          DO UPDATE SET generation = excluded.generation, envelope_json = excluded.envelope_json,
-            updated_at = excluded.updated_at`,
-        [route.replica_id, envelope.issuerNodeId, envelope.accountId, envelope.keyEpoch,
-          envelope.keyringId, envelope.generation, encoded, nowIso()]);
-      }
-    });
-  }
-
-  private async assertMemberEnvelopeKeyEpoch(driver: SqlDriver, replicaId: string,
-    envelope: LedgerMemberKeyEnvelope): Promise<void> {
-    const current = await driver.all<{ envelope_json: string }>(`
-      SELECT envelope_json FROM ledger_member_key_envelopes
-      WHERE replica_id = ? AND key_epoch = ?`, [replicaId, envelope.keyEpoch]);
-    for (const row of current) {
-      const existing = JSON.parse(row.envelope_json) as LedgerMemberKeyEnvelope;
-      if (existing.activeKeyId !== envelope.activeKeyId) {
-        throw new ServerStoreError('MEMBER_ACTIVE_KEY_MISMATCH', 409,
-          '同一密钥代次的成员密钥包必须使用同一个活动密钥');
-      }
-    }
-    const previous = await driver.get<{ envelope_json: string }>(`
-      SELECT envelope_json FROM ledger_member_key_envelopes
-      WHERE replica_id = ? AND key_epoch < ? ORDER BY key_epoch DESC LIMIT 1`,
-    [replicaId, envelope.keyEpoch]);
-    if (previous && (JSON.parse(previous.envelope_json) as LedgerMemberKeyEnvelope).activeKeyId === envelope.activeKeyId) {
-      throw new ServerStoreError('MEMBER_KEY_NOT_ROTATED', 409,
-        '移除成员后必须更换账本活动密钥');
-    }
   }
 
   async bindFederatedAccount(username: string, ledgerId: string, issuerNodeId: string, subjectAccountId: string): Promise<void> {
@@ -5696,9 +4713,6 @@ END;`);
       else await driver.run(`INSERT INTO federated_account_bindings
         (local_username, issuer_node_id, subject_account_id, ledger_id, created_at, verified_at)
         VALUES (?, ?, ?, ?, ?, ?)`, [username, issuerNodeId, subjectAccountId, ledgerId, at, at]);
-      const slot = await driver.get<{ replica_id: string }>(
-        'SELECT replica_id FROM ledger_account_routes WHERE username = ?', [username]);
-      if (slot) await this.rebuildAccountLedgerIndex(driver, slot.replica_id);
     });
   }
 
@@ -5877,93 +4891,6 @@ END;`);
       hasMore: nextSeq < Number(head?.seq ?? 0) };
   }
 
-  async accountEncryptionKey(issuerNodeId: string, subjectAccountId: string): Promise<AccountEncryptionKeyRecord | undefined> {
-    await this.ready;
-    const row = await this.driver.get<Record<string, unknown>>(
-      'SELECT * FROM account_encryption_keys WHERE issuer_node_id = ? AND subject_account_id = ?',
-      [issuerNodeId, subjectAccountId],
-    );
-    return row ? { issuerNodeId, subjectAccountId, publicKey: String(row['public_key']),
-      envelope: jsonObject(row['envelope_json']), revision: Number(row['revision']),
-      updatedAt: String(row['updated_at']) } : undefined;
-  }
-
-  async putAccountEncryptionKey(issuerNodeId: string, subjectAccountId: string, publicKey: string,
-    envelope: JsonRecord, expectedRevision: number): Promise<AccountEncryptionKeyRecord> {
-    await this.ready;
-    try { assertAccountEncryptionKeyEnvelope(envelope as unknown as AccountEncryptionKeyEnvelope); }
-    catch { throw new ServerStoreError('INVALID_ACCOUNT_KEY', 400, '账号加密密钥包无效'); }
-    if (envelope['issuerNodeId'] !== issuerNodeId || envelope['accountId'] !== subjectAccountId
-      || envelope['publicKey'] !== publicKey) throw new ServerStoreError('INVALID_ACCOUNT_KEY', 400, '账号加密密钥包身份不匹配');
-    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-      throw new ServerStoreError('INVALID_REVISION', 400, '账号密钥版本无效');
-    }
-    return this.driver.transaction(async (driver) => {
-      const existing = await driver.get<{ public_key: string; envelope_json: string; revision: number; updated_at: string }>(
-        'SELECT public_key, envelope_json, revision, updated_at FROM account_encryption_keys WHERE issuer_node_id = ? AND subject_account_id = ?',
-        [issuerNodeId, subjectAccountId],
-      );
-      const encoded = JSON.stringify(envelope);
-      if (existing && existing.public_key !== publicKey) {
-        throw new ServerStoreError('ACCOUNT_KEY_CHANGED', 409, '账号加密公钥已改变，需要专门的密钥轮换流程');
-      }
-      if (existing && canonicalJson(JSON.parse(existing.envelope_json)) === canonicalJson(envelope)) return { issuerNodeId, subjectAccountId, publicKey,
-        envelope, revision: Number(existing.revision), updatedAt: existing.updated_at };
-      if (Number(existing?.revision ?? 0) !== expectedRevision) {
-        throw new ServerStoreError('ACCOUNT_KEY_REVISION', 409, '账号加密密钥包已更新，请重新读取');
-      }
-      const at = nowIso();
-      const revision = expectedRevision + 1;
-      await driver.run(`INSERT INTO account_encryption_keys
-        (issuer_node_id, subject_account_id, public_key, envelope_json, revision, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT (issuer_node_id, subject_account_id) DO UPDATE SET envelope_json = excluded.envelope_json,
-          revision = excluded.revision, updated_at = excluded.updated_at`,
-      [issuerNodeId, subjectAccountId, publicKey, encoded, revision, at]);
-      if (issuerNodeId === this.serverId) await driver.run(`UPDATE sync_users
-        SET revision = revision + 1, updated_at = ?
-        WHERE username = (SELECT username FROM sync_account_identities WHERE account_id = ?)`,
-      [at, subjectAccountId]);
-      return { issuerNodeId, subjectAccountId, publicKey, envelope, revision, updatedAt: at };
-    });
-  }
-
-  async importAccountEncryptionKey(record: AccountEncryptionKeyRecord): Promise<void> {
-    await this.ready;
-    try { assertAccountEncryptionKeyEnvelope(record.envelope as unknown as AccountEncryptionKeyEnvelope); }
-    catch { throw new ServerStoreError('INVALID_ACCOUNT_KEY', 400, '账号加密密钥包无效'); }
-    if (record.envelope['issuerNodeId'] !== record.issuerNodeId || record.envelope['accountId'] !== record.subjectAccountId
-      || record.envelope['publicKey'] !== record.publicKey || !Number.isSafeInteger(record.revision)
-      || record.revision < 1 || !Number.isFinite(Date.parse(record.updatedAt))) {
-      throw new ServerStoreError('INVALID_ACCOUNT_KEY', 400, '账号加密密钥包身份或版本无效');
-    }
-    await this.driver.transaction(async (driver) => {
-      const existing = await driver.get<{ public_key: string; envelope_json: string; revision: number }>(
-        'SELECT public_key, envelope_json, revision FROM account_encryption_keys WHERE issuer_node_id = ? AND subject_account_id = ?',
-        [record.issuerNodeId, record.subjectAccountId],
-      );
-      const encoded = JSON.stringify(record.envelope);
-      if (existing?.public_key && existing.public_key !== record.publicKey) {
-        throw new ServerStoreError('ACCOUNT_KEY_CHANGED', 409, '身份节点账号加密公钥已改变');
-      }
-      if (existing && Number(existing.revision) > record.revision) {
-        throw new ServerStoreError('ACCOUNT_KEY_ROLLBACK', 409, '身份节点账号密钥包版本倒退，复制已停止');
-      }
-      if (existing && Number(existing.revision) === record.revision) {
-        if (canonicalJson(JSON.parse(existing.envelope_json)) !== canonicalJson(record.envelope)) {
-          throw new ServerStoreError('ACCOUNT_KEY_COLLISION', 409, '账号密钥包同版本内容不一致');
-        }
-        return;
-      }
-      await driver.run(`INSERT INTO account_encryption_keys
-        (issuer_node_id, subject_account_id, public_key, envelope_json, revision, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT (issuer_node_id, subject_account_id) DO UPDATE SET envelope_json = excluded.envelope_json,
-          revision = excluded.revision, updated_at = excluded.updated_at`,
-      [record.issuerNodeId, record.subjectAccountId, record.publicKey, encoded, record.revision, record.updatedAt]);
-    });
-  }
-
   async createFederatedLoginState(state: string, linkId: string): Promise<void> {
     await this.ready;
     const link = await this.driver.get('SELECT 1 FROM node_replication_links WHERE link_id = ? AND enabled = 1', [linkId]);
@@ -6006,17 +4933,9 @@ END;`);
         '本节点不能替其他身份节点签发统一登录凭据');
       if (!account || Number(account.disabled) || account.account_id !== subjectAccountId
         || !ownerRoute || ownerRoute.ledger_id !== grant.ledger_id) {
-        throw new ServerStoreError('LEDGER_MEMBER_REQUIRED', 403, '当前账号没有该账本的访问权');
+        throw new ServerStoreError('LEDGER_ACCESS_DENIED', 403, '当前账号没有该账本的访问权');
       }
-      const control = await this.readLedgerControlState(driver, ownerRoute.replica_id);
       await this.assertLedgerAccessOnReplica(driver, username, ownerRoute.replica_id, 'read');
-      if (username !== grant.username) {
-        if (!control) throw new ServerStoreError('LEDGER_MEMBER_REQUIRED', 403, '该账本尚未开放成员登录');
-        const envelope = await driver.get(`SELECT 1 FROM ledger_member_key_envelopes
-          WHERE replica_id = ? AND issuer_node_id = ? AND account_id = ? AND key_epoch = ?`,
-        [ownerRoute.replica_id, this.serverId, subjectAccountId, control.keyEpoch]);
-        if (!envelope) throw new ServerStoreError('MEMBER_ENVELOPE_REQUIRED', 409, '成员密钥包尚未发放');
-      }
       const code = randomBytes(32).toString('base64url');
       await driver.run('DELETE FROM federated_login_codes WHERE expires_at <= ?', [at]);
       await driver.run(`INSERT INTO federated_login_codes
@@ -6075,7 +4994,6 @@ END;`);
       await driver.run(`UPDATE sync_sessions SET replica_id = ?, updated_at = ?
         WHERE username = ? AND kind = 'ledger' AND replica_id IS NULL`,
       [replica.replicaId, at, username]);
-      await this.rebuildAccountLedgerIndex(driver, replica.replicaId);
       return replica;
     });
   }
@@ -6124,10 +5042,8 @@ END;`);
       replica.headSeq, activeEnvelope.envelope_json, oldProtection?.mode ?? null,
       oldProtection?.version ?? null, oldProtection?.sealed_secret ?? null, at]);
     await driver.run(`INSERT INTO ledger_replacement_checkpoint_commits
-      (checkpoint_id, seq, commit_id, ledger_id, content_hash, enc_commit_json, key_epoch,
-        writer_issuer_node_id, writer_account_id, cipher_bytes, created_at)
-      SELECT ?, seq, commit_id, ledger_id, content_hash, enc_commit_json, key_epoch,
-        writer_issuer_node_id, writer_account_id, cipher_bytes, created_at
+      (checkpoint_id, seq, commit_id, ledger_id, content_hash, enc_commit_json, cipher_bytes, created_at)
+      SELECT ?, seq, commit_id, ledger_id, content_hash, enc_commit_json, cipher_bytes, created_at
       FROM ledger_replica_commits WHERE replica_id = ?`, [checkpointId, replica.replicaId]);
     const copied = await driver.get<{ count: number }>(
       'SELECT COUNT(*) AS count FROM ledger_replacement_checkpoint_commits WHERE checkpoint_id = ?', [checkpointId]);
@@ -6160,11 +5076,6 @@ END;`);
       if (!current || current.ledgerId !== expected.ledgerId || current.streamEpoch !== expected.streamEpoch || ledgerId === current.ledgerId) {
         throw new ServerStoreError('LEDGER_MISMATCH', 409, '服务器账本已变化，请重新登录并确认要替换的账本');
       }
-      const routes = await driver.get<{ count: number }>('SELECT COUNT(*) AS count FROM ledger_account_routes WHERE replica_id = ?', [current.replicaId]);
-      if (Number(routes?.count) !== 1) throw new ServerStoreError('REPLICA_SHARED', 409, '共享账本不能由单个账号替换');
-      const control = await driver.get<{ replica_id: string }>(
-        'SELECT replica_id FROM ledger_control_roots WHERE replica_id = ?', [current.replicaId]);
-      if (control) throw new ServerStoreError('REPLICA_CONTROLLED', 409, '已有成员控制链的账本不能通过单账号替换');
       const quota = await driver.get<{ commit_quota_bytes: number }>('SELECT commit_quota_bytes FROM sync_user_quotas WHERE username = ?', [username]);
       const quotaRole = await driver.get<{ role: string }>(`SELECT ${ROLE_SQL} AS role FROM sync_users u LEFT JOIN server_administrators a ON a.username = u.username LEFT JOIN server_ownership o ON o.username = u.username WHERE u.username = ?`, [username]);
       const bytes = commits.reduce((sum, commit) => sum + Buffer.byteLength(JSON.stringify(commit.encCommit)), 0);
@@ -6202,8 +5113,6 @@ END;`);
       await driver.run('UPDATE node_replication_grants SET revoked_at = COALESCE(revoked_at, ?) WHERE username = ? AND ledger_id = ?', [at, username, current.ledgerId]);
       await driver.run('UPDATE sync_sessions SET replica_id = ?, updated_at = ? WHERE session_id = ?',
         [next.replicaId, at, sessionId]);
-      await this.rebuildAccountLedgerIndex(driver, current.replicaId);
-      await this.rebuildAccountLedgerIndex(driver, next.replicaId);
       return next;
     });
   }
@@ -6216,11 +5125,6 @@ END;`);
       await this.assertLedgerAccessOnReplica(this.driver, username, replica.replicaId, 'read');
     }
     if (!replica || replica.ledgerId !== ledgerId) return undefined;
-    if (access === 'account' && await this.readLedgerControlState(this.driver, replica.replicaId)) {
-      const owner = await this.driver.get<{ username: string }>(
-        'SELECT username FROM sync_replicas WHERE replica_id = ?', [replica.replicaId]);
-      if (owner?.username !== username) return undefined;
-    }
     const row = await this.driver.get<{ envelope_json: string }>(
       'SELECT envelope_json FROM ledger_replica_key_envelopes WHERE replica_id = ? AND ledger_id = ?',
       [replica.replicaId, ledgerId]);
@@ -6241,9 +5145,6 @@ END;`);
       const replica = await this.accountReplicaRow(driver, username, replicaId);
       if (replica?.ledger_id !== ledgerId) throw new ServerStoreError('LEDGER_MISMATCH', 409, 'account is bound to another ledger');
       if (access === 'account') await this.assertLedgerAccessOnReplica(driver, username, replica.replica_id, 'manage');
-      if (access === 'account' && await driver.get('SELECT 1 FROM ledger_control_roots WHERE replica_id = ?', [replica.replica_id])) {
-        throw new ServerStoreError('KEY_ENVELOPE_CONTROLLED', 409, '此账本已启用成员密钥，不能通过旧密钥包接口更新');
-      }
       const legacyOwner = await driver.get<{ username: string }>('SELECT username FROM sync_replicas WHERE replica_id = ?', [replica.replica_id]);
       if (legacyOwner?.username !== username) {
         throw new ServerStoreError('KEY_ENVELOPE_OWNER_REQUIRED', 403, '共享副本旧密钥包只能由原账号维护');
@@ -6369,46 +5270,6 @@ END;`);
     });
   }
 
-  /** Retain bounded encrypted evidence of a rejected write even if its sender later fails. */
-  async recordRejectedNodeCommit(username: string, peerNodeId: string,
-    item: Omit<StoredCommit, 'seq' | 'cipherBytes' | 'createdAt'>, reason: string,
-    replicaId?: string): Promise<void> {
-    await this.ready;
-    const replica = await this.getReplica(username, replicaId);
-    if (!replica || item.ledgerId !== replica.ledgerId
-      || !/^[A-Za-z0-9_-]{8,128}$/.test(peerNodeId)
-      || !Number.isSafeInteger(item.keyEpoch) || Number(item.keyEpoch) < 0
-      || !/^[a-f0-9]{64}$/.test(item.contentHash)) {
-      throw new ServerStoreError('INVALID_REJECTED_COMMIT', 400, '无法记录无效的远端提交');
-    }
-    const at = nowIso();
-    const encoded = JSON.stringify(item.encCommit);
-    const bytes = Buffer.byteLength(encoded);
-    await this.driver.transaction(async (driver) => {
-      const prior = await driver.get<{ content_hash: string }>(`SELECT content_hash
-        FROM ledger_replica_rejected_commits WHERE replica_id = ? AND peer_node_id = ? AND commit_id = ?`,
-      [replica.replicaId, peerNodeId, item.commitId]);
-      if (prior && prior.content_hash !== item.contentHash) {
-        throw new ServerStoreError('REJECTED_COMMIT_COLLISION', 409, '隔离提交 ID 的内容哈希已改变');
-      }
-      await driver.run(`INSERT INTO ledger_replica_rejected_commits
-        (replica_id, peer_node_id, commit_id, content_hash, key_epoch,
-          writer_issuer_node_id, writer_account_id, reason, first_seen_at, last_seen_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (replica_id, peer_node_id, commit_id) DO UPDATE SET
-          last_seen_at = excluded.last_seen_at, reason = excluded.reason`,
-      [replica.replicaId, peerNodeId, item.commitId, item.contentHash, item.keyEpoch!,
-        item.writer?.issuerNodeId ?? null, item.writer?.accountId ?? null, reason, at, at]);
-      const used = await driver.get<{ bytes: number }>(`SELECT COALESCE(SUM(cipher_bytes), 0) AS bytes
-        FROM ledger_replica_rejected_payloads WHERE replica_id = ?`, [replica.replicaId]);
-      if (bytes <= 16 * 1024 * 1024 && Number(used?.bytes ?? 0) + bytes <= 512 * 1024 * 1024) {
-        await driver.run(`INSERT OR IGNORE INTO ledger_replica_rejected_payloads
-          (replica_id, peer_node_id, commit_id, enc_commit_json, cipher_bytes) VALUES (?, ?, ?, ?, ?)`,
-        [replica.replicaId, peerNodeId, item.commitId, encoded, bytes]);
-      }
-    });
-  }
-
   async listReplacementCheckpoints(username: string): Promise<LedgerReplacementCheckpoint[]> {
     await this.ready;
     const rows = await this.driver.all<Record<string, unknown>>(`SELECT checkpoint.checkpoint_id,
@@ -6458,13 +5319,6 @@ END;`);
       if (current.ledgerId !== expected.ledgerId || current.streamEpoch !== expected.streamEpoch) {
         throw new ServerStoreError('LEDGER_MISMATCH', 409, '当前账本已变化，请刷新后重新确认恢复');
       }
-      const routes = await driver.get<{ count: number }>(
-        'SELECT COUNT(*) AS count FROM ledger_account_routes WHERE replica_id = ?', [current.replicaId]);
-      if (Number(routes?.count) !== 1) throw new ServerStoreError('REPLICA_SHARED', 409, '共享账本不能由单个账号恢复');
-      if (await driver.get('SELECT 1 FROM ledger_control_roots WHERE replica_id IN (?, ?)',
-        [current.replicaId, checkpoint.replica_id])) {
-        throw new ServerStoreError('REPLICA_CONTROLLED', 409, '已有成员控制链的账本不能通过单账号恢复');
-      }
       const target = await driver.get<{ ledger_id: string; stream_epoch: string; head_seq: number }>(
         'SELECT ledger_id, stream_epoch, head_seq FROM ledger_replica_slots WHERE replica_id = ?', [checkpoint.replica_id]);
       const targetRoutes = await driver.get<{ count: number }>(
@@ -6502,10 +5356,8 @@ END;`);
       [checkpoint.replica_id, checkpoint.ledger_id, String(envelope.keyringId),
         Number(envelope.generation), checkpoint.envelope_json, at]);
       await driver.run(`INSERT INTO ledger_replica_commits
-        (replica_id, seq, commit_id, ledger_id, content_hash, enc_commit_json, key_epoch,
-          writer_issuer_node_id, writer_account_id, cipher_bytes, created_at)
-        SELECT ?, seq, commit_id, ledger_id, content_hash, enc_commit_json, key_epoch,
-          writer_issuer_node_id, writer_account_id, cipher_bytes, created_at
+        (replica_id, seq, commit_id, ledger_id, content_hash, enc_commit_json, cipher_bytes, created_at)
+        SELECT ?, seq, commit_id, ledger_id, content_hash, enc_commit_json, cipher_bytes, created_at
         FROM ledger_replacement_checkpoint_commits WHERE checkpoint_id = ? ORDER BY seq`,
       [checkpoint.replica_id, checkpointId]);
       if (checkpoint.protection_mode) {
@@ -6526,59 +5378,9 @@ END;`);
         [at, username, current.ledgerId]);
       await driver.run('UPDATE node_replication_grants SET revoked_at = COALESCE(revoked_at, ?) WHERE username = ? AND ledger_id = ?',
         [at, username, current.ledgerId]);
-      await this.rebuildAccountLedgerIndex(driver, current.replicaId);
-      await this.rebuildAccountLedgerIndex(driver, checkpoint.replica_id);
       return { ...current, ledgerId: checkpoint.ledger_id, replicaId: checkpoint.replica_id,
         streamEpoch: checkpoint.stream_epoch, headSeq: Number(checkpoint.head_seq), updatedAt: at };
     });
-  }
-
-  async listRejectedNodeCommits(username: string, replicaId?: string): Promise<{ peerNodeId: string; commitId: string;
-    contentHash: string; keyEpoch: number; writer?: LedgerMemberIdentity; reason: string;
-    firstSeenAt: string; lastSeenAt: string; archived: boolean;
-    resolution?: { decision: 'replay' | 'discard'; replacementCommitId?: string } }[]> {
-    await this.ready;
-    const replica = await this.getReplica(username, replicaId);
-    if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-    await this.assertLedgerAccessOnReplica(this.driver, username, replica.replicaId, 'manage');
-    const rows = await this.driver.all<Record<string, unknown>>(`SELECT rejected.*, payload.cipher_bytes,
-      resolution.decision, resolution.replacement_commit_id
-      FROM ledger_replica_rejected_commits rejected LEFT JOIN ledger_replica_rejected_payloads payload
-        ON payload.replica_id = rejected.replica_id AND payload.peer_node_id = rejected.peer_node_id
-          AND payload.commit_id = rejected.commit_id
-      LEFT JOIN ledger_control_resolutions resolution ON resolution.replica_id = rejected.replica_id
-        AND resolution.rejected_commit_id = rejected.commit_id
-        AND resolution.rejected_content_hash = rejected.content_hash
-      WHERE rejected.replica_id = ? ORDER BY rejected.last_seen_at DESC LIMIT 200`, [replica.replicaId]);
-    return rows.map((row) => ({ peerNodeId: String(row['peer_node_id']), commitId: String(row['commit_id']),
-      contentHash: String(row['content_hash']), keyEpoch: Number(row['key_epoch']),
-      ...(row['writer_issuer_node_id'] && row['writer_account_id'] ? {
-        writer: { issuerNodeId: String(row['writer_issuer_node_id']), accountId: String(row['writer_account_id']) },
-      } : {}), reason: String(row['reason']), firstSeenAt: String(row['first_seen_at']),
-      lastSeenAt: String(row['last_seen_at']), archived: row['cipher_bytes'] != null,
-      ...(row['decision'] ? { resolution: { decision: String(row['decision']) as 'replay' | 'discard',
-        ...(row['replacement_commit_id'] ? { replacementCommitId: String(row['replacement_commit_id']) } : {}) } } : {}) }));
-  }
-
-  async rejectedNodeCommitCiphertext(username: string, peerNodeId: string, commitId: string,
-    replicaId?: string): Promise<{ commitId: string; ledgerId: string; contentHash: string;
-      keyEpoch: number; writer?: LedgerMemberIdentity; encCommit: JsonRecord } | undefined> {
-    await this.ready;
-    const replica = await this.getReplica(username, replicaId);
-    if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-    await this.assertLedgerAccessOnReplica(this.driver, username, replica.replicaId, 'manage');
-    const row = await this.driver.get<Record<string, unknown>>(`SELECT rejected.*, payload.enc_commit_json
-      FROM ledger_replica_rejected_commits rejected JOIN ledger_replica_rejected_payloads payload
-        ON payload.replica_id = rejected.replica_id AND payload.peer_node_id = rejected.peer_node_id
-          AND payload.commit_id = rejected.commit_id
-      WHERE rejected.replica_id = ? AND rejected.peer_node_id = ? AND rejected.commit_id = ?`,
-    [replica.replicaId, peerNodeId, commitId]);
-    if (!row) return undefined;
-    return { commitId, ledgerId: replica.ledgerId, contentHash: String(row['content_hash']),
-      keyEpoch: Number(row['key_epoch']),
-      ...(row['writer_issuer_node_id'] && row['writer_account_id'] ? {
-        writer: { issuerNodeId: String(row['writer_issuer_node_id']), accountId: String(row['writer_account_id']) },
-      } : {}), encCommit: JSON.parse(String(row['enc_commit_json'])) as JsonRecord };
   }
 
   async listCommits(username: string, after: number, limit: number, access: 'account' | 'node' = 'account',
@@ -6587,22 +5389,12 @@ END;`);
     const replica = await this.getReplica(username, replicaId);
     if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
     if (access === 'account') await this.assertLedgerAccessOnReplica(this.driver, username, replica.replicaId, 'read');
-    const rows = await this.driver.all<Record<string, unknown>>(`SELECT commit_row.*,
-      resolution.rejected_commit_id AS resolved_commit_id FROM ledger_replica_commits commit_row
-      LEFT JOIN ledger_control_resolutions resolution ON resolution.replica_id = commit_row.replica_id
-        AND resolution.rejected_commit_id = commit_row.commit_id
-        AND resolution.rejected_content_hash = commit_row.content_hash
-      WHERE commit_row.replica_id = ? AND commit_row.seq > ? ORDER BY commit_row.seq LIMIT ?`,
-    [replica.replicaId, after, limit]);
+    const rows = await this.driver.all<Record<string, unknown>>(`SELECT * FROM ledger_replica_commits WHERE replica_id = ? AND seq > ? ORDER BY seq LIMIT ?`,
+      [replica.replicaId, after, limit]);
     const commits = rows.map((row): StoredCommit => ({
       seq: Number(row['seq']), commitId: String(row['commit_id']), ledgerId: String(row['ledger_id']),
       contentHash: String(row['content_hash']), encCommit: jsonObject(row['enc_commit_json']),
-      keyEpoch: Number(row['key_epoch'] ?? 0),
-      ...(row['writer_issuer_node_id'] && row['writer_account_id'] ? {
-        writer: { issuerNodeId: String(row['writer_issuer_node_id']), accountId: String(row['writer_account_id']) },
-      } : {}),
       cipherBytes: Number(row['cipher_bytes']), createdAt: String(row['created_at']),
-      ...(row['resolved_commit_id'] ? { quarantined: true } : {}),
     }));
     const nextSeq = commits.at(-1)?.seq ?? after;
     return { commits, headSeq: replica.headSeq, nextSeq, hasMore: nextSeq < replica.headSeq };
@@ -6624,7 +5416,7 @@ END;`);
       const replicaRow = replicaId
         ? await driver.get<Record<string, unknown>>(`SELECT membership.username, slot.ledger_id,
           slot.replica_id, slot.stream_epoch, slot.head_seq, slot.created_at, slot.updated_at
-          FROM account_ledger_index membership JOIN ledger_replica_slots slot ON slot.replica_id = membership.replica_id
+          FROM ledger_account_routes membership JOIN ledger_replica_slots slot ON slot.replica_id = membership.replica_id
           WHERE membership.username = ? AND membership.replica_id = ?`, [username, replicaId])
         : await driver.get<Record<string, unknown>>(`SELECT route.username, slot.ledger_id,
           slot.replica_id, slot.stream_epoch, slot.head_seq, slot.created_at, slot.updated_at
@@ -6637,16 +5429,6 @@ END;`);
         throw new ServerStoreError('REPLICA_RETIRED', 409, '本节点已移出副本组，当前账本禁止继续写入');
       }
       if (access === 'account') await this.assertLedgerAccessOnReplica(driver, username, replica.replicaId, 'write');
-      const control = incoming.length ? await this.readLedgerControlState(driver, replica.replicaId) : undefined;
-      const accountIdentity = control && access === 'account' ? await driver.get<{
-        account_id: string; issuer_node_id: string | null; subject_account_id: string | null;
-      }>(`SELECT identity.account_id, binding.issuer_node_id, binding.subject_account_id
-        FROM sync_account_identities identity LEFT JOIN federated_account_bindings binding
-          ON binding.local_username = identity.username WHERE identity.username = ?`, [username]) : undefined;
-      const accountWriter = accountIdentity ? {
-        issuerNodeId: accountIdentity.issuer_node_id ?? this.serverId,
-        accountId: accountIdentity.subject_account_id ?? accountIdentity.account_id,
-      } : undefined;
       const requirements = await driver.all<{ capability: string }>('SELECT capability FROM ledger_replica_requirements WHERE replica_id = ?', [replica.replicaId]);
       if (requiredCapabilities.some((capability) => capability !== 'asset-cost-v2')) throw new ServerStoreError('UNSUPPORTED_CAPABILITY', 409, 'server upgrade required');
       const required = new Set([...requirements.map((row) => row.capability), ...requiredCapabilities]);
@@ -6666,65 +5448,11 @@ END;`);
       const assigned: { commitId: string; seq: number; contentHash: string }[] = [];
       for (const item of incoming) {
         if (item.ledgerId !== replica.ledgerId) throw new ServerStoreError('LEDGER_MISMATCH', 409, 'account is bound to another ledger');
-        const resolution = await driver.get<{ rejected_content_hash: string }>(`SELECT rejected_content_hash
-          FROM ledger_control_resolutions WHERE replica_id = ? AND rejected_commit_id = ?`,
-        [replica.replicaId, item.commitId]);
-        if (resolution) throw new ServerStoreError('RESOLVED_COMMIT_QUARANTINED', 409,
-          resolution.rejected_content_hash === item.contentHash
-            ? '原提交已由账本所有者签名处置，不再进入活动账本'
-            : '原提交 ID 与已签名处置记录的内容哈希不同', item.commitId);
-        // A browser can pull an old ciphertext from the sending node and then
-        // re-encrypt that same logical commit with today's key. Never treat that
-        // automatic relay as the current member approving a quarantined write.
-        if (access === 'account' && control) {
-          const rejected = await driver.get<{ content_hash: string }>(`
-            SELECT content_hash FROM ledger_replica_rejected_commits
-            WHERE replica_id = ? AND commit_id = ? LIMIT 1`, [replica.replicaId, item.commitId]);
-          if (rejected) throw new ServerStoreError('REJECTED_COMMIT_REVIEW_REQUIRED', 409,
-            rejected.content_hash === item.contentHash
-              ? '此提交曾因旧权限或密钥代次被隔离，须审核后以新提交重新记账'
-              : '此提交 ID 已对应一条被隔离的其他内容', item.commitId);
-        }
         const existing = await driver.get<{ seq: number; content_hash: string }>('SELECT seq, content_hash FROM ledger_replica_commits WHERE replica_id = ? AND commit_id = ?', [replica.replicaId, item.commitId]);
         if (existing) {
           if (existing.content_hash !== item.contentHash) throw new ServerStoreError('COMMIT_ID_COLLISION', 409, `commit ${item.commitId} has different content`);
           assigned.push({ commitId: item.commitId, seq: Number(existing.seq), contentHash: existing.content_hash });
           continue;
-        }
-        const keyEpoch = access === 'account' ? control?.keyEpoch ?? 0 : item.keyEpoch;
-        const writer = access === 'account' ? accountWriter : item.writer;
-        if (!Number.isSafeInteger(keyEpoch) || keyEpoch! < 0
-          || keyEpoch! > 0 && (!writer || !/^[A-Za-z0-9_-]{8,160}$/.test(writer.issuerNodeId)
-            || !/^[A-Za-z0-9_-]{8,160}$/.test(writer.accountId))) {
-          throw new ServerStoreError('INVALID_COMMIT_EPOCH', 400, '提交缺少有效的密钥代次或写入账号');
-        }
-        const epoch = keyEpoch as number;
-        if (control && epoch === 0) {
-          throw new ServerStoreError('STALE_COMMIT_EPOCH', 409,
-            '成员控制链建立后不能接收没有密钥代次的节点提交', item.commitId);
-        }
-        if (control) {
-          if (epoch !== control.keyEpoch) {
-            throw new ServerStoreError('STALE_COMMIT_EPOCH', 409,
-              '离线提交属于旧密钥代次，已停止复制并等待处理', item.commitId);
-          }
-          const member = control.members[`${writer!.issuerNodeId}/${writer!.accountId}`];
-          if (!member || member.removed || member.role === 'VIEWER') {
-            throw new ServerStoreError('STALE_COMMIT_WRITER', 409,
-              '提交写入账号已无当前账本写入权', item.commitId);
-          }
-          const envelopeRow = await driver.get<{ envelope_json: string }>(`SELECT envelope_json
-            FROM ledger_member_key_envelopes WHERE replica_id = ? AND issuer_node_id = ?
-              AND account_id = ? AND key_epoch = ?`,
-          [replica.replicaId, writer!.issuerNodeId, writer!.accountId, epoch]);
-          if (!envelopeRow) throw new ServerStoreError('MEMBER_ENVELOPE_REQUIRED', 409, '当前成员密钥包尚未发放');
-          const envelope = JSON.parse(envelopeRow.envelope_json) as LedgerMemberKeyEnvelope;
-          if (item.encCommit['keyId'] !== envelope.activeKeyId) {
-            throw new ServerStoreError('COMMIT_KEY_EPOCH_MISMATCH', 409,
-              '提交未使用当前密钥代次的活动数据密钥', item.commitId);
-          }
-        } else if (!control && epoch > 0) {
-          throw new ServerStoreError('CONTROL_UNINITIALIZED', 409, '成员控制链尚未到达此节点');
         }
         const encoded = JSON.stringify(item.encCommit);
         const bytes = Buffer.byteLength(encoded);
@@ -6733,11 +5461,9 @@ END;`);
         projected += bytes;
         const at = nowIso();
         await driver.run(`INSERT INTO ledger_replica_commits
-          (replica_id, seq, commit_id, ledger_id, content_hash, enc_commit_json, key_epoch,
-            writer_issuer_node_id, writer_account_id, cipher_bytes, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [replica.replicaId, headSeq, item.commitId, item.ledgerId, item.contentHash, encoded,
-          epoch, writer?.issuerNodeId ?? null, writer?.accountId ?? null, bytes, at]);
+          (replica_id, seq, commit_id, ledger_id, content_hash, enc_commit_json, cipher_bytes, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [replica.replicaId, headSeq, item.commitId, item.ledgerId, item.contentHash, encoded, bytes, at]);
         assigned.push({ commitId: item.commitId, seq: headSeq, contentHash: item.contentHash });
       }
       const at = nowIso();
@@ -6995,9 +5721,6 @@ END;`);
       if (replica && session.replica_id && session.replica_id !== replica.replica_id) {
         throw new ServerStoreError('LEGACY_PROTECTION_SCOPE', 409, '此保护设置属于另一个账本');
       }
-      if (replica && await driver.get('SELECT 1 FROM ledger_control_roots WHERE replica_id = ?', [replica.replica_id])) {
-        throw new ServerStoreError('PROTECTION_CONTROLLED', 409, '此账本已启用成员密钥，不能通过旧保护接口更换密钥');
-      }
       const oldEnvelope = replica ? await driver.get<{ envelope_json: string; generation: number; keyring_id: string }>(
         'SELECT envelope_json, generation, keyring_id FROM ledger_replica_key_envelopes WHERE replica_id = ?',
         [replica.replica_id]) : undefined;
@@ -7010,7 +5733,6 @@ END;`);
         replica = { ledger_id: String(envelope.ledgerId), replica_id: `rep-${randomBytes(12).toString('hex')}` };
         await driver.run('INSERT INTO sync_replicas (username, ledger_id, replica_id, stream_epoch, head_seq, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)',
           [username, replica.ledger_id, replica.replica_id, `epoch-${randomBytes(12).toString('hex')}`, at, at]);
-        await this.rebuildAccountLedgerIndex(driver, replica.replica_id);
         if (session.kind === 'ledger') await driver.run(
           'UPDATE sync_sessions SET replica_id = ?, updated_at = ? WHERE session_id = ?',
           [replica.replica_id, at, sessionId]);

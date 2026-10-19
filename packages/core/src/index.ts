@@ -9,7 +9,6 @@ export * from './asset-cost.js';
 export * from './asset-cost-events.js';
 export * from './asset-cost-ledger.js';
 export * from './category-catalog.js';
-export * from './ledger-control.js';
 export { PLAIN_HTTP_HOST_ALLOWLIST, isPlainHttpHost } from './transport-policy.js';
 export {
   CLIENT_IDENTITY_HEADER,
@@ -30,13 +29,6 @@ export {
   changeLedgerPassphrase,
   rotateLedgerDataKey,
   rotateLedgerProtection,
-  createAccountEncryptionKey,
-  wrapAccountEncryptionKey,
-  assertAccountEncryptionKeyEnvelope,
-  unlockAccountEncryptionKey,
-  wrapLedgerCryptoSessionForMember,
-  assertLedgerMemberKeyEnvelope,
-  unlockLedgerMemberKeyEnvelope,
   normalizeSyncUsername,
   canonicalJson,
   sha256Json,
@@ -55,8 +47,6 @@ export {
   type EncryptedBackupChunk,
   type LedgerKeyEnvelope,
   type LedgerCryptoSession,
-  type AccountEncryptionKeyEnvelope,
-  type LedgerMemberKeyEnvelope,
   type AttachmentCryptoRoutingContext,
   type AttachmentCryptoContext,
   type EncryptedAttachmentChunk,

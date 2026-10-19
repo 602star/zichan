@@ -5,8 +5,7 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from '
 import { extname, join, resolve, sep } from 'node:path';
 import * as opaque from '@serenity-kit/opaque';
 import { normalizeSyncUsername, createLedgerKeyEnvelope, unlockLedgerKeyEnvelope, newId, PLAIN_HTTP_HOST_ALLOWLIST,
-  assertAccountEncryptionKeyEnvelope, type AccountEncryptionKeyEnvelope, type LedgerControlEvent,
-  type LedgerKeyEnvelope, type LedgerMemberKeyEnvelope } from '@zichan/core';
+  type LedgerKeyEnvelope } from '@zichan/core';
 import { loadCustodyKey, sealCustodySecret, openCustodySecret } from './key-custody.js';
 import { loadNodeIdentity, verifyNodeSignature, type NodeIdentity } from './node-identity.js';
 import { signNodeResponse, verifyNodeRequest, type NodeRequestProof } from './node-request-auth.js';
@@ -59,7 +58,6 @@ import {
   SyncServerStore,
   FEDERATED_ONLY_RECORD,
   type JsonRecord,
-  type LedgerControlRoot,
   type NodeReplicationLink,
   type RegistrationMode,
   type ServerLog,
@@ -78,16 +76,6 @@ const REQUEST_ID_BYTES = 8;
 function nowIso(): string {
   return new Date().toISOString();
 }
-
-function publicCommitRow(commit: StoredCommit): StoredCommit | {
-  seq: number; commitId: string; ledgerId: string; contentHash: string; quarantined: true;
-} {
-  return commit.quarantined
-    ? { seq: commit.seq, commitId: commit.commitId, ledgerId: commit.ledgerId,
-      contentHash: commit.contentHash, quarantined: true }
-    : commit;
-}
-
 
 function isLedgerKeyEnvelope(value: unknown): value is JsonRecord {
   if (!isRecord(value)) return false;
@@ -126,23 +114,15 @@ function normalizeBasePath(raw?: string): string {
   return (value.startsWith('/') ? value : `/${value}`).replace(/\/+$/, '');
 }
 
-function initialEncryptedCommits(value: unknown, ledgerId: string, requireEpoch = false): Omit<StoredCommit, 'seq' | 'cipherBytes' | 'createdAt'>[] {
-  if (!Array.isArray(value) || !requireEpoch && !value.length || value.length > 100) throw new ServerStoreError('INVALID_COMMIT', 400, 'initial encrypted commits required');
+function initialEncryptedCommits(value: unknown, ledgerId: string, allowEmpty = false): Omit<StoredCommit, 'seq' | 'cipherBytes' | 'createdAt'>[] {
+  if (!Array.isArray(value) || !allowEmpty && !value.length || value.length > 100) throw new ServerStoreError('INVALID_COMMIT', 400, 'initial encrypted commits required');
   const ids = new Set<string>();
   return value.map((row) => {
     if (!isRecord(row) || typeof row.commitId !== 'string' || !/^[A-Za-z0-9_-]{16,160}$/.test(row.commitId) || row.ledgerId !== ledgerId || typeof row.contentHash !== 'string' || !/^[a-f0-9]{64}$/.test(row.contentHash) || !isRecord(row.encCommit) || row.encCommit.v !== 3 || typeof row.encCommit.keyId !== 'string' || !/^[A-Za-z0-9_-]{16,160}$/.test(row.encCommit.keyId) || typeof row.encCommit.iv !== 'string' || typeof row.encCommit.ct !== 'string' || row.encCommit.iv.length > 256 || row.encCommit.ct.length > MAX_BODY_BYTES || ids.has(row.commitId)) {
       throw new ServerStoreError('INVALID_COMMIT', 400, 'invalid initial encrypted commit');
     }
-    if (requireEpoch && (!Number.isSafeInteger(row.keyEpoch) || Number(row.keyEpoch) < 0
-      || Number(row.keyEpoch) > 0 && (!isRecord(row.writer)
-        || typeof row.writer.issuerNodeId !== 'string' || typeof row.writer.accountId !== 'string'))) {
-      throw new ServerStoreError('INVALID_COMMIT_EPOCH', 400, 'node commit epoch or writer is missing');
-    }
     ids.add(row.commitId);
-    return { commitId: row.commitId, ledgerId, contentHash: row.contentHash, encCommit: row.encCommit,
-      ...(requireEpoch ? { keyEpoch: Number(row.keyEpoch), ...(Number(row.keyEpoch) > 0 ? {
-        writer: row.writer as unknown as StoredCommit['writer'],
-      } : {}) } : {}) };
+    return { commitId: row.commitId, ledgerId, contentHash: row.contentHash, encCommit: row.encCommit };
   });
 }
 
@@ -170,7 +150,6 @@ interface TokenClaims {
   username?: string;
   sessionId?: string;
   replicaId?: string | null;
-  selectionVersion?: number;
   purpose?: string;
   inviteCode?: string;
   exp?: number;
@@ -465,31 +444,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     );
     opaqueServerPublicKey = opaque.server.getPublicKey(opaqueServerSetup);
   });
-  async function activateRelayedCredentials(username: string, ledgerId: string, replicaId: string): Promise<void> {
-    const state = await store.ledgerControlState(username, replicaId);
-    if (!state) return;
-    const peers = await store.listReplicaGroupMembers(replicaId);
-    for (const member of Object.values(state.members)) {
-      if (member.removed || member.issuerNodeId === serverId) continue;
-      const relayed = await store.relayedCredential(ledgerId, member.issuerNodeId, member.accountId);
-      const peer = peers.find((item) => item.nodeId === member.issuerNodeId && !item.retiredAt);
-      if (!relayed || !peer || !verifyFederatedCredential(relayed.bundle, relayed.signature, peer.publicKey)
-        || relayed.bundle.accountKey?.publicKey !== member.encryptionPublicKey) continue;
-      try {
-        const localUsername = await store.provisionFederatedMember(
-          { username, ledgerId, peerNodeId: peer.nodeId }, member.issuerNodeId, member.accountId);
-        await store.importFederatedPasswordCredential({ localUsername,
-          sourceUsername: relayed.bundle.username, displayName: relayed.bundle.displayName,
-          issuerNodeId: member.issuerNodeId, subjectAccountId: member.accountId,
-          registrationRecord: relayed.bundle.registrationRecord, serverSetup: relayed.bundle.serverSetup,
-          disabled: relayed.bundle.disabled, sourceRevision: relayed.bundle.revision });
-      } catch (error) {
-        if (error instanceof ServerStoreError && (error.code === 'MEMBER_ENVELOPE_REQUIRED'
-          || error.code === 'MEMBER_ACCOUNT_KEY_REQUIRED')) continue;
-        throw error;
-      }
-    }
-  }
   const nodeReplication = createNodeReplicationWorker(store, blobStore, () => nodeIdentity,
     async (link, mode, secretValue) => {
       const binding = await store.federatedAccount(link.username);
@@ -516,7 +470,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       }
       await store.importFederatedLedgerProtection(link.username, binding.issuerNodeId,
         link.ledgerId, mode, sealed!);
-    }, () => opaqueServerSetup);
+    });
   const groupReconciler = createGroupReconciler(store, () => nodeIdentity, () => opaqueServerSetup,
     async (username, accountId) => {
       const protection = await store.getLedgerProtection(username);
@@ -572,14 +526,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     lastIp: session.lastIp ?? null,
     revokedAt: session.revokedAt ?? null,
     replicaId: session.replicaId ?? null,
-    selectionVersion: session.selectionVersion,
     active: !session.revokedAt && session.expiresAt > nowIso(),
   } : undefined;
   const issueAccessToken = (session: SyncSession) => {
     const expiresAtMs = Date.now() + ACCESS_TOKEN_TTL_MS;
     return {
       accessToken: signToken(secret, { username: session.username, sessionId: session.id,
-        replicaId: session.replicaId ?? null, selectionVersion: session.selectionVersion,
+        replicaId: session.replicaId ?? null,
         exp: expiresAtMs }),
       accessExpiresAt: new Date(expiresAtMs).toISOString(),
     };
@@ -592,7 +545,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     const session = claims?.sessionId ? await store.getSession(claims.sessionId) : undefined;
     if (!user || user.disabled || !session || session.username !== user.username
       || session.revokedAt || session.expiresAt <= nowIso()
-      || (claims?.selectionVersion ?? 0) !== session.selectionVersion
       || claims?.replicaId != null && claims.replicaId !== session.replicaId) return undefined;
     return { user, session, role: await store.roleForUser(user.username) };
   };
@@ -1057,15 +1009,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           const accounts = [];
           for (const row of selected) {
             if (row.issuerNodeId === serverId) {
-              const accountKey = await store.accountEncryptionKey(serverId, row.subjectAccountId);
               const bundle = { v: 1 as const, ledgerId: group.groupId,
                 issuerNodeId: serverId, subjectAccountId: row.subjectAccountId,
                 username: row.user.username, displayName: row.user.displayName,
                 registrationRecord: row.user.opaqueRegistrationRecord,
                 serverSetup: await store.opaqueSetupForUser(row.user.username) ?? opaqueServerSetup,
                 disabled: row.user.disabled,
-                revision: row.user.revision * 1_000_000 + (accountKey?.revision ?? 0),
-                accountKey: accountKey ?? null };
+                revision: row.user.revision };
               accounts.push({ bundle, issuerSignature: signFederatedCredential(nodeIdentity, bundle) });
             } else {
               const relayed = await store.relayedCredential(group.groupId,
@@ -1106,7 +1056,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           }
           const username = await store.acceptGroupAccount(bundle, body.issuerSignature,
             member.publicKey, body.inviteCode, body.preExistingAt);
-          if (bundle.accountKey) await store.importAccountEncryptionKey(bundle.accountKey);
           return signedGroupJson({ groupId: group.groupId, serverId,
             issuerNodeId: bundle.issuerNodeId, subjectAccountId: bundle.subjectAccountId,
             username: bundle.username, localUsername: username });
@@ -1167,7 +1116,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         }
         await store.importFederatedLedgerProtection(owner.username, member.nodeId,
           body.ledgerId, 'managed', sealedProtection!);
-        if (bundle.accountKey) await store.importAccountEncryptionKey(bundle.accountKey);
         await store.importFederatedPasswordCredential({ localUsername: owner.username,
           sourceUsername: bundle.username, displayName: bundle.displayName,
           issuerNodeId: member.nodeId, subjectAccountId: bundle.subjectAccountId,
@@ -1186,15 +1134,12 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       const nodePromisePage = /^\/api\/v4\/replication\/attachment-promise\/uploads\/([a-f0-9]{32})\/pages$/.exec(apiPath);
       const nodePromiseComplete = /^\/api\/v4\/replication\/attachment-promise\/uploads\/([a-f0-9]{32})\/complete$/.exec(apiPath);
       const nodeRoute = (apiPath === '/api/v4/replication/commits' && (req.method === 'GET' || req.method === 'POST'))
-        || (apiPath === '/api/v4/replication/control' && (req.method === 'GET' || req.method === 'POST'))
-        || (apiPath === '/api/v4/replication/member-envelopes' && (req.method === 'GET' || req.method === 'POST'))
         || (apiPath === '/api/v4/identity/exchange' && req.method === 'POST')
         || (apiPath === '/api/v4/replication/key-envelope' && (req.method === 'GET' || req.method === 'POST'))
         || (apiPath === '/api/v4/replication/account-identity' && req.method === 'GET')
-        || (apiPath === '/api/v4/replication/account-credential' && (req.method === 'GET' || req.method === 'POST'))
+        || (apiPath === '/api/v4/replication/account-credential' && req.method === 'GET')
         || (apiPath === '/api/v4/replication/account-directory' && req.method === 'GET')
         || (apiPath === '/api/v4/replication/account-protection' && req.method === 'GET')
-        || (apiPath === '/api/v4/replication/account-key' && req.method === 'GET')
         || (apiPath === '/api/v4/replication/inventory' && req.method === 'GET')
         || (apiPath === '/api/v4/replication/health-report' && req.method === 'POST')
         || (apiPath === '/api/v4/replication/group-state' && req.method === 'GET')
@@ -1318,15 +1263,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
             && (await store.serverSyncGroup())?.role !== 'main') return send(res, 403,
             { code: 'DIRECTORY_RELAY_REQUIRED', error: '账号目录必须由主节点提供' });
           for (const source of await store.pendingHubDirectoryUsers(grant.ledgerId)) {
-            const accountKey = await store.accountEncryptionKey(serverId, source.accountId);
-            if (!accountKey) continue;
             const bundle = { v: 1 as const, ledgerId: grant.ledgerId,
               issuerNodeId: serverId, subjectAccountId: source.accountId,
               username: source.username, displayName: source.displayName,
               registrationRecord: source.opaqueRegistrationRecord,
               serverSetup: await store.opaqueSetupForUser(source.username) ?? opaqueServerSetup,
               disabled: source.disabled,
-              revision: source.revision * 1_000_000 + accountKey.revision, accountKey };
+              revision: source.revision };
             await store.saveRelayedCredential(bundle, signFederatedCredential(nodeIdentity, bundle),
               nodeIdentity.publicKey);
             await store.markHubDirectoryUserExported(grant.ledgerId, source.accountId, bundle.revision);
@@ -1342,71 +1285,15 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           if (!primary || primaryBinding && (await store.serverSyncGroup())?.role !== 'main') {
             return send(res, 403, { code: 'ISSUER_REQUIRED', error: '账号原始身份节点不可用' });
           }
-          if (req.method === 'POST') {
-            let body: unknown;
-            try { body = JSON.parse(Buffer.from(requestBytes).toString('utf8')); }
-            catch { return send(res, 400, { code: 'INVALID_CREDENTIAL', error: '账号凭据格式无效' }); }
-            if (!isRecord(body) || typeof body.issuerSignature !== 'string') {
-              return send(res, 400, { code: 'INVALID_CREDENTIAL', error: '账号凭据签名缺失' });
-            }
-            let bundle;
-            try { bundle = parseFederatedCredential(body.bundle); }
-            catch { return send(res, 400, { code: 'INVALID_CREDENTIAL', error: '账号凭据格式无效' }); }
-            const control = await store.ledgerControlState(grant.username, replica.replicaId);
-            const member = control?.members[`${bundle.issuerNodeId}/${bundle.subjectAccountId}`];
-            const peer = (await store.listReplicaGroupMembers(replica.replicaId))
-              .find((item) => item.nodeId === proof.nodeId);
-            if (bundle.ledgerId !== grant.ledgerId || bundle.issuerNodeId !== proof.nodeId
-              || !peer || peer.retiredAt || peer.publicKey !== grant.peerPublicKey
-              || !bundle.accountKey
-              || member && bundle.accountKey.publicKey !== member.encryptionPublicKey
-              || !verifyFederatedCredential(bundle, body.issuerSignature, peer.publicKey)) {
-              return send(res, 403, { code: 'INVALID_ISSUER_CREDENTIAL', error: '账号凭据与授权成员或签发节点不匹配' });
-            }
-            await store.importAccountEncryptionKey(bundle.accountKey);
-            await store.saveRelayedCredential(bundle, body.issuerSignature, peer.publicKey);
-            const directoryUsername = await store.provisionFederatedDirectoryAccount(grant.ledgerId,
-              bundle.issuerNodeId, bundle.subjectAccountId);
-            await store.importFederatedPasswordCredential({ localUsername: directoryUsername,
-              sourceUsername: bundle.username, displayName: bundle.displayName,
-              issuerNodeId: bundle.issuerNodeId, subjectAccountId: bundle.subjectAccountId,
-              registrationRecord: bundle.registrationRecord, serverSetup: bundle.serverSetup,
-              disabled: bundle.disabled, sourceRevision: bundle.revision });
-            if (!member || member.removed) return signedJson({ serverId, replicaId: replica.replicaId,
-              streamEpoch: replica.streamEpoch, ledgerId: grant.ledgerId, accepted: false });
-            try {
-              const localUsername = await store.provisionFederatedMember(
-                { username: grant.username, ledgerId: grant.ledgerId, peerNodeId: peer.nodeId },
-                bundle.issuerNodeId, bundle.subjectAccountId);
-              await store.importFederatedPasswordCredential({ localUsername,
-                sourceUsername: bundle.username, displayName: bundle.displayName,
-                issuerNodeId: bundle.issuerNodeId, subjectAccountId: bundle.subjectAccountId,
-                registrationRecord: bundle.registrationRecord, serverSetup: bundle.serverSetup,
-                disabled: bundle.disabled, sourceRevision: bundle.revision });
-              return signedJson({ serverId, replicaId: replica.replicaId,
-                streamEpoch: replica.streamEpoch, ledgerId: grant.ledgerId, accepted: true });
-            } catch (error) {
-              if (error instanceof ServerStoreError && (error.code === 'MEMBER_ENVELOPE_REQUIRED'
-                || error.code === 'MEMBER_ACCOUNT_KEY_REQUIRED')) {
-                return signedJson({ serverId, replicaId: replica.replicaId,
-                  streamEpoch: replica.streamEpoch, ledgerId: grant.ledgerId, accepted: false });
-              }
-              throw error;
-            }
-          }
           const issuerNodeId = url.searchParams.get('issuerNodeId') ?? serverId;
           const subjectAccountId = url.searchParams.get('subjectAccountId') ?? primary.accountId;
           if (!/^[A-Za-z0-9_-]{8,128}$/.test(issuerNodeId)
             || !/^[A-Za-z0-9_-]{8,160}$/.test(subjectAccountId)) {
             return send(res, 400, { error: 'invalid account identity' });
           }
-            if (issuerNodeId !== serverId || subjectAccountId !== primary.accountId) {
-              const isOwner = primaryBinding?.issuerNodeId === issuerNodeId
-                && primaryBinding.subjectAccountId === subjectAccountId;
-              const control = await store.ledgerControlState(grant.username, replica.replicaId);
-              const member = control?.members[`${issuerNodeId}/${subjectAccountId}`];
-              if (!isOwner && (!member || member.removed)) return send(res, 403, { error: 'account is not a ledger member' });
-          }
+          const ownsLedger = issuerNodeId === (primaryBinding?.issuerNodeId ?? serverId)
+            && subjectAccountId === (primaryBinding?.subjectAccountId ?? primary.accountId);
+          if (!ownsLedger) return send(res, 403, { error: 'account is not bound to this ledger' });
           if (issuerNodeId !== serverId) {
             const relayed = await store.relayedCredential(grant.ledgerId, issuerNodeId, subjectAccountId);
             const pinned = (await store.listReplicaGroupMembers(replica.replicaId))
@@ -1428,15 +1315,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           if (!source || await store.federatedAccount(source.username)) {
             return send(res, 403, { code: 'ISSUER_REQUIRED', error: '账号凭据不属于此身份节点' });
           }
-          const accountKey = await store.accountEncryptionKey(serverId, subjectAccountId);
           const bundle = { v: 1 as const, ledgerId: grant.ledgerId,
             issuerNodeId: serverId, subjectAccountId,
             username: source.username, displayName: source.displayName,
             registrationRecord: source.opaqueRegistrationRecord,
             serverSetup: await store.opaqueSetupForUser(source.username) ?? opaqueServerSetup,
             disabled: source.disabled,
-            revision: source.revision * 1_000_000 + (accountKey?.revision ?? 0),
-            accountKey: accountKey ?? null };
+            revision: source.revision };
           return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
             ledgerId: grant.ledgerId, issuerNodeId: serverId, subjectAccountId,
             username: source.username, displayName: source.displayName,
@@ -1457,28 +1342,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
             : null;
           return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
             ledgerId: grant.ledgerId, mode, secret: secretValue });
-        }
-        if (apiPath === '/api/v4/replication/account-key') {
-          const account = await store.getUser(grant.username);
-          if (!account || account.disabled) return send(res, 403, { error: 'issuer account disabled' });
-          const issuerNodeId = url.searchParams.get('issuerNodeId') ?? serverId;
-          const subjectAccountId = url.searchParams.get('subjectAccountId') ?? account.accountId;
-          if (!/^[A-Za-z0-9_-]{8,128}$/.test(issuerNodeId)
-            || !/^[A-Za-z0-9_-]{8,160}$/.test(subjectAccountId)) {
-            return send(res, 400, { error: 'invalid account identity' });
-          }
-          if (issuerNodeId !== serverId || subjectAccountId !== account.accountId) {
-            const binding = await store.federatedAccount(account.username);
-            const isOwner = binding?.issuerNodeId === issuerNodeId
-              && binding.subjectAccountId === subjectAccountId;
-            const control = await store.ledgerControlState(grant.username, replica.replicaId);
-            const member = control?.members[`${issuerNodeId}/${subjectAccountId}`];
-            if (!isOwner && (!member || member.removed)) return send(res, 403, { error: 'account is not a ledger member' });
-          }
-          const record = await store.accountEncryptionKey(issuerNodeId, subjectAccountId) ?? null;
-          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
-            ledgerId: grant.ledgerId,
-            record });
         }
         if (apiPath === '/api/v4/replication/inventory') {
           return signedJson(await store.replicaInventory(grant.username, grant.ledgerId, replica.replicaId));
@@ -1550,44 +1413,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
             nodePromiseComplete[1]!, replica.replicaId, proof.nodeId);
           return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
             ledgerId: grant.ledgerId, catalog });
-        }
-        if (apiPath === '/api/v4/replication/control') {
-          if (req.method === 'GET') {
-            const after = Number(url.searchParams.get('after') ?? 0);
-            const limit = Number(url.searchParams.get('limit') ?? 50);
-            const page = await store.ledgerControlPage(grant.username, after, limit, replica.replicaId);
-            return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
-              ledgerId: grant.ledgerId, ...page });
-          }
-          let body: unknown;
-          try { body = JSON.parse(Buffer.from(requestBytes).toString('utf8')); } catch { /* Refuse below. */ }
-          if (!isRecord(body) || !Array.isArray(body.events) || body.events.length > 50
-            || body.root !== null && !isRecord(body.root)) {
-            return send(res, 400, { code: 'INVALID_CONTROL_PAGE', error: 'invalid ledger control page' });
-          }
-          const state = await store.importLedgerControlPage(grant.username, proof.nodeId,
-            body.root as LedgerControlRoot | null, body.events as LedgerControlEvent[], replica.replicaId);
-          await activateRelayedCredentials(grant.username, grant.ledgerId, replica.replicaId);
-          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
-            ledgerId: grant.ledgerId, headSeq: state?.seq ?? 0, headHash: state?.headHash ?? null });
-        }
-        if (apiPath === '/api/v4/replication/member-envelopes') {
-          if (req.method === 'GET') {
-            const after = url.searchParams.get('after') ?? '';
-            const limit = Number(url.searchParams.get('limit') ?? 10);
-            const page = await store.ledgerMemberEnvelopePage(grant.username, after, limit, replica.replicaId);
-            return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
-              ledgerId: grant.ledgerId, ...page });
-          }
-          let body: unknown;
-          try { body = JSON.parse(Buffer.from(requestBytes).toString('utf8')); } catch { /* Refuse below. */ }
-          if (!isRecord(body) || !Array.isArray(body.envelopes) || body.envelopes.length > 10) {
-            return send(res, 400, { code: 'INVALID_MEMBER_ENVELOPES', error: 'invalid member envelope page' });
-          }
-          await store.importLedgerMemberEnvelopes(grant.username, body.envelopes as LedgerMemberKeyEnvelope[], replica.replicaId);
-          await activateRelayedCredentials(grant.username, grant.ledgerId, replica.replicaId);
-          return signedJson({ serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch,
-            ledgerId: grant.ledgerId, accepted: body.envelopes.length });
         }
         if (apiPath === '/api/v4/replication/key-envelope') {
           if (req.method === 'GET') {
@@ -1723,10 +1548,10 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
             return send(res, 400, { code: 'INVALID_CURSOR', error: 'invalid replication cursor' });
           }
           const page = await store.listCommits(grant.username, after, requested, 'node', replica.replicaId);
-          const selected: ReturnType<typeof publicCommitRow>[] = [];
+          const selected: StoredCommit[] = [];
           let responseBytes = 0;
           for (const commit of page.commits) {
-            const row = publicCommitRow(commit);
+            const row = commit;
             const bytes = Buffer.byteLength(JSON.stringify(row));
             if (selected.length && responseBytes + bytes > 15 * 1024 * 1024) break;
             selected.push(row);
@@ -1750,17 +1575,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           || requiredCapabilities.some((value) => typeof value !== 'string' || value.length > 80)) {
           return send(res, 400, { code: 'INVALID_CAPABILITY', error: 'invalid required capabilities' });
         }
-        let pushed: Awaited<ReturnType<typeof store.pushCommits>>;
-        try {
-          pushed = await store.pushCommits(grant.username, commits, ['asset-cost-v2'], requiredCapabilities as string[], 'node', replica.replicaId);
-        } catch (error) {
-          if (error instanceof ServerStoreError && error.commitId
-            && ['STALE_COMMIT_EPOCH', 'STALE_COMMIT_WRITER', 'COMMIT_KEY_EPOCH_MISMATCH'].includes(error.code)) {
-            const rejected = commits.find((item) => item.commitId === error.commitId);
-            if (rejected) await store.recordRejectedNodeCommit(grant.username, proof.nodeId, rejected, error.code, replica.replicaId);
-          }
-          throw error;
-        }
+        const pushed = await store.pushCommits(grant.username, commits, ['asset-cost-v2'], requiredCapabilities as string[], 'node', replica.replicaId);
         const result = { serverId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch, assigned: pushed.assigned, headSeq: pushed.replica.headSeq };
         return signedJson(result);
       }
@@ -1840,11 +1655,12 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           || assertion.ledgerId !== link.ledgerId) {
           return send(res, 403, { error: '统一账号映射不匹配' });
         }
-        const memberUsername = binding?.issuerNodeId === link.peerNodeId
+        if (!(binding?.issuerNodeId === link.peerNodeId
           && binding.subjectAccountId === assertion.subjectAccountId
-          && binding.ledgerId === link.ledgerId
-          ? link.username
-          : await store.provisionFederatedMember(link, link.peerNodeId, assertion.subjectAccountId);
+          && binding.ledgerId === link.ledgerId)) {
+          return send(res, 403, { error: '统一账号不属于当前账本' });
+        }
+        const memberUsername = link.username;
         const user = await store.getUser(memberUsername);
         if (!user || user.disabled) return send(res, 403, { error: '本地账号不可用' });
         const linkedReplica = await store.getReplicaForLedger(link.username, link.ledgerId);
@@ -2013,7 +1829,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
             issuerNodeId: serverId, subjectAccountId: groupAccountId,
             username: claims.username, displayName: claims.displayName ?? claims.username,
             registrationRecord, serverSetup: registrationSetup,
-            disabled: false, revision: 1_000_000, accountKey: null };
+            disabled: false, revision: 1 };
           const accepted = await signedCall(nodeIdentity, { peerUrl: group.mainUrl,
             peerPublicKey: group.mainPublicKey, grantId: group.groupId },
           'POST', '/api/v4/group/account', JSON.stringify({ bundle,
@@ -2270,45 +2086,20 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       if (req.method === 'GET' && apiPath === '/api/auth/me') {
         const replica = await store.getReplica(user.username, session.replicaId);
         const federatedIdentity = await store.federatedAccount(user.username);
-        const control = replica ? await store.ledgerControlState(user.username, session.replicaId) : undefined;
-        const identityKey = `${federatedIdentity?.issuerNodeId ?? serverId}/${federatedIdentity?.subjectAccountId ?? user.accountId}`;
-        const ledgerRole = replica ? control?.members[identityKey]?.role ?? (control ? null : 'OWNER') : null;
-        const ledgers = await store.listAccountLedgers(user.username);
         return send(res, 200, {
           username: user.username,
           loginUsername: await store.federatedSourceUsername(user.username) ?? user.username,
           displayName: user.displayName,
           role: auth.role,
-          ledgerRole,
           accountId: user.accountId,
           federatedIdentity: federatedIdentity ?? null,
           disabled: false,
           session: publicSession(session),
-          ledgers,
           ...(replica ? {
             ledgerId: replica.ledgerId,
             replicaId: replica.replicaId,
             streamEpoch: replica.streamEpoch,
           } : {}),
-        });
-      }
-      if (req.method === 'POST' && apiPath === '/api/auth/ledger/select') {
-        const body = await readBody(req, 1024);
-        if (typeof body.replicaId !== 'string' || !/^[A-Za-z0-9_-]{8,128}$/.test(body.replicaId)) {
-          return send(res, 400, { code: 'INVALID_REPLICA_ID', error: '账本副本 ID 无效' });
-        }
-        const selected = await store.selectSessionReplica(user.username, session.id, body.replicaId);
-        const replica = await store.getReplica(user.username, selected.replicaId);
-        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 403, '当前账号没有此账本');
-        res.setHeader('Cache-Control', 'no-store');
-        return send(res, 200, {
-          ...issueAccessToken(selected),
-          accountId: user.accountId,
-          session: publicSession(selected),
-          ledgerId: replica.ledgerId,
-          replicaId: replica.replicaId,
-          streamEpoch: replica.streamEpoch,
-          ledgers: await store.listAccountLedgers(user.username),
         });
       }
       if (req.method === 'PUT' && apiPath === '/api/auth/profile') {
@@ -2338,12 +2129,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       }
       if (req.method === 'GET' && apiPath === '/api/auth/usage') {
         const currentReplica = await store.getReplica(user.username, session.replicaId);
-        const blobUsername = currentReplica
-          ? await store.replicaStorageOwner(user.username, currentReplica.replicaId) ?? user.username
-          : user.username;
         const [commits, attachments, transfer] = await Promise.all([
           store.commitUsage(user.username, session.replicaId),
-          blobStore.usage(blobUsername, currentReplica?.ledgerId),
+          blobStore.usage(user.username, currentReplica?.ledgerId),
           store.accountTransfer(user.username),
         ]);
         res.setHeader('Cache-Control', 'no-store');
@@ -2440,30 +2228,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         await log('info', 'logout', 'Sync session logged out', { ip, username: user.username, detail: { sessionId: session.id } });
         return send(res, 200, { ok: true });
       }
-      if (apiPath === '/api/v4/account/encryption-key' && (req.method === 'GET' || req.method === 'PUT')) {
-        const binding = await store.federatedAccount(user.username);
-        const issuerNodeId = binding?.issuerNodeId ?? serverId;
-        const subjectAccountId = binding?.subjectAccountId ?? user.accountId;
-        if (req.method === 'GET') return send(res, 200, {
-          record: await store.accountEncryptionKey(issuerNodeId, subjectAccountId) ?? null,
-        });
-        if (binding) return send(res, 409, { code: 'IDENTITY_ISSUER_REQUIRED', error: '请在账号身份节点更新加密公钥' });
-        const body = await readBody(req, 64 * 1024);
-        const envelope = body.envelope as AccountEncryptionKeyEnvelope;
-        try { assertAccountEncryptionKeyEnvelope(envelope); }
-        catch { return send(res, 400, { error: '账号加密密钥包无效' }); }
-        if (envelope.issuerNodeId !== serverId || envelope.accountId !== user.accountId
-          || !Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0) {
-          return send(res, 400, { error: '账号加密密钥包身份或版本不匹配' });
-        }
-        const record = await store.putAccountEncryptionKey(serverId, user.accountId, envelope.publicKey,
-          envelope as unknown as JsonRecord, Number(body.expectedRevision));
-        return send(res, 200, { record });
-      }
       const replica = await store.getReplica(user.username, session.replicaId);
-      const blobUsername = replica
-        ? await store.replicaStorageOwner(user.username, replica.replicaId) ?? user.username
-        : user.username;
+      const blobUsername = user.username;
       if (!replica && session.replicaId && (apiPath === '/api/v3/commits'
         || apiPath.startsWith('/api/v3/blobs/') || apiPath.startsWith('/api/v4/ledger/'))) {
         throw new ServerStoreError('LEDGER_ACCESS_DENIED', 403, '当前账号已失去此账本的访问权限');
@@ -2489,68 +2255,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         }
       }
 
-      if (apiPath === '/api/v4/ledger/control') {
-        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-        res.setHeader('Cache-Control', 'no-store');
-        if (req.method === 'GET') {
-          await store.assertLedgerAccess(user.username, 'read', session.replicaId);
-          return send(res, 200, { state: await store.ledgerControlState(user.username, session.replicaId) ?? null });
-        }
-        if (req.method === 'POST') {
-          const body = await readBody(req, 64 * 1024);
-          if (!isRecord(body.event)) return send(res, 400, { code: 'INVALID_CONTROL_EVENT', error: '成员事件无效' });
-          const state = await store.initializeLedgerControl(user.username, body.event as unknown as LedgerControlEvent,
-            session.replicaId);
-          return send(res, 201, { state });
-        }
-      }
-      if (apiPath === '/api/v4/ledger/control/events' && req.method === 'POST') {
-        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-        const body = await readBody(req, 2 * 1024 * 1024);
-        if (!isRecord(body.event)) return send(res, 400, { code: 'INVALID_CONTROL_EVENT', error: '成员事件无效' });
-        if (body.envelopes !== undefined && (!Array.isArray(body.envelopes) || body.envelopes.length > 100)) {
-          return send(res, 400, { code: 'INVALID_MEMBER_ENVELOPES', error: '成员密钥包列表无效' });
-        }
-        const state = await store.appendLedgerControlEvent(user.username, body.event as unknown as LedgerControlEvent,
-          body.envelopes as LedgerMemberKeyEnvelope[] | undefined, session.replicaId);
-        await activateRelayedCredentials(user.username, replica.ledgerId, replica.replicaId);
-        return send(res, 201, { state });
-      }
-      if (apiPath === '/api/v4/ledger/member-envelopes' && req.method === 'GET') {
-        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-        await store.assertLedgerAccess(user.username, 'manage', session.replicaId);
-        res.setHeader('Cache-Control', 'no-store');
-        return send(res, 200, await store.ledgerMemberEnvelopePage(user.username,
-          url.searchParams.get('after') ?? '', Number(url.searchParams.get('limit') ?? 10), session.replicaId));
-      }
-      if (apiPath === '/api/v4/ledger/member-envelope') {
-        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-        res.setHeader('Cache-Control', 'no-store');
-        if (req.method === 'GET') {
-          await store.assertLedgerAccess(user.username, 'read', session.replicaId);
-          return send(res, 200, { envelope: await store.currentLedgerMemberKeyEnvelope(user.username, session.replicaId) ?? null });
-        }
-        if (req.method === 'PUT') {
-          const body = await readBody(req, 2 * 1024 * 1024);
-          if (!isRecord(body.envelope)) return send(res, 400, { code: 'INVALID_MEMBER_ENVELOPE', error: '成员密钥包无效' });
-          await store.putLedgerMemberKeyEnvelope(user.username, body.envelope as unknown as LedgerMemberKeyEnvelope,
-            session.replicaId);
-          return send(res, 200, { ok: true });
-        }
-      }
-      if (apiPath === '/api/v4/ledger/rejected-commits' && req.method === 'GET') {
-        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-        res.setHeader('Cache-Control', 'no-store');
-        return send(res, 200, { commits: await store.listRejectedNodeCommits(user.username, session.replicaId) });
-      }
-      const rejectedCiphertextPath = /^\/api\/v4\/ledger\/rejected-commits\/([A-Za-z0-9_-]{8,128})\/([A-Za-z0-9_-]{16,160})$/.exec(apiPath);
-      if (rejectedCiphertextPath && req.method === 'GET') {
-        if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
-        res.setHeader('Cache-Control', 'no-store');
-        const commit = await store.rejectedNodeCommitCiphertext(user.username,
-          rejectedCiphertextPath[1]!, rejectedCiphertextPath[2]!, session.replicaId);
-        return commit ? send(res, 200, { commit }) : send(res, 404, { code: 'REJECTED_CIPHERTEXT_UNAVAILABLE', error: '隔离提交密文不可用，请保留并检查发送节点' });
-      }
       if (apiPath === '/api/v4/ledger/group-members' && req.method === 'GET') {
         if (!replica) throw new ServerStoreError('REPLICA_UNBOUND', 409, 'bind a ledger first');
         await store.assertLedgerAccess(user.username, 'manage', session.replicaId);
@@ -2888,7 +2592,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         return {
           mode: protection?.mode ?? (bound ? 'relay' : null), version: protection?.version ?? 0,
           defaultMode: defaultProtection, custodyEnabled,
-          controlled: bound ? Boolean(await store.ledgerControlState(user.username, session.replicaId)) : false,
           secret: protection?.mode === 'managed' && protection.sealedSecret ? openCustodySecret(custodyKey, custodyScope, protection.sealedSecret) : null,
           envelope: bound && legacySelected
             ? await store.getKeyEnvelope(user.username, bound.ledgerId, 'account', session.replicaId) ?? null : null,
@@ -2990,7 +2693,6 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           streamEpoch: replica.streamEpoch, headSeq: replica.headSeq, capabilities: ['asset-cost-v2'],
           // Preserve server-managed routing during bootstrap, outages and grant revocation.
           serverManagedReplication: links.length > 0 || groupMembers.length > 0,
-          currentKeyEpoch: (await store.ledgerControlState(user.username, session.replicaId))?.keyEpoch ?? 0,
           physical: await store.replicaPhysicalStatus(blobUsername, replica.ledgerId), links,
         });
       }
@@ -3140,9 +2842,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         if (!Number.isSafeInteger(after) || after < 0) return send(res, 400, { error: 'invalid cursor' });
         const page = await store.listCommits(user.username, after, Number.isSafeInteger(requested) ? Math.max(1, Math.min(200, requested)) : 200,
           'account', session.replicaId);
-        const payload = { ...page, commits: page.commits.map(publicCommitRow), serverId, replicaId: replica.replicaId,
+        const payload = { ...page, commits: page.commits, serverId, replicaId: replica.replicaId,
           streamEpoch: replica.streamEpoch,
-          currentKeyEpoch: (await store.ledgerControlState(user.username, session.replicaId))?.keyEpoch ?? 0 };
+ };
         const transferBytes = Buffer.byteLength(JSON.stringify(payload));
         await store.recordAccountTransfer(user.username, 'commit-pull', transferBytes);
         await store.recordSyncEvent({

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
-import { accountSigningPublicKey, createAccountEncryptionKey, createLedgerKeyEnvelope, signLedgerControlEvent } from '@zichan/core';
+import { createLedgerKeyEnvelope } from '@zichan/core';
 import { fetchAuthMe, httpCommitTransport, loginAccount, registerAccount, syncReplica } from '@zichan/db';
 import { NodeSqliteDriver, openLedger } from '@zichan/db/node';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from '../../sync-server/test/support/server-fixture.js';
@@ -56,41 +56,6 @@ describe('replace a forgotten encrypted ledger using an existing account', () =>
       expect(recovered.ledger.settings).toHaveLength(1);
     } finally {
       await Promise.all([old.close(), local.close()]);
-      await server.close();
-    }
-  });
-
-  it('refuses a controlled ledger before creating local replacement data', async () => {
-    const server = createTestSyncServer();
-    await new Promise<void>((resolve) => server.server.listen(0, resolve));
-    const baseUrl = `http://localhost:${(server.server.address() as AddressInfo).port}`;
-    const local = await openLedger({ deviceId: 'blocked-ledger-replacement' });
-    const serverStore = new SyncServerStore(join(server.dataDir, 'server.sqlite'), 'open', server.serverId);
-    try {
-      await registerAccount(baseUrl, 'controlled-owner', 'account-password', { ownerSetupToken: OWNER_SETUP_TOKEN });
-      auth.token = (await loginAccount(baseUrl, 'controlled-owner', 'account-password')).accessToken;
-      const ledgerId = 'ledger-controlled-replacement-0001';
-      const replica = await serverStore.bindReplica('controlled-owner', ledgerId);
-      const owner = (await serverStore.getUser('controlled-owner'))!;
-      const accountKey = await createAccountEncryptionKey(server.serverId, owner.accountId, 'separate-account-key-password');
-      await serverStore.putAccountEncryptionKey(server.serverId, owner.accountId,
-        accountKey.envelope.publicKey, accountKey.envelope as unknown as Record<string, unknown>, 0);
-      const actor = { issuerNodeId: server.serverId, accountId: owner.accountId };
-      await serverStore.initializeLedgerControl('controlled-owner', signLedgerControlEvent(accountKey.privateKey, {
-        v: 1, ledgerId, seq: 1, previousHash: null, keyEpoch: 1, kind: 'MemberGenesis',
-        actor, target: actor, role: 'OWNER', signingPublicKey: accountSigningPublicKey(accountKey.privateKey),
-        encryptionPublicKey: accountKey.envelope.publicKey,
-      }));
-      const connection = { ...newSyncConnection(baseUrl), id: 'controlled-owner', username: 'controlled-owner',
-        serverId: server.serverId, ledgerId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch };
-      await expect(replaceRemoteLedger(local, connection, NEW_LEDGER_SECRET))
-        .rejects.toThrow('成员账本不能通过单账号替换');
-      expect(await local.settings.count()).toBe(0);
-      expect(await local.listSyncCommits()).toEqual([]);
-      expect((await serverStore.getReplica('controlled-owner'))?.ledgerId).toBe(ledgerId);
-    } finally {
-      await serverStore.close();
-      await local.close();
       await server.close();
     }
   });
@@ -159,7 +124,7 @@ describe('replace a forgotten encrypted ledger using an existing account', () =>
         expect((await checkpointDb.get<{ count: number }>(
           'SELECT COUNT(*) AS count FROM ledger_replica_slots WHERE replica_id = ?', [before.replicaId]))?.count).toBe(1);
         expect((await checkpointDb.get<{ count: number }>(
-          'SELECT COUNT(*) AS count FROM account_ledger_index WHERE replica_id = ?', [before.replicaId]))?.count).toBe(0);
+          'SELECT COUNT(*) AS count FROM ledger_account_routes WHERE replica_id = ?', [before.replicaId]))?.count).toBe(0);
       } finally { await checkpointDb.close(); }
       await expect(fetchAuthMe(baseUrl, other)).rejects.toThrow();
       const headers = { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json' };

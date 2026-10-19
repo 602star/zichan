@@ -1,6 +1,5 @@
 import { tauriInvoke } from './tauri.js';
-import { fetchAuthMe, selectAccountLedger, type SyncAuthMe,
-  type SyncAuthSession, type SyncLedgerSelection } from '@zichan/db';
+import { fetchAuthMe, type SyncAuthMe, type SyncAuthSession } from '@zichan/db';
 import { buildSyncBaseUrl, newSyncConnection, type SyncConnection } from './sync-config.js';
 
 export interface DesktopLedgerProfileBinding {
@@ -21,23 +20,6 @@ export interface DesktopLedgerProfileStatus {
 }
 
 let startupProfile: DesktopLedgerProfileStatus | undefined;
-const SWITCH_ERROR_KEY = 'zichan.desktop.ledger-profile-switch-error';
-let consumedSwitchError: string | undefined;
-
-export function rememberDesktopProfileSwitchError(message: string): void {
-  try { sessionStorage.setItem(SWITCH_ERROR_KEY, message); }
-  catch { /* The failed switch still leaves the original profile locked. */ }
-}
-
-export function consumeDesktopProfileSwitchError(): string {
-  if (consumedSwitchError !== undefined) return consumedSwitchError;
-  try {
-    const message = sessionStorage.getItem(SWITCH_ERROR_KEY) ?? '';
-    sessionStorage.removeItem(SWITCH_ERROR_KEY);
-    consumedSwitchError = message;
-  } catch { consumedSwitchError = ''; }
-  return consumedSwitchError;
-}
 
 export async function loadDesktopLedgerProfile(): Promise<DesktopLedgerProfileStatus> {
   const request = tauriInvoke<DesktopLedgerProfileStatus>('desktop_storage_status');
@@ -68,52 +50,17 @@ export function nativeBootstrapConnection(): SyncConnection | undefined {
     enabled: true, status: 'online' };
 }
 
-export function desktopBinding(profile: SyncConnection, ledgerId: string,
-  replicaId: string, streamEpoch: string): DesktopLedgerProfileBinding {
-  if (!profile.serverId || !profile.serverPublicKey || !profile.accountId
-    || !profile.username || !profile.baseUrl) throw new Error('当前节点账号身份不完整');
-  return { serverId: profile.serverId, serverPublicKey: profile.serverPublicKey,
-    accountId: profile.accountId, username: profile.username, serverUrl: buildSyncBaseUrl(profile),
-    ledgerId, replicaId, streamEpoch };
-}
-
-export async function bindLegacyDesktopLedger(binding: DesktopLedgerProfileBinding): Promise<void> {
-  const request = tauriInvoke('desktop_bind_legacy_profile', { binding });
-  if (!request) throw new Error('桌面账本绑定命令不可用');
-  await request;
-}
-
-export async function switchDesktopLedger(binding: DesktopLedgerProfileBinding): Promise<void> {
-  const request = tauriInvoke('desktop_switch_ledger_profile', { binding });
-  if (!request) throw new Error('桌面账本切换命令不可用');
-  await request;
-}
-
-export async function returnToLegacyDesktopLedger(): Promise<void> {
-  const request = tauriInvoke<Array<{ id: string; binding: DesktopLedgerProfileBinding }>>(
-    'desktop_list_ledger_profiles');
-  if (!request) throw new Error('桌面账本 profile 列表命令不可用');
-  const legacy = (await request).find((profile) => profile.id === 'legacy');
-  if (!legacy) throw new Error('原始桌面账本 profile 不存在');
-  await switchDesktopLedger(legacy.binding);
-}
-
-/** Re-select the bound replica before any native database or key is opened. */
-export async function selectNativeProfileSession(connection: SyncConnection, session: SyncAuthSession,
+/** Verify the bound replica before any native database or key is opened. */
+export async function verifyNativeProfileSession(connection: SyncConnection, session: SyncAuthSession,
   binding: DesktopLedgerProfileBinding,
-  select = selectAccountLedger,
   readAccount = fetchAuthMe): Promise<{ connection: SyncConnection; session: SyncAuthSession }> {
   if (connection.serverId !== binding.serverId || connection.serverPublicKey !== binding.serverPublicKey
     || connection.accountId !== binding.accountId) {
     throw new Error('登录账号或节点与当前桌面账本 profile 不匹配');
   }
-  if (connection.replicaId !== binding.replicaId) {
-    const selected: SyncLedgerSelection = await select(buildSyncBaseUrl(connection), session.accessToken, binding.replicaId);
-    if (selected.accountId !== binding.accountId || selected.ledgerId !== binding.ledgerId
-      || selected.streamEpoch !== binding.streamEpoch) throw new Error('服务器账本副本身份已变化');
-    session = { ...session, ...selected };
-    connection = { ...connection, ledgerId: selected.ledgerId, replicaId: selected.replicaId,
-      streamEpoch: selected.streamEpoch };
+  if (connection.replicaId !== binding.replicaId || connection.ledgerId !== binding.ledgerId
+    || connection.streamEpoch !== binding.streamEpoch) {
+    throw new Error('当前桌面账本 profile 与服务器副本身份不一致');
   }
   const account: SyncAuthMe = await readAccount(buildSyncBaseUrl(connection), session.accessToken);
   if (account.accountId !== binding.accountId || account.ledgerId !== binding.ledgerId

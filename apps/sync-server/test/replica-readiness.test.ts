@@ -5,16 +5,12 @@ import type { NodeReplicaInventory, NodeReplicationLink, ReplicaPhysicalStatus }
 const hash = 'a'.repeat(64);
 const inventory: NodeReplicaInventory = {
   serverId: 'node-home', replicaId: 'replica-home', streamEpoch: 'epoch-home', ledgerId: 'ledger-readiness-0001',
-  issuerNodeId: 'node-home', subjectAccountId: 'account-owner', accountKeyHash: hash,
+  issuerNodeId: 'node-home', subjectAccountId: 'account-owner',
   keyringId: 'keyring-readiness', keyGeneration: 1, keyEnvelopeHash: hash,
-  controlSeq: 0, controlHash: hash, keyEpoch: 0,
-  memberEnvelopeCount: 0, memberEnvelopeHash: hash, missingMemberEnvelopeCount: 0,
-  memberAccountKeyCount: 0, memberAccountKeyHash: hash, missingMemberAccountKeyCount: 0,
-  memberAccountCount: 0, missingMemberAccountCount: 0,
   requirementsHash: hash, commitCount: 3, commitHash: hash, commitStreamComplete: 1,
   attachmentPromisePresent: 1, attachmentPromiseCurrent: 1,
   promisedBlobCount: 2, promisedBlobHash: hash, missingPromisedBlobCount: 0,
-  rejectedCommitCount: 0, blobCount: 2, blobHash: hash, tombstoneCount: 0, stateHash: hash,
+  blobCount: 2, blobHash: hash, tombstoneCount: 0, stateHash: hash,
   legacyBlobCount: 0,
 };
 const physical: ReplicaPhysicalStatus = { blobHash: hash, verifiedAt: new Date().toISOString() };
@@ -39,12 +35,9 @@ describe('replica readiness evidence', () => {
     expect(check({ snapshotStable: false }).state).toBe('VERIFYING');
   });
 
-  it('keeps incomplete members, old objects, missing promised blobs and rejected writes out of READY', () => {
-    expect(check({ inventory: { ...inventory, missingMemberEnvelopeCount: 1 } }).state).toBe('BOOTSTRAPPING');
-    expect(check({ inventory: { ...inventory, missingMemberAccountCount: 1 } }).state).toBe('BOOTSTRAPPING');
+  it('keeps old objects and missing promised blobs out of READY', () => {
     expect(check({ inventory: { ...inventory, legacyBlobCount: 1 } }).state).toBe('BOOTSTRAPPING');
     expect(check({ inventory: { ...inventory, missingPromisedBlobCount: 1 } }).state).toBe('CATCHING_UP');
-    expect(check({ inventory: { ...inventory, rejectedCommitCount: 1 } }).state).toBe('VERIFYING');
     expect(check({ inventory: { ...inventory, commitStreamComplete: 0 } }).state).toBe('VERIFYING');
   });
 

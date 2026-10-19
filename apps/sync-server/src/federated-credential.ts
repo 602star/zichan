@@ -1,7 +1,5 @@
-import { canonicalJson, assertAccountEncryptionKeyEnvelope,
-  type AccountEncryptionKeyEnvelope } from '@zichan/core';
+import { canonicalJson } from '@zichan/core';
 import { verifyNodeSignature, type NodeIdentity } from './node-identity.js';
-import type { AccountEncryptionKeyRecord } from './store.js';
 
 /** An issuer signs its own credential before a coordinator relays it to another node. */
 export interface FederatedCredentialBundle {
@@ -15,7 +13,6 @@ export interface FederatedCredentialBundle {
   serverSetup: string;
   disabled: boolean;
   revision: number;
-  accountKey: AccountEncryptionKeyRecord | null;
 }
 
 export function credentialBytes(bundle: FederatedCredentialBundle): Uint8Array {
@@ -47,18 +44,6 @@ export function parseFederatedCredential(value: unknown): FederatedCredentialBun
     || typeof bundle.disabled !== 'boolean'
     || !Number.isSafeInteger(bundle.revision) || Number(bundle.revision) < 1) {
     throw new Error('账号凭据格式无效');
-  }
-  if (bundle.accountKey !== null) {
-    const key = bundle.accountKey;
-    if (!key || key.issuerNodeId !== bundle.issuerNodeId
-      || key.subjectAccountId !== bundle.subjectAccountId
-      || typeof key.publicKey !== 'string' || !Number.isSafeInteger(key.revision)
-      || key.revision < 1 || typeof key.updatedAt !== 'string'
-      || !Number.isFinite(Date.parse(key.updatedAt))) throw new Error('账号加密公钥记录无效');
-    assertAccountEncryptionKeyEnvelope(key.envelope as unknown as AccountEncryptionKeyEnvelope);
-    if (key.envelope.issuerNodeId !== bundle.issuerNodeId
-      || key.envelope.accountId !== bundle.subjectAccountId
-      || key.envelope.publicKey !== key.publicKey) throw new Error('账号加密公钥身份不匹配');
   }
   return bundle as FederatedCredentialBundle;
 }

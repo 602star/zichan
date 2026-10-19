@@ -1,21 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchAuthMe, requestJson, selectAccountLedger,
-  type SyncAuthMe } from '@zichan/db';
-import { WEB_ACCOUNT_BINDING_KEY, WEB_LEDGER_SWITCH_EVENT_KEY } from '../account-storage.js';
+import { fetchAuthMe, requestJson } from '@zichan/db';
 import { accountProtection } from '../account-protection.js';
-import { ACCOUNT_LOCK_REQUEST_EVENT, hasAccountCloseHandler } from '../browser-account-exit.js';
 import { useStore } from '../db/store.js';
 import { authenticateSyncProfile } from '../sync-auth.js';
 import { buildSyncBaseUrl, loadSyncConnections } from '../sync-config.js';
-import { suspendSyncForLedgerSwitch, withSyncLock } from '../sync-lock.js';
-import { isTauriRuntime } from '../tauri.js';
-import { activeDesktopLedgerProfile, bindLegacyDesktopLedger, desktopBinding,
-  rememberDesktopProfileSwitchError, switchDesktopLedger } from '../desktop-ledger-profile.js';
 import { AccountProfilePanel } from '../ui/AccountProfilePanel.js';
 import { AccountEmailPanel } from '../ui/AccountEmailPanel.js';
 import { AccountSecurityPanel } from '../ui/AccountSecurityPanel.js';
-import { AccountKeyPanel } from '../ui/AccountKeyPanel.js';
-import { LedgerMembersPanel } from '../ui/LedgerMembersPanel.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { btnOutline } from '../ui/styles.js';
 
@@ -51,7 +42,7 @@ function QuotaCard({ title, used, limit, detail }: { title: string; used: number
 }
 
 export function Account() {
-  const { exitAccount, prepareNativeLedgerSwitch, store } = useStore();
+  const { exitAccount } = useStore();
   const profileId = accountProtection()?.profileId;
   const profile = loadSyncConnections().find((row) => row.id === profileId);
   const [usage, setUsage] = useState<AccountUsage>();
@@ -59,11 +50,6 @@ export function Account() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirmExit, setConfirmExit] = useState(false);
-  const [ledgers, setLedgers] = useState<NonNullable<SyncAuthMe['ledgers']>>([]);
-  const [currentReplicaId, setCurrentReplicaId] = useState('');
-  const [selectedReplicaId, setSelectedReplicaId] = useState('');
-  const [switchBusy, setSwitchBusy] = useState(false);
-  const [ledgerError, setLedgerError] = useState('');
 
   useEffect(() => {
     if (!profileId) return;
@@ -75,101 +61,11 @@ export function Account() {
       if (account.accountId !== connection.accountId) throw new Error('当前网站账号身份已变化');
       if (active) {
         setRoleInfo({ node: ({ owner: '节点所有者', admin: '节点管理员', viewer: '只读管理员', member: '普通用户' })[account.role],
-          ledger: account.ledgerRole === 'OWNER' ? '账本所有者'
-            : account.ledgerRole === 'EDITOR' ? '可记账成员'
-              : account.ledgerRole === 'VIEWER' ? '只读成员' : '尚无账本权限' });
-        setLedgers(account.ledgers ?? []);
-        setCurrentReplicaId(account.replicaId ?? '');
-        setSelectedReplicaId(account.replicaId ?? '');
+          ledger: account.ledgerId ? '个人账本' : '尚未创建账本' });
       }
-    }).catch((reason) => {
-      if (active) setLedgerError(reason instanceof Error ? reason.message : String(reason));
-    });
+    }).catch(() => { /* Account details remain available after a transient network failure. */ });
     return () => { active = false; };
   }, [profileId]);
-
-  async function switchLedger() {
-    if (!profile || !selectedReplicaId || selectedReplicaId === currentReplicaId || switchBusy) return;
-    setSwitchBusy(true); setLedgerError('');
-    try {
-      if (isTauriRuntime()) {
-        if (!prepareNativeLedgerSwitch) throw new Error('桌面账本切换流程不可用');
-        const profileStatus = activeDesktopLedgerProfile();
-        if (!profileStatus) throw new Error('桌面账本 profile 状态尚未加载');
-        if (!profileStatus.ledgerProfileSwitchSupported) throw new Error('当前桌面平台尚未支持账本 profile 切换');
-        await withSyncLock(async () => {
-          const resumeSync = suspendSyncForLedgerSwitch();
-          let resumeBackups: (() => void) | undefined;
-          try {
-            const token = await authenticateSyncProfile(profile);
-            const account = await fetchAuthMe(buildSyncBaseUrl(profile), token);
-            const currentLedgerId = await store.getLedgerId();
-            if (account.accountId !== profile.accountId || account.ledgerId !== currentLedgerId
-              || !account.replicaId || (profile.replicaId && account.replicaId !== profile.replicaId)
-              || !account.streamEpoch) {
-              throw new Error('当前本机账本与服务器会话不一致，请重新登录后再切换');
-            }
-            const target = account.ledgers?.find((item) => item.replicaId === selectedReplicaId);
-            if (!target) throw new Error('目标账本不在当前账号可访问列表中');
-            if (target.replicaId === account.replicaId) throw new Error('当前账本已经打开');
-            const currentBinding = desktopBinding(profile, currentLedgerId,
-              account.replicaId, account.streamEpoch);
-            if (profileStatus.ledgerProfileId === 'legacy') {
-              await bindLegacyDesktopLedger(currentBinding);
-            } else if (JSON.stringify(profileStatus.ledgerProfileBinding) !== JSON.stringify(currentBinding)) {
-              const bound = profileStatus.ledgerProfileBinding;
-              if (!bound || bound.serverId !== currentBinding.serverId
-                || bound.accountId !== currentBinding.accountId || bound.replicaId !== currentBinding.replicaId
-                || bound.ledgerId !== currentBinding.ledgerId || bound.streamEpoch !== currentBinding.streamEpoch) {
-                throw new Error('本机账本 profile 与当前服务器副本身份不一致');
-              }
-            }
-            const targetBinding = desktopBinding(profile, target.ledgerId,
-              target.replicaId, target.streamEpoch);
-            resumeBackups = await prepareNativeLedgerSwitch();
-            await switchDesktopLedger(targetBinding);
-            throw new Error('桌面重启未开始');
-          } catch (reason) {
-            resumeBackups?.();
-            resumeSync();
-            if (resumeBackups) {
-              rememberDesktopProfileSwitchError(reason instanceof Error ? reason.message : String(reason));
-              window.location.reload();
-            }
-            throw reason;
-          }
-        });
-        return;
-      }
-      await withSyncLock(async () => {
-        const resume = suspendSyncForLedgerSwitch();
-        try {
-          const token = await authenticateSyncProfile(profile);
-          const selected = await selectAccountLedger(buildSyncBaseUrl(profile), token, selectedReplicaId);
-          if (selected.accountId !== profile.accountId) throw new Error('服务器返回了不同账号的账本');
-          try {
-            const remembered = { ...profile, ledgerId: selected.ledgerId,
-              replicaId: selected.replicaId, streamEpoch: selected.streamEpoch,
-              browserSessionId: selected.session.id };
-            const encoded = JSON.stringify(remembered);
-            sessionStorage.setItem(WEB_ACCOUNT_BINDING_KEY, encoded);
-            localStorage.setItem(WEB_ACCOUNT_BINDING_KEY, encoded);
-          } catch { /* The live cookie session still restores the selected ledger after reload. */ }
-          try {
-            localStorage.setItem(WEB_LEDGER_SWITCH_EVENT_KEY, JSON.stringify({
-              serverId: profile.serverId, accountId: profile.accountId,
-              replicaId: selected.replicaId, at: Date.now(),
-            }));
-          } catch { /* The selected session still reloads this tab safely. */ }
-          if (hasAccountCloseHandler()) window.dispatchEvent(new Event(ACCOUNT_LOCK_REQUEST_EVENT));
-          else window.location.reload();
-        } catch (reason) { resume(); throw reason; }
-      });
-    } catch (reason) {
-      setLedgerError(reason instanceof Error ? reason.message : String(reason));
-      setSwitchBusy(false);
-    }
-  }
 
   const refreshUsage = useCallback(async () => {
     const selected = loadSyncConnections().find((row) => row.id === profileId);
@@ -192,31 +88,7 @@ export function Account() {
   return <div>
     {profile ? <>
       <div className="zc-card"><AccountProfilePanel /></div>
-      {ledgers.length > 1 && (!isTauriRuntime()
-        || activeDesktopLedgerProfile()?.ledgerProfileSwitchSupported) && <section className="zc-card" aria-label="选择账本">
-        <h2 className="zc-section-title">选择账本</h2>
-        <p className="zc-caption">此账号可进入 {ledgers.length} 个账本。{isTauriRuntime()
-          ? '桌面版切换时会关闭当前加密数据库并重启，目标账本使用独立的本机文件和安全库；首次进入需再次登录并解锁。'
-          : '切换会保存并关闭当前设备缓存，然后打开所选账本。'}</p>
-        <div className="zc-account-ledger-switch">
-          <label className="zc-field">要进入的账本
-            <select className="zc-select" aria-label="账本副本" value={selectedReplicaId}
-              onChange={(event) => setSelectedReplicaId(event.target.value)} disabled={switchBusy}>
-              {ledgers.map((item) => <option key={item.replicaId} value={item.replicaId}>{item.ledgerId}{item.replicaId === currentReplicaId ? ' · 当前账本' : ''}</option>)}
-            </select>
-          </label>
-          <button type="button" style={btnOutline} disabled={switchBusy || !selectedReplicaId
-            || selectedReplicaId === currentReplicaId} onClick={() => void switchLedger()}>
-            {switchBusy ? '正在切换…' : '进入账本'}
-          </button>
-        </div>
-        {ledgerError && <p role="alert">{ledgerError}</p>}
-      </section>}
-      {ledgers.length <= 1 && ledgerError && <p role="alert">账本列表读取失败：{ledgerError}</p>}
       <AccountEmailPanel quotaUnlimited={usage?.commits.quotaBytes === null && usage?.attachments.quotaBytes === null} />
-      <AccountKeyPanel profile={profile}>
-        {profile.ledgerId && <LedgerMembersPanel profile={profile} />}
-      </AccountKeyPanel>
       <section className="zc-card" aria-label="数据保护入口">
         <h2 className="zc-section-title">数据保护</h2>
         <p className="zc-caption">查看当前账本连接了哪些服务器、各服务器的副本是否就绪；服务器同步组由管理员配置。</p>

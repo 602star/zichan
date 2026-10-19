@@ -1,18 +1,15 @@
 import { isIP } from 'node:net';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { assertAccountEncryptionKeyEnvelope, ledgerControlEventHash,
-  type AccountEncryptionKeyEnvelope, type LedgerControlEvent, type LedgerMemberKeyEnvelope } from '@zichan/core';
 import type { NodeIdentity } from './node-identity.js';
 import { signNodeRequest, verifyNodeResponse } from './node-request-auth.js';
 import { assessReplicaReadiness } from './replica-readiness.js';
 import { parseNodeReplicaGroupSnapshot } from './replica-group-health.js';
-import { parseFederatedCredential, signFederatedCredential,
-  verifyFederatedCredential, type FederatedCredentialBundle } from './federated-credential.js';
+import { parseFederatedCredential, verifyFederatedCredential } from './federated-credential.js';
 import type { BlobManifest, BlobReplicaState, EncryptedBlobStore } from './blob-store.js';
 import { decodeBlobPack, encodeBlobPack, MAX_BLOB_PACK_CHUNK_BYTES, MAX_BLOB_PACK_OBJECTS } from './blob-pack.js';
-import { ServerStoreError, type AttachmentPromiseCatalog, type AttachmentPromiseUpload,
-  type JsonRecord, type LedgerControlRoot, type NodeReplicaInventory, type NodeReplicationLink,
+import { type AttachmentPromiseCatalog, type AttachmentPromiseUpload,
+  type JsonRecord, type NodeReplicaInventory, type NodeReplicationLink,
   type StoredCommit, type SyncServerStore } from './store.js';
 
 const COMMIT_PATH = '/api/v4/replication/commits';
@@ -148,25 +145,15 @@ function incomingCommits(value: unknown, ledgerId: string, after: number): { com
       throw new Error('对端提交页包含无效提交');
     }
     nextSeq = Number(item.seq);
-    if (item.quarantined === true) {
-      if (Object.keys(item).sort().join(',') !== 'commitId,contentHash,ledgerId,quarantined,seq') {
-        throw new Error('对端隔离提交标记包含额外内容');
-      }
-      continue;
-    }
     if (!record(item.encCommit)
       || item.encCommit.v !== 3 || typeof item.encCommit.keyId !== 'string'
       || !/^[A-Za-z0-9_-]{16,160}$/.test(item.encCommit.keyId)
       || typeof item.encCommit.iv !== 'string' || item.encCommit.iv.length > 256
-      || typeof item.encCommit.ct !== 'string' || item.encCommit.ct.length > MAX_REQUEST_BYTES
-      || !Number.isSafeInteger(item.keyEpoch) || Number(item.keyEpoch) < 0
-      || Number(item.keyEpoch) > 0 && (!record(item.writer)
-        || typeof item.writer.issuerNodeId !== 'string' || typeof item.writer.accountId !== 'string')) {
+      || typeof item.encCommit.ct !== 'string' || item.encCommit.ct.length > MAX_REQUEST_BYTES) {
       throw new Error('对端提交页包含无效提交');
     }
     commits.push({ commitId: item.commitId as string, ledgerId, contentHash: item.contentHash as string,
-      encCommit: item.encCommit, keyEpoch: Number(item.keyEpoch),
-      ...(Number(item.keyEpoch) > 0 ? { writer: item.writer as StoredCommit['writer'] } : {}) });
+      encCommit: item.encCommit });
   }
   return { commits, nextSeq };
 }
@@ -194,16 +181,7 @@ export async function replicateNodeLink(store: SyncServerStore, identity: NodeId
   const remoteRequirements = page.requiredCapabilities as string[];
   if (pulled.nextSeq > link.pullSeq) {
     if (pulled.commits.length || remoteRequirements.length) {
-      try {
-        await store.pushCommits(link.username, pulled.commits, ['asset-cost-v2'], remoteRequirements, 'node', local.replicaId);
-      } catch (error) {
-        if (error instanceof ServerStoreError && error.commitId
-          && ['STALE_COMMIT_EPOCH', 'STALE_COMMIT_WRITER', 'COMMIT_KEY_EPOCH_MISMATCH'].includes(error.code)) {
-          const rejected = pulled.commits.find((item) => item.commitId === error.commitId);
-          if (rejected) await store.recordRejectedNodeCommit(link.username, link.peerNodeId, rejected, error.code, local.replicaId);
-        }
-        throw error;
-      }
+      await store.pushCommits(link.username, pulled.commits, ['asset-cost-v2'], remoteRequirements, 'node', local.replicaId);
     }
     await store.updateNodeReplicationLink(link.linkId, { pullSeq: pulled.nextSeq, error: null });
   } else if (remoteRequirements.length) {
@@ -217,7 +195,6 @@ export async function replicateNodeLink(store: SyncServerStore, identity: NodeId
     const batch: StoredCommit[] = [];
     let processedSeq = link.pushSeq;
     for (const item of localPage.commits) {
-      if (item.quarantined) { processedSeq = item.seq; continue; }
       const next = [...batch, item];
       if (Buffer.byteLength(JSON.stringify({ commits: next, requiredCapabilities: localRequirements })) > MAX_REQUEST_BYTES) break;
       batch.push(item);
@@ -225,8 +202,8 @@ export async function replicateNodeLink(store: SyncServerStore, identity: NodeId
     }
     if (!batch.length && processedSeq === link.pushSeq) throw new Error('单条密文提交超出节点复制请求上限');
     if (batch.length) {
-      const body = JSON.stringify({ commits: batch.map(({ commitId, ledgerId, contentHash, encCommit, keyEpoch, writer }) =>
-        ({ commitId, ledgerId, contentHash, encCommit, keyEpoch, ...(writer ? { writer } : {}) })), requiredCapabilities: localRequirements });
+      const body = JSON.stringify({ commits: batch.map(({ commitId, ledgerId, contentHash, encCommit }) =>
+        ({ commitId, ledgerId, contentHash, encCommit })), requiredCapabilities: localRequirements });
       const result = await signedCall(identity, link, 'POST', COMMIT_PATH, body);
       checkPeer(result, link);
       if (!Array.isArray(result.assigned) || result.assigned.length !== batch.length
@@ -321,27 +298,7 @@ export async function replicateNodeAccountIdentity(store: SyncServerStore, ident
   await store.bindFederatedAccount(link.username, link.ledgerId, account.issuerNodeId, account.subjectAccountId);
   await replicateNodeAccountCredential(store, identity, link, account.issuerNodeId,
     account.subjectAccountId, link.username);
-  const keyResponse = await signedCall(identity, link, 'GET',
-    `/api/v4/replication/account-key?issuerNodeId=${encodeURIComponent(account.issuerNodeId)}`
-    + `&subjectAccountId=${encodeURIComponent(account.subjectAccountId)}`);
-  checkPeer(keyResponse, link);
-  if (keyResponse.record === null) return;
-  const recordValue = keyResponse.record;
-  if (!record(recordValue) || recordValue.issuerNodeId !== account.issuerNodeId
-    || recordValue.subjectAccountId !== account.subjectAccountId
-    || typeof recordValue.publicKey !== 'string' || !Number.isSafeInteger(recordValue.revision)
-    || Number(recordValue.revision) < 1 || typeof recordValue.updatedAt !== 'string'
-    || !Number.isFinite(Date.parse(recordValue.updatedAt)) || !record(recordValue.envelope)) {
-    throw new Error('对端账号加密公钥记录无效');
-  }
-  const envelope = recordValue.envelope as unknown as AccountEncryptionKeyEnvelope;
-  assertAccountEncryptionKeyEnvelope(envelope);
-  if (envelope.issuerNodeId !== account.issuerNodeId || envelope.accountId !== account.subjectAccountId
-    || envelope.publicKey !== recordValue.publicKey) throw new Error('对端账号加密公钥身份不匹配');
-  await store.importAccountEncryptionKey({ issuerNodeId: account.issuerNodeId,
-    subjectAccountId: account.subjectAccountId as string, publicKey: recordValue.publicKey,
-    envelope: recordValue.envelope as JsonRecord, revision: Number(recordValue.revision),
-    updatedAt: recordValue.updatedAt });
+
 }
 
 async function replicateNodeAccountCredential(store: SyncServerStore, identity: NodeIdentity,
@@ -405,83 +362,7 @@ async function replicateNodeAccountCredential(store: SyncServerStore, identity: 
     disabled: remote.disabled, sourceRevision: 0 });
 }
 
-/** The identity issuer supplies each active member's encrypted account key; other peers cannot invent one. */
-export async function replicateNodeMemberAccountKeys(store: SyncServerStore, identity: NodeIdentity,
-  link: NodeReplicationLink): Promise<void> {
-  const replica = await linkedReplica(store, link);
-  const state = await store.ledgerControlState(link.username, replica.replicaId);
-  if (!state) return;
-  for (const member of Object.values(state.members)) {
-    if (member.removed || member.issuerNodeId === identity.nodeId) continue;
-    const remote = await signedCall(identity, link, 'GET',
-      `/api/v4/replication/account-key?issuerNodeId=${encodeURIComponent(member.issuerNodeId)}`
-      + `&subjectAccountId=${encodeURIComponent(member.accountId)}`);
-    checkPeer(remote, link);
-    if (remote.ledgerId !== link.ledgerId) throw new Error('对端成员账号密钥账本不匹配');
-    if (remote.record === null) continue; // Inventory keeps this replica incomplete until the issuer publishes it.
-    if (!record(remote.record)) throw new Error('对端成员账号密钥格式无效');
-    const value = remote.record;
-    if (value.issuerNodeId !== member.issuerNodeId || value.subjectAccountId !== member.accountId
-      || value.publicKey !== member.encryptionPublicKey || !Number.isSafeInteger(value.revision)
-      || Number(value.revision) < 1 || typeof value.updatedAt !== 'string'
-      || !Number.isFinite(Date.parse(value.updatedAt)) || !record(value.envelope)) {
-      throw new Error('成员账号密钥记录与签名授权不符');
-    }
-    const envelope = value.envelope as unknown as AccountEncryptionKeyEnvelope;
-    assertAccountEncryptionKeyEnvelope(envelope);
-    await store.importAccountEncryptionKey({ issuerNodeId: member.issuerNodeId,
-      subjectAccountId: member.accountId, publicKey: value.publicKey as string,
-      envelope: value.envelope as JsonRecord, revision: Number(value.revision),
-      updatedAt: value.updatedAt as string });
-  }
-}
-
-/** Make issuer-backed members available for node-local login before they visit this site. */
-export async function provisionNodeMembers(store: SyncServerStore, identity: NodeIdentity, link: NodeReplicationLink): Promise<void> {
-  const replica = await linkedReplica(store, link);
-  const state = await store.ledgerControlState(link.username, replica.replicaId);
-  if (!state) return;
-  for (const member of Object.values(state.members)) {
-    if (member.removed || member.issuerNodeId === identity.nodeId) continue;
-    try {
-      const localUsername = await store.provisionFederatedMember(link, member.issuerNodeId, member.accountId);
-      await replicateNodeAccountCredential(store, identity, link,
-        member.issuerNodeId, member.accountId, localUsername);
-    } catch (error) {
-      if (error instanceof ServerStoreError
-        && (error.code === 'MEMBER_ENVELOPE_REQUIRED' || error.code === 'MEMBER_ACCOUNT_KEY_REQUIRED')) continue;
-      throw error;
-    }
-  }
-}
-
-/** A subsidiary sends its own ledger member identities to the coordinator over its existing grant. */
-export async function publishNativeMemberCredentials(store: SyncServerStore,
-  identity: NodeIdentity, link: NodeReplicationLink, legacyOpaqueSetup: string): Promise<void> {
-  if (!await store.federatedAccount(link.username)) return;
-  for (const source of await store.pendingNativeDirectoryUsers(link.linkId)) {
-    const accountKey = await store.accountEncryptionKey(identity.nodeId, source.accountId);
-    if (!accountKey) continue;
-    const bundle: FederatedCredentialBundle = {
-      v: 1, ledgerId: link.ledgerId, issuerNodeId: identity.nodeId,
-      subjectAccountId: source.accountId, username: source.username,
-      displayName: source.displayName, registrationRecord: source.opaqueRegistrationRecord,
-      serverSetup: await store.opaqueSetupForUser(source.username)
-        ?? legacyOpaqueSetup,
-      disabled: source.disabled, revision: source.revision * 1_000_000 + accountKey.revision, accountKey,
-    };
-    const result = await signedCall(identity, link, 'POST',
-      '/api/v4/replication/account-credential',
-      JSON.stringify({ bundle, issuerSignature: signFederatedCredential(identity, bundle) }));
-    checkPeer(result, link);
-    if (result.ledgerId !== link.ledgerId || typeof result.accepted !== 'boolean') {
-      throw new Error('中继账号凭据接收结果无效');
-    }
-    await store.markDirectoryUserExported(link.linkId, source.accountId, bundle.revision);
-  }
-}
-
-/** Pull group login identities independently of ledger membership; ledger access stays signed by its owner. */
+/** Pull group login identities independently of ledger replication. */
 export async function replicateNodeAccountDirectory(store: SyncServerStore, identity: NodeIdentity,
   link: NodeReplicationLink): Promise<boolean> {
   if (!await store.federatedAccount(link.username)) return true;
@@ -512,7 +393,6 @@ export async function replicateNodeAccountDirectory(store: SyncServerStore, iden
     }
     // Old directory events remain auditable, but a retired issuer cannot refresh login credentials.
     if (issuer?.retiredAt) continue;
-    if (bundle.accountKey) await store.importAccountEncryptionKey(bundle.accountKey);
     const localUsername = await store.provisionFederatedDirectoryAccount(link.ledgerId,
       bundle.issuerNodeId, bundle.subjectAccountId);
     await store.importFederatedPasswordCredential({ localUsername,
@@ -528,84 +408,6 @@ export async function replicateNodeAccountDirectory(store: SyncServerStore, iden
 }
 
 /** One bounded page per round; signed events are checked again before they enter SQLite. */
-export async function replicateNodeControl(store: SyncServerStore, identity: NodeIdentity,
-  link: NodeReplicationLink): Promise<boolean> {
-  const replica = await linkedReplica(store, link);
-  const local = await store.ledgerControlPage(link.username, 0, 1, replica.replicaId);
-  const remote = await signedCall(identity, link, 'GET',
-    `/api/v4/replication/control?after=${local.headSeq}&limit=${PAGE_SIZE}`);
-  checkPeer(remote, link);
-  if (remote.ledgerId !== link.ledgerId || !Number.isSafeInteger(remote.headSeq)
-    || Number(remote.headSeq) < 0 || (remote.headHash !== null
-      && (typeof remote.headHash !== 'string' || !/^[a-f0-9]{64}$/.test(remote.headHash)))
-    || !Array.isArray(remote.events) || remote.events.length > PAGE_SIZE
-    || remote.root !== null && !record(remote.root)) {
-    throw new Error('对端成员控制页无效');
-  }
-  if (local.root && remote.root && JSON.stringify(local.root) !== JSON.stringify(remote.root)) {
-    throw new Error('对端账本初始所有者锚点与本地不同');
-  }
-  if (remote.events.length) {
-    if (!remote.root) throw new Error('对端成员事件缺少初始所有者');
-    await store.importLedgerControlPage(link.username, link.peerNodeId,
-      remote.root as unknown as LedgerControlRoot, remote.events as LedgerControlEvent[], replica.replicaId);
-  }
-  const current = await store.ledgerControlPage(link.username, 0, 1, replica.replicaId);
-  const remoteHead = Number(remote.headSeq);
-  if (current.headSeq < remoteHead) return false;
-  if (current.headSeq === remoteHead) {
-    if (current.headHash !== remote.headHash) throw new Error('同序号成员控制链哈希不同；复制已停止');
-    return true;
-  }
-  if (!current.root) throw new Error('本地成员控制根缺失');
-  const outgoing = await store.ledgerControlPage(link.username, remoteHead, PAGE_SIZE, replica.replicaId);
-  if (!outgoing.events.length) throw new Error('本地成员控制页缺失');
-  const result = await signedCall(identity, link, 'POST', '/api/v4/replication/control',
-    JSON.stringify({ root: current.root, events: outgoing.events }));
-  checkPeer(result, link);
-  const last = outgoing.events.at(-1)!;
-  if (!Number.isSafeInteger(result.headSeq) || Number(result.headSeq) < last.seq
-    || Number(result.headSeq) === last.seq && result.headHash !== ledgerControlEventHash(last)) {
-    throw new Error('对端没有确认成员控制事件');
-  }
-  return last.seq >= current.headSeq;
-}
-
-export async function replicateNodeMemberEnvelopes(store: SyncServerStore, identity: NodeIdentity,
-  link: NodeReplicationLink): Promise<boolean> {
-  const replica = await linkedReplica(store, link);
-  const state = await store.ledgerControlState(link.username, replica.replicaId);
-  const epoch = state?.keyEpoch ?? 0;
-  const changedEpoch = link.memberEpoch !== epoch;
-  if (changedEpoch) await store.updateNodeReplicationLink(link.linkId,
-    { memberEpoch: epoch, pullMemberCursor: '', pushMemberCursor: '' });
-  const pullCursor = changedEpoch ? '' : link.pullMemberCursor;
-  const pushCursor = changedEpoch ? '' : link.pushMemberCursor;
-  const remote = await signedCall(identity, link, 'GET',
-    `/api/v4/replication/member-envelopes?after=${encodeURIComponent(pullCursor)}&limit=10`);
-  checkPeer(remote, link);
-  if (remote.ledgerId !== link.ledgerId || remote.keyEpoch !== epoch
-    || !Array.isArray(remote.envelopes) || remote.envelopes.length > 10
-    || typeof remote.nextCursor !== 'string' || typeof remote.hasMore !== 'boolean'
-    || remote.hasMore && remote.nextCursor <= pullCursor) {
-    throw new Error('对端成员密钥页或权限代次无效');
-  }
-  await store.importLedgerMemberEnvelopes(link.username, remote.envelopes as LedgerMemberKeyEnvelope[], replica.replicaId);
-  await store.updateNodeReplicationLink(link.linkId,
-    { pullMemberCursor: remote.hasMore ? remote.nextCursor : '' });
-  const local = await store.ledgerMemberEnvelopePage(link.username, pushCursor, 10, replica.replicaId);
-  if (local.keyEpoch !== epoch) throw new Error('本地成员密钥代次在复制期间已改变');
-  if (local.envelopes.length) {
-    const accepted = await signedCall(identity, link, 'POST', '/api/v4/replication/member-envelopes',
-      JSON.stringify({ envelopes: local.envelopes }));
-    checkPeer(accepted, link);
-    if (accepted.accepted !== local.envelopes.length) throw new Error('对端未确认成员密钥页');
-  }
-  await store.updateNodeReplicationLink(link.linkId,
-    { pushMemberCursor: local.hasMore ? local.nextCursor : '' });
-  return !remote.hasMore && !local.hasMore;
-}
-
 function portableManifests(value: unknown, after: string): BlobManifest[] {
   if (!Array.isArray(value) || value.length > 20) throw new Error('对端附件清单页无效');
   let previous = after;
@@ -1003,71 +805,42 @@ export async function verifyNodeReplicaInventory(store: SyncServerStore, identit
   link: NodeReplicationLink, localInventory?: NodeReplicaInventory): Promise<NodeReplicaInventory | undefined> {
   const remote = await signedCall(identity, link, 'GET', '/api/v4/replication/inventory');
   checkPeer(remote, link);
-  const fields = ['issuerNodeId', 'subjectAccountId', 'accountKeyHash', 'keyringId', 'keyGeneration', 'keyEnvelopeHash',
-    'controlSeq', 'controlHash', 'keyEpoch', 'memberEnvelopeCount', 'memberEnvelopeHash',
-    'missingMemberEnvelopeCount', 'memberAccountKeyCount', 'memberAccountKeyHash',
-    'missingMemberAccountKeyCount', 'memberAccountCount', 'missingMemberAccountCount', 'requirementsHash',
-    'commitCount', 'commitHash', 'commitStreamComplete', 'attachmentPromisePresent', 'attachmentPromiseCurrent',
-    'promisedBlobCount', 'promisedBlobHash', 'missingPromisedBlobCount',
-    'rejectedCommitCount', 'blobCount', 'blobHash', 'tombstoneCount', 'stateHash', 'legacyBlobCount'] as const;
-  const numeric = new Set<string>(['keyGeneration', 'controlSeq', 'keyEpoch', 'memberEnvelopeCount',
-    'missingMemberEnvelopeCount', 'memberAccountKeyCount', 'missingMemberAccountKeyCount',
-    'memberAccountCount', 'missingMemberAccountCount',
-    'commitCount', 'commitStreamComplete', 'attachmentPromisePresent', 'attachmentPromiseCurrent',
-    'promisedBlobCount', 'missingPromisedBlobCount',
-    'rejectedCommitCount', 'blobCount', 'tombstoneCount', 'legacyBlobCount']);
+  const fields = ['issuerNodeId', 'subjectAccountId', 'keyringId', 'keyGeneration', 'keyEnvelopeHash',
+    'requirementsHash', 'commitCount', 'commitHash', 'commitStreamComplete',
+    'attachmentPromisePresent', 'attachmentPromiseCurrent', 'promisedBlobCount', 'promisedBlobHash',
+    'missingPromisedBlobCount', 'blobCount', 'blobHash', 'tombstoneCount', 'stateHash', 'legacyBlobCount'] as const;
+  const numeric = new Set<string>(['keyGeneration', 'commitCount', 'commitStreamComplete',
+    'attachmentPromisePresent', 'attachmentPromiseCurrent', 'promisedBlobCount',
+    'missingPromisedBlobCount', 'blobCount', 'tombstoneCount', 'legacyBlobCount']);
   for (const field of fields) {
     const value = remote[field];
     if (numeric.has(field) ? !Number.isSafeInteger(value) || Number(value) < 0
       : typeof value !== 'string' || !value || value.length > 256) throw new Error('对端账本目录摘要格式无效');
   }
-  for (const field of ['accountKeyHash', 'keyEnvelopeHash', 'controlHash', 'memberEnvelopeHash', 'memberAccountKeyHash',
-    'requirementsHash', 'commitHash', 'promisedBlobHash', 'blobHash', 'stateHash'] as const) {
+  for (const field of ['keyEnvelopeHash', 'requirementsHash', 'commitHash', 'promisedBlobHash',
+    'blobHash', 'stateHash'] as const) {
     if (!/^[a-f0-9]{64}$/.test(String(remote[field]))) throw new Error('对端账本目录哈希无效');
   }
   const local: NodeReplicaInventory = localInventory ?? await store.replicaInventory(link.username, link.ledgerId,
     (await linkedReplica(store, link)).replicaId);
   const differences = fields.filter((field) => local[field] !== remote[field]);
   if (local.legacyBlobCount || Number(remote.legacyBlobCount)) differences.push('legacyBlobCount');
-  if (local.missingMemberEnvelopeCount || Number(remote.missingMemberEnvelopeCount)) {
-    differences.push('missingMemberEnvelopeCount');
-  }
-  if (local.missingMemberAccountKeyCount || Number(remote.missingMemberAccountKeyCount)) {
-    differences.push('missingMemberAccountKeyCount');
-  }
-  if (local.missingMemberAccountCount || Number(remote.missingMemberAccountCount)) {
-    differences.push('missingMemberAccountCount');
-  }
-  if (local.rejectedCommitCount || Number(remote.rejectedCommitCount)) {
-    differences.push('rejectedCommitCount');
-  }
-  if (local.missingPromisedBlobCount || Number(remote.missingPromisedBlobCount)) {
-    differences.push('missingPromisedBlobCount');
-  }
-  if (!local.commitStreamComplete || !Number(remote.commitStreamComplete)) {
-    differences.push('commitStreamComplete');
-  }
+  if (local.missingPromisedBlobCount || Number(remote.missingPromisedBlobCount)) differences.push('missingPromisedBlobCount');
+  if (!local.commitStreamComplete || !Number(remote.commitStreamComplete)) differences.push('commitStreamComplete');
   if (local.attachmentPromisePresent && !local.attachmentPromiseCurrent
     || Number(remote.attachmentPromisePresent) && !Number(remote.attachmentPromiseCurrent)) {
     differences.push('attachmentPromiseCurrent');
   }
   const labels = new Set(differences.map((field) =>
-    field === 'issuerNodeId' || field === 'subjectAccountId' || field === 'accountKeyHash' ? '账号身份及公钥'
+    field === 'issuerNodeId' || field === 'subjectAccountId' ? '账号身份'
       : field === 'keyringId' || field === 'keyGeneration' || field === 'keyEnvelopeHash' ? '密钥包'
-        : field === 'controlSeq' || field === 'controlHash' || field === 'keyEpoch' ? '成员控制链'
-      : field === 'memberEnvelopeCount' || field === 'memberEnvelopeHash'
-            || field === 'missingMemberEnvelopeCount' ? '成员密钥待补齐'
-        : field === 'memberAccountKeyCount' || field === 'memberAccountKeyHash'
-            || field === 'missingMemberAccountKeyCount' ? '成员账号密钥待补齐'
-        : field === 'memberAccountCount' || field === 'missingMemberAccountCount' ? '成员账号待开通'
         : field === 'requirementsHash' ? '账本能力'
         : field === 'commitCount' || field === 'commitHash' || field === 'commitStreamComplete' ? '提交'
           : field === 'attachmentPromisePresent' || field === 'attachmentPromiseCurrent'
             || field === 'promisedBlobCount' || field === 'promisedBlobHash'
             || field === 'missingPromisedBlobCount' ? '附件承诺目录'
-          : field === 'rejectedCommitCount' ? '过期写入待处理'
-          : field === 'blobCount' || field === 'blobHash' ? '新版附件'
-            : field === 'legacyBlobCount' ? '旧版附件待迁移' : '删除与恢复状态'));
+            : field === 'blobCount' || field === 'blobHash' ? '新版附件'
+              : field === 'legacyBlobCount' ? '旧版附件待迁移' : '删除与恢复状态'));
   await store.updateNodeReplicationLink(link.linkId, differences.length
     ? { inventoryIssue: `目录尚未一致：${[...labels].join('、')}`, inventoryBlobHash: local.blobHash }
     : { inventoryMatched: true, inventoryIssue: null, inventoryBlobHash: local.blobHash });
@@ -1120,8 +893,7 @@ export async function verifyReplicaPhysical(store: SyncServerStore, blobStore: E
 
 export function createNodeReplicationWorker(store: SyncServerStore, blobStore: EncryptedBlobStore,
   identity: () => NodeIdentity,
-  applyProtection?: (link: NodeReplicationLink, mode: 'managed', secret: string) => Promise<void>,
-  legacyOpaqueSetup: () => string = () => '') {
+  applyProtection?: (link: NodeReplicationLink, mode: 'managed', secret: string) => Promise<void>) {
   let flight: Promise<void> | undefined;
   let stopped = false;
   let pauseCount = 0;
@@ -1163,8 +935,7 @@ export function createNodeReplicationWorker(store: SyncServerStore, blobStore: E
       }));
       const failed = new Set<string>();
       const roundStarted = new Map<string, number>();
-      const stages = new Map<string, { identityDone: boolean; controlDone: boolean; envelopesDone: boolean;
-        credentialsDone: boolean; commitsDone: boolean;
+      const stages = new Map<string, { identityDone: boolean; credentialsDone: boolean; commitsDone: boolean;
         promiseDone: boolean; statePullDone: boolean; statePushDone: boolean; blobPullDone: boolean; blobPushDone: boolean }>();
       // Keep a large first copy moving without waiting for the ten-second scheduler
       // after every page. Each stream stops after its own full sweep; otherwise
@@ -1182,8 +953,7 @@ export function createNodeReplicationWorker(store: SyncServerStore, blobStore: E
           // the other still has a cursor, keep the completed direction parked
           // across runs. Once both cursors are empty, start a fresh sweep so
           // newly added objects and states can still be discovered.
-          const stage = stages.get(link.linkId) ?? { identityDone: false, controlDone: false,
-            envelopesDone: false, credentialsDone: false, commitsDone: false, promiseDone: false,
+          const stage = stages.get(link.linkId) ?? { identityDone: false, credentialsDone: false, commitsDone: false, promiseDone: false,
             statePullDone: Boolean(link.pushStateCursor && !link.pullStateCursor && link.pullStateSweepAt),
             statePushDone: Boolean(link.pullStateCursor && !link.pushStateCursor && link.pushStateSweepAt),
             blobPullDone: Boolean(link.pushBlobCursor && !link.pullBlobCursor && link.pullBlobSweepAt),
@@ -1200,20 +970,8 @@ export function createNodeReplicationWorker(store: SyncServerStore, blobStore: E
               if (!nativeSource && applyProtection) await replicateNodeProtection(identity(), link, applyProtection);
               stage.identityDone = true;
             }
-            if (!stage.controlDone) stage.controlDone = await replicateNodeControl(store, identity(), link);
-            if (stage.controlDone && !stage.envelopesDone) {
-              await replicateNodeMemberAccountKeys(store, identity(), link);
-              const envelopesDone = await replicateNodeMemberEnvelopes(store, identity(), link);
-              if (envelopesDone) await provisionNodeMembers(store, identity(), link);
-              stage.envelopesDone = envelopesDone;
-            }
-            if (stage.controlDone && stage.envelopesDone && !stage.credentialsDone) {
-              await publishNativeMemberCredentials(store, identity(), link, legacyOpaqueSetup());
-              stage.credentialsDone = await replicateNodeAccountDirectory(store, identity(), link);
-            }
-            if (stage.controlDone && stage.envelopesDone && !stage.commitsDone) {
-              await replicateNodeLink(store, identity(), link);
-            }
+            if (!stage.credentialsDone) stage.credentialsDone = await replicateNodeAccountDirectory(store, identity(), link);
+            if (!stage.commitsDone) await replicateNodeLink(store, identity(), link);
             if (stage.commitsDone && !stage.promiseDone) {
               stage.promiseDone = await replicateNodeAttachmentPromise(store, identity(), link);
             }
@@ -1249,8 +1007,7 @@ export function createNodeReplicationWorker(store: SyncServerStore, blobStore: E
           stage.statePushDone ||= !link.pushStateCursor;
           stage.blobPullDone ||= !link.pullBlobCursor;
           stage.blobPushDone ||= !link.pushBlobCursor;
-          pending ||= !stage.identityDone || !stage.controlDone || !stage.envelopesDone
-            || !stage.credentialsDone
+          pending ||= !stage.identityDone || !stage.credentialsDone
             || !stage.commitsDone || !stage.promiseDone || !stage.statePullDone || !stage.statePushDone
             || !stage.blobPullDone || !stage.blobPushDone;
         }
@@ -1260,11 +1017,11 @@ export function createNodeReplicationWorker(store: SyncServerStore, blobStore: E
       for (const link of (await store.listNodeReplicationLinks()).filter((item) => !failed.has(item.linkId))) {
         if (pauseCount > 0) break;
         const stage = stages.get(link.linkId);
-        if (!stage?.identityDone || !stage.controlDone || !stage.envelopesDone || !stage.credentialsDone
+        if (!stage?.identityDone || !stage.credentialsDone
           || !stage.commitsDone || !stage.promiseDone || !stage.statePullDone || !stage.statePushDone
           || !stage.blobPullDone || !stage.blobPushDone) {
           await store.recordNodeLinkLifecycle(link.linkId,
-            stage?.identityDone && stage.controlDone && stage.envelopesDone ? 'CATCHING_UP' : 'BOOTSTRAPPING');
+            stage?.identityDone ? 'CATCHING_UP' : 'BOOTSTRAPPING');
           continue;
         }
         try {

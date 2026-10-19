@@ -111,10 +111,9 @@ export async function inspectLocalReplicaRetirement(dataDirValue: string,
       ORDER BY namespace`, [ledgerId, replicaId, ledgerId, replicaId]);
     const accounts = await db.all<{ username: string }>(`
       SELECT DISTINCT username FROM (
-        SELECT username FROM account_ledger_index WHERE replica_id = ?
-        UNION ALL SELECT username FROM ledger_account_routes WHERE replica_id = ?
+        SELECT username FROM ledger_account_routes WHERE replica_id = ?
         UNION ALL SELECT username FROM sync_replicas WHERE replica_id = ?)
-      ORDER BY username`, [replicaId, replicaId, replicaId]);
+      ORDER BY username`, [replicaId, replicaId]);
     const namespaces = [...new Set([
       replicaNamespace(ledgerId, replicaId), ...namespaceRows.map((row) => row.namespace),
       ...accounts.map((row) => legacyNamespace(row.username, ledgerId)),

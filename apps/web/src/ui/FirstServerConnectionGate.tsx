@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { fetchAuthMe, loginAccount, registerAccount, requestJson, type SyncAuthSession } from '@zichan/db';
-import { createAccountEncryptionKey } from '@zichan/core';
+import { fetchAuthMe, loginAccount, registerAccount, type SyncAuthSession } from '@zichan/db';
 import { getDeviceId } from '../db/cloud.js';
 import { rememberLoginPassword } from '../login-password.js';
 import { PasswordRecovery } from './PasswordRecovery.js';
@@ -213,24 +212,6 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
       });
       const account = await fetchAuthMe(checked.baseUrl, session.accessToken);
       if (!account.accountId) throw new Error('服务器未返回账号身份');
-      if (!account.federatedIdentity) {
-        const keyUrl = `${checked.baseUrl}/api/v4/account/encryption-key`;
-        const headers = { Authorization: `Bearer ${session.accessToken}` };
-        const keyResponse = await requestJson(keyUrl, { cache: 'no-store', redirect: 'error',
-          credentials: 'omit', headers });
-        if (keyResponse.ok) {
-          const keyBody = await keyResponse.json() as { record?: unknown };
-          if (!keyBody.record) {
-            const created = await createAccountEncryptionKey(checked.health.serverId, account.accountId, password);
-            try {
-              const saved = await requestJson(keyUrl, { method: 'PUT', cache: 'no-store', redirect: 'error',
-                credentials: 'omit', headers: { ...headers, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ envelope: created.envelope, expectedRevision: 0 }) });
-              if (!saved.ok) throw new Error('账号密钥初始化失败，请重试登录');
-            } finally { created.privateKey.fill(0); }
-          }
-        }
-      }
       const connection = {
         ...newSyncConnection(checked.baseUrl),
         alias: expectedLink?.alias ?? (preset === 'current' ? '当前网站' : preset === 'local' ? '本机服务器' : preset === 'lan' ? '局域网服务器' : '公网服务器'),

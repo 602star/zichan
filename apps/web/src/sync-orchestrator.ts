@@ -79,9 +79,9 @@ function authenticatedTransport(profile: SyncConnection): MeteredTransport {
     const keyEnvelope = storedLedgerKeyEnvelope();
     if (!keyEnvelope) throw new Error('本机没有账本密钥包，请先在同步页创建或获取');
     const protection = accountProtection();
-    if (protection && protection.info.mode !== 'member' && protection.profileId !== profile.id) {
+    if (protection && protection.profileId !== profile.id) {
       const remote = await protectionRequest(candidate);
-      if (!remote.controlled && remote.mode === 'managed'
+      if (remote.mode === 'managed'
         && remote.envelope?.keyringId === keyEnvelope.keyringId && remote.envelope.generation < keyEnvelope.generation) {
         // Existing authorization follows managed rewrapping. Private transitions
         // revoke custody instead; a relay never receives a plaintext key.
@@ -95,7 +95,6 @@ function authenticatedTransport(profile: SyncConnection): MeteredTransport {
       token: accessToken,
       cryptoSession: requireLedgerCryptoSession(keyEnvelope.ledgerId),
       keyEnvelope,
-      memberKeyEnvelope: protection?.info.mode === 'member',
       clientIdentity: clientIdentity(),
     });
   };

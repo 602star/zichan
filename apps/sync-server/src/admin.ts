@@ -421,12 +421,8 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       }
       if (req.method === 'GET' && parts[2] === 'usage') {
         const replica = await store.getReplica(target.username);
-        const [usage, quotaOwner] = await Promise.all([
-          blobStore.usage(target.username, replica?.ledgerId),
-          store.replicaStorageOwner(target.username),
-        ]);
-        return send(res, 200, { ...usage,
-          ...(quotaOwner && quotaOwner !== target.username ? { quotaOwnerUsername: quotaOwner } : {}) });
+        const usage = await blobStore.usage(target.username, replica?.ledgerId);
+        return send(res, 200, usage);
       }
       const routes: Record<string, string> = { state: 'users', devices: 'users', blobs: 'quotas', commits: 'quotas' };
       const group = routes[parts[2]!];
@@ -653,9 +649,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if (!detail) return send(res, 404, { error: 'account not found' });
       const username = String((detail['account'] as JsonRecord)['username']);
       const replica = await store.getReplica(username);
-      const [usage, quotaOwner] = await Promise.all([
-        blobStore.usage(username, replica?.ledgerId), store.replicaStorageOwner(username),
-      ]);
+      const usage = await blobStore.usage(username, replica?.ledgerId);
       return send(res, 200, {
         ...detail,
         capacity: {
@@ -665,10 +659,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
           blobObjectCount: usage.objectCount,
           blobTrashBytes: usage.trashBytes,
           blobStagingBytes: usage.stagingBytes,
-          ...(quotaOwner && quotaOwner !== username ? { blobQuotaOwnerUsername: quotaOwner } : {}),
-          quotaNote: quotaOwner && quotaOwner !== username
-            ? `此账号与账本宿主账号 ${quotaOwner} 共用附件容量和配额。`
-            : usage.quotaBytes === null
+          quotaNote: usage.quotaBytes === null
             ? '所有者和管理员无限额；单文件大小与服务器实际磁盘空间仍有限制。'
             : '提交、有效附件、回收站与暂存上传都计入各自配额；降低上限不会删除已有数据，只限制后续上传。',
         },
@@ -1292,11 +1283,8 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         users: await Promise.all(users.map(async (user) => {
           const username = String(user['username']);
           const replica = await store.getReplica(username);
-          const [usage, quotaOwner] = await Promise.all([
-            blobStore.usage(username, replica?.ledgerId), store.replicaStorageOwner(username),
-          ]);
-          return { username, ...usage,
-            ...(quotaOwner && quotaOwner !== username ? { quotaOwnerUsername: quotaOwner } : {}) };
+          const usage = await blobStore.usage(username, replica?.ledgerId);
+          return { username, ...usage };
         })),
         dataDir: deps.dataDir,
         nextCursor,
@@ -1322,11 +1310,6 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     if (req.method === 'POST' && parts[0] === 'quotas' && parts[2] === 'blobs') {
       const username = parts[1] ?? '';
       const target = await assertManageTarget(username, true);
-      const quotaOwner = await store.replicaStorageOwner(username);
-      if (quotaOwner && quotaOwner !== username) {
-        return send(res, 409, { code: 'REPLICA_QUOTA_OWNER',
-          error: `此账号使用共享账本副本配额，请调整宿主账号 ${quotaOwner} 的附件配额` });
-      }
       const body = await readBody(req, ADMIN_BODY_BYTES);
       if (body.quotaBytes !== null && (!Number.isSafeInteger(body.quotaBytes)
         || Number(body.quotaBytes) < 1024 * 1024 || Number(body.quotaBytes) > 1024 ** 4)) {

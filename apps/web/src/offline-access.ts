@@ -70,8 +70,7 @@ export async function forgetOfflineAccess(): Promise<void> {
 
 async function restore(profile: SyncConnection, state: UnlockedProtection): Promise<void> {
   if (state.profileId !== profile.id || state.info.replica?.serverId !== profile.serverId) throw new Error('离线授权不属于当前账号');
-  await unlockAccountProtection(profile, { ...state.info, secret: state.info.mode === 'managed' ? state.secret : null },
-    state.secret);
+  await unlockAccountProtection(profile, { ...state.info, secret: state.info.mode === 'managed' ? state.secret : null });
   await unlockDeviceStorage(state.secret, true);
 }
 

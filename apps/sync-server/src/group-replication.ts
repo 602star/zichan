@@ -34,7 +34,6 @@ export function createGroupReconciler(store: SyncServerStore, identity: () => No
         const rows = await store.groupAccountRows(accountAfter, 50);
         for (const row of rows) {
           if (row.issuerNodeId !== node.nodeId) continue;
-          const accountKey = await store.accountEncryptionKey(node.nodeId, row.subjectAccountId);
           const bundle: FederatedCredentialBundle = {
             v: 1, ledgerId: group.groupId, issuerNodeId: node.nodeId,
             subjectAccountId: row.subjectAccountId, username: row.user.username,
@@ -42,8 +41,7 @@ export function createGroupReconciler(store: SyncServerStore, identity: () => No
             registrationRecord: row.user.opaqueRegistrationRecord,
             serverSetup: await store.opaqueSetupForUser(row.user.username) ?? opaqueSetup(),
             disabled: row.user.disabled,
-            revision: row.user.revision * 1_000_000 + (accountKey?.revision ?? 0),
-            accountKey: accountKey ?? null,
+            revision: row.user.revision,
           };
           if (await store.groupAccountExportRevision(row.subjectAccountId) >= bundle.revision) continue;
           const result = await signedCall(node, peer, 'POST', '/api/v4/group/account',
@@ -89,7 +87,6 @@ export function createGroupReconciler(store: SyncServerStore, identity: () => No
           }
           const localUsername = await store.provisionFederatedDirectoryAccount(group.groupId,
             bundle.issuerNodeId, bundle.subjectAccountId);
-          if (bundle.accountKey) await store.importAccountEncryptionKey(bundle.accountKey);
           await store.importFederatedPasswordCredential({ localUsername,
             sourceUsername: bundle.username, displayName: bundle.displayName,
             issuerNodeId: bundle.issuerNodeId, subjectAccountId: bundle.subjectAccountId,
@@ -112,7 +109,6 @@ export function createGroupReconciler(store: SyncServerStore, identity: () => No
         if (!envelope) continue;
         const sourceGrant = await store.ensureNativeGroupSourceGrant(slot.username, replica.replicaId,
           group.mainNodeId, group.mainPublicKey);
-        const accountKey = await store.accountEncryptionKey(node.nodeId, user.accountId);
         const protection = await readProtection(slot.username, user.accountId);
         if (!protection) continue;
         const bundle: FederatedCredentialBundle = {
@@ -121,8 +117,7 @@ export function createGroupReconciler(store: SyncServerStore, identity: () => No
           displayName: user.displayName,
           registrationRecord: user.opaqueRegistrationRecord,
           serverSetup: await store.opaqueSetupForUser(user.username) ?? opaqueSetup(),
-          disabled: user.disabled, revision: user.revision * 1_000_000 + (accountKey?.revision ?? 0),
-          accountKey: accountKey ?? null,
+          disabled: user.disabled, revision: user.revision,
         };
         const answer = await signedCall(node, peer, 'POST', '/api/v4/group/announce',
           JSON.stringify({ ledgerId: slot.ledgerId, replicaId: replica.replicaId,

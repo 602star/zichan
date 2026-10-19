@@ -43,7 +43,7 @@ describe('three-node replica fault recovery', () => {
           createdAt: new Date().toISOString(), parentCommitIds: [], revisions: [] };
         const contentHash = await sha256Json(commit);
         const encCommit = await encryptJson(session, commit, { protocol: 2, ledgerId, commitId, contentHash });
-        await store.pushCommits('owner', [{ commitId, ledgerId, contentHash, encCommit, keyEpoch: 0 }]);
+        await store.pushCommits('owner', [{ commitId, ledgerId, contentHash, encCommit }]);
       };
       await write(stores[0]!, 'hub-before-outage-0000001');
       await Promise.all([home.flushNodeReplication(), office.flushNodeReplication()]);
