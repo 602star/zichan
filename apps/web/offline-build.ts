@@ -14,6 +14,9 @@ export function offlineBuild(): Plugin {
       const digest = createHash('sha256');
       for (const name of assets) digest.update(name).update(readFileSync(join(output, name)));
       const version = digest.digest('hex').slice(0, 20);
+      const indexPath = join(output, 'index.html');
+      const index = readFileSync(indexPath, 'utf8');
+      writeFileSync(indexPath, index.replace('  </head>', `    <meta name="zichan-shell-version" content="${version}" />\n  </head>`));
       const template = readFileSync(new URL('./offline-worker.js', import.meta.url), 'utf8');
       writeFileSync(join(output, 'sw.js'), template.replace('__ASSETS__', JSON.stringify(assets)).replace('__VERSION__', version));
     },
