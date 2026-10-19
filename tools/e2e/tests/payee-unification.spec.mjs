@@ -1,14 +1,8 @@
 import { test, expect } from './fixtures.mjs';
+import { openLedger } from './helpers.mjs';
 
 async function start(page) {
-  await page.goto('/');
-  await page.getByRole('button', { name: '注册新账号', exact: true }).click();
-  await page.getByLabel('服务器用户名').fill(`payee-unified-${crypto.randomUUID()}`);
-  await page.getByLabel('服务器账号密码', { exact: true }).fill('Payee-unified-password');
-  await page.getByLabel('确认账号密码', { exact: true }).fill('Payee-unified-password');
-  await page.getByRole('button', { name: '注册并登录', exact: true }).click();
-  await page.getByRole('button', { name: '开始记账', exact: true }).click();
-  await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '取消', exact: true }).click();
+  await openLedger(page);
 }
 
 async function manage(page) {
@@ -78,7 +72,7 @@ test('platform directory edits the same counterpart and management searches real
   await filter.getByLabel('搜索已有交易对象').fill('jd');
   await filter.getByRole('option', { name: '我的京东采购', exact: true }).click();
   await expect(page.getByText('目录采购流水', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '清除其他筛选', exact: true }).click();
+  await page.locator('.zc-transaction-clear-desktop').click();
   await expect(page.getByLabel('流水交易对象')).toContainText('全部交易对象');
   await page.getByRole('button', { name: /^高级查询/ }).click();
   await page.getByRole('button', { name: '+ 条件组 OR', exact: true }).click();
@@ -90,7 +84,7 @@ test('platform directory edits the same counterpart and management searches real
   await advanced.getByLabel('搜索已有交易对象').fill('jd');
   await advanced.getByRole('option', { name: '我的京东采购', exact: true }).click();
   await expect(page.getByLabel('高级查询值')).toContainText('我的京东采购');
-  await page.getByRole('button', { name: '清除其他筛选', exact: true }).click();
+  await page.locator('.zc-transaction-clear-desktop').click();
   await page.getByRole('checkbox', { name: '选择 目录采购流水', exact: true }).check();
   await page.getByRole('button', { name: '批量修改', exact: true }).click();
   const batch = page.getByRole('dialog', { name: '批量修改流水', exact: true });
@@ -116,7 +110,7 @@ test('platform directory edits the same counterpart and management searches real
   await page.getByLabel('流水交易对象', { exact: true }).click();
   await page.getByRole('dialog', { name: '流水交易对象', exact: true }).getByRole('option', { name: '我的京东采购', exact: true }).click();
   await expect(page.locator('.zc-transaction-row')).toHaveCount(0);
-  await page.getByRole('button', { name: '清除其他筛选', exact: true }).click();
+  await page.locator('.zc-transaction-clear-desktop').click();
   await expect(page.locator('.zc-transaction-row')).toHaveCount(1);
 });
 
@@ -140,6 +134,7 @@ test('scheduled entries and templates use the picker and generate referenced cou
   await expect(page.locator('.zc-transaction-row')).toHaveCount(1);
   await manage(page);
   await page.getByRole('tab', { name: '其他资料', exact: true }).click();
+  await page.getByRole('tab', { name: '交易模板', exact: true }).click();
   await page.getByRole('button', { name: '+ 新增交易模板', exact: true }).click();
   const template = page.getByRole('dialog', { name: '新增 · 交易模板', exact: true });
   await template.getByLabel(/^名称/).fill('京东模板');

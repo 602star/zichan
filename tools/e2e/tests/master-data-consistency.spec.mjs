@@ -1,14 +1,8 @@
 import { test, expect } from './fixtures.mjs';
+import { openLedger } from './helpers.mjs';
 
 async function start(page) {
-  await page.goto('/');
-  await page.getByRole('button', { name: '注册新账号', exact: true }).click();
-  await page.getByLabel('服务器用户名').fill(`game-visibility-${crypto.randomUUID()}`);
-  await page.getByLabel('服务器账号密码', { exact: true }).fill('Payee-unified-password');
-  await page.getByLabel('确认账号密码', { exact: true }).fill('Payee-unified-password');
-  await page.getByRole('button', { name: '注册并登录', exact: true }).click();
-  await page.getByRole('button', { name: '开始记账', exact: true }).click();
-  await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '取消', exact: true }).click();
+  await openLedger(page);
 }
 
 
@@ -41,6 +35,7 @@ test('grouped tags and template creation share selection and save rules', async 
     await save(form);
   }
   await page.getByRole('tab', { name: '其他资料', exact: true }).click();
+  await page.getByRole('tab', { name: '交易模板', exact: true }).click();
   await page.getByRole('button', { name: '+ 新增交易模板', exact: true }).click();
   let form = page.getByRole('dialog', { name: '新增 · 交易模板', exact: true });
   await form.getByLabel(/^名称/).fill('差旅模板');
@@ -67,6 +62,7 @@ test('account creation and editing preserve metadata, balance origin and default
   await start(page);
   await navigate(page, '管理');
   await page.getByRole('tab', { name: '其他资料', exact: true }).click();
+  await page.getByRole('tab', { name: '账户', exact: true }).click();
   await page.getByRole('button', { name: '+ 新增账户', exact: true }).click();
   let form = page.getByRole('dialog', { name: '添加银行卡或钱包', exact: true });
   await expect(form.getByLabel('账户类型').locator('option')).toHaveCount(8);
@@ -120,6 +116,7 @@ test('duplicate accounts can reuse existing data, and same-name schedules requir
   await expect(page.getByLabel('游戏账号筛选').locator('option')).toHaveCount(2);
   await navigate(page, '管理');
   await page.getByRole('tab', { name: '其他资料', exact: true }).click();
+  await page.getByRole('tab', { name: '计划预算', exact: true }).click();
   for (let index = 0; index < 2; index++) {
     await page.getByRole('button', { name: '+ 新增定期交易', exact: true }).click();
     const schedule = page.getByRole('dialog', { name: '新增 · 定期交易', exact: true });

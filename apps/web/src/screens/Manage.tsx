@@ -51,6 +51,7 @@ const KIND_LABEL: Record<string, string> = {
 const norm = (value: unknown) => String(value ?? '').trim().toLowerCase();
 
 type ManageTab = 'transactionCategories' | 'fixedCategories' | 'labels' | 'assets' | 'other';
+type OtherDataTab = 'accounts' | 'templates' | 'prices' | 'plans' | 'games' | 'attachments';
 type CategoryCenterMode = 'structure' | 'quick';
 type ManageTarget = { tab?: ManageTab; categoryMode?: CategoryCenterMode };
 
@@ -73,6 +74,7 @@ export function Manage() {
   const [payeeView, setPayeeView] = useState<'mine' | 'catalog'>('mine');
   const [initialTarget] = useState(readManageTarget);
   const [tab, setTab] = useState<ManageTab>(initialTarget.tab ?? 'transactionCategories');
+  const [otherTab, setOtherTab] = useState<OtherDataTab>('accounts');
   const [categoryMode, setCategoryMode] = useState<CategoryCenterMode>(initialTarget.categoryMode ?? 'structure');
   const [categoryPackBusy, setCategoryPackBusy] = useState('');
   const [categoryPackNotice, setCategoryPackNotice] = useState('');
@@ -183,7 +185,7 @@ export function Manage() {
         <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4 }}>在资产标签管理货币与资产的加入、停用和归档；其他标签维护分类与基础资料。</div>
       </div>
 
-      <div role="tablist" aria-label="资产与资料中心" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', overflowX: 'auto' }}>
+      <div role="tablist" aria-label="资产与资料中心" className="zc-manage-primary-tabs" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', overflowX: 'auto' }}>
         {([
           ['transactionCategories', '收支分类'],
           ['fixedCategories', '物品分类'],
@@ -347,7 +349,20 @@ export function Manage() {
 
       {tab === 'other' && (
         <>
-          {usesAccounts && (
+          <div role="tablist" aria-label="其他资料类别" className="zc-manage-other-tabs">
+            {([
+              ['accounts', '账户'],
+              ['templates', '交易模板'],
+              ['prices', '价格汇率'],
+              ['plans', '计划预算'],
+              ['games', '游戏资料'],
+              ['attachments', '附件'],
+            ] as const).map(([id, label]) => (
+              <button key={id} id={`zc-manage-other-tab-${id}`} type="button" role="tab" aria-selected={otherTab === id} aria-controls="zc-manage-other-panel" className={`zc-manage-other-tab${otherTab === id ? ' is-active' : ''}`} onClick={() => setOtherTab(id)}>{label}</button>
+            ))}
+          </div>
+          <div id="zc-manage-other-panel" role="tabpanel" aria-labelledby={`zc-manage-other-tab-${otherTab}`} className="zc-manage-other-panel">
+          {otherTab === 'accounts' && usesAccounts && (
             <Section
               title="账户" headers={['名称', '类型', '平台', '账单 / 期限']}
               items={snap.accounts}
@@ -369,11 +384,14 @@ export function Manage() {
               lifecycleCandidates={snap.accounts.filter((row) => row.isActive !== false).map((row) => ({ id: row.id, label: row.name }))}
             />
           )}
-          <Section title="交易模板" headers={['名称', '类型', '分类', '金额']} items={snap.transactionTemplates} row={(t) => [t.name, TYPE_LABEL[t.type], categoryLabel(t.category, snap.categories), t.amount ?? '—']} duplicateKey={(t) => norm(t.name)} makeSpec={() => transactionTemplateForm(snap, { usesAccounts })} put={async (transactionStore, entity) => transactionStore.transactionTemplates.put({ ...await withRememberedPayee(transactionStore, entity), tagIds: await resolveTransactionTags(transactionStore, entity.tagIds) })} bump={bump} />
-          <Section title="价格与折算率" headers={['资产', '每单位价格', '计价币种', '日期']} items={snap.priceMarks} row={(m) => [codeOf(m.assetId), m.price, codeOf(m.quoteAssetId), m.date]} dateOf={(m) => m.date} duplicateKey={(m) => `${m.assetId}:${m.quoteAssetId}:${m.date}`} makeSpec={() => priceMarkForm(snap)} put={(transactionStore, entity) => transactionStore.priceMarks.put(entity)} bump={bump} />
-          <Section title="定投计划" headers={['名称', '目标', '金额', '频率', '状态']} items={snap.dcaPlans} row={(p) => [p.name, codeOf(p.targetAssetId), `${p.plannedAmount} ${codeOf(p.baseCurrencyAssetId)}`, p.frequency, p.status]} duplicateKey={(p) => norm(p.name)} makeSpec={() => dcaPlanForm(snap)} put={(transactionStore, entity) => transactionStore.dcaPlans.put(entity)} bump={bump} />
-          <Section title="分类预算" headers={['月份', '分类', '预算', '币种', '结转']} items={snap.budgetCategories} row={(b) => [b.month, categoryLabel(b.category, snap.categories), b.plannedAmount, codeOf(b.assetId), b.rolloverMode === 'none' ? '不结转' : b.rolloverMode === 'positive_only' ? '仅结余' : '含超支']} duplicateKey={(b) => `${b.month}:${b.category}`} makeSpec={() => budgetCategoryForm(snap)} put={(transactionStore, entity) => transactionStore.budgetCategories.put(entity)} bump={bump} />
-          <Section title="定期交易" headers={['名称', '类型', '金额', '下次日期', '状态']} items={snap.scheduledTransactions} row={(s) => [s.name, TYPE_LABEL[s.type], `${s.amount} ${codeOf(s.assetId)}`, nextUnhandledScheduleOccurrence(s, snap.scheduledExecutions)?.date ?? '已结束', s.status]} duplicateKey={(s) => norm(s.name)} makeSpec={() => scheduledTransactionForm(snap)} put={async (transactionStore, entity) => transactionStore.scheduledTransactions.put(await withRememberedPayee(transactionStore, entity))} bump={bump} />
+          {otherTab === 'templates' && <Section title="交易模板" headers={['名称', '类型', '分类', '金额']} items={snap.transactionTemplates} row={(t) => [t.name, TYPE_LABEL[t.type], categoryLabel(t.category, snap.categories), t.amount ?? '—']} duplicateKey={(t) => norm(t.name)} makeSpec={() => transactionTemplateForm(snap, { usesAccounts })} put={async (transactionStore, entity) => transactionStore.transactionTemplates.put({ ...await withRememberedPayee(transactionStore, entity), tagIds: await resolveTransactionTags(transactionStore, entity.tagIds) })} bump={bump} />}
+          {otherTab === 'prices' && <Section title="价格与折算率" headers={['资产', '每单位价格', '计价币种', '日期']} items={snap.priceMarks} row={(m) => [codeOf(m.assetId), m.price, codeOf(m.quoteAssetId), m.date]} dateOf={(m) => m.date} duplicateKey={(m) => `${m.assetId}:${m.quoteAssetId}:${m.date}`} makeSpec={() => priceMarkForm(snap)} put={(transactionStore, entity) => transactionStore.priceMarks.put(entity)} bump={bump} />}
+          {otherTab === 'plans' && <>
+            <Section title="定投计划" headers={['名称', '目标', '金额', '频率', '状态']} items={snap.dcaPlans} row={(p) => [p.name, codeOf(p.targetAssetId), `${p.plannedAmount} ${codeOf(p.baseCurrencyAssetId)}`, p.frequency, p.status]} duplicateKey={(p) => norm(p.name)} makeSpec={() => dcaPlanForm(snap)} put={(transactionStore, entity) => transactionStore.dcaPlans.put(entity)} bump={bump} />
+            <Section title="分类预算" headers={['月份', '分类', '预算', '币种', '结转']} items={snap.budgetCategories} row={(b) => [b.month, categoryLabel(b.category, snap.categories), b.plannedAmount, codeOf(b.assetId), b.rolloverMode === 'none' ? '不结转' : b.rolloverMode === 'positive_only' ? '仅结余' : '含超支']} duplicateKey={(b) => `${b.month}:${b.category}`} makeSpec={() => budgetCategoryForm(snap)} put={(transactionStore, entity) => transactionStore.budgetCategories.put(entity)} bump={bump} />
+            <Section title="定期交易" headers={['名称', '类型', '金额', '下次日期', '状态']} items={snap.scheduledTransactions} row={(s) => [s.name, TYPE_LABEL[s.type], `${s.amount} ${codeOf(s.assetId)}`, nextUnhandledScheduleOccurrence(s, snap.scheduledExecutions)?.date ?? '已结束', s.status]} duplicateKey={(s) => norm(s.name)} makeSpec={() => scheduledTransactionForm(snap)} put={async (transactionStore, entity) => transactionStore.scheduledTransactions.put(await withRememberedPayee(transactionStore, entity))} bump={bump} />
+          </>}
+          {otherTab === 'games' && <>
           <Section
             title="游戏" headers={['名称', '平台', '区服']} items={snap.games}
             row={(g) => [g.name, g.platform ?? '—', g.serverName ?? '—']}
@@ -396,7 +414,8 @@ export function Manage() {
             makeSpec={() => gameSeasonForm(snap)} put={(transactionStore, entity) => transactionStore.gameSeasons.put(entity)} bump={bump} masterKind="game_season"
             lifecycleCandidates={snap.seasons.filter((row) => row.status !== 'ended').map((row) => ({ id: row.id, label: `${gameName(row.gameId)} / ${row.name}` }))}
           />
-          <AttachmentSection
+          </>}
+          {otherTab === 'attachments' && <AttachmentSection
             items={snap.attachments}
             preview={Boolean(preview)}
             onDelete={async (attachment) => {
@@ -406,7 +425,8 @@ export function Manage() {
               await reconcileAttachmentStorage(store);
               bump();
             }}
-          />
+          />}
+          </div>
         </>
       )}
     </div>

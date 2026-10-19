@@ -3567,6 +3567,26 @@ input[type="radio"] {
 .zc-asset-select { position: relative; }
 .zc-asset-select > .zc-asset-icon { position: absolute; top: 50%; left: 8px; z-index: 1; transform: translateY(-50%); pointer-events: none; }
 .zc-asset-select > .zc-select { padding-left: 42px; }
+.zc-manage-primary-tabs > button { flex: 0 0 auto; }
+.zc-manage-other-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.zc-manage-other-tab {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.zc-manage-other-tab.is-active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.zc-manage-other-panel { display: grid; gap: 22px; min-width: 0; }
+@media (max-width: 767px) {
+  .zc-manage-other-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .zc-manage-other-tab { min-width: 0; padding-inline: 4px; }
+}
 .zc-asset-preset-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(144px, 1fr)); gap: var(--sp-2); }
 .zc-asset-preset-button {
   display: flex;

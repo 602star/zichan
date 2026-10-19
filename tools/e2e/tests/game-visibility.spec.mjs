@@ -1,14 +1,8 @@
 import { test, expect } from './fixtures.mjs';
+import { openLedger } from './helpers.mjs';
 
 async function start(page) {
-  await page.goto('/');
-  await page.getByRole('button', { name: '注册新账号', exact: true }).click();
-  await page.getByLabel('服务器用户名').fill(`game-visibility-${crypto.randomUUID()}`);
-  await page.getByLabel('服务器账号密码', { exact: true }).fill('Payee-unified-password');
-  await page.getByLabel('确认账号密码', { exact: true }).fill('Payee-unified-password');
-  await page.getByRole('button', { name: '注册并登录', exact: true }).click();
-  await page.getByRole('button', { name: '开始记账', exact: true }).click();
-  await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '取消', exact: true }).click();
+  await openLedger(page);
 }
 
 
@@ -26,6 +20,15 @@ async function navigate(page, name) {
 async function save(form) {
   await form.getByRole('button', { name: '保存', exact: true }).click();
   await expect(form).toBeHidden();
+}
+
+async function fillRequiredCurrencyFields(form) {
+  const name = form.getByLabel(/^新游戏币名称/);
+  if (await name.isVisible()) await name.fill('测试金币');
+  const quantity = form.getByLabel(/^游戏币数量/);
+  if (await quantity.isVisible()) await quantity.fill('10');
+  const rate = form.getByLabel(/^当时汇率：1 计价币种可换游戏币/);
+  if (await rate.isVisible()) await rate.fill('100');
 }
 
 test('game records remain visible, unassigned history can be assigned, and accounts are created in place', async ({ page }, testInfo) => {
@@ -47,6 +50,7 @@ test('game records remain visible, unassigned history can be assigned, and accou
   expect(seasonId).not.toBe('');
   await expect(form.getByLabel('账号（可选）')).toHaveValue(/.+/);
   await form.getByLabel('备注', { exact: true }).fill('保存即见的记录');
+  await fillRequiredCurrencyFields(form);
   await save(form);
   await expect(page.getByRole('button', { name: '编辑游戏记录 保存即见的记录', exact: true })).toBeVisible();
   await expect(page.getByLabel('游戏记录类型筛选')).toHaveValue('all');
@@ -64,6 +68,7 @@ test('game records remain visible, unassigned history can be assigned, and accou
   expect(secondSeasonId).not.toBe(seasonId);
   await form.getByLabel('赛季', { exact: true }).selectOption('');
   await form.getByLabel('备注', { exact: true }).fill('未归属旧记录');
+  await fillRequiredCurrencyFields(form);
   await save(form);
   await expect(page.getByRole('button', { name: '编辑游戏记录 未归属旧记录', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /^未分配赛季/ })).toHaveAttribute('aria-pressed', 'true');
@@ -85,6 +90,7 @@ test('game records remain visible, unassigned history can be assigned, and accou
   await expect(page.getByRole('button', { name: /^编辑游戏记录 / })).toHaveCount(2);
   await navigate(page, '管理');
   await page.getByRole('tab', { name: '其他资料', exact: true }).click();
+  await page.getByRole('tab', { name: '游戏资料', exact: true }).click();
   await page.getByRole('button', { name: '+ 新增游戏赛季', exact: true }).click();
   form = page.getByRole('dialog', { name: '新增 · 游戏赛季', exact: true });
   expect(await form.locator('label.zc-label').allTextContents()).toEqual(seasonLabels);
@@ -105,6 +111,7 @@ test('game records remain visible, unassigned history can be assigned, and accou
   await expect(form.getByLabel(/^游戏\*?$/).locator('option:checked')).toHaveText('另一款游戏');
   await expect(form.getByLabel('赛季', { exact: true }).locator('option:checked')).toHaveText('另一游戏赛季');
   await form.getByLabel('备注', { exact: true }).fill('另一游戏记录');
+  await fillRequiredCurrencyFields(form);
   await save(form);
   await expect(page.getByRole('button', { name: '编辑游戏记录 另一游戏记录', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '编辑游戏记录 保存即见的记录', exact: true })).toHaveCount(0);
