@@ -12,7 +12,7 @@ export function settingGroup(name: string): string {
   if (name === 'defaultCommitQuotaBytes' || name === 'defaultBlobQuotaBytes' || name === 'attachmentMaxFileBytes') return 'capacity';
   if (name.startsWith('backup')) return 'backup';
   if (name === 'alertChannels' || name === 'alertWebhookUrl') return 'notifications';
-  if (name === 'requireAdminMfa' || name === 'ledgerWebAccess') return 'security';
+  if (name === 'requireAdminMfa' || name === 'ledgerWebAccess' || name === 'adminAccessPath') return 'security';
   if (name.toLowerCase().includes('retention')) return 'retention';
   return 'advanced';
 }

@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Keep browser fixtures on a known deployment path; production derives a random default.
+process.env.ADMIN_ACCESS_PATH = 'e2e-private-entry';
+
 export default defineConfig({
   testDir: './account-tests',
   // Visual baselines are a local tool with their own config; see visual.config.mjs.

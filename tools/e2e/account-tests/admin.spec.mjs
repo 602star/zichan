@@ -32,7 +32,7 @@ const currentCode = (secret) => codeForStep(secret, 0);
 const nextStepCode = (secret) => codeForStep(secret, 1);
 
 async function signIn(page, origin, username = 'owner') {
-  await page.goto(`${origin}/admin/`);
+  await page.goto(`${origin}/e2e-private-entry/admin/`);
   await page.getByLabel('管理账号用户名').fill(username);
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
@@ -58,31 +58,39 @@ test('initializes the owner in the browser, then keeps every management page on 
   const fresh = await listen({ basePath: '/ledger' });
   const origin = `http://127.0.0.1:${fresh.server.address().port}/ledger`;
   try {
-    await page.goto(`${origin}/admin/`);
+    await page.goto(`${origin}/e2e-private-entry/admin/`);
     await expect(page.getByRole('heading', { name: '初始化服务器所有者' })).toBeVisible();
     await page.getByLabel('管理账号用户名').fill('owner');
     await page.getByLabel('管理账号密码').fill(password);
     await page.getByRole('button', { name: '创建所有者并进入后台' }).click();
     await expect(page.getByRole('link', { name: '运行概览' })).toBeVisible();
     // The bare console URL canonicalises to the overview page.
-    await expect(page).toHaveURL(/\/ledger\/admin\/overview$/);
+    await expect(page).toHaveURL(/\/ledger\/e2e-private-entry\/admin\/overview$/);
     await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
     // The overview states that an idle account is not an online user.
     await expect(page.getByText('有效会话不代表在线人数')).toBeVisible();
 
     // A direct visit to a deep URL restores that page and its filters after a reload.
-    await page.goto(`${origin}/admin/users?quota=over`);
+    await page.goto(`${origin}/e2e-private-entry/admin/users?quota=over`);
     await expect(page.getByRole('heading', { name: '用户管理' })).toBeVisible();
     await expect(page.getByLabel('配额状态')).toHaveValue('over');
     await page.getByLabel('配额状态').selectOption('');
-    await expect(page).toHaveURL(/\/ledger\/admin\/users$/);
+    await expect(page).toHaveURL(/\/ledger\/e2e-private-entry\/admin\/users$/);
 
     // Navigation keeps the URL in sync and back/forward works.
     await clickAdminLink(page, '设备与会话');
-    await expect(page).toHaveURL(/\/ledger\/admin\/sessions$/);
+    await expect(page).toHaveURL(/\/ledger\/e2e-private-entry\/admin\/sessions$/);
     await expect(page.getByRole('heading', { name: '设备与会话' })).toBeVisible();
     await page.goBack();
     await expect(page.getByRole('heading', { name: '用户管理' })).toBeVisible();
+
+    await clickAdminLink(page, '系统设置');
+    await page.getByRole('tab', { name: '访问安全' }).click();
+    await page.getByLabel('管理后台安全路径').fill('changed-admin-entry-2026');
+    await page.getByRole('button', { name: '保存本组设置' }).click();
+    await expect(page).toHaveURL(/\/ledger\/changed-admin-entry-2026\/admin\/settings\?group=security$/);
+    await expect(page.getByRole('heading', { name: '系统设置' })).toBeVisible();
+    expect((await page.request.get(`${origin}/e2e-private-entry/admin/`)).status()).toBe(404);
   } finally { fresh.server.closeAllConnections(); await fresh.close(); }
 });
 
@@ -157,7 +165,7 @@ test('keeps the management console out of the ledger and rejects non-administrat
   const memberContext = await browser.newContext();
   const member = await memberContext.newPage();
   try {
-    await member.goto(`${baseUrl}/admin/`);
+    await member.goto(`${baseUrl}/e2e-private-entry/admin/`);
     await member.getByLabel('管理账号用户名').fill('member-plain');
     await member.getByLabel('管理账号密码').fill(password);
     await member.getByRole('button', { name: '登录管理后台', exact: true }).click();
@@ -169,7 +177,7 @@ test('keeps the management console out of the ledger and rejects non-administrat
 test('a read-only operator reaches every page but gets no write control', async ({ page, browser }) => {
   // The owner grants the read-only role through the same control an administrator uses.
   await signIn(page, baseUrl);
-  await page.goto(`${baseUrl}/admin/users?search=viewer-one`);
+  await page.goto(`${baseUrl}/e2e-private-entry/admin/users?search=viewer-one`);
   await page.getByRole('button', { name: '详情', exact: true }).first().click();
   await page.getByRole('button', { name: '修改角色' }).click();
   await page.getByLabel('角色').selectOption('viewer');
@@ -200,7 +208,7 @@ test('a read-only operator reaches every page but gets no write control', async 
 test('clears the management session in other tabs when one tab signs out', async ({ page, context }) => {
   await signIn(page, baseUrl);
   const second = await context.newPage();
-  await second.goto(`${baseUrl}/admin/`);
+  await second.goto(`${baseUrl}/e2e-private-entry/admin/`);
   // A second tab restores the same management session instead of asking for credentials again.
   await expect(second.getByRole('link', { name: '运行概览' })).toBeVisible();
   await second.getByRole('button', { name: '退出管理后台' }).click();
@@ -222,7 +230,7 @@ test('signs an administrator in with a second factor and shows the recovery code
   await page.getByRole('button', { name: '退出管理后台' }).click();
 
   // The administrator enrolls their own factor: nobody can do it for them.
-  await page.goto(`${baseUrl}/admin/security`);
+  await page.goto(`${baseUrl}/e2e-private-entry/admin/security`);
   await page.getByLabel('管理账号用户名').fill('mfa-admin');
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();

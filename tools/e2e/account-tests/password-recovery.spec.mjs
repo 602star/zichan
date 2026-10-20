@@ -17,7 +17,7 @@ test('administrator reviews and issues a code, user resets only account credenti
     await registerAccount(url, 'recover-user', 'old-user-test-password');
     const original = await loginAccount(url, 'recover-user', 'old-user-test-password');
     await page.clock.install();
-    await page.goto(`${url}/admin/`);
+    await page.goto(`${url}/e2e-private-entry/admin/`);
     await page.getByLabel('管理账号用户名').fill('reviewer');
     await page.getByLabel('管理账号密码').fill('reviewer-test-password');
     await page.getByRole('button', { name: '登录管理后台', exact: true }).click();

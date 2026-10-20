@@ -36,7 +36,7 @@ async function listen(options = {}) {
 }
 
 async function signIn(page, origin, username = 'owner') {
-  await page.goto(`${origin}/admin/`);
+  await page.goto(`${origin}/e2e-private-entry/admin/`);
   await page.getByLabel('管理账号用户名').fill(username);
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
@@ -74,14 +74,14 @@ test('an administrator opens a user ledger as a read-only preview and can close 
     await signIn(page, origin);
 
     // The user list offers the preview on the account row.
-    await page.goto(`${origin}/admin/users`);
+    await page.goto(`${origin}/e2e-private-entry/admin/users`);
     const row = page.getByRole('row').filter({ hasText: 'preview-user' });
     await expect(row).toBeVisible();
     await expect(row.getByRole('button', { name: '预览' })).toBeVisible();
 
     // Opening decrypts the user's ledger, so the console asks for a reason and says why.
     await row.getByRole('button', { name: '预览', exact: true }).click();
-    await expect(page).toHaveURL(`${origin}/admin/preview?username=preview-user`);
+    await expect(page).toHaveURL(`${origin}/e2e-private-entry/admin/preview?username=preview-user`);
     await expect(page.getByRole('heading', { name: /预览用户记账/ })).toBeVisible();
     await page.getByLabel('查看原因').fill('核对用户反馈的金额差异');
     await page.getByRole('button', { name: '打开预览' }).click();
@@ -115,7 +115,7 @@ test('an administrator opens a user ledger as a read-only preview and can close 
     // for a closed preview id is covered by the route tests.)
     await row.getByRole('button', { name: '详情', exact: true }).click();
     await page.getByRole('button', { name: '预览记账数据', exact: true }).click();
-    await expect(page).toHaveURL(`${origin}/admin/preview?username=preview-user`);
+    await expect(page).toHaveURL(`${origin}/e2e-private-entry/admin/preview?username=preview-user`);
     await page.reload();
     await expect(page.getByLabel('查看原因')).toBeVisible();
     await expect(page.locator('.zc-app-shell')).toHaveCount(0);
@@ -135,7 +135,7 @@ test('a private-mode account is refused with a reason instead of an empty ledger
     await registerAccount(origin, 'private-user', userPassword);
 
     await signIn(page, origin);
-    await page.goto(`${origin}/admin/preview?username=private-user`);
+    await page.goto(`${origin}/e2e-private-entry/admin/preview?username=private-user`);
     await page.getByLabel('查看原因').fill('排查同步问题');
     await page.getByRole('button', { name: '打开预览' }).click();
 

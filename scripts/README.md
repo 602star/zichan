@@ -18,13 +18,13 @@
 
 CMD 默认在结束或失败时暂停，以便双击运行时看到诊断信息。终端或自动化调用可设置 `ZICHAN_NO_PAUSE=1`；只检查本机基础工具时再设置 `ZICHAN_CHECK_ONLY=1`。
 
-同步服务器入口显式把 `DATA_DIR` 设为仓库内 `.runtime/sync-server`，不使用 AppData。默认只监听 `127.0.0.1:8787`，新数据库采用邀请注册；已有数据库的注册策略不被覆盖。首次打开 `/admin/` 在 Web 引导中设置管理员用户名和密码，不需要初始化密钥；已有管理员直接登录。远程访问应配置受信 HTTPS；单独打开局域网 HTTP 不会获得浏览器账号或管理 Cookie 会话。
+同步服务器入口显式把 `DATA_DIR` 设为仓库内 `.runtime/sync-server`，不使用 AppData。默认只监听 `127.0.0.1:8787`，新数据库采用邀请注册；已有数据库的注册策略不被覆盖。首次打开启动日志显示的 `/<安全路径>/admin/`，在 Web 引导中设置管理员用户名和密码，不需要初始化密钥；已有管理员直接登录。远程访问应配置受信 HTTPS；单独打开局域网 HTTP 不会获得浏览器账号或管理 Cookie 会话。
 
 ## 日常命令
 
 | 命令 | 行为 |
 |---|---|
-| `npm start` / `npm run start:server` | 构建后提供同站 `/app/`、`/admin/` 和 `/api/health`，默认端口 8787 |
+| `npm start` / `npm run start:server` | 构建后提供同站 `/app/`、`/<安全路径>/admin/` 和 `/api/health`，默认端口 8787 |
 | `npm run build:server` | 依次构建共享包、服务器和 Web，共享依赖只构建一次 |
 | `npm run start:server:built` | 使用现有产物启动；修改源码后须先重新构建 |
 | `npm run start:all` | 同时提供服务器与 Vite 热更新页面 |
@@ -35,7 +35,7 @@ CMD 默认在结束或失败时暂停，以便双击运行时看到诊断信息�
 
 启动前明确安装依赖：`npm ci`。启动器不会静默安装，也不会抢占端口。可通过 `PORT`、`WEB_PORT`、`DATA_DIR`、`BASE_PATH`、`HOST` 配置入口；终端打印解析后的地址与数据目录。PowerShell/Bash 包装与 CMD 共用 Node 编排器，支持 `--check` 和 `--no-build`（PowerShell 对应 `-Check`、`-NoBuild`）。
 
-Vite 开发页面（默认 5173）将 `/api/*` 同源代理到后端（默认 8787）。`start:all` 自动传入后端地址；单独运行前端时，可用 `ZICHAN_DEV_API_TARGET=http://127.0.0.1:8787` 指定后端，也可在地址后带后端 `BASE_PATH`。开发页面仍使用根 `/admin/` 和 `/app/`。代理保留 Host/Origin 校验并映射 Cookie 路径，不放宽管理会话的跨域限制。修改代理配置或环境变量后重新启动开发服务；只运行前端不会创建服务器账号。
+Vite 开发页面（默认 5173）将 `/api/*` 同源代理到后端（默认 8787）。`start:all` 自动传入后端地址；单独运行前端时，可用 `ZICHAN_DEV_API_TARGET=http://127.0.0.1:8787` 指定后端，也可在地址后带后端 `BASE_PATH`。开发页面用后端启动日志中的安全路径打开 `http://127.0.0.1:5173/<安全路径>/admin/`（不带后端 `BASE_PATH`），记账应用仍在 `/app/`。代理保留 Host/Origin 校验并映射 Cookie 路径，不放宽管理会话的跨域限制。修改代理配置或环境变量后重新启动开发服务；只运行前端不会创建服务器账号。
 
 经隧道或反向代理访问开发页面时，Host 是公网域名，Vite 默认白名单（本机名、IP 字面量）不含它，会在代理生效之前直接返回 `403 Blocked request. This host (...) is not allowed.`。此时需要两个声明：前端在 `apps/web/.env.local` 设置 `ZICHAN_DEV_ALLOWED_HOSTS=<主机名>`（逗号分隔，也可用同名环境变量）；后端设置 `TRUSTED_PROXIES=loopback`，否则回环代理不被信任，`X-Forwarded-Proto: https` 会被忽略，后端按 `http://` 推导来源，同站 Cookie 会话以 `SESSION_ORIGIN_REJECTED` 失败（代理必须覆盖为单一的 `X-Forwarded-Proto: https`，见 cloud-sync 说明）。`TRUSTED_PROXIES=loopback` 期间不要直接访问 `http://127.0.0.1:8787` 的 Cookie 会话：没有代理声明协议时该路径会按设计拒绝。放行主机等于把这个无鉴权、可读取整个源码树的开发服务器暴露给该主机，仅在可信隧道下开启。
 

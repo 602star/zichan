@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminClient, AdminError, adminBaseUrl } from '../src/admin/client.js';
+import { adminBasePath, adminHref, parseAdminPath } from '../src/admin/router.js';
 import { completeMfaLogin, fetchAuthMe, loginAccount, MfaRequiredError, refreshAccountSession, registerAccount } from '@zichan/db';
 
 vi.mock('@zichan/db', () => ({
@@ -105,9 +106,13 @@ describe('independent management session lifecycle', () => {
     await expect(client.request('/jobs/missing')).rejects.toMatchObject({ message: 'job not found' });
   });
   it('routes management without routing ledger paths into the admin bootstrap', () => {
-    expect(adminBaseUrl({ origin: 'https://example.com', pathname: '/ledger/admin/users' })).toBe('https://example.com/ledger');
-    expect(adminBaseUrl({ origin: 'https://example.com', pathname: '/admin' })).toBe('https://example.com');
+    expect(adminBaseUrl({ origin: 'https://example.com', pathname: '/ledger/private-123456789/admin/users' })).toBe('https://example.com/ledger');
+    expect(adminBaseUrl({ origin: 'https://example.com', pathname: '/private-123456789/admin' })).toBe('https://example.com');
+    expect(adminBaseUrl({ origin: 'https://example.com', pathname: '/admin' })).toBeUndefined();
     expect(adminBaseUrl({ origin: 'https://example.com', pathname: '/ledger/app/' })).toBeUndefined();
+    expect(adminBasePath({ pathname: '/ledger/private-123456789/admin/users' })).toBe('/ledger/private-123456789');
+    expect(adminHref('/ledger/private-123456789', '/users')).toBe('/ledger/private-123456789/admin/users');
+    expect(parseAdminPath('/ledger/private-123456789/admin/users')).toBe('/users');
   });
 
   it('uses the independent admin cookie context and refuses ordinary members', async () => {

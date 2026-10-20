@@ -257,7 +257,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
   const route = useRoute();
   const [navOpen, setNavOpen] = useState(false);
   useBodyScrollLock(navOpen);
-  const basePath = baseUrl.replace(/^https?:\/\/[^/]+/, '');
+  const basePath = adminBasePath(window.location);
   const go = (to: string) => { navigateRoute(adminHref(basePath, to)); };
   const role = account.role;
   const groups = adminNavigation(role);

@@ -73,7 +73,7 @@ async function fixture() {
 }
 
 async function signIn(page, url) {
-  await page.goto(`${url}/admin/`);
+  await page.goto(`${url}/e2e-private-entry/admin/`);
   await page.getByLabel('管理账号用户名').fill('operator');
   await page.getByLabel('管理账号密码').fill(accountPassword);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
@@ -161,11 +161,11 @@ test('reports a cursor from another ordering instead of showing a plausible wron
     const stale = (await (await sorted).json()).nextCursor;
     expect(stale).toBeTruthy();
 
-    await page.goto(`${f.url}/admin/users?limit=25&cursor=${encodeURIComponent(stale)}`);
+    await page.goto(`${f.url}/e2e-private-entry/admin/users?limit=25&cursor=${encodeURIComponent(stale)}`);
     await expect(page.getByText(/翻页游标与当前排序不一致/)).toBeVisible();
 
     // The same cursor under the ordering it was issued for is accepted and returns a real page.
-    await page.goto(`${f.url}/admin/users?sort=name&dir=asc&limit=25&cursor=${encodeURIComponent(stale)}`);
+    await page.goto(`${f.url}/e2e-private-entry/admin/users?sort=name&dir=asc&limit=25&cursor=${encodeURIComponent(stale)}`);
     const table = page.locator('section').filter({ has: page.getByText('用户列表', { exact: true }) }).locator('table');
     await expect(table.locator('tbody tr')).toHaveCount(6);
   } finally { await f.close(); }

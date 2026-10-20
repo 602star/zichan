@@ -19,7 +19,7 @@ for (const width of [1280, 390]) {
       const url = `http://127.0.0.1:${server.server.address().port}`;
       await registerAccount(url, 'operator', 'executor-ui-password-0000000', { ownerSetupToken: 'executor-ui-setup-token-000000000' });
       await page.setViewportSize({ width, height: 900 });
-      await page.goto(url + '/admin/');
+      await page.goto(url + '/e2e-private-entry/admin/');
       await page.getByLabel('管理账号用户名').fill('operator');
       await page.getByLabel('管理账号密码').fill('executor-ui-password-0000000');
       await page.getByRole('button', { name: '登录管理后台', exact: true }).click();

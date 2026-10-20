@@ -148,7 +148,7 @@ async function seedUserLedger(origin) {
 }
 
 async function signIn(page, origin) {
-  await page.goto(`${origin}/admin/`);
+  await page.goto(`${origin}/e2e-private-entry/admin/`);
   await page.getByLabel('管理账号用户名').fill('owner');
   await page.getByLabel('管理账号密码').fill(adminPassword);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
@@ -164,7 +164,7 @@ test('an administrator downloads a user attachment from the read-only preview', 
     await seedUserLedger(origin);
 
     await signIn(page, origin);
-    await page.goto(`${origin}/admin/preview?username=preview-user`);
+    await page.goto(`${origin}/e2e-private-entry/admin/preview?username=preview-user`);
     await page.getByLabel('查看原因').fill('核对用户上传的发票');
     await page.getByRole('button', { name: '打开预览' }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });

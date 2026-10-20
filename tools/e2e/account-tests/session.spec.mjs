@@ -26,7 +26,7 @@ test('uses real same-origin browser cookies without storing account passwords or
   await expect(page.getByLabel('完整服务器地址')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^纯本地使用/ })).toHaveCount(0);
   await expect(page.getByRole('link', { name: '初始化管理员' })).toHaveCount(0);
-  await page.goto(`${baseUrl}/ledger/admin/`);
+  await page.goto(`${baseUrl}/ledger/e2e-private-entry/admin/`);
   await page.getByLabel('管理账号用户名').fill('browser-owner');
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '创建所有者并进入后台' }).click();

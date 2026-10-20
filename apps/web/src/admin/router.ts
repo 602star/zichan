@@ -1,7 +1,7 @@
 /**
  * Minimal path router for the management console.
  *
- * Every page has a real URL under `/admin/...`, so refresh, back/forward and shared
+ * Every page has a real URL under `/<access-path>/admin/...`, so refresh, back/forward and shared
  * links keep the current view and its filters. The server already falls back to
  * `index.html` for extension-less paths, so no server change is needed and no routing
  * dependency is added to the offline-capable Web bundle.
@@ -56,7 +56,7 @@ export function navigate(to: string, options: { replace?: boolean } = {}): void 
   window.dispatchEvent(new Event(NAVIGATE_EVENT));
 }
 
-/** Builds an admin URL from the deployment base path, e.g. `/ledger/admin/overview`. */
+/** Builds an admin URL from the deployment base and secret segment. */
 export function adminHref(basePath: string, path: string, query?: Record<string, string | undefined>): string {
   const normalized = path.startsWith('/') ? path : `/${path}`;
   const params = new URLSearchParams();

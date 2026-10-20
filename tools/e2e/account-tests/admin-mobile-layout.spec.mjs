@@ -74,14 +74,14 @@ test('management pages fit phone and iPad touch viewports', async ({ page }) => 
       ownerSetupToken: 'admin-mobile-layout-owner-setup-000000',
     });
     await registerAccount(base, 'layout-member', 'layout-member-password');
-    await page.goto(`${base}/admin/`);
+    await page.goto(`${base}/e2e-private-entry/admin/`);
     await page.getByLabel('管理账号用户名').fill('layout-owner');
     await page.getByLabel('管理账号密码').fill('layout-owner-password');
     await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
     await expect(page.locator('.zc-admin-content')).toBeVisible();
 
     await page.setViewportSize({ width: 820, height: 1180 });
-    await page.evaluate(() => { history.pushState(null, '', '/admin/users'); dispatchEvent(new Event('zichan:admin:navigate')); });
+    await page.evaluate(() => { history.pushState(null, '', '/e2e-private-entry/admin/users'); dispatchEvent(new Event('zichan:admin:navigate')); });
     await page.getByRole('button', { name: 'layout-member', exact: true }).click();
     const confirm = page.locator('.zc-admin-password-reset-confirm');
     await expect(confirm).toBeVisible();
@@ -93,7 +93,7 @@ test('management pages fit phone and iPad touch viewports', async ({ page }) => 
       await page.waitForTimeout(250);
       for (const route of routes) {
         await page.evaluate((path) => {
-          history.pushState(null, '', `/admin/${path}`);
+          history.pushState(null, '', `/e2e-private-entry/admin/${path}`);
           dispatchEvent(new Event('zichan:admin:navigate'));
         }, route);
         await page.waitForTimeout(120);
@@ -110,7 +110,7 @@ test('management pages fit phone and iPad touch viewports', async ({ page }) => 
       { width: 320, height: 568 }, { width: 390, height: 844 }, { width: 844, height: 390 },
     ]) {
       await page.setViewportSize(viewport);
-      await page.evaluate(() => { history.pushState(null, '', '/admin/logs'); dispatchEvent(new Event('zichan:admin:navigate')); });
+      await page.evaluate(() => { history.pushState(null, '', '/e2e-private-entry/admin/logs'); dispatchEvent(new Event('zichan:admin:navigate')); });
       await page.getByRole('button', { name: '起始日期' }).click();
       const calendar = await page.evaluate(() => {
         const popover = document.querySelector('.zc-calendar-popover');
@@ -143,7 +143,7 @@ test('management pages fit phone and iPad touch viewports', async ({ page }) => 
       await page.setViewportSize(viewport);
       for (const route of routes) {
         await page.evaluate((path) => {
-          history.pushState(null, '', `/admin/${path}`);
+          history.pushState(null, '', `/e2e-private-entry/admin/${path}`);
           dispatchEvent(new Event('zichan:admin:navigate'));
         }, route);
         await page.waitForTimeout(120);

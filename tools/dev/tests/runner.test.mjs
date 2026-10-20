@@ -30,13 +30,14 @@ async function ready(url) {
   throw new Error('Fixture did not become ready');
 }
 
-test('plans a single all-in-one build with safe defaults and prefixed admin URLs', () => {
+test('plans a single all-in-one build with safe defaults and no stale admin URL', () => {
   const value = plan('server', { BASE_PATH: '/ledger', PORT: '18888' }, resolve('example'));
   assert.equal(value.build, 'build:server');
   assert.equal(value.units[0].env.HOST, '0.0.0.0');
   assert.equal(value.units[0].env.ALLOW_INSECURE_HTTP, '1');
   assert.equal(value.units[0].env.REGISTRATION_MODE, 'invite');
-  assert.ok(value.urls.includes('http://127.0.0.1:18888/ledger/admin/'));
+  assert.ok(value.urls.includes('http://127.0.0.1:18888/ledger/app/'));
+  assert.ok(!value.urls.some((url) => url.includes('/admin/')));
   assert.equal(plan('sync', {}).units[0].env.ENABLE_WEB, '0');
   assert.throws(() => plan('all', { PORT: '5173' }), /must differ/);
   assert.throws(() => plan('server', { PORT: 'bad' }), /integers/);

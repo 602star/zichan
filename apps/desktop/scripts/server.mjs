@@ -35,7 +35,7 @@ console.log(`Data directory: ${process.env.DATA_DIR}`);
 console.log(`Bind: ${process.env.HOST}:${process.env.PORT}`);
 console.log(`Base path: ${process.env.BASE_PATH || '/'}`);
 console.log(`Registration default: ${process.env.REGISTRATION_MODE}; existing database policy is retained.`);
-console.log('First use: open /admin/ and set your administrator username and password.');
+console.log('Admin console: see the server startup log for the generated security path.');
 console.log(process.env.ALLOW_INSECURE_HTTP === '1'
   ? 'Plain HTTP is allowed for LAN clients (ALLOW_INSECURE_HTTP=1). Use it only on trusted private networks.'
   : 'Remote browser and admin access require trusted HTTPS. Bind and transport overrides must be explicit.');

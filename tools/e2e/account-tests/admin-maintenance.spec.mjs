@@ -43,7 +43,7 @@ async function fixture() {
 }
 
 async function signIn(page, url) {
-  await page.goto(`${url}/admin/`);
+  await page.goto(`${url}/e2e-private-entry/admin/`);
   await page.getByLabel('管理账号用户名').fill('operator');
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();

@@ -9,6 +9,11 @@ import type { SettingsField, SettingsPayload } from './types.js';
 import { ServerGroupPanel } from './ServerGroupPanel.js';
 import { NotificationChannelsEditor } from './NotificationChannelsEditor.js';
 
+function openUpdatedAdminPath(segment: string): void {
+  const next = window.location.pathname.replace(/\/[^/]+\/admin(?=\/|$)/, `/${segment}/admin`);
+  window.location.assign(`${next}${window.location.search}`);
+}
+
 export function SettingsPage({ client, role, query, navigate }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (to: string) => void }) {
   const group = SETTING_GROUPS.find((entry) => entry.id === query.get('group')) ?? SETTING_GROUPS[0];
   const baseline = useRef<Record<string, string>>({});
@@ -60,6 +65,10 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
     setSaving(true);
     try {
       await client.request('/settings', { settings: updates }, { idempotencyKey: adminIdempotencyKey('settings') });
+      if (typeof updates.adminAccessPath === 'string') {
+        openUpdatedAdminPath(updates.adminAccessPath);
+        return;
+      }
       // Submitted values can be normalized by the server (for example trimmed paths).
       // Mark only these drafts as submitted so the refresh adopts their effective values.
       baseline.current = { ...baseline.current, ...Object.fromEntries(fields.filter((field) => field.name in updates).map((field) => [field.name, draft[field.name] ?? ''])) };
@@ -79,6 +88,10 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
         const next = settingEditorValue(effective);
         baseline.current = { ...baseline.current, [field.name]: next };
         setDraft((current) => ({ ...current, [field.name]: next }));
+        if (field.name === 'adminAccessPath') {
+          openUpdatedAdminPath(next);
+          return;
+        }
       }
       setNotice(`${field.label}已恢复${field.overridesEnv ? '部署初始值' : '内置默认值'}。`);
       payload.reload();
@@ -162,6 +175,9 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
                 {field.source === 'env' ? <span> 来自 {field.envVar}；保存后以页面设置为准</span> : null}
                 {field.overridesEnv ? <span> 已覆盖部署初始值 {field.envVar}</span> : null}
               </p>
+              {field.name === 'adminAccessPath' ? <p style={{ ...muted, overflowWrap: 'anywhere' }}>
+                当前后台地址：{window.location.origin}{/^(.*\/admin)(?:\/|$)/.exec(window.location.pathname)?.[1]}/
+              </p> : null}
               {field.source === 'database' && role === 'owner' ? <Button disabled={saving || payload.stale}
                 onClick={() => { void restoreInitial(field); }}>
                 恢复{field.overridesEnv ? '部署初始值' : '内置默认值'}

@@ -104,7 +104,7 @@ export function plan(mode, env = process.env, directory = root) {
     env, cwd: join(directory, 'apps/desktop'), port: 5173, host: '127.0.0.1', ready: null };
   return { mode, directory, units: mode === 'all' ? [server, web] : [mode === 'web' ? web : mode === 'desktop' ? desktop : server],
     build: mode === 'server' || mode === 'all' ? 'build:server' : mode === 'sync' ? 'build:api' : null,
-    urls: mode === 'sync' ? [server.ready] : mode === 'web' ? [web.ready] : mode === 'desktop' ? [] : [`${localUrl}/app/`, `${localUrl}/admin/`, server.ready] };
+    urls: mode === 'sync' ? [server.ready] : mode === 'web' ? [web.ready] : mode === 'desktop' ? [] : [`${localUrl}/app/`, server.ready] };
 }
 
 export async function assertPortFree(port, host) {
@@ -224,14 +224,14 @@ export async function start(value, { noBuild = false, check = false } = {}) {
     const addresses = lanAddresses();
     if (!addresses.length) continue;
     const prefix = unit.key === 'server' ? unit.env.BASE_PATH || '' : '';
-    const paths = unit.key === 'server' ? [`${prefix}/app/`, `${prefix}/admin/`] : [`${prefix}/`];
+    const paths = unit.key === 'server' ? [`${prefix}/app/`] : [`${prefix}/`];
     console.log(`LAN (${unit.key}): bound to ${unit.host}, reachable from other devices on this network`);
     for (const address of addresses) console.log(`  ${paths.map((path) => `http://${address}:${unit.port}${path}`).join('  ')}`);
   }
   const serverUnit = value.units.find((unit) => unit.key === 'server');
   if (serverUnit) {
     console.log(`Data: ${serverUnit.env.DATA_DIR}`);
-    console.log('First use: open /admin/ and set your administrator username and password.');
+    console.log('Admin console: see the server startup log for the generated security path.');
     console.log(`New database registration default: ${serverUnit.env.REGISTRATION_MODE}; existing database policy is retained.`);
     const insecureHttp = serverUnit.env.ALLOW_INSECURE_HTTP === '1';
     console.log(insecureHttp

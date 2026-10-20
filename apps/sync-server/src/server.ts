@@ -360,6 +360,7 @@ export interface SyncServerOptions {
 
 export interface SyncServer {
   backupPlan: () => Promise<import('./backup-executor.js').BackupPlan>;
+  adminAccessPath: () => string;
   server: Server;
   serverId: string;
   dataDir: string;
@@ -402,6 +403,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   const startedAt = Date.now();
   const serverVersion = readServerVersion();
   const secret = loadPersistedValue(dataDir, 'server.secret', options.secret, () => randomBytes(32).toString('hex'));
+  const defaultAdminAccessPath = createHmac('sha256', secret).update('zichan-admin-access-path-v1').digest('base64url').slice(0, 24);
   const ownerSetupToken = loadPersistedValue(dataDir, 'owner-setup.secret', options.ownerSetupToken, () => randomBytes(32).toString('hex'));
   if (ownerSetupToken.length < 32) throw new Error('owner-setup.secret must contain at least 32 characters');
   const serverId = loadPersistedValue(dataDir, 'server-id', options.serverId, () => `srv-${randomBytes(8).toString('hex')}`);
@@ -551,6 +553,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
 
   const runtimeSettings = createSettings(store, process.env, {
     defaults: {
+      adminAccessPath: defaultAdminAccessPath,
       ...(options.commitQuotaBytes === undefined ? {} : { defaultCommitQuotaBytes: options.commitQuotaBytes }),
       ...(options.attachmentQuotaBytes === undefined ? {} : { defaultBlobQuotaBytes: options.attachmentQuotaBytes }),
       ...(options.attachmentMaxFileBytes === undefined ? {} : { attachmentMaxFileBytes: options.attachmentMaxFileBytes }),
@@ -892,7 +895,20 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         return send(res, probe.ok ? 200 : 503, { ok: probe.ok, serverId, mode: 'light', database: probe });
       }
       if (basePath && (path === '/api' || path.startsWith('/api/'))) return send(res, 404, { error: 'not found' });
-      if (routedPath && serveWeb(req, res, routedPath, enableWeb ? options.webDir : undefined, allowInsecureHttp)) return;
+      // The management UI only exists below the configured secret segment. Reject the old
+      // /admin route and all guessed /<segment>/admin routes before the SPA fallback.
+      const requestedAdminPage = !routedPath?.startsWith('/api/')
+        && /(?:^|\/)admin(?:\/|$)/.test(routedPath ?? path);
+      let webPath = routedPath;
+      if (requestedAdminPage) {
+        await runtimeSettings.load();
+        const adminPrefix = `/${settings.effective('adminAccessPath')}/admin`;
+        if (!routedPath || routedPath !== adminPrefix && !routedPath.startsWith(`${adminPrefix}/`)) {
+          return send(res, 404, { error: 'not found' });
+        }
+        webPath = routedPath.slice(adminPrefix.length) ? `/admin${routedPath.slice(adminPrefix.length)}` : '/admin';
+      }
+      if (webPath && serveWeb(req, res, webPath, enableWeb ? options.webDir : undefined, allowInsecureHttp)) return;
       if (!routedPath && serveWeb(req, res, path, enableWeb ? options.webDir : undefined, allowInsecureHttp)) return;
       if (!routedPath) return send(res, 404, { error: 'not found' });
       const apiPath = routedPath;
@@ -2931,6 +2947,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
 
   return {
     server,
+    adminAccessPath: () => String(settings.effective('adminAccessPath')),
     serverId,
     dataDir,
     ready,

@@ -18,6 +18,7 @@ services:
       - ENABLE_WEB=${ENABLE_WEB:-1}
       - ENABLE_SYNC=${ENABLE_SYNC:-1}
       - BASE_PATH=${BASE_PATH:-}
+      - ADMIN_ACCESS_PATH=${ADMIN_ACCESS_PATH:-}
       - TRUSTED_PROXIES=${TRUSTED_PROXIES:-private}
       - ALLOW_INSECURE_HTTP=0
       - WEB_DIST=/app/web-dist

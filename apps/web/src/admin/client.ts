@@ -14,7 +14,7 @@ export class AdminError extends Error {
 async function readAdminJson<T>(res: Response): Promise<T> {
   try { return await res.json() as T; }
   catch {
-    throw new AdminError(res.status, 'INVALID_API_RESPONSE', '管理 API 未返回有效 JSON，可能连接到了前端页面或开发代理未启动。请运行 npm run start:all 后重试，或使用服务器的 /admin/ 地址（默认 http://127.0.0.1:8787/admin/）。');
+    throw new AdminError(res.status, 'INVALID_API_RESPONSE', '管理 API 未返回有效 JSON，可能连接到了前端页面或开发代理未启动。请运行 npm run start:all 后重试，或使用服务器启动日志中的管理后台安全地址。');
   }
 }
 
@@ -56,7 +56,7 @@ export function fileNameFromDisposition(header: string | null): string {
 }
 
 export function adminBaseUrl(location: Pick<Location, 'origin' | 'pathname'>): string | undefined {
-  const match = /^(.*)\/admin(?:\/.*)?$/.exec(location.pathname);
+  const match = /^(.*)\/[^/]+\/admin(?:\/.*)?$/.exec(location.pathname);
   return match ? `${location.origin}${match[1]}` : undefined;
 }
 

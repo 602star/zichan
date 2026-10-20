@@ -41,7 +41,7 @@ async function fixture() {
 }
 
 async function signIn(page, url) {
-  await page.goto(`${url}/admin/`);
+  await page.goto(`${url}/e2e-private-entry/admin/`);
   await page.getByLabel('管理账号用户名').fill('operator');
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
@@ -84,7 +84,7 @@ test('narrows the export to the filters the page is showing', async ({ page }) =
   try {
     await signIn(page, f.url);
     // Filter to one account, so the export must not contain the other account's lines.
-    await page.goto(`${f.url}/admin/logs?username=otheruser`);
+    await page.goto(`${f.url}/e2e-private-entry/admin/logs?username=otheruser`);
     await expect(page.getByRole('heading', { name: '运行日志' })).toBeVisible();
 
     const download = page.waitForEvent('download');

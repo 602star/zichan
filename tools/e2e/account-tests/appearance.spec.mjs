@@ -137,7 +137,7 @@ test('a dark screen survives a reload, and the accent family is a separate axis'
 test('the account id is readable in the list, not just copyable', async ({ page }) => {
   const f = await fixture();
   try {
-    await page.goto(`${f.url}/admin/`);
+    await page.goto(`${f.url}/e2e-private-entry/admin/`);
     await page.getByLabel('管理账号用户名').fill('owner');
     await page.getByLabel('管理账号密码').fill('owner-test-password');
     await page.getByRole('button', { name: '登录管理后台', exact: true }).click({ timeout: 30_000 });
@@ -159,7 +159,7 @@ test('the account id is readable in the list, not just copyable', async ({ page 
 test('the console can jump between the sections of a long page', async ({ page }) => {
   const f = await fixture();
   try {
-    await page.goto(`${f.url}/admin/`);
+    await page.goto(`${f.url}/e2e-private-entry/admin/`);
     await page.getByLabel('管理账号用户名').fill('owner');
     await page.getByLabel('管理账号密码').fill('owner-test-password');
     await page.getByRole('button', { name: '登录管理后台', exact: true }).click({ timeout: 30_000 });
@@ -205,9 +205,9 @@ test('the management console follows the same device preference', async ({ page 
     await page.getByRole('radio', { name: '深色', exact: true }).click();
     await expect.poll(async () => (await readPalette(page)).colorScheme).toBe('dark');
 
-    // A fresh page at /admin/ is a different entry point but the same origin,
+    // A fresh page at the management path is a different entry point but the same origin,
     // so it must read the same stored preference rather than a hardcoded theme.
-    await page.goto(`${f.url}/admin/`);
+    await page.goto(`${f.url}/e2e-private-entry/admin/`);
     await expect.poll(async () => (await readPalette(page)).colorScheme).toBe('dark');
     expect((await readPalette(page)).bodyBackgroundLuminance).toBeLessThan(80);
 

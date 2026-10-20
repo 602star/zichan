@@ -69,7 +69,7 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
     let context = await browser.newContext();
     context.setDefaultTimeout(10_000);
     let page = await context.newPage();
-    await page.goto(`${url}/admin/`);
+    await page.goto(`${url}/e2e-private-entry/admin/`);
     await page.getByLabel('管理账号用户名').fill('owner');
     await page.getByLabel('管理账号密码').fill('owner-test-password');
     await page.getByRole('button', { name: '创建所有者并进入后台' }).click();

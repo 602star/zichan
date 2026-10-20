@@ -35,6 +35,11 @@ export interface SettingField {
 
 export const SETTING_FIELDS: SettingField[] = [
   {
+    name: 'adminAccessPath', label: '管理后台安全路径', kind: 'text', textFormat: 'free',
+    envVar: 'ADMIN_ACCESS_PATH', default: '', maxLength: 64,
+    description: '后台入口为 域名/安全路径/admin/。首次部署自动生成；修改后旧入口立即失效，请保存新的完整地址。仅使用字母、数字、下划线和连字符（12–64 位）。',
+  },
+  {
     name: 'defaultCommitQuotaBytes', label: '默认加密提交配额', kind: 'number', unit: 'bytes',
     envVar: 'COMMIT_QUOTA_BYTES', default: 20 * 1024 ** 3,
     min: 1024 ** 2, max: 1024 ** 4,
@@ -314,6 +319,9 @@ export function parseSettingValue(field: SettingField, value: unknown): number |
           : `（最多 ${String(field.maxLength ?? 500)} 个字符，留空表示未配置）`;
     throw new ServerStoreError('INVALID_SETTING', 400, `${field.label} 取值无效${bounds}`);
   }
+  if (field.name === 'adminAccessPath' && !/^[A-Za-z0-9_-]{12,64}$/.test(String(coerced))) {
+    throw new ServerStoreError('INVALID_SETTING', 400, '管理后台安全路径须为 12–64 位字母、数字、下划线或连字符');
+  }
   if (field.name === 'alertChannels') {
     try { parseAlertChannels(coerced); }
     catch (error) { throw new ServerStoreError('INVALID_SETTING', 400, error instanceof Error ? error.message : String(error)); }
@@ -364,7 +372,7 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
       }
       const fromEnv = env[field.envVar];
       if (fromEnv !== undefined && fromEnv !== '') {
-        const parsed = coerce(field, fromEnv);
+        const parsed = field.name === 'adminAccessPath' ? parseSettingValue(field, fromEnv) : coerce(field, fromEnv);
         if (parsed === undefined) throw new Error(`环境变量 ${field.envVar} 取值无效：${fromEnv}（${field.label}）；请修正或删除该变量，不会静默回退默认值`);
         values[field.name] = parsed;
         continue;
@@ -381,7 +389,7 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
     for (const field of SETTING_FIELDS) {
       const raw = await store.maintenanceState(`${SETTING_PREFIX}${field.name}`);
       if (raw && raw['value'] !== undefined) {
-        const parsed = coerce(field, raw['value']);
+        const parsed = field.name === 'adminAccessPath' ? parseSettingValue(field, raw['value']) : coerce(field, raw['value']);
         if (parsed !== undefined) loaded[field.name] = parsed;
       }
     }
@@ -401,7 +409,7 @@ export function createSettings(store: SyncServerStore, env: NodeJS.ProcessEnv = 
     let value: number | string = fallback;
     let source: EffectiveSetting['source'] = 'default';
     if (storedValue === null && fromEnv !== undefined && fromEnv !== '') {
-      const parsed = coerce(field, fromEnv);
+      const parsed = field.name === 'adminAccessPath' ? parseSettingValue(field, fromEnv) : coerce(field, fromEnv);
       if (parsed === undefined) {
         throw new Error(`环境变量 ${field.envVar} 取值无效：${fromEnv}（${field.label}）；请修正或删除该变量，不会静默回退默认值`);
       }

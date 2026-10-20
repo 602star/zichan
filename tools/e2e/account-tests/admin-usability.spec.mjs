@@ -28,7 +28,7 @@ async function fixture() {
 }
 
 async function signIn(page, url) {
-  await page.goto(`${url}/admin/`);
+  await page.goto(`${url}/e2e-private-entry/admin/`);
   await page.getByLabel('管理账号用户名').fill('operator');
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
@@ -268,7 +268,7 @@ test('retries a failed initial connection without reloading the page', async ({ 
   const f = await fixture();
   try {
     await page.route('**/api/health', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }), { times: 1 });
-    await page.goto(`${f.url}/admin/`);
+    await page.goto(`${f.url}/e2e-private-entry/admin/`);
     await expect(page.getByRole('alert')).toContainText('HTTP 503');
     await page.getByRole('button', { name: '重新连接服务器' }).click();
     await expect(page.getByRole('heading', { name: '管理员登录' })).toBeVisible();

@@ -28,7 +28,7 @@ test('development proxy supports owner creation, cookie restore and rejects fore
     });
     expect(foreignSetup.status()).toBe(403);
     await page.route('**/api/health', (route) => route.fulfill({ contentType: 'text/html', body: '<!DOCTYPE html><html></html>' }));
-    await page.goto(`${origin}/admin/`);
+    await page.goto(`${origin}/e2e-private-entry/admin/`);
     await expect(page.getByRole('heading', { name: '尚未连接管理服务器' })).toBeVisible();
     await expect(page.getByRole('alert')).toContainText('管理 API 未返回有效 JSON');
     await expect(page.getByRole('button', { name: '等待服务器连接' })).toBeDisabled();
@@ -59,7 +59,7 @@ test('development proxy supports owner creation, cookie restore and rejects fore
       headers: { Origin: 'http://foreign.invalid', 'X-Zichan-Session': 'admin-cookie' }, data: {},
     });
     expect(denied.status()).toBe(403);
-    await page.getByRole('button', { name: '退出管理后台' }).click();
+    await page.getByRole('button', { name: '退出', exact: true }).click();
     await expect(page.getByRole('heading', { name: '管理员登录' })).toBeVisible();
   } finally {
     if (previousTarget === undefined) delete process.env.ZICHAN_DEV_API_TARGET;
