@@ -1,5 +1,6 @@
-# HTTPS-terminated deployment: Caddy (auto Let's Encrypt) in front of the unified server.
-# Usage: SYNC_SECRET=$(openssl rand -hex 32) docker compose up -d
+# Publish the unified server on host port 8787; configure your own HTTPS reverse proxy.
+# Defaults to loopback so a proxy on the same host can reach it without public exposure.
+# Usage: SYNC_SECRET=$(openssl rand -hex 32) docker compose up -d --remove-orphans
 services:
   sync-server:
     build:
@@ -24,8 +25,8 @@ services:
       - WEB_DIST=/app/web-dist
     volumes:
       - zichan-data:/state
-    expose:
-      - "8787"
+    ports:
+      - "${SYNC_BIND_ADDRESS:-127.0.0.1}:8787:8787"
     healthcheck:
       test: ["CMD", "node", "-e", "const p=(process.env.BASE_PATH||'').replace(/\\/$/,'');fetch('http://127.0.0.1:8787'+p+'/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -34,21 +35,5 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  caddy:
-    image: caddy:2
-    depends_on:
-      sync-server:
-        condition: service_healthy
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    restart: unless-stopped
-
 volumes:
   zichan-data: {}
-  caddy-data: {}
-  caddy-config: {}
