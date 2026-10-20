@@ -11,5 +11,5 @@
     "declaration": false,
     "declarationMap": false
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "bench", "vite.config.ts"]
 }

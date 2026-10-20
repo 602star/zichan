@@ -327,15 +327,15 @@ export function Game() {
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {!vm.records.length && <p className="zc-meta">当前范围没有记录，可查看“全部记录”或调整筛选。</p>}
             {vm.records.map((r) => (
-              <div id={`game-record-${r.raw.id}`} className="zc-game-record-row" key={r.raw.id} role="button" tabIndex={0} aria-label={`编辑游戏记录 ${r.item || REC_LABEL[r.type]}`} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setEditRec(r.raw); } }} onClick={() => setEditRec(r.raw)} title="点击编辑" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
+              <div id={`game-record-${r.raw.id}`} className="zc-game-record-row" key={r.raw.id} role="button" tabIndex={0} aria-label={`编辑游戏记录 ${r.item || REC_LABEL[r.type]}`} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setEditRec(r.raw); } }} onClick={() => setEditRec(r.raw)} title="点击编辑">
                 <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', width: 38, flexShrink: 0 }}>{r.date.slice(5)}</div>
                 <span style={recBadge(r.type)}>{REC_LABEL[r.type]}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-medium)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.item || REC_LABEL[r.type]}</div>
+                  <div className="zc-game-record-title" style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-medium)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.item || REC_LABEL[r.type]}</div>
                   <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 2 }}>{r.nativeAmount}{!vm.season && ` · ${r.seasonName}`}</div>
                 </div>
-                <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', width: 64, textAlign: 'right', flexShrink: 0 }}>{r.acc}</div>
-                <div style={{ fontSize: 'var(--fs-body)', width: 74, textAlign: 'right', ...amountColor(r.amt) }}>
+                <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', textAlign: 'right', flexShrink: 0 }}>{r.acc}</div>
+                <div style={{ fontSize: 'var(--fs-body)', textAlign: 'right', ...amountColor(r.amt) }}>
                   {r.amt === 0 ? money(0) : signedMoney(r.amt)}
                 </div>
               </div>

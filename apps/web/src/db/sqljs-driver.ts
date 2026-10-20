@@ -1,7 +1,7 @@
 /**
  * SqlDriver backed by sql.js (SQLite compiled to WASM). Lets the browser reuse
  * the exact @zichan/db schema + repository. The database lives in memory and is
- * exported to IndexedDB (debounced) after each mutation for durability.
+ * exported to IndexedDB after each mutation for durability.
  */
 import initSqlJs, { type Database } from 'sql.js';
 import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
@@ -27,6 +27,14 @@ interface SqlJsState {
   onClose?: CloseHook;
   closed: boolean;
   dirty: boolean;
+  persistenceFailure?: Error;
+}
+
+export class SqlJsPersistenceError extends Error {
+  constructor(cause: unknown) {
+    super('浏览器账本保存失败；当前页面中的数据可能尚未落盘。请关闭所有账本页面后重新打开，再核对最近的记录。', { cause });
+    this.name = 'SqlJsPersistenceError';
+  }
 }
 
 export class SqlJsDriver implements SqlDriver {
@@ -45,7 +53,13 @@ export class SqlJsDriver implements SqlDriver {
 
   private async persist(): Promise<void> {
     if (!this.state.dirty) return;
-    if (this.state.onPersist) await this.state.onPersist(this.state.db.export());
+    this.assertUsable();
+    try {
+      if (this.state.onPersist) await this.state.onPersist(this.state.db.export());
+    } catch (error) {
+      this.state.persistenceFailure = new SqlJsPersistenceError(error);
+      throw this.state.persistenceFailure;
+    }
     this.state.dirty = false;
   }
 
@@ -92,6 +106,7 @@ export class SqlJsDriver implements SqlDriver {
   async transaction<T>(fn: (driver: SqlDriver) => Promise<T>): Promise<T> {
     if (!this.transactionScoped) {
       return this.state.queue.run(async () => {
+        this.assertUsable();
         this.state.db.run('BEGIN');
         const scoped = new SqlJsDriver(this.state, true);
         let result: T;
@@ -109,6 +124,7 @@ export class SqlJsDriver implements SqlDriver {
     }
 
     return this.nestedQueue.run(async () => {
+      this.assertUsable();
       const savepoint = `web_sp_${++this.state.nextSavepoint}`;
       this.state.db.run(`SAVEPOINT ${savepoint}`);
       const scoped = new SqlJsDriver(this.state, true);
@@ -129,7 +145,9 @@ export class SqlJsDriver implements SqlDriver {
     await this.state.queue.run(async () => {
       if (this.state.closed) return;
       try {
-        await this.persist();
+        // A failed snapshot must never be retried implicitly during close: that
+        // would save an operation the caller was told had failed.
+        if (!this.state.persistenceFailure) await this.persist();
       } finally {
         try {
           this.state.db.close();
@@ -142,7 +160,18 @@ export class SqlJsDriver implements SqlDriver {
   }
 
   private operation<T>(task: () => Promise<T>): Promise<T> {
-    if (this.transactionScoped) return task();
-    return this.state.queue.run(task);
+    if (this.transactionScoped) {
+      this.assertUsable();
+      return task();
+    }
+    return this.state.queue.run(async () => {
+      this.assertUsable();
+      return task();
+    });
+  }
+
+  private assertUsable(): void {
+    if (this.state.persistenceFailure) throw this.state.persistenceFailure;
+    if (this.state.closed) throw new Error('浏览器账本已关闭');
   }
 }

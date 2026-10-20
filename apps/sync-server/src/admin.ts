@@ -1292,7 +1292,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     }
 
     if (req.method === 'POST' && suffix === '/quotas/blobs/verify') {
-      const body = await readBody(req, ADMIN_BODY_BYTES).catch(() => ({}) as JsonRecord);
+      const body = await readBody(req, ADMIN_BODY_BYTES);
       const accountId = typeof body.accountId === 'string' ? body.accountId : undefined;
       await assertJobAuthorized('blobs.verify', accountId);
       return void await withIdempotency(req, res, `blobs.verify:${accountId ?? 'all'}`, body, async () => {

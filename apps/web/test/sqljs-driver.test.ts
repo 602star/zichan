@@ -9,7 +9,7 @@ import {
   saveTransaction,
 } from '@zichan/db';
 import { createLogger, nullSink } from '@zichan/logger';
-import { SqlJsDriver } from '../src/db/sqljs-driver.js';
+import { SqlJsDriver, SqlJsPersistenceError } from '../src/db/sqljs-driver.js';
 
 const log = createLogger({ level: 'error', sinks: [nullSink()] });
 
@@ -170,6 +170,36 @@ describe('SqlJsDriver', () => {
     expect(persistCalls).toBe(2);
     expect(maxActivePersists).toBe(1);
     await driver.close();
+  });
+
+  it.each(['transaction', 'direct write'] as const)('fails closed after a %s snapshot write fails', async (mode) => {
+    let persisted: Uint8Array | null = null;
+    let rejectNextSave = false;
+    let saveAttempts = 0;
+    const driver = await SqlJsDriver.open(null, (bytes) => {
+      saveAttempts += 1;
+      if (rejectNextSave) throw new Error('IndexedDB quota exceeded');
+      persisted = bytes.slice();
+    });
+    await driver.exec('CREATE TABLE entries (value TEXT NOT NULL)');
+    await driver.run('INSERT INTO entries(value) VALUES (?)', ['saved']);
+    rejectNextSave = true;
+
+    const write = mode === 'transaction'
+      ? driver.transaction(async (scope) => scope.run('INSERT INTO entries(value) VALUES (?)', ['unsaved']))
+      : driver.run('INSERT INTO entries(value) VALUES (?)', ['unsaved']);
+    await expect(write).rejects.toBeInstanceOf(SqlJsPersistenceError);
+    const attemptsAfterFailure = saveAttempts;
+
+    await expect(driver.all('SELECT value FROM entries')).rejects.toThrow('重新打开');
+    await expect(driver.run('INSERT INTO entries(value) VALUES (?)', ['later'])).rejects.toThrow('重新打开');
+    await expect(driver.transaction(async () => { throw new Error('must not run'); })).rejects.toThrow('重新打开');
+    await driver.close();
+    expect(saveAttempts).toBe(attemptsAfterFailure);
+
+    const reopened = await SqlJsDriver.open(persisted);
+    expect(await reopened.all('SELECT value FROM entries')).toEqual([{ value: 'saved' }]);
+    await reopened.close();
   });
 
   it('releases its browser lifetime lock exactly once when closed', async () => {

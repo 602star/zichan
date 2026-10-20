@@ -15,6 +15,7 @@ const desktopPackage = readFileSync(new URL('../package.json', root), 'utf8');
 const androidConfigure = readFileSync(new URL('../scripts/configure-android.mjs', root), 'utf8');
 const systemShareCargo = readFileSync(new URL('../plugins/system-share/Cargo.toml', root), 'utf8');
 const systemShareAndroid = readFileSync(new URL('../plugins/system-share/android/src/main/java/com/zichan/systemshare/SystemSharePlugin.kt', root), 'utf8');
+const systemShareFileProvider = readFileSync(new URL('../plugins/system-share/android/src/main/java/com/zichan/systemshare/SystemShareFileProvider.kt', root), 'utf8');
 const systemShareManifest = readFileSync(new URL('../plugins/system-share/android/src/main/AndroidManifest.xml', root), 'utf8');
 const systemShareIos = readFileSync(new URL('../plugins/system-share/ios/Sources/SystemSharePlugin.swift', root), 'utf8');
 
@@ -85,7 +86,7 @@ describe('native security and device configuration', () => {
     expect(cargo).toContain('tauri-plugin-biometric = "2"');
     expect(cargo).toContain('tauri-plugin-barcode-scanner = "2"');
     expect(cargo).toContain('tauri-plugin-geolocation = "2"');
-    expect(rust).toContain('tauri_plugin_biometric::Builder::new().build()');
+    expect(rust).toContain('tauri_plugin_biometric::init()');
     expect(rust).toContain('tauri_plugin_barcode_scanner::init()');
     expect(rust).toContain('tauri_plugin_geolocation::init()');
     expect(mobileCapability).toContain('biometric:default');
@@ -100,7 +101,8 @@ describe('native security and device configuration', () => {
     expect(mobileCapability).toContain('system-share:default');
     expect(systemShareAndroid).toContain('Intent.ACTION_SEND');
     expect(systemShareAndroid).toContain('FileProvider.getUriForFile');
-    expect(systemShareManifest).toContain('androidx.core.content.FileProvider');
+    expect(systemShareManifest).toContain('com.zichan.systemshare.SystemShareFileProvider');
+    expect(systemShareFileProvider).toContain('class SystemShareFileProvider : FileProvider()');
     expect(systemShareIos).toContain('UIActivityViewController');
   });
 

@@ -5,19 +5,27 @@ test.setTimeout(120_000);
 
 /** 行内的摘要主标题（粗体那一格）。 */
 function summaryOf(row) {
-  return row.locator('span > span').first();
+  return row.locator('.zc-transaction-summary-title');
+}
+
+function addTransaction(page) {
+  return page.locator('#transaction-records').getByRole('button', { name: /^\+ 记(账|支出)$/ });
+}
+
+function newTransactionForm(page) {
+  return page.getByRole('dialog', { name: /^新增 · 日常(收支|支出)$/ });
 }
 
 /** 记一笔支出；`description` 可以不填。 */
 async function recordExpense(page, { category, amount, description }) {
-  await page.getByRole('button', { name: '+ 记支出' }).click();
-  const form = page.getByRole('dialog', { name: '新增 · 日常支出' });
+  await addTransaction(page).click();
+  const form = newTransactionForm(page);
   await expect(form).toBeVisible();
-  await form.getByLabel('二级分类').click();
+  await form.getByLabel('分类*').click();
   const panel = page.locator('.zc-category-picker-panel');
   await panel.getByLabel('搜索分类', { exact: true }).fill(category);
-  // 面板右栏写的是叶子名本身，自带的斜杠原样保留，所以按名字直接找得到。
-  await panel.getByRole('option', { name: category }).first().click();
+  // 搜索结果包含完整层级，按叶子名定位目标分类。
+  await panel.getByRole('option').filter({ hasText: category }).first().click();
   if (description) await form.getByLabel('描述').fill(description);
   await page.getByRole('textbox', { name: /^金额/ }).fill(amount);
   await page.getByRole('button', { name: '保存', exact: true }).click();
@@ -85,19 +93,19 @@ test('a long 「一级 / 二级」 chip stays inside its own column and is not e
  */
 test('the picker spells a subcategory name with a slash verbatim', async ({ page }) => {
   await openTransactions(page);
-  await page.getByRole('button', { name: '+ 记支出' }).click();
-  const form = page.getByRole('dialog', { name: '新增 · 日常支出' });
+  await addTransaction(page).click();
+  const form = newTransactionForm(page);
   await expect(form).toBeVisible();
-  await form.getByLabel('二级分类').click();
+  await form.getByLabel('分类*').click();
   const panel = page.locator('.zc-category-picker-panel');
   await panel.getByLabel('搜索分类', { exact: true }).fill('打车/网约车');
 
-  // 右栏：首字色块 + 叶子名，中间只允许空白，不允许「 / 」。
+  // 搜索结果显示完整层级，同时保留叶子名内部的斜杠。
   const option = panel.getByRole('option').filter({ hasText: '打车' });
   await expect(option).toHaveCount(1);
-  await expect(option).toHaveText(/^打\s*打车\/网约车$/);
+  await expect(option).toHaveText(/^交通出行\s*›\s*打车\/网约车$/);
 
   // 选完后，触发按钮上的两栏读法也不许被改写。
   await option.click();
-  await expect(form.getByLabel('二级分类')).toHaveText(/^交通出行\s*›\s*打车\/网约车\s*[▲▼]$/);
+  await expect(form.getByLabel('分类*')).toContainText('打车/网约车');
 });

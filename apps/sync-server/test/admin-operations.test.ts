@@ -43,6 +43,27 @@ const waitForJob = async (f: Awaited<ReturnType<typeof fixture>>, jobId: string)
 };
 
 describe('management console operations', () => {
+  it('rejects malformed and oversized attachment verification requests without creating a scan', async () => {
+    const f = await fixture();
+    try {
+      const url = `${f.url}/api/admin/quotas/blobs/verify`;
+      const headers = { Authorization: `Bearer ${f.owner.accessToken}`, 'Content-Type': 'application/json' };
+      const malformed = await fetch(url, { method: 'POST', headers, body: '{' });
+      expect(malformed.status).toBe(400);
+      expect(await malformed.json()).toMatchObject({ error: 'invalid JSON body' });
+
+      const oversized = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ padding: 'x'.repeat(256 * 1024) }) });
+      expect(oversized.status).toBe(413);
+      expect(await oversized.json()).toMatchObject({ error: 'request body too large' });
+
+      const jobs = await (await f.api(f.owner.accessToken, '/jobs?type=blobs.verify')).json() as { jobs: unknown[] };
+      expect(jobs.jobs).toEqual([]);
+
+      const valid = await fetch(url, { method: 'POST', headers, body: '{}' });
+      expect(valid.status).toBe(202);
+    } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+  });
+
   it('keeps the handshake constant and moves whole-database checks into a job', async () => {
     const f = await fixture();
     try {

@@ -2454,10 +2454,10 @@ function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilter
 function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof buildTransactions>>; usesAccounts: boolean }) {
   if (!usesAccounts) {
     return (
-      <div className="zc-transaction-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 16 }}>
-        <div className="zc-transaction-summary-metric" style={cardTight}><Kpi label={`${vm.month} 本月支出`} value={money(vm.expense)} tone="var(--negative)" sub="自动汇总全部支出" /></div>
-        <div className="zc-transaction-summary-metric" style={cardTight}><Kpi label="当前范围" value={`${vm.count} 笔`} tone="var(--accent)" sub={`合计支出 ${money(vm.filteredExpense)}`} /></div>
-        <div style={cardTight}>
+      <div className="zc-transaction-summary-grid">
+        <div className="zc-transaction-summary-metric"><Kpi label={`${vm.month} 本月支出`} value={money(vm.expense)} tone="var(--negative)" sub="自动汇总全部支出" /></div>
+        <div className="zc-transaction-summary-metric"><Kpi label="当前范围" value={`${vm.count} 笔`} tone="var(--accent)" sub={`合计支出 ${money(vm.filteredExpense)}`} /></div>
+        <div>
           <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>常用支出分类</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 11 }}>
             {vm.topExpenseCategories.length === 0 && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>记下第一笔支出后会自动汇总</div>}
@@ -2472,12 +2472,12 @@ function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof b
     );
   }
   return (
-    <div className="zc-transaction-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16 }}>
-      <div className="zc-transaction-summary-metric" style={cardTight}><Kpi label={`${vm.month} 本月收入`} value={money(vm.income)} tone="var(--positive)" sub="不受筛选影响" /></div>
-      <div className="zc-transaction-summary-metric" style={cardTight}><Kpi label={`${vm.month} 本月支出`} value={money(vm.expense)} tone="var(--negative)" sub={usesAccounts ? '转账不计入支出' : '只统计收入和支出'} /></div>
-      <div className="zc-transaction-summary-metric" style={cardTight}><Kpi label="本月结余" value={signedMoney(vm.net)} tone={Number(vm.net) >= 0 ? 'var(--positive)' : 'var(--negative)'} sub="收入 - 支出" /></div>
-      <div className="zc-transaction-summary-metric" style={cardTight}><Kpi label="当前筛选" value={`${vm.count} 条`} tone="var(--accent)" sub={`收 ${money(vm.filteredIncome)} · 支 ${money(vm.filteredExpense)} · ${signedMoney(vm.filteredNet)}`} /></div>
-      <div style={cardTight}>
+    <div className="zc-transaction-summary-grid has-accounts">
+      <div className="zc-transaction-summary-metric"><Kpi label={`${vm.month} 本月收入`} value={money(vm.income)} tone="var(--positive)" sub="不受筛选影响" /></div>
+      <div className="zc-transaction-summary-metric"><Kpi label={`${vm.month} 本月支出`} value={money(vm.expense)} tone="var(--negative)" sub={usesAccounts ? '转账不计入支出' : '只统计收入和支出'} /></div>
+      <div className="zc-transaction-summary-metric"><Kpi label="本月结余" value={signedMoney(vm.net)} tone={Number(vm.net) >= 0 ? 'var(--positive)' : 'var(--negative)'} sub="收入 - 支出" /></div>
+      <div className="zc-transaction-summary-metric"><Kpi label="当前筛选" value={`${vm.count} 条`} tone="var(--accent)" sub={`收 ${money(vm.filteredIncome)} · 支 ${money(vm.filteredExpense)} · ${signedMoney(vm.filteredNet)}`} /></div>
+      <div>
         <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>Top 支出分类</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 11 }}>
           {vm.topExpenseCategories.length === 0 && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>本月暂无支出</div>}
@@ -2611,7 +2611,7 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
                     {item.categoryLabel}
                   </span>
                   <span style={{ minWidth: 0 }}>
-                    <span style={{ display: 'block', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...(settled ? { textDecoration: 'line-through', color: 'var(--text-tertiary)' } : {}) }}>{title}</span>
+                    <span className="zc-transaction-summary-title" style={{ display: 'block', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...(settled ? { textDecoration: 'line-through', color: 'var(--text-tertiary)' } : {}) }}>{title}</span>
                     <span style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
                       <span className="zc-transaction-details-desktop" style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
                         {details}
@@ -3065,9 +3065,9 @@ function Table(props: { headers: string[]; children: ReactNode }) {
 function Kpi({ label, value, sub, tone }: { label: string; value: string; sub: string; tone: string }) {
   return (
     <>
-      <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>{label}</div>
-      <div style={{ fontSize: 'var(--fs-display)', fontWeight: 'var(--fw-bold)', marginTop: 10, color: tone, whiteSpace: 'nowrap' }}>{value}</div>
-      <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 5, fontWeight: 'var(--fw-medium)' }}>{sub}</div>
+      <div className="zc-summary-kpi-label">{label}</div>
+      <div className="zc-summary-kpi-value" style={{ color: tone }}>{value}</div>
+      <div className="zc-summary-kpi-sub">{sub}</div>
     </>
   );
 }

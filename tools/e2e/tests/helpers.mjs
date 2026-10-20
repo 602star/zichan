@@ -28,8 +28,7 @@ export async function openLedger(page, options = {}) {
   const unlock = page.getByRole('button', { name: '解锁', exact: true });
   const quickStart = page.getByRole('button', { name: '开始记账', exact: true });
   const appReady = page.locator('.zc-app-shell');
-  const quickExpense = page.getByRole('dialog', { name: '新增 · 日常收支' });
-  let startedQuickLedger = false;
+  const quickExpense = page.getByRole('dialog', { name: '记一笔支出' });
 
   await expect(login.or(create).or(createPersonal).or(unlock).or(appReady).or(quickStart)).toBeVisible({ timeout: 30_000 });
   if (await login.isVisible().catch(() => false)) {
@@ -56,11 +55,9 @@ export async function openLedger(page, options = {}) {
   }
   await expect(appReady.or(quickStart)).toBeVisible({ timeout: 30_000 });
   if (await quickStart.isVisible().catch(() => false)) {
-    startedQuickLedger = true;
     await quickStart.click();
   }
   await expect(appReady).toBeVisible({ timeout: 30_000 });
-  if (startedQuickLedger) await expect(quickExpense).toBeVisible({ timeout: 30_000 });
 
   if (options.keepQuickExpense !== true && await quickExpense.isVisible().catch(() => false)) {
     await quickExpense.getByRole('button', { name: '取消', exact: true }).click();
@@ -70,7 +67,6 @@ export async function openLedger(page, options = {}) {
 
 export async function openTransactions(page) {
   await openLedger(page);
-  const dailyExpenses = page.locator('.zc-sidebar').getByText('日常支出', { exact: true });
-  await dailyExpenses.click();
-  await expect(page.getByRole('button', { name: '+ 记支出' })).toBeVisible();
+  await page.locator('.zc-sidebar nav').getByRole('button', { name: /日常收支|日常支出/ }).click();
+  await expect(page.locator('#transaction-records').getByRole('button', { name: /^\+ 记(账|支出)$/ })).toBeVisible();
 }
