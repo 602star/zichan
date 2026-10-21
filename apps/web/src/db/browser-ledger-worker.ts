@@ -119,7 +119,7 @@ async function openDatabase(request: Request): Promise<SharedDatabase> {
       const bytes = await loadDbBytes(session, scope.databaseName);
       const driver = await SqlJsDriver.open(bytes, async (next) => {
         await release.assertHeld();
-        await saveDbBytes(next, session, scope.databaseName);
+        await saveDbBytes(next, session, scope.databaseName, release.snapshotLease);
       }, release);
       return { driver, databaseName: scope.databaseName, ledgerId: session.ledgerId, keyringId: session.keyringId };
     } catch (error) {

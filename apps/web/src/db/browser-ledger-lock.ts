@@ -1,4 +1,7 @@
 import { accountDatabaseName, accountStorageKey } from '../account-storage.js';
+import { BrowserLedgerAlreadyOpenError } from './browser-ledger-error.js';
+import { LEDGER_LEASE_STORE, openIdb, type LedgerSnapshotLease } from './idb.js';
+export { BrowserLedgerAlreadyOpenError } from './browser-ledger-error.js';
 
 export const BROWSER_LEDGER_LOCK_NAME = 'zichan-browser-ledger.sqlite';
 
@@ -32,13 +35,6 @@ function wirePageHideRelease(): void {
     // fresh heartbeat behind. The TTL still covers a crashed document.
     void releaseLedgerLease(lease.backend, lease.owner, lease.version).catch(() => undefined);
   });
-}
-
-export class BrowserLedgerAlreadyOpenError extends Error {
-  constructor(message = '账本已在另一个标签页打开。为防止本地数据互相覆盖，请关闭其他标签页后重试。') {
-    super(message);
-    this.name = 'BrowserLedgerAlreadyOpenError';
-  }
 }
 
 /**
@@ -148,21 +144,13 @@ function ledgerLeaseTabId(): string {
 }
 
 function indexedDbLeaseBackend(databaseName = accountDatabaseName(), recordKey = accountStorageKey(BROWSER_LEDGER_LOCK_NAME)): LedgerLeaseBackend {
-  const storeName = 'lease';
-  databaseName = `${databaseName}:ledger-lease`;
-  const open = () => new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(databaseName, 1);
-    request.onupgradeneeded = () => { request.result.createObjectStore(storeName); };
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-  });
   return {
     async transact<T>(work: (state: BrowserLedgerLeaseState | undefined) => { next?: BrowserLedgerLeaseState | null; result: T }): Promise<T> {
-      const database = await open();
+      const database = await openIdb(databaseName);
       try {
         return await new Promise<T>((resolve, reject) => {
-          const transaction = database.transaction(storeName, 'readwrite');
-          const store = transaction.objectStore(storeName);
+          const transaction = database.transaction(LEDGER_LEASE_STORE, 'readwrite');
+          const store = transaction.objectStore(LEDGER_LEASE_STORE);
           const read = store.get(recordKey);
           let outcome: { next?: BrowserLedgerLeaseState | null; result: T } | undefined;
           read.onerror = () => reject(read.error);
@@ -183,12 +171,13 @@ function indexedDbLeaseBackend(databaseName = accountDatabaseName(), recordKey =
 /** The release callable also exposes `assertHeld` for save-time lease checks. */
 export type BrowserLedgerLeaseHandle = (() => Promise<void>) & {
   assertHeld: () => Promise<void>;
+  snapshotLease: LedgerSnapshotLease | null;
 };
 
 async function acquireWebLockLease(
   manager: BrowserLockManager,
   lockName = accountStorageKey(BROWSER_LEDGER_LOCK_NAME),
-): Promise<{ release: () => Promise<void>; assertHeld: () => Promise<void> }> {
+): Promise<{ release: () => Promise<void>; assertHeld: () => Promise<void>; snapshotLease: LedgerSnapshotLease | null }> {
   let acquiredSettled = false;
   let resolveAcquired!: (value: boolean) => void;
   let rejectAcquired!: (reason: unknown) => void;
@@ -229,6 +218,7 @@ async function acquireWebLockLease(
 
   let released = false;
   return {
+    snapshotLease: null,
     // A held Web Lock cannot be taken over, so the lease always still holds.
     async assertHeld(): Promise<void> {},
     async release(): Promise<void> {
@@ -241,7 +231,7 @@ async function acquireWebLockLease(
   };
 }
 
-async function acquireIndexedDbLease(databaseName?: string, lockName?: string, ownerId?: string): Promise<{ release: () => Promise<void>; assertHeld: () => Promise<void> }> {
+async function acquireIndexedDbLease(databaseName?: string, lockName?: string, ownerId?: string): Promise<{ release: () => Promise<void>; assertHeld: () => Promise<void>; snapshotLease: LedgerSnapshotLease }> {
   if (typeof globalThis.indexedDB?.open !== 'function') {
     throw new Error('当前浏览器既不支持 Web Locks 也无法使用 IndexedDB，无法建立跨标签页账本锁。请升级浏览器或使用桌面版。');
   }
@@ -262,6 +252,7 @@ async function acquireIndexedDbLease(databaseName?: string, lockName?: string, o
 
   let released = false;
   return {
+    snapshotLease: { recordKey: lockName ?? accountStorageKey(BROWSER_LEDGER_LOCK_NAME), owner, version, leaseMs: BROWSER_LEDGER_LEASE_MS },
     async assertHeld(): Promise<void> {
       if (heartbeatLost) throw new BrowserLedgerAlreadyOpenError();
       if (!await assertLedgerLease(backend, owner, version)) throw new BrowserLedgerAlreadyOpenError();
@@ -299,7 +290,7 @@ export async function acquireBrowserLedgerLock(
   localLeaseTail = currentLocalLease;
   if (previousLocalLease) await previousLocalLease;
 
-  let handle: { release: () => Promise<void>; assertHeld: () => Promise<void> };
+  let handle: { release: () => Promise<void>; assertHeld: () => Promise<void>; snapshotLease: LedgerSnapshotLease | null };
   try {
     handle = providedManager
       ? await acquireWebLockLease(providedManager, scope?.lockName)
@@ -322,5 +313,6 @@ export async function acquireBrowserLedgerLock(
     }
   }) as BrowserLedgerLeaseHandle;
   lease.assertHeld = () => handle.assertHeld();
+  lease.snapshotLease = handle.snapshotLease;
   return lease;
 }

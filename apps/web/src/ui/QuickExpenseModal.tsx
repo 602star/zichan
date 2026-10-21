@@ -9,6 +9,7 @@ import {
 } from '../db/form-drafts.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { DialogShell } from './DialogShell.js';
+import { FormDraftStatus, useFormDraftAutosave } from './FormDraftStatus.js';
 import { CategoryPicker, type FieldOption } from './EntityFormModal.js';
 
 export type QuickExpenseCategoryOption = FieldOption;
@@ -288,7 +289,13 @@ export function QuickExpenseModal({
   const activeAssets = assets.filter((asset) => !asset.isDeleted && asset.isActive);
   const currentDraft: QuickExpenseDraft = { amount, category, description, date, time, assetId };
   const currentValues = draftValues(currentDraft);
-  const dirty = formDraftFingerprint(currentValues, {}) !== initialFingerprint.current;
+  const fingerprint = formDraftFingerprint(currentValues, {});
+  const dirty = fingerprint !== initialFingerprint.current;
+  const draftAutosave = useFormDraftAutosave(
+    draftReady && dirty && !saved.current,
+    fingerprint,
+    () => saveFormDraft(QUICK_EXPENSE_DRAFT_KEY, currentValues, {}),
+  );
 
   useEffect(() => {
     if (draftLoaded.current) return;
@@ -337,14 +344,6 @@ export function QuickExpenseModal({
       cancelled = true;
     };
   }, [assets, categories, initialTemplate]);
-
-  useEffect(() => {
-    if (!draftReady || !dirty || saved.current) return;
-    const timer = window.setTimeout(() => {
-      void saveFormDraft(QUICK_EXPENSE_DRAFT_KEY, currentValues, {}).catch(() => undefined);
-    }, 500);
-    return () => window.clearTimeout(timer);
-  }, [currentValues, dirty, draftReady]);
 
   useEffect(() => {
     if (!dirty || saved.current) return;
@@ -399,6 +398,7 @@ export function QuickExpenseModal({
     try {
       await onSave({ amount, category, description: description.trim() || undefined, date, time, assetId });
       saved.current = true;
+      await draftAutosave.stopAndDrain();
       await deleteFormDraft(QUICK_EXPENSE_DRAFT_KEY).catch(() => undefined);
       onClose();
     } catch (saveError) {
@@ -443,6 +443,7 @@ export function QuickExpenseModal({
             已恢复 {new Date(draftRestoredAt).toLocaleString()} 自动保存的支出草稿。
           </div>
         )}
+        {draftReady && dirty && <FormDraftStatus status={draftAutosave.status} />}
 
         <label style={{ display: 'block', marginTop: 22 }}>
           <span style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>支出金额</span>
@@ -530,6 +531,7 @@ export function QuickExpenseModal({
             cancelLabel="继续编辑"
             onCancel={() => setCloseOpen(false)}
             onConfirm={async () => {
+              await draftAutosave.drainPending();
               await saveFormDraft(QUICK_EXPENSE_DRAFT_KEY, currentValues, {});
               onClose();
             }}

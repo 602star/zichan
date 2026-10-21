@@ -8,6 +8,7 @@ import { PayeePicker } from './PayeePicker.js';
 import { TagPicker } from './TagPicker.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { DialogShell } from './DialogShell.js';
+import { FormDraftStatus, useFormDraftAutosave } from './FormDraftStatus.js';
 import { btnOutline } from './styles.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
 import { readAttachmentBlob, type AttachmentDraftData } from '../db/attachment-storage.js';
@@ -294,6 +295,11 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
 
   const fingerprint = formDraftFingerprint(values, fileValues);
   const dirty = fingerprint !== initialFingerprint.current;
+  const draftAutosave = useFormDraftAutosave(
+    draftReady && !pendingDraft && dirty && !savedOrDeleted.current,
+    fingerprint,
+    () => saveFormDraft(draftKey, values, fileValues, entityVersion, [...manualFields.current]),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -319,14 +325,6 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
       cancelled = true;
     };
   }, [draftKey, entityVersion, initialValues, spec.fields, spec.confirmNewDraft, creating]);
-
-  useEffect(() => {
-    if (!draftReady || pendingDraft || !dirty || savedOrDeleted.current) return;
-    const timer = window.setTimeout(() => {
-      void saveFormDraft(draftKey, values, fileValues, entityVersion, [...manualFields.current]).catch(() => undefined);
-    }, 500);
-    return () => window.clearTimeout(timer);
-  }, [draftKey, draftReady, pendingDraft, dirty, entityVersion, fileValues, values]);
 
   useEffect(() => {
     if (pendingDraft || !dirty || savedOrDeleted.current) return;
@@ -516,6 +514,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
       }
       await onSave(candidate);
       savedOrDeleted.current = true;
+      await draftAutosave.stopAndDrain();
       await deleteFormDraft(draftKey).catch(() => undefined);
       onClose();
     } catch (e) {
@@ -538,6 +537,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     try {
       await onDelete();
       savedOrDeleted.current = true;
+      await draftAutosave.stopAndDrain();
       await deleteFormDraft(draftKey).catch(() => undefined);
       onClose();
     } catch (e) {
@@ -591,6 +591,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
             已恢复 {new Date(draftRestoredAt).toLocaleString()} 自动保存的草稿。
           </div>
         )}
+        {draftReady && dirty && !pendingDraft && <FormDraftStatus status={draftAutosave.status} />}
 
         {spec.summary?.(values) && <p role="status" className="zc-caption">{spec.summary(values)}</p>}
         {fieldPickerOpen && (
@@ -773,7 +774,10 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
             cancelLabel="继续编辑"
             onCancel={() => setCloseOpen(false)}
             onConfirm={() => persistDraftBeforeClose(
-              () => saveFormDraft(draftKey, values, fileValues, entityVersion, [...manualFields.current]),
+              async () => {
+                await draftAutosave.drainPending();
+                await saveFormDraft(draftKey, values, fileValues, entityVersion, [...manualFields.current]);
+              },
               onClose,
             )}
           >

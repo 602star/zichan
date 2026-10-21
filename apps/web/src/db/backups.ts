@@ -113,6 +113,8 @@ export interface SavedBackup {
   preflight: BackupPreflight;
   /** Native file listings read only archive headers, so they cannot verify payload contents. */
   preflightKnown?: boolean;
+  /** Set only after this local archive passes a complete restore rehearsal. */
+  verifiedAt?: string;
   checksum: string;
   sizeBytes: number;
   /** Local archive path. On Windows portable builds this remains inside data/backups. */
@@ -499,6 +501,41 @@ export async function listSavedBackups(): Promise<SavedBackup[]> {
     row.archive instanceof Blob
     && row.archive.size === row.sizeBytes
     && validBackupArchiveHeader(row.container)));
+}
+
+/** Remove one browser-local archive without touching copies in external directories or servers. */
+export async function removeLocalBackup(id: string): Promise<void> {
+  if (isTauriRuntime()) throw new Error('此操作仅用于浏览器本地备份');
+  await withSharedBrowserTaskLock('backup', async () => {
+    const stored = await loadKv<SavedBackup[]>(BACKUPS_KEY);
+    const rows = autoRetention((Array.isArray(stored) ? stored : []).filter((row) =>
+      row.archive instanceof Blob
+      && row.archive.size === row.sizeBytes
+      && validBackupArchiveHeader(row.container)));
+    const selected = rows.find((row) => row.id === id);
+    if (!selected) throw new Error('本地备份已不存在，请刷新列表');
+    const remaining = rows.filter((row) => row.id !== id);
+    if (!remaining.length) throw new Error('不能删除最后一份本地备份；请先创建并校验新备份');
+    if (selected.preflightKnown && selected.preflight.ok
+      && !remaining.some((row) => row.preflightKnown && row.preflight.ok)) {
+      throw new Error('不能删除最后一份通过预检的本地备份；请先创建并校验新备份');
+    }
+    if (selected.verifiedAt && !remaining.some((row) => row.verifiedAt)) {
+      throw new Error('不能删除最后一份通过恢复演练的本地备份；请先演练另一份备份');
+    }
+    await saveKv(BACKUPS_KEY, remaining);
+    window.dispatchEvent(new CustomEvent('zichan:safety-updated'));
+  });
+}
+
+export async function recordLocalBackupVerification(id: string, verifiedAt = new Date().toISOString()): Promise<void> {
+  if (isTauriRuntime()) return;
+  await withSharedBrowserTaskLock('backup', async () => {
+    const rows = await loadKv<SavedBackup[]>(BACKUPS_KEY);
+    if (!Array.isArray(rows) || !rows.some((row) => row.id === id)) throw new Error('本地备份已不存在，请刷新列表');
+    await saveKv(BACKUPS_KEY, rows.map((row) => row.id === id ? { ...row, verifiedAt } : row));
+    window.dispatchEvent(new CustomEvent('zichan:safety-updated'));
+  });
 }
 
 async function writeBackups(rows: SavedBackup[]): Promise<void> {

@@ -57,11 +57,11 @@ export async function openPlatformDriver(
     return {
       driver: await SqlJsDriver.open(
         bytes,
-        // Refuse to write a snapshot when another tab took the lease while this
-        // document was backgrounded, instead of silently overwriting newer data.
+        // The quick check catches a lost heartbeat; saveDbBytes also checks the
+        // lease version in the same IndexedDB transaction as the snapshot write.
         async (next) => {
           await releaseLock.assertHeld();
-          await saveDbBytes(next, protection.cryptoSession);
+          await saveDbBytes(next, protection.cryptoSession, undefined, releaseLock.snapshotLease);
         },
         releaseLock,
       ),

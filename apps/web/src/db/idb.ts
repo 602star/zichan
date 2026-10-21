@@ -8,11 +8,21 @@ import {
   DeviceStorageResetRequiredError,
   isDeviceStorageResetRequiredError,
 } from '../device-storage-error.js';
+import { BrowserLedgerAlreadyOpenError } from './browser-ledger-error.js';
 
 /** Minimal IndexedDB store for the encrypted sql.js database and attachment objects. */
 
 const STORE = 'kv';
+export const LEDGER_LEASE_STORE = 'lease';
 const KEY = 'ledger.sqlite';
+const DATABASE_VERSION = 2;
+
+export interface LedgerSnapshotLease {
+  recordKey: string;
+  owner: string;
+  version: number;
+  leaseMs: number;
+}
 
 export interface EncryptedDatabaseSnapshot {
   format: 'zichan-encrypted-database';
@@ -23,12 +33,24 @@ export interface EncryptedDatabaseSnapshot {
   ciphertext: Uint8Array;
 }
 
-function openIdb(databaseName = accountDatabaseName()): Promise<IDBDatabase> {
+export function openIdb(databaseName = accountDatabaseName()): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(databaseName, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-    req.onsuccess = () => resolve(req.result);
+    const req = indexedDB.open(databaseName, DATABASE_VERSION);
+    let blocked = false;
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE);
+      if (!req.result.objectStoreNames.contains(LEDGER_LEASE_STORE)) req.result.createObjectStore(LEDGER_LEASE_STORE);
+    };
+    req.onsuccess = () => {
+      req.result.onversionchange = () => req.result.close();
+      if (blocked) req.result.close();
+      else resolve(req.result);
+    };
     req.onerror = () => reject(req.error);
+    req.onblocked = () => {
+      blocked = true;
+      reject(new Error('浏览器存储升级被其他页面占用，请关闭其他本应用页面后重试'));
+    };
   });
 }
 
@@ -113,8 +135,46 @@ export async function loadDbBytes(session: LedgerCryptoSession, databaseName = a
   return decodeDatabaseStorageValue(session, await loadKv<unknown>(KEY, databaseName));
 }
 
-export async function saveDbBytes(bytes: Uint8Array, session: LedgerCryptoSession, databaseName = accountDatabaseName()): Promise<void> {
-  await saveKv(KEY, await encryptDatabaseSnapshot(session, bytes), databaseName);
+export async function saveDbBytes(
+  bytes: Uint8Array,
+  session: LedgerCryptoSession,
+  databaseName = accountDatabaseName(),
+  lease?: LedgerSnapshotLease | null,
+): Promise<void> {
+  const snapshot = await encryptDatabaseSnapshot(session, bytes);
+  if (!lease) {
+    await saveKv(KEY, snapshot, databaseName);
+    return;
+  }
+  const db = await openIdb(databaseName);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction([LEDGER_LEASE_STORE, STORE], 'readwrite');
+      const leaseStore = tx.objectStore(LEDGER_LEASE_STORE);
+      const snapshotStore = tx.objectStore(STORE);
+      const read = leaseStore.get(lease.recordKey);
+      let lostLease = false;
+      let writeError: unknown;
+      read.onsuccess = () => {
+        const current = read.result as { owner?: string; version?: number; heartbeat?: number } | undefined;
+        if (current?.owner !== lease.owner || current.version !== lease.version
+          || typeof current.heartbeat !== 'number' || current.heartbeat + lease.leaseMs <= Date.now()) {
+          lostLease = true;
+          tx.abort();
+          return;
+        }
+        try { snapshotStore.put(snapshot, KEY); }
+        catch (error) { writeError = error; tx.abort(); }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(lostLease
+        ? new BrowserLedgerAlreadyOpenError('账本租约已失效，请重新打开账本')
+        : writeError ?? tx.error ?? new Error('IndexedDB snapshot write aborted'));
+    });
+  } finally {
+    db.close();
+  }
 }
 
 export async function loadKv<T>(key: string, databaseName = accountDatabaseName()): Promise<T | null> {

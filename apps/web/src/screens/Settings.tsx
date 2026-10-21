@@ -31,6 +31,8 @@ import {
   openVerifiedSavedBackup,
   prepareRemoteBackupForRestore,
   rehearseRestore,
+  recordLocalBackupVerification,
+  removeLocalBackup,
   saveLedgerBackup,
   type ExternalBackupStatus,
   type ParsedEncryptedBackup,
@@ -130,6 +132,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   const [remoteBackups, setRemoteBackups] = useState<RemoteBackupRow[]>([]);
   const [remoteLoaded, setRemoteLoaded] = useState(false);
   const [pendingRemoteDelete, setPendingRemoteDelete] = useState<{ profile: SyncConnection; backup: RemoteBackupArchive } | null>(null);
+  const [pendingLocalDelete, setPendingLocalDelete] = useState<SavedBackup | null>(null);
   const [backupPasswordRequest, setBackupPasswordRequest] = useState<BackupPasswordRequest | null>(null);
   const [backupPassphrase, setBackupPassphrase] = useState('');
   const [restorePickerOpen, setRestorePickerOpen] = useState(false);
@@ -374,6 +377,22 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
       setBackupBusy(null);
     }
   }
+  async function confirmLocalDelete() {
+    const pending = pendingLocalDelete;
+    if (!pending) return;
+    setBackupBusy(`local-delete-${pending.id}`);
+    try {
+      await removeLocalBackup(pending.id);
+      setPendingLocalDelete(null);
+      await refreshBackups();
+      setBackupNote(`已删除本机备份“${pending.label}”；外部和服务器副本未受影响。`);
+    } catch (error) {
+      setBackupNote(`删除本机备份失败：${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    } finally {
+      setBackupBusy(null);
+    }
+  }
 
   async function exportBackupFile() {
     if (backupBusy !== null) return;
@@ -412,14 +431,19 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
     try {
       const opened = await openVerifiedSavedBackup(entry, passphrase);
       const result = await rehearseRestore(opened.payload.ledger);
+      let verificationError = '';
       if (result.ok) {
+        if (storageBackend === 'browser-indexeddb') {
+          try { await recordLocalBackupVerification(entry.id); }
+          catch (error) { verificationError = error instanceof Error ? error.message : String(error); }
+        }
         setBackups((rows) => rows.map((row) => row.id === entry.id
-          ? { ...row, preflight: result.preflight, preflightKnown: true }
+          ? { ...row, preflight: result.preflight, preflightKnown: true, ...(!verificationError && storageBackend === 'browser-indexeddb' ? { verifiedAt: new Date().toISOString() } : {}) }
           : row));
       }
       await saveSafetyState({ lastRehearsalAt: new Date().toISOString(), lastRehearsalOk: result.ok, lastRehearsalLabel: entry.label });
       setBackupNote(result.ok
-        ? `恢复演练通过：${describePreflight(result.preflight)}`
+        ? `恢复演练通过：${describePreflight(result.preflight)}${verificationError ? `；但无法记录验证状态：${verificationError}` : ''}`
         : `恢复演练未通过：${result.error ?? result.consistencyIssues.map((i) => i.detail).join('；')}`);
     } catch (error) {
       if (error instanceof BackupPassphraseRequiredError) {
@@ -442,6 +466,10 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
         setBackupNote(`恢复演练未通过，已停止导入：${rehearsal.error ?? rehearsal.consistencyIssues.map((i) => i.detail).join('；')}`);
         await saveSafetyState({ lastRehearsalAt: new Date().toISOString(), lastRehearsalOk: false, lastRehearsalLabel: entry.label });
         return;
+      }
+      if (storageBackend === 'browser-indexeddb') {
+        try { await recordLocalBackupVerification(entry.id); }
+        catch (error) { setBackupNote(`恢复演练通过，但无法记录验证状态：${error instanceof Error ? error.message : String(error)}`); }
       }
       await saveSafetyState({ lastRehearsalAt: new Date().toISOString(), lastRehearsalOk: true, lastRehearsalLabel: entry.label });
       setPendingRestore({ entry, mode, opened, preflight: rehearsal.preflight });
@@ -575,6 +603,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   }
   const backupSize = (entry: Pick<SavedBackup, 'sizeBytes'>): string => {
     const bytes = entry.sizeBytes;
+    if (bytes === 0) return '0 B';
     return bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
   };
   const reasonLabel = (reason: SavedBackup['reason']): string => {
@@ -588,6 +617,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
     : backupFilter === 'all' ? backups : backups.filter((b) => b.reason === backupFilter);
   const latestBackup = backups[0];
   const latestAuto = backups.find((b) => b.reason === 'auto');
+  const localBackupBytes = backups.reduce((sum, entry) => sum + entry.sizeBytes, 0);
   const selectedLocalBackup = backups.find((b) => restoreSourceKey === `local:${b.id}`);
   const selectedRemoteBackup = remoteBackups.find((row) => restoreSourceKey === `remote:${row.profile.id}:${row.backup.archiveId}`);
   function openRestorePicker(sourceKey = '') {
@@ -929,7 +959,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   <HealthTile label="最近备份" value={latestBackup ? new Date(latestBackup.createdAt).toLocaleString() : '暂无'} tone={latestBackup ? 'var(--positive)' : 'var(--negative)'} />
                   <HealthTile label="自动备份" value={latestAuto ? new Date(latestAuto.createdAt).toLocaleString() : '暂无'} tone={latestAuto ? 'var(--positive)' : 'var(--fg-subtle)'} />
                   <HealthTile label="最近演练" value={safetyState.lastRehearsalAt ? `${safetyState.lastRehearsalOk ? '通过' : '未通过'} · ${safetyState.lastRehearsalLabel ?? ''}` : '未运行'} tone={safetyState.lastRehearsalOk ? 'var(--positive)' : safetyState.lastRehearsalAt ? 'var(--negative)' : 'var(--fg-subtle)'} />
-                  <HealthTile label="备份数量" value={`${backups.length} 份`} tone={backups.length > 0 ? 'var(--positive)' : 'var(--fg-subtle)'} />
+                  <HealthTile label="本机备份" value={`${backups.length} 份 · ${backupSize({ sizeBytes: localBackupBytes })}`} tone={backups.length > 0 ? 'var(--positive)' : 'var(--fg-subtle)'} />
                   <HealthTile label="独立副本最近成功" value={hasIndependentBackup ? (safetyState.lastExternalBackupAt ? new Date(safetyState.lastExternalBackupAt).toLocaleString() : '本次已写入') : '暂无'} tone={hasIndependentBackup ? 'var(--positive)' : 'var(--negative)'} />
                   <HealthTile
                     label={storageBackend === 'native-sqlite' ? '原生存储' : '浏览器存储'}
@@ -938,6 +968,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   />
                 </div>
                 <p className="zc-meta" style={{ overflowWrap: 'anywhere' }}>主数据位置：{dataLocation}</p>
+                {storageBackend === 'browser-indexeddb' && <p className="zc-meta">本机备份与账本共用浏览器存储。上方大小为归档合计，不含存储开销。可删除不再需要的恢复点；最后一份本机备份、通过预检的备份和通过恢复演练的备份会受到保护。</p>}
                 {externalStatus.kind === 'portable' && <p className="zc-meta" style={{ overflowWrap: 'anywhere' }}>{externalStatus.desktopMode === 'installed' ? '安装版本地备份' : '便携本地备份'}：{externalStatus.label}。请启用同步服务器备份，或用“分享 / 下载”复制到其他磁盘。</p>}
                 {backupNote && <p className="zc-caption" style={{ color: backupNote.includes('未通过') || backupNote.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 'var(--fw-bold)' }}>{backupNote}</p>}
                 <div style={{ overflowX: 'auto' }}>
@@ -955,6 +986,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                           <td style={tdStyle}>
                             <div>{reasonLabel(b.reason)} · {b.kind === 'device' ? '完整设备' : '可移植账本'} · {b.tier === 'pinned' ? '固定保留' : b.tier === 'hourly' ? '小时层' : b.tier === 'daily' ? '日层' : '周层'}</div>
                             <div style={{ fontSize: 'var(--fs-meta)', color: b.externalSaved ? 'var(--positive)' : 'var(--fg-subtle)', marginTop: 3 }}>{b.externalSaved ? '创建时已写入远端 / 外部副本' : storageBackend === 'native-sqlite' ? '便携目录内本地备份；远端副本见服务器列表' : '仅本机存储'}</div>
+                            {b.verifiedAt && <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--positive)', marginTop: 3 }}>已通过恢复演练 · {new Date(b.verifiedAt).toLocaleString()}</div>}
                           </td>
                           <td style={tdStyle}>{backupSize(b)}</td>
                           <td style={{ ...tdStyle, color: b.preflightKnown === false ? 'var(--text-secondary)' : b.preflight.ok ? 'var(--positive)' : 'var(--negative)' }}>
@@ -972,6 +1004,9 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                                 {backupBusy === `download-${b.id}` ? '保存中…' : storageBackend === 'native-sqlite' ? '另存为…' : '分享 / 下载'}
                               </button>
                               <button onClick={() => openRestorePicker(`local:${b.id}`)} disabled={backupBusy !== null} style={btnOutline}>恢复…</button>
+                              {storageBackend === 'browser-indexeddb' && (
+                                <button type="button" onClick={() => setPendingLocalDelete(b)} disabled={backupBusy !== null} style={btnDanger}>删除本机副本</button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1229,6 +1264,19 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
         >
           将把“{pendingRemoteDelete.backup.label}”从 {pendingRemoteDelete.profile.alias} 的备份目录移除，
           密文对象先进入服务器回收区，等待延迟清理。
+        </ConfirmDialog>
+      )}
+      {pendingLocalDelete && (
+        <ConfirmDialog
+          title="删除本机备份"
+          confirmLabel="删除本机副本"
+          cancelLabel="取消"
+          tone="danger"
+          busy={backupBusy === `local-delete-${pendingLocalDelete.id}`}
+          onCancel={() => setPendingLocalDelete(null)}
+          onConfirm={confirmLocalDelete}
+        >
+          将从当前浏览器删除“{pendingLocalDelete.label}”（{backupSize(pendingLocalDelete)}）。此操作无法撤销；外部目录和服务器上的副本不会删除。最后一份本机备份、通过预检的备份或通过恢复演练的备份会受到保护。
         </ConfirmDialog>
       )}
       {cleanupOpen && (
