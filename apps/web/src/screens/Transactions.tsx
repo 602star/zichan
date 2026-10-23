@@ -1612,13 +1612,17 @@ export function Transactions() {
           <p className="zc-meta">默认账户归集暂不细分来源的收支。下方银行卡与钱包展示账面余额；余额流水从各自的余额起点开始。</p>
           {!selectedAccountId ? <p>添加银行卡或钱包后，可以核对余额和账单。现在也可以继续使用默认账户记收支。</p> : <>
           <div className="zc-account-filter-grid" style={{ display: 'grid', gridTemplateColumns: '220px 160px 1fr', gap: 10, marginBottom: 14 }}>
-            <select style={selectStyle} value={selectedAccountId} onChange={(e) => setAccountId(e.target.value)}>
-              {snap.accounts.filter((a) => !isDefaultAccount(a) && a.kind !== 'other').map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-            <select style={selectStyle} value={assetId} onChange={(e) => setAssetId(e.target.value)}>
-              <option value="all">全部币种</option>
-              {accountAssets.map((id) => <option key={id} value={id}>{snap.assets.find((a) => a.id === id)?.code ?? id}</option>)}
-            </select>
+            <label className="zc-field">账户
+              <select style={selectStyle} value={selectedAccountId} onChange={(e) => setAccountId(e.target.value)}>
+                {snap.accounts.filter((a) => !isDefaultAccount(a) && a.kind !== 'other').map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </label>
+            <label className="zc-field">币种
+              <select style={selectStyle} value={assetId} onChange={(e) => setAssetId(e.target.value)}>
+                <option value="all">全部币种</option>
+                {accountAssets.map((id) => <option key={id} value={id}>{snap.assets.find((a) => a.id === id)?.code ?? id}</option>)}
+              </select>
+            </label>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {vm.accountBalances.filter((b) => b.accountId === selectedAccountId).map((b) => (
                 <span key={`${b.accountId}:${b.assetId}`} style={tagStyle}>{b.amount} {b.assetCode}</span>
@@ -1652,7 +1656,7 @@ export function Transactions() {
             </div>
           )}
           <div style={{ marginTop: 18, fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>对账记录</div>
-          <Table headers={['账单日', '账户', '币种', '账单余额', '差额', '状态']}>
+          <Table headers={['账单日', '账户', '币种', '账单余额', '差额', '状态', '操作']}>
             {reconciliationRows.map((r) => (
               <tr key={r.id} onClick={() => setEditingReconcile(r)} style={{ cursor: 'pointer' }}>
                 <td style={tdStyle}>{r.statementDate}</td>
@@ -1661,9 +1665,10 @@ export function Transactions() {
                 <td style={tdStyle}>{r.statementBalance}</td>
                 <td style={{ ...tdStyle, ...amountColor(D(r.difference).negated()) }}>{r.difference}</td>
                 <td style={tdStyle}>{r.status === 'closed' ? '已完成' : '进行中'}</td>
+                <td style={tdStyle}><button type="button" style={button} onClick={(event) => { event.stopPropagation(); setEditingReconcile(r); }}>查看对账</button></td>
               </tr>
             ))}
-            {reconciliationRows.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={6}>该时间范围内暂无对账记录</td></tr>}
+            {reconciliationRows.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={7}>该时间范围内暂无对账记录</td></tr>}
           </Table></>}
         </div>
       )}
@@ -2176,7 +2181,7 @@ function SavedViews(props: {
                     </button>
                   </>
                 )}
-                <button onClick={() => props.onRemove(view)} title="删除保存的筛选" style={{ ...button, padding: '6px 8px' }}>×</button>
+                <button type="button" aria-label={`删除保存的筛选 ${view.name}`} onClick={() => props.onRemove(view)} title="删除保存的筛选" style={{ ...button, padding: '6px 8px' }}>×</button>
               </span>
             );
           })}
@@ -2323,7 +2328,7 @@ function AdvancedConditionRow(props: {
       {condition.op === 'between'
         ? <ConditionValueInput snap={snap} field={condition.field} value={condition.value2 ?? ''} options={options} onChange={(value2) => onChange({ value2 })} />
         : <span />}
-      <button onClick={onRemove} title="删除条件" style={{ ...button, padding: '8px 10px' }}>×</button>
+      <button type="button" aria-label="删除筛选条件" onClick={onRemove} title="删除条件" style={{ ...button, padding: '8px 10px' }}>×</button>
     </div>
   );
 }
@@ -2576,9 +2581,6 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
                   className={`zc-transaction-row${setSelectedIds ? ' has-selection' : ''}${usesAccounts ? ' has-account' : ''}`}
                   key={tx.id}
                   onClick={() => onEdit(tx)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') onEdit(tx); }}
-                  role="button"
-                  tabIndex={0}
                   style={{
                     width: '100%', display: 'grid', gridTemplateColumns: `${setSelectedIds ? '34px ' : ''}${usesAccounts ? '88px var(--zc-category-track) 1fr 150px 110px 72px' : '88px var(--zc-category-track) 1fr 110px 72px'}`,
                     alignItems: 'center', gap: 12, border: 'none', borderBottom: '1px solid var(--border)',
@@ -2631,12 +2633,13 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
                   <span style={{ justifySelf: 'end', fontSize: 'var(--fs-body)', ...(settled ? { textDecoration: 'line-through', color: 'var(--text-tertiary)' } : amountColor(item.signedAmount)) }}>
                     {tx.type === 'transfer' ? '' : tx.type === 'income' || tx.type === 'refund' || (tx.type === 'adjustment' && tx.adjustmentDirection === 'increase') ? '+' : '-'}{tx.amount} {item.assetCode}
                   </span>
-                  <span style={{ justifySelf: 'end' }}>
+                  <span className="zc-transaction-actions" style={{ justifySelf: 'end', display: 'flex', gap: 4 }}>
+                    <button type="button" aria-label={`查看 ${title} 的详情`} onClick={(event) => { event.stopPropagation(); onEdit(tx); }} style={{ ...button, padding: '6px 8px' }}>详情</button>
                     {tx.type === 'expense' && D(remaining).gt(0) ? (
                       <button
                         type="button"
                         onClick={(event) => { event.stopPropagation(); onRefund(tx); }}
-                        style={{ ...button, padding: '6px 10px' }}
+                        style={{ ...button, padding: '6px 8px' }}
                         title={`剩余可退 ${remaining}`}
                       >退款</button>
                     ) : null}
@@ -2847,20 +2850,26 @@ function BatchEditModal(props: {
             allowInactive={false} disabled={busy} onChange={(id) => { markDirty(); setPayeeId(id); }} />
           {usesAccounts && (
             <>
-              <select style={selectStyle} value={accountId} onChange={(e) => { markDirty(); setAccountId(e.target.value); }}>
-                <option value="">不改账户</option>
-                {snap.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-              <select style={selectStyle} value={status} onChange={(e) => { markDirty(); setStatus(e.target.value); }}>
-                <option value="">不改状态</option>
-                {STATUS_OPTIONS.filter((o) => o.value !== 'all').map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+              <label className="zc-field">账户
+                <select style={selectStyle} value={accountId} onChange={(e) => { markDirty(); setAccountId(e.target.value); }}>
+                  <option value="">不改账户</option>
+                  {snap.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </label>
+              <label className="zc-field">状态
+                <select style={selectStyle} value={status} onChange={(e) => { markDirty(); setStatus(e.target.value); }}>
+                  <option value="">不改状态</option>
+                  {STATUS_OPTIONS.filter((o) => o.value !== 'all').map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </label>
             </>
           )}
-          <select style={selectStyle} value={locationId} onChange={(e) => { markDirty(); setLocationId(e.target.value); }}>
-            <option value="">不改地点</option>
-            {snap.transactionLocations.filter((l) => !l.isDeleted).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
+          <label className="zc-field">地点
+            <select style={selectStyle} value={locationId} onChange={(e) => { markDirty(); setLocationId(e.target.value); }}>
+              <option value="">不改地点</option>
+              {snap.transactionLocations.filter((l) => !l.isDeleted).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </label>
         </div>
         <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 10 }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>

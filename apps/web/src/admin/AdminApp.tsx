@@ -31,7 +31,7 @@ import { UsersPage } from './UsersPage.js';
 import './admin.css';
 import { PasswordRecovery } from '../ui/PasswordRecovery.js';
 import { useBodyScrollLock } from '../ui/body-scroll-lock.js';
-import { Breadcrumbs, roleLabel } from './ui.js';
+import { Breadcrumbs, isPlainPrimaryClick, roleLabel } from './ui.js';
 import { adminNavigation } from './navigation.js';
 
 const navigationIcons: Record<string, LucideIcon> = {
@@ -203,7 +203,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
           {account ? (
             <>
               <span className="zc-admin-operator"><strong>{account.username}</strong><small>{roleLabel(account.role)}</small></span>
-              <a className="zc-admin-security-link" href={adminHref(adminBasePath(window.location), '/security')} onClick={(event) => { event.preventDefault(); navigateRoute(adminHref(adminBasePath(window.location), '/security')); }}>账号安全</a>
+              <a className="zc-admin-security-link" href={adminHref(adminBasePath(window.location), '/security')} onClick={(event) => { if (!isPlainPrimaryClick(event)) return; event.preventDefault(); navigateRoute(adminHref(adminBasePath(window.location), '/security')); }}>账号安全</a>
               <button className="zc-admin-logout" onClick={() => void logout()}><LogOut size={16} aria-hidden="true" />退出</button>
             </>
           ) : null}
@@ -349,7 +349,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
             href={adminHref(basePath, item.path)}
             aria-current={item === current ? 'page' : undefined}
             data-active={item === current ? 'true' : undefined}
-            onClick={(event) => { event.preventDefault(); setNavOpen(false); go(item.path); }}
+            onClick={(event) => { if (!isPlainPrimaryClick(event)) return; event.preventDefault(); setNavOpen(false); go(item.path); }}
           >{Icon ? <Icon size={17} strokeWidth={1.8} aria-hidden="true" /> : null}<span>{item.label}</span></a>
           );
           };
@@ -359,7 +359,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
           </div>;
         })}
         <div className="zc-admin-nav-footer">
-          <a href={adminHref(basePath, '/security')} onClick={(event) => { event.preventDefault(); setNavOpen(false); go('/security'); }}><ShieldCheck size={17} strokeWidth={1.8} aria-hidden="true" /><span>账号安全</span></a>
+          <a href={adminHref(basePath, '/security')} onClick={(event) => { if (!isPlainPrimaryClick(event)) return; event.preventDefault(); setNavOpen(false); go('/security'); }}><ShieldCheck size={17} strokeWidth={1.8} aria-hidden="true" /><span>账号安全</span></a>
           <a href={`${baseUrl}/app/`}><ExternalLink size={17} strokeWidth={1.8} aria-hidden="true" /><span>打开记账应用</span></a>
         </div>
       </nav>

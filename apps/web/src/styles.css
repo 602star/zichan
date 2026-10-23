@@ -677,6 +677,22 @@ button,
   min-height: 100dvh;
 }
 
+.zc-skip-link {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 1000;
+  transform: translateY(-150%);
+  padding: 10px 14px;
+  border-radius: var(--r-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.zc-skip-link:focus-visible {
+  transform: translateY(0);
+}
+
 #zc-dialog-portal {
   display: contents;
 }
@@ -2147,6 +2163,10 @@ input[type="radio"] {
   --zc-category-track: 112px;
 }
 
+.zc-transaction-actions {
+  flex-direction: column;
+}
+
 @media (min-width: 1024px) {
   .zc-transaction-row {
     --zc-category-track: minmax(112px, 200px);
@@ -2286,7 +2306,7 @@ input[type="radio"] {
     padding: calc(10px + env(safe-area-inset-top)) 15px 10px;
   }
 
-  .zc-header-title > div:first-child {
+  .zc-header-title > h1:first-child {
     font-size: var(--fs-heading) !important;
   }
 
@@ -2867,6 +2887,13 @@ input[type="radio"] {
   .zc-transaction-row:not(.has-selection).has-account > :nth-child(5) {
     grid-column: 2;
     grid-row: 1;
+  }
+
+  .zc-transaction-actions {
+    grid-column: 1 / -1;
+    grid-row: 4;
+    justify-self: end;
+    flex-direction: row;
   }
 
   .zc-transaction-row:not(.has-selection).has-account > :nth-child(4),

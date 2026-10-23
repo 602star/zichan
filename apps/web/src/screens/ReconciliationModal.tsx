@@ -190,7 +190,7 @@ export function ReconciliationModal(props: Props) {
           {!session && (
             <>
               <div style={{ display: 'flex', gap: 10, marginTop: 18, alignItems: 'center' }}>
-                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索日期、摘要、商户、分类或金额" style={{ ...inputStyle, flex: 1 }} />
+                <input aria-label="搜索对账记录" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索日期、摘要、商户、分类或金额" style={{ ...inputStyle, flex: 1 }} />
                 <button type="button" onClick={() => setSelectedIds(preview?.candidates.filter((row) => row.transaction.status !== 'pending').map((row) => row.transaction.id) ?? [])} style={button}>勾选无需核实的记录</button>
                 <button type="button" onClick={() => setSelectedIds([])} style={button}>清空</button>
               </div>

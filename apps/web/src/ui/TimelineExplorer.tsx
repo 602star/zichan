@@ -128,16 +128,20 @@ function EntryList<T>(props: { rows: T[]; keyOf: (item: T) => string; renderEntr
   return (
     <div style={{ ...card, paddingTop: 4, paddingBottom: 4 }}>
       {props.rows.map((item) => (
-        <div
-          key={props.keyOf(item)}
-          role={props.onOpen ? 'button' : undefined}
-          tabIndex={props.onOpen ? 0 : undefined}
-          onClick={() => props.onOpen?.(item)}
-          onKeyDown={(event) => { if (props.onOpen && event.key === 'Enter') props.onOpen(item); }}
-          style={{ borderBottom: '1px solid var(--border)', padding: '9px 0', cursor: props.onOpen ? 'pointer' : 'default' }}
-        >
-          {props.renderEntry(item)}
-        </div>
+        props.onOpen ? (
+          <button
+            key={props.keyOf(item)}
+            type="button"
+            onClick={() => props.onOpen?.(item)}
+            style={{ display: 'block', width: '100%', border: 0, borderBottom: '1px solid var(--border)', padding: '9px 0', background: 'transparent', color: 'inherit', font: 'inherit', textAlign: 'left', cursor: 'pointer' }}
+          >
+            {props.renderEntry(item)}
+          </button>
+        ) : (
+          <div key={props.keyOf(item)} style={{ borderBottom: '1px solid var(--border)', padding: '9px 0' }}>
+            {props.renderEntry(item)}
+          </div>
+        )
       ))}
     </div>
   );

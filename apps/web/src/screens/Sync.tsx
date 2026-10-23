@@ -1693,13 +1693,13 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
             {(wizardMode === 'lan' || wizardMode === 'public') && (
               <div className="zc-sync-wizard-grid" style={{ display: 'grid', gridTemplateColumns: wizardMode === 'public' ? '1fr 180px' : '1fr', gap: 10, marginBottom: 10 }}>
                 <div>
-                  <label className="zc-label">{wizardMode === 'public' ? '公网域名' : '局域网 IP / 主机名'}</label>
-                  <input className="zc-input" value={wizardHost} onChange={(e) => setWizardHost(e.target.value)} placeholder={wizardMode === 'public' ? 'ledger.example.com' : '192.168.1.100'} />
+                  <label className="zc-label" htmlFor="zc-sync-wizard-host">{wizardMode === 'public' ? '公网域名' : '局域网 IP / 主机名'}</label>
+                  <input id="zc-sync-wizard-host" className="zc-input" value={wizardHost} onChange={(e) => setWizardHost(e.target.value)} placeholder={wizardMode === 'public' ? 'ledger.example.com' : '192.168.1.100'} />
                 </div>
                 {wizardMode === 'public' && (
                   <div>
-                    <label className="zc-label">安全路径</label>
-                    <input className="zc-input" value={wizardBasePath} onChange={(e) => setWizardBasePath(e.target.value)} placeholder="/zichan" />
+                    <label className="zc-label" htmlFor="zc-sync-wizard-path">安全路径</label>
+                    <input id="zc-sync-wizard-path" className="zc-input" value={wizardBasePath} onChange={(e) => setWizardBasePath(e.target.value)} placeholder="/zichan" />
                   </div>
                 )}
               </div>
@@ -1762,7 +1762,11 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
               {profiles.map((p) => (
                 <tr key={p.id} onClick={() => setSelectedId(p.id)} style={{ cursor: 'pointer', background: selected?.id === p.id ? 'var(--accent-soft)' : 'transparent' }}>
                   <td style={tdStyle}><span className="zc-check-target" onClick={(e) => e.stopPropagation()}><input aria-label={`启用 ${p.alias}`} type="checkbox" checked={p.enabled} disabled={isPrimaryWebConnection(p)} onChange={(e) => patchProfile(p.id, { enabled: e.target.checked })} onClick={(e) => e.stopPropagation()} /></span></td>
-                  <td style={tdStyle}>{p.alias}{isPrimaryWebConnection(p) && ' · 本站登录'}{p.browserBridge && ' · 浏览器同步'}</td>
+                  <td style={tdStyle}>
+                    <button type="button" aria-label={`编辑服务器 ${p.alias}`} aria-current={selected?.id === p.id ? 'true' : undefined} onClick={(event) => { event.stopPropagation(); setSelectedId(p.id); }} style={{ border: 0, padding: 0, background: 'transparent', color: 'inherit', font: 'inherit', textAlign: 'left', cursor: 'pointer' }}>
+                      {p.alias}{isPrimaryWebConnection(p) && ' · 本站登录'}{p.browserBridge && ' · 浏览器同步'}
+                    </button>
+                  </td>
                   <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{buildBaseUrl(p)}</td>
                   <td style={tdStyle}>{p.username || '—'}</td>
                   <td style={{ ...tdStyle, color: p.status === 'online' ? 'var(--positive)' : p.status === 'offline' || p.status === 'identity_changed' || p.status === 'replica_retired' ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 'var(--fw-bold)' }}>{statusText[p.status]}</td>

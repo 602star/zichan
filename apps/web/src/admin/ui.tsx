@@ -8,6 +8,10 @@ export const anchorOffset: CSSProperties = { scrollMarginTop: 16 };
 export const row: CSSProperties = { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' };
 export const muted: CSSProperties = { color: 'var(--text-muted)', fontSize: 'var(--fs-sm)' };
 
+export function isPlainPrimaryClick(event: React.MouseEvent<HTMLAnchorElement>): boolean {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
+
 /**
  * Whether this role may change anything. A read-only operator (`viewer`) sees every page; the
  * controls that would write are disabled here and refused by the server if they are reached
@@ -290,6 +294,7 @@ export function PanelIndex({ sections }: { sections: PageSection[] }) {
           key={section.id}
           href={`#${section.id}`}
           onClick={(event) => {
+            if (!isPlainPrimaryClick(event)) return;
             // Scroll without letting the hash change the URL: the console's routes
             // are its own, and a stray fragment would be read back as a route.
             event.preventDefault();
@@ -411,7 +416,7 @@ export function Breadcrumbs({ crumbs, onNavigate }: {
             ) : (
               <a
                 href={crumb.href}
-                onClick={onNavigate ? (event) => { event.preventDefault(); onNavigate(crumb.href!); } : undefined}
+                onClick={onNavigate ? (event) => { if (!isPlainPrimaryClick(event)) return; event.preventDefault(); onNavigate(crumb.href!); } : undefined}
               >{crumb.label}</a>
             )}
           </Fragment>

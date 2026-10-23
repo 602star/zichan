@@ -544,15 +544,16 @@ export function App() {
 
   return (
     <div className="zc-app-shell" style={rootStyle}>
+      <a className="zc-skip-link" href="#zc-app-main" onClick={(event) => { event.preventDefault(); document.getElementById('zc-app-main')?.focus(); }}>跳转到主要内容</a>
       <Sidebar screen={screen} setScreen={setScreen} onQuickTransaction={quickTransaction} ledgerMode={ledgerMode} navigation={effectiveNavigation} />
-      <main className="zc-app-main">
+      <main id="zc-app-main" className="zc-app-main" tabIndex={-1}>
         <header className="zc-app-header" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           borderBottom: '1px solid var(--border)',
           position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 5,
         }}>
           <div className="zc-header-title">
-            <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{title}</div>
+            <h1 style={{ margin: 0, fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{title}</h1>
             <div className="zc-header-subtitle" style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginTop: 3 }}>{sub}</div>
           </div>
           <div className="zc-header-meta" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
