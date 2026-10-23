@@ -416,6 +416,3 @@ export async function seedDemoLedger(store: SqlLedgerStore): Promise<void> {
   await store.fixedAssetGoals.put(goal(car.id, '每公里净使用成本', 'km', '12028', '0.5', D('12028').div('0.5').ceil().toString(), '2024-01-15', carKm.id));
   }, 'system', { undoable: false });
 }
-
-/** Kept for fixture compatibility; production startup must use seedDemoLedger explicitly. */
-export const seedIfEmpty = seedDemoLedger;

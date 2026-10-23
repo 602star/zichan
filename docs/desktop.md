@@ -54,7 +54,7 @@ Debug 模式只写仓库内被忽略的 `.runtime/desktop/`；自动化测试可
 - 主库：`data/ledger/ledger.sqlite`；附件：`data/attachments/{staging,objects,trash,quarantine}`；加密 `.zcbak`：`data/backups`。
 - Stronghold 位于 `data/security`；WebView 的 localStorage、IndexedDB 和缓存固定在 `data/webview`；一体服务器状态位于 `data/server`。
 
-升级便携版时先正常退出应用和内置服务器，把新 ZIP 解压到新的空目录，再将旧目录的整个 `data/` 复制进去，保留旧目录作为回退副本。不要把新资源直接覆盖到旧程序目录：旧的带哈希 JS 文件可能残留，便携资源清单校验会拒绝启动。移动同一版本时则移动整个便携目录。
+升级便携版时先正常退出应用和内置服务器，把新 ZIP 解压到新的空目录。仅在新旧版本的数据 schema 均受当前程序支持时，才将旧目录的整个 `data/` 复制进去；当前客户端仅接受 schema 127，内置服务器仅接受 schema 27，旧开发数据不支持直接复制升级。保留旧目录作为回退副本。不要把新资源直接覆盖到旧程序目录：旧的带哈希 JS 文件可能残留，便携资源清单校验会拒绝启动。移动同一版本时则移动整个便携目录。
 - 打包前运行 `npm run release:check` 和 `npm run test:release`；正式入口统一为 `scripts\windows\build-desktop.cmd`。
 - 发布说明至少写清：新增功能、数据目录、备份建议、同步服务器是否需要重新登录、已知限制。
 - 完整 ZIP 契约、WebView2 准备和 Windows Sandbox 验收见 [desktop-release.md](desktop-release.md)。

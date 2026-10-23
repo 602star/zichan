@@ -1,6 +1,6 @@
 # 账号模式实施状态
 
-以 2026-09-12 当前设计为准，不迁移旧浏览器账本或旧用户密钥。本文替代早期分批实施计划；详细验收见[交付记录](release-readiness.md)。
+> 历史实施记录（2026-09-12）。下文的流程和验收结论反映当时状态；现行保护与同步行为见[账本保护与离线访问](ledger-protection.md)和[云同步](cloud-sync.md)。本文替代早期分批实施计划；当时的详细验收见[交付记录](release-readiness.md)。
 
 ## 已接入的流程
 
@@ -21,4 +21,4 @@
 
 使用 `npm test`、`npm run typecheck`、`npm run lint`、`npm run build:server` 和 `npm run test:e2e:account` 验证代码。具体结果、原生 Windows 与手机视口覆盖范围见交付记录，不以历史测试数作为当前版本证明。
 
-生产及公网部署使用可信 HTTPS；开发、localhost 与显式开启 ALLOW_INSECURE_HTTP 的私有局域网可使用 HTTP。HTTPS 部署恢复演练只操作隔离实例，正式服务升级仍需部署者安排。服务器当前 schema 为 `server_key_custody_v10`，备份必须包含托管主密钥 `custody.key`。
+生产及公网部署使用可信 HTTPS；开发、localhost 与显式开启 ALLOW_INSECURE_HTTP 的私有局域网可使用 HTTP。HTTPS 部署恢复演练只操作隔离实例，正式服务升级仍需部署者安排。当时服务器 schema 为 `server_key_custody_v10`；现行 schema 27 的备份范围见[云同步](cloud-sync.md)。

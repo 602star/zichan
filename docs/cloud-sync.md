@@ -155,9 +155,9 @@ Compose 将父目录 `/state` 挂载到 `zichan-data`，实际 `DATA_DIR` 为 `/
 
 ## 备份、迁移与恢复演练
 
-从 schema 6 至 12 首次升级到 schema 13 时，服务器会在 SQLite 内复制旧提交密文到按副本分区的新表；此步骤不复制图片等附件文件。升级前应先完成并验证独立备份，并为提交数据的临时双份占用预留空间。启动过程会按提交字节数、索引和 WAL 余量检查数据库所在磁盘；空间不足会停止迁移并保留旧数据。大账本的首次启动可能等待此数据库迁移完成。
+服务器当前 schema 为 27（`single_user_replica_storage_v27`）。启动及备份恢复只接受当前 schema marker，不提供旧 schema 的原地升级；升级部署前应核对数据版本并完成独立备份。旧版本数据的处理需另行确定支持边界和迁移方案。
 
-新版本在服务器数据目录中另存节点签名私钥 `node-signing.key`，供后续节点间复制使用。备份会包含该文件；数据库一旦绑定其公钥，私钥丢失时服务器拒绝自动生成新节点身份。恢复旧备份时按旧版本身份规则升级。
+服务器数据目录另存节点签名私钥 `node-signing.key`，供节点间复制使用。备份会包含该文件；数据库一旦绑定其公钥，私钥丢失时服务器拒绝自动生成新节点身份。
 
 维护命令要求先停止服务器。备份先用 SQLite `VACUUM INTO` 生成一致快照，再复制 `server.secret`、`custody.key`、`server-id`、OPAQUE 服务器 setup 和附件目录；账号角色与设备会话都在 SQLite 中，不存在单独的管理密钥文件。每个文件写入 SHA-256 清单，全部校验通过后才原子提升备份目录。`server.sqlite`、`server.secret`、`server-id` 和 `opaque.server-setup` 是恢复必需文件。恢复会先预检到暂存目录，再保留原数据为 `*.before-restore-*` 并原子替换。
 
@@ -175,4 +175,4 @@ docker compose run --rm -v ./backups:/backup sync-server \
   node dist/maintenance.js verify-backup --backup /backup/2026-07-19
 ```
 
-恢复演练应恢复到隔离目录，使用临时端口启动，检查 `/api/ready`，再在管理后台执行数据库和附件校验，并用测试客户端拉取一份带图片的账本。迁移成功后保留恢复前目录，直到所有设备完成一次同步。当前服务器及备份工具接受 schema 22 和可追加升级的 schema 6 至 21；恢复工具撤销旧会话并清除未完成登录及密码重置码，需要重新登录。旧 PBKDF2/固定证明/一次性 challenge 认证、旧 JSON 状态、人工管理 Token 与旧 SQLite 基线都不读取、不转换。
+恢复演练应恢复到隔离目录，使用临时端口启动，检查 `/api/ready`，再在管理后台执行数据库和附件校验，并用测试客户端拉取一份带图片的账本。恢复后保留恢复前目录，直到所有设备完成一次同步。当前服务器及备份工具只接受 schema 27；恢复工具撤销旧会话并清除未完成登录及密码重置码，需要重新登录。旧 PBKDF2/固定证明/一次性 challenge 认证、旧 JSON 状态、人工管理 Token 与旧 SQLite 基线都不读取、不转换。

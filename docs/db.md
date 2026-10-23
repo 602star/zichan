@@ -58,7 +58,7 @@ Indexes cover the hot query columns (FKs + dates): `game_records.season_id`,
 ## 当前 Schema 基线
 
 [migrations.ts](../packages/db/src/migrations.ts) 当前开发基线为
-`current_schema_2026_10_05_consumable_merchant`（version 127）。代码只对明确列出的旧开发基线执行原地升级；发现其他旧 marker、旧表、缺列、
+`current_schema_2026_10_05_consumable_merchant`（version 127）。当前代码不提供旧开发基线的原地升级；发现旧 marker、旧表、缺列、
 多列或额外表时会抛出 `SchemaResetRequiredError`，Web/桌面初始化错误页提供“重置本机开发数据”。Web 端另外会把未加密、
 无法解密或数据密钥不匹配的 IndexedDB 快照标记为需要显式重置，并同时提供重试和返回解锁入口。
 应用不会自动删除账本，也不会猜测性转换旧结构。若数据库已有业务表但缺少 `schema_migrations`，验证会在写入任何 marker
@@ -68,15 +68,15 @@ Indexes cover the hot query columns (FKs + dates): `game_records.season_id`,
 ### 1.0 迁移兼容边界
 
 产品决策（2026-08-13）：正式数据库迁移框架暂不纳入当前 `0.x` 开发阶段。开发期间仍允许直接提升当前 schema 基线，
-旧开发库继续通过导出备份或显式重置处理，不承诺从 version 114、115、116 或未列出的开发期 schema 原地升级。当前代码为 version 117 至 126 提供逐版、显式的原地升级；每一步先验证结构并在事务内更新 marker，其他版本拒绝猜测性迁移。
+旧开发库需先用匹配其版本的程序导出可受理的备份，或经用户确认后显式重置；当前代码不提供 version 117 至 126 的原地升级，也不自动清除旧数据。
 
 到 `1.0` 发布准备阶段，再冻结**当时最终确认的 schema** 作为首个长期兼容基线；正式编号迁移只承诺覆盖
 `1.0 → 后续版本`。届时再单独审批迁移事务、失败回滚、幂等、未来版本拒绝、跨 sql.js / Node SQLite /
 Tauri SQLite 验证和升级测试矩阵。本事项当前状态为“已记录、延期”，不得在其他功能改造中顺带引入半套迁移机制。
 
 每次启动都会逐表、逐列验证当前结构。默认收支分类与物品二级分类属于当前产品资料，由 seed 和
-幂等维护任务写入，不再借 schema migration 播种。便携备份只接受完整的 `version=7` 当前格式，
-所有实体集合都必须显式存在。
+幂等维护任务写入，不再借 schema migration 播种。便携备份接受完整的 `version=7` 或 `version=8` 载荷，
+各版本要求的实体集合都必须显式存在。
 
 ## 平台存储边界
 

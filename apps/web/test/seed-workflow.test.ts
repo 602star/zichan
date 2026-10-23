@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { checkConsistency, exportLedger, preflightImport } from '@zichan/db';
 import { openLedger } from '@zichan/db/node';
-import { seedIfEmpty } from '../src/db/seed.js';
+import { seedDemoLedger } from '../src/db/seed.js';
 import { loadSnapshot } from '../src/db/snapshot.js';
 import { buildFixed } from '../src/selectors/fixed.js';
 
 describe('real demo ledger workflow', () => {
   it('seeds, calculates, backs up, and keeps module defaults non-retroactive', async () => {
     const store = await openLedger({ deviceId: 'web-real-flow' });
-    await Promise.all([seedIfEmpty(store), seedIfEmpty(store)]);
+    await Promise.all([seedDemoLedger(store), seedDemoLedger(store)]);
     expect(await checkConsistency(store)).toEqual([]);
     expect(await store.settings.count()).toBe(1);
 

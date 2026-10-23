@@ -120,10 +120,6 @@ Header；实际访问控制由 OPAQUE、Bearer 会话、角色检查、设备撤
 loopback 或私有局域网；HTTPS 页面连接私网 HTTP 仍可能被浏览器混合内容或私有网络策略阻止，此时应使用
 可信 HTTPS、服务器自带 Web 或桌面端。
 
-本项目尚未发布，只接受当前提交协议 v2、HTTP/密文协议 v3、加密归档 v4（载荷 v2、账本备份 v7）、
-同步服务器 `server_management_ops_v11`（schema 11）和本地账本
-`current_schema_2026_09_22_entity_icons`（schema 119）。旧 PBKDF2/HMAC 认证、旧 Admin Token、旧管理路由、
-旧同步连接配置、旧事件端点、旧游标表、快照同步以及开发期旧数据库均不读取或迁移；发现旧开发数据时明确要求重置。
-明确支持的例外是：同步服务器 schema 6–10（版本及名称必须匹配代码白名单）和本地账本 version 117–118。
-服务器启动时补齐当前表、列和账号身份映射，再更新 marker；账本 117 补齐账户入门所需列和 `payees.icon` 后升级到 119，118 只补 `payees.icon`。
-这些路径保留已有数据，不代表其他开发期版本也支持原地升级。
+当前提交协议为 v2、HTTP/密文协议为 v3、加密归档为 v4（载荷 v2；账本备份载荷为 v7 或 v8）。
+同步服务器当前为 `single_user_replica_storage_v27`（schema 27），本地账本为
+`current_schema_2026_10_05_consumable_merchant`（schema 127）。启动只接受各自的当前 schema marker；旧开发数据库不原地升级，也不会自动清除。旧库应先用匹配版本的程序导出受支持的备份，或经用户确认后显式重置。具体存储边界见 [数据库](db.md)和[云同步](cloud-sync.md)。

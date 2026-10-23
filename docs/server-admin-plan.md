@@ -1,6 +1,6 @@
 # 服务器管理后台完善方案（一期 A–D）
 
-> 历史规划文档。私密模式和 `ACCOUNT_PROTECTION` / `CUSTODY_ENABLED` 配置已移除；当前行为以[账本保护与离线访问](ledger-protection.md)为准。
+> 历史规划与验收记录（2026-09-17 起）。正文中的“当前”“未实施”、schema 版本及升级路径均指记录当时，不代表现行状态。当前管理能力见[服务器管理后台](server-admin.md)，数据版本见[数据库](db.md)与[云同步](cloud-sync.md)。私密模式和 `ACCOUNT_PROTECTION` / `CUSTODY_ENABLED` 配置已移除；当前保护行为见[账本保护与离线访问](ledger-protection.md)。
 
 > 状态：**方案，未实施**。本文件只描述拟实施内容，本次提交只新增本文件与工作记录，不修改任何代码。
 >
