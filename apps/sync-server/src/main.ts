@@ -100,7 +100,7 @@ server.listen(port, host, () => {
   console.log(`zichan server -> http://${bind}  (data directory: ${dataDir})`);
   console.log(`serverId=${serverId} sync=${enableSync ? 'on' : 'off'} web=${enableWeb && webDir ? 'on' : 'off'} registration=${registrationMode} basePath=${basePath || '/'}`);
   console.log(`account-admin=owner-session${webDir ? ` webDir=${webDir}` : ''}`);
-  console.log(`Admin console path: ${basePath || ''}/${service.adminAccessPath()}/admin/`);
+  console.log(`Admin console path: ${basePath || ''}${service.adminAccessPath() ? `/${service.adminAccessPath()}` : ''}/admin/`);
   console.log('First use: open the admin console address above and set your administrator username and password.');
   console.log(`transport=${boolEnv('ALLOW_INSECURE_HTTP', false) ? 'explicit HTTP allowed' : 'HTTPS required outside loopback'} trustedProxies=${listEnv('TRUSTED_PROXIES')?.join(',') || 'none'}`);
   console.log('Ledger payloads are encrypted. Authorized servers hold the keys needed to open managed ledgers.');

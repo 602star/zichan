@@ -6,7 +6,7 @@ import { registerAccount, loginAccount } from '@zichan/db';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
 
 describe('management access path', () => {
-  it('generates a stable default, rejects old and guessed routes, and applies owner changes immediately', async () => {
+  it('uses /admin by default, supports custom paths, and returns to /admin when cleared', async () => {
     const root = mkdtempSync(join(tmpdir(), 'zichan-admin-path-'));
     const webDir = join(root, 'web');
     const dataDir = join(root, 'data');
@@ -22,29 +22,48 @@ describe('management access path', () => {
     };
     let running = await start();
     try {
-      const generated = running.instance.adminAccessPath();
-      expect(generated).toMatch(/^[A-Za-z0-9_-]{24}$/);
-      expect((await fetch(`${running.url}/admin/`)).status).toBe(404);
+      expect(running.instance.adminAccessPath()).toBe('');
+      expect((await fetch(`${running.url}/admin/`)).status).toBe(200);
+      expect((await fetch(`${running.url}/admin/users`)).status).toBe(200);
       expect((await fetch(`${running.url}/wrong-segment/admin/`)).status).toBe(404);
-      expect((await fetch(`${running.url}/${generated}/admin/`)).status).toBe(200);
-      expect((await fetch(`${running.url}/${generated}/admin/users`)).status).toBe(200);
       expect((await fetch(`${running.url}/app/`)).status).toBe(200);
       await registerAccount(running.url, 'owner', 'owner-password', { ownerSetupToken: OWNER_SETUP_TOKEN });
+      expect((await fetch(`${running.url}/admin/`)).status).toBe(200);
       const owner = await loginAccount(running.url, 'owner', 'owner-password');
       const headers = { Authorization: `Bearer ${owner.accessToken}`, 'Content-Type': 'application/json' };
       const bad = await fetch(`${running.url}/api/admin/settings`, { method: 'POST', headers,
         body: JSON.stringify({ settings: { adminAccessPath: '../admin' } }) });
       expect(bad.status).toBe(400);
+      const reserved = await fetch(`${running.url}/api/admin/settings`, { method: 'POST', headers,
+        body: JSON.stringify({ settings: { adminAccessPath: 'api' } }) });
+      expect(reserved.status).toBe(400);
       const changed = await fetch(`${running.url}/api/admin/settings`, { method: 'POST', headers,
-        body: JSON.stringify({ settings: { adminAccessPath: 'my-private-entry-2026' } }) });
+        body: JSON.stringify({ settings: { adminAccessPath: 'admin1' } }) });
       expect(changed.status).toBe(200);
-      expect(running.instance.adminAccessPath()).toBe('my-private-entry-2026');
-      expect((await fetch(`${running.url}/${generated}/admin/`)).status).toBe(404);
-      expect((await fetch(`${running.url}/my-private-entry-2026/admin/`)).status).toBe(200);
+      expect(running.instance.adminAccessPath()).toBe('admin1');
+      expect((await fetch(`${running.url}/admin/`, { redirect: 'manual' })).status).toBe(404);
+      expect((await fetch(`${running.url}/admin1/admin/`)).status).toBe(200);
       await running.instance.close();
       running = await start();
-      expect(running.instance.adminAccessPath()).toBe('my-private-entry-2026');
-      expect((await fetch(`${running.url}/my-private-entry-2026/admin/`)).status).toBe(200);
+      expect(running.instance.adminAccessPath()).toBe('admin1');
+      expect((await fetch(`${running.url}/admin/`, { redirect: 'manual' })).status).toBe(404);
+      expect((await fetch(`${running.url}/admin1/admin/`)).status).toBe(200);
+      const longPath = 'x'.repeat(600);
+      const longValue = await fetch(`${running.url}/api/admin/settings`, { method: 'POST', headers,
+        body: JSON.stringify({ settings: { adminAccessPath: longPath } }) });
+      expect(longValue.status).toBe(200);
+      expect((await fetch(`${running.url}/admin1/admin/`)).status).toBe(404);
+      expect((await fetch(`${running.url}/${longPath}/admin/`)).status).toBe(200);
+      const cleared = await fetch(`${running.url}/api/admin/settings`, { method: 'POST', headers,
+        body: JSON.stringify({ settings: { adminAccessPath: '' } }) });
+      expect(cleared.status).toBe(200);
+      expect(running.instance.adminAccessPath()).toBe('');
+      expect((await fetch(`${running.url}/admin/`)).status).toBe(200);
+      expect((await fetch(`${running.url}/${longPath}/admin/`)).status).toBe(404);
+      await running.instance.close();
+      running = await start();
+      expect(running.instance.adminAccessPath()).toBe('');
+      expect((await fetch(`${running.url}/admin/`)).status).toBe(200);
     } finally {
       await running.instance.close();
       rmSync(root, { recursive: true, force: true });

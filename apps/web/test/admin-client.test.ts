@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AdminClient, AdminError, adminBaseUrl } from '../src/admin/client.js';
+import { AdminClient, AdminError, adminBaseUrls, resolveAdminBaseUrl } from '../src/admin/client.js';
 import { adminBasePath, adminHref, parseAdminPath } from '../src/admin/router.js';
 import { completeMfaLogin, fetchAuthMe, loginAccount, MfaRequiredError, refreshAccountSession, registerAccount } from '@zichan/db';
 
@@ -105,11 +105,16 @@ describe('independent management session lifecycle', () => {
     fetcher.mockResolvedValueOnce(reply({ error: 'job not found' }, 404));
     await expect(client.request('/jobs/missing')).rejects.toMatchObject({ message: 'job not found' });
   });
-  it('routes management without routing ledger paths into the admin bootstrap', () => {
-    expect(adminBaseUrl({ origin: 'https://example.com', pathname: '/ledger/private-123456789/admin/users' })).toBe('https://example.com/ledger');
-    expect(adminBaseUrl({ origin: 'https://example.com', pathname: '/private-123456789/admin' })).toBe('https://example.com');
-    expect(adminBaseUrl({ origin: 'https://example.com', pathname: '/admin' })).toBeUndefined();
-    expect(adminBaseUrl({ origin: 'https://example.com', pathname: '/ledger/app/' })).toBeUndefined();
+  it('routes default and custom management paths without routing ledger pages into the admin bootstrap', async () => {
+    const origin = 'https://example.com';
+    expect(adminBaseUrls({ origin, pathname: '/ledger/private-123456789/admin/users' })).toEqual([`${origin}/ledger/private-123456789`, `${origin}/ledger`]);
+    expect(adminBaseUrls({ origin, pathname: '/private-123456789/admin' })).toEqual([`${origin}/private-123456789`, origin]);
+    expect(adminBaseUrls({ origin, pathname: '/ledger/admin/users' })).toEqual([`${origin}/ledger`, origin]);
+    expect(adminBaseUrls({ origin, pathname: '/admin' })).toEqual([origin]);
+    expect(adminBaseUrls({ origin, pathname: '/ledger/app/' })).toEqual([]);
+    const probe = vi.fn(async (url: string) => reply(url === `${origin}/ledger/api/health` ? health : { error: 'not found' }, url === `${origin}/ledger/api/health` ? 200 : 404));
+    expect(await resolveAdminBaseUrl({ origin, pathname: '/ledger/private-123456789/admin/users' }, probe as typeof fetch)).toBe(`${origin}/ledger`);
+    expect(await resolveAdminBaseUrl({ origin, pathname: '/ledger/admin/users' }, probe as typeof fetch)).toBe(`${origin}/ledger`);
     expect(adminBasePath({ pathname: '/ledger/private-123456789/admin/users' })).toBe('/ledger/private-123456789');
     expect(adminHref('/ledger/private-123456789', '/users')).toBe('/ledger/private-123456789/admin/users');
     expect(parseAdminPath('/ledger/private-123456789/admin/users')).toBe('/users');

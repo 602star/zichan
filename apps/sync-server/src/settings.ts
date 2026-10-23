@@ -36,8 +36,8 @@ export interface SettingField {
 export const SETTING_FIELDS: SettingField[] = [
   {
     name: 'adminAccessPath', label: '管理后台安全路径', kind: 'text', textFormat: 'free',
-    envVar: 'ADMIN_ACCESS_PATH', default: '', maxLength: 64,
-    description: '后台入口为 域名/安全路径/admin/。首次部署自动生成；修改后旧入口立即失效，请保存新的完整地址。仅使用字母、数字、下划线和连字符（12–64 位）。',
+    envVar: 'ADMIN_ACCESS_PATH', default: '',
+    description: '留空使用 /admin/；填写后入口为 /安全路径/admin/。修改后旧入口立即失效。自定义路径不限长度，仅使用字母、数字、下划线或连字符；短路径容易被猜到。',
   },
   {
     name: 'defaultCommitQuotaBytes', label: '默认加密提交配额', kind: 'number', unit: 'bytes',
@@ -286,7 +286,7 @@ function coerce(field: SettingField, value: unknown): number | string | undefine
     const trimmed = value.trim();
     // An empty value is a real choice ("no external channel"), not an invalid one.
     if (!trimmed) return '';
-    if (trimmed.length > (field.maxLength ?? 500)) return undefined;
+    if (field.name !== 'adminAccessPath' && trimmed.length > (field.maxLength ?? 500)) return undefined;
     if ((field.textFormat ?? 'url') === 'url' && !/^https?:\/\/[^\s]+$/i.test(trimmed)) return undefined;
     // Structure is checked by the feature's own parser at delivery time; here it only has to be
     // JSON, so a malformed list is refused at save rather than discovered when an alert fires.
@@ -310,7 +310,9 @@ function coerce(field: SettingField, value: unknown): number | string | undefine
 export function parseSettingValue(field: SettingField, value: unknown): number | string {
   const coerced = coerce(field, value);
   if (coerced === undefined) {
-    const bounds = field.kind === 'number'
+    const bounds = field.name === 'adminAccessPath'
+      ? '（留空使用 /admin/；自定义值仅使用字母、数字、下划线或连字符；不能使用 api）'
+      : field.kind === 'number'
       ? `（${String(field.min)}–${String(field.max)}）`
       : field.kind === 'select'
         ? `（${(field.options ?? []).join('、')}）`
@@ -319,8 +321,11 @@ export function parseSettingValue(field: SettingField, value: unknown): number |
           : `（最多 ${String(field.maxLength ?? 500)} 个字符，留空表示未配置）`;
     throw new ServerStoreError('INVALID_SETTING', 400, `${field.label} 取值无效${bounds}`);
   }
-  if (field.name === 'adminAccessPath' && !/^[A-Za-z0-9_-]{12,64}$/.test(String(coerced))) {
-    throw new ServerStoreError('INVALID_SETTING', 400, '管理后台安全路径须为 12–64 位字母、数字、下划线或连字符');
+  if (field.name === 'adminAccessPath') {
+    const segment = String(coerced);
+    if (!segment) return '';
+    if (!/^[A-Za-z0-9_-]+$/.test(segment)) throw new ServerStoreError('INVALID_SETTING', 400, '管理后台安全路径只能使用字母、数字、下划线或连字符');
+    if (segment.toLowerCase() === 'api') throw new ServerStoreError('INVALID_SETTING', 400, '管理后台安全路径不能使用保留字 api');
   }
   if (field.name === 'alertChannels') {
     try { parseAlertChannels(coerced); }

@@ -58,12 +58,14 @@ test('initializes the owner in the browser, then keeps every management page on 
   const fresh = await listen({ basePath: '/ledger' });
   const origin = `http://127.0.0.1:${fresh.server.address().port}/ledger`;
   try {
-    await page.goto(`${origin}/e2e-private-entry/admin/`);
+    await page.goto(`${origin}/admin/`);
+    await expect(page).toHaveURL(/\/ledger\/e2e-private-entry\/admin\/$/);
     await expect(page.getByRole('heading', { name: '初始化服务器所有者' })).toBeVisible();
     await page.getByLabel('管理账号用户名').fill('owner');
     await page.getByLabel('管理账号密码').fill(password);
     await page.getByRole('button', { name: '创建所有者并进入后台' }).click();
     await expect(page.getByRole('link', { name: '运行概览' })).toBeVisible();
+    expect((await page.request.get(`${origin}/admin/`)).status()).toBe(404);
     // The bare console URL canonicalises to the overview page.
     await expect(page).toHaveURL(/\/ledger\/e2e-private-entry\/admin\/overview$/);
     await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
@@ -86,11 +88,24 @@ test('initializes the owner in the browser, then keeps every management page on 
 
     await clickAdminLink(page, '系统设置');
     await page.getByRole('tab', { name: '访问安全' }).click();
-    await page.getByLabel('管理后台安全路径').fill('changed-admin-entry-2026');
+    await page.getByLabel('管理后台安全路径').fill('api');
     await page.getByRole('button', { name: '保存本组设置' }).click();
-    await expect(page).toHaveURL(/\/ledger\/changed-admin-entry-2026\/admin\/settings\?group=security$/);
+    await expect(page.getByText('管理后台安全路径不能使用保留字 api')).toBeVisible();
+    await page.getByLabel('管理后台安全路径').fill('admin1');
+    await page.getByRole('button', { name: '保存本组设置' }).click();
+    await expect(page).toHaveURL(/\/ledger\/admin1\/admin\/settings\?group=security$/);
     await expect(page.getByRole('heading', { name: '系统设置' })).toBeVisible();
     expect((await page.request.get(`${origin}/e2e-private-entry/admin/`)).status()).toBe(404);
+    await page.getByLabel('不设置安全路径，使用 /admin/').check();
+    await expect(page.getByLabel('管理后台安全路径')).toBeDisabled();
+    await page.getByRole('button', { name: '保存本组设置' }).click();
+    await expect(page).toHaveURL(/\/ledger\/admin\/settings\?group=security$/);
+    await expect(page.getByRole('heading', { name: '系统设置' })).toBeVisible();
+    expect((await page.request.get(`${origin}/admin1/admin/`)).status()).toBe(404);
+    await page.getByLabel('不设置安全路径，使用 /admin/').uncheck();
+    await page.getByLabel('管理后台安全路径').fill('admin1');
+    await page.getByRole('button', { name: '保存本组设置' }).click();
+    await expect(page).toHaveURL(/\/ledger\/admin1\/admin\/settings\?group=security$/);
   } finally { fresh.server.closeAllConnections(); await fresh.close(); }
 });
 

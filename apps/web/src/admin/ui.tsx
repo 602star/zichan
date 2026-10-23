@@ -71,7 +71,6 @@ export function message(error: unknown): string {
       REQUEST_TIMEOUT: '请求超时，服务器可能已完成操作。请先刷新核实结果，再决定是否重试。',
       JOB_TYPE_INVALID: '不支持的任务类型。',
       JOB_PARAMETER_INVALID: '任务参数无效。',
-      INVALID_SETTING: '设置取值无效。',
       UNKNOWN_SETTING: '不支持的设置项。',
       BACKUP_RECORD_NOT_FOUND: '未登记该备份记录。',
       CANCELLED: '任务已在安全边界取消。',

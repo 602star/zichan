@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { adminBaseUrl, type AdminClient } from './client.js';
+import type { AdminClient } from './client.js';
 import { Button, CopyValue, Field, Loading, Notice, Panel, TextInput,
   message, muted, row, useResource } from './ui.js';
 
@@ -13,7 +13,7 @@ interface GroupStatus {
 
 export function ServerGroupPanel({ client, role }: { client: AdminClient; role: string }) {
   const status = useResource(() => client.request<GroupStatus>('/sync-group'), []);
-  const currentUrl = adminBaseUrl(window.location) ?? window.location.origin;
+  const currentUrl = client.baseUrl;
   const [createUrl, setCreateUrl] = useState(currentUrl);
   const [mainUrl, setMainUrl] = useState('');
   const [localUrl, setLocalUrl] = useState(currentUrl);

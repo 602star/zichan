@@ -55,9 +55,27 @@ export function fileNameFromDisposition(header: string | null): string {
   return plain?.[1] ?? '';
 }
 
-export function adminBaseUrl(location: Pick<Location, 'origin' | 'pathname'>): string | undefined {
-  const match = /^(.*)\/[^/]+\/admin(?:\/.*)?$/.exec(location.pathname);
-  return match ? `${location.origin}${match[1]}` : undefined;
+/** The path before /admin may be BASE_PATH alone or BASE_PATH plus a custom segment. */
+export function adminBaseUrls(location: Pick<Location, 'origin' | 'pathname'>): string[] {
+  const match = /^(.*)\/admin(?:\/.*)?$/.exec(location.pathname);
+  if (!match) return [];
+  const prefix = match[1] ?? '';
+  const parent = prefix.slice(0, prefix.lastIndexOf('/'));
+  return [...new Set([prefix, parent].map((path) => `${location.origin}${path}`))];
+}
+
+export async function resolveAdminBaseUrl(location: Pick<Location, 'origin' | 'pathname'>,
+  request: typeof fetch = fetch): Promise<string> {
+  for (const candidate of adminBaseUrls(location)) {
+    try {
+      const response = await request(`${candidate}/api/health`, { cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(5_000) });
+      if (!response.ok) continue;
+      const health = await response.json() as { serverId?: unknown; capabilities?: unknown };
+      if (typeof health.serverId === 'string' && Array.isArray(health.capabilities)
+        && health.capabilities.includes('server-management-v1')) return candidate;
+    } catch { /* Try the next possible deployment prefix. */ }
+  }
+  throw new Error('无法确定管理服务器地址，请确认后台服务已启动并刷新页面。');
 }
 
 /**

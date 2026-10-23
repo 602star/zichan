@@ -8,10 +8,38 @@ import { SETTING_GROUPS, settingGroup, mergeSettingDrafts } from './setting-grou
 import type { SettingsField, SettingsPayload } from './types.js';
 import { ServerGroupPanel } from './ServerGroupPanel.js';
 import { NotificationChannelsEditor } from './NotificationChannelsEditor.js';
+import { adminBasePath } from './router.js';
 
-function openUpdatedAdminPath(segment: string): void {
-  const next = window.location.pathname.replace(/\/[^/]+\/admin(?=\/|$)/, `/${segment}/admin`);
+function openUpdatedAdminPath(segment: string, previousSegment: string): void {
+  const currentBase = adminBasePath(window.location);
+  const previousSuffix = previousSegment ? `/${previousSegment}` : '';
+  if (previousSuffix && !currentBase.endsWith(previousSuffix)) throw new Error('当前后台地址与生效设置不一致，请刷新页面后重试。');
+  const deploymentBase = previousSuffix ? currentBase.slice(0, -previousSuffix.length) : currentBase;
+  const next = `${deploymentBase}${segment ? `/${segment}` : ''}${window.location.pathname.slice(currentBase.length)}`;
   window.location.assign(`${next}${window.location.search}`);
+}
+
+function AdminPathInput({ id, value, disabled, invalid, describedBy, onChange }: {
+  id: string; value: string; disabled: boolean; invalid: boolean; describedBy: string; onChange: (value: string) => void;
+}) {
+  const [useDefault, setUseDefault] = useState(value === '');
+  const [lastCustom, setLastCustom] = useState(value);
+  useEffect(() => {
+    setUseDefault(value === '');
+    if (value) setLastCustom(value);
+  }, [value]);
+  return <>
+    <label style={{ ...row, marginBottom: 8 }}>
+      <input type="checkbox" checked={useDefault} disabled={disabled} onChange={(event) => {
+        setUseDefault(event.target.checked);
+        onChange(event.target.checked ? '' : lastCustom);
+      }} />
+      不设置安全路径，使用 /admin/
+    </label>
+    <TextInput id={id} aria-label="管理后台安全路径" aria-invalid={invalid} aria-describedby={describedBy}
+      value={value} disabled={disabled || useDefault} onChange={(event) => onChange(event.target.value)}
+      placeholder="输入自定义路径，例如 admin1" style={{ width: '100%' }} />
+  </>;
 }
 
 export function SettingsPage({ client, role, query, navigate }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (to: string) => void }) {
@@ -64,9 +92,12 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
     if (!Object.keys(updates).length) { setNotice('没有需要保存的改动。'); return; }
     setSaving(true);
     try {
-      await client.request('/settings', { settings: updates }, { idempotencyKey: adminIdempotencyKey('settings') });
+      const result = await client.request<{ settings: SettingsField[] }>('/settings', { settings: updates }, { idempotencyKey: adminIdempotencyKey('settings') });
       if (typeof updates.adminAccessPath === 'string') {
-        openUpdatedAdminPath(updates.adminAccessPath);
+        const effective = result.settings.find((field) => field.name === 'adminAccessPath');
+        if (!effective) throw new Error('服务器没有返回更新后的后台安全路径，请刷新并核对当前地址。');
+        const previous = data.settings.find((field) => field.name === 'adminAccessPath');
+        openUpdatedAdminPath(String(effective.value), String(previous?.value ?? ''));
         return;
       }
       // Submitted values can be normalized by the server (for example trimmed paths).
@@ -89,7 +120,7 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
         baseline.current = { ...baseline.current, [field.name]: next };
         setDraft((current) => ({ ...current, [field.name]: next }));
         if (field.name === 'adminAccessPath') {
-          openUpdatedAdminPath(next);
+          openUpdatedAdminPath(next, String(field.value));
           return;
         }
       }
@@ -153,11 +184,16 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
               <p id={'setting-help-' + field.name} style={muted}>{field.name === 'alertWebhookUrl' ? '旧版单一 Webhook 地址；仅在上方没有配置渠道时生效。清空后保存即可停用。' : field.description}</p>
               <div className="zc-admin-setting-reference">
                 <p style={muted}>默认：{field.defaultValue === undefined ? '未提供' : field.defaultValue === '' ? '空' : settingDisplayValue(field, field.defaultValue)}；
-                  范围：{field.kind === 'number' ? settingRange(field) : field.kind === 'text' ? textRange(field.textFormat, field.maxLength) : (field.options ?? []).map((option) => selectLabel(field.name, option)).join('、')}</p>
+                  范围：{field.name === 'adminAccessPath' ? '留空使用 /admin/；自定义路径不限长度，仅字母、数字、下划线或连字符（不能使用 api）' : field.kind === 'number' ? settingRange(field) : field.kind === 'text' ? textRange(field.textFormat, field.maxLength) : (field.options ?? []).map((option) => selectLabel(field.name, option)).join('、')}</p>
               </div>
             </div>
             <div>
-              {field.kind === 'select' ? <Select
+              {field.name === 'adminAccessPath' ? <AdminPathInput
+                id={'setting-' + field.name} value={draft[field.name] ?? settingEditorValue(field)}
+                invalid={Boolean(fieldErrors[field.name])} disabled={saving || !field.editable || role !== 'owner'}
+                describedBy={'setting-help-' + field.name + (fieldErrors[field.name] ? ' setting-error-' + field.name : '')}
+                onChange={(value) => setDraft((current) => ({ ...current, [field.name]: value }))} />
+              : field.kind === 'select' ? <Select
                 id={'setting-' + field.name} aria-label={field.label} aria-describedby={'setting-help-' + field.name}
                 value={draft[field.name] ?? settingEditorValue(field)} disabled={saving || !field.editable || role !== 'owner'}
                 onChange={(event) => setDraft((current) => ({ ...current, [field.name]: event.target.value }))}>
@@ -187,7 +223,9 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
         </div>
         {changed.length ? <div aria-label="本组变更预览" style={{ marginTop: 12 }}>
           <strong>将修改 {changed.length} 项</strong>
-          <ul>{changed.map((field) => <li key={field.name}>{field.name === 'alertChannels' ? `${field.label}已修改（密钥已隐藏）` : `${field.label}：${settingDisplayValue(field, field.value) || '空'} → ${draft[field.name] || '空'}${settingInputUnit(field) ? ' ' + settingInputUnit(field) : ''}`}</li>)}</ul>
+          <ul>{changed.map((field) => <li key={field.name}>{field.name === 'alertChannels' ? `${field.label}已修改（密钥已隐藏）` : field.name === 'adminAccessPath'
+            ? `${field.label}：${field.value || '/admin/（默认）'} → ${draft[field.name] || '/admin/（默认）'}`
+            : `${field.label}：${settingDisplayValue(field, field.value) || '空'} → ${draft[field.name] || '空'}${settingInputUnit(field) ? ' ' + settingInputUnit(field) : ''}`}</li>)}</ul>
         </div> : <p style={muted}>本组没有未保存的修改。</p>}
 
         {notice ? <Notice>{notice}</Notice> : null}
