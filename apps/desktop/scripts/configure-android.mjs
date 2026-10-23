@@ -4,9 +4,14 @@ import { dirname, resolve } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const gradlePath = resolve(here, '../src-tauri/gen/android/app/build.gradle.kts');
+const activityPath = resolve(here, '../src-tauri/gen/android/app/src/main/java/com/zichan/ledger/MainActivity.kt');
+const activityTemplatePath = resolve(here, '../android/MainActivity.kt');
 
 if (!existsSync(gradlePath)) {
   throw new Error('Android 工程尚未生成，请先运行 npm run android:init -w @zichan/desktop');
+}
+if (!existsSync(activityPath)) {
+  throw new Error(`无法定位 Android Activity，请检查 ${activityPath}`);
 }
 
 const source = readFileSync(gradlePath, 'utf8');
@@ -22,4 +27,10 @@ if (source.includes(releaseSetting)) {
   console.log('已允许 Android 发布包访问局域网 HTTP 同步服务器；公网服务器仍应使用 HTTPS。');
 } else {
   throw new Error(`无法定位 Android release 配置，请检查 ${gradlePath}`);
+}
+
+const activityTemplate = readFileSync(activityTemplatePath, 'utf8');
+if (readFileSync(activityPath, 'utf8') !== activityTemplate) {
+  writeFileSync(activityPath, activityTemplate);
+  console.log('已为 Android WebView 配置系统栏与刘海屏安全区域。');
 }

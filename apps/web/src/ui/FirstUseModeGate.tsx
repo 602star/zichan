@@ -41,7 +41,7 @@ export function FirstUseModeGate({ busy, error = '', onSelect, persistence, onCo
         <p style={{ margin: 0, color: 'var(--text-secondary)', lineHeight: 1.7 }}>之后仍可把纯本地账本连接到一台或多台同步服务器。</p>
         <section aria-label="存储能力与权限状态" style={{ marginTop: 20, padding: 16, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', lineHeight: 1.8 }}>
           <strong>当前存储能力与权限</strong>
-          {native ? <p>桌面本地存储：使用应用数据目录，不需要浏览器持久存储授权。</p> : <>
+          {native ? <p>本机加密存储：使用此设备的应用数据目录，不需要浏览器持久存储授权。</p> : <>
             <div>本地加密存储：{capability.supported ? '所需接口可用（实际读写将在打开账本时验证）' : `不可用，缺少 ${capability.missing.join('、')}`}</div>
             <div>防自动清理保护：{!persistence?.checked ? '正在检查' : persistence.persisted ? '已授予' : '未授予或未确认'}</div>
             <div>普通 IndexedDB 存储不是文件夹访问授权；本站不会因此获得任意磁盘文件的读写权限。</div>
@@ -52,7 +52,9 @@ export function FirstUseModeGate({ busy, error = '', onSelect, persistence, onCo
         <div role="group" aria-label="数据保存方式" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16, marginTop: 28 }}>
           <button type="button" disabled={busy} onClick={() => void onSelect('local')} style={{ ...card, opacity: busy ? .55 : 1 }}>
             <span style={{ display: 'block', color: 'var(--text-primary)', fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>纯本地使用</span>
-            <span style={{ display: 'block', marginTop: 10, color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.65 }}>桌面版保存到应用数据目录；网页版加密保存在当前网站的 IndexedDB。未取得防自动清理保护时，可确认风险后继续。</span>
+            <span style={{ display: 'block', marginTop: 10, color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.65 }}>{native
+              ? '账本加密保存在此设备的应用数据目录。请定期导出备份并妥善保管。'
+              : '网页版加密保存在当前网站的 IndexedDB。未取得防自动清理保护时，可确认风险后继续。'}</span>
           </button>
           <button type="button" disabled={busy} onClick={() => void onSelect('server')} style={{ ...card, borderColor: 'var(--accent)', opacity: busy ? .55 : 1 }}>
             <span style={{ display: 'block', color: 'var(--text-primary)', fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>连接同步服务器</span>

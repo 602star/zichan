@@ -167,6 +167,6 @@ npm run mobile:build:ios
 
 Windows 开发机仍缺 Android SDK/NDK；Ubuntu 26.04 测试机已用 JDK 17、Android SDK 36、NDK 27 和 Rust `aarch64-linux-android` 目标构建 ARM64 APK。Linux 上编译 vendored OpenSSL 时，需设置 `TARGET_RANLIB="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib"`。先使用 `.node-version` 指定的 Node.js 执行 `npm ci` 和 `mobile:init:android`，再运行 `npm run mobile:build:android -- --apk --target aarch64`。生成的 Release APK 默认未签名；安装测试可用调试密钥签名，正式分发需配置自己的发布密钥。`gen/android` 是平台生成目录，不改变共享业务代码。
 
-`android:init` 生成工程后会自动运行 `scripts/configure-android.mjs`，使发布 WebView 能连接家中 `http://192.168.x.x` 同步服务器；重新生成工程后也可单独运行 `npm run android:configure -w @zichan/desktop`。iOS plist 同样允许本地网络 WebView 请求。该例外是为了局域网自托管；同步提交仍以密文传输，但托管服务器持有账本解密凭据。公网服务器必须使用 HTTPS。
+`android:init` 生成工程后会自动运行 `scripts/configure-android.mjs`；`android:dev` 和 `android:build` 也会在每次运行前应用配置。脚本使发布 WebView 能连接家中 `http://192.168.x.x` 同步服务器，并从仓库维护的 `android/MainActivity.kt` 配置 Android 系统栏与刘海屏安全区域；单独执行时使用 `npm run android:configure -w @zichan/desktop`。iOS plist 同样允许本地网络 WebView 请求。该例外是为了局域网自托管；同步提交仍以密文传输，但托管服务器持有账本解密凭据。公网服务器必须使用 HTTPS。
 
 移动壳还接入 biometric、barcode-scanner、geolocation 和 system-share：应用锁可选开启；物品表单可扫码，附件可直接调用相机，流水可主动记录当前位置。加密 `.zcbak` 备份不依赖 WebView 的文件分享能力，而是由 `plugins/system-share` 写入原生缓存并打开 Android/iOS 系统分享面板。通知仅在 WebView 提供标准 Web Notification 时可用。iOS 隐私用途说明位于 `src-tauri/Info.ios.plist`；Android 相机和定位权限由对应插件声明并在使用时请求。
