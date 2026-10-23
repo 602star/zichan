@@ -143,7 +143,7 @@ function ledgerLeaseTabId(): string {
   }
 }
 
-function indexedDbLeaseBackend(databaseName = accountDatabaseName(), recordKey = accountStorageKey(BROWSER_LEDGER_LOCK_NAME)): LedgerLeaseBackend {
+export function indexedDbLeaseBackend(databaseName = accountDatabaseName(), recordKey = accountStorageKey(BROWSER_LEDGER_LOCK_NAME)): LedgerLeaseBackend {
   return {
     async transact<T>(work: (state: BrowserLedgerLeaseState | undefined) => { next?: BrowserLedgerLeaseState | null; result: T }): Promise<T> {
       const database = await openIdb(databaseName);
@@ -169,7 +169,7 @@ function indexedDbLeaseBackend(databaseName = accountDatabaseName(), recordKey =
 }
 
 /** The release callable also exposes `assertHeld` for save-time lease checks. */
-export type BrowserLedgerLeaseHandle = (() => Promise<void>) & {
+export type BrowserLedgerLeaseHandle = ((databaseDeleted?: boolean) => Promise<void>) & {
   assertHeld: () => Promise<void>;
   snapshotLease: LedgerSnapshotLease | null;
 };
@@ -231,7 +231,7 @@ async function acquireWebLockLease(
   };
 }
 
-async function acquireIndexedDbLease(databaseName?: string, lockName?: string, ownerId?: string): Promise<{ release: () => Promise<void>; assertHeld: () => Promise<void>; snapshotLease: LedgerSnapshotLease }> {
+async function acquireIndexedDbLease(databaseName?: string, lockName?: string, ownerId?: string): Promise<{ release: (databaseDeleted?: boolean) => Promise<void>; assertHeld: () => Promise<void>; snapshotLease: LedgerSnapshotLease }> {
   if (typeof globalThis.indexedDB?.open !== 'function') {
     throw new Error('当前浏览器既不支持 Web Locks 也无法使用 IndexedDB，无法建立跨标签页账本锁。请升级浏览器或使用桌面版。');
   }
@@ -257,12 +257,13 @@ async function acquireIndexedDbLease(databaseName?: string, lockName?: string, o
       if (heartbeatLost) throw new BrowserLedgerAlreadyOpenError();
       if (!await assertLedgerLease(backend, owner, version)) throw new BrowserLedgerAlreadyOpenError();
     },
-    async release(): Promise<void> {
+    async release(databaseDeleted = false): Promise<void> {
       if (released) return;
       released = true;
       clearInterval(timer);
       if (heldIndexedDbLease?.owner === owner) heldIndexedDbLease = null;
-      await releaseLedgerLease(backend, owner, version);
+      // Reset already removed the database. Opening it here would recreate it.
+      if (!databaseDeleted) await releaseLedgerLease(backend, owner, version);
     },
   };
 }
@@ -290,7 +291,7 @@ export async function acquireBrowserLedgerLock(
   localLeaseTail = currentLocalLease;
   if (previousLocalLease) await previousLocalLease;
 
-  let handle: { release: () => Promise<void>; assertHeld: () => Promise<void>; snapshotLease: LedgerSnapshotLease | null };
+  let handle: { release: (databaseDeleted?: boolean) => Promise<void>; assertHeld: () => Promise<void>; snapshotLease: LedgerSnapshotLease | null };
   try {
     handle = providedManager
       ? await acquireWebLockLease(providedManager, scope?.lockName)
@@ -302,11 +303,11 @@ export async function acquireBrowserLedgerLock(
   }
 
   let finished = false;
-  const lease = (async () => {
+  const lease = (async (databaseDeleted = false) => {
     if (finished) return;
     finished = true;
     try {
-      await handle.release();
+      await handle.release(databaseDeleted);
     } finally {
       if (localLeaseTail === currentLocalLease) localLeaseTail = null;
       resolveLocalLease();

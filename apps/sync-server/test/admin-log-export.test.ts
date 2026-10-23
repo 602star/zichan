@@ -3,8 +3,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loginAccount, registerAccount } from '@zichan/db';
+import { NodeSqliteDriver } from '@zichan/db/node';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
 import { SyncServerStore } from '../src/store.js';
+import { escapeSpreadsheetCsvCell } from '../src/admin.js';
 
 const password = ['log', 'export', '0001'].join('-');
 
@@ -30,6 +32,34 @@ async function fixture() {
 }
 
 describe('run log export', () => {
+  it('streams every matching row beyond the former 5000-row limit for logs and audit', async () => {
+    const f = await fixture();
+    try {
+      const driver = new NodeSqliteDriver(join(f.dataDir, 'server.sqlite'));
+      try {
+        await driver.transaction(async (tx) => {
+          for (let index = 0; index < 5_005; index += 1) {
+            const at = new Date(Date.now() - index * 1_000).toISOString();
+            await tx.run('INSERT INTO server_logs (id, at, level, action, message) VALUES (?, ?, ?, ?, ?)',
+              [`bulk-log-${index}`, at, 'info', 'bulk_export_probe', `row ${index}`]);
+            await tx.run('INSERT INTO server_admin_audit (at, actor_account_id, action, before_json, after_json, reason) VALUES (?, ?, ?, ?, ?, ?)',
+              [at, f.owner.accountId, 'role', '{}', '{}', `bulk ${index}`]);
+          }
+        });
+      } finally { await driver.close(); }
+      const logs = await (await f.api('/logs/export?format=json&action=bulk_export_probe')).json() as { exportedCount: number; rows: unknown[] };
+      expect(logs.exportedCount).toBe(5_005);
+      expect(logs.rows).toHaveLength(5_005);
+      const logCsv = await (await f.api('/logs/export?format=csv&action=bulk_export_probe')).text();
+      expect(logCsv.trimEnd().split('\n')).toHaveLength(5_006);
+      const audit = await (await f.api('/audit/export?format=json&action=role')).json() as { exportedCount: number; rows: unknown[] };
+      expect(audit.exportedCount).toBe(5_005);
+      expect(audit.rows).toHaveLength(5_005);
+      const auditCsv = await (await f.api('/audit/export?format=csv&action=role')).text();
+      expect(auditCsv.trimEnd().split('\n')).toHaveLength(5_006);
+    } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+  });
+
   it('exports JSON and CSV, and reports what it redacted', async () => {
     const f = await fixture();
     try {
@@ -134,5 +164,13 @@ describe('run log export', () => {
       // make the role useless for the incident it exists for.
       expect(response.status).toBe(200);
     } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('spreadsheet CSV cells', () => {
+  it('neutralizes formula prefixes including leading whitespace and preserves quoted text', () => {
+    expect(escapeSpreadsheetCsvCell('=1+1')).toBe('"\'=1+1"');
+    expect(escapeSpreadsheetCsvCell('\t@SUM(1)')).toBe('"\'\t@SUM(1)"');
+    expect(escapeSpreadsheetCsvCell('ordinary "text"')).toBe('"ordinary ""text"""');
   });
 });

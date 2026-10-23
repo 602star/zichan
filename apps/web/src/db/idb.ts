@@ -14,8 +14,9 @@ import { BrowserLedgerAlreadyOpenError } from './browser-ledger-error.js';
 
 const STORE = 'kv';
 export const LEDGER_LEASE_STORE = 'lease';
+export const BACKUP_ARCHIVE_STORE = 'backup-archives';
 const KEY = 'ledger.sqlite';
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 3;
 
 export interface LedgerSnapshotLease {
   recordKey: string;
@@ -40,6 +41,7 @@ export function openIdb(databaseName = accountDatabaseName()): Promise<IDBDataba
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE);
       if (!req.result.objectStoreNames.contains(LEDGER_LEASE_STORE)) req.result.createObjectStore(LEDGER_LEASE_STORE);
+      if (!req.result.objectStoreNames.contains(BACKUP_ARCHIVE_STORE)) req.result.createObjectStore(BACKUP_ARCHIVE_STORE);
     };
     req.onsuccess = () => {
       req.result.onversionchange = () => req.result.close();
@@ -62,7 +64,9 @@ export function deleteWebDatabase(databaseName = accountDatabaseName()): Promise
     const request = factory.deleteDatabase(databaseName);
     request.onsuccess = () => resolve();
     request.onerror = () => reject(request.error);
-    request.onblocked = () => reject(new Error('浏览器存储仍被占用，请关闭其他本应用页面后重试'));
+    // A blocked deletion is still pending. Rejecting here lets reset clear its
+    // other state while IndexedDB may delete the database much later.
+    request.onblocked = () => undefined;
   });
 }
 

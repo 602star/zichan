@@ -78,11 +78,10 @@ export async function resetPlatformData(): Promise<void> {
   // A different tab may still be using the shared worker. Refuse to delete its
   // IndexedDB snapshot until all browser connections have closed.
   const releaseResetLock = isTauriRuntime() ? null : await acquireBrowserLedgerLock();
+  let webDatabaseDeleted = false;
   try {
     const { forgetOfflineAccess } = await import('../offline-access.js');
     const { clearAccountProtection } = await import('../account-protection.js');
-    clearAccountProtection();
-    await forgetOfflineAccess().catch(() => undefined);
     if (isTauriRuntime()) {
       const databaseUrl = tauriInvoke<string>('native_sql_database_url');
       if (!databaseUrl) throw new Error('原生数据库路径命令不可用');
@@ -96,7 +95,10 @@ export async function resetPlatformData(): Promise<void> {
       await resetCredentialVault();
     }
     await deleteWebDatabase();
+    webDatabaseDeleted = true;
 
+    clearAccountProtection();
+    await forgetOfflineAccess().catch(() => undefined);
     clearDeviceStorageState();
     clearLedgerKey();
     clearSyncConfiguration();
@@ -104,6 +106,6 @@ export async function resetPlatformData(): Promise<void> {
     clearCloudIdentity();
     clearSafetyState();
   } finally {
-    await releaseResetLock?.();
+    await releaseResetLock?.(webDatabaseDeleted);
   }
 }

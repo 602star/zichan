@@ -38,8 +38,8 @@ describe('browser snapshot and fallback lease commit', () => {
     oldDatabase.close();
 
     const upgraded = await openIdb(name);
-    expect(upgraded.version).toBe(2);
-    expect([...upgraded.objectStoreNames]).toEqual(['kv', 'lease']);
+    expect(upgraded.version).toBe(3);
+    expect([...upgraded.objectStoreNames]).toEqual(['backup-archives', 'kv', 'lease']);
     upgraded.close();
     const { loadKv } = await import('../src/db/idb.js');
     expect(await loadKv('existing-key', name)).toBe('existing-value');

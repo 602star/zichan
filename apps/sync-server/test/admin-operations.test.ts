@@ -261,18 +261,19 @@ describe('management console operations', () => {
     try {
       const inviteResponse = await f.api(f.owner.accessToken, '/invites', { days: 7 });
       const invite = ((await inviteResponse.json()) as { invite: { code: string } }).invite;
-      const reset = await f.api(f.owner.accessToken, `/accounts/${f.member.accountId}/password-reset`, { reason: '用户申请' });
+      const reset = await f.api(f.owner.accessToken, `/accounts/${f.member.accountId}/password-reset`, { reason: '=1+1' });
       const resetBody = await reset.json() as { code: string };
       const exported = await f.api(f.owner.accessToken, '/audit/export?format=json');
       expect(exported.status).toBe(200);
       const text = await exported.text();
       expect(text).toContain('password-reset-issue');
+      expect(JSON.parse(text)).toMatchObject({ exportedCount: expect.any(Number) });
       expect(text).not.toContain(invite.code);
       expect(text).not.toContain(resetBody.code);
       const csv = await f.api(f.owner.accessToken, '/audit/export?format=csv&action=password-reset-issue');
       expect(csv.status).toBe(200);
       expect(csv.headers.get('content-type')).toContain('text/csv');
-      expect(await csv.text()).toContain('用户申请');
+      expect(await csv.text()).toContain('"\'=1+1"');
       expect((await f.api(f.owner.accessToken, '/audit/export?format=pdf')).status).toBe(400);
     } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
   });

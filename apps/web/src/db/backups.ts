@@ -42,6 +42,7 @@ import {
   type BackupPayload,
 } from './backup-archive.js';
 import { loadKv, saveKv } from './idb.js';
+import { deleteBrowserBackupRecord, loadBrowserBackupRecords, putBrowserBackupRecord } from './browser-backup-storage.js';
 import {
   exportPortableLedger,
   preflightPortableBackup,
@@ -49,7 +50,6 @@ import {
 } from './portable-backup.js';
 import { SqlJsDriver } from './sqljs-driver.js';
 
-const BACKUPS_KEY = 'ledger.encryptedBackups.v3';
 const AUTO_MIN_INTERVAL_MS = 60 * 60_000;
 const EXTERNAL_HANDLE_KEY = 'ledger.external-backup-directory.v1';
 const DESKTOP_TRANSFER_BYTES = 512 * 1024;
@@ -496,8 +496,8 @@ export async function listSavedBackups(): Promise<SavedBackup[]> {
     }
     return retained;
   }
-  const rows = await loadKv<SavedBackup[]>(BACKUPS_KEY);
-  return autoRetention((Array.isArray(rows) ? rows : []).filter((row) =>
+  const rows = await loadBrowserBackupRecords<SavedBackup>();
+  return autoRetention(rows.filter((row) =>
     row.archive instanceof Blob
     && row.archive.size === row.sizeBytes
     && validBackupArchiveHeader(row.container)));
@@ -507,23 +507,23 @@ export async function listSavedBackups(): Promise<SavedBackup[]> {
 export async function removeLocalBackup(id: string): Promise<void> {
   if (isTauriRuntime()) throw new Error('此操作仅用于浏览器本地备份');
   await withSharedBrowserTaskLock('backup', async () => {
-    const stored = await loadKv<SavedBackup[]>(BACKUPS_KEY);
-    const rows = autoRetention((Array.isArray(stored) ? stored : []).filter((row) =>
-      row.archive instanceof Blob
-      && row.archive.size === row.sizeBytes
-      && validBackupArchiveHeader(row.container)));
-    const selected = rows.find((row) => row.id === id);
-    if (!selected) throw new Error('本地备份已不存在，请刷新列表');
-    const remaining = rows.filter((row) => row.id !== id);
-    if (!remaining.length) throw new Error('不能删除最后一份本地备份；请先创建并校验新备份');
-    if (selected.preflightKnown && selected.preflight.ok
-      && !remaining.some((row) => row.preflightKnown && row.preflight.ok)) {
-      throw new Error('不能删除最后一份通过预检的本地备份；请先创建并校验新备份');
-    }
-    if (selected.verifiedAt && !remaining.some((row) => row.verifiedAt)) {
-      throw new Error('不能删除最后一份通过恢复演练的本地备份；请先演练另一份备份');
-    }
-    await saveKv(BACKUPS_KEY, remaining);
+    await deleteBrowserBackupRecord<SavedBackup>(id, (stored) => {
+      const rows = autoRetention(stored.filter((row) =>
+        row.archive instanceof Blob
+        && row.archive.size === row.sizeBytes
+        && validBackupArchiveHeader(row.container)));
+      const selected = rows.find((row) => row.id === id);
+      if (!selected) throw new Error('本地备份已不存在，请刷新列表');
+      const remaining = rows.filter((row) => row.id !== id);
+      if (!remaining.length) throw new Error('不能删除最后一份本地备份；请先创建并校验新备份');
+      if (selected.preflightKnown && selected.preflight.ok
+        && !remaining.some((row) => row.preflightKnown && row.preflight.ok)) {
+        throw new Error('不能删除最后一份通过预检的本地备份；请先创建并校验新备份');
+      }
+      if (selected.verifiedAt && !remaining.some((row) => row.verifiedAt)) {
+        throw new Error('不能删除最后一份通过恢复演练的本地备份；请先演练另一份备份');
+      }
+    });
     window.dispatchEvent(new CustomEvent('zichan:safety-updated'));
   });
 }
@@ -531,15 +531,21 @@ export async function removeLocalBackup(id: string): Promise<void> {
 export async function recordLocalBackupVerification(id: string, verifiedAt = new Date().toISOString()): Promise<void> {
   if (isTauriRuntime()) return;
   await withSharedBrowserTaskLock('backup', async () => {
-    const rows = await loadKv<SavedBackup[]>(BACKUPS_KEY);
-    if (!Array.isArray(rows) || !rows.some((row) => row.id === id)) throw new Error('本地备份已不存在，请刷新列表');
-    await saveKv(BACKUPS_KEY, rows.map((row) => row.id === id ? { ...row, verifiedAt } : row));
+    const rows = await loadBrowserBackupRecords<SavedBackup>();
+    const selected = rows.find((row) => row.id === id);
+    if (!selected) throw new Error('本地备份已不存在，请刷新列表');
+    await putBrowserBackupRecord({ ...selected, verifiedAt });
     window.dispatchEvent(new CustomEvent('zichan:safety-updated'));
   });
 }
 
-async function writeBackups(rows: SavedBackup[]): Promise<void> {
-  if (!isTauriRuntime()) await saveKv(BACKUPS_KEY, autoRetention(rows));
+async function writeBackups(entry: SavedBackup): Promise<void> {
+  if (!isTauriRuntime()) {
+    const stored = await loadBrowserBackupRecords<SavedBackup>();
+    const retained = autoRetention([entry, ...stored]);
+    const retainedIds = new Set(retained.map((row) => row.id));
+    await putBrowserBackupRecord(entry, new Set(stored.filter((row) => row.reason === 'auto' && !retainedIds.has(row.id)).map((row) => row.id)));
+  }
   window.dispatchEvent(new CustomEvent('zichan:safety-updated'));
 }
 
@@ -627,7 +633,7 @@ async function saveLedgerBackupNow(
   if (isTauriRuntime() && !entry.externalSaved && !entry.externalError) {
     entry.externalError = '仅保存在便携目录 data/backups；尚无远端或外部目录副本';
   }
-  await writeBackups([entry, ...await listSavedBackups()]);
+  await writeBackups(entry);
   return entry;
 }
 

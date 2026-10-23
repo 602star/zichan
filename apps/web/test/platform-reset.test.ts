@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { IDBFactory } from 'fake-indexeddb';
 import type { LedgerCryptoSession, LedgerKeyEnvelope } from '@zichan/core';
 import {
   clearCredentialVaultRuntimeState,
@@ -35,6 +36,7 @@ import {
   CLOUD_DEVICES_KEY,
 } from '../src/db/cloud.js';
 import { resetPlatformData } from '../src/db/platform-driver.js';
+import { openIdb } from '../src/db/idb.js';
 import { clearSafetyState, SAFETY_STATE_KEY } from '../src/db/safety.js';
 
 class MemoryStorage implements Storage {
@@ -162,6 +164,33 @@ afterEach(() => {
 });
 
 describe('resetPlatformData', () => {
+  it('waits for a blocked IndexedDB deletion before clearing ledger credentials', async () => {
+    vi.stubGlobal('navigator', { locks: { async request(_name: string, _options: unknown, callback: (lock: object) => Promise<void>) { await callback({}); } } });
+    vi.stubGlobal('indexedDB', new IDBFactory());
+    const blocker = await openIdb();
+    blocker.onversionchange = () => undefined;
+    seedLedgerBoundState();
+    let completed = false;
+    const reset = resetPlatformData().then(() => { completed = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(completed).toBe(false);
+    expect(ledgerKeyState()).toMatchObject({ initialized: true, unlocked: true });
+    blocker.close();
+    await reset;
+    expectLedgerBoundStateCleared();
+  });
+
+  it('does not recreate the ledger database when releasing a fallback lease after reset', async () => {
+    vi.stubGlobal('navigator', {});
+    const factory = new IDBFactory();
+    vi.stubGlobal('indexedDB', factory);
+    const db = await openIdb();
+    db.close();
+    seedLedgerBoundState();
+    await resetPlatformData();
+    expect((await factory.databases()).some((entry) => entry.name === 'zichan-web')).toBe(false);
+  });
+
   it('clears browser database keys, sync configuration, identities and safety state', async () => {
     vi.stubGlobal('navigator', {
       locks: {

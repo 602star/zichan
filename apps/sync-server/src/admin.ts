@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { EncryptedBlobStore } from './blob-store.js';
-import { ADMIN_BODY_BYTES, pathParts, readBody, send, sendDownload, sendText } from './http-util.js';
+import { ADMIN_BODY_BYTES, pathParts, readBody, send, sendDownload } from './http-util.js';
 import { isJobType, jobOutcome, jobParamsFor, type JobRunner } from './jobs.js';
 import { cursorMatchesSort, readCursor, resolveSort, type ResolvedSort, type SortOption } from './list-sort.js';
 import { importMaintenanceRecords } from './maintenance-records.js';
@@ -95,6 +95,34 @@ const AUDIT_ACTIONS = [
 ];
 
 const SYNC_EVENT_CATEGORIES = ['session-invalid', 'quota-exceeded', 'protocol-incompatible', 'ledger-mismatch', 'server-storage-error', 'other'];
+
+/** Quoting alone does not stop spreadsheet formula evaluation after CSV import. */
+export function escapeSpreadsheetCsvCell(value: unknown): string {
+  const raw = String(value ?? '');
+  const safe = /^[\u0000-\u0020\u007f\ufeff]*[=+\-@]/u.test(raw) ? `'${raw}` : raw;
+  return `"${safe.replace(/"/g, '""')}"`;
+}
+
+function beginExport(res: ServerResponse, contentType: string, filename: string): void {
+  res.writeHead(200, {
+    'Content-Type': contentType,
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+}
+
+async function writeExportChunk(res: ServerResponse, chunk: string): Promise<void> {
+  if (res.destroyed) throw new Error('导出连接已关闭');
+  if (res.write(chunk)) return;
+  await new Promise<void>((resolve, reject) => {
+    const onDrain = () => { cleanup(); resolve(); };
+    const onClose = () => { cleanup(); reject(new Error('导出连接已关闭')); };
+    const cleanup = () => { res.off('drain', onDrain); res.off('close', onClose); };
+    res.once('drain', onDrain);
+    res.once('close', onClose);
+  });
+}
 
 /**
  * Reads the sort/direction pair shared by every cursor-paginated list.
@@ -1213,46 +1241,53 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const from = optionalIso(search.get('from'), 'from');
       const until = optionalIso(search.get('until'), 'until');
       const cache = new Map<string, string>();
-      const collected: Record<string, unknown>[] = [];
-      // The export walks the same ordering the page shows, so the file matches what the operator
-      // was looking at. It follows the filters but not the page cursor: "everything matching".
       const exportSort = resolveSort(AUDIT_SORT_OPTIONS, 'at', 'at', 'desc');
-      let cursor: string | undefined;
-      for (let page = 0; page < 20 && collected.length < 5_000; page += 1) {
-        const chunk = await store.listAdminAudit({
-          sort: exportSort,
-          ...(cursor ? { cursor } : {}),
-          limit: 200,
-          ...(action ? { action } : {}),
-          ...(term ? { search: term } : {}),
-          ...(search.get('actor') ? { actorAccountId: search.get('actor')! } : {}),
-          ...(search.get('target') ? { targetAccountId: search.get('target')! } : {}),
-          ...(from ? { from } : {}),
-          ...(until ? { until } : {}),
-        });
-        for (const entry of chunk.entries) {
-          const actor = await accountLabel(entry['actorAccountId'] as string, cache);
-          const target = await accountLabel(entry['targetAccountId'] as string | null, cache);
-          collected.push({
-            at: entry['at'], action: entry['action'], actorAccountId: entry['actorAccountId'],
-            actorName: actor, targetAccountId: entry['targetAccountId'] ?? '', targetName: target,
-            reason: entry['reason'] ?? '', requestId: entry['requestId'] ?? '',
-            before: JSON.stringify(entry['before']), after: JSON.stringify(entry['after']),
-            summary: describeAudit({ action: String(entry['action']), before: entry['before'], after: entry['after'], reason: entry['reason'] as string | null }, actor, target),
-          });
-        }
-        if (!chunk.nextCursor) break;
-        cursor = chunk.nextCursor;
-      }
-      await log('info', 'audit_exported', 'Management audit exported', {
+      await log('info', 'audit_export_started', 'Management audit export started', {
         username: auth.user.username,
-        detail: { format, rows: collected.length, action: action || 'all' },
+        detail: { format, action: action || 'all' },
       });
-      if (format === 'json') return sendText(res, 200, 'application/json; charset=utf-8', `${JSON.stringify({ exportedAt: new Date().toISOString(), rows: collected }, null, 2)}\n`, 'management-audit.json');
       const headers = ['at', 'action', 'actorAccountId', 'actorName', 'targetAccountId', 'targetName', 'reason', 'requestId', 'summary'];
-      const escapeCsv = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-      const csv = [headers.join(','), ...collected.map((row) => headers.map((header) => escapeCsv(row[header])).join(','))].join('\n');
-      return sendText(res, 200, 'text/csv; charset=utf-8', `${csv}\n`, 'management-audit.csv');
+      beginExport(res, format === 'json' ? 'application/json; charset=utf-8' : 'text/csv; charset=utf-8', format === 'json' ? 'management-audit.json' : 'management-audit.csv');
+      try {
+        await writeExportChunk(res, format === 'json'
+          ? `{"exportedAt":${JSON.stringify(new Date().toISOString())},"rows":[`
+          : `${headers.join(',')}\n`);
+        let cursor: string | undefined;
+        let written = 0;
+        for (;;) {
+          const chunk = await store.listAdminAudit({
+            sort: exportSort, ...(cursor ? { cursor } : {}), limit: 200,
+            ...(action ? { action } : {}), ...(term ? { search: term } : {}),
+            ...(search.get('actor') ? { actorAccountId: search.get('actor')! } : {}),
+            ...(search.get('target') ? { targetAccountId: search.get('target')! } : {}),
+            ...(from ? { from } : {}), ...(until ? { until } : {}),
+          });
+          const lines: string[] = [];
+          for (const entry of chunk.entries) {
+            const actor = await accountLabel(entry['actorAccountId'] as string, cache);
+            const target = await accountLabel(entry['targetAccountId'] as string | null, cache);
+            const row: Record<string, unknown> = {
+              at: entry['at'], action: entry['action'], actorAccountId: entry['actorAccountId'],
+              actorName: actor, targetAccountId: entry['targetAccountId'] ?? '', targetName: target,
+              reason: entry['reason'] ?? '', requestId: entry['requestId'] ?? '',
+              before: JSON.stringify(entry['before']), after: JSON.stringify(entry['after']),
+              summary: describeAudit({ action: String(entry['action']), before: entry['before'], after: entry['after'], reason: entry['reason'] as string | null }, actor, target),
+            };
+            lines.push(format === 'json' ? `${written ? ',' : ''}${JSON.stringify(row)}`
+              : `${headers.map((header) => escapeSpreadsheetCsvCell(row[header])).join(',')}\n`);
+            written += 1;
+          }
+          if (lines.length) await writeExportChunk(res, lines.join(''));
+          if (!chunk.nextCursor) break;
+          cursor = chunk.nextCursor;
+        }
+        await log('info', 'audit_exported', 'Management audit exported', {
+          username: auth.user.username,
+          detail: { format, rows: written, action: action || 'all' },
+        });
+        res.end(format === 'json' ? `],"exportedCount":${written}}\n` : '');
+      } catch (error) { res.destroy(error instanceof Error ? error : new Error(String(error))); }
+      return;
     }
 
     if (req.method === 'GET' && suffix === '/audit/failures') {
@@ -1377,54 +1412,52 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const action = (search.get('action') ?? '').trim();
       if (action.length > 64) return send(res, 400, { error: 'action must not exceed 64 characters' });
 
-      const collected: Record<string, unknown>[] = [];
-      let cursor: string | undefined;
-      // Same ceiling as the audit export. An export is a deliberate act, so it is capped to
-      // keep one request from reading the whole retained log.
-      for (let page = 0; page < 50 && collected.length < 5_000; page += 1) {
-        const chunk = await store.listLogs({
-          limit: 200,
-          ...(level ? { level } : {}),
-          ...(from ? { from } : {}),
-          ...(until ? { until } : {}),
-          ...(term ? { requestId: term } : {}),
-          ...(requestId ? { requestId } : {}),
-          ...(username ? { username } : {}),
-          ...(action ? { action } : {}),
-          ...(cursor ? { cursor } : {}),
-        });        for (const entry of chunk.logs) {
-          // The request id is carried inside the detail record, the same place the console reads
-          // it from; it is pulled out into its own column so the export can be filtered and
-          // sorted on it without parsing JSON.
-          const detailRequestId = typeof entry.detail?.['requestId'] === 'string' ? entry.detail['requestId'] : '';
-          collected.push({
-            at: entry.at,
-            level: entry.level,
-            action: entry.action,
-            message: redactText(entry.message),
-            ip: entry.ip ?? '',
-            username: entry.username ?? '',
-            status: entry.status ?? '',
-            requestId: detailRequestId,
-            detail: entry.detail ? JSON.stringify(redactForExport(entry.detail)) : '',
-          });
-        }
-        if (!chunk.nextCursor) break;
-        cursor = chunk.nextCursor;
-      }
-
-      await log('info', 'logs_exported', 'Run log exported', {
+      await log('info', 'logs_export_started', 'Run log export started', {
         username: auth.user.username,
-        detail: { format, rows: collected.length, level: level || 'all', redacted: true },
+        detail: { format, level: level || 'all', redacted: true },
       });
       const redaction = '导出的日志已按字段名与取值形态脱敏：令牌、密钥、邀请码与重置码不会出现在文件里；账号 ID、任务 ID 与请求 ID 保留，否则导出无法与后台对应。';
-      if (format === 'json') {
-        return sendText(res, 200, 'application/json; charset=utf-8', `${JSON.stringify({ exportedAt: new Date().toISOString(), redaction, rows: collected }, null, 2)}\n`, 'run-log.json');
-      }
       const headers = ['at', 'level', 'action', 'message', 'ip', 'username', 'status', 'requestId', 'detail'];
-      const escapeCsv = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-      const csv = [headers.join(','), ...collected.map((row) => headers.map((header) => escapeCsv(row[header])).join(','))].join('\n');
-      return sendText(res, 200, 'text/csv; charset=utf-8', `${csv}\n`, 'run-log.csv');
+      beginExport(res, format === 'json' ? 'application/json; charset=utf-8' : 'text/csv; charset=utf-8', format === 'json' ? 'run-log.json' : 'run-log.csv');
+      try {
+        await writeExportChunk(res, format === 'json'
+          ? `{"exportedAt":${JSON.stringify(new Date().toISOString())},"redaction":${JSON.stringify(redaction)},"rows":[`
+          : `${headers.join(',')}\n`);
+        let cursor: string | undefined;
+        let written = 0;
+        for (;;) {
+          const chunk = await store.listLogs({
+            limit: 200,
+            ...(level ? { level } : {}), ...(from ? { from } : {}),
+            ...(until ? { until } : {}), ...(term ? { requestId: term } : {}),
+            ...(requestId ? { requestId } : {}), ...(username ? { username } : {}),
+            ...(action ? { action } : {}), ...(cursor ? { cursor } : {}),
+          });
+          const lines: string[] = [];
+          for (const entry of chunk.logs) {
+            const detailRequestId = typeof entry.detail?.['requestId'] === 'string' ? entry.detail['requestId'] : '';
+            const row: Record<string, unknown> = {
+              at: entry.at, level: entry.level, action: entry.action,
+              message: redactText(entry.message), ip: entry.ip ?? '',
+              username: entry.username ?? '', status: entry.status ?? '',
+              requestId: detailRequestId,
+              detail: entry.detail ? JSON.stringify(redactForExport(entry.detail)) : '',
+            };
+            lines.push(format === 'json' ? `${written ? ',' : ''}${JSON.stringify(row)}`
+              : `${headers.map((header) => escapeSpreadsheetCsvCell(row[header])).join(',')}\n`);
+            written += 1;
+          }
+          if (lines.length) await writeExportChunk(res, lines.join(''));
+          if (!chunk.nextCursor) break;
+          cursor = chunk.nextCursor;
+        }
+        await log('info', 'logs_exported', 'Run log exported', {
+          username: auth.user.username,
+          detail: { format, rows: written, level: level || 'all', redacted: true },
+        });
+        res.end(format === 'json' ? `],"exportedCount":${written}}\n` : '');
+      } catch (error) { res.destroy(error instanceof Error ? error : new Error(String(error))); }
+      return;
     }
 
     if (req.method === 'GET' && suffix === '/logs/summary') {

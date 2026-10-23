@@ -1,7 +1,12 @@
 import { newId, type LedgerCryptoSession } from '@zichan/core';
 import { SerialTaskQueue, type SqlDriver, type SqlParam, type SqlRunResult } from '@zichan/db';
 import { accountDatabaseName, accountStorageKey } from '../account-storage.js';
-import { BROWSER_LEDGER_LOCK_NAME, BrowserLedgerAlreadyOpenError } from './browser-ledger-lock.js';
+import { isTauriRuntime } from '../tauri.js';
+import {
+  assertLedgerLease, BROWSER_LEDGER_LEASE_MS, BROWSER_LEDGER_LOCK_NAME,
+  BrowserLedgerAlreadyOpenError, claimLedgerLease, indexedDbLeaseBackend,
+  releaseLedgerLease, renewLedgerLease,
+} from './browser-ledger-lock.js';
 import LedgerWorker from './browser-ledger-worker.ts?sharedworker';
 
 type Operation = 'open' | 'close' | 'exec' | 'run' | 'all' | 'get' | 'begin' | 'commit' | 'rollback' | 'task-lock' | 'task-unlock';
@@ -51,11 +56,51 @@ function rejectPending(state: ConnectionState, reason: Error): void {
 }
 
 let activeConnection: ConnectionState | null = null;
+let fallbackTaskTail = Promise.resolve();
+
+function queueFallbackTask<T>(operation: () => Promise<T>): Promise<T> {
+  const task = fallbackTaskTail.then(operation, operation);
+  fallbackTaskTail = task.then(() => undefined, () => undefined);
+  return task;
+}
+
+async function withIndexedDbTaskLock<T>(taskName: string, operation: () => Promise<T>): Promise<T> {
+  const backend = indexedDbLeaseBackend(accountDatabaseName(), accountStorageKey(`zichan-browser-task.${taskName}`));
+  const owner = newId();
+  let version: number | null = null;
+  while (version === null) {
+    version = await claimLedgerLease(backend, owner, Date.now());
+    if (version === null) await new Promise<void>((resolve) => setTimeout(resolve, 100));
+  }
+  const heldVersion = version;
+  let lost = false;
+  const timer = setInterval(() => {
+    void renewLedgerLease(backend, owner, heldVersion, Date.now())
+      .then((held) => { if (!held) lost = true; })
+      .catch(() => { lost = true; });
+  }, Math.floor(BROWSER_LEDGER_LEASE_MS / 3));
+  try {
+    const result = await operation();
+    if (lost || !await assertLedgerLease(backend, owner, heldVersion)) {
+      throw new BrowserLedgerAlreadyOpenError('浏览器备份任务锁已失效，请刷新后重试');
+    }
+    return result;
+  } finally {
+    clearInterval(timer);
+    await releaseLedgerLease(backend, owner, heldVersion);
+  }
+}
 
 /** Serialize browser-wide work that combines SQL with network or attachment I/O. */
 export async function withSharedBrowserTaskLock<T>(taskName: string, operation: () => Promise<T>): Promise<T> {
   const state = activeConnection;
-  if (!state || state.closed) return operation();
+  if (!state || state.closed) return queueFallbackTask(() => {
+    if (isTauriRuntime() || !globalThis.indexedDB) return operation();
+    const locks = globalThis.navigator?.locks;
+    if (locks) return locks.request<Promise<T>>(accountStorageKey(`zichan-browser-task.${taskName}`), { mode: 'exclusive' }, operation)
+      .then((result) => result);
+    return withIndexedDbTaskLock(taskName, operation);
+  });
   const taskToken = newId();
   await request(state, { op: 'task-lock', taskName, taskToken });
   try { return await operation(); }

@@ -127,7 +127,7 @@ export function LogsPage({ client, query, navigate }: { client: AdminClient; que
           <Button onClick={() => { setRequestDraft(''); update({ requestId: undefined, from: undefined, until: undefined, level: undefined, action: undefined, accountId: undefined, username: undefined }); }}>清除筛选</Button>
         </div>
         <p style={muted}>
-          导出沿用当前筛选条件（最多 5000 条），并按字段名与取值形态脱敏：令牌、密钥、邀请码与重置码不会出现在文件里。
+          导出当前筛选条件下的全部匹配日志；数据量大时可能需要较长时间。字段按名称与取值形态脱敏：令牌、密钥、邀请码与重置码不会出现在文件里。
           账号 ID、任务 ID 与请求 ID 保留，否则导出无法与后台对应。
         </p>
       </FilterBar>
@@ -275,7 +275,7 @@ export function AuditPage({ client, query, navigate }: { client: AdminClient; qu
   return (
     <>
       <PageHeader title="管理审计" description="追溯谁在何时做了什么；详情在记录下方就地显示。" actions={<><Button onClick={list.reload}>刷新</Button><Button disabled={exporting || list.loading || list.data?.entries.length === 0} onClick={() => { setExporting(true); setExportError(''); void download(client, 'json', filterQuery).catch((error) => setExportError(error instanceof Error ? error.message : String(error))).finally(() => setExporting(false)); }}>导出 JSON</Button><Button disabled={exporting || list.loading || list.data?.entries.length === 0} onClick={() => { setExporting(true); setExportError(''); void download(client, 'csv', filterQuery).catch((error) => setExportError(error instanceof Error ? error.message : String(error))).finally(() => setExporting(false)); }}>导出 CSV</Button></>} />
-      <FilterBar note="审计用于追溯权限、账号与配置变更；筛选在服务端执行，翻页会继续沿着同一组筛选条件。导出遵循当前筛选条件。">
+      <FilterBar note="审计用于追溯权限、账号与配置变更；筛选在服务端执行。导出当前筛选条件下的全部匹配记录，数据量大时可能需要较长时间。">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
           <Field label="关键字（动作或 accountId）"><TextInput value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="role、account-…" /></Field>
           <Field label="动作">
@@ -348,8 +348,7 @@ export function AuditPage({ client, query, navigate }: { client: AdminClient; qu
 }
 
 async function download(client: AdminClient, format: 'json' | 'csv', filters: string): Promise<void> {
-  const text = await client.download(`/audit/export?format=${format}${filters ? `&${filters}` : ''}`);
-  const blob = new Blob([text], { type: format === 'csv' ? 'text/csv' : 'application/json' });
+  const blob = await client.download(`/audit/export?format=${format}${filters ? `&${filters}` : ''}`);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -360,8 +359,7 @@ async function download(client: AdminClient, format: 'json' | 'csv', filters: st
 
 /** Same download path as the audit export; the file is the run log, redacted server-side. */
 async function exportLogs(client: AdminClient, format: 'json' | 'csv', filters: string): Promise<void> {
-  const text = await client.download(`/logs/export?format=${format}${filters ? `&${filters}` : ''}`);
-  const blob = new Blob([text], { type: format === 'csv' ? 'text/csv' : 'application/json' });
+  const blob = await client.download(`/logs/export?format=${format}${filters ? `&${filters}` : ''}`);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   anchor.href = url;
