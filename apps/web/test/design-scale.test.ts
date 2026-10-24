@@ -118,6 +118,7 @@ describe('design scale contract', () => {
     // The donut legend rows are compact under a mouse, so they must be put back
     // on the touch floor for a finger.
     expect(coarse).toContain('.zc-donut-legend-row');
+    expect(coarse).toMatch(/\.zc-icon-options button\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px/);
   });
 
   /*

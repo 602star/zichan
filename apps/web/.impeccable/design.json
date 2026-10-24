@@ -1,0 +1,499 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-23T11:44:42Z",
+  "title": "Design System: 资产生命周期",
+  "extensions": {
+    "colorMeta": {
+      "primary-terracotta": {
+        "role": "primary",
+        "displayName": "暖纸 · 赭石",
+        "canonical": "#bf6b3f",
+        "tonalRamp": [
+          "oklch(15% 0.122 47.0)",
+          "oklch(25% 0.122 47.0)",
+          "oklch(35% 0.122 47.0)",
+          "oklch(45% 0.122 47.0)",
+          "oklch(55% 0.122 47.0)",
+          "oklch(65% 0.122 47.0)",
+          "oklch(78% 0.122 47.0)",
+          "oklch(92% 0.122 47.0)"
+        ]
+      },
+      "primary-sage": {
+        "role": "primary",
+        "displayName": "鼠尾草 · 苔绿",
+        "canonical": "#4f7d64",
+        "tonalRamp": [
+          "oklch(15% 0.064 159.6)",
+          "oklch(25% 0.064 159.6)",
+          "oklch(35% 0.064 159.6)",
+          "oklch(45% 0.064 159.6)",
+          "oklch(55% 0.064 159.6)",
+          "oklch(65% 0.064 159.6)",
+          "oklch(78% 0.064 159.6)",
+          "oklch(92% 0.064 159.6)"
+        ]
+      },
+      "primary-plum": {
+        "role": "primary",
+        "displayName": "梅子 · 紫褐",
+        "canonical": "#8f5670",
+        "tonalRamp": [
+          "oklch(15% 0.083 351.5)",
+          "oklch(25% 0.083 351.5)",
+          "oklch(35% 0.083 351.5)",
+          "oklch(45% 0.083 351.5)",
+          "oklch(55% 0.083 351.5)",
+          "oklch(65% 0.083 351.5)",
+          "oklch(78% 0.083 351.5)",
+          "oklch(92% 0.083 351.5)"
+        ]
+      },
+      "accent-soft-terracotta": {
+        "role": "neutral",
+        "displayName": "柔和赭石",
+        "canonical": "#f6e4d5",
+        "tonalRamp": [
+          "oklch(15% 0.028 62.3)",
+          "oklch(25% 0.028 62.3)",
+          "oklch(35% 0.028 62.3)",
+          "oklch(45% 0.028 62.3)",
+          "oklch(55% 0.028 62.3)",
+          "oklch(65% 0.028 62.3)",
+          "oklch(78% 0.028 62.3)",
+          "oklch(92% 0.028 62.3)"
+        ]
+      },
+      "paper-terracotta": {
+        "role": "neutral",
+        "displayName": "暖纸底",
+        "canonical": "#f0e9dc",
+        "tonalRamp": [
+          "oklch(15% 0.019 83.1)",
+          "oklch(25% 0.019 83.1)",
+          "oklch(35% 0.019 83.1)",
+          "oklch(45% 0.019 83.1)",
+          "oklch(55% 0.019 83.1)",
+          "oklch(65% 0.019 83.1)",
+          "oklch(78% 0.019 83.1)",
+          "oklch(92% 0.019 83.1)"
+        ]
+      },
+      "surface-terracotta": {
+        "role": "neutral",
+        "displayName": "浅纸表面",
+        "canonical": "#fffcf6",
+        "tonalRamp": [
+          "oklch(15% 0.009 84.6)",
+          "oklch(25% 0.009 84.6)",
+          "oklch(35% 0.009 84.6)",
+          "oklch(45% 0.009 84.6)",
+          "oklch(55% 0.009 84.6)",
+          "oklch(65% 0.009 84.6)",
+          "oklch(78% 0.009 84.6)",
+          "oklch(92% 0.009 84.6)"
+        ]
+      },
+      "surface-raised-terracotta": {
+        "role": "neutral",
+        "displayName": "次级暖纸表面",
+        "canonical": "#f6efe2",
+        "tonalRamp": [
+          "oklch(15% 0.019 83.1)",
+          "oklch(25% 0.019 83.1)",
+          "oklch(35% 0.019 83.1)",
+          "oklch(45% 0.019 83.1)",
+          "oklch(55% 0.019 83.1)",
+          "oklch(65% 0.019 83.1)",
+          "oklch(78% 0.019 83.1)",
+          "oklch(92% 0.019 83.1)"
+        ]
+      },
+      "ink-terracotta": {
+        "role": "neutral",
+        "displayName": "深棕墨色",
+        "canonical": "#2b2620",
+        "tonalRamp": [
+          "oklch(15% 0.013 72.3)",
+          "oklch(25% 0.013 72.3)",
+          "oklch(35% 0.013 72.3)",
+          "oklch(45% 0.013 72.3)",
+          "oklch(55% 0.013 72.3)",
+          "oklch(65% 0.013 72.3)",
+          "oklch(78% 0.013 72.3)",
+          "oklch(92% 0.013 72.3)"
+        ]
+      },
+      "ink-secondary-terracotta": {
+        "role": "neutral",
+        "displayName": "次级棕墨",
+        "canonical": "#6b6155",
+        "tonalRamp": [
+          "oklch(15% 0.023 72.3)",
+          "oklch(25% 0.023 72.3)",
+          "oklch(35% 0.023 72.3)",
+          "oklch(45% 0.023 72.3)",
+          "oklch(55% 0.023 72.3)",
+          "oklch(65% 0.023 72.3)",
+          "oklch(78% 0.023 72.3)",
+          "oklch(92% 0.023 72.3)"
+        ]
+      },
+      "ink-tertiary-terracotta": {
+        "role": "neutral",
+        "displayName": "第三级棕墨",
+        "canonical": "#a3988a",
+        "tonalRamp": [
+          "oklch(15% 0.024 74.0)",
+          "oklch(25% 0.024 74.0)",
+          "oklch(35% 0.024 74.0)",
+          "oklch(45% 0.024 74.0)",
+          "oklch(55% 0.024 74.0)",
+          "oklch(65% 0.024 74.0)",
+          "oklch(78% 0.024 74.0)",
+          "oklch(92% 0.024 74.0)"
+        ]
+      },
+      "border-terracotta": {
+        "role": "neutral",
+        "displayName": "暖纸边线",
+        "canonical": "#e6dccb",
+        "tonalRamp": [
+          "oklch(15% 0.025 81.1)",
+          "oklch(25% 0.025 81.1)",
+          "oklch(35% 0.025 81.1)",
+          "oklch(45% 0.025 81.1)",
+          "oklch(55% 0.025 81.1)",
+          "oklch(65% 0.025 81.1)",
+          "oklch(78% 0.025 81.1)",
+          "oklch(92% 0.025 81.1)"
+        ]
+      },
+      "on-accent-light": {
+        "role": "neutral",
+        "displayName": "浅色主题主按钮文字",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "oklch(15% 0.000 0.0)",
+          "oklch(25% 0.000 0.0)",
+          "oklch(35% 0.000 0.0)",
+          "oklch(45% 0.000 0.0)",
+          "oklch(55% 0.000 0.0)",
+          "oklch(65% 0.000 0.0)",
+          "oklch(78% 0.000 0.0)",
+          "oklch(92% 0.000 0.0)"
+        ]
+      },
+      "income": {
+        "role": "tertiary",
+        "displayName": "收入与正向状态",
+        "canonical": "#3f8f6b",
+        "tonalRamp": [
+          "oklch(15% 0.097 161.7)",
+          "oklch(25% 0.097 161.7)",
+          "oklch(35% 0.097 161.7)",
+          "oklch(45% 0.097 161.7)",
+          "oklch(55% 0.097 161.7)",
+          "oklch(65% 0.097 161.7)",
+          "oklch(78% 0.097 161.7)",
+          "oklch(92% 0.097 161.7)"
+        ]
+      },
+      "expense": {
+        "role": "tertiary",
+        "displayName": "支出与负向状态",
+        "canonical": "#c2604a",
+        "tonalRamp": [
+          "oklch(15% 0.131 33.9)",
+          "oklch(25% 0.131 33.9)",
+          "oklch(35% 0.131 33.9)",
+          "oklch(45% 0.131 33.9)",
+          "oklch(55% 0.131 33.9)",
+          "oklch(65% 0.131 33.9)",
+          "oklch(78% 0.131 33.9)",
+          "oklch(92% 0.131 33.9)"
+        ]
+      },
+      "warning": {
+        "role": "tertiary",
+        "displayName": "提醒",
+        "canonical": "#9a681d",
+        "tonalRamp": [
+          "oklch(15% 0.108 72.2)",
+          "oklch(25% 0.108 72.2)",
+          "oklch(35% 0.108 72.2)",
+          "oklch(45% 0.108 72.2)",
+          "oklch(55% 0.108 72.2)",
+          "oklch(65% 0.108 72.2)",
+          "oklch(78% 0.108 72.2)",
+          "oklch(92% 0.108 72.2)"
+        ]
+      },
+      "dark-paper-terracotta": {
+        "role": "neutral",
+        "displayName": "深色暖纸底",
+        "canonical": "#191512",
+        "tonalRamp": [
+          "oklch(15% 0.009 59.1)",
+          "oklch(25% 0.009 59.1)",
+          "oklch(35% 0.009 59.1)",
+          "oklch(45% 0.009 59.1)",
+          "oklch(55% 0.009 59.1)",
+          "oklch(65% 0.009 59.1)",
+          "oklch(78% 0.009 59.1)",
+          "oklch(92% 0.009 59.1)"
+        ]
+      },
+      "dark-surface-terracotta": {
+        "role": "neutral",
+        "displayName": "深色内容表面",
+        "canonical": "#221d19",
+        "tonalRamp": [
+          "oklch(15% 0.011 60.9)",
+          "oklch(25% 0.011 60.9)",
+          "oklch(35% 0.011 60.9)",
+          "oklch(45% 0.011 60.9)",
+          "oklch(55% 0.011 60.9)",
+          "oklch(65% 0.011 60.9)",
+          "oklch(78% 0.011 60.9)",
+          "oklch(92% 0.011 60.9)"
+        ]
+      },
+      "dark-ink-terracotta": {
+        "role": "neutral",
+        "displayName": "深色主题浅墨",
+        "canonical": "#f2e9dd",
+        "tonalRamp": [
+          "oklch(15% 0.019 75.3)",
+          "oklch(25% 0.019 75.3)",
+          "oklch(35% 0.019 75.3)",
+          "oklch(45% 0.019 75.3)",
+          "oklch(55% 0.019 75.3)",
+          "oklch(65% 0.019 75.3)",
+          "oklch(78% 0.019 75.3)",
+          "oklch(92% 0.019 75.3)"
+        ]
+      },
+      "dark-accent-terracotta": {
+        "role": "primary",
+        "displayName": "深色主题赭石",
+        "canonical": "#e0a072",
+        "tonalRamp": [
+          "oklch(15% 0.098 56.4)",
+          "oklch(25% 0.098 56.4)",
+          "oklch(35% 0.098 56.4)",
+          "oklch(45% 0.098 56.4)",
+          "oklch(55% 0.098 56.4)",
+          "oklch(65% 0.098 56.4)",
+          "oklch(78% 0.098 56.4)",
+          "oklch(92% 0.098 56.4)"
+        ]
+      },
+      "on-accent-dark": {
+        "role": "neutral",
+        "displayName": "深色主题主按钮文字",
+        "canonical": "#241a12",
+        "tonalRamp": [
+          "oklch(15% 0.022 60.1)",
+          "oklch(25% 0.022 60.1)",
+          "oklch(35% 0.022 60.1)",
+          "oklch(45% 0.022 60.1)",
+          "oklch(55% 0.022 60.1)",
+          "oklch(65% 0.022 60.1)",
+          "oklch(78% 0.022 60.1)",
+          "oklch(92% 0.022 60.1)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "汇总金额",
+        "purpose": "关键账本指标。"
+      },
+      "headline": {
+        "displayName": "页面标题",
+        "purpose": "账本页面与弹窗的主标题。"
+      },
+      "title": {
+        "displayName": "区块标题",
+        "purpose": "内容分组及行内重点。"
+      },
+      "body": {
+        "displayName": "正文",
+        "purpose": "密集数据与表单的基本阅读层级。"
+      },
+      "caption": {
+        "displayName": "说明",
+        "purpose": "次级说明与列表补充信息。"
+      },
+      "label": {
+        "displayName": "标签",
+        "purpose": "字段标签、徽记和图轴。"
+      },
+      "input-touch": {
+        "displayName": "触控输入",
+        "purpose": "粗指针设备上的表单输入。"
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-md-light",
+        "value": "0 18px 40px rgba(46, 36, 27, .16)",
+        "purpose": "浅色主题的中等浮层。"
+      },
+      {
+        "name": "shadow-lg-light",
+        "value": "0 24px 80px rgba(46, 36, 27, .12)",
+        "purpose": "浅色主题的重要弹窗。"
+      },
+      {
+        "name": "shadow-up-light",
+        "value": "0 -10px 30px rgba(15, 23, 42, .08)",
+        "purpose": "浅色主题向上升起的移动控件。"
+      },
+      {
+        "name": "shadow-up-strong-light",
+        "value": "0 -22px 64px rgba(15, 23, 42, .24)",
+        "purpose": "浅色主题移动抽屉。"
+      },
+      {
+        "name": "shadow-md-dark",
+        "value": "0 18px 40px rgba(0, 0, 0, .55)",
+        "purpose": "深色主题的中等浮层。"
+      },
+      {
+        "name": "shadow-lg-dark",
+        "value": "0 24px 80px rgba(0, 0, 0, .6)",
+        "purpose": "深色主题的重要弹窗。"
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "phone-max",
+        "value": "767px"
+      },
+      {
+        "name": "tablet-max",
+        "value": "1199px"
+      },
+      {
+        "name": "wide-desktop",
+        "value": "2200px"
+      },
+      {
+        "name": "large-desktop-type",
+        "value": "2560px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "主要按钮",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "账本中最重要的提交或继续操作。",
+      "html": "<button class=\"ds-btn-primary\">保存记录</button>",
+      "css": ".ds-btn-primary{min-height:var(--control-h,38px);padding:0 16px;border:1px solid var(--accent);border-radius:var(--r-sm,8px);background:var(--accent);color:var(--on-accent);font:600 var(--fs-body,13px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;cursor:pointer;}.ds-btn-primary:hover{border-color:var(--accent);color:var(--on-accent);}.ds-btn-primary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}"
+    },
+    {
+      "name": "次要按钮",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "保留清晰边界的辅助操作。",
+      "html": "<button class=\"ds-btn-outline\">查看详情</button>",
+      "css": ".ds-btn-outline{min-height:var(--control-h,38px);padding:0 16px;border:1px solid var(--border);border-radius:var(--r-sm,8px);background:var(--surface);color:var(--text-secondary);font:600 var(--fs-body,13px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;cursor:pointer;}.ds-btn-outline:hover{border-color:var(--accent);color:var(--accent);}.ds-btn-outline:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}"
+    },
+    {
+      "name": "轻量按钮",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "低优先级操作或紧邻主要数据的动作。",
+      "html": "<button class=\"ds-btn-ghost\">取消</button>",
+      "css": ".ds-btn-ghost{min-height:var(--control-h,38px);padding:0 16px;border:1px solid transparent;border-radius:var(--r-sm,8px);background:transparent;color:var(--text-secondary);font:600 var(--fs-body,13px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;cursor:pointer;}.ds-btn-ghost:hover{border-color:var(--accent);color:var(--accent);}.ds-btn-ghost:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}"
+    },
+    {
+      "name": "内容卡片",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "单层的账本信息分组，内部用分隔线继续组织。",
+      "html": "<section class=\"ds-card\"><strong>本月收支</strong><p>记录汇总</p></section>",
+      "css": ".ds-card{padding:var(--sp-5,20px);border:1px solid var(--border);border-radius:var(--r-md,12px);background:var(--surface);color:var(--text-primary);font:400 var(--fs-body,13px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;}.ds-card strong{font-weight:700;}.ds-card p{margin:8px 0 0;color:var(--text-secondary);}"
+    },
+    {
+      "name": "输入字段",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "带上方标签的账本录入字段。",
+      "html": "<label class=\"ds-field\">金额<input class=\"ds-input\" inputmode=\"decimal\" placeholder=\"0.00\"></label>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:4px;color:var(--text-secondary);font:600 var(--fs-meta,11px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;}.ds-input{min-height:var(--control-h,38px);padding:9px 11px;border:1px solid var(--border);border-radius:var(--r-sm,8px);background:var(--bg);color:var(--text-primary);font:400 var(--fs-body,13px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;font-variant-numeric:tabular-nums;}.ds-input:hover{border-color:var(--border-strong);}.ds-input:focus-visible{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:3px;}@media(pointer:coarse){.ds-input{min-height:44px;font-size:var(--fs-input,16px);}}"
+    },
+    {
+      "name": "状态标签",
+      "kind": "chip",
+      "refersTo": "tag",
+      "description": "简短的状态或分类说明。",
+      "html": "<span class=\"ds-tag\">已同步</span>",
+      "css": ".ds-tag{display:inline-flex;padding:3px 8px;border:1px solid var(--border);border-radius:var(--r-sm,8px);background:var(--surface-2);color:var(--text-secondary);font:600 var(--fs-meta,11px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;}"
+    },
+    {
+      "name": "当前标签页",
+      "kind": "nav",
+      "refersTo": "tab-active",
+      "description": "横向标签导航中的当前视图。",
+      "html": "<button class=\"ds-tab\">本月</button>",
+      "css": ".ds-tab{min-height:var(--control-h,38px);padding:0 12px;border:0;border-bottom:2px solid var(--accent);background:transparent;color:var(--text-primary);font:700 var(--fs-body,13px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;cursor:pointer;}.ds-tab:hover{color:var(--accent);}.ds-tab:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}"
+    },
+    {
+      "name": "汇总指标",
+      "kind": "custom",
+      "refersTo": "summary-metric",
+      "description": "标签先于金额的连续式汇总条单元。",
+      "html": "<div class=\"ds-metric\"><span>本月支出</span><strong>¥ 1,280.00</strong></div>",
+      "css": ".ds-metric{display:flex;flex-direction:column;gap:4px;padding:16px;background:var(--surface);color:var(--text-primary);font-family:'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;}.ds-metric span{color:var(--text-tertiary);font-size:var(--fs-meta,11px);font-weight:600;}.ds-metric strong{font-size:var(--fs-display,26px);font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums;}"
+    }
+  ],
+  "narrative": {
+    "northStar": "温暖的个人分类账",
+    "overview": "这个界面把个人账本当作需要长期翻阅和操作的工具：底色像暖纸，记录与控件清楚分层，金额和状态可以快速扫读。整体气质是温和、清晰、克制；强调可靠的操作反馈，而不让装饰压过财务数据。\n\n默认呈现“暖纸 · 赭石”，另有“鼠尾草 · 苔绿”和“梅子 · 紫褐”两套主题。每套主题都可独立选择浅色、深色或跟随系统。主题切换改变语义色板，不改变页面结构、字级或交互含义。",
+    "keyCharacteristics": [
+      "暖色或带色相的页面底与明晰的内容表面，依靠细边框和间距分组。",
+      "字号紧凑、金额突出；辅助文字分为可辨认的次级和第三级。",
+      "常规页面保持平稳，弹窗与抽屉才明显抬升。",
+      "桌面、平板与手机共享组件语言，并按输入方式调整触控尺寸。"
+    ],
+    "rules": [
+      {
+        "name": "The Semantic Color Rule",
+        "body": "金额方向、警告、图表分类和主要操作分别使用自己的语义色，不用同一个颜色承担相互冲突的含义。",
+        "section": "colors"
+      },
+      {
+        "name": "The Theme Pair Rule",
+        "body": "每个主题同时提供浅色和深色变量；切换模式时保留主题色相，并重新选择文字、边框、状态色及阴影。",
+        "section": "colors"
+      },
+      {
+        "name": "The Numbers First Rule",
+        "body": "用字级、字重和对齐让金额与核心状态先被看见；说明文字保持可读，但不与主要数据争夺焦点。",
+        "section": "typography"
+      },
+      {
+        "name": "The Raised Layer Rule",
+        "body": "静态内容不靠普遍投影制造层级；只有离开页面流、盖在内容之上的界面才明显抬升。",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do 通过语义变量使用三套主题，并核对浅色、深色和跟随系统的首屏效果。",
+      "Do 先用字级、间距、表面与边框建立信息层次；金额和状态保持可扫读。",
+      "Do 在粗指针设备保留足够的命中区与较大的输入字号，验证横屏手机和平板。",
+      "Do 让图表分类同时依靠文字标签与固定顺序，不只靠颜色辨别。"
+    ],
+    "donts": [
+      "Don't 把卡片再套进同样的卡片；内部层级用分隔线和留白。",
+      "Don't 把支出红、收入绿或警告色当作任意分类色或装饰色。",
+      "Don't 给每块静态内容加阴影，削弱真正浮层的层次。",
+      "Don't 为单一页面另造字号、圆角或按钮外观，跳过既有比例尺与组件语义。"
+    ]
+  }
+}

@@ -19,17 +19,17 @@
   --surface-2: #f6efe2;
   --fg: #2b2620;
   --fg-muted: #6b6155;
-  --fg-subtle: #a3988a;
+  --fg-subtle: #706558;
   --border: #e6dccb;
-  --accent: #bf6b3f;
+  --accent: #a0522d;
   --accent-soft: #f6e4d5;
-  --positive: #3f8f6b;
-  --negative: #c2604a;
-  --warning: #9a681d;
+  --positive: #317554;
+  --negative: #a64c37;
+  --warning: #855916;
   /* The danger alias: `--negative` is 「支出」 on the ledger screens, so a
      destructive *action* needs a name of its own rather than borrowing the one
      that already means something else. */
-  --danger: #c2604a;
+  --danger: #a64c37;
   /* Text that sits on an accent-filled button. Light mode paints the accent dark
      enough for white; dark mode re-points it at a near-black, because a light
      accent on a dark surface is the readable pairing there. */
@@ -131,7 +131,7 @@
    * `theme.ts` repeats these for all three themes; `design-scale.test.ts` fails
    * if one theme is left without them.
    */
-  --cat-1: #bf6b3f;
+  --cat-1: #a0522d;
   --cat-2: #3f7d92;
   --cat-3: #6b8f3f;
   --cat-4: #b8862f;
@@ -162,7 +162,7 @@
     --surface-2: #2b2521;
     --fg: #f2e9dd;
     --fg-muted: #b9ab9a;
-    --fg-subtle: #8a7e70;
+    --fg-subtle: #9b8f81;
     --border: #3b322b;
     --accent: #e0a072;
     --accent-soft: #3a2a1f;
@@ -1682,6 +1682,10 @@ input[type="radio"] {
   font-size: var(--fs-body);
   font-family: inherit;
   font-variant-numeric: tabular-nums;
+}
+.zc-input::placeholder {
+  color: var(--text-tertiary);
+  opacity: 1;
 }
 .zc-input:focus,
 .zc-select:focus {
@@ -3444,6 +3448,10 @@ input[type="radio"] {
 .zc-icon-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 6px; margin-top: 8px; }
 .zc-icon-options button { display: flex; align-items: center; justify-content: center; min-height: 40px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text-secondary); cursor: pointer; }
 .zc-icon-options button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+@media (pointer: coarse) {
+  .zc-icon-options { grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); }
+  .zc-icon-options button { min-width: 44px; min-height: 44px; }
+}
 .zc-icon-error { color: var(--negative); font-size: var(--fs-caption); }
 
 .zc-payee-directory-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }

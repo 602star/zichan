@@ -5,6 +5,7 @@ import { CategoryMark, EntityIcon } from '../ui/EntityIcon.js';
 import { accountSessionStorage } from '../account-storage.js';
 import { readOnboarding, updateOnboarding } from '../onboarding.js';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useTabSet } from '../ui/useTabSet.js';
 import { isDateInRange, nextUnhandledScheduleOccurrence, type Attachment, type Category, type FixedAssetCategory } from '@zichan/core';
 import {
   archiveMasterData,
@@ -53,6 +54,9 @@ const norm = (value: unknown) => String(value ?? '').trim().toLowerCase();
 
 type ManageTab = 'transactionCategories' | 'fixedCategories' | 'labels' | 'assets' | 'other';
 type OtherDataTab = 'accounts' | 'templates' | 'prices' | 'plans' | 'games' | 'attachments';
+const MANAGE_TABS: readonly ManageTab[] = ['transactionCategories', 'fixedCategories', 'labels', 'assets', 'other'];
+const OTHER_DATA_TABS: readonly OtherDataTab[] = ['accounts', 'templates', 'prices', 'plans', 'games', 'attachments'];
+const PAYEE_TABS = ['mine', 'catalog'] as const;
 type CategoryCenterMode = 'structure' | 'quick';
 type ManageTarget = { tab?: ManageTab; categoryMode?: CategoryCenterMode; otherTab?: OtherDataTab };
 
@@ -76,6 +80,9 @@ export function Manage() {
   const [initialTarget] = useState(readManageTarget);
   const [tab, setTab] = useState<ManageTab>(initialTarget.tab ?? 'transactionCategories');
   const [otherTab, setOtherTab] = useState<OtherDataTab>(initialTarget.otherTab ?? 'accounts');
+  const primaryTabs = useTabSet(MANAGE_TABS, tab, setTab);
+  const otherTabs = useTabSet(OTHER_DATA_TABS, otherTab, setOtherTab);
+  const payeeTabs = useTabSet(PAYEE_TABS, payeeView, setPayeeView);
   const [categoryMode, setCategoryMode] = useState<CategoryCenterMode>(initialTarget.categoryMode ?? 'structure');
   const [categoryPackBusy, setCategoryPackBusy] = useState('');
   const [categoryPackNotice, setCategoryPackNotice] = useState('');
@@ -201,10 +208,11 @@ export function Manage() {
           ['assets', '资产'],
           ['other', '其他资料'],
         ] as const).map(([id, label]) => (
-          <button key={id} role="tab" aria-selected={tab === id} type="button" onClick={() => setTab(id)} style={manageTabButton(tab === id)}>{label}</button>
+          <button key={id} {...primaryTabs.tabProps(id)} type="button" style={manageTabButton(tab === id)}>{label}</button>
         ))}
       </div>
 
+      <div {...primaryTabs.panelProps} style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       {tab === 'transactionCategories' && (
         <>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -297,9 +305,10 @@ export function Manage() {
             lifecycleCandidates={snap.transactionLocations.filter((row) => row.isActive).map((row) => ({ id: row.id, label: row.name }))}
           />
           <div role="tablist" aria-label="交易对象视图" style={{ display: 'flex', gap: 8 }}>
-            <button role="tab" aria-selected={payeeView === 'mine'} onClick={() => setPayeeView('mine')} style={manageFilterButton(payeeView === 'mine', true)}>我的交易对象</button>
-            <button role="tab" aria-selected={payeeView === 'catalog'} onClick={() => setPayeeView('catalog')} style={manageFilterButton(payeeView === 'catalog', true)}>平台目录</button>
+            <button type="button" {...payeeTabs.tabProps('mine')} style={manageFilterButton(payeeView === 'mine', true)}>我的交易对象</button>
+            <button type="button" {...payeeTabs.tabProps('catalog')} style={manageFilterButton(payeeView === 'catalog', true)}>平台目录</button>
           </div>
+          <div {...payeeTabs.panelProps}>
           {payeeView === 'catalog' ? <PayeeDirectory snap={snap} /> : <Section
             title="交易对象" headers={usesAccounts ? ['名称', '默认分类', '默认账户', '别名'] : ['名称', '默认分类', '别名']}
             items={snap.payees}
@@ -314,6 +323,7 @@ export function Manage() {
             bump={bump} masterKind="payee"
             lifecycleCandidates={snap.payees.filter((row) => row.isActive).map((row) => ({ id: row.id, label: row.name }))}
           />}
+          </div>
         </>
       )}
 
@@ -366,10 +376,10 @@ export function Manage() {
               ['games', '游戏资料'],
               ['attachments', '附件'],
             ] as const).map(([id, label]) => (
-              <button key={id} id={`zc-manage-other-tab-${id}`} type="button" role="tab" aria-selected={otherTab === id} aria-controls="zc-manage-other-panel" className={`zc-manage-other-tab${otherTab === id ? ' is-active' : ''}`} onClick={() => setOtherTab(id)}>{label}</button>
+              <button key={id} type="button" {...otherTabs.tabProps(id)} className={`zc-manage-other-tab${otherTab === id ? ' is-active' : ''}`}>{label}</button>
             ))}
           </div>
-          <div id="zc-manage-other-panel" role="tabpanel" aria-labelledby={`zc-manage-other-tab-${otherTab}`} className="zc-manage-other-panel">
+          <div {...otherTabs.panelProps} className="zc-manage-other-panel">
           {otherTab === 'accounts' && usesAccounts && (
             <Section
               title="账户" headers={['名称', '类型', '平台', '账单 / 期限']}
@@ -437,6 +447,7 @@ export function Manage() {
           </div>
         </>
       )}
+      </div>
     </div>
   );
 }

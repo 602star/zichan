@@ -17,6 +17,7 @@ import { assetConversionActions } from '../conversion-entry.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
+import { useTabSet } from '../ui/useTabSet.js';
 import {
   activeAssetByCode,
   ASSET_PRESETS,
@@ -32,6 +33,7 @@ const TYPE_LABEL: Record<string, string> = {
 const TYPE_OPTS: [ConversionType, string][] = [
   ['dca', '定投'], ['buy', '买入'], ['sell', '卖出'], ['swap', '资产互换'], ['exchange', '换汇'], ['deposit', '入金'], ['withdraw', '提现'],
 ];
+const CONVERT_VIEWS = ['overview', 'list', 'year', 'month', 'day'] as const;
 
 function badgeStyle(type: string) {
   const base = { padding: '5px 11px', borderRadius: 'var(--r-sm)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', flexShrink: 0 } as const;
@@ -55,6 +57,7 @@ export function Convert() {
   const [priceAssetId, setPriceAssetId] = useState<string | null>(null);
   const [showVoided, setShowVoided] = useState(false);
   const [view, setView] = useState<'overview' | TimelineViewMode>('overview');
+  const viewTabs = useTabSet(CONVERT_VIEWS, view, setView);
   const [focusDate, setFocusDate] = useState(localToday);
   const [dateRange, setDateRange] = useState<DateRangeValue>(() => dateRangeValue('all'));
   const [ctype, setCtype] = useState('');
@@ -170,7 +173,7 @@ export function Convert() {
       {actionError && <div role="alert">{actionError}</div>}
       <div className="zc-convert-toolbar">
         <div className="zc-convert-view-tabs" role="tablist" aria-label="资产转换视图">
-          {(['overview', 'list', 'year', 'month', 'day'] as const).map((mode) => <button key={mode} role="tab" aria-selected={view === mode} onClick={() => setView(mode)} style={pillBtn(view === mode)}>{mode === 'overview' ? '持仓概览' : mode === 'list' ? '时间线' : mode === 'year' ? '年度' : mode === 'month' ? '月历' : '单日'}</button>)}
+          {CONVERT_VIEWS.map((mode) => <button key={mode} type="button" {...viewTabs.tabProps(mode)} style={pillBtn(view === mode)}>{mode === 'overview' ? '持仓概览' : mode === 'list' ? '时间线' : mode === 'year' ? '年度' : mode === 'month' ? '月历' : '单日'}</button>)}
         </div>
         <div className="zc-convert-toolbar-actions">
           <button onClick={() => setOpeningCost(true)} style={btnOutline}>{snap.costState ? '核对成本起点' : '启用统一成本核算'}</button>
@@ -203,6 +206,7 @@ export function Convert() {
         <div className="zc-convert-filter-note">筛选仅作用于历史记录。当前余额包含期初、收支与转换；现值按最新行情折算为 {reportAsset?.code ?? '报表币种'}。</div>
       </div>
 
+      <div {...viewTabs.panelProps} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {view === 'overview' && vm.groups.every((group) => !group.hasPosition && group.chains.length === 0) && (
         <ConvertEmptyState assets={snap.assets} onSelect={(assetPresetCode) => setAdding({ assetPresetCode })} />
       )}
@@ -375,6 +379,8 @@ export function Convert() {
           emptyText="该时间范围内没有资产转换记录。"
         />
       )}
+
+      </div>
 
       {detail && <DialogShell labelledBy={detailTitleId} onDismiss={() => setDetailId(null)} backdropClassName="zc-backdrop zc-conversion-backdrop" panelClassName="zc-conversion-detail">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h2 id={detailTitleId} style={{ flex: 1 }}>{detail.title}</h2><button aria-label="关闭详情" style={pillBtn(false)} onClick={() => setDetailId(null)}>关闭</button></div>

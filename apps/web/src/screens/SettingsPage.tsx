@@ -1,6 +1,7 @@
 import type { ThemeId, ThemeMode, ThemeModePreference } from '../theme.js';
 import { Settings, type SettingsSection } from './Settings.js';
 import { Sync } from './Sync.js';
+import { useTabSet } from '../ui/useTabSet.js';
 
 const TABS: readonly [SettingsSection, string][] = [
   ['ledger', '记账'],
@@ -24,6 +25,7 @@ export function SettingsPage({ theme, mode, resolvedMode, setTheme, setMode, sec
 }) {
   const appearance = { theme, mode, resolvedMode, setTheme, setMode };
   const backupActions = { onExportBackup, onImportBackup };
+  const tabs = useTabSet(TABS.map(([id]) => id), section, onSelectSection);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
       <div className="zc-tabs" role="tablist" aria-label="设置分类">
@@ -31,18 +33,18 @@ export function SettingsPage({ theme, mode, resolvedMode, setTheme, setMode, sec
           <button
             key={id}
             type="button"
-            role="tab"
-            aria-selected={section === id}
+            {...tabs.tabProps(id)}
             className={section === id ? 'zc-tab is-active' : 'zc-tab'}
-            onClick={() => onSelectSection(id)}
           >
             {label}
           </button>
         ))}
       </div>
-      {section === 'ledger' || section === 'appearance'
-        ? <Settings {...appearance} {...backupActions} section={section} />
-        : <Sync {...appearance} {...backupActions} section={section} onSelectSection={onSelectSection} />}
+      <div {...tabs.panelProps}>
+        {section === 'ledger' || section === 'appearance'
+          ? <Settings {...appearance} {...backupActions} section={section} />
+          : <Sync {...appearance} {...backupActions} section={section} onSelectSection={onSelectSection} />}
+      </div>
     </div>
   );
 }

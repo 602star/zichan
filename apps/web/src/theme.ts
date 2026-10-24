@@ -1,7 +1,7 @@
 /**
- * Design tokens. The semantic palette below is copied verbatim from the prototype
- * (THEMES in the .dc.html); the categorical slots are ours and are documented in
- * place.
+ * Design tokens. The semantic palette follows the prototype (THEMES in the
+ * .dc.html), with contrast adjustments for readable text and controls.
+ * The categorical slots are ours and are documented in place.
  *
  * A theme is one accent family (terracotta / sage / plum) and a mode (`light` /
  * `dark`). They are separate axes on purpose: choosing a warm accent should not
@@ -34,12 +34,12 @@ export type ThemeModePreference = ThemeMode | 'system';
  */
 const CATEGORICAL: Record<ThemeId, Record<string, string>> = {
   terracotta: {
-    '--cat-1': '#bf6b3f', '--cat-2': '#3f7d92', '--cat-3': '#6b8f3f',
+    '--cat-1': '#a0522d', '--cat-2': '#3f7d92', '--cat-3': '#6b8f3f',
     '--cat-4': '#b8862f', '--cat-5': '#a04a72', '--cat-6': '#5b5f9e',
     '--cat-other': '#9c948a',
   },
   sage: {
-    '--cat-1': '#4f7d64', '--cat-2': '#33707f', '--cat-3': '#6f8b3a',
+    '--cat-1': '#406d54', '--cat-2': '#33707f', '--cat-3': '#6f8b3a',
     '--cat-4': '#ab8226', '--cat-5': '#9a4a6e', '--cat-6': '#575c99',
     '--cat-other': '#96a094',
   },
@@ -154,28 +154,28 @@ export const OTHER_CATEGORY_COLOR = 'var(--cat-other)';
 export const THEMES: Record<ThemeId, Record<string, string>> = {
   terracotta: {
     '--bg': '#f0e9dc', '--surface': '#fffcf6', '--surface-2': '#f6efe2',
-    '--fg': '#2b2620', '--fg-muted': '#6b6155', '--fg-subtle': '#a3988a',
-    '--border': '#e6dccb', '--accent': '#bf6b3f', '--accent-soft': '#f6e4d5',
-    '--positive': '#3f8f6b', '--negative': '#c2604a', '--warning': '#9a681d',
-    '--on-accent': '#ffffff', '--danger': '#c2604a', '--text-muted': '#6b6155',
+    '--fg': '#2b2620', '--fg-muted': '#6b6155', '--fg-subtle': '#706558',
+    '--border': '#e6dccb', '--accent': '#a0522d', '--accent-soft': '#f6e4d5',
+    '--positive': '#317554', '--negative': '#a64c37', '--warning': '#855916',
+    '--on-accent': '#ffffff', '--danger': '#a64c37', '--text-muted': '#6b6155',
     ...SURFACES.terracotta,
     ...CATEGORICAL.terracotta,
   },
   sage: {
     '--bg': '#e9eee9', '--surface': '#fbfdfb', '--surface-2': '#eef3ee',
-    '--fg': '#25302a', '--fg-muted': '#5c6b62', '--fg-subtle': '#93a397',
-    '--border': '#d8e2d9', '--accent': '#4f7d64', '--accent-soft': '#dfeae1',
-    '--positive': '#3f8f6b', '--negative': '#c2604a', '--warning': '#8a681d',
-    '--on-accent': '#ffffff', '--danger': '#c2604a', '--text-muted': '#5c6b62',
+    '--fg': '#25302a', '--fg-muted': '#5c6b62', '--fg-subtle': '#5e6e61',
+    '--border': '#d8e2d9', '--accent': '#406d54', '--accent-soft': '#dfeae1',
+    '--positive': '#317554', '--negative': '#a64c37', '--warning': '#855916',
+    '--on-accent': '#ffffff', '--danger': '#a64c37', '--text-muted': '#5c6b62',
     ...SURFACES.sage,
     ...CATEGORICAL.sage,
   },
   plum: {
     '--bg': '#f1eaee', '--surface': '#fffcfe', '--surface-2': '#f6eef3',
-    '--fg': '#2c2429', '--fg-muted': '#6b5d65', '--fg-subtle': '#a1929a',
+    '--fg': '#2c2429', '--fg-muted': '#6b5d65', '--fg-subtle': '#74646e',
     '--border': '#e8dbe3', '--accent': '#8f5670', '--accent-soft': '#f2e2ec',
-    '--positive': '#3f8f6b', '--negative': '#c2604a', '--warning': '#94621c',
-    '--on-accent': '#ffffff', '--danger': '#c2604a', '--text-muted': '#6b5d65',
+    '--positive': '#317554', '--negative': '#a64c37', '--warning': '#855916',
+    '--on-accent': '#ffffff', '--danger': '#a64c37', '--text-muted': '#6b5d65',
     ...SURFACES.plum,
     ...CATEGORICAL.plum,
   },
@@ -192,7 +192,7 @@ export const THEMES: Record<ThemeId, Record<string, string>> = {
 export const DARK_THEMES: Record<ThemeId, Record<string, string>> = {
   terracotta: {
     '--bg': '#191512', '--surface': '#221d19', '--surface-2': '#2b2521',
-    '--fg': '#f2e9dd', '--fg-muted': '#b9ab9a', '--fg-subtle': '#8a7e70',
+    '--fg': '#f2e9dd', '--fg-muted': '#b9ab9a', '--fg-subtle': '#9b8f81',
     '--border': '#3b322b', '--accent': '#e0a072', '--accent-soft': '#3a2a1f',
     '--positive': '#6fc79b', '--negative': '#e79079', '--warning': '#d9ad63',
     '--on-accent': '#241a12', '--danger': '#e79079', '--text-muted': '#b9ab9a',
@@ -201,7 +201,7 @@ export const DARK_THEMES: Record<ThemeId, Record<string, string>> = {
   },
   sage: {
     '--bg': '#121814', '--surface': '#1a211c', '--surface-2': '#222a24',
-    '--fg': '#e8f0e9', '--fg-muted': '#a8b8ac', '--fg-subtle': '#7d8c81',
+    '--fg': '#e8f0e9', '--fg-muted': '#a8b8ac', '--fg-subtle': '#91a093',
     '--border': '#2d3830', '--accent': '#7fb894', '--accent-soft': '#1e2b23',
     '--positive': '#6fc79b', '--negative': '#e79079', '--warning': '#d3ab63',
     '--on-accent': '#0f1a13', '--danger': '#e79079', '--text-muted': '#a8b8ac',
@@ -210,7 +210,7 @@ export const DARK_THEMES: Record<ThemeId, Record<string, string>> = {
   },
   plum: {
     '--bg': '#171214', '--surface': '#201a1d', '--surface-2': '#292125',
-    '--fg': '#f1e8ec', '--fg-muted': '#bda9b4', '--fg-subtle': '#8e7d88',
+    '--fg': '#f1e8ec', '--fg-muted': '#bda9b4', '--fg-subtle': '#9c8b95',
     '--border': '#372c33', '--accent': '#cf8fae', '--accent-soft': '#33222c',
     '--positive': '#6fc79b', '--negative': '#e79079', '--warning': '#d3ab63',
     '--on-accent': '#1f1319', '--danger': '#e79079', '--text-muted': '#bda9b4',
@@ -220,7 +220,7 @@ export const DARK_THEMES: Record<ThemeId, Record<string, string>> = {
 };
 
 export const ACCENTS: Record<ThemeId, string> = {
-  terracotta: '#bf6b3f', sage: '#4f7d64', plum: '#8f5670',
+  terracotta: '#a0522d', sage: '#406d54', plum: '#8f5670',
 };
 
 export const DARK_ACCENTS: Record<ThemeId, string> = {

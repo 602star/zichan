@@ -9,6 +9,7 @@ import type { SettingsField, SettingsPayload } from './types.js';
 import { ServerGroupPanel } from './ServerGroupPanel.js';
 import { NotificationChannelsEditor } from './NotificationChannelsEditor.js';
 import { adminBasePath } from './router.js';
+import { useTabSet } from '../ui/useTabSet.js';
 
 function openUpdatedAdminPath(segment: string, previousSegment: string): void {
   const currentBase = adminBasePath(window.location);
@@ -44,6 +45,11 @@ function AdminPathInput({ id, value, disabled, invalid, describedBy, onChange }:
 
 export function SettingsPage({ client, role, query, navigate }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (to: string) => void }) {
   const group = SETTING_GROUPS.find((entry) => entry.id === query.get('group')) ?? SETTING_GROUPS[0];
+  const tabs = useTabSet(SETTING_GROUPS.map((entry) => entry.id), group.id, (id) => {
+    setError('');
+    setNotice('');
+    navigate('/settings?group=' + id);
+  });
   const baseline = useRef<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const payload = useResource(() => client.request<SettingsPayload>('/settings'), []);
@@ -137,9 +143,9 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
       {role !== 'owner' ? <Notice>只有服务器所有者可以修改设置；这里显示的是当前生效值。</Notice> : null}
 
       <div role="tablist" aria-label="设置分组" style={{ ...row, marginBottom: 16 }}>
-        {SETTING_GROUPS.map((entry) => <Button key={entry.id} role="tab" aria-selected={group.id === entry.id} disabled={saving}
-          onClick={() => { setError(''); setNotice(''); navigate('/settings?group=' + entry.id); }}>{entry.label}</Button>)}
+        {SETTING_GROUPS.map((entry) => <Button key={entry.id} {...tabs.tabProps(entry.id)} disabled={saving}>{entry.label}</Button>)}
       </div>
+      <div {...tabs.panelProps}>
       <p>{group.description}</p>
       {group.id === 'capacity' ? <div style={{ ...row, marginBottom: 16 }}>
         <Button onClick={() => navigate('/users')}>查看单用户配额</Button>
@@ -262,6 +268,7 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
       </Panel>
       </div>
       </>}
+      </div>
     </>
   );
 }

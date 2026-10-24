@@ -27,7 +27,6 @@ export default defineConfig(({ mode }) => {
           const normalized = id.replace(/\\/g, '/');
           if (normalized.includes('/node_modules/react') || normalized.includes('/node_modules/react-dom')) return 'react';
           if (normalized.includes('/node_modules/sql.js')) return 'sql';
-          if (normalized.includes('/packages/core/') || normalized.includes('/packages/db/') || normalized.includes('/packages/logger/')) return 'ledger';
           return undefined;
         },
       },
