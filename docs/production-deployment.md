@@ -36,7 +36,7 @@ export RESTIC_PASSWORD_FILE='/etc/zichan/restic-password'
 bash scripts/production/ship-backup.sh /srv/zichan/backups/<记录>
 ```
 
-运送脚本先通过业务镜像的维护入口校验数据库、附件和密钥清单，上传后执行 `restic check --read-data`。生产应使用独立权限的异机账户，并由主机定时器调用；自动备份保持关闭，直到异机恢复演练及备份维护窗口通过。`TZ=Asia/Shanghai` 必须同时用于容器与维护窗口验收，检查管理页及 `backup-executor.json` 的下次执行时间。
+运送脚本先通过业务镜像的维护入口校验数据库、附件和密钥清单，上传后执行 `restic check --read-data`。生产应使用独立权限的异机账户。`scripts/production/systemd/` 提供每日北京时间 05:00 的主机运送定时器，调用 `ship-latest.sh`，只有验证成功才记录已运送的备份路径。安装时将脚本固定到 `/opt/zichan`，配置 `/etc/zichan/backup-transport.env` 后启用 timer；运送窗口应晚于实际自动备份窗口。自动备份保持关闭，直到异机恢复演练及备份维护窗口通过。`TZ=Asia/Shanghai` 必须同时用于容器与维护窗口验收，检查管理页及 `backup-executor.json` 的下次执行时间。
 
 ## 整机恢复
 
@@ -54,4 +54,4 @@ bash scripts/production/deploy.sh
 
 ## 共享维护锁
 
-自动备份认领窗口前会在 `/srv/zichan/state/server/maintenance.lock` 原子建目录，直到备份和服务恢复完毕才释放。未来主机升级程序须持有同一锁，并核对 `backup-executor.json` 心跳和状态后才能停服。进程异常退出时锁会保留以安全失败；只有确认备份进程已经退出、数据已校验后，运维才可人工清理锁。当前尚未实现完整跨版本迁移和自动回退执行器。
+自动备份认领窗口前会在 `/srv/zichan/state/server/maintenance.lock` 原子建目录，直到备份和服务恢复完毕才释放。主机侧 `with-maintenance-lock.sh COMMAND` 使用同一锁，只有备份执行器处于 `disabled` 或 `waiting` 且心跳在 30 秒内才运行命令；未来升级执行器须复用这个入口。进程异常退出时锁会保留以安全失败；只有确认备份进程已经退出、数据已校验后，运维才可人工清理锁。当前尚未实现完整跨版本迁移和自动回退执行器。

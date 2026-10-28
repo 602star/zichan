@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily encrypted Zichan backup transport
+
+[Timer]
+OnCalendar=*-*-* 05:00:00 Asia/Shanghai
+Persistent=true
+Unit=zichan-backup-transport.service
+
+[Install]
+WantedBy=timers.target

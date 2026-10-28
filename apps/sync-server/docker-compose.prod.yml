@@ -5,7 +5,6 @@ name: zichan-prod
 services:
   sync-server:
     image: ${ZICHAN_IMAGE:?Set ZICHAN_IMAGE to a verified sha256 digest}
-    pull_policy: always
     network_mode: host
     init: true
     user: '1000:1000'

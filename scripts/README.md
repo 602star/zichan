@@ -1,6 +1,6 @@
 # 启动与构建脚本
 
-`scripts/` 只放可直接运行的启动、停止和构建脚本。用户入口优先使用根 `package.json` 的 npm 命令；Windows 下需要双击时使用 `windows/` 中的薄 CMD 包装，不在仓库根目录增加 CMD。
+`scripts/` 放可直接运行的启动、停止、构建和生产维护脚本。用户入口优先使用根 `package.json` 的 npm 命令；Windows 下需要双击时使用 `windows/` 中的薄 CMD 包装，不在仓库根目录增加 CMD。Linux 生产镜像部署、备份运送和恢复入口位于 `production/`，使用方法见 `docs/production-deployment.md`。
 
 测试、CI 专用生成器和其他开发工具统一放在仓库根 `tools/`：发布测试位于 `tools/release/tests/`，数据库 schema 契约导出器位于 `tools/ci/`。它们由 npm 命令或 CI 调用，不作为日常双击入口。
 

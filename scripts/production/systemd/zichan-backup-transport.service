@@ -1,0 +1,11 @@
+[Unit]
+Description=Verify and ship the latest Zichan backup to encrypted storage
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/zichan/backup-transport.env
+WorkingDirectory=/opt/zichan
+ExecStart=/opt/zichan/scripts/production/ship-latest.sh
+TimeoutStartSec=4h
