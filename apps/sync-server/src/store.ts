@@ -4107,8 +4107,10 @@ END;`);
         `SELECT keyring_id, generation, envelope_json FROM ledger_replica_key_envelopes
          WHERE replica_id = ? AND ledger_id = ?`, [replica.replica_id, ledgerId]);
       if (!key) throw new ServerStoreError('REPLICA_INCOMPLETE', 409, '账本副本或密钥包缺失');
+      // A federated identity belongs to the account. Group replication stores
+      // the group ID in this row, which can differ from the replica ledger ID.
       const binding = await driver.get<{ issuer_node_id: string; subject_account_id: string }>(
-        'SELECT issuer_node_id, subject_account_id FROM federated_account_bindings WHERE local_username = ? AND ledger_id = ?', [username, ledgerId]);
+        'SELECT issuer_node_id, subject_account_id FROM federated_account_bindings WHERE local_username = ?', [username]);
       const issuerNodeId = binding?.issuer_node_id ?? this.serverId;
       const subjectAccountId = binding?.subject_account_id ?? replica.account_id;
       const requirements = await driver.all<{ capability: string }>(

@@ -116,8 +116,7 @@ test('records on three separate websites and converges their server replicas', a
     await page.goto(`${hub.url}/app/`);
     await page.getByLabel('服务器用户名').fill('owner');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
-    await page.getByRole('button', { name: '登录已有账号' }).click();
-    await page.getByRole('button', { name: '创建个人账本' }).click();
+    await page.getByRole('button', { name: '登录', exact: true }).click();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await page.keyboard.press('Escape');
@@ -157,7 +156,7 @@ test('records on three separate websites and converges their server replicas', a
       await page.goto(`${node.url}/app/`);
       await page.getByLabel('服务器用户名').fill('owner');
       await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
-      await page.getByRole('button', { name: '登录已有账号' }).click();
+      await page.getByRole('button', { name: '登录', exact: true }).click();
       await expect(page.locator('.zc-app-shell')).toBeVisible();
       await saveExpense(page, amount, note);
       await syncCurrentSite(page);
@@ -236,11 +235,18 @@ test('records on three separate websites and converges their server replicas', a
       'home-hub-offline', 'office-hub-offline']) {
       await expect(page.getByText(note, { exact: true })).toBeVisible();
     }
-    const groupHealth = await fetch(`${hub.url}/api/v4/ledger/group-health`, {
-      headers: { Authorization: `Bearer ${owner.accessToken}` },
-    });
-    expect(groupHealth.status).toBe(200);
-    expect(await groupHealth.json()).toMatchObject({ memberCount: 3 });
+    for (const node of [home, office, hub]) {
+      await revisitSite(page, node.url);
+      await syncCurrentSite(page);
+    }
+    await expect.poll(async () => {
+      await Promise.all([home.flushNodeReplication(), office.flushNodeReplication()]);
+      const response = await fetch(`${hub.url}/api/v4/ledger/group-health`, {
+        headers: { Authorization: `Bearer ${owner.accessToken}` },
+      });
+      expect(response.status).toBe(200);
+      return response.json();
+    }, { timeout: 30_000 }).toMatchObject({ state: 'READY', memberCount: 3, readyCount: 3, issues: [] });
 
     // A saved site may still be open after its node is removed. With another
     // configured member, its pending client commit must use that member.

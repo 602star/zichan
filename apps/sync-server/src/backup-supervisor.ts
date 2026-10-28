@@ -6,19 +6,56 @@ import { createBackupExecutor, type BackupPlan } from './backup-executor.js';
 import { watchShutdownInput } from './shutdown-input.js';
 import { assertServerStopped } from './backup.js';
 
-/** A supervisor owns only its own HTTP child. It never kills a PID taken from a file. */
-export async function runBackupSupervisor(entry: string, dataDir: string, webDir: string | undefined, controlStdin: boolean): Promise<void> {
+function linuxProcessIdentity(pid: number): string | undefined {
+  if (process.platform !== 'linux') return undefined;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
+    const startTicks = fields[19]; // /proc stat field 22; fields here begin at field 3.
+    const bootId = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+    return startTicks && /^\d+$/.test(startTicks) && bootId ? `${bootId}:${startTicks}` : undefined;
+  } catch { return undefined; }
+}
+
+/** Keep a Linux PID reuse from turning a killed container's lock into a permanent startup failure. */
+export function acquireBackupExecutorLock(dataDir: string): () => void {
   mkdirSync(dataDir, { recursive: true });
   const lock = join(dataDir, 'backup-executor.lock');
   if (existsSync(lock)) {
-    const pid = Number(readFileSync(lock, 'utf8'));
+    const contents = readFileSync(lock, 'utf8');
+    let pid: number;
+    let identity: string | undefined;
+    try {
+      if (/^\d+$/.test(contents)) pid = Number(contents);
+      else {
+        const parsed: unknown = JSON.parse(contents);
+        if (!parsed || typeof parsed !== 'object' || !('pid' in parsed)) throw new Error();
+        pid = Number(parsed.pid);
+        identity = 'identity' in parsed && typeof parsed.identity === 'string'
+          ? parsed.identity : undefined;
+      }
+    } catch { throw new Error('备份执行器锁文件无效，请核实进程后处理'); }
     if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('备份执行器锁文件无效，请核实进程后处理');
-    try { process.kill(pid, 0); throw new Error('该数据目录已有备份执行器'); }
+    let live = false;
+    try { process.kill(pid, 0); live = true; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+    const currentIdentity = live ? linuxProcessIdentity(pid) : undefined;
+    if (live && (!identity || !currentIdentity || identity === currentIdentity)) {
+      throw new Error('该数据目录已有备份执行器');
+    }
     unlinkSync(lock);
   }
   const handle = openSync(lock, 'wx', 0o600);
-  try { writeFileSync(handle, String(process.pid)); } finally { closeSync(handle); }
+  try {
+    const identity = linuxProcessIdentity(process.pid);
+    writeFileSync(handle, identity ? JSON.stringify({ pid: process.pid, identity }) : String(process.pid));
+  } finally { closeSync(handle); }
+  return () => unlinkSync(lock);
+}
+
+/** A supervisor owns only its own HTTP child. It never kills a PID taken from a file. */
+export async function runBackupSupervisor(entry: string, dataDir: string, webDir: string | undefined, controlStdin: boolean): Promise<void> {
+  const releaseLock = acquireBackupExecutorLock(dataDir);
   let child: ChildProcess | undefined;
   let exited: Promise<number | null> = Promise.resolve(0);
   let plan: BackupPlan | undefined;
@@ -103,6 +140,6 @@ export async function runBackupSupervisor(entry: string, dataDir: string, webDir
     await executor?.close();
     await stopService();
     unwatch?.(); process.off('SIGINT', onInt); process.off('SIGTERM', onTerm);
-    unlinkSync(lock);
+    releaseLock();
   }
 }
