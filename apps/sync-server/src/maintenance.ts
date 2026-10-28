@@ -11,7 +11,7 @@ function option(name: string, fallback?: string): string {
   const index = process.argv.indexOf(`--${name}`);
   const value = index >= 0 ? process.argv[index + 1] : undefined;
   if (value && !value.startsWith('--')) return value;
-  if (fallback) return fallback;
+  if (fallback !== undefined) return fallback;
   throw new Error(`缺少 --${name}`);
 }
 
