@@ -22,9 +22,11 @@ services:
       - ADMIN_ACCESS_PATH=${ADMIN_ACCESS_PATH:-}
       - TRUSTED_PROXIES=127.0.0.1
       - ALLOW_INSECURE_HTTP=0
+      - ADMIN_BACKUP_DIRECTORY=/backups
       - WEB_DIST=/app/web-dist
     volumes:
       - zichan-data:/state
+      - zichan-backups:/backups
     network_mode: host
     healthcheck:
       test: ["CMD", "node", "-e", "const p=(process.env.BASE_PATH||'').replace(/\\/$/,'');fetch('http://127.0.0.1:8787'+p+'/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -38,3 +40,4 @@ services:
 
 volumes:
   zichan-data: {}
+  zichan-backups: {}
