@@ -1,5 +1,5 @@
-# Publish the unified server on host port 8787; configure your own HTTPS reverse proxy.
-# Defaults to loopback so a proxy on the same host can reach it without public exposure.
+# Linux deployment: only the business container runs in Compose.
+# Run the HTTPS reverse proxy on the host; it forwards to 127.0.0.1:8787.
 # Usage: docker compose up -d --build --remove-orphans
 # The first start persists a generated server.secret in the data volume.
 services:
@@ -9,25 +9,23 @@ services:
       dockerfile: apps/sync-server/Dockerfile
     environment:
       - PORT=8787
-      - HOST=0.0.0.0
+      - HOST=127.0.0.1
       - DATA_DIR=/state/server
       - COMMIT_QUOTA_BYTES=${COMMIT_QUOTA_BYTES:-21474836480}
       - ATTACHMENT_QUOTA_BYTES=${ATTACHMENT_QUOTA_BYTES:-21474836480}
       - ATTACHMENT_MAX_FILE_BYTES=${ATTACHMENT_MAX_FILE_BYTES:-104857600}
       - ATTACHMENT_TRASH_RETENTION_MS=${ATTACHMENT_TRASH_RETENTION_MS:-2592000000}
-      - SYNC_SECRET=${SYNC_SECRET:-}
       - REGISTRATION_MODE=${REGISTRATION_MODE:-invite}
       - ENABLE_WEB=${ENABLE_WEB:-1}
       - ENABLE_SYNC=${ENABLE_SYNC:-1}
       - BASE_PATH=${BASE_PATH:-}
       - ADMIN_ACCESS_PATH=${ADMIN_ACCESS_PATH:-}
-      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-private}
+      - TRUSTED_PROXIES=127.0.0.1
       - ALLOW_INSECURE_HTTP=0
       - WEB_DIST=/app/web-dist
     volumes:
       - zichan-data:/state
-    ports:
-      - "${SYNC_BIND_ADDRESS:-127.0.0.1}:8787:8787"
+    network_mode: host
     healthcheck:
       test: ["CMD", "node", "-e", "const p=(process.env.BASE_PATH||'').replace(/\\/$/,'');fetch('http://127.0.0.1:8787'+p+'/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -35,6 +33,8 @@ services:
       retries: 3
       start_period: 10s
     restart: unless-stopped
+    # The supervisor waits for an active scheduled backup before shutting down.
+    stop_grace_period: 30m
 
 volumes:
   zichan-data: {}

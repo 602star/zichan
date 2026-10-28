@@ -150,9 +150,21 @@ cd apps/sync-server
 docker compose up -d --build --remove-orphans
 ```
 
-Compose 将父目录 `/state` 挂载到 `zichan-data`，实际 `DATA_DIR` 为 `/state/server`；这使恢复命令可以原子替换数据子目录。Compose 只运行同步服务器，默认把宿主机 `127.0.0.1:8787` 映射到容器的 8787，不占用 80/443；由部署者自行配置 HTTPS 反向代理并转发到 `http://127.0.0.1:8787`。代理在另一台主机时，可将 `SYNC_BIND_ADDRESS` 设为代理可访问的宿主机地址，并用防火墙限制来源。反向代理须保留公共 Host，并覆盖单一 `X-Forwarded-Proto: https`；`TRUSTED_PROXIES` 应配置为实际代理地址或网段。生产环境应固定 `SYNC_SECRET`、域名和 `BASE_PATH`，限制宿主机对数据卷的访问，不要把上游 8787 端口直接开放到公网。首次部署通过启动日志显示的后台路径显式创建 Owner，再对外开放服务；普通注册不应被当作取得管理员权限的入口。已有服务器按管理后台提示完成初始化，切勿为了重新初始化而删除账本数据。若密钥、`server.secret`、`server-id`、数据库或旧 JSON 状态曾进入源码目录或版本控制，应按已泄露处理：停止服务、保留加密数据备份，轮换 `SYNC_SECRET`，撤销设备会话后重新登录。
+Compose 将父目录 `/state` 挂载到 `zichan-data`，实际 `DATA_DIR` 为 `/state/server`；这使恢复命令可以原子替换数据子目录。此 Linux Compose **只运行一个业务容器**，使用宿主机网络并让服务仅监听 `127.0.0.1:8787`，没有容器内 HTTPS 代理，也不发布 80/443。HTTPS 反向代理由同一宿主机单独运行，转发到 `http://127.0.0.1:8787`；反向代理必须保留公共 Host，**覆盖**传入的 `X-Forwarded-Proto` 为单一的 `https`。Compose 把 `TRUSTED_PROXIES` 精确设为实际连接服务的代理地址 `127.0.0.1`，不信任整个私网。若代理位于另一台主机，需另行设计受防火墙保护的连接与精确代理 IP 配置，不能直接复用此回环部署。公网只开放 443，不开放上游 8787。首次部署通过启动日志显示的后台路径显式创建 Owner，再对外开放服务；普通注册不应被当作取得管理员权限的入口。已有服务器按管理后台提示完成初始化，切勿为了重新初始化而删除账本数据。若密钥、`server.secret`、`server-id`、数据库或旧 JSON 状态曾进入源码目录或版本控制，应按已泄露处理：停止服务、保留加密数据备份，轮换 `SYNC_SECRET`，撤销设备会话后重新登录。
 
-首次启动会在持久卷中生成 `/state/server/server.secret`；后续 `compose up` 会复用它。显式传入 `SYNC_SECRET` 时必须长期保留同一值，不能在每次启动时重新生成。备份卷须先准备为容器内 `node` 用户可写，再执行下述维护命令。
+宿主机 Caddy 配置示例（将域名替换为实际域名；Caddy 作为宿主机服务运行）：
+
+```caddyfile
+ledger.example.com {
+  reverse_proxy 127.0.0.1:8787 {
+    header_up X-Forwarded-Proto https
+  }
+}
+```
+
+Caddy 默认保留公共 Host；这里显式覆盖协议头，避免上游信任客户端传来的伪造值。启用或修改宿主机代理后，从公开 HTTPS 域名检查 `/api/ready` 与管理页面。
+
+首次启动会在持久卷中生成 `/state/server/server.secret`；后续 `compose up` 会复用它。不要在每次启动时生成或注入新的 `SYNC_SECRET`；若另行显式配置它，必须长期保留同一值并安全备份。`stop_grace_period: 30m` 给正在执行的自动备份留出退出时间，但不能保证任意大小的备份都能在 30 分钟内完成；人工停服和未来的升级程序须先确认备份执行器不在 `running` 状态。备份卷须先准备为容器内 `node` 用户可写，再执行下述维护命令。
 
 ## 备份、迁移与恢复演练
 
