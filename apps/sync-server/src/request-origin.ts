@@ -37,6 +37,10 @@ export function createRequestOrigin(trustedProxies: string[], allowInsecureHttp 
     return family !== 0 && allowed.check(address, family === 4 ? 'ipv4' : 'ipv6');
   };
   return {
+    /** The direct socket peer alone decides whether deployment metadata is trusted. */
+    trustedPeer(req: IncomingMessage): boolean {
+      return trusted(normalize(req.socket.remoteAddress ?? 'unknown'));
+    },
     browserOrigin(req: IncomingMessage): string | undefined {
       const remote = normalize(req.socket.remoteAddress ?? 'unknown');
       const host = req.headers.host;

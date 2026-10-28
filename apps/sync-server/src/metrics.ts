@@ -592,6 +592,32 @@ export function createMetricsService(deps: MetricsServiceDeps) {
       detail: { recentErrors: syncErrors, threshold },
     });
 
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+    const requestBuckets = await store.listMetricBuckets('minute', fiveMinutesAgo, new Date().toISOString());
+    const requestTotals = requestBuckets.reduce((total, bucket) => ({
+      requests: total.requests + bucket.requests,
+      errors: total.errors + bucket.errors,
+      slow: total.slow + bucket.slowRequests,
+    }), { requests: 0, errors: 0, slow: 0 });
+    const minRequests = Number(settings.effective('requestAlertMinCount'));
+    const enoughRequests = requestTotals.requests >= minRequests;
+    const errorRate = requestTotals.requests ? requestTotals.errors / requestTotals.requests * 100 : null;
+    const slowRate = requestTotals.requests ? requestTotals.slow / requestTotals.requests * 100 : null;
+    const errorThreshold = Number(settings.effective('httpErrorRateWarnPercent'));
+    const slowThreshold = Number(settings.effective('slowRequestRateWarnPercent'));
+    await store.upsertAlert({
+      key: 'requests:error-rate', rule: 'http-error-rate', scope: 'http', severity: 'warning',
+      active: enoughRequests && errorRate !== null && errorRate >= errorThreshold,
+      detail: { windowMinutes: 5, requests: requestTotals.requests, errors: requestTotals.errors,
+        ratePercent: errorRate === null ? null : Number(errorRate.toFixed(1)), thresholdPercent: errorThreshold, minRequests },
+    });
+    await store.upsertAlert({
+      key: 'requests:slow-rate', rule: 'slow-request-rate', scope: 'http', severity: 'warning',
+      active: enoughRequests && slowRate !== null && slowRate >= slowThreshold,
+      detail: { windowMinutes: 5, requests: requestTotals.requests, slowRequests: requestTotals.slow,
+        ratePercent: slowRate === null ? null : Number(slowRate.toFixed(1)), thresholdPercent: slowThreshold, minRequests },
+    });
+
     const disk = current.storage.diskFreeBytes;
     const total = current.storage.diskTotalBytes;
     if (disk !== null && total) {
@@ -766,6 +792,11 @@ export function createMetricsService(deps: MetricsServiceDeps) {
 
   return {
     observeRequest,
+    /** Explicit operator test; it does not change an alert's state or history. */
+    async testNotifications(): Promise<{ state: 'sent' | 'failed' | 'skipped'; error?: string }> {
+      return notifier({ key: 'notification:test', rule: 'notification-test', scope: 'server',
+        severity: 'warning', state: 'active', at: new Date().toISOString(), detail: { test: true } });
+    },
     /** Cached snapshot: the overview page polls this instead of recomputing aggregates. */
     async current(): Promise<ServiceSnapshot> {
       if (snapshot && Date.now() - snapshotAt < intervalMs) return { ...snapshot, sampledWithinMs: Date.now() - snapshotAt };

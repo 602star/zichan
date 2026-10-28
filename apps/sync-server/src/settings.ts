@@ -221,6 +221,21 @@ export const SETTING_FIELDS: SettingField[] = [
     description: '更早的分钟级监控指标会在下一次例行清理时删除。',
   },
   {
+    name: 'httpErrorRateWarnPercent', label: 'HTTP 错误率告警阈值（%）', kind: 'number',
+    envVar: 'ADMIN_HTTP_ERROR_RATE_WARN_PERCENT', default: 20, min: 1, max: 100,
+    description: '最近 5 分钟内 HTTP 4xx/5xx 占比达到该值，且请求量达到最小样本数后告警。连续两次异常才触发。',
+  },
+  {
+    name: 'slowRequestRateWarnPercent', label: '慢请求率告警阈值（%）', kind: 'number',
+    envVar: 'ADMIN_SLOW_REQUEST_RATE_WARN_PERCENT', default: 20, min: 1, max: 100,
+    description: '最近 5 分钟内耗时至少 1 秒的请求占比达到该值，且请求量达到最小样本数后告警。',
+  },
+  {
+    name: 'requestAlertMinCount', label: '请求告警最小样本数', kind: 'number',
+    envVar: 'ADMIN_REQUEST_ALERT_MIN_COUNT', default: 20, min: 1, max: 100_000,
+    description: 'HTTP 错误率和慢请求率规则只在最近 5 分钟达到这个请求数后评估，避免极低流量产生误报。',
+  },
+  {
     name: 'metricsHourRetentionDays', label: '小时级指标保留天数', kind: 'number',
     envVar: 'ADMIN_METRICS_HOUR_DAYS', default: 90, min: 7, max: 730,
     description: '更早的小时级监控指标会在下一次例行清理时删除。',

@@ -68,6 +68,7 @@ export interface AdminRouterDeps {
   version: string;
   enableSync: boolean;
   enableWeb: boolean;
+  trafficCountryConfigured?: boolean;
   basePath: string;
   defaultProtection: string;
   custodyEnabled: boolean;
@@ -672,6 +673,23 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       });
     }
 
+    if (req.method === 'GET' && suffix === '/traffic') {
+      const range = search.get('range') ?? '24h';
+      if (!['1h', '24h', '7d', '30d', '90d'].includes(range)) return send(res, 400, { error: 'invalid range' });
+      const spanMs = range === '1h' ? 3_600_000 : range === '24h' ? 86_400_000
+        : Number(range.slice(0, -1)) * 86_400_000;
+      const until = new Date();
+      const from = new Date(until.getTime() - spanMs);
+      const trafficGranularity = range === '1h' ? 'minute' : range === '24h' ? 'hour' : 'day';
+      return send(res, 200, {
+        range, from: from.toISOString(), until: until.toISOString(),
+        granularity: trafficGranularity,
+        ...await store.trafficSummary(from.toISOString(), until.toISOString(), trafficGranularity),
+        countryAvailable: Boolean(deps.trafficCountryConfigured),
+        note: 'PV 为浏览器上报的页面进入和后台路由切换；UV 为去重浏览器标识，不等于人数。只保留小时级指标配置对应的天数。',
+      });
+    }
+
     if (req.method === 'GET' && parts[0] === 'accounts' && parts.length === 2) {
       const detail = await store.accountDetail(parts[1]!);
       if (!detail) return send(res, 404, { error: 'account not found' });
@@ -933,6 +951,17 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       return send(res, 200, { alerts: await store.listAlerts({ ...(state ? { state } : {}) }) });
     }
 
+    if (req.method === 'POST' && suffix === '/alerts/test-notification') {
+      if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '仅服务器所有者可以测试通知渠道' });
+      return void await withIdempotency(req, res, 'alerts:test-notification', {}, async () => {
+        const result = await metrics.testNotifications();
+        await log(result.state === 'failed' ? 'warn' : 'info', 'alert_notification_test', 'Alert notification channel test', {
+          username: auth.user.username, detail: { state: result.state, ...(result.error ? { error: result.error } : {}) },
+        });
+        return { status: 200, body: result };
+      });
+    }
+
     if (req.method === 'POST' && parts[0] === 'alerts' && parts[2] === 'acknowledge') {
       const key = parts[1] ?? '';
       const body = await readBody(req, ADMIN_BODY_BYTES);
@@ -1191,6 +1220,8 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     }
 
     if (req.method === 'GET' && suffix === '/audit') {
+      const limit = Number(search.get('limit') ?? 50);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) return send(res, 400, { error: 'limit must be between 1 and 200' });
       const term = search.get('search')?.trim() ?? '';
       if (term.length > 128) return send(res, 400, { error: 'search must not exceed 128 characters' });
       const action = search.get('action') ?? '';
@@ -1204,7 +1235,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const page = await store.listAdminAudit({
         sort,
         ...(search.get('cursor') ? { cursor: search.get('cursor')! } : {}),
-        limit: 50,
+        limit,
         ...(term ? { search: term } : {}),
         ...(action ? { action } : {}),
         ...(search.get('actor') ? { actorAccountId: search.get('actor')! } : {}),
@@ -1429,7 +1460,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
           const chunk = await store.listLogs({
             limit: 200,
             ...(level ? { level } : {}), ...(from ? { from } : {}),
-            ...(until ? { until } : {}), ...(term ? { requestId: term } : {}),
+            ...(until ? { until } : {}), ...(term ? { search: term } : {}),
             ...(requestId ? { requestId } : {}), ...(username ? { username } : {}),
             ...(action ? { action } : {}), ...(cursor ? { cursor } : {}),
           });
@@ -1485,6 +1516,8 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const until = optionalIso(search.get('until'), 'until');
       const username = (search.get('username') ?? '').trim();
       if (username.length > 64) return send(res, 400, { error: 'username must not exceed 64 characters' });
+      const term = (search.get('search') ?? '').trim();
+      if (term.length > 128) return send(res, 400, { error: 'search must not exceed 128 characters' });
       const { sort, error } = readListSort(search, LOG_SORT_OPTIONS, 'at');
       if (error) return send(res, 400, { error });
       const guard = cursorGuard(search, sort);
@@ -1498,6 +1531,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         ...(search.get('cursor') ? { cursor: search.get('cursor')! } : {}),
         ...(search.get('requestId') ? { requestId: search.get('requestId')! } : {}),
         ...(username ? { username } : {}),
+        ...(term ? { search: term } : {}),
         ...(search.get('action') ? { action: search.get('action')! } : {}),
       });
       // The action list comes from the table, so the filter stays correct as actions are added.

@@ -157,6 +157,15 @@
 .zc-admin-page-header h2 { margin: 0 0 6px; font-size: var(--fs-heading); }
 .zc-admin-page-header p { margin: 0; font-size: var(--fs-body); }
 .zc-admin-page-actions, .zc-admin-view-switch { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.zc-admin-workspace-nav { display: flex; gap: 2px; max-width: 100%; margin: 4px 0 20px; overflow-x: auto; border-bottom: 1px solid var(--border); }
+.zc-admin-workspace-nav a, .zc-admin-root .zc-admin-workspace-nav button { display: grid; gap: 1px; flex: none; min-width: 136px; padding: 10px 16px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-secondary); text-align: left; text-decoration: none; }
+.zc-admin-workspace-nav a strong, .zc-admin-workspace-nav button strong { color: inherit; font-size: var(--fs-body); font-weight: var(--fw-medium); }
+.zc-admin-workspace-nav a span, .zc-admin-workspace-nav button span { color: var(--text-tertiary); font-size: var(--fs-caption); }
+.zc-admin-workspace-nav a[aria-current="page"], .zc-admin-root .zc-admin-workspace-nav button[aria-current="page"] { border-bottom-color: var(--accent); color: var(--accent); }
+.zc-admin-workspace-nav a:hover, .zc-admin-root .zc-admin-workspace-nav button:hover { background: var(--surface-2); }
+.zc-admin-monitor-context { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; color: var(--text-secondary); font-size: var(--fs-caption); }
+.zc-admin-monitor-catalog-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; color: var(--text-secondary); font-size: var(--fs-sm); }
+.zc-admin-monitor-catalog-controls label { display: inline-flex; align-items: center; gap: 6px; }
 .zc-admin-root [aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .zc-admin-filterbar { padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); box-shadow: 0 3px 18px rgb(21 50 30 / 3%); }
 .zc-admin-filterbar + .zc-admin-panel { margin-top: 16px !important; }
@@ -217,6 +226,14 @@
 .zc-admin-monitor-process-list { width: 100%; overflow-x: auto; }
 .zc-admin-monitor-process-row { display: grid; grid-template-columns: minmax(120px, 1fr) 80px 80px 110px; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); min-width: 420px; }
 .zc-admin-monitor-process-row > span:first-child { overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+  .zc-admin-monitor-process-row { min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px 8px; }
+  .zc-admin-monitor-process-row:first-child { display: none; }
+  .zc-admin-monitor-process-row > span:first-child { grid-column: 1 / -1; font-weight: 600; }
+  .zc-admin-monitor-process-row > span:nth-child(2)::before { content: 'PID '; color: var(--text-secondary); }
+  .zc-admin-monitor-process-row > span:nth-child(3)::before { content: 'CPU '; color: var(--text-secondary); }
+  .zc-admin-monitor-process-row > span:nth-child(4)::before { content: 'RSS '; color: var(--text-secondary); }
+}
 .zc-admin-line-chart { margin: 10px 0 2px; min-width: 0; }
 .zc-admin-line-chart svg { display: block; width: 100%; height: auto; }
 .zc-admin-line-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--text-secondary); font-size: var(--fs-sm); }
@@ -227,11 +244,23 @@
 .zc-admin-chart-title { font-size: var(--fs-body); margin: 16px 0 4px; }
 .zc-admin-log-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 12px 18px; margin: 0 0 16px; }
 .zc-admin-log-toolbar > * { min-width: min(100%, 210px); }
+.zc-admin-log-follow { display: flex; align-items: center; gap: 6px; align-self: center; min-width: 0; }
+.zc-admin-log-follow input { min-height: 0; accent-color: var(--accent); }
+.zc-admin-log-follow span { color: var(--text-secondary); font-size: var(--fs-caption); }
+.zc-admin-audit-action { display: grid; gap: 3px; min-width: 220px; max-width: 60ch; }
+.zc-admin-audit-action strong { font-weight: var(--fw-medium); }
+.zc-admin-audit-action span { color: var(--text-secondary); font-size: var(--fs-caption); }
+.zc-admin-audit-detail { display: grid; gap: 14px; padding: 14px; background: var(--surface-2); border-radius: var(--r-sm); }
+.zc-admin-audit-detail dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px 18px; margin: 0; }
+.zc-admin-audit-detail dt { color: var(--text-secondary); font-size: var(--fs-caption); }
+.zc-admin-audit-detail dd { margin: 0; overflow-wrap: anywhere; }
+.zc-admin-audit-detail summary { width: fit-content; cursor: pointer; }
+.zc-admin-audit-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 10px; }
+.zc-admin-audit-values section { min-width: 0; }
+.zc-admin-audit-values pre { max-height: 260px; overflow: auto; padding: 10px; background: var(--surface); border-radius: var(--r-sm); }
 .zc-admin-log-toolbar select { width: 100%; }
 .zc-admin-log-list { display: grid; gap: 12px; }
-.zc-admin-log-card { min-width: 0; padding: 16px 18px; border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--r-md); background: var(--surface-2); }
-.zc-admin-log-card[data-level="warn"] { border-left-color: var(--warning); }
-.zc-admin-log-card[data-level="error"] { border-left-color: var(--danger); }
+.zc-admin-log-card { min-width: 0; padding: 16px 18px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); }
 .zc-admin-log-head, .zc-admin-log-bottom { display: flex; align-items: start; justify-content: space-between; gap: 10px 18px; }
 .zc-admin-log-head time { flex: none; color: var(--text-secondary); font-size: var(--fs-caption); font-variant-numeric: tabular-nums; }
 .zc-admin-log-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 11px; min-width: 0; }
@@ -327,6 +356,8 @@
   .zc-admin-log-head time { width: 100%; }
   .zc-admin-log-detail { grid-template-columns: minmax(0, 1fr); }
   .zc-admin-log-toolbar > * { flex: 1 1 100%; }
+  .zc-admin-workspace-nav a, .zc-admin-root .zc-admin-workspace-nav button { min-width: 118px; padding-inline: 11px; }
+  .zc-admin-audit-values { grid-template-columns: minmax(0, 1fr); }
   .zc-admin-monitor-stats, .zc-admin-monitor-mini-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .zc-admin-monitor-stats > button:first-child { grid-column: 1 / -1; }
   .zc-admin-two-column, .zc-admin-security-workspace, .zc-admin-resource-workspace, .zc-admin-monitor-grid { display: block; }

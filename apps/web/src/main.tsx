@@ -8,6 +8,7 @@ import { enableWebAccounts } from './account-storage.js';
 import { OfflineShellStatus } from './ui/OfflineShellStatus.js';
 import { loadDesktopLedgerProfile } from './desktop-ledger-profile.js';
 import { saveFirstUseMode } from './browser-storage-policy.js';
+import { reportPageView } from './traffic-view.js';
 
 const AdminApp = lazy(() => import('./admin/AdminApp.js').then((module) => ({ default: module.AdminApp })));
 const LedgerApp = lazy(() => import('./LedgerApp.js').then((module) => ({ default: module.LedgerApp })));
@@ -23,9 +24,34 @@ function ManagementEntry() {
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { active = false; };
   }, [attempt]);
+  useEffect(() => {
+    if (!baseUrl) return;
+    let previous = '';
+    const track = () => {
+      const page = `/admin/${window.location.pathname.split('/admin/')[1]?.split('/')[0] || 'overview'}`;
+      if (page === previous) return;
+      previous = page;
+      reportPageView(baseUrl, page);
+    };
+    track();
+    window.addEventListener('zichan:admin:navigate', track);
+    window.addEventListener('popstate', track);
+    return () => {
+      window.removeEventListener('zichan:admin:navigate', track);
+      window.removeEventListener('popstate', track);
+    };
+  }, [baseUrl]);
   if (baseUrl) return <AdminApp baseUrl={baseUrl} />;
   return <main><p role={error ? 'alert' : 'status'}>{error || '正在连接管理服务器…'}</p>
     {error && <button onClick={() => setAttempt((value) => value + 1)}>重新连接</button>}</main>;
+}
+function TrackedWebAccountApp() {
+  useEffect(() => {
+    const path = window.location.pathname;
+    const prefix = /^(.*)\/app(?:\/|$)/.exec(path)?.[1] ?? (path === '/' ? '' : path.replace(/\/$/, ''));
+    reportPageView(`${window.location.origin}${prefix}`, '/app');
+  }, []);
+  return <WebAccountApp />;
 }
 function DesktopLedgerApp() {
   const [state, setState] = useState<'loading' | 'ready' | string>('loading');
@@ -49,7 +75,7 @@ createRoot(document.getElementById('root')!).render(
     <AppErrorBoundary>
       {!managementPage && <OfflineShellStatus />}
       <Suspense fallback={<p role="status">正在加载…</p>}>
-        {managementPage ? <ManagementEntry /> : isTauriRuntime() ? <DesktopLedgerApp /> : <WebAccountApp />}
+        {managementPage ? <ManagementEntry /> : isTauriRuntime() ? <DesktopLedgerApp /> : <TrackedWebAccountApp />}
       </Suspense>
     </AppErrorBoundary>
   </StrictMode>,

@@ -9,11 +9,13 @@ describe('request origin trust', () => {
     const origin = createRequestOrigin(['127.0.0.1']);
     const req = request('203.0.113.9', { 'x-forwarded-for': '127.0.0.1', 'x-forwarded-proto': 'https' });
     expect(origin.clientIp(req)).toBe('203.0.113.9');
+    expect(origin.trustedPeer(req)).toBe(false);
     expect(origin.secureTransport(req, false)).toBe(false);
   });
   it('walks trusted hops right-to-left and stops at the first untrusted hop', () => {
     const origin = createRequestOrigin(['10.1.0.0/16']);
     const req = request('10.1.0.2', { 'x-forwarded-for': '127.0.0.1, 203.0.113.9, 10.1.0.3' });
+    expect(origin.trustedPeer(req)).toBe(true);
     expect(origin.clientIp(req)).toBe('203.0.113.9');
     expect(origin.secureTransport(req, false)).toBe(false);
   });

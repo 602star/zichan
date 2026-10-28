@@ -60,6 +60,7 @@ interface Harness {
   store: SyncServerStore;
   /** One sampling pass. Two are needed before an alert counts as entered. */
   sample: () => Promise<void>;
+  testNotifications: () => Promise<{ state: string; error?: string }>;
   close: () => Promise<void>;
 }
 
@@ -95,6 +96,7 @@ async function harness(input: { alertChannels?: string; alertWebhookUrl?: string
   return {
     store,
     sample: async () => { await metrics.sample(); },
+    testNotifications: () => metrics.testNotifications(),
     close: async () => { await store.close(); await blobStore.close(); rmSync(dir, { recursive: true, force: true }); },
   };
 }
@@ -231,5 +233,15 @@ describe('multi-channel alert delivery', () => {
     // is treated as one more channel rather than removed.
     expect(forKey(legacy, 'backup:failure')).toHaveLength(1);
     expect((await f.store.getAlert('backup:failure'))?.notifyState).toBe('sent');
+  });
+
+  it('sends an explicit test through configured channels without creating an incident', async () => {
+    const receiver = await capture();
+    cleanup.push(receiver.close);
+    const f = await harness({ alertChannels: JSON.stringify([channel({ url: receiver.url })]) });
+    cleanup.push(f.close);
+    expect(await f.testNotifications()).toMatchObject({ state: 'sent' });
+    expect(forKey(receiver, 'notification:test')).toHaveLength(1);
+    expect(await f.store.getAlert('notification:test')).toBeUndefined();
   });
 });

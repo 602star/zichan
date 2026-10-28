@@ -202,6 +202,24 @@ describe('sortable admin lists', () => {
     } finally { await f.close(); }
   });
 
+  it('honors the selected audit page size and keeps the cursor at its boundary', async () => {
+    const f = await fixture();
+    try {
+      const statements: [string, (string | number | null)[]][] = [];
+      for (let index = 0; index < 60; index += 1) {
+        statements.push(["INSERT INTO server_admin_audit (at, actor_account_id, action, before_json, after_json) VALUES (?, 'account-a', 'role', '{}', '{}')", [new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString()]]);
+      }
+      await seed(f, statements);
+      const first = await (await f.api('/audit?limit=25&action=role')).json() as Paged<{ entries: { id: number }[] }>;
+      expect(first.entries).toHaveLength(25);
+      expect(first.nextCursor).toBeTruthy();
+      const second = await (await f.api(`/audit?limit=25&action=role&cursor=${encodeURIComponent(first.nextCursor!)}`)).json() as Paged<{ entries: { id: number }[] }>;
+      expect(second.entries).toHaveLength(25);
+      expect(second.entries.map((entry) => entry.id).filter((id) => first.entries.some((entry) => entry.id === id))).toEqual([]);
+      expect((await f.api('/audit?limit=201')).status).toBe(400);
+    } finally { await f.close(); }
+  });
+
   it('orders invitations by state and expiry without ever putting the code in the cursor', async () => {
     const f = await fixture();
     try {

@@ -10,8 +10,9 @@ import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { PageHeader, Badge, Button, DataTable, Field, Loading, Notice, Panel, Select, Stat, muted, row, useResource, when } from './ui.js';
 import type { AuthFailuresPayload, RateLimitsPayload } from './types.js';
+import { LogWorkspaceNav } from './LogWorkspaceNav.js';
 
-export function SecurityEventsPage({ client }: { client: AdminClient }) {
+export function SecurityEventsPage({ client, query, navigate }: { client: AdminClient; query: URLSearchParams; navigate: (to: string) => void }) {
   const [minFailures, setMinFailures] = useState('1');
   const failures = useResource(() => client.request<AuthFailuresPayload>(`/auth-failures?minFailures=${minFailures}`), [minFailures]);
   const limits = useResource(() => client.request<RateLimitsPayload>('/rate-limits'), []);
@@ -23,6 +24,7 @@ export function SecurityEventsPage({ client }: { client: AdminClient }) {
   return (
     <>
       <PageHeader title="登录安全" description="查看失败登录来源与限流证据。" actions={<><Button onClick={() => { failures.reload(); limits.reload(); }}>刷新</Button></>} />
+      <LogWorkspaceNav current="security-events" query={query} navigate={navigate} />
       <Loading loading={failures.loading || limits.loading} error={failures.error || limits.error}
         stale={failures.stale || limits.stale} loadedAt={failures.loadedAt ?? limits.loadedAt} />
 

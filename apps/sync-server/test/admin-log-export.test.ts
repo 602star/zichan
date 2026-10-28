@@ -165,6 +165,57 @@ describe('run log export', () => {
       expect(response.status).toBe(200);
     } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
   });
+  it('keeps keyword results identical between the list and export', async () => {
+    const f = await fixture();
+    try {
+      const store = new SyncServerStore(join(f.dataDir, 'server.sqlite'), 'open', f.server.serverId);
+      try {
+        await store.appendLog({ id: 'keyword-message', at: new Date().toISOString(), level: 'warn', action: 'probe', message: 'distinctive monitor needle' });
+        await store.appendLog({ id: 'keyword-detail', at: new Date().toISOString(), level: 'info', action: 'probe', message: 'other text', detail: { eventCode: 'needle_in_detail' } });
+      } finally { await store.close(); }
+      const list = await (await f.api('/logs?search=needle&action=probe')).json() as { logs: { id: string }[] };
+      const exported = await (await f.api('/logs/export?format=json&search=needle&action=probe')).json() as { rows: { message: string }[] };
+      expect(list.logs.map((row) => row.id).sort()).toEqual(['keyword-detail', 'keyword-message']);
+      expect(exported.rows.map((row) => row.message).sort()).toEqual(['distinctive monitor needle', 'other text']);
+      expect((await f.api(`/logs?search=${'x'.repeat(129)}`)).status).toBe(400);
+    } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+  });
+
+  it('matches request IDs exactly across list and export', async () => {
+    const f = await fixture();
+    try {
+      const store = new SyncServerStore(join(f.dataDir, 'server.sqlite'), 'open', f.server.serverId);
+      try {
+        await store.appendLog({ id: 'request-one', at: new Date().toISOString(), level: 'info', action: 'correlation_probe', message: 'first', detail: { requestId: 'req-one' } });
+        await store.appendLog({ id: 'request-two', at: new Date().toISOString(), level: 'info', action: 'correlation_probe', message: 'second', detail: { requestId: 'req-one-extra' } });
+      } finally { await store.close(); }
+      const list = await (await f.api('/logs?action=correlation_probe&requestId=req-one')).json() as { logs: { id: string }[] };
+      const exported = await (await f.api('/logs/export?format=json&action=correlation_probe&requestId=req-one')).json() as { rows: { message: string }[] };
+      expect(list.logs.map((row) => row.id)).toEqual(['request-one']);
+      expect(exported.rows.map((row) => row.message)).toEqual(['first']);
+    } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+  });
+
+  it('uses the configured retention for write-path pruning', async () => {
+    const f = await fixture();
+    try {
+      const driver = new NodeSqliteDriver(join(f.dataDir, 'server.sqlite'));
+      try {
+        await driver.transaction(async (tx) => {
+          for (let index = 0; index < 5_001; index += 1) {
+            await tx.run('INSERT INTO server_logs (id, at, level, action, message) VALUES (?, ?, ?, ?, ?)',
+              [`retained-${index}`, new Date(Date.now() - index * 1_000).toISOString(), 'info', 'retention_probe', 'probe']);
+          }
+        });
+      } finally { await driver.close(); }
+      const store = new SyncServerStore(join(f.dataDir, 'server.sqlite'), 'open', f.server.serverId);
+      try {
+        store.setLogRetentionProvider(() => 6_000);
+        await store.appendLog({ id: 'retained-latest', at: new Date().toISOString(), level: 'info', action: 'retention_probe', message: 'new' });
+        expect((await store.listLogs({ limit: 5_003, action: 'retention_probe' })).logs).toHaveLength(5_002);
+      } finally { await store.close(); }
+    } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+  });
 });
 
 describe('spreadsheet CSV cells', () => {

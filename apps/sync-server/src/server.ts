@@ -353,6 +353,8 @@ export interface SyncServerOptions {
   enableWeb?: boolean;
   basePath?: string;
   trustedProxies?: string[];
+  /** Header overwritten by the trusted edge with an ISO 3166-1 alpha-2 country code. */
+  trafficCountryHeader?: string;
   allowInsecureHttp?: boolean;
   /** Injectable delivery for integration tests; deployments use the configured SMTP channel. */
   accountEmailSender?: (to: string, subject: string, body: string) => Promise<void>;
@@ -380,6 +382,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   const enableWeb = options.enableWeb ?? Boolean(options.webDir);
   const basePath = normalizeBasePath(options.basePath);
   const trustedProxies = options.trustedProxies ?? [];
+  if (options.trafficCountryHeader && !/^(?:x-[a-z0-9-]+|cf-ipcountry)$/i.test(options.trafficCountryHeader)) {
+    throw new Error('TRAFFIC_COUNTRY_HEADER must be a dedicated proxy header');
+  }
   const allowInsecureHttp = options.allowInsecureHttp === true;
   const origin = createRequestOrigin(trustedProxies, allowInsecureHttp);
   const browserSession = createBrowserSessionCookies(basePath, origin.browserOrigin);
@@ -564,6 +569,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     },
   });
   const settings = runtimeSettings.settings;
+  store.setLogRetentionProvider(() => Number(settings.effective('logRetention')));
   const accountEmailChannel = (): EmailChannel | undefined => parseAlertChannels(settings.effective('alertChannels'))
     .find((channel): channel is EmailChannel => channel.kind === 'email' && channel.enabled);
   const accountEmailAvailable = (): boolean => {
@@ -743,6 +749,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     version: serverVersion,
     enableSync,
     enableWeb,
+    trafficCountryConfigured: Boolean(options.trafficCountryHeader),
     basePath,
     defaultProtection,
     custodyEnabled,
@@ -968,6 +975,24 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         res.setHeader('Retry-After', String(rate.retryAfterSeconds));
         await log('warn', 'rate_limited', 'API request rate limited', { ip, status: 429 });
         return send(res, 429, { error: 'rate limited, slow down' });
+      }
+
+      if (apiPath === '/api/traffic/view' && req.method === 'POST') {
+        const browserOrigin = origin.browserOrigin(req);
+        if (!browserOrigin || req.headers.origin !== browserOrigin) return send(res, 403, { error: 'same-origin browser required' });
+        const body = await readBody(req, 512);
+        const visitorId = body.visitorId;
+        const page = body.page;
+        if (typeof visitorId !== 'string' || !/^[a-f0-9-]{36}$/.test(visitorId)
+          || typeof page !== 'string' || !/^\/(?:app|admin)(?:\/[a-z0-9-]{1,48})?$/.test(page)) {
+          return send(res, 400, { error: 'invalid traffic view' });
+        }
+        const countryHeader = options.trafficCountryHeader?.toLowerCase();
+        const rawCountry = countryHeader && origin.trustedPeer(req) ? req.headers[countryHeader] : undefined;
+        const country = typeof rawCountry === 'string' && /^[A-Z]{2}$/.test(rawCountry) && !['XX', 'ZZ'].includes(rawCountry) ? rawCountry : null;
+        const visitorHash = createHmac('sha256', secret).update(visitorId).digest('hex');
+        await store.recordPageView(visitorHash, page, country);
+        return send(res, 202, { accepted: true });
       }
 
       if (apiPath === '/api/v4/group/join' && req.method === 'POST') {

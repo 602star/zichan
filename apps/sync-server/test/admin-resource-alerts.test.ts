@@ -98,6 +98,26 @@ describe('process memory alert', () => {
   });
 });
 
+describe('request quality alerts', () => {
+  it('activates error and slow request rules only after enough real requests', async () => {
+    const h = await harness([{}]);
+    try {
+      await h.store.recordServiceSample({ requests: 100, errors: 25, slowRequests: 30 });
+      await h.activate();
+      expect((await h.store.getAlert('requests:error-rate'))?.state).toBe('active');
+      expect((await h.store.getAlert('requests:slow-rate'))?.state).toBe('active');
+      expect((await h.store.getAlert('requests:error-rate'))?.detail).toMatchObject({ requests: 100, thresholdPercent: 20 });
+    } finally { await h.close(); }
+    const low = await harness([{}]);
+    try {
+      await low.store.recordServiceSample({ requests: 1, errors: 1, slowRequests: 1 });
+      await low.activate();
+      expect((await low.store.getAlert('requests:error-rate'))?.state).not.toBe('active');
+      expect((await low.store.getAlert('requests:slow-rate'))?.state).not.toBe('active');
+    } finally { await low.close(); }
+  });
+});
+
 describe('memory growth alert', () => {
   it('needs a full window of climbing readings before calling it a leak', async () => {
     // One rising pair is not a leak: the rule requires the whole window to be filled.

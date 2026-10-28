@@ -309,11 +309,11 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
           : <UsersPage client={client} query={route.query} navigate={go} role={role} />;
       case 'sessions': return <SessionsPage client={client} query={route.query} navigate={go} role={role} selfAccountId={account.accountId ?? ''} />;
       case 'sync': return <SyncPage client={client} query={route.query} navigate={go} />;
-      case 'security-events': return <SecurityEventsPage client={client} />;
+      case 'security-events': return <SecurityEventsPage client={client} query={route.query} navigate={go} />;
       case 'alerts': return <AlertsPage client={client} role={role} navigate={go} query={route.query} />;
       case 'invites': return <InvitesPage client={client} role={role} query={route.query} navigate={go} />;
       case 'storage': return <StoragePage client={client} role={role} query={route.query} navigate={go} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
-      case 'monitor': return <MonitorPage client={client} role={role} />;
+      case 'monitor': return <MonitorPage client={client} role={role} query={route.query} navigate={go} />;
       case 'resources': return <ResourcesPage client={client} role={role} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
       case 'jobs': return <JobsPage client={client} query={route.query} navigate={go} role={role} />;
       case 'logs': return <LogsPage client={client} query={route.query} navigate={go} />;

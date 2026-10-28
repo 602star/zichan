@@ -81,6 +81,7 @@ const service = createSyncServer({
   webDir,
   basePath,
   trustedProxies: listEnv('TRUSTED_PROXIES'),
+  trafficCountryHeader: process.env.TRAFFIC_COUNTRY_HEADER,
   allowInsecureHttp: boolEnv('ALLOW_INSECURE_HTTP', false),
 });
 const { server, serverId } = service;

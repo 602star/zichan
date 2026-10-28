@@ -6,8 +6,10 @@
  * reads `GET /alerts?state=resolved` (which the server always supported) and keeps the record
  * readable: first seen, last seen, occurrences, how it ended.
  */
+import { useState } from 'react';
 import { AlertControls } from './AlertControls.js';
 import type { AdminClient } from './client.js';
+import { adminIdempotencyKey } from './idempotency.js';
 import { alertNextStep, alertStateLabel, describeAlert, isSilenced } from './alerts.js';
 import { Badge, Button, DataTable, Loading, Notice, Panel, PageHeader, FilterBar, muted, row, useResource, when } from './ui.js';
 import type { Alert } from './types.js';
@@ -15,6 +17,8 @@ import type { Alert } from './types.js';
 type StateFilter = '' | 'pending' | 'active' | 'resolved';
 
 export function AlertsPage({ client, role, navigate, query }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (to: string) => void }) {
+  const [testResult, setTestResult] = useState('');
+  const [testing, setTesting] = useState(false);
   const requested = query.get('state') ?? 'resolved';
   const state: StateFilter = ['active', 'pending', 'resolved', ''].includes(requested) ? requested as StateFilter : 'resolved';
   const list = useResource(() => client.request<{ alerts: Alert[] }>(`/alerts${state ? `?state=${state}` : ''}`), [state]);
@@ -25,7 +29,18 @@ export function AlertsPage({ client, role, navigate, query }: { client: AdminCli
 
   return (
     <>
-      <PageHeader title="告警历史" description="在当前记录上处理告警；知晓与暂停通知都不代表问题恢复。" actions={<Button onClick={list.reload}>刷新</Button>} />
+      <PageHeader title="告警历史" description="在当前记录上处理告警；知晓与暂停通知都不代表问题恢复。" actions={<>
+        {role === 'owner' ? <><Button onClick={() => navigate('/settings?group=advanced')}>配置规则阈值</Button><Button onClick={() => navigate('/settings?group=notifications')}>通知渠道</Button>
+          <Button disabled={testing} onClick={() => {
+            setTesting(true); setTestResult('');
+            void client.request<{ state: string; error?: string }>('/alerts/test-notification', {}, { idempotencyKey: adminIdempotencyKey('alert-notification-test') })
+              .then((result) => setTestResult(result.state === 'sent' ? result.error ? `测试已送达，${result.error}` : '测试通知已送达' : result.state === 'skipped' ? '没有启用的通知渠道' : `通知发送失败：${result.error ?? '未知原因'}`))
+              .catch((error) => setTestResult(error instanceof Error ? error.message : String(error)))
+              .finally(() => setTesting(false));
+          }}>测试通知</Button></> : null}
+        <Button onClick={list.reload}>刷新</Button>
+      </>} />
+      {testResult ? <Notice tone={testResult.includes('失败') ? 'bad' : 'info'}>{testResult}</Notice> : null}
       <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
 
       <FilterBar>

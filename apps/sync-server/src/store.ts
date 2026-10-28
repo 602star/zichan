@@ -833,6 +833,12 @@ export class SyncServerStore {
   private readonly driver: NodeSqliteDriver;
   private logWrites = 0;
   private lastLogPruneAt = 0;
+  private logRetention = () => LOG_RETENTION;
+
+  /** Keep write-path trimming aligned with the current deployment setting. */
+  setLogRetentionProvider(provider: () => number): void {
+    this.logRetention = provider;
+  }
 
   constructor(
     readonly databaseFile: string,
@@ -1596,6 +1602,15 @@ CREATE TABLE IF NOT EXISTS system_metric_buckets (
   network_tx_bytes_per_second REAL,
   PRIMARY KEY (scope, granularity, bucket_at)
 );
+CREATE TABLE IF NOT EXISTS traffic_page_views (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  visitor_hash TEXT NOT NULL,
+  country TEXT,
+  page TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_traffic_page_views_at ON traffic_page_views (at);
+CREATE INDEX IF NOT EXISTS idx_traffic_page_views_country_at ON traffic_page_views (country, at);
 CREATE TABLE IF NOT EXISTS sync_events (
   id TEXT PRIMARY KEY,
   at TEXT NOT NULL,
@@ -5554,7 +5569,7 @@ END;`);
     if (this.logWrites >= 200 || now - this.lastLogPruneAt >= 60_000) {
       this.logWrites = 0;
       this.lastLogPruneAt = now;
-      await this.pruneLogs();
+      await this.pruneLogs(this.logRetention());
     }
   }
 
@@ -5565,6 +5580,7 @@ END;`);
     until?: string;
     cursor?: string;
     requestId?: string;
+    search?: string;
     /** Exact account name, as recorded on the log line. */
     username?: string;
     action?: string;
@@ -5577,14 +5593,18 @@ END;`);
     if (options.level) { clauses.push('level = ?'); params.push(options.level); }
     if (options.username) { clauses.push('username = ?'); params.push(options.username); }
     if (options.action) { clauses.push('action = ?'); params.push(options.action); }
+    if (options.search) {
+      clauses.push("instr(lower(action || ' ' || message || ' ' || COALESCE(detail_json, '')), lower(?)) > 0");
+      params.push(options.search);
+    }
     if (options.from) { clauses.push('at >= ?'); params.push(options.from); }
     if (options.until) { clauses.push('at < ?'); params.push(options.until); }
     // The cursor is compared against the ordering expression, so the two are built together.
     const cursor = readCursor(options.cursor);
     const cursorClause = cursor ? sort.cursor(sort.value(cursor.value), cursor.id) : undefined;
     if (cursorClause) clauses.push(cursorClause.sql);
-    // Lets an operator jump from an error message straight to the request log line.
-    if (options.requestId) { clauses.push("instr(COALESCE(detail_json, ''), ?) > 0"); params.push(options.requestId); }
+    // Request IDs are correlation keys: a prefix match can attach another request's evidence.
+    if (options.requestId) { clauses.push("json_extract(detail_json, '$.requestId') = ?"); params.push(options.requestId); }
     let sql = "SELECT *, CASE level WHEN 'error' THEN 3 WHEN 'warn' THEN 2 WHEN 'info' THEN 1 ELSE 0 END AS level_rank FROM server_logs";
     if (clauses.length) sql += ` WHERE ${clauses.join(' AND ')}`;
     sql += ` ORDER BY ${sort.orderBy} LIMIT ?`;
@@ -6314,6 +6334,47 @@ END;`);
     }));
   }
 
+  /** A page view is a browser-reported visit, never an API request or a person record. */
+  async recordPageView(visitorHash: string, page: string, country: string | null, at = new Date()): Promise<void> {
+    await this.ready;
+    await this.driver.run(
+      'INSERT INTO traffic_page_views (at, visitor_hash, country, page) VALUES (?, ?, ?, ?)',
+      [at.toISOString(), visitorHash, country, page],
+    );
+  }
+
+  async trafficSummary(from: string, until: string, granularity: 'minute' | 'hour' | 'day'): Promise<{
+    pv: number; uv: number; observedSince: string | null;
+    buckets: { bucketAt: string; pv: number; uv: number }[];
+    countries: { country: string | null; pv: number; uv: number }[];
+    pages: { page: string; pv: number; uv: number }[];
+  }> {
+    await this.ready;
+    const bounds = [from, until];
+    const where = 'at >= ? AND at < ?';
+    const total = await this.driver.get<{ pv: number; uv: number; observed_since: string | null }>(
+      `SELECT COUNT(*) AS pv, COUNT(DISTINCT visitor_hash) AS uv, MIN(at) AS observed_since FROM traffic_page_views WHERE ${where}`, bounds);
+    const expression = granularity === 'minute'
+      ? "strftime('%Y-%m-%dT%H:%M:00.000Z', at)"
+      : granularity === 'hour' ? "strftime('%Y-%m-%dT%H:00:00.000Z', at)"
+        : "strftime('%Y-%m-%dT00:00:00.000Z', at)";
+    const buckets = await this.driver.all<{ bucket_at: string; pv: number; uv: number }>(
+      `SELECT ${expression} AS bucket_at, COUNT(*) AS pv, COUNT(DISTINCT visitor_hash) AS uv
+       FROM traffic_page_views WHERE ${where} GROUP BY bucket_at ORDER BY bucket_at`, bounds);
+    const countries = await this.driver.all<{ country: string | null; pv: number; uv: number }>(
+      `SELECT country, COUNT(*) AS pv, COUNT(DISTINCT visitor_hash) AS uv
+       FROM traffic_page_views WHERE ${where} GROUP BY country ORDER BY pv DESC LIMIT 50`, bounds);
+    const pages = await this.driver.all<{ page: string; pv: number; uv: number }>(
+      `SELECT page, COUNT(*) AS pv, COUNT(DISTINCT visitor_hash) AS uv
+       FROM traffic_page_views WHERE ${where} GROUP BY page ORDER BY pv DESC LIMIT 50`, bounds);
+    return {
+      pv: Number(total?.pv ?? 0), uv: Number(total?.uv ?? 0), observedSince: total?.observed_since ?? null,
+      buckets: buckets.map((row) => ({ bucketAt: row.bucket_at, pv: Number(row.pv), uv: Number(row.uv) })),
+      countries: countries.map((row) => ({ country: row.country, pv: Number(row.pv), uv: Number(row.uv) })),
+      pages: pages.map((row) => ({ page: row.page, pv: Number(row.pv), uv: Number(row.uv) })),
+    };
+  }
+
   async pruneMetrics(now = new Date(), minuteDays = 7, hourDays = 90): Promise<{ removed: number }> {
     await this.ready;
     const minuteCutoff = new Date(now.getTime() - minuteDays * 24 * 60 * 60 * 1000).toISOString();
@@ -6322,7 +6383,8 @@ END;`);
     const hours = await this.driver.run("DELETE FROM server_metric_buckets WHERE granularity = 'hour' AND bucket_at < ?", [hourCutoff]);
     const systemMinutes = await this.driver.run("DELETE FROM system_metric_buckets WHERE granularity = 'minute' AND bucket_at < ?", [minuteCutoff]);
     const systemHours = await this.driver.run("DELETE FROM system_metric_buckets WHERE granularity = 'hour' AND bucket_at < ?", [hourCutoff]);
-    return { removed: Number(minutes.changes ?? 0) + Number(hours.changes ?? 0) + Number(systemMinutes.changes ?? 0) + Number(systemHours.changes ?? 0) };
+    const traffic = await this.driver.run('DELETE FROM traffic_page_views WHERE at < ?', [hourCutoff]);
+    return { removed: Number(minutes.changes ?? 0) + Number(hours.changes ?? 0) + Number(systemMinutes.changes ?? 0) + Number(systemHours.changes ?? 0) + Number(traffic.changes ?? 0) };
   }
 
   /** Diagnostic events get their own retention so log trimming cannot erase them. */

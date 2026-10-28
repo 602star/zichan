@@ -35,6 +35,8 @@ export function describeAlert(alert: Alert): string {
     case 'verification-issue': return alert.scope === 'database' ? '数据库校验发现问题' : '附件校验发现问题';
     case 'cleanup-failure': return `附件清理连续失败 ${String(detail['consecutiveFailures'] ?? '')} 次`;
     case 'sync-errors': return `持续出现同步错误（最近 ${String(detail['recentErrors'] ?? '')} 次）`;
+    case 'http-error-rate': return `近 5 分钟 HTTP 错误率 ${String(detail['ratePercent'] ?? '—')}%，阈值 ${String(detail['thresholdPercent'] ?? '—')}%（${String(detail['requests'] ?? 0)} 次请求）`;
+    case 'slow-request-rate': return `近 5 分钟慢请求率 ${String(detail['ratePercent'] ?? '—')}%，阈值 ${String(detail['thresholdPercent'] ?? '—')}%（${String(detail['requests'] ?? 0)} 次请求）`;
     case 'disk-space': return '磁盘剩余空间不足';
     case 'process-memory': {
       const ratio = typeof detail['ratio'] === 'number' ? `，已占上限 ${(detail['ratio'] * 100).toFixed(0)}%` : '';
@@ -70,6 +72,7 @@ export function alertNextStep(alert: Alert): { label: string; to: string } | und
   if (alert.rule === 'verification-issue') return { label: '查看校验任务', to: '/jobs' };
   if (alert.rule === 'cleanup-failure') return { label: '查看清理状态', to: '/storage' };
   if (alert.rule === 'sync-errors') return { label: '查看同步诊断', to: '/sync?outcome=error' };
+  if (alert.rule === 'http-error-rate' || alert.rule === 'slow-request-rate') return { label: '查看请求趋势', to: '/monitor?view=overview' };
   if (alert.rule === 'disk-space') return { label: '查看存储', to: '/storage' };
   // Resource and database alerts all live on one page, so every one of them leads there.
   if (alert.rule.startsWith('process-') || alert.rule.startsWith('database-') || alert.rule === 'event-loop-lag') {
