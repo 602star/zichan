@@ -123,7 +123,6 @@ jobs:
           }
           trap cleanup EXIT
           docker build --file apps/sync-server/Dockerfile --tag "zichan-sync-ci:${GITHUB_SHA}" . 2>&1 | tee ci-artifacts/docker-build.log
-          sync_secret="$(openssl rand -hex 32)"
           # The image defaults to an unprivileged user; CI matches the runner uid so the
           # bind-mounted state directory stays writable without granting root.
           docker run --detach --name "$container" \
@@ -131,7 +130,6 @@ jobs:
             --publish 127.0.0.1:18787:8787 \
             --env HOST=0.0.0.0 \
             --env DATA_DIR=/state/server \
-            --env SYNC_SECRET="$sync_secret" \
             --env REGISTRATION_MODE=open \
             --env ENABLE_WEB=0 \
             --env ENABLE_SYNC=1 \

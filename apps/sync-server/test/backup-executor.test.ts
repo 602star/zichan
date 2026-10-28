@@ -8,6 +8,7 @@ import { executorStatus, writeExecutorState } from '../src/backup-executor-state
 import { readMaintenanceRecords } from '../src/maintenance-records.js';
 import { SyncServerStore } from '../src/store.js';
 import { verifyServerBackup } from '../src/backup.js';
+import { acquireMaintenanceLock } from '../src/maintenance-lock.js';
 
 const local = (day: number, hour: number, minute = 0) => new Date(2026, 8, day, hour, minute);
 describe('backup calendar windows', () => {
@@ -37,6 +38,20 @@ function fixture() {
 }
 
 describe('durable backup executor', () => {
+  it('waits for the host maintenance lock before claiming a backup window', async () => {
+    const f = fixture();
+    try {
+      const release = acquireMaintenanceLock(f.dataDir, 'host-updater:test');
+      expect(release).toBeTypeOf('function');
+      const stop = vi.fn(async () => undefined);
+      const executor = createBackupExecutor({ dataDir: f.dataDir, now: () => local(29, 3, 15), stopService: stop, startService: async () => undefined });
+      await executor.tick(f.plan);
+      expect(stop).not.toHaveBeenCalled();
+      expect(executor.state.lastSlot).toBeUndefined();
+      release!();
+      await executor.close();
+    } finally { f.cleanup(); }
+  });
   it('stops, produces a real verified backup, restarts and never repeats that slot after restart', async () => {
     const f = fixture();
     try {

@@ -1,0 +1,48 @@
+name: zichan-prod
+
+# A host HTTPS proxy forwards to 127.0.0.1:8787 and overwrites
+# X-Forwarded-Proto with the single value https.
+services:
+  sync-server:
+    image: ${ZICHAN_IMAGE:?Set ZICHAN_IMAGE to a verified sha256 digest}
+    pull_policy: always
+    network_mode: host
+    init: true
+    user: '1000:1000'
+    environment:
+      PORT: '8787'
+      HOST: '127.0.0.1'
+      DATA_DIR: /state/server
+      ADMIN_BACKUP_DIRECTORY: /backups
+      WEB_DIST: /app/web-dist
+      TZ: ${ZICHAN_TZ:-Asia/Shanghai}
+      TRUSTED_PROXIES: '127.0.0.1'
+      ALLOW_INSECURE_HTTP: '0'
+      REGISTRATION_MODE: ${REGISTRATION_MODE:-invite}
+      ENABLE_WEB: '1'
+      ENABLE_SYNC: '1'
+      BASE_PATH: ${BASE_PATH:-}
+      ADMIN_ACCESS_PATH: ${ADMIN_ACCESS_PATH:-}
+      COMMIT_QUOTA_BYTES: ${COMMIT_QUOTA_BYTES:-21474836480}
+      ATTACHMENT_QUOTA_BYTES: ${ATTACHMENT_QUOTA_BYTES:-21474836480}
+      ATTACHMENT_MAX_FILE_BYTES: ${ATTACHMENT_MAX_FILE_BYTES:-104857600}
+      ATTACHMENT_TRASH_RETENTION_MS: ${ATTACHMENT_TRASH_RETENTION_MS:-2592000000}
+    volumes:
+      - type: bind
+        source: ${ZICHAN_STATE_DIR:-/srv/zichan/state}
+        target: /state
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ZICHAN_BACKUP_DIR:-/srv/zichan/backups}
+        target: /backups
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ['CMD', 'node', '-e', "const p=(process.env.BASE_PATH||'').replace(/\\/$/,'');fetch('http://127.0.0.1:8787'+p+'/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 30m

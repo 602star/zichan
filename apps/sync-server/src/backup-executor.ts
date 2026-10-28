@@ -5,6 +5,7 @@ import { createServerBackup } from './backup.js';
 import { parseBackupWindow, backupSlot } from './backup-schedule.js';
 import { readExecutorState, writeExecutorState, type BackupExecutorState } from './backup-executor-state.js';
 import { readMaintenanceRecords, writeMaintenanceRecord } from './maintenance-records.js';
+import { acquireMaintenanceLock } from './maintenance-lock.js';
 
 export interface BackupPlan { enabled: boolean; directory: string; window: string; serverId: string }
 export interface BackupExecutorDeps {
@@ -84,38 +85,47 @@ export function createBackupExecutor(deps: BackupExecutorDeps) {
       state.nextRunAt = slot.nextAt; state.status = 'waiting';
       if (!slot.due) { publish(); return; }
       const recordId = `scheduled-${slot.due.replace(/[:.]/g, '-')}`;
-      state.lastSlot = slot.due; state.recordId = recordId; state.status = 'running'; state.error = undefined;
-      publish(); // fsync before any stop or filesystem operation.
-      const createdAt = now().toISOString();
-      const output = join(directory, recordId);
-      try {
-        writeMaintenanceRecord(deps.dataDir, { recordId, kind: 'scheduled', status: 'planned', createdAt, outputPath: output });
-        await deps.stopService();
-        mkdirSync(directory, { recursive: true, mode: 0o700 });
-        const manifest = await (deps.backup ?? createServerBackup)(deps.dataDir, output);
-        const finishedAt = now().toISOString();
-        writeMaintenanceRecord(deps.dataDir, {
-          recordId, kind: 'scheduled', status: 'completed', createdAt, finishedAt, outputPath: output,
-          serverId: manifest.serverId, fileCount: manifest.files.length,
-          totalBytes: manifest.files.reduce((sum, file) => sum + file.sizeBytes, 0), verifiedAt: finishedAt,
-          verification: { ok: true, checkedFiles: manifest.files.length },
-          note: '自动执行器在停服期间创建并校验；未执行历史备份删除。',
-        });
-        state.lastResult = 'completed'; state.lastFinishedAt = finishedAt;
-      } catch (error) {
-        state.error = error instanceof Error ? error.message : String(error);
-        state.lastResult = 'failed'; state.lastFinishedAt = now().toISOString();
-        writeMaintenanceRecord(deps.dataDir, {
-          recordId, kind: 'scheduled', status: 'failed', createdAt, finishedAt: state.lastFinishedAt,
-          outputPath: output, errorMessage: state.error,
-        });
-      } finally {
-        // Also recover when shutdown finished with an error. The supervisor's start is idempotent.
-        if (!closing) await deps.startService();
+      const releaseMaintenance = acquireMaintenanceLock(deps.dataDir, `scheduled:${recordId}:${state.executorId}`);
+      if (!releaseMaintenance) {
+        state.status = 'waiting';
+        state.error = '维护锁被占用；自动备份等待下次检查';
+        publish();
+        return;
       }
-      state.status = state.lastResult === 'completed' ? 'waiting' : 'error';
-      state.nextRunAt = backupSlot(window, now(), state.lastSlot).nextAt;
-      publish();
+      try {
+        state.lastSlot = slot.due; state.recordId = recordId; state.status = 'running'; state.error = undefined;
+        publish(); // fsync before any stop or filesystem operation.
+        const createdAt = now().toISOString();
+        const output = join(directory, recordId);
+        try {
+          writeMaintenanceRecord(deps.dataDir, { recordId, kind: 'scheduled', status: 'planned', createdAt, outputPath: output });
+          await deps.stopService();
+          mkdirSync(directory, { recursive: true, mode: 0o700 });
+          const manifest = await (deps.backup ?? createServerBackup)(deps.dataDir, output);
+          const finishedAt = now().toISOString();
+          writeMaintenanceRecord(deps.dataDir, {
+            recordId, kind: 'scheduled', status: 'completed', createdAt, finishedAt, outputPath: output,
+            serverId: manifest.serverId, fileCount: manifest.files.length,
+            totalBytes: manifest.files.reduce((sum, file) => sum + file.sizeBytes, 0), verifiedAt: finishedAt,
+            verification: { ok: true, checkedFiles: manifest.files.length },
+            note: '自动执行器在停服期间创建并校验；未执行历史备份删除。',
+          });
+          state.lastResult = 'completed'; state.lastFinishedAt = finishedAt;
+        } catch (error) {
+          state.error = error instanceof Error ? error.message : String(error);
+          state.lastResult = 'failed'; state.lastFinishedAt = now().toISOString();
+          writeMaintenanceRecord(deps.dataDir, {
+            recordId, kind: 'scheduled', status: 'failed', createdAt, finishedAt: state.lastFinishedAt,
+            outputPath: output, errorMessage: state.error,
+          });
+        } finally {
+          // Also recover when shutdown finished with an error. The supervisor's start is idempotent.
+          if (!closing) await deps.startService();
+        }
+        state.status = state.lastResult === 'completed' ? 'waiting' : 'error';
+        state.nextRunAt = backupSlot(window, now(), state.lastSlot).nextAt;
+        publish();
+      } finally { releaseMaintenance(); }
     } catch (error) {
       state.status = 'error'; state.error = error instanceof Error ? error.message : String(error); publish();
     } finally { busy = false; }

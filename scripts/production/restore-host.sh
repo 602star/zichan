@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source "$(dirname "$0")/common.sh"
+
+[[ $# == 2 ]] || { echo 'Usage: restore-host.sh RESTIC_SNAPSHOT_ID ORIGINAL_ABSOLUTE_BACKUP_PATH' >&2; exit 2; }
+: "${RESTIC_REPOSITORY:?}"
+: "${RESTIC_PASSWORD_FILE:?}"
+snapshot="$1"
+original="$2"
+[[ "$snapshot" =~ ^[a-f0-9]{8,64}$ && "$original" == /* && "$original" != *..* ]] || {
+  echo 'Invalid snapshot or backup path' >&2; exit 2
+}
+check_directory "$ZICHAN_STATE_DIR"
+check_directory "$ZICHAN_BACKUP_DIR"
+[[ -z "$(find "$ZICHAN_STATE_DIR" -mindepth 1 -print -quit)" ]] || {
+  echo 'Restore target state must be empty; isolate the original node and use a blank directory' >&2
+  exit 2
+}
+verify_image
+staging="$(mktemp -d)"
+trap 'rm -rf -- "$staging"' EXIT
+restic restore "$snapshot" --target "$staging" --include "$original"
+backup="$staging$original"
+[[ -f "$backup/manifest.json" ]] || { echo 'Snapshot does not contain the requested backup' >&2; exit 1; }
+chown -R 1000:1000 "$staging"
+verify_backup "$backup"
+expected_id="$(cat "$backup/server-id")"
+docker run --rm --network none --user 1000:1000 \
+  --mount "type=bind,src=$ZICHAN_STATE_DIR,dst=/state" \
+  --mount "type=bind,src=$backup,dst=/backup,readonly" \
+  --entrypoint node "$ZICHAN_IMAGE" \
+  dist/maintenance.mjs restore --data-dir /state/server --backup /backup
+[[ "$(cat "$ZICHAN_STATE_DIR/server/server-id")" == "$expected_id" ]] || {
+  echo 'Restored server identity differs from the backup' >&2; exit 1
+}
+printf 'Offline restore verified for server ID %s. Start only after isolating the original node.\n' "$expected_id"

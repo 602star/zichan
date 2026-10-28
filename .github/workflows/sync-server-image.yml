@@ -1,0 +1,66 @@
+name: Sync server candidate image
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run release:check
+      - run: npm run build:server
+      - run: npm run typecheck
+      - run: npm test --workspace @zichan/sync-server
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push candidate
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/sync-server/Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ghcr.io/${{ github.repository }}-sync:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign and verify candidate digest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY}-sync@${{ steps.build.outputs.digest }}"
+          cosign sign --yes "$image"
+          cosign verify "$image" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/sync-server-image.yml@refs/heads/${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' > /dev/null
+      - name: Record immutable image reference
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY}-sync@${{ steps.build.outputs.digest }}"
+          printf '%s\n' "image=$image" "source_commit=$GITHUB_SHA" "platform=linux/amd64" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$image" > image-digest.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sync-server-image-digest
+          path: image-digest.txt
