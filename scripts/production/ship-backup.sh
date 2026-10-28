@@ -5,7 +5,7 @@ source "$(dirname "$0")/common.sh"
 [[ $# == 1 ]] || { echo 'Usage: ship-backup.sh BACKUP_RECORD_DIRECTORY' >&2; exit 2; }
 : "${RESTIC_REPOSITORY:?Set RESTIC_REPOSITORY to an independent encrypted backup target}"
 : "${RESTIC_PASSWORD_FILE:?Set RESTIC_PASSWORD_FILE outside the business host data and repository}"
-[[ -r "$RESTIC_PASSWORD_FILE" ]] || { echo 'Restic password file is unreadable' >&2; exit 2; }
+check_restic_password
 command -v restic >/dev/null || { echo 'restic is required' >&2; exit 2; }
 check_directory "$ZICHAN_BACKUP_DIR"
 record="$(realpath -- "$1")"

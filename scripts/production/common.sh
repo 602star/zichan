@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-compose_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/apps/sync-server/docker-compose.prod.yml"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+compose_file="$repo_root/apps/sync-server/docker-compose.prod.yml"
 export ZICHAN_STATE_DIR="${ZICHAN_STATE_DIR:-/srv/zichan/state}"
 export ZICHAN_BACKUP_DIR="${ZICHAN_BACKUP_DIR:-/srv/zichan/backups}"
 
@@ -33,6 +34,25 @@ check_directory() {
   }
   [[ "$(stat -c %u "$path")" == 1000 ]] || {
     echo "Directory must be owned by container uid 1000: $path" >&2
+    exit 2
+  }
+}
+
+check_restic_password() {
+  [[ -f "${RESTIC_PASSWORD_FILE:-}" && -r "$RESTIC_PASSWORD_FILE" ]] || {
+    echo 'Restic password file is missing or unreadable' >&2
+    exit 2
+  }
+  local password_path
+  password_path="$(realpath -- "$RESTIC_PASSWORD_FILE")"
+  case "$password_path" in
+    "$ZICHAN_STATE_DIR"/*|"$ZICHAN_BACKUP_DIR"/*|"$repo_root"/*)
+      echo 'Restic password file must be outside state, backups and Git checkout' >&2
+      exit 2
+      ;;
+  esac
+  [[ -z "$(find "$password_path" -perm /077 -print -quit)" ]] || {
+    echo 'Restic password file must not be accessible to group or other users' >&2
     exit 2
   }
 }

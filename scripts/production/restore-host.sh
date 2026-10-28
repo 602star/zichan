@@ -5,6 +5,7 @@ source "$(dirname "$0")/common.sh"
 [[ $# == 2 ]] || { echo 'Usage: restore-host.sh RESTIC_SNAPSHOT_ID ORIGINAL_ABSOLUTE_BACKUP_PATH' >&2; exit 2; }
 : "${RESTIC_REPOSITORY:?}"
 : "${RESTIC_PASSWORD_FILE:?}"
+check_restic_password
 snapshot="$1"
 original="$2"
 [[ "$snapshot" =~ ^[a-f0-9]{8,64}$ && "$original" == /* && "$original" != *..* ]] || {

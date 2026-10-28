@@ -28,7 +28,7 @@ bash scripts/production/deploy.sh
 
 ## 加密备份运送
 
-业务容器创建并验证 `/backups/<记录>`。主机将 `RESTIC_REPOSITORY` 指向独立机器的 SFTP 仓库或有版本保留的异地目标，`RESTIC_PASSWORD_FILE` 指向独立保管的解密凭据。凭据不进 Git、镜像、业务容器环境变量或日志。仓库首次由运维执行 `restic init`。之后每份已完成备份执行：
+业务容器创建并验证 `/backups/<记录>`。主机将 `RESTIC_REPOSITORY` 指向独立机器的 SFTP 仓库或有版本保留的异地目标，`RESTIC_PASSWORD_FILE` 指向权限为 `0600`、位于业务状态、备份和 Git 目录之外的解密凭据。恢复所需凭据须在源主机之外另存一份。凭据不进 Git、镜像、业务容器环境变量或日志。仓库首次由运维执行 `restic init`。之后每份已完成备份执行：
 
 ```bash
 export RESTIC_REPOSITORY='sftp:backup-user@backup-host:/srv/restic/zichan'
