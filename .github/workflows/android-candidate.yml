@@ -1,0 +1,69 @@
+name: Android candidate APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - name: Configure Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ndk="${ANDROID_NDK:-}"
+          if [[ -z "$ndk" || ! -d "$ndk" ]]; then
+            ndk="$(find "$ANDROID_HOME/ndk" -mindepth 1 -maxdepth 1 -type d -name '27.*' | sort -V | tail -n 1)"
+          fi
+          test -d "$ndk"
+          ranlib="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib"
+          test -x "$ranlib"
+          echo "NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          echo "TARGET_RANLIB=$ranlib" >> "$GITHUB_ENV"
+      - run: npm ci
+      - name: Generate Android project
+        run: npm run mobile:init:android
+      - name: Build ARM64 APK
+        run: npm run mobile:build:android -- --apk --target aarch64
+      - name: Verify and sign test APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_apk='apps/desktop/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk'
+          test -s "$source_apk"
+          unzip -t "$source_apk" > /dev/null
+          unzip -Z1 "$source_apk" | grep '^lib/arm64-v8a/libzichan_lib.so$'
+
+          apksigner="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$apksigner"
+          keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/candidate.jks" -storepass candidate-only -keypass candidate-only -alias candidate -keyalg RSA -keysize 3072 -validity 30 -dname 'CN=Temporary CI Candidate' > /dev/null
+          mkdir -p candidate-apk
+          cp "$source_apk" candidate-apk/zichan-android-arm64-unsigned.apk
+          "$apksigner" sign --ks "$RUNNER_TEMP/candidate.jks" --ks-pass pass:candidate-only --key-pass pass:candidate-only --out candidate-apk/zichan-android-arm64-test.apk candidate-apk/zichan-android-arm64-unsigned.apk
+          "$apksigner" verify --verbose candidate-apk/zichan-android-arm64-test.apk
+          (cd candidate-apk && sha256sum *.apk > SHA256SUMS)
+          printf '%s\n' "$GITHUB_SHA" > candidate-apk/COMMIT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-arm64-candidate-${{ github.sha }}
+          path: candidate-apk/
+          if-no-files-found: error

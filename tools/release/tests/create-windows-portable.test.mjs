@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -16,6 +16,15 @@ const NODE_VERSION = '22.23.3';
 const HASH = 'a'.repeat(64);
 const execFile = promisify(execFileCallback);
 const createWindowsPortable = (options) => createWindowsPortableActual({ inspectNodeVersion: () => NODE_VERSION, ...options });
+
+async function expandPortableArchive(archive, destination) {
+  await execFile('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+    'Expand-Archive -LiteralPath $env:ZICHAN_TEST_ARCHIVE -DestinationPath $env:ZICHAN_TEST_EXTRACTED -Force',
+  ], {
+    env: { ...process.env, ZICHAN_TEST_ARCHIVE: archive, ZICHAN_TEST_EXTRACTED: destination },
+  });
+}
 
 async function rewriteOuterHash(archive) {
   const bytes = await readFile(archive);
@@ -397,12 +406,11 @@ test('creates a ZIP with one portable top-level directory and a valid outer hash
     const verified = await verifyReleaseArtifacts({ artifact: result.archive, version: VERSION, runtimeVersion: RUNTIME_VERSION });
     assert.equal(verified.sha256, result.sha256);
     assert.equal(verified.contents.marker.appVersion, VERSION);
-    const listing = await execFile('tar.exe', ['-tf', result.archive], { encoding: 'utf8' });
-    const entries = listing.stdout.trim().split(/\r?\n/);
-    assert.ok(entries.length > 1);
-    const normalized = entries.map((entry) => entry.replaceAll('\\', '/'));
-    assert.equal(new Set(normalized.map((entry) => entry.split('/')[0])).size, 1);
-    assert.ok(normalized.every((entry) => entry.includes(`_${VERSION}_windows-x64_portable/`)));
+    const extracted = join(value.root, 'extracted');
+    await mkdir(extracted);
+    await expandPortableArchive(result.archive, extracted);
+    const entries = await readdir(extracted);
+    assert.deepEqual(entries, [`资产生命周期_${VERSION}_windows-x64_portable`]);
   } finally {
     await rm(value.root, { recursive: true, force: true });
   }
@@ -445,7 +453,7 @@ test('rejects a ZIP with another top level, a missing required file, or content 
     });
     const extracted = join(value.root, 'extracted');
     await mkdir(extracted);
-    await execFile('tar.exe', ['-xf', result.archive, '-C', extracted]);
+    await expandPortableArchive(result.archive, extracted);
     const topLevel = `资产生命周期_${VERSION}_windows-x64_portable`;
 
     await writeFile(join(extracted, 'unexpected.txt'), 'extra top level');
