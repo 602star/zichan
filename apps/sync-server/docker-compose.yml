@@ -1,6 +1,6 @@
 # Linux deployment: only the business container runs in Compose.
 # Run the HTTPS reverse proxy on the host; it forwards to 127.0.0.1:8787.
-# Usage: docker compose up -d --build --remove-orphans
+# Usage: docker compose up -d --build --remove-orphans --wait --wait-timeout 120
 # The first start persists a generated server.secret in the data volume.
 services:
   sync-server:

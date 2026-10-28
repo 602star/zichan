@@ -147,7 +147,7 @@ OPAQUE 注册和登录都由客户端与服务器交换 PAKE 消息，账号密�
 
 ```bash
 cd apps/sync-server
-docker compose up -d --build --remove-orphans
+docker compose up -d --build --remove-orphans --wait --wait-timeout 120
 ```
 
 Compose 将父目录 `/state` 挂载到 `zichan-data`，实际 `DATA_DIR` 为 `/state/server`；独立的 `zichan-backups` 卷挂到 `/backups`，容器内的 `node` 用户可以写入。实际 Docker 卷名带 Compose 项目前缀，例如 `zichan-dev_zichan-backups`。首次创建卷前，镜像会准备好目录所有权；不要再用不存在的宿主机 `./backups` 路径临时覆盖 `/backups`，那会由 Docker 创建为 root 所有，导致备份失败。两个卷都要纳入宿主机和异机备份；仅保留同机备份卷不能应对整机故障。此 Linux Compose **只运行一个业务容器**，使用宿主机网络并让服务仅监听 `127.0.0.1:8787`，没有容器内 HTTPS 代理，也不发布 80/443。HTTPS 反向代理由同一宿主机单独运行，转发到 `http://127.0.0.1:8787`；反向代理必须保留公共 Host，**覆盖**传入的 `X-Forwarded-Proto` 为单一的 `https`。Compose 把 `TRUSTED_PROXIES` 精确设为实际连接服务的代理地址 `127.0.0.1`，不信任整个私网。若代理位于另一台主机，需另行设计受防火墙保护的连接与精确代理 IP 配置，不能直接复用此回环部署。公网只开放 443，不开放上游 8787。首次部署通过启动日志显示的后台路径显式创建 Owner，再对外开放服务；普通注册不应被当作取得管理员权限的入口。已有服务器按管理后台提示完成初始化，切勿为了重新初始化而删除账本数据。若密钥、`server.secret`、`server-id`、数据库或旧 JSON 状态曾进入源码目录或版本控制，应按已泄露处理：停止服务、保留加密数据备份，轮换 `SYNC_SECRET`，撤销设备会话后重新登录。
@@ -197,7 +197,7 @@ docker compose run --rm --no-deps sync-server \
   node dist/maintenance.mjs backup --data-dir /state/server --output "/backups/$backup_name"
 docker compose run --rm --no-deps sync-server \
   node dist/maintenance.mjs verify-backup --data-dir /state/server --backup "/backups/$backup_name"
-docker compose up -d --no-deps sync-server
+docker compose up -d --no-deps --wait --wait-timeout 120 sync-server
 ```
 
 恢复演练应恢复到隔离目录，使用临时端口启动，检查 `/api/ready`，再在管理后台执行数据库和附件校验，并用测试客户端拉取一份带图片的账本。恢复后保留恢复前目录，直到所有设备完成一次同步。当前服务器及备份工具只接受 schema 27；恢复工具撤销旧会话并清除未完成登录及密码重置码，需要重新登录。旧 PBKDF2/固定证明/一次性 challenge 认证、旧 JSON 状态、人工管理 Token 与旧 SQLite 基线都不读取、不转换。
