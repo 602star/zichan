@@ -19,7 +19,9 @@ verify_image() {
   cosign verify "$ZICHAN_IMAGE" \
     --certificate-identity 'https://github.com/602star/zichan/.github/workflows/sync-server-image.yml@refs/heads/main' \
     --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' >/dev/null
-  docker pull "$ZICHAN_IMAGE"
+  if ! docker image inspect "$ZICHAN_IMAGE" >/dev/null 2>&1; then
+    docker pull "$ZICHAN_IMAGE"
+  fi
   [[ "$(docker image inspect --format '{{.Architecture}}' "$ZICHAN_IMAGE")" == amd64 ]] || {
     echo 'Image is not linux/amd64' >&2
     exit 2

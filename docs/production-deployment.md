@@ -26,7 +26,7 @@ bash scripts/production/deploy.sh
 
 仅创建全新服务器时，将最后一行改为 `ZICHAN_ALLOW_FIRST_BOOT=yes bash scripts/production/deploy.sh`；迁移和回退不得设置此开关。
 
-脚本校验 Cosign 的 GitHub Actions OIDC 签名（只接受此仓库 `main` 的镜像流水线）、拉取镜像、检查 `linux/amd64`、Compose 配置、挂载目录、健康状态与持久身份。生产 Compose 在 [docker-compose.prod.yml](../apps/sync-server/docker-compose.prod.yml)。Compose 不设置 `pull_policy: always`，但部署脚本的验签和显式 `docker pull` 仍需要网络；当前手动回退不能保证离线执行。手动回退仅允许在未迁移 schema、未开放新写入的情况下使用旧 digest 并重复部署检查；跨 schema 更新须遵守 [升级方案](production-upgrade-1.0.md) 的恢复边界。
+脚本校验 Cosign 的 GitHub Actions OIDC 签名（只接受此仓库 `main` 的镜像流水线）、仅在本机缺少该 digest 时拉取镜像，并检查 `linux/amd64`、Compose 配置、挂载目录、健康状态与持久身份。运行中的生产容器需要重建时，Compose 操作会通过共享维护锁执行；发现已有锁则拒绝部署。生产 Compose 在 [docker-compose.prod.yml](../apps/sync-server/docker-compose.prod.yml)。Compose 不设置 `pull_policy: always`，所以已缓存的旧 digest 回退时不会重复拉取；Cosign 验签仍需访问私有镜像仓库，当前不能保证完全离线回退。手动回退仅允许在未迁移 schema、未开放新写入的情况下使用旧 digest 并重复部署检查；跨 schema 更新须遵守 [升级方案](production-upgrade-1.0.md) 的恢复边界。
 
 ## 加密备份运送
 

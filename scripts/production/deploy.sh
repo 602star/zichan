@@ -4,6 +4,10 @@ source "$(dirname "$0")/common.sh"
 
 check_directory "$ZICHAN_STATE_DIR"
 check_directory "$ZICHAN_BACKUP_DIR"
+if [[ -e "$ZICHAN_STATE_DIR/server/maintenance.lock" || -L "$ZICHAN_STATE_DIR/server/maintenance.lock" ]]; then
+  echo 'Maintenance lock is held or stale; refusing deployment' >&2
+  exit 2
+fi
 if [[ ! -f "$ZICHAN_STATE_DIR/server/server-id" ]]; then
   if [[ -n "$(find "$ZICHAN_STATE_DIR" -mindepth 1 -print -quit)" ]]; then
     echo 'Existing nonempty server state has no server-id; refusing to create a new identity' >&2
@@ -26,7 +30,12 @@ docker run --rm --network none --user 1000:1000 \
   --mount "type=bind,src=$ZICHAN_BACKUP_DIR,dst=/backups" \
   --entrypoint sh "$ZICHAN_IMAGE" -c 'test -w /state && test -w /backups'
 docker compose -f "$compose_file" config --quiet
-docker compose -f "$compose_file" up -d --no-build --wait --wait-timeout 180
+if [[ -n "$(docker ps -q --filter label=com.docker.compose.project=zichan-prod)" ]]; then
+  bash "$repo_root/scripts/production/with-maintenance-lock.sh" \
+    docker compose -f "$compose_file" up -d --no-build --wait --wait-timeout 180
+else
+  docker compose -f "$compose_file" up -d --no-build --wait --wait-timeout 180
+fi
 new_id="$(cat "$ZICHAN_STATE_DIR/server/server-id")"
 new_key="$(sha256sum "$ZICHAN_STATE_DIR/server/server.secret" | cut -d ' ' -f 1)"
 [[ -n "$new_id" && -n "$new_key" ]] || { echo 'Server identity is incomplete' >&2; exit 1; }
