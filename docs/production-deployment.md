@@ -12,7 +12,7 @@
 sudo install -d -m 700 -o 1000 -g 1000 /srv/zichan/state /srv/zichan/backups
 ```
 
-从开发命名卷迁移时，先停服，执行完整备份及 `verify-backup`，再将备份恢复到**空**的 `/srv/zichan/state`；不要直接切换到空挂载。`/srv/zichan/state/server/server.secret` 是首次启动生成的服务器密钥，必须和数据库、`server-id`、节点签名密钥一起持久保留。部署脚本在后续启动时检查服务器 ID 和密钥哈希未变。生产配置不使用临时 `SYNC_SECRET`。
+从开发命名卷迁移时，先停服，执行完整备份及 `verify-backup`，再将备份恢复到**空**的 `/srv/zichan/state`；不要直接切换到空挂载。部署脚本默认拒绝空状态目录；只有确认是在创建全新服务器时，才对首次部署单次设置 `ZICHAN_ALLOW_FIRST_BOOT=yes`。`/srv/zichan/state/server/server.secret` 是首次启动生成的服务器密钥，必须和数据库、`server-id`、节点签名密钥一起持久保留。部署脚本在后续启动时检查服务器 ID 和密钥哈希未变。生产配置不使用临时 `SYNC_SECRET`。
 
 ## 按 digest 部署
 
@@ -24,7 +24,9 @@ export ZICHAN_TZ=Asia/Shanghai
 bash scripts/production/deploy.sh
 ```
 
-脚本校验 Cosign 的 GitHub Actions OIDC 签名（只接受此仓库 `main` 的镜像流水线）、拉取镜像、检查 `linux/amd64`、Compose 配置、挂载目录、健康状态与持久身份。生产 Compose 在 [docker-compose.prod.yml](../apps/sync-server/docker-compose.prod.yml)。手动回退仅允许在未迁移 schema、未开放新写入的情况下使用旧 digest 并重复部署检查；跨 schema 更新须遵守 [升级方案](production-upgrade-1.0.md) 的恢复边界。
+仅创建全新服务器时，将最后一行改为 `ZICHAN_ALLOW_FIRST_BOOT=yes bash scripts/production/deploy.sh`；迁移和回退不得设置此开关。
+
+脚本校验 Cosign 的 GitHub Actions OIDC 签名（只接受此仓库 `main` 的镜像流水线）、拉取镜像、检查 `linux/amd64`、Compose 配置、挂载目录、健康状态与持久身份。生产 Compose 在 [docker-compose.prod.yml](../apps/sync-server/docker-compose.prod.yml)。Compose 不设置 `pull_policy: always`，但部署脚本的验签和显式 `docker pull` 仍需要网络；当前手动回退不能保证离线执行。手动回退仅允许在未迁移 schema、未开放新写入的情况下使用旧 digest 并重复部署检查；跨 schema 更新须遵守 [升级方案](production-upgrade-1.0.md) 的恢复边界。
 
 ## 加密备份运送
 

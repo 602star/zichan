@@ -4,10 +4,15 @@ source "$(dirname "$0")/common.sh"
 
 check_directory "$ZICHAN_STATE_DIR"
 check_directory "$ZICHAN_BACKUP_DIR"
-if [[ ! -f "$ZICHAN_STATE_DIR/server/server-id" ]] \
-  && [[ -n "$(find "$ZICHAN_STATE_DIR" -mindepth 1 -print -quit)" ]]; then
-  echo 'Existing nonempty server state has no server-id; refusing to create a new identity' >&2
-  exit 2
+if [[ ! -f "$ZICHAN_STATE_DIR/server/server-id" ]]; then
+  if [[ -n "$(find "$ZICHAN_STATE_DIR" -mindepth 1 -print -quit)" ]]; then
+    echo 'Existing nonempty server state has no server-id; refusing to create a new identity' >&2
+    exit 2
+  fi
+  if [[ "${ZICHAN_ALLOW_FIRST_BOOT:-}" != yes ]]; then
+    echo 'Empty server state requires ZICHAN_ALLOW_FIRST_BOOT=yes for an intentional first boot' >&2
+    exit 2
+  fi
 fi
 if [[ -f "$ZICHAN_STATE_DIR/server/server-id" && ! -s "$ZICHAN_STATE_DIR/server/server.secret" ]]; then
   echo 'Existing server identity has no persistent server.secret' >&2
