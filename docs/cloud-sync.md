@@ -147,11 +147,12 @@ OPAQUE 注册和登录都由客户端与服务器交换 PAKE 消息，账号密�
 
 ```bash
 cd apps/sync-server
-SYNC_SECRET=$(openssl rand -hex 32) \
-docker compose up -d --remove-orphans
+docker compose up -d --build --remove-orphans
 ```
 
 Compose 将父目录 `/state` 挂载到 `zichan-data`，实际 `DATA_DIR` 为 `/state/server`；这使恢复命令可以原子替换数据子目录。Compose 只运行同步服务器，默认把宿主机 `127.0.0.1:8787` 映射到容器的 8787，不占用 80/443；由部署者自行配置 HTTPS 反向代理并转发到 `http://127.0.0.1:8787`。代理在另一台主机时，可将 `SYNC_BIND_ADDRESS` 设为代理可访问的宿主机地址，并用防火墙限制来源。反向代理须保留公共 Host，并覆盖单一 `X-Forwarded-Proto: https`；`TRUSTED_PROXIES` 应配置为实际代理地址或网段。生产环境应固定 `SYNC_SECRET`、域名和 `BASE_PATH`，限制宿主机对数据卷的访问，不要把上游 8787 端口直接开放到公网。首次部署通过启动日志显示的后台路径显式创建 Owner，再对外开放服务；普通注册不应被当作取得管理员权限的入口。已有服务器按管理后台提示完成初始化，切勿为了重新初始化而删除账本数据。若密钥、`server.secret`、`server-id`、数据库或旧 JSON 状态曾进入源码目录或版本控制，应按已泄露处理：停止服务、保留加密数据备份，轮换 `SYNC_SECRET`，撤销设备会话后重新登录。
+
+首次启动会在持久卷中生成 `/state/server/server.secret`；后续 `compose up` 会复用它。显式传入 `SYNC_SECRET` 时必须长期保留同一值，不能在每次启动时重新生成。备份卷须先准备为容器内 `node` 用户可写，再执行下述维护命令。
 
 ## 备份、迁移与恢复演练
 
@@ -170,9 +171,9 @@ npm run server:restore -- --data-dir D:\ledger-server --backup D:\ledger-backups
 # Docker：先停服务，并把宿主机备份目录挂到 /backup
 docker compose stop sync-server
 docker compose run --rm -v ./backups:/backup sync-server \
-  node dist/maintenance.js backup --data-dir /state/server --output /backup/2026-07-19
+  node dist/maintenance.mjs backup --data-dir /state/server --output /backup/2026-07-19
 docker compose run --rm -v ./backups:/backup sync-server \
-  node dist/maintenance.js verify-backup --backup /backup/2026-07-19
+  node dist/maintenance.mjs verify-backup --backup /backup/2026-07-19
 ```
 
 恢复演练应恢复到隔离目录，使用临时端口启动，检查 `/api/ready`，再在管理后台执行数据库和附件校验，并用测试客户端拉取一份带图片的账本。恢复后保留恢复前目录，直到所有设备完成一次同步。当前服务器及备份工具只接受 schema 27；恢复工具撤销旧会话并清除未完成登录及密码重置码，需要重新登录。旧 PBKDF2/固定证明/一次性 challenge 认证、旧 JSON 状态、人工管理 Token 与旧 SQLite 基线都不读取、不转换。

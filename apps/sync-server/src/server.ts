@@ -99,7 +99,10 @@ function assertSeparateDirectories(dataDir: string, webDir: string): void {
   }
 }
 
+declare const __ZICHAN_SERVER_VERSION__: string | undefined;
+
 function readServerVersion(): string {
+  if (typeof __ZICHAN_SERVER_VERSION__ === 'string' && __ZICHAN_SERVER_VERSION__) return __ZICHAN_SERVER_VERSION__;
   try {
     const value = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version?: string };
     return typeof value.version === 'string' && value.version ? value.version : 'dev';

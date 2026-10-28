@@ -159,6 +159,20 @@ jobs:
           test "$(docker exec "$container" id -u)" != 0
           # State volume is writable by the unprivileged user.
           docker exec "$container" sh -c 'test -w /state/server'
+          # The final image must carry a self-contained maintenance entry, not only
+          # TypeScript output whose workspace imports need node_modules.
+          mkdir -p "$RUNNER_TEMP/zichan-sync-backups"
+          docker stop --time 60 "$container"
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --mount "type=bind,src=$RUNNER_TEMP/zichan-sync-state,dst=/state" \
+            --mount "type=bind,src=$RUNNER_TEMP/zichan-sync-backups,dst=/backups" \
+            "zichan-sync-ci:${GITHUB_SHA}" \
+            node dist/maintenance.mjs backup --data-dir /state/server --output /backups/ci
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --mount "type=bind,src=$RUNNER_TEMP/zichan-sync-state,dst=/state" \
+            --mount "type=bind,src=$RUNNER_TEMP/zichan-sync-backups,dst=/backups" \
+            "zichan-sync-ci:${GITHUB_SHA}" \
+            node dist/maintenance.mjs verify-backup --data-dir /state/server --backup /backups/ci
       - name: Upload container failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

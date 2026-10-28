@@ -9,6 +9,7 @@ const desktopRoot = resolve(here, '..');
 const repoRoot = resolve(desktopRoot, '../..');
 const resources = resolve(desktopRoot, 'resources');
 const runtimeName = process.platform === 'win32' ? 'node.exe' : 'node';
+const serverVersion = JSON.parse(await readFile(resolve(repoRoot, 'apps/sync-server/package.json'), 'utf8')).version;
 
 if (process.env.ZICHAN_RELEASE_BUILD === '1') {
   const expected = (await readFile(resolve(repoRoot, '.node-version'), 'utf8')).trim();
@@ -29,6 +30,7 @@ await build({
   platform: 'node',
   target: 'node22',
   format: 'esm',
+  define: { __ZICHAN_SERVER_VERSION__: JSON.stringify(serverVersion) },
   sourcemap: false,
   minify: true,
   // The bundled systeminformation CommonJS code requires Node builtins at runtime.

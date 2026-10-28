@@ -1,6 +1,7 @@
 # Publish the unified server on host port 8787; configure your own HTTPS reverse proxy.
 # Defaults to loopback so a proxy on the same host can reach it without public exposure.
-# Usage: SYNC_SECRET=$(openssl rand -hex 32) docker compose up -d --remove-orphans
+# Usage: docker compose up -d --build --remove-orphans
+# The first start persists a generated server.secret in the data volume.
 services:
   sync-server:
     build:
@@ -14,7 +15,7 @@ services:
       - ATTACHMENT_QUOTA_BYTES=${ATTACHMENT_QUOTA_BYTES:-21474836480}
       - ATTACHMENT_MAX_FILE_BYTES=${ATTACHMENT_MAX_FILE_BYTES:-104857600}
       - ATTACHMENT_TRASH_RETENTION_MS=${ATTACHMENT_TRASH_RETENTION_MS:-2592000000}
-      - SYNC_SECRET=${SYNC_SECRET:?set SYNC_SECRET (e.g. openssl rand -hex 32)}
+      - SYNC_SECRET=${SYNC_SECRET:-}
       - REGISTRATION_MODE=${REGISTRATION_MODE:-invite}
       - ENABLE_WEB=${ENABLE_WEB:-1}
       - ENABLE_SYNC=${ENABLE_SYNC:-1}
