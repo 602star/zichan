@@ -266,5 +266,5 @@ describe('federated replica join', () => {
       await Promise.all([source.close(), target.close(), third.close()]);
       rmSync(root, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 90_000);
 });

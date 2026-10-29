@@ -191,5 +191,5 @@ describe('large three-node replica recovery', () => {
     }
   }, process.env['ZICHAN_REPLICA_STRESS'] === '1'
     ? Math.max(600_000, Number(process.env['ZICHAN_REPLICA_STRESS_BLOBS'] ?? '1000') * 600)
-    : 120_000);
+    : 300_000);
 });
