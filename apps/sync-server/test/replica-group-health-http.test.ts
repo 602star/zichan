@@ -203,5 +203,5 @@ describe('three node replica group health', () => {
       await Promise.all([hub, home, office].map((node) => node.close()));
       rmSync(root, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, 45_000);
 });

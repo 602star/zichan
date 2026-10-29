@@ -100,7 +100,9 @@ async function enroll(url: string, username: string) {
   expect(before.enabled).toBe(false);
   const enrollment = await (await request('/mfa/enroll', {})).json() as { secret: string; otpauthUrl: string };
   expect(enrollment.otpauthUrl).toContain('otpauth://totp/');
-  const confirmed = await (await request('/mfa/confirm', { code: codeNow(enrollment.secret) })).json() as { recoveryCodes: string[] };
+  const confirmation = await request('/mfa/confirm', { code: codeNow(enrollment.secret) });
+  expect(confirmation.status).toBe(200);
+  const confirmed = await confirmation.json() as { recoveryCodes: string[] };
   const after = await (await request('/mfa')).json() as { enabled: boolean; recoveryCodesRemaining: number };
   expect(after.enabled).toBe(true);
   expect(after.recoveryCodesRemaining).toBe(confirmed.recoveryCodes.length);

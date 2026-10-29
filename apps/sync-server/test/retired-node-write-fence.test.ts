@@ -60,6 +60,9 @@ describe('retired replica write fence', () => {
       expect(await oldStore.replicaRetirement(local.replicaId)).toMatchObject({
         sourceNodeId: hub.serverId,
       });
+      expect((await oldStore.listNodeReplicationLinks('owner'))[0]).toMatchObject({
+        lifecycleState: 'REVOKED', revocationPending: false,
+      });
       await expect(oldStore.assertLedgerAccess('owner', 'write', local.replicaId))
         .rejects.toMatchObject({ code: 'REPLICA_RETIRED' });
     } finally {

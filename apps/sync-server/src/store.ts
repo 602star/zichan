@@ -3759,7 +3759,8 @@ END;`);
       && row['inventory_blob_hash'] && row['physical_blob_hash'] === row['inventory_blob_hash']
       && row['physical_verified_at'];
     const lifecycleState = !enabled
-      ? bool(row['revocation_pending']) ? 'REVOKING' : row['remote_revoked_at'] ? 'REVOKED' : 'STOPPED'
+      ? bool(row['revocation_pending']) ? 'REVOKING'
+        : row['remote_revoked_at'] || recorded === 'REVOKED' ? 'REVOKED' : 'STOPPED'
       : recorded === 'READY' && !readyEvidence ? behind ? 'CATCHING_UP' : 'VERIFYING' : recorded;
     return {
       linkId: String(row['link_id']), username: String(row['username']), ledgerId: String(row['ledger_id']),
