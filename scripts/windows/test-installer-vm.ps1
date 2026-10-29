@@ -47,11 +47,17 @@ function Install-Package([string]$path, [string]$label) {
   Assert-Signature $path
   if ($Format -eq 'msi') {
     $log = Join-Path $env:TEMP "zichan-$label-msi.log"
-    & msiexec.exe /i $path "INSTALLDIR=$InstallRoot" /qn /norestart /L*v $log
+    $arguments = "/i `"$path`" INSTALLDIR=`"$InstallRoot`" /qn /norestart /L*v `"$log`""
+    $process = Start-Process -FilePath msiexec.exe -ArgumentList $arguments -Wait -PassThru
   } else {
-    & $path /S "/D=$InstallRoot"
+    $process = Start-Process -FilePath $path -ArgumentList "/S /D=$InstallRoot" -Wait -PassThru
   }
-  if ($LASTEXITCODE -ne 0) { throw "$label installation failed with exit code $LASTEXITCODE" }
+  if ($process.ExitCode -ne 0) {
+    if ($Format -eq 'msi' -and (Test-Path -LiteralPath $log)) {
+      Get-Content -LiteralPath $log -Tail 80 | Write-Output
+    }
+    throw "$label installation failed with exit code $($process.ExitCode)"
+  }
 }
 
 function Assert-Installation([string]$version) {
@@ -117,14 +123,21 @@ if ($PreviousInstaller) {
   if (-not $SkipLaunch) { Start-And-Close $exe }
 }
 if ($Format -eq 'msi') {
-  & msiexec.exe /x $CurrentInstaller /qn /norestart /L*v (Join-Path $env:TEMP 'zichan-uninstall-msi.log')
+  $log = Join-Path $env:TEMP 'zichan-uninstall-msi.log'
+  $arguments = "/x `"$CurrentInstaller`" /qn /norestart /L*v `"$log`""
+  $process = Start-Process -FilePath msiexec.exe -ArgumentList $arguments -Wait -PassThru
 } else {
   $uninstaller = Get-ChildItem -LiteralPath $InstallRoot -File -Filter 'uninstall*.exe' | Select-Object -First 1
   if (-not $uninstaller) { throw 'NSIS uninstaller missing' }
   Assert-Signature $uninstaller.FullName
-  & $uninstaller.FullName /S
+  $process = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait -PassThru
 }
-if ($LASTEXITCODE -ne 0) { throw "Uninstall failed with exit code $LASTEXITCODE" }
+if ($process.ExitCode -ne 0) {
+  if ($Format -eq 'msi' -and (Test-Path -LiteralPath $log)) {
+    Get-Content -LiteralPath $log -Tail 80 | Write-Output
+  }
+  throw "Uninstall failed with exit code $($process.ExitCode)"
+}
 $deadline = (Get-Date).AddSeconds(30)
 while ((Get-Date) -lt $deadline -and (Test-Path -LiteralPath (Join-Path $InstallRoot 'zichan.exe'))) { Start-Sleep -Milliseconds 500 }
 if (Test-Path -LiteralPath (Join-Path $InstallRoot 'zichan.exe')) { throw 'Uninstall left the executable behind' }
