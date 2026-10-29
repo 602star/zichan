@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -9,6 +9,20 @@ import { SyncServerStore } from '../src/store.js';
 import { createTestSyncServer } from './support/server-fixture.js';
 
 describe('stopped node retirement', () => {
+  it('refuses a linked ancestor of the node data directory', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'zichan-retire-linked-'));
+    const real = join(base, 'real');
+    const alias = join(base, 'alias');
+    mkdirSync(join(real, 'node'), { recursive: true });
+    try {
+      symlinkSync(real, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      await expect(inspectNodeRetirement(join(alias, 'node')))
+        .rejects.toThrow(/符号链接或目录联接/);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   it('keeps data on identity mismatch or a running service, then backs up and clears only the named node', async () => {
     const root = mkdtempSync(join(tmpdir(), 'zichan-retire-node-'));
     const dataDir = join(root, 'old-node');

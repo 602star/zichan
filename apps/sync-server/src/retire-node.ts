@@ -29,19 +29,21 @@ function canonicalNewDirectory(value: string): string {
 }
 
 export function assertIndependentNodeBackupPath(dataDir: string, backupPath: string): void {
+  const canonicalDataDir = realpathSync.native(dataDir);
   const canonicalBackup = canonicalNewDirectory(backupPath);
-  if (inside(dataDir, canonicalBackup) || inside(canonicalBackup, dataDir)) {
+  if (inside(canonicalDataDir, canonicalBackup) || inside(canonicalBackup, canonicalDataDir)) {
     throw new Error('独立备份目录与节点数据目录不能互相包含；未执行清理');
   }
 }
 
 function assertNoLinkedFiles(root: string, current = root): void {
+  const canonicalRoot = realpathSync.native(root);
   for (const entry of readdirSync(current, { withFileTypes: true })) {
     const path = join(current, entry.name);
     const stat = lstatSync(path);
     if (stat.isSymbolicLink()) throw new Error(`节点数据目录包含链接 ${path}；未执行清理`);
     if (stat.isDirectory()) {
-      if (!inside(root, realpathSync.native(path))) {
+      if (!inside(canonicalRoot, realpathSync.native(path))) {
         throw new Error(`节点数据子目录超出指定目录 ${path}；未执行清理`);
       }
       assertNoLinkedFiles(root, path);
@@ -56,19 +58,22 @@ function assertExactDataDir(value: string): string {
     || lstatSync(dataDir).isSymbolicLink()) {
     throw new Error('必须指定已存在的节点数据目录，不能使用磁盘根目录或符号链接');
   }
-  const actual = resolve(realpathSync.native(dataDir));
-  if ((process.platform === 'win32' ? actual.toLowerCase() : actual)
-    !== (process.platform === 'win32' ? dataDir.toLowerCase() : dataDir)) {
-    throw new Error('节点数据目录路径包含符号链接或目录联接；请直接指定实际目录');
+  let component = parse(dataDir).root;
+  for (const name of relative(component, dataDir).split(sep).filter(Boolean)) {
+    component = join(component, name);
+    if (lstatSync(component).isSymbolicLink()) {
+      throw new Error('节点数据目录路径包含符号链接或目录联接；请直接指定实际目录');
+    }
   }
+  const actual = resolve(realpathSync.native(dataDir));
   for (const name of ['server-id', 'server.secret', 'server.sqlite', 'opaque.server-setup']) {
     const file = join(dataDir, name);
     if (!existsSync(file) || !lstatSync(file).isFile() || lstatSync(file).isSymbolicLink()) {
       throw new Error(`节点数据目录缺少普通文件 ${name}；未执行清理`);
     }
   }
-  assertNoLinkedFiles(dataDir);
-  return dataDir;
+  assertNoLinkedFiles(actual);
+  return actual;
 }
 
 /** Inspect the stopped old node without modifying its ledger or attachments. */
