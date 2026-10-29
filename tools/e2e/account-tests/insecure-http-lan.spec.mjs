@@ -17,22 +17,12 @@ function lanIPv4() {
   throw new Error('no non-loopback IPv4 address is available on this machine');
 }
 
-/** Quick start opens a modal that must be dismissed before the sidebar is clickable. */
-async function dismissQuickStart(page, quickStart) {
-  if (!await quickStart.isVisible().catch(() => false)) return;
-  await quickStart.click();
-  const close = page.getByRole('button', { name: '关闭快速记账' });
-  await expect(close).toBeVisible({ timeout: 30_000 });
-  await close.click();
-  await expect(close).toBeHidden({ timeout: 30_000 });
-}
-
 async function signIn(page) {
   const loginHeading = page.getByRole('heading', { name: '账号登录', exact: true });
   if (await loginHeading.isVisible().catch(() => false)) {
     await page.getByLabel('服务器用户名').fill('lan-member');
     await page.getByLabel('服务器账号密码').fill('lan-account-password');
-    await page.getByRole('button', { name: '登录已有账号', exact: true }).click();
+    await page.getByRole('button', { name: '登录', exact: true }).click();
   }
 }
 
@@ -67,15 +57,15 @@ test('plain-HTTP LAN origin unlocks the ledger, saves a record and reloads it', 
     expect(await page.evaluate(() => typeof globalThis.crypto?.subtle)).toBe('undefined');
     expect(await page.evaluate(() => typeof globalThis.navigator?.locks)).toBe('undefined');
 
-    const quickStart = page.getByRole('button', { name: '直接开始记支出', exact: true });
+    const quickStart = page.getByRole('button', { name: '开始记账', exact: true });
     const appShell = page.locator('.zc-app-shell');
     await signIn(page);
     await expect(quickStart.or(appShell)).toBeVisible({ timeout: 30_000 });
-    await dismissQuickStart(page, quickStart);
+    if (await quickStart.isVisible().catch(() => false)) await quickStart.click();
     await expect(appShell).toBeVisible({ timeout: 30_000 });
 
     // Record an expense through the ordinary transactions screen.
-    await page.locator('.zc-sidebar').getByText('日常支出', { exact: true }).click();
+    await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
     await page.getByRole('button', { name: '+ 记支出' }).click();
     await page.getByRole('textbox', { name: /^金额/ }).fill('12.50');
     await page.getByLabel('描述').fill(marker);
@@ -119,7 +109,7 @@ test('plain-HTTP LAN origin unlocks the ledger, saves a record and reloads it', 
     await expect(quickStart.or(appShell)).toBeVisible({ timeout: 30_000 });
     await dismissQuickStart(page, quickStart);
     await expect(appShell).toBeVisible({ timeout: 30_000 });
-    await page.locator('.zc-sidebar').getByText('日常支出', { exact: true }).click();
+    await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
     await expect(page.getByText(marker, { exact: true })).toBeVisible({ timeout: 30_000 });
   } finally {
     await page.close();

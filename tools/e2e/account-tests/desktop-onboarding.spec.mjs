@@ -17,7 +17,6 @@ test('desktop account ledger shows the same optional guide without opening a mod
     await page.getByLabel('服务器用户名').fill('desktop-user');
     await page.getByLabel('服务器账号密码').fill('account-test-password');
     await page.getByRole('button', { name: '登录', exact: true }).click();
-    await page.getByRole('button', { name: '创建个人账本' }).click();
     await page.getByRole('button', { name: '添加常用账户' }).click();
     const guide = page.getByRole('region', { name: '首次记账引导' });
     await expect(guide).toBeVisible();

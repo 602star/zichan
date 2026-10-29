@@ -62,19 +62,19 @@ test('states the scope before writing, then reports each account', async ({ page
     await page.getByRole('link', { name: '用户管理' }).click();
     await expect(page.getByRole('heading', { name: '用户管理' })).toBeVisible();
 
-    const table = page.locator('section').filter({ has: page.getByText('用户列表', { exact: true }) }).locator('table');
+    const cards = page.locator('.zc-admin-user-card-grid');
     // The owner is in the list and is not selectable; its checkbox says why.
-    const ownerRow = table.locator('tbody tr').filter({ hasText: 'operator' }).first();
+    const ownerRow = cards.locator('.zc-admin-user-card').filter({ hasText: 'operator' }).first();
     await expect(ownerRow.getByRole('checkbox')).toBeDisabled();
     await expect(ownerRow.getByRole('checkbox')).toHaveAttribute('title', '所有者账号不可批量处理');
 
     // Select two members.
-    await table.locator('tbody tr').filter({ hasText: 'member-one' }).first().getByRole('checkbox').check();
-    await table.locator('tbody tr').filter({ hasText: 'member-two' }).first().getByRole('checkbox').check();
+    await cards.locator('.zc-admin-user-card').filter({ hasText: 'member-one' }).first().getByRole('checkbox').check();
+    await cards.locator('.zc-admin-user-card').filter({ hasText: 'member-two' }).first().getByRole('checkbox').check();
     await expect(page.getByText('已选 2 个账号（仅当前页）')).toBeVisible();
 
     // Choosing an action shows the scope *before* the write, naming the accounts. The order is the
-    // table's (newest first), so this checks the set rather than a sequence.
+    // card order is newest first, so this checks the set rather than a sequence.
     await page.getByLabel('批量操作', { exact: true }).selectOption('disable');
     await expect(page.getByText('禁用账号：确认范围')).toBeVisible();
     const scope = page.getByText(/^将处理 2 个：/);
@@ -83,7 +83,7 @@ test('states the scope before writing, then reports each account', async ({ page
     await page.getByRole('button', { name: '确认执行' }).click();
 
     // The report names the outcome per group rather than only a count. It renders as one block, so
-    // the text is read and checked as a whole; the account order is the table's, not ours.
+    // the text is read and checked as a whole; the account order is the cards', not ours.
     const report = page.locator('p').filter({ hasText: '动作：禁用账号' });
     await expect(report).toContainText('动作：禁用账号。范围：已选 2 个账号，其中可处理 2 个、跳过 0 个。');
     await expect(report).toContainText('成功 2 个：');
@@ -112,9 +112,9 @@ test('skips an account that is already in the target state and still handles the
 
     await signIn(page, f.url);
     await page.getByRole('link', { name: '用户管理' }).click();
-    const table = page.locator('section').filter({ has: page.getByText('用户列表', { exact: true }) }).locator('table');
-    await table.locator('tbody tr').filter({ hasText: 'member-one' }).first().getByRole('checkbox').check();
-    await table.locator('tbody tr').filter({ hasText: 'member-two' }).first().getByRole('checkbox').check();
+    const cards = page.locator('.zc-admin-user-card-grid');
+    await cards.locator('.zc-admin-user-card').filter({ hasText: 'member-one' }).first().getByRole('checkbox').check();
+    await cards.locator('.zc-admin-user-card').filter({ hasText: 'member-two' }).first().getByRole('checkbox').check();
 
     await page.getByLabel('批量操作', { exact: true }).selectOption('disable');
     // The already-disabled account is called out before the write, with the reason.
@@ -143,9 +143,9 @@ test('re-enables the selected accounts and reports a session revoke honestly', a
 
     await signIn(page, f.url);
     await page.getByRole('link', { name: '用户管理' }).click();
-    const table = page.locator('section').filter({ has: page.getByText('用户列表', { exact: true }) }).locator('table');
-    await table.locator('tbody tr').filter({ hasText: 'member-one' }).first().getByRole('checkbox').check();
-    await table.locator('tbody tr').filter({ hasText: 'member-two' }).first().getByRole('checkbox').check();
+    const cards = page.locator('.zc-admin-user-card-grid');
+    await cards.locator('.zc-admin-user-card').filter({ hasText: 'member-one' }).first().getByRole('checkbox').check();
+    await cards.locator('.zc-admin-user-card').filter({ hasText: 'member-two' }).first().getByRole('checkbox').check();
 
     await page.getByLabel('批量操作', { exact: true }).selectOption('enable');
     await page.getByRole('button', { name: '确认执行' }).click();
@@ -165,7 +165,7 @@ test('re-enables the selected accounts and reports a session revoke honestly', a
     // nothing to end: the scope says so before the write and the confirm button stays disabled
     // rather than running a no-op that would report success for work that did not happen.
     await page.getByRole('button', { name: '刷新' }).click();
-    await table.locator('tbody tr').filter({ hasText: 'member-one' }).first().getByRole('checkbox').check();
+    await cards.locator('.zc-admin-user-card').filter({ hasText: 'member-one' }).first().getByRole('checkbox').check();
     await page.getByLabel('批量操作', { exact: true }).selectOption('revoke-sessions');
     await expect(page.getByText('将跳过 1 个：member-one（没有有效会话）')).toBeVisible();
     await expect(page.getByText('将处理 0 个：（无）')).toBeVisible();

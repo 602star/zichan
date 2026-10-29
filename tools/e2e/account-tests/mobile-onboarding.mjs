@@ -6,7 +6,6 @@ export async function openSpendingLedger(page, base, username, password) {
   await page.getByLabel('服务器用户名').fill(username);
   await page.getByLabel('服务器账号密码').fill(password);
   await page.getByRole('button', { name: '登录', exact: true }).click();
-  await page.getByRole('button', { name: '创建个人账本' }).click();
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
   const firstEntry = page.getByRole('dialog', { name: '新增 · 日常收支' });
   await expect(page.getByRole('region', { name: '首次记账引导' })).toBeVisible();

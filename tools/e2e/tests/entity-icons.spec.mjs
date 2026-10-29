@@ -45,9 +45,7 @@ for (const width of [390, 1280]) test(`payee uploads survive reload and reset at
   await page.getByRole('button', { name: '+ 记账', exact: true }).click();
   const entry = page.getByRole('dialog', { name: '新增 · 日常收支', exact: true });
   if (width === 390) {
-    await entry.getByRole('button', { name: '常用附加字段', exact: true }).click();
-    await entry.getByRole('checkbox', { name: '商家 / 平台', exact: true }).check();
-    await entry.getByRole('button', { name: '常用附加字段', exact: true }).click();
+    await entry.locator('summary').filter({ hasText: '更多信息' }).press('Enter');
   }
   await entry.getByRole('textbox', { name: '商家 / 平台', exact: true }).fill('我的图标商店');
   await expect(entry.getByRole('button', { name: '我的图标商店', exact: true }).locator('img')).toHaveAttribute('src', source);
@@ -59,7 +57,9 @@ for (const width of [390, 1280]) test(`payee uploads survive reload and reset at
   await page.getByRole('dialog', { name: '更多功能' }).getByRole('button', { name: '⊞ 管理', exact: true }).click();
   await page.setViewportSize({ width, height: 900 });
   await page.getByRole('tab', { name: '标签与交易对象', exact: true }).click();
-  const row = page.getByRole('row').filter({ hasText: '我的图标商店' });
+  const row = width === 390
+    ? page.getByRole('button', { name: '编辑交易对象 我的图标商店', exact: true })
+    : page.getByRole('row').filter({ hasText: '我的图标商店' });
   await expect(row.locator('img')).toHaveAttribute('src', source);
   await row.click();
   const edit = page.getByRole('dialog', { name: '编辑 · 交易对象', exact: true });

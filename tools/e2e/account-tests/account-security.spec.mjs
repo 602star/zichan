@@ -17,10 +17,8 @@ test('changes account password and revokes only a selected own device', async ({
     await page.goto(`${url}/app/`);
     await page.getByLabel('服务器用户名').fill('security-user');
     await page.getByLabel('服务器账号密码').fill('account-test-password');
-    await page.getByRole('button', { name: '登录已有账号', exact: true }).click();
-    await page.getByRole('button', { name: '创建个人账本' }).click();
+    await page.getByRole('button', { name: '登录', exact: true }).click();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
-    await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
     await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
     const panel = page.getByRole('region', { name: '账号安全', exact: true });
     await panel.getByText('登录设备', { exact: true }).click();
@@ -34,10 +32,10 @@ test('changes account password and revokes only a selected own device', async ({
     await panel.getByLabel('修改后的账号密码').fill('new-account-password');
     await panel.getByLabel('再次输入新密码').fill('new-account-password');
     await panel.getByRole('button', { name: '确认修改账号密码' }).click();
-    await expect(page.getByRole('button', { name: '登录已有账号', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible();
     await page.getByLabel('服务器用户名').fill('security-user');
     await page.getByLabel('服务器账号密码').fill('new-account-password');
-    await page.getByRole('button', { name: '登录已有账号', exact: true }).click();
+    await page.getByRole('button', { name: '登录', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await expect(page.getByRole('button', { name: '直接开始记支出', exact: true })).toHaveCount(0);
   } finally { await page.close(); const closing = server.close(); server.server.closeAllConnections(); await closing; }

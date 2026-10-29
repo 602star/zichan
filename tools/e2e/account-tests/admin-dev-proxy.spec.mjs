@@ -29,9 +29,8 @@ test('development proxy supports owner creation, cookie restore and rejects fore
     expect(foreignSetup.status()).toBe(403);
     await page.route('**/api/health', (route) => route.fulfill({ contentType: 'text/html', body: '<!DOCTYPE html><html></html>' }));
     await page.goto(`${origin}/e2e-private-entry/admin/`);
-    await expect(page.getByRole('heading', { name: '尚未连接管理服务器' })).toBeVisible();
-    await expect(page.getByRole('alert')).toContainText('管理 API 未返回有效 JSON');
-    await expect(page.getByRole('button', { name: '等待服务器连接' })).toBeDisabled();
+    await expect(page.getByRole('alert')).toContainText('无法确定管理服务器地址');
+    await expect(page.getByRole('button', { name: '重新连接' })).toBeVisible();
     await expect(page.getByRole('button', { name: '创建所有者并进入后台' })).toHaveCount(0);
     await page.unroute('**/api/health');
     await page.reload();

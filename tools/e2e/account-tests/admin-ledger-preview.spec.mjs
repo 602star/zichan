@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
-import { registerAccount } from '../../../packages/db/dist/index.js';
+import { loginAccount, registerAccount } from '../../../packages/db/dist/index.js';
 
 /**
  * Administrator ledger preview, end to end.
@@ -48,12 +48,10 @@ async function recordExpenseAs(page, origin, username, amount) {
   await page.goto(`${origin}/app/`);
   await page.getByLabel('服务器用户名').fill(username);
   await page.getByLabel('服务器账号密码', { exact: true }).fill(userPassword);
-  await page.getByRole('button', { name: '登录已有账号', exact: true }).click();
-  // A brand-new account starts on the first-run wizard; "先记收支" is the plain-ledger choice,
-  // and it opens the quick-expense form, which needs nothing but an amount.
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  // A brand-new account starts on the first-run wizard.
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
-  // "先记收支" opens the ordinary new-transaction form, which needs only an amount and saves on
-  // its own defaults.
+  await page.getByRole('button', { name: '记第一笔', exact: true }).click();
   const form = page.getByRole('dialog', { name: '新增 · 日常收支' });
   await form.getByLabel('金额*').fill(amount);
   await form.getByRole('button', { name: '保存' }).first().click();
@@ -68,19 +66,26 @@ test('an administrator opens a user ledger as a read-only preview and can close 
     await registerAccount(origin, 'preview-user', userPassword);
 
     await recordExpenseAs(page, origin, 'preview-user', '42.50');
-    // Let the background sync push the commit, so the server has something to decrypt.
-    await page.waitForTimeout(5_000);
+    // A preview can only include the record after the background sync has pushed it.
+    const ownerSession = await loginAccount(origin, 'owner', password, { sessionContext: 'admin' });
+    await expect.poll(async () => {
+      const response = await fetch(`${origin}/api/admin/users?search=preview-user`, {
+        headers: { Authorization: `Bearer ${ownerSession.accessToken}` },
+      });
+      const result = await response.json();
+      return result.users.find((user) => user.username === 'preview-user')?.commitBytes ?? 0;
+    }, { timeout: 30_000 }).toBeGreaterThan(0);
 
     await signIn(page, origin);
 
-    // The user list offers the preview on the account row.
+    // The user list offers the preview on the account card.
     await page.goto(`${origin}/e2e-private-entry/admin/users`);
-    const row = page.getByRole('row').filter({ hasText: 'preview-user' });
-    await expect(row).toBeVisible();
-    await expect(row.getByRole('button', { name: '预览' })).toBeVisible();
+    const card = page.locator('.zc-admin-user-card').filter({ hasText: 'preview-user' });
+    await expect(card).toBeVisible();
+    await expect(card.getByRole('button', { name: '预览账本' })).toBeVisible();
 
     // Opening decrypts the user's ledger, so the console asks for a reason and says why.
-    await row.getByRole('button', { name: '预览', exact: true }).click();
+    await card.getByRole('button', { name: '预览账本', exact: true }).click();
     await expect(page).toHaveURL(`${origin}/e2e-private-entry/admin/preview?username=preview-user`);
     await expect(page.getByRole('heading', { name: /预览用户记账/ })).toBeVisible();
     await page.getByLabel('查看原因').fill('核对用户反馈的金额差异');
@@ -113,7 +118,7 @@ test('an administrator opens a user ledger as a read-only preview and can close 
     // And the session is really gone, not just off screen: revisiting asks for a reason again
     // instead of handing back the ledger the operator just closed. (The 410 the server answers
     // for a closed preview id is covered by the route tests.)
-    await row.getByRole('button', { name: '详情', exact: true }).click();
+    await card.getByRole('button', { name: '账号详情', exact: true }).click();
     await page.getByRole('button', { name: '预览记账数据', exact: true }).click();
     await expect(page).toHaveURL(`${origin}/e2e-private-entry/admin/preview?username=preview-user`);
     await page.reload();

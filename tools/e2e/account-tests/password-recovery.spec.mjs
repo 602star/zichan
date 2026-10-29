@@ -22,7 +22,7 @@ test('administrator reviews and issues a code, user resets only account credenti
     await page.getByLabel('管理账号密码').fill('reviewer-test-password');
     await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
     await page.getByRole('link', { name: '用户管理' }).click();
-    await page.getByRole('row').filter({ has: page.getByText('recover-user', { exact: true }) }).getByRole('button', { name: '详情' }).click();
+    await page.locator('.zc-admin-user-card').filter({ hasText: 'recover-user' }).getByRole('button', { name: '账号详情' }).click();
     await expect(page.getByRole('button', { name: '发放一次性重置码', exact: true })).toBeDisabled();
     await page.getByLabel('我已通过可信渠道核实 recover-user 的身份和恢复请求').check();
     await page.getByRole('button', { name: '发放一次性重置码', exact: true }).click();
@@ -43,8 +43,8 @@ test('administrator reviews and issues a code, user resets only account credenti
     await expect(loginAccount(url, 'recover-user', 'old-user-test-password')).rejects.toThrow();
     expect((await fetch(`${url}/api/auth/me`, { headers: { Authorization: `Bearer ${original.accessToken}` } })).status).toBe(401);
     await user.getByLabel('服务器账号密码').fill('new-user-test-password');
-    await user.getByRole('button', { name: '登录已有账号' }).click();
-    await expect(user.getByRole('button', { name: '直接开始记支出', exact: true })).toBeVisible();
+    await user.getByRole('button', { name: '登录' }).click();
+    await expect(user.getByRole('button', { name: '开始记账', exact: true })).toBeVisible();
     await page.clock.fastForward(16 * 60_000);
     await expect(page.getByLabel('本次重置码')).toHaveCount(0);
     await expect(page.getByText('重置码已到期并自动隐藏。如仍需恢复，请重新核实身份后发放。')).toBeVisible();

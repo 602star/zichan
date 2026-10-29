@@ -22,9 +22,7 @@ for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, ini
     await page.getByLabel('服务器账号密码').fill('account-test-password');
     await fits();
     await page.getByRole('button', { name: '登录', exact: true }).click();
-    await expect(page.getByRole('button', { name: '创建个人账本' })).toBeVisible();
     await fits();
-    await page.getByRole('button', { name: '创建个人账本' }).click();
     const firstRunTitle = page.getByRole('heading', { name: '你希望怎样开始记账？' });
     await expect(firstRunTitle).toBeVisible();
     const titleLines = await firstRunTitle.evaluate((element) => {

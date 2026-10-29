@@ -21,7 +21,6 @@ test('two browser tabs can write the same ledger and see each other’s records'
     await page.getByLabel('服务器用户名').fill('multi-tab-user');
     await page.getByLabel('服务器账号密码').fill('account-test-password');
     await page.getByRole('button', { name: '登录', exact: true }).click();
-    await page.getByRole('button', { name: '创建个人账本' }).click();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
     if (await page.getByRole('dialog').isVisible()) await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();

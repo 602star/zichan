@@ -41,7 +41,7 @@ test('quota typos never reset overrides and settings reject a mixed invalid batc
     await registerAccount(f.url, 'quota-target', password);
     await signIn(page, f.url);
     await page.getByRole('link', { name: '用户管理', exact: true }).click();
-    await page.getByRole('row').filter({ has: page.getByText('quota-target', { exact: true }) }).getByRole('button', { name: '详情', exact: true }).click();
+    await page.locator('.zc-admin-user-card').filter({ hasText: 'quota-target' }).getByRole('button', { name: '账号详情', exact: true }).click();
     const sent = [];
     page.on('request', (request) => { if (request.method() === 'POST' && /\/accounts\/[^/]+\/(commits|blobs)$/.test(request.url())) sent.push(request.postDataJSON()); });
     for (const [label, field] of [['调整提交配额', 'commitQuotaBytes'], ['调整附件配额', 'quotaBytes']]) {
@@ -73,6 +73,7 @@ test('quota typos never reset overrides and settings reject a mixed invalid batc
     const settingsResponse = page.waitForResponse((response) => response.url().endsWith('/api/admin/settings') && response.request().method() === 'GET');
     await page.getByRole('link', { name: '系统设置', exact: true }).click();
     const fields = (await (await settingsResponse).json()).settings.filter((field) => field.editable && ['backupRetentionCount', 'backupIntervalHours'].includes(field.name));
+    await page.getByRole('tab', { name: '备份计划' }).click();
     const [bad, good] = fields;
     const valid = good.value === good.minimum ? good.maximum : good.minimum;
     let saves = 0;
@@ -97,7 +98,7 @@ test('account session links use exact identity and compose with search filters',
     for (const name of ['alice', 'alice2']) { await registerAccount(f.url, name, password); await loginAccount(f.url, name, password); }
     await signIn(page, f.url);
     await page.getByRole('link', { name: '用户管理', exact: true }).click();
-    await page.getByRole('row').filter({ has: page.getByRole('button', { name: 'alice', exact: true }) }).getByRole('button', { name: '详情', exact: true }).click();
+    await page.locator('.zc-admin-user-card').filter({ has: page.getByRole('button', { name: 'alice', exact: true }) }).getByRole('button', { name: '账号详情', exact: true }).click();
     const accountId = new URL(page.url()).pathname.split('/').at(-1);
     await page.getByRole('button', { name: '该账号的会话', exact: true }).click();
     await expect.poll(() => new URL(page.url()).searchParams.get('accountId')).toBe(accountId);
@@ -131,7 +132,9 @@ for (const view of [
       await signIn(page, f.url);
       await clickAdminLink(page, view.label);
       const input = page.getByLabel(view.input, { exact: true });
-      const rowsFor = (name) => page.getByRole('row').filter({ has: page.getByRole('button', { name, exact: true }) });
+      const rowsFor = (name) => view.path === 'users'
+        ? page.locator('.zc-admin-user-card').filter({ has: page.getByRole('button', { name, exact: true }) })
+        : page.getByRole('row').filter({ has: page.getByRole('button', { name, exact: true }) });
       const assertSearch = async (name, excluded) => {
         await expect.poll(() => new URL(page.url()).searchParams.get('search') ?? '').toBe(name);
         await expect(input).toHaveValue(name);
@@ -172,7 +175,7 @@ test('revoking all account sessions requires confirmation and blocks duplicate r
     await signIn(page, f.url);
     await page.getByRole('link', { name: '用户管理', exact: true }).click();
     const detailResponse = page.waitForResponse((response) => /\/api\/admin\/accounts\/account-[^/]+$/.test(response.url()) && response.request().method() === 'GET');
-    await page.getByRole('row').filter({ has: page.getByText('session-target', { exact: true }) }).getByRole('button', { name: '详情', exact: true }).click();
+    await page.locator('.zc-admin-user-card').filter({ hasText: 'session-target' }).getByRole('button', { name: '账号详情', exact: true }).click();
     const detail = await (await detailResponse).json();
     expect(detail.activeSessionCount).toBeGreaterThan(0);
     let requests = 0;
@@ -285,11 +288,11 @@ test('reports a failed account read, revokes a member session and shows verifica
     // A failed detail read must surface as an error instead of an empty or editable form.
     await page.route('**/api/admin/accounts/*', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'usage temporarily unavailable' }) }), { times: 1 });
     await page.getByRole('link', { name: '用户管理' }).click();
-    await page.getByRole('row').filter({ has: page.getByText('device-user', { exact: true }) }).getByRole('button', { name: '详情' }).click();
+    await page.locator('.zc-admin-user-card').filter({ hasText: 'device-user' }).getByRole('button', { name: '账号详情' }).click();
     await expect(page.getByText('usage temporarily unavailable')).toBeVisible();
     await expect(page.getByRole('button', { name: '调整附件配额' })).toHaveCount(0);
     await page.getByRole('button', { name: '返回用户列表' }).click();
-    await page.getByRole('row').filter({ has: page.getByText('device-user', { exact: true }) }).getByRole('button', { name: '详情' }).click();
+    await page.locator('.zc-admin-user-card').filter({ hasText: 'device-user' }).getByRole('button', { name: '账号详情' }).click();
     await expect(page.getByRole('button', { name: '调整附件配额' })).toBeEnabled();
     await page.getByRole('button', { name: '调整附件配额' }).click();
     await page.getByLabel('新的上限（GiB）').fill('0.03125');

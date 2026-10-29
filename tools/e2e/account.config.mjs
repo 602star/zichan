@@ -8,7 +8,7 @@ export default defineConfig({
   // Visual baselines are a local tool with their own config; see visual.config.mjs.
   testIgnore: 'visual-baselines.spec.mjs',
   outputDir: './test-results/accounts',
-  workers: 1,
+  workers: 2,
   timeout: 90_000,
   reporter: 'list',
   use: {

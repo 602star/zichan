@@ -7,7 +7,7 @@ export default defineConfig({
   root,
   test: {
     environment: 'node',
-    maxWorkers: 4,
+    maxWorkers: 2,
     minWorkers: 1,
     testTimeout: 60_000,
     include: [

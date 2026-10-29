@@ -37,7 +37,7 @@ test('game season saves an optional in-game fee and a paid record without a cash
   const assetId = await currency.locator('option').nth(1).getAttribute('value');
   await currency.selectOption(assetId);
   await form.getByLabel('实际收支金额').fill('20');
-  await expect(form.getByRole('status')).toContainText('成交汇率：1 元 ≈ 50 通货；到账汇率：1 元 ≈ 45 通货');
+  await expect(form.locator('p[role="status"]')).toContainText('成交汇率：1 元 ≈ 50 通货；到账汇率：1 元 ≈ 45 通货');
   await expect(form.getByLabel('收支资金处理')).toHaveValue('create_transaction');
   await expect(form.getByLabel('结算账户')).toHaveCount(0);
   await expect(form.getByLabel('手续费账户')).toHaveCount(0);
@@ -57,7 +57,7 @@ test('game season saves an optional in-game fee and a paid record without a cash
     await form.getByLabel('游戏币数量').fill(quantity);
     await form.getByLabel('当时汇率：1 计价币种可换游戏币').fill(rate);
     await form.getByLabel('汇率计价币种').selectOption(assetId);
-    await expect(form.getByRole('status')).toContainText(valuation.replace('估值 ', '本次 '));
+    await expect(form.locator('p[role="status"]')).toContainText(valuation.replace('估值 ', '本次 '));
     await form.getByLabel('备注', { exact: true }).fill(note);
     await form.getByRole('button', { name: '保存', exact: true }).click();
     await expect(form).toBeHidden();

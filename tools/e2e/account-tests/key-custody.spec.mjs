@@ -20,10 +20,9 @@ test('managed account opens on another device and prepares offline access automa
       await target.goto(`${url}/app/`);
       await target.getByLabel('服务器用户名').fill('managed-user');
       await target.getByLabel('服务器账号密码', { exact: true }).fill('account-test-password');
-      await target.getByRole('button', { name: '登录已有账号', exact: true }).click();
+      await target.getByRole('button', { name: '登录', exact: true }).click();
     };
     await login(page);
-    await page.getByRole('button', { name: '创建个人账本' }).click();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     const session = await loginAccount(url, 'managed-user', 'account-test-password');

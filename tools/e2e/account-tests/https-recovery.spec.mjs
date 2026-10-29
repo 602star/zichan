@@ -76,12 +76,12 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
     await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
     await page.goto(`${url}/app/`);
     await page.getByRole('button', { name: '注册新账号', exact: true }).click();
+    await page.getByLabel('昵称', { exact: true }).fill('部署测试用户');
     await page.getByLabel('服务器用户名').fill('deployment-user');
     await page.getByLabel('服务器账号密码', { exact: true }).fill('deployment-password');
     await page.getByLabel('确认账号密码').fill('deployment-password');
     await page.getByRole('button', { name: '注册并登录', exact: true }).click();
-    await page.getByRole('button', { name: '直接开始记支出', exact: true }).click();
-    await page.getByRole('button', { name: '关闭快速记账' }).click();
+    await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await page.getByRole('button', { name: '+ 记支出' }).click();
     await page.getByRole('textbox', { name: /^金额/ }).fill('68');
     await page.getByLabel('描述').fill('HTTPS 恢复演练');
@@ -106,7 +106,7 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
     await page.goto(`${url}/app/`);
     await page.getByLabel('服务器用户名').fill('deployment-user');
     await page.getByLabel('服务器账号密码', { exact: true }).fill('deployment-password');
-    await page.getByRole('button', { name: '登录已有账号', exact: true }).click();
+    await page.getByRole('button', { name: '登录', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await expect(page.getByText('HTTPS 恢复演练', { exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('https-restored-ledger.png') });

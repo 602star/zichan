@@ -50,7 +50,7 @@ for (const width of [1280, 390]) {
     };
     try {
       await clickAdminLink(page, '用户管理');
-      const user = page.getByRole('row').filter({ hasText: 'sample-user' }).first();
+      const user = page.locator('.zc-admin-user-card').filter({ hasText: 'sample-user' }).first();
       const userAction = async (label) => {
         const button = user.getByRole('button', { name: label, exact: true, includeHidden: true });
         if (!(await button.isVisible())) await user.locator('summary').click();

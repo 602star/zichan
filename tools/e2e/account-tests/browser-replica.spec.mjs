@@ -86,8 +86,7 @@ test('the browser carries a personal ledger between independent servers', async 
     await page.goto(`${first.url}/app/`);
     await page.getByLabel('服务器用户名').fill('owner');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
-    await page.getByRole('button', { name: '登录已有账号' }).click();
-    await page.getByRole('button', { name: '创建个人账本' }).click();
+    await page.getByRole('button', { name: '登录' }).click();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await page.keyboard.press('Escape');
@@ -122,7 +121,7 @@ test('the browser carries a personal ledger between independent servers', async 
     await secondPage.goto(`${second.url}/app/`);
     await secondPage.getByLabel('服务器用户名').fill('owner');
     await secondPage.getByLabel('服务器账号密码', { exact: true }).fill(password);
-    await secondPage.getByRole('button', { name: '登录已有账号' }).click();
+    await secondPage.getByRole('button', { name: '登录' }).click();
     await expect(secondPage.locator('.zc-app-shell')).toBeVisible();
     await secondPage.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
     await secondPage.getByText('first-browser-entry', { exact: true }).click();

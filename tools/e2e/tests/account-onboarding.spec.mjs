@@ -193,7 +193,7 @@ test('clear other filters preserves dates while resetting drill and advanced con
   await expect(page.getByLabel('流水搜索', { exact: true })).toHaveValue('');
   await expect(page.getByLabel('开始日期')).toHaveValue(dateBeforeClear[0]);
   await expect(page.getByLabel('结束日期')).toHaveValue(dateBeforeClear[1]);
-  await page.getByRole('button', { name: '清除', exact: true }).click();
+  await page.getByLabel('快捷时间范围', { exact: true }).selectOption('all');
   await expect(page.getByLabel('开始日期')).toHaveValue('');
   await expect(page.getByLabel('结束日期')).toHaveValue('');
   await expect(page.getByLabel('快捷时间范围')).toHaveValue('all');

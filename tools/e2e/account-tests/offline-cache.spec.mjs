@@ -17,10 +17,8 @@ for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`un
     await page.getByLabel('服务器用户名').fill('offline-user');
     await page.getByLabel('服务器账号密码').fill('account-test-password');
     await page.getByRole('button', { name: '登录', exact: true }).click();
-    await page.getByRole('button', { name: '创建个人账本' }).click();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
-    await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
     if (backendFailure === 'cold-start') {
       await page.evaluate(async () => { await navigator.serviceWorker.ready; });
       await context.setOffline(true);

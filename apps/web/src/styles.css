@@ -1143,7 +1143,6 @@ button,
 .zc-settings-mobile-toggle {
   display: none;
 }
-.zc-transaction-clear-mobile { display: none !important; }
 
 .zc-game-season-tabs {
   min-width: 0;
@@ -2811,7 +2810,7 @@ input[type="radio"] {
   }
   .zc-transaction-filter-toggle > span { color: var(--accent); white-space: nowrap; }
   .zc-transaction-filter-panel:not(.is-open) { display: none; }
-  .zc-transaction-clear-mobile { display: block !important; width: 100%; margin-bottom: 14px; }
+  .zc-transaction-clear-mobile { display: block; width: 100%; margin-bottom: 14px; }
 
   .zc-settings-mobile-toggle {
     display: flex;

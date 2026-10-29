@@ -132,7 +132,7 @@ test('runs the daily management work: policy, invites, roles, quotas and audit',
 
   // User detail: roles, quotas and capacity, with a readable audit sentence afterwards.
   await page.getByRole('link', { name: '用户管理' }).click();
-  await page.getByRole('row').filter({ has: page.getByText('member-one', { exact: true }) }).getByRole('button', { name: '详情' }).click();
+  await page.locator('.zc-admin-user-card').filter({ hasText: 'member-one' }).getByRole('button', { name: '账号详情' }).click();
   await expect(page.getByRole('heading', { name: /用户详情/ })).toBeVisible();
   await page.getByRole('button', { name: '修改角色' }).click();
   await page.getByLabel('角色').selectOption('admin');
@@ -151,7 +151,7 @@ test('runs the daily management work: policy, invites, roles, quotas and audit',
 
   // Disabling an account states how many sessions are revoked before it is confirmed.
   await page.getByRole('link', { name: '用户管理' }).click();
-  await page.getByRole('row').filter({ has: page.getByText('member-one', { exact: true }) }).getByRole('button', { name: '详情' }).click();
+  await page.locator('.zc-admin-user-card').filter({ hasText: 'member-one' }).getByRole('button', { name: '账号详情' }).click();
   await page.getByRole('button', { name: '禁用账号' }).click();
   await expect(page.getByText(/将立即撤销该账号的 \d+ 个有效会话/)).toBeVisible();
   await page.getByRole('button', { name: '确认禁用' }).click();
@@ -193,7 +193,7 @@ test('a read-only operator reaches every page but gets no write control', async 
   // The owner grants the read-only role through the same control an administrator uses.
   await signIn(page, baseUrl);
   await page.goto(`${baseUrl}/e2e-private-entry/admin/users?search=viewer-one`);
-  await page.getByRole('button', { name: '详情', exact: true }).first().click();
+  await page.getByRole('button', { name: '账号详情', exact: true }).first().click();
   await page.getByRole('button', { name: '修改角色' }).click();
   await page.getByLabel('角色').selectOption('viewer');
   await page.getByLabel('原因（会写入审计）').fill('只读运维值班');
@@ -226,7 +226,7 @@ test('clears the management session in other tabs when one tab signs out', async
   await second.goto(`${baseUrl}/e2e-private-entry/admin/`);
   // A second tab restores the same management session instead of asking for credentials again.
   await expect(second.getByRole('link', { name: '运行概览' })).toBeVisible();
-  await second.getByRole('button', { name: '退出管理后台' }).click();
+  await second.getByRole('button', { name: '退出' }).click();
   // Signing out in one tab clears the console everywhere else.
   await expect(page.getByRole('alert')).toContainText('其他标签页已改变管理会话');
   await expect(page.getByRole('heading', { name: '管理员登录' })).toBeVisible();
@@ -237,12 +237,12 @@ test('signs an administrator in with a second factor and shows the recovery code
   // Promote the dedicated account while the owner is signed in.
   await signIn(page, baseUrl);
   await page.getByRole('link', { name: '用户管理' }).click();
-  await page.getByRole('row').filter({ has: page.getByText('mfa-admin', { exact: true }) }).getByRole('button', { name: '详情' }).click();
+  await page.locator('.zc-admin-user-card').filter({ hasText: 'mfa-admin' }).getByRole('button', { name: '账号详情' }).click();
   await page.getByRole('button', { name: '修改角色' }).click();
   await page.getByLabel('角色').selectOption('admin');
   await page.getByRole('button', { name: '保存' }).click();
   await expect(page.getByText('操作已完成。')).toBeVisible();
-  await page.getByRole('button', { name: '退出管理后台' }).click();
+  await page.getByRole('button', { name: '退出' }).click();
 
   // The administrator enrolls their own factor: nobody can do it for them.
   await page.goto(`${baseUrl}/e2e-private-entry/admin/security`);
@@ -281,7 +281,7 @@ test('signs an administrator in with a second factor and shows the recovery code
   await expect(page.locator('pre')).toHaveCount(0);
 
   // Signing in now stops at the second factor, and the console says so instead of failing.
-  await page.getByRole('button', { name: '退出管理后台' }).click();
+  await page.getByRole('button', { name: '退出' }).click();
   await page.getByLabel('管理账号用户名').fill('mfa-admin');
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
@@ -296,7 +296,7 @@ test('signs an administrator in with a second factor and shows the recovery code
   await expect(page.getByRole('link', { name: '运行概览' })).toBeVisible();
 
   // A recovery code works in the same field, which is all a lost device leaves behind.
-  await page.getByRole('button', { name: '退出管理后台' }).click();
+  await page.getByRole('button', { name: '退出' }).click();
   await page.getByLabel('管理账号用户名').fill('mfa-admin');
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();

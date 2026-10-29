@@ -16,6 +16,7 @@ test('registers distinct accounts and keeps their database, keys and caches isol
     await registerAccount(url, 'owner', 'test-owner-password', { ownerSetupToken: setup });
     async function register(username) {
       await page.getByRole('button', { name: '注册新账号', exact: true }).click();
+      await page.getByLabel('昵称', { exact: true }).fill(username);
       await page.getByLabel('服务器用户名').fill(username);
       await page.getByLabel('服务器账号密码', { exact: true }).fill('account-test-password');
       await page.getByLabel('确认账号密码').fill('different-password');
@@ -23,17 +24,14 @@ test('registers distinct accounts and keeps their database, keys and caches isol
       await expect(page.getByRole('alert')).toContainText('两次输入');
       await page.getByLabel('确认账号密码').fill('account-test-password');
       await page.getByRole('button', { name: '注册并登录', exact: true }).click();
-      await expect(page.getByRole('button', { name: '直接开始记支出', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: '开始记账', exact: true })).toBeVisible();
     }
     async function createCache(password) {
-      await page.getByRole('button', { name: '直接开始记支出', exact: true }).click();
+      await page.getByRole('button', { name: '开始记账', exact: true }).click();
       await expect(page.locator('.zc-app-shell')).toBeVisible();
-      await page.getByRole('button', { name: '关闭快速记账' }).click();
     }
     async function logout() {
-      await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
-      // Account actions live on the second Settings tab.
-      await page.getByRole('tab', { name: '同步与账号' }).click();
+      await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
       await page.getByRole('button', { name: '退出记账账号', exact: true }).click();
       await page.getByRole('button', { name: '确认退出', exact: true }).click();
       await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
@@ -52,7 +50,7 @@ test('registers distinct accounts and keeps their database, keys and caches isol
     await logout();
     await page.getByLabel('服务器用户名').fill('alice');
     await page.getByLabel('服务器账号密码', { exact: true }).fill('account-test-password');
-    await page.getByRole('button', { name: '登录已有账号' }).click();
+    await page.getByRole('button', { name: '登录' }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('zichan.web-account.v2.binding')).accountId)).toBe(alice.binding.accountId);
     await context.clearCookies();

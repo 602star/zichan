@@ -1468,7 +1468,7 @@ export function Transactions() {
                   onRemove={(v) => void removeSavedView(v)}
                 />
                 <AdvancedQueryBuilder snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} />
-                <button type="button" className="zc-transaction-clear-mobile" onClick={clearOtherFilters} style={button}>清除其他筛选</button>
+                <button type="button" className="zc-transaction-clear-mobile" onClick={clearOtherFilters} style={{ ...button, display: undefined }}>清除其他筛选</button>
               </div>
             )}
             {showVoided && (

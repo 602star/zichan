@@ -37,8 +37,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await page.goto(`${home.url}/app/`);
     await page.getByLabel('服务器用户名').fill('home-user');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
-    await page.getByRole('button', { name: '登录已有账号' }).click();
-    await page.getByRole('button', { name: '创建个人账本' }).click();
+    await page.getByRole('button', { name: '登录' }).click();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await page.keyboard.press('Escape');
@@ -146,7 +145,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     expect((await fetch(`${secondary.url}/api/auth/me`, { headers: { Authorization: `Bearer ${remoteSession.accessToken}` } })).status).toBe(401);
     await page.getByLabel('服务器用户名').fill('home-user');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
-    await page.getByRole('button', { name: '登录已有账号' }).click();
+    await page.getByRole('button', { name: '登录' }).click();
     await openSync(page);
     await expect(page.getByLabel('启用 本机副本', { exact: true })).toBeChecked();
     await expect(page.getByLabel('启用 公网副本', { exact: true })).not.toBeChecked();

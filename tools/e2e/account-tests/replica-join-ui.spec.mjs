@@ -65,8 +65,7 @@ test('a new user sees simple server-copy status after administrators join three 
     await page.goto(`${hub.url}/app/`);
     await page.getByLabel('服务器用户名').fill('ledger-owner');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
-    await page.getByRole('button', { name: '登录已有账号' }).click();
-    await page.getByRole('button', { name: '创建个人账本' }).click();
+    await page.getByRole('button', { name: '登录' }).click();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await page.keyboard.press('Escape');

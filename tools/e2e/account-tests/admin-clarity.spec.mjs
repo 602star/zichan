@@ -41,12 +41,12 @@ for (const width of [1280, 390]) {
       const navigation = page.getByRole('navigation', { name: '管理后台导航' });
       if (width <= 767) await page.getByRole('button', { name: '菜单' }).click();
       for (const link of await navigation.getByRole('link').all()) await expect(link).toBeVisible();
-      if (width <= 767) await page.getByRole('button', { name: '关闭管理导航' }).click();
+      if (width <= 767) await page.keyboard.press('Escape');
       await expect(page.locator('.zc-admin-dashboard details')).toHaveCount(0);
       await expect(page.locator('#section-维护窗口')).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath(`overview-${width}.png`), fullPage: true });
       await page.getByRole('button', { name: '查找用户与预览记账' }).click();
-      await page.getByRole('row').filter({ hasText: 'support-user' }).getByRole('button', { name: '详情', exact: true }).click();
+      await page.locator('.zc-admin-user-card').filter({ hasText: 'support-user' }).getByRole('button', { name: '账号详情', exact: true }).click();
       await expect(page.getByRole('button', { name: '预览记账数据', exact: true })).toBeVisible();
       expect(await page.getByRole('button', { name: '预览记账数据', exact: true }).evaluate((element) => element.getBoundingClientRect().top)).toBeLessThan(900);
       const support = page.locator('#section-用户支持摘要');

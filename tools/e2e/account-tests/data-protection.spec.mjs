@@ -23,11 +23,9 @@ test('opens backup, sync, recovery and security as settings tabs', async ({ page
     await page.goto(`${url}/app/`);
     await page.getByLabel('服务器用户名').fill('protection-user');
     await page.getByLabel('服务器账号密码').fill('account-test-password');
-    await page.getByRole('button', { name: '登录已有账号' }).click();
-    await page.getByRole('button', { name: '创建个人账本' }).click();
+    await page.getByRole('button', { name: '登录' }).click();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 20_000 });
-    await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
 
     await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
     await expect(page.getByRole('tab', { name: '记账' })).toHaveAttribute('aria-selected', 'true');

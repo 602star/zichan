@@ -42,7 +42,6 @@ test('new account opens its ledger over plain LAN HTTP without a device password
     await page.getByLabel('服务器账号密码').fill('lan-mobile-password');
     await page.getByLabel('确认账号密码').fill('lan-mobile-password');
     await page.getByRole('button', { name: '注册并登录' }).click();
-    await page.getByRole('button', { name: '创建个人账本' }).click();
     await expect(page.getByRole('button', { name: '开始记账', exact: true })).toBeVisible();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await expect(page.getByRole('region', { name: '首次记账引导' })).toBeVisible();

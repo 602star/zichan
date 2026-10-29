@@ -78,7 +78,8 @@ test('changes the administrator password from the console and signs the console 
     // overview: the console restores whatever page the operator was on.
     await page.getByLabel('管理账号密码').fill(nextPassword);
     await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
-    await expect(page.getByRole('button', { name: '退出管理后台' })).toBeVisible();
-    await expect(page.getByText('operator · 所有者')).toBeVisible();
+    await expect(page.getByRole('button', { name: '退出' })).toBeVisible();
+    await expect(page.locator('.zc-admin-operator')).toContainText('operator');
+    await expect(page.locator('.zc-admin-operator')).toContainText('所有者');
   } finally { await f.close(); }
 });

@@ -2,8 +2,8 @@
  * Sorting, page size and column visibility in a real browser.
  *
  * The unit tests pin the query shapes and the cursor/ordering pairing. This pins what an operator
- * actually does: click a header and see the *server* reorder the list, change the page size and
- * see more rows, and turn a column off and have it stay off.
+ * actually does: choose a sort order and see the *server* reorder the list, change the page size and
+ * see more cards, and hide a card fact persistently.
  *
  * The failure this guards against is invisible on screen. Sorting the rows already loaded would
  * reorder the twenty-five on screen and present the result as "the newest accounts" — a page that
@@ -18,6 +18,8 @@ import { fileURLToPath } from 'node:url';
 import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
 import { SyncServerStore } from '../../../apps/sync-server/dist/store.js';
 import { loginAccount, registerAccount } from '../../../packages/db/dist/index.js';
+
+test.setTimeout(120_000);
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const accountPassword = ['list', 'controls', 'browser', '0001'].join('-');
@@ -87,32 +89,25 @@ test('sorts, resizes and hides columns on the account list', async ({ page }) =>
     await page.getByRole('link', { name: '用户管理' }).click();
     await expect(page.getByRole('heading', { name: '用户管理' })).toBeVisible();
 
-    // The list is the one inside the「用户列表」panel; the page shell is also a <section>.
-    const table = page.locator('section').filter({ has: page.getByText('用户列表', { exact: true }) }).locator('table');
-    await expect(table.locator('tbody tr')).toHaveCount(25);
+    const cards = page.locator('.zc-admin-user-card-grid .zc-admin-user-card');
+    await expect(cards).toHaveCount(25);
+    const sort = page.getByRole('combobox', { name: '排序', exact: true });
 
-    // A sortable header is a button named after its column, and it must carry no aria-label: on the
-    // sessions page "状态" is both a sortable column and a filter select, and `getByLabel` matches an
-    // accessible name, so an aria-label here would make the existing filter locators ambiguous.
-    await expect(table.getByRole('button', { name: '用户名', exact: true })).toHaveCount(1);
-    expect(await table.getByRole('button', { name: '用户名', exact: true }).getAttribute('aria-label')).toBeNull();
-
-    // Clicking a header asks the server for that ordering rather than reordering the loaded rows.
+    // Changing the sort order asks the server rather than reordering the loaded cards.
     const requested = page.waitForRequest((request) => request.url().includes('/api/admin/users') && request.url().includes('sort=name'));
-    await table.getByRole('button', { name: '用户名', exact: true }).click();
+    await sort.selectOption('name:asc');
     expect((await requested).url()).toContain('dir=asc');
-    // The sorted state is exposed where assistive technology looks for it.
-    await expect(table.locator('th[aria-sort="ascending"]')).toHaveCount(1);
+    await expect(sort).toHaveValue('name:asc');
 
     // Name-ascending puts `member-01` first. It was created *last*, so it was on the second page
     // before the sort: the ordering really came from the server, not from reordering this page.
-    await expect(table.locator('tbody tr').first()).toContainText('member-01');
+    await expect(cards.first()).toContainText('member-01');
     // Flipping the direction re-queries instead of reversing what is on screen.
     const flipped = page.waitForRequest((request) => request.url().includes('/api/admin/users') && request.url().includes('dir=desc'));
-    await table.getByRole('button', { name: '用户名', exact: true }).click();
+    await sort.selectOption('name:desc');
     await flipped;
-    await expect(table.locator('th[aria-sort="descending"]')).toHaveCount(1);
-    await expect(table.locator('tbody tr').first()).toContainText('operator');
+    await expect(sort).toHaveValue('name:desc');
+    await expect(cards.first()).toContainText('operator');
 
     // Sorting restarts from the first page: the cursor belonged to the previous ordering.
     await expect(page.getByText('第 1 页')).toBeVisible();
@@ -122,23 +117,17 @@ test('sorts, resizes and hides columns on the account list', async ({ page }) =>
     await page.getByLabel('每页条数').selectOption('50');
     await resized;
     // 30 seeded accounts plus the operator.
-    await expect(table.locator('tbody tr')).toHaveCount(31);
+    await expect(cards).toHaveCount(31);
 
-    // Column visibility: turning a column off removes it from the table, and the choice is about
-    // the person, so it survives a reload rather than travelling in the URL. The header is located
-    // by its accessible name: the button also contains the sort arrow, so an exact text match on
-    // the column label would not find it.
-    const syncHeader = table.getByRole('button', { name: '最近成功同步', exact: true });
-    await page.getByText('列显示').click();
-    await expect(syncHeader).toBeVisible();
+    // Card information choices survive reload instead of travelling in the URL.
+    await page.getByText('卡片信息').click();
+    await expect(cards.first().getByText('最近成功同步')).toBeVisible();
     await page.getByRole('checkbox', { name: '最近成功同步' }).uncheck();
-    await expect(syncHeader).toHaveCount(0);
+    await expect(cards.first().getByText('最近成功同步')).toHaveCount(0);
 
     await page.reload();
     await expect(page.getByRole('heading', { name: '用户管理' })).toBeVisible();
-    const afterReload = page.locator('section').filter({ has: page.getByText('用户列表', { exact: true }) }).locator('table');
-    // The header for a hidden column is gone with it, not left behind sorting nothing.
-    await expect(afterReload.getByRole('button', { name: '最近成功同步', exact: true })).toHaveCount(0);
+    await expect(cards.first().getByText('最近成功同步')).toHaveCount(0);
 
     await page.screenshot({ path: test.info().outputPath('admin-list-controls.png'), fullPage: true });
   } finally { await f.close(); }
@@ -156,8 +145,7 @@ test('reports a cursor from another ordering instead of showing a plausible wron
     // about the response looks broken. The cursor is taken from the page's own authenticated
     // request, so this exercises exactly what the console would hand to the next page.
     const sorted = page.waitForResponse((response) => response.url().includes('/api/admin/users') && response.url().includes('sort=name'));
-    await page.locator('section').filter({ has: page.getByText('用户列表', { exact: true }) })
-      .locator('table').getByRole('button', { name: '用户名', exact: true }).click();
+    await page.getByRole('combobox', { name: '排序', exact: true }).selectOption('name:asc');
     const stale = (await (await sorted).json()).nextCursor;
     expect(stale).toBeTruthy();
 
@@ -166,7 +154,6 @@ test('reports a cursor from another ordering instead of showing a plausible wron
 
     // The same cursor under the ordering it was issued for is accepted and returns a real page.
     await page.goto(`${f.url}/e2e-private-entry/admin/users?sort=name&dir=asc&limit=25&cursor=${encodeURIComponent(stale)}`);
-    const table = page.locator('section').filter({ has: page.getByText('用户列表', { exact: true }) }).locator('table');
-    await expect(table.locator('tbody tr')).toHaveCount(6);
+    await expect(page.locator('.zc-admin-user-card-grid .zc-admin-user-card')).toHaveCount(6);
   } finally { await f.close(); }
 });

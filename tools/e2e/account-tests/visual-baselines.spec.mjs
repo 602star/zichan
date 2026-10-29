@@ -70,7 +70,7 @@ test('phone visual baselines', async ({ page, baseURL }) => {
   await page.goto(`${baseURL}/app/`);
   await page.getByLabel('服务器用户名').fill('visual-user');
   await page.getByLabel('服务器账号密码').fill('visual-user-password');
-  await page.getByRole('button', { name: '登录已有账号', exact: true }).click();
+  await page.getByRole('button', { name: '登录', exact: true }).click();
   await page.getByRole('button', { name: '直接开始记支出', exact: true }).click({ timeout: 30_000 });
   await page.getByRole('dialog', { name: '记一笔支出' }).waitFor({ timeout: 30_000 });
   await page.getByRole('button', { name: '关闭快速记账' }).click();

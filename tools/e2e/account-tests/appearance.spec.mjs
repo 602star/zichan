@@ -69,7 +69,7 @@ async function openAppearance(page, url) {
   await page.goto(`${url}/app/`);
   await page.getByLabel('服务器用户名').fill('operator');
   await page.getByLabel('服务器账号密码').fill(password);
-  await page.getByRole('button', { name: '登录已有账号', exact: true }).click();
+  await page.getByRole('button', { name: '登录', exact: true }).click();
   await page.getByRole('button', { name: '开始记账', exact: true }).click({ timeout: 30_000 });
   // The wizard hands straight into the first entry dialog; Escape dismisses it.
   await page.waitForTimeout(1500);

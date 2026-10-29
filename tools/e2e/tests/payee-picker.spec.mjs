@@ -63,9 +63,7 @@ test('scene browsing stays usable on a phone and custom counterpart text saves d
   await page.setViewportSize({ width: 390, height: 844 });
   await register(page);
   const entry = page.getByRole('dialog');
-  await entry.getByRole('button', { name: '常用附加字段', exact: true }).click();
-  await entry.getByRole('checkbox', { name: '商家 / 平台', exact: true }).check();
-  await entry.getByRole('button', { name: '常用附加字段', exact: true }).click();
+  await entry.locator('summary').filter({ hasText: '更多信息' }).press('Enter');
   const input = entry.getByRole('textbox', { name: '商家 / 平台', exact: true });
   await input.click();
   await entry.getByRole('button', { name: '按场景浏览', exact: true }).click();
