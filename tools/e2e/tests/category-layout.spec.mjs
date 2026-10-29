@@ -3,11 +3,13 @@ import { test, expect } from './fixtures.mjs';
 async function start(page) {
   await page.goto('/');
   await page.getByRole('button', { name: '注册新账号', exact: true }).click();
+  await page.getByLabel('昵称', { exact: true }).fill('端到端测试用户');
   await page.getByLabel('服务器用户名').fill(`category-${crypto.randomUUID()}`);
   await page.getByLabel('服务器账号密码', { exact: true }).fill('Category-layout-password');
   await page.getByLabel('确认账号密码', { exact: true }).fill('Category-layout-password');
   await page.getByRole('button', { name: '注册并登录', exact: true }).click();
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
+  await page.getByRole('button', { name: '记第一笔', exact: true }).click();
 }
 
 async function fits(panel) {

@@ -142,18 +142,32 @@ jobs:
             fi
             if ! docker inspect --format '{{.State.Running}}' "$container" | grep --quiet true; then
               echo 'sync-server container stopped before becoming healthy' >&2
+              docker logs "$container" >&2 || true
               exit 1
             fi
             sleep 2
           done
           test -s ci-artifacts/health.json
-          curl --fail --silent --show-error http://127.0.0.1:18787/api/ready --output ci-artifacts/ready.json
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18787/api/ready --output ci-artifacts/ready.json; then
+              break
+            fi
+            if ! docker inspect --format '{{.State.Running}}' "$container" | grep --quiet true; then
+              echo 'sync-server container stopped during readiness probing' >&2
+              docker logs "$container" >&2 || true
+              exit 1
+            fi
+            sleep 2
+          done
+          test -s ci-artifacts/ready.json
           jq --exit-status '.ok == true' ci-artifacts/health.json >/dev/null
           # Readiness is a lightweight probe now: it must not run a whole-database check,
           # because the container healthcheck calls it every 30 seconds.
           jq --exit-status '.ok == true and .mode == "light" and .database.ok == true and .database.result == "ok"' ci-artifacts/ready.json >/dev/null
-          # The container must not run as root.
-          test "$(docker inspect --format '{{.Config.User}}' "$container")" = node
+          # The image defaults to node; this CI container deliberately overrides it
+          # with the runner UID so the bind mount is writable.
+          test "$(docker image inspect --format '{{.Config.User}}' "zichan-sync-ci:${GITHUB_SHA}")" = node
+          test "$(docker inspect --format '{{.Config.User}}' "$container")" = "$(id -u):$(id -g)"
           test "$(docker exec "$container" id -u)" != 0
           # State volume is writable by the unprivileged user.
           docker exec "$container" sh -c 'test -w /state/server'
@@ -181,7 +195,7 @@ jobs:
 
   browser-flows:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -192,12 +206,34 @@ jobs:
       - run: npm ci --prefix tools/e2e
       - run: npm run install:chromium --prefix tools/e2e
       - run: npm run test:e2e
-      - run: npm run test:e2e:account
       - name: Upload Playwright diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
+          path: |
+            tools/e2e/playwright-report/
+            tools/e2e/test-results/
+          if-no-files-found: ignore
+
+  browser-account-flows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix tools/e2e
+      - run: npm run install:chromium --prefix tools/e2e
+      - run: npm run test:e2e:account
+      - name: Upload account Playwright diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: account-playwright-report
           path: |
             tools/e2e/playwright-report/
             tools/e2e/test-results/

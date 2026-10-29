@@ -460,7 +460,22 @@ mod tests {
             PathBuf::from(format!("{}-shm", path.display())),
         ] {
             if candidate.is_file() {
-                fs::remove_file(candidate).expect("remove SQLCipher contract test file");
+                for attempt in 0..20 {
+                    match fs::remove_file(&candidate) {
+                        Ok(()) => break,
+                        Err(error)
+                            if cfg!(windows)
+                                && matches!(error.raw_os_error(), Some(32 | 33))
+                                && attempt < 19 =>
+                        {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        }
+                        Err(error) => panic!(
+                            "remove SQLCipher contract test file {}: {error}",
+                            candidate.display()
+                        ),
+                    }
+                }
             }
         }
     }
@@ -584,6 +599,8 @@ mod tests {
                 .expect("read canonical-path database row");
             assert_eq!(value, "ok");
             reopened.close().await;
+            drop(reopened);
+            drop(pool);
 
             remove_sqlite_files(&path);
             fs::remove_dir_all(&directory).expect("remove SQLCipher test directory");

@@ -3,12 +3,14 @@ import { test, expect } from './fixtures.mjs';
 async function register(page) {
   await page.goto('/');
   await page.getByRole('button', { name: '注册新账号', exact: true }).click();
+  await page.getByLabel('昵称', { exact: true }).fill('端到端测试用户');
   await page.getByLabel('服务器用户名').fill(`payee-${crypto.randomUUID()}`);
   await page.getByLabel('服务器账号密码', { exact: true }).fill('E2E-payee-password');
   await page.getByLabel('确认账号密码', { exact: true }).fill('E2E-payee-password');
   await page.getByRole('button', { name: '注册并登录', exact: true }).click();
   await expect(page.getByRole('heading', { name: '你希望怎样开始记账？' })).toBeVisible({ timeout: 30000 });
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
+  await page.getByRole('button', { name: '记第一笔', exact: true }).click();
 }
 
 async function category(page, entry, name) {
@@ -61,6 +63,9 @@ test('scene browsing stays usable on a phone and custom counterpart text saves d
   await page.setViewportSize({ width: 390, height: 844 });
   await register(page);
   const entry = page.getByRole('dialog');
+  await entry.getByRole('button', { name: '常用附加字段', exact: true }).click();
+  await entry.getByRole('checkbox', { name: '商家 / 平台', exact: true }).check();
+  await entry.getByRole('button', { name: '常用附加字段', exact: true }).click();
   const input = entry.getByRole('textbox', { name: '商家 / 平台', exact: true });
   await input.click();
   await entry.getByRole('button', { name: '按场景浏览', exact: true }).click();

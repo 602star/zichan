@@ -11,11 +11,13 @@ test('fiat conversion appears in account ledger without becoming daily income or
   });
   await page.goto('/');
   await page.getByRole('button', { name: '注册新账号', exact: true }).click();
+  await page.getByLabel('昵称', { exact: true }).fill('端到端测试用户');
   await page.getByLabel('服务器用户名').fill(`fiat-${crypto.randomUUID()}`);
   await page.getByLabel('服务器账号密码', { exact: true }).fill('E2E-account-password');
   await page.getByLabel('确认账号密码', { exact: true }).fill('E2E-account-password');
   await page.getByRole('button', { name: '注册并登录', exact: true }).click();
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
+  await page.getByRole('button', { name: '记第一笔', exact: true }).click();
   await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '关闭', exact: true }).click();
 
   await page.getByRole('button', { name: '账户', exact: true }).click();

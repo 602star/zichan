@@ -3,6 +3,7 @@ import { test, expect } from './fixtures.mjs';
 async function register(page) {
   await page.goto('/');
   await page.getByRole('button', { name: '注册新账号', exact: true }).click();
+  await page.getByLabel('昵称', { exact: true }).fill('端到端测试用户');
   await page.getByLabel('服务器用户名').fill(`onboard-${crypto.randomUUID()}`);
   await page.getByLabel('服务器账号密码', { exact: true }).fill('E2E-onboarding-password');
   await page.getByLabel('确认账号密码', { exact: true }).fill('E2E-onboarding-password');
@@ -13,6 +14,7 @@ async function register(page) {
 test('default accounts first, then a wallet and historical attribution', async ({ page }) => {
   await register(page);
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
+  await page.getByRole('button', { name: '记第一笔', exact: true }).click();
   const entry = page.getByRole('dialog');
   await expect(entry).toBeVisible();
   await expect(entry.getByLabel('交易时间', { exact: true })).toBeVisible();
@@ -74,6 +76,7 @@ test('fund onboarding can be deferred on a phone without losing the initialized 
   await register(page);
   await page.screenshot({ path: 'test-results/account-onboarding-mobile-choice.png', fullPage: true });
   await page.getByRole('button', { name: '添加常用账户', exact: true }).click();
+  await page.getByRole('button', { name: '添加银行卡 / 钱包', exact: true }).click();
   const setup = page.getByRole('dialog', { name: '添加银行卡或钱包' });
   await expect(setup).toBeVisible();
   await setup.getByRole('button', { name: '取消', exact: true }).click();
@@ -86,6 +89,7 @@ test('fund onboarding can be deferred on a phone without losing the initialized 
 test('field preferences only control defaults; editing reveals existing notes and attachments', async ({ page }) => {
   await register(page);
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
+  await page.getByRole('button', { name: '记第一笔', exact: true }).click();
   let entry = page.getByRole('dialog');
   await expect(entry).toBeVisible();
   expect((await entry.boundingBox()).width).toBe(880);
@@ -117,6 +121,7 @@ test('field preferences only control defaults; editing reveals existing notes an
 test('tags can be created, searched and removed; review flags survive editing', async ({ page }) => {
   await register(page);
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
+  await page.getByRole('button', { name: '记第一笔', exact: true }).click();
   let entry = page.getByRole('dialog');
   await entry.getByLabel(/^金额/).fill('18');
   await entry.getByLabel('描述', { exact: true }).fill('标签与核实检查');
@@ -146,6 +151,7 @@ test('tags can be created, searched and removed; review flags survive editing', 
 test('clear other filters preserves dates while resetting drill and advanced conditions', async ({ page }) => {
   await register(page);
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
+  await page.getByRole('button', { name: '记第一笔', exact: true }).click();
   const entry = page.getByRole('dialog');
   await entry.getByLabel(/^金额/).fill('18');
   await entry.getByLabel('描述', { exact: true }).fill('清除筛选检查');
@@ -182,6 +188,7 @@ test('clear other filters preserves dates while resetting drill and advanced con
   await page.getByRole('button', { name: '保留的筛选方案', exact: true }).click();
   await expect(page.getByLabel('流水搜索', { exact: true })).toHaveValue('不会匹配');
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: /筛选与搜索/ }).click();
   await page.getByRole('button', { name: '清除其他筛选', exact: true }).click();
   await expect(page.getByLabel('流水搜索', { exact: true })).toHaveValue('');
   await expect(page.getByLabel('开始日期')).toHaveValue(dateBeforeClear[0]);
@@ -197,6 +204,7 @@ test('a newly defaulted account is used after a draft and its spending reaches b
   const today = await page.evaluate(() => new Date().toLocaleDateString('sv-SE'));
   const yesterday = await page.evaluate(() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toLocaleDateString('sv-SE'); });
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
+  await page.getByRole('button', { name: '记第一笔', exact: true }).click();
   let entry = page.getByRole('dialog');
   await entry.getByLabel(/^金额/).fill('100');
   await entry.getByLabel(/^日期/).fill(yesterday);

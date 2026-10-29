@@ -3,11 +3,13 @@ import { test, expect } from './fixtures.mjs';
 async function start(page) {
   await page.goto('/');
   await page.getByRole('button', { name: '注册新账号', exact: true }).click();
+  await page.getByLabel('昵称', { exact: true }).fill('端到端测试用户');
   await page.getByLabel('服务器用户名').fill(`icons-${crypto.randomUUID()}`);
   await page.getByLabel('服务器账号密码', { exact: true }).fill('Icon-upload-password');
   await page.getByLabel('确认账号密码', { exact: true }).fill('Icon-upload-password');
   await page.getByRole('button', { name: '注册并登录', exact: true }).click();
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
+  await page.getByRole('button', { name: '记第一笔', exact: true }).click();
   await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '取消', exact: true }).click();
 }
 
@@ -42,6 +44,11 @@ for (const width of [390, 1280]) test(`payee uploads survive reload and reset at
   await page.reload();
   await page.getByRole('button', { name: '+ 记账', exact: true }).click();
   const entry = page.getByRole('dialog', { name: '新增 · 日常收支', exact: true });
+  if (width === 390) {
+    await entry.getByRole('button', { name: '常用附加字段', exact: true }).click();
+    await entry.getByRole('checkbox', { name: '商家 / 平台', exact: true }).check();
+    await entry.getByRole('button', { name: '常用附加字段', exact: true }).click();
+  }
   await entry.getByRole('textbox', { name: '商家 / 平台', exact: true }).fill('我的图标商店');
   await expect(entry.getByRole('button', { name: '我的图标商店', exact: true }).locator('img')).toHaveAttribute('src', source);
   await entry.getByRole('button', { name: '取消', exact: true }).click();
