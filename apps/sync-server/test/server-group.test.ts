@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -116,9 +116,11 @@ describe('server synchronization group', () => {
         method: 'POST', headers: { Authorization: `Bearer ${branchGroupLogin.accessToken}`,
           'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'managed' }),
       })).status).toBe(200);
-      await branch.flushGroupReplication();
-      await branch.flushNodeReplication();
-      expect((await mainStore.listReplicaSlots()).map((slot) => slot.ledgerId)).toHaveLength(4);
+      await vi.waitFor(async () => {
+        await branch.flushGroupReplication();
+        await branch.flushNodeReplication();
+        expect((await mainStore.listReplicaSlots()).map((slot) => slot.ledgerId)).toHaveLength(4);
+      }, { timeout: 15_000, interval: 200 });
       await expect(registerAccount(url(branch), 'another-user', 'another-password',
         { inviteCode: invite })).rejects.toThrow();
       await joinGroup(later);

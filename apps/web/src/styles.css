@@ -683,7 +683,7 @@ button,
   left: 12px;
   z-index: 1000;
   transform: translateY(-150%);
-  padding: 10px 14px;
+  padding: 12px 14px;
   border-radius: var(--r-sm);
   background: var(--accent);
   color: var(--on-accent);
@@ -2242,7 +2242,7 @@ input[type="radio"] {
 .zc-mobile-guide-header { color: var(--text-secondary); font-size: var(--fs-caption); font-weight: var(--fw-medium); }
 .zc-mobile-guide-header button,
 .zc-mobile-guide-nav button {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 8px;
   border: 0;
   background: transparent;
@@ -2255,7 +2255,7 @@ input[type="radio"] {
 .zc-mobile-guide-progress span.is-active { background: var(--accent); }
 .zc-mobile-guide-content { display: grid; gap: 10px; }
 .zc-mobile-guide-content p { margin: 0; font-size: var(--fs-caption); }
-.zc-mobile-guide-content .zc-first-entry-actions button { min-height: 40px; }
+.zc-mobile-guide-content .zc-first-entry-actions button { min-height: 44px; }
 .zc-mobile-guide-nav { padding-top: 4px; border-top: 1px solid var(--border); }
 .zc-mobile-guide-nav button:first-child:last-child { margin-left: auto; }
 

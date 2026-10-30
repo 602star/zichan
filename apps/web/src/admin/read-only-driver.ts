@@ -11,8 +11,8 @@
  * that was never written to check `readOnly`. Reads (`all`/`get`) pass through untouched so
  * every report and dashboard still renders.
  *
- * `transaction` is refused too: callers open one to write, and a read-only transaction that
- * silently succeeded would let the caller believe a save happened.
+ * A read transaction can run against the immutable in-memory preview. Its callback gets the
+ * guarded driver, so any write inside the transaction still fails.
  */
 import type { SqlDriver, SqlParam, SqlRunResult } from '@zichan/db';
 
@@ -49,7 +49,7 @@ export function readOnlyDriver(inner: SqlDriver): SqlDriver {
     run: async (_sql: string, _params?: SqlParam[]): Promise<SqlRunResult> => { throw new ReadOnlyPreviewError(); },
     all: <R = Record<string, unknown>>(sql: string, params?: SqlParam[]) => inner.all<R>(sql, params),
     get: <R = Record<string, unknown>>(sql: string, params?: SqlParam[]) => inner.get<R>(sql, params),
-    transaction: async <T>(_fn: (driver: SqlDriver) => Promise<T>): Promise<T> => { throw new ReadOnlyPreviewError(); },
+    transaction: async <T>(fn: (driver: SqlDriver) => Promise<T>): Promise<T> => fn(readOnlyDriver(inner)),
     close: () => inner.close(),
   };
 }

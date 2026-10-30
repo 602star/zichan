@@ -170,6 +170,7 @@ test('an administrator downloads a user attachment from the read-only preview', 
     await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
 
     await page.locator('.zc-sidebar').getByRole('button', { name: /管理$/ }).click();
+    await expect(page.getByRole('tab', { name: '其他资料' })).toBeVisible({ timeout: 30_000 });
     await page.getByRole('tab', { name: '其他资料' }).click();
     await page.getByRole('tab', { name: '附件', exact: true }).click();
     const attachmentRow = page.getByRole('row').filter({ hasText: fileName });

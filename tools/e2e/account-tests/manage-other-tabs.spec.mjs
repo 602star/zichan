@@ -43,7 +43,7 @@ test('other master data opens one focused category at a time on phone and deskto
     expect(selectedBounds.selectedRight).toBeLessThanOrEqual(selectedBounds.listRight + 1);
 
     const tabs = page.getByRole('tablist', { name: '其他资料类别' });
-    const panel = page.getByRole('tabpanel');
+    const panel = page.locator('.zc-manage-other-panel');
     await expect(tabs.getByRole('tab')).toHaveCount(6);
     const positions = await tabs.getByRole('tab').evaluateAll((nodes) => nodes.map((node) => ({
       top: Math.round(node.getBoundingClientRect().top),
@@ -61,9 +61,10 @@ test('other master data opens one focused category at a time on phone and deskto
       { id: 'games', label: '游戏资料', actions: ['+ 新增游戏', '+ 新增游戏账号', '+ 新增游戏赛季'] },
       { id: 'attachments', label: '附件', actions: [] },
     ];
-    for (const { id, label, actions } of categories) {
-      await tabs.getByRole('tab', { name: label, exact: true }).click();
-      await expect(panel).toHaveAttribute('aria-labelledby', `zc-manage-other-tab-${id}`);
+    for (const { label, actions } of categories) {
+      const selectedTab = tabs.getByRole('tab', { name: label, exact: true });
+      await selectedTab.click();
+      await expect(panel).toHaveAttribute('aria-labelledby', await selectedTab.getAttribute('id'));
       await expect(panel.getByRole('button', { name: /^\+ 新增/ })).toHaveCount(actions.length);
       for (const action of actions) await expect(panel.getByRole('button', { name: action, exact: true })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${label} should fit phone width`).toBe(true);

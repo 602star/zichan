@@ -9,8 +9,8 @@ function rowFor(page, description) {
 }
 
 async function recordExpense(page, { amount, description }) {
-  await page.getByRole('button', { name: '+ 记支出' }).click();
-  const form = page.getByRole('dialog', { name: '新增 · 日常支出' });
+  await page.getByRole('button', { name: '+ 记账' }).click();
+  const form = page.getByRole('dialog', { name: '新增 · 日常收支' });
   await expect(form).toBeVisible();
   await page.getByRole('textbox', { name: /^金额/ }).fill(amount);
   await page.getByLabel('描述').fill(description);
@@ -48,7 +48,8 @@ test('a refund in the same currency never asks for a second amount', async ({ pa
   const summary = page.locator('.zc-transaction-summary-grid');
   await expect(summary).toContainText('本月支出');
   await expect(summary).toContainText('¥70.00');
-  await expect(summary).toContainText('合计支出 ¥70.00');
+  await expect(summary.locator('.zc-transaction-summary-metric').nth(1)).toContainText('¥70.00');
+  await expect(summary.locator('.zc-transaction-summary-metric').nth(3)).toContainText('¥70.00');
 });
 
 test('a full refund settles the row instead of leaving it looking unpaid', async ({ page }) => {
@@ -69,7 +70,8 @@ test('a full refund settles the row instead of leaving it looking unpaid', async
   // 同一屏的两个数字不再互相矛盾。
   const summary = page.locator('.zc-transaction-summary-grid');
   await expect(summary).toContainText('¥0.00');
-  await expect(summary).toContainText('合计支出 ¥0.00');
+  await expect(summary.locator('.zc-transaction-summary-metric').nth(1)).toContainText('¥0.00');
+  await expect(summary.locator('.zc-transaction-summary-metric').nth(3)).toContainText('¥0.00');
 });
 
 test('a fully refunded expense keeps a way into its refunds, and voiding restores it', async ({ page }) => {
@@ -100,5 +102,6 @@ test('a fully refunded expense keeps a way into its refunds, and voiding restore
   await expect(row.locator('.zc-refund-chip')).toHaveCount(0);
   await expect(row.getByRole('button', { name: '退款', exact: true })).toBeVisible();
   const summary = page.locator('.zc-transaction-summary-grid');
-  await expect(summary).toContainText('合计支出 ¥80.00');
+  await expect(summary.locator('.zc-transaction-summary-metric').nth(1)).toContainText('¥80.00');
+  await expect(summary.locator('.zc-transaction-summary-metric').nth(3)).toContainText('¥80.00');
 });

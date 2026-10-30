@@ -146,8 +146,8 @@ test('runs the daily management work: policy, invites, roles, quotas and audit',
 
   await clickAdminLink(page, '管理审计');
   await expect(page.getByRole('cell', { name: /附件配额调整为 5 GiB/ })).toBeVisible();
-  // The readable sentence and the structured reason column both stay searchable.
-  await expect(page.getByRole('row').filter({ hasText: '附件配额调整为 5 GiB' }).getByRole('cell', { name: '协助处理容量申请', exact: true })).toBeVisible();
+  // The readable audit sentence includes the operator's recorded reason.
+  await expect(page.getByRole('row').filter({ hasText: '附件配额调整为 5 GiB' }).getByRole('cell', { name: /原因：协助处理容量申请/ })).toBeVisible();
 
   // Disabling an account states how many sessions are revoked before it is confirmed.
   await page.getByRole('link', { name: '用户管理' }).click();

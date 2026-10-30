@@ -5,9 +5,9 @@ test.setTimeout(180_000);
 
 /** 在轻量记账模式下记一笔支出（只填金额、分类、描述）。 */
 async function recordExpense(page, { category, description, amount, dialogName }) {
-  await page.getByRole('button', { name: '+ 记支出' }).click();
+  await page.getByRole('button', { name: '+ 记账' }).click();
   const form = page.getByRole('dialog', { name: dialogName });
-  await form.getByLabel('二级分类').click();
+  await form.getByLabel('分类').click();
   const panel = page.locator('.zc-category-picker-panel');
   await panel.getByLabel('搜索分类', { exact: true }).fill(category);
   await panel.getByRole('option', { name: new RegExp(category) }).first().click();
@@ -35,9 +35,9 @@ test('keeps transactions of a disabled pack filterable without re-enabling it', 
   await studentPack.getByRole('button', { name: '启用学生扩展包', exact: true }).click();
   await expect(studentPack.getByText('7 项全部可用', { exact: true })).toBeVisible();
 
-  await page.getByText('日常支出', { exact: true }).first().click();
-  await recordExpense(page, { category: '食堂', description: '停用前的食堂消费', amount: '42', dialogName: '新增 · 日常支出' });
-  await recordExpense(page, { category: '堂食餐饮', description: '普通午餐', amount: '18', dialogName: '新增 · 日常支出' });
+  await page.getByText('日常收支', { exact: true }).first().click();
+  await recordExpense(page, { category: '食堂', description: '停用前的食堂消费', amount: '42', dialogName: '新增 · 日常收支' });
+  await recordExpense(page, { category: '堂食餐饮', description: '普通午餐', amount: '18', dialogName: '新增 · 日常收支' });
 
   // 2. 停用扩展包：这会把「食堂」停用，即使它已经被引用过。
   await sidebar.getByRole('button', { name: /管理$/ }).click();
@@ -48,9 +48,7 @@ test('keeps transactions of a disabled pack filterable without re-enabling it', 
   await expect(page.getByText(/仍保留历史引用/).first()).toBeVisible();
   await expect(page.getByRole('button', { name: '撤销', exact: true })).toHaveCount(0, { timeout: 20_000 });
 
-  // 3. 切到完整资产账本——日常流水的筛选行只在非轻量模式下出现。
-  await sidebar.getByRole('button', { name: /设置$/ }).click();
-  await page.getByLabel('记账模式 · 录入深度').selectOption('assets');
+  // 3. Return to the daily ledger and inspect its filters.
   await sidebar.getByRole('button', { name: /日常收支$/ }).click();
   await expect(page.getByText('日常流水', { exact: true }).first()).toBeVisible();
 
@@ -86,7 +84,7 @@ test('keeps transactions of a disabled pack filterable without re-enabling it', 
   // 6b. 写路径（记账弹窗）仍然搜不到停用分类。
   await page.getByRole('button', { name: '+ 记账' }).click();
   const entryForm = page.getByRole('dialog', { name: /新增/ });
-  await entryForm.getByLabel('二级分类').click();
+  await entryForm.getByLabel('分类').click();
   const entryPanel = page.locator('.zc-category-picker-panel');
   await entryPanel.getByLabel('搜索分类', { exact: true }).fill('食堂');
   await expect(entryPanel.getByRole('option', { name: /食堂/ })).toHaveCount(0);

@@ -68,7 +68,7 @@ for (const width of [1280, 390]) {
       await page.getByRole('button', { name: '保存', exact: true }).click();
       await expect(page.getByText('操作已完成。')).toBeVisible();
       await expect(page.getByRole('button', { name: '关闭处理面板' })).toHaveCount(0);
-      if (width === 390) await expect(user.locator('[data-column="created"]')).toBeVisible();
+      if (width === 390) await expect(user.locator('.zc-admin-user-facts dt', { hasText: '创建时间' })).toBeVisible();
       await capture('users');
 
       await clickAdminLink(page, '告警历史');
@@ -104,7 +104,9 @@ for (const width of [1280, 390]) {
       await clickAdminLink(page, '管理审计');
       const entry = page.locator('#section-审计记录 tbody tr').first();
       await entry.getByRole('button', { name: '展开', exact: true }).click();
-      await expect(entry.locator('xpath=following-sibling::tr[1]').locator('pre')).toBeVisible();
+      const auditDetails = entry.locator('xpath=following-sibling::tr[1]');
+      await auditDetails.locator('summary', { hasText: '查看变更前后值' }).click();
+      await expect(auditDetails.locator('pre').last()).toBeVisible();
       const timeRange = page.getByRole('group', { name: '时间范围' });
       await timeRange.getByRole('button', { name: '起始日期' }).click();
       const calendar = page.getByRole('dialog', { name: '起始日期' });

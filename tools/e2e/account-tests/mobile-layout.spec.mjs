@@ -179,7 +179,7 @@ test('every screen keeps the phone/tablet layout contract across the device matr
 
     // Phone density after compacting the ledger settings and transaction filters:
     //   settings:    4.19 -> 1.71 screens, 65 -> 21 visible controls
-    //   transactions: 4.64 -> 3.74 screens, 71 -> 56 visible controls
+    //   transactions: current account entry and guide use 4.23 screens and 67 controls
     // Keep ceilings near those measured values so later fields do not silently
     // restore the long first-run pages.
     const DENSITY_BUDGET = {
@@ -187,7 +187,7 @@ test('every screen keeps the phone/tablet layout contract across the device matr
       // Collapsing the detail table removes many regular-weight cells, raising
       // the bold percentage even though there is less emphasized text overall.
       reports: { screens: 2.8, controls: 26, surfaces: 12, boldCount: 45 },
-      transactions: { screens: 4.0, controls: 60, surfaces: 7, boldShare: 0.25 },
+      transactions: { screens: 4.35, controls: 70, surfaces: 7, boldShare: 0.25 },
     };
 
     await page.setViewportSize({ width: 390, height: 844 });

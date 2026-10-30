@@ -29,11 +29,11 @@ try {
     await page.screenshot({ path: `${root}/native-offline.png` });
     console.log('native cold start recovered the original record while server was stopped');
   } else if (action === 'offline-record') {
-    await page.getByRole('button', { name: '+ 记支出' }).click();
+    await page.getByRole('button', { name: '+ 记账' }).click();
     await page.getByRole('textbox', { name: /^金额/ }).fill('25');
     await page.getByLabel('描述').fill('原生断网未同步');
     await page.getByRole('button', { name: '保存', exact: true }).click();
-    await page.getByRole('dialog', { name: '新增 · 日常支出' }).waitFor({ state: 'hidden' });
+    await page.getByRole('dialog', { name: '新增 · 日常收支' }).waitFor({ state: 'hidden' });
     await page.getByText('原生断网未同步', { exact: true }).waitFor();
     console.log('offline native record committed before forced termination');
   } else if (action === 'verify-crash') {

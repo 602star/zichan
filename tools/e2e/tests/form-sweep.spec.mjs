@@ -3,17 +3,16 @@ import { openLedger } from './helpers.mjs';
 
 test.setTimeout(240_000);
 
-/** Labels differ by ledger mode (日常支出 vs 日常收支), so accept both. */
 const SCREENS = [
   ['总览'],
   ['资产转换'],
-  ['日常支出', '日常收支'],
+  ['日常收支'],
   ['游戏赛季'],
   ['物品资产'],
-  ['支出报表', '报表'],
+  ['报表'],
   ['历史'],
   ['管理'],
-  ['同步'],
+  ['我的账号'],
   ['设置'],
 ];
 
@@ -122,6 +121,8 @@ async function saveAndCheckRecovery(page, label) {
 
 /** Open every "+ …" create action in the current view and empty-submit it. */
 async function sweepCurrentView(page, screenLabel) {
+  // Asset conversion has a dedicated multi-step modal, covered by conversion workflow tests.
+  if (screenLabel.startsWith('资产转换')) return ['专用转换表单'];
   const buttons = page.locator('main button');
   const total = await buttons.count();
   const labels = new Set();
@@ -158,14 +159,14 @@ async function sweepScreen(page, screenLabel) {
   return results;
 }
 
-test('spending mode with every module on: no create form blocks on an invisible field', async ({ page }) => {
+test('every module on: no create form blocks on an invisible field', async ({ page }) => {
   await openLedger(page);
-  expect(await sidebarLabels(page)).toEqual(['总览', '日常支出', '物品资产', '设置']);
+  expect(await sidebarLabels(page)).toEqual(['总览', '日常收支', '物品资产', '我的账号', '设置']);
 
   const moduleCount = await enableAllModules(page);
   expect(moduleCount).toBe(10);
   expect(await sidebarLabels(page)).toEqual([
-    '总览', '资产转换', '日常支出', '游戏赛季', '物品资产', '支出报表', '历史', '管理', '同步', '设置',
+    '总览', '资产转换', '日常收支', '游戏赛季', '物品资产', '报表', '历史', '管理', '我的账号', '设置',
   ]);
 
   const report = {};
@@ -173,36 +174,20 @@ test('spending mode with every module on: no create form blocks on an invisible 
     const label = await navigate(page, labels);
     report[label] = await sweepScreen(page, label);
   }
-  console.log(`SPENDING_SWEEP ${JSON.stringify(report)}`);
+  console.log(`FORM_SWEEP ${JSON.stringify(report)}`);
   expect(Object.keys(report)).toHaveLength(10);
 });
 
-test('accounts mode with every module on: no create form blocks on an invisible field', async ({ page }) => {
-  await openLedger(page);
-  await navigate(page, ['设置']);
-  await page.getByLabel('记账模式 · 录入深度').selectOption('accounts');
-  await page.waitForTimeout(200);
-  await enableAllModules(page);
-
-  const report = {};
-  for (const labels of SCREENS) {
-    const label = await navigate(page, labels);
-    report[label] = await sweepScreen(page, label);
-  }
-  console.log(`ACCOUNTS_SWEEP ${JSON.stringify(report)}`);
-  expect(Object.keys(report)).toHaveLength(10);
-});
-
-test('spending mode with every module on: a full record-keeping pass end to end', async ({ page }) => {
+test('all modules enabled: a full record-keeping pass end to end', async ({ page }) => {
   await openLedger(page);
   await enableAllModules(page);
 
   // 1. Daily expense: the amount is the only thing must-type.
-  await navigate(page, ['日常支出', '日常收支']);
-  await page.getByRole('button', { name: '+ 记支出' }).click();
-  const expense = page.getByRole('dialog', { name: '新增 · 日常支出' });
-  await expect(expense.getByLabel('账户')).toHaveCount(0);
-  await expect(expense.getByLabel('类型')).toHaveCount(0);
+  await navigate(page, ['日常收支']);
+  await page.getByRole('button', { name: '+ 记账' }).click();
+  const expense = page.getByRole('dialog', { name: '新增 · 日常收支' });
+  await expect(expense.getByLabel('账户')).toBeVisible();
+  await expect(expense.getByLabel('类型')).toBeVisible();
   await page.getByRole('textbox', { name: /^金额/ }).fill('26.5');
   await page.getByLabel('描述').fill('扫描午餐');
   await expense.getByRole('button', { name: '保存', exact: true }).click();
@@ -217,6 +202,9 @@ test('spending mode with every module on: a full record-keeping pass end to end'
   await page.getByRole('button', { name: '+ 记录' }).click();
   const record = page.getByRole('dialog').last();
   await expect(record).toBeVisible();
+  await record.getByLabel('记录类型').selectOption('other_expense');
+  await record.getByLabel('实际收支币种').selectOption('CNY');
+  await record.getByLabel('实际收支金额').fill('6');
   await record.getByRole('button', { name: '保存', exact: true }).click();
   await expect(record).toBeHidden({ timeout: 10_000 });
 
@@ -234,11 +222,10 @@ test('spending mode with every module on: a full record-keeping pass end to end'
   await navigate(page, ['管理']);
   const manageTab = (name) => page.locator('main [role="tab"]').filter({ hasText: name }).first();
   await manageTab('其他资料').click();
-  // Lightweight mode hides the whole 账户 section rather than showing an empty one.
-  await expect(page.getByRole('button', { name: '+ 新增账户' })).toHaveCount(0);
-  await manageTab('标签与商户').click();
+  await expect(page.getByRole('button', { name: '+ 新增账户' })).toBeVisible();
+  await manageTab('标签与交易对象').click();
   for (const [action, value] of [
-    ['+ 新增商户', '扫描商户'],
+    ['+ 新增交易对象', '扫描交易对象'],
     ['+ 新增标签', '扫描标签'],
     ['+ 新增地点', '扫描地点'],
   ]) {
@@ -249,9 +236,9 @@ test('spending mode with every module on: a full record-keeping pass end to end'
     await dialog.getByRole('button', { name: '保存', exact: true }).click();
     await expect(dialog).toBeHidden({ timeout: 10_000 });
   }
-  await expect(page.getByText('扫描商户', { exact: true })).toBeVisible();
+  await expect(page.getByText('扫描交易对象', { exact: true })).toBeVisible();
 
-  // Nothing above should have needed an account field anywhere.
+  // Return to overview after saving across the enabled modules.
   await navigate(page, ['总览']);
   await expect(page.locator('main')).toBeVisible();
 });

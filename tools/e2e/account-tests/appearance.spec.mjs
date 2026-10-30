@@ -143,14 +143,8 @@ test('the account id is readable in the list, not just copyable', async ({ page 
     await page.getByRole('button', { name: '登录管理后台', exact: true }).click({ timeout: 30_000 });
     await page.getByRole('link', { name: '用户管理' }).click();
 
-    // The column is optional and off by default, so turn it on first.
-    await page.getByText('列显示', { exact: false }).click();
-    await page.getByLabel('账号 ID', { exact: true }).check();
-    await page.keyboard.press('Escape');
-
-    // A column headed 账号 ID has to show the id. A button alone would leave the
-    // cell blank for anyone who only wants to read or select it.
-    const id = await page.locator('table code').first().textContent();
+    // The card shows the ID as selectable text alongside its copy action.
+    const id = await page.locator('.zc-admin-user-card code').first().textContent();
     expect(id ?? '').toMatch(/^account-[a-f0-9]{32}$/);
     await expect(page.getByRole('button', { name: `复制 ${id}` })).toBeVisible();
   } finally { await f.close(); }
@@ -165,14 +159,14 @@ test('the console can jump between the sections of a long page', async ({ page }
     await page.getByRole('button', { name: '登录管理后台', exact: true }).click({ timeout: 30_000 });
 
     // The overview is one of the pages long enough to carry a jump list.
-    const index = page.getByRole('navigation', { name: '页内跳转' });
+    const index = page.getByRole('navigation', { name: '总览分区' });
     await expect(index).toBeVisible({ timeout: 30_000 });
     const links = await index.getByRole('link').allTextContents();
     expect(links.length).toBeGreaterThanOrEqual(3);
 
     // Every entry has to resolve to a real element; a link to a missing id looks
     // correct and does nothing, which is the failure a unit test cannot see.
-    const targets = await page.evaluate(() => [...document.querySelectorAll('nav[aria-label="页内跳转"] a')]
+    const targets = await page.evaluate(() => [...document.querySelectorAll('nav[aria-label="总览分区"] a')]
       .map((a) => ({ text: (a.textContent ?? '').trim(), id: (a.getAttribute('href') ?? '').slice(1) })));
     const missing = await page.evaluate((entries) => entries
       .filter((entry) => !document.getElementById(entry.id))
@@ -185,7 +179,7 @@ test('the console can jump between the sections of a long page', async ({ page }
     await page.waitForTimeout(400);
     expect(page.url()).toBe(before);
     const scrolled = await page.evaluate(() => {
-      const target = document.querySelector('nav[aria-label="页内跳转"] a:last-child');
+      const target = [...document.querySelectorAll('nav[aria-label="总览分区"] a')].at(-1);
       const section = document.getElementById((target?.getAttribute('href') ?? '').slice(1));
       if (!section) return false;
       const box = section.getBoundingClientRect();

@@ -119,7 +119,7 @@ test('account session links use exact identity and compose with search filters',
 });
 
 for (const view of [
-  { path: 'users', label: '用户管理', input: '用户名或 accountId' },
+  { path: 'users', label: '用户管理', input: '登录账号、昵称或账号 ID' },
   { path: 'sessions', label: '设备与会话', input: '用户名、accountId 或设备名' },
 ]) {
   test(`${view.path} search follows browser back and forward without submitting drafts`, async ({ page }) => {
@@ -270,10 +270,14 @@ test('reflects the stored registration policy and paginates and filters invitati
 test('retries a failed initial connection without reloading the page', async ({ page }) => {
   const f = await fixture();
   try {
-    await page.route('**/api/health', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }), { times: 1 });
+    let unavailable = true;
+    await page.route('**/api/health', (route) => unavailable
+      ? route.fulfill({ status: 503, contentType: 'application/json', body: '{}' })
+      : route.continue());
     await page.goto(`${f.url}/e2e-private-entry/admin/`);
-    await expect(page.getByRole('alert')).toContainText('HTTP 503');
-    await page.getByRole('button', { name: '重新连接服务器' }).click();
+    await expect(page.getByRole('alert')).toContainText('无法确定管理服务器地址');
+    unavailable = false;
+    await page.getByRole('button', { name: '重新连接', exact: true }).click();
     await expect(page.getByRole('heading', { name: '管理员登录' })).toBeVisible();
     await expect(page.getByRole('button', { name: '登录管理后台', exact: true })).toBeEnabled();
   } finally { await f.close(); }

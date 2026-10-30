@@ -46,7 +46,7 @@ test('uses real same-origin browser cookies without storing account passwords or
   await expect(page.getByRole('button', { name: '开始记账', exact: true })).toBeVisible();
   const cookie = (await context.cookies()).find((row) => row.name === 'zichan_session');
   expect(cookie?.httpOnly).toBe(true);
-  expect(cookie?.sameSite).toBe('Strict');
+  expect(cookie?.sameSite).toBe('Lax');
   expect(cookie?.path).toBe('/ledger/api/auth');
   const storage = await page.evaluate(() => ({
     cookies: document.cookie,

@@ -10,9 +10,9 @@ function rows(page) {
 
 /** 在轻量记账模式下记一笔支出（只填二级分类、描述、金额）。 */
 async function recordExpense(page, { category, description, amount }) {
-  await page.getByRole('button', { name: '+ 记支出' }).click();
-  const form = page.getByRole('dialog', { name: '新增 · 日常支出' });
-  await form.getByLabel('二级分类').click();
+  await page.getByRole('button', { name: '+ 记账' }).click();
+  const form = page.getByRole('dialog', { name: '新增 · 日常收支' });
+  await form.getByLabel('分类').click();
   const panel = page.locator('.zc-category-picker-panel');
   await panel.getByLabel('搜索分类', { exact: true }).fill(category);
   await panel.getByRole('option', { name: new RegExp(category) }).first().click();
@@ -106,7 +106,7 @@ test('the reports rings drill 板块 then 二级, in both chart shapes', async (
   await page.locator('.zc-sidebar').getByRole('button', { name: /设置$/ }).click();
   // 报表默认不在侧边栏；滑块包裹在 <label> 里，点输入框会被标签再激活一次（状态回到原样），
   // 所以用键盘激活这一次——与用户按空格同一条路。
-  const reportsNav = page.getByRole('checkbox', { name: /在侧边栏显示.*支出报表/ });
+  const reportsNav = page.getByRole('checkbox', { name: /在侧边栏显示.*报表/ });
   await reportsNav.focus();
   await reportsNav.press('Space');
   await expect(reportsNav).toBeChecked();
@@ -222,11 +222,9 @@ test('the 日常收支 charts stack full width, and no legend name is cut off', 
   for (const gap of drilled.nameToAmountGaps) expect(gap).toBeLessThanOrEqual(24);
 });
 
-/** 完整账本模式才渲染整行筛选器（轻量模式只有面包屑）。 */
+/** Open the daily ledger's filter controls. */
 async function switchToAssetsMode(page) {
   const sidebar = page.locator('.zc-sidebar');
-  await sidebar.getByRole('button', { name: /设置$/ }).click();
-  await page.getByLabel('记账模式 · 录入深度').selectOption('assets');
   await sidebar.getByRole('button', { name: /日常收支$/ }).click();
   await expect(page.getByText('日常流水', { exact: true }).first()).toBeVisible();
 }

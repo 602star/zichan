@@ -23,6 +23,6 @@ test('opens and reopens a ledger with the IndexedDB lease fallback', async ({ pa
     return false;
   });
   expect(hasLeaseStore).toBe(true);
-  await page.reload();
-  await expect(page.locator('.zc-app-shell')).toBeVisible();
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
 });

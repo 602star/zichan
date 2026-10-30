@@ -82,10 +82,9 @@ test('shows server and software monitoring together without leaving the page', a
     await expect(page.getByRole('img', { name: '软件内存趋势，近 1h' })).toBeVisible();
     await expect(page).toHaveURL(/\/admin\/monitor\?/);
     await clickAdminLink(page, '运行日志');
-    await expect(page.locator('#section-日志趋势')).toBeVisible();
-    await expect(page.getByRole('heading', { name: '错误日志 · 近 24h' })).toBeVisible();
-    await page.getByRole('button', { name: '7d', exact: true }).click();
-    await expect(page.getByRole('heading', { name: '错误日志 · 近 7d' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '错误记录趋势 · 近 24 小时' })).toBeVisible();
+    await page.getByLabel('日志趋势时间范围').getByRole('button', { name: '近 7 天' }).click();
+    await expect(page.getByRole('heading', { name: '错误记录趋势 · 近 7 天' })).toBeVisible();
   } finally { await f.close(); }
 });
 

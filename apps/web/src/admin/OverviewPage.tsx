@@ -1,8 +1,8 @@
 /** Runtime overview: the day-to-day entry point, not a wall of counters. */
 import { pendingAlerts, overviewStatus } from './operations.js';
-import { useState } from 'react';
+import { useState, type MouseEvent } from 'react';
 import type { AdminClient } from './client.js';
-import { PageHeader, Badge, Button, DataTable, Loading, Notice, Panel, Select, Stat, TextInput, bytes, canWrite, message, muted, roleLabel, row, usePolling, useResource, when } from './ui.js';
+import { PageHeader, Badge, Button, DataTable, Loading, Notice, Panel, Select, Stat, TextInput, bytes, canWrite, isPlainPrimaryClick, message, muted, roleLabel, row, usePolling, useResource, when } from './ui.js';
 import { alertNextStep, alertStateLabel, acknowledgeAlert, describeAlert, isSilenced, silenceAlert, unsilenceAlert, SILENCE_HOURS } from './alerts.js';
 import { TrendChart } from './chart.js';
 import { MaintenancePanel } from './MaintenancePanel.js';
@@ -10,6 +10,12 @@ import type { TrendPoint } from './trend.js';
 import type { AdminLoginSummary, Alert, Metrics, Overview } from './types.js';
 
 const RANGES = ['1h', '24h', '7d'] as const;
+
+function jumpToSection(event: MouseEvent<HTMLAnchorElement>) {
+  if (!isPlainPrimaryClick(event)) return;
+  event.preventDefault();
+  document.getElementById(decodeURIComponent(event.currentTarget.hash.slice(1)))?.scrollIntoView({ block: 'start' });
+}
 
 /** Bucket series the trend chart can draw; totals stay in the cards above it. */
 const SERIES = [
@@ -75,10 +81,10 @@ export function OverviewPage({ client, navigate, role }: {
       <PageHeader title="运行概览" />
       <p>服务运行、异常处理与维护操作。</p>
       <nav className="zc-admin-overview-jumps" aria-label="总览分区">
-        <a href="#section-待处理事项">处理异常</a>
-        <a href="#section-核心指标">请求趋势</a>
-        <a href="#section-最近管理员登录">管理员登录</a>
-        <a href="#section-维护窗口">维护窗口</a>
+        <a href="#section-待处理事项" onClick={jumpToSection}>处理异常</a>
+        <a href="#section-核心指标" onClick={jumpToSection}>请求趋势</a>
+        <a href="#section-最近管理员登录" onClick={jumpToSection}>管理员登录</a>
+        <a href="#section-维护窗口" onClick={jumpToSection}>维护窗口</a>
         <button type="button" onClick={() => navigate('/monitor')}>监控中心</button>
       </nav>
       <Loading loading={overview.loading} error={overview.error} stale={overview.stale} loadedAt={overview.loadedAt} />

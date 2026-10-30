@@ -82,15 +82,15 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
     await page.getByLabel('确认账号密码').fill('deployment-password');
     await page.getByRole('button', { name: '注册并登录', exact: true }).click();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
-    await page.getByRole('button', { name: '+ 记支出' }).click();
+    await page.getByRole('button', { name: '+ 记账' }).click();
     await page.getByRole('textbox', { name: /^金额/ }).fill('68');
     await page.getByLabel('描述').fill('HTTPS 恢复演练');
     await page.getByRole('button', { name: '保存', exact: true }).click();
     await expect(page.getByText('HTTPS 恢复演练', { exact: true })).toBeVisible();
-    expect((await context.cookies()).find((c) => c.name === 'zichan_session')).toMatchObject({ secure: true, httpOnly: true, sameSite: 'Strict' });
+    expect((await context.cookies()).find((c) => c.name === 'zichan_session')).toMatchObject({ secure: true, httpOnly: true, sameSite: 'Lax' });
     await expect.poll(async () => {
       const driver = new NodeSqliteDriver(join(source, 'server.sqlite'));
-      try { return Number((await driver.get('SELECT COUNT(*) AS n FROM sync_server_commits')).n); } finally { await driver.close(); }
+      try { return Number((await driver.get('SELECT COUNT(*) AS n FROM ledger_replica_commits')).n); } finally { await driver.close(); }
     }).toBeGreaterThan(1);
     await context.close();
     await stop();

@@ -56,6 +56,12 @@ async function recordExpenseAs(page, origin, username, amount) {
   await form.getByLabel('金额*').fill(amount);
   await form.getByRole('button', { name: '保存' }).first().click();
   await expect(form).toHaveCount(0);
+  await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
+  await page.getByRole('button', { name: '查看服务器上的账本' }).click();
+  const syncSettings = page.getByRole('button', { name: /^客户端同步与服务器连接/ });
+  if (await syncSettings.getAttribute('aria-expanded') !== 'true') await syncSettings.click();
+  await page.getByRole('button', { name: '同步账本', exact: true }).first().click();
+  await expect(page.getByText(/^(?:本机提交已|本次同步：|已完成 \d+ 轮同步)/).first()).toBeVisible();
 }
 
 test('an administrator opens a user ledger as a read-only preview and can close it', async ({ page }) => {
@@ -66,7 +72,7 @@ test('an administrator opens a user ledger as a read-only preview and can close 
     await registerAccount(origin, 'preview-user', userPassword);
 
     await recordExpenseAs(page, origin, 'preview-user', '42.50');
-    // A preview can only include the record after the background sync has pushed it.
+    // The explicit sync above must have pushed a commit before the preview opens.
     const ownerSession = await loginAccount(origin, 'owner', password, { sessionContext: 'admin' });
     await expect.poll(async () => {
       const response = await fetch(`${origin}/api/admin/users?search=preview-user`, {

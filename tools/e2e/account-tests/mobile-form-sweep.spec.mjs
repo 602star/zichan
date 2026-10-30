@@ -348,7 +348,16 @@ async function sweepScreen(page, label, report) {
   for (const tabLabel of tabLabels) {
     await page.locator('.zc-page-content [role="tab"]').filter({ hasText: tabLabel }).first().click();
     await page.waitForTimeout(200);
-    await sweepCurrentView(page, `${label}/${tabLabel}`, report[label], visitedActions);
+    if (label === '管理' && tabLabel === '其他资料') {
+      const otherTabs = page.getByRole('tablist', { name: '其他资料类别' });
+      const otherLabels = await otherTabs.getByRole('tab').allInnerTexts();
+      for (const otherLabel of otherLabels) {
+        await otherTabs.getByRole('tab', { name: otherLabel, exact: true }).click();
+        await sweepCurrentView(page, `${label}/${tabLabel}/${otherLabel}`, report[label], visitedActions);
+      }
+    } else {
+      await sweepCurrentView(page, `${label}/${tabLabel}`, report[label], visitedActions);
+    }
   }
 }
 

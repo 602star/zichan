@@ -4,6 +4,7 @@ import { createLedgerStore, exportLedger, saveTransaction, type SqlDriver } from
 import { SqlJsDriver } from '../src/db/sqljs-driver.js';
 import { ReadOnlyPreviewError, isReadOnlyPreviewError, readOnlyDriver } from '../src/admin/read-only-driver.js';
 import { buildPreviewStore } from '../src/admin/PreviewStoreProvider.js';
+import { loadSnapshot } from '../src/db/snapshot.js';
 
 /**
  * The preview reuses the real ledger UI against a user's decrypted ledger. These tests cover the
@@ -56,7 +57,8 @@ describe('read-only preview driver', () => {
 
     await expect(driver.run('UPDATE assets SET code = ? WHERE id = ?', ['X', 'CNY'])).rejects.toBeInstanceOf(ReadOnlyPreviewError);
     await expect(driver.exec('DROP TABLE assets')).rejects.toBeInstanceOf(ReadOnlyPreviewError);
-    await expect(driver.transaction(async () => undefined)).rejects.toBeInstanceOf(ReadOnlyPreviewError);
+    expect(await driver.transaction(async (tx) => tx.get<{ code: string }>('SELECT code FROM assets WHERE id = ?', ['CNY']))).toEqual({ code: 'CNY' });
+    await expect(driver.transaction(async (tx) => tx.run('UPDATE assets SET code = ? WHERE id = ?', ['X', 'CNY']))).rejects.toBeInstanceOf(ReadOnlyPreviewError);
 
     // The refusals must not have changed anything on the way past.
     expect((await driver.all<{ code: string }>('SELECT code FROM assets ORDER BY code')).map((row) => row.code)).toEqual(['CNY', 'USD']);
@@ -85,6 +87,8 @@ describe('preview store', () => {
     // normalises through `D(...).toString()`, so "42.50" is stored as "42.5" — that is the
     // ledger's own canonical form, and the preview must agree with it exactly.
     expect(D(rows[0]!.amount).eq('42.50')).toBe(true);
+    const manage = await loadSnapshot(store, 'manage');
+    expect(manage.assets.map((asset) => asset.code)).toContain('CNY');
 
     // A screen that saves anyway — a stray effect, a form submit — must fail here rather than
     // reach the user's ledger.
