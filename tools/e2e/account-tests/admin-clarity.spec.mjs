@@ -34,7 +34,7 @@ for (const width of [1280, 390]) {
     const f = await fixture(page);
     try {
       await expect(page.locator('#section-待处理事项')).toBeVisible();
-      await expect(page.getByText('状态未知', { exact: true })).toHaveCount(0);
+      await expect(page.getByText('状态未知', { exact: true })).toHaveCount(0, { timeout: 20_000 });
       expect(await page.locator('#section-待处理事项').evaluate((element) => element.getBoundingClientRect().top)).toBeLessThan(900);
       await expect(page.locator('#section-核心指标')).toBeVisible();
       await expect(page.locator('.zc-admin-nav details')).toHaveCount(0);

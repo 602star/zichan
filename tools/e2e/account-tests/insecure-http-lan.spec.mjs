@@ -19,7 +19,9 @@ function lanIPv4() {
 
 async function signIn(page) {
   const loginHeading = page.getByRole('heading', { name: '账号登录', exact: true });
-  if (await loginHeading.isVisible().catch(() => false)) {
+  const ready = loginHeading.or(page.getByRole('button', { name: '开始记账', exact: true })).or(page.locator('.zc-app-shell'));
+  await expect(ready).toBeVisible({ timeout: 30_000 });
+  if (await loginHeading.isVisible()) {
     await page.getByLabel('服务器用户名').fill('lan-member');
     await page.getByLabel('服务器账号密码').fill('lan-account-password');
     await page.getByRole('button', { name: '登录', exact: true }).click();

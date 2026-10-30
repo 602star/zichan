@@ -1591,7 +1591,7 @@ export function Transactions() {
       {accountSetupOpen && <AccountSetupPanel store={store} assets={snap.assets} accounts={snap.accounts} setting={snap.setting} onSaved={(account) => { setAccountSetupOpen(false); setAddedAccount(account); setAccountId(account.id); bump(); }} onClose={() => setAccountSetupOpen(false)} />}
       {accountHistoryOpen && <AccountHistoryPanel store={store} accounts={snap.accounts} assets={snap.assets} categories={snap.categories} timeZone={snap.setting?.timezone} initialAccountId={addedAccount?.id} onChanged={bump} onClose={() => setAccountHistoryOpen(false)} />}
       {addedAccount && <div style={cardTight} role="status">已添加 {addedAccount.name} · 余额起点 {new Date(addedAccount.balanceStartAt!).toLocaleString('zh-CN', { timeZone: snap.setting?.timezone })}，{addedAccount.openingBalance} {snap.assets.find((a) => a.id === addedAccount.openingAssetId)?.code}。以前的记录已保留。<p>默认付款：{snap.accounts.find((a) => a.id === snap.setting?.expenseDefaultAccountId)?.name}；默认收款：{snap.accounts.find((a) => a.id === snap.setting?.incomeDefaultAccountId)?.name}。</p>
-        <button style={button} onClick={() => setAccountHistoryOpen(true)}>整理以前的记录</button><button style={button} onClick={() => { setAddedAccount(null); openNewTransaction(); }}>记一笔</button>
+        <button style={button} onClick={() => setAccountHistoryOpen(true)}>整理以前的记录</button><button style={button} disabled={!snap.accounts.some((account) => account.id === addedAccount.id)} onClick={() => { setAddedAccount(null); openNewTransaction(); }}>记一笔</button>
       </div>}
       {usesAccounts && activeTab === 'accounts' && (
         <div style={card}>

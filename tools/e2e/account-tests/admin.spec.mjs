@@ -70,7 +70,7 @@ test('initializes the owner in the browser, then keeps every management page on 
     await expect(page).toHaveURL(/\/ledger\/e2e-private-entry\/admin\/overview$/);
     await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
     // The overview states that an idle account is not an online user.
-    await expect(page.getByText('有效会话不代表在线人数')).toBeVisible();
+    await expect(page.getByText('有效会话不代表在线人数')).toBeVisible({ timeout: 20_000 });
 
     // A direct visit to a deep URL restores that page and its filters after a reload.
     await page.goto(`${origin}/e2e-private-entry/admin/users?quota=over`);

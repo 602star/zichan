@@ -25,6 +25,17 @@ export interface SystemMonitorReading {
 const valid = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 const rounded = (value: number | null, digits = 1): number | null => value === null ? null : Number(value.toFixed(digits));
 const execFileAsync = promisify(execFile);
+const PROBE_TIMEOUT_MS = 4_000;
+
+function boundedProbe<T>(probe: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    probe,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('system probe timed out')), PROBE_TIMEOUT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer!));
+}
 
 async function windowsDisk(): Promise<{ read: number | null; write: number | null }> {
   const script = "Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk | Where-Object Name -eq '_Total' | Select-Object DiskReadBytesPerSec,DiskWriteBytesPerSec | ConvertTo-Json -Compress";
@@ -73,11 +84,11 @@ export function createSystemMonitor() {
   const collect = async (): Promise<SystemMonitorReading> => {
     const at = Date.now();
     const [cpu, memory, network, disk, processes] = await Promise.allSettled([
-      docker ? containerCpu() : si.currentLoad(),
-      docker ? containerMemory() : si.mem(),
-      si.networkStats('*'),
-      os === 'linux' && !docker ? si.fsStats() : os === 'win32' ? windowsDisk() : Promise.resolve(null),
-      si.processes(),
+      boundedProbe<Awaited<ReturnType<typeof containerCpu>> | Awaited<ReturnType<typeof si.currentLoad>>>(docker ? containerCpu() : si.currentLoad()),
+      boundedProbe<Awaited<ReturnType<typeof containerMemory>> | Awaited<ReturnType<typeof si.mem>>>(docker ? containerMemory() : si.mem()),
+      boundedProbe(si.networkStats('*')),
+      boundedProbe<Awaited<ReturnType<typeof si.fsStats>> | Awaited<ReturnType<typeof windowsDisk>> | null>(os === 'linux' && !docker ? si.fsStats() : os === 'win32' ? windowsDisk() : Promise.resolve(null)),
+      boundedProbe(si.processes()),
     ]);
     const unavailable: string[] = [];
     let cpuPercent: number | null = null;

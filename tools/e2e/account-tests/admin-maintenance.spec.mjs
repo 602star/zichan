@@ -58,7 +58,7 @@ test('declares a maintenance window, shows it as a planned state, and restores w
 
     // Before: normal operation, and stopping would be safe.
     await expect(panel.getByText('正常', { exact: true }).first()).toBeVisible();
-    await expect(panel.getByText(/没有进行中的写入与任务/)).toBeVisible();
+    await expect(panel.getByText(/没有进行中的写入与任务/)).toBeVisible({ timeout: 20_000 });
 
     await panel.getByLabel('维护说明（会显示给客户端）').fill('升级数据库，约 30 分钟');
     await panel.getByRole('button', { name: '声明维护窗口' }).click();

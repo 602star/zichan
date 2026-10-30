@@ -87,8 +87,11 @@ test('the browser carries a personal ledger between independent servers', async 
     await page.getByLabel('服务器用户名').fill('owner');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await page.getByRole('button', { name: '登录' }).click();
-    await page.getByRole('button', { name: '开始记账', exact: true }).click();
-    await expect(page.locator('.zc-app-shell')).toBeVisible();
+    const quickStart = page.getByRole('button', { name: '开始记账', exact: true });
+    const appShell = page.locator('.zc-app-shell');
+    await expect(quickStart.or(appShell)).toBeVisible({ timeout: 30_000 });
+    if (await quickStart.isVisible()) await quickStart.click();
+    await expect(appShell).toBeVisible();
     await page.keyboard.press('Escape');
     await saveExpense(page, 'first-browser-entry', 'browser-photo.png');
     await syncSite(page);

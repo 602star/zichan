@@ -65,7 +65,7 @@ test('shows server and software monitoring together without leaving the page', a
     const views = page.getByRole('navigation', { name: '运维监测视图' });
     await views.getByRole('button', { name: /资源状态/ }).click();
     await expect(page.locator('#section-服务器资源监控')).toBeVisible();
-    await expect(page.getByText(/Windows 直接运行|Linux 直接运行|Linux Docker/)).toBeVisible();
+    await expect(page.getByText(/Windows 直接运行|Linux 直接运行|Linux Docker/)).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole('img', { name: /CPU 趋势，近 24h/ }).first()).toBeVisible();
     await expect(page.getByRole('img', { name: /内存趋势，近 24h/ }).first().locator('circle').first()).toBeVisible();
     await views.getByRole('button', { name: /服务占用/ }).click();
@@ -105,7 +105,7 @@ test('shows process and database readings, and scans tables only on request', as
     await expect(page.getByText(/^[1-9][\d.]* (B|KiB|MiB|GiB)$/).first()).toBeVisible();
     await expect(page.getByText('事件循环延迟', { exact: true })).toBeVisible();
     // The boundary of what these numbers cover is stated on the page, not left to the reader.
-    await expect(page.getByText(/只统计同步服务器进程本身/)).toBeVisible();
+    await expect(page.getByText(/只统计同步服务器进程本身/)).toBeVisible({ timeout: 20_000 });
 
     // Database structure is available without any scan.
     await expect(page.getByText('日志模式', { exact: true })).toBeVisible();

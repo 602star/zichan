@@ -636,6 +636,7 @@ export function AddConversionModal({
 
   async function save() {
     if (completed.current) return;
+    if (creatingAssetCode !== null) return;
     if (draftState.pending || draftState.conflict) { setErr('请先处理草稿恢复与版本差异'); return; }
     setSaving(true);
     setErr(null);
@@ -971,7 +972,7 @@ export function AddConversionModal({
           )}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
             <button onClick={requestClose} disabled={saving} style={secondaryButton}>取消</button>
-            <button onClick={() => void save()} disabled={saving || completed.current} style={{ ...primaryButton, opacity: saving ? 0.6 : 1 }}>{saving ? '处理中…' : initial ? '预览影响' : '保存转换'}</button>
+            <button onClick={() => void save()} disabled={saving || creatingAssetCode !== null || completed.current} style={{ ...primaryButton, opacity: saving || creatingAssetCode !== null ? 0.6 : 1 }}>{saving || creatingAssetCode !== null ? '处理中…' : initial ? '预览影响' : '保存转换'}</button>
           </div>
         </div>
       {(draftState.error || draftState.status) && <div role={draftState.error ? 'alert' : 'status'}>{draftState.error || draftState.status}</div>}
