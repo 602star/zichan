@@ -2,7 +2,7 @@
 
 SQLite persistence for the ledger. Implements the core's storage port
 ([`LedgerStore`](../packages/core/src/storage.ts)) so business logic never touches
-SQL. See [`data-model.md`](data-model.md) for the logical model this persists.
+SQL. See [`data-model.md`](legacy-design/data-model.md) for the logical model this persists.
 
 ## 分层
 
@@ -269,14 +269,14 @@ doctor 用「真相」（steps + consumptions）重算来校验/修复：
 - `pushReplica()` 只发送已封口且该副本未确认的提交，按内容哈希幂等确认。
 - `syncReplicas()` 统一执行 pull-all、apply、push-all、re-pull 和收敛校验；健康服务器不受单点故障阻塞。
 - 传输实现为 `memoryCommitTransport()`（测试）和 `httpCommitTransport()`（通过 HTTP v3 API 传递 AES-GCM E2E 的 v2 提交信封，连接
-  [`@zichan/sync-server`](cloud-sync.md)）。
+  [`@zichan/sync-server`](architecture/cloud-sync.md)）。
 
 附件正文不进入提交 DAG。`attachment-sync.ts` 在提交收敛后按服务器分别派生 HMAC 对象 ID 和 AES-GCM 密钥，
 以 4 MiB 分块断点上传；缩略图自动补齐，正文按查看/导出或服务器中继需求下载。删除先进入本机和远端回收区，
 开放冲突分支中的附件引用同样受保护。
 
 整库快照、旧事件端点和 LWW 状态同步已删除；备份只负责导入、精确恢复和恢复演练。
-完整协议、身份与冲突规则见 [`event-sync-design.md`](event-sync-design.md)。测试覆盖单服务器收敛、
+提交图设计与身份规则见[同步提交图设计](legacy-design/event-sync-design.md)，服务器现行接口见[云同步](architecture/cloud-sync.md)。测试覆盖单服务器收敛、
 两服务器 N 向中继、原子提交、后代隔离、显式合并、远端自动关冲突、账本身份拒绝及确认后换账本。
 
 ## 用法

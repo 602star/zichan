@@ -37,6 +37,7 @@ apps/desktop/src-tauri/tauri.installer.signing.generated.json
 .vscode/
 .idea/
 .claude/
+memory/
 # local caches (never commit)
 .npm-cache/
 .playwright-browsers/

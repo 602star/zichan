@@ -40,9 +40,9 @@ web
 
 ## Evidence on Hand
 
-- 现行账号和离线行为：[Web 账号 v2](../../docs/web-account-v2.md)、[账本保护与离线访问](../../docs/ledger-protection.md)。
-- 现有功能与多端界面：[Web 应用](../../docs/web.md)、[项目 README](../../README.md)、`src/main.tsx`。
-- 金额与资产计算口径：`../../packages/core/src/` 及 `../../docs/data-model.md`；后者含历史方案，具体当前行为应以实现和现行文档为准。
+- 现行账号和离线行为：[Web 账号 v2](../../docs/guides/web-account-v2.md)、[账本保护与离线访问](../../docs/guides/ledger-protection.md)。
+- 现有功能与多端界面：[Web 应用](../../docs/guides/web.md)、[项目 README](../../README.md)、`src/main.tsx`。
+- 金额与资产计算口径：`../../packages/core/src/` 及 `../../docs/legacy-design/data-model.md`；后者含历史方案，具体当前行为应以实现和现行文档为准。
 - 产品已有实际界面和本地设计原型；本文件不定义或替换其视觉系统。
 
 ## Product Principles

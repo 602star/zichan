@@ -1,7 +1,7 @@
 /**
  * @zichan/core — platform-agnostic data model + lifecycle calculations for the
  * multi-asset lifecycle ledger. No UI, no platform/storage deps: web, desktop,
- * and mobile shells all import from here. See docs/data-model.md.
+ * and mobile shells all import from here. See docs/legacy-design/data-model.md.
  */
 export * from './types.js';
 export * from './fixed-components.js';

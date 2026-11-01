@@ -1,4 +1,4 @@
-资产生命周期 0.2.0 Windows x64 完全便携版
+资产生命周期 0.3.0 Windows x64 完全便携版
 ===========================================
 
 一、启动
@@ -76,6 +76,6 @@ Evergreen；若系统没有可用运行时，应用会提示后退出，不会�
 
 可用 PowerShell 校验下载文件：
 
-  Get-FileHash -Algorithm SHA256 .\资产生命周期_0.2.0_windows-x64_portable.zip
+  Get-FileHash -Algorithm SHA256 .\资产生命周期_0.3.0_windows-x64_portable.zip
 
 结果应与同目录 .zip.sha256 文件的第一列完全一致。

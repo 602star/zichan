@@ -1,7 +1,6 @@
-# 工作日志 Worklog
+# 工作日志
 
-A running record of what the coding agent did on this project — what changed, why, and how
-it was verified. Newest entries first. (Requested: “记录你做什么操作”.)
+记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
 ## 2026-09-29 — 重复启动复用已有服务
 
@@ -2333,7 +2332,7 @@ error: TypeError: Cannot read properties of null (reading 'open')
 - 统一当前文档中的云端托管、私密恢复码及独立管理员入口；旧日期条目仅作历史操作记录，不代表现行设计。
 - 补全主动改密、自助设备撤销、唯一 Owner 本机恢复、生产 Web 离线资源和原生离线入口。
 - 完成隔离 HTTPS 备份恢复、手机 360/390 px 和真实 Windows 便携目录移动、离线冷启动、强制退出后恢复验收；测量并优化大账本计算和密码库加载。
-- 最终全量回归发现两个浏览器等待时序问题，分别补上替换后的重载等待、旧页面关闭后的 Service Worker 激活等待，针对性复验通过。最终交付状态持续记录在 [release-readiness.md](release-readiness.md)。
+- 最终全量回归发现两个浏览器等待时序问题，分别补上替换后的重载等待、旧页面关闭后的 Service Worker 激活等待，针对性复验通过。最终交付状态当时记录在[发布准备记录](acceptance/release-readiness.md)。
 ## 2026-09-01 — 快速记账时间推荐与弹窗背景修复
 
 - 修复快速记账只设置宽高、未设置面板背景造成的透明问题；桌面补齐实体背景、边框、圆角和阴影，手机使用带安全区的底部实体面板。

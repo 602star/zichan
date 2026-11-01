@@ -1,5 +1,5 @@
 /**
- * Data model v1 (redesigned). See docs/data-model.md for the rationale and the
+ * Data model v1 (redesigned). See docs/legacy-design/data-model.md for the rationale and the
  * conventions (§0) these types encode. Amounts are decimal strings.
  */
 
