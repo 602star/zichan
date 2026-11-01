@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test as base, expect } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
@@ -10,11 +11,11 @@ export const test = base.extend({
     const server = createSyncServer({ enableWeb: true, webDir: fileURLToPath(new URL('../../../apps/web/dist', import.meta.url)), registrationMode: 'open', ownerSetupToken: setup });
     try {
       await server.ready;
-      await new Promise((done, reject) => { server.server.once('error', reject); server.server.listen(0, '127.0.0.1', done); });
+      await listenOnSafePort(server.server, '127.0.0.1');
       const url = `http://127.0.0.1:${server.server.address().port}`;
       await registerAccount(url, 'test-owner', 'test-owner-password', { ownerSetupToken: setup });
       await use(url);
-    } finally { server.server.closeAllConnections(); await server.close(); }
+    } finally { await closeTestSyncServer(server); }
   },
 });
 export { expect };

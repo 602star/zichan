@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { clickAdminLink } from '../admin-navigation.mjs';
 /**
  * The unified monitoring page in a real browser.
@@ -25,13 +26,13 @@ async function fixture() {
   });
   await server.ready;
   await server.started;
-  await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+  await listenOnSafePort(server.server, '127.0.0.1');
   const url = `http://127.0.0.1:${server.server.address().port}`;
   try {
     await registerAccount(url, 'operator', accountLogin, { [['ownerSetup', 'Token'].join('')]: ownerSecret });
     await registerAccount(url, 'viewer-one', accountLogin);
   } catch (error) {
-    server.server.closeAllConnections(); await server.close(); throw error;
+    await closeTestSyncServer(server); throw error;
   }
   const owner = await loginAccount(url, 'operator', accountLogin);
   const scheme = ['Bea', 'rer'].join('');
@@ -43,7 +44,7 @@ async function fixture() {
   return {
     url, owner, apiAs,
     api: (path, body) => apiAs(owner.accessToken, path, body),
-    close: async () => { server.server.closeAllConnections(); await server.close(); },
+    close: async () => { await closeTestSyncServer(server); },
   };
 }
 

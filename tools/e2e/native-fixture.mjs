@@ -1,6 +1,7 @@
 import { createSyncServer } from '../../apps/sync-server/dist/server.js';
 import { loginAccount, registerAccount } from '../../packages/db/dist/index.js';
 import { resolve } from 'node:path';
+import { closeTestSyncServer } from './safe-listen.mjs';
 const setup = 'native-acceptance-only-owner-00000000000';
 const server = createSyncServer({ dataDir: resolve('.runtime/native-acceptance-server'), registrationMode: 'open', ownerSetupToken: setup });
 await server.ready;
@@ -13,5 +14,5 @@ catch {
 }
 console.log('Native acceptance fixture ready at http://127.0.0.1:19342');
 process.stdin.setEncoding('utf8');
-process.stdin.on('data', async (value) => { if (value.trim() === 'shutdown') { const closing = server.close(); server.server.closeAllConnections(); await closing; process.exit(0); } });
+process.stdin.on('data', async (value) => { if (value.trim() === 'shutdown') { await closeTestSyncServer(server); process.exit(0); } });
 process.stdin.resume();

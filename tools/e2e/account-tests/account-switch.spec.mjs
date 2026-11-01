@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,7 @@ test('registers distinct accounts and keeps their database, keys and caches isol
   const server = createSyncServer({ webDir: resolve(root, 'apps/web/dist'), enableWeb: true, registrationMode: 'open', ownerSetupToken: setup });
   try {
     await server.ready;
-    await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(server.server, '127.0.0.1');
     const url = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(url, 'owner', 'test-owner-password', { ownerSetupToken: setup });
     async function register(username) {
@@ -57,5 +58,5 @@ test('registers distinct accounts and keeps their database, keys and caches isol
     await page.reload();
     await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
     await expect(page.getByLabel('账本密码', { exact: true })).toHaveCount(0);
-  } finally { server.server.closeAllConnections(); await server.close(); }
+  } finally { await closeTestSyncServer(server); }
 });

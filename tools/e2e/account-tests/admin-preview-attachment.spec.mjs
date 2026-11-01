@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -47,7 +48,7 @@ async function listen() {
   });
   await instance.ready;
   await instance.started;
-  await new Promise((done) => instance.server.listen(0, '127.0.0.1', done));
+  await listenOnSafePort(instance.server, '127.0.0.1');
   return instance;
 }
 
@@ -195,7 +196,6 @@ test('an administrator downloads a user attachment from the read-only preview', 
     expect((await closed).status()).toBe(200);
   } finally {
     await page.close();
-    server.server.closeAllConnections();
-    await server.close();
+    await closeTestSyncServer(server);
   }
 });

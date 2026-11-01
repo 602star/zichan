@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 /**
  * Bulk account actions in a real browser.
  *
@@ -24,7 +25,7 @@ async function fixture() {
   });
   await server.ready;
   await server.started;
-  await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+  await listenOnSafePort(server.server, '127.0.0.1');
   const url = `http://127.0.0.1:${server.server.address().port}`;
   try {
     await registerAccount(url, 'operator', password, { ownerSetupToken: setupToken });
@@ -35,7 +36,7 @@ async function fixture() {
     }
     await registerAccount(url, 'peer-admin', password);
   } catch (error) {
-    server.server.closeAllConnections(); await server.close(); throw error;
+    await closeTestSyncServer(server); throw error;
   }
   const owner = await loginAccount(url, 'operator', password);
   const api = (path, body) => fetch(`${url}/api/admin${path}`, {
@@ -44,7 +45,7 @@ async function fixture() {
     body: JSON.stringify(body ?? {}),
   });
   const read = (path) => fetch(`${url}/api/admin${path}`, { headers: { Authorization: `Bearer ${owner.accessToken}` } });
-  return { url, api, read, close: async () => { server.server.closeAllConnections(); await server.close(); } };
+  return { url, api, read, close: async () => { await closeTestSyncServer(server); } };
 }
 
 async function signIn(page, url) {

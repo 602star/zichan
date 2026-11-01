@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,7 +14,7 @@ for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, ini
   const fits = async () => expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   try {
     await server.ready;
-    await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(server.server, '127.0.0.1');
     const url = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(url, 'owner', 'owner-test-password', { ownerSetupToken: setup });
     await registerAccount(url, 'mobile-user', 'account-test-password');
@@ -98,5 +99,5 @@ for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, ini
     await expect(page.getByRole('region', { name: '账本保护' })).toBeVisible();
     await fits();
     await page.screenshot({ path: testInfo.outputPath('mobile-sync.png') });
-  } finally { await page.close(); const closing = server.close(); server.server.closeAllConnections(); await closing; }
+  } finally { await page.close(); await closeTestSyncServer(server); }
 });

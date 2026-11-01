@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,7 +32,7 @@ async function listen(options = {}) {
   });
   await instance.ready;
   await instance.started;
-  await new Promise((done) => instance.server.listen(0, '127.0.0.1', done));
+  await listenOnSafePort(instance.server, '127.0.0.1');
   return instance;
 }
 
@@ -131,8 +132,7 @@ test('an administrator opens a user ledger as a read-only preview and can close 
     await expect(page.getByLabel('查看原因')).toBeVisible();
     await expect(page.locator('.zc-app-shell')).toHaveCount(0);
   } finally {
-    server.server.closeAllConnections();
-    await server.close();
+    await closeTestSyncServer(server);
   }
 });
 
@@ -155,7 +155,6 @@ test('a private-mode account is refused with a reason instead of an empty ledger
     await expect(page.getByRole('alert')).toContainText('托管');
     await expect(page.locator('.zc-app-shell')).toHaveCount(0);
   } finally {
-    server.server.closeAllConnections();
-    await server.close();
+    await closeTestSyncServer(server);
   }
 });

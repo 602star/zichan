@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,10 +17,11 @@ async function fixture(page) {
   const directory = mkdtempSync(join(tmpdir(), 'zichan-admin-workflows-'));
   const server = createSyncServer({ dataDir: directory, webDir: resolve(root, 'apps/web/dist'), enableWeb: true, registrationMode: 'open', ownerSetupToken: setup });
   await server.ready; await server.started;
-  await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+  await listenOnSafePort(server.server, '127.0.0.1');
   const url = `http://127.0.0.1:${server.server.address().port}`;
   const close = async () => {
-    await page.close(); server.server.closeAllConnections(); await server.close();
+    await page.close();
+    await closeTestSyncServer(server);
     if (resolve(directory).startsWith(resolve(tmpdir()) + '\\zichan-admin-workflows-') || resolve(directory).startsWith(resolve(tmpdir()) + '/zichan-admin-workflows-')) rmSync(directory, { recursive: true, force: true });
   };
   try {

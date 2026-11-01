@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { clickAdminLink } from '../admin-navigation.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
@@ -13,18 +14,18 @@ async function fixture() {
   const server = createSyncServer({ webDir: resolve(root, 'apps/web/dist'), enableWeb: true, registrationMode: 'open', ownerSetupToken: setup });
   await server.ready;
   await server.started;
-  await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+  await listenOnSafePort(server.server, '127.0.0.1');
   const url = `http://127.0.0.1:${server.server.address().port}`;
   try {
     await registerAccount(url, 'operator', password, { ownerSetupToken: setup });
   } catch (error) {
-    server.server.closeAllConnections(); await server.close(); throw error;
+    await closeTestSyncServer(server); throw error;
   }
   const owner = await loginAccount(url, 'operator', password);
   const api = (path, body) => fetch(`${url}/api/admin${path}`, {
     method: 'POST', headers: { Authorization: `Bearer ${owner.accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}),
   });
-  return { url, api, close: async () => { server.server.closeAllConnections(); await server.close(); } };
+  return { url, api, close: async () => { await closeTestSyncServer(server); } };
 }
 
 async function signIn(page, url) {
@@ -32,7 +33,7 @@ async function signIn(page, url) {
   await page.getByLabel('管理账号用户名').fill('operator');
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible({ timeout: 30_000 });
 }
 
 test('quota typos never reset overrides and settings reject a mixed invalid batch', async ({ page }) => {

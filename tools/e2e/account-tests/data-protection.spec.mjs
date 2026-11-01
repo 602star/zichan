@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +17,7 @@ test('opens backup, sync, recovery and security as settings tabs', async ({ page
   });
   try {
     await server.ready;
-    await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(server.server, '127.0.0.1');
     const url = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(url, 'owner', 'owner-test-password', { ownerSetupToken: 'test-data-protection-owner-0000000' });
     await registerAccount(url, 'protection-user', 'account-test-password');
@@ -56,8 +57,6 @@ test('opens backup, sync, recovery and security as settings tabs', async ({ page
     await restore.getByRole('button', { name: '取消' }).click();
   } finally {
     await page.close();
-    const closing = server.close();
-    server.server.closeAllConnections();
-    await closing;
+    await closeTestSyncServer(server);
   }
 });

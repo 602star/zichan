@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,7 +17,7 @@ test('investigates logs and monitoring with readable views on desktop and mobile
   try {
     await server.ready;
     await server.started;
-    await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(server.server, '127.0.0.1');
     const url = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(url, 'operator', password, { ownerSetupToken });
     await page.goto(`${url}/e2e-private-entry/admin/`);
@@ -74,8 +75,7 @@ test('investigates logs and monitoring with readable views on desktop and mobile
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
     await page.screenshot({ path: testInfo.outputPath('resources-mobile.png'), fullPage: true });
   } finally {
-    server.server.closeAllConnections();
-    await server.close();
+    await closeTestSyncServer(server);
     rmSync(dataDir, { recursive: true, force: true });
   }
 });

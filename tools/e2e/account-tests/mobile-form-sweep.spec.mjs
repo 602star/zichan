@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -374,10 +375,7 @@ for (const vp of VIEWPORTS) {
 
     try {
       await server.ready;
-      await new Promise((done, reject) => {
-        server.server.once('error', reject);
-        server.server.listen(0, '127.0.0.1', done);
-      });
+      await listenOnSafePort(server.server, '127.0.0.1');
       const base = `http://127.0.0.1:${server.server.address().port}`;
       await registerAccount(base, 'sweep-owner', 'sweep-owner-password', { ownerSetupToken });
       await registerAccount(base, 'sweep-user', 'sweep-user-password');
@@ -403,8 +401,7 @@ for (const vp of VIEWPORTS) {
       expect(flat.filter((line) => /没有焦点|不可见|面板滚动区之外|被底部导航遮住|触控高度|没有任何可见提示/.test(line))).toEqual([]);
     } finally {
       await page.close();
-      server.server.closeAllConnections();
-      await server.close();
+      await closeTestSyncServer(server);
     }
   });
 }
@@ -421,10 +418,7 @@ test(`phone 390x844: a record-keeping pass fills and saves at phone size`, async
 
   try {
     await server.ready;
-    await new Promise((done, reject) => {
-      server.server.once('error', reject);
-      server.server.listen(0, '127.0.0.1', done);
-    });
+    await listenOnSafePort(server.server, '127.0.0.1');
     const base = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(base, 'save-owner', 'save-owner-password', { ownerSetupToken });
     await registerAccount(base, 'save-user', 'save-user-password');
@@ -492,7 +486,6 @@ test(`phone 390x844: a record-keeping pass fills and saves at phone size`, async
     // 资产转换 is covered by the sweep above, which runs it at every viewport.
   } finally {
     await page.close();
-    server.server.closeAllConnections();
-    await server.close();
+    await closeTestSyncServer(server);
   }
 });

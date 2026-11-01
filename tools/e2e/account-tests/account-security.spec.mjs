@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +10,7 @@ test('changes account password and revokes only a selected own device', async ({
   const server = createSyncServer({ webDir: resolve(fileURLToPath(new URL('../../../', import.meta.url)), 'apps/web/dist'), enableWeb: true, registrationMode: 'open', ownerSetupToken: setup });
   try {
     await server.ready;
-    await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(server.server, '127.0.0.1');
     const url = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(url, 'owner', 'owner-test-password', { ownerSetupToken: setup });
     await registerAccount(url, 'security-user', 'account-test-password');
@@ -38,5 +39,5 @@ test('changes account password and revokes only a selected own device', async ({
     await page.getByRole('button', { name: '登录', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     await expect(page.getByRole('button', { name: '直接开始记支出', exact: true })).toHaveCount(0);
-  } finally { await page.close(); const closing = server.close(); server.server.closeAllConnections(); await closing; }
+  } finally { await page.close(); await closeTestSyncServer(server); }
 });

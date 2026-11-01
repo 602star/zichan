@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,10 +14,10 @@ test('development proxy supports owner creation, cookie restore and rejects fore
   const previousTarget = process.env.ZICHAN_DEV_API_TARGET;
   try {
     await server.ready;
-    await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(server.server, '127.0.0.1');
     process.env.ZICHAN_DEV_API_TARGET = `http://127.0.0.1:${server.server.address().port}/ledger`;
     const probe = createPortProbe();
-    await new Promise((done) => probe.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(probe, '127.0.0.1');
     const port = probe.address().port;
     await new Promise((done) => probe.close(done));
     vite = await createViteServer({ root: join(root, 'apps/web'), server: { port, host: '127.0.0.1' } });
@@ -45,7 +46,7 @@ test('development proxy supports owner creation, cookie restore and rejects fore
     await expect(page.getByRole('button', { name: '创建所有者并进入后台' })).toHaveCount(0);
     await page.getByLabel('管理账号密码').fill('dev-owner-test-password');
     await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
-    await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible({ timeout: 30_000 });
     const repeated = await context.request.post(`${origin}/api/auth/register/start`, {
       headers: { Origin: origin, 'X-Zichan-Session': 'admin-cookie' },
       data: { username: 'another-owner', registrationRequest: 'test', initializeOwner: true },
@@ -54,7 +55,7 @@ test('development proxy supports owner creation, cookie restore and rejects fore
     expect((await repeated.json()).code).toBe('OWNER_ALREADY_CLAIMED');
     expect((await context.cookies()).find((cookie) => cookie.name === 'zichan_admin_session')).toMatchObject({ httpOnly: true, path: '/api/auth', sameSite: 'Strict' });
     await page.reload();
-    await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible({ timeout: 30_000 });
     const denied = await context.request.post(`${origin}/api/auth/refresh`, {
       headers: { Origin: 'http://foreign.invalid', 'X-Zichan-Session': 'admin-cookie' }, data: {},
     });
@@ -65,7 +66,6 @@ test('development proxy supports owner creation, cookie restore and rejects fore
     if (previousTarget === undefined) delete process.env.ZICHAN_DEV_API_TARGET;
     else process.env.ZICHAN_DEV_API_TARGET = previousTarget;
     await vite?.close();
-    server.server.closeAllConnections();
-    await server.close();
+    await closeTestSyncServer(server);
   }
 });

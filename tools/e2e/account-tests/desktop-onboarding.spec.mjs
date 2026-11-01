@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +10,7 @@ test('desktop account ledger shows the same optional guide without opening a mod
   const server = createSyncServer({ webDir: root, enableWeb: true, registrationMode: 'open', ownerSetupToken: 'test-desktop-onboarding-owner-00000' });
   try {
     await server.ready;
-    await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(server.server, '127.0.0.1');
     const url = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(url, 'owner', 'owner-test-password', { ownerSetupToken: 'test-desktop-onboarding-owner-00000' });
     await registerAccount(url, 'desktop-user', 'account-test-password');
@@ -31,8 +32,6 @@ test('desktop account ledger shows the same optional guide without opening a mod
     await expect(page.getByRole('dialog')).toBeVisible();
   } finally {
     await page.close();
-    const closing = server.close();
-    server.server.closeAllConnections();
-    await closing;
+    await closeTestSyncServer(server);
   }
 });

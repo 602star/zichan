@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { clickAdminLink } from '../admin-navigation.mjs';
 /**
  * Registration growth on the invitations page, in a real browser.
@@ -26,7 +27,7 @@ async function fixture() {
   });
   await server.ready;
   await server.started;
-  await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+  await listenOnSafePort(server.server, '127.0.0.1');
   const url = `http://127.0.0.1:${server.server.address().port}`;
   await registerAccount(url, 'operator', accountPassword, { ownerSetupToken: setupToken });
   const store = new SyncServerStore(server.dataDir + '/server.sqlite', 'invite', server.serverId);
@@ -35,7 +36,7 @@ async function fixture() {
   await store.createInvite('browser-invite-two');
   await store.setInviteDisabled('browser-invite-two', true);
   await registerAccount(url, 'invited-member', accountPassword, { inviteCode: 'browser-invite-one' });
-  return { url, store, close: async () => { await store.close(); server.server.closeAllConnections(); await server.close(); } };
+  return { url, store, close: async () => { await store.close(); await closeTestSyncServer(server); } };
 }
 
 async function signIn(page, url) {

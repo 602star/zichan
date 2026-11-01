@@ -5,20 +5,18 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { chromium } from '@playwright/test';
+import { listenOnSafePort } from './safe-listen.mjs';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
 const counts = (process.argv[2] ?? '1000,10000,50000').split(',').map(Number);
 if (counts.some((count) => !Number.isSafeInteger(count) || count < 1)) throw new Error('Counts must be positive integers');
 
-const port = await new Promise((resolvePort, reject) => {
-  const server = createServer();
-  server.once('error', reject);
-  server.listen(0, '127.0.0.1', () => {
-    const address = server.address();
-    if (!address || typeof address === 'string') return reject(new Error('No benchmark port'));
-    server.close(() => resolvePort(address.port));
-  });
-});
+const portProbe = createServer();
+await listenOnSafePort(portProbe);
+const address = portProbe.address();
+if (!address || typeof address === 'string') throw new Error('No benchmark port');
+const port = address.port;
+await new Promise((resolveClose) => portProbe.close(resolveClose));
 const base = `http://127.0.0.1:${port}`;
 const vite = spawn(process.execPath, [resolve(root, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
   cwd: resolve(root, 'apps/web'),

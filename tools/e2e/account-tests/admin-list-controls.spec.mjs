@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 /**
  * Sorting, page size and column visibility in a real browser.
  *
@@ -39,7 +40,7 @@ async function fixture() {
   });
   await server.ready;
   await server.started;
-  await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+  await listenOnSafePort(server.server, '127.0.0.1');
   const url = `http://127.0.0.1:${server.server.address().port}`;
   try {
     await registerAccount(url, 'operator', accountPassword, { ownerSetupToken: setupToken });
@@ -60,15 +61,14 @@ async function fixture() {
     } finally { await store.close(); }
     await loginAccount(url, 'operator', accountPassword);
   } catch (error) {
-    server.server.closeAllConnections(); await server.close();
+    await closeTestSyncServer(server);
     rmSync(dataDir, { recursive: true, force: true });
     throw error;
   }
   return {
     url,
     close: async () => {
-      server.server.closeAllConnections();
-      await server.close();
+      await closeTestSyncServer(server);
       rmSync(dataDir, { recursive: true, force: true });
     },
   };

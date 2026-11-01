@@ -30,7 +30,17 @@ async function fixture() {
   const url = `http://127.0.0.1:${address.port}`;
   await registerAccount(url, 'owner', accountLogin, { [setupKey]: OWNER_SETUP_TOKEN });
   const owner = await loginAccount(url, 'owner', accountLogin);
-  const api = (path: string) => fetch(`${url}/api/admin${path}`, { headers: { Authorization: `${bearer} ${owner.accessToken}` } });
+  const api = async (path: string) => {
+    const request = () => fetch(`${url}/api/admin${path}`, { headers: { Authorization: `${bearer} ${owner.accessToken}` } });
+    try {
+      return await request();
+    } catch (error) {
+      // Node's pooled loopback socket can race the server's five-second keep-alive close on a
+      // loaded Windows runner. A GET is safe to repeat; a second reset still fails the test.
+      if (!(error instanceof TypeError) || (error.cause as NodeJS.ErrnoException | undefined)?.code !== 'ECONNRESET') throw error;
+      return request();
+    }
+  };
   const post = (path: string, body: unknown) => fetch(`${url}/api/admin${path}`, {
     method: 'POST',
     headers: { Authorization: `${bearer} ${owner.accessToken}`, 'Content-Type': 'application/json' },

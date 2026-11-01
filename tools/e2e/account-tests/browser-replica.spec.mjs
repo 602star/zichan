@@ -1,3 +1,4 @@
+import { closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { randomInt } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -178,8 +179,7 @@ test('the browser carries a personal ledger between independent servers', async 
     await secondPage?.close();
     await page.close();
     await Promise.all(stores.map((store) => store.close()));
-    for (const node of nodes) node.server.closeAllConnections();
-    await Promise.all(nodes.map((node) => node.close()));
+    await Promise.all(nodes.map((node) => closeTestSyncServer(node)));
     const safePrefix = `${resolve(tmpdir())}${sep}zichan-browser-replica-`;
     if (!resolve(dataRoot).startsWith(safePrefix)) throw new Error('unsafe browser replica test directory');
     rmSync(dataRoot, { recursive: true, force: true });

@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { expect, test } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,10 +19,7 @@ test('populated mobile cards keep amounts and actions within the phone viewport'
   });
   try {
     await server.ready;
-    await new Promise((done, reject) => {
-      server.server.once('error', reject);
-      server.server.listen(0, '127.0.0.1', done);
-    });
+    await listenOnSafePort(server.server, '127.0.0.1');
     const base = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(base, 'mobile-card-owner', 'mobile-card-owner-password', { ownerSetupToken });
     await registerAccount(base, 'mobile-card-user', 'mobile-card-user-password');
@@ -141,7 +139,6 @@ test('populated mobile cards keep amounts and actions within the phone viewport'
     await expect(page.getByRole('button', { name: '恢复推荐布局' })).toBeVisible();
   } finally {
     await page.close();
-    server.server.closeAllConnections();
-    await server.close();
+    await closeTestSyncServer(server);
   }
 });

@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -107,10 +108,7 @@ test('every screen keeps the phone/tablet layout contract across the device matr
 
   try {
     await server.ready;
-    await new Promise((done, reject) => {
-      server.server.once('error', reject);
-      server.server.listen(0, '127.0.0.1', done);
-    });
+    await listenOnSafePort(server.server, '127.0.0.1');
     const base = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(base, 'layout-owner', 'layout-owner-password', { ownerSetupToken });
     await registerAccount(base, 'layout-user', 'layout-user-password');
@@ -402,7 +400,6 @@ test('every screen keeps the phone/tablet layout contract across the device matr
     }
   } finally {
     await page.close();
-    server.server.closeAllConnections();
-    await server.close();
+    await closeTestSyncServer(server);
   }
 });

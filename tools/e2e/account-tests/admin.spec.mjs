@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { clickAdminLink } from '../admin-navigation.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
@@ -16,7 +17,7 @@ async function listen(options) {
   const instance = createSyncServer({ webDir: resolve(root, 'apps/web/dist'), enableWeb: true, ownerSetupToken: setupToken, ...options });
   await instance.ready;
   await instance.started;
-  await new Promise((done) => instance.server.listen(0, '127.0.0.1', done));
+  await listenOnSafePort(instance.server, '127.0.0.1');
   return instance;
 }
 
@@ -51,7 +52,7 @@ test.beforeAll(async () => {
   // The second-factor case owns this account; the other cases keep signing in as the bare owner.
   await registerAccount(baseUrl, 'mfa-admin', password);
 });
-test.afterAll(async () => { server?.server.closeAllConnections(); await server?.close(); });
+test.afterAll(async () => { if (server) await closeTestSyncServer(server); });
 
 test('initializes the owner in the browser, then keeps every management page on its own URL', async ({ page }) => {
   // A server without an owner shows the initialization form; no setup secret is required.
@@ -106,7 +107,7 @@ test('initializes the owner in the browser, then keeps every management page on 
     await page.getByLabel('管理后台安全路径').fill('admin1');
     await page.getByRole('button', { name: '保存本组设置' }).click();
     await expect(page).toHaveURL(/\/ledger\/admin1\/admin\/settings\?group=security$/);
-  } finally { fresh.server.closeAllConnections(); await fresh.close(); }
+  } finally { await closeTestSyncServer(fresh); }
 });
 
 test('runs the daily management work: policy, invites, roles, quotas and audit', async ({ page }) => {

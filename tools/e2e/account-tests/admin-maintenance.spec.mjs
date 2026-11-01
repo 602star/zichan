@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 /**
  * The maintenance window in a real browser.
  *
@@ -24,13 +25,13 @@ async function fixture() {
   });
   await server.ready;
   await server.started;
-  await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+  await listenOnSafePort(server.server, '127.0.0.1');
   const url = `http://127.0.0.1:${server.server.address().port}`;
   try {
     await registerAccount(url, 'operator', password, { ownerSetupToken: setupToken });
     await registerAccount(url, 'member', password);
   } catch (error) {
-    server.server.closeAllConnections(); await server.close(); throw error;
+    await closeTestSyncServer(server); throw error;
   }
   const owner = await loginAccount(url, 'operator', password);
   const member = await loginAccount(url, 'member', password);
@@ -39,7 +40,7 @@ async function fixture() {
   const clientWrite = () => fetch(`${url}/api/v3/commits`, {
     method: 'POST', headers: { Authorization: `${authorization} ${member.accessToken}`, 'Content-Type': 'application/json' },
   });
-  return { url, clientWrite, close: async () => { server.server.closeAllConnections(); await server.close(); } };
+  return { url, clientWrite, close: async () => { await closeTestSyncServer(server); } };
 }
 
 async function signIn(page, url) {

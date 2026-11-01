@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +25,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     const server = createSyncServer({ webDir: resolve(root, 'apps/web/dist'), enableWeb: true, registrationMode: 'open', ownerSetupToken: setup });
     servers.push(server);
     await server.ready;
-    await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(server.server, '127.0.0.1');
     const url = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(url, 'operator', password, { ownerSetupToken: setup });
     await registerAccount(url, username, password);
@@ -160,6 +161,6 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await expect(page.getByLabel('启用 公网副本', { exact: true })).toHaveCount(0);
   } finally {
     await page.close();
-    for (const server of servers) { server.server.closeAllConnections(); await server.close(); }
+    for (const server of servers) { await closeTestSyncServer(server); }
   }
 });

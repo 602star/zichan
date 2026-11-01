@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +10,7 @@ for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`un
   const server = createSyncServer({ webDir: resolve(fileURLToPath(new URL('../../../', import.meta.url)), 'apps/web/dist'), enableWeb: true, registrationMode: 'open', ownerSetupToken: setup });
   try {
     await server.ready;
-    await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(server.server, '127.0.0.1');
     const url = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(url, 'owner', 'owner-test-password', { ownerSetupToken: setup });
     await registerAccount(url, 'offline-user', 'account-test-password');
@@ -69,5 +70,5 @@ for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`un
       await expect(page.getByText(/服务器身份已变化，请联系部署者/)).toBeVisible();
       await expect(page.getByRole('button', { name: '离线解锁 offline-user 的缓存' })).toHaveCount(0);
     }
-  } finally { await page.close(); const closing = server.close(); server.server.closeAllConnections(); await closing; }
+  } finally { await page.close(); await closeTestSyncServer(server); }
 });

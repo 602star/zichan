@@ -1,3 +1,4 @@
+import { listenOnSafePort } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -11,7 +12,7 @@ const root = fileURLToPath(new URL('../../../', import.meta.url));
 
 async function freePort() {
   const server = createServer();
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await listenOnSafePort(server, '127.0.0.1');
   const port = server.address().port;
   await new Promise((resolve) => server.close(resolve));
   return port;

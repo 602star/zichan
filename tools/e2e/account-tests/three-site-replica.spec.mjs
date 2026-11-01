@@ -1,3 +1,4 @@
+import { closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { randomInt } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -92,7 +93,8 @@ async function revisitSite(page, url) {
   await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
 }
 
-test.setTimeout(150_000);
+// This exercises several real HTTP servers, browser databases and replication rounds.
+test.setTimeout(300_000);
 
 test('records on three separate websites and converges their server replicas', async ({ page }) => {
   page.setDefaultTimeout(20_000);
@@ -188,8 +190,9 @@ test('records on three separate websites and converges their server replicas', a
 
     await revisitSite(page, home.url);
     const hubAddress = new URL(hub.url);
+    const closeHub = new Promise((done, fail) => hub.server.close((error) => error ? fail(error) : done()));
     hub.server.closeAllConnections();
-    await new Promise((done, fail) => hub.server.close((error) => error ? fail(error) : done()));
+    await closeHub;
     await expect(fetch(`${hub.url}/api/health`, { signal: AbortSignal.timeout(1_000) })).rejects.toThrow();
     const homeUsername = (await stores[1].listNodeReplicationLinks())[0].username;
     const officeUsername = (await stores[2].listNodeReplicationLinks())[0].username;
@@ -289,8 +292,7 @@ test('records on three separate websites and converges their server replicas', a
   } finally {
     await page.close();
     await Promise.all(stores.map((store) => store.close()));
-    for (const node of nodes) node.server.closeAllConnections();
-    await Promise.all(nodes.map((node) => node.close()));
+    await Promise.all(nodes.map((node) => closeTestSyncServer(node)));
     const safePrefix = `${resolve(tmpdir())}${sep}zichan-three-site-web-`;
     if (!resolve(dataRoot).startsWith(safePrefix)) throw new Error('unsafe three-site test directory');
     rmSync(dataRoot, { recursive: true, force: true });

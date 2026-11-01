@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { expect, test } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,10 +18,7 @@ test('other master data opens one focused category at a time on phone and deskto
   });
   try {
     await server.ready;
-    await new Promise((done, reject) => {
-      server.server.once('error', reject);
-      server.server.listen(0, '127.0.0.1', done);
-    });
+    await listenOnSafePort(server.server, '127.0.0.1');
     const base = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(base, 'manage-tabs-owner', 'manage-tabs-owner-password', { ownerSetupToken });
     await registerAccount(base, 'manage-tabs-user', 'manage-tabs-user-password');
@@ -77,7 +75,6 @@ test('other master data opens one focused category at a time on phone and deskto
     await expect(panel.getByRole('button', { name: '+ 新增交易模板', exact: true })).toBeVisible();
     await expect(panel.getByRole('button', { name: '+ 新增账户', exact: true })).toHaveCount(0);
   } finally {
-    server.server.closeAllConnections();
-    await server.close();
+    await closeTestSyncServer(server);
   }
 });

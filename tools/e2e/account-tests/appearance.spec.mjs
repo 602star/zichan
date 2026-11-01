@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,17 +32,16 @@ async function fixture() {
   });
   await server.ready;
   await server.started;
-  await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+  await listenOnSafePort(server.server, '127.0.0.1');
   const url = `http://127.0.0.1:${server.server.address().port}`;
   try {
     await registerAccount(url, 'owner', 'owner-test-password', { ownerSetupToken: setup });
     await registerAccount(url, 'operator', password);
   } catch (error) {
-    server.server.closeAllConnections();
-    await server.close();
+    await closeTestSyncServer(server);
     throw error;
   }
-  return { url, close: async () => { server.server.closeAllConnections(); await server.close(); } };
+  return { url, close: async () => { await closeTestSyncServer(server); } };
 }
 
 /** The channels a palette has to reach for dark mode to be real. */
@@ -127,6 +127,8 @@ test('a dark screen survives a reload, and the accent family is a separate axis'
     expect((await readPalette(page)).bg).toBe('#191512');
 
     // Switching the accent family keeps the mode: they are separate axes.
+    await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
+    await page.locator('.zc-sidebar button[title="设置"]').click();
     await page.getByRole('tab', { name: '外观', exact: true }).click();
     await page.getByRole('radio', { name: '鼠尾草 · 苔绿', exact: true }).click();
     await expect.poll(async () => (await readPalette(page)).bg).toBe('#121814');

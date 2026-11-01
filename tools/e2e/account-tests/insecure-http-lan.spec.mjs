@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,10 +43,7 @@ test('plain-HTTP LAN origin unlocks the ledger, saves a record and reloads it', 
   });
   try {
     await server.ready;
-    await new Promise((done, reject) => {
-      server.server.once('error', reject);
-      server.server.listen(0, '0.0.0.0', done);
-    });
+    await listenOnSafePort(server.server, '0.0.0.0');
     const port = server.server.address().port;
     const origin = `http://${address}:${port}`;
     await registerAccount(`http://127.0.0.1:${port}`, 'lan-owner', 'lan-owner-password', { ownerSetupToken });
@@ -115,8 +113,6 @@ test('plain-HTTP LAN origin unlocks the ledger, saves a record and reloads it', 
     await expect(page.getByText(marker, { exact: true })).toBeVisible({ timeout: 30_000 });
   } finally {
     await page.close();
-    const closing = server.close();
-    server.server.closeAllConnections();
-    await closing;
+    await closeTestSyncServer(server);
   }
 });

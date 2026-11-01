@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,7 @@ test('administrator reviews and issues a code, user resets only account credenti
   let recipient;
   try {
     await server.ready;
-    await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(server.server, '127.0.0.1');
     const url = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(url, 'reviewer', 'reviewer-test-password', { ownerSetupToken: setup });
     await registerAccount(url, 'recover-user', 'old-user-test-password');
@@ -48,5 +49,5 @@ test('administrator reviews and issues a code, user resets only account credenti
     await page.clock.fastForward(16 * 60_000);
     await expect(page.getByLabel('本次重置码')).toHaveCount(0);
     await expect(page.getByText('重置码已到期并自动隐藏。如仍需恢复，请重新核实身份后发放。')).toBeVisible();
-  } finally { await recipient?.close(); server.server.closeAllConnections(); await server.close(); }
+  } finally { await recipient?.close(); await closeTestSyncServer(server); }
 });

@@ -1,3 +1,4 @@
+import { listenOnSafePort } from '../safe-listen.mjs';
 import { test, expect, chromium } from '@playwright/test';
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -22,7 +23,7 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
   let upstreamPort;
   const freePort = async () => {
     const socket = createHttp();
-    await new Promise((done) => socket.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(socket, '127.0.0.1');
     const port = socket.address().port;
     await new Promise((done) => socket.close(done));
     return port;
@@ -63,7 +64,7 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
       req.pipe(upstream);
     });
     await start(source);
-    await new Promise((done) => proxy.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(proxy, '127.0.0.1');
     const url = `https://127.0.0.1:${proxy.address().port}`;
     browser = await chromium.launch({ ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}), args: [`--ignore-certificate-errors-spki-list=${pin}`] });
     let context = await browser.newContext();
@@ -107,7 +108,7 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
     await page.getByLabel('服务器用户名').fill('deployment-user');
     await page.getByLabel('服务器账号密码', { exact: true }).fill('deployment-password');
     await page.getByRole('button', { name: '登录', exact: true }).click();
-    await expect(page.locator('.zc-app-shell')).toBeVisible();
+    await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('HTTPS 恢复演练', { exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('https-restored-ledger.png') });
     await testInfo.attach('deployment-evidence', { body: JSON.stringify({ transport: 'HTTPS', certificateTrust: 'isolated SPKI pin', source: 'separate server.mjs process', restore: 'new process and data directory', files: manifest.files.map((f) => f.path), secureCookie: true, freshDeviceRestored: true }, null, 2), contentType: 'application/json' });

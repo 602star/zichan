@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,14 +11,11 @@ let baseUrl;
 test.beforeAll(async () => {
   server = createSyncServer({ webDir: resolve(root, 'apps/web/dist'), enableWeb: true, basePath: '/ledger' });
   await server.ready;
-  await new Promise((resolveListen) => server.server.listen(0, '127.0.0.1', resolveListen));
+  await listenOnSafePort(server.server, '127.0.0.1');
   baseUrl = `http://127.0.0.1:${server.server.address().port}`;
 });
 
-test.afterAll(async () => {
-  server?.server.closeAllConnections();
-  await server?.close();
-});
+test.afterAll(async () => { if (server) await closeTestSyncServer(server); });
 
 test('uses real same-origin browser cookies without storing account passwords or exposing refresh secrets', async ({ page, context }) => {
   const password = 'browser-test-account-password';

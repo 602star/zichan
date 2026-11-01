@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,7 +16,7 @@ for (const width of [1280, 390]) {
     const server = createSyncServer({ dataDir, webDir: resolve(root, 'apps/web/dist'), enableWeb: true, registrationMode: 'open', ownerSetupToken: 'executor-ui-setup-token-000000000' });
     try {
       await server.ready; await server.started;
-      await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+      await listenOnSafePort(server.server, '127.0.0.1');
       const url = `http://127.0.0.1:${server.server.address().port}`;
       await registerAccount(url, 'operator', 'executor-ui-password-0000000', { ownerSetupToken: 'executor-ui-setup-token-000000000' });
       await page.setViewportSize({ width, height: 900 });
@@ -44,7 +45,7 @@ for (const width of [1280, 390]) {
       await page.reload();
       await expect(panel).toContainText('执行异常'); await expect(panel).toContainText('disk full');
     } finally {
-      await page.close(); server.server.closeAllConnections(); await server.close();
+      await page.close(); await closeTestSyncServer(server);
       if (!resolve(dataDir).startsWith(resolve(tmpdir()) + (process.platform === 'win32' ? '\\' : '/') + 'zichan-executor-ui-')) throw new Error('unsafe temporary path');
       rmSync(dataDir, { recursive: true, force: true });
     }

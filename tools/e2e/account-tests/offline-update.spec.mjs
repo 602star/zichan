@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { mkdtempSync, cpSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -12,7 +13,7 @@ test('update one page while another keeps its old shell, then remove unused cach
   const server = createSyncServer({ webDir, enableWeb: true, basePath: '/ledger' });
   try {
     await server.ready;
-    await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(server.server, '127.0.0.1');
     const url = `http://127.0.0.1:${server.server.address().port}/ledger/app/`;
     await page.goto(url);
     await page.evaluate(async () => { await navigator.serviceWorker.ready; });
@@ -52,9 +53,7 @@ test('update one page while another keeps its old shell, then remove unused cach
     await expect.poll(() => page.evaluate(() => caches.keys())).toEqual(['zichan-shell:/ledger/app/:acceptance-update']);
   } finally {
     await context.close();
-    const closing = server.close();
-    server.server.closeAllConnections();
-    await closing;
+    await closeTestSyncServer(server);
     rmSync(temporary, { recursive: true, force: true });
   }
 });
@@ -77,7 +76,7 @@ test('a legacy worker can migrate without closing every tab', async ({ page, con
   const server = createSyncServer({ webDir, enableWeb: true, basePath: '/ledger' });
   try {
     await server.ready;
-    await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+    await listenOnSafePort(server.server, '127.0.0.1');
     const url = `http://127.0.0.1:${server.server.address().port}/ledger/app/`;
     await page.goto(url);
     await page.evaluate(async () => { await navigator.serviceWorker.ready; });
@@ -93,9 +92,7 @@ test('a legacy worker can migrate without closing every tab', async ({ page, con
     await expect(page).toHaveTitle('Migrated release');
   } finally {
     await context.close();
-    const closing = server.close();
-    server.server.closeAllConnections();
-    await closing;
+    await closeTestSyncServer(server);
     rmSync(temporary, { recursive: true, force: true });
   }
 });

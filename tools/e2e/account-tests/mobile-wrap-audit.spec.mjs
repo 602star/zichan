@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { expect, test } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -18,10 +19,7 @@ test('audit short Chinese labels on phone screens', async ({ page }) => {
   });
   try {
     await server.ready;
-    await new Promise((done, reject) => {
-      server.server.once('error', reject);
-      server.server.listen(0, '127.0.0.1', done);
-    });
+    await listenOnSafePort(server.server, '127.0.0.1');
     const base = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(base, 'wrap-owner', 'wrap-owner-password', { ownerSetupToken });
     await registerAccount(base, 'wrap-user', 'wrap-user-password');
@@ -79,7 +77,6 @@ test('audit short Chinese labels on phone screens', async ({ page }) => {
       }
     }
   } finally {
-    server.server.closeAllConnections();
-    await server.close();
+    await closeTestSyncServer(server);
   }
 });

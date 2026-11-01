@@ -1,3 +1,4 @@
+import { closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { randomInt } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -111,8 +112,7 @@ test('a new user sees simple server-copy status after administrators join three 
   } finally {
     await page.close();
     await Promise.all(stores.map((store) => store.close()));
-    for (const node of nodes) node.server.closeAllConnections();
-    await Promise.all(nodes.map((node) => node.close()));
+    await Promise.all(nodes.map((node) => closeTestSyncServer(node)));
     const safePrefix = `${resolve(tmpdir())}${sep}zichan-replica-join-ui-`;
     if (!resolve(dataRoot).startsWith(safePrefix)) throw new Error('unsafe replica join test directory');
     rmSync(dataRoot, { recursive: true, force: true });

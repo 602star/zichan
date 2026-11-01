@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { networkInterfaces } from 'node:os';
 import { resolve } from 'node:path';
@@ -21,10 +22,7 @@ test('new account opens its ledger over plain LAN HTTP without a device password
   });
   try {
     await server.ready;
-    await new Promise((done, reject) => {
-      server.server.once('error', reject);
-      server.server.listen(0, '0.0.0.0', done);
-    });
+    await listenOnSafePort(server.server, '0.0.0.0');
     const base = `http://${lanAddress}:${server.server.address().port}`;
     await registerAccount(base, 'lan-owner', 'lan-owner-password', { ownerSetupToken });
     await page.setViewportSize({ width: 390, height: 844 });
@@ -51,7 +49,6 @@ test('new account opens its ledger over plain LAN HTTP without a device password
     await expect(page.getByText('数据库初始化失败')).toHaveCount(0);
     await expect(page.getByText('解锁本机账本')).toHaveCount(0);
   } finally {
-    server.server.closeAllConnections();
-    await server.close();
+    await closeTestSyncServer(server);
   }
 });

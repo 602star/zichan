@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 /**
  * The console's "change my own password" entry point in a real browser.
  *
@@ -27,14 +28,14 @@ async function fixture() {
   });
   await server.ready;
   await server.started;
-  await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+  await listenOnSafePort(server.server, '127.0.0.1');
   const url = `http://127.0.0.1:${server.server.address().port}`;
   try {
     await registerAccount(url, 'operator', accountPassword, { ownerSetupToken: setupToken });
   } catch (error) {
-    server.server.closeAllConnections(); await server.close(); throw error;
+    await closeTestSyncServer(server); throw error;
   }
-  return { url, close: async () => { server.server.closeAllConnections(); await server.close(); } };
+  return { url, close: async () => { await closeTestSyncServer(server); } };
 }
 
 async function signIn(page, url, password = accountPassword) {

@@ -1,3 +1,4 @@
+import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,9 +14,9 @@ async function fixture(page) {
   const server = createSyncServer({ webDir: resolve(root, 'apps/web/dist'), enableWeb: true, registrationMode: 'open', ownerSetupToken: token });
   await server.ready;
   await server.started;
-  await new Promise((done) => server.server.listen(0, '127.0.0.1', done));
+  await listenOnSafePort(server.server, '127.0.0.1');
   const url = `http://127.0.0.1:${server.server.address().port}`;
-  const close = async () => { await page.close(); server.server.closeAllConnections(); await server.close(); };
+  const close = async () => { await page.close(); await closeTestSyncServer(server); };
   try {
     await registerAccount(url, 'operator', password, { ownerSetupToken: token });
     await registerAccount(url, 'support-user', password);
