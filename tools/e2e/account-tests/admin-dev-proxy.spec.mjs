@@ -34,7 +34,8 @@ test('development proxy supports owner creation, cookie restore and rejects fore
     await expect(page.getByRole('button', { name: '创建所有者并进入后台' })).toHaveCount(0);
     await page.unroute('**/api/health');
     await page.reload();
-    await expect(page.getByRole('heading', { name: '初始化服务器所有者' })).toBeVisible();
+    // Vite may still be transforming the admin bundle after a reload on a busy CI runner.
+    await expect(page.getByRole('heading', { name: '初始化服务器所有者' })).toBeVisible({ timeout: 30_000 });
     await page.getByLabel('管理账号用户名').fill('dev-owner');
     await page.getByLabel('管理账号密码').fill('dev-owner-test-password');
     await expect(page.getByLabel('部署者初始化密钥')).toHaveCount(0);

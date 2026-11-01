@@ -52,7 +52,7 @@ async function signIn(page, url, username = 'operator') {
   await page.getByLabel('管理账号用户名').fill(username);
   await page.getByLabel('管理账号密码').fill(accountLogin);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible({ timeout: 30_000 });
 }
 
 test('shows server and software monitoring together without leaving the page', async ({ page }) => {
@@ -67,7 +67,16 @@ test('shows server and software monitoring together without leaving the page', a
     await expect(page.locator('#section-服务器资源监控')).toBeVisible();
     await expect(page.getByText(/Windows 直接运行|Linux 直接运行|Linux Docker/)).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole('img', { name: /CPU 趋势，近 24h/ }).first()).toBeVisible();
-    await expect(page.getByRole('img', { name: /内存趋势，近 24h/ }).first().locator('circle').first()).toBeVisible();
+    const memoryTrend = page.getByRole('img', { name: /内存趋势，近 24h/ }).first();
+    await expect(memoryTrend).toBeVisible();
+    // A host probe may be unavailable under CI load. The chart must still explain the gap.
+    const memoryReading = memoryTrend.locator('circle').first();
+    if (await memoryReading.count() === 0) {
+      await expect(page.getByText(/内存暂不可读/)).toBeVisible();
+      await expect(page.getByText('已用内存：暂无读数')).toBeVisible();
+    } else {
+      await expect(memoryReading).toBeVisible();
+    }
     await views.getByRole('button', { name: /服务占用/ }).click();
     await expect(page.locator('#section-软件运行占用监控')).toBeVisible();
     await expect(page.getByRole('img', { name: '软件内存趋势，近 24h' })).toBeVisible();

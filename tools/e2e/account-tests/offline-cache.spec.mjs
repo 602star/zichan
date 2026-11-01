@@ -33,9 +33,13 @@ for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`un
       expect(cachedUrls.length).toBeGreaterThan(5);
       expect(cachedUrls.some((value) => value.includes('/api/'))).toBe(false);
       await context.setOffline(false);
-      await expect.poll(async () => (await page.request.get(`${url}/api/health`)).status()).toBe(200);
+      // APIRequestContext has its own network stack; verify that the browser page is online.
+      await expect.poll(() => page.evaluate(async () => {
+        try { return (await fetch('/api/health', { cache: 'no-store' })).status; }
+        catch { return 0; }
+      }), { timeout: 20_000 }).toBe(200);
       await page.reload();
-      await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 15_000 });
+      await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
       return;
     }
     await page.addInitScript((online) => Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => online }), backendFailure === 'http503');

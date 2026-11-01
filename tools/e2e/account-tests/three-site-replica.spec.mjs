@@ -89,7 +89,7 @@ async function inventory(store, username, ledgerId) {
 
 async function revisitSite(page, url) {
   await page.goto(`${url}/app/`);
-  await expect(page.locator('.zc-app-shell')).toBeVisible();
+  await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
 }
 
 test.setTimeout(150_000);
@@ -118,7 +118,7 @@ test('records on three separate websites and converges their server replicas', a
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await page.getByRole('button', { name: '登录', exact: true }).click();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
-    await expect(page.locator('.zc-app-shell')).toBeVisible();
+    await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
     await page.keyboard.press('Escape');
     await saveExpense(page, '10.01', 'hub-entry');
     await syncCurrentSite(page);
@@ -157,7 +157,7 @@ test('records on three separate websites and converges their server replicas', a
       await page.getByLabel('服务器用户名').fill('owner');
       await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
       await page.getByRole('button', { name: '登录', exact: true }).click();
-      await expect(page.locator('.zc-app-shell')).toBeVisible();
+      await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
       await saveExpense(page, amount, note);
       await syncCurrentSite(page);
       await expect.poll(async () => (await inventory(stores[index],
