@@ -5835,7 +5835,7 @@ dependencies = [
 
 [[package]]
 name = "zichan"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "fs2",
  "libsqlite3-sys",

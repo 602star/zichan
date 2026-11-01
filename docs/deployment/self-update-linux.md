@@ -1,6 +1,6 @@
 # Linux 测试机一键自更新（0.3.x）
 
-此流程只用于单实例 Linux/Docker 测试部署。管理后台“系统设置 → 一键更新”读取签名的 0.3.x 清单，下载完整的服务端与 Web 包，安装到独立版本目录，由镜像内固定启动器重启和健康验证。运行程序保存在 `zichan-update-runtime` 卷中；重新创建容器并保留该卷时仍使用已安装版本。生产环境继续使用 [签名镜像部署](production-deployment.md)，本流程不更新 Docker 镜像。
+此流程只用于单实例 Linux/Docker 测试部署。管理后台“系统设置 → 版本更新”读取签名的 0.3.x 清单，下载完整的服务端与 Web 包，安装到独立版本目录，由镜像内固定启动器重启和健康验证。运行程序保存在 `zichan-update-runtime` 卷中；重新创建容器并保留该卷时仍使用已安装版本。生产环境继续使用 [签名镜像部署](production-deployment.md)，本流程不更新 Docker 镜像。
 
 ## 发布格式与信任
 
@@ -38,7 +38,7 @@ node scripts/release/create-update-package.mjs \
   "$HOME/zichan-update-test/feed"
 ```
 
-如果在另一台机器构建，复制 `zichan-0.3.2.json` 和 `latest.json` 到测试机的 feed 目录，**不要复制私钥到运行容器**。在管理后台重新登录所有者账号（安装要求最近 5 分钟内登录），进入“系统设置 → 一键更新”，先“检查更新”，再点“立即更新至 0.3.2”。页面会轮询状态；成功后自动刷新。接口为 `GET /api/admin/updates/check`、`GET /api/admin/updates/status`、`POST /api/admin/updates/apply`，最后一个仅所有者可调用。
+如果在另一台机器构建，复制 `zichan-0.3.2.json` 和 `latest.json` 到测试机的 feed 目录，**不要复制私钥到运行容器**。在管理后台重新登录所有者账号（安装要求最近 5 分钟内登录），进入“系统设置 → 版本更新”，先“检查更新”，再点“立即更新至 0.3.2”。页面会轮询状态；成功后自动刷新。接口为 `GET /api/admin/updates/check`、`GET /api/admin/updates/status`、`POST /api/admin/updates/apply`，最后一个仅所有者可调用。
 
 验收时核对 `/api/health` 的 `version`、`/api/ready`、管理后台与记账入口。执行 `docker compose -f apps/sync-server/docker-compose.self-update.yml up -d --force-recreate --wait` 后再次核对版本，确认卷中安装内容未被镜像初始版本覆盖。可在隔离测试中篡改包字节：安装必须因摘要错误失败，现有服务保持可用。新进程 60 秒内未以目标版本通过健康检查时，启动器切回先前版本并写入 `/app/runtime/update-result.json`；查看容器日志和后台状态核实原因。
 

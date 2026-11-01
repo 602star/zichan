@@ -159,7 +159,8 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
       {group.id === 'security' && role === 'owner' ? <div style={{ ...row, marginBottom: 16 }}>
         <Button onClick={() => navigate('/invites')}>管理注册策略与邀请</Button>
       </div> : null}
-      {group.id === 'sync-group' ? <ServerGroupPanel client={client} role={role} /> : <>
+      {group.id === 'sync-group' ? <ServerGroupPanel client={client} role={role} />
+        : group.id === 'updates' ? <UpdatePanel client={client} role={role} version={data.version.server} /> : <>
       <Panel title={group.label} note="页面保存值优先；尚未保存时使用部署环境值，最后使用内置默认值。">
         <div className="zc-admin-savebar" style={{ ...row, marginTop: 10 }}>
           <Button disabled={saving || payload.loading || payload.stale || !changed.length || role !== 'owner'} onClick={() => { void save(); }}>{saving ? '正在保存…' : '保存本组设置'}</Button>
@@ -250,8 +251,6 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
           <Stat label="强制 HTTPS" value={data.environment['httpsRequired'] ? '是' : '否（显式允许明文 HTTP）'} />
         </div>
       </Panel>
-      <UpdatePanel client={client} role={role} version={data.version.server} />
-
       <Panel title="密钥状态" note="密钥只显示是否已配置，页面不返回密钥本身，也不提供读取用户密钥的入口。">
         <ul style={{ margin: 0, paddingLeft: 18 }}>
           {Object.entries(data.secrets).map(([key, value]) => <li key={key}>{key}：{value === 'configured' ? '已配置' : '未配置'}</li>)}
