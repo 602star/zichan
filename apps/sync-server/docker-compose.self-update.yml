@@ -1,0 +1,55 @@
+name: zichan-update-test
+
+# Isolated Linux test deployment; does not alter docker-compose.prod.yml.
+services:
+  sync-server:
+    build:
+      context: ../..
+      dockerfile: apps/sync-server/Dockerfile.self-update
+    network_mode: host
+    init: true
+    environment:
+      PORT: '8787'
+      HOST: '127.0.0.1'
+      DATA_DIR: /state/server
+      WEB_DIST: /app/runtime/current/web-dist
+      ZICHAN_UPDATE_RUNTIME_DIR: /app/runtime
+      UPDATE_FEED_DIR: /updates
+      UPDATE_PUBLIC_KEY_PATH: /keys/update-public.pem
+      TRUSTED_PROXIES: '127.0.0.1'
+      ALLOW_INSECURE_HTTP: ${ALLOW_INSECURE_HTTP:-0}
+      REGISTRATION_MODE: invite
+      ENABLE_WEB: '1'
+      ENABLE_SYNC: '1'
+      BASE_PATH: ${BASE_PATH:-}
+      ADMIN_ACCESS_PATH: ${ADMIN_ACCESS_PATH:-}
+      ADMIN_BACKUP_DIRECTORY: /backups
+    volumes:
+      - zichan-update-runtime:/app/runtime
+      - zichan-update-state:/state
+      - zichan-update-backups:/backups
+      - type: bind
+        source: ${ZICHAN_UPDATE_FEED_DIR:?Set absolute host feed directory}
+        target: /updates
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${ZICHAN_UPDATE_PUBLIC_KEY_FILE:?Set absolute public key file}
+        target: /keys/update-public.pem
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ['CMD', 'node', '-e', "const b=(process.env.BASE_PATH||'').replace(/\\/$/,'');fetch('http://127.0.0.1:8787'+(b&&!b.startsWith('/')?'/'+b:b)+'/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 30m
+
+volumes:
+  zichan-update-runtime: {}
+  zichan-update-state: {}
+  zichan-update-backups: {}

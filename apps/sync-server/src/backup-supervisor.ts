@@ -113,6 +113,11 @@ export async function runBackupSupervisor(entry: string, dataDir: string, webDir
       instance.once('error', (error) => { clearTimeout(timeout); reject(error); });
       instance.once('exit', (code) => { clearTimeout(timeout); reject(new Error(`HTTP 服务启动失败（${String(code)}）`)); });
       instance.on('message', (message: unknown) => {
+        if (typeof message === 'object' && message && 'updateRestart' in message
+          && message.updateRestart === true && process.env.ZICHAN_UPDATE_LAUNCHER === '1') {
+          requestShutdown('signed update installed');
+          return;
+        }
         if (typeof message !== 'object' || !message || !('backupPlan' in message)) return;
         plan = (message as { backupPlan: BackupPlan }).backupPlan;
         settle();

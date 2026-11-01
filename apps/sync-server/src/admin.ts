@@ -3,7 +3,7 @@
  *
  * Every route here is administrative: the role checks in `handle` gate the whole
  * surface, target-scoped authorization stays on the server, and no route can read
- * plaintext ledger data or call something that must stop this process first.
+ * plaintext ledger data. The owner-only signed update route requests a supervised restart.
  */
 import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -41,6 +41,7 @@ import {
 import type { MfaService } from './mfa.js';
 import type { LedgerPreviewRegistry, LedgerPreviewSession } from './ledger-preview.js';
 import type { createSystemMonitor } from './system-monitor.js';
+import { createUpdater } from './updater.js';
 
 /** Task types that only the server owner may create, re-run or cancel. */
 const JOB_OWNER_ONLY: AdminJobType[] = ['backup.verify', 'restore.drill'];
@@ -263,6 +264,7 @@ export function describeAudit(
 export function createAdminRouter(deps: AdminRouterDeps) {
   const { store, blobStore, settings, metrics, jobs, log } = deps;
   const systemMonitor = deps.systemMonitor;
+  const updater = createUpdater(deps.version, deps.dataDir);
 
   const accountLabel = async (accountId: string | null | undefined, cache: Map<string, string>): Promise<string> => {
     if (!accountId) return '';
@@ -343,6 +345,29 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         throw new ServerStoreError('RECENT_LOGIN_REQUIRED', 403, '此敏感操作需要最近 5 分钟内的登录，请退出管理后台并重新登录');
       }
     };
+
+    if (suffix === '/updates/status' && req.method === 'GET') {
+      return send(res, 200, await updater.status());
+    }
+    if (suffix === '/updates/check' && req.method === 'GET') {
+      return send(res, 200, await updater.check());
+    }
+    if (suffix === '/updates/apply' && req.method === 'POST') {
+      if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '只有服务器所有者可以更新服务' });
+      await assertRecentLogin();
+      if (!updater.enabled) return send(res, 409, { code: 'UPDATE_DISABLED', error: '此部署未启用自更新' });
+      const body = await readBody(req, 1024);
+      if (typeof body.version !== 'string') return send(res, 400, { code: 'INVALID_VERSION', error: '请选择签名清单中的版本' });
+      let result: Awaited<ReturnType<typeof updater.apply>>;
+      try { result = await updater.apply(body.version, auth.user.username); }
+      catch (error) {
+        throw new ServerStoreError('UPDATE_CONFLICT', 409, error instanceof Error ? error.message : String(error));
+      }
+      await log('info', 'server_update_requested', 'Signed server update requested', {
+        username: auth.user.username, detail: { taskId: result.taskId, version: body.version },
+      });
+      return send(res, 202, result);
+    }
 
     const assertManageTarget = async (username: string, quota = false) => {
       const target = await store.getUser(username);

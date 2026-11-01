@@ -876,6 +876,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         return send(res, 200, {
           ok: true,
           serverId,
+          version: serverVersion,
           serverPublicKey: opaqueServerPublicKey,
           nodePublicKey,
           claimed,

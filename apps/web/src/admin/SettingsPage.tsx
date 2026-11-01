@@ -10,6 +10,7 @@ import { ServerGroupPanel } from './ServerGroupPanel.js';
 import { NotificationChannelsEditor } from './NotificationChannelsEditor.js';
 import { adminBasePath } from './router.js';
 import { useTabSet } from '../ui/useTabSet.js';
+import { UpdatePanel } from './UpdatePanel.js';
 
 function openUpdatedAdminPath(segment: string, previousSegment: string): void {
   const currentBase = adminBasePath(window.location);
@@ -249,6 +250,7 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
           <Stat label="强制 HTTPS" value={data.environment['httpsRequired'] ? '是' : '否（显式允许明文 HTTP）'} />
         </div>
       </Panel>
+      <UpdatePanel client={client} role={role} version={data.version.server} />
 
       <Panel title="密钥状态" note="密钥只显示是否已配置，页面不返回密钥本身，也不提供读取用户密钥的入口。">
         <ul style={{ margin: 0, paddingLeft: 18 }}>

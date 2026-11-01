@@ -43,6 +43,20 @@ const waitForJob = async (f: Awaited<ReturnType<typeof fixture>>, jobId: string)
 };
 
 describe('management console operations', () => {
+  it('gates signed updates to the owner and reports unsupported deployments', async () => {
+    const f = await fixture();
+    try {
+      const status = await f.api(f.owner.accessToken, '/updates/status');
+      expect(status.status).toBe(200);
+      expect(await status.json()).toMatchObject({ enabled: false, status: { state: 'idle' } });
+      const denied = await f.api(f.manager.accessToken, '/updates/apply', { version: '0.3.2' });
+      expect(denied.status).toBe(403);
+      const unsupported = await f.api(f.owner.accessToken, '/updates/apply', { version: '0.3.2' });
+      expect(unsupported.status).toBe(409);
+      expect(await unsupported.json()).toMatchObject({ code: 'UPDATE_DISABLED' });
+    } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+  });
+
   it('rejects malformed and oversized attachment verification requests without creating a scan', async () => {
     const f = await fixture();
     try {
