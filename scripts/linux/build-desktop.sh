@@ -40,7 +40,7 @@ if [[ "${ZICHAN_UPDATE_TEST:-0}" == 1 ]]; then
     echo 'Expected one finalized AppImage for updater signing.' >&2
     exit 1
   fi
-  npx tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY_PATH" \
+  env -u TAURI_SIGNING_PRIVATE_KEY npx tauri signer sign --private-key-path "$TAURI_SIGNING_PRIVATE_KEY_PATH" \
     --password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" "${appimages[0]}"
 fi
 node scripts/release/verify-linux-artifacts.mjs

@@ -1,6 +1,6 @@
 [package]
 name = "zichan"
-version = "0.3.3"
+version = "0.3.4"
 description = "资产生命周期 · Lifecycle Ledger"
 edition = "2021"
 rust-version = "1.90"

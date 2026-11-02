@@ -139,7 +139,7 @@ export function UpdatePanel({ client, role, version }: { client: AdminClient; ro
     </Panel>
     <Panel title="更新历史" note="记录最近 50 项更新或回滚任务；刷新页面后仍可查看。">
       {history.length ? <ul>{history.map((entry) => <li key={entry.taskId}>
-        {new Date(entry.updatedAt).toLocaleString()} · {entry.operation === 'rollback' ? '回滚' : '更新'} {entry.fromVersion ?? entry.currentVersion} → {entry.targetVersion}
+        {new Date(entry.updatedAt).toLocaleString()} · {entry.operation === 'rollback' ? '回滚' : '更新'} {entry.fromVersion ?? (entry.currentVersion === entry.targetVersion ? '旧版本' : entry.currentVersion)} → {entry.targetVersion}
         {' · '}{labels[entry.state]}{entry.actor ? ` · ${entry.actor}` : ''}{entry.error ? ` · ${entry.error}` : ''}
       </li>)}</ul> : <p>暂无更新记录。</p>}
     </Panel>

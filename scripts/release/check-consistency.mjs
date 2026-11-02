@@ -175,6 +175,13 @@ export async function checkReleaseConsistency(rootDirectory, options = {}) {
   if (tauriConfig.bundle?.windows?.webviewInstallMode?.type !== 'skip') {
     failures.push('apps/desktop/src-tauri/tauri.conf.json must set bundle.windows.webviewInstallMode.type to skip');
   }
+  const updaterTestConfig = await json(join(root, 'apps', 'desktop', 'src-tauri', 'tauri.update-test.conf.json'));
+  const updaterTestKey = (await readFile(join(root, 'apps', 'desktop', 'src-tauri', 'installer', 'update-test.pub'), 'utf8')).trim();
+  if (updaterTestConfig.bundle?.createUpdaterArtifacts !== true
+    || updaterTestConfig.plugins?.updater?.pubkey !== updaterTestKey
+    || JSON.stringify(updaterTestConfig.plugins?.updater?.endpoints) !== '[]') {
+    failures.push('tauri.update-test.conf.json must enable updater artifacts and match the committed test public key');
+  }
   const installerConfig = await json(join(root, 'apps', 'desktop', 'src-tauri', 'tauri.installer.conf.json'));
   const installerMarker = await json(join(root, 'apps', 'desktop', 'src-tauri', 'installer', 'installed-mode.json'));
   if (installerMarker.formatVersion !== 1 || installerMarker.appVersion !== version || installerMarker.architecture !== 'x64') {

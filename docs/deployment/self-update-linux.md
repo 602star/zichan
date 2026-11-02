@@ -29,7 +29,7 @@ docker compose -f apps/sync-server/docker-compose.self-update.yml up -d --build 
 
 ## 制作下一补丁包并更新
 
-在含下一版本（例如 `0.3.3`）的本地提交上构建，保持与测试容器相同的 Node 22/Linux 构建环境。发布包内只含打包好的 Node 服务端与 Web 静态文件，目标容器无需 `npm install`。
+在含下一版本（例如 `0.3.4`）的本地提交上构建，保持与测试容器相同的 Node 22/Linux 构建环境。发布包内只含打包好的 Node 服务端与 Web 静态文件，目标容器无需 `npm install`。
 
 ```bash
 npm ci
@@ -39,7 +39,7 @@ node scripts/release/create-update-package.mjs \
   "$HOME/zichan-update-test/feed"
 ```
 
-如果在另一台机器构建，复制 `zichan-0.3.3.json`、`zichan-0.3.3.feed.json` 和 `latest.json` 到测试机的 feed 目录，**不要复制私钥到运行容器**。在管理后台重新登录所有者账号（安装与回滚要求最近 5 分钟内登录），进入“系统设置 → 版本更新”。页面自动检查，也可手动检查；发现新版本后点“立即更新至 0.3.3”。下载进度和最近 50 次更新记录会显示在页面；成功后自动刷新。接口增加 `GET /api/admin/updates/versions`、`GET /api/admin/updates/history` 与 `POST /api/admin/updates/rollback`。
+如果在另一台机器构建，复制 `zichan-0.3.4.json`、`zichan-0.3.4.feed.json` 和 `latest.json` 到测试机的 feed 目录，**不要复制私钥到运行容器**。在管理后台重新登录所有者账号（安装与回滚要求最近 5 分钟内登录），进入“系统设置 → 版本更新”。页面自动检查，也可手动检查；发现新版本后点“立即更新至 0.3.4”。下载进度和最近 50 次更新记录会显示在页面；成功后自动刷新。接口增加 `GET /api/admin/updates/versions`、`GET /api/admin/updates/history` 与 `POST /api/admin/updates/rollback`。
 
 手动回滚仅允许选择运行卷里已安装的更早 0.3.x 版本，所有者再次点击确认。回滚也经过固定启动器的健康检查；失败时切回原版本。更新源列出的“已发布版本”只是可见信息，未安装的历史版本不会直接拿来回滚。数据库不随程序回滚，先独立备份并确认两个版本使用相同 schema。
 
@@ -59,3 +59,9 @@ docker compose -f apps/sync-server/docker-compose.self-update.github.yml up -d -
 验收时核对 `/api/health` 的 `version`、`/api/ready`、管理后台与记账入口。执行 `docker compose -f apps/sync-server/docker-compose.self-update.yml up -d --force-recreate --wait` 后再次核对版本，确认卷中安装内容未被镜像初始版本覆盖。可在隔离测试中篡改包字节：安装必须因摘要错误失败，现有服务保持可用。新进程 60 秒内未以目标版本通过健康检查时，启动器切回先前版本并写入 `/app/runtime/update-result.json`；查看容器日志和后台状态核实原因。
 
 本机制不自动迁移或回滚数据库。跨 schema 的改动必须先备份并按[升级方案](production-upgrade-1.0.md)评估恢复边界；不能把程序回退当成数据库回退。测试 Compose 与生产 Compose 使用不同项目名和卷。
+
+## 2026-11-02 隔离测试机实测
+
+使用独立 Compose 项目、独立卷和宿主机回环端口 18787。基线镜像为 0.3.1，更新包由同机本地源码构建并以临时 Ed25519 私钥签名。管理后台实际点击完成 0.3.1 → 0.3.3 → 0.3.4、0.3.4 → 0.3.1 回滚、0.3.1 → 0.3.4 再升级；各次启动后 `/api/health` 报告目标版本，`/api/ready` 正常，服务器身份与 schema 27 未变。保留运行卷强制重建容器后仍运行 0.3.4。测试机原有 8787 服务未操作；未访问 GitHub Releases。
+
+0.3.1 固定启动器只写最终结果文件，不写历史日志。0.3.4 服务端会把可读到的旧启动器最终结果补记到历史，但旧版回滚时的中间历史状态可能仍停在“重启并验证中”；不能将旧启动器的历史记录视为完整审计日志。新测试部署应使用带完整历史写入能力的固定启动器基线。

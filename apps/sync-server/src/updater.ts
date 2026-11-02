@@ -66,6 +66,22 @@ async function history(runtime: string): Promise<UpdateStatus[]> {
   } catch { return []; }
 }
 
+interface LauncherResult { taskId: string; version: string; state: 'success' | 'failed'; operation?: 'update' | 'rollback'; error?: string; at: string }
+
+/** Older 0.3.x launchers wrote only the final result, without a history journal. */
+export async function reconcileLauncherResult(runtime: string, currentVersion: string, result: LauncherResult): Promise<UpdateStatus | undefined> {
+  if (result.state === 'success' && result.version !== currentVersion) return undefined;
+  const previous = (await history(runtime)).find((entry) => entry.taskId === result.taskId);
+  const resolved: UpdateStatus = { ...previous, state: result.state, currentVersion,
+    targetVersion: result.version, taskId: result.taskId, operation: result.operation ?? previous?.operation ?? 'update',
+    error: result.error, updatedAt: result.at };
+  if (!previous || previous.state !== result.state) {
+    try { appendJournal(runtime, resolved); }
+    catch (error) { console.error('更新结果历史写入失败', error); }
+  }
+  return resolved;
+}
+
 export function parseRelease(bytes: Buffer, expected: Feed): Release {
   if (createHash('sha256').update(bytes).digest('hex') !== expected.sha256) throw new Error('更新包 SHA256 不匹配');
   const release = JSON.parse(bytes.toString('utf8')) as Release;
@@ -201,20 +217,11 @@ export function createUpdater(currentVersion: string, dataDir: string) {
       return { enabled, status, available: status.state === 'available' };
     }
     try {
-      const result = JSON.parse(await readFile(join(runtime, 'update-result.json'), 'utf8')) as {
-        taskId: string; version: string; state: 'success' | 'failed'; operation?: 'update' | 'rollback'; error?: string; at: string;
-      };
-      if (result.state === 'success' && result.version !== currentVersion) return { enabled, status };
-      const previous = (await history(runtime)).find((entry) => entry.taskId === result.taskId);
-      if (previous && previous.state !== result.state) {
-        try { appendJournal(runtime, { ...previous, state: result.state, currentVersion,
-          operation: result.operation ?? previous.operation, error: result.error, updatedAt: result.at }); }
-        catch (error) { console.error('更新结果历史写入失败', error); }
-      }
+      const result = JSON.parse(await readFile(join(runtime, 'update-result.json'), 'utf8')) as LauncherResult;
+      const completed = await reconcileLauncherResult(runtime, currentVersion, result);
+      if (!completed) return { enabled, status };
       if (status.state !== 'idle') return { enabled, status, available: status.state === 'available' };
-      return { enabled, available: false, status: { state: result.state, currentVersion,
-        fromVersion: previous?.fromVersion, targetVersion: result.version, taskId: result.taskId, operation: result.operation ?? previous?.operation,
-        error: result.error, updatedAt: result.at } };
+      return { enabled, available: false, status: completed };
     } catch { return { enabled, status, available: false }; }
   };
   const versions = async () => {

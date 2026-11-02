@@ -2,5 +2,11 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCRkQ0RjA1M0U1MjA5MTYKUldRV0NWSStCVS85U3dTWFBERHNuamZiZktTclJMVkxUV04wRkRFcHJNTFp6a1U4RjZBY3pXVmMK",
+      "endpoints": []
+    }
   }
 }

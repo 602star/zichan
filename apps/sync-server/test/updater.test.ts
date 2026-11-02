@@ -1,6 +1,9 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { comparePatch, parseFeed, parseRelease, signedFeedText } from '../src/updater.js';
+import { comparePatch, parseFeed, parseRelease, reconcileLauncherResult, signedFeedText } from '../src/updater.js';
 
 const { privateKey, publicKey } = generateKeyPairSync('ed25519');
 const publicPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
@@ -23,6 +26,21 @@ const feed = {
 };
 
 describe('signed 0.3.x self updates', () => {
+  it('records a legacy launcher result without a prior history entry', async () => {
+    const runtime = await mkdtemp(join(tmpdir(), 'zichan-update-history-'));
+    try {
+      const result = { taskId: 'legacy-task', version: '0.3.3', state: 'success' as const,
+        at: '2026-11-02T00:00:00.000Z' };
+      expect(await reconcileLauncherResult(runtime, '0.3.3', result)).toMatchObject({
+        state: 'success', targetVersion: '0.3.3', operation: 'update', taskId: 'legacy-task',
+      });
+      await reconcileLauncherResult(runtime, '0.3.3', result);
+      const lines = (await readFile(join(runtime, 'update-history.jsonl'), 'utf8')).trim().split('\n');
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0]!)).toMatchObject({ state: 'success', targetVersion: '0.3.3' });
+    } finally { await rm(runtime, { recursive: true, force: true }); }
+  });
+
   it('accepts a signed release with the required server and web files', () => {
     expect(comparePatch('0.3.2', '0.3.1')).toBe(1);
     const verified = parseFeed(feed, publicPem);
