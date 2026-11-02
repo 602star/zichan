@@ -17,6 +17,7 @@ import { useCompactView } from './useCompactView.js';
 import { ensureAttachmentBlobAvailable } from '../attachment-sync.js';
 import { buildSyncBaseUrl, loadSyncConnections } from '../sync-config.js';
 import { barcodeScannerAvailable, currentDevicePosition, scanBarcode } from '../device-capabilities.js';
+import { ASSET_PRESETS, ASSET_PRESET_GROUPS, ensureAssetPreset, type AssetPresetCode } from '../assetPresets.js';
 import {
   type FormDraft,
   deleteFormDraft,
@@ -85,6 +86,8 @@ export interface FieldDef {
   defaultValue?: string;
   resetWhen?: string[];
   singleOptionSummary?: boolean;
+  /** Offer presets that are added to the ledger only when selected. */
+  assetPresetOptions?: boolean;
   checkboxValues?: { checked: string; unchecked: string; label: string };
   half?: boolean; // render at half width (two-column grid)
   section?: 'core' | 'more';
@@ -259,7 +262,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   optionalFieldPresets?: { label: string; keys: string[] }[];
 }) {
   const compactView = useCompactView();
-  const { store } = useStore();
+  const { store, bump, preview } = useStore();
   const [duplicates, setDuplicates] = useState<DuplicateMasterDataError | null>(null);
   const [existingChoice, setExistingChoice] = useState<T | undefined>();
   const [saveWarning, setSaveWarning] = useState<string | null>(null);
@@ -295,6 +298,8 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   const [pendingDraft, setPendingDraft] = useState<FormDraft | null>(null);
   const [draftRestoredAt, setDraftRestoredAt] = useState('');
   const [closeOpen, setCloseOpen] = useState(false);
+  const createdAssetOptions = useRef<Record<string, FieldOption[]>>({});
+  const [, setCreatedAssetRevision] = useState(0);
   const creating = isNew ?? !initial;
 
   const fingerprint = formDraftFingerprint(values, fileValues);
@@ -343,7 +348,26 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   const set = (key: string, value: string) => {
     touched.current = true;
     manualFields.current.add(key);
-    setValues((v) => { const next = { ...v, [key]: value }; return normalizeValues(spec.fields, spec.onFieldChange?.(next, key, manualFields.current) ?? next, key); });
+    setValues((v) => {
+      const next = { ...v, [key]: value };
+      const fields = spec.fields.map((field) => field.assetPresetOptions
+        ? { ...field, options: (current: Record<string, string>) => optionsWithCreatedAssets(field, current) }
+        : field);
+      return normalizeValues(fields, spec.onFieldChange?.(next, key, manualFields.current) ?? next, key);
+    });
+  };
+  const optionsWithCreatedAssets = (field: FieldDef, current: Record<string, string>): FieldOption[] => {
+    const options = fieldOptions(field, current);
+    const existing = new Set(options.map((option) => option.value));
+    return [...options, ...(createdAssetOptions.current[field.key] ?? []).filter((option) => !existing.has(option.value))];
+  };
+  const addAssetPreset = async (fieldKey: string, code: AssetPresetCode) => {
+    const { asset } = await ensureAssetPreset(store, code);
+    const prior = createdAssetOptions.current[fieldKey] ?? [];
+    createdAssetOptions.current[fieldKey] = [...prior.filter((option) => option.value !== asset.id), { value: asset.id, label: asset.code }];
+    setCreatedAssetRevision((revision) => revision + 1);
+    set(fieldKey, asset.id);
+    bump();
   };
   const requestClose = () => {
     if (busy || iconBusy) return;
@@ -631,7 +655,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
         <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           {coreFields.map((f) => {
             const fieldId = `${formId}-${f.key}`;
-            const options = fieldOptions(f, values);
+            const options = optionsWithCreatedAssets(f, values);
             return (
               <FormField
                 key={f.key}
@@ -656,6 +680,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                 runDeviceAction={runDeviceAction}
                 error={fieldErrors[f.key]}
                 hint={f.hint ?? optionHint(f, options.length)}
+                onAddAssetPreset={f.assetPresetOptions && !preview ? (code) => addAssetPreset(f.key, code) : undefined}
               />
             );
           })}
@@ -676,7 +701,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
               <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
                 {visibleMoreFields.map((f) => {
                   const fieldId = `${formId}-${f.key}`;
-                  const options = fieldOptions(f, values);
+                  const options = optionsWithCreatedAssets(f, values);
                   return (
                     <FormField
                       key={f.key}
@@ -701,6 +726,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                       runDeviceAction={runDeviceAction}
                       error={fieldErrors[f.key]}
                       hint={f.hint ?? optionHint(f, options.length)}
+                      onAddAssetPreset={f.assetPresetOptions && !preview ? (code) => addAssetPreset(f.key, code) : undefined}
                     />
                   );
                 })}
@@ -810,18 +836,40 @@ function FormField(props: {
   runDeviceAction: (field: FieldDef) => Promise<void>;
   error?: string;
   hint?: string;
+  onAddAssetPreset?: (code: AssetPresetCode) => Promise<void>;
 }) {
   const { f, values, fieldId, options, value, selectedValues, fileRows, set, readFiles, setFileRows, deviceBusy, runDeviceAction, error, hint } = props;
+  const [presetBusy, setPresetBusy] = useState(false);
+  const [presetError, setPresetError] = useState('');
   const binding = f.payeeBinding;
   const suffix = typeof f.suffix === 'function' ? f.suffix(values) : f.suffix;
   const payeeType = typeof binding?.type === 'function' ? binding.type(values) : binding?.type ?? values[binding?.typeKey ?? 'type'] ?? 'expense';
+  const availablePresetGroups = props.onAddAssetPreset ? ASSET_PRESET_GROUPS.map((group) => ({
+    label: group.label,
+    presets: ASSET_PRESETS.filter((preset) => group.codes.includes(preset.code)
+      && !options.some((option) => option.label.trim().toUpperCase() === preset.code)),
+  })).filter((group) => group.presets.length > 0) : [];
+  const chooseSelect = async (next: string) => {
+    const prefix = '__add_asset_preset__:';
+    if (!next.startsWith(prefix)) { setPresetError(''); set(f.key, next); return; }
+    const preset = ASSET_PRESETS.find((row) => row.code === next.slice(prefix.length));
+    if (!preset || !props.onAddAssetPreset) return;
+    setPresetBusy(true);
+    setPresetError('');
+    try { await props.onAddAssetPreset(preset.code); }
+    catch (cause) { setPresetError(cause instanceof Error ? cause.message : '添加币种失败，请重试'); }
+    finally { setPresetBusy(false); }
+  };
   return (
     <div className="zc-form-field" key={f.key} data-form-field={fieldId} style={{ gridColumn: f.half ? 'span 1' : 'span 2' }}>
       <label className="zc-label" htmlFor={fieldId}>{f.type === 'payee' && payeeType === 'income' ? '付款方' : f.label}{f.required && <span style={{ color: 'var(--negative)', marginLeft: 3 }}>*</span>}</label>
       {f.type === 'select' && f.singleOptionSummary && options.length === 1 ? <output id={fieldId} aria-label={f.label} style={{ display: 'block', padding: '8px 0' }}>{options[0]!.label}</output> : f.type === 'select' ? (
-        <select id={fieldId} name={f.key} className="zc-select" required={f.required} value={value} onChange={(e) => set(f.key, e.target.value)}>
+        <select id={fieldId} name={f.key} className="zc-select" required={f.required} disabled={presetBusy} value={value} onChange={(e) => void chooseSelect(e.target.value)}>
           {f.allowEmpty && <option value="">（无）</option>}
           {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          {availablePresetGroups.map((group) => <optgroup key={group.label} label={`添加${group.label}`}>
+            {group.presets.map((preset) => <option key={preset.code} value={`__add_asset_preset__:${preset.code}`}>{preset.code} · {preset.name}</option>)}
+          </optgroup>)}
         </select>
       ) : f.type === 'icon' ? (
         <EntityIconEditor disabled={props.iconDisabled} id={fieldId} value={value} platformId={f.iconKind === 'payee' ? props.entityId : undefined} platformName={f.iconKind === 'payee' ? values.name : undefined}
@@ -935,6 +983,7 @@ function FormField(props: {
         </div>
       )}
       {error && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', marginTop: 4 }}>{error}</div>}
+      {presetError && <div role="alert" style={{ color: 'var(--negative)', fontSize: 'var(--fs-meta)', marginTop: 4 }}>{presetError}</div>}
       {!error && hint && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', marginTop: 4 }}>{hint}</div>}
     </div>
   );

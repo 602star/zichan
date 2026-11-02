@@ -36,12 +36,34 @@ test.describe('touch category selection', () => {
     await expect(entry.getByLabel(/^币种/)).toBeHidden();
     await entry.getByText('更多信息', { exact: true }).click();
     await expect(entry.getByLabel(/^币种/)).toBeVisible();
+    await entry.getByLabel(/^币种/).selectOption('__add_asset_preset__:USD');
+    await expect(entry.getByLabel('当前币种')).toHaveText('美元');
+    await expect(entry.getByLabel(/^币种/).locator('option:checked')).toHaveText('USD');
     await entry.getByLabel(/^分类/).click();
     const picker = page.getByRole('dialog', { name: '选择分类', exact: true });
     await expect(picker.getByRole('button', { name: '关闭分类选择' })).toBeFocused();
     await expect(picker.getByLabel('搜索分类')).not.toBeFocused();
     await picker.getByLabel('搜索分类').fill('交通');
     await expect(picker.getByRole('option').first()).toBeVisible();
+    await picker.getByRole('option').first().click();
+    await entry.getByLabel(/^金额/).fill('118');
+    await entry.getByRole('button', { name: '保存', exact: true }).click();
+    await expect(entry).toBeHidden();
+    await expect(page.locator('#transaction-records')).toContainText('USD');
+  });
+
+  test('can choose a new daily default currency from mobile settings', async ({ page }) => {
+    await start(page);
+    await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '取消', exact: true }).click();
+    await page.getByRole('navigation', { name: '移动端主导航' }).getByRole('button', { name: /更多$/ }).click();
+    await page.getByRole('dialog', { name: '更多功能' }).getByRole('button', { name: /设置$/ }).click();
+    const currency = page.getByLabel('日常记账默认币种');
+    await expect(currency).toBeVisible();
+    await currency.selectOption('__add_asset_preset__:USD');
+    await expect(currency.locator('option:checked')).toHaveText('USD · 美元');
+    await page.getByRole('navigation', { name: '移动端主导航' }).getByRole('button', { name: /日常收支/ }).click();
+    await page.locator('#transaction-records').getByRole('button', { name: '+ 记账', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: '新增 · 日常收支' }).getByLabel('当前币种')).toHaveText('美元');
   });
 });
 

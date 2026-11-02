@@ -17,6 +17,7 @@ describe('transaction form presentation', () => {
     expect(typeof amount.suffix === 'function' ? amount.suffix({ assetId: snap.ids.gbp }) : amount.suffix).toBe('英镑');
     expect(typeof amount.suffix === 'function' ? amount.suffix({ assetId: snap.ids.btc }) : amount.suffix).toBe('比特币');
     expect(spec.fields.find((field) => field.key === 'assetId')?.defaultValue).toBe(snap.ids.gbp);
+    expect(spec.fields.find((field) => field.key === 'assetId')?.assetPresetOptions).toBe(true);
     const populated = progressiveFieldGroups(spec.fields, { type: 'expense', assetId: snap.ids.btc }, { assetId: snap.ids.btc }, []);
     expect(keys(populated.more)).toContain('assetId');
     snap.setting!.transactionDefaultAssetId = snap.ids.btc;

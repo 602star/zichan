@@ -56,6 +56,7 @@ import {
   type SafetyState,
 } from '../db/safety.js';
 import { moduleCurrencyId, moduleCurrencyPatch, type CurrencyModule } from '../currencyPreferences.js';
+import { ASSET_PRESETS, ASSET_PRESET_GROUPS, ensureAssetPreset } from '../assetPresets.js';
 import { importPortableLedger } from '../db/portable-backup.js';
 import { reconcileAttachmentStorage } from '../db/attachment-storage.js';
 import { checkAllAttachmentFiles, cleanupAllTestTransactions } from '../db/settings-maintenance.js';
@@ -145,6 +146,8 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [navigationBusy, setNavigationBusy] = useState(false);
   const [mobileLedgerMoreOpen, setMobileLedgerMoreOpen] = useState(false);
+  const [currencyPresetBusy, setCurrencyPresetBusy] = useState(false);
+  const [currencyPresetError, setCurrencyPresetError] = useState('');
   const [mobileSectionOpen, setMobileSectionOpen] = useState({ categories: false, fields: false, navigation: false });
   const [pendingAsOf, setPendingAsOf] = useState<{ date: string; warning: string } | null>(null);
   const [safetyState, setSafetyState] = useState(readSafetyState);
@@ -248,7 +251,23 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   }
 
   async function onModuleCurrency(module: CurrencyModule, assetId: string) {
-    await saveSetting(moduleCurrencyPatch(module, assetId), { label: '调整模块默认货币' });
+    const prefix = '__add_asset_preset__:';
+    if (module !== 'transaction' || !assetId.startsWith(prefix)) {
+      await saveSetting(moduleCurrencyPatch(module, assetId), { label: '调整模块默认货币' });
+      return;
+    }
+    const preset = ASSET_PRESETS.find((row) => row.code === assetId.slice(prefix.length));
+    if (!preset) return;
+    setCurrencyPresetBusy(true);
+    setCurrencyPresetError('');
+    try {
+      const { asset } = await ensureAssetPreset(store, preset.code);
+      await saveSetting(moduleCurrencyPatch(module, asset.id), { label: '调整日常记账默认币种' });
+    } catch (cause) {
+      setCurrencyPresetError(cause instanceof Error ? cause.message : '添加默认币种失败，请重试');
+    } finally {
+      setCurrencyPresetBusy(false);
+    }
   }
 
   async function runCheck() {
@@ -687,10 +706,18 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                 return (
                   <div key={module} className={`zc-field${module === 'transaction' ? '' : ' zc-settings-advanced-field'}`}>
                     <label className="zc-label">{label}</label>
-                    <select aria-label={label} className="zc-select" value={fieldValue ?? ''} onChange={(e) => void onModuleCurrency(module, e.target.value)}>
+                    <select aria-label={label} className="zc-select" value={fieldValue ?? ''} disabled={module === 'transaction' && currencyPresetBusy} onChange={(e) => void onModuleCurrency(module, e.target.value)}>
                       <option value="">沿用全局 · {snap.assets.find((a) => a.id === moduleCurrencyId(setting, module))?.code ?? '未设置'}</option>
                       {snap.assets.filter((a) => !a.isDeleted).map((a) => <option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}
+                      {module === 'transaction' && ASSET_PRESET_GROUPS.map((group) => {
+                        const presets = ASSET_PRESETS.filter((preset) => group.codes.includes(preset.code)
+                          && !snap.assets.some((asset) => !asset.isDeleted && asset.code.trim().toUpperCase() === preset.code));
+                        return presets.length ? <optgroup key={group.label} label={`添加${group.label}`}>
+                          {presets.map((preset) => <option key={preset.code} value={`__add_asset_preset__:${preset.code}`}>{preset.code} · {preset.name}</option>)}
+                        </optgroup> : null;
+                      })}
                     </select>
+                    {module === 'transaction' && currencyPresetError && <div role="alert" className="zc-meta" style={{ color: 'var(--negative)' }}>{currencyPresetError}</div>}
                   </div>
                 );
               })}

@@ -11,6 +11,8 @@ import { ConfirmDialog } from './ConfirmDialog.js';
 import { DialogShell } from './DialogShell.js';
 import { FormDraftStatus, useFormDraftAutosave } from './FormDraftStatus.js';
 import { CategoryPicker, type FieldOption } from './EntityFormModal.js';
+import { ASSET_PRESETS, ASSET_PRESET_GROUPS, ensureAssetPreset } from '../assetPresets.js';
+import { useStore } from '../db/store.js';
 
 export type QuickExpenseCategoryOption = FieldOption;
 
@@ -247,6 +249,7 @@ export function QuickExpenseModal({
   onSave,
   onClose,
 }: QuickExpenseModalProps) {
+  const { store, bump } = useStore();
   const titleId = useId();
   const amountRef = useRef<HTMLInputElement>(null);
   const recommendationCategories = useMemo(
@@ -284,10 +287,37 @@ export function QuickExpenseModal({
   const [draftReady, setDraftReady] = useState(false);
   const [draftRestoredAt, setDraftRestoredAt] = useState('');
   const [closeOpen, setCloseOpen] = useState(false);
+  const [addedAsset, setAddedAsset] = useState<Asset>();
+  const [assetPresetBusy, setAssetPresetBusy] = useState(false);
 
   const expenseTemplates = templates.filter((template) => template.type === 'expense' && !template.isDeleted && template.isActive);
-  const activeAssets = assets.filter((asset) => !asset.isDeleted && asset.isActive);
-  const selectedAsset = assets.find((asset) => asset.id === assetId);
+  const activeAssets = [...assets.filter((asset) => !asset.isDeleted && asset.isActive),
+    ...(addedAsset && !assets.some((asset) => asset.id === addedAsset.id) ? [addedAsset] : [])];
+  const selectedAsset = activeAssets.find((asset) => asset.id === assetId);
+  const availablePresetGroups = ASSET_PRESET_GROUPS.map((group) => ({
+    label: group.label,
+    presets: ASSET_PRESETS.filter((preset) => group.codes.includes(preset.code)
+      && !activeAssets.some((asset) => asset.code.trim().toUpperCase() === preset.code)),
+  })).filter((group) => group.presets.length > 0);
+  async function chooseAsset(next: string) {
+    const prefix = '__add_asset_preset__:';
+    if (!next.startsWith(prefix)) { touched.current = true; setAssetId(next); return; }
+    const preset = ASSET_PRESETS.find((row) => row.code === next.slice(prefix.length));
+    if (!preset) return;
+    setAssetPresetBusy(true);
+    setError('');
+    try {
+      const { asset } = await ensureAssetPreset(store, preset.code);
+      setAddedAsset(asset);
+      touched.current = true;
+      setAssetId(asset.id);
+      bump();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '添加币种失败，请重试');
+    } finally {
+      setAssetPresetBusy(false);
+    }
+  }
   const currentDraft: QuickExpenseDraft = { amount, category, description, date, time, assetId };
   const currentValues = draftValues(currentDraft);
   const fingerprint = formDraftFingerprint(currentValues, {});
@@ -379,6 +409,7 @@ export function QuickExpenseModal({
   }
 
   async function submit() {
+    if (assetPresetBusy) return;
     setError('');
     try {
       if (!D(amount || 0).gt(0)) {
@@ -518,7 +549,14 @@ export function QuickExpenseModal({
           <div className="zc-quick-expense-split" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 12 }}>
             <label><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>日期</span><input aria-label="支出日期" type="date" value={date} onChange={(event) => { touched.current = true; setDate(event.target.value); }} style={field} /></label>
             <label><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>时间</span><input aria-label="支出时间" type="time" value={time} onChange={(event) => { touched.current = true; setTime(event.target.value); }} style={field} /></label>
-            <label style={{ gridColumn: '1 / -1' }}><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>币种</span><select aria-label="支出币种" value={assetId} onChange={(event) => { touched.current = true; setAssetId(event.target.value); }} style={field}>{activeAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.code}</option>)}</select></label>
+            <label style={{ gridColumn: '1 / -1' }}><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>币种</span>
+              <select aria-label="支出币种" value={assetId} disabled={assetPresetBusy} onChange={(event) => void chooseAsset(event.target.value)} style={field}>
+                {activeAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.code}</option>)}
+                {availablePresetGroups.map((group) => <optgroup key={group.label} label={`添加${group.label}`}>
+                  {group.presets.map((preset) => <option key={preset.code} value={`__add_asset_preset__:${preset.code}`}>{preset.code} · {preset.name}</option>)}
+                </optgroup>)}
+              </select>
+            </label>
           </div>
         </details>
 
@@ -526,7 +564,7 @@ export function QuickExpenseModal({
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
           <button type="button" onClick={requestClose} disabled={busy} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', color: 'var(--text-secondary)', padding: '10px 16px', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>取消</button>
-          <button type="button" onClick={() => void submit()} disabled={busy} style={{ border: '1px solid var(--accent)', borderRadius: 'var(--r-sm)', background: 'var(--accent)', color: 'var(--on-accent)', padding: '10px 20px', fontWeight: 'var(--fw-bold)', cursor: busy ? 'wait' : 'pointer' }}>{busy ? '保存中…' : '保存支出'}</button>
+          <button type="button" onClick={() => void submit()} disabled={busy || assetPresetBusy} style={{ border: '1px solid var(--accent)', borderRadius: 'var(--r-sm)', background: 'var(--accent)', color: 'var(--on-accent)', padding: '10px 20px', fontWeight: 'var(--fw-bold)', cursor: busy || assetPresetBusy ? 'wait' : 'pointer' }}>{busy ? '保存中…' : '保存支出'}</button>
         </div>
         {closeOpen && (
           <ConfirmDialog

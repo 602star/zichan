@@ -603,7 +603,7 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       { key: 'amount', label: '金额', type: 'number', half: true, lockedVisible: true, required: true,
         suffix: (v) => { const asset = snap.assets.find((row) => row.id === (v.assetId || defaultAssetId)); return asset?.name ?? asset?.code ?? ''; },
         hint: refundMode && options.refundRemaining ? `本次到账金额；剩余可退 ${options.refundRemaining}。改小即为部分退款。` : undefined },
-      { key: 'assetId', label: '币种', type: 'select', half: true, options: settlementOpts(snap), defaultValue: defaultAssetId, section: 'more', keepInMore: true, lockedVisible: true, required: true },
+      { key: 'assetId', label: '币种', type: 'select', half: true, options: settlementOpts(snap), assetPresetOptions: true, defaultValue: defaultAssetId, section: 'more', keepInMore: true, lockedVisible: true, required: true },
       { key: 'date', label: '日期', type: 'date', half: true, defaultValue: currentDate(), lockedVisible: true, required: true },
       { key: 'time', label: '交易时间', type: 'time', half: true, defaultValue: currentTime(), lockedVisible: true },
       {
