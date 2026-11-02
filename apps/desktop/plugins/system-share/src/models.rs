@@ -14,3 +14,16 @@ pub struct ShareRequest {
 pub struct ShareResponse {
     pub shared: bool,
 }
+
+#[cfg(target_os = "android")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApkInstallRequest {
+    pub path: String,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ApkInstallResponse {
+    pub started: bool,
+}

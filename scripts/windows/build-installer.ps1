@@ -1,4 +1,4 @@
-param([switch]$RequireSignature, [switch]$VerifyOnly)
+param([switch]$RequireSignature, [switch]$VerifyOnly, [switch]$UpdateTest)
 
 $ErrorActionPreference = 'Stop'
 $repository = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -44,7 +44,12 @@ try {
     $env:ZICHAN_BUILD_PREPARED = '1'
     $env:ZICHAN_RELEASE_BUILD = '1'
     $buildStarted = Get-Date
-    & npm.cmd run build --workspace '@zichan/desktop' -- --config $installerConfig --bundles msi nsis --ci -- --locked
+    $tauriConfigs = @('--config', $installerConfig)
+    if ($UpdateTest) {
+      if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'TAURI_SIGNING_PRIVATE_KEY is required for updater test artifacts' }
+      $tauriConfigs += @('--config', 'src-tauri/tauri.update-test.conf.json')
+    }
+    & npm.cmd run build --workspace '@zichan/desktop' -- @tauriConfigs --bundles msi nsis --ci -- --locked
     if ($LASTEXITCODE -ne 0) { throw 'Tauri installer build failed' }
   }
   $msi = @(Get-ChildItem 'apps/desktop/src-tauri/target/release/bundle/msi' -Filter '*.msi' -File)

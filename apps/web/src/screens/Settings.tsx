@@ -15,6 +15,7 @@ import { LedgerProtectionPanel } from '../ui/LedgerProtectionPanel.js';
 import { accountProtection } from '../account-protection.js';
 import { ACCENTS, DARK_ACCENTS, THEME_NAMES, THEME_MODE_NAMES, THEMES, type ThemeId, type ThemeMode, type ThemeModePreference } from '../theme.js';
 import { PortableStoragePanel } from '../ui/PortableStoragePanel.js';
+import { ClientUpdatePanel } from '../ui/ClientUpdatePanel.js';
 import { allCategories, categoryIsHidden } from '../transactionMeta.js';
 import {
   optionalTransactionFields,
@@ -898,6 +899,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
       {section !== 'ledger' && section !== 'appearance' && (
         <>
           {section === 'device' && <section aria-label="当前设备" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+            <ClientUpdatePanel />
             <div>
               <h2 className="zc-section-title">当前设备</h2>
               <p className="zc-caption">这里是当前浏览器或桌面应用正在使用的账本，以及保存在本机的备份。</p>

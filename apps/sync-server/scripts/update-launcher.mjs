@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { cp, mkdir, readFile, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, cp, mkdir, readFile, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -8,6 +8,7 @@ const releases = join(runtime, 'releases');
 const current = join(runtime, 'current');
 const pendingFile = join(runtime, 'pending.json');
 const statusFile = join(runtime, 'update-result.json');
+const historyFile = join(runtime, 'update-history.jsonl');
 const targetPattern = /^releases\/v0\.3\.(?:0|[1-9]\d*)$/;
 let child;
 let stopping = false;
@@ -16,6 +17,17 @@ async function atomicJson(path, value) {
   const temp = `${path}.${randomUUID()}.tmp`;
   await writeFile(temp, JSON.stringify(value), { mode: 0o600 });
   await rename(temp, path);
+}
+
+async function recordResult(update, state, error) {
+  const at = new Date().toISOString();
+  const result = { taskId: update.taskId, version: update.version, state,
+    operation: update.operation || 'update', error, at };
+  await atomicJson(statusFile, result);
+  await appendFile(historyFile, JSON.stringify({ state, currentVersion: state === 'success' ? update.version : update.from.slice('releases/v'.length),
+    fromVersion: update.from.slice('releases/v'.length),
+    targetVersion: update.version, taskId: update.taskId, operation: result.operation, actor: update.actor,
+    error, updatedAt: at }) + '\n', { mode: 0o600 });
 }
 
 async function activate(target) {
@@ -106,13 +118,12 @@ async function run() {
     if (update) {
       const healthy = await ready(update.version, () => exited);
       if (healthy) {
-        await atomicJson(statusFile, { taskId: update.taskId, version: update.version, state: 'success', at: new Date().toISOString() });
+        await recordResult(update, 'success');
         await rm(pendingFile);
       } else if (!stopping) {
         if (!exited) { child.kill('SIGTERM'); await completion; }
         await activate(update.from);
-        await atomicJson(statusFile, { taskId: update.taskId, version: update.version, state: 'failed',
-          error: '新版本未在 60 秒内通过健康检查，已切回旧版本', at: new Date().toISOString() });
+        await recordResult(update, 'failed', '目标版本未在 60 秒内通过健康检查，已切回先前版本');
         await rm(pendingFile);
         continue;
       }

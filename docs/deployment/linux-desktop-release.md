@@ -8,6 +8,8 @@
 
 Linux 专用的 `tauri.linux-release.conf.json` 使用 ASCII 包名 `zichan`，保留中文窗口标题，并把 `resources/` 放到 Tauri 应用资源目录的 `server/` 下。用户数据使用 Tauri 的 Linux 应用数据目录（受 `XDG_DATA_HOME` 控制）；安装、升级、卸载均不把数据库、附件或备份写入包管理器拥有的目录。AppImage 也使用相同的用户数据目录，不把数据写进只读镜像。
 
+0.3.3 起 AppImage 在设置中可检查并安装经 Tauri 签名的更高 0.3.x 版本；`.deb` 会先下载并验证签名，再打开系统包安装器，由用户确认安装。构建签名更新物与跨版本验收见[客户端签名更新](client-self-update.md)。
+
 `build-desktop.sh` 校验 Node 版本、发行元数据、类型、Rust 格式与测试，再生成 `.deb` 和 AppImage。linuxdeploy 会给 AppImage 内置 Node 写入 `$ORIGIN` RPATH；`finalize-appimage.mjs` 只接受这项变更，更新 AppImage 内资源清单并重新封装。`verify-linux-artifacts.mjs` 解包两种产物，逐文件核对服务资源 SHA-256、内置 Node 的 x86_64 ELF 格式、执行权限和运行库，检查 `.deb` 的 WebKitGTK 依赖，最后生成 `.sha256` 旁车。Linux release 启动时也复验资源清单。
 
 ## 安装与升级验收

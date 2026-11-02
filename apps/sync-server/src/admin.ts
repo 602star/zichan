@@ -352,6 +352,12 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     if (suffix === '/updates/check' && req.method === 'GET') {
       return send(res, 200, await updater.check());
     }
+    if (suffix === '/updates/versions' && req.method === 'GET') {
+      return send(res, 200, await updater.versions());
+    }
+    if (suffix === '/updates/history' && req.method === 'GET') {
+      return send(res, 200, { entries: await updater.history() });
+    }
     if (suffix === '/updates/apply' && req.method === 'POST') {
       if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '只有服务器所有者可以更新服务' });
       await assertRecentLogin();
@@ -364,6 +370,22 @@ export function createAdminRouter(deps: AdminRouterDeps) {
         throw new ServerStoreError('UPDATE_CONFLICT', 409, error instanceof Error ? error.message : String(error));
       }
       await log('info', 'server_update_requested', 'Signed server update requested', {
+        username: auth.user.username, detail: { taskId: result.taskId, version: body.version },
+      });
+      return send(res, 202, result);
+    }
+    if (suffix === '/updates/rollback' && req.method === 'POST') {
+      if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '只有服务器所有者可以回滚服务' });
+      await assertRecentLogin();
+      if (!updater.enabled) return send(res, 409, { code: 'UPDATE_DISABLED', error: '此部署未启用自更新' });
+      const body = await readBody(req, 1024);
+      if (typeof body.version !== 'string') return send(res, 400, { code: 'INVALID_VERSION', error: '请选择已安装的历史版本' });
+      let result: Awaited<ReturnType<typeof updater.rollback>>;
+      try { result = await updater.rollback(body.version, auth.user.username); }
+      catch (error) {
+        throw new ServerStoreError('UPDATE_CONFLICT', 409, error instanceof Error ? error.message : String(error));
+      }
+      await log('warn', 'server_update_rollback_requested', 'Signed server rollback requested', {
         username: auth.user.username, detail: { taskId: result.taskId, version: body.version },
       });
       return send(res, 202, result);

@@ -14,6 +14,8 @@ mod models;
 
 pub use error::{Error, Result};
 pub use models::{ShareRequest, ShareResponse};
+#[cfg(target_os = "android")]
+pub use models::{ApkInstallRequest, ApkInstallResponse};
 
 #[cfg(desktop)]
 use desktop::SystemShare;

@@ -1,6 +1,6 @@
 # Windows 便携版发布与验收
 
-便携通道只构建 Windows x64 ZIP，不安装服务、启动项、文件关联或卸载项，也不启用桌面自动更新。ZIP 解压后直接运行，所有应用持久状态随根目录下的 `data/` 移动。独立的 MSI/NSIS 通道见 [Windows 安装版布局与验收](windows-installer.md)。
+便携通道只构建 Windows x64 ZIP，不安装服务、启动项、文件关联或卸载项。ZIP 解压后直接运行，所有应用持久状态随根目录下的 `data/` 移动。0.3.3 起可从应用设置下载签名 ZIP，由独立助手退出旧进程后替换程序并保留 `data/`；见[客户端签名更新](client-self-update.md)。独立的 MSI/NSIS 通道见 [Windows 安装版布局与验收](windows-installer.md)。
 
 ## 发布物契约
 

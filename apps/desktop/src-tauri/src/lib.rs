@@ -10,7 +10,13 @@ use std::{
     time::{Duration, Instant},
 };
 use tauri::Manager;
+#[cfg(any(windows, target_os = "linux"))]
+mod client_updates;
+#[cfg(target_os = "ios")]
+mod ios_updates;
 mod ledger_profile;
+#[cfg(target_os = "android")]
+mod mobile_updates;
 mod native_attachments;
 mod native_backup_export;
 mod native_sql;
@@ -819,11 +825,29 @@ fn desktop_stop_server(
 }
 
 fn app_builder() -> tauri::Builder<tauri::Wry> {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_system_share::init())
+    let builder = tauri::Builder::default().plugin(tauri_plugin_system_share::init());
+    #[cfg(any(windows, target_os = "linux"))]
+    let builder = builder
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(client_updates::PendingClientUpdate::default());
+    #[cfg(target_os = "android")]
+    let builder = builder.manage(mobile_updates::PendingAndroidUpdate::default());
+    builder
         .manage(DesktopServerState::default())
         .manage(NativeSqlState::default())
         .invoke_handler(tauri::generate_handler![
+            #[cfg(any(windows, target_os = "linux"))]
+            client_updates::client_update_status,
+            #[cfg(any(windows, target_os = "linux"))]
+            client_updates::client_update_check,
+            #[cfg(any(windows, target_os = "linux"))]
+            client_updates::client_update_install,
+            #[cfg(target_os = "android")]
+            mobile_updates::client_update_check,
+            #[cfg(target_os = "android")]
+            mobile_updates::client_update_install,
+            #[cfg(target_os = "ios")]
+            ios_updates::client_update_check,
             portable::desktop_storage_status,
             ledger_profile::desktop_bind_legacy_profile,
             ledger_profile::desktop_list_ledger_profiles,

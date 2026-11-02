@@ -2,6 +2,14 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-02 — 0.3.3 多端签名更新候选
+
+- Linux/Docker 测试更新在既有 0.3.1/0.3.2 基础上支持私有 GitHub Releases 只读 Token 源、自动发现、已安装版本回滚、下载进度和持久历史。固定启动器的健康失败切回逻辑继续复用；新增独立私有 Releases Compose，不将 Token 交给 Web。
+- Windows 安装版按 MSI/NSIS 标记选择签名安装器；便携版验签后解压到同级目录，由独立 PowerShell 助手保留 `data/` 并在新程序提前退出时恢复旧目录。Linux AppImage 走 Tauri updater，`.deb` 验签后由系统包管理器确认。Android 走 Ed25519 清单、SHA256 下载校验与系统 APK 安装界面；候选工作流改为稳定测试 keystore 签名，未配置时只输出未签名 APK。客户端面板保存最近 20 次本机更新尝试，重启后依据实际版本确认结果。
+- 提供桌面与 Android 清单制作脚本、0.3.3 文档和跨版本测试步骤。客户端不包含私有 GitHub Token；更新资产由单独 HTTPS 服务提供。旧客户端需手动安装 0.3.3 后才能用下一补丁版演练应用内更新。
+- 本机验证：`npm run release:check`、`npm run test:release`（32 项）、`npm run lint`、`npm run typecheck`、`cargo check --locked`、`cargo test --locked`（24 通过、1 项既有忽略）和服务端更新源定向测试通过。core 168、db 194、logger 7、Web 701、sync-server 395 项通过，服务端另有 1 项既有跳过。默认 Node 26 的全套运行曾使一个测试 worker 达到 4 GiB 堆上限；提高该测试进程堆上限至 8 GiB 后，服务器 84 个文件全部通过。Web 一条不允许 updater 插件的旧架构断言已按新设计修正。`npm run build:server` 成功；本地 0.3.3 签名发布包通过 Ed25519、SHA256、版本与 schema 解析，含 56 个文件。Windows 本机无 Docker、Linux 构建环境和 Android SDK/设备，未宣称这些平台的端到端升级已通过。
+- 本批仅在本地工作区构建和提交；未推送 GitHub、创建远程 Release 或触碰生产部署。密钥与测试包位于忽略的运行目录。
+
 ## 2026-11-01 — 0.3.2 本地升级演练版本
 
 - 在 0.3.1 自更新基线之后递增所有工作区、Tauri 与锁文件版本，用于制作可由 0.3.1 Linux 测试容器安装的 0.3.2 签名包。更新入口移到独立的「版本更新」设置分组。没有改变数据库 schema 或同步协议；未推送远端。

@@ -4,6 +4,8 @@
 `@zichan/web` + `@zichan/core` + `@zichan/db`。桌面端由自有 Rust 命令桥管理
 SQLCipher/SQLite 和附件；Windows 有数据随 ZIP 移动的便携模式，以及数据留在当前用户目录的安装模式。
 
+0.3.3 起 Windows、Linux 原生端和 Android 在“设置 → 应用版本更新”提供签名更新检查与安装入口；各包格式、密钥、测试步骤和系统确认边界见[客户端签名更新手册](../deployment/client-self-update.md)。
+
 ## 结构
 
 ```

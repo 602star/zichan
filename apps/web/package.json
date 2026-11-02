@@ -1,6 +1,6 @@
 {
   "name": "@zichan/web",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,6 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.12.4",
     "@zichan/core": "*",
     "@zichan/db": "*",
     "@zichan/logger": "*",

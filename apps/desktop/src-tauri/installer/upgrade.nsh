@@ -12,3 +12,9 @@
       Abort "安装目录含有非本安装版的 server 资源"
   done_server_check:
 !macroend
+
+!macro NSIS_HOOK_POSTINSTALL
+  FileOpen $0 "$INSTDIR\installer-channel.txt" w
+  FileWrite $0 "nsis$\r$\n"
+  FileClose $0
+!macroend

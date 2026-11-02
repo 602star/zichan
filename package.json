@@ -1,7 +1,7 @@
 {
   "name": "zichan",
   "private": true,
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "多资产生命周期记账系统 — local-first multi-asset lifecycle ledger",
   "workspaces": [
     "packages/*",
@@ -36,7 +36,7 @@
     "test:coverage": "npm run test --prefix tools/coverage",
     "test:e2e": "npm run build:server && npm run test --prefix tools/e2e",
     "test:e2e:account": "npm run build:server && npm run test --prefix tools/e2e -- --config account.config.mjs",
-    "test:release": "node --test tools/release/tests/check-consistency.test.mjs tools/release/tests/webview2-runtime.test.mjs tools/release/tests/create-windows-portable.test.mjs tools/release/tests/verify-artifacts.test.mjs",
+    "test:release": "node --test tools/release/tests/check-consistency.test.mjs tools/release/tests/webview2-runtime.test.mjs tools/release/tests/create-windows-portable.test.mjs tools/release/tests/verify-artifacts.test.mjs tools/release/tests/update-feeds.test.mjs",
     "bench:transactions": "npm run build && node packages/db/bench/transaction-scale.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build": "npm run build --workspace @zichan/logger --workspace @zichan/core --workspace @zichan/db",

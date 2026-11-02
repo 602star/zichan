@@ -47,5 +47,7 @@ const signature = sign(null,
   await readFile(resolve(privateKeyPath), 'utf8')).toString('base64');
 await mkdir(resolve(outputDirectory), { recursive: true });
 await writeFile(join(resolve(outputDirectory), artifact), bytes, { flag: 'wx', mode: 0o644 });
-await writeFile(join(resolve(outputDirectory), 'latest.json'), JSON.stringify({ ...feed, signature }) + '\n');
+const signedFeed = JSON.stringify({ ...feed, signature }) + '\n';
+await writeFile(join(resolve(outputDirectory), `zichan-${version}.feed.json`), signedFeed, { flag: 'wx', mode: 0o644 });
+await writeFile(join(resolve(outputDirectory), 'latest.json'), signedFeed);
 console.log(`已创建 ${artifact}，SHA256 ${feed.sha256}`);

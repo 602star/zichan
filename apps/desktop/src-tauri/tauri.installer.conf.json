@@ -6,7 +6,8 @@
     "resources": {
       "../resources/": "server/",
       "installer/installed-mode.json": "installed-mode.json",
-      "installer/installed-files.json": "installed-files.json"
+      "installer/installed-files.json": "installed-files.json",
+      "installer/installer-channel.txt": "installer-channel.txt"
     },
     "windows": {
       "allowDowngrades": false,

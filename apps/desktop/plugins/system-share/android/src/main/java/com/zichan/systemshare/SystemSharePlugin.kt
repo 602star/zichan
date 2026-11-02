@@ -3,6 +3,9 @@ package com.zichan.systemshare
 import android.app.Activity
 import android.content.ClipData
 import android.content.Intent
+import android.os.Build
+import android.net.Uri
+import android.provider.Settings
 import androidx.core.content.FileProvider
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -20,8 +23,50 @@ class ShareArgs {
     var title: String = "分享文件"
 }
 
+@InvokeArg
+class InstallApkArgs {
+    lateinit var path: String
+}
+
 @TauriPlugin
 class SystemSharePlugin(private val activity: Activity) : Plugin(activity) {
+    @Command
+    fun installApk(invoke: Invoke) {
+        try {
+            val args = invoke.parseArgs(InstallApkArgs::class.java)
+            val allowed = File(activity.cacheDir, "zichan-updates").canonicalFile
+            val target = File(args.path).canonicalFile
+            if (target.parentFile != allowed || !target.name.endsWith(".apk") || !target.isFile || target.length() == 0L) {
+                invoke.reject("APK 安装文件路径无效")
+                return
+            }
+            if (Build.VERSION.SDK_INT >= 26 && !activity.packageManager.canRequestPackageInstalls()) {
+                activity.runOnUiThread {
+                    try {
+                        activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                            Uri.parse("package:${activity.packageName}")))
+                        invoke.reject("请在打开的系统设置中允许安装更新包，然后返回应用重试")
+                    } catch (error: Exception) {
+                        invoke.reject(error.message ?: "无法打开安装权限设置")
+                    }
+                }
+                return
+            }
+            val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.zichan.systemshare.files", target)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            activity.runOnUiThread {
+                try {
+                    activity.startActivity(intent)
+                    invoke.resolve(JSObject().apply { put("started", true) })
+                } catch (error: Exception) { invoke.reject(error.message ?: "无法打开系统 APK 安装界面") }
+            }
+        } catch (error: Exception) { invoke.reject(error.message ?: "准备 APK 安装失败") }
+    }
+
     @Command
     fun share(invoke: Invoke) {
         try {

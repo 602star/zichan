@@ -56,7 +56,7 @@ describe('native security and device configuration', () => {
 
   it('keeps every Windows persistent path inside the portable root', () => {
     expect(cargo).not.toContain('tauri-plugin-sql');
-    expect(cargo).not.toContain('tauri-plugin-updater');
+    expect(desktopCapability).not.toContain('updater:default');
     expect(rust).not.toContain('.app_data_dir()');
     expect(rust).not.toContain('.app_local_data_dir()');
     expect(rust).toContain('.data_directory(setup_paths.webview.clone())');

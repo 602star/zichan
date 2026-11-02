@@ -1,6 +1,6 @@
 {
   "name": "@zichan/logger",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Tiny structured, leveled logger with pluggable sinks",
   "type": "module",
   "main": "./dist/index.js",
