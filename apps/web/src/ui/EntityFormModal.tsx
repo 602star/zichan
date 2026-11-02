@@ -80,6 +80,8 @@ export interface FieldDef {
   placeholder?: string;
   /** Always-visible helper line under the control, for rules the label cannot carry. */
   hint?: string;
+  /** Read-only context shown beside a value, for example the selected currency beside an amount. */
+  suffix?: string | ((values: Record<string, string>) => string);
   defaultValue?: string;
   resetWhen?: string[];
   singleOptionSummary?: boolean;
@@ -87,6 +89,8 @@ export interface FieldDef {
   half?: boolean; // render at half width (two-column grid)
   section?: 'core' | 'more';
   lockedVisible?: boolean;
+  /** Keep a field in 更多信息 even when required or populated. */
+  keepInMore?: boolean;
   required?: boolean;
   categoryShowHiddenDefault?: boolean;
   hidden?: boolean;
@@ -809,6 +813,7 @@ function FormField(props: {
 }) {
   const { f, values, fieldId, options, value, selectedValues, fileRows, set, readFiles, setFileRows, deviceBusy, runDeviceAction, error, hint } = props;
   const binding = f.payeeBinding;
+  const suffix = typeof f.suffix === 'function' ? f.suffix(values) : f.suffix;
   const payeeType = typeof binding?.type === 'function' ? binding.type(values) : binding?.type ?? values[binding?.typeKey ?? 'type'] ?? 'expense';
   return (
     <div className="zc-form-field" key={f.key} data-form-field={fieldId} style={{ gridColumn: f.half ? 'span 1' : 'span 2' }}>
@@ -921,6 +926,7 @@ function FormField(props: {
             required={f.required}
             style={{ flex: 1, minWidth: 0 }}
           />
+          {suffix && <output className="zc-amount-currency" aria-label="当前币种">{suffix}</output>}
           {f.deviceAction && (f.deviceAction !== 'scan-barcode' || barcodeScannerAvailable()) && (
             <button type="button" title={f.deviceAction === 'scan-barcode' ? '扫描条形码或二维码' : '读取当前位置'} disabled={deviceBusy} onClick={() => void runDeviceAction(f)} style={{ flex: '0 0 auto', height: 38, padding: '0 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--text-secondary)', background: 'var(--surface-2)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', cursor: deviceBusy ? 'wait' : 'pointer' }}>
               {deviceBusy ? '读取中…' : f.deviceAction === 'scan-barcode' ? '扫码' : '定位'}
@@ -1049,6 +1055,7 @@ export function CategoryPicker(props: {
   const { fieldId, name, value, options, allowEmpty, defaultShowHidden = false, onChange,
     emptyLabel = '不选择', placeholder = '选择分类', ariaLabel, triggerStyle } = props;
   const trigger = useRef<HTMLButtonElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -1128,13 +1135,14 @@ export function CategoryPicker(props: {
       <span aria-hidden="true">{open ? '▲' : '▼'}</span>
     </button>
     {open && <DialogShell labelledBy={titleId} onDismiss={() => setOpen(false)}
+      initialFocusRef={typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? closeButton : undefined}
       backdropClassName="zc-category-backdrop" panelClassName="zc-category-picker-panel"
       panelStyle={{ position: 'fixed', ...placement }}>
       <span id={titleId} className="zc-category-accessible-title">选择分类</span>
       <div className="zc-category-picker-search">
         <input className="zc-input" value={search} onChange={(event) => setSearch(event.target.value)}
           placeholder="搜索分类" aria-label="搜索分类" />
-        <button type="button" className="zc-category-close" aria-label="关闭分类选择" onClick={() => setOpen(false)}>×</button>
+        <button ref={closeButton} type="button" className="zc-category-close" aria-label="关闭分类选择" onClick={() => setOpen(false)}>×</button>
         {hiddenCount > 0 && <button type="button" className="zc-category-scope" aria-pressed={showHidden}
           onClick={() => setShowHidden((current) => !current)}>{showHidden ? '只看高频' : `显示隐藏 (${hiddenCount})`}</button>}
       </div>

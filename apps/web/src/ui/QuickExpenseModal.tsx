@@ -287,6 +287,7 @@ export function QuickExpenseModal({
 
   const expenseTemplates = templates.filter((template) => template.type === 'expense' && !template.isDeleted && template.isActive);
   const activeAssets = assets.filter((asset) => !asset.isDeleted && asset.isActive);
+  const selectedAsset = assets.find((asset) => asset.id === assetId);
   const currentDraft: QuickExpenseDraft = { amount, category, description, date, time, assetId };
   const currentValues = draftValues(currentDraft);
   const fingerprint = formDraftFingerprint(currentValues, {});
@@ -447,17 +448,20 @@ export function QuickExpenseModal({
 
         <label style={{ display: 'block', marginTop: 22 }}>
           <span style={{ display: 'block', marginBottom: 7, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>支出金额</span>
-          <input
-            ref={amountRef}
-            data-dialog-initial-focus
-            aria-label="支出金额"
-            inputMode="decimal"
-            value={amount}
-            onChange={(event) => { touched.current = true; setAmount(event.target.value); }}
-            onKeyDown={(event) => { if (event.key === 'Enter') void submit(); }}
-            placeholder="0.00"
-            style={{ ...field, fontSize: 'var(--fs-hero)', fontWeight: 'var(--fw-bold)', padding: '14px 16px' }}
-          />
+          <span style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <input
+              ref={amountRef}
+              data-dialog-initial-focus
+              aria-label="支出金额"
+              inputMode="decimal"
+              value={amount}
+              onChange={(event) => { touched.current = true; setAmount(event.target.value); }}
+              onKeyDown={(event) => { if (event.key === 'Enter') void submit(); }}
+              placeholder="0.00"
+              style={{ ...field, width: 'auto', flex: '1 1 0', minWidth: 0, fontSize: 'var(--fs-hero)', fontWeight: 'var(--fw-bold)', padding: '14px 16px' }}
+            />
+            {selectedAsset && <output className="zc-amount-currency" aria-label="当前币种">{selectedAsset.name || selectedAsset.code}</output>}
+          </span>
         </label>
 
         {expenseTemplates.length > 0 && (

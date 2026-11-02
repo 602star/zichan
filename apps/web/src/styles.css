@@ -1699,6 +1699,14 @@ input[type="radio"] {
   margin-bottom: 5px;
   display: block;
 }
+.zc-amount-currency {
+  flex: 0 1 auto;
+  max-width: 45%;
+  color: var(--text-secondary);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  overflow-wrap: anywhere;
+}
 
 .zc-category-backdrop { position: fixed; inset: 0; background: transparent; }
 .zc-category-picker-panel {
@@ -1765,7 +1773,6 @@ input[type="radio"] {
 .zc-category-group-summary:hover {
   background: var(--surface-2);
 }
-
 .zc-category-summary-actions {
   display: flex;
   align-items: center;

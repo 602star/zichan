@@ -6,12 +6,22 @@ import { makeSnapshot } from './fixtures.js';
 
 const keys = (fields: { key: string }[]) => fields.map((f) => f.key);
 describe('transaction form presentation', () => {
-  it('keeps a stable width and all basic information outside more information', () => {
-    const spec = transactionForm(makeSnapshot());
+  it('shows the currency beside the amount and keeps its selector in more information', () => {
+    const snap = makeSnapshot();
+    const spec = transactionForm(snap);
     expect(spec.modalWidth).toBe(880);
     const groups = progressiveFieldGroups(spec.fields, { type: 'expense' }, {}, []);
-    expect(keys(groups.core)).toEqual(expect.arrayContaining(['amount', 'assetId', 'date', 'time', 'category', 'accountId', 'attachmentDrafts']));
-    expect(keys(groups.more)).toContain('note');
+    expect(keys(groups.core)).toEqual(expect.arrayContaining(['amount', 'date', 'time', 'category', 'accountId', 'attachmentDrafts']));
+    expect(keys(groups.more)).toEqual(expect.arrayContaining(['assetId', 'note']));
+    const amount = spec.fields.find((field) => field.key === 'amount')!;
+    expect(typeof amount.suffix === 'function' ? amount.suffix({ assetId: snap.ids.gbp }) : amount.suffix).toBe('英镑');
+    expect(typeof amount.suffix === 'function' ? amount.suffix({ assetId: snap.ids.btc }) : amount.suffix).toBe('比特币');
+    expect(spec.fields.find((field) => field.key === 'assetId')?.defaultValue).toBe(snap.ids.gbp);
+    const populated = progressiveFieldGroups(spec.fields, { type: 'expense', assetId: snap.ids.btc }, { assetId: snap.ids.btc }, []);
+    expect(keys(populated.more)).toContain('assetId');
+    snap.setting!.transactionDefaultAssetId = snap.ids.btc;
+    const withChangedDefault = transactionForm(snap);
+    expect(withChangedDefault.fields.find((field) => field.key === 'assetId')?.defaultValue).toBe(snap.ids.btc);
   });
   it('promotes existing business data without promoting automatic defaults or changing preferences', () => {
     const spec = transactionForm(makeSnapshot());
@@ -32,8 +42,8 @@ describe('transaction form presentation', () => {
     const spec = transactionForm(makeSnapshot());
     const compactKeys = spec.compactNewFieldKeys!;
     const empty = progressiveFieldGroups(spec.fields, { type: 'expense' }, {}, [], compactKeys);
-    expect(keys(empty.more)).toEqual(expect.arrayContaining(['time', 'attachmentDrafts', 'note']));
-    expect(keys(empty.core)).toEqual(expect.arrayContaining(['amount', 'assetId', 'date', 'category']));
+    expect(keys(empty.more)).toEqual(expect.arrayContaining(['assetId', 'time', 'attachmentDrafts', 'note']));
+    expect(keys(empty.core)).toEqual(expect.arrayContaining(['amount', 'date', 'category']));
 
     const populated = progressiveFieldGroups(spec.fields, { type: 'expense' }, { time: '13:45', attachmentDrafts: '[{"fileName":"receipt.jpg"}]' }, [], compactKeys);
     expect(keys(populated.core)).toEqual(expect.arrayContaining(['time', 'attachmentDrafts']));

@@ -26,6 +26,25 @@ async function fits(panel) {
   expect(bounds.overflow).toBe(false);
 }
 
+test.describe('touch category selection', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+
+  test('opens the category list without focusing search and shows the amount currency', async ({ page }) => {
+    await start(page);
+    const entry = page.getByRole('dialog', { name: '新增 · 日常收支', exact: true });
+    await expect(entry.getByLabel('当前币种')).toHaveText('人民币');
+    await expect(entry.getByLabel(/^币种/)).toBeHidden();
+    await entry.getByText('更多信息', { exact: true }).click();
+    await expect(entry.getByLabel(/^币种/)).toBeVisible();
+    await entry.getByLabel(/^分类/).click();
+    const picker = page.getByRole('dialog', { name: '选择分类', exact: true });
+    await expect(picker.getByRole('button', { name: '关闭分类选择' })).toBeFocused();
+    await expect(picker.getByLabel('搜索分类')).not.toBeFocused();
+    await picker.getByLabel('搜索分类').fill('交通');
+    await expect(picker.getByRole('option').first()).toBeVisible();
+  });
+});
+
 test('actual half-width forms, filters and advanced queries share the overlay', async ({ page }) => {
   await start(page);
   await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '取消', exact: true }).click();
