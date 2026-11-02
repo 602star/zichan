@@ -5,7 +5,7 @@
  * seed; now it's one tested place.
  */
 import {
-  D,
+  D, endOfMonth, isValidDay,
   componentHostAt,
   defaultTransactionAccount, isDefaultAccount, accountTransactionPostings, Decimal, traceChain, conversionStepAmounts, assertConversionShape, matchSell, lotFromTrace, isTransactionActive, newId, refundAppliedAmount,
   assertDcaExecutionShape, assertDcaPlanShape, assertTransactionShape, dcaOccurrenceDate, transactionReportingEffect,
@@ -5250,47 +5250,56 @@ export async function monthlyTransactionSummary(
   month: string,
   assetId?: string,
 ): Promise<MonthlyTransactionSummary> {
-  const all = (await store.transactions.list()).filter(isTransactionActive);
-  const [splits, refundAllocations] = await Promise.all([
-    store.transactionSplits.list(),
-    store.refundAllocations.list(),
-  ]);
-  const rows = all.map((transaction) => ({
-    transaction,
-    effect: transactionReportingEffect(transaction, { splits, refundAllocations }),
-  }));
-  const cashRows = rows.filter(({ effect }) => (
-    effect.reportDate.slice(0, 7) === month
-    && (!assetId || effect.reportAssetId === assetId)
-    && (!D(effect.incomeDelta).isZero() || !D(effect.expenseDelta).isZero())
-  ));
-  if (!assetId) {
-    const assetIds = new Set(cashRows.map(({ effect }) => effect.reportAssetId));
-    if (assetIds.size > 1) {
-      throw new DomainValidationError(`月度汇总必须指定币种，当前包含：${[...assetIds].sort().join('、')}`);
-    }
-  }
+  const firstDay = `${month}-01`;
+  if (!/^\d{4}-\d{2}$/.test(month) || !isValidDay(firstDay)) throw new DomainValidationError('月份无效');
   let income = D(0);
   let expense = D(0);
+  let transactionCount = 0;
+  const assetIds = new Set<string>();
   const byKey = new Map<string, MonthlyTransactionCategorySummary>();
 
-  for (const { effect } of cashRows) {
-    income = income.plus(effect.incomeDelta);
-    expense = expense.plus(effect.expenseDelta);
-    const summaryType: TransactionType = D(effect.incomeDelta).isZero() ? 'expense' : 'income';
-    const direction = D(effect.expenseDelta).isNegative() ? -1 : 1;
-    for (const categoryRow of effect.categoryRows) {
-      const key = `${summaryType}:${categoryRow.categoryId}`;
-      const row = byKey.get(key) ?? {
-        category: categoryRow.categoryId,
-        type: summaryType,
-        totalAmount: '0',
-        count: 0,
-      };
-      row.totalAmount = D(row.totalAmount).plus(D(categoryRow.amount).mul(direction)).toString();
-      row.count += 1;
-      byKey.set(key, row);
+  for await (const page of store.iterateTransactionReport({ from: firstDay, to: endOfMonth(firstDay), pageSize: 500 })) {
+    const splitsByTransaction = new Map<string, TransactionSplit[]>();
+    const allocationsByRefund = new Map<string, RefundAllocation[]>();
+    for (const split of page.transactionSplits) {
+      const rows = splitsByTransaction.get(split.transactionId) ?? [];
+      rows.push(split);
+      splitsByTransaction.set(split.transactionId, rows);
     }
+    for (const allocation of page.refundAllocations) {
+      const rows = allocationsByRefund.get(allocation.refundTransactionId) ?? [];
+      rows.push(allocation);
+      allocationsByRefund.set(allocation.refundTransactionId, rows);
+    }
+    for (const transaction of page.transactions) {
+      const effect = transactionReportingEffect(transaction, {
+        splits: splitsByTransaction.get(transaction.id),
+        refundAllocations: allocationsByRefund.get(transaction.id),
+      });
+      if (assetId && effect.reportAssetId !== assetId) continue;
+      if (D(effect.incomeDelta).isZero() && D(effect.expenseDelta).isZero()) continue;
+      assetIds.add(effect.reportAssetId);
+      transactionCount += 1;
+      income = income.plus(effect.incomeDelta);
+      expense = expense.plus(effect.expenseDelta);
+      const summaryType: TransactionType = D(effect.incomeDelta).isZero() ? 'expense' : 'income';
+      const direction = D(effect.expenseDelta).isNegative() ? -1 : 1;
+      for (const categoryRow of effect.categoryRows) {
+        const key = `${summaryType}:${categoryRow.categoryId}`;
+        const row = byKey.get(key) ?? {
+          category: categoryRow.categoryId,
+          type: summaryType,
+          totalAmount: '0',
+          count: 0,
+        };
+        row.totalAmount = D(row.totalAmount).plus(D(categoryRow.amount).mul(direction)).toString();
+        row.count += 1;
+        byKey.set(key, row);
+      }
+    }
+  }
+  if (!assetId && assetIds.size > 1) {
+    throw new DomainValidationError(`月度汇总必须指定币种，当前包含：${[...assetIds].sort().join('、')}`);
   }
 
   return {
@@ -5298,7 +5307,7 @@ export async function monthlyTransactionSummary(
     income: income.toString(),
     expense: expense.toString(),
     net: income.minus(expense).toString(),
-    transactionCount: cashRows.length,
+    transactionCount,
     byCategory: [...byKey.values()].sort((a, b) => D(b.totalAmount).comparedTo(D(a.totalAmount))),
   };
 }

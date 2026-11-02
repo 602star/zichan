@@ -303,9 +303,17 @@ export async function loadSnapshot(store: SqlLedgerStore, scope: SnapshotScope =
   };
 }
 
+interface SnapshotRequestState<T> {
+  store: SqlLedgerStore;
+  scope: SnapshotScope;
+  revision: number;
+  value: T;
+}
+
 export function useSnapshot(scope: SnapshotScope = 'all'): Snapshot | null {
   const { store } = useStore();
-  const [snap, setSnap] = useState<Snapshot | null>(null);
+  const [loaded, setLoaded] = useState<SnapshotRequestState<Snapshot> | null>(null);
+  const [failure, setFailure] = useState<SnapshotRequestState<Error> | null>(null);
   const [revision, setRevision] = useState(0);
   useEffect(() => {
     const entityTypes = new Set([...fieldsFor(scope)].flatMap((field) => FIELD_ENTITY_TYPES[field]));
@@ -321,11 +329,20 @@ export function useSnapshot(scope: SnapshotScope = 'all'): Snapshot | null {
   useEffect(() => {
     let cancelled = false;
     void loadSnapshot(store, scope).then((s) => {
-      if (!cancelled) setSnap(s);
+      if (cancelled) return;
+      setFailure(null);
+      setLoaded({ store, scope, revision, value: s });
+    }).catch((cause: unknown) => {
+      if (cancelled) return;
+      setFailure({
+        store, scope, revision,
+        value: cause instanceof Error ? cause : new Error(String(cause)),
+      });
     });
     return () => {
       cancelled = true;
     };
   }, [revision, scope, store]);
-  return snap;
+  if (failure?.store === store && failure.scope === scope && failure.revision === revision) throw failure.value;
+  return loaded?.store === store && loaded.scope === scope ? loaded.value : null;
 }

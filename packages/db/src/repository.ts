@@ -175,10 +175,28 @@ export interface StoreChange {
 
 type StoreChangeListener = (change: StoreChange) => void;
 
+interface AccountConversionCandidate {
+  accountId: string;
+  conversion: { chain: ConversionChain; step: ConversionStep };
+  entryId: string;
+  key: string;
+  date: string;
+  assetId: string;
+  postingAmount: string;
+  reconciliationStatus: 'cleared';
+}
+
+interface ConversionReadModel {
+  postings: Posting[];
+  byAccount: Map<string, AccountConversionCandidate[]>;
+  byAccountAsset: Map<string, Map<string, AccountConversionCandidate[]>>;
+}
+
 class StoreChangeBus {
   private readonly listeners = new Set<StoreChangeListener>();
   private readonly queued = new Set<string>();
   private scheduled = false;
+  conversionReadCache?: { watermark: string | null; data: Promise<ConversionReadModel> };
 
   subscribe(listener: StoreChangeListener): () => void {
     this.listeners.add(listener);
@@ -199,6 +217,8 @@ class StoreChangeBus {
 }
 
 function recordChange(ctx: StoreCtx, entityType: string): void {
+  if (entityType === '*' || entityType === 'account' || entityType === 'conversion_chain'
+    || entityType === 'conversion_chain_steps') ctx.changeBus.conversionReadCache = undefined;
   if (ctx.pendingChanges) ctx.pendingChanges.add(entityType);
   else ctx.changeBus.publish([entityType]);
 }
@@ -2596,11 +2616,65 @@ export class SqlLedgerStore implements LedgerStore {
     }));
   }
 
+  private async conversionReadModel(): Promise<ConversionReadModel> {
+    // An append-only audit id also notices writes made by another store instance.
+    // The shared bus invalidates immediately for writes made through this store.
+    const watermark = (await this.driver.get<{ id: string }>(
+      'SELECT id FROM operation_log ORDER BY rowid DESC LIMIT 1',
+    ))?.id ?? null;
+    const cached = this.ctx.changeBus.conversionReadCache;
+    if (cached?.watermark === watermark) return cached.data;
+    const data = (async (): Promise<ConversionReadModel> => {
+      const [accounts, chains] = await Promise.all([this.accounts.list(), this.conversionChains.list()]);
+      const stepsByChain = await this.listStepsByChains(chains.map((chain) => chain.id));
+      const postings: Posting[] = [];
+      const byAccount = new Map<string, AccountConversionCandidate[]>();
+      const byAccountAsset = new Map<string, Map<string, AccountConversionCandidate[]>>();
+      for (const chain of chains) {
+        const steps = stepsByChain.get(chain.id) ?? [];
+        const stepById = new Map(steps.map((step) => [step.id, step]));
+        const chainPostings = accountChainPostings({ chain, steps }, accounts);
+        postings.push(...chainPostings);
+        chainPostings.forEach((posting, index) => {
+          if (!posting.accountId) return;
+          const step = stepById.get(posting.source.id);
+          if (!step) return;
+          const key = `conversion:${chain.id}:${step.id}:${String(index).padStart(6, '0')}`;
+          const rows = byAccount.get(posting.accountId) ?? [];
+          const candidate: AccountConversionCandidate = {
+            accountId: posting.accountId,
+            conversion: { chain, step }, entryId: key, key, date: posting.date,
+            assetId: posting.assetId, postingAmount: posting.amount, reconciliationStatus: 'cleared',
+          };
+          rows.push(candidate);
+          byAccount.set(posting.accountId, rows);
+          const byAsset = byAccountAsset.get(posting.accountId) ?? new Map<string, AccountConversionCandidate[]>();
+          const assetRows = byAsset.get(posting.assetId) ?? [];
+          assetRows.push(candidate);
+          byAsset.set(posting.assetId, assetRows);
+          byAccountAsset.set(posting.accountId, byAsset);
+        });
+      }
+      const sortRows = (rows: AccountConversionCandidate[]) => {
+        rows.sort((left, right) => right.date.localeCompare(left.date)
+          || (left.key < right.key ? 1 : left.key > right.key ? -1 : 0));
+      };
+      for (const rows of byAccount.values()) sortRows(rows);
+      for (const byAsset of byAccountAsset.values()) for (const rows of byAsset.values()) sortRows(rows);
+      return { postings, byAccount, byAccountAsset };
+    })();
+    const next = { watermark, data };
+    this.ctx.changeBus.conversionReadCache = next;
+    try {
+      return await data;
+    } catch (error) {
+      if (this.ctx.changeBus.conversionReadCache === next) this.ctx.changeBus.conversionReadCache = undefined;
+      throw error;
+    }
+  }
+
   async accountConversionPostings(): Promise<Posting[]> {
-    const accounts = await this.accounts.list();
-    const chains = await this.conversionChains.list();
-    const steps = await this.listStepsByChains(chains.map((c) => c.id));
-    return chains.flatMap((chain) => accountChainPostings({ chain, steps: steps.get(chain.id) ?? [] }, accounts));
+    return (await this.conversionReadModel()).postings;
   }
 
   async accountBalanceAggregates(): Promise<AccountBalanceAggregateRow[]> {
@@ -2734,40 +2808,30 @@ export class SqlLedgerStore implements LedgerStore {
       postingAmount: String(row['posting_amount']),
       reconciliationStatus: String(row['reconciliation_status']) as AccountLedgerReadRow['reconciliationStatus'],
     }));
-    const accounts = await this.accounts.list();
-    const chains = await this.conversionChains.list();
-    const stepsByChain = await this.listStepsByChains(chains.map((chain) => chain.id));
-    const conversionCandidates: LedgerCandidate[] = [];
-    for (const chain of chains) {
-      const steps = stepsByChain.get(chain.id) ?? [];
-      const stepById = new Map(steps.map((step) => [step.id, step]));
-      const postings = accountChainPostings({ chain, steps }, accounts);
-      postings.forEach((posting, index) => {
-        if (posting.accountId !== input.accountId) return;
-        if (input.assetId && posting.assetId !== input.assetId) return;
-        const step = stepById.get(posting.source.id);
-        if (!step) return;
-        const key = `conversion:${chain.id}:${step.id}:${String(index).padStart(6, '0')}`;
-        conversionCandidates.push({
-          conversion: { chain, step },
-          entryId: key,
-          key,
-          date: posting.date,
-          assetId: posting.assetId,
-          postingAmount: posting.amount,
-          reconciliationStatus: 'cleared',
-        });
-      });
-    }
-    const inRange = (row: LedgerCandidate) =>
-      (!input.from || row.date >= input.from)
-      && (!input.to || row.date <= input.to);
-    const beforeCursor = (row: LedgerCandidate) =>
-      !input.cursor || row.date < input.cursor.value
-      || (row.date === input.cursor.value && row.key < input.cursor.id);
-    const visibleConversions = conversionCandidates.filter((row) => inRange(row) && beforeCursor(row));
-    const sortedCandidates = [...transactionCandidates, ...visibleConversions]
-      .sort((left, right) => right.date.localeCompare(left.date)
+    const conversionModel = await this.conversionReadModel();
+    const conversionRows = input.assetId
+      ? conversionModel.byAccountAsset.get(input.accountId)?.get(input.assetId) ?? []
+      : conversionModel.byAccount.get(input.accountId) ?? [];
+    const firstMatching = (matches: (row: AccountConversionCandidate) => boolean): number => {
+      let low = 0;
+      let high = conversionRows.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (matches(conversionRows[middle]!)) high = middle;
+        else low = middle + 1;
+      }
+      return low;
+    };
+    const rangeStart = input.to ? firstMatching((row) => row.date <= input.to!) : 0;
+    const rangeEnd = input.from ? firstMatching((row) => row.date < input.from!) : conversionRows.length;
+    const cursorStart = input.cursor
+      ? firstMatching((row) => row.date < input.cursor!.value
+        || (row.date === input.cursor!.value && row.key < input.cursor!.id))
+      : 0;
+    const visibleStart = Math.max(rangeStart, cursorStart);
+    const visibleConversions = conversionRows.slice(visibleStart, Math.min(rangeEnd, visibleStart + limit + 1));
+    const sortedCandidates: LedgerCandidate[] = [...transactionCandidates, ...visibleConversions];
+    sortedCandidates.sort((left, right) => right.date.localeCompare(left.date)
         || (left.key < right.key ? 1 : left.key > right.key ? -1 : 0));
     const hasMore = sortedCandidates.length > limit;
     const pageRows = sortedCandidates.slice(0, limit);
@@ -2797,8 +2861,7 @@ export class SqlLedgerStore implements LedgerStore {
         String(row['asset_id']),
         sum(JSON.parse(String(row['amounts_json'])) as string[]).toString(),
       ]));
-      for (const posting of conversionCandidates) {
-        if (input.to && posting.date > input.to) continue;
+      for (const posting of conversionRows.slice(rangeStart)) {
         balances[posting.assetId] = D(balances[posting.assetId] ?? 0).plus(posting.postingAmount).toString();
       }
     }
@@ -2826,7 +2889,7 @@ export class SqlLedgerStore implements LedgerStore {
     const last = pageRows.at(-1);
     return {
       rows: resultRows,
-      totalCount: Number(countRow?.count ?? 0) + conversionCandidates.filter(inRange).length,
+      totalCount: Number(countRow?.count ?? 0) + Math.max(0, rangeEnd - rangeStart),
       hasMore,
       nextStartingBalances: balances,
       ...(hasMore && last
@@ -3361,6 +3424,7 @@ export class SqlLedgerStore implements LedgerStore {
         [ledgerId, nowIso()],
       );
     });
+    this.ctx.changeBus.conversionReadCache = undefined;
   }
 
   private async commitFromRow(row: Record<string, unknown>): Promise<StoredSyncCommit> {

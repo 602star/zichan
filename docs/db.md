@@ -131,6 +131,14 @@ interface Collection<T> {
 `decimal.js` 求和和折算；账户类型为 `other` 的期初/权益过账继续排除。Dashboard 页面快照因此无需加载全部
 `transactions / transaction_splits / refund_allocations`。
 
+账户流水的转换分录按账户及资产建立内存读索引。首次读取用现有 `accountChainPostings()` 生成精确金额，
+后续游标页在已排序的索引上定位并只合并当前页候选，避免逐页重读全部转换链和步骤。账户、转换链或步骤写入后
+立即失效；读取前核对操作日志末条 ID，也能发现另一连接写入。索引只在当前 store 生命周期内存在，不改变
+SQLite schema 或同步载荷。首页期末余额仍按 `decimal.js` 汇总，后续页沿用上页余额。
+
+`monthlyTransactionSummary()` 按报表归属日期使用 `iterateTransactionReport()` 分页读取，并只给当前页流水
+配对拆分和退款分配后逐页累计；退款的原日期归属和跨币种拒绝规则不变。
+
 `transactionBrowsePage()` 的金额上下限和高级筛选不会把金额 `CAST AS REAL`，也不会先转成 JavaScript
 `Number`。仓储层把有限十进制规范化为“十进制指数 + 有效数字”的 SQLite 可比较键，因此大额、小数和科学计数法
 都按 `decimal.js` 的精确值筛选；非有限值或超出 SQLite 整数指数范围的输入会显式拒绝，而不是静默错筛。

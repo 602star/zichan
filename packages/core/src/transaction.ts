@@ -303,7 +303,9 @@ export function categoryTrend(
   const groups = new Map<string, { sum: Numeric[]; count: number }>();
   const active = transactions.filter((row) => isTransactionActive(row) && row.type !== 'transfer' && row.type !== 'adjustment');
   const effects = active.map((transaction) => transactionReportingEffect(transaction, opts));
-  const assetIds = new Set(effects.map((effect) => effect.reportAssetId));
+  const assetIds = new Set(effects
+    .filter((effect) => effect.categoryRows.some((row) => row.categoryId === category && !D(row.amount).isZero()))
+    .map((effect) => effect.reportAssetId));
   if (!opts.baseAssetId && assetIds.size > 1) throw new Error(`禁止跨币种直接汇总：${[...assetIds].sort().join('、')}`);
   for (const effect of effects) {
     if (opts.baseAssetId && effect.reportAssetId !== opts.baseAssetId) continue;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,6 +28,7 @@ import {
   saveTransactionAggregate,
   syncReplica,
   undoLatestReconciliation,
+  voidConversion,
   voidTransaction,
 } from '../src/index.js';
 import { openLedger } from '../src/node.js';
@@ -468,7 +469,9 @@ describe('transactions persistence', () => {
       await saveTransaction(store, tx({ id: 'groceries-gbp', date: '2026-03-03', amount: '100', accountId: 'bank' }));
       await saveTransaction(store, tx({ id: 'groceries-usd', date: '2026-03-04', amount: '50', assetId: 'USD', accountId: 'bank' }));
 
+      const stepReads = vi.spyOn(store, 'listStepsByChains');
       const first = await store.accountLedgerPage({ accountId: 'bank', limit: 2 });
+      expect(stepReads).toHaveBeenCalledTimes(1);
       expect(first.totalCount).toBe(5);
       expect(first.rows.map((row) => [row.transaction?.id ?? row.conversion?.chain.id, row.postingAmount, row.balance])).toEqual([
         ['groceries-usd', '-50', '200'],
@@ -486,6 +489,13 @@ describe('transactions persistence', () => {
       });
       expect(third.rows.map((row) => [row.transaction?.id, row.balance])).toEqual([['salary-gbp', '1000']]);
       expect(third.hasMore).toBe(false);
+      expect(stepReads).toHaveBeenCalledTimes(1);
+      const usdOnly = await store.accountLedgerPage({
+        accountId: 'bank', assetId: 'USD', from: '2026-03-02', to: '2026-03-03', limit: 2,
+      });
+      expect(usdOnly.totalCount).toBe(1);
+      expect(usdOnly.rows.map((row) => [row.conversion?.chain.id, row.postingAmount, row.balance]))
+        .toEqual([['buy-usd', '250', '250']]);
       const incomeExpense = await store.transactionReportAggregate({ from: '2026-03-01', to: '2026-03-31' });
       expect(incomeExpense.reduce((count, row) => count + row.count, 0)).toBe(3);
       expect((await store.transactionBrowsePage({})).totalCount).toBe(3);
@@ -495,7 +505,9 @@ describe('transactions persistence', () => {
         fromAssetId: 'USD', fromAmount: '50', toAssetId: 'GBP', toAmount: '40',
         accountFromId: 'bank', accountToId: 'bank',
       }] });
+      stepReads.mockClear();
       const afterSale = await store.accountLedgerPage({ accountId: 'bank', limit: 2 });
+      expect(stepReads).toHaveBeenCalledTimes(1);
       expect(afterSale.totalCount).toBe(7);
       expect(afterSale.rows.map((row) => [row.conversion?.chain.id, row.assetId, row.postingAmount, row.balance])).toEqual([
         ['sell-usd', 'GBP', '40', '740'],
@@ -534,6 +546,31 @@ describe('transactions persistence', () => {
       }
     } finally {
       await store.close();
+    }
+  });
+
+  it('refreshes conversion pages after another store changes the shared ledger', async () => {
+    const filename = join(tmpdir(), `zichan-conversion-read-${newId()}.sqlite`);
+    let first: Awaited<ReturnType<typeof openLedger>> | undefined;
+    let second: Awaited<ReturnType<typeof openLedger>> | undefined;
+    try {
+      first = await openLedger({ filename, deviceId: 'window-a' });
+      await seedTransactionLedger(first);
+      await first.assets.put({ ...base(), id: 'USD', code: 'USD', name: 'US Dollar', type: 'fiat', decimals: 2, isActive: true } as never);
+      const chain = { ...base(), id: 'shared-conversion', date: '2026-03-02', type: 'buy' as const, title: '买入美元', baseCurrencyAssetId: 'GBP' };
+      await recordConversion(first, { chain, steps: [{
+        id: 'shared-step', chainId: chain.id, order: 1,
+        fromAssetId: 'GBP', fromAmount: '20', toAssetId: 'USD', toAmount: '25',
+        accountFromId: 'bank', accountToId: 'bank',
+      }] });
+      second = await openLedger({ filename, deviceId: 'window-b' });
+      expect((await first.accountLedgerPage({ accountId: 'bank' })).totalCount).toBe(2);
+      await voidConversion(second, chain.id);
+      expect((await first.accountLedgerPage({ accountId: 'bank' })).totalCount).toBe(0);
+    } finally {
+      await second?.close();
+      await first?.close();
+      for (const suffix of ['', '-wal', '-shm']) rmSync(`${filename}${suffix}`, { force: true });
     }
   });
 
@@ -803,6 +840,22 @@ describe('transactions persistence', () => {
     expect(round(summary.net, 2)).toBe('2977.60');
     expect(summary.byCategory[0]?.category).toBe('salary');
     await store.close();
+  });
+
+  it('summarizes a month across report-page boundaries without losing cents', async () => {
+    const store = await openTransactionLedger();
+    try {
+      for (let index = 0; index < 501; index += 1) {
+        await store.transactions.put(tx({ id: `cent-${String(index).padStart(3, '0')}`, amount: '0.01', accountId: 'bank' }));
+      }
+      await store.transactions.put(tx({ id: 'next-month', date: '2026-04-01', amount: '9', accountId: 'bank' }));
+      const summary = await monthlyTransactionSummary(store, '2026-03', 'GBP');
+      expect(summary).toMatchObject({ expense: '5.01', net: '-5.01', transactionCount: 501 });
+      expect(summary.byCategory).toMatchObject([{ category: 'food', totalAmount: '5.01', count: 501 }]);
+      await expect(monthlyTransactionSummary(store, '2026-13')).rejects.toThrow('月份无效');
+    } finally {
+      await store.close();
+    }
   });
 
   it('imports refunds after their originals and remaps a skipped duplicate original', async () => {

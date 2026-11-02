@@ -109,6 +109,17 @@ describe('daily transactions', () => {
     ]);
   });
 
+  it('checks currencies only for rows in the requested category', () => {
+    const rows = [
+      tx({ id: 'food-gbp', category: 'food', amount: '10', assetId: 'GBP' }),
+      tx({ id: 'travel-usd', category: 'travel', amount: '20', assetId: 'USD' }),
+      tx({ id: 'balance-usd', category: 'food', amount: '30', assetId: 'USD', reportingTreatment: 'balance_only' }),
+    ];
+    expect(categoryTrend(rows, 'food')).toEqual([{ month: '2026-03', amount: '10', count: 1 }]);
+    expect(() => categoryTrend([...rows, tx({ id: 'food-usd', category: 'food', amount: '5', assetId: 'USD' })], 'food'))
+      .toThrow('禁止跨币种直接汇总');
+  });
+
   it('rejects persisted transaction enum values outside the current model', () => {
     expect(() => assertTransactionShape(tx({ status: 'reconciled' as never }))).toThrow('流水状态无效');
     expect(() => assertTransactionShape(tx({ type: 'chargeback' as never }))).toThrow('流水类型无效');
