@@ -123,6 +123,18 @@ jobs:
           }
           trap cleanup EXIT
           docker build --file apps/sync-server/Dockerfile --tag "zichan-sync-ci:${GITHUB_SHA}" . 2>&1 | tee ci-artifacts/docker-build.log
+          # Only the two bundled server entries and built Web assets belong in /app.
+          docker run --rm --entrypoint sh "zichan-sync-ci:${GITHUB_SHA}" -c '
+            set -eu
+            test -s /app/dist/server.mjs
+            test -s /app/dist/maintenance.mjs
+            test -s /app/web-dist/index.html
+            test "$(find /app/dist -type f | wc -l)" -eq 2
+            if find /app -type f \( -name "*.map" -o -name "*.ts" -o -name "*.tsx" -o -name "*.d.ts" \) | grep -q .; then
+              echo "runtime image contains source maps or TypeScript files" >&2
+              exit 1
+            fi
+          '
           # The image defaults to an unprivileged user; CI matches the runner uid so the
           # bind-mounted state directory stays writable without granting root.
           docker run --detach --name "$container" \
