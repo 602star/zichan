@@ -6,19 +6,6 @@ check_directory "$ZICHAN_STATE_DIR"
 check_directory "$ZICHAN_BACKUP_DIR"
 export ZICHAN_RUNTIME_DIR="${ZICHAN_RUNTIME_DIR:-/srv/zichan/runtime}"
 check_directory "$ZICHAN_RUNTIME_DIR"
-: "${ZICHAN_UPDATE_GITHUB_TOKEN_FILE:?Set the private Releases read-only token file}"
-: "${ZICHAN_UPDATE_PUBLIC_KEY_FILE:?Set the Ed25519 update public key file}"
-for credential in "$ZICHAN_UPDATE_GITHUB_TOKEN_FILE" "$ZICHAN_UPDATE_PUBLIC_KEY_FILE"; do
-  [[ "$credential" == /* && -f "$credential" && ! -L "$credential" ]] || {
-    echo "Update credential is missing, relative or symlink: $credential" >&2
-    exit 2
-  }
-done
-[[ "$(stat -c %u "$ZICHAN_UPDATE_GITHUB_TOKEN_FILE")" == 1000 \
-  && "$(stat -c %a "$ZICHAN_UPDATE_GITHUB_TOKEN_FILE")" == 600 ]] || {
-  echo 'Private Releases token must be owned by uid 1000 with mode 0600' >&2
-  exit 2
-}
 if [[ -e "$ZICHAN_STATE_DIR/server/maintenance.lock" || -L "$ZICHAN_STATE_DIR/server/maintenance.lock" ]]; then
   echo 'Maintenance lock is held or stale; refusing deployment' >&2
   exit 2
@@ -64,9 +51,7 @@ docker run --rm --network none --user 1000:1000 \
   --mount "type=bind,src=$ZICHAN_STATE_DIR,dst=/state" \
   --mount "type=bind,src=$ZICHAN_BACKUP_DIR,dst=/backups" \
   --mount "type=bind,src=$ZICHAN_RUNTIME_DIR,dst=/app/runtime" \
-  --mount "type=bind,src=$ZICHAN_UPDATE_GITHUB_TOKEN_FILE,dst=/keys/github-token,readonly" \
-  --mount "type=bind,src=$ZICHAN_UPDATE_PUBLIC_KEY_FILE,dst=/keys/update-public.pem,readonly" \
-  --entrypoint sh "$ZICHAN_IMAGE" -c 'test -w /state && test -w /backups && test -w /app/runtime && test -s /keys/github-token && test -s /keys/update-public.pem && test -s /app/bootstrap/update-launcher.mjs && test -s /app/bootstrap/pre-update-backup.mjs'
+  --entrypoint sh "$ZICHAN_IMAGE" -c 'test -w /state && test -w /backups && test -w /app/runtime && test -s /keys/github-token && test -s /app/bootstrap/update-public.pem && test -s /app/bootstrap/update-launcher.mjs && test -s /app/bootstrap/pre-update-backup.mjs'
 docker compose -f "$compose_file" config --quiet
 if [[ -n "$(docker ps -q --filter label=com.docker.compose.project=zichan-prod)" ]]; then
   bash "$repo_root/scripts/production/with-maintenance-lock.sh" \

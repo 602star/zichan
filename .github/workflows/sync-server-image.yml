@@ -36,6 +36,10 @@ jobs:
         with:
           context: .
           file: apps/sync-server/Dockerfile
+          build-args: |
+            ZICHAN_REQUIRE_RELEASE_TOKEN=1
+          secrets: |
+            release_token=${{ secrets.ZICHAN_RELEASE_READ_TOKEN }}
           platforms: linux/amd64
           push: true
           provenance: mode=max

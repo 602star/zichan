@@ -16,13 +16,11 @@ sudo install -d -m 700 -o 1000 -g 1000 /srv/zichan/state /srv/zichan/backups /sr
 
 ## 按 digest 部署
 
-手工触发 GitHub Actions 的 `Sync server candidate image`，从作业摘要或 `sync-server-image-digest` 构件取得完整镜像引用。流水线只生成 `sha-<commit>` 候选标签，部署引用必须是 `@sha256:<digest>`。部署前按[自更新手册](production-self-update.md)安装只读私有 Release Token 与更新公钥。主机上执行：
+手工触发 GitHub Actions 的 `Sync server candidate image`，从作业摘要或 `sync-server-image-digest` 构件取得完整镜像引用。流水线只生成 `sha-<commit>` 候选标签，部署引用必须是 `@sha256:<digest>`。镜像工作流从仓库 Secret 注入私有 Release 只读 Token，并固定更新公钥；部署时不再复制这两份文件到宿主机。主机上执行：
 
 ```bash
 export ZICHAN_IMAGE='ghcr.io/602star/zichan-sync@sha256:<64位摘要>'
 export ZICHAN_TZ=Asia/Shanghai
-export ZICHAN_UPDATE_GITHUB_TOKEN_FILE=/etc/zichan/github-release-token
-export ZICHAN_UPDATE_PUBLIC_KEY_FILE=/etc/zichan/update-public.pem
 bash scripts/production/deploy.sh
 ```
 
@@ -50,8 +48,6 @@ bash scripts/production/ship-backup.sh /srv/zichan/backups/<记录>
 
 ```bash
 export ZICHAN_IMAGE='ghcr.io/602star/zichan-sync@sha256:<64位摘要>'
-export ZICHAN_UPDATE_GITHUB_TOKEN_FILE=/etc/zichan/github-release-token
-export ZICHAN_UPDATE_PUBLIC_KEY_FILE=/etc/zichan/update-public.pem
 export RESTIC_REPOSITORY='sftp:backup-user@backup-host:/srv/restic/zichan'
 export RESTIC_PASSWORD_FILE='/etc/zichan/restic-password'
 bash scripts/production/restore-host.sh <快照ID> /srv/zichan/backups/<记录>

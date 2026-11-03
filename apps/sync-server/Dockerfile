@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # Build from the REPO ROOT:  docker build -f apps/sync-server/Dockerfile -t zichan-sync .
 FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS build
 WORKDIR /repo
@@ -19,6 +20,14 @@ COPY --from=build /repo/apps/web/dist ./bootstrap/release/web-dist
 COPY --from=build /repo/apps/sync-server/package.json ./bootstrap/release/package.json
 COPY apps/sync-server/scripts/update-launcher.mjs ./bootstrap/update-launcher.mjs
 COPY apps/sync-server/scripts/pre-update-backup.mjs ./bootstrap/pre-update-backup.mjs
+COPY apps/sync-server/keys/update-public.pem ./bootstrap/update-public.pem
+ARG ZICHAN_REQUIRE_RELEASE_TOKEN=0
+RUN --mount=type=secret,id=release_token \
+    if [ "$ZICHAN_REQUIRE_RELEASE_TOKEN" = 1 ]; then \
+      test -s /run/secrets/release_token && \
+      install -d -o node -g node -m 700 /keys && \
+      install -o node -g node -m 600 /run/secrets/release_token /keys/github-token; \
+    fi
 ENV HOST=0.0.0.0 PORT=8787 DATA_DIR=/state/server WEB_DIST=/app/web-dist ENABLE_WEB=1 ENABLE_SYNC=1 REGISTRATION_MODE=invite BASE_PATH= TRUSTED_PROXIES= ALLOW_INSECURE_HTTP=0
 # Run unprivileged: Docker initializes both named volumes with node-owned directories.
 RUN mkdir -p /state/server /backups /app/runtime /keys && chown -R node:node /state /backups /app

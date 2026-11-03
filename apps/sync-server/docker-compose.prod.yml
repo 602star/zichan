@@ -18,7 +18,7 @@ services:
       ZICHAN_UPDATE_REQUIRE_BACKUP: '1'
       UPDATE_GITHUB_REPO: 602star/zichan
       UPDATE_GITHUB_TOKEN_FILE: /keys/github-token
-      UPDATE_PUBLIC_KEY_PATH: /keys/update-public.pem
+      UPDATE_PUBLIC_KEY_PATH: /app/bootstrap/update-public.pem
       TZ: ${ZICHAN_TZ:-Asia/Shanghai}
       TRUSTED_PROXIES: '127.0.0.1'
       ALLOW_INSECURE_HTTP: '0'
@@ -45,18 +45,6 @@ services:
       - type: bind
         source: ${ZICHAN_RUNTIME_DIR:-/srv/zichan/runtime}
         target: /app/runtime
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${ZICHAN_UPDATE_GITHUB_TOKEN_FILE:?Set the private Releases read-only token file}
-        target: /keys/github-token
-        read_only: true
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ${ZICHAN_UPDATE_PUBLIC_KEY_FILE:?Set the Ed25519 update public key file}
-        target: /keys/update-public.pem
-        read_only: true
         bind:
           create_host_path: false
     healthcheck:

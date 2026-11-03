@@ -92,6 +92,7 @@ jobs:
           [[ "$ZICHAN_UPDATE_PUBLIC_KEY_SHA256" =~ ^[a-f0-9]{64}$ ]]
           actual="$(sha256sum release/update-public.pem | cut -d ' ' -f 1)"
           test "$actual" = "$ZICHAN_UPDATE_PUBLIC_KEY_SHA256"
+          cmp release/update-public.pem apps/sync-server/keys/update-public.pem
           node scripts/release/verify-update-package.mjs release/update-public.pem release/latest.json \
             "release/zichan-${RELEASE_TAG#v}.json"
           printf 'Update public key SHA-256: `%s`\n' "$actual" >> "$GITHUB_STEP_SUMMARY"
