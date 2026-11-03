@@ -110,11 +110,15 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: node --test tools/release/tests/update-launcher-integration.test.mjs
       - name: Build image and verify health endpoints
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p ci-artifacts "$RUNNER_TEMP/zichan-sync-state"
+          mkdir -p ci-artifacts "$RUNNER_TEMP/zichan-sync-state" "$RUNNER_TEMP/zichan-sync-runtime" "$RUNNER_TEMP/zichan-sync-backups"
           container=zichan-sync-ci
           cleanup() {
             docker logs "$container" > ci-artifacts/docker-container.log 2>&1 || true
@@ -129,6 +133,10 @@ jobs:
             test -s /app/dist/server.mjs
             test -s /app/dist/maintenance.mjs
             test -s /app/web-dist/index.html
+            test -s /app/bootstrap/update-launcher.mjs
+            test -s /app/bootstrap/pre-update-backup.mjs
+            test -s /app/bootstrap/release/dist/server.mjs
+            test -s /app/bootstrap/release/dist/maintenance.mjs
             test "$(find /app/dist -type f | wc -l)" -eq 2
             if find /app -type f \( -name "*.map" -o -name "*.ts" -o -name "*.tsx" -o -name "*.d.ts" \) | grep -q .; then
               echo "runtime image contains source maps or TypeScript files" >&2
@@ -142,11 +150,16 @@ jobs:
             --publish 127.0.0.1:18787:8787 \
             --env HOST=0.0.0.0 \
             --env DATA_DIR=/state/server \
+            --env ADMIN_BACKUP_DIRECTORY=/backups \
+            --env ZICHAN_UPDATE_RUNTIME_DIR=/app/runtime \
+            --env ZICHAN_UPDATE_REQUIRE_BACKUP=1 \
             --env REGISTRATION_MODE=open \
             --env ENABLE_WEB=0 \
             --env ENABLE_SYNC=1 \
             --env ALLOW_INSECURE_HTTP=1 \
             --mount "type=bind,src=$RUNNER_TEMP/zichan-sync-state,dst=/state" \
+            --mount "type=bind,src=$RUNNER_TEMP/zichan-sync-runtime,dst=/app/runtime" \
+            --mount "type=bind,src=$RUNNER_TEMP/zichan-sync-backups,dst=/backups" \
             "zichan-sync-ci:${GITHUB_SHA}"
           for attempt in $(seq 1 30); do
             if curl --fail --silent --show-error http://127.0.0.1:18787/api/health --output ci-artifacts/health.json; then
@@ -183,9 +196,9 @@ jobs:
           test "$(docker exec "$container" id -u)" != 0
           # State volume is writable by the unprivileged user.
           docker exec "$container" sh -c 'test -w /state/server'
+          docker exec "$container" sh -c 'test -L /app/runtime/current && test -s /app/runtime/current/dist/server.mjs'
           # The final image must carry a self-contained maintenance entry, not only
           # TypeScript output whose workspace imports need node_modules.
-          mkdir -p "$RUNNER_TEMP/zichan-sync-backups"
           docker stop --time 60 "$container"
           docker run --rm --user "$(id -u):$(id -g)" \
             --mount "type=bind,src=$RUNNER_TEMP/zichan-sync-state,dst=/state" \
@@ -197,6 +210,16 @@ jobs:
             --mount "type=bind,src=$RUNNER_TEMP/zichan-sync-backups,dst=/backups" \
             "zichan-sync-ci:${GITHUB_SHA}" \
             node dist/maintenance.mjs verify-backup --data-dir /state/server --backup /backups/ci
+          docker start "$container"
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:18787/api/ready >/dev/null; then break; fi
+            sleep 2
+          done
+          curl --fail --silent --show-error http://127.0.0.1:18787/api/ready >/dev/null
+          curl --fail --silent --show-error http://127.0.0.1:18787/api/health --output ci-artifacts/health-after-restart.json
+          jq --exit-status --slurpfile before ci-artifacts/health.json \
+            '.ok == true and .serverId == $before[0].serverId and .version == $before[0].version' \
+            ci-artifacts/health-after-restart.json >/dev/null
       - name: Upload container failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

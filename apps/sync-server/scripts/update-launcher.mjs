@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { appendFile, cp, mkdir, readFile, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { verifiedPreUpdateBackup } from './pre-update-backup.mjs';
 
 const runtime = process.env.ZICHAN_UPDATE_RUNTIME_DIR || '/app/runtime';
 const releases = join(runtime, 'releases');
@@ -9,7 +10,9 @@ const current = join(runtime, 'current');
 const pendingFile = join(runtime, 'pending.json');
 const statusFile = join(runtime, 'update-result.json');
 const historyFile = join(runtime, 'update-history.jsonl');
-const targetPattern = /^releases\/v0\.3\.(?:0|[1-9]\d*)$/;
+const versionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const targetPattern = /^releases\/v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const taskPattern = /^[a-f0-9-]{36}$/;
 let child;
 let stopping = false;
 
@@ -22,12 +25,12 @@ async function atomicJson(path, value) {
 async function recordResult(update, state, error) {
   const at = new Date().toISOString();
   const result = { taskId: update.taskId, version: update.version, state,
-    operation: update.operation || 'update', error, at };
+    operation: update.operation || 'update', backupPath: update.backupPath, error, at };
   await atomicJson(statusFile, result);
   await appendFile(historyFile, JSON.stringify({ state, currentVersion: state === 'success' ? update.version : update.from.slice('releases/v'.length),
     fromVersion: update.from.slice('releases/v'.length),
     targetVersion: update.version, taskId: update.taskId, operation: result.operation, actor: update.actor,
-    error, updatedAt: at }) + '\n', { mode: 0o600 });
+    backupPath: update.backupPath, error, updatedAt: at }) + '\n', { mode: 0o600 });
 }
 
 async function activate(target) {
@@ -45,7 +48,7 @@ async function initialize() {
     if (error.code !== 'ENOENT') throw error;
     const source = '/app/bootstrap/release';
     const packageJson = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'));
-    if (!/^0\.3\.(?:0|[1-9]\d*)$/.test(packageJson.version)) throw new Error('镜像初始版本无效');
+    if (!versionPattern.test(packageJson.version)) throw new Error('镜像初始版本无效');
     const target = `releases/v${packageJson.version}`;
     const staging = join(runtime, `.bootstrap-${randomUUID()}`);
     await cp(source, staging, { recursive: true, errorOnExist: true, force: false });
@@ -66,8 +69,8 @@ async function trustedCurrent() {
 async function pending() {
   try {
     const value = JSON.parse(await readFile(pendingFile, 'utf8'));
-    if (!targetPattern.test(value.from) || !targetPattern.test(value.to)
-      || !/^0\.3\.(?:0|[1-9]\d*)$/.test(value.version)
+    if (!taskPattern.test(value.taskId) || !targetPattern.test(value.from) || !targetPattern.test(value.to)
+      || !versionPattern.test(value.version)
       || value.to !== `releases/v${value.version}`) throw new Error('待确认更新状态无效');
     return value;
   } catch (error) {
@@ -105,6 +108,20 @@ async function run() {
       continue;
     }
     if (update && target !== update.to) throw new Error('待确认版本与当前链接不一致');
+    if (update) {
+      try {
+        if (process.env.ZICHAN_UPDATE_REQUIRE_BACKUP === '1') {
+          update.backupPath = await verifiedPreUpdateBackup({ runtime, update,
+            backupRoot: process.env.ADMIN_BACKUP_DIRECTORY, dataDir: process.env.DATA_DIR || '/state/server' });
+        }
+      } catch (error) {
+        await activate(update.from);
+        await recordResult(update, 'failed', `切换前备份失败：${error instanceof Error ? error.message : String(error)}`);
+        await rm(pendingFile);
+        continue;
+      }
+    }
+    if (stopping) break;
     child = spawn(process.execPath, [join(runtime, target, 'dist', 'server.mjs')], {
       env: { ...process.env, WEB_DIST: join(runtime, target, 'web-dist'),
         ZICHAN_UPDATE_RUNTIME_DIR: runtime, ZICHAN_UPDATE_LAUNCHER: '1' },

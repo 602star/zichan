@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { comparePatch, parseFeed, parseRelease, reconcileLauncherResult, signedFeedText } from '../src/updater.js';
+import { compareVersions, parseFeed, parseRelease, reconcileLauncherResult, signedFeedText } from '../src/updater.js';
 
 const { privateKey, publicKey } = generateKeyPairSync('ed25519');
 const publicPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
@@ -25,7 +25,7 @@ const feed = {
   signature: sign(null, Buffer.from(signedFeedText(unsigned)), privateKey).toString('base64'),
 };
 
-describe('signed 0.3.x self updates', () => {
+describe('signed stable self updates', () => {
   it('records a legacy launcher result without a prior history entry', async () => {
     const runtime = await mkdtemp(join(tmpdir(), 'zichan-update-history-'));
     try {
@@ -42,7 +42,10 @@ describe('signed 0.3.x self updates', () => {
   });
 
   it('accepts a signed release with the required server and web files', () => {
-    expect(comparePatch('0.3.2', '0.3.1')).toBe(1);
+    expect(compareVersions('0.3.2', '0.3.1')).toBe(1);
+    expect(compareVersions('0.4.0', '0.3.5')).toBe(1);
+    expect(compareVersions('0.4.1', '0.4.0')).toBe(1);
+    expect(compareVersions('0.4.0', '0.4.1')).toBe(-1);
     const verified = parseFeed(feed, publicPem);
     expect(parseRelease(release, verified).version).toBe('0.3.2');
   });
@@ -50,7 +53,7 @@ describe('signed 0.3.x self updates', () => {
   it('rejects a forged or stale feed and a modified package', () => {
     expect(() => parseFeed({ ...feed, sha256: '0'.repeat(64) }, publicPem)).toThrow('签名无效');
     expect(() => parseFeed({ ...feed, artifact: '../bad.json' }, publicPem)).toThrow('格式无效');
-    expect(() => comparePatch('0.4.0', '0.3.1')).toThrow();
+    expect(() => compareVersions('0.4.0-rc.1', '0.3.1')).toThrow();
     expect(() => parseRelease(Buffer.concat([release, Buffer.from(' ')]), feed)).toThrow('SHA256');
   });
 

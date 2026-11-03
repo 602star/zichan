@@ -11,6 +11,7 @@ COPY --from=build /repo/apps/sync-server/dist /app/bootstrap/release/dist
 COPY --from=build /repo/apps/web/dist /app/bootstrap/release/web-dist
 COPY --from=build /repo/apps/sync-server/package.json /app/bootstrap/release/package.json
 COPY apps/sync-server/scripts/update-launcher.mjs /app/bootstrap/update-launcher.mjs
+COPY apps/sync-server/scripts/pre-update-backup.mjs /app/bootstrap/pre-update-backup.mjs
 ENV HOST=127.0.0.1 PORT=8787 DATA_DIR=/state/server WEB_DIST=/app/runtime/current/web-dist ZICHAN_UPDATE_RUNTIME_DIR=/app/runtime ENABLE_WEB=1 ENABLE_SYNC=1 REGISTRATION_MODE=invite BASE_PATH= TRUSTED_PROXIES=127.0.0.1 ALLOW_INSECURE_HTTP=0
 RUN mkdir -p /app/runtime /state/server /backups /keys && chown -R node:node /app /state /backups
 USER node

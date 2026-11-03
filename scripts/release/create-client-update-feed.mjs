@@ -9,7 +9,7 @@ if (!rawBase || !rawOutput || !mappings.length) {
 const base = new URL(rawBase);
 if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash) throw new Error('客户端更新目录必须使用 HTTPS');
 const version = JSON.parse(await readFile(resolve(import.meta.dirname, '../../package.json'), 'utf8')).version;
-if (!/^0\.3\.(?:0|[1-9]\d*)$/.test(version)) throw new Error('客户端更新只支持 0.3.x');
+if (!/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(version)) throw new Error('客户端更新只支持稳定版本号');
 const versionInName = new RegExp(`(?:^|[^0-9])${version.replaceAll('.', '\\.')}(?:[^0-9]|$)`);
 const targetExtensions = new Map([
   ['windows-msi-x86_64', '.msi'], ['windows-nsis-x86_64', '-setup.exe'],

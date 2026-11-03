@@ -96,4 +96,4 @@ tools/
    └─ tests/                    # 发布构建链的 Node 测试
 ```
 
-MSI/NSIS、安装烟测、PFX/updater 签名和 GitHub 发布工作流在 v0.1 不启用，统一记录为 1.0 发布准备事项。新增脚本必须放入对应职责目录，并同步更新 npm 入口、自动化测试和文档调用点。
+服务器签名包由 `scripts/release/create-update-package.mjs` 生成候选、`sign-update-package.mjs` 在受保护 Actions 作业签名；生产自更新部署与验收见 `docs/deployment/production-self-update.md`。新增脚本必须放入对应职责目录，并同步更新 npm 入口、自动化测试和文档调用点。

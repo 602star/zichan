@@ -26,9 +26,9 @@ describe('update sources', () => {
       delete process.env.UPDATE_GITHUB_REPO;
       process.env.UPDATE_FEED_DIR = directory;
       await writeFile(join(directory, 'latest.json'), 'signed');
-      await writeFile(join(directory, 'zichan-0.3.3.feed.json'), 'signed');
+      await writeFile(join(directory, 'zichan-0.4.1.feed.json'), 'signed');
       expect((await readUpdateAsset('latest.json', 4096)).toString()).toBe('signed');
-      expect(await listUpdateFeedVersions()).toEqual(['0.3.3']);
+      expect(await listUpdateFeedVersions()).toEqual(['0.4.1']);
       await expect(readUpdateAsset('../secret', 4096)).rejects.toThrow('名称无效');
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
@@ -45,7 +45,9 @@ describe('update sources', () => {
       vi.stubGlobal('fetch', vi.fn(async (input: string, init?: RequestInit) => {
         calls.push({ url: input, authorization: new Headers(init?.headers).get('authorization') ?? undefined });
         if (input.endsWith('/releases?per_page=100')) return new Response(JSON.stringify([
-          { tag_name: 'v0.3.3', draft: false, prerelease: false,
+          { tag_name: 'v0.3.5', draft: false, prerelease: false,
+            assets: [{ id: 6, name: 'latest.json', size: 6 }] },
+          { tag_name: 'v0.4.1', draft: false, prerelease: false,
             assets: [{ id: 7, name: 'latest.json', size: 6 }] },
         ]));
         if (input.endsWith('/assets/7')) return new Response(null, {
@@ -54,7 +56,8 @@ describe('update sources', () => {
         return new Response('signed');
       }));
       expect((await readUpdateAsset('latest.json', 4096)).toString()).toBe('signed');
-      expect(await listUpdateFeedVersions()).toEqual(['0.3.3']);
+      expect(await listUpdateFeedVersions()).toEqual(['0.3.5', '0.4.1']);
+      expect(calls.some((entry) => entry.url.endsWith('/assets/6'))).toBe(false);
       expect(calls.find((entry) => entry.url === 'https://release-assets.githubusercontent.com/signed')?.authorization).toBeUndefined();
       expect(calls[0]?.authorization).toMatch(/^Bearer github_pat_/);
     } finally { await rm(directory, { recursive: true, force: true }); }

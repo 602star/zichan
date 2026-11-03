@@ -6482,7 +6482,7 @@ dependencies = [
 
 [[package]]
 name = "zichan"
-version = "0.3.5"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "fs2",

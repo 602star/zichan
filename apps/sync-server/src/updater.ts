@@ -7,17 +7,23 @@ import { acquireMaintenanceLock } from './maintenance-lock.js';
 import { readUpdateAsset, listUpdateFeedVersions, updateSourceConfigured, UPDATE_FEED_LIMIT } from './update-source.js';
 
 const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024;
-const VERSION = /^0\.3\.(0|[1-9]\d*)$/;
-const ASSET = /^zichan-0\.3\.(?:0|[1-9]\d*)\.json$/;
+const VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const ASSET = /^zichan-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.json$/;
 const FILE = /^(?:dist\/(?:server|maintenance)\.mjs|web-dist\/[A-Za-z0-9._/-]+)$/;
 
 interface Feed { format: 'zichan-update-feed-v1'; version: string; artifact: string; sha256: string; signature: string }
 interface Release { format: 'zichan-release-v1'; version: string; schema: { version: number; name: string }; files: { path: string; data: string }[] }
 export interface UpdateStatus { state: 'idle' | 'checking' | 'available' | 'current' | 'downloading' | 'installing' | 'restarting' | 'success' | 'failed'; currentVersion: string; fromVersion?: string; targetVersion?: string; taskId?: string; operation?: 'update' | 'rollback'; actor?: string; percent?: number; downloadedBytes?: number; totalBytes?: number; error?: string; updatedAt: string }
 
-export function comparePatch(left: string, right: string): number {
-  if (!VERSION.test(left) || !VERSION.test(right)) throw new Error('仅支持 0.3.x 稳定版');
-  return Number(left.split('.')[2]) - Number(right.split('.')[2]);
+export function compareVersions(left: string, right: string): number {
+  if (!VERSION.test(left) || !VERSION.test(right)) throw new Error('仅支持稳定版本号');
+  const leftParts = left.split('.').map(BigInt);
+  const rightParts = right.split('.').map(BigInt);
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index]! > rightParts[index]!) return 1;
+    if (leftParts[index]! < rightParts[index]!) return -1;
+  }
+  return 0;
 }
 
 export function signedFeedText(feed: Pick<Feed, 'format' | 'version' | 'artifact' | 'sha256'>): string {
@@ -145,7 +151,7 @@ export function createUpdater(currentVersion: string, dataDir: string) {
       downloadedBytes: undefined, totalBytes: undefined });
     try {
       const feed = await latest();
-      const available = comparePatch(feed.version, currentVersion) > 0;
+      const available = compareVersions(feed.version, currentVersion) > 0;
       set(available ? 'available' : 'current', { targetVersion: feed.version, error: undefined });
       return { enabled, status, available };
     } catch (error) {
@@ -156,7 +162,7 @@ export function createUpdater(currentVersion: string, dataDir: string) {
   const apply = async (version: string, actor: string): Promise<UpdateStatus> => {
     if (!enabled || !runtime) throw new Error('此部署未启用自更新');
     if (busy) throw new Error('已有更新任务正在执行');
-    if (!VERSION.test(version) || comparePatch(version, currentVersion) <= 0) throw new Error('目标版本必须高于当前 0.3.x 版本');
+    if (!VERSION.test(version) || compareVersions(version, currentVersion) <= 0) throw new Error('目标版本必须高于当前版本');
     if (await stat(join(runtime, 'pending.json')).then(() => true, () => false)) throw new Error('已有待确认更新');
     busy = true;
     const taskId = randomUUID();
@@ -227,15 +233,15 @@ export function createUpdater(currentVersion: string, dataDir: string) {
   const versions = async () => {
     if (!enabled || !runtime) return { installed: [], published: [] };
     const installed = (await readdir(join(runtime, 'releases')))
-      .filter((name) => /^v0\.3\.(?:0|[1-9]\d*)$/.test(name));
+      .filter((name) => /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(name));
     const published = await listUpdateFeedVersions().catch(() => []);
-    return { installed: installed.map((name) => name.slice(1)).sort((a, b) => comparePatch(b, a)),
-      published: published.sort((a, b) => comparePatch(b, a)) };
+    return { installed: installed.map((name) => name.slice(1)).sort((a, b) => compareVersions(b, a)),
+      published: published.sort((a, b) => compareVersions(b, a)) };
   };
   const rollback = async (version: string, actor: string): Promise<UpdateStatus> => {
     if (!enabled || !runtime) throw new Error('此部署未启用自更新');
     if (busy) throw new Error('已有更新任务正在执行');
-    if (!VERSION.test(version) || comparePatch(version, currentVersion) >= 0) throw new Error('只能回滚到更早的 0.3.x 版本');
+    if (!VERSION.test(version) || compareVersions(version, currentVersion) >= 0) throw new Error('只能回滚到更早的版本');
     const target = `v${version}`;
     if (!(await versions()).installed.includes(version)) throw new Error('目标版本未安装');
     for (const name of ['dist/server.mjs', 'dist/maintenance.mjs', 'web-dist/index.html']) {

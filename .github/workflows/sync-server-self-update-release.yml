@@ -1,0 +1,130 @@
+name: Signed sync server self-update release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable version tag pointing to a commit on main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      tag_commit: ${{ steps.provenance.outputs.tag_commit }}
+    steps:
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Run the release workflow from main' >&2; exit 2; }
+          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 2
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Pin the tag commit
+        id: provenance
+        run: echo "tag_commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - run: npm ci
+      - name: Check tag and build signed-update candidate
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          git merge-base --is-ancestor HEAD "$GITHUB_SHA"
+          node scripts/release/check-consistency.mjs --tag "$RELEASE_TAG"
+          npm run test:release
+          npm run typecheck
+          npm test --workspace @zichan/sync-server
+          npm run build:server
+          node scripts/release/create-update-package.mjs --unsigned candidate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-sync-update
+          path: candidate/zichan-*.json
+          if-no-files-found: error
+
+  sign-and-publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-sync-update
+          path: release
+      - name: Sign with protected Ed25519 key
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          ZICHAN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.ZICHAN_UPDATE_SIGNING_KEY_PEM }}
+          ZICHAN_UPDATE_PUBLIC_KEY_SHA256: ${{ vars.ZICHAN_UPDATE_PUBLIC_KEY_SHA256 }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$ZICHAN_UPDATE_SIGNING_KEY_PEM"
+          key="$RUNNER_TEMP/zichan-update-signing.pem"
+          trap 'rm -f "$key"' EXIT
+          umask 077
+          printf '%s' "$ZICHAN_UPDATE_SIGNING_KEY_PEM" > "$key"
+          node scripts/release/sign-update-package.mjs "$RELEASE_TAG" "$key" \
+            "release/zichan-${RELEASE_TAG#v}.json" release
+          openssl pkey -in "$key" -pubout -out release/update-public.pem
+          [[ "$ZICHAN_UPDATE_PUBLIC_KEY_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          actual="$(sha256sum release/update-public.pem | cut -d ' ' -f 1)"
+          test "$actual" = "$ZICHAN_UPDATE_PUBLIC_KEY_SHA256"
+          node scripts/release/verify-update-package.mjs release/update-public.pem release/latest.json \
+            "release/zichan-${RELEASE_TAG#v}.json"
+          printf 'Update public key SHA-256: `%s`\n' "$actual" >> "$GITHUB_STEP_SUMMARY"
+      - name: Recheck release tag commit
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          EXPECTED_TAG_COMMIT: ${{ needs.build.outputs.tag_commit }}
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$EXPECTED_TAG_COMMIT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sync-update-public-key
+          path: release/update-public.pem
+          if-no-files-found: error
+      - name: Publish immutable release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+            --title "$RELEASE_TAG" --notes "Signed sync server self-update package for $RELEASE_TAG"
+          gh release upload "$RELEASE_TAG" \
+            "release/zichan-${RELEASE_TAG#v}.json" \
+            "release/zichan-${RELEASE_TAG#v}.feed.json" \
+            release/latest.json \
+            --repo "$GITHUB_REPOSITORY"
+          expected="$(printf '%s\n' latest.json "zichan-${RELEASE_TAG#v}.feed.json" "zichan-${RELEASE_TAG#v}.json" | sort)"
+          actual="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort)"
+          test "$actual" = "$expected"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false

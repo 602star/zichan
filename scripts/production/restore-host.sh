@@ -25,6 +25,13 @@ backup="$staging$original"
 [[ -f "$backup/manifest.json" ]] || { echo 'Snapshot does not contain the requested backup' >&2; exit 1; }
 chown -R 1000:1000 "$staging"
 verify_backup "$backup"
+saved_backup="$ZICHAN_BACKUP_DIR/$(basename "$backup")"
+[[ ! -e "$saved_backup" && ! -L "$saved_backup" ]] || {
+  echo 'Recovered backup record already exists in ZICHAN_BACKUP_DIR' >&2
+  exit 2
+}
+cp -a -- "$backup" "$saved_backup"
+verify_backup "$saved_backup"
 expected_id="$(cat "$backup/server-id")"
 docker run --rm --network none --user 1000:1000 \
   --mount "type=bind,src=$ZICHAN_STATE_DIR,dst=/state" \
@@ -34,4 +41,4 @@ docker run --rm --network none --user 1000:1000 \
 [[ "$(cat "$ZICHAN_STATE_DIR/server/server-id")" == "$expected_id" ]] || {
   echo 'Restored server identity differs from the backup' >&2; exit 1
 }
-printf 'Offline restore verified for server ID %s. Start only after isolating the original node.\n' "$expected_id"
+printf 'Offline restore verified for server ID %s. Set ZICHAN_BASELINE_BACKUP=%s before deploy; start only after isolating the original node.\n' "$expected_id" "$saved_backup"

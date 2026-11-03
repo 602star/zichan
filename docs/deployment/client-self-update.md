@@ -20,7 +20,7 @@ Windows 安装版依靠包内 `installer-channel.txt` 选择 MSI 或 NSIS，不�
 - Android 在构建时设置 `ZICHAN_ANDROID_UPDATE_URL=https://…/android-latest.json`；清单签名、版本、APK 文件名及 SHA256 由原生层校验。只接受同目录的 HTTPS APK，不跟随重定向。
 - 测试公钥分别在 `apps/desktop/src-tauri/installer/update-test.pub` 与 `android-update-test.pub`。对应私钥仅在构建机的忽略目录中。换密钥时必须重新构建客户端；私钥、APK 签名 keystore、Token 和更新包都不提交。
 - 新测试机若没有对应私钥，应先生成自己的 Tauri updater 密钥（`npx tauri signer generate --ci -p '' -w <忽略目录>/tauri.key`）及 Android 清单 Ed25519 密钥，并把新公钥写入上述文件后重新构建 0.3.3 基线。不同公钥签的下一版本不能更新已有客户端。
-- 私有 GitHub Releases 可供 Linux/Docker 服务端用只读 Token 获取，见[服务端更新手册](self-update-linux.md)。客户端不内置 GitHub Token；其签名清单与包须由部署方放在客户端可访问的 HTTPS 目录。原始仓库保持私有也可以使用单独的更新文件服务。
+- 私有 GitHub Releases 可供 Linux/Docker 服务端用只读 Token 获取，见[生产自更新手册](production-self-update.md)及[隔离测试手册](self-update-linux.md)。客户端不内置 GitHub Token；其签名清单与包须由部署方放在客户端可访问的 HTTPS 目录。原始仓库保持私有也可以使用单独的更新文件服务。
 
 ## 制作本地测试包
 

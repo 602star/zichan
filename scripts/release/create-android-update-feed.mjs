@@ -8,7 +8,7 @@ if (!privateKeyPath || !rawApk || !rawOutput) {
   process.exit(2);
 }
 const version = JSON.parse(await readFile(resolve(import.meta.dirname, '../../package.json'), 'utf8')).version;
-if (!/^0\.3\.(?:0|[1-9]\d*)$/.test(version)) throw new Error('Android 更新只支持 0.3.x');
+if (!/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(version)) throw new Error('Android 更新只支持稳定版本号');
 const apk = resolve(rawApk);
 if (!apk.toLowerCase().endsWith('.apk')) throw new Error('更新资产必须是 APK');
 const bytes = await readFile(apk);

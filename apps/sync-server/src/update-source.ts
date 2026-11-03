@@ -2,8 +2,19 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 
 const MAX_FEED_BYTES = 4096;
-const RELEASE_ASSET = /^zichan-0\.3\.(?:0|[1-9]\d*)\.json$/;
-const FEED_ASSET = /^zichan-0\.3\.(?:0|[1-9]\d*)\.feed\.json$/;
+const VERSION = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const RELEASE_ASSET = /^zichan-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.json$/;
+const FEED_ASSET = /^zichan-(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.feed\.json$/;
+
+function compareVersions(left: string, right: string): number {
+  const leftParts = left.split('.').map(BigInt);
+  const rightParts = right.split('.').map(BigInt);
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index]! > rightParts[index]!) return 1;
+    if (leftParts[index]! < rightParts[index]!) return -1;
+  }
+  return 0;
+}
 
 interface GithubAsset { id: number; name: string; size: number }
 interface GithubRelease { tag_name: string; draft: boolean; prerelease: boolean; assets: GithubAsset[] }
@@ -62,7 +73,8 @@ async function githubReleases(): Promise<GithubRelease[]> {
   const releases = JSON.parse(response.toString('utf8')) as GithubRelease[];
   if (!Array.isArray(releases)) throw new Error('GitHub 发布列表无效');
   return releases.filter((release) => release && !release.draft && !release.prerelease
-    && /^v0\.3\.(?:0|[1-9]\d*)$/.test(release.tag_name) && Array.isArray(release.assets));
+    && VERSION.test(release.tag_name?.slice(1) ?? '') && release.tag_name.startsWith('v')
+    && Array.isArray(release.assets));
 }
 
 async function githubAsset(release: GithubRelease, name: string, limit: number,
@@ -97,8 +109,8 @@ export async function readUpdateAsset(name: string, limit: number, version?: str
   const releases = await githubReleases();
   const release = version
     ? releases.find((entry) => entry.tag_name === `v${version}`)
-    : releases.sort((a, b) => Number(b.tag_name.split('.')[2]) - Number(a.tag_name.split('.')[2]))[0];
-  if (!release) throw new Error('GitHub 没有可用的 0.3.x 发布');
+    : releases.sort((a, b) => compareVersions(b.tag_name.slice(1), a.tag_name.slice(1)))[0];
+  if (!release) throw new Error('GitHub 没有可用的稳定版发布');
   return githubAsset(release, name, limit, onProgress);
 }
 

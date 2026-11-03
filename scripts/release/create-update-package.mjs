@@ -2,14 +2,15 @@ import { createHash, sign } from 'node:crypto';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 
-const [privateKeyPath, outputDirectory] = process.argv.slice(2);
-if (!privateKeyPath || !outputDirectory) {
-  console.error('用法：node scripts/release/create-update-package.mjs <Ed25519 私钥 PEM> <输出目录>');
+const unsigned = process.argv[2] === '--unsigned';
+const [privateKeyPath, outputDirectory] = unsigned ? [undefined, process.argv[3]] : process.argv.slice(2);
+if (!outputDirectory || !unsigned && !privateKeyPath) {
+  console.error('用法：node scripts/release/create-update-package.mjs <Ed25519 私钥 PEM> <输出目录> | --unsigned <输出目录>');
   process.exit(2);
 }
 const root = resolve(import.meta.dirname, '../..');
 const version = JSON.parse(await readFile(join(root, 'apps/sync-server/package.json'), 'utf8')).version;
-if (!/^0\.3\.(?:0|[1-9]\d*)$/.test(version)) throw new Error('更新包仅支持 0.3.x');
+if (!/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(version)) throw new Error('更新包仅支持稳定版本号');
 const storeSource = await readFile(join(root, 'apps/sync-server/src/store.ts'), 'utf8');
 const schemaVersion = /export const CURRENT_SERVER_SCHEMA = (\d+);/.exec(storeSource)?.[1];
 const schemaName = /export const CURRENT_SERVER_SCHEMA_NAME = '([^']+)';/.exec(storeSource)?.[1];
@@ -38,6 +39,12 @@ const artifact = `zichan-${version}.json`;
 const bytes = Buffer.from(JSON.stringify({ format: 'zichan-release-v1', version,
   schema: { version: Number(schemaVersion), name: schemaName }, files }));
 if (bytes.length > 64 * 1024 * 1024) throw new Error('更新包超过 64 MiB');
+await mkdir(resolve(outputDirectory), { recursive: true });
+await writeFile(join(resolve(outputDirectory), artifact), bytes, { flag: 'wx', mode: 0o644 });
+if (unsigned) {
+  console.log(`已创建未签名候选包 ${artifact}`);
+  process.exit(0);
+}
 const feed = {
   format: 'zichan-update-feed-v1', version, artifact,
   sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -45,8 +52,6 @@ const feed = {
 const signature = sign(null,
   Buffer.from(`${feed.format}\n${feed.version}\n${feed.artifact}\n${feed.sha256}\n`),
   await readFile(resolve(privateKeyPath), 'utf8')).toString('base64');
-await mkdir(resolve(outputDirectory), { recursive: true });
-await writeFile(join(resolve(outputDirectory), artifact), bytes, { flag: 'wx', mode: 0o644 });
 const signedFeed = JSON.stringify({ ...feed, signature }) + '\n';
 await writeFile(join(resolve(outputDirectory), `zichan-${version}.feed.json`), signedFeed, { flag: 'wx', mode: 0o644 });
 await writeFile(join(resolve(outputDirectory), 'latest.json'), signedFeed);
