@@ -5,7 +5,7 @@
 ## 2026-11-03 — 生产镜像内置私有 Release 只读凭据
 
 - 按部署决策将更新签名公钥固定在生产镜像，并将仅能读取 `602star/zichan` 的细粒度 Token 由仓库 Actions Secret `ZICHAN_RELEASE_READ_TOKEN` 在 Docker BuildKit 构建时注入最终镜像；源码和 Dockerfile 不包含 Token 内容。生产 Compose 不再挂载宿主机的 Token 或公钥文件，部署预检改为确认镜像内文件可读。用户已明确接受镜像读取者可离线提取该 Token 的后果；镜像保持私有，撤销或轮换 Token 后须重新构建并部署基础镜像。
-- 隔离 Linux 测试机从当前代码构建含凭据镜像 `zichan-sync:embedded-token-e2e`，镜像内 `/keys/github-token` 为 UID 1000、模式 `0600`，固定公钥 SHA-256 为 `c19dc8e44eb08e241de4a92c0c4fbadb5688a0172ac5f6baa924a11335d37f0a`。容器自身从 GitHub API 读取到私有正式 Release `v0.4.1` 和 `v0.4.0`，未使用宿主机 Token 挂载。实际镜像流水线和 Cosign 摘要需在推送后另行验收。
+- 隔离 Linux 测试机从当前代码构建含凭据镜像 `zichan-sync:embedded-token-e2e`，镜像内 `/keys/github-token` 为 UID 1000、模式 `0600`，固定公钥 SHA-256 为 `c19dc8e44eb08e241de4a92c0c4fbadb5688a0172ac5f6baa924a11335d37f0a`。容器自身从 GitHub API 读取到私有正式 Release `v0.4.1` 和 `v0.4.0`，未使用宿主机 Token 挂载；不带 Secret 的普通 CI 镜像也成功构建。提交 `77d3ebe` 的[正式候选镜像作业](https://github.com/602star/zichan/actions/runs/41617975139)通过全套门禁、构建、推送及 Cosign 验证，摘要为 `sha256:49be4ac9322364be984584d25f2c1342a00f5f442412d633f56e3227567a3bf0`。尚无生产主机，因此该摘要未在生产部署。
 
 ## 2026-11-03 — 私有 Releases 直连升级验收与生产灾备盘点
 
