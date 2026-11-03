@@ -2,6 +2,12 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-03 — 私有 Releases 直连升级验收与生产灾备盘点
+
+- GitHub 新建 `zichan-production-release-read` 细粒度 PAT，范围仅 `602star/zichan`，Contents 只读及 GitHub 必需的 Metadata 只读，没有账户权限。本机密钥文件在仓库外，测试机凭据文件由容器 UID 1000 拥有、模式 `0600`，只读挂载到独立测试容器。GitHub 页面显示该 Token 无到期日，后续生产运维需明确轮换策略。
+- 在 `192.168.2.117` 的 `/opt/zichan-private-release-e2e-20261103` 新建隔离实例，以 0.4.0 生产 Dockerfile 镜像、独立状态/运行/备份目录和回环端口 `18792` 启动；创建测试所有者、账本提交和 AES-GCM 加密附件。更新源只配置 `UPDATE_GITHUB_REPO=602star/zichan` 与只读 Token 文件，没有挂载本地 feed。所有者管理 API 从私有 Releases 直接检查、下载并安装签名的 0.4.1 包，任务 `6c6ed1b6-fde2-442f-a6c4-a0e52d2e50cf` 成功，schema 保持 27。预更新备份 `/backups/pre-update-6c6ed1b6-fde2-442f-a6c4-a0e52d2e50cf` 独立 `verify-backup` 通过（9 个文件、数据库 `ok`）；`server-id` 与三份密钥文件同备份一致，账号登录、提交读取和附件解密通过。保留状态/运行/备份目录重建 0.4.0 基础镜像容器后，仍运行 0.4.1，业务读取再次通过。此项**私有 Releases 容器直连升级验收通过**。
+- 测试机无 `/srv/zichan` 生产目录；查到的 `/srv/zichan-test/restic` 与两套 `/opt/zichan-*-e2e-20261103/backups` 都是同机测试数据。尚未得到完整生产备份或异机 Restic 仓库位置、第二台空白恢复主机；**真实生产数据和异机恢复仍未验收**，也没有接触运行中的生产数据。
+
 ## 2026-11-03 — v0.4.0 → v0.4.1 私有签名发布与 Linux 实测
 
 - 已推送 `main` 及 `v0.4.0`、`v0.4.1` 标签；两版均由 `production-release` Environment 签名作业发布正式私有 GitHub Release，均含 `latest.json`、版本清单和完整更新包。发布作业分别成功：[v0.4.0](https://github.com/602star/zichan/actions/runs/41584818987)、[v0.4.1](https://github.com/602star/zichan/actions/runs/41585733860)。两版资产下载后以固定公钥验证 Ed25519 签名和包 SHA-256 通过。v0.4.0 的生产候选镜像构建及 Cosign 验证作业也通过，摘要为 `sha256:b1d777d0704f8e1691b32ae34613372fcfd3862778bc6396e73f7cece1f842b6`。
