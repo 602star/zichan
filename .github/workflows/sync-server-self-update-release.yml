@@ -46,8 +46,8 @@ jobs:
           node scripts/release/check-consistency.mjs --tag "$RELEASE_TAG"
           npm run test:release
           npm run typecheck
-          npm test --workspace @zichan/sync-server
           npm run build:server
+          npm test --workspace @zichan/sync-server
           node scripts/release/create-update-package.mjs --unsigned candidate
       - uses: actions/upload-artifact@v4
         with:
