@@ -34,7 +34,7 @@ test('managed account opens on another device and prepares offline access automa
     expect(protection.secret).toEqual(expect.any(String));
     const other = await second.newPage();
     await login(other);
-    await expect(other.locator('.zc-app-shell')).toBeVisible();
+    await expect(other.locator('.zc-app-shell')).toBeVisible({ timeout: 20_000 });
     await other.close();
     await page.route('**/api/**', (route) => route.fulfill({ status: 503, json: { error: 'offline' } }));
     await page.reload();

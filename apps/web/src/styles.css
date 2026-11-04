@@ -1070,7 +1070,7 @@ button,
   min-width: 0;
   font-size: var(--fs-body);
   font-weight: var(--fw-bold);
-  line-height: 1.1;
+  line-height: 1.25;
   overflow-wrap: anywhere;
   text-wrap: balance;
   text-align: center;
@@ -3733,6 +3733,9 @@ input[type="radio"] {
 .zc-asset-preset-button > span:last-child { min-width: 0; }
 .zc-asset-preset-button strong { display: block; font-size: var(--fs-body); font-weight: var(--fw-medium); }
 .zc-asset-preset-button small { display: block; margin-top: 2px; color: var(--text-secondary); font-size: var(--fs-caption); }
+@media (max-width: 460px) {
+  .zc-asset-preset-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .zc-asset-preset-more { margin-top: var(--sp-3); }
 .zc-asset-preset-more > summary { color: var(--accent); font-size: var(--fs-body); font-weight: var(--fw-medium); cursor: pointer; }
 .zc-asset-preset-group-title { margin: var(--sp-3) 0 var(--sp-2); color: var(--text-secondary); font-size: var(--fs-caption); font-weight: var(--fw-medium); }
