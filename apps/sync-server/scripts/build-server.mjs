@@ -8,7 +8,7 @@ const version = JSON.parse(await readFile(new URL('../package.json', import.meta
 const common = {
   bundle: true,
   platform: 'node',
-  target: 'node22',
+  target: 'node26',
   format: 'esm',
   define: { __ZICHAN_SERVER_VERSION__: JSON.stringify(version) },
   banner: { js: "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);" },

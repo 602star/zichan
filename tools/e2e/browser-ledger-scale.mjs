@@ -1,13 +1,16 @@
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { chromium } from '@playwright/test';
 import { listenOnSafePort } from './safe-listen.mjs';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
+const webRequire = createRequire(resolve(root, 'apps/web/package.json'));
+const viteBin = resolve(dirname(webRequire.resolve('vite/package.json')), 'bin/vite.js');
 const counts = (process.argv[2] ?? '1000,10000,50000').split(',').map(Number);
 if (counts.some((count) => !Number.isSafeInteger(count) || count < 1)) throw new Error('Counts must be positive integers');
 
@@ -18,7 +21,7 @@ if (!address || typeof address === 'string') throw new Error('No benchmark port'
 const port = address.port;
 await new Promise((resolveClose) => portProbe.close(resolveClose));
 const base = `http://127.0.0.1:${port}`;
-const vite = spawn(process.execPath, [resolve(root, 'node_modules/vite/bin/vite.js'), '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
+const vite = spawn(process.execPath, [viteBin, '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
   cwd: resolve(root, 'apps/web'),
   stdio: ['ignore', 'pipe', 'pipe'],
 });

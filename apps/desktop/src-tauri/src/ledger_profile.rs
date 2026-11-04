@@ -363,17 +363,21 @@ pub async fn desktop_switch_ledger_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_DIR: AtomicU64 = AtomicU64::new(0);
 
     struct TestDir(PathBuf);
     impl TestDir {
         fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
-                "zichan-ledger-profile-{}-{}",
+                "zichan-ledger-profile-{}-{}-{}",
                 std::process::id(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_nanos(),
+                NEXT_TEST_DIR.fetch_add(1, Ordering::Relaxed)
             ));
             fs::create_dir(&path).unwrap();
             Self(path)

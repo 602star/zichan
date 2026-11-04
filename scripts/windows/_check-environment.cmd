@@ -4,7 +4,7 @@ setlocal EnableExtensions
 node.exe --version >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] Node.js was not found in PATH.
-  echo         Install Node.js 22.3 or newer, then reopen this window.
+  echo         Install Node.js 26.13.0 or newer, then reopen this window.
   exit /b 1
 )
 
@@ -15,9 +15,9 @@ if errorlevel 1 (
   exit /b 1
 )
 
-node.exe -e "const [major, minor] = process.versions.node.split('.').map(Number); process.exit(major > 22 || (major === 22 && minor >= 3) ? 0 : 1)"
+node.exe -e "const [major, minor] = process.versions.node.split('.').map(Number); process.exit(major > 26 || (major === 26 && minor >= 13) ? 0 : 1)"
 if errorlevel 1 (
-  for /f "delims=" %%V in ('node.exe -p "process.versions.node"') do echo [ERROR] Node.js 22.3 or newer is required. Current: %%V
+  for /f "delims=" %%V in ('node.exe -p "process.versions.node"') do echo [ERROR] Node.js 26.13.0 or newer is required. Current: %%V
   exit /b 1
 )
 

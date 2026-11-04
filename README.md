@@ -17,7 +17,7 @@
 
 ## 开发与验证
 
-需要 `.node-version` 指定的 Node.js 版本和 npm。首次安装及常用命令：
+需要 `.node-version` 指定的 Node.js 26.13.0 LTS 和 npm。首次安装及常用命令：
 
 ```bash
 npm install

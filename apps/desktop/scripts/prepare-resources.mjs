@@ -28,7 +28,7 @@ await build({
   outfile: resolve(resources, 'server.mjs'),
   bundle: true,
   platform: 'node',
-  target: 'node22',
+  target: 'node26',
   format: 'esm',
   define: { __ZICHAN_SERVER_VERSION__: JSON.stringify(serverVersion) },
   sourcemap: false,

@@ -1,12 +1,14 @@
 import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { join } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { createServer as createPortProbe } from 'node:net';
-import { createServer as createViteServer } from '../../../node_modules/vite/dist/node/index.js';
 import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
+const webRequire = createRequire(new URL('../../../apps/web/package.json', import.meta.url));
+const { createServer: createViteServer } = await import(webRequire.resolve('vite'));
 
 test('development proxy supports owner creation, cookie restore and rejects foreign origins', async ({ page, context }) => {
   const server = createSyncServer({ basePath: '/ledger', enableWeb: false });

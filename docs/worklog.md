@@ -2,6 +2,22 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-04 — Web 图标与浏览器数据库依赖升级
+
+- `lucide-react` 升至 1.68.0、`simple-icons` 升至 16.36.0、`sql.js` 升至 1.15.2，更新 Web 工作区最低依赖声明和根锁文件。`sql.js` 新版的 `Database.export()` 使用 SQLite backup API，并要求写事务提交后导出；现有驱动在根事务提交后持久化。扩展驱动测试，核对提交快照可重新打开且原连接可继续写入和再次导出。
+- Web 工作区的 `test` 脚本直接调用 Vitest，但此前没有声明 Vitest 开发依赖，干净安装后定向 CI 命令会找不到可执行文件；现补齐 `vitest@5.1.0`。本机定向 `sqljs-driver` 测试 8/8、`npm run ci` 通过，覆盖率 231 个文件、1,470 项通过、1 项平台跳过；服务器与 Web 构建、Lint、类型检查均通过。
+
+## 2026-11-04 — Node 26 LTS 与开发工具链升级
+
+- 发布 Node 从 22.23.3 升至 26.13.0 LTS，根工作区与同步服务最低要求同步调整；Windows 本机 Scoop Node 也更新到 26.13.0。两个同步服务 Dockerfile 改用经 OCI 摘要固定的 `node:26-alpine`，核对镜像配置为 `NODE_VERSION=26.13.0`。Linux 桌面构建补装 Node 26 所需的 `libatomic1`。
+- 升级 Vite 8、React 插件 6、Vitest/覆盖率 5、ESLint 10、Playwright 1.64、esbuild 0.28、Tauri CLI 2.12 及对应锁文件；`systeminformation` 升至 5.33.19，避开 Windows `services()` 命令注入受影响版本。TypeScript 升至 6.0.3，仍在当前 `typescript-eslint` 的 `>=4.8.4 <6.1.0` 支持范围内；core/db 显式声明 DOM 类型，适配 TypeScript 6 的默认类型行为。本机 Rust stable 更新到 1.99.1，仓库 Rust 最低声明不变。
+- Node 26.13.0 下 `npm run release:check`、`npm run test:release`（35 通过、1 项 Linux 专用跳过）、`npm run build:server`、`npm run typecheck`、`npm run lint`、`npm run test:scripts`（10 通过）及 `npm run test:coverage`（231 个文件、1,470 项通过、1 项平台跳过）均通过。根工作区、覆盖率与 E2E 工具的 `npm audit` 为零；ESLint 独立工具仍有 10 项中危关联告警，根因是其上游直接要求 `minimatch` 10，当前修复版在 11 系列；本地 ESLint 仅使用固定仓库文件模式，未强制覆盖上游主版本范围。
+- Windows 本机升级 Rust stable 后，`cargo fmt --check` 和 `cargo check --locked` 通过。`cargo test --locked` 首次运行发现两个并行测试复用了 Windows 时钟同一时间戳创建的临时目录；测试夹具加递增编号后重跑，24 项通过、1 项按原设置跳过。
+- Playwright 1.64 的 Chromium 常规浏览器套件 65/65、账号套件 88/88 通过。新版 npm 的依赖布局不再把 Web 的 Vite 放在根 `node_modules`，开发启动器与两处 E2E 脚本改为从 Web 工作区解析 CLI。桌面资源准备脚本补声明直接使用的 `esbuild`；服务端与桌面打包目标改为 Node 26，开发启动预检及 Windows 命令脚本的最低版本检查同步调整。
+- 补齐直接依赖与 Node 26 打包目标后重跑 `npm ci`、`npm run test:scripts`（10/10）、`npm run typecheck`、`npm run lint` 和 `npm run test:coverage`（231 个文件、1,470 项通过、1 项跳过），均通过。Windows 启动脚本预检确认 Node 26.13.0；桌面资源内置 Node 与安装清单也均为 26.13.0，内置服务端 bundle 通过 `node --check`。
+- `npm run build:desktop:binary` 在 Rust 1.99.1、Tauri CLI 2.12.4 下生成 Windows Release 二进制 `zichan.exe`（20,712,960 字节）；原生 libsodium/OpenSSL 链接提示缺少 PDB 调试信息和默认库冲突警告，构建退出码为 0。当前 Windows 本机没有 Docker，因此两份 Node 26 Alpine Dockerfile 未在本机实际构建；Linux 桌面 CI 的 `libatomic1` 变更仍待 CI 环境验证。
+- 复核 `typescript-eslint@8.72.1` 的 TypeScript 范围为 `>=4.8.4 <6.1.0`，因此将 TypeScript 从 5.9.3 补升至 6.0.3，而不是停在 5.9。适配其默认类型行为后，`npm run typecheck`、`npm run lint`、`npm run build:server`、`npm run release:check`、完整覆盖率测试（231 个文件、1,470 项通过、1 项跳过）及 Windows 桌面 Release 二进制构建再次通过。独立 ESLint 工具已是当前最新版；10 项中危审计记录来自同一个 `minimatch@10.2.6` 问题沿依赖链展开，上游 ESLint、`@eslint/config-array`、`@typescript-eslint/typescript-estree` 仍声明 `minimatch` 10，修复版从 11.0.1 开始。
+
 ## 2026-11-04 — CI 失败定位与隔离 Linux 验收
 
 - GitHub CI 的 Rust 格式检查失败来自桌面 `system-share` 插件两个源文件；已按 rustfmt 整理。Linux 桌面发行包能构建，但普通发行配置没有 updater 公钥，启动时仍无条件注册插件，导致 `invalid type: null, expected struct Config`；现按最终合并配置注册 updater，未配置的构建在设置页明确显示更新不可用。

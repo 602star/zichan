@@ -12,7 +12,7 @@
 
 ## 从 0.3.1 启动测试实例
 
-在 Linux 测试机的 `0.3.1` 本地提交上执行。测试机需要 Docker Compose、Node.js 22 和 OpenSSL；也可以在构建机生成发布包后复制到测试机。以下目录为示例，均由当前用户创建；请勿复用生产数据卷。
+在 Linux 测试机的 `0.3.1` 本地提交上执行。测试机需要 Docker Compose 和 OpenSSL；Node.js 版本以所检出的历史提交为准（当前主线要求 26.13.0 LTS）。也可以在构建机生成发布包后复制到测试机。以下目录为示例，均由当前用户创建；请勿复用生产数据卷。
 
 ```bash
 mkdir -p "$HOME/zichan-update-test/feed" "$HOME/zichan-update-test/keys"
@@ -29,7 +29,7 @@ docker compose -f apps/sync-server/docker-compose.self-update.yml up -d --build 
 
 ## 制作下一补丁包并更新
 
-在含下一版本（例如 `0.3.4`）的本地提交上构建，保持与测试容器相同的 Node 22/Linux 构建环境。发布包内只含打包好的 Node 服务端与 Web 静态文件，目标容器无需 `npm install`。
+在含下一版本（例如 `0.3.4`）的本地提交上构建，保持与测试容器相同的 Node/Linux 构建环境；当前主线使用 Node 26.13.0 LTS。发布包内只含打包好的 Node 服务端与 Web 静态文件，目标容器无需 `npm install`。
 
 ```bash
 npm ci

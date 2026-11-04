@@ -5,7 +5,7 @@
   "description": "End-to-end-encrypted commit-replica server with accounts and administration",
   "type": "module",
   "engines": {
-    "node": ">=22.3"
+    "node": ">=26.13.0"
   },
   "scripts": {
     "build": "npm run build:dependencies && npm run build:app",
@@ -25,15 +25,15 @@
     "retire-local-replica": "npm run maintenance -- retire-local-replica"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
+    "@types/node": "^26.6.6",
     "@zichan/core": "*",
     "@zichan/db": "*",
-    "esbuild": "^0.21.5",
-    "typescript": "^5.6.3",
-    "vitest": "^2.1.8"
+    "esbuild": "^0.28.2",
+    "typescript": "^6.0.3",
+    "vitest": "^5.1.0"
   },
   "dependencies": {
     "@serenity-kit/opaque": "^1.1.0",
-    "systeminformation": "^5.33.15"
+    "systeminformation": "^5.33.19"
   }
 }

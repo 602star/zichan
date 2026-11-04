@@ -12,7 +12,7 @@ import { runtimeTreeDigest } from '../../../scripts/release/setup-webview2-runti
 
 const VERSION = '0.1.0';
 const RUNTIME_VERSION = '151.0.4129.101';
-const NODE_VERSION = '22.23.3';
+const NODE_VERSION = '26.13.0';
 const HASH = 'a'.repeat(64);
 const execFile = promisify(execFileCallback);
 const createWindowsPortable = (options) => createWindowsPortableActual({ inspectNodeVersion: () => NODE_VERSION, ...options });
@@ -122,7 +122,7 @@ test('rejects a bundled Node.js version that differs from the release pin', asyn
       lockPath: value.lock,
       archive: false,
       inspectNodeVersion: () => '26.3.0',
-    }), /Bundled Node\.js runtime is 26\.3\.0, expected 22\.23\.3/);
+    }), /Bundled Node\.js runtime is 26\.3\.0, expected 26\.13\.0/);
   } finally {
     await rm(value.root, { recursive: true, force: true });
   }

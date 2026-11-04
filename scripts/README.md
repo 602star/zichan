@@ -16,7 +16,7 @@ Playwright E2E 使用构建产物；根目录的 `npm run test:e2e` 和 `npm run
 | `windows/setup-webview2-runtime.cmd` | 显式下载、校验并解包锁定的 WebView2 固定版 | `.tools/webview2-fixed/<版本>/x64/` |
 | `windows/build-desktop.cmd` | 运行门禁并构建 Windows x64 完全便携 ZIP | `apps/desktop/src-tauri/target/release/portable/` |
 
-这些 CMD 会检查 Node.js 22.3+、npm 和依赖目录；桌面构建还会检查 Rust 与 Perl（vendored OpenSSL/SQLCipher 的 Windows release 构建需要 Perl）。它们不会自动安装依赖、抢占端口或结束其他程序。开发服务以前台方式运行，使用 `Ctrl+C` 停止。
+这些 CMD 会检查 Node.js 26.13.0+、npm 和依赖目录；桌面构建还会检查 Rust 与 Perl（vendored OpenSSL/SQLCipher 的 Windows release 构建需要 Perl）。它们不会自动安装依赖、抢占端口或结束其他程序。开发服务以前台方式运行，使用 `Ctrl+C` 停止。
 
 CMD 默认在结束或失败时暂停，以便双击运行时看到诊断信息。终端或自动化调用可设置 `ZICHAN_NO_PAUSE=1`；只检查本机基础工具时再设置 `ZICHAN_CHECK_ONLY=1`。
 

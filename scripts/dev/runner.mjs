@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { createServer as createTcpServer } from 'node:net';
 import { networkInterfaces } from 'node:os';
@@ -10,6 +11,19 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 export const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const modes = ['web', 'sync', 'server', 'desktop', 'all'];
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
+
+function workspaceBin(directory, workspace, packageName, bin) {
+  const manifest = join(directory, workspace, 'package.json');
+  if (existsSync(manifest)) {
+    try {
+      const requireWorkspace = createRequire(manifest);
+      return join(dirname(requireWorkspace.resolve(`${packageName}/package.json`)), bin);
+    } catch (error) {
+      if (error.code !== 'MODULE_NOT_FOUND') throw error;
+    }
+  }
+  return join(directory, 'node_modules', packageName, bin);
+}
 
 /** Only configuration that changes the running service participates; npm invocation variables do not. */
 function fingerprint(unit) {
@@ -98,9 +112,9 @@ export function plan(mode, env = process.env, directory = root) {
     ALLOW_INSECURE_HTTP: env.ALLOW_INSECURE_HTTP || '1', CONTROL_STDIN: '1' };
   const server = { key: 'server', entry: join(directory, 'apps/desktop/scripts/server.mjs'), args: [], env: serverEnv,
     cwd: directory, port, host: serverEnv.HOST, ready: `${localUrl}/api/health`, graceful: true };
-  const web = { key: 'web', entry: join(directory, 'node_modules/vite/bin/vite.js'), args: ['--host', '0.0.0.0', '--port', String(webPort), '--strictPort'],
+  const web = { key: 'web', entry: workspaceBin(directory, 'apps/web', 'vite', 'bin/vite.js'), args: ['--host', '0.0.0.0', '--port', String(webPort), '--strictPort'],
     env: { ...env, ZICHAN_DEV_API_TARGET: env.ZICHAN_DEV_API_TARGET || localUrl }, cwd: join(directory, 'apps/web'), port: webPort, host: '0.0.0.0', ready: `http://127.0.0.1:${webPort}/` };
-  const desktop = { key: 'desktop', entry: join(directory, 'node_modules/@tauri-apps/cli/tauri.js'), args: ['dev'],
+  const desktop = { key: 'desktop', entry: workspaceBin(directory, 'apps/desktop', '@tauri-apps/cli', 'tauri.js'), args: ['dev'],
     env, cwd: join(directory, 'apps/desktop'), port: 5173, host: '127.0.0.1', ready: null };
   return { mode, directory, units: mode === 'all' ? [server, web] : [mode === 'web' ? web : mode === 'desktop' ? desktop : server],
     build: mode === 'server' || mode === 'all' ? 'build:server' : mode === 'sync' ? 'build:api' : null,
@@ -117,7 +131,7 @@ export async function assertPortFree(port, host) {
 
 function preflight(value, noBuild) {
   const [major, minor] = process.versions.node.split('.').map(Number);
-  if (major < 22 || major === 22 && minor < 3) throw new Error('Node.js 22.3+ is required.');
+  if (major < 26 || major === 26 && minor < 13) throw new Error('Node.js 26.13.0+ is required.');
   if (!existsSync(join(value.directory, 'node_modules'))) throw new Error('Dependencies are missing. Run npm ci explicitly first.');
   for (const unit of value.units) {
     if (!existsSync(unit.entry)) throw new Error(`Missing runtime: ${unit.entry}`);

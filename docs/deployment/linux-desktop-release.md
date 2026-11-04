@@ -4,7 +4,7 @@
 
 ## 构建
 
-在 Ubuntu 22.04 安装 `libwebkit2gtk-4.1-dev`、`libgtk-3-dev`、`libayatana-appindicator3-dev`、`librsvg2-dev`、`libxdo-dev`、`libssl-dev`、`patchelf`、`libfuse2`、`xvfb`、`xauth`、`dbus-x11` 与基础编译工具，然后安装 Rust 和 `.node-version` 指定的 Node.js。Ubuntu 26.04 的 FUSE 包名为 `libfuse2t64`。运行 `npm ci` 和 `npm run build:desktop:linux`。CI 入口为 `.github/workflows/linux-desktop-release.yml`，支持手动触发和 `v*` 标签触发。
+在 Ubuntu 22.04 安装 `libwebkit2gtk-4.1-dev`、`libgtk-3-dev`、`libayatana-appindicator3-dev`、`librsvg2-dev`、`libxdo-dev`、`libssl-dev`、`patchelf`、`libfuse2`、`libatomic1`、`xvfb`、`xauth`、`dbus-x11` 与基础编译工具，然后安装 Rust 和 `.node-version` 指定的 Node.js。内置的 Node.js 26 需要 `libatomic1`；Ubuntu 26.04 的 FUSE 包名为 `libfuse2t64`。运行 `npm ci` 和 `npm run build:desktop:linux`。CI 入口为 `.github/workflows/linux-desktop-release.yml`，支持手动触发和 `v*` 标签触发。
 
 Linux 专用的 `tauri.linux-release.conf.json` 使用 ASCII 包名 `zichan`，保留中文窗口标题，并把 `resources/` 放到 Tauri 应用资源目录的 `server/` 下。用户数据使用 Tauri 的 Linux 应用数据目录（受 `XDG_DATA_HOME` 控制）；安装、升级、卸载均不把数据库、附件或备份写入包管理器拥有的目录。AppImage 也使用相同的用户数据目录，不把数据写进只读镜像。
 

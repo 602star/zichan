@@ -2,6 +2,8 @@
 
 ## 本地待发布补丁（未发布）
 
+- 开发、CI 与发行包内置 Node.js 对齐到 26.13.0 LTS；同步服务镜像也改用 Node 26。更新 TypeScript 6、Vite、Vitest、ESLint、Playwright 等开发工具链，并修复 `systeminformation` 的受影响版本。
+- 更新 Web 图标依赖 `lucide-react`、`simple-icons` 和浏览器 SQLite 引擎 `sql.js`；补齐 Web 工作区测试所需的 Vitest 直接依赖，并验证账本快照提交后可重新打开及继续写入。
 - 修复 Linux/Windows 普通桌面构建在未配置客户端 updater 验签密钥时启动失败的问题；有签名更新配置的构建继续注册 updater。补齐 Rust 格式检查。
 - 服务端同步轮次报告接受客户端实际生成的 26 位轮次 ID，并保留原有 UUID 格式，避免后台重复提交返回 400。
 - 同站 Cookie 刷新请求在页面重载时继续完成，避免服务端已轮换凭据、浏览器却丢失新 Cookie 后被要求重新登录。

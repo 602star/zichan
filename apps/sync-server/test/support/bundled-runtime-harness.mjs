@@ -25,7 +25,7 @@ try {
     outfile: entry,
     bundle: true,
     platform: 'node',
-    target: 'node22',
+    target: 'node26',
     format: 'esm',
     banner: { js: "import { createRequire } from 'node:module';\nconst require = createRequire(import.meta.url);" },
   });

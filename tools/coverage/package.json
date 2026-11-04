@@ -7,7 +7,7 @@
     "test": "vitest run --config vitest.config.mjs --coverage"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "2.1.9",
-    "vitest": "2.1.9"
+    "@vitest/coverage-v8": "5.1.0",
+    "vitest": "5.1.0"
   }
 }

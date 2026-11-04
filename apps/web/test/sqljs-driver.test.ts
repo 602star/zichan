@@ -116,7 +116,7 @@ describe('SqlJsDriver', () => {
 
   it('exports browser snapshots only after a transaction commits', async () => {
     const snapshots: Uint8Array[] = [];
-    const driver = await SqlJsDriver.open(null, (bytes) => snapshots.push(bytes));
+    const driver = await SqlJsDriver.open(null, (bytes) => snapshots.push(bytes.slice()));
     await driver.exec('CREATE TABLE entries (value TEXT NOT NULL)');
     expect(snapshots).toHaveLength(1);
 
@@ -135,6 +135,18 @@ describe('SqlJsDriver', () => {
     releaseCommit();
     await transaction;
     expect(snapshots).toHaveLength(2);
+
+    const committed = await SqlJsDriver.open(snapshots[1]);
+    expect(await committed.all('SELECT value FROM entries')).toEqual([{ value: 'committed' }]);
+    await committed.close();
+
+    await driver.run('INSERT INTO entries(value) VALUES (?)', ['later']);
+    expect(snapshots).toHaveLength(3);
+    const reopened = await SqlJsDriver.open(snapshots[2]);
+    expect(await reopened.all('SELECT value FROM entries ORDER BY rowid')).toEqual([
+      { value: 'committed' }, { value: 'later' },
+    ]);
+    await reopened.close();
     await driver.close();
   });
 

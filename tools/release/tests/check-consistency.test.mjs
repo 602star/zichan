@@ -34,7 +34,7 @@ test('accepts the repository release metadata and exact version tag', async () =
     assert.ok(Number.isSafeInteger(result.schemaVersion) && result.schemaVersion > 0);
     assert.equal(result.webview2RuntimeVersion, '151.0.4129.101');
     assert.equal(result.webview2LockComplete, true);
-    assert.equal(result.releaseNodeVersion, '22.23.3');
+    assert.equal(result.releaseNodeVersion, '26.13.0');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
