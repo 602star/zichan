@@ -20,12 +20,22 @@ describe('browser task lock without a SharedWorker connection', () => {
     vi.stubGlobal('navigator', {});
     const order: string[] = [];
     let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
     const wait = new Promise<void>((resolve) => { releaseFirst = resolve; });
-    const first = withSharedBrowserTaskLock('backup', async () => { order.push('first-start'); await wait; order.push('first-end'); });
+    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+    const first = withSharedBrowserTaskLock('backup', async () => {
+      order.push('first-start');
+      markFirstStarted();
+      await wait;
+      order.push('first-end');
+    });
     const second = withSharedBrowserTaskLock('backup', async () => { order.push('second'); });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(order).toEqual(['first-start']);
-    releaseFirst();
+    try {
+      await firstStarted;
+      expect(order).toEqual(['first-start']);
+    } finally {
+      releaseFirst();
+    }
     await Promise.all([first, second]);
     expect(order).toEqual(['first-start', 'first-end', 'second']);
   });
