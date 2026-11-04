@@ -547,6 +547,8 @@ export async function refreshAccountSession(baseUrl: string, refreshToken: strin
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(transport === 'cookie' ? { 'X-Zichan-Session': context === 'admin' ? 'admin-cookie' : 'cookie' } : {}) },
     credentials: transport === 'cookie' ? 'same-origin' : 'omit',
+    // A page reload must not cancel a refresh after the server rotates its cookie.
+    keepalive: transport === 'cookie',
     body: JSON.stringify(transport === 'cookie' ? {} : { refreshToken }),
     redirect: 'error',
   }, options);

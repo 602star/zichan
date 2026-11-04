@@ -104,7 +104,21 @@ fn info(app: &AppHandle, paths: &PortablePaths) -> ClientUpdateInfo {
     } else {
         "platform"
     };
-    let reason = target(paths).and_then(|_| endpoint().map(|_| ())).err();
+    let reason = target(paths)
+        .and_then(|_| {
+            if app
+                .config()
+                .plugins
+                .0
+                .get("updater")
+                .is_some_and(serde_json::Value::is_object)
+            {
+                endpoint().map(|_| ())
+            } else {
+                Err("此构建未配置客户端签名更新验证密钥".into())
+            }
+        })
+        .err();
     ClientUpdateInfo {
         enabled: reason.is_none(),
         mode,

@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import * as opaque from '@serenity-kit/opaque';
 import { loginAccount, registerAccount } from '@zichan/db';
 import { NodeSqliteDriver } from '@zichan/db/node';
-import { encryptJson, sha256Json, unlockLedgerKeyEnvelope, type LedgerKeyEnvelope } from '@zichan/core';
+import { encryptJson, newId, sha256Json, unlockLedgerKeyEnvelope, type LedgerKeyEnvelope } from '@zichan/core';
 import { createTestSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
 import { loadNodeIdentity } from '../src/node-identity.js';
 import { verifyNodeReplicaInventory } from '../src/node-replication.js';
@@ -141,9 +141,14 @@ describe('federated replica join', () => {
         body: JSON.stringify({ runId: '00000000-0000-4000-8000-000000000001', outcome: 'converged',
           pulled: 1, pushed: 0, attachmentUploads: 0, attachmentDownloads: 0, durationMs: 42 }),
       })).status).toBe(200);
+      expect((await fetch(`${targetUrl}/api/v4/sync-runs`, {
+        method: 'POST', headers: { ...federatedAuth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: newId(), outcome: 'converged',
+          pulled: 1, pushed: 0, attachmentUploads: 0, attachmentDownloads: 0, durationMs: 42 }),
+      })).status).toBe(200);
       const usageWithRun = await (await fetch(`${targetUrl}/api/auth/usage`,
         { headers: federatedAuth })).json() as { transfer: { syncRuns: number; convergedRuns: number } };
-      expect(usageWithRun.transfer).toMatchObject({ syncRuns: 1, convergedRuns: 1 });
+      expect(usageWithRun.transfer).toMatchObject({ syncRuns: 2, convergedRuns: 2 });
       const key = await unlockLedgerKeyEnvelope(protection.secret, protection.envelope);
       const publish = async (url: string, auth: Record<string, string>, commitId: string) => {
         const commit = { protocol: 2, ledgerId: protection.replica.ledgerId, commitId,

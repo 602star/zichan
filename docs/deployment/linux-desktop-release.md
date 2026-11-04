@@ -10,6 +10,8 @@ Linux 专用的 `tauri.linux-release.conf.json` 使用 ASCII 包名 `zichan`，�
 
 0.3.3 起 AppImage 在设置中可检查并安装经 Tauri 签名的更高 0.3.x 版本；`.deb` 会先下载并验证签名，再打开系统包安装器，由用户确认安装。构建签名更新物与跨版本验收见[客户端签名更新](client-self-update.md)。
 
+普通发行构建没有客户端 updater 验签配置时，桌面应用仍可启动，设置页会说明此构建未启用客户端签名更新。需要验证应用内升级时，按客户端签名更新手册提供测试公钥、签名私钥和 HTTPS 更新源，再用 `ZICHAN_UPDATE_TEST=1` 构建测试包。
+
 `build-desktop.sh` 校验 Node 版本、发行元数据、类型、Rust 格式与测试，再生成 `.deb` 和 AppImage。linuxdeploy 会给 AppImage 内置 Node 写入 `$ORIGIN` RPATH；`finalize-appimage.mjs` 只接受这项变更，更新 AppImage 内资源清单并重新封装。`verify-linux-artifacts.mjs` 解包两种产物，逐文件核对服务资源 SHA-256、内置 Node 的 x86_64 ELF 格式、执行权限和运行库，检查 `.deb` 的 WebKitGTK 依赖，最后生成 `.sha256` 旁车。Linux release 启动时也复验资源清单。
 
 ## 安装与升级验收

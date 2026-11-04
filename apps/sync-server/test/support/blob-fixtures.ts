@@ -41,28 +41,30 @@ export async function seedObjects(dataDir: string, username: string, ledgerId: s
   const namespace = objectNamespace(username, ledgerId);
   const blobIds: string[] = [];
   try {
-    for (let index = 0; index < count; index += 1) {
-      const blobId = createHash('sha256').update(`seeded-${index}`).digest('hex');
-      blobIds.push(blobId);
-      const contents = Buffer.alloc(32, index % 251);
-      const manifest = {
-        v: 1,
-        blobId,
-        cipherBytes: contents.byteLength,
-        chunkCount: 1,
-        chunks: [{ index: 0, sizeBytes: contents.byteLength, ciphertextSha256: createHash('sha256').update(contents).digest('hex'), iv: 'AAECAwQFBgcICQoL' }],
-      };
-      if (withFiles) writeObjectTree(dataDir, username, ledgerId, blobId, contents);
-      await driver.run(
-        `INSERT OR REPLACE INTO blob_objects
+    await driver.transaction(async (transaction) => {
+      for (let index = 0; index < count; index += 1) {
+        const blobId = createHash('sha256').update(`seeded-${index}`).digest('hex');
+        blobIds.push(blobId);
+        const contents = Buffer.alloc(32, index % 251);
+        const manifest = {
+          v: 1,
+          blobId,
+          cipherBytes: contents.byteLength,
+          chunkCount: 1,
+          chunks: [{ index: 0, sizeBytes: contents.byteLength, ciphertextSha256: createHash('sha256').update(contents).digest('hex'), iv: 'AAECAwQFBgcICQoL' }],
+        };
+        if (withFiles) writeObjectTree(dataDir, username, ledgerId, blobId, contents);
+        await transaction.run(
+          `INSERT OR REPLACE INTO blob_objects
          (username, ledger_id, blob_id, namespace, state, cipher_bytes, chunk_count, manifest_json, created_at, updated_at, deleted_at)
          VALUES (?, ?, ?, ?, 'available', ?, 1, ?, ?, ?, NULL)`,
-        [username, ledgerId, blobId, namespace, contents.byteLength, JSON.stringify(manifest), new Date().toISOString(), new Date().toISOString()],
-      );
-      // Yield periodically: synchronous file writes for a large seed would otherwise block the
-      // event loop long enough to leave the HTTP keep-alive timers and the caller racing.
-      if ((index + 1) % 200 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
-    }
+          [username, ledgerId, blobId, namespace, contents.byteLength, JSON.stringify(manifest), new Date().toISOString(), new Date().toISOString()],
+        );
+        // Yield periodically: synchronous file writes for a large seed would otherwise block the
+        // event loop long enough to leave the HTTP keep-alive timers and the caller racing.
+        if ((index + 1) % 200 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    });
   } finally { await driver.close(); }
   return blobIds;
 }

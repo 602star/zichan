@@ -10,6 +10,7 @@ interface JsonRequestInit {
   redirect?: 'error';
   credentials?: 'same-origin' | 'omit';
   cache?: 'no-store';
+  keepalive?: boolean;
 }
 
 export class HttpRequestError extends Error {

@@ -4,9 +4,9 @@ use tauri::{
     AppHandle, Runtime,
 };
 
-use crate::{Result, ShareRequest, ShareResponse};
 #[cfg(target_os = "android")]
 use crate::{ApkInstallRequest, ApkInstallResponse};
+use crate::{Result, ShareRequest, ShareResponse};
 
 #[cfg(target_os = "ios")]
 tauri::ios_plugin_binding!(init_plugin_system_share);
@@ -33,6 +33,8 @@ impl<R: Runtime> SystemShare<R> {
 
     #[cfg(target_os = "android")]
     pub fn install_apk(&self, payload: ApkInstallRequest) -> Result<ApkInstallResponse> {
-        self.0.run_mobile_plugin("installApk", payload).map_err(Into::into)
+        self.0
+            .run_mobile_plugin("installApk", payload)
+            .map_err(Into::into)
     }
 }

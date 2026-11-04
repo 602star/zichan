@@ -6462,7 +6462,8 @@ END;`);
     attachmentUploads: number; attachmentDownloads: number; durationMs: number;
   }): Promise<void> {
     await this.ready;
-    if (!/^[a-f0-9-]{36}$/.test(input.runId) || !['converged', 'partial', 'failed'].includes(input.outcome)
+    if (!(/^[a-f0-9-]{36}$/.test(input.runId) || /^[0-9A-HJKMNP-TV-Z]{26}$/.test(input.runId))
+      || !['converged', 'partial', 'failed'].includes(input.outcome)
       || [input.pulled, input.pushed, input.attachmentUploads, input.attachmentDownloads, input.durationMs]
         .some((value) => !Number.isSafeInteger(value) || value < 0)) {
       throw new ServerStoreError('INVALID_SYNC_RUN', 400, '同步轮次报告无效');

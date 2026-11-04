@@ -824,12 +824,19 @@ fn desktop_stop_server(
     }
 }
 
-fn app_builder() -> tauri::Builder<tauri::Wry> {
+fn app_builder(updater_configured: bool) -> tauri::Builder<tauri::Wry> {
     let builder = tauri::Builder::default().plugin(tauri_plugin_system_share::init());
     #[cfg(any(windows, target_os = "linux"))]
-    let builder = builder
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(client_updates::PendingClientUpdate::default());
+    let builder = {
+        let builder = if updater_configured {
+            builder.plugin(tauri_plugin_updater::Builder::new().build())
+        } else {
+            builder
+        };
+        builder.manage(client_updates::PendingClientUpdate::default())
+    };
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let _ = updater_configured;
     #[cfg(target_os = "android")]
     let builder = builder.manage(mobile_updates::PendingAndroidUpdate::default());
     builder
@@ -925,21 +932,30 @@ fn run_windows() {
     for window in &mut context.config_mut().app.windows {
         window.create = false;
     }
-    let builder = app_builder().manage(paths).manage(lock).setup(move |app| {
-        let result = (|| -> Result<(), Box<dyn std::error::Error>> {
-            install_stronghold(app, &setup_paths)?;
-            tauri::WebviewWindowBuilder::from_config(app.handle(), &window_config)?
-                .data_directory(setup_paths.webview.clone())
-                .enable_clipboard_access()
-                .build()?;
+    let updater_configured = context
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .is_some_and(serde_json::Value::is_object);
+    let builder = app_builder(updater_configured)
+        .manage(paths)
+        .manage(lock)
+        .setup(move |app| {
+            let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+                install_stronghold(app, &setup_paths)?;
+                tauri::WebviewWindowBuilder::from_config(app.handle(), &window_config)?
+                    .data_directory(setup_paths.webview.clone())
+                    .enable_clipboard_access()
+                    .build()?;
+                Ok(())
+            })();
+            if let Err(error) = result {
+                portable::show_native_error(&format!("初始化桌面失败：{error}"));
+                app.handle().exit(1);
+            }
             Ok(())
-        })();
-        if let Err(error) = result {
-            portable::show_native_error(&format!("初始化桌面失败：{error}"));
-            app.handle().exit(1);
-        }
-        Ok(())
-    });
+        });
     match builder.build(context) {
         Ok(app) => app.run(|handle, event| {
             if matches!(event, tauri::RunEvent::Exit) {
@@ -952,7 +968,17 @@ fn run_windows() {
 
 #[cfg(not(windows))]
 fn run_platform() {
-    let builder = app_builder().setup(|app| {
+    let context = tauri::generate_context!();
+    #[cfg(target_os = "linux")]
+    let updater_configured = context
+        .config()
+        .plugins
+        .0
+        .get("updater")
+        .is_some_and(serde_json::Value::is_object);
+    #[cfg(not(target_os = "linux"))]
+    let updater_configured = false;
+    let builder = app_builder(updater_configured).setup(|app| {
         let result = (|| -> Result<(), Box<dyn std::error::Error>> {
             let paths = PortablePaths::from_platform_app(app.handle())?;
             install_stronghold(app, &paths)?;
@@ -971,7 +997,7 @@ fn run_platform() {
         }
         Ok(())
     });
-    match builder.build(tauri::generate_context!()) {
+    match builder.build(context) {
         Ok(app) => app.run(|handle, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 stop_server_before_exit(handle);
