@@ -10,6 +10,8 @@
 - 本机最终源码验证：`npm run test:coverage` 通过 231 个文件、1,470 项测试（1 项跳过）；`npm run typecheck`、`npm run lint`、`npm run build:server`、Rust `cargo check`/`cargo test`/格式检查均通过。账号浏览器完整套件 88/88 通过；会话改动重建后，相关 4 项定向用例再次通过。
 - 测试机 `192.168.2.167`（Ubuntu 24.04，Node 22.23.3）上，扫描检查点与新轮次 ID 接口测试通过；重建后的 Chromium 相关账号用例重复三轮共 12/12 通过，另在桌面构建负载下重复 HTTP 503 离线恢复 2/2 通过。首次 Linux 桌面 DEB/AppImage 构建与资源校验通过，真实安装、升级、卸载及两种包启动保留了用户数据哨兵。
 - 最终源码在同一测试机重新构建 DEB 与 AppImage，两包均校验 56 项服务资源和内置 Node；第二次包生命周期验收再次通过。此脚本在缺少历史包时将当前 DEB 的版本字段改为 `0.0.0` 来演练包管理器升级，不代表真实跨应用版本迁移。GitHub Actions 的 Ubuntu 22.04 作业仍需以后推送才能验证；本次仅在本地提交，不推送、打标签或发布，也未接触生产数据。
+- 对照 GitHub CI 使用的 Node 22.23.3，在 Windows 本机执行 `npm run ci` 成功：覆盖率 231 个文件、1,470 项通过，1 项 Linux 专用进程锁用例按平台跳过；该锁用例在 Linux 测试机单独运行 2/2 通过。Windows `test:release` 为 35 项通过、1 项 Linux 专用启动器用例跳过，Linux 发行构建已执行该用例；Rust release check、被标记为 ignored 的 SQLCipher schema 合同测试也通过。Linux 测试机按 CI Dockerfile 构建镜像，并验证非 root 启动、健康/就绪、备份校验及重启后身份不变。
+- 用 Node 22 和 Playwright 自带 Headless Shell 跑账号浏览器套件 88/88 通过。常规浏览器套件首次运行发现分类浮层在向上弹出后内容变高的短暂间隔超出视口，原有即时边界断言在 CI 浏览器中连续失败；改为固定向上弹出浮层的底边，让内容增长时向上扩展。失败用例重复 5/5 通过，完整常规浏览器套件复跑 65/65 通过。最终改动后 Node 22 的 `npm run ci` 再次通过，覆盖率仍为 231 个文件、1,470 项通过、1 项平台跳过。完整 Chromium 安装在本机解压时停滞，Headless Shell 安装成功并承担上述浏览器验收；远端此前已成功执行相同的完整安装步骤。本地结果不等于新的 GitHub CI 结果，当前提交尚未推送。
 
 ## 2026-11-03 — 生产镜像内置私有 Release 只读凭据
 

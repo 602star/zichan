@@ -1140,10 +1140,10 @@ export function CategoryPicker(props: {
       const above = rect.top - oy - 16;
       const down = below >= Math.min(height, 240) || below >= above;
       const maxHeight = Math.max(100, Math.min(420, vh - 20, down ? below : above));
-      const actualHeight = Math.min(height, maxHeight);
-      const desired = down ? rect.bottom + 6 : rect.top - actualHeight - 6;
-      setPlacement({ width, maxHeight, left: Math.max(ox + 10, Math.min(rect.left, ox + vw - width - 10)),
-        top: Math.max(oy + 10, Math.min(desired, oy + vh - actualHeight - 10)) });
+      const left = Math.max(ox + 10, Math.min(rect.left, ox + vw - width - 10));
+      setPlacement(down
+        ? { width, maxHeight, left, top: Math.max(oy + 10, rect.bottom + 6) }
+        : { width, maxHeight, left, bottom: Math.max(window.innerHeight - (oy + vh) + 10, window.innerHeight - rect.top + 6) });
     };
     position();
     const panel = document.getElementById(titleId)?.closest('[role="dialog"]');
