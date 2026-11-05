@@ -460,13 +460,13 @@ mod tests {
             PathBuf::from(format!("{}-shm", path.display())),
         ] {
             if candidate.is_file() {
-                for attempt in 0..20 {
+                for attempt in 0..100 {
                     match fs::remove_file(&candidate) {
                         Ok(()) => break,
                         Err(error)
                             if cfg!(windows)
                                 && matches!(error.raw_os_error(), Some(32 | 33))
-                                && attempt < 19 =>
+                                && attempt < 99 =>
                         {
                             std::thread::sleep(std::time::Duration::from_millis(100));
                         }

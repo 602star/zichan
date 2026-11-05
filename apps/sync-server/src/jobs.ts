@@ -95,7 +95,8 @@ export function jobParamsFor(type: AdminJobType, raw: unknown): JsonRecord {
 
 export function createJobRunner(deps: JobRunnerDeps) {
   const { store, log, handlers } = deps;
-  let draining = false;
+  let activeDrain: Promise<void> | undefined;
+  let stopped = false;
 
   const kick = (): void => { void drain().catch(() => undefined); };
 
@@ -152,25 +153,29 @@ export function createJobRunner(deps: JobRunnerDeps) {
 
   /** Runs queued jobs until the queue is empty. A job that cannot record its own failure is
    * closed here, because the queue refuses to start another job while one stays `running`. */
-  const drain = async (): Promise<void> => {
-    if (draining) return;
-    draining = true;
-    try {
-      for (;;) {
-        const job = await store.claimNextJob();
-        if (!job) return;
-        try {
-          await execute(job);
-        } catch (error) {
-          const detail = { jobId: job.jobId, type: job.type, error: error instanceof Error ? error.message : String(error) };
-          await store.finishJob(job.jobId, { status: 'failed', errorCode: 'JOB_FAILED', errorMessage: '任务未能记录执行结果，已停止并标记失败' }).catch(() => undefined);
-          await store.appendJobEvent(job.jobId, 'error', '任务未能记录执行结果', detail).catch(() => undefined);
-          await log('error', 'job_execution_failed', '任务未能记录执行结果', { detail }).catch(() => undefined);
+  const drain = (): Promise<void> => {
+    if (activeDrain) return activeDrain;
+    if (stopped) return Promise.resolve();
+    activeDrain = (async () => {
+      try {
+        for (;;) {
+          if (stopped) return;
+          const job = await store.claimNextJob();
+          if (!job) return;
+          try {
+            await execute(job);
+          } catch (error) {
+            const detail = { jobId: job.jobId, type: job.type, error: error instanceof Error ? error.message : String(error) };
+            await store.finishJob(job.jobId, { status: 'failed', errorCode: 'JOB_FAILED', errorMessage: '任务未能记录执行结果，已停止并标记失败' }).catch(() => undefined);
+            await store.appendJobEvent(job.jobId, 'error', '任务未能记录执行结果', detail).catch(() => undefined);
+            await log('error', 'job_execution_failed', '任务未能记录执行结果', { detail }).catch(() => undefined);
+          }
         }
+      } finally {
+        activeDrain = undefined;
       }
-    } finally {
-      draining = false;
-    }
+    })();
+    return activeDrain;
   };
 
   return {
@@ -191,6 +196,10 @@ export function createJobRunner(deps: JobRunnerDeps) {
     },
     kick,
     drain,
+    async stop(): Promise<void> {
+      stopped = true;
+      await activeDrain;
+    },
     async runPending(): Promise<number> {
       let executed = 0;
       for (;;) {

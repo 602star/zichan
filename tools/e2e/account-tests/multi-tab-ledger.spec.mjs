@@ -34,6 +34,8 @@ test('two browser tabs can write the same ledger and see each other’s records'
     async function record(target, description, amount) {
       await target.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
       await target.getByRole('button', { name: /^\+ 记(支出|账)$/ }).click();
+      const restartDraft = target.getByRole('button', { name: '重新开始', exact: true });
+      if (await restartDraft.isVisible()) await restartDraft.click();
       await target.getByRole('textbox', { name: /^金额/ }).fill(amount);
       await target.getByLabel('描述').fill(description);
       await target.getByRole('button', { name: '保存', exact: true }).click();

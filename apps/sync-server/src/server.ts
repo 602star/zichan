@@ -3014,6 +3014,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       await hashOffload.close();
       await started.catch(() => undefined);
       if (server.listening) await new Promise<void>((resolveClose, reject) => server.close((error) => error ? reject(error) : resolveClose()));
+      await jobs.stop();
       await store.close();
       await blobStore.close();
     },

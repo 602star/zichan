@@ -915,8 +915,10 @@ export function createNodeReplicationWorker(store: SyncServerStore, blobStore: E
       await verifyReplicaPhysical(store, blobStore, username, ledgerId, () => stopped, inventory);
     })()
       .catch(async (error) => {
-        await store.recordReplicaPhysicalFailure(username, ledgerId,
-          `本地副本无法校验：${String(error).slice(0, 300)}`);
+        if (!stopped) {
+          await store.recordReplicaPhysicalFailure(username, ledgerId,
+            `本地副本无法校验：${String(error).slice(0, 300)}`).catch(() => undefined);
+        }
       }).finally(() => { physicalFlights.delete(key); });
     physicalFlights.set(key, work);
   };
