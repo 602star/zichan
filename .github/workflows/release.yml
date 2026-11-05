@@ -84,6 +84,11 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          for bundle_dir in release/deb release/appimage; do
+            test -d "$bundle_dir"
+            mv "$bundle_dir"/* release/
+            rmdir "$bundle_dir"
+          done
           shopt -s nullglob
           test "${#GITHUB_REF_NAME}" -gt 1
           version="${GITHUB_REF_NAME#v}"
