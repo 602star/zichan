@@ -72,6 +72,8 @@ echo.
 echo Running portable release gates...
 if "%ZICHAN_RELEASE_GATES_PASSED%"=="1" (
   echo [OK] Release checks passed in the calling workflow.
+  call npm.cmd run build:server
+  if errorlevel 1 goto :finish
   goto :build_desktop
 )
 call npm.cmd run release:check

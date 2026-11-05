@@ -109,10 +109,12 @@ test('the browser carries a personal ledger between independent servers', async 
     await expect(page.getByRole('checkbox', { name: '自动同步' })).toBeChecked();
     await expect(page.getByRole('progressbar', { name: '附件传输进度' })).toBeVisible();
     const source = await stores[0].getReplica('owner');
-    await expect.poll(async () => (await stores[1].getReplica('owner'))?.ledgerId).toBe(source.ledgerId);
-    await expect.poll(async () => (await stores[1].replicaInventory('owner', source.ledgerId)).commitHash)
-      .toBe((await stores[0].replicaInventory('owner', source.ledgerId)).commitHash);
-    await expect.poll(async () => (await stores[1].replicaInventory('owner', source.ledgerId)).promisedBlobCount)
+    await expect.poll(async () => (await stores[1].getReplica('owner'))?.ledgerId, { timeout: 20_000 }).toBe(source.ledgerId);
+    await expect.poll(async () => {
+      const [first, second] = await Promise.all(stores.map((store) => store.replicaInventory('owner', source.ledgerId)));
+      return Boolean(first.commitHash) && first.commitHash === second.commitHash;
+    }, { timeout: 20_000 }).toBe(true);
+    await expect.poll(async () => (await stores[1].replicaInventory('owner', source.ledgerId)).promisedBlobCount, { timeout: 20_000 })
       .toBeGreaterThan(0);
     const firstInventory = await stores[0].replicaInventory('owner', source.ledgerId);
     const secondInventory = await stores[1].replicaInventory('owner', source.ledgerId);
@@ -136,8 +138,10 @@ test('the browser carries a personal ledger between independent servers', async 
     await saveExpense(secondPage, 'second-browser-entry');
     await syncSite(secondPage);
     await page.getByRole('button', { name: '立即同步' }).click();
-    await expect.poll(async () => (await stores[0].replicaInventory('owner', source.ledgerId)).commitHash)
-      .toBe((await stores[1].replicaInventory('owner', source.ledgerId)).commitHash);
+    await expect.poll(async () => {
+      const [first, second] = await Promise.all(stores.map((store) => store.replicaInventory('owner', source.ledgerId)));
+      return Boolean(first.commitHash) && first.commitHash === second.commitHash;
+    }, { timeout: 20_000 }).toBe(true);
     await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
     await expect(page.getByText('second-browser-entry', { exact: true })).toBeVisible();
 

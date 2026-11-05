@@ -11,8 +11,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
           cache: npm
@@ -25,7 +25,7 @@ jobs:
         shell: pwsh
         run: node scripts/release/check-consistency.mjs --tag '${{ github.ref_name }}'
       - name: Restore pinned WebView2 runtime
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .tools/webview2-fixed
           key: webview2-fixed-${{ runner.os }}-${{ hashFiles('scripts/release/webview2-runtime.lock.json') }}
@@ -40,7 +40,7 @@ jobs:
           & .\scripts\windows\build-desktop.cmd
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload verified portable release
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-x64-portable
           path: |

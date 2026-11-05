@@ -52,12 +52,12 @@ jobs:
 
   publish:
     needs: [windows, windows-installer, linux, android, sync-update, image]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production-release
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - name: Verify the tag still points to this commit
@@ -67,27 +67,27 @@ jobs:
           git fetch --no-tags origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
           test "$(git rev-parse "${GITHUB_REF_NAME}^{commit}")" = "$GITHUB_SHA"
           node scripts/release/check-consistency.mjs --tag "$GITHUB_REF_NAME"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: windows-x64-portable
           path: release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: windows-installer-candidates
           path: release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: linux-x64-deb-appimage
           path: release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: android-arm64-release
           path: release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: signed-sync-update
           path: release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: sync-server-image-digest
           path: release
