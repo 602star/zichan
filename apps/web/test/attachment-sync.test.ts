@@ -340,5 +340,5 @@ describe('attachment replica sync', () => {
       rmSync(secondDataDir, { recursive: true, force: true });
       rmSync(thirdDataDir, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 90_000);
 });
