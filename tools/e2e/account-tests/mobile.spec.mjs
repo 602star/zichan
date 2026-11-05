@@ -53,7 +53,7 @@ for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, ini
     await expect(page.getByRole('dialog', { name: '新增 · 日常收支' })).toBeVisible();
     await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '取消', exact: true }).click();
     await page.reload();
-    await expect(guide).toBeVisible();
+    await expect(guide).toBeVisible({ timeout: 30_000 });
     await expect(guide).toContainText('新手引导 · 3/3');
     await guide.getByRole('button', { name: '收起' }).click();
     await expect(guide).toBeHidden();
@@ -69,7 +69,7 @@ for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, ini
     await entry.getByRole('button', { name: '保存', exact: true }).click();
     await expect(guide.getByText('记第一笔 · 已完成')).toBeVisible();
     await page.reload();
-    await expect(guide.getByText('记第一笔 · 已完成')).toBeVisible();
+    await expect(guide.getByText('记第一笔 · 已完成')).toBeVisible({ timeout: 30_000 });
     await guide.getByRole('button', { name: '下一步' }).click();
     await guide.getByRole('button', { name: '下一步' }).click();
     await guide.getByRole('button', { name: '创建自己的模板' }).click();

@@ -407,7 +407,8 @@ export function Transactions() {
           summaryAggregates,
           recommendationTransactions,
         });
-        setSelectedIds([]);
+        const visibleIds = new Set(page.transactions.map((transaction) => transaction.id));
+        setSelectedIds((current) => current.filter((id) => visibleIds.has(id)));
       }
     }).catch((error) => {
       if (!cancelled) {
