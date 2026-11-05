@@ -70,6 +70,10 @@ if errorlevel 1 (
 
 echo.
 echo Running portable release gates...
+if "%ZICHAN_RELEASE_GATES_PASSED%"=="1" (
+  echo [OK] Release checks passed in the calling workflow.
+  goto :build_desktop
+)
 call npm.cmd run release:check
 if errorlevel 1 goto :finish
 call npm.cmd run test:release
@@ -83,6 +87,7 @@ if errorlevel 1 goto :finish
 call npm.cmd test
 if errorlevel 1 goto :finish
 
+:build_desktop
 echo.
 echo Building the desktop executable without MSI, NSIS, or updater bundles...
 echo The first build may take a long time while Cargo compiles dependencies.
