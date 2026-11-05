@@ -3,7 +3,7 @@
 - 版本标签的统一发布流水线新增 Windows MSI 和 NSIS 安装版：前置 CI、安装包资源校验及 Windows 安装/卸载验收通过后，与便携版、Linux、Android、签名服务更新包和 Docker 镜像一同发布。
 - 本版 MSI 和 NSIS **未做 Windows Authenticode 代码签名**：仓库尚未配置受信任的签名证书。Windows 可能显示“未知发布者”或 SmartScreen 提示；请只从本仓库的 GitHub Release 下载，并核对旁车 SHA-256。APK 与服务端更新清单保持原有签名验证。
 - 修复镜像 Cosign 工作流身份和 Linux 构件目录汇总；Windows 安装版与便携版复用前置 CI 结果，不再重复运行整套测试。
-- 延长三个耗时的同步与数据库集成测试限时，适配较慢的 GitHub runner，避免测试已正常推进时被过早终止。
+- 调整耗时的同步与数据库集成测试限时，并在 CI 中串行运行覆盖率测试，避免 GitHub runner 上的资源争用和过早超时。
 - 服务器 schema 仍为 27，本地账本 schema 仍为 127，同步协议仍为 v3。
 
 # 0.5.1

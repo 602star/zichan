@@ -7,7 +7,8 @@ export default defineConfig({
   root,
   test: {
     environment: 'node',
-    maxWorkers: 2,
+    // Server and SQLite integration suites share CPU and filesystem bandwidth on CI runners.
+    maxWorkers: process.env.CI ? 1 : 2,
     minWorkers: 1,
     testTimeout: 60_000,
     include: [
