@@ -7,6 +7,7 @@
 - 第三轮标签流水线的五项 CI 经重跑均通过，Windows MSI/NSIS 构建及两项安装验收、Linux、Android、同步服务更新包和镜像作业也通过；Windows 便携版因跳过重复门禁后未生成 `apps/web/dist/index.html` 而失败，发布作业因此未启动。便携版脚本在已有 CI 通过的路径上先运行 `build:server`（同时构建 API 与 Web），再执行 Tauri 打包。
 - 浏览器同步副本的异步落库断言在 GitHub runner 上偶发触及 Playwright 默认 5 秒窗口；本机延长等待后又复现源端哈希更新、测试却持有旧期望值的问题。现在轮询时同时读取两端当前提交哈希并比较，相关等待为 20 秒。GitHub 工作流的 Node 20 Action 升至使用 Node 24 的主版本，并将浮动的 `ubuntu-latest` 固定为 Ubuntu 24.04，以消除重复的弃用警告和 Ubuntu 26 迁移提示。保留现有发布作业拆分，以便每个平台单独验收。
 - 本机对全部工作流运行 Actionlint 通过；以标签发布的跳过门禁模式完整执行 Windows 便携版构建，生成可执行文件、ZIP 和 SHA-256 旁车文件（ZIP 摘要 `7757135f921655642a8f87c3eb05bc39317a07e5c516fe01811768a42dc8b448`）。`npm run release:check` 和 `npm run test:release`（35 项通过、1 项跳过）通过；浏览器副本定向测试通过。新标签发布验收待记录。
+- 第四轮标签流水线 [42064292696](https://github.com/602star/zichan/actions/runs/42064292696) 的五项 CI（账户浏览器因管理登录耗时超过默认 5 秒而重跑一次）、Windows 便携 ZIP、MSI/NSIS 构建及两项安装验收、Linux、Android、同步更新包和 GHCR 镜像全部通过。最终 `publish` 在校验标签时失败：`checkout@v5` 把本地注释标签临时改为提交引用，随后未加 `--force` 的显式 `git fetch` 被 Git 拒绝覆盖。现在强制更新本地标签后仍核对其剥离后的提交 SHA 与 `GITHUB_SHA`，避免把错误标签发布。下载该轮六组发布构件后，核对 17 个文件名与所有 SHA-256 旁车均通过。管理后台登录的浏览器断言改为等待最多 30 秒，本机相关 3 项通过。
 
 ## 2026-11-05 — v0.5.2 自动发布 Windows 安装版
 

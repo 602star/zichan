@@ -64,7 +64,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          git fetch --no-tags origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          git fetch --force --no-tags origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
           test "$(git rev-parse "${GITHUB_REF_NAME}^{commit}")" = "$GITHUB_SHA"
           node scripts/release/check-consistency.mjs --tag "$GITHUB_REF_NAME"
       - uses: actions/download-artifact@v7
