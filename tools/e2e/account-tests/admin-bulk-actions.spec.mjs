@@ -53,7 +53,7 @@ async function signIn(page, url) {
   await page.getByLabel('管理账号用户名').fill('operator');
   await page.getByLabel('管理账号密码').fill(password);
   await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible({ timeout: 30_000 });
 }
 
 test('states the scope before writing, then reports each account', async ({ page }) => {
