@@ -6,6 +6,9 @@
 
 - 将前期仅在本地提交的修复和依赖升级归入 0.5.0，统一 npm 工作区、锁文件、Tauri、Cargo、安装标记及发布说明版本。数据库和同步协议版本保持不变。
 - 本地 `npm run release:check`、精确标签检查 `--tag v0.5.0`、`npm run test:release`（35 项通过、1 项按平台跳过）和 `npm run build:server` 通过。此前同一代码在 Linux 测试机完成完整 CI、浏览器套件、Docker 和桌面包验收；发布后的 GitHub Actions 结果另行核对。
+- 提交 `48cba84` 推送至 `main`，并创建指向该提交的 `v0.5.0` 注解标签。[正式 Release](https://github.com/602star/zichan/releases/tag/v0.5.0) 已公开并成为 Latest；[签名同步服务发布作业](https://github.com/602star/zichan/actions/runs/41941531755)通过。从 Release 下载更新包后，以仓库固定公钥验证 Ed25519 签名及包 SHA-256 通过。
+- 标签触发的 [Linux 桌面包](https://github.com/602star/zichan/actions/runs/41941090031)和 [Windows 便携包](https://github.com/602star/zichan/actions/runs/41941090153)作业通过。已将 DEB、AppImage、便携 ZIP 与各自 SHA-256 旁车上传至正式 Release；下载前核对三个包的 SHA-256 分别为 `93fda9e2a837cd7cc0780fb017f65f8e2a69ceabb45d1a1e839c57119f23d256`、`4ab3b14c8939f88e4e30027ea6efe26e36288885de6e57e78322eb3b739fcc5c`、`d919db7f44c16b57ae86374f28c8cb78dbd0b580d4e666415d156a43d4e5f68a`；GitHub 资产摘要一致。便携 ZIP 的发布下载名使用 ASCII，以免 GitHub 把中文文件名替换后与校验文件不符。
+- 标签 [CI](https://github.com/602star/zichan/actions/runs/41941089895) 首轮的普通浏览器、同步服务容器与桌面 Rust 作业通过；覆盖率测试在 Windows runner 上有 1/1,471 项登录断言失败及两处后台扫描 SQLite 锁异常，账号浏览器套件 86/88 通过、两项超时。`main` 的并行 CI 也出现这些间歇失败，并有一项 Windows Rust 测试清理文件时遇到占用；标签 Rust 作业通过。重试失败作业时，GitHub 立即拒绝启动，注释为账户近期付款失败或 Actions 支出上限需提高。故不能宣称 GitHub 全套 CI 通过；前述 Linux 测试机完整 CI 和浏览器套件仍为通过状态。
 
 ## 2026-11-05 — Linux 测试机完整验收
 
