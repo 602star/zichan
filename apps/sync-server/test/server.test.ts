@@ -20,7 +20,8 @@ beforeAll(async () => {
   sv = createSyncServer(); // in-memory
   await new Promise<void>((r) => sv.server.listen(0, r));
   const addr = sv.server.address() as AddressInfo;
-  url = `http://localhost:${addr.port}`;
+  // OPAQUE login state is bound to the client IP; localhost may alternate IPv4 and IPv6.
+  url = `http://127.0.0.1:${addr.port}`;
 });
 afterAll(() => sv.close());
 
@@ -475,7 +476,7 @@ describe('sync-server endpoints', () => {
     let s: SyncServer | null = createSyncServer({ dataDir });
     try {
       await new Promise<void>((r) => s!.server.listen(0, r));
-      const u = `http://localhost:${(s.server.address() as AddressInfo).port}`;
+      const u = `http://127.0.0.1:${(s.server.address() as AddressInfo).port}`;
       const startLoginRequest = opaque.client.startLogin({ password: 'rate-test' }).startLoginRequest;
       let got429 = false;
       for (let i = 0; i < 25; i++) {
@@ -486,7 +487,7 @@ describe('sync-server endpoints', () => {
       await s.close();
       s = createSyncServer({ dataDir });
       await new Promise<void>((r) => s!.server.listen(0, r));
-      const restarted = `http://localhost:${(s.server.address() as AddressInfo).port}`;
+      const restarted = `http://127.0.0.1:${(s.server.address() as AddressInfo).port}`;
       expect((await post2(restarted, '/api/auth/login/start', { username: 'rate-user', startLoginRequest })).status).toBe(429);
     } finally {
       await s?.close();
@@ -537,7 +538,7 @@ describe('sync-server endpoints', () => {
       trustedProxies: ['loopback'],
     });
     await new Promise<void>((resolve) => s.server.listen(0, resolve));
-    const base = `http://localhost:${(s.server.address() as AddressInfo).port}`;
+    const base = `http://127.0.0.1:${(s.server.address() as AddressInfo).port}`;
     try {
       const preflight = await fetch(base + '/api/auth/me', {
         method: 'OPTIONS',
@@ -592,7 +593,7 @@ describe('sync-server endpoints', () => {
   it('reserves upload capacity and rejects blobs beyond the account quota', async () => {
     const s = createSyncServer({ attachmentQuotaBytes: 1024 * 1024 });
     await new Promise<void>((r) => s.server.listen(0, r));
-    const u = `http://localhost:${(s.server.address() as AddressInfo).port}`;
+    const u = `http://127.0.0.1:${(s.server.address() as AddressInfo).port}`;
     try {
       const username = 'quota-user';
       expect((await registerUser(u, 'owner', 'owner-password')).status).toBe(200);
@@ -624,7 +625,7 @@ describe('sync-server endpoints', () => {
   it('requires the deployment secret for the owner and protects management with account sessions', async () => {
     const s = createSyncServer({ registrationMode: 'invite' });
     await new Promise<void>((r) => s.server.listen(0, r));
-    const u = `http://localhost:${(s.server.address() as AddressInfo).port}`;
+    const u = `http://127.0.0.1:${(s.server.address() as AddressInfo).port}`;
     try {
       const ordinary = await registerUser(u, 'visitor-user', 'visitor-password', undefined, '', false);
       expect(ordinary.status).toBe(403);
@@ -741,7 +742,7 @@ describe('sync-server endpoints', () => {
   it('mounts account, sync, and management APIs under a base path and exposes logs', async () => {
     const s = createSyncServer({ basePath: '/账本-2026' });
     await new Promise<void>((r) => s.server.listen(0, r));
-    const u = `http://localhost:${(s.server.address() as AddressInfo).port}`;
+    const u = `http://127.0.0.1:${(s.server.address() as AddressInfo).port}`;
     try {
       expect((await fetch(u + '/api/health')).status).toBe(404);
       const health = await fetch(u + '/%E8%B4%A6%E6%9C%AC-2026/api/health');
@@ -783,7 +784,7 @@ describe('sync-server endpoints', () => {
     writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Zichan Web</title><div id="root"></div>');
     const s = createSyncServer({ webDir: dir, enableWeb: true, enableSync: false, basePath: '/ledger' });
     await new Promise<void>((r) => s.server.listen(0, r));
-    const u = `http://localhost:${(s.server.address() as AddressInfo).port}`;
+    const u = `http://127.0.0.1:${(s.server.address() as AddressInfo).port}`;
     try {
       const page = await fetch(u + '/');
       expect(page.status).toBe(200);
@@ -810,7 +811,7 @@ describe('sync-server endpoints', () => {
     const app = createSyncServer({ webDir: dir, enableWeb: true, enableSync: false,
       allowInsecureHttp: true });
     await new Promise<void>((resolve) => app.server.listen(0, resolve));
-    const base = `http://localhost:${(app.server.address() as AddressInfo).port}`;
+    const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
     try {
       const csp = (await fetch(`${base}/app/`)).headers.get('content-security-policy') ?? '';
       const connectSrc = csp.split('; ').find((directive) => directive.startsWith('connect-src')) ?? '';
@@ -832,7 +833,7 @@ describe('sync-server endpoints', () => {
     writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Zichan Web</title><div id="root"></div>');
     const s = createSyncServer({ webDir: dir, enableWeb: true, enableSync: false });
     await new Promise<void>((r) => s.server.listen(0, r));
-    const u = `http://localhost:${(s.server.address() as AddressInfo).port}`;
+    const u = `http://127.0.0.1:${(s.server.address() as AddressInfo).port}`;
     try {
       const csp = (await fetch(u + '/')).headers.get('content-security-policy') ?? '';
       const connectSrc = csp.split('; ').find((directive) => directive.startsWith('connect-src')) ?? '';
@@ -851,7 +852,7 @@ describe('sync-server endpoints', () => {
     const s = createSyncServer({ commitQuotaBytes: 256 });
     await s.ready;
     await new Promise<void>((resolve) => s.server.listen(0, resolve));
-    const base = `http://localhost:${(s.server.address() as AddressInfo).port}`;
+    const base = `http://127.0.0.1:${(s.server.address() as AddressInfo).port}`;
     try {
       const oversized = await post2(base, '/api/auth/register/start', {
         username: 'large-body',
@@ -886,7 +887,7 @@ describe('sync-server endpoints', () => {
     try {
       await first.ready;
       await new Promise<void>((resolve) => first!.server.listen(0, resolve));
-      const firstUrl = `http://localhost:${(first.server.address() as AddressInfo).port}`;
+      const firstUrl = `http://127.0.0.1:${(first.server.address() as AddressInfo).port}`;
       expect((await registerUser(firstUrl, 'persisted', 'pw')).status).toBe(200);
       const ownerAccessToken = await accessToken(firstUrl, 'persisted', 'pw');
       const ready = await fetch(firstUrl + '/api/ready');
@@ -908,7 +909,7 @@ describe('sync-server endpoints', () => {
       try {
         await restarted.ready;
         await new Promise<void>((resolve) => restarted.server.listen(0, resolve));
-        const restartedUrl = `http://localhost:${(restarted.server.address() as AddressInfo).port}`;
+        const restartedUrl = `http://127.0.0.1:${(restarted.server.address() as AddressInfo).port}`;
         expect((await loginUser(restartedUrl, 'persisted', 'pw')).status).toBe(200);
       } finally {
         await restarted.close();
@@ -980,7 +981,7 @@ describe('sync-server endpoints', () => {
     await s.ready;
     await new Promise<void>((resolve) => s.server.listen(0, resolve));
     try {
-      const base = `http://localhost:${(s.server.address() as AddressInfo).port}`;
+      const base = `http://127.0.0.1:${(s.server.address() as AddressInfo).port}`;
       expect((await registerUser(base, 'fresh-path', 'pw')).status).toBe(200);
       expect(existsSync(join(dataDir, 'server.sqlite'))).toBe(true);
       expect(existsSync(join(dataDir, 'server.secret'))).toBe(true);
@@ -1062,7 +1063,7 @@ describe('sync-server endpoints', () => {
     try {
       await source.ready;
       await new Promise<void>((resolve) => source.server.listen(0, resolve));
-      const base = `http://localhost:${(source.server.address() as AddressInfo).port}`;
+      const base = `http://127.0.0.1:${(source.server.address() as AddressInfo).port}`;
       expect((await registerUser(base, 'recovered', 'pw')).status).toBe(200);
     } finally {
       await source.close();
@@ -1076,7 +1077,7 @@ describe('sync-server endpoints', () => {
       try {
         await restored.ready;
         await new Promise<void>((resolve) => restored.server.listen(0, resolve));
-        const base = `http://localhost:${(restored.server.address() as AddressInfo).port}`;
+        const base = `http://127.0.0.1:${(restored.server.address() as AddressInfo).port}`;
         expect((await loginUser(base, 'recovered', 'pw')).status).toBe(200);
       } finally {
         await restored.close();

@@ -4,6 +4,7 @@
 
 ## 2026-11-05 — 统一版本发布流水线与 CI 故障定位
 
+- 后续 GitHub 手动 CI 的覆盖率套件 1,470 项通过、1 项双节点就绪测试在 Windows 并行负载下触及原有 20 秒限时；本机该用例覆盖率运行约 6 秒，故将该网络与 SQLite 集成用例限时调整为 60 秒。OPAQUE 登录测试中的 `localhost` 可能在 IPv4 与 IPv6 间切换，而服务端登录状态绑定 IP；测试地址固定为 `127.0.0.1`，避免跨请求出现偶发 401。
 - 公开仓库使用的 `windows-latest`、`ubuntu-latest` 等标准 GitHub runner 按 GitHub 文档免费且不限分钟；此前把未启动作业的通用“付款或支出上限”注释解释为公开仓库额度不足并不准确。仓库 API 只能确认作业在执行步骤前被账户级门禁拒绝，具体账户原因仍需在 GitHub Billing 页面核对。
 - `ci.yml` 改为拉取请求、可复用调用及手动入口，普通推送不触发。`release.yml` 是唯一版本标签入口：完整 CI 通过后统一调用 Windows、Linux、Android、同步服务签名包和 GHCR 镜像构建；汇总验签、摘要及产物后才公开 Release，既有版本资产不覆盖。`production-release` 环境新增 `v*` 标签规则，保留 `main`。
 - 生产 Android 签名 keystore 与更新清单 Ed25519 密钥已在本机被忽略的 `.runtime/release-keys/android/` 创建，并存入 GitHub `production-release` 环境 Secret；公钥固定在客户端。该本机目录需要另作受控备份。新版 Android 更新比较支持完整稳定版本号。仓库尚未配置可直接提供清单与 APK 的 HTTPS 静态更新源，故 Release 中的 APK 可手动安装，应用内更新仍待部署该源。
