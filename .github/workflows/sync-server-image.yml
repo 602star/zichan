@@ -53,7 +53,7 @@ jobs:
           image="ghcr.io/${GITHUB_REPOSITORY}-sync@${{ steps.build.outputs.digest }}"
           cosign sign --yes "$image"
           cosign verify "$image" \
-            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/${GITHUB_REF_NAME}" \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/sync-server-image.yml@refs/tags/${GITHUB_REF_NAME}" \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' > /dev/null
       - name: Record immutable image reference
         shell: bash
