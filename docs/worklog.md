@@ -7,7 +7,7 @@
 - 将原本独立手动运行的 Windows 安装版验收工作流接入统一标签发布：构建 MSI 和 NSIS `setup.exe`，在隔离的 Windows runner 上分别完成安装、资源完整性、用户数据保留与卸载验收；汇总发布时核对两个安装包及旁车 SHA-256，再以 ASCII 文件名上传。手动运行保留为可选的发布前验收入口，正式发布不依赖人工触发。
 - 构建脚本在标签发布的前置 CI 已通过时只重新构建服务端与 Web 资源，避免重复跑整套测试；手工运行脚本仍执行全部原有门禁。仓库没有受信任的 Windows 代码签名证书，也没有为免费开源签名服务准备 OSI 许可证；用户决定 v0.5.2 先发布明确标注的未签名 MSI/NSIS，后续正式签名需所有者完成身份/证书配置。
 - 版本元数据更新到 0.5.2，服务器 schema 保持 27、本地账本 schema 保持 127、同步协议保持 v3。发布流程修复包括 v0.5.1 首次运行发现的 Cosign 身份和 Linux 构件目录问题。
-- 本机 `npm run release:check` 通过、`npm run test:release` 为 35 项通过/1 项按平台跳过，Actionlint 检查两个发布工作流通过；提取的 0.5.2 Release 正文包含未签名提示。本机完成 MSI（SHA-256 `018b234d1966e8bab37d846137cef829d287a2df2ea4c799413f2bef18b66aa8`）与 NSIS `setup.exe`（`02b1cccade5bc9b2b45326b45367c169555d8dc148af5c9becb2a50b3b8ea956`）构建，脚本核对离线 WebView2、安装资源和摘要；安装/卸载仍需隔离 Windows runner 验收。
+- 本机 `npm run release:check` 通过、`npm run test:release` 为 35 项通过/1 项按平台跳过，Actionlint 检查两个发布工作流通过；提取的 0.5.2 Release 正文包含未签名提示。本机完成 MSI（SHA-256 `018b234d1966e8bab37d846137cef829d287a2df2ea4c799413f2bef18b66aa8`）与 NSIS `setup.exe`（`02b1cccade5bc9b2b45326b45367c169555d8dc148af5c9becb2a50b3b8ea956`）构建，脚本核对离线 WebView2、安装资源和摘要。GitHub Actions 手动预检 [42019938917](https://github.com/602star/zichan/actions/runs/42019938917) 的构建、MSI 安装卸载和 NSIS 安装卸载均通过；下载候选产物后再次核对目录、摘要和未签名状态。
 
 ## 2026-11-05 — 统一版本发布流水线与 CI 故障定位
 
