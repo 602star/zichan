@@ -22,6 +22,10 @@
 
 ## 构建与签名
 
+`v0.5.2` 起，推送正式版本标签时统一发布流水线在完整 CI 通过后自动构建 MSI 与 NSIS `setup.exe`，并在隔离的 Windows runner 上分别执行安装、资源完整性、数据保留和卸载验收。两种安装包及其 SHA-256 旁车文件与 Windows 便携 ZIP 一同进入 GitHub Release。可选的 `Windows installer release and acceptance` 手动运行只用于提前验收，不是正式发布的必要步骤。
+
+当前仓库没有受信任的 Windows 代码签名证书，`v0.5.2` 安装包为**未签名**版本。下载时请核对 Release 中的 `.sha256`，Windows 仍可能显示“未知发布者”或 SmartScreen 警告；SHA-256 只能证明下载文件与发布页所列文件一致，不能代替受信任的发布者签名。后续配置正式证书时，需由仓库所有者完成证书申请或云签名服务的身份验证，再把签名凭据配置到 Actions，开启 `signed` 构建并验收 EXE、MSI、NSIS 的签名和时间戳。
+
 在 Windows x64、锁定的 `.node-version`、Rust/MSVC、Perl 和 npm 依赖齐备时：
 
 ```powershell

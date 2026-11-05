@@ -37,7 +37,12 @@ if ($thumbprint) {
 }
 try {
   if (-not $VerifyOnly) {
-    foreach ($command in @('release:check', 'test:release', 'test:scripts', 'build:server', 'typecheck', 'test')) {
+    $commands = if ($env:ZICHAN_RELEASE_GATES_PASSED -eq '1') {
+      @('build:server')
+    } else {
+      @('release:check', 'test:release', 'test:scripts', 'build:server', 'typecheck', 'test')
+    }
+    foreach ($command in $commands) {
       & npm.cmd run $command
       if ($LASTEXITCODE -ne 0) { throw "npm run $command failed" }
     }
@@ -52,14 +57,15 @@ try {
     & npm.cmd run build --workspace '@zichan/desktop' -- @tauriConfigs --bundles msi nsis --ci -- --locked
     if ($LASTEXITCODE -ne 0) { throw 'Tauri installer build failed' }
   }
-  $msi = @(Get-ChildItem 'apps/desktop/src-tauri/target/release/bundle/msi' -Filter '*.msi' -File)
-  $nsis = @(Get-ChildItem 'apps/desktop/src-tauri/target/release/bundle/nsis' -Filter '*-setup.exe' -File)
+  $appVersion = (Get-Content 'package.json' -Raw | ConvertFrom-Json).version
+  $msi = @(Get-ChildItem 'apps/desktop/src-tauri/target/release/bundle/msi' -Filter "*_${appVersion}_*.msi" -File)
+  $nsis = @(Get-ChildItem 'apps/desktop/src-tauri/target/release/bundle/nsis' -Filter "*_${appVersion}_*-setup.exe" -File)
   if ($msi.Count -ne 1 -or $nsis.Count -ne 1) { throw 'Expected exactly one MSI and one NSIS installer' }
   if (-not $VerifyOnly -and ($msi[0].LastWriteTime -lt $buildStarted.AddSeconds(-2) -or $nsis[0].LastWriteTime -lt $buildStarted.AddSeconds(-2))) {
     throw 'Installer outputs were not refreshed by this build'
   }
   $manifest = Get-Content 'apps/desktop/src-tauri/installer/installed-files.json' -Raw | ConvertFrom-Json
-  if ($manifest.nodeVersion -ne $version -or $manifest.appVersion -ne (Get-Content 'package.json' -Raw | ConvertFrom-Json).version) {
+  if ($manifest.nodeVersion -ne $version -or $manifest.appVersion -ne $appVersion) {
     throw 'Installed resource manifest version mismatch'
   }
   $expected = @('server/node.exe', 'server/node-LICENSE.txt', 'server/server.mjs', 'server/web/index.html')

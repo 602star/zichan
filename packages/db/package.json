@@ -1,6 +1,6 @@
 {
   "name": "@zichan/db",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "SQLite persistence: schema, migrations, and a LedgerStore over a driver port",
   "type": "module",
   "main": "./dist/index.js",

@@ -1,6 +1,11 @@
-name: Windows installer acceptance
+name: Windows installer release and acceptance
 
 on:
+  workflow_call:
+    inputs:
+      signed:
+        type: boolean
+        default: false
   workflow_dispatch:
     inputs:
       signed:
@@ -27,6 +32,17 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
       - run: npm ci
+      - name: Verify release version
+        shell: pwsh
+        env:
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+        run: |
+          if ($env:RELEASE_REF_TYPE -eq 'tag') {
+            node scripts/release/check-consistency.mjs --tag '${{ github.ref_name }}'
+          } else {
+            npm run release:check
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Import signing certificate
         if: inputs.signed
         shell: pwsh
@@ -54,6 +70,7 @@ jobs:
         shell: pwsh
         env:
           SIGNED: ${{ inputs.signed }}
+          ZICHAN_RELEASE_GATES_PASSED: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
         run: |
           if ($env:SIGNED -eq 'true') {
             ./scripts/windows/build-installer.ps1 -RequireSignature

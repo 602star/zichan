@@ -20,6 +20,13 @@ jobs:
     needs: checks
     uses: ./.github/workflows/windows-portable-release.yml
 
+  windows-installer:
+    needs: checks
+    uses: ./.github/workflows/windows-installer-acceptance.yml
+    with:
+      signed: false
+    secrets: inherit
+
   linux:
     needs: checks
     uses: ./.github/workflows/linux-desktop-release.yml
@@ -44,7 +51,7 @@ jobs:
     secrets: inherit
 
   publish:
-    needs: [windows, linux, android, sync-update, image]
+    needs: [windows, windows-installer, linux, android, sync-update, image]
     runs-on: ubuntu-latest
     environment: production-release
     permissions:
@@ -66,6 +73,10 @@ jobs:
           path: release
       - uses: actions/download-artifact@v4
         with:
+          name: windows-installer-candidates
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
           name: linux-x64-deb-appimage
           path: release
       - uses: actions/download-artifact@v4
@@ -84,11 +95,12 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          for bundle_dir in release/deb release/appimage; do
+          for bundle_dir in release/deb release/appimage release/msi release/nsis; do
             test -d "$bundle_dir"
             mv "$bundle_dir"/* release/
             rmdir "$bundle_dir"
           done
+          test -z "$(find release -mindepth 1 -type d -print -quit)"
           shopt -s nullglob
           test "${#GITHUB_REF_NAME}" -gt 1
           version="${GITHUB_REF_NAME#v}"
@@ -101,23 +113,31 @@ jobs:
           deb=(release/*.deb)
           appimage=(release/*.AppImage)
           portable=(release/*.zip)
+          msi=(release/*.msi)
+          nsis=(release/*-setup.exe)
           test "${#deb[@]}" -eq 1
           test "${#appimage[@]}" -eq 1
           test "${#portable[@]}" -eq 1
-          for asset in "${deb[0]}" "${appimage[0]}" "${portable[0]}"; do
+          test "${#msi[@]}" -eq 1
+          test "${#nsis[@]}" -eq 1
+          for asset in "${deb[0]}" "${appimage[0]}" "${portable[0]}" "${msi[0]}" "${nsis[0]}"; do
             test -s "$asset"
             test -s "$asset.sha256"
             (cd release && sha256sum --check "$(basename "$asset.sha256")")
           done
           (cd release && sha256sum --check SHA256SUMS)
           grep -Eq '^ghcr\.io/[^ ]+@sha256:[a-f0-9]{64}$' release/image-digest.txt
-          # GitHub normalizes non-ASCII asset names. Give the verified ZIP a stable
-          # ASCII download name and update its checksum sidecar before upload.
-          portable_name="zichan-${version}-windows-x64-portable.zip"
-          mv "${portable[0]}" "release/$portable_name"
-          rm "${portable[0]}.sha256"
-          (cd release && sha256sum "$portable_name" > "$portable_name.sha256")
-          (cd release && sha256sum --check "$portable_name.sha256")
+          # GitHub normalizes non-ASCII asset names. Rename verified Windows
+          # artifacts and regenerate their checksum sidecars before upload.
+          rename_windows_asset() {
+            local source="$1" target="$2"
+            mv "$source" "release/$target"
+            rm "$source.sha256"
+            (cd release && sha256sum "$target" > "$target.sha256" && sha256sum --check "$target.sha256")
+          }
+          rename_windows_asset "${portable[0]}" "zichan-${version}-windows-x64-portable.zip"
+          rename_windows_asset "${msi[0]}" "zichan-${version}-windows-x64.msi"
+          rename_windows_asset "${nsis[0]}" "zichan-${version}-windows-x64-setup.exe"
       - name: Publish the complete release
         shell: bash
         env:
@@ -128,8 +148,10 @@ jobs:
             echo "Release $GITHUB_REF_NAME already exists; refusing to overwrite assets" >&2
             exit 1
           fi
+          notes="$RUNNER_TEMP/zichan-release-notes.md"
+          node scripts/release/extract-release-notes.mjs "$GITHUB_REF_NAME" "$notes"
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --verify-tag --draft --title "$GITHUB_REF_NAME" --generate-notes
+            --verify-tag --draft --title "$GITHUB_REF_NAME" --notes-file "$notes"
           gh release upload "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY"
           expected="$(find release -maxdepth 1 -type f -printf '%f\n' | sort)"
           actual="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort)"

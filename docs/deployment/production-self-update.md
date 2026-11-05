@@ -4,7 +4,7 @@
 
 ## Actions 发布
 
-`production-release` Environment 允许 `main` 分支和 `v*` 标签。环境 Secret `ZICHAN_UPDATE_SIGNING_KEY_PEM` 保存 Ed25519 私钥 PEM，Variable `ZICHAN_UPDATE_PUBLIC_KEY_SHA256` 保存对应公钥 PEM 的 SHA-256。不要把私钥放进仓库、镜像、生产主机或普通 Actions 构件。推送稳定版标签后，[统一发布工作流](../../.github/workflows/release.yml)自动先执行完整 CI，再构建 Windows、Linux、Android、同步服务签名包与 Docker 镜像；所有构件齐备且校验通过后才创建正式 Release。签名包子工作流检出标签并确认它属于 `main`，再次核对标签提交及公钥指纹。Release 含 `latest.json`、`zichan-<版本>.feed.json`、`zichan-<版本>.json` 及客户端包；既有 Release 不覆盖。普通分支推送不触发 CI，拉取请求仍运行 CI，必要时可手动运行 CI。
+`production-release` Environment 允许 `main` 分支和 `v*` 标签。环境 Secret `ZICHAN_UPDATE_SIGNING_KEY_PEM` 保存 Ed25519 私钥 PEM，Variable `ZICHAN_UPDATE_PUBLIC_KEY_SHA256` 保存对应公钥 PEM 的 SHA-256。不要把私钥放进仓库、镜像、生产主机或普通 Actions 构件。推送稳定版标签后，[统一发布工作流](../../.github/workflows/release.yml)自动先执行完整 CI，再构建 Windows 便携 ZIP、MSI、NSIS `setup.exe`、Linux、Android、同步服务签名包与 Docker 镜像；安装版还需通过 Windows runner 安装/卸载验收，所有构件齐备且校验通过后才创建正式 Release。签名包子工作流检出标签并确认它属于 `main`，再次核对标签提交及公钥指纹。Release 含 `latest.json`、`zichan-<版本>.feed.json`、`zichan-<版本>.json` 及客户端包；既有 Release 不覆盖。普通分支推送不触发 CI，拉取请求仍运行 CI，必要时可手动运行 CI。Windows 安装版的签名状态见[安装版说明](windows-installer.md)。
 
 在受控发布机上生成首次密钥对，并把私钥 PEM **内容**录入 Secret、公钥文件固定到仓库的 `apps/sync-server/keys/update-public.pem`，公钥哈希录入 Variable：
 
