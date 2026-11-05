@@ -86,7 +86,7 @@ scripts\windows\build-desktop.cmd
 普通 `tauri build` 不是 v0.1 发布入口；发布脚本显式 `--no-bundle`，不会产生安装器或 updater payload。
 打包器不会删除已有的同名便携目录；使用 `--no-archive` 或 `--keep-directory` 时，目录已存在会直接失败。请将发布 ZIP 解压到独立测试目录运行，不要把 `target/release/portable/` 当作长期数据目录。并发打包同一输出目录会被锁文件拒绝；异常终止留下锁文件时，确认没有构建进程后再移除。
 
-`.github/workflows/windows-portable-release.yml` 在版本标签或手动触发时，从干净检出执行完整 Windows 构建和 ZIP 验证。Windows 10 NTFS、Windows 10 exFAT 与 Windows 11 的实际界面和迁移验收仍按下方矩阵执行。
+版本标签由统一 `release.yml` 触发 `windows-portable-release.yml` 子工作流，从干净检出执行完整 Windows 构建和 ZIP 验证。Windows 10 NTFS、Windows 10 exFAT 与 Windows 11 的实际界面和迁移验收仍按下方矩阵执行。
 
 ## Windows Sandbox / VM 验收
 

@@ -1,15 +1,7 @@
 name: Linux desktop release verification
 
 on:
-  workflow_dispatch:
-    inputs:
-      previous_release_tag:
-        description: Optional earlier release tag in this repository for cross-version upgrade verification
-        required: false
-        type: string
-  push:
-    tags:
-      - 'v*'
+  workflow_call:
 
 permissions:
   contents: read
@@ -39,24 +31,9 @@ jobs:
             patchelf libfuse2 libatomic1 file xvfb xauth dbus-x11 xdotool
       - run: npm ci
       - name: Verify release tag
-        if: startsWith(github.ref, 'refs/tags/')
         run: node scripts/release/check-consistency.mjs --tag '${{ github.ref_name }}'
       - name: Build and verify DEB and AppImage
         run: bash scripts/linux/build-desktop.sh
-      - name: Download historical DEB when supplied
-        if: github.event_name == 'workflow_dispatch' && inputs.previous_release_tag != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PREVIOUS_RELEASE_TAG: ${{ inputs.previous_release_tag }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/zichan-previous"
-          gh release download "$PREVIOUS_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern '*.deb*' --dir "$RUNNER_TEMP/zichan-previous"
-          packages=("$RUNNER_TEMP"/zichan-previous/*.deb)
-          test "${#packages[@]}" -eq 1
-          test -f "${packages[0]}.sha256"
-          (cd "$RUNNER_TEMP/zichan-previous" && sha256sum --check "$(basename "${packages[0]}.sha256")")
-          echo "ZICHAN_PREVIOUS_DEB=${packages[0]}" >> "$GITHUB_ENV"
       - name: Verify package install, upgrade, uninstall, and launch
         run: bash scripts/linux/test-package-lifecycle.sh
       - name: Upload verified Linux artifacts

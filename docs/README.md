@@ -19,7 +19,7 @@
 ## 部署与发布 `deployment/`
 
 - **服务器：**[生产部署与恢复](deployment/production-deployment.md)、[生产签名包自更新](deployment/production-self-update.md)、[Linux 测试机一键自更新](deployment/self-update-linux.md)、[自动备份执行器](deployment/backup-executor.md)；旧设计见[历史 1.0 升级方案](deployment/production-upgrade-1.0.md)。
-- **客户端更新：**[0.3.x 桌面与 Android 签名更新](deployment/client-self-update.md)。
+- **客户端更新：**[桌面与 Android 签名更新](deployment/client-self-update.md)。
 - **桌面安装包：**[Windows 便携版](deployment/desktop-release.md)、[Windows 安装版](deployment/windows-installer.md)、[Linux 桌面版](deployment/linux-desktop-release.md)。
 - **历史发布包：**[0.2.0 本地发布包](deployment/local-release-0.2.0.md)、[便携版随包说明](portable/README-便携版.txt)。
 

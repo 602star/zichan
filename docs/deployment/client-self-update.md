@@ -1,6 +1,6 @@
-# 0.3.x 客户端签名更新测试
+# 客户端签名更新与 Android 发布
 
-0.3.3 为 Windows 安装版、Windows 便携版、Linux AppImage、Linux `.deb` 和 Android 增加“设置 → 应用版本更新”。打开设置时自动检查，也可手动检查。显示下载进度与本机最近 20 次更新尝试；应用重开后根据实际运行版本确认安装成功。记录保存在当前设备的 WebView 存储中，清除应用网站数据会清除记录。只接受补丁号更高的稳定 `0.3.x`；旧安装包没有这一入口，需要先手动安装 0.3.3，再用下一补丁版演练应用内升级。客户端更新源与服务端/Docker 更新源分别配置。
+0.3.3 为 Windows 安装版、Windows 便携版、Linux AppImage、Linux `.deb` 和 Android 增加“设置 → 应用版本更新”。打开设置时自动检查，也可手动检查。显示下载进度与本机最近 20 次更新尝试；应用重开后根据实际运行版本确认安装成功。记录保存在当前设备的 WebView 存储中，清除应用网站数据会清除记录。新版 Android 客户端按完整稳定版本号比较，可识别跨次版本和主版本升级；0.3.x 旧包仍受当时内置的补丁版本和测试公钥限制。客户端更新源与服务端/Docker 更新源分别配置。
 
 ## 更新方式
 
@@ -18,7 +18,7 @@ Windows 安装版依靠包内 `installer-channel.txt` 选择 MSI 或 NSIS，不�
 
 - 桌面版在构建时设置 `ZICHAN_CLIENT_UPDATE_URL=https://…/latest.json`；本机测试可在启动前设置同名环境变量。这个 URL 是 Tauri 静态清单，`platforms` 按 `windows-msi-x86_64`、`windows-nsis-x86_64`、`windows-portable-x86_64`、`linux-appimage-x86_64`、`linux-deb-x86_64` 分流，资产 URL 为 HTTPS。Tauri updater 验证下载包的签名。
 - Android 在构建时设置 `ZICHAN_ANDROID_UPDATE_URL=https://…/android-latest.json`；清单签名、版本、APK 文件名及 SHA256 由原生层校验。只接受同目录的 HTTPS APK，不跟随重定向。
-- 测试公钥分别在 `apps/desktop/src-tauri/installer/update-test.pub` 与 `android-update-test.pub`。对应私钥仅在构建机的忽略目录中。换密钥时必须重新构建客户端；私钥、APK 签名 keystore、Token 和更新包都不提交。
+- 桌面测试公钥在 `apps/desktop/src-tauri/installer/update-test.pub`；新版 Android 发布公钥在 `android-update.pub`。Android 的生产 APK 签名 keystore 和清单 Ed25519 私钥保存在 `production-release` Environment 的 Secret 中，本机原件在被忽略的 `.runtime/release-keys/android/`，需要另作受控备份。更换任何一把密钥时必须先考虑已安装客户端的升级连续性；私钥、keystore、Token 和更新包不提交。
 - 新测试机若没有对应私钥，应先生成自己的 Tauri updater 密钥（`npx tauri signer generate --ci -p '' -w <忽略目录>/tauri.key`）及 Android 清单 Ed25519 密钥，并把新公钥写入上述文件后重新构建 0.3.3 基线。不同公钥签的下一版本不能更新已有客户端。
 - 私有 GitHub Releases 可供 Linux/Docker 服务端用只读 Token 获取，见[生产自更新手册](production-self-update.md)及[隔离测试手册](self-update-linux.md)。客户端不内置 GitHub Token；其签名清单与包须由部署方放在客户端可访问的 HTTPS 目录。原始仓库保持私有也可以使用单独的更新文件服务。
 
@@ -30,7 +30,7 @@ Windows 安装版依靠包内 `installer-channel.txt` 选择 MSI 或 NSIS，不�
 - Windows 便携 ZIP：先按[便携版手册](desktop-release.md)构建，再以 `npx tauri signer sign -f <测试私钥> -p '' <便携 ZIP>` 生成同名 `.sig`；若密钥有口令，改用实际口令或环境变量。
 - Linux：在 Linux x86_64 将 `ZICHAN_UPDATE_TEST=1` 后运行 `npm run build:desktop:linux`；脚本在 AppImage 最终封装后重新生成签名，`.deb` 另以 `npx tauri signer sign -f <测试私钥> -p '' <deb 文件>` 签名。
 - 用 `node scripts/release/create-client-update-feed.mjs https://updates.example/client/ <输出目录> windows-msi-x86_64=<MSI> windows-nsis-x86_64=<NSIS> windows-portable-x86_64=<ZIP> linux-appimage-x86_64=<AppImage> linux-deb-x86_64=<deb>` 汇总已签名资产；可只包含本次实际测试的平台。脚本输出 `latest.json` 和对应包。
-- Android 使用稳定测试 keystore 构建并签名 ARM64 APK，先运行 Android SDK 的 `apksigner verify --verbose <APK>`，再运行 `node scripts/release/create-android-update-feed.mjs <Ed25519 私钥 PEM> <已签名 APK> <输出目录>`。输出 `android-latest.json` 和规范文件名 APK。工作流 `.github/workflows/android-candidate.yml` 从仓库变量 `ZICHAN_ANDROID_UPDATE_URL` 读取候选更新地址，仅在提供稳定测试 keystore 的四个 Secret 时产生已签名 APK；否则只保存未签名候选包，不能用于应用内升级。
+- Android 发布子工作流 `.github/workflows/android-release.yml` 使用生产 keystore 签名 ARM64 APK，经 `apksigner verify` 后制作并验证 `android-latest.json`。统一发布工作流将两者加入 GitHub Release；缺少签名 Secret 时发布失败，不会把未签名 APK 当成正式包。仓库变量 `ZICHAN_ANDROID_UPDATE_URL` 尚需指向可直接提供清单和 APK 的同目录 HTTPS 静态服务；GitHub Release 下载重定向不能直接用作 Android 应用内更新源。未配置前，APK 可从 Release 手动下载安装。
 
 不要把 `latest.json` 从 0.3.2 改名冒充 0.3.3，必须从当前版本构建并签名。正式渠道应单独管理签名密钥、Windows 代码签名证书与 Android keystore，先在隔离测试目录完成跨版本验收。
 

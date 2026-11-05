@@ -17,7 +17,7 @@ verify_image() {
   require_image
   command -v cosign >/dev/null || { echo 'cosign is required' >&2; exit 2; }
   cosign verify "$ZICHAN_IMAGE" \
-    --certificate-identity 'https://github.com/602star/zichan/.github/workflows/sync-server-image.yml@refs/heads/main' \
+    --certificate-identity-regexp '^https://github\.com/602star/zichan/\.github/workflows/(sync-server-image\.yml@refs/heads/main|release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+)$' \
     --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' >/dev/null
   if ! docker image inspect "$ZICHAN_IMAGE" >/dev/null 2>&1; then
     docker pull "$ZICHAN_IMAGE"

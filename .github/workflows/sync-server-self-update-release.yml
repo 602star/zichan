@@ -1,12 +1,7 @@
 name: Signed sync server self-update release
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing stable version tag pointing to a commit on main
-        required: true
-        type: string
+  workflow_call:
 
 permissions:
   contents: read
@@ -20,13 +15,12 @@ jobs:
     steps:
       - name: Validate release tag
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          [[ "$GITHUB_REF" == refs/heads/main ]] || { echo 'Run the release workflow from main' >&2; exit 2; }
+          [[ "$GITHUB_REF" == refs/tags/v* ]] || { echo 'Release requires a version tag' >&2; exit 2; }
           [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 2
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
           persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-node@v4
@@ -39,15 +33,13 @@ jobs:
       - run: npm ci
       - name: Check tag and build signed-update candidate
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -Eeuo pipefail
-          git merge-base --is-ancestor HEAD "$GITHUB_SHA"
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
           node scripts/release/check-consistency.mjs --tag "$RELEASE_TAG"
-          npm run test:release
-          npm run typecheck
           npm run build:server
-          npm test --workspace @zichan/sync-server
           node scripts/release/create-update-package.mjs --unsigned candidate
       - uses: actions/upload-artifact@v4
         with:
@@ -55,13 +47,11 @@ jobs:
           path: candidate/zichan-*.json
           if-no-files-found: error
 
-  sign-and-publish:
+  sign:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production-release
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,7 +66,7 @@ jobs:
       - name: Sign with protected Ed25519 key
         shell: bash
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.ref_name }}
           ZICHAN_UPDATE_SIGNING_KEY_PEM: ${{ secrets.ZICHAN_UPDATE_SIGNING_KEY_PEM }}
           ZICHAN_UPDATE_PUBLIC_KEY_SHA256: ${{ vars.ZICHAN_UPDATE_PUBLIC_KEY_SHA256 }}
         run: |
@@ -99,7 +89,7 @@ jobs:
       - name: Recheck release tag commit
         shell: bash
         env:
-          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.ref_name }}
           EXPECTED_TAG_COMMIT: ${{ needs.build.outputs.tag_commit }}
         run: |
           set -Eeuo pipefail
@@ -107,25 +97,8 @@ jobs:
           test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$EXPECTED_TAG_COMMIT"
       - uses: actions/upload-artifact@v4
         with:
-          name: sync-update-public-key
-          path: release/update-public.pem
+          name: signed-sync-update
+          path: |
+            release/zichan-*.json
+            release/latest.json
           if-no-files-found: error
-      - name: Publish immutable release assets
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
-        run: |
-          set -Eeuo pipefail
-          gh release create "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
-            --title "$RELEASE_TAG" --notes "Signed sync server self-update package for $RELEASE_TAG"
-          gh release upload "$RELEASE_TAG" \
-            "release/zichan-${RELEASE_TAG#v}.json" \
-            "release/zichan-${RELEASE_TAG#v}.feed.json" \
-            release/latest.json \
-            --repo "$GITHUB_REPOSITORY"
-          expected="$(printf '%s\n' latest.json "zichan-${RELEASE_TAG#v}.feed.json" "zichan-${RELEASE_TAG#v}.json" | sort)"
-          actual="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort)"
-          test "$actual" = "$expected"
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false

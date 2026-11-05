@@ -1,7 +1,7 @@
-name: Android candidate APK
+name: Android release APK
 
 on:
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -10,6 +10,7 @@ jobs:
   apk:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    environment: production-release
     env:
       ZICHAN_ANDROID_UPDATE_URL: ${{ vars.ZICHAN_ANDROID_UPDATE_URL }}
     steps:
@@ -42,19 +43,26 @@ jobs:
           echo "NDK_HOME=$ndk" >> "$GITHUB_ENV"
           echo "TARGET_RANLIB=$ranlib" >> "$GITHUB_ENV"
       - run: npm ci
+      - run: node scripts/release/check-consistency.mjs --tag "${{ github.ref_name }}"
       - name: Generate Android project
         run: npm run mobile:init:android
       - name: Build ARM64 APK
         run: npm run mobile:build:android -- --apk --target aarch64
-      - name: Verify candidate APK and sign with a stable test key when configured
+      - name: Sign and verify release APK and update feed
         shell: bash
         env:
-          ANDROID_TEST_KEYSTORE_BASE64: ${{ secrets.ANDROID_TEST_KEYSTORE_BASE64 }}
-          ANDROID_TEST_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_TEST_KEYSTORE_PASSWORD }}
-          ANDROID_TEST_KEY_ALIAS: ${{ secrets.ANDROID_TEST_KEY_ALIAS }}
-          ANDROID_TEST_KEY_PASSWORD: ${{ secrets.ANDROID_TEST_KEY_PASSWORD }}
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+          ANDROID_UPDATE_SIGNING_KEY_PEM: ${{ secrets.ANDROID_UPDATE_SIGNING_KEY_PEM }}
         run: |
           set -euo pipefail
+          test -n "$ANDROID_RELEASE_KEYSTORE_BASE64"
+          test -n "$ANDROID_RELEASE_KEYSTORE_PASSWORD"
+          test -n "$ANDROID_RELEASE_KEY_ALIAS"
+          test -n "$ANDROID_RELEASE_KEY_PASSWORD"
+          test -n "$ANDROID_UPDATE_SIGNING_KEY_PEM"
           source_apk='apps/desktop/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk'
           test -s "$source_apk"
           unzip -t "$source_apk" > /dev/null
@@ -62,19 +70,21 @@ jobs:
 
           apksigner="$(find "$ANDROID_HOME/build-tools" -mindepth 2 -maxdepth 2 -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$apksigner"
-          mkdir -p candidate-apk
-          cp "$source_apk" candidate-apk/zichan-android-arm64-unsigned.apk
-          if [[ -n "$ANDROID_TEST_KEYSTORE_BASE64" && -n "$ANDROID_TEST_KEYSTORE_PASSWORD" && -n "$ANDROID_TEST_KEY_ALIAS" && -n "$ANDROID_TEST_KEY_PASSWORD" ]]; then
-            printf '%s' "$ANDROID_TEST_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/zichan-android-test.jks"
-            "$apksigner" sign --ks "$RUNNER_TEMP/zichan-android-test.jks" --ks-key-alias "$ANDROID_TEST_KEY_ALIAS" --ks-pass env:ANDROID_TEST_KEYSTORE_PASSWORD --key-pass env:ANDROID_TEST_KEY_PASSWORD --out candidate-apk/zichan-android-arm64-test.apk candidate-apk/zichan-android-arm64-unsigned.apk
-            "$apksigner" verify --verbose candidate-apk/zichan-android-arm64-test.apk
-          else
-            echo 'No stable Android test signing key configured; only unsigned APK is available.'
-          fi
-          (cd candidate-apk && sha256sum *.apk > SHA256SUMS)
-          printf '%s\n' "$GITHUB_SHA" > candidate-apk/COMMIT
+          umask 077
+          key="$RUNNER_TEMP/zichan-android-release.jks"
+          feed_key="$RUNNER_TEMP/zichan-android-feed.pem"
+          trap 'rm -f "$key" "$feed_key"' EXIT
+          printf '%s' "$ANDROID_RELEASE_KEYSTORE_BASE64" | base64 -d > "$key"
+          printf '%s' "$ANDROID_UPDATE_SIGNING_KEY_PEM" > "$feed_key"
+          mkdir -p release-apk
+          signed="$RUNNER_TEMP/zichan-android-arm64-signed.apk"
+          "$apksigner" sign --ks "$key" --ks-key-alias "$ANDROID_RELEASE_KEY_ALIAS" --ks-pass env:ANDROID_RELEASE_KEYSTORE_PASSWORD --key-pass env:ANDROID_RELEASE_KEY_PASSWORD --out "$signed" "$source_apk"
+          "$apksigner" verify --verbose "$signed"
+          node scripts/release/create-android-update-feed.mjs "$feed_key" "$signed" release-apk
+          node scripts/release/verify-android-update-feed.mjs "$feed_key" release-apk/android-latest.json
+          (cd release-apk && sha256sum *.apk > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
-          name: android-arm64-candidate-${{ github.sha }}
-          path: candidate-apk/
+          name: android-arm64-release
+          path: release-apk/
           if-no-files-found: error

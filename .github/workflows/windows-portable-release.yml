@@ -1,10 +1,7 @@
 name: Windows portable release verification
 
 on:
-  workflow_dispatch:
-  push:
-    tags:
-      - 'v*'
+  workflow_call:
 
 permissions:
   contents: read
@@ -24,11 +21,7 @@ jobs:
         with:
           workspaces: apps/desktop/src-tauri
       - run: npm ci
-      - run: npm ci --prefix tools/eslint
-      - run: npm run lint
-      - run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
       - name: Verify release tag
-        if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: node scripts/release/check-consistency.mjs --tag '${{ github.ref_name }}'
       - name: Restore pinned WebView2 runtime

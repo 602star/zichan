@@ -4,7 +4,7 @@
 
 ## Actions 发布
 
-在 GitHub 创建 `production-release` Environment，限定从 `main` 运行；若仓库套餐支持，另设置审批和版本标签规则集。在该 Environment 下保存 `ZICHAN_UPDATE_SIGNING_KEY_PEM` Secret（Ed25519 私钥 PEM）及 `ZICHAN_UPDATE_PUBLIC_KEY_SHA256` Variable（由对应公钥 PEM 文件计算的 SHA-256）。不要把私钥放进仓库、镜像、生产主机或普通 Actions 构件。工作流 [sync-server-self-update-release.yml](../../.github/workflows/sync-server-self-update-release.yml) 由人工在 `main` 选择已有的稳定版标签触发：无密钥作业检出标签、检查它指向 `main` 的祖先提交、运行类型和服务器测试、构建未签名包；独立签名作业再次核对标签提交和公钥指纹，先创建草稿并核对资产，再发布正式 GitHub Release。Release 含 `latest.json`、`zichan-<版本>.feed.json` 和 `zichan-<版本>.json`。不重新覆盖既有 Release；失败后须调查产物与标签，不得改写同版本已安装资产。当前私有仓库的 GitHub 页面提示规则集在现有套餐下不会强制执行，因此工作流的标签提交复核只是发布时检查，不能代替服务端标签保护。
+`production-release` Environment 允许 `main` 分支和 `v*` 标签。环境 Secret `ZICHAN_UPDATE_SIGNING_KEY_PEM` 保存 Ed25519 私钥 PEM，Variable `ZICHAN_UPDATE_PUBLIC_KEY_SHA256` 保存对应公钥 PEM 的 SHA-256。不要把私钥放进仓库、镜像、生产主机或普通 Actions 构件。推送稳定版标签后，[统一发布工作流](../../.github/workflows/release.yml)自动先执行完整 CI，再构建 Windows、Linux、Android、同步服务签名包与 Docker 镜像；所有构件齐备且校验通过后才创建正式 Release。签名包子工作流检出标签并确认它属于 `main`，再次核对标签提交及公钥指纹。Release 含 `latest.json`、`zichan-<版本>.feed.json`、`zichan-<版本>.json` 及客户端包；既有 Release 不覆盖。普通分支推送不触发 CI，拉取请求仍运行 CI，必要时可手动运行 CI。
 
 在受控发布机上生成首次密钥对，并把私钥 PEM **内容**录入 Secret、公钥文件固定到仓库的 `apps/sync-server/keys/update-public.pem`，公钥哈希录入 Variable：
 
@@ -15,7 +15,7 @@ openssl pkey -in update-private.pem -pubout -out update-public.pem
 sha256sum update-public.pem
 ```
 
-签名作业另输出 `sync-update-public-key` 构件和公钥 SHA-256，并核对它与镜像内固定的公钥一致。部署方独立核对公钥指纹；以后同一更新通道继续使用这把密钥。轮换密钥需要交付新的基础镜像或先完成受信任的迁移，不能仅替换远端清单。
+签名作业输出公钥 SHA-256，并核对它与镜像内固定的公钥一致。部署方独立核对公钥指纹；以后同一更新通道继续使用这把密钥。轮换密钥需要交付新的基础镜像或先完成受信任的迁移，不能仅替换远端清单。
 
 ## 镜像凭据与主机目录
 

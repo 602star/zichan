@@ -2,6 +2,14 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-05 — 统一版本发布流水线与 CI 故障定位
+
+- 公开仓库使用的 `windows-latest`、`ubuntu-latest` 等标准 GitHub runner 按 GitHub 文档免费且不限分钟；此前把未启动作业的通用“付款或支出上限”注释解释为公开仓库额度不足并不准确。仓库 API 只能确认作业在执行步骤前被账户级门禁拒绝，具体账户原因仍需在 GitHub Billing 页面核对。
+- `ci.yml` 改为拉取请求、可复用调用及手动入口，普通推送不触发。`release.yml` 是唯一版本标签入口：完整 CI 通过后统一调用 Windows、Linux、Android、同步服务签名包和 GHCR 镜像构建；汇总验签、摘要及产物后才公开 Release，既有版本资产不覆盖。`production-release` 环境新增 `v*` 标签规则，保留 `main`。
+- 生产 Android 签名 keystore 与更新清单 Ed25519 密钥已在本机被忽略的 `.runtime/release-keys/android/` 创建，并存入 GitHub `production-release` 环境 Secret；公钥固定在客户端。该本机目录需要另作受控备份。新版 Android 更新比较支持完整稳定版本号。仓库尚未配置可直接提供清单与 APK 的 HTTPS 静态更新源，故 Release 中的 APK 可手动安装，应用内更新仍待部署该源。
+- GitHub Windows CI 日志显示，多标签浏览器测试的“保存”被未处理的草稿恢复提示禁用；测试现按界面流程处理提示。后台副本物理扫描的错误记录可能再次遇到 SQLite 锁而成为未处理拒绝，现收束该异常并在关闭服务器时等待任务执行完。Rust 临时 SQLite 文件在 Windows 被短暂占用时延长有限重试；管理后台全视口布局测试延长总时限。
+- 本机 `actionlint`、`npm run typecheck`、`npm run test:release`（35 项通过、1 项跳过）、`npm run build:server`、定向服务端 40 项、两个失败的 Playwright 用例以及 Android 私钥/公钥与清单模拟校验通过；完整 GitHub 发布流水线仍须在下一个版本标签上验收。
+
 ## 2026-11-05 — 0.5.0 发布准备
 
 - 将前期仅在本地提交的修复和依赖升级归入 0.5.0，统一 npm 工作区、锁文件、Tauri、Cargo、安装标记及发布说明版本。数据库和同步协议版本保持不变。

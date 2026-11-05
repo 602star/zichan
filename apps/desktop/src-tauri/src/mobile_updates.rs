@@ -11,7 +11,7 @@ use std::{
 use tauri::{ipc::Channel, AppHandle, Manager, State};
 use tauri_plugin_system_share::{ApkInstallRequest, SystemShareExt};
 
-const PUBLIC_KEY: &str = include_str!("../installer/android-update-test.pub");
+const PUBLIC_KEY: &str = include_str!("../installer/android-update.pub");
 const MAX_APK_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -51,18 +51,23 @@ pub enum DownloadEvent {
     Installing,
 }
 
-fn patch(version: &str) -> Result<u64, String> {
-    let Some(value) = version.strip_prefix("0.3.") else {
-        return Err("仅支持 0.3.x 补丁升级".into());
-    };
-    if value.is_empty()
-        || value.len() > 6
-        || value.starts_with('0') && value != "0"
-        || !value.bytes().all(|byte| byte.is_ascii_digit())
+fn stable_version(version: &str) -> Result<(u64, u64, u64), String> {
+    let parts = version.split('.').collect::<Vec<_>>();
+    if parts.len() != 3
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || part.len() > 10
+                || part.starts_with('0') && *part != "0"
+                || !part.bytes().all(|byte| byte.is_ascii_digit())
+        })
     {
         return Err("版本号格式无效".into());
     }
-    value.parse().map_err(|_| "版本号格式无效".into())
+    Ok((
+        parts[0].parse().map_err(|_| "版本号格式无效")?,
+        parts[1].parse().map_err(|_| "版本号格式无效")?,
+        parts[2].parse().map_err(|_| "版本号格式无效")?,
+    ))
 }
 
 fn endpoint() -> Result<reqwest::Url, String> {
@@ -91,7 +96,7 @@ fn signed_text(feed: &AndroidFeed) -> String {
 }
 
 fn verify_feed(feed: &AndroidFeed) -> Result<(), String> {
-    patch(&feed.version)?;
+    stable_version(&feed.version)?;
     if feed.format != "zichan-android-feed-v1"
         || feed.artifact != format!("zichan-{}-android-arm64.apk", feed.version)
         || feed.sha256.len() != 64
@@ -161,13 +166,26 @@ pub async fn client_update_check(
     let feed: AndroidFeed =
         serde_json::from_slice(&bytes).map_err(|_| "Android 更新清单格式无效")?;
     verify_feed(&feed)?;
-    if patch(&feed.version)? > patch(&current)? {
+    if stable_version(&feed.version)? > stable_version(&current)? {
         result.target_version = Some(feed.version.clone());
         *pending.0.lock().map_err(|_| "Android 更新状态锁不可用")? = Some(feed);
     } else {
         *pending.0.lock().map_err(|_| "Android 更新状态锁不可用")? = None;
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stable_version;
+
+    #[test]
+    fn stable_versions_compare_across_minor_and_major_releases() {
+        assert!(stable_version("0.5.1").unwrap() > stable_version("0.5.0").unwrap());
+        assert!(stable_version("1.0.0").unwrap() > stable_version("0.9.99").unwrap());
+        assert!(stable_version("0.5.0-beta.1").is_err());
+        assert!(stable_version("00.5.0").is_err());
+    }
 }
 
 #[tauri::command]

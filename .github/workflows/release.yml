@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  windows:
+    needs: checks
+    uses: ./.github/workflows/windows-portable-release.yml
+
+  linux:
+    needs: checks
+    uses: ./.github/workflows/linux-desktop-release.yml
+
+  android:
+    needs: checks
+    uses: ./.github/workflows/android-release.yml
+    secrets: inherit
+
+  sync-update:
+    needs: checks
+    uses: ./.github/workflows/sync-server-self-update-release.yml
+    secrets: inherit
+
+  image:
+    needs: checks
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    uses: ./.github/workflows/sync-server-image.yml
+    secrets: inherit
+
+  publish:
+    needs: [windows, linux, android, sync-update, image]
+    runs-on: ubuntu-latest
+    environment: production-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify the tag still points to this commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git fetch --no-tags origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          test "$(git rev-parse "${GITHUB_REF_NAME}^{commit}")" = "$GITHUB_SHA"
+          node scripts/release/check-consistency.mjs --tag "$GITHUB_REF_NAME"
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-x64-portable
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-x64-deb-appimage
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-arm64-release
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-sync-update
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: sync-server-image-digest
+          path: release
+      - name: Check every release asset
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          shopt -s nullglob
+          test "${#GITHUB_REF_NAME}" -gt 1
+          version="${GITHUB_REF_NAME#v}"
+          test -s "release/zichan-${version}.json"
+          test -s "release/zichan-${version}.feed.json"
+          test -s release/latest.json
+          test -s release/android-latest.json
+          test -s "release/zichan-${version}-android-arm64.apk"
+          test -s release/image-digest.txt
+          deb=(release/*.deb)
+          appimage=(release/*.AppImage)
+          portable=(release/*.zip)
+          test "${#deb[@]}" -eq 1
+          test "${#appimage[@]}" -eq 1
+          test "${#portable[@]}" -eq 1
+          for asset in "${deb[0]}" "${appimage[0]}" "${portable[0]}"; do
+            test -s "$asset"
+            test -s "$asset.sha256"
+            (cd release && sha256sum --check "$(basename "$asset.sha256")")
+          done
+          (cd release && sha256sum --check SHA256SUMS)
+          grep -Eq '^ghcr\.io/[^ ]+@sha256:[a-f0-9]{64}$' release/image-digest.txt
+          # GitHub normalizes non-ASCII asset names. Give the verified ZIP a stable
+          # ASCII download name and update its checksum sidecar before upload.
+          portable_name="zichan-${version}-windows-x64-portable.zip"
+          mv "${portable[0]}" "release/$portable_name"
+          rm "${portable[0]}.sha256"
+          (cd release && sha256sum "$portable_name" > "$portable_name.sha256")
+          (cd release && sha256sum --check "$portable_name.sha256")
+      - name: Publish the complete release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; refusing to overwrite assets" >&2
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --draft --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY"
+          expected="$(find release -maxdepth 1 -type f -printf '%f\n' | sort)"
+          actual="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort)"
+          test "$actual" = "$expected"
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
