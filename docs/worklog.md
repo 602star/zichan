@@ -5,7 +5,7 @@
 ## 2026-11-06 — 管理员首次初始化输入与 HTTPS 代理提示
 
 - v0.5.3 管理员首次初始化时，网页允许输入含 `@` 的邮箱式用户名，服务端按账号规则拒绝并返回笼统的 `invalid registration fields`。管理页现在提交前按服务端规则验证用户名，明确提示只允许中文、字母、数字或 `_ . -`；HTML 最短长度同步为 2。`npm run build:server` 与 `admin.spec.mjs` 中的首次初始化浏览器用例通过。
-- 1Panel 容器在 HTTPS 域名代理后仍显示 `trustedProxies=none` 时，服务忽略 `X-Forwarded-Proto` 并把请求视作 HTTP；浏览器的 HTTPS `Origin` 因此触发 `SESSION_ORIGIN_REJECTED`。部署文档补充 `TRUSTED_PROXIES` 应填实际代理 IP、保留原始 `Host` 和覆盖为单一 `X-Forwarded-Proto: https` 的要求。v0.5.3 已发布镜像需修改容器配置并重建；本次源码与文档修正不会改变已发布镜像。
+- 1Panel 容器在 HTTPS 域名代理后仍显示 `trustedProxies=none` 时，服务忽略 `X-Forwarded-Proto` 并把请求视作 HTTP；浏览器的 HTTPS `Origin` 因此触发 `SESSION_ORIGIN_REJECTED`。部署文档补充 `TRUSTED_PROXIES` 应填实际代理 IP、保留原始 `Host` 和覆盖为单一 `X-Forwarded-Proto: https` 的要求；生产 Compose 增加 `ZICHAN_TRUSTED_PROXIES` 覆盖默认值。v0.5.3 已发布镜像需修改容器配置并重建；本次源码与文档修正不会改变已发布镜像。
 
 ## 2026-11-06 — v0.5.3 正式发布验收
 
