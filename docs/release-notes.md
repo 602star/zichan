@@ -1,3 +1,9 @@
+# 0.5.3
+
+- 生产同步服务器镜像和生产 Compose 默认监听 `0.0.0.0:8787`，允许可信私有局域网通过 HTTP 直连；1Panel 更新至本版镜像并重建容器后，可使用内网 IP 连接。
+- 如需仅通过 HTTPS 反向代理访问，可为生产 Compose 设置 `ZICHAN_HOST=127.0.0.1` 和 `ZICHAN_ALLOW_INSECURE_HTTP=0`；直接创建容器时设置 `HOST=127.0.0.1` 和 `ALLOW_INSECURE_HTTP=0`。公网部署仍应使用 HTTPS，并限制明文端口的入站访问。
+- Windows 安装包仍未进行 Authenticode 签名，可能出现“未知发布者”或 SmartScreen 提示。服务器 schema 仍为 27，本地账本 schema 仍为 127，同步协议仍为 v3。
+
 # 0.5.2
 
 - 版本标签的统一发布流水线新增 Windows MSI 和 NSIS 安装版：前置 CI、安装包资源校验及 Windows 安装/卸载验收通过后，与便携版、Linux、Android、签名服务更新包和 Docker 镜像一同发布。
