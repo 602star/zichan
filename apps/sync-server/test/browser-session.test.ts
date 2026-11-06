@@ -45,6 +45,25 @@ describe('browser session origin and cookies', () => {
     expect(createRequestOrigin(['loopback'], true).browserOrigin(request('127.0.0.1', { host: 'ledger.example' }))).toBeUndefined();
   });
 
+  it('accepts a same-origin browser behind a host-to-bridge proxy without trusting its forwarded headers', () => {
+    const origin = createRequestOrigin(['127.0.0.1'], true);
+    const headers = {
+      host: 'ledger.example', origin: 'https://ledger.example',
+      'x-forwarded-proto': 'https', 'x-zichan-session': 'admin-cookie',
+    };
+    const req = request('172.18.0.1', headers);
+    const cookies = createBrowserSessionCookies('', origin.browserOrigin);
+    expect(origin.trustedPeer(req)).toBe(false);
+    expect(cookies.requested(req)).toBe(true);
+    let cookie = '';
+    cookies.write(req, { setHeader: (_key: string, value: string) => { cookie = value; } } as ServerResponse, 'token');
+    expect(cookie).toContain('; Secure');
+    expect(() => cookies.requested(request('172.18.0.1', { ...headers, origin: 'https://attacker.example' }))).toThrow();
+    expect(() => cookies.requested(request('172.18.0.1', { ...headers, host: '127.0.0.1:8787' }))).toThrow();
+    expect(createRequestOrigin(['127.0.0.1']).browserOrigin(req)).toBeUndefined();
+    expect(origin.secureTransport(req, false)).toBe(false);
+  });
+
   it('rejects duplicate cookies and never implicitly selects cookie authentication', () => {
     const cookies = createBrowserSessionCookies('', () => 'https://ledger.example');
     const token = `session-${'a'.repeat(32)}.${'b'.repeat(43)}`;

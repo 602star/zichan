@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
 import * as opaque from '@serenity-kit/opaque';
 import type { SyncServer } from '../src/server.js';
 import { createTestSyncServer as createSyncServer, OWNER_SETUP_TOKEN } from './support/server-fixture.js';
@@ -528,6 +529,40 @@ describe('sync-server endpoints', () => {
         expect(response.status).toBe(200);
         await response.body?.cancel();
       }
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('starts browser owner setup through an untrusted Docker bridge when the public Host matches Origin', async () => {
+    const app = createSyncServer({ allowInsecureHttp: true, trustedProxies: ['192.0.2.1'] });
+    await new Promise<void>((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+    try {
+      await opaque.ready;
+      const registrationRequest = opaque.client.startRegistration({ password: 'bridge-owner-password' }).registrationRequest;
+      const body = JSON.stringify({ username: 'bridge-owner', registrationRequest, initializeOwner: true });
+      const headers = {
+        Host: 'ledger.example', Origin: 'https://ledger.example',
+        'X-Zichan-Session': 'admin-cookie', 'X-Forwarded-Proto': 'https',
+        'Content-Type': 'application/json',
+      };
+      const post = (originHeader: string) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = httpRequest(`${base}/api/auth/register/start`, {
+          method: 'POST', headers: { ...headers, Origin: originHeader, 'Content-Length': Buffer.byteLength(body) },
+        }, (response) => {
+          const chunks: Buffer[] = [];
+          response.on('data', (chunk: Buffer) => chunks.push(chunk));
+          response.on('end', () => resolve({ status: response.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
+        });
+        req.on('error', reject);
+        req.end(body);
+      });
+      const accepted = await post('https://ledger.example');
+      expect(accepted.status, accepted.body).toBe(200);
+      const rejected = await post('https://other.example');
+      expect(rejected.status).toBe(403);
+      expect((JSON.parse(rejected.body) as { code: string }).code).toBe('SESSION_ORIGIN_REJECTED');
     } finally {
       await app.close();
     }

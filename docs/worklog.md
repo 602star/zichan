@@ -2,6 +2,12 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-06 — 1Panel Docker 网桥下的浏览器同源判断
+
+- 用户提供的 1Panel OpenResty 规则已设置 `Host $host` 与 `X-Forwarded-Proto $scheme`，代理目标是 `127.0.0.1:34567`，而 Zichan 镜像内监听 `8787`。宿主机端口映射后，业务容器看到的代理对端未必是 `127.0.0.1`；v0.5.3 只信任配置中的代理 IP 来推断浏览器协议，因而 HTTPS 管理页可能被误判为 HTTP 并返回 `SESSION_ORIGIN_REJECTED`。
+- 在显式允许 HTTP 的部署模式下，浏览器请求现从浏览器 `Origin` 与代理保留的 `Host` 做严格匹配，匹配后才发浏览器 Cookie；不信任未经验证的 `X-Forwarded-Proto`，跨域来源和改写 Host 仍被拒绝。`ALLOW_INSECURE_HTTP=0` 的代理传输要求保持不变。v0.5.3 镜像尚无此修复，当前实例须将实际网桥对端配置为可信代理或使用生产 Compose 的宿主机网络。
+- 验证：Windows 本机 `browser-session.test.ts` 7 项、模拟宿主机到网桥代理的管理员注册 API 用例、服务端 TypeScript 类型检查、`npm run build:server`、管理页首次创建所有者 Playwright 用例和 `npm run release:check` 通过。Linux 测试机 `192.168.2.167` 在隔离目录对相同源码归档执行 `npm ci`、上述两项定向 Vitest、`npm run build:server`、`npm run release:check`、完整 `npm run ci` 和同步服务 `docker build`，均以退出码 0 通过。同步服务器全套 Vitest 在 Windows 本机数分钟未输出结果，已中止；完整 CI 已由 Linux 测试机验证。
+
 ## 2026-11-06 — 管理员首次初始化输入与 HTTPS 代理提示
 
 - v0.5.3 管理员首次初始化时，网页允许输入含 `@` 的邮箱式用户名，服务端按账号规则拒绝并返回笼统的 `invalid registration fields`。管理页现在提交前按服务端规则验证用户名，明确提示只允许中文、字母、数字或 `_ . -`；HTML 最短长度同步为 2。`npm run build:server` 与 `admin.spec.mjs` 中的首次初始化浏览器用例通过。

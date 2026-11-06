@@ -45,7 +45,20 @@ export function createRequestOrigin(trustedProxies: string[], allowInsecureHttp 
       const remote = normalize(req.socket.remoteAddress ?? 'unknown');
       const host = req.headers.host;
       if (!host || /[\s/\\@?#]/.test(host)) return undefined;
-      const protocol = trusted(remote) ? req.headers['x-forwarded-proto'] : 'http';
+      const trustedProxy = trusted(remote);
+      // A browser supplies Origin itself. With explicitly enabled HTTP, a
+      // container bridge may hide the host-network proxy's socket address.
+      // Match Origin against the forwarded Host instead of trusting an
+      // unverified X-Forwarded-Proto header for browser cookie requests.
+      if (allowInsecureHttp && !trustedProxy && typeof req.headers.origin === 'string') {
+        try {
+          const browser = new URL(req.headers.origin);
+          if ((browser.protocol === 'https:' || browser.protocol === 'http:')
+            && browser.origin === req.headers.origin
+            && browser.host === new URL(`${browser.protocol}//${host}`).host) return browser.origin;
+        } catch { /* Invalid browser Origin or Host falls through to the direct-HTTP policy. */ }
+      }
+      const protocol = trustedProxy ? req.headers['x-forwarded-proto'] : 'http';
       if (protocol !== 'https' && protocol !== 'http') return undefined;
       try {
         const url = new URL(`${protocol}://${host}`);
@@ -54,7 +67,7 @@ export function createRequestOrigin(trustedProxies: string[], allowInsecureHttp 
         // so a bare HOST=0.0.0.0 binding does not silently hand out sessions.
         if (protocol === 'http' && !allowInsecureHttp) {
           const hostname = url.hostname.replace(/^\[|\]$/g, '');
-          if (!loopback(remote) || trusted(remote) || !(hostname === 'localhost' || loopback(hostname))) return undefined;
+          if (!loopback(remote) || trustedProxy || !(hostname === 'localhost' || loopback(hostname))) return undefined;
         }
         return url.origin;
       } catch {
