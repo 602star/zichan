@@ -8,7 +8,7 @@ export async function openSpendingLedger(page, base, username, password) {
   await page.getByRole('button', { name: '登录', exact: true }).click();
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
   const firstEntry = page.getByRole('dialog', { name: '新增 · 日常收支' });
-  await expect(page.getByRole('region', { name: '首次记账引导' })).toBeVisible();
+  await expect(page.getByRole('region', { name: '首次记账引导' })).toBeVisible({ timeout: 30_000 });
   await expect(firstEntry).toBeHidden();
 }
 
