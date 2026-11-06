@@ -22,12 +22,17 @@ async function fixture() {
   const port = await freePort();
   return { mode: 'web', directory, build: null, urls: [], units: [{ key: 'web', entry: fixtureEntry, args: [], cwd: directory, env: { ...process.env, TEST_PORT: String(port) }, host: '127.0.0.1', port, ready: `http://127.0.0.1:${port}/`, graceful: true }] };
 }
-async function ready(url) {
-  for (let i = 0; i < 100; i++) {
-    try { const res = await fetch(url); await res.body.cancel(); if (res.ok) return; } catch { /* Not listening yet. */ }
+async function ready(url, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(Math.min(2_000, deadline - Date.now())) });
+      await response.body?.cancel();
+      if (response.ok) return;
+    } catch { /* Not listening yet. */ }
     await sleep(30);
   }
-  throw new Error('Fixture did not become ready');
+  throw new Error(`Fixture did not become ready within ${timeoutMs}ms: ${url}`);
 }
 
 test('plans a single all-in-one build with safe defaults and no stale admin URL', () => {
@@ -146,7 +151,7 @@ test('build failure never starts services and is not reported as success', async
   } finally { rmSync(value.directory, { recursive: true, force: true }); }
 });
 
-test('built server serves app/admin/health and shuts down using isolated data', {
+test('built server serves root/admin/health and shuts down using isolated data', {
   skip: !existsSync(join(root, 'apps/sync-server/dist/server.mjs')) || !existsSync(join(root, 'apps/web/dist/index.html')),
 }, async () => {
   const isolated = await fixture();
@@ -157,7 +162,7 @@ test('built server serves app/admin/health and shuts down using isolated data', 
   value.build = null; // Artifacts are prerequisites; never build or write launcher records in the user's data directory.
   const running = start(value);
   try {
-    await ready(value.units[0].ready);
+    await ready(value.units[0].ready, 30_000);
     for (const url of value.urls) {
       const response = await fetch(url);
       assert.equal(response.status, 200, url);

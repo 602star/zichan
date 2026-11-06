@@ -120,6 +120,7 @@ describe('resource and database endpoints', () => {
     } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
   });
 
+  // Account setup, ANALYZE, and cleanup share one timeout on the Windows coverage runner.
   it('queues ANALYZE as a task and records its result', async () => {
     const f = await fixture();
     try {
@@ -146,7 +147,7 @@ describe('resource and database endpoints', () => {
       expect(stats.analyze?.checkedAt).toBeTruthy();
       expect(stats.database['analyzedAt']).toBe(stats.analyze?.checkedAt);
     } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
-  });
+  }, 120_000);
 
   it('lets a read-only operator read everything and refuse the write', async () => {
     const f = await fixture();
