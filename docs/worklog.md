@@ -2,6 +2,11 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-06 — 生产镜像支持局域网 HTTP 直连
+
+- 用户在 1Panel 中直接部署 v0.5.2 镜像时，生产 Compose 原先固定 `HOST=127.0.0.1` 与 `ALLOW_INSECURE_HTTP=0`，远端内网 HTTP 注册返回 426。生产 Compose 现默认监听 `0.0.0.0:8787` 并允许 HTTP；下一版镜像也默认允许 HTTP。可通过 `ZICHAN_HOST=127.0.0.1` 和 `ZICHAN_ALLOW_INSECURE_HTTP=0` 恢复原有 HTTPS 代理模式。v0.5.2 已发布镜像不变，现有 1Panel 容器需显式设置容器环境变量并重建。
+- `0.0.0.0` 同时覆盖公网网卡，HTTP 开关在服务端对所有来源生效；文档要求在局域网模式用主机防火墙限制 8787，公网模式仍使用 HTTPS。Linux 测试机 Docker Compose v5.7.0 解析默认配置为 `HOST=0.0.0.0`、`ALLOW_INSECURE_HTTP=1`，显式覆盖后为 `127.0.0.1`、`0`。本机 `browser-session.test.ts` 与 `server.test.ts` 共 30 项通过，`npm run release:check` 通过。
+
 ## 2026-11-06 — v0.5.2 发布流水线收尾
 
 - 第三轮标签流水线的五项 CI 经重跑均通过，Windows MSI/NSIS 构建及两项安装验收、Linux、Android、同步服务更新包和镜像作业也通过；Windows 便携版因跳过重复门禁后未生成 `apps/web/dist/index.html` 而失败，发布作业因此未启动。便携版脚本在已有 CI 通过的路径上先运行 `build:server`（同时构建 API 与 Web），再执行 Tauri 打包。

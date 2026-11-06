@@ -1,7 +1,7 @@
 name: zichan-prod
 
-# A host HTTPS proxy forwards to 127.0.0.1:8787 and overwrites
-# X-Forwarded-Proto with the single value https.
+# Direct HTTP is enabled for trusted LAN deployments. Restrict port 8787 at
+# the host firewall; public deployments should use an HTTPS reverse proxy.
 services:
   sync-server:
     image: ${ZICHAN_IMAGE:?Set ZICHAN_IMAGE to a verified sha256 digest}
@@ -10,7 +10,7 @@ services:
     user: '1000:1000'
     environment:
       PORT: '8787'
-      HOST: '127.0.0.1'
+      HOST: ${ZICHAN_HOST:-0.0.0.0}
       DATA_DIR: /state/server
       ADMIN_BACKUP_DIRECTORY: /backups
       WEB_DIST: /app/runtime/current/web-dist
@@ -21,7 +21,7 @@ services:
       UPDATE_PUBLIC_KEY_PATH: /app/bootstrap/update-public.pem
       TZ: ${ZICHAN_TZ:-Asia/Shanghai}
       TRUSTED_PROXIES: '127.0.0.1'
-      ALLOW_INSECURE_HTTP: '0'
+      ALLOW_INSECURE_HTTP: ${ZICHAN_ALLOW_INSECURE_HTTP:-1}
       REGISTRATION_MODE: ${REGISTRATION_MODE:-invite}
       ENABLE_WEB: '1'
       ENABLE_SYNC: '1'

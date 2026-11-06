@@ -73,7 +73,7 @@ Windows 也可双击 `scripts\windows\start-sync-server.cmd`。该开发入口�
 - `REGISTRATION_MODE`：`open`、`invite` 或 `closed`，新服务器默认 `invite`；仅所有者可在管理页动态修改。已有库的策略不被部署默认值覆盖。
 - `SYNC_SECRET`、`SERVER_ID`：访问令牌签名和服务器身份配置；生产部署必须稳定保存。
 - `TRUSTED_PROXIES`：允许提供 `X-Forwarded-*` 的代理 IP 或 CIDR（IPv4/IPv6），兼容显式的 `loopback/private`；优先限定到实际代理地址，不要在直接暴露 8787 时信任任意来源。代理链从右向左检查，到首个不受信任的地址为止。代理必须覆盖 `X-Forwarded-Proto` 为单一的 `https`；经代理的请求不能依靠 `X-Forwarded-For: 127.0.0.1` 获得本机 HTTP 豁免。
-- `ALLOW_INSECURE_HTTP`：默认 `0`。设为 `1` 时，私有局域网的明文 HTTP 也可用于账号登录、同步、浏览器 Cookie 会话与管理后台（Cookie 不设置 Secure）；公网部署仍必须使用 HTTPS。仓库开发启动器默认设为 `1`，仅面向可信家庭局域网，切勿在公网暴露时开启。
+- `ALLOW_INSECURE_HTTP`：服务端程序未设置时默认 `0`。设为 `1` 时，私有局域网的明文 HTTP 也可用于账号登录、同步、浏览器 Cookie 会话与管理后台（Cookie 不设置 Secure）；公网部署仍应使用 HTTPS。生产镜像与生产 Compose 默认设为 `1`，开发启动器也默认设为 `1`；这些入口仅面向可信局域网，必须由防火墙阻止公网访问明文端口。该开关在服务端对所有来源生效，不能代替防火墙。
 
 明文 HTTP 下的能力与边界：浏览器把 `crypto.subtle` 与 Web Locks 限制在安全上下文。本应用在缺少它们时改用随包提供的纯 JavaScript 后端（`@noble/ciphers` / `@noble/hashes`）与 IndexedDB 事务租约，因此局域网 HTTP 可以正常解锁、记账、附件、备份；支持 SharedWorker 的浏览器还可共用一份数据库同时打开多个标签页，缺少 SharedWorker 时退回单标签页互斥。AES-GCM（16 字节 tag）、SHA-256 和 HMAC-SHA256 在两个后端逐字节一致，现有账本与新写入可双向互读。Argon2id 仍由 `hash-wasm` 提供，是唯一没有回退的能力，缺少 WebAssembly 时明确拒绝解锁并说明原因。两点必须如实知悉：其一，明文 HTTP 无法保证传输中的页面代码和托管凭据不被截取或篡改，账本静态存储虽仍加密，但请仅在可信内网开启；其二，该退化路径下「记住设备七天」存不了不可导出的原生密钥，只能落原始密钥字节，保护强度低于原生路径，界面不得把它当作同等保护。另外局域网 HTTP 不是安全上下文，Service Worker 不可用，关闭浏览器后完全断网重新打开网页不受保证。
 
@@ -150,7 +150,7 @@ cd apps/sync-server
 docker compose up -d --build --remove-orphans --wait --wait-timeout 120
 ```
 
-Compose 将父目录 `/state` 挂载到 `zichan-data`，实际 `DATA_DIR` 为 `/state/server`；独立的 `zichan-backups` 卷挂到 `/backups`，容器内的 `node` 用户可以写入。实际 Docker 卷名带 Compose 项目前缀，例如 `zichan-dev_zichan-backups`。首次创建卷前，镜像会准备好目录所有权；不要再用不存在的宿主机 `./backups` 路径临时覆盖 `/backups`，那会由 Docker 创建为 root 所有，导致备份失败。两个卷都要纳入宿主机和异机备份；仅保留同机备份卷不能应对整机故障。此 Linux Compose **只运行一个业务容器**，使用宿主机网络并让服务仅监听 `127.0.0.1:8787`，没有容器内 HTTPS 代理，也不发布 80/443。HTTPS 反向代理由同一宿主机单独运行，转发到 `http://127.0.0.1:8787`；反向代理必须保留公共 Host，**覆盖**传入的 `X-Forwarded-Proto` 为单一的 `https`。Compose 把 `TRUSTED_PROXIES` 精确设为实际连接服务的代理地址 `127.0.0.1`，不信任整个私网。若代理位于另一台主机，需另行设计受防火墙保护的连接与精确代理 IP 配置，不能直接复用此回环部署。公网只开放 443，不开放上游 8787。首次部署通过启动日志显示的后台路径显式创建 Owner，再对外开放服务；普通注册不应被当作取得管理员权限的入口。已有服务器按管理后台提示完成初始化，切勿为了重新初始化而删除账本数据。若密钥、`server.secret`、`server-id`、数据库或旧 JSON 状态曾进入源码目录或版本控制，应按已泄露处理：停止服务、保留加密数据备份，轮换 `SYNC_SECRET`，撤销设备会话后重新登录。
+此处的源码构建 Compose 将父目录 `/state` 挂载到 `zichan-data`，实际 `DATA_DIR` 为 `/state/server`；独立的 `zichan-backups` 卷挂到 `/backups`，容器内的 `node` 用户可以写入。实际 Docker 卷名带 Compose 项目前缀，例如 `zichan-dev_zichan-backups`。首次创建卷前，镜像会准备好目录所有权；不要再用不存在的宿主机 `./backups` 路径临时覆盖 `/backups`，那会由 Docker 创建为 root 所有，导致备份失败。两个卷都要纳入宿主机和异机备份；仅保留同机备份卷不能应对整机故障。此开发 Compose **只运行一个业务容器**，使用宿主机网络并让服务仅监听 `127.0.0.1:8787`，没有容器内 HTTPS 代理，也不发布 80/443。生产镜像 Compose 的局域网 HTTP 入口见[生产部署说明](../deployment/production-deployment.md)。HTTPS 反向代理由同一宿主机单独运行，转发到 `http://127.0.0.1:8787`；反向代理必须保留公共 Host，**覆盖**传入的 `X-Forwarded-Proto` 为单一的 `https`。Compose 把 `TRUSTED_PROXIES` 精确设为实际连接服务的代理地址 `127.0.0.1`，不信任整个私网。若代理位于另一台主机，需另行设计受防火墙保护的连接与精确代理 IP 配置，不能直接复用此回环部署。公网只开放 443，不开放上游 8787。首次部署通过启动日志显示的后台路径显式创建 Owner，再对外开放服务；普通注册不应被当作取得管理员权限的入口。已有服务器按管理后台提示完成初始化，切勿为了重新初始化而删除账本数据。若密钥、`server.secret`、`server-id`、数据库或旧 JSON 状态曾进入源码目录或版本控制，应按已泄露处理：停止服务、保留加密数据备份，轮换 `SYNC_SECRET`，撤销设备会话后重新登录。
 
 宿主机 Caddy 配置示例（将域名替换为实际域名；Caddy 作为宿主机服务运行）：
 

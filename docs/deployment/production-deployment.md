@@ -4,7 +4,9 @@
 
 ## 主机准备
 
-宿主机安装 Docker Compose、Cosign、Restic，并取得私有 GHCR 镜像的只读访问凭据；在宿主机执行 `docker login ghcr.io`。生产 Compose 只含一个业务容器，HTTPS 反向代理在宿主机运行，转发到 `127.0.0.1:8787`，保留外部 Host，并把 `X-Forwarded-Proto` **覆盖**为单一值 `https`。服务只信任实际代理地址 `127.0.0.1`。没有测试域名时只能验收本机业务与备份恢复，不能算真实 HTTPS 入口通过。
+宿主机安装 Docker Compose 和 Cosign，并取得私有 GHCR 镜像的只读访问凭据；在宿主机执行 `docker login ghcr.io`。Restic 用于后续异机备份和恢复，不是首次启动容器的前提。生产 Compose 只含一个业务容器，默认通过宿主机网络监听 `0.0.0.0:8787`，并允许 HTTP 注册、登录、同步及管理。这个默认入口面向受防火墙保护的可信私有局域网：只允许可信内网访问 8787，不要把它开放到公网。已发布的镜像不会因本仓库 Compose 变化而改变；通过 1Panel 直接创建旧镜像容器时，需要在容器环境变量中设置 `HOST=0.0.0.0` 和 `ALLOW_INSECURE_HTTP=1` 并重建。
+
+公网部署应先设置 `ZICHAN_HOST=127.0.0.1` 和 `ZICHAN_ALLOW_INSECURE_HTTP=0`，由宿主机 HTTPS 反向代理转发到 `127.0.0.1:8787`。代理保留外部 Host，并把 `X-Forwarded-Proto` 覆盖为单一值 `https`；服务只信任实际代理地址 `127.0.0.1`。没有测试域名时只能验收本机业务与备份恢复，不能算真实 HTTPS 入口通过。
 
 预建并保护目录，容器 UID 1000 必须拥有读写权限；运行目录存放已安装的服务程序版本：
 
@@ -23,6 +25,15 @@ export ZICHAN_IMAGE='ghcr.io/602star/zichan-sync@sha256:<64位摘要>'
 export ZICHAN_TZ=Asia/Shanghai
 bash scripts/production/deploy.sh
 ```
+
+默认可从私有局域网访问 `http://<服务器内网IP>:8787/app/`，同步服务器地址使用 `http://<服务器内网IP>:8787`。若使用上文的公网 HTTPS 模式，在部署前另执行：
+
+```bash
+export ZICHAN_HOST=127.0.0.1
+export ZICHAN_ALLOW_INSECURE_HTTP=0
+```
+
+这两个变量属于 Compose 配置；1Panel 直接创建容器时，填写的是容器环境变量 `HOST` 和 `ALLOW_INSECURE_HTTP`。修改现有容器环境变量后需重建容器，保留 `/srv/zichan/state`、`/srv/zichan/backups` 和 `/srv/zichan/runtime`。`0.0.0.0` 表示所有网卡，包括公网网卡；即使官方客户端拒绝公网 HTTP 地址，服务端一旦暴露仍会接收明文请求，必须由主机防火墙限制 8787。
 
 仅创建全新服务器时，将最后一行改为 `ZICHAN_ALLOW_FIRST_BOOT=yes bash scripts/production/deploy.sh`；迁移和回退不得设置此开关。已有节点首次接入自更新启动器时，须先停服完成并校验完整备份，另设置 `ZICHAN_BASELINE_BACKUP=/srv/zichan/backups/<记录>`；部署脚本会复验备份并比对服务器身份。
 
