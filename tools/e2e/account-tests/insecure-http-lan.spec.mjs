@@ -49,7 +49,7 @@ test('plain-HTTP LAN origin unlocks the ledger, saves a record and reloads it', 
     await registerAccount(`http://127.0.0.1:${port}`, 'lan-owner', 'lan-owner-password', { ownerSetupToken });
     await registerAccount(`http://127.0.0.1:${port}`, 'lan-member', 'lan-account-password');
 
-    await page.goto(`${origin}/app/`);
+    await page.goto(`${origin}/`);
 
     // Exactly the reported environment: a real plain-HTTP LAN origin where the
     // browser withholds every secure-context-only API.

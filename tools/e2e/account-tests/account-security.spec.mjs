@@ -15,7 +15,7 @@ test('changes account password and revokes only a selected own device', async ({
     await registerAccount(url, 'owner', 'owner-test-password', { ownerSetupToken: setup });
     await registerAccount(url, 'security-user', 'account-test-password');
     const other = await loginAccount(url, 'security-user', 'account-test-password', { deviceName: '另一部手机' });
-    await page.goto(`${url}/app/`);
+    await page.goto(`${url}/`);
     await page.getByLabel('服务器用户名').fill('security-user');
     await page.getByLabel('服务器账号密码').fill('account-test-password');
     await page.getByRole('button', { name: '登录', exact: true }).click();

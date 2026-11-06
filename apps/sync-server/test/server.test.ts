@@ -833,7 +833,11 @@ describe('sync-server endpoints', () => {
       const account = await fetch(u + '/ledger/api/auth/me');
       expect(account.status).toBe(503);
       expect(account.headers.get('content-type')).toContain('application/json');
-      expect((await fetch(u + '/ledger/app/')).status).toBe(200);
+      expect((await fetch(u + '/ledger/')).status).toBe(200);
+      const oldEntry = await fetch(u + '/ledger/app/?federation=sample', { redirect: 'manual' });
+      expect(oldEntry.status).toBe(302);
+      expect(oldEntry.headers.get('location')).toBe('/ledger/?federation=sample');
+      expect((await fetch(u + '/ledger/app/assets/old.js')).status).toBe(404);
     } finally {
       await s.close();
       rmSync(dir, { recursive: true, force: true });
@@ -848,7 +852,7 @@ describe('sync-server endpoints', () => {
     await new Promise<void>((resolve) => app.server.listen(0, resolve));
     const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
     try {
-      const csp = (await fetch(`${base}/app/`)).headers.get('content-security-policy') ?? '';
+      const csp = (await fetch(`${base}/`)).headers.get('content-security-policy') ?? '';
       const connectSrc = csp.split('; ').find((directive) => directive.startsWith('connect-src')) ?? '';
       expect(connectSrc).toMatch(/\shttp:$/);
     } finally {

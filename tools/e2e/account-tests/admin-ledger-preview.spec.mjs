@@ -46,7 +46,7 @@ async function signIn(page, origin, username = 'owner') {
 
 /** Records one expense as the user, so the server holds commits worth previewing. */
 async function recordExpenseAs(page, origin, username, amount) {
-  await page.goto(`${origin}/app/`);
+  await page.goto(`${origin}/`);
   await page.getByLabel('服务器用户名').fill(username);
   await page.getByLabel('服务器账号密码', { exact: true }).fill(userPassword);
   await page.getByRole('button', { name: '登录', exact: true }).click();

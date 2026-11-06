@@ -92,7 +92,12 @@ describe('sync configuration', () => {
     });
   });
 
-  it('derives the current server base path from its bundled /app URL', () => {
+  it('derives the current server base path from root and legacy /app URLs', () => {
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { baseURI: 'https://ledger.example.com/home-ledger/index.html' },
+    });
+    expect(syncAddressPresetUrl('current')).toBe('https://ledger.example.com/home-ledger');
     Object.defineProperty(globalThis, 'document', {
       configurable: true,
       value: { baseURI: 'https://ledger.example.com/home-ledger/app/index.html' },

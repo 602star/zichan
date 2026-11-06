@@ -36,7 +36,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
   try {
     const home = await start('home-user');
     const secondary = await start('remote-user');
-    await page.goto(`${home.url}/app/`);
+    await page.goto(`${home.url}/`);
     await page.getByLabel('服务器用户名').fill('home-user');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await page.getByRole('button', { name: '登录' }).click();

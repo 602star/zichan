@@ -60,7 +60,7 @@ export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> 
   return <section className="zc-protection" aria-label="账号安全" style={{ padding: 20, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', marginBottom: 16 }}>
     <h2 style={{ fontSize: 'var(--fs-title)' }}>账号安全 · {identity?.loginUsername ?? profile.username}</h2>
     {identity?.issuerNodeId ? <p>此账号由身份源节点 {identity.issuerNodeId} 管理密码。
-      {identity.issuerUrl ? <>请在 <a href={`${identity.issuerUrl}/app/`}>身份源网站</a> 修改或找回密码。</> : '请到创建此账号的网站修改或找回密码。'}
+      {identity.issuerUrl ? <>请在 <a href={`${identity.issuerUrl}/`}>身份源网站</a> 修改或找回密码。</> : '请到创建此账号的网站修改或找回密码。'}
       更新后本站会在后台同步新凭据。</p> : identity && <details><summary>修改账号密码</summary>
       <p>修改后所有设备都需要重新登录。账本、恢复码和保护方式保持不变；未同步数据保留在本机。</p>
       <form className="zc-account-form" onSubmit={(event) => {

@@ -6,6 +6,9 @@ const urls = __ASSETS__.map((name) => new URL(name, scope).href);
 const assets = new Set(urls);
 const shell = new URL('index.html', scope).href;
 const assetPath = new URL('assets/', scope).pathname;
+// The old /app/ entry now redirects to this scope's root. A cached root index
+// must not intercept that navigation or resolve old assets below /app/assets/*.
+const nestedAppPath = new URL('app', scope).pathname;
 async function supportsInPlaceUpdate(worker) {
   return new Promise((resolve) => {
     const channel = new MessageChannel();
@@ -79,6 +82,7 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== new URL(scope).origin || /\/(api|admin)(\/|$)/.test(url.pathname)) return;
+  if (request.mode === 'navigate' && (url.pathname === nestedAppPath || url.pathname.startsWith(`${nestedAppPath}/`))) return;
   if (request.mode === 'navigate' && request.url.startsWith(scope)) {
     event.respondWith((async () => (await (await caches.open(cacheName)).match(shell)) || fetch(request))());
   } else if (assets.has(request.url)) {

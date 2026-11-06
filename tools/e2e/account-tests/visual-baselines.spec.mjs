@@ -67,7 +67,7 @@ test('phone visual baselines', async ({ page, baseURL }) => {
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.clock.setFixedTime(FIXED_NOW);
-  await page.goto(`${baseURL}/app/`);
+  await page.goto(`${baseURL}/`);
   await page.getByLabel('服务器用户名').fill('visual-user');
   await page.getByLabel('服务器账号密码').fill('visual-user-password');
   await page.getByRole('button', { name: '登录', exact: true }).click();

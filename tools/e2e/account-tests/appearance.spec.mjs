@@ -66,7 +66,7 @@ const readPalette = (page) => page.evaluate(() => {
 
 /** Signs in, finishes first-run setup, and opens 设置 → 外观. */
 async function openAppearance(page, url) {
-  await page.goto(`${url}/app/`);
+  await page.goto(`${url}/`);
   await page.getByLabel('服务器用户名').fill('operator');
   await page.getByLabel('服务器账号密码').fill(password);
   await page.getByRole('button', { name: '登录', exact: true }).click();

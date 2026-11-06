@@ -45,7 +45,7 @@ export ZICHAN_TZ=Asia/Shanghai
 bash scripts/production/deploy.sh
 ```
 
-默认可从私有局域网访问 `http://<服务器内网IP>:8787/app/`，同步服务器地址使用 `http://<服务器内网IP>:8787`。若使用上文的公网 HTTPS 模式，在部署前另执行：
+默认可从私有局域网访问 `http://<服务器内网IP>:8787/`，同步服务器地址使用 `http://<服务器内网IP>:8787`。旧 `/app/` 入口会跳转到根路径；若浏览器仍显示旧页，应先从根路径刷新应用缓存。若使用上文的公网 HTTPS 模式，在部署前另执行：
 
 ```bash
 export ZICHAN_HOST=127.0.0.1

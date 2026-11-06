@@ -8,7 +8,7 @@ test('ignores old local mode and key envelopes and always starts at account logi
     localStorage.setItem('zichan.firstUse.mode.v1', 'local');
     localStorage.setItem('zichan.device.storageEnvelope.v1', 'legacy-envelope-not-to-read');
   });
-  await page.goto('/app/');
+  await page.goto('/');
   await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
   await expect(page.getByRole('button', { name: /^纯本地使用/ })).toHaveCount(0);
   await expect(page.getByLabel('完整服务器地址')).toHaveCount(0);

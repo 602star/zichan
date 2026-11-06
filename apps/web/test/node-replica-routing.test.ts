@@ -43,7 +43,7 @@ const profile = (nodeId: string): SyncConnection => ({ id: nodeId, serverRef: no
 describe('node replica browser routing', () => {
   it('prefers the node serving the current website', async () => {
     Object.defineProperty(globalThis, 'document', { configurable: true,
-      value: { baseURI: 'https://home.example.com/app/' } });
+      value: { baseURI: 'https://home.example.com/' } });
     const { preferredReplicaProfiles } = await import('../src/node-replica-routing.js');
     expect(preferredReplicaProfiles(['hub', 'office', 'home'].map(profile))[0]?.id).toBe('home');
   });

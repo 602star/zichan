@@ -18,7 +18,7 @@ for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, ini
     const url = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(url, 'owner', 'owner-test-password', { ownerSetupToken: setup });
     await registerAccount(url, 'mobile-user', 'account-test-password');
-    await page.goto(`${url}/app/`);
+    await page.goto(`${url}/`);
     await page.getByLabel('服务器用户名').fill('mobile-user');
     await page.getByLabel('服务器账号密码').fill('account-test-password');
     await fits();

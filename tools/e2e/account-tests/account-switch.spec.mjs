@@ -37,7 +37,7 @@ test('registers distinct accounts and keeps their database, keys and caches isol
       await page.getByRole('button', { name: '确认退出', exact: true }).click();
       await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
     }
-    await page.goto(`${url}/app/`);
+    await page.goto(`${url}/`);
     await register('alice'); await createCache('alice-cache-password');
     const alice = await page.evaluate(() => ({ binding: JSON.parse(localStorage.getItem('zichan.web-account.v2.binding')), envelopes: Object.keys(localStorage).filter((key) => key.endsWith('zichan.device.storageEnvelope.v1')), databases: [] }));
     const namesA = await page.evaluate(async () => (await indexedDB.databases()).map((db) => db.name).filter((name) => name.endsWith(':database')));

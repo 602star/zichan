@@ -32,7 +32,7 @@ test('administrator reviews and issues a code, user resets only account credenti
     const code = await page.getByLabel('本次重置码').inputValue();
     recipient = await browser.newContext();
     const user = await recipient.newPage();
-    await user.goto(`${url}/app/`);
+    await user.goto(`${url}/`);
     await user.getByText('忘记账号密码', { exact: true }).click();
     await user.getByLabel('找回账号用户名').fill('recover-user');
     await user.getByLabel('一次性重置码', { exact: true }).fill(code);

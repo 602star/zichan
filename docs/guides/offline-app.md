@@ -8,4 +8,4 @@
 
 更新下载完成后显示提示，用户保存操作、关闭本站全部旧页面后，浏览器才启用新版。不会强制刷新正在填写的表单，不让旧页面与新资源混用；激活后只清理同一部署路径的旧静态缓存，不清除数据库、密钥或其他网站缓存。
 
-`offline-cache.spec.mjs` 验证真实离线关闭页面再新开、解锁和重新联网，以及 Cache Storage 不含 API URL；`offline-update.spec.mjs` 验证 `/ledger/app/` 子路径、多个旧页面等待更新、激活后保留原账号与记账记录。
+`offline-cache.spec.mjs` 验证真实离线关闭页面再新开、解锁和重新联网，以及 Cache Storage 不含 API URL；`offline-update.spec.mjs` 验证 `/ledger/` 部署前缀、多个旧页面等待更新、激活后保留原账号与记账记录，并检查旧 `/app/` 入口跳转。

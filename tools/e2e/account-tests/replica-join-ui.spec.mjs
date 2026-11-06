@@ -63,7 +63,7 @@ test('a new user sees simple server-copy status after administrators join three 
     await registerAccount(home.url, 'home-admin', password, { ownerSetupToken: setupToken });
     await registerAccount(office.url, 'office-admin', password, { ownerSetupToken: setupToken });
 
-    await page.goto(`${hub.url}/app/`);
+    await page.goto(`${hub.url}/`);
     await page.getByLabel('服务器用户名').fill('ledger-owner');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await page.getByRole('button', { name: '登录' }).click();

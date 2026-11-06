@@ -173,7 +173,7 @@ test('keeps the management console out of the ledger and rejects non-administrat
   const databases = await page.evaluate(() => indexedDB.databases().then((rows) => rows.map((row) => row.name)));
   expect(databases.filter((name) => name && name.includes('ledger'))).toEqual([]);
 
-  await page.goto(`${baseUrl}/app/`);
+  await page.goto(`${baseUrl}/`);
   const ledgerMe = await page.evaluate(async (origin) => {
     const response = await fetch(`${origin}/api/auth/me`, { headers: { 'X-Zichan-Session': 'cookie' }, credentials: 'same-origin' });
     return response.status;

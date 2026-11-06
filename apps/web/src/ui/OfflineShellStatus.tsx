@@ -31,8 +31,12 @@ export function OfflineShellStatus() {
     };
     navigator.serviceWorker.addEventListener('message', onMessage);
     navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
-    // Relative to the actual document, including deployments under /prefix/app/.
+    // Relative to the actual document, including deployments under /prefix/.
     const base = new URL('./', window.location.href);
+    const oldAppScope = new URL('app/', base).href;
+    void navigator.serviceWorker.getRegistration(oldAppScope).then((registration) => {
+      if (registration?.scope === oldAppScope) return registration.unregister();
+    }).catch(() => undefined);
     void navigator.serviceWorker.register(new URL('sw.js', base), { scope: base.pathname, updateViaCache: 'none' }).then((registration) => {
       if (!active) return;
       registrationRef.current = registration;

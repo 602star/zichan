@@ -2,7 +2,7 @@ import { expect } from '@playwright/test';
 
 /** Create a real spending ledger through the current account and first-run flow. */
 export async function openSpendingLedger(page, base, username, password) {
-  await page.goto(`${base}/app/`);
+  await page.goto(`${base}/`);
   await page.getByLabel('服务器用户名').fill(username);
   await page.getByLabel('服务器账号密码').fill(password);
   await page.getByRole('button', { name: '登录', exact: true }).click();

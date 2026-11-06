@@ -89,7 +89,7 @@ async function inventory(store, username, ledgerId) {
 }
 
 async function revisitSite(page, url) {
-  await page.goto(`${url}/app/`);
+  await page.goto(`${url}/`);
   await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
 }
 
@@ -115,7 +115,7 @@ test('records on three separate websites and converges their server replicas', a
     await registerAccount(hub.url, 'owner', password, { ownerSetupToken: setupToken });
     await registerAccount(home.url, 'home-admin', password, { ownerSetupToken: setupToken });
     await registerAccount(office.url, 'office-admin', password, { ownerSetupToken: setupToken });
-    await page.goto(`${hub.url}/app/`);
+    await page.goto(`${hub.url}/`);
     await page.getByLabel('服务器用户名').fill('owner');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await page.getByRole('button', { name: '登录', exact: true }).click();
@@ -155,7 +155,7 @@ test('records on three separate websites and converges their server replicas', a
     for (const [index, node, amount, note] of [
       [1, home, '20.02', 'home-entry'], [2, office, '30.03', 'office-entry'],
     ]) {
-      await page.goto(`${node.url}/app/`);
+      await page.goto(`${node.url}/`);
       await page.getByLabel('服务器用户名').fill('owner');
       await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
       await page.getByRole('button', { name: '登录', exact: true }).click();
@@ -181,7 +181,7 @@ test('records on three separate websites and converges their server replicas', a
     for (const note of ['hub-entry', 'home-entry', 'office-entry']) {
       await expect(page.getByText(note, { exact: true })).toBeVisible();
     }
-    await page.goto(`${hub.url}/app/`);
+    await page.goto(`${hub.url}/`);
     await syncCurrentSite(page);
     await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
     for (const note of ['hub-entry', 'home-entry', 'office-entry']) {

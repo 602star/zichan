@@ -26,7 +26,10 @@ describe('management access path', () => {
       expect((await fetch(`${running.url}/admin/`)).status).toBe(200);
       expect((await fetch(`${running.url}/admin/users`)).status).toBe(200);
       expect((await fetch(`${running.url}/wrong-segment/admin/`)).status).toBe(404);
-      expect((await fetch(`${running.url}/app/`)).status).toBe(200);
+      expect((await fetch(`${running.url}/`)).status).toBe(200);
+      const legacyEntry = await fetch(`${running.url}/app/`, { redirect: 'manual' });
+      expect(legacyEntry.status).toBe(302);
+      expect(legacyEntry.headers.get('location')).toBe('/ledger/');
       await registerAccount(running.url, 'owner', 'owner-password', { ownerSetupToken: OWNER_SETUP_TOKEN });
       expect((await fetch(`${running.url}/admin/`)).status).toBe(200);
       const owner = await loginAccount(running.url, 'owner', 'owner-password');

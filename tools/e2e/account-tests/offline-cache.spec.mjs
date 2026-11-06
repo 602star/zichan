@@ -14,7 +14,7 @@ for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`un
     const url = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(url, 'owner', 'owner-test-password', { ownerSetupToken: setup });
     await registerAccount(url, 'offline-user', 'account-test-password');
-    await page.goto(`${url}/app/`);
+    await page.goto(`${url}/`);
     await page.getByLabel('服务器用户名').fill('offline-user');
     await page.getByLabel('服务器账号密码').fill('account-test-password');
     await page.getByRole('button', { name: '登录', exact: true }).click();
@@ -25,7 +25,7 @@ for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`un
       await context.setOffline(true);
       await page.close();
       page = await context.newPage();
-      await page.goto(`${url}/app/`);
+      await page.goto(`${url}/`);
       await page.getByRole('button', { name: '离线解锁 offline-user 的缓存' }).click();
       await page.getByLabel('账号密码', { exact: true }).fill('account-test-password');
       await page.getByRole('button', { name: '解锁缓存', exact: true }).click();

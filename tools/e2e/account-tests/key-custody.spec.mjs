@@ -18,7 +18,7 @@ test('managed account opens on another device and prepares offline access automa
     await registerAccount(url, 'owner', 'owner-test-password', { ownerSetupToken: setup });
     await registerAccount(url, 'managed-user', 'account-test-password');
     const login = async (target) => {
-      await target.goto(`${url}/app/`);
+      await target.goto(`${url}/`);
       await target.getByLabel('服务器用户名').fill('managed-user');
       await target.getByLabel('服务器账号密码', { exact: true }).fill('account-test-password');
       await target.getByRole('button', { name: '登录', exact: true }).click();

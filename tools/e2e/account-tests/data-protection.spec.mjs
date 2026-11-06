@@ -21,7 +21,7 @@ test('opens backup, sync, recovery and security as settings tabs', async ({ page
     const url = `http://127.0.0.1:${server.server.address().port}`;
     await registerAccount(url, 'owner', 'owner-test-password', { ownerSetupToken: 'test-data-protection-owner-0000000' });
     await registerAccount(url, 'protection-user', 'account-test-password');
-    await page.goto(`${url}/app/`);
+    await page.goto(`${url}/`);
     await page.getByLabel('服务器用户名').fill('protection-user');
     await page.getByLabel('服务器账号密码').fill('account-test-password');
     await page.getByRole('button', { name: '登录' }).click();

@@ -84,7 +84,7 @@ test('the browser carries a personal ledger between independent servers', async 
       stores.push(store);
       await store.ready;
     }
-    await page.goto(`${first.url}/app/`);
+    await page.goto(`${first.url}/`);
     await page.getByLabel('服务器用户名').fill('owner');
     await page.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await page.getByRole('button', { name: '登录' }).click();
@@ -124,7 +124,7 @@ test('the browser carries a personal ledger between independent servers', async 
     expect(await stores[1].listNodeReplicationLinks()).toHaveLength(0);
 
     secondPage = await context.newPage();
-    await secondPage.goto(`${second.url}/app/`);
+    await secondPage.goto(`${second.url}/`);
     await secondPage.getByLabel('服务器用户名').fill('owner');
     await secondPage.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await secondPage.getByRole('button', { name: '登录' }).click();

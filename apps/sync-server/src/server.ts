@@ -317,9 +317,10 @@ function serveWeb(req: IncomingMessage, res: ServerResponse, path: string, webDi
   allowInsecureHttp = false): boolean {
   if (!webDir || (req.method !== 'GET' && req.method !== 'HEAD')) return false;
   if (path === '/api' || path.startsWith('/api/')) return false;
+  if (path === '/app' || path.startsWith('/app/')) return false;
   const root = resolve(webDir);
-  const staticPath = path === '/app' || path === '/app/' || path === '/admin' || path === '/admin/' ? '/'
-    : path.startsWith('/app/') ? path.slice(4) : path.startsWith('/admin/') ? path.slice(6) : path;
+  const staticPath = path === '/admin' || path === '/admin/' ? '/'
+    : path.startsWith('/admin/') ? path.slice(6) : path;
   const target = safeResolve(root, staticPath);
   if (!target) { res.writeHead(403); res.end('forbidden'); return true; }
   let file = fileIfExists(target);
@@ -904,6 +905,14 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         return send(res, probe.ok ? 200 : 503, { ok: probe.ok, serverId, mode: 'light', database: probe });
       }
       if (basePath && (path === '/api' || path.startsWith('/api/'))) return send(res, 404, { error: 'not found' });
+      if (routedPath === '/app' || routedPath === '/app/') {
+        if (enableWeb && options.webDir && (req.method === 'GET' || req.method === 'HEAD')) {
+          res.writeHead(302, { Location: `${encodeURI(basePath)}/${url.search}`, 'Cache-Control': 'no-store' });
+          res.end();
+          return;
+        }
+        return send(res, 404, { error: 'not found' });
+      }
       // Without a configured segment, /admin is the permanent management entry.
       // With one, /admin only discovers it before the first owner is created.
       const requestedAdminPage = !routedPath?.startsWith('/api/')
@@ -1677,7 +1686,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         const account = session ? await store.getUser(session.username) : undefined;
         if (!refreshToken || !session || !account || account.disabled || session.revokedAt || session.expiresAt <= nowIso()
           || !safeEqual(session.refreshHash, opaqueHash(secret, refreshToken))) {
-          const login = `${basePath}/app/?federation=${encodeURIComponent(encoded)}`;
+          const login = `${encodeURI(basePath)}/?federation=${encodeURIComponent(encoded)}`;
           res.writeHead(302, { Location: login, 'Cache-Control': 'no-store' });
           res.end();
           return;
@@ -1737,7 +1746,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         await log('info', 'federated_login_success', 'Federated identity created a node-local session', {
           ip, username: user.username, detail: { issuerNodeId: link.peerNodeId, sessionId: newSessionId },
         });
-        res.writeHead(303, { Location: `${basePath}/app/`, 'Cache-Control': 'no-store' });
+        res.writeHead(303, { Location: `${encodeURI(basePath)}/`, 'Cache-Control': 'no-store' });
         res.end();
         return;
       }

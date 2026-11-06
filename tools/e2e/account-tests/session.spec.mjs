@@ -19,7 +19,7 @@ test.afterAll(async () => { if (server) await closeTestSyncServer(server); });
 
 test('uses real same-origin browser cookies without storing account passwords or exposing refresh secrets', async ({ page, context }) => {
   const password = 'browser-test-account-password';
-  await page.goto(`${baseUrl}/ledger/app/`);
+  await page.goto(`${baseUrl}/ledger/`);
   await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
   await expect(page.getByLabel('完整服务器地址')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^纯本地使用/ })).toHaveCount(0);
@@ -68,7 +68,7 @@ test('uses real same-origin browser cookies without storing account passwords or
   await expect(page.locator('.zc-app-shell')).toBeVisible();
   await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
   const other = await context.newPage();
-  await other.goto(`${baseUrl}/ledger/app/`);
+  await other.goto(`${baseUrl}/ledger/`);
   await page.getByRole('button', { name: '退出记账账号', exact: true }).click();
   await page.getByRole('button', { name: '确认退出', exact: true }).click();
   await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();

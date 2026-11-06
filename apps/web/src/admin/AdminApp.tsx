@@ -204,7 +204,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
         </div>
         <div className="zc-admin-topbar-actions">
           {health ? <span className="zc-admin-connection" title={`服务器 ${health.serverId}`}><span aria-hidden="true" />{health.claimed ? '管理服务已连接' : '等待初始化'}</span> : null}
-          <a className="zc-admin-app-link" href={`${baseUrl}/app/`}>打开记账应用</a>
+          <a className="zc-admin-app-link" href={`${baseUrl}/`}>打开记账应用</a>
           {account ? (
             <>
               <span className="zc-admin-operator"><strong>{account.username}</strong><small>{roleLabel(account.role)}</small></span>
@@ -365,7 +365,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
         })}
         <div className="zc-admin-nav-footer">
           <a href={adminHref(basePath, '/security')} onClick={(event) => { if (!isPlainPrimaryClick(event)) return; event.preventDefault(); setNavOpen(false); go('/security'); }}><ShieldCheck size={17} strokeWidth={1.8} aria-hidden="true" /><span>账号安全</span></a>
-          <a href={`${baseUrl}/app/`}><ExternalLink size={17} strokeWidth={1.8} aria-hidden="true" /><span>打开记账应用</span></a>
+          <a href={`${baseUrl}/`}><ExternalLink size={17} strokeWidth={1.8} aria-hidden="true" /><span>打开记账应用</span></a>
         </div>
       </nav>
       <section className="zc-admin-content">
