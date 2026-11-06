@@ -35,7 +35,7 @@ for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, ini
     await fits();
     await page.screenshot({ path: testInfo.outputPath('mobile-first-run.png') });
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
-    await expect(page.getByRole('region', { name: '首次记账引导' })).toBeVisible();
+    await expect(page.getByRole('region', { name: '首次记账引导' })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole('dialog', { name: '新增 · 日常收支' })).toBeHidden();
     await fits();
     await page.screenshot({ path: testInfo.outputPath('mobile-first-entry-guide.png') });

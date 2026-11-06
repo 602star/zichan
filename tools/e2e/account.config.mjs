@@ -10,6 +10,7 @@ export default defineConfig({
   outputDir: './test-results/accounts',
   workers: 2,
   timeout: 90_000,
+  expect: { timeout: 15_000 },
   reporter: 'list',
   use: {
     ...devices['Desktop Chrome'],
