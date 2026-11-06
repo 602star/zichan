@@ -4,7 +4,7 @@ source "$(dirname "$0")/common.sh"
 
 check_directory "$ZICHAN_STATE_DIR"
 check_directory "$ZICHAN_BACKUP_DIR"
-export ZICHAN_RUNTIME_DIR="${ZICHAN_RUNTIME_DIR:-/srv/zichan/runtime}"
+export ZICHAN_RUNTIME_DIR="${ZICHAN_RUNTIME_DIR:-/opt/zichan/runtime}"
 check_directory "$ZICHAN_RUNTIME_DIR"
 if [[ -e "$ZICHAN_STATE_DIR/server/maintenance.lock" || -L "$ZICHAN_STATE_DIR/server/maintenance.lock" ]]; then
   echo 'Maintenance lock is held or stale; refusing deployment' >&2

@@ -33,17 +33,17 @@ services:
       ATTACHMENT_TRASH_RETENTION_MS: ${ATTACHMENT_TRASH_RETENTION_MS:-2592000000}
     volumes:
       - type: bind
-        source: ${ZICHAN_STATE_DIR:-/srv/zichan/state}
+        source: ${ZICHAN_STATE_DIR:-/opt/zichan/state}
         target: /state
         bind:
           create_host_path: false
       - type: bind
-        source: ${ZICHAN_BACKUP_DIR:-/srv/zichan/backups}
+        source: ${ZICHAN_BACKUP_DIR:-/opt/zichan/backups}
         target: /backups
         bind:
           create_host_path: false
       - type: bind
-        source: ${ZICHAN_RUNTIME_DIR:-/srv/zichan/runtime}
+        source: ${ZICHAN_RUNTIME_DIR:-/opt/zichan/runtime}
         target: /app/runtime
         bind:
           create_host_path: false

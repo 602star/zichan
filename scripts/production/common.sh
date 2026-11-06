@@ -3,8 +3,8 @@ set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 compose_file="$repo_root/apps/sync-server/docker-compose.prod.yml"
-export ZICHAN_STATE_DIR="${ZICHAN_STATE_DIR:-/srv/zichan/state}"
-export ZICHAN_BACKUP_DIR="${ZICHAN_BACKUP_DIR:-/srv/zichan/backups}"
+export ZICHAN_STATE_DIR="${ZICHAN_STATE_DIR:-/opt/zichan/state}"
+export ZICHAN_BACKUP_DIR="${ZICHAN_BACKUP_DIR:-/opt/zichan/backups}"
 
 require_image() {
   [[ "${ZICHAN_IMAGE:-}" =~ ^ghcr\.io/602star/zichan-sync@sha256:[a-f0-9]{64}$ ]] || {
