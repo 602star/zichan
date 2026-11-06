@@ -41,8 +41,9 @@ describe('browser session origin and cookies', () => {
     const lan = request('192.168.1.7', { host: '192.168.1.2:8787' });
     expect(createRequestOrigin([], true).browserOrigin(lan)).toBe('http://192.168.1.2:8787');
     expect(createRequestOrigin([]).browserOrigin(lan)).toBeUndefined();
-    // A trusted proxy must still attest the protocol; a missing header stays rejected.
-    expect(createRequestOrigin(['loopback'], true).browserOrigin(request('127.0.0.1', { host: 'ledger.example' }))).toBeUndefined();
+    // Explicit HTTP mode still supports a direct request without proxy headers.
+    expect(createRequestOrigin(['loopback'], true).browserOrigin(request('127.0.0.1', { host: 'ledger.example' }))).toBe('http://ledger.example');
+    expect(createRequestOrigin(['loopback']).browserOrigin(request('127.0.0.1', { host: 'ledger.example' }))).toBeUndefined();
   });
 
   it('accepts a same-origin browser behind a host-to-bridge proxy without trusting its forwarded headers', () => {
@@ -62,6 +63,34 @@ describe('browser session origin and cookies', () => {
     expect(() => cookies.requested(request('172.18.0.1', { ...headers, host: '127.0.0.1:8787' }))).toThrow();
     expect(createRequestOrigin(['127.0.0.1']).browserOrigin(req)).toBeUndefined();
     expect(origin.secureTransport(req, false)).toBe(false);
+  });
+
+  it('trusts private Docker peers while rejecting public peers and unsafe proxy headers', () => {
+    const origin = createRequestOrigin(['private']);
+    const headers = {
+      host: 'ledger.example', origin: 'https://ledger.example',
+      'x-forwarded-proto': 'https', 'x-forwarded-for': '203.0.113.8',
+      'x-zichan-session': 'admin-cookie',
+    };
+    const cookies = createBrowserSessionCookies('', origin.browserOrigin);
+    for (const address of ['10.0.0.1', '172.18.0.1', '192.168.1.1', 'fc00::1']) {
+      const req = request(address, headers);
+      expect(origin.trustedPeer(req)).toBe(true);
+      expect(origin.secureTransport(req, false)).toBe(true);
+      expect(origin.clientIp(req)).toBe('203.0.113.8');
+      expect(cookies.requested(req)).toBe(true);
+      expect(() => cookies.requested(request(address, { ...headers, origin: 'https://attacker.example' }))).toThrow();
+      expect(() => cookies.requested(request(address, { ...headers, 'x-forwarded-proto': 'https,http' }))).toThrow();
+    }
+    const directHttp = request('172.18.0.1', { host: '192.168.1.2:8787', origin: 'http://192.168.1.2:8787', 'x-zichan-session': 'admin-cookie' });
+    expect(createRequestOrigin(['private'], true).browserOrigin(directHttp)).toBe('http://192.168.1.2:8787');
+    expect(origin.browserOrigin(directHttp)).toBeUndefined();
+    expect(() => cookies.requested(request('172.18.0.1', { ...headers, 'x-forwarded-proto': '' }))).toThrow();
+    const publicReq = request('203.0.113.9', headers);
+    expect(origin.trustedPeer(publicReq)).toBe(false);
+    expect(origin.secureTransport(publicReq, false)).toBe(false);
+    expect(origin.clientIp(publicReq)).toBe('203.0.113.9');
+    expect(origin.browserOrigin(publicReq)).toBeUndefined();
   });
 
   it('rejects duplicate cookies and never implicitly selects cookie authentication', () => {

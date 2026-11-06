@@ -28,7 +28,7 @@ RUN --mount=type=secret,id=release_token \
       install -d -o node -g node -m 700 /keys && \
       install -o node -g node -m 600 /run/secrets/release_token /keys/github-token; \
     fi
-ENV HOST=0.0.0.0 PORT=8787 DATA_DIR=/state/server WEB_DIST=/app/web-dist ENABLE_WEB=1 ENABLE_SYNC=1 REGISTRATION_MODE=invite BASE_PATH= TRUSTED_PROXIES= ALLOW_INSECURE_HTTP=1
+ENV HOST=0.0.0.0 PORT=8787 DATA_DIR=/state/server WEB_DIST=/app/web-dist ENABLE_WEB=1 ENABLE_SYNC=1 REGISTRATION_MODE=invite BASE_PATH= TRUSTED_PROXIES=private ALLOW_INSECURE_HTTP=1
 # Run unprivileged: Docker initializes both named volumes with node-owned directories.
 RUN mkdir -p /state/server /backups /app/runtime /keys && chown -R node:node /state /backups /app
 VOLUME /state

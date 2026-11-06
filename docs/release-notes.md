@@ -1,3 +1,10 @@
+# 0.5.4
+
+- 修复 1Panel HTTPS 反向代理到 Docker 网桥容器时，管理员首次初始化可能返回 `SESSION_ORIGIN_REJECTED`：镜像默认信任常见私有网段代理，识别代理提供的 HTTPS 协议；显式设置 `TRUSTED_PROXIES` 仍可收紧为实际代理 IP。
+- 在显式允许 HTTP 的部署中，管理页还可核对浏览器 `Origin` 与保留的 `Host`，避免网桥地址不在信任列表时误判同源；跨域请求和格式错误的代理协议仍被拒绝。生产 Compose 使用宿主机网络，继续默认仅信任回环代理。
+- 显式允许 HTTP 时，Docker 网桥上的内网直连请求即使没有代理协议头，也继续按 HTTP 处理；关闭 HTTP 后仍要求可信代理明确声明 HTTPS。
+- Windows MSI 和 NSIS 安装包仍未做 Authenticode 签名，可能显示“未知发布者”或 SmartScreen 提示。服务器 schema 仍为 27，本地账本 schema 仍为 127，同步协议仍为 v3。
+
 # 0.5.3
 
 - 生产同步服务器镜像和生产 Compose 默认监听 `0.0.0.0:8787`，允许可信私有局域网通过 HTTP 直连；1Panel 更新至本版镜像并重建容器后，可使用内网 IP 连接。

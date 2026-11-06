@@ -28,7 +28,8 @@ export function createRequestOrigin(trustedProxies: string[], allowInsecureHttp 
       add('::1');
     }
     if (rule === 'private') {
-      // Legacy explicit opt-in; deployments should prefer their proxy IP/CIDR.
+      // Docker images opt in by default; a deployment can replace this with
+      // the actual proxy IP/CIDR when its network topology is known.
       for (const subnet of ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', 'fc00::/7', 'fe80::/10']) add(subnet);
     } else if (rule !== 'loopback') add(rule);
   }
@@ -58,7 +59,12 @@ export function createRequestOrigin(trustedProxies: string[], allowInsecureHttp 
             && browser.host === new URL(`${browser.protocol}//${host}`).host) return browser.origin;
         } catch { /* Invalid browser Origin or Host falls through to the direct-HTTP policy. */ }
       }
-      const protocol = trustedProxy ? req.headers['x-forwarded-proto'] : 'http';
+      // Docker's host-port mapping can make a direct LAN request appear to
+      // come from a trusted bridge gateway. With HTTP explicitly enabled,
+      // absence of proxy metadata still means a direct HTTP request.
+      const protocol = trustedProxy
+        ? (req.headers['x-forwarded-proto'] ?? (allowInsecureHttp ? 'http' : undefined))
+        : 'http';
       if (protocol !== 'https' && protocol !== 'http') return undefined;
       try {
         const url = new URL(`${protocol}://${host}`);

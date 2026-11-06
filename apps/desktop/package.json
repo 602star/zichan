@@ -1,6 +1,6 @@
 {
   "name": "@zichan/desktop",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "private": true,
   "description": "Tauri 2 desktop shell wrapping the @zichan/web build",
   "scripts": {

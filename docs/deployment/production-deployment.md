@@ -8,9 +8,9 @@
 
 公网部署应先设置 `ZICHAN_HOST=127.0.0.1` 和 `ZICHAN_ALLOW_INSECURE_HTTP=0`，由宿主机 HTTPS 反向代理转发到 `127.0.0.1:8787`。代理保留外部 Host，并把 `X-Forwarded-Proto` 覆盖为单一值 `https`；服务只信任实际代理地址 `127.0.0.1`。没有测试域名时只能验收本机业务与备份恢复，不能算真实 HTTPS 入口通过。
 
-通过 1Panel 直接创建容器并用 `https://域名/admin/` 打开管理页时，还需在容器环境变量中设置 `TRUSTED_PROXIES` 为**实际连接到同步服务的代理 IP**（同机代理连接 `127.0.0.1:8787` 时通常为 `127.0.0.1`），重建容器后启动日志不应再显示 `trustedProxies=none`。使用生产 Compose 时可设置 `ZICHAN_TRUSTED_PROXIES` 覆盖默认的 `127.0.0.1`。代理必须转发原始 `Host`，并把 `X-Forwarded-Proto` 覆盖成单一的 `https`。否则浏览器的 HTTPS `Origin` 与服务误判的 HTTP 来源不一致，首次创建管理员会返回 `SESSION_ORIGIN_REJECTED`。不要通过信任任意来源或关闭同源检查解决此错误。
+通过 1Panel 直接创建 v0.5.4 或更新版本的容器并用 `https://域名/admin/` 打开管理页时，镜像默认使用 `TRUSTED_PROXIES=private`，信任直接连接容器的私有网段代理，包括常见 Docker 网桥地址。1Panel 应保留原始 `Host`，并把 `X-Forwarded-Proto` 覆盖成单一的 `https`。启动日志应显示 `trustedProxies=private`；若旧容器曾手动设置 `TRUSTED_PROXIES=127.0.0.1`，升级镜像不会覆盖该环境变量，需在 1Panel 删除该覆盖值或改成 `private` 后重建。若 1Panel 代理本身位于其他地址，或能确认实际代理 IP，建议将 `TRUSTED_PROXIES` 覆盖为该 IP/CIDR 并重建容器。生产 Compose 使用宿主机网络，仍默认仅信任 `127.0.0.1`，可通过 `ZICHAN_TRUSTED_PROXIES` 覆盖。
 
-1Panel 的反向代理目标若是 `http://127.0.0.1:宿主机映射端口`，而业务容器实际监听 `8787`，则中间经过 Docker 端口映射；业务容器看到的代理对端通常是网桥网关，而不是 `127.0.0.1`。上段是 **v0.5.3 镜像** 的排障步骤：查看业务容器的实际网络与网关，再将其确认为可信代理地址。后续版本在 `ALLOW_INSECURE_HTTP=1` 时，可直接用浏览器提供的 `Origin` 与代理保留的 `Host` 验证管理页同源，管理员初始化不再因网桥对端地址而失败；可信代理地址仍影响真实客户端 IP 和限流，`ALLOW_INSECURE_HTTP=0` 仍要求可信代理提供 HTTPS 协议。不要将整个私网配置为可信代理来掩盖具体网络问题。
+1Panel 的反向代理目标若是 `http://127.0.0.1:宿主机映射端口`，而业务容器实际监听 `8787`，则中间经过 Docker 端口映射；业务容器看到的代理对端通常是网桥网关，而不是 `127.0.0.1`。**v0.5.3 镜像**没有上述默认值，需将实际网桥对端地址设为 `TRUSTED_PROXIES`，或升级镜像。v0.5.4 在 `ALLOW_INSECURE_HTTP=1` 时还可用浏览器的 `Origin` 与代理保留的 `Host` 验证管理页同源。`private` 会信任这些网段发来的转发头，必须限制后端端口仅由代理和受信任内网访问；若客户端可直连并伪造转发头，应改用精确代理 IP/CIDR。`ALLOW_INSECURE_HTTP=0` 仍要求可信代理提供 HTTPS 协议。
 
 预建并保护目录，容器 UID 1000 必须拥有读写权限；运行目录存放已安装的服务程序版本：
 
