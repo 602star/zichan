@@ -2,6 +2,11 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-06 — 管理员首次初始化输入与 HTTPS 代理提示
+
+- v0.5.3 管理员首次初始化时，网页允许输入含 `@` 的邮箱式用户名，服务端按账号规则拒绝并返回笼统的 `invalid registration fields`。管理页现在提交前按服务端规则验证用户名，明确提示只允许中文、字母、数字或 `_ . -`；HTML 最短长度同步为 2。`npm run build:server` 与 `admin.spec.mjs` 中的首次初始化浏览器用例通过。
+- 1Panel 容器在 HTTPS 域名代理后仍显示 `trustedProxies=none` 时，服务忽略 `X-Forwarded-Proto` 并把请求视作 HTTP；浏览器的 HTTPS `Origin` 因此触发 `SESSION_ORIGIN_REJECTED`。部署文档补充 `TRUSTED_PROXIES` 应填实际代理 IP、保留原始 `Host` 和覆盖为单一 `X-Forwarded-Proto: https` 的要求。v0.5.3 已发布镜像需修改容器配置并重建；本次源码与文档修正不会改变已发布镜像。
+
 ## 2026-11-06 — v0.5.3 正式发布验收
 
 - [标签发布流水线 42137939308](https://github.com/602star/zichan/actions/runs/42137939308) 第二次尝试全部通过；五项 CI、Windows 便携版与 MSI/NSIS 安装卸载验收、Linux DEB/AppImage、Android ARM64 APK、签名同步更新包、GHCR 镜像和最终发布汇总均成功。[公开 Release v0.5.3](https://github.com/602star/zichan/releases/tag/v0.5.3) 含 17 个资产，标签剥离后的提交为 `444322ea957e58ba2f84ebb827397310cd872e9a`，镜像摘要为 `sha256:14362795a3fae5f0af121a40400a305f6e9225fecf6d906639ad15aa0766c577`。

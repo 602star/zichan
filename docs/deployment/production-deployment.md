@@ -8,6 +8,8 @@
 
 公网部署应先设置 `ZICHAN_HOST=127.0.0.1` 和 `ZICHAN_ALLOW_INSECURE_HTTP=0`，由宿主机 HTTPS 反向代理转发到 `127.0.0.1:8787`。代理保留外部 Host，并把 `X-Forwarded-Proto` 覆盖为单一值 `https`；服务只信任实际代理地址 `127.0.0.1`。没有测试域名时只能验收本机业务与备份恢复，不能算真实 HTTPS 入口通过。
 
+通过 1Panel 直接创建容器并用 `https://域名/admin/` 打开管理页时，还需在容器环境变量中设置 `TRUSTED_PROXIES` 为**实际连接到同步服务的代理 IP**（同机代理连接 `127.0.0.1:8787` 时通常为 `127.0.0.1`），重建容器后启动日志不应再显示 `trustedProxies=none`。代理必须转发原始 `Host`，并把 `X-Forwarded-Proto` 覆盖成单一的 `https`。否则浏览器的 HTTPS `Origin` 与服务误判的 HTTP 来源不一致，首次创建管理员会返回 `SESSION_ORIGIN_REJECTED`。不要通过信任任意来源或关闭同源检查解决此错误。
+
 预建并保护目录，容器 UID 1000 必须拥有读写权限；运行目录存放已安装的服务程序版本：
 
 ```bash

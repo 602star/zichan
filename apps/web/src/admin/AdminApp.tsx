@@ -101,6 +101,11 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
     event.preventDefault();
     const client = clientRef.current;
     if (!client || !health || busy) return;
+    const normalizedUsername = username.trim().normalize('NFKC').toLowerCase();
+    if (!/^[\p{L}\p{N}_.-]{2,64}$/u.test(normalizedUsername)) {
+      setMessage('用户名须为 2 至 64 个中文、字母、数字或 _ . -，不能使用邮箱地址或空格。');
+      return;
+    }
     setBusy(true); setMessage('');
     try {
       const user = await client.login(username.trim(), password, !health.claimed, () => {
@@ -227,7 +232,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
               <p style={{ margin: 0 }}>恢复码每个只能使用一次；用它登录成功后，请在“账号安全”页重新生成。</p>
             </form>
             : <form onSubmit={(event) => void submit(event)} style={{ display: 'grid', gap: 16 }}>
-              <label>用户名<input className="zc-input" aria-label="管理账号用户名" autoComplete="username" required minLength={3} value={username} disabled={busy} onChange={(event) => setUsername(event.target.value)} /></label>
+      <label>用户名<input className="zc-input" aria-label="管理账号用户名" autoComplete="username" required minLength={2} maxLength={64} value={username} disabled={busy} onChange={(event) => setUsername(event.target.value)} />{!health?.claimed && <small>使用 2 至 64 个中文、字母、数字或 _ . -；不能使用邮箱地址。</small>}</label>
               <label>账号密码<input className="zc-input" aria-label="管理账号密码" type="password" autoComplete={health?.claimed ? 'current-password' : 'new-password'} required minLength={8} value={password} disabled={busy} onChange={(event) => setPassword(event.target.value)} /></label>
               {health && !health.claimed && <p>首次使用：设置管理员用户名和密码即可。创建成功后，此页面将只提供登录，不会创建个人账本。</p>}
               <button disabled={busy || !health} type="submit">{busy ? '处理中…' : !health ? '等待服务器连接' : health.claimed ? '登录管理后台' : '创建所有者并进入后台'}</button>

@@ -62,6 +62,11 @@ test('initializes the owner in the browser, then keeps every management page on 
     await page.goto(`${origin}/admin/`);
     await expect(page).toHaveURL(/\/ledger\/e2e-private-entry\/admin\/$/);
     await expect(page.getByRole('heading', { name: '初始化服务器所有者' })).toBeVisible();
+    await page.getByLabel('管理账号用户名').fill('owner@example.com');
+    await page.getByLabel('管理账号密码').fill(password);
+    await page.getByRole('button', { name: '创建所有者并进入后台' }).click();
+    await expect(page.getByRole('alert')).toContainText('不能使用邮箱地址');
+    await expect(page.getByRole('heading', { name: '初始化服务器所有者' })).toBeVisible();
     await page.getByLabel('管理账号用户名').fill('owner');
     await page.getByLabel('管理账号密码').fill(password);
     await page.getByRole('button', { name: '创建所有者并进入后台' }).click();
