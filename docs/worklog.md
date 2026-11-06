@@ -5,13 +5,13 @@
 ## 2026-11-06 — GitHub 账户流程测试等待登录恢复
 
 - v0.5.4 标签的首轮发布流水线中，账户流程 Playwright 的多服务器用例在刷新后只等待主界面 5 秒。失败 trace 显示 `login/finish` 成功但耗时约 4.8 秒，随后 `/api/auth/me` 成功又耗时约 4.4 秒；页面仍显示“处理中…”时测试便判失败，其余 87 项账户用例和另外四项 CI 作业通过。第二轮重跑的失败位于另一项手机首次建账用例：点击“开始记账”后，账本仍在创建，测试同样在 5 秒后判断引导区未出现。
-- 将多服务器用例等待主界面的时限设为 30 秒，手机首次建账引导也等待 30 秒；账户套件的通用断言时限增至 15 秒，以覆盖受共享 runner 负载影响的异步操作。本机多服务器定向重复运行 3 次通过。v0.5.4 标签不移动，测试稳定性修正作为后续主分支提交；发布标签作业单独重跑。
+- 将多服务器用例等待主界面的时限设为 30 秒，手机首次建账引导也等待 30 秒；账户套件的通用断言时限增至 15 秒，以覆盖受共享 runner 负载影响的异步操作。本机多服务器定向重复运行 3 次通过，完整账户套件 88 项通过。v0.5.4 标签不移动，测试稳定性修正作为后续主分支提交；标签发布流水线第 3 次运行全部通过，包含 5 项检查、Docker、Windows 便携版与 MSI/NSIS 冒烟、Android、Linux、同步更新签名和最终发布。
 
 ## 2026-11-06 — v0.5.4 Docker 代理默认值
 
 - 对照 Immich 的代理实现后，v0.5.4 同步服务 Docker 镜像默认设置 `TRUSTED_PROXIES=private`，涵盖 Docker 常见私有网段；1Panel 的宿主机端口映射若让容器看到网桥对端，服务现可按代理提供的 `X-Forwarded-Proto: https` 判断管理页请求。生产 Compose 使用宿主机网络，继续覆盖为精确的 `127.0.0.1`。信任私有网段意味着这些网段内的直连者也能提供代理头，部署时须限制后端端口；可在容器环境变量中改为实际代理 IP/CIDR。
 - Docker 宿主机端口映射也会让无反向代理的内网 HTTP 直连显示为网桥对端，故显式允许 HTTP 且代理协议头缺失时按直连 HTTP 处理；严格 HTTPS 模式仍拒绝。补充私有网桥代理、内网直连、跨域 `Origin`、重复代理协议和公网对端伪造头的测试。
-- 验证：本机版本一致性检查、服务端类型检查、`browser-session.test.ts` 8 项、管理员注册集成用例和 `npm run build:server` 通过。Linux 测试机 `192.168.2.167` 对最终源码执行完整 `npm run ci` 与同步服务 Docker 构建，退出码均为 0；测试镜像环境和启动日志均显示 `TRUSTED_PROXIES=private`，容器健康接口返回 200。使用有效 OPAQUE 注册请求模拟 HTTPS 代理、内网 HTTP 直连和跨域访问，分别得到 200、200 和 `SESSION_ORIGIN_REJECTED` 403。正式发布结果待 GitHub 流水线完成后补记。
+- 验证：本机版本一致性检查、服务端类型检查、`browser-session.test.ts` 8 项、管理员注册集成用例和 `npm run build:server` 通过。Linux 测试机 `192.168.2.167` 对最终源码执行完整 `npm run ci` 与同步服务 Docker 构建，退出码均为 0；测试镜像环境和启动日志均显示 `TRUSTED_PROXIES=private`，容器健康接口返回 200。使用有效 OPAQUE 注册请求模拟 HTTPS 代理、内网 HTTP 直连和跨域访问，分别得到 200、200 和 `SESSION_ORIGIN_REJECTED` 403。GitHub v0.5.4 第 3 次流水线全部通过，公开 Release 包含 Android APK、Windows 便携版、NSIS EXE、MSI、Linux DEB/AppImage 和镜像摘要 `ghcr.io/602star/zichan-sync@sha256:5971060df0aa34e33ab4106f2c02a1bf9b3d93e7594584ce2b6b9254cbefee23`。
 
 ## 2026-11-06 — 1Panel Docker 网桥下的浏览器同源判断
 
