@@ -10,7 +10,8 @@ const password = 'multi-server-account-password';
 const cachePassword = 'multi-server-cache-password';
 
 async function openSync(page) {
-  await expect(page.locator('.zc-app-shell')).toBeVisible();
+  // Reload may restore the encrypted browser ledger before mounting the shell.
+  await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
   await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
   await page.getByRole('button', { name: '查看服务器上的账本' }).click();
   const settings = page.getByRole('button', { name: /^客户端同步与服务器连接/ });
