@@ -1,6 +1,6 @@
 name: zichan-update-test
 
-# Isolated Linux test deployment; does not alter docker-compose.prod.yml.
+# Isolated Linux test deployment; does not alter root compose.prod.yml.
 services:
   sync-server:
     build:

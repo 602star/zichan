@@ -1,10 +1,20 @@
 # Linux 生产镜像部署与恢复
 
-本流程用于提交 SHA 候选镜像。候选镜像按源码提交标识，版本标签本身不代表生产部署通过验收；生产镜像须按下文核对 digest、签名、备份与恢复结果后再部署。后续补丁更新以[生产签名包自更新](production-self-update.md)为标准，基础镜像仍由本流程交付与灾难恢复。
+本流程用于 Linux Docker 首次安装、生产部署和恢复。首次安装使用仓库根目录的 [compose.prod.yml](../../compose.prod.yml) 和 [install-docker.sh](../../scripts/production/install-docker.sh)；开发构建使用 `apps/sync-server/docker-compose.yml`。候选镜像按源码提交标识，版本标签本身不代表生产部署通过验收；生产镜像须按下文核对 digest、签名、备份与恢复结果后再部署。后续补丁更新以[生产签名包自更新](production-self-update.md)为标准，基础镜像仍由本流程交付与灾难恢复。
+
+## 全新 Linux 主机一条命令安装
+
+先安装 Docker Engine、Docker Compose v2、Cosign、Git 和 curl。若 GHCR 镜像需要认证，先在 root 的 Docker 凭据中用具有 `read:packages` 权限的 Token 登录：`sudo docker login ghcr.io -u 602star`，提示输入密码时粘贴 Token。确认主机端口 `8787` 只允许可信内网访问。随后运行：
+
+```bash
+sudo git clone --depth 1 https://github.com/602star/zichan.git /opt/zichan/source && sudo bash /opt/zichan/source/scripts/production/install-docker.sh v0.5.4
+```
+
+脚本读取该 Release 的 `image-digest.txt`，验证格式和 Cosign 签名，创建 UID 1000 持有的 `/opt/zichan/state`、`/opt/zichan/backups`、`/opt/zichan/runtime`，然后调用生产部署脚本及 Compose，等待健康检查通过。打开 `http://<服务器内网IP>:8787/admin/` 首次设置管理员，用户端为 `http://<服务器内网IP>:8787/`。仅支持 `linux/amd64`。它会拒绝已有数据、运行目录或生产容器；现有 1Panel 部署、升级或迁移须沿用原有挂载和身份，按下文操作。当前 v0.5.4 镜像在主分支根路径入口修复之前构建；下个版本镜像发布后才能获得该修复。
 
 ## 开发与生产部署对照
 
-| 项目 | 开发 Compose `apps/sync-server/docker-compose.yml` | 生产 Compose `apps/sync-server/docker-compose.prod.yml` |
+| 项目 | 开发 Compose `apps/sync-server/docker-compose.yml` | 生产 Compose `compose.prod.yml` |
 | --- | --- | --- |
 | 镜像 | 在部署主机从当前源码 `build` | 使用 GHCR 已签名、固定 SHA-256 digest 的镜像；部署脚本验签和检查架构 |
 | 持久数据 | Docker 命名卷 `zichan-data`、`zichan-backups` | 宿主机目录 `/opt/zichan/state`、`/opt/zichan/backups`、`/opt/zichan/runtime` 绑定挂载 |
@@ -56,7 +66,7 @@ export ZICHAN_ALLOW_INSECURE_HTTP=0
 
 仅创建全新服务器时，将最后一行改为 `ZICHAN_ALLOW_FIRST_BOOT=yes bash scripts/production/deploy.sh`；迁移和回退不得设置此开关。已有节点首次接入自更新启动器时，须先停服完成并校验完整备份，另设置 `ZICHAN_BASELINE_BACKUP=/opt/zichan/backups/<记录>`；部署脚本会复验备份并比对服务器身份。
 
-脚本校验 Cosign 的 GitHub Actions OIDC 签名（接受此仓库版本标签发布流水线及旧版 `main` 镜像流水线）、仅在本机缺少该 digest 时拉取镜像，并检查 `linux/amd64`、Compose 配置、挂载目录、更新凭据、健康状态与持久身份。运行中的生产容器需要重建时，Compose 操作会通过共享维护锁执行；发现已有锁则拒绝部署。生产 Compose 在 [docker-compose.prod.yml](../../apps/sync-server/docker-compose.prod.yml)。Compose 不设置 `pull_policy: always`；Cosign 验签仍需访问镜像仓库，当前不能保证完全离线恢复。持久运行目录有已安装版本时，换镜像 digest **不会**回滚应用程序；同 schema 的程序回滚必须通过管理后台已安装版本执行。跨 schema 更新须先实现并验收独立迁移与恢复流程。
+脚本校验 Cosign 的 GitHub Actions OIDC 签名（接受此仓库版本标签发布流水线及旧版 `main` 镜像流水线）、仅在本机缺少该 digest 时拉取镜像，并检查 `linux/amd64`、Compose 配置、挂载目录、更新凭据、健康状态与持久身份。运行中的生产容器需要重建时，Compose 操作会通过共享维护锁执行；发现已有锁则拒绝部署。生产 Compose 在 [compose.prod.yml](../../compose.prod.yml)。Compose 不设置 `pull_policy: always`；Cosign 验签仍需访问镜像仓库，当前不能保证完全离线恢复。持久运行目录有已安装版本时，换镜像 digest **不会**回滚应用程序；同 schema 的程序回滚必须通过管理后台已安装版本执行。跨 schema 更新须先实现并验收独立迁移与恢复流程。
 
 最终生产镜像带固定自更新启动器、初始版本的两个服务端打包入口与 Web 构建目录；另保留 `/app/dist` 下的两个维护入口供宿主机备份恢复调用。不包含 TypeScript 编译产生的 `.js`、声明文件或 source map。容器 CI 检查这些文件，并实测启动、健康端点及备份维护入口。打包后的服务端程序仍包含可分析的运行逻辑；镜像精简不能代替主机和容器访问控制。
 

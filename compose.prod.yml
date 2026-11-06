@@ -1,3 +1,5 @@
+# Linux production Compose. For first installation use
+# scripts/production/install-docker.sh; for upgrades use deploy.sh.
 name: zichan-prod
 
 # Direct HTTP is enabled for trusted LAN deployments. Restrict port 8787 at

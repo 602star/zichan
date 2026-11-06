@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-compose_file="$repo_root/apps/sync-server/docker-compose.prod.yml"
+compose_file="$repo_root/compose.prod.yml"
 export ZICHAN_STATE_DIR="${ZICHAN_STATE_DIR:-/opt/zichan/state}"
 export ZICHAN_BACKUP_DIR="${ZICHAN_BACKUP_DIR:-/opt/zichan/backups}"
 
