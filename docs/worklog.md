@@ -2,6 +2,11 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-06 — v0.5.5 发布结果
+
+- `v0.5.5` 标签指向 `e315e4c`。统一发布流水线 [42222241738](https://github.com/602star/zichan/actions/runs/42222241738) 最终成功；正式 [Release](https://github.com/602star/zichan/releases/tag/v0.5.5) 已公开，包含 Android APK、Windows 便携 ZIP、MSI、NSIS EXE、Linux DEB/AppImage、签名服务更新包和镜像摘要。镜像为 `ghcr.io/602star/zichan-sync@sha256:d557838ede913bc474cb7cca7403f3a37001baf9d4b7c2c9494bcdca50b703d8`。
+- 首次质量作业在 Windows runner 的覆盖率套件中有一项 `admin-resources-api` 测试超过 60 秒；第二次仅重跑失败作业时，启动器烟雾测试的 3 秒就绪轮询早于服务约 8 秒的实际启动时间结束。第三次重跑质量作业全部通过，其他 CI、构建、安装器烟雾和最终资产校验均通过。标签未移动；这两处测试等待对慢速 runner 较敏感，后续应单独调整。
+
 ## 2026-11-06 — 准备 v0.5.5 统一发布
 
 - 将 npm 工作区、锁文件、Tauri、安装标记和发布说明统一到 0.5.5。此版包含根路径用户端、Linux Docker 首次安装入口与通用稳定版本回滚列表；服务器 schema 27、本地账本 schema 127、同步协议 v3 不变。
