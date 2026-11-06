@@ -7,10 +7,10 @@
 先安装 Docker Engine、Docker Compose v2、Cosign、Git 和 curl。若 GHCR 镜像需要认证，先在 root 的 Docker 凭据中用具有 `read:packages` 权限的 Token 登录：`sudo docker login ghcr.io -u 602star`，提示输入密码时粘贴 Token。确认主机端口 `8787` 只允许可信内网访问。随后运行：
 
 ```bash
-sudo git clone --depth 1 https://github.com/602star/zichan.git /opt/zichan/source && sudo bash /opt/zichan/source/scripts/production/install-docker.sh v0.5.4
+sudo git clone --depth 1 https://github.com/602star/zichan.git /opt/zichan/source && sudo bash /opt/zichan/source/scripts/production/install-docker.sh v0.5.5
 ```
 
-脚本读取该 Release 的 `image-digest.txt`，验证格式和 Cosign 签名，创建 UID 1000 持有的 `/opt/zichan/state`、`/opt/zichan/backups`、`/opt/zichan/runtime`，然后调用生产部署脚本及 Compose，等待健康检查通过。打开 `http://<服务器内网IP>:8787/admin/` 首次设置管理员，用户端为 `http://<服务器内网IP>:8787/`。仅支持 `linux/amd64`。它会拒绝已有数据、运行目录或生产容器；现有 1Panel 部署、升级或迁移须沿用原有挂载和身份，按下文操作。当前 v0.5.4 镜像在主分支根路径入口修复之前构建；下个版本镜像发布后才能获得该修复。
+脚本读取该 Release 的 `image-digest.txt`，验证格式和 Cosign 签名，创建 UID 1000 持有的 `/opt/zichan/state`、`/opt/zichan/backups`、`/opt/zichan/runtime`，然后调用生产部署脚本及 Compose，等待健康检查通过。打开 `http://<服务器内网IP>:8787/admin/` 首次设置管理员，用户端为 `http://<服务器内网IP>:8787/`。仅支持 `linux/amd64`。它会拒绝已有数据、运行目录或生产容器；现有 1Panel 部署、升级或迁移须沿用原有挂载和身份，按下文操作。v0.5.5 镜像包含记账入口统一到根路径的修复。
 
 ## 开发与生产部署对照
 

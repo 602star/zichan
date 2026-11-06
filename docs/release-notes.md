@@ -1,3 +1,10 @@
+# 0.5.5
+
+- Web 记账入口统一为站点根路径 `/`；旧 `/app/` 跳转到根路径，旧 `/app/` 静态资源不再公开。处理旧 Service Worker 缓存造成的 `/app/` 空白页，管理后台和联邦登录链接同步指向根路径。
+- Linux 生产 Compose 放到仓库根目录 `compose.prod.yml`，持久数据默认使用 `/opt/zichan/`；新增全新 Linux 主机的 Docker 首次安装命令，自动读取已发布镜像摘要并沿用验签和健康检查部署流程。
+- 管理后台的历史版本回滚列表改为按完整稳定版本号比较，不再写死 `0.3.x`；自更新仍要求签名发布包与当前程序具有相同的服务器数据 schema。
+- Windows MSI 和 NSIS 安装包仍未做 Authenticode 签名，可能显示“未知发布者”或 SmartScreen 提示。服务器 schema 仍为 27，本地账本 schema 仍为 127，同步协议仍为 v3。
+
 # 0.5.4
 
 - 修复 1Panel HTTPS 反向代理到 Docker 网桥容器时，管理员首次初始化可能返回 `SESSION_ORIGIN_REJECTED`：镜像默认信任常见私有网段代理，识别代理提供的 HTTPS 协议；显式设置 `TRUSTED_PROXIES` 仍可收紧为实际代理 IP。
