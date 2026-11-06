@@ -25,6 +25,18 @@ const labels: Record<UpdateStatus['state'], string> = {
   success: '操作成功', failed: '操作失败',
 };
 
+export function isOlderStableVersion(candidate: string, current: string): boolean {
+  const stable = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+  if (!stable.test(candidate) || !stable.test(current)) return false;
+  const candidateParts = candidate.split('.').map(BigInt);
+  const currentParts = current.split('.').map(BigInt);
+  for (let index = 0; index < 3; index += 1) {
+    if (candidateParts[index]! < currentParts[index]!) return true;
+    if (candidateParts[index]! > currentParts[index]!) return false;
+  }
+  return false;
+}
+
 export function UpdatePanel({ client, role, version }: { client: AdminClient; role: string; version: string }) {
   const [view, setView] = useState<UpdateView>();
   const [versions, setVersions] = useState<VersionList>({ installed: [], published: [] });
@@ -100,10 +112,9 @@ export function UpdatePanel({ client, role, version }: { client: AdminClient; ro
   const updating = status && ['downloading', 'installing', 'restarting'].includes(status.state);
   const latestVersion = versions.published[0] ??
     (status?.state === 'available' || status?.state === 'current' ? status.targetVersion : undefined);
-  const older = versions.installed.filter((entry) => /^0\.3\.\d+$/.test(entry)
-    && Number(entry.split('.')[2]) < Number(version.split('.')[2]));
+  const older = versions.installed.filter((entry) => isOlderStableVersion(entry, version));
   return <>
-    <Panel title="版本更新" note="检查并安装已签名的 0.3.x 服务端与 Web 发布包。">
+    <Panel title="版本更新" note="检查并安装已签名、数据 schema 兼容的服务端与 Web 正式发布包。">
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
         <Stat label="当前版本" value={version} />
         <Stat label="最新版本" value={latestVersion ?? '待检查'} />
@@ -122,7 +133,7 @@ export function UpdatePanel({ client, role, version }: { client: AdminClient; ro
       </div>
       <p style={{ marginTop: 12 }}>安装后自动重启并检查健康状态；目标版本启动失败时切回先前版本。数据库不会随程序回滚。</p>
     </Panel>
-    <Panel title="已安装版本" note="仅同一 0.3.x 数据 schema 的历史程序可在这里回滚。">
+    <Panel title="已安装版本" note="可回滚到已安装的较早版本；目标程序须兼容当前数据库 schema。">
       {older.length ? <div style={row}>
         <Select aria-label="选择回滚版本" value={rollbackVersion} disabled={busy || updating || role !== 'owner'} onChange={(event) => {
           setRollbackVersion(event.target.value); setConfirmRollback(false);

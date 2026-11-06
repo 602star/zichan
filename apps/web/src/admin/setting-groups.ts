@@ -5,7 +5,7 @@ export const SETTING_GROUPS = [
   { id: 'security', label: '访问安全', description: '调整管理员登录要求。启用两步验证要求前，所有管理员需先在“账号安全”完成绑定。' },
   { id: 'retention', label: '记录保留', description: '根据排查所需的历史跨度调整。缩短保留范围可能在后续清理中删除旧记录。' },
   { id: 'advanced', label: '高级阈值', description: '已有持续误报或明确的资源约束时再调整；通常保持默认值即可。' },
-  { id: 'updates', label: '版本更新', description: '检查并安装签名的 0.3.x 补丁版本。' },
+  { id: 'updates', label: '版本更新', description: '检查并安装签名、数据 schema 兼容的正式版本。' },
   { id: 'sync-group', label: '服务器同步组', description: '在主节点创建同步组，其他服务器各加入一次。组内账号、账本和附件由服务器自动传播。' },
 ] as const;
 
