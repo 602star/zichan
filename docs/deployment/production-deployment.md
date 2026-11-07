@@ -16,6 +16,10 @@ sudo git clone --depth 1 https://github.com/602star/zichan.git /opt/zichan/sourc
 
 [compose.1panel.yml](../../compose.1panel.yml) 默认使用 `ghcr.io/602star/zichan-sync:v0.5.7`。在 1Panel 新建 Compose 项目时直接导入，无需另填 `ZICHAN_IMAGE`。编排只有 `sync-server` 一个服务，使用 Compose 短格式绑定：首次启动时 Compose 自动创建缺失的宿主机 `/opt/zichan/data`。容器先以 root 创建 `server`、`backups`、`runtime` 子目录并设为 UID 1000 可写，随后切换到 `node` 用户运行更新启动器和业务服务；后续每次重启也执行同样的权限检查。若 1Panel 的 Compose 实现仍报 `bind source path does not exist`，可在 Docker 所在宿主机执行 `sudo install -d -m 700 -o 1000 -g 1000 /opt/zichan/data` 后重试；这只是兼容旧实现的补救步骤。改基础镜像版本只需修改 `sync-server.image`。该配置只绑定这一个宿主机目录到容器 `/state`。首次运行也可用 `docker compose -f compose.1panel.yml up -d --wait`。如需改宿主机目录，设置 `ZICHAN_DATA_DIR` 为另一个**专用的绝对路径**；不可指向包含源码或其他应用数据的共享目录。
 
+在 1Panel 创建编排时，以面板填写的名称作为项目名，例如 `zichan`。此文件不再固定顶层 `name`：若文件写着 `name: zichan-1panel`，而面板项目叫 `zichan`，Docker 可能创建名为 `zichan-1panel` 的实际项目，面板又把它识别为“本地”编排，列表里便出现两条。已有这种情况时，先核对运行容器挂载仍为 `/opt/zichan/data:/state`，保留该宿主机目录；在 `zichan` 面板项目中替换配置、停掉旧 `zichan-1panel` 容器后启动 `zichan`，确认健康和服务器 ID 不变，再移除旧的 `zichan-1panel` 本地编排记录及其容器/网络。删除编排时不要勾选删除宿主机数据。
+
+`/admin/` 首次显示“初始化服务器所有者”，以后显示“管理员登录”；项目没有预设的管理账号或默认密码。页面由 `/api/health` 的 `claimed` 字段切换，取值来自持久化数据库中的所有者记录。若在认为是全新安装的节点上看到登录页，先核对反向代理实际指向的容器、`serverId` 和 `/opt/zichan/data/server` 中原有状态；不要通过删除数据目录来强行回到初始化页。表单用户名初始为空，若看见已填入内容，也要检查浏览器自动填充。
+
 从旧版双容器 1Panel 编排升级时，保持原有 `/opt/zichan/data` 挂载和容器环境变量，替换 Compose 后重建 `sync-server`。旧的、已经退出的 `zichan-1panel-prepare-1` 若仍显示在 1Panel 中，可在新服务健康后只删除这个容器；不要选择删除编排数据或宿主机目录。
 
 该配置把端口 `8787` 映射到所有宿主机网卡，默认允许 HTTP，仅适合有防火墙保护的可信内网或由 1Panel HTTPS 代理接入。若只经同机反向代理访问，可设 `ZICHAN_BIND_IP=127.0.0.1` 后重建。`TRUSTED_PROXIES=private` 适配 Docker 网桥代理。`/state/runtime` 持久保存签名更新包，更新源、公钥、预更新备份均已配置；管理后台可检查正式版本。镜像内置只读发布 Token 的可读性仍取决于镜像是否来自正式发布工作流。

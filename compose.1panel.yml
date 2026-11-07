@@ -3,7 +3,7 @@
 # then drops to the node user before launching the server.
 # Change the base image version below when needed. Existing deployments must
 # migrate their state, backups, and runtime before switching to this layout.
-name: zichan-1panel
+# Let 1Panel choose the Compose project name. Do not set top-level name here.
 
 services:
   sync-server:
