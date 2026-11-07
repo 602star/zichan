@@ -11,9 +11,12 @@ original="$2"
 [[ "$snapshot" =~ ^[a-f0-9]{8,64}$ && "$original" == /* && "$original" != *..* ]] || {
   echo 'Invalid snapshot or backup path' >&2; exit 2
 }
-check_directory "$ZICHAN_STATE_DIR"
+check_legacy_layout
+check_directory "$ZICHAN_DATA_DIR"
+check_directory "$ZICHAN_DATA_DIR/server"
 check_directory "$ZICHAN_BACKUP_DIR"
-[[ -z "$(find "$ZICHAN_STATE_DIR" -mindepth 1 -print -quit)" ]] || {
+check_directory "$ZICHAN_RUNTIME_DIR"
+[[ -z "$(find "$ZICHAN_DATA_DIR/server" -mindepth 1 -print -quit)" ]] || {
   echo 'Restore target state must be empty; isolate the original node and use a blank directory' >&2
   exit 2
 }
@@ -34,7 +37,7 @@ cp -a -- "$backup" "$saved_backup"
 verify_backup "$saved_backup"
 expected_id="$(cat "$backup/server-id")"
 docker run --rm --network none --user 1000:1000 \
-  --mount "type=bind,src=$ZICHAN_STATE_DIR,dst=/state" \
+  --mount "type=bind,src=$ZICHAN_DATA_DIR,dst=/state" \
   --mount "type=bind,src=$backup,dst=/backup,readonly" \
   --entrypoint node "$ZICHAN_IMAGE" \
   dist/maintenance.mjs restore --data-dir /state/server --backup /backup

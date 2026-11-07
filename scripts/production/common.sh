@@ -2,9 +2,41 @@
 set -Eeuo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-compose_file="$repo_root/compose.prod.yml"
-export ZICHAN_STATE_DIR="${ZICHAN_STATE_DIR:-/opt/zichan/state}"
-export ZICHAN_BACKUP_DIR="${ZICHAN_BACKUP_DIR:-/opt/zichan/backups}"
+compose_file="$repo_root/compose.yml"
+if [[ -n "${ZICHAN_STATE_DIR:-}${ZICHAN_BACKUP_DIR:-}${ZICHAN_RUNTIME_DIR:-}" ]]; then
+  echo 'Legacy directory variables are unsupported. Migrate to one ZICHAN_DATA_DIR first.' >&2
+  exit 2
+fi
+export ZICHAN_DATA_DIR="${ZICHAN_DATA_DIR:-/opt/zichan/data}"
+[[ "$ZICHAN_DATA_DIR" == /* && "$ZICHAN_DATA_DIR" != / && "$ZICHAN_DATA_DIR" != */ && "$ZICHAN_DATA_DIR" != *'/../'* ]] || {
+  echo 'ZICHAN_DATA_DIR must be a dedicated absolute directory' >&2
+  exit 2
+}
+ZICHAN_STATE_DIR="$ZICHAN_DATA_DIR"
+ZICHAN_BACKUP_DIR="$ZICHAN_DATA_DIR/backups"
+ZICHAN_RUNTIME_DIR="$ZICHAN_DATA_DIR/runtime"
+
+check_legacy_layout() {
+  if [[ "$ZICHAN_DATA_DIR" == /opt/zichan/data && ! -f "$ZICHAN_DATA_DIR/server/server-id" ]] &&
+    { [[ -n "$(find /opt/zichan/state -mindepth 1 -print -quit 2>/dev/null)" ]] || [[ -n "$(find /opt/zichan/runtime -mindepth 1 -print -quit 2>/dev/null)" ]] || [[ -n "$(find /opt/zichan/backups -mindepth 1 -print -quit 2>/dev/null)" ]]; }; then
+    echo 'Legacy /opt/zichan/{state,backups,runtime} data exists. Migrate it before using /opt/zichan/data.' >&2
+    exit 2
+  fi
+}
+
+check_data_not_used_by_other_project() {
+  local container project mounted_path
+  for container in $(docker ps -q); do
+    project="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container")"
+    [[ "$project" == zichan-prod ]] && continue
+    while IFS= read -r mounted_path; do
+      if [[ "$mounted_path" == "$ZICHAN_DATA_DIR" ]]; then
+        echo "Data directory is mounted by another running container ($container, project $project); stop it before deploying" >&2
+        exit 2
+      fi
+    done < <(docker inspect --format '{{range .Mounts}}{{println .Source}}{{end}}' "$container")
+  done
+}
 
 require_image() {
   [[ "${ZICHAN_IMAGE:-}" =~ ^ghcr\.io/602star/zichan-sync@sha256:[a-f0-9]{64}$ ]] || {
@@ -48,7 +80,7 @@ check_restic_password() {
   local password_path
   password_path="$(realpath -- "$RESTIC_PASSWORD_FILE")"
   case "$password_path" in
-    "$ZICHAN_STATE_DIR"/*|"$ZICHAN_BACKUP_DIR"/*|"$repo_root"/*)
+    "$ZICHAN_DATA_DIR"/*|"$repo_root"/*)
       echo 'Restic password file must be outside state, backups and Git checkout' >&2
       exit 2
       ;;

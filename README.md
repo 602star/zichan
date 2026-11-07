@@ -38,14 +38,14 @@ Windows 可用 `npm start` 启动服务、`npm stop` 停止；`npm run start:all
 
 从[文档目录](docs/README.md)查找功能说明、部署手册、发布说明和待办。常用入口：[Web 应用](docs/guides/web.md)、[服务器管理](docs/guides/server-admin.md)、[生产部署与恢复](docs/deployment/production-deployment.md)、[Windows 便携版](docs/deployment/desktop-release.md)。
 
-Linux Docker 首次安装使用根目录的[生产 Compose](compose.prod.yml)和[安装脚本](scripts/production/install-docker.sh)。已安装 Docker Compose v2、Cosign、Git 和 curl，且可拉取 GHCR 镜像后，在全新服务器执行：
+Linux Docker 与 1Panel 共用根目录的[生产 Compose](compose.yml)。命令行全新安装还可使用[安装脚本](scripts/production/install-docker.sh)，它会验证镜像签名和服务器身份。已安装 Docker Compose v2、Cosign、Git 和 curl，且可拉取 GHCR 镜像后，在全新服务器执行：
 
 ```bash
 sudo git clone --depth 1 https://github.com/602star/zichan.git /opt/zichan/source && sudo bash /opt/zichan/source/scripts/production/install-docker.sh v0.5.7
 ```
 
-命令只用于全新安装，自动取得 v0.5.7 镜像摘要并验签，在 `/opt/zichan/{state,backups,runtime}` 保存数据。已有 1Panel 容器或服务器数据时按[生产部署与恢复](docs/deployment/production-deployment.md)迁移，不能直接运行首次安装命令。默认在可信内网开放 `8787`；公网接入前请按部署文档配置 HTTPS 与防火墙。
+命令只用于全新安装，自动取得 v0.5.7 镜像摘要并验签，在 `/opt/zichan/data` 保存数据。已有 1Panel 容器或服务器数据时按[生产部署与恢复](docs/deployment/production-deployment.md)迁移，不能直接运行首次安装命令。默认在可信内网开放 `8787`；公网接入前请按部署文档配置 HTTPS 与防火墙。
 
-1Panel 中全新创建 Compose 项目可用[单容器、单目录配置](compose.1panel.yml)：直接导入，并由 1Panel 指定编排名称；Compose 会自动创建缺失的宿主机 `/opt/zichan/data`，容器启动时设好目录权限，再以 UID 1000 运行服务。默认镜像标签为 `v0.5.7`，仅挂载该数据目录。已有容器不能直接改用空目录；迁移步骤见[生产部署说明](docs/deployment/production-deployment.md)。
+1Panel 中全新创建 Compose 项目也导入同一份 [compose.yml](compose.yml)，由 1Panel 指定编排名称；Compose 会自动创建缺失的宿主机 `/opt/zichan/data`，容器启动时设好目录权限，再以 UID 1000 运行服务。默认镜像标签为 `v0.5.7`。已有容器不能直接改用空目录；迁移步骤见[生产部署说明](docs/deployment/production-deployment.md)。
 
 运行日志、测试截图、缓存和个人 memory 不提交到仓库。可复现的行为与操作步骤写进对应主题文档；过程记录保留在[工作日志](docs/worklog.md)，版本变化见[发布说明](docs/release-notes.md)。

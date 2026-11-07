@@ -1,8 +1,8 @@
-# New 1Panel installations: one host directory, /opt/zichan/data.
+# Linux production and 1Panel: one host directory, /opt/zichan/data.
 # Short bind syntax creates a missing host directory. Startup sets ownership,
 # then drops to the node user before launching the server.
-# Change the base image version below when needed. Existing deployments must
-# migrate their state, backups, and runtime before switching to this layout.
+# Production scripts override ZICHAN_IMAGE with a verified release digest.
+# Existing three-directory deployments must migrate before switching layouts.
 # Let 1Panel choose the Compose project name. Do not set top-level name here.
 
 services:
@@ -28,18 +28,24 @@ services:
       UPDATE_GITHUB_REPO: 602star/zichan
       UPDATE_GITHUB_TOKEN_FILE: /keys/github-token
       UPDATE_PUBLIC_KEY_PATH: /app/bootstrap/update-public.pem
-      TRUSTED_PROXIES: private
-      ALLOW_INSECURE_HTTP: '1'
-      REGISTRATION_MODE: invite
+      TRUSTED_PROXIES: ${ZICHAN_TRUSTED_PROXIES:-private}
+      ALLOW_INSECURE_HTTP: ${ZICHAN_ALLOW_INSECURE_HTTP:-1}
+      REGISTRATION_MODE: ${REGISTRATION_MODE:-invite}
       ENABLE_WEB: '1'
       ENABLE_SYNC: '1'
+      BASE_PATH: ${BASE_PATH:-}
+      ADMIN_ACCESS_PATH: ${ADMIN_ACCESS_PATH:-}
+      COMMIT_QUOTA_BYTES: ${COMMIT_QUOTA_BYTES:-21474836480}
+      ATTACHMENT_QUOTA_BYTES: ${ATTACHMENT_QUOTA_BYTES:-21474836480}
+      ATTACHMENT_MAX_FILE_BYTES: ${ATTACHMENT_MAX_FILE_BYTES:-104857600}
+      ATTACHMENT_TRASH_RETENTION_MS: ${ATTACHMENT_TRASH_RETENTION_MS:-2592000000}
       TZ: ${ZICHAN_TZ:-Asia/Shanghai}
     ports:
       - '${ZICHAN_BIND_IP:-0.0.0.0}:${ZICHAN_PORT:-8787}:8787'
     volumes:
       - '${ZICHAN_DATA_DIR:-/opt/zichan/data}:/state'
     healthcheck:
-      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8787/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ['CMD', 'node', '-e', "const p=(process.env.BASE_PATH||'').replace(/\\/$/,'');fetch('http://127.0.0.1:8787'+p+'/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3

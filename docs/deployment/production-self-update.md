@@ -1,6 +1,6 @@
 # 生产同步服务器签名包自更新
 
-生产更新采用后台下载签名的服务端程序包、停服备份、切换持久版本目录、重启验收的方式。基础 Docker 镜像仍按 digest 和 Cosign 签名交付；后续稳定版更新由同一容器内的固定启动器完成。镜像重建保留 `/opt/zichan/runtime` 时继续运行已安装版本；换镜像 digest 不会回滚这个已安装版本。更新包不能改变服务器 schema；跨 schema 更新必须先交付迁移、恢复和写入边界验收。
+生产更新采用后台下载签名的服务端程序包、停服备份、切换持久版本目录、重启验收的方式。基础 Docker 镜像仍按 digest 和 Cosign 签名交付；后续稳定版更新由同一容器内的固定启动器完成。镜像重建保留 `/opt/zichan/data/runtime` 时继续运行已安装版本；换镜像 digest 不会回滚这个已安装版本。更新包不能改变服务器 schema；跨 schema 更新必须先交付迁移、恢复和写入边界验收。
 
 ## Actions 发布
 
@@ -19,15 +19,15 @@ sha256sum update-public.pem
 
 ## 镜像凭据与主机目录
 
-创建仅能读取 `602star/zichan` 的 GitHub fine-grained PAT，仓库权限只给 Contents 读取，并将其内容录入仓库 Actions Secret `ZICHAN_RELEASE_READ_TOKEN`。生产镜像工作流以 BuildKit secret 注入构建，最终镜像包含 UID 1000 可读、模式 `0600` 的 `/keys/github-token` 和固定的 `/app/bootstrap/update-public.pem`；私钥永不进入镜像。镜像应保持私有：有权拉取镜像的人可以离线提取 Token，Token 泄露或轮换时必须撤销旧凭据并构建新镜像。GHCR 镜像读取凭据仍用于初次部署和灾难恢复。主机另外准备 UID 1000 拥有、模式 `0700` 的 `/opt/zichan/runtime`、`/opt/zichan/state` 与 `/opt/zichan/backups`。
+创建仅能读取 `602star/zichan` 的 GitHub fine-grained PAT，仓库权限只给 Contents 读取，并将其内容录入仓库 Actions Secret `ZICHAN_RELEASE_READ_TOKEN`。生产镜像工作流以 BuildKit secret 注入构建，最终镜像包含 UID 1000 可读、模式 `0600` 的 `/keys/github-token` 和固定的 `/app/bootstrap/update-public.pem`；私钥永不进入镜像。镜像应保持私有：有权拉取镜像的人可以离线提取 Token，Token 泄露或轮换时必须撤销旧凭据并构建新镜像。GHCR 镜像读取凭据仍用于初次部署和灾难恢复。主机另外准备 UID 1000 拥有、模式 `0700` 的 `/opt/zichan/data` 及其 `server`、`backups`、`runtime` 子目录。
 
 ```bash
-sudo install -d -m 700 -o 1000 -g 1000 /opt/zichan/runtime /opt/zichan/state /opt/zichan/backups
+sudo install -d -m 700 -o 1000 -g 1000 /opt/zichan/data /opt/zichan/data/server /opt/zichan/data/backups /opt/zichan/data/runtime
 export ZICHAN_IMAGE='ghcr.io/602star/zichan-sync@sha256:<已签名镜像摘要>'
 bash scripts/production/deploy.sh
 ```
 
-`deploy.sh` 在切换前验证镜像签名、架构、数据和运行目录权限，并检查镜像内 Token 与公钥可读。现有节点必须复用原来的状态目录，即使它仍位于 `/srv/zichan/state`；首次换用自更新镜像前先停服，用原镜像的维护入口完成独立备份及 `verify-backup`，然后把 `ZICHAN_BASELINE_BACKUP` 设为实际备份目录下的记录路径，例如 `/opt/zichan/backups/<记录>`。部署脚本会再次用目标镜像验证备份及 `server-id`，并在启动后核对 `server.secret` 与节点签名密钥未变。不可把隔离测试 Compose 的空命名卷接到生产。
+`deploy.sh` 在切换前验证镜像签名、架构、数据和运行目录权限，并检查镜像内 Token 与公钥可读。现有节点须先按[生产部署说明](production-deployment.md)迁移为单目录布局并保留服务器身份；首次换用自更新镜像前先停服，用原镜像的维护入口完成独立备份及 `verify-backup`，然后把 `ZICHAN_BASELINE_BACKUP` 设为实际备份目录下的记录路径，例如 `/opt/zichan/data/backups/<记录>`。部署脚本会再次用目标镜像验证备份及 `server-id`，并在启动后核对 `server.secret` 与节点签名密钥未变。不可把隔离测试 Compose 的空命名卷接到生产。
 
 ## 更新、备份和失败处理
 

@@ -28,7 +28,7 @@ G0 只证明镜像**可交付**，不代表可以把真实账本切到生产环�
 
 每台 Linux 主机的 Compose 只运行一个业务容器；HTTPS 反向代理作为宿主机服务运行，只开放 443。业务服务通过宿主机网络仅监听 `127.0.0.1:8787`，反向代理转发到该地址、保留公共 Host，并覆盖 `X-Forwarded-Proto` 为单一的 `https`。`TRUSTED_PROXIES` 精确设为实际代理地址 `127.0.0.1`。每台节点使用独立的持久数据目录与节点身份。
 
-当前开发 Compose 使用两个 Docker 命名卷 `zichan-data:/state` 与 `zichan-backups:/backups`。生产配置建议将部署配置、业务状态和本机备份分开：`/etc/zichan/` 保存 Compose 与更新策略，预创建并验证 `node` 用户可写的 `/opt/zichan/state/` 挂到 `/state`，`/opt/zichan/backups/` 挂到 `/backups`。从命名卷迁移到宿主机目录时必须先完整复制数据和权限，在隔离环境验证身份与恢复；直接换挂载会得到空数据目录并生成新服务器身份。生产 Compose 使用经验证的镜像 digest，不包含 `build:`，也不在目标机从源码构建。首次生成的 `server.secret` 固定保存；重启和重建容器必须复用数据，不临时生成另一把 `SYNC_SECRET`。
+当前开发 Compose 使用两个 Docker 命名卷 `zichan-data:/state` 与 `zichan-backups:/backups`。生产配置使用一个专用宿主机目录 `/opt/zichan/data/` 绑定到 `/state`，其中 `server/`、`backups/`、`runtime/` 分别保存业务状态、本机备份和已安装程序。从命名卷迁移到宿主机目录时必须先完整复制数据和权限，在隔离环境验证身份与恢复；直接换挂载会得到空数据目录并生成新服务器身份。生产脚本使用经验证的镜像 digest，Compose 不包含 `build:`，也不在目标机从源码构建。首次生成的 `server.secret` 固定保存；重启和重建容器必须复用数据，不临时生成另一把 `SYNC_SECRET`。
 
 ### G0：生产镜像交付
 

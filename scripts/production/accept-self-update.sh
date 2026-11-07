@@ -10,7 +10,6 @@ command -v curl >/dev/null && command -v jq >/dev/null || {
   echo 'curl and jq are required for acceptance' >&2
   exit 2
 }
-export ZICHAN_RUNTIME_DIR="${ZICHAN_RUNTIME_DIR:-/opt/zichan/runtime}"
 check_directory "$ZICHAN_STATE_DIR"
 check_directory "$ZICHAN_BACKUP_DIR"
 check_directory "$ZICHAN_RUNTIME_DIR"

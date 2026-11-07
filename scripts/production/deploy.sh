@@ -2,16 +2,22 @@
 set -Eeuo pipefail
 source "$(dirname "$0")/common.sh"
 
-check_directory "$ZICHAN_STATE_DIR"
+check_legacy_layout
+check_directory "$ZICHAN_DATA_DIR"
+check_directory "$ZICHAN_DATA_DIR/server"
 check_directory "$ZICHAN_BACKUP_DIR"
-export ZICHAN_RUNTIME_DIR="${ZICHAN_RUNTIME_DIR:-/opt/zichan/runtime}"
 check_directory "$ZICHAN_RUNTIME_DIR"
+check_data_not_used_by_other_project
+if [[ -n "${ZICHAN_HOST:-}" && "$ZICHAN_HOST" != 0.0.0.0 ]]; then
+  echo 'Bridge-network Compose uses HOST=0.0.0.0 inside the container; use ZICHAN_BIND_IP to restrict the host port' >&2
+  exit 2
+fi
 if [[ -e "$ZICHAN_STATE_DIR/server/maintenance.lock" || -L "$ZICHAN_STATE_DIR/server/maintenance.lock" ]]; then
   echo 'Maintenance lock is held or stale; refusing deployment' >&2
   exit 2
 fi
 if [[ ! -f "$ZICHAN_STATE_DIR/server/server-id" ]]; then
-  if [[ -n "$(find "$ZICHAN_STATE_DIR" -mindepth 1 -print -quit)" ]]; then
+  if [[ -n "$(find "$ZICHAN_DATA_DIR/server" -mindepth 1 -print -quit)" ]]; then
     echo 'Existing nonempty server state has no server-id; refusing to create a new identity' >&2
     exit 2
   fi
@@ -48,16 +54,14 @@ if [[ -n "$old_id" && -z "$(find "$ZICHAN_RUNTIME_DIR" -mindepth 1 -print -quit)
   }
 fi
 docker run --rm --network none --user 1000:1000 \
-  --mount "type=bind,src=$ZICHAN_STATE_DIR,dst=/state" \
-  --mount "type=bind,src=$ZICHAN_BACKUP_DIR,dst=/backups" \
-  --mount "type=bind,src=$ZICHAN_RUNTIME_DIR,dst=/app/runtime" \
-  --entrypoint sh "$ZICHAN_IMAGE" -c 'test -w /state && test -w /backups && test -w /app/runtime && test -s /keys/github-token && test -s /app/bootstrap/update-public.pem && test -s /app/bootstrap/update-launcher.mjs && test -s /app/bootstrap/pre-update-backup.mjs'
-docker compose -f "$compose_file" config --quiet
+  --mount "type=bind,src=$ZICHAN_DATA_DIR,dst=/state" \
+  --entrypoint sh "$ZICHAN_IMAGE" -c 'test -w /state/server && test -w /state/backups && test -w /state/runtime && test -s /keys/github-token && test -s /app/bootstrap/update-public.pem && test -s /app/bootstrap/update-launcher.mjs && test -s /app/bootstrap/pre-update-backup.mjs'
+docker compose -p zichan-prod -f "$compose_file" config --quiet
 if [[ -n "$(docker ps -q --filter label=com.docker.compose.project=zichan-prod)" ]]; then
   bash "$repo_root/scripts/production/with-maintenance-lock.sh" \
-    docker compose -f "$compose_file" up -d --no-build --wait --wait-timeout 180
+    docker compose -p zichan-prod -f "$compose_file" up -d --no-build --wait --wait-timeout 180
 else
-  docker compose -f "$compose_file" up -d --no-build --wait --wait-timeout 180
+  docker compose -p zichan-prod -f "$compose_file" up -d --no-build --wait --wait-timeout 180
 fi
 new_id="$(cat "$ZICHAN_STATE_DIR/server/server-id")"
 new_key="$(sha256sum "$ZICHAN_STATE_DIR/server/server.secret" | cut -d ' ' -f 1)"

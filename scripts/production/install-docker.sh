@@ -21,17 +21,10 @@ if [[ -n "${ZICHAN_IMAGE:-}" ]]; then
   echo 'ZICHAN_IMAGE is set; use deploy.sh for an existing or custom deployment' >&2
   exit 2
 fi
+check_legacy_layout
 
-if [[ -d "$ZICHAN_STATE_DIR" && -n "$(find "$ZICHAN_STATE_DIR" -mindepth 1 -print -quit)" ]]; then
-  echo "Existing state found at $ZICHAN_STATE_DIR; use deploy.sh and preserve its identity" >&2
-  exit 2
-fi
-if [[ -d "$ZICHAN_BACKUP_DIR" && -n "$(find "$ZICHAN_BACKUP_DIR" -mindepth 1 -print -quit)" ]]; then
-  echo 'Existing backups found; use deploy.sh for an existing deployment' >&2
-  exit 2
-fi
-if [[ -d "${ZICHAN_RUNTIME_DIR:-/opt/zichan/runtime}" && -n "$(find "${ZICHAN_RUNTIME_DIR:-/opt/zichan/runtime}" -mindepth 1 -print -quit)" ]]; then
-  echo 'Existing update runtime found; use deploy.sh' >&2
+if [[ -d "$ZICHAN_DATA_DIR" && -n "$(find "$ZICHAN_DATA_DIR" -mindepth 1 -print -quit)" ]]; then
+  echo "Existing data found at $ZICHAN_DATA_DIR; use deploy.sh and preserve its identity" >&2
   exit 2
 fi
 if [[ -n "$(docker ps -aq --filter label=com.docker.compose.project=zichan-prod)" ]]; then
@@ -48,7 +41,7 @@ export ZICHAN_IMAGE="$(tr -d '\r\n' < "$digest_file")"
 require_image
 
 install -d -m 700 -o 1000 -g 1000 \
-  "$ZICHAN_STATE_DIR" "$ZICHAN_BACKUP_DIR" "${ZICHAN_RUNTIME_DIR:-/opt/zichan/runtime}"
+  "$ZICHAN_DATA_DIR" "$ZICHAN_DATA_DIR/server" "$ZICHAN_BACKUP_DIR" "$ZICHAN_RUNTIME_DIR"
 export ZICHAN_ALLOW_FIRST_BOOT=yes
 bash "$repo_root/scripts/production/deploy.sh"
 
