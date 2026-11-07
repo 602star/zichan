@@ -65,6 +65,21 @@ describe('browser session origin and cookies', () => {
     expect(origin.secureTransport(req, false)).toBe(false);
   });
 
+  it('accepts an HTTPS browser behind a private bridge when the local proxy reports HTTP', () => {
+    const headers = {
+      host: 'ledger.example', origin: 'https://ledger.example',
+      'x-forwarded-proto': 'http', 'x-zichan-session': 'admin-cookie',
+    };
+    const req = request('172.18.0.1', headers);
+    const origin = createRequestOrigin(['private'], true);
+    const cookies = createBrowserSessionCookies('', origin.browserOrigin);
+    expect(origin.trustedPeer(req)).toBe(true);
+    expect(cookies.requested(req)).toBe(true);
+    expect(() => cookies.requested(request('172.18.0.1', { ...headers, host: 'other.example' }))).toThrow();
+    expect(() => cookies.requested(request('172.18.0.1', { ...headers, 'x-forwarded-proto': 'https,http' }))).toThrow();
+    expect(() => createBrowserSessionCookies('', createRequestOrigin(['private']).browserOrigin).requested(req)).toThrow();
+  });
+
   it('trusts private Docker peers while rejecting public peers and unsafe proxy headers', () => {
     const origin = createRequestOrigin(['private']);
     const headers = {

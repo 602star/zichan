@@ -534,8 +534,11 @@ describe('sync-server endpoints', () => {
     }
   });
 
-  it('starts browser owner setup through an untrusted Docker bridge when the public Host matches Origin', async () => {
-    const app = createSyncServer({ allowInsecureHttp: true, trustedProxies: ['192.0.2.1'] });
+  it.each([
+    { case: 'untrusted Docker bridge', trustedProxies: ['192.0.2.1'], forwardedProto: 'https' },
+    { case: 'trusted private bridge reporting HTTP', trustedProxies: ['private'], forwardedProto: 'http' },
+  ])('starts browser owner setup through $case when the public Host matches Origin', async ({ trustedProxies, forwardedProto }) => {
+    const app = createSyncServer({ allowInsecureHttp: true, trustedProxies });
     await new Promise<void>((resolve) => app.server.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
     try {
@@ -544,7 +547,7 @@ describe('sync-server endpoints', () => {
       const body = JSON.stringify({ username: 'bridge-owner', registrationRequest, initializeOwner: true });
       const headers = {
         Host: 'ledger.example', Origin: 'https://ledger.example',
-        'X-Zichan-Session': 'admin-cookie', 'X-Forwarded-Proto': 'https',
+        'X-Zichan-Session': 'admin-cookie', 'X-Forwarded-Proto': forwardedProto,
         'Content-Type': 'application/json',
       };
       const post = (originHeader: string) => new Promise<{ status: number; body: string }>((resolve, reject) => {

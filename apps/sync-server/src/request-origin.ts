@@ -47,11 +47,13 @@ export function createRequestOrigin(trustedProxies: string[], allowInsecureHttp 
       const host = req.headers.host;
       if (!host || /[\s/\\@?#]/.test(host)) return undefined;
       const trustedProxy = trusted(remote);
-      // A browser supplies Origin itself. With explicitly enabled HTTP, a
-      // container bridge may hide the host-network proxy's socket address.
-      // Match Origin against the forwarded Host instead of trusting an
-      // unverified X-Forwarded-Proto header for browser cookie requests.
-      if (allowInsecureHttp && !trustedProxy && typeof req.headers.origin === 'string') {
+      const forwardedProto = req.headers['x-forwarded-proto'];
+      if (trustedProxy && forwardedProto !== undefined && forwardedProto !== 'https' && forwardedProto !== 'http') return undefined;
+      // A browser supplies Origin itself. With explicitly enabled HTTP, the
+      // public HTTPS connection may terminate before the local proxy, so its
+      // X-Forwarded-Proto can be HTTP even when the browser uses HTTPS.
+      // Match Origin against the preserved Host for browser cookie requests.
+      if (allowInsecureHttp && typeof req.headers.origin === 'string') {
         try {
           const browser = new URL(req.headers.origin);
           if ((browser.protocol === 'https:' || browser.protocol === 'http:')
@@ -63,7 +65,7 @@ export function createRequestOrigin(trustedProxies: string[], allowInsecureHttp 
       // come from a trusted bridge gateway. With HTTP explicitly enabled,
       // absence of proxy metadata still means a direct HTTP request.
       const protocol = trustedProxy
-        ? (req.headers['x-forwarded-proto'] ?? (allowInsecureHttp ? 'http' : undefined))
+        ? (forwardedProto ?? (allowInsecureHttp ? 'http' : undefined))
         : 'http';
       if (protocol !== 'https' && protocol !== 'http') return undefined;
       try {
