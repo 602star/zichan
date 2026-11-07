@@ -1,3 +1,9 @@
+# 0.5.6
+
+- 修复 1Panel 的 HTTPS 域名经 Docker 网桥转发、内层代理报告 `X-Forwarded-Proto: http` 时，镜像默认 `TRUSTED_PROXIES=private` 导致管理页返回 `SESSION_ORIGIN_REJECTED`。显式允许 HTTP 的部署现按浏览器 `Origin` 与保留的 `Host` 校验同源；无需逐个填写网桥代理 IP，跨域请求和异常代理协议头仍被拒绝。
+- 仅通过 HTTPS 代理的严格模式仍要求可信代理提供单一的 `X-Forwarded-Proto: https`。Windows 质量作业中两项慢速测试的等待上限已按实际启动和运行时间调整，不改变产品功能。
+- Windows MSI 和 NSIS 安装包仍未做 Authenticode 签名，可能显示“未知发布者”或 SmartScreen 提示。服务器 schema 仍为 27，本地账本 schema 仍为 127，同步协议仍为 v3。
+
 # 0.5.5
 
 - Web 记账入口统一为站点根路径 `/`；旧 `/app/` 跳转到根路径，旧 `/app/` 静态资源不再公开。处理旧 Service Worker 缓存造成的 `/app/` 空白页，管理后台和联邦登录链接同步指向根路径。
