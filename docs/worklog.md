@@ -2,6 +2,11 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-07 — v0.5.7 发布结果
+
+- `v0.5.7` 标签指向 `c3c2ad8`；统一发布流水线 [42341067148](https://github.com/602star/zichan/actions/runs/42341067148) 全部成功，正式 [Release](https://github.com/602star/zichan/releases/tag/v0.5.7) 已公开。17 个资产包含 Android ARM64 APK、Windows 便携 ZIP/MSI/NSIS EXE、Linux DEB/AppImage、签名服务更新包和镜像摘要。
+- 发布镜像为 `ghcr.io/602star/zichan-sync@sha256:ccc8840984284ab3839e859bb8ce3ceedae9724b4bba4394f1c7626c21adc653`，同时标记 `v0.5.7`。五项 CI 检查、Windows MSI/NSIS 安装与卸载冒烟、各平台构建及最终资产摘要校验均通过。单目录 Compose 只适合全新安装；现有 1Panel 节点须先迁移原状态和运行目录。
+
 ## 2026-11-07 — 准备 v0.5.7 统一发布
 
 - 将 npm 工作区、锁文件、Tauri、安装标记、两份生产 Compose 和当前安装示例同步到 0.5.7。发布重点是可直接导入的 1Panel 单目录 Compose，以及其 UID 1000 目录初始化；服务器代码与 0.5.6 相比没有业务行为变更，schema 与同步协议不变。
