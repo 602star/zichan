@@ -1,31 +1,22 @@
 # New 1Panel installations: one host directory, /opt/zichan/data.
-# Short bind syntax creates a missing host directory; prepare sets ownership.
+# Short bind syntax creates a missing host directory. Startup sets ownership,
+# then drops to the node user before launching the server.
 # Change the base image version below when needed. Existing deployments must
 # migrate their state, backups, and runtime before switching to this layout.
 name: zichan-1panel
-x-zichan-image: &zichan-image ${ZICHAN_IMAGE:-ghcr.io/602star/zichan-sync:v0.5.7}
 
 services:
-  prepare:
-    image: *zichan-image
+  sync-server:
+    image: ${ZICHAN_IMAGE:-ghcr.io/602star/zichan-sync:v0.5.7}
+    init: true
     user: '0:0'
-    network_mode: none
     entrypoint: [sh, -ec]
     command:
       - |
         mkdir -p /state/server /state/backups /state/runtime
         chown 1000:1000 /state /state/server /state/backups /state/runtime
         chmod 700 /state /state/server /state/backups /state/runtime
-    volumes:
-      - '${ZICHAN_DATA_DIR:-/opt/zichan/data}:/state'
-
-  sync-server:
-    image: *zichan-image
-    depends_on:
-      prepare:
-        condition: service_completed_successfully
-    init: true
-    user: '1000:1000'
+        exec su -s /bin/sh node -c 'exec node /app/bootstrap/update-launcher.mjs'
     environment:
       HOST: 0.0.0.0
       PORT: '8787'
