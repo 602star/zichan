@@ -2,6 +2,11 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-07 — v0.6.0 发布结果
+
+- 注释标签 `v0.6.0` 指向 `aebce16`；[GitHub Actions 发布运行 42373610471](https://github.com/602star/zichan/actions/runs/42373610471) 的五项 CI、Windows MSI/NSIS 安装验收、便携 ZIP、Linux DEB/AppImage、Android APK、签名更新包、镜像构建和最终发布作业均成功。
+- [正式 Release](https://github.com/602star/zichan/releases/tag/v0.6.0) 已公开，17 个资产齐全。镜像摘要为 `ghcr.io/602star/zichan-sync@sha256:a4c4fde8fb538ab2ca67634fcf2acfb2e98733c5e7e88e39a3e73c46cc38ca9f`。
+
 ## 2026-11-07 — 准备 0.6.0 发布
 
 - 统一更新 npm 工作区、锁文件、Tauri、Compose 和部署说明中的正式版本为 0.6.0；发布说明包含管理后台升级按钮及更新权限修正、登录 401 日志诊断和 CI 时限调整。服务器 schema 与同步协议不变。
