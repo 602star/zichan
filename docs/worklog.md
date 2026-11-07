@@ -6,6 +6,7 @@
 
 - 将 npm 工作区、锁文件、Tauri 配置、Cargo、安装模式标记及部署文件版本统一到 0.5.8；发布说明记录 1Panel 与命令行生产 Compose 合并、旧布局迁移要求和未签名 Windows 安装版。
 - 本地 `npm run release:check`、`npm run test:release`、`npm run build:server` 和 `npm run ci` 通过；完整 CI 中覆盖率测试 232 个文件通过、1477 项通过、1 项跳过。正式产物由 `v0.5.8` 标签触发的统一发布工作流生成并验收。
+- 标签 `v0.5.8` 指向 `46ee8b7`。GitHub Actions [Release 运行 42351342800](https://github.com/602star/zichan/actions/runs/42351342800) 全部成功：CI、Windows MSI/NSIS 安装与卸载、便携 ZIP、Linux DEB/AppImage、Android APK、签名更新包及 Docker 镜像均通过。公开 Release 含 17 个资产；`image-digest.txt` 为 `ghcr.io/602star/zichan-sync@sha256:d146de53cac0f8156aede7ea8ed5f93a01c3d6c01d26421068d78f1ce0de65ed`。
 
 ## 2026-11-07 — 合并生产与 1Panel Compose
 
