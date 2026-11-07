@@ -1,0 +1,59 @@
+# New 1Panel installations: one host directory, /opt/zichan/data.
+# Image is the immutable v0.5.6 release. Existing deployments must migrate
+# their state, backups, and runtime before switching to this layout.
+name: zichan-1panel
+
+services:
+  prepare:
+    image: ${ZICHAN_IMAGE:-ghcr.io/602star/zichan-sync@sha256:22340c715b66fdcab54d6dbf9724cebff34a694283fd38dd7c3af32a4bceb202}
+    user: '0:0'
+    network_mode: none
+    entrypoint: [sh, -ec]
+    command:
+      - |
+        mkdir -p /state/server /state/backups /state/runtime
+        chown 1000:1000 /state /state/server /state/backups /state/runtime
+        chmod 700 /state /state/server /state/backups /state/runtime
+    volumes:
+      - type: bind
+        source: ${ZICHAN_DATA_DIR:-/opt/zichan/data}
+        target: /state
+
+  sync-server:
+    image: ${ZICHAN_IMAGE:-ghcr.io/602star/zichan-sync@sha256:22340c715b66fdcab54d6dbf9724cebff34a694283fd38dd7c3af32a4bceb202}
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+    init: true
+    user: '1000:1000'
+    environment:
+      HOST: 0.0.0.0
+      PORT: '8787'
+      DATA_DIR: /state/server
+      ADMIN_BACKUP_DIRECTORY: /state/backups
+      WEB_DIST: /state/runtime/current/web-dist
+      ZICHAN_UPDATE_RUNTIME_DIR: /state/runtime
+      ZICHAN_UPDATE_REQUIRE_BACKUP: '1'
+      UPDATE_GITHUB_REPO: 602star/zichan
+      UPDATE_GITHUB_TOKEN_FILE: /keys/github-token
+      UPDATE_PUBLIC_KEY_PATH: /app/bootstrap/update-public.pem
+      TRUSTED_PROXIES: private
+      ALLOW_INSECURE_HTTP: '1'
+      REGISTRATION_MODE: invite
+      ENABLE_WEB: '1'
+      ENABLE_SYNC: '1'
+      TZ: ${ZICHAN_TZ:-Asia/Shanghai}
+    ports:
+      - '${ZICHAN_BIND_IP:-0.0.0.0}:${ZICHAN_PORT:-8787}:8787'
+    volumes:
+      - type: bind
+        source: ${ZICHAN_DATA_DIR:-/opt/zichan/data}
+        target: /state
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8787/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 30m

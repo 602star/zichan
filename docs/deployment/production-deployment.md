@@ -7,10 +7,20 @@
 先安装 Docker Engine、Docker Compose v2、Cosign、Git 和 curl。若 GHCR 镜像需要认证，先在 root 的 Docker 凭据中用具有 `read:packages` 权限的 Token 登录：`sudo docker login ghcr.io -u 602star`，提示输入密码时粘贴 Token。确认主机端口 `8787` 只允许可信内网访问。随后运行：
 
 ```bash
-sudo git clone --depth 1 https://github.com/602star/zichan.git /opt/zichan/source && sudo bash /opt/zichan/source/scripts/production/install-docker.sh v0.5.5
+sudo git clone --depth 1 https://github.com/602star/zichan.git /opt/zichan/source && sudo bash /opt/zichan/source/scripts/production/install-docker.sh v0.5.6
 ```
 
-脚本读取该 Release 的 `image-digest.txt`，验证格式和 Cosign 签名，创建 UID 1000 持有的 `/opt/zichan/state`、`/opt/zichan/backups`、`/opt/zichan/runtime`，然后调用生产部署脚本及 Compose，等待健康检查通过。打开 `http://<服务器内网IP>:8787/admin/` 首次设置管理员，用户端为 `http://<服务器内网IP>:8787/`。仅支持 `linux/amd64`。它会拒绝已有数据、运行目录或生产容器；现有 1Panel 部署、升级或迁移须沿用原有挂载和身份，按下文操作。v0.5.5 镜像包含记账入口统一到根路径的修复。
+脚本读取该 Release 的 `image-digest.txt`，验证格式和 Cosign 签名，创建 UID 1000 持有的 `/opt/zichan/state`、`/opt/zichan/backups`、`/opt/zichan/runtime`，然后调用生产部署脚本及 Compose，等待健康检查通过。打开 `http://<服务器内网IP>:8787/admin/` 首次设置管理员，用户端为 `http://<服务器内网IP>:8787/`。仅支持 `linux/amd64`。它会拒绝已有数据、运行目录或生产容器；现有 1Panel 部署、升级或迁移须沿用原有挂载和身份，按下文操作。
+
+## 1Panel 单目录 Compose（全新安装）
+
+[compose.1panel.yml](../../compose.1panel.yml) 固定使用 v0.5.6 的 SHA-256 镜像摘要；在 1Panel 新建 Compose 项目时可直接导入，无需另填 `ZICHAN_IMAGE`。该配置只有一个宿主机绑定目录：`/opt/zichan/data` 挂到容器 `/state`，内部再分为 `server`、`backups`、`runtime`。一次性 `prepare` 服务以 root 创建并授权这些子目录，业务服务仍以 UID 1000 运行；成功后 `prepare` 显示“已退出 (0)”属正常。首次运行可用 `docker compose -f compose.1panel.yml up -d --wait`。如需改宿主机目录，设置 `ZICHAN_DATA_DIR` 为另一个**专用的绝对路径**；不可指向包含源码或其他应用数据的共享目录。
+
+该配置把端口 `8787` 映射到所有宿主机网卡，默认允许 HTTP，仅适合有防火墙保护的可信内网或由 1Panel HTTPS 代理接入。若只经同机反向代理访问，可设 `ZICHAN_BIND_IP=127.0.0.1` 后重建。`TRUSTED_PROXIES=private` 适配 Docker 网桥代理。`/state/runtime` 持久保存签名更新包，更新源、公钥、预更新备份均已配置；管理后台可检查正式版本。镜像内置只读发布 Token 的可读性仍取决于镜像是否来自正式发布工作流。
+
+**已有 1Panel 容器不要直接换成这个 Compose。** 先核对现有 `/state`、`/backups`、`/app/runtime` 的实际挂载和服务器身份，停服并完成可验证备份，再将旧 `/state/server` 的内容迁入 `/opt/zichan/data/server`，旧 `/backups` 内容迁入 `/opt/zichan/data/backups`，旧 `/app/runtime` 内容迁入 `/opt/zichan/data/runtime`，确认 UID 1000 可读写后才切换。尤其不能让旧 `/state/server` 被一个空目录替代，否则会创建新服务器身份。三个子目录共用一个宿主机目录，不能充当异机备份；重要数据仍需另行运送备份到独立存储。
+
+镜像构建时对 `/app/runtime` 的 `chown` 只作用于**镜像内目录**。1Panel 若在宿主机自动创建绑定目录，Docker 会用这个目录覆盖镜像里的路径，宿主机目录通常由 root 持有，UID 1000 因而无法创建 `releases`。单目录配置的 `prepare` 服务修复新安装时的这一权限差异；原有三目录部署的安装脚本则用 `install -o 1000 -g 1000` 在宿主机预创建目录。`compose.prod.yml` 也已固定 v0.5.6 摘要，但直接 `docker compose up` 会跳过部署脚本的验签、权限和服务器身份检查，应继续用脚本部署。
 
 ## 开发与生产部署对照
 

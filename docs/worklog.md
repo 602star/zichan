@@ -2,6 +2,12 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-07 — 补齐可直接导入的 1Panel Compose
+
+- 生产 Compose 默认镜像改为已发布 v0.5.6 的固定 digest，避免直接导入时报缺少 `ZICHAN_IMAGE`；部署脚本仍要求显式验签摘要。另增 1Panel 单目录 Compose，把 `/opt/zichan/data` 一次绑定到 `/state`，内部区分服务状态、备份和更新目录，启动前一次性以 root 设好 UID 1000 权限，业务容器维持非 root；显式提供签名更新配置。
+- 原有三目录生产流程不改挂载布局，避免已有节点误切空目录。说明镜像目录所有权会被 1Panel 自动创建的宿主机绑定目录覆盖，迁移必须先核对服务器身份并完成备份。
+- 验证：`compose.prod.yml` 与 `compose.1panel.yml` 的 YAML 解析及 Linux 测试机 Docker Compose v5.7.0 `config --quiet` 通过；在 `192.168.2.167` 的隔离临时目录，用测试机已有的 v0.5.4 镜像覆盖镜像变量验证新 Compose 的目录与启动逻辑。一次性初始化服务退出码 0，业务容器以 UID 1000 健康启动，三个子目录权限均为 `1000:1000 0700`，更新启动器创建 `runtime/current` 成功；强制重建后服务器身份保持不变。测试容器和临时目录已清理。此验收只验证 Compose 布局和权限，不代表重新构建或重新发布 v0.5.6 镜像。
+
 ## 2026-11-07 — v0.5.6 发布结果
 
 - `v0.5.6` 标签指向 `e69386d`；统一发布流水线 [42335687302](https://github.com/602star/zichan/actions/runs/42335687302) 全部成功，正式 [Release](https://github.com/602star/zichan/releases/tag/v0.5.6) 已公开，17 个资产包含 Android ARM64 APK、Windows 便携 ZIP/MSI/NSIS EXE、Linux DEB/AppImage、签名服务更新包和镜像摘要。Docker 镜像为 `ghcr.io/602star/zichan-sync@sha256:22340c715b66fdcab54d6dbf9724cebff34a694283fd38dd7c3af32a4bceb202`。
