@@ -46,6 +46,6 @@ sudo git clone --depth 1 https://github.com/602star/zichan.git /opt/zichan/sourc
 
 命令只用于全新安装，自动取得 v0.5.7 镜像摘要并验签，在 `/opt/zichan/{state,backups,runtime}` 保存数据。已有 1Panel 容器或服务器数据时按[生产部署与恢复](docs/deployment/production-deployment.md)迁移，不能直接运行首次安装命令。默认在可信内网开放 `8787`；公网接入前请按部署文档配置 HTTPS 与防火墙。
 
-1Panel 中全新创建 Compose 项目可用[单目录配置](compose.1panel.yml)：先在宿主机执行 `sudo install -d -m 700 -o 1000 -g 1000 /opt/zichan/data`，再导入配置。默认镜像标签为 `v0.5.7`，仅把宿主机该目录挂载一次，初始化任务会将内部状态、备份和更新目录设为容器 UID 1000 可写。已有容器不能直接改用空目录；迁移步骤见[生产部署说明](docs/deployment/production-deployment.md)。
+1Panel 中全新创建 Compose 项目可用[单目录配置](compose.1panel.yml)：直接导入，Compose 会自动创建缺失的宿主机 `/opt/zichan/data`，初始化任务随后把目录设为容器 UID 1000 可写。默认镜像标签为 `v0.5.7`，仅把该目录挂载一次。已有容器不能直接改用空目录；迁移步骤见[生产部署说明](docs/deployment/production-deployment.md)。
 
 运行日志、测试截图、缓存和个人 memory 不提交到仓库。可复现的行为与操作步骤写进对应主题文档；过程记录保留在[工作日志](docs/worklog.md)，版本变化见[发布说明](docs/release-notes.md)。
