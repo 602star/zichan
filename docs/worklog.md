@@ -2,6 +2,11 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-07 — v0.5.6 发布结果
+
+- `v0.5.6` 标签指向 `e69386d`；统一发布流水线 [42335687302](https://github.com/602star/zichan/actions/runs/42335687302) 全部成功，正式 [Release](https://github.com/602star/zichan/releases/tag/v0.5.6) 已公开，17 个资产包含 Android ARM64 APK、Windows 便携 ZIP/MSI/NSIS EXE、Linux DEB/AppImage、签名服务更新包和镜像摘要。Docker 镜像为 `ghcr.io/602star/zichan-sync@sha256:22340c715b66fdcab54d6dbf9724cebff34a694283fd38dd7c3af32a4bceb202`。
+- 五项 CI 检查、Windows MSI/NSIS 安装与卸载冒烟、各平台构建及最终资产摘要核验均通过。镜像默认 `TRUSTED_PROXIES=private`；1Panel 桥接容器升级镜像并删除旧的显式 `TRUSTED_PROXIES=127.0.0.1` 覆盖值后，可在 `ALLOW_INSECURE_HTTP=1` 模式下使用代理保留的 `Host` 与浏览器 `Origin` 完成管理页同源校验。
+
 ## 2026-11-07 — 准备 v0.5.6 统一发布
 
 - 将 npm 工作区、锁文件、Tauri 和安装标记统一到 0.5.6，发布说明记录 1Panel 私有网桥代理的同源误判修复，以及质量作业等待调整。镜像继续默认 `TRUSTED_PROXIES=private`；显式 HTTP 模式按 `Origin`/`Host` 校验同源，用户不必配置网桥 IP。服务器 schema 27、本地账本 schema 127、同步协议 v3 不变。
