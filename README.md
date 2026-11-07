@@ -41,11 +41,11 @@ Windows 可用 `npm start` 启动服务、`npm stop` 停止；`npm run start:all
 Linux Docker 与 1Panel 共用根目录的[生产 Compose](compose.yml)。命令行全新安装还可使用[安装脚本](scripts/production/install-docker.sh)，它会验证镜像签名和服务器身份。已安装 Docker Compose v2、Cosign、Git 和 curl，且可拉取 GHCR 镜像后，在全新服务器执行：
 
 ```bash
-sudo git clone --depth 1 https://github.com/602star/zichan.git /opt/zichan/source && sudo bash /opt/zichan/source/scripts/production/install-docker.sh v0.5.8
+sudo git clone --depth 1 https://github.com/602star/zichan.git /opt/zichan/source && sudo bash /opt/zichan/source/scripts/production/install-docker.sh v0.5.9
 ```
 
-命令只用于全新安装，自动取得 v0.5.8 镜像摘要并验签，在 `/opt/zichan/data` 保存数据。已有 1Panel 容器或服务器数据时按[生产部署与恢复](docs/deployment/production-deployment.md)迁移，不能直接运行首次安装命令。默认在可信内网开放 `8787`；公网接入前请按部署文档配置 HTTPS 与防火墙。
+命令只用于全新安装，自动取得 v0.5.9 镜像摘要并验签，在 `/opt/zichan/data` 保存数据。已有 1Panel 容器或服务器数据时按[生产部署与恢复](docs/deployment/production-deployment.md)迁移，不能直接运行首次安装命令。默认在可信内网开放 `8787`；公网接入前请按部署文档配置 HTTPS 与防火墙。
 
-1Panel 中全新创建 Compose 项目也导入同一份 [compose.yml](compose.yml)，由 1Panel 指定编排名称；Compose 会自动创建缺失的宿主机 `/opt/zichan/data`，容器启动时设好目录权限，再以 UID 1000 运行服务。默认镜像标签为 `v0.5.8`。已有容器不能直接改用空目录；迁移步骤见[生产部署说明](docs/deployment/production-deployment.md)。
+1Panel 中全新创建 Compose 项目也导入同一份 [compose.yml](compose.yml)，由 1Panel 指定编排名称；Compose 会自动创建缺失的宿主机 `/opt/zichan/data`，容器启动时设好目录权限，再以 UID 1000 运行服务。默认镜像标签为 `v0.5.9`。已有容器不能直接改用空目录；迁移步骤见[生产部署说明](docs/deployment/production-deployment.md)。
 
 运行日志、测试截图、缓存和个人 memory 不提交到仓库。可复现的行为与操作步骤写进对应主题文档；过程记录保留在[工作日志](docs/worklog.md)，版本变化见[发布说明](docs/release-notes.md)。

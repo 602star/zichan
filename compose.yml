@@ -7,7 +7,7 @@
 
 services:
   sync-server:
-    image: ${ZICHAN_IMAGE:-ghcr.io/602star/zichan-sync:v0.5.8}
+    image: ${ZICHAN_IMAGE:-ghcr.io/602star/zichan-sync:v0.5.9}
     init: true
     user: '0:0'
     entrypoint: [sh, -ec]
