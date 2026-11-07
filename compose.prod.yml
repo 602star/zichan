@@ -1,14 +1,14 @@
 # Linux production Compose. For first installation use
 # scripts/production/install-docker.sh; for upgrades use deploy.sh.
-# Default image is the published v0.5.6 digest. Deploy scripts still verify its
-# Cosign signature; set ZICHAN_IMAGE explicitly to deploy another verified digest.
+# Direct Compose use defaults to the published v0.5.6 tag. Production deploy
+# scripts set ZICHAN_IMAGE to the verified release digest before invoking Compose.
 name: zichan-prod
 
 # Direct HTTP is enabled for trusted LAN deployments. Restrict port 8787 at
 # the host firewall; public deployments should use an HTTPS reverse proxy.
 services:
   sync-server:
-    image: ${ZICHAN_IMAGE:-ghcr.io/602star/zichan-sync@sha256:22340c715b66fdcab54d6dbf9724cebff34a694283fd38dd7c3af32a4bceb202}
+    image: ${ZICHAN_IMAGE:-ghcr.io/602star/zichan-sync:v0.5.6}
     network_mode: host
     init: true
     user: '1000:1000'

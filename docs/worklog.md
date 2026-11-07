@@ -2,6 +2,12 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-07 — Compose 默认镜像改为版本标签
+
+- 1Panel 单目录 Compose 和原生产 Compose 的默认镜像均改为 `ghcr.io/602star/zichan-sync:v0.5.6`；1Panel 文件通过一个 YAML 锚点集中指定两个服务的镜像，升级基础镜像时只改一处。生产部署脚本仍从 Release 读取 digest、验签并通过 `ZICHAN_IMAGE` 覆盖默认标签。
+- 文档区分镜像标签与持久运行目录的版本：更换镜像标签不会自动替换已安装程序，日常更新仍走后台签名包流程；直接 Compose 部署也不具备脚本的验签与身份检查。
+- 验证：本机 YAML 解析与 `git diff --check` 通过；Linux 测试机 Docker Compose v5.7.0 对两份 Compose 的 `config --quiet` 均通过，默认展开为 `ghcr.io/602star/zichan-sync:v0.5.6`，`ZICHAN_IMAGE` 覆盖时两项 1Panel 服务都展开为指定 digest。临时校验文件已清理。
+
 ## 2026-11-07 — 补齐可直接导入的 1Panel Compose
 
 - 生产 Compose 默认镜像改为已发布 v0.5.6 的固定 digest，避免直接导入时报缺少 `ZICHAN_IMAGE`；部署脚本仍要求显式验签摘要。另增 1Panel 单目录 Compose，把 `/opt/zichan/data` 一次绑定到 `/state`，内部区分服务状态、备份和更新目录，启动前一次性以 root 设好 UID 1000 权限，业务容器维持非 root；显式提供签名更新配置。

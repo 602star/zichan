@@ -14,13 +14,15 @@ sudo git clone --depth 1 https://github.com/602star/zichan.git /opt/zichan/sourc
 
 ## 1Panel 单目录 Compose（全新安装）
 
-[compose.1panel.yml](../../compose.1panel.yml) 固定使用 v0.5.6 的 SHA-256 镜像摘要；在 1Panel 新建 Compose 项目时可直接导入，无需另填 `ZICHAN_IMAGE`。该配置只有一个宿主机绑定目录：`/opt/zichan/data` 挂到容器 `/state`，内部再分为 `server`、`backups`、`runtime`。一次性 `prepare` 服务以 root 创建并授权这些子目录，业务服务仍以 UID 1000 运行；成功后 `prepare` 显示“已退出 (0)”属正常。首次运行可用 `docker compose -f compose.1panel.yml up -d --wait`。如需改宿主机目录，设置 `ZICHAN_DATA_DIR` 为另一个**专用的绝对路径**；不可指向包含源码或其他应用数据的共享目录。
+[compose.1panel.yml](../../compose.1panel.yml) 默认使用 `ghcr.io/602star/zichan-sync:v0.5.6`；在 1Panel 新建 Compose 项目时可直接导入，无需另填 `ZICHAN_IMAGE`。改基础镜像版本只需修改文件顶部的 `x-zichan-image`，两个服务会使用同一镜像。该配置只有一个宿主机绑定目录：`/opt/zichan/data` 挂到容器 `/state`，内部再分为 `server`、`backups`、`runtime`。一次性 `prepare` 服务以 root 创建并授权这些子目录，业务服务仍以 UID 1000 运行；成功后 `prepare` 显示“已退出 (0)”属正常。首次运行可用 `docker compose -f compose.1panel.yml up -d --wait`。如需改宿主机目录，设置 `ZICHAN_DATA_DIR` 为另一个**专用的绝对路径**；不可指向包含源码或其他应用数据的共享目录。
 
 该配置把端口 `8787` 映射到所有宿主机网卡，默认允许 HTTP，仅适合有防火墙保护的可信内网或由 1Panel HTTPS 代理接入。若只经同机反向代理访问，可设 `ZICHAN_BIND_IP=127.0.0.1` 后重建。`TRUSTED_PROXIES=private` 适配 Docker 网桥代理。`/state/runtime` 持久保存签名更新包，更新源、公钥、预更新备份均已配置；管理后台可检查正式版本。镜像内置只读发布 Token 的可读性仍取决于镜像是否来自正式发布工作流。
 
 **已有 1Panel 容器不要直接换成这个 Compose。** 先核对现有 `/state`、`/backups`、`/app/runtime` 的实际挂载和服务器身份，停服并完成可验证备份，再将旧 `/state/server` 的内容迁入 `/opt/zichan/data/server`，旧 `/backups` 内容迁入 `/opt/zichan/data/backups`，旧 `/app/runtime` 内容迁入 `/opt/zichan/data/runtime`，确认 UID 1000 可读写后才切换。尤其不能让旧 `/state/server` 被一个空目录替代，否则会创建新服务器身份。三个子目录共用一个宿主机目录，不能充当异机备份；重要数据仍需另行运送备份到独立存储。
 
-镜像构建时对 `/app/runtime` 的 `chown` 只作用于**镜像内目录**。1Panel 若在宿主机自动创建绑定目录，Docker 会用这个目录覆盖镜像里的路径，宿主机目录通常由 root 持有，UID 1000 因而无法创建 `releases`。单目录配置的 `prepare` 服务修复新安装时的这一权限差异；原有三目录部署的安装脚本则用 `install -o 1000 -g 1000` 在宿主机预创建目录。`compose.prod.yml` 也已固定 v0.5.6 摘要，但直接 `docker compose up` 会跳过部署脚本的验签、权限和服务器身份检查，应继续用脚本部署。
+镜像构建时对 `/app/runtime` 的 `chown` 只作用于**镜像内目录**。1Panel 若在宿主机自动创建绑定目录，Docker 会用这个目录覆盖镜像里的路径，宿主机目录通常由 root 持有，UID 1000 因而无法创建 `releases`。单目录配置的 `prepare` 服务修复新安装时的这一权限差异；原有三目录部署的安装脚本则用 `install -o 1000 -g 1000` 在宿主机预创建目录。`compose.prod.yml` 也默认指向 v0.5.6 标签；部署脚本会覆盖为验签后的 digest，直接 `docker compose up` 则会跳过验签、权限和服务器身份检查。
+
+镜像版本标签方便手工选择基础镜像，但标签可以被重新指向，无法像 digest 一样保证拉到完全相同的字节。更重要的是，已安装的程序位于持久化的 `/state/runtime/current`：**只改镜像标签并重建容器，不会覆盖这里的程序版本**。同一数据 schema 的日常升级应在管理后台安装签名更新包；更换基础镜像后可用 `docker compose -f compose.1panel.yml pull` 和 `docker compose -f compose.1panel.yml up -d --wait` 重建，并以 `/api/health` 核对实际运行版本。需要固定镜像及验签时用 `image-digest.txt` 和生产部署脚本。
 
 ## 开发与生产部署对照
 
