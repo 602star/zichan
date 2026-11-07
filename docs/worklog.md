@@ -2,6 +2,12 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-07 — 修正 1Panel 首次部署的绑定目录前置条件
+
+- 用户在 1Panel 导入 v0.5.7 单目录 Compose 后，Docker 创建 `prepare` 容器时因 `/opt/zichan/data` 不存在而拒绝绑定；容器内的建目录命令尚无机会运行。Compose 的两个绑定挂载均显式启用 `create_host_path`，同时部署文档要求先在 Docker 宿主机创建 UID 1000 持有的目录，以兼容 1Panel 的创建行为。
+- 已发布的 v0.5.7 镜像和标签不变；现有数据目录不得用新空目录替代。
+- 验证：本机 YAML 解析和 `git diff --check` 通过；Linux 测试机 Docker Compose v5.7.0 可解析修改后的完整文件。在隔离的临时路径中，`create_host_path: true` 让缺失的宿主机目录自动创建，测试容器退出码 0；测试容器、网络和临时文件已清理。1Panel 自身仍以用户提供的报错为依据，部署前需按文档显式创建目录。
+
 ## 2026-11-07 — v0.5.7 发布结果
 
 - `v0.5.7` 标签指向 `c3c2ad8`；统一发布流水线 [42341067148](https://github.com/602star/zichan/actions/runs/42341067148) 全部成功，正式 [Release](https://github.com/602star/zichan/releases/tag/v0.5.7) 已公开。17 个资产包含 Android ARM64 APK、Windows 便携 ZIP/MSI/NSIS EXE、Linux DEB/AppImage、签名服务更新包和镜像摘要。

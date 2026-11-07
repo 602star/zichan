@@ -1,4 +1,6 @@
 # New 1Panel installations: one host directory, /opt/zichan/data.
+# In 1Panel, create this host directory before importing the Compose file:
+# install -d -m 700 -o 1000 -g 1000 /opt/zichan/data
 # Change the base image version below when needed. Existing deployments must
 # migrate their state, backups, and runtime before switching to this layout.
 name: zichan-1panel
@@ -19,6 +21,8 @@ services:
       - type: bind
         source: ${ZICHAN_DATA_DIR:-/opt/zichan/data}
         target: /state
+        bind:
+          create_host_path: true
 
   sync-server:
     image: *zichan-image
@@ -50,6 +54,8 @@ services:
       - type: bind
         source: ${ZICHAN_DATA_DIR:-/opt/zichan/data}
         target: /state
+        bind:
+          create_host_path: true
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:8787/api/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
