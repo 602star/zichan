@@ -2,6 +2,11 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-07 — 准备 0.5.8 发布
+
+- 将 npm 工作区、锁文件、Tauri 配置、Cargo、安装模式标记及部署文件版本统一到 0.5.8；发布说明记录 1Panel 与命令行生产 Compose 合并、旧布局迁移要求和未签名 Windows 安装版。
+- 本地 `npm run release:check`、`npm run test:release`、`npm run build:server` 和 `npm run ci` 通过；完整 CI 中覆盖率测试 232 个文件通过、1477 项通过、1 项跳过。正式产物由 `v0.5.8` 标签触发的统一发布工作流生成并验收。
+
 ## 2026-11-07 — 合并生产与 1Panel Compose
 
 - 两份生产配置原先分别使用宿主机网络加三个绑定目录、桥接网络加一个绑定目录；统一为根目录 `compose.yml`，一个服务和 `/opt/zichan/data` 一个绑定目录。生产脚本仍按 Release digest 验签，显式使用 `zichan-prod` 项目名；1Panel 自行指定项目名。桥接网络下用 `ZICHAN_BIND_IP` 限制宿主机监听，旧的 `ZICHAN_HOST=127.0.0.1` 会被脚本拒绝。

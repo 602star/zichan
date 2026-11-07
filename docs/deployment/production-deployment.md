@@ -2,7 +2,7 @@
 
 Linux 命令行和 1Panel 共用仓库根目录的 [compose.yml](../../compose.yml)：一个 `sync-server` 容器、一个宿主机目录 `/opt/zichan/data`。目录下的 `server/` 保存数据库和服务器身份，`backups/` 保存本机备份，`runtime/` 保存已安装的签名更新包。开发环境仍使用 `apps/sync-server/docker-compose.yml`，从源码构建并使用测试卷。
 
-Compose 默认使用 `ghcr.io/602star/zichan-sync:v0.5.7`、桥接网络、宿主机 `8787` 端口和受防火墙保护的 HTTP。无顶层 `name`，1Panel 会使用面板填写的编排名；命令行生产脚本显式使用项目名 `zichan-prod`。直接导入 Compose 不会执行镜像验签和服务器身份检查；生产脚本会从 Release 读取 digest、验证 Cosign 签名、检查备份及身份，然后使用同一份 Compose。镜像仅支持 `linux/amd64`。
+Compose 默认使用 `ghcr.io/602star/zichan-sync:v0.5.8`、桥接网络、宿主机 `8787` 端口和受防火墙保护的 HTTP。无顶层 `name`，1Panel 会使用面板填写的编排名；命令行生产脚本显式使用项目名 `zichan-prod`。直接导入 Compose 不会执行镜像验签和服务器身份检查；生产脚本会从 Release 读取 digest、验证 Cosign 签名、检查备份及身份，然后使用同一份 Compose。镜像仅支持 `linux/amd64`。
 
 | 项目 | 开发环境 | Linux 命令行生产 | 1Panel 生产 |
 | --- | --- | --- | --- |
@@ -17,7 +17,7 @@ Compose 默认使用 `ghcr.io/602star/zichan-sync:v0.5.7`、桥接网络、宿�
 先安装 Docker Engine、Docker Compose v2、Cosign、Git 和 curl。若 GHCR 需要认证，使用具有 `read:packages` 权限的 Token 执行 `sudo docker login ghcr.io -u 602star`。仅在全新主机上运行：
 
 ```bash
-sudo git clone --depth 1 https://github.com/602star/zichan.git /opt/zichan/source && sudo bash /opt/zichan/source/scripts/production/install-docker.sh v0.5.7
+sudo git clone --depth 1 https://github.com/602star/zichan.git /opt/zichan/source && sudo bash /opt/zichan/source/scripts/production/install-docker.sh v0.5.8
 ```
 
 脚本拒绝已有数据和旧三目录布局，创建 UID 1000 拥有的 `/opt/zichan/data/{server,backups,runtime}`，验签镜像并等待服务健康。管理员首次设置地址为 `http://<内网IP>:8787/admin/`，用户端为根路径 `/`。
