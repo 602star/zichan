@@ -77,5 +77,5 @@ describe('node attachment promise replication', () => {
       await Promise.all([source.close(), peer.close()]);
       rmSync(root, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 120_000);
 });

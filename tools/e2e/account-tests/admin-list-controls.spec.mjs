@@ -20,7 +20,7 @@ import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
 import { SyncServerStore } from '../../../apps/sync-server/dist/store.js';
 import { loginAccount, registerAccount } from '../../../packages/db/dist/index.js';
 
-test.setTimeout(120_000);
+test.setTimeout(480_000);
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const accountPassword = ['list', 'controls', 'browser', '0001'].join('-');

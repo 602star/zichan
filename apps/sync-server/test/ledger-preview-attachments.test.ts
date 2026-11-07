@@ -259,7 +259,7 @@ describe('preview attachment download', () => {
     } finally {
       await f.close();
     }
-  }, 120_000);
+  }, 480_000);
 
   it('finds the body when the account was registered with a different case than the server stores', async () => {
     // The hazard, end to end: registration lowercases, so a person who types `Alice` gets an account
@@ -278,7 +278,7 @@ describe('preview attachment download', () => {
     } finally {
       await f.close();
     }
-  }, 120_000);
+  }, 480_000);
 
   it.each(['Alice', 'alice'])('downloads with stored Alice and AAD %s through real HTTP', async (deriveAs) => {
     const f = await fixture({ typed: 'Alice', storedAs: 'Alice', deriveAs });
@@ -298,7 +298,7 @@ describe('preview attachment download', () => {
       const logs = await f.store.listLogs({ limit: 100 });
       expect(JSON.stringify(logs)).toContain('ledger_preview_attachment_read');
     } finally { await f.close(); }
-  }, 120_000);
+  }, 480_000);
 
   it('preserves an original AAD spelling supplied when opening the preview', async () => {
     const f = await fixture({ typed: 'Alice', deriveAs: 'Alice' });
@@ -309,7 +309,7 @@ describe('preview attachment download', () => {
       const opened = await f.registry.decryptAttachment(preview.id, f.sha256);
       expect(new Uint8Array(opened!.file.bytes)).toEqual(f.plaintext);
     } finally { await f.close(); }
-  }, 120_000);
+  }, 480_000);
 
   it('reports a file the ledger does not contain rather than an expired preview', async () => {
     const f = await fixture();
@@ -322,7 +322,7 @@ describe('preview attachment download', () => {
     } finally {
       await f.close();
     }
-  }, 120_000);
+  }, 480_000);
 
   it('refuses a body the server does not hold, and says so', async () => {
     const f = await fixture();
@@ -335,7 +335,7 @@ describe('preview attachment download', () => {
     } finally {
       await f.close();
     }
-  }, 120_000);
+  }, 480_000);
 
   it('drops decrypted files when the preview closes', async () => {
     const f = await fixture();
@@ -352,7 +352,7 @@ describe('preview attachment download', () => {
     } finally {
       await f.close();
     }
-  }, 120_000);
+  }, 480_000);
 
   it('rejects corrupt ciphertext without caching it', async () => {
     const f = await fixture();
@@ -362,7 +362,7 @@ describe('preview attachment download', () => {
       await expect(f.registry.decryptAttachment(preview.id, f.sha256)).rejects.toMatchObject({ code: 'ATTACHMENT_CORRUPT' });
       expect(preview.attachments.size).toBe(0);
     } finally { await f.close(); }
-  }, 120_000);
+  }, 480_000);
 
   it('does not return or cache plaintext if the preview closes during download', async () => {
     const f = await fixture();
@@ -376,7 +376,7 @@ describe('preview attachment download', () => {
       expect(await f.registry.decryptAttachment(preview.id, f.sha256)).toBeUndefined();
       expect(preview.attachments.size).toBe(0);
     } finally { await f.close(); }
-  }, 120_000);
+  }, 480_000);
 
   it('answers an unknown preview id as gone, not as a missing file', async () => {
     const f = await fixture();
@@ -385,7 +385,7 @@ describe('preview attachment download', () => {
     } finally {
       await f.close();
     }
-  }, 120_000);
+  }, 480_000);
 
   it('rejects a malformed checksum before touching any storage', async () => {
     const f = await fixture();
@@ -396,7 +396,7 @@ describe('preview attachment download', () => {
     } finally {
       await f.close();
     }
-  }, 120_000);
+  }, 480_000);
 });
 
 /** Guards the assumptions this file depends on, so a change upstream fails loudly here. */

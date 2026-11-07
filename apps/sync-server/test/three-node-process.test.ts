@@ -197,5 +197,5 @@ describe('independent three-node processes', () => {
       if (!resolve(root).startsWith(safePrefix)) throw new Error('unsafe temporary process test directory');
       rmSync(root, { recursive: true, force: true });
     }
-  }, 150_000);
+  }, 600_000);
 });

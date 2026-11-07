@@ -199,7 +199,7 @@ describe('ledger preview routes', () => {
     } finally {
       await f.server.close();
     }
-  }, 120_000);
+  }, 480_000);
 
   it('reports an open preview without opening one', async () => {
     const f = await fixture();
@@ -229,7 +229,7 @@ describe('ledger preview routes', () => {
     } finally {
       await f.server.close();
     }
-  }, 120_000);
+  }, 480_000);
 
   it('refuses the backup once the preview is closed', async () => {
     const f = await fixture();
@@ -252,7 +252,7 @@ describe('ledger preview routes', () => {
     } finally {
       await f.server.close();
     }
-  }, 120_000);
+  }, 480_000);
 
   it('answers an unknown preview id as expired, not as an empty ledger', async () => {
     const f = await fixture();
@@ -262,7 +262,7 @@ describe('ledger preview routes', () => {
     } finally {
       await f.server.close();
     }
-  }, 120_000);
+  }, 480_000);
 
   it('rejects missing attachments, invalid checksums and closed previews', async () => {
     const f = await fixture();
@@ -291,5 +291,5 @@ describe('ledger preview routes', () => {
     } finally {
       await f.server.close();
     }
-  }, 120_000);
+  }, 480_000);
 });

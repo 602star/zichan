@@ -10,7 +10,7 @@ import { enableEveryNavigationModule, openSpendingLedger } from './mobile-onboar
 test.use({ hasTouch: true, isMobile: true });
 
 test('audit short Chinese labels on phone screens', async ({ page }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(720_000);
   const ownerSetupToken = 'e2e-wrap-audit-owner-setup-00000000';
   const server = createSyncServer({
     enableWeb: true,

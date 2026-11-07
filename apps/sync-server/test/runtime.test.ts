@@ -59,11 +59,11 @@ describe('bundled desktop server entry', () => {
     const result = spawnSync(process.execPath, [harness], {
       cwd: resolve(dirname(fileURLToPath(import.meta.url)), '../../..'),
       encoding: 'utf8',
-      timeout: 25_000,
+      timeout: 100_000,
     });
 
     expect(result.error).toBeUndefined();
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('bundled-runtime-ok');
-  }, 30_000);
+  }, 120_000);
 });

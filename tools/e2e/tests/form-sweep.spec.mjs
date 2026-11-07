@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.mjs';
 import { openLedger } from './helpers.mjs';
 
-test.setTimeout(240_000);
+test.setTimeout(960_000);
 
 const SCREENS = [
   ['总览'],

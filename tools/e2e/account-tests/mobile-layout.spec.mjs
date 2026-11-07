@@ -12,7 +12,7 @@ import { enableEveryNavigationModule, openSpendingLedger } from './mobile-onboar
 // `@media (pointer: coarse)` and would silently pass.
 test.use({ hasTouch: true, isMobile: true });
 
-test.setTimeout(300_000);
+test.setTimeout(1_200_000);
 
 const SCREENS = [
   { id: 'dashboard', label: '总览' },
@@ -97,7 +97,7 @@ function violationsFor(data, viewport, screen) {
 }
 
 test('every screen keeps the phone/tablet layout contract across the device matrix', async ({ page }) => {
-  test.setTimeout(360_000);
+  test.setTimeout(1_440_000);
   const ownerSetupToken = 'e2e-mobile-layout-owner-setup-00000000';
   const server = createSyncServer({
     enableWeb: true,

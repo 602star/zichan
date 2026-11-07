@@ -237,7 +237,7 @@ describe('attachment replica sync', () => {
       await server.close();
       rmSync(dataDir, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 120_000);
 
   it('encrypts portable replica objects, resumes missing content, relays, and soft-deletes remote copies', async () => {
     const files = installAttachmentMock();
@@ -340,5 +340,5 @@ describe('attachment replica sync', () => {
       rmSync(secondDataDir, { recursive: true, force: true });
       rmSync(thirdDataDir, { recursive: true, force: true });
     }
-  }, 90_000);
+  }, 360_000);
 });

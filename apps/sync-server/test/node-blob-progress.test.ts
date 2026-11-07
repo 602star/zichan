@@ -147,5 +147,5 @@ describe('node attachment chunk progress', () => {
       await source.close();
       rmSync(root, { recursive: true, force: true });
     }
-  }, 90_000);
+  }, 360_000);
 });

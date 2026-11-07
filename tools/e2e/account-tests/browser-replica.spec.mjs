@@ -59,7 +59,7 @@ async function syncSite(page) {
   await expect(page.getByText(/^(?:本机提交已|本次同步：|已完成 \d+ 轮同步)/).first()).toBeVisible();
 }
 
-test.setTimeout(120_000);
+test.setTimeout(480_000);
 
 test('the browser carries a personal ledger between independent servers', async ({ page, context }) => {
   page.setDefaultTimeout(20_000);

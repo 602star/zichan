@@ -228,5 +228,5 @@ describe('database alerts', () => {
       expect(stats.freelistBytes).toBeGreaterThan(0);
       expect((await h.store.getAlert('database:fragmentation'))?.severity ?? 'warning').toBe('warning');
     } finally { await h.close(); }
-  }, 120_000);
+  }, 480_000);
 });

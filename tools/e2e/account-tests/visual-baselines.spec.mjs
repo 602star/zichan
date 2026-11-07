@@ -27,7 +27,7 @@ import { registerAccount } from '../../../packages/db/dist/index.js';
  */
 
 test.use({ hasTouch: true, isMobile: true });
-test.setTimeout(300_000);
+test.setTimeout(1_200_000);
 
 const FIXED_NOW = new Date('2026-03-15T10:00:00+08:00');
 

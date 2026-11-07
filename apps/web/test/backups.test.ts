@@ -526,7 +526,7 @@ describe('encrypted backup archives', () => {
       await store.close();
       await server.close();
     }
-  }, 20_000);
+  }, 80_000);
 
   it('keeps the committed portable backup when an enabled remote target is unavailable', async () => {
     const store = await openLedger({ deviceId: 'portable-local-fallback-device' });

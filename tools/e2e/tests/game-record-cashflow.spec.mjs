@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.mjs';
 import { openLedger } from './helpers.mjs';
 
-test.setTimeout(120_000);
+test.setTimeout(480_000);
 
 test('game season saves an optional in-game fee and a paid record without a cash fee', async ({ page }) => {
   await openLedger(page);

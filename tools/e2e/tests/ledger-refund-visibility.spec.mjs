@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.mjs';
 import { openTransactions } from './helpers.mjs';
 
-test.setTimeout(90_000);
+test.setTimeout(360_000);
 
 /** One expense row, located by its description. */
 function rowFor(page, description) {

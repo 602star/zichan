@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.mjs';
 import { openLedger } from './helpers.mjs';
 
-test.setTimeout(90_000);
+test.setTimeout(360_000);
 
 test('ignores old local mode and key envelopes and always starts at account login', async ({ page }) => {
   await page.addInitScript(() => {

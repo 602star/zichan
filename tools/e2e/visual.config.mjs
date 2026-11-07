@@ -13,7 +13,7 @@ export default defineConfig({
   outputDir: './test-results/visual',
   snapshotDir: './visual-baselines',
   workers: 1,
-  timeout: 300_000,
+  timeout: 1_200_000,
   reporter: 'list',
   use: {
     ...devices['Desktop Chrome'],

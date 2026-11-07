@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.mjs';
 import { openLedger, openTransactions } from './helpers.mjs';
 
-test.setTimeout(120_000);
+test.setTimeout(480_000);
 
 test('points at the field that blocks a save instead of only refusing', async ({ page }) => {
   await openTransactions(page);

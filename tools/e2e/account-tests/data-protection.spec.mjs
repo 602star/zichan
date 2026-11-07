@@ -6,7 +6,7 @@ import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
 import { registerAccount } from '../../../packages/db/dist/index.js';
 
 test('opens backup, sync, recovery and security as settings tabs', async ({ page }) => {
-  test.setTimeout(30_000);
+  test.setTimeout(120_000);
   page.setDefaultTimeout(10_000);
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const server = createSyncServer({

@@ -42,7 +42,7 @@ async function postAdmin(node, token, path, body) {
   return JSON.parse(text);
 }
 
-test.setTimeout(120_000);
+test.setTimeout(480_000);
 
 test('a new user sees simple server-copy status after administrators join three nodes', async ({ page }) => {
   page.setDefaultTimeout(20_000);

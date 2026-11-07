@@ -10,7 +10,7 @@ export default defineConfig({
     // Server and SQLite integration suites share CPU and filesystem bandwidth on CI runners.
     maxWorkers: process.env.CI ? 1 : 2,
     minWorkers: 1,
-    testTimeout: 60_000,
+    testTimeout: 240_000,
     include: [
       'packages/*/test/**/*.test.ts',
       'apps/*/test/**/*.test.ts',

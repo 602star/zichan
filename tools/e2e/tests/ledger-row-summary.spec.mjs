@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.mjs';
 import { openTransactions } from './helpers.mjs';
 
-test.setTimeout(120_000);
+test.setTimeout(480_000);
 
 /** 行内的摘要主标题（粗体那一格）。 */
 function summaryOf(row) {

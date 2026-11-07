@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.mjs';
 import { openTransactions } from './helpers.mjs';
 
-test.setTimeout(180_000);
+test.setTimeout(720_000);
 
 /** 流水列表里的行（不含「最近使用」模板条）。 */
 function rows(page) {

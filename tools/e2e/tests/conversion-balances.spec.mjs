@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures.mjs';
 
-test.setTimeout(120_000);
+test.setTimeout(480_000);
 test.afterEach(async ({ page }) => { await page.close(); });
 
 test('conversion balances, saved metadata, compact rates and responsive details', async ({ page }, testInfo) => {

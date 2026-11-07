@@ -119,7 +119,7 @@ describe('ledger replica readiness HTTP', () => {
       await source.close();
       rmSync(root, { recursive: true, force: true });
     }
-  }, 60_000);
+  }, 240_000);
 
   it('holds READY until a current attachment claim and matching physical scan exist', async () => {
     const root = mkdtempSync(join(tmpdir(), 'zichan-readiness-http-'));

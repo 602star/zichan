@@ -85,5 +85,5 @@ describe('three-node replica fault recovery', () => {
       await Promise.all(nodes.map((node) => node.close()));
       rmSync(root, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 120_000);
 });

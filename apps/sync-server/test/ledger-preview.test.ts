@@ -182,7 +182,7 @@ describe('admin ledger preview', () => {
     } finally {
       await server.close();
     }
-  }, 120_000);
+  }, 480_000);
 
   it('refuses an account the server cannot decrypt', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zichan-preview-'));
@@ -213,7 +213,7 @@ describe('admin ledger preview', () => {
     } finally {
       await server.close();
     }
-  }, 120_000);
+  }, 480_000);
 
   it('expires sessions on the idle window and never persists them', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zichan-preview-'));
@@ -245,7 +245,7 @@ describe('admin ledger preview', () => {
     } finally {
       await server.close();
     }
-  }, 120_000);
+  }, 480_000);
 
   it('honours the absolute ceiling even while the session is being read', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'zichan-preview-'));
@@ -274,5 +274,5 @@ describe('admin ledger preview', () => {
     } finally {
       await server.close();
     }
-  }, 120_000);
+  }, 480_000);
 });

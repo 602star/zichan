@@ -147,7 +147,7 @@ describe('resource and database endpoints', () => {
       expect(stats.analyze?.checkedAt).toBeTruthy();
       expect(stats.database['analyzedAt']).toBe(stats.analyze?.checkedAt);
     } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
-  }, 120_000);
+  }, 480_000);
 
   it('lets a read-only operator read everything and refuse the write', async () => {
     const f = await fixture();

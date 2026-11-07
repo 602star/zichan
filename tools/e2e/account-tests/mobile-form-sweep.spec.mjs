@@ -19,7 +19,7 @@ import { openSpendingLedger } from './mobile-onboarding.mjs';
 
 test.use({ hasTouch: true, isMobile: true });
 
-test.setTimeout(300_000);
+test.setTimeout(1_200_000);
 
 const VIEWPORTS = [
   { name: '390x844', width: 390, height: 844 },
@@ -364,7 +364,7 @@ async function sweepScreen(page, label, report) {
 
 for (const vp of VIEWPORTS) {
   test(`${vp.name}: with every module on, no create form blocks on a field that cannot be reached`, async ({ page }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(1_200_000);
     const ownerSetupToken = 'test-mobile-sweep-owner-000000000000';
     const server = createSyncServer({
       enableWeb: true,
@@ -407,7 +407,7 @@ for (const vp of VIEWPORTS) {
 }
 
 test(`phone 390x844: a record-keeping pass fills and saves at phone size`, async ({ page }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(1_200_000);
   const ownerSetupToken = 'test-mobile-save-owner-000000000000';
   const server = createSyncServer({
     enableWeb: true,

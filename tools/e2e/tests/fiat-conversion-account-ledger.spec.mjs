@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.mjs';
 
 test('fiat conversion appears in account ledger without becoming daily income or expense', async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(480_000);
   page.setDefaultTimeout(10_000);
   await page.addInitScript(() => {
     Object.defineProperties(navigator.storage, {

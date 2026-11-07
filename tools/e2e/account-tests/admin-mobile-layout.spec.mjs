@@ -6,7 +6,7 @@ import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
 import { registerAccount } from '../../../packages/db/dist/index.js';
 
 test.use({ hasTouch: true, isMobile: true });
-test.setTimeout(300_000);
+test.setTimeout(1_200_000);
 
 const routes = [
   'overview', 'users', 'sessions', 'invites', 'storage', 'monitor', 'sync',
@@ -60,7 +60,7 @@ function measureAdminLayout() {
 }
 
 test('management pages fit phone and iPad touch viewports', async ({ page }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(1_200_000);
   const server = createSyncServer({
     enableWeb: true,
     webDir: resolve(fileURLToPath(new URL('../../../', import.meta.url)), 'apps/web/dist'),

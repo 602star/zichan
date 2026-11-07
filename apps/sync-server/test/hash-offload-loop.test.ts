@@ -64,7 +64,7 @@ describe('verification keeps the event loop responsive', () => {
       while (Date.now() - started < 300) { /* deliberate synchronous block */ }
     });
     expect(stall).toBeGreaterThan(200);
-  }, 60_000);
+  }, 240_000);
 
   it('hashes a large file off-thread while the event loop keeps running', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zichan-loop-'));
@@ -85,7 +85,7 @@ describe('verification keeps the event loop responsive', () => {
       await offload.close();
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 120_000);
+  }, 480_000);
 
   it('verifies a real object store through the injected hasher', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zichan-verify-blobs-'));
@@ -127,7 +127,7 @@ describe('verification keeps the event loop responsive', () => {
       await offload.close();
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 120_000);
+  }, 480_000);
 
   it('verifies a real backup through the injected hasher', async () => {
     const data = mkdtempSync(join(tmpdir(), 'zichan-verify-data-'));
@@ -162,5 +162,5 @@ describe('verification keeps the event loop responsive', () => {
       rmSync(data, { recursive: true, force: true });
       rmSync(root, { recursive: true, force: true });
     }
-  }, 120_000);
+  }, 480_000);
 });

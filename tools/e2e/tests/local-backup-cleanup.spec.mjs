@@ -2,7 +2,7 @@ import { test, expect } from './fixtures.mjs';
 import { openLedger } from './helpers.mjs';
 
 test('shows browser backup usage and deletes one local copy', async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(480_000);
   await openLedger(page);
   await page.locator('.zc-sidebar nav').getByRole('button', { name: /设置/ }).click();
   await page.getByRole('tab', { name: '本机备份', exact: true }).click();

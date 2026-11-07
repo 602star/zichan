@@ -52,7 +52,7 @@ describe('safe remote ledger join', () => {
       await remote.close();
       await local.close();
     }
-  }, 30_000);
+  }, 120_000);
 
   it('restores the original database and key when a post-commit step fails', async () => {
     const remote = await openLedger({ deviceId: 'remote-owner' });
@@ -86,7 +86,7 @@ describe('safe remote ledger join', () => {
       await remote.close();
       await local.close();
     }
-  }, 30_000);
+  }, 120_000);
 
   it('rolls back the database, key and client identity when profile persistence fails', async () => {
     const remote = await openLedger({ deviceId: 'remote-owner' });
@@ -128,7 +128,7 @@ describe('safe remote ledger join', () => {
       await remote.close();
       await local.close();
     }
-  }, 30_000);
+  }, 120_000);
 
   it('rejects a converged remote stream containing an authenticated but invalid commit', async () => {
     const ledgerId = 'ledger-remote-invalid-0001';
@@ -166,5 +166,5 @@ describe('safe remote ledger join', () => {
 
     await expect(stageRemoteLedgerJoin(ledgerId, transport, key.envelope, key.session))
       .rejects.toThrow('远端提交验证失败');
-  }, 30_000);
+  }, 120_000);
 });

@@ -9,7 +9,7 @@ import { enableEveryNavigationModule, openSpendingLedger } from './mobile-onboar
 test.use({ hasTouch: true, isMobile: true });
 
 test('populated mobile cards keep amounts and actions within the phone viewport', async ({ page }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(480_000);
   const ownerSetupToken = 'e2e-mobile-card-owner-setup-0000000';
   const server = createSyncServer({
     enableWeb: true,

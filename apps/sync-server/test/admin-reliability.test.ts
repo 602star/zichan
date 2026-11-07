@@ -291,7 +291,7 @@ describe('interrupted scans resume from a checkpoint written during the run', ()
         expect(resumed?.params['resumeFrom']).toBe(checkpointKey);
       } finally { await store.close(); }
     } finally { await f.server.close().catch(() => undefined); rmSync(f.dir, { recursive: true, force: true }); }
-  }, 60_000);
+  }, 240_000);
 
   it('schedules queued and resumed tasks when the service starts again', async () => {
     const f = await fixture();

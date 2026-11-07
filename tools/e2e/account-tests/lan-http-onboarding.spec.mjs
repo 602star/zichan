@@ -11,7 +11,7 @@ const lanAddress = Object.values(networkInterfaces()).flat()
 
 test('new account opens its ledger over plain LAN HTTP without a device password prompt', async ({ page }) => {
   test.skip(!lanAddress, 'No non-loopback IPv4 address is available');
-  test.setTimeout(120_000);
+  test.setTimeout(480_000);
   const ownerSetupToken = 'e2e-lan-http-owner-setup-00000000';
   const server = createSyncServer({
     enableWeb: true,

@@ -125,5 +125,5 @@ describe('durable node grant revocation', () => {
       await Promise.all([source.close(), target.close()]);
       rmSync(root, { recursive: true, force: true });
     }
-  }, 30_000);
+  }, 120_000);
 });

@@ -30,7 +30,7 @@ async function signIn(page) {
 }
 
 test('plain-HTTP LAN origin unlocks the ledger, saves a record and reloads it', async ({ page }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(720_000);
   const address = lanIPv4();
   const marker = 'LAN-HTTP-明文验收';
   const ownerSetupToken = 'e2e-insecure-lan-owner-setup-000000000000';

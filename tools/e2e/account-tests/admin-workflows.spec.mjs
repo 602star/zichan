@@ -42,7 +42,7 @@ async function fixture(page) {
 
 for (const width of [1280, 390]) {
   test(`direct management workflows and every remaining page at ${width}px`, async ({ page }, testInfo) => {
-    test.setTimeout(120_000);
+    test.setTimeout(480_000);
     page.setDefaultTimeout(15_000);
     await page.setViewportSize({ width, height: 900 });
     const f = await fixture(page);

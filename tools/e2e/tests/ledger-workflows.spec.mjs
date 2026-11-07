@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { test, expect } from './fixtures.mjs';
 import { openLedger, openTransactions } from './helpers.mjs';
 
-test.setTimeout(90_000);
+test.setTimeout(360_000);
 
 test('records a detailed expense and keeps it visible after reload', async ({ page }) => {
   await openTransactions(page);

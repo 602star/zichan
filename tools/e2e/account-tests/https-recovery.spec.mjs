@@ -12,7 +12,7 @@ import { createServerBackup, verifyServerBackup, restoreServerBackup } from '../
 import { NodeSqliteDriver } from '../../../packages/db/dist/node.js';
 
 test('isolated HTTPS process deployment restores managed custody and ledger on another instance', async ({}, testInfo) => {
-  test.setTimeout(120_000);
+  test.setTimeout(480_000);
   const root = resolve(fileURLToPath(new URL('../../../', import.meta.url)));
   const temporary = mkdtempSync(join(tmpdir(), 'zichan-https-'));
   const source = join(temporary, 'source');

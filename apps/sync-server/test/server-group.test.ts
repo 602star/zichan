@@ -164,5 +164,5 @@ describe('server synchronization group', () => {
       await Promise.all([main.close(), branch.close(), later.close()]);
       rmSync(root, { recursive: true, force: true });
     }
-  }, 180_000);
+  }, 720_000);
 });

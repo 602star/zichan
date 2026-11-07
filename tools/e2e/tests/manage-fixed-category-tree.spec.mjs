@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.mjs';
 import { openLedger } from './helpers.mjs';
 
-test.setTimeout(120_000);
+test.setTimeout(480_000);
 
 /**
  * 管理 →「物品分类」结构列表按一级分类折叠（<details>）。

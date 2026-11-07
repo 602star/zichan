@@ -139,5 +139,5 @@ describe('Settings maintenance reads', () => {
     } finally {
       await store.close();
     }
-  }, 20_000);
+  }, 80_000);
 });

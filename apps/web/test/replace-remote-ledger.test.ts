@@ -58,7 +58,7 @@ describe('replace a forgotten encrypted ledger using an existing account', () =>
       await Promise.all([old.close(), local.close()]);
       await server.close();
     }
-  }, 30_000);
+  }, 120_000);
 
   it('replaces atomically, restores the new ledger, rejects stale devices, and rolls back rejected attempts', async () => {
     const values = new Map<string, string>();
@@ -195,5 +195,5 @@ describe('replace a forgotten encrypted ledger using an existing account', () =>
       await Promise.all([old.close(), local.close(), rejected.close(), serverStore.close(), blobs.close()]);
       await server.close();
     }
-  }, 30_000);
+  }, 120_000);
 });

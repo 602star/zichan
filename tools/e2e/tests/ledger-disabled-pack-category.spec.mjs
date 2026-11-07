@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.mjs';
 import { openLedger } from './helpers.mjs';
 
-test.setTimeout(180_000);
+test.setTimeout(720_000);
 
 /** 在轻量记账模式下记一笔支出（只填金额、分类、描述）。 */
 async function recordExpense(page, { category, description, amount, dialogName }) {

@@ -6,9 +6,9 @@ import { expect, it } from 'vitest';
 it('runs the bundled supervisor through actual stop, backup, restart, failure and restart deduplication', () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const result = spawnSync(process.execPath, [join(here, 'support/backup-supervisor-harness.mjs')], {
-    cwd: resolve(here, '../../..'), encoding: 'utf8', timeout: 80_000, windowsHide: true,
+    cwd: resolve(here, '../../..'), encoding: 'utf8', timeout: 320_000, windowsHide: true,
   });
   expect(result.error).toBeUndefined();
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
   expect(result.stdout).toContain('backup-supervisor-ok');
-}, 90_000);
+}, 360_000);

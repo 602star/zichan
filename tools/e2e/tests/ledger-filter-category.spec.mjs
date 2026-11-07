@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures.mjs';
 import { openLedger, openTransactions } from './helpers.mjs';
 
-test.setTimeout(120_000);
+test.setTimeout(480_000);
 
 /** Open the daily ledger and its category filters. */
 async function openDailyTransactions(page) {

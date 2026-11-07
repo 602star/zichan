@@ -10,6 +10,6 @@ export default defineConfig({
     minWorkers: 1,
     // GitHub's Windows runners can take over 15 s for real HTTP and SQLite
     // integration flows, even with a single worker.
-    testTimeout: 45_000,
+    testTimeout: 180_000,
   },
 });

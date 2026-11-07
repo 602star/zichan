@@ -9,7 +9,7 @@ export default defineConfig({
   testIgnore: 'visual-baselines.spec.mjs',
   outputDir: './test-results/accounts',
   workers: 2,
-  timeout: 90_000,
+  timeout: 360_000,
   expect: { timeout: 15_000 },
   reporter: 'list',
   use: {

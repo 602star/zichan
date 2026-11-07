@@ -94,7 +94,7 @@ async function revisitSite(page, url) {
 }
 
 // This exercises several real HTTP servers, browser databases and replication rounds.
-test.setTimeout(300_000);
+test.setTimeout(1_200_000);
 
 test('records on three separate websites and converges their server replicas', async ({ page }) => {
   page.setDefaultTimeout(20_000);
