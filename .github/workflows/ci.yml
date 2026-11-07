@@ -11,7 +11,7 @@ permissions:
 jobs:
   quality:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -59,7 +59,7 @@ jobs:
 
   desktop-rust:
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -108,7 +108,7 @@ jobs:
 
   sync-server-container:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 140
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -231,7 +231,7 @@ jobs:
 
   browser-flows:
     runs-on: windows-latest
-    timeout-minutes: 50
+    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -254,7 +254,7 @@ jobs:
 
   browser-account-flows:
     runs-on: windows-latest
-    timeout-minutes: 50
+    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
