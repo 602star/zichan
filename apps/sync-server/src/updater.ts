@@ -228,7 +228,7 @@ export function createUpdater(currentVersion: string, dataDir: string) {
       if (!completed) return { enabled, status };
       if (status.state !== 'idle') return { enabled, status, available: status.state === 'available' };
       return { enabled, available: false, status: completed };
-    } catch { return { enabled, status, available: false }; }
+    } catch { return { enabled, status, available: status.state === 'available' }; }
   };
   const versions = async () => {
     if (!enabled || !runtime) return { installed: [], published: [] };

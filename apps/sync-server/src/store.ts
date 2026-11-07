@@ -154,6 +154,10 @@ export interface OpaqueLoginState {
   usedAt?: string;
 }
 
+export type OpaqueLoginConsumeResult =
+  | { state: OpaqueLoginState; reason?: never }
+  | { state?: never; reason: 'missing' | 'already_used' | 'ip_changed' | 'expired' | 'raced' };
+
 export interface SyncSession {
   id: string;
   username: string;
@@ -2333,22 +2337,24 @@ END;`);
     return loginState;
   }
 
-  async consumeOpaqueLoginState(id: string, ip: string): Promise<OpaqueLoginState | undefined> {
+  async consumeOpaqueLoginState(id: string, ip: string): Promise<OpaqueLoginConsumeResult> {
     await this.ready;
     return this.driver.transaction(async (driver) => {
       const row = await driver.get<Record<string, unknown>>(
         'SELECT * FROM sync_opaque_login_states WHERE login_id = ?',
         [id],
       );
-      if (!row) return undefined;
+      if (!row) return { reason: 'missing' };
       const loginState = opaqueLoginStateFromRow(row);
       const usedAt = nowIso();
-      if (loginState.usedAt || loginState.ip !== ip || loginState.expiresAt <= usedAt) return undefined;
+      if (loginState.usedAt) return { reason: 'already_used' };
+      if (loginState.expiresAt <= usedAt) return { reason: 'expired' };
+      if (loginState.ip !== ip) return { reason: 'ip_changed' };
       const result = await driver.run(
         'UPDATE sync_opaque_login_states SET used_at = ? WHERE login_id = ? AND used_at IS NULL',
         [usedAt, id],
       );
-      return result.changes === 1 ? loginState : undefined;
+      return result.changes === 1 ? { state: loginState } : { reason: 'raced' };
     });
   }
 

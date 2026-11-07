@@ -1972,11 +1972,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         // every factor has been proven.
         void browserSession.requested(req);
         const { loginId, finishLoginRequest, deviceId, deviceName } = await readBody(req, AUTH_BODY_BYTES);
-        const loginState = typeof loginId === 'string'
+        const consumed = typeof loginId === 'string'
           ? await store.consumeOpaqueLoginState(loginId, ip)
-          : undefined;
+          : { state: undefined, reason: 'invalid_state_id' as const };
+        const loginState = consumed.state;
         const user = loginState ? await store.getUser(loginState.username) : undefined;
         let authenticated = false;
+        let failureReason: string = consumed.reason ?? 'invalid_proof';
         if (loginState && typeof finishLoginRequest === 'string' && finishLoginRequest.length <= AUTH_BODY_BYTES) {
           try {
             const stored = JSON.parse(loginState.serverLoginState) as {
@@ -1989,6 +1991,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
               && !credential.disabled ? credential.registrationRecord
               : stored.federated ? undefined : user?.opaqueRegistrationRecord;
             if (!user || !currentRecord || stored.credentialHash !== createHash('sha256').update(currentRecord).digest('hex')) {
+              failureReason = 'credentials_changed';
               throw new Error('credentials changed');
             }
             opaque.server.finishLogin({
@@ -2001,9 +2004,12 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           } catch {
             authenticated = false;
           }
+        } else if (loginState) {
+          failureReason = 'invalid_finish_request';
         }
         if (!authenticated || !user) {
-          await log('warn', 'login_failed', 'Login failed', { ip, username: loginState?.username, status: 401 });
+          await log('warn', 'login_failed', 'Login failed', { ip, username: loginState?.username,
+            status: 401, detail: { reason: failureReason } });
           return send(res, 401, { error: 'invalid credentials' });
         }
         if (user.disabled) {

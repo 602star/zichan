@@ -1,9 +1,9 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { compareVersions, parseFeed, parseRelease, reconcileLauncherResult, signedFeedText } from '../src/updater.js';
+import { compareVersions, createUpdater, parseFeed, parseRelease, reconcileLauncherResult, signedFeedText } from '../src/updater.js';
 
 const { privateKey, publicKey } = generateKeyPairSync('ed25519');
 const publicPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
@@ -26,6 +26,34 @@ const feed = {
 };
 
 describe('signed stable self updates', () => {
+  it('keeps an available update enabled while status polls before the first launcher result', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'zichan-update-status-'));
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const names = ['UPDATE_FEED_DIR', 'UPDATE_FEED_URL', 'UPDATE_GITHUB_REPO',
+      'UPDATE_PUBLIC_KEY_PATH', 'ZICHAN_UPDATE_RUNTIME_DIR', 'ZICHAN_UPDATE_LAUNCHER'] as const;
+    const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+    try {
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+      for (const name of names) delete process.env[name];
+      process.env.UPDATE_FEED_DIR = directory;
+      process.env.UPDATE_PUBLIC_KEY_PATH = join(directory, 'public.pem');
+      process.env.ZICHAN_UPDATE_RUNTIME_DIR = directory;
+      process.env.ZICHAN_UPDATE_LAUNCHER = '1';
+      await writeFile(process.env.UPDATE_PUBLIC_KEY_PATH, publicPem);
+      await writeFile(join(directory, 'latest.json'), JSON.stringify(feed));
+      const updater = createUpdater('0.3.1', directory);
+      expect(await updater.check()).toMatchObject({ available: true, status: { state: 'available' } });
+      expect(await updater.status()).toMatchObject({ available: true, status: { state: 'available' } });
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+      for (const name of names) {
+        const value = previous[name];
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it('records a legacy launcher result without a prior history entry', async () => {
     const runtime = await mkdtemp(join(tmpdir(), 'zichan-update-history-'));
     try {

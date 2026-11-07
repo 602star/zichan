@@ -307,6 +307,13 @@ describe('sync-server endpoints', () => {
     const login = await post2(url, '/api/auth/login/finish', loginBody);
     expect(login.status).toBe(200);
     expect((await post2(url, '/api/auth/login/finish', loginBody)).status).toBe(401);
+    const logDriver = new NodeSqliteDriver(join(sv.dataDir, 'server.sqlite'));
+    try {
+      const failure = await logDriver.get<{ detail_json: string }>(
+        "SELECT detail_json FROM server_logs WHERE action = 'login_failed' AND ip IS NOT NULL ORDER BY at DESC, id DESC LIMIT 1",
+      );
+      expect(JSON.parse(failure!.detail_json)).toMatchObject({ reason: 'already_used' });
+    } finally { await logDriver.close(); }
     const first = await login.json() as { accessToken: string; refreshToken: string; session: { id: string } };
 
     const refreshedResponse = await post2(url, '/api/auth/refresh', { refreshToken: first.refreshToken });
@@ -493,6 +500,23 @@ describe('sync-server endpoints', () => {
     } finally {
       await s?.close();
       rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it('distinguishes an IP change from an expired or reused one-time login state', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zichan-login-state-'));
+    const store = new SyncServerStore(join(dir, 'server.sqlite'), 'open', 'srv-login-state');
+    try {
+      await store.ready;
+      const state = await store.createOpaqueLoginState('owner', 'opaque-state', '203.0.113.10',
+        new Date(Date.now() + 60_000).toISOString());
+      expect(await store.consumeOpaqueLoginState(state.id, '203.0.113.11')).toMatchObject({ reason: 'ip_changed' });
+      expect(await store.consumeOpaqueLoginState(state.id, '203.0.113.10')).toMatchObject({ state: { id: state.id } });
+      expect(await store.consumeOpaqueLoginState(state.id, '203.0.113.10')).toMatchObject({ reason: 'already_used' });
+      expect(await store.consumeOpaqueLoginState('missing', '203.0.113.10')).toMatchObject({ reason: 'missing' });
+    } finally {
+      await store.close();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 

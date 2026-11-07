@@ -45,7 +45,10 @@ const waitForJob = async (f: Awaited<ReturnType<typeof fixture>>, jobId: string)
 describe('management console operations', () => {
   it('gates signed updates to the owner and reports unsupported deployments', async () => {
     const f = await fixture();
+    const db = new NodeSqliteDriver(join(f.server.dataDir, 'server.sqlite'));
     try {
+      await db.run('UPDATE sync_sessions SET created_at = ? WHERE session_id = ?',
+        [new Date(Date.now() - 6 * 60_000).toISOString(), f.owner.session.id]);
       const status = await f.api(f.owner.accessToken, '/updates/status');
       expect(status.status).toBe(200);
       expect(await status.json()).toMatchObject({ enabled: false, status: { state: 'idle' } });
@@ -54,7 +57,10 @@ describe('management console operations', () => {
       const unsupported = await f.api(f.owner.accessToken, '/updates/apply', { version: '0.3.2' });
       expect(unsupported.status).toBe(409);
       expect(await unsupported.json()).toMatchObject({ code: 'UPDATE_DISABLED' });
-    } finally { await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
+      const rollback = await f.api(f.owner.accessToken, '/updates/rollback', { version: '0.3.1' });
+      expect(rollback.status).toBe(409);
+      expect(await rollback.json()).toMatchObject({ code: 'UPDATE_DISABLED' });
+    } finally { await db.close(); await f.server.close(); rmSync(f.dir, { recursive: true, force: true }); }
   });
 
   it('rejects malformed and oversized attachment verification requests without creating a scan', async () => {

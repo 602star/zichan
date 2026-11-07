@@ -360,7 +360,6 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     }
     if (suffix === '/updates/apply' && req.method === 'POST') {
       if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '只有服务器所有者可以更新服务' });
-      await assertRecentLogin();
       if (!updater.enabled) return send(res, 409, { code: 'UPDATE_DISABLED', error: '此部署未启用自更新' });
       const body = await readBody(req, 1024);
       if (typeof body.version !== 'string') return send(res, 400, { code: 'INVALID_VERSION', error: '请选择签名清单中的版本' });
@@ -376,7 +375,6 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     }
     if (suffix === '/updates/rollback' && req.method === 'POST') {
       if (auth.role !== 'owner') return send(res, 403, { code: 'OWNER_REQUIRED', error: '只有服务器所有者可以回滚服务' });
-      await assertRecentLogin();
       if (!updater.enabled) return send(res, 409, { code: 'UPDATE_DISABLED', error: '此部署未启用自更新' });
       const body = await readBody(req, 1024);
       if (typeof body.version !== 'string') return send(res, 400, { code: 'INVALID_VERSION', error: '请选择已安装的历史版本' });
