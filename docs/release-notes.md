@@ -1,3 +1,9 @@
+# 0.5.7
+
+- 新增可直接导入 1Panel 的单目录 Compose：默认使用 `v0.5.7` 镜像标签，宿主机只需挂载 `/opt/zichan/data`，一次性初始化服务为容器 UID 1000 创建可写的状态、备份与程序更新目录；业务服务仍以非 root 运行。
+- 生产 Compose 默认镜像也写明版本标签；生产部署脚本继续按 Release 的镜像 digest 验签。已有节点必须保留原数据挂载，不能直接切换到空的单目录。日常程序升级仍通过管理后台安装同 schema 的签名更新包；仅换镜像标签不会覆盖持久化的已安装版本。
+- 本版服务器 schema 仍为 27，本地账本 schema 仍为 127，同步协议仍为 v3。Windows MSI 和 NSIS 安装包仍未做 Authenticode 签名，可能显示“未知发布者”或 SmartScreen 提示。
+
 # 0.5.6
 
 - 修复 1Panel 的 HTTPS 域名经 Docker 网桥转发、内层代理报告 `X-Forwarded-Proto: http` 时，镜像默认 `TRUSTED_PROXIES=private` 导致管理页返回 `SESSION_ORIGIN_REJECTED`。显式允许 HTTP 的部署现按浏览器 `Origin` 与保留的 `Host` 校验同源；无需逐个填写网桥代理 IP，跨域请求和异常代理协议头仍被拒绝。

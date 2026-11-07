@@ -1,7 +1,7 @@
 {
   "name": "zichan",
   "private": true,
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "多资产生命周期记账系统 — local-first multi-asset lifecycle ledger",
   "workspaces": [
     "packages/*",
