@@ -7,6 +7,8 @@
 - 1Panel 桥接容器使用 `TRUSTED_PROXIES=private` 时，服务会信任网桥对端并用其 `X-Forwarded-Proto` 推断浏览器协议；如果 HTTPS 已在上游终止、内层代理报告 `http`，浏览器的 HTTPS `Origin` 与推断出的 HTTP 地址不符，返回 `SESSION_ORIGIN_REJECTED`。改为 `127.0.0.1` 后网桥对端不在信任列表，显式 HTTP 模式转而用 `Origin` 与 `Host` 核对，所以能正常访问。
 - 显式允许 HTTP 时，对可信私有网桥同样使用严格的 `Origin`/`Host` 同源匹配；格式错误或多值的可信代理协议头仍拒绝，严格 HTTPS 模式仍要求可信代理报告 `https`。增加单元及管理员初始化 HTTP 集成回归测试。已发布 v0.5.5 镜像不包含此修复，现有实例可继续使用已验证有效的 `127.0.0.1` 配置。
 - 验证：回归测试在修复前按预期复现 403；修复后相关 3 个测试文件共 39 项通过，服务端 TypeScript 类型检查、`npm run build:server` 和 ESLint 通过。
+- Linux 测试机 `192.168.2.167` 从提交 `4002d5e` 构建隔离 Docker 镜像，以宿主机端口映射接入网桥容器。容器日志确认 `trustedProxies=private`；模拟上游 HTTPS、内层代理报告 `http` 时，同源管理注册请求越过同源检查（测试请求故意使用无效 OPAQUE 数据，随后返回 400），跨域 `Origin` 仍返回 `SESSION_ORIGIN_REJECTED` 403。临时容器、镜像和源码目录已清理。
+- 主分支 [CI 42329226590](https://github.com/602star/zichan/actions/runs/42329226590) 的五项作业全部通过，包含 Windows 质量与完整覆盖率、账户浏览器流程、Docker 容器和桌面 Rust 检查。
 
 ## 2026-11-06 — 调整慢速 Windows CI 的两处测试等待
 
