@@ -718,6 +718,14 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       });
     }
 
+    if (req.method === 'GET' && suffix === '/startup-timing') {
+      const range = search.get('range') ?? '7d';
+      if (!['7d', '30d', '90d'].includes(range)) return send(res, 400, { error: 'invalid range' });
+      const days = Number.parseInt(range, 10);
+      const fromDay = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+      return send(res, 200, { range, fromDay, buckets: await store.startupTimingSummary(fromDay) });
+    }
+
     if (req.method === 'GET' && suffix === '/traffic') {
       const range = search.get('range') ?? '24h';
       if (!['1h', '24h', '7d', '30d', '90d'].includes(range)) return send(res, 400, { error: 'invalid range' });

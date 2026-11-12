@@ -6,6 +6,7 @@ import { pendingAlerts, overviewStatus } from './operations.js';
 import { ResourcesPage } from './ResourcesPage.js';
 import { TrafficPanel } from './TrafficPanel.js';
 import { MetricCatalog } from './MetricCatalog.js';
+import { StartupTimingPanel } from './StartupTimingPanel.js';
 import type { Metrics, Overview, SystemMetrics, SystemMonitorReading } from './types.js';
 import { Badge, Button, Loading, Notice, PageHeader, Panel, Stat, bytes, muted, usePolling, useResource, when } from './ui.js';
 
@@ -140,6 +141,7 @@ export function MonitorPage({ client, role, query, navigate }: { client: AdminCl
 
     {view === 'overview' ? <section id="section-请求与异常" className="zc-admin-monitor-section">
       <h2>请求与异常</h2>
+      <StartupTimingPanel client={client} range={range === '1h' || range === '24h' ? '7d' : range} />
       <div className="zc-admin-monitor-grid">
         <Panel title="请求表现" note="请求量按分桶累计；错误包含 HTTP 4xx 和 5xx。">
           <div className="zc-admin-monitor-mini-stats">

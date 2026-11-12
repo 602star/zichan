@@ -125,4 +125,26 @@ describe('browser session origin and cookies', () => {
     expect(header).toContain('Path=/%E8%B4%A6%E6%9C%AC-2026/api/auth');
     expect(header).not.toContain('账本');
   });
+
+  it('persists ledger cookies until the session expiry but keeps admin cookies session-only', () => {
+    const cookies = createBrowserSessionCookies('', () => 'https://ledger.example');
+    const expiresAt = new Date(Date.now() + 100 * 86_400_000).toISOString();
+    const regular = request('127.0.0.1', { origin: 'https://ledger.example', 'x-zichan-session': 'cookie' });
+    const admin = request('127.0.0.1', { origin: 'https://ledger.example', 'x-zichan-session': 'admin-cookie' });
+    let ledgerHeader = '';
+    let adminHeader = '';
+    cookies.write(regular, { setHeader: (_key: string, value: string) => { ledgerHeader = value; } } as ServerResponse, 'token', expiresAt);
+    cookies.write(admin, { setHeader: (_key: string, value: string) => { adminHeader = value; } } as ServerResponse, 'token', expiresAt);
+    expect(Number(/Max-Age=(\d+)/.exec(ledgerHeader)?.[1])).toBeGreaterThan(99 * 86_400);
+    expect(adminHeader).not.toContain('Max-Age');
+  });
+
+  it('persists plaintext LAN ledger cookies until the session expiry', () => {
+    const cookies = createBrowserSessionCookies('', () => 'http://192.168.1.2:8787');
+    let header = '';
+    cookies.write(request('192.168.1.7', {}), { setHeader: (_key: string, value: string) => { header = value; } } as ServerResponse,
+      'token', new Date(Date.now() + 100 * 86_400_000).toISOString());
+    expect(Number(/Max-Age=(\d+)/.exec(header)?.[1])).toBeGreaterThan(99 * 86_400);
+    expect(header).not.toContain('; Secure');
+  });
 });

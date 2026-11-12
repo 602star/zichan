@@ -245,7 +245,7 @@ export function SettingsPage({ client, role, query, navigate }: { client: AdminC
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
           <Stat label="服务版本" value={data.version.server} hint={`数据 schema ${data.version.schema}`} />
           <Stat label="访问令牌有效期" value={`${data.security.accessTokenMinutes} 分钟`} />
-          <Stat label="会话有效期" value={`${data.security.sessionDays} 天`} />
+          <Stat label="记账会话闲置期" value={`${data.security.sessionDays} 天`} />
           <Stat label="同步服务" value={String(data.environment['syncEnabled'])} />
           <Stat label="Web 服务" value={String(data.environment['webEnabled'])} />
           <Stat label="强制 HTTPS" value={data.environment['httpsRequired'] ? '是' : '否（显式允许明文 HTTP）'} />

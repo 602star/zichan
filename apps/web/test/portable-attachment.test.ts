@@ -146,7 +146,7 @@ describe('portable attachment storage', () => {
       expect(await attachmentStorageStatus(attachment.sha256)).toBe('missing');
       expect([...files.keys()].some((value) => value.startsWith('staging:'))).toBe(true);
 
-      await recoverAttachmentStorage(store);
+      await recoverAttachmentStorage(store, false);
       expect(await attachmentStorageStatus(attachment.sha256)).toBe('ready');
       expect(await verifyAttachmentContent(attachment)).toBe(true);
       expect((await store.attachmentState.getFileOp(prepared.operationId!))?.phase).toBe('completed');

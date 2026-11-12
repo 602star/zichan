@@ -4961,6 +4961,18 @@ export async function importLedger(
     };
     const transactions = [...data.transactions].sort((left, right) =>
       Number(left.type === 'refund') - Number(right.type === 'refund'));
+    const splitsByTransaction = new Map<string, typeof data.transactionSplits>();
+    for (const split of data.transactionSplits) {
+      const rows = splitsByTransaction.get(split.transactionId) ?? [];
+      rows.push(split);
+      splitsByTransaction.set(split.transactionId, rows);
+    }
+    const refundsByTransaction = new Map<string, typeof data.refundAllocations>();
+    for (const allocation of data.refundAllocations) {
+      const rows = refundsByTransaction.get(allocation.refundTransactionId) ?? [];
+      rows.push(allocation);
+      refundsByTransaction.set(allocation.refundTransactionId, rows);
+    }
 
     // Restore in dependency order. The scoped import context accepts historical
     // references to archived rows, but still rejects missing or deleted targets.
@@ -5004,8 +5016,8 @@ export async function importLedger(
       for (const transaction of data.transactions.filter((row) => !row.isDeleted)) {
         await aggregateStore.assertTransactionAggregate({
           transaction,
-          splits: data.transactionSplits.filter((row) => row.transactionId === transaction.id),
-          refundAllocations: data.refundAllocations.filter((row) => row.refundTransactionId === transaction.id),
+          splits: splitsByTransaction.get(transaction.id) ?? [],
+          refundAllocations: refundsByTransaction.get(transaction.id) ?? [],
         });
       }
     });

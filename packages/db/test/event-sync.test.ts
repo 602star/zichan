@@ -527,10 +527,17 @@ describe('sync protocol v2', () => {
       { id: 'first', endpoint: 'server-1', transport: first },
       { id: 'second', endpoint: 'server-2', transport: second },
     ];
-    const aResult = await syncReplicas(a, targets);
+    const phases: { phase: string; durationMs?: number }[] = [];
+    const aResult = await syncReplicas(a, targets, { onPhase: (phase, durationMs) => {
+      phases.push({ phase, durationMs });
+    } });
     const bResult = await syncReplicas(b, targets);
 
     expect(aResult.converged, JSON.stringify(aResult)).toBe(true);
+    for (const phase of ['connect', 'pull', 'apply', 'push', 'verify']) {
+      expect(phases.some((row) => row.phase === phase && row.durationMs === undefined)).toBe(true);
+      expect(phases.some((row) => row.phase === phase && typeof row.durationMs === 'number')).toBe(true);
+    }
     expect(bResult.converged).toBe(true);
     expect((await a.assets.list()).map((row) => row.code).sort()).toEqual(['BTC', 'ETH']);
     expect((await b.assets.list()).map((row) => row.code).sort()).toEqual(['BTC', 'ETH']);

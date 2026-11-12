@@ -675,12 +675,24 @@ export async function syncReplica(store: SqlLedgerStore, transport: CommitTransp
  * them and verifies their new heads. A failed replica is isolated without
  * preventing the healthy replicas from converging.
  */
+type SyncPhase = 'connect' | 'pull' | 'apply' | 'push' | 'verify';
+
 export async function syncReplicas(
   store: SqlLedgerStore,
   targets: SyncReplicaTarget[],
-  options: { maxRounds?: number } = {},
+  options: { maxRounds?: number; /** Undefined duration starts a phase; a number finishes it. */ onPhase?: (phase: SyncPhase, durationMs?: number) => void } = {},
 ): Promise<MultiReplicaSyncResult> {
   const maxRounds = Math.max(1, Math.min(10, options.maxRounds ?? 3));
+  const timed = async <T>(phase: SyncPhase, work: () => Promise<T>): Promise<T> => {
+    try { options.onPhase?.(phase); }
+    catch { /* Diagnostic callbacks cannot change synchronization. */ }
+    const started = performance.now();
+    try { return await work(); }
+    finally {
+      try { options.onPhase?.(phase, performance.now() - started); }
+      catch { /* Diagnostic callbacks cannot change synchronization. */ }
+    }
+  };
   const rows = new Map<string, ReplicaSyncEndpointResult>();
   const connected: {
     target: SyncReplicaTarget;
@@ -701,7 +713,7 @@ export async function syncReplicas(
     };
     rows.set(target.id, row);
     try {
-      const connection = await connectReplica(store, target.transport);
+      const connection = await timed('connect', () => connectReplica(store, target.transport));
       const key = replicaKey(connection);
       if (replicaKeys.has(key)) throw new Error('同一个同步副本被重复配置');
       replicaKeys.add(key);
@@ -727,7 +739,7 @@ export async function syncReplicas(
   };
 
   const apply = async () => {
-    const result = await applyPendingCommits(store);
+    const result = await timed('apply', () => applyPendingCommits(store));
     total.applied += result.applied;
     total.conflicts += result.conflicts;
     total.skipped += result.skipped;
@@ -741,7 +753,7 @@ export async function syncReplicas(
     for (const current of connected) {
       if (current.row.error) continue;
       try {
-        const pulled = await pullReplica(store, current.target.transport, current.connection);
+        const pulled = await timed('pull', () => pullReplica(store, current.target.transport, current.connection));
         current.connection = { ...current.connection, headSeq: pulled.headSeq };
         current.row.pulled += pulled.pulled;
         current.row.headSeq = pulled.headSeq;
@@ -756,7 +768,7 @@ export async function syncReplicas(
     for (const current of connected) {
       if (current.row.error) continue;
       try {
-        const pushed = await pushReplica(store, current.target.transport, current.connection);
+        const pushed = await timed('push', () => pushReplica(store, current.target.transport, current.connection));
         current.connection = { ...current.connection, headSeq: pushed.headSeq };
         current.row.pushed += pushed.pushed;
         current.row.headSeq = pushed.headSeq;
@@ -771,7 +783,7 @@ export async function syncReplicas(
     for (const current of connected) {
       if (current.row.error) continue;
       try {
-        const pulled = await pullReplica(store, current.target.transport, current.connection);
+        const pulled = await timed('pull', () => pullReplica(store, current.target.transport, current.connection));
         current.connection = { ...current.connection, headSeq: pulled.headSeq };
         current.row.pulled += pulled.pulled;
         current.row.headSeq = pulled.headSeq;
@@ -786,11 +798,13 @@ export async function syncReplicas(
     let healthyConverged = true;
     for (const current of connected) {
       if (current.row.error) continue;
-      const state = await store.getReplicaState(current.connection);
-      current.row.cursor = state.cursor;
-      current.row.headSeq = state.headSeq;
-      current.row.pendingPush = (await store.commitsPendingForReplica(replicaKey(current.connection))).length;
-      if (state.cursor < state.headSeq || current.row.pendingPush > 0) healthyConverged = false;
+      await timed('verify', async () => {
+        const state = await store.getReplicaState(current.connection);
+        current.row.cursor = state.cursor;
+        current.row.headSeq = state.headSeq;
+        current.row.pendingPush = (await store.commitsPendingForReplica(replicaKey(current.connection))).length;
+      });
+      if (current.row.cursor < current.row.headSeq || current.row.pendingPush > 0) healthyConverged = false;
     }
     if (healthyConverged && total.pending === 0) break;
   }

@@ -707,7 +707,8 @@ async function recoverCommittedOperation(store: SqlLedgerStore, op: AttachmentFi
   });
 }
 
-export async function recoverAttachmentStorage(store: SqlLedgerStore): Promise<void> {
+/** Recover interrupted file operations; a fresh restore can defer the full catalog scan. */
+export async function recoverAttachmentStorage(store: SqlLedgerStore, reconcile = true): Promise<void> {
   const operations = await store.attachmentState.listFileOps(['preparing', 'prepared', 'db_committed', 'promoted']);
   for (const operation of operations) {
     try {
@@ -724,7 +725,7 @@ export async function recoverAttachmentStorage(store: SqlLedgerStore): Promise<v
       await store.attachmentState.patchFileOp(operation.id, { error: error instanceof Error ? error.message : String(error) });
     }
   }
-  await reconcileAttachmentStorage(store);
+  if (reconcile) await reconcileAttachmentStorage(store);
 }
 
 export async function attachmentPreviewUrl(attachment: Pick<AttachmentDraftData, 'sha256' | 'thumbnailSha256' | 'mimeType' | 'thumbnailMimeType'>): Promise<string> {

@@ -120,6 +120,32 @@ async function accessToken(base: string, username: string, password: string, pre
 }
 
 describe('sync-server endpoints', () => {
+  it('collects ledger opening telemetry as anonymous aggregate statistics', async () => {
+    const app = createSyncServer();
+    await new Promise<void>((resolve) => app.server.listen(0, resolve));
+    const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+    try {
+      expect((await registerUser(base, 'timing-owner', 'pw')).status).toBe(200);
+      const token = await accessToken(base, 'timing-owner', 'pw');
+      const headers = { Authorization: `Bearer ${token}` };
+      const timing = { version: 1, startedAt: new Date().toISOString(), totalMs: 1234,
+        stages: [{ name: 'account.unlockLedgerKey', durationMs: 321, runs: 1 },
+          { name: 'local.importLedger', durationMs: 222, runs: 1 }], counts: {} };
+      expect((await post2(base, '/api/v4/diagnostics/ledger-open', timing)).status).toBe(401);
+      expect((await post2(base, '/api/v4/diagnostics/ledger-open', { ...timing,
+        stages: [{ name: 'secret', durationMs: 1, runs: 1 }] }, headers)).status).toBe(400);
+      expect((await post2(base, '/api/v4/diagnostics/ledger-open', timing, headers)).status).toBe(200);
+      const response = await fetch(`${base}/api/admin/startup-timing?range=7d`, { headers });
+      expect(response.status).toBe(200);
+      const data = await response.json() as { buckets: { stage: string; samples: number; durationSumMs: number }[] };
+      expect(data.buckets.find((row) => row.stage === 'total')?.durationSumMs).toBe(1234);
+      expect(data.buckets.find((row) => row.stage === 'account.unlockLedgerKey')?.durationSumMs).toBe(321);
+      expect(data.buckets.find((row) => row.stage === 'first_restore_total')?.samples).toBe(1);
+      expect(JSON.stringify(data)).not.toContain('timing-owner');
+      const logs = await (await fetch(`${base}/api/admin/logs?action=ledger_open_timing`, { headers })).json() as { logs: unknown[] };
+      expect(logs.logs).toEqual([]);
+    } finally { await app.close(); }
+  });
   it('keeps browser refresh secrets in same-origin HttpOnly cookies and rejects mixed or cross-site refresh', async () => {
     const app = createSyncServer({ basePath: '/ledger' });
     await new Promise<void>((resolve) => app.server.listen(0, '127.0.0.1', resolve));
@@ -129,13 +155,21 @@ describe('sync-server endpoints', () => {
       const headers = { Origin: base, 'X-Zichan-Session': 'cookie' };
       const loggedIn = await loginUser(base, 'cookie-user', 'cookie-password', '/ledger', 'device-cookie', headers);
       expect(loggedIn.status).toBe(200);
-      const login = await loggedIn.json() as { accessToken: string; refreshToken?: string; sessionTransport: string };
+      const login = await loggedIn.json() as { accessToken: string; refreshToken?: string; sessionTransport: string; session: { id: string; expiresAt: string } };
       expect(login.refreshToken).toBeUndefined();
       expect(login.sessionTransport).toBe('cookie');
       const setCookie = loggedIn.headers.get('set-cookie')!;
       expect(setCookie).toContain('Path=/ledger/api/auth; HttpOnly; SameSite=Lax');
-      expect(setCookie).not.toContain('Max-Age');
+      const loginMaxAge = Number(/Max-Age=(\d+)/.exec(setCookie)?.[1]);
+      expect(loginMaxAge).toBeGreaterThan(99 * 86_400);
+      expect(loginMaxAge).toBeLessThanOrEqual(100 * 86_400);
+      expect(Date.parse(login.session.expiresAt) - Date.now()).toBeGreaterThan(99 * 86_400_000);
       const cookie = setCookie.split(';')[0]!;
+      const driver = new NodeSqliteDriver(join(app.dataDir, 'server.sqlite'));
+      try {
+        await driver.run('UPDATE sync_sessions SET expires_at = ? WHERE session_id = ?',
+          [new Date(Date.now() + 86_400_000).toISOString(), login.session.id]);
+      } finally { await driver.close(); }
       const endpoint = '/ledger/api/auth/refresh';
       expect((await post2(base, endpoint, {}, { ...headers, Origin: 'https://evil.example', Cookie: cookie })).status).toBe(403);
       expect((await post2(base, endpoint, {}, { 'X-Zichan-Session': 'cookie', Cookie: cookie })).status).toBe(403);
@@ -143,15 +177,30 @@ describe('sync-server endpoints', () => {
       expect((await post2(base, endpoint, {}, { Cookie: cookie })).status).toBe(401);
       const refreshed = await post2(base, endpoint, {}, { ...headers, Cookie: cookie });
       expect(refreshed.status).toBe(200);
-      const next = await refreshed.json() as { accessToken: string; refreshToken?: string };
+      const next = await refreshed.json() as { accessToken: string; refreshToken?: string; session: { expiresAt: string } };
       expect(next.refreshToken).toBeUndefined();
+      expect(Number(/Max-Age=(\d+)/.exec(refreshed.headers.get('set-cookie') ?? '')?.[1])).toBeGreaterThan(99 * 86_400);
+      expect(Date.parse(next.session.expiresAt)).toBeGreaterThanOrEqual(Date.parse(login.session.expiresAt));
       const nextCookie = refreshed.headers.get('set-cookie')!.split(';')[0]!;
       expect(nextCookie).not.toBe(cookie);
-      expect((await post2(base, endpoint, {}, { ...headers, Cookie: cookie })).status).toBe(401);
-      const logout = await post2(base, '/ledger/api/auth/logout', {}, { ...headers, Cookie: nextCookie, Authorization: `Bearer ${next.accessToken}` });
+      const staleRefresh = await post2(base, endpoint, {}, { ...headers, Cookie: cookie });
+      expect(staleRefresh.status).toBe(401);
+      expect(staleRefresh.headers.get('set-cookie')).toBeNull();
+      const capDriver = new NodeSqliteDriver(join(app.dataDir, 'server.sqlite'));
+      try {
+        await capDriver.run('UPDATE sync_sessions SET created_at = ?, expires_at = ? WHERE session_id = ?',
+          [new Date(Date.now() - 364 * 86_400_000).toISOString(), new Date(Date.now() + 86_400_000).toISOString(), login.session.id]);
+      } finally { await capDriver.close(); }
+      const capped = await post2(base, endpoint, {}, { ...headers, Cookie: nextCookie });
+      expect(capped.status).toBe(200);
+      const cappedSession = await capped.json() as { accessToken: string; session: { expiresAt: string } };
+      expect(Date.parse(cappedSession.session.expiresAt) - Date.now()).toBeLessThanOrEqual(86_400_000);
+      const cappedCookie = capped.headers.get('set-cookie')!.split(';')[0]!;
+      expect(Number(/Max-Age=(\d+)/.exec(capped.headers.get('set-cookie') ?? '')?.[1])).toBeLessThanOrEqual(86_400);
+      const logout = await post2(base, '/ledger/api/auth/logout', {}, { ...headers, Cookie: cappedCookie, Authorization: `Bearer ${cappedSession.accessToken}` });
       expect(logout.status).toBe(200);
       expect(logout.headers.get('set-cookie')).toContain('Max-Age=0');
-      expect((await post2(base, endpoint, {}, { ...headers, Cookie: nextCookie })).status).toBe(401);
+      expect((await post2(base, endpoint, {}, { ...headers, Cookie: cappedCookie })).status).toBe(401);
     } finally {
       await app.close();
     }

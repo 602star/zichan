@@ -41,6 +41,7 @@ export async function enableOfflinePassword(password: string): Promise<void> {
   if (password.length < 8) throw new Error('账号密码至少需要 8 个字符');
   const created = await createLedgerKeyEnvelope(newId(), password);
   const payload = await encryptJson(created.session, state, AAD);
+  if (accountProtection() !== state) return;
   accountLocalStorage.setItem(OFFLINE_KEY, JSON.stringify({ envelope: created.envelope, payload }));
 }
 

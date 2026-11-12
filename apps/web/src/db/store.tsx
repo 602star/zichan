@@ -21,7 +21,7 @@ import { runLedgerMaintenance } from './maintenance.js';
 import { successfulBackupSafetyPatch, writeSafetyState } from './safety.js';
 import { openPlatformDriver, resetPlatformData, type StorageBackend } from './platform-driver.js';
 import { withSharedBrowserTaskLock } from './shared-browser-driver.js';
-import { recoverAttachmentStorage } from './attachment-storage.js';
+import { reconcileAttachmentStorage, recoverAttachmentStorage } from './attachment-storage.js';
 import { isInitializationResetRequiredError } from './initialization-error.js';
 import { initializedLedgerSetting } from './ledger-initialization.js';
 import { exportPortableLedger } from './portable-backup.js';
@@ -60,6 +60,7 @@ import { clearSyncConfiguration, hasSavedSyncConnection, loadSyncConnections, sa
 import { syncConfiguredServers } from '../sync-orchestrator.js';
 import { clearCredentialVaultRuntimeState, persistCredential, runtimeCredentialMap, unlockCredentialVault } from '../credential-vault.js';
 import { loadSharedSyncDirectory, mergeSharedSyncDirectory, saveSharedSyncDirectory } from '../sync-server-directory.js';
+import { finishStartupTiming, measureStartupStage } from '../startup-timing.js';
 
 /**
  * What every ledger screen reads.
@@ -442,7 +443,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    void refreshDeviceStorageState()
+    void measureStartupStage('local.inspectStorage', () => refreshDeviceStorageState())
       .then((state) => { if (active) setStorageProtection(state); })
       .catch((reason) => {
         if (active) setUnlockError(reason instanceof Error ? reason.message : String(reason));
@@ -535,7 +536,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           });
           if (!currentPersistence.supported || (!currentPersistence.persisted && !bestEffortAccepted)) return;
         }
-        const platform = await openPlatformDriver();
+        const platform = await measureStartupStage('local.openDatabase', () => openPlatformDriver());
         if (await closeStoreWhenCancelled(platform.driver, () => cancelled)) return;
         const log = createLogger({ level: 'info', sinks: [consoleSink()], fields: { app: platform.backend === 'native-sqlite' ? 'native' : 'web' } });
         let s: SqlLedgerStore;
@@ -545,7 +546,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             await assertCurrentSchema(platform.driver);
             s = new SqlLedgerStore(platform.driver, { logger: log, deviceId });
           } else {
-            s = await createLedgerStore(platform.driver, { logger: log, deviceId });
+            s = await measureStartupStage('local.initializeStore', () => createLedgerStore(platform.driver, { logger: log, deviceId }));
           }
         } catch (error) {
           await platform.driver.close().catch(() => undefined);
@@ -557,7 +558,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           openedStore = null;
           return;
         }
-        const setting = await initializedLedgerSetting(s);
+        const setting = await measureStartupStage('local.inspectLedger', () => initializedLedgerSetting(s));
         if (await closeStoreWhenCancelled(s, () => cancelled)) {
           openedStore = null;
           return;
@@ -616,6 +617,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setDataLocation(platform.dataLocation);
         setLedgerKind(setting.ledgerKind ?? 'personal');
         setStore(s);
+        finishStartupTiming();
         if (!browserLocalRecovery) {
           void maybeAutoBackup(s)
             .then((entry) => {
@@ -757,17 +759,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setInitializationAttempt((attempt) => attempt + 1);
   }
 
-  async function finishFirstRun(setting: Setting) {
+  async function finishFirstRun(setting: Setting, onStage?: (stage: string) => void) {
     const pending = pendingInitialization;
     if (!pending) throw new Error('首次初始化上下文已经失效，请重新打开账本');
     try {
       const passphrase = storagePassphrase.current;
       if (!passphrase) throw new Error('账本密码会话已经失效，请返回解锁页后重试');
-      await ensureLedgerKeyForStore(pending.store, passphrase);
+      onStage?.('正在准备本机备份密钥…');
+      await measureStartupStage('local.ensureBackupKey', () => ensureLedgerKeyForStore(pending.store, passphrase));
       await withSharedBrowserTaskLock('sync', async () => {
-        await recoverAttachmentStorage(pending.store);
-        await runLedgerMaintenance(pending.store);
-        await runDueScheduledTransactions(pending.store);
+        onStage?.('正在恢复未完成的附件操作…');
+        await measureStartupStage('local.recoverAttachmentOperations', () => recoverAttachmentStorage(pending.store, false));
+        onStage?.('正在整理账本默认资料…');
+        await measureStartupStage('local.maintenance', () => runLedgerMaintenance(pending.store));
+        onStage?.('正在处理到期的定期交易…');
+        await measureStartupStage('local.scheduledTransactions', () => runDueScheduledTransactions(pending.store));
       });
       if (firstUseMode === 'server') {
         const connections = isTauriRuntime() ? mergeSharedSyncDirectory(
@@ -777,7 +783,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const enabledConnections = connections.filter((connection) => connection.enabled);
         if (!enabledConnections.length) throw new Error('服务器模式没有可用连接，请重新完成服务器登录');
         if (isTauriRuntime()) await saveSharedSyncDirectory(pending.store, connections);
-        const syncResult = await syncConfiguredServers(pending.store, enabledConnections);
+        onStage?.('正在确认最后一轮账本同步…');
+        const syncResult = await measureStartupStage('local.finalSync', () => syncConfiguredServers(
+          pending.store, enabledConnections, { skipAttachmentSync: true },
+        ));
         const failed = syncResult.endpoints.filter((endpoint) => endpoint.error || endpoint.attachments?.error);
         if (failed.length) {
           throw new Error(`首次同步失败：${failed.map((endpoint) => `${endpoint.alias}：${endpoint.error ?? endpoint.attachments?.error}`).join('；')}`);
@@ -788,6 +797,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setLedgerKind(setting.ledgerKind ?? 'personal');
       setPendingInitialization(null);
       setStore(pending.store);
+      finishStartupTiming();
+      const reconcile = () => {
+        void measureStartupStage('background.reconcileAttachments', () => withSharedBrowserTaskLock('sync',
+          () => reconcileAttachmentStorage(pending.store))).catch((reason) => {
+          console.warn('首次附件状态整理失败', reason);
+        });
+      };
+      if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(reconcile, { timeout: 5_000 });
+      else globalThis.setTimeout(reconcile, 0);
       storagePassphrase.current = null;
       void maybeAutoBackup(pending.store)
         .then((entry) => {

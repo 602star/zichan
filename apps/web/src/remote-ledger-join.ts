@@ -17,6 +17,7 @@ import {
 } from '@zichan/db';
 import { SqlJsDriver } from './db/sqljs-driver.js';
 import { clientIdentity } from './client-identity.js';
+import { measureStartupStage, recordStartupCount, recordStartupTiming } from './startup-timing.js';
 
 export interface PreparedRemoteLedgerJoin {
   ledgerId: string;
@@ -36,6 +37,7 @@ export interface PrepareRemoteLedgerJoinInput {
   endpointLabel?: string;
   expectedServerId?: string;
   onProgress?: (received: number, total: number) => void;
+  onStage?: (stage: string) => void;
 }
 
 function validLedgerId(value: string): boolean {
@@ -72,6 +74,7 @@ export async function stageRemoteLedgerJoin(
   cryptoSession: LedgerCryptoSession,
   endpointLabel = 'remote-preflight',
   onProgress?: (received: number, total: number) => void,
+  onStage?: (stage: string) => void,
 ): Promise<PreparedRemoteLedgerJoin> {
   if (!validLedgerId(ledgerId)) throw new Error('远端账本 ID 无效');
   if (keyEnvelope.ledgerId !== ledgerId || cryptoSession.ledgerId !== ledgerId
@@ -80,9 +83,10 @@ export async function stageRemoteLedgerJoin(
     throw new Error('远端账本、密钥封套与已解锁会话不一致');
   }
 
-  const temp = await createLedgerStore(await SqlJsDriver.open(null), {
+  onStage?.('正在创建隔离验证数据库…');
+  const temp = await measureStartupStage('remote.openTemporaryStore', async () => createLedgerStore(await SqlJsDriver.open(null), {
     deviceId: 'remote-ledger-join-preflight',
-  });
+  }));
   try {
     await temp.resetToLedger(ledgerId);
     const observedTransport: CommitTransport = onProgress ? {
@@ -94,11 +98,18 @@ export async function stageRemoteLedgerJoin(
       },
       pushCommits: (identity, commits, capabilities) => transport.pushCommits(identity, commits, capabilities),
     } : transport;
-    const result = await syncReplicas(temp, [{
+    const result = await measureStartupStage('remote.commit.total', () => syncReplicas(temp, [{
       id: 'remote-join',
       endpoint: endpointLabel,
       transport: observedTransport,
-    }], { maxRounds: 10 });
+    }], { maxRounds: 10, onPhase: (phase, durationMs) => {
+      if (durationMs !== undefined) recordStartupTiming(`remote.commit.${phase}`, durationMs);
+      else onStage?.(phase === 'pull' ? '正在接收加密提交…'
+        : phase === 'apply' ? '正在解密并验证提交关系…'
+          : phase === 'push' ? '正在确认远端同步状态…'
+            : phase === 'verify' ? '正在核对同步前沿…' : '正在连接远端副本…');
+    } }));
+    recordStartupCount('remote.commitsPulled', result.pulled);
     const endpoint = result.endpoints[0];
     if (!endpoint) throw new Error('远端同步预检没有返回副本结果');
     if (endpoint.error) throw new Error(`远端提交预检失败：${endpoint.error}`);
@@ -113,12 +124,15 @@ export async function stageRemoteLedgerJoin(
         .join('；') || `${result.invalid} 条提交无效`}`);
     }
 
-    const issues = await checkConsistency(temp);
+    onStage?.('正在检查账本一致性…');
+    const issues = await measureStartupStage('remote.consistency', () => checkConsistency(temp));
     if (issues.length) {
       throw new Error(`远端账本一致性检查失败：${issues.slice(0, 5).map((issue) => issue.detail).join('；')}`);
     }
-    const ledger = await exportLedger(temp);
-    const preflight = preflightImport(ledger);
+    onStage?.('正在导出经过验证的账本…');
+    const ledger = await measureStartupStage('remote.export', () => exportLedger(temp));
+    onStage?.('正在检查导入数据…');
+    const preflight = await measureStartupStage('remote.importPreflight', async () => preflightImport(ledger));
     if (!preflight.ok) {
       throw new Error(`远端账本导入预检失败：${preflight.issues
         .filter((issue) => issue.level === 'error')
@@ -139,7 +153,7 @@ export async function stageRemoteLedgerJoin(
       keyEnvelope,
       cryptoSession,
       ledger,
-      deviceState: await temp.exportDeviceRecoveryState(),
+      deviceState: await measureStartupStage('remote.exportDeviceState', () => temp.exportDeviceRecoveryState()),
       identity: endpoint.identity,
       pulled: result.pulled,
     };
@@ -154,13 +168,16 @@ export async function prepareRemoteLedgerJoin(
 ): Promise<PreparedRemoteLedgerJoin> {
   if (!validLedgerId(input.ledgerId)) throw new Error('远端账本 ID 无效');
   assertSecureSyncUrl(input.baseUrl);
-  await requireBoundRemoteReplica(input.baseUrl, input.token, input.ledgerId);
-  const envelope = await fetchLedgerKeyEnvelope(input.baseUrl, input.token);
+  input.onStage?.('正在核对远端账本身份…');
+  await measureStartupStage('remote.checkReplica', () => requireBoundRemoteReplica(input.baseUrl, input.token, input.ledgerId));
+  input.onStage?.('正在取得账本密钥封套…');
+  const envelope = await measureStartupStage('remote.fetchKeyEnvelope', () => fetchLedgerKeyEnvelope(input.baseUrl, input.token));
   if (!envelope) throw new Error('远端账本没有密钥封套，不能安全加入');
   if (envelope.ledgerId !== input.ledgerId) throw new Error('远端密钥封套不属于目标账本');
   let cryptoSession: LedgerCryptoSession;
   try {
-    cryptoSession = await unlockLedgerKeyEnvelope(input.passphrase, envelope);
+    input.onStage?.('正在解锁远端账本密钥…');
+    cryptoSession = await measureStartupStage('remote.unlockLedgerKey', () => unlockLedgerKeyEnvelope(input.passphrase, envelope));
   } catch {
     throw new Error('远端账本加密密码错误，或密钥封套已经损坏');
   }
@@ -179,6 +196,7 @@ export async function prepareRemoteLedgerJoin(
     cryptoSession,
     input.endpointLabel ?? input.baseUrl,
     input.onProgress,
+    input.onStage,
   );
   if (input.expectedServerId && prepared.identity.serverId !== input.expectedServerId) {
     throw new Error('远端同步服务器身份在恢复预检期间发生变化');

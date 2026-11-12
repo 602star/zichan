@@ -12,6 +12,7 @@ import {
   type SyncConnection,
 } from '../sync-config.js';
 import { btnOutline, btnPrimary } from './styles.js';
+import { measureStartupStage, recordStartupCount } from '../startup-timing.js';
 
 const button = btnOutline;
 const primary = btnPrimary;
@@ -19,7 +20,7 @@ const primary = btnPrimary;
 export function FirstRemoteLedgerRestoreGate(props: {
   store: SqlLedgerStore;
   connection: SyncConnection;
-  onRestored: (setting: Setting) => Promise<void>;
+  onRestored: (setting: Setting, onStage?: (stage: string) => void) => Promise<void>;
   onUseDifferentAccount: () => void;
   onStartNew: () => Promise<void>;
 }) {
@@ -66,21 +67,24 @@ export function FirstRemoteLedgerRestoreGate(props: {
     try {
       // Authentication always performs an anonymous health identity check first. Cached
       // access/refresh tokens and the password are never sent to an unverified endpoint.
-      const accessToken = await authenticateSyncProfile(props.connection);
+      setMessage('正在验证服务器身份和账号会话…');
+      const accessToken = await measureStartupStage('remote.authenticate', () => authenticateSyncProfile(props.connection));
       const onProgress = (received: number, total: number) => {
-        setMessage(`已接收 ${received}/${total} 条加密提交，正在验证账本…附件在使用时按需下载。`);
+        setMessage(`加密提交同步位置 ${received}/${total}，正在验证账本…附件正文在使用时按需下载。`);
       };
       const prepared = await prepareRemoteLedgerJoin({
         baseUrl: buildSyncBaseUrl(props.connection), token: accessToken, ledgerId, passphrase,
         endpointLabel: props.connection.alias, expectedServerId: props.connection.serverId,
-        onProgress,
+        onProgress, onStage: setMessage,
       });
-      await props.store.transaction(async (transaction) => {
+      recordStartupCount('remote.attachments', prepared.ledger.attachments.length);
+      setMessage('正在写入本机加密数据库…');
+      await measureStartupStage('local.importLedger', () => props.store.transaction(async (transaction) => {
         await transaction.resetToLedger(prepared.ledgerId);
         await importLedger(transaction, prepared.ledger, {
           afterImport: (importStore) => importStore.restoreDeviceRecoveryState(prepared.deviceState),
         });
-      });
+      }));
       adoptUnlockedLedgerKeyEnvelope(prepared.keyEnvelope, prepared.cryptoSession, true);
       const restoredAt = new Date().toISOString();
       saveSyncConnections(loadSyncConnections().map((connection) => connection.id === props.connection.id ? {
@@ -96,7 +100,7 @@ export function FirstRemoteLedgerRestoreGate(props: {
       setMessage('远端账本验证通过，正在完成本机初始化…');
       const setting = (await props.store.settings.list({ limit: 1 }))[0];
       if (!setting) throw new Error('远端账本没有活动设置');
-      await props.onRestored(setting);
+      await props.onRestored(setting, setMessage);
     } catch (error) {
       setMessage(`恢复失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {

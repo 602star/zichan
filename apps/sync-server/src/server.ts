@@ -27,6 +27,7 @@ import { createAdminRouter } from './admin.js';
 import { createSystemMonitor } from './system-monitor.js';
 import { createRequestOrigin } from './request-origin.js';
 import { createBrowserSessionCookies } from './browser-session.js';
+import { parseStartupTiming } from './startup-timing.js';
 import {
   ADMIN_BODY_BYTES,
   AUTH_BODY_BYTES,
@@ -68,7 +69,9 @@ import {
 export type { RegistrationMode } from './store.js';
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const LEDGER_SESSION_IDLE_TTL_MS = 100 * 24 * 60 * 60 * 1000;
+const LEDGER_SESSION_ABSOLUTE_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 const OPAQUE_LOGIN_TTL_MS = 60 * 1000;
 const OPAQUE_REGISTRATION_TTL_MS = 5 * 60 * 1000;
 const REQUEST_ID_BYTES = 8;
@@ -640,14 +643,14 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       deviceId: input.deviceId,
       deviceName: input.deviceName,
       refreshHash: opaqueHash(secret, refreshToken),
-      expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+      expiresAt: new Date(Date.now() + (input.adminContext ? ADMIN_SESSION_TTL_MS : LEDGER_SESSION_IDLE_TTL_MS)).toISOString(),
       ip: input.ip,
       kind: input.adminContext ? 'admin' : 'ledger',
     });
     await store.noteLogin(input.user.username);
     await log('info', 'login_success', 'Sync user logged in', { ip: input.ip, username: input.user.username, detail: { sessionId: session.id, deviceId: session.deviceId } });
     const replica = await store.getReplica(input.user.username);
-    if (cookieSession) browserSession.write(input.request, input.response, refreshToken);
+    if (cookieSession) browserSession.write(input.request, input.response, refreshToken, session.kind === 'ledger' ? session.expiresAt : undefined);
     return {
       ...issueAccessToken(session),
       accountId: input.user.accountId,
@@ -760,7 +763,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     ledgerPreview,
     allowInsecureHttp,
     accessTokenMinutes: ACCESS_TOKEN_TTL_MS / 60_000,
-    sessionDays: SESSION_TTL_MS / 86_400_000,
+    sessionDays: LEDGER_SESSION_IDLE_TTL_MS / 86_400_000,
   });
   // Recovery, deployment-record import and sampling all start after the stores are ready.
   // The queue is also re-kicked on a slow timer: a task that stayed `queued` because the
@@ -894,7 +897,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
             httpsRequired: !allowInsecureHttp,
             adminHttpsRequired: !allowInsecureHttp,
             accessTokenMinutes: ACCESS_TOKEN_TTL_MS / 60_000,
-            sessionDays: SESSION_TTL_MS / 86_400_000,
+            sessionDays: LEDGER_SESSION_IDLE_TTL_MS / 86_400_000,
           },
         });
       }
@@ -1733,13 +1736,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         }
         const newSessionId = `session-${randomBytes(16).toString('hex')}`;
         const localRefreshToken = createRefreshToken(newSessionId);
-        await store.createSession({ expectedRegistrationRecord: user.opaqueRegistrationRecord,
+        const localSession = await store.createSession({ expectedRegistrationRecord: user.opaqueRegistrationRecord,
           id: newSessionId, username: user.username, deviceId: `federated-${randomBytes(12).toString('hex')}`,
           deviceName: 'Federated Browser', refreshHash: opaqueHash(secret, localRefreshToken),
-          expiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(), ip,
+          expiresAt: new Date(Date.now() + LEDGER_SESSION_IDLE_TTL_MS).toISOString(), ip,
           replicaId: linkedReplica.replicaId });
         await store.noteLogin(user.username);
-        browserSession.write(req, res, localRefreshToken);
+        browserSession.write(req, res, localRefreshToken, localSession.expiresAt);
         const sessionCookie = res.getHeader('Set-Cookie');
         res.setHeader('Set-Cookie', [String(sessionCookie),
           `zichan_federation_state=; Path=${basePath || ''}/api/auth/federation; HttpOnly; SameSite=Lax; Max-Age=0`]);
@@ -2096,16 +2099,21 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         if (!session || !user || user.disabled || session.revokedAt || session.expiresAt <= nowIso()
           || !safeEqual(session.refreshHash, suppliedHash)) {
           await log('warn', 'refresh_failed', 'Session refresh failed', { ip, username: user?.username, status: 401 });
-          if (cookieSession) browserSession.write(req, res);
+          // A stale refresh response may arrive after a newer login or refresh.
+          // Clearing the cookie here would erase that newer, valid session.
           return send(res, 401, { error: 'invalid refresh token' });
         }
         if (session.kind !== 'admin' && !await ledgerWebAccess()) return send(res, 403,
           { code: 'LEDGER_WEB_ACCESS_DISABLED', error: '管理员已关闭通过本站网页记账' });
         const nextRefreshToken = createRefreshToken(session.id);
-        const rotated = await store.rotateSessionRefresh(session.id, session.refreshHash, opaqueHash(secret, nextRefreshToken), ip);
+        const nextExpiresAt = session.kind === 'ledger' ? new Date(Math.min(
+          Date.now() + LEDGER_SESSION_IDLE_TTL_MS,
+          Date.parse(session.createdAt) + LEDGER_SESSION_ABSOLUTE_TTL_MS,
+        )).toISOString() : undefined;
+        const rotated = await store.rotateSessionRefresh(session.id, session.refreshHash, opaqueHash(secret, nextRefreshToken), ip, nextExpiresAt);
         if (!rotated) return send(res, 401, { error: 'refresh token already used' });
         const replica = await store.getReplica(user.username, rotated.replicaId);
-        if (cookieSession) browserSession.write(req, res, nextRefreshToken);
+        if (cookieSession) browserSession.write(req, res, nextRefreshToken, rotated.kind === 'ledger' ? rotated.expiresAt : undefined);
         return send(res, 200, {
           ...issueAccessToken(rotated),
           accountId: user.accountId,
@@ -2195,6 +2203,17 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           attachmentDownloads: Number(body.attachmentDownloads),
           durationMs: Number(body.durationMs),
         });
+        return send(res, 200, { ok: true });
+      }
+      if (req.method === 'POST' && apiPath === '/api/v4/diagnostics/ledger-open') {
+        if (session.kind !== 'ledger') return send(res, 403, { error: 'ledger session required' });
+        const body = await readBody(req, 8192);
+        const timing = parseStartupTiming(body);
+        if (!timing) return send(res, 400, { error: 'invalid startup timing' });
+        if (!await allow(user.accountId, 'ledger-open-timing', 30, 24 * 60 * 60 * 1000)) {
+          return send(res, 429, { error: 'too many startup timings' });
+        }
+        await store.recordStartupTiming(timing);
         return send(res, 200, { ok: true });
       }
       if (req.method === 'GET' && apiPath === '/api/auth/usage') {

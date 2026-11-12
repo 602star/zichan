@@ -87,9 +87,9 @@ OPAQUE 注册和登录都由客户端与服务器交换 PAKE 消息，账号密�
 
 空服务器关闭普通注册。未设置安全路径时，首次和日常访问均使用 `/admin/`；配置 `ADMIN_ACCESS_PATH` 后使用 `/<安全路径>/admin/`，未创建所有者时访问 `/admin/` 也会跳转到初始化页。通过 Web 引导设置管理员用户名和密码即可，无需读取初始化密钥。配置安全路径并创建所有者后，`/admin/` 返回 404。初始化请求使用同源管理通道，认领标记进入短期签名的 OPAQUE 注册完成凭据；用户与唯一所有者在同一 SQLite 事务中创建，并发创建只有一个成功。已有所有者后不能再次初始化或绕过注册策略。旧版密钥接口暂时保留兼容，但不再是 Web 初始化的前置条件。普通成员注册遵循 `REGISTRATION_MODE`；管理员不能禁用自己。
 
-登录成功后，访问令牌有效 15 分钟，refresh token 每次使用后立即轮换且旧 token 不能再使用，设备会话最长 7 天。服务器只持久化 refresh token 的 HMAC-SHA-256。禁用用户会同时撤销其全部会话，用户和管理员都可按设备查看最近 IP、最后访问时间并单独撤销。管理 API 复用同一 Bearer 会话并在每次请求时检查数据库角色：无有效会话返回 401，成员访问返回 403。
+登录成功后，访问令牌有效 15 分钟，refresh token 每次使用后立即轮换且旧 token 不能再使用。记账设备会话闲置 100 天失效，成功续期时延长闲置期限，从登录起最长 365 天；管理员会话最长 7 天。HTTPS 本站、本机回环地址及显式启用的局域网 HTTP 地址的记账 Cookie 均持久保存至当前会话到期；管理 Cookie 仍为浏览器会话 Cookie。局域网 HTTP Cookie 不带 Secure，传输中可能被截取，仅限可信内网使用。服务器只持久化 refresh token 的 HMAC-SHA-256。禁用用户会同时撤销其全部会话，用户和管理员都可按设备查看最近 IP、最后访问时间并单独撤销。管理 API 复用同一 Bearer 会话并在每次请求时检查数据库角色：无有效会话返回 401，成员访问返回 403。
 
-同站 Web 登录使用 `X-Zichan-Session: cookie`，服务器验证请求 Origin 后，把 refresh token 写入 HttpOnly、SameSite=Lax 的账本 Cookie，以支持统一登录的跨站顶层跳转；管理 Cookie 仍为 SameSite=Strict。生产 HTTPS 下同时设置 Secure。Cookie 路径限定为部署前缀下的 `/api/auth`，登录与刷新 JSON 不返回 refresh token；刷新不能同时提供 JSON token。Cookie 为会话级；可选的七天设备解锁授权独立于 Cookie，详见账本保护说明。跨域 CORS 不允许这个自定义头，也不开放 credential。代理部署需保留公共 Host 并覆盖单一 `X-Forwarded-Proto: https`；当部署显式设置 `ALLOW_INSECURE_HTTP=1` 时，私有局域网明文 HTTP 也可使用同站 Cookie 会话与管理后台，此时 Cookie 不带 Secure，请仅在可信内网开启。
+同站 Web 登录使用 `X-Zichan-Session: cookie`，服务器验证请求 Origin 后，把 refresh token 写入 HttpOnly、SameSite=Lax 的账本 Cookie，以支持统一登录的跨站顶层跳转；管理 Cookie 仍为 SameSite=Strict。生产 HTTPS 下同时设置 Secure。Cookie 路径限定为部署前缀下的 `/api/auth`，登录与刷新 JSON 不返回 refresh token；刷新不能同时提供 JSON token。账本 Cookie 按记账会话到期时间持久保存，管理 Cookie 为浏览器会话级；可选的七天设备解锁授权独立于 Cookie，详见账本保护说明。跨域 CORS 不允许这个自定义头，也不开放 credential。代理部署需保留公共 Host 并覆盖单一 `X-Forwarded-Proto: https`；当部署显式设置 `ALLOW_INSECURE_HTTP=1` 时，私有局域网明文 HTTP 也可使用同站 Cookie 会话与管理后台，此时 Cookie 不带 Secure，请仅在可信内网开启。
 
 桌面和附加跨站连接使用独立 JSON token 传输；桌面 Stronghold 只保存刷新会话，不保存账号密码。后台同步不进行密码登录：令牌被拒绝时最多受控刷新一次，刷新失效后要求用户明确重新登录；网络错误和 5xx 保留会话用于重试。
 

@@ -1067,6 +1067,14 @@ CREATE TABLE IF NOT EXISTS joined_group_registration_policy (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_account_sync_runs_user_at ON account_sync_runs(username, finished_at);
+CREATE TABLE IF NOT EXISTS startup_timing_buckets (
+  day TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  latency_bucket INTEGER NOT NULL,
+  samples INTEGER NOT NULL,
+  duration_sum_ms INTEGER NOT NULL,
+  PRIMARY KEY (day, stage, latency_bucket)
+);
 CREATE TABLE IF NOT EXISTS federated_login_intents (
   state_hash TEXT PRIMARY KEY,
   link_id TEXT NOT NULL REFERENCES node_replication_links(link_id) ON DELETE CASCADE,
@@ -2428,14 +2436,14 @@ END;`);
     return row ? sessionFromRow(row) : undefined;
   }
 
-  async rotateSessionRefresh(id: string, expectedHash: string, nextHash: string, ip?: string): Promise<SyncSession | undefined> {
+  async rotateSessionRefresh(id: string, expectedHash: string, nextHash: string, ip?: string, nextExpiresAt?: string): Promise<SyncSession | undefined> {
     await this.ready;
     const at = nowIso();
     const result = await this.driver.run(
       `UPDATE sync_sessions
-       SET refresh_hash = ?, updated_at = ?, last_seen_at = ?, last_ip = ?
+       SET refresh_hash = ?, updated_at = ?, last_seen_at = ?, last_ip = ?, expires_at = COALESCE(?, expires_at)
        WHERE session_id = ? AND refresh_hash = ? AND revoked_at IS NULL AND expires_at > ?`,
-      [nextHash, at, at, ip ?? null, id, expectedHash, at],
+      [nextHash, at, at, ip ?? null, nextExpiresAt ?? null, id, expectedHash, at],
     );
     return result.changes === 1 ? this.getSession(id) : undefined;
   }
@@ -6393,7 +6401,36 @@ END;`);
     const systemMinutes = await this.driver.run("DELETE FROM system_metric_buckets WHERE granularity = 'minute' AND bucket_at < ?", [minuteCutoff]);
     const systemHours = await this.driver.run("DELETE FROM system_metric_buckets WHERE granularity = 'hour' AND bucket_at < ?", [hourCutoff]);
     const traffic = await this.driver.run('DELETE FROM traffic_page_views WHERE at < ?', [hourCutoff]);
-    return { removed: Number(minutes.changes ?? 0) + Number(hours.changes ?? 0) + Number(systemMinutes.changes ?? 0) + Number(systemHours.changes ?? 0) + Number(traffic.changes ?? 0) };
+    const startup = await this.driver.run('DELETE FROM startup_timing_buckets WHERE day < ?', [hourCutoff.slice(0, 10)]);
+    return { removed: Number(minutes.changes ?? 0) + Number(hours.changes ?? 0) + Number(systemMinutes.changes ?? 0) + Number(systemHours.changes ?? 0) + Number(traffic.changes ?? 0) + Number(startup.changes ?? 0) };
+  }
+
+  /** Anonymous daily histograms: no username, account, device, IP or ledger identifier is stored. */
+  async recordStartupTiming(timing: { totalMs: number; stages: { name: string; durationMs: number }[] }): Promise<void> {
+    await this.ready;
+    const day = nowIso().slice(0, 10);
+    const thresholds = [100, 250, 500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 120_000, 300_000, 600_000];
+    await this.driver.transaction(async (driver) => {
+      const firstRestore = timing.stages.some((stage) => stage.name === 'local.importLedger');
+      const stages = [{ name: 'total', durationMs: timing.totalMs },
+        ...(firstRestore ? [{ name: 'first_restore_total', durationMs: timing.totalMs }] : []), ...timing.stages];
+      for (const stage of stages) {
+        const bucket = thresholds.findIndex((limit) => stage.durationMs <= limit);
+        await driver.run(`INSERT INTO startup_timing_buckets (day, stage, latency_bucket, samples, duration_sum_ms)
+          VALUES (?, ?, ?, 1, ?) ON CONFLICT(day, stage, latency_bucket) DO UPDATE SET
+          samples = samples + 1, duration_sum_ms = duration_sum_ms + excluded.duration_sum_ms`,
+        [day, stage.name, bucket < 0 ? thresholds.length : bucket, stage.durationMs]);
+      }
+    });
+  }
+
+  async startupTimingSummary(fromDay: string): Promise<{ stage: string; latencyBucket: number; samples: number; durationSumMs: number }[]> {
+    await this.ready;
+    const rows = await this.driver.all<{ stage: string; latency_bucket: number; samples: number; duration_sum_ms: number }>(
+      `SELECT stage, latency_bucket, SUM(samples) AS samples, SUM(duration_sum_ms) AS duration_sum_ms
+       FROM startup_timing_buckets WHERE day >= ? GROUP BY stage, latency_bucket ORDER BY stage, latency_bucket`, [fromDay]);
+    return rows.map((row) => ({ stage: row.stage, latencyBucket: row.latency_bucket,
+      samples: Number(row.samples), durationSumMs: Number(row.duration_sum_ms) }));
   }
 
   /** Diagnostic events get their own retention so log trimming cannot erase them. */

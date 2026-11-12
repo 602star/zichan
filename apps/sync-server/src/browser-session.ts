@@ -30,13 +30,17 @@ export function createBrowserSessionCookies(basePath: string, requestOrigin: (re
     return /^session-[a-f0-9]{32}\.[A-Za-z0-9_-]{43}$/.test(value) ? value : undefined;
   }
 
-  function write(req: IncomingMessage, res: ServerResponse, token?: string): void {
-    const secure = requestOrigin(req)?.startsWith('https://') ? '; Secure' : '';
-    // Session-only until a separate, explicit trusted-device enrollment is implemented.
+  function write(req: IncomingMessage, res: ServerResponse, token?: string, expiresAt?: string): void {
+    const origin = requestOrigin(req);
+    const secure = origin?.startsWith('https://') ? '; Secure' : '';
+    // Ledger sessions persist across browser restarts; admin sessions remain session-only.
     // Ledger sessions allow a top-level redirect back from the trusted identity node.
     // Mutating cookie requests still require the same-origin custom header and Origin check.
     const sameSite = cookieName(req) === 'zichan_admin_session' ? 'Strict' : 'Lax';
-    res.setHeader('Set-Cookie', `${cookieName(req)}=${token ?? ''}; Path=${path}; HttpOnly; SameSite=${sameSite}${secure}${token ? '' : '; Max-Age=0'}`);
+    const maxAge = token && expiresAt && cookieName(req) === COOKIE_NAME
+      ? `; Max-Age=${Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000))}`
+      : token ? '' : '; Max-Age=0';
+    res.setHeader('Set-Cookie', `${cookieName(req)}=${token ?? ''}; Path=${path}; HttpOnly; SameSite=${sameSite}${secure}${maxAge}`);
   }
 
   return { requested, read, write };
