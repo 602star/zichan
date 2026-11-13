@@ -22,16 +22,12 @@ import {
   BackupPassphraseRequiredError,
   describePreflight,
   downloadBackup,
-  listSavedBackups,
   parseEncryptedBackup,
   rehearseRestore,
   saveLedgerBackup,
   type ParsedEncryptedBackup,
-  type SavedBackup,
 } from './db/backups.js';
 import {
-  safetyStateFromSetting,
-  safetyWarnings,
   successfulBackupSafetyPatch,
   writeSafetyState,
 } from './db/safety.js';
@@ -158,7 +154,6 @@ function formatAsOfDate(date?: string): string {
   return [y, m, d].filter(Boolean).join(' · ');
 }
 
-const ghostBtn = 'zc-btn zc-btn--ghost';
 
 type ImportDialog =
   | { kind: 'password'; file: File }
@@ -329,7 +324,6 @@ export function App() {
   const [importBusy, setImportBusy] = useState(false);
   const [importPassphrase, setImportPassphrase] = useState('');
   const [importUnlockError, setImportUnlockError] = useState('');
-  const [backups, setBackups] = useState<SavedBackup[]>([]);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [enablingModule, setEnablingModule] = useState<ScreenId | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -372,19 +366,6 @@ export function App() {
       // Session storage can be unavailable in hardened browser contexts.
     }
   }, [screen]);
-
-  useEffect(() => {
-    // The saved-backup list lives in this device's storage. In a preview it would describe the
-    // administrator's own backups while the page shows someone else's ledger, which reads as
-    // "this ledger has no backups" — a false statement about the user's data.
-    if (preview) return;
-    const refreshSafety = () => {
-      void listSavedBackups().then(setBackups);
-    };
-    refreshSafety();
-    window.addEventListener('zichan:safety-updated', refreshSafety);
-    return () => window.removeEventListener('zichan:safety-updated', refreshSafety);
-  }, [preview]);
 
   // A preview is a read-only copy of somebody else's ledger: installing the sync lifecycle
   // would try to push the administrator's session at the user's account and reconcile replicas
@@ -554,12 +535,6 @@ export function App() {
   // A manual cut-off that has fallen behind is a data-correctness problem, not a
   // preference, so the header flags it instead of showing a neutral date.
   const staleCutoff = asOf?.stale && asOf.mode === 'manual' ? asOf : null;
-  const safetyState = safetyStateFromSetting(snap?.setting);
-  // Backup and self-check history belongs to a device, and in a preview there is none: the
-  // warnings would describe the administrator's own machine while the page shows the user's
-  // ledger. "还没有本地备份" would then be a false claim about the user's data.
-  const safety = preview ? [] : safetyWarnings(backups, safetyState);
-
   return (
     <div className="zc-app-shell" style={rootStyle}>
       <a className="zc-skip-link" href="#zc-app-main" onClick={(event) => { event.preventDefault(); document.getElementById('zc-app-main')?.focus(); }}>跳转到主要内容</a>
@@ -602,15 +577,6 @@ export function App() {
         </header>
 
         <div className="zc-page-content">
-          {safety.length > 0 && screen !== 'settings' && (
-            <div className="zc-safety-banner" style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
-              <div>
-                <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color: safety.some((w) => w.tone === 'danger') ? 'var(--negative)' : 'var(--warning)' }}>数据安全提醒</div>
-                <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', marginTop: 4 }}>{safety.slice(0, 3).map((w) => w.message).join('；')}</div>
-              </div>
-              <button onClick={() => { setSettingsSection('device'); setScreen('settings'); }} className={ghostBtn}>去处理</button>
-            </div>
-          )}
           <Suspense fallback={<div role="status" style={{ minHeight: 240, padding: 24, color: 'var(--text-tertiary)' }}>正在载入…</div>}>
             {screen === 'dashboard' && <Dashboard />}
             {screen === 'convert' && <Convert />}

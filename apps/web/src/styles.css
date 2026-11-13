@@ -737,7 +737,6 @@ button,
   transform: rotate(-3deg);
 }
 .zc-ledger-records { overflow: visible; }
-.zc-safety-banner { padding: 12px 14px; }
 .zc-appearance-option { min-height: var(--control-h); }
 .zc-ledger-records .zc-transaction-row { background: transparent; }
 .zc-ledger-records .zc-transaction-row:hover { background: var(--surface-2); }
@@ -2578,22 +2577,6 @@ input[type="radio"] {
   .zc-page-content {
     gap: 14px;
     padding: 14px 12px calc(92px + env(safe-area-inset-bottom));
-  }
-
-  .zc-safety-banner {
-    align-items: center !important;
-    flex-direction: row;
-    gap: 8px !important;
-    padding: 8px 10px;
-  }
-
-  .zc-safety-banner > div {
-    min-width: 0;
-  }
-
-  .zc-safety-banner button {
-    flex: none;
-    padding-inline: 8px;
   }
 
   .zc-navigation-settings-row {
