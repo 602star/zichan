@@ -4,7 +4,7 @@ import type { Snapshot } from '../db/snapshot.js';
 import { useStore } from '../db/store.js';
 import { draftSetting, saveLedgerSetting } from '../db/ledger-settings.js';
 import { ledgerAsOf, needsAsOfAttention } from '../as-of.js';
-import { btnOutline, cardTight, linkAccent } from './styles.js';
+import { linkAccent } from './styles.js';
 
 /**
  * The ledger cut-off (「账本日」) freezes at sign-up and never advances on its
@@ -44,9 +44,8 @@ export function LedgerCutoffNotice({ snap }: { snap: Snapshot }) {
 
   return (
     <div
-      className="zc-cutoff-notice"
+      className="zc-cutoff-notice zc-card is-tight"
       style={{
-        ...cardTight,
         borderColor: 'var(--warning)',
         display: 'flex',
         flexWrap: 'wrap',
@@ -75,7 +74,8 @@ export function LedgerCutoffNotice({ snap }: { snap: Snapshot }) {
           type="button"
           disabled={busy}
           onClick={() => void apply({ asOfDate: state.today }, '更新账本日')}
-          style={{ ...btnOutline, opacity: busy ? 0.65 : 1 }}
+          className="zc-btn"
+          style={busy ? { opacity: 0.65 } : undefined}
         >
           {busy ? '处理中…' : `更新到今天 · ${state.today}`}
         </button>

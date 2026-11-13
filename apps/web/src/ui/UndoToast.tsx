@@ -1,7 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { undoBusinessCompensation, type SqlLedgerStore } from '@zichan/db';
 import { reconcileAttachmentStorage } from '../db/attachment-storage.js';
-import { btnPrimary } from './styles.js';
 
 interface UndoOffer {
   id: number;
@@ -55,9 +54,9 @@ export function UndoProvider({ children }: { children: ReactNode }) {
     <UndoContext.Provider value={{ offer: publish, clear }}>
       {children}
       {offer && (
-        <div role="status" aria-live="polite" className="zc-undo-toast" style={{ position: 'fixed', left: '50%', transform: 'translateX(-50%)', zIndex: 1200, width: 'min(520px, calc(100vw - 24px))', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-primary)', boxShadow: 'var(--shadow-md)', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div role="status" aria-live="polite" className="zc-undo-toast" style={{ position: 'fixed', left: '50%', transform: 'translateX(-50%)', zIndex: 1200, width: 'min(520px, calc(100vw - 24px))', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-primary)', boxShadow: 'var(--shadow-md)', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 'var(--sp-3)' }}>
           <span style={{ flex: 1, minWidth: 0, fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{error || offer.label}</span>
-          {error ? <button type="button" onClick={clear} style={button}>关闭</button> : <button type="button" onClick={() => void run()} disabled={busy} style={button}>{busy ? '撤销中…' : '撤销'}</button>}
+          {error ? <button type="button" onClick={clear} className="zc-btn zc-btn--primary">关闭</button> : <button type="button" onClick={() => void run()} disabled={busy} className="zc-btn zc-btn--primary">{busy ? '撤销中…' : '撤销'}</button>}
         </div>
       )}
     </UndoContext.Provider>
@@ -88,5 +87,3 @@ export function useUndo(store?: SqlLedgerStore, onPersistentUndo?: () => void): 
   }, [onPersistentUndo, store, value]);
   return useMemo(() => ({ offer, clear: value.clear }), [offer, value.clear]);
 }
-
-const button = btnPrimary;

@@ -6,7 +6,7 @@ import { useStore } from '../db/store.js';
 import { buildConvert, type ConvertChainVM } from '../selectors/convert.js';
 import { money, signedMoney, amount as fmtAmount, num, significant } from '../format.js';
 import { baseAsset, financialPostings } from '../db/derive.js';
-import { btnGhost, btnOutline, btnPrimary, card, pillBtn } from '../ui/styles.js';
+import { pillBtn } from '../ui/styles.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { DialogShell } from '../ui/DialogShell.js';
 import { AssetIcon } from '../ui/AssetIcon.js';
@@ -176,12 +176,12 @@ export function Convert() {
           {CONVERT_VIEWS.map((mode) => <button key={mode} type="button" {...viewTabs.tabProps(mode)} style={pillBtn(view === mode)}>{mode === 'overview' ? '持仓概览' : mode === 'list' ? '时间线' : mode === 'year' ? '年度' : mode === 'month' ? '月历' : '单日'}</button>)}
         </div>
         <div className="zc-convert-toolbar-actions">
-          <button onClick={() => setOpeningCost(true)} style={btnOutline}>{snap.costState ? '核对成本起点' : '启用统一成本核算'}</button>
-          <button onClick={() => setAdding({})} style={btnPrimary}>+ 新增转换</button>
+          <button onClick={() => setOpeningCost(true)} className="zc-btn">{snap.costState ? '核对成本起点' : '启用统一成本核算'}</button>
+          <button onClick={() => setAdding({})} className="zc-btn zc-btn--primary">+ 新增转换</button>
         </div>
       </div>
       <div className="zc-convert-filter-toggle">
-        <button type="button" aria-expanded={showHistoryFilters} aria-controls="zc-convert-history-filters" onClick={() => setShowHistoryFilters((value) => !value)} style={btnOutline}>
+        <button type="button" aria-expanded={showHistoryFilters} aria-controls="zc-convert-history-filters" onClick={() => setShowHistoryFilters((value) => !value)} className="zc-btn">
           历史筛选{activeFilterCount ? ` · ${activeFilterCount} 项已启用` : ''} <span aria-hidden="true">{showHistoryFilters ? '▴' : '▾'}</span>
         </button>
       </div>
@@ -200,7 +200,7 @@ export function Convert() {
             {snap.accounts.filter((account) => !account.isDeleted && account.kind !== 'other').map((account) => <option key={account.id} value={account.id}>{account.name}{account.isActive === false ? '（已归档）' : ''}</option>)}
           </select>
           <input aria-label="搜索转换" className="zc-input" placeholder="搜索标题、备注或平台" value={search} onChange={(event) => setSearch(event.target.value)} />
-          <button onClick={() => setShowVoided((value) => !value)} style={showVoided ? pillBtn(true) : btnOutline} aria-pressed={showVoided}>作废记录 {snap.chains.filter((row) => row.chain.recordState === 'voided').length}</button>
+          <button onClick={() => setShowVoided((value) => !value)} style={showVoided ? pillBtn(true) : undefined} className={showVoided ? undefined : 'zc-btn'} aria-pressed={showVoided}>作废记录 {snap.chains.filter((row) => row.chain.recordState === 'voided').length}</button>
         </div>
         <DateRangeBar value={dateRange} onChange={setDateRange} />
         <div className="zc-convert-filter-note">筛选仅作用于历史记录。当前余额包含期初、收支与转换；现值按最新行情折算为 {reportAsset?.code ?? '报表币种'}。</div>
@@ -212,7 +212,7 @@ export function Convert() {
       )}
 
       {showVoided && (
-        <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
+        <div className="zc-card" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ padding: '13px 18px', borderBottom: '1px solid var(--border)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>已作废转换</div>
           {voidedChains.map((row) => (
             <div key={row.chain.id} className="zc-voided-row" style={{ display: 'grid', gridTemplateColumns: '120px 100px minmax(0, 1fr) 90px', alignItems: 'center', gap: 12, padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
@@ -237,7 +237,7 @@ export function Convert() {
         const needsValue = g.hasPosition && g.value === null;
         const needsCost = g.hasPosition && !g.costBasisKnown;
         return (
-          <div key={g.assetId} className="zc-convert-asset-card" style={{ ...card, padding: 0, overflow: 'hidden' }}>
+          <div key={g.assetId} className="zc-convert-asset-card zc-card" style={{ padding: 0, overflow: 'hidden' }}>
             <button
               onClick={() => setOpenGroup((s) => ({ ...s, [g.assetId]: !open }))}
               className="zc-convert-asset-header"
@@ -261,20 +261,20 @@ export function Convert() {
 
             <div className="zc-convert-card-tools">
               <div className="zc-convert-trade-actions">
-                {cardActions.map(({ type, label, source, requiresCostOpening }) => <button key={label} disabled={!cardAsset?.isActive} style={btnOutline} onClick={() => {
+                {cardActions.map(({ type, label, source, requiresCostOpening }) => <button key={label} disabled={!cardAsset?.isActive} className="zc-btn" onClick={() => {
                   const entry = { type, ...(source ? { fromAssetId: g.assetId } : { toAssetId: g.assetId }) };
                   if (requiresCostOpening) { setPendingTrade(entry); setOpeningCost(true); }
                   else setAdding({ entry });
                 }}>{label}</button>)}
               </div>
-              <button style={btnGhost} onClick={() => setActivityAssetId(g.assetId)}>全部流水与账户分布</button>
+              <button className="zc-btn zc-btn--ghost" onClick={() => setActivityAssetId(g.assetId)}>全部流水与账户分布</button>
             </div>
             {(needsValue || needsCost || g.missingCostRateAssetId || cardActions[0]?.requiresCostOpening) && <div className="zc-convert-card-status" role="status">
               <span>{[needsValue ? `缺少 ${g.assetCode} → ${reportAsset?.code ?? '报表币种'} 行情` : '', needsCost ? `成本：${g.costStatus}` : '', g.missingCostRateAssetId ? `缺少 ${bookCurrency?.code} → ${reportAsset?.code} 汇率` : '', cardActions[0]?.requiresCostOpening ? '首次买卖前需核对成本起点' : ''].filter(Boolean).join(' · ')}。现值行情不会自动补历史成本。</span>
               <div className="zc-convert-status-actions">
-                {needsValue && cardAsset?.isActive !== false && <button style={btnOutline} onClick={() => setPriceAssetId(g.assetId)}>补充现值 / 价格</button>}
-                {g.missingCostRateAssetId && snap.assets.find((asset) => asset.id === g.missingCostRateAssetId)?.isActive !== false && <button style={btnOutline} onClick={() => setPriceAssetId(g.missingCostRateAssetId)}>补充汇率</button>}
-                {needsCost && <button style={btnOutline} onClick={() => setOpeningCost(true)}>核对成本</button>}
+                {needsValue && cardAsset?.isActive !== false && <button className="zc-btn" onClick={() => setPriceAssetId(g.assetId)}>补充现值 / 价格</button>}
+                {g.missingCostRateAssetId && snap.assets.find((asset) => asset.id === g.missingCostRateAssetId)?.isActive !== false && <button className="zc-btn" onClick={() => setPriceAssetId(g.missingCostRateAssetId)}>补充汇率</button>}
+                {needsCost && <button className="zc-btn" onClick={() => setOpeningCost(true)}>核对成本</button>}
               </div>
             </div>}
 
@@ -314,7 +314,7 @@ export function Convert() {
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                             <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', letterSpacing: 0 }}>换算步骤</div>
                             {c.steps.map((s) => (
-                              <div key={s.n} style={{ ...card, padding: '14px 16px' }}>
+                              <div key={s.n} className="zc-card" style={{ padding: '14px 16px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                                   <span style={{ width: 22, height: 22, borderRadius: 'var(--r-round)', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{s.n}</span>
                                   <span style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{s.from}</span>
@@ -330,7 +330,7 @@ export function Convert() {
                               </div>
                             ))}
                           </div>
-                          <div style={{ ...card, padding: '16px 18px', alignSelf: 'start' }}>
+                          <div className="zc-card" style={{ padding: '16px 18px', alignSelf: 'start' }}>
                             <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', letterSpacing: 0, marginBottom: 6 }}>收付与记账明细</div>
                             {c.calc.map((r, index) => (
                               <div key={`${r.l}-${index}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', overflowWrap: 'anywhere', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
@@ -444,7 +444,7 @@ function ConvertEmptyState({
     </button>;
   };
   return (
-    <section style={{ ...card, padding: 22 }}>
+    <section className="zc-card" style={{ padding: 22 }}>
       <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{onlyCny ? '当前只有人民币' : '还没有资产转换记录'}</div>
       <div style={{ marginTop: 7, color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.7 }}>
         选一个常用目标资产开始填写真实转换。系统只会在需要时补充资产定义，不会伪造余额、持仓或交易。

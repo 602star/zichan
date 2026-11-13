@@ -1,5 +1,6 @@
 import { test, expect } from '../tests/fixtures.mjs';
 import { registerAccount } from '../../../packages/db/dist/index.js';
+import { enableEveryNavigationModule, openSpendingLedger } from './mobile-onboarding.mjs';
 
 /*
  * Opt-in visual baselines for the phone layout.
@@ -31,7 +32,7 @@ test.setTimeout(1_200_000);
 
 const FIXED_NOW = new Date('2026-03-15T10:00:00+08:00');
 
-const SCREENS = ['总览', '资产转换', '日常支出', '游戏赛季', '物品资产', '报表', '历史', '管理', '同步', '设置'];
+const SCREENS = ['总览', '资产转换', '日常收支', '游戏赛季', '物品资产', '报表', '历史', '管理', '设置'];
 
 async function clickNav(page, label) {
   const where = await page.evaluate((target) => {
@@ -55,7 +56,7 @@ async function clickNav(page, label) {
   if (where === 'drawer') {
     const drawer = page.getByRole('dialog', { name: '更多功能' });
     await expect(drawer).toBeVisible();
-    await drawer.locator('.zc-mobile-drawer-grid button', { hasText: label }).first().click();
+    await drawer.locator('.zc-mobile-drawer-grid button', { hasText: label }).first().click({ timeout: 15_000 });
   } else if (where !== 'bar' && where !== 'sidebar') {
     throw new Error(`navigation failed for ${label}: ${where}`);
   }
@@ -67,21 +68,16 @@ test('phone visual baselines', async ({ page, baseURL }) => {
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.clock.setFixedTime(FIXED_NOW);
-  await page.goto(`${baseURL}/`);
-  await page.getByLabel('服务器用户名').fill('visual-user');
-  await page.getByLabel('服务器账号密码').fill('visual-user-password');
-  await page.getByRole('button', { name: '登录', exact: true }).click();
-  await page.getByRole('button', { name: '直接开始记支出', exact: true }).click({ timeout: 30_000 });
-  await page.getByRole('dialog', { name: '记一笔支出' }).waitFor({ timeout: 30_000 });
-  await page.getByRole('button', { name: '关闭快速记账' }).click();
-  await page.getByRole('dialog', { name: '记一笔支出' }).waitFor({ state: 'hidden' });
+  await openSpendingLedger(page, baseURL, 'visual-user', 'visual-user-password');
+  const dismissGuide = page.getByRole('button', { name: '暂时收起' });
+  if (await dismissGuide.isVisible().catch(() => false)) await dismissGuide.click();
 
   // A fixed sample set: the 7-figure amount is what used to push the dashboard
   // date off screen, so the baseline should keep showing it.
-  await clickNav(page, '日常支出');
+  await clickNav(page, '日常收支');
   for (const [text, amount] of [['午餐', '38.50'], ['地铁通勤', '6'], ['年终奖金', '1280246.79']]) {
-    await page.getByRole('button', { name: '+ 记支出' }).click();
-    const form = page.getByRole('dialog', { name: '新增 · 日常支出' });
+    await page.getByRole('button', { name: '+ 记账' }).click();
+    const form = page.getByRole('dialog', { name: '新增 · 日常收支' });
     await form.waitFor({ timeout: 20_000 });
     await page.getByRole('textbox', { name: /^金额/ }).fill(amount);
     await page.getByLabel('描述').fill(text);
@@ -90,20 +86,14 @@ test('phone visual baselines', async ({ page, baseURL }) => {
   }
 
   // Everything on, so each screen shows its real content rather than an empty state.
-  await clickNav(page, '设置');
-  const toggles = await page.evaluate(() => [...document.querySelectorAll('input[type="checkbox"]')]
-    .map((box) => box.getAttribute('aria-label'))
-    .filter((label) => (label || '').startsWith('在侧边栏显示')));
-  for (const label of toggles) {
-    const box = page.getByRole('checkbox', { name: label });
-    if (!(await box.isChecked().catch(() => true))) await box.check().catch(() => undefined);
-  }
+  await enableEveryNavigationModule(page);
 
   const shot = (name) => expect(page).toHaveScreenshot(name, {
     animations: 'disabled',
     caret: 'hide',
     fullPage: true,
     maxDiffPixelRatio: 0.02,
+    timeout: 20_000,
   });
 
   // Saving raises an undo toast that outranks the dialog layer, so it would sit in
@@ -119,9 +109,9 @@ test('phone visual baselines', async ({ page, baseURL }) => {
 
   // The two modal shapes that carry a refusal: the shared entity form and the
   // one dialog outside that contract.
-  await clickNav(page, '日常支出');
-  await page.getByRole('button', { name: '+ 记支出' }).click();
-  const entityForm = page.getByRole('dialog', { name: '新增 · 日常支出' });
+  await clickNav(page, '日常收支');
+  await page.getByRole('button', { name: '+ 记账' }).click();
+  const entityForm = page.getByRole('dialog', { name: '新增 · 日常收支' });
   await expect(entityForm).toBeVisible();
   // 记支出 keeps the previous entry's draft, so an untouched form can save
   // straight through. Clear the amount to guarantee the refusal branch.
@@ -141,7 +131,7 @@ test('phone visual baselines', async ({ page, baseURL }) => {
   const conversion = page.getByRole('dialog', { name: /资产转换/ });
   await expect(conversion).toBeVisible();
   await conversion.getByRole('button', { name: '保存转换' }).click();
-  await expect(conversion.getByRole('alert')).toBeVisible();
+  await expect(conversion.getByRole('alert').first()).toBeVisible();
   await page.waitForTimeout(200);
   await shot('dialog-conversion-refusal.png');
 });

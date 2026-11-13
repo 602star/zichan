@@ -1,61 +1,15 @@
 import type { CSSProperties } from 'react';
 import { D, type Numeric } from '@zichan/core';
 
-export const card: CSSProperties = {
-  background: 'var(--surface)',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--r-sm)',
-  padding: 20,
-};
-
-export const cardTight: CSSProperties = { ...card, padding: 16 };
-
 /*
- * Buttons.
+ * Design token–based style helpers that cannot yet be expressed as CSS classes.
  *
- * These were previously re-declared inside a dozen screens
- * (`outline`/`primary`/`smallButton`/`primaryBtn`/`outlineButton`/`ghostBtn`…),
- * which is why the same "primary action" looked different on every page. There
- * is now one shape and four intents.
- *
- * No `minHeight` here on purpose: the height has to stay in CSS so the
- * `@media (pointer: coarse)` block can raise it to a 44px touch target. An
- * inline value would outrank that rule.
+ * Everything here is a residual: items that are still used as inline style values
+ * because they carry per-instance variation or because they appear inside a computed
+ * CSSProperties object (e.g. pillBtn, amountColor). The card/btn families that used
+ * to live here have been fully migrated to .zc-card / .zc-btn CSS classes, so they
+ * are intentionally absent.
  */
-export const btnBase: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 4,
-  padding: '0 16px',
-  border: '1px solid var(--border)',
-  borderRadius: 'var(--r-sm)',
-  background: 'var(--surface)',
-  color: 'var(--text-secondary)',
-  fontSize: 'var(--fs-body)',
-  /* An action is identified by its shape and colour, so it does not also need
-     to out-shout the data it sits next to. */
-  fontWeight: 'var(--fw-medium)',
-  whiteSpace: 'nowrap',
-  cursor: 'pointer',
-};
-
-export const btnPrimary: CSSProperties = {
-  ...btnBase,
-  borderColor: 'var(--accent)',
-  background: 'var(--accent)',
-  color: 'var(--on-accent)',
-};
-
-export const btnOutline: CSSProperties = btnBase;
-
-export const btnQuiet: CSSProperties = { ...btnBase, background: 'var(--surface-2)' };
-
-export const btnGhost: CSSProperties = { ...btnBase, borderColor: 'transparent', background: 'transparent' };
-
-export const btnDanger: CSSProperties = { ...btnBase, borderColor: 'var(--negative)', color: 'var(--negative)' };
-
-export const btnSmall: CSSProperties = { ...btnBase, padding: '0 8px', fontSize: 'var(--fs-caption)' };
 
 /* The one caption style, so supporting copy stops varying per section. */
 export const metaText: CSSProperties = {
@@ -66,12 +20,22 @@ export const metaText: CSSProperties = {
 
 /* A square icon-only action (close, step, paginate). */
 export const iconBtn: CSSProperties = {
-  ...btnBase,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 4,
   width: 34,
   height: 34,
   padding: 0,
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--r-sm)',
+  background: 'var(--surface)',
+  color: 'var(--text-secondary)',
   fontSize: 'var(--fs-title)',
+  fontWeight: 'var(--fw-medium)',
   lineHeight: 1,
+  whiteSpace: 'nowrap',
+  cursor: 'pointer',
 };
 
 /* A borderless text action that reads as a link. */

@@ -4,7 +4,6 @@ import { DialogShell } from './DialogShell.js';
 import type { Category, Payee } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { matchingPayee, normalizedPayeeName, PAYEE_SCENES, PLATFORM_CATALOG, relatedPlatforms, type PlatformEntry } from '../payee-catalog.js';
-import { btnOutline } from './styles.js';
 
 export function PayeePicker({ id, payees, categories, payeeId, merchant, categoryId, type, textOnly = false, onChange }: {
   id: string; payees: Payee[]; categories: Category[]; payeeId: string; merchant: string;
@@ -44,34 +43,35 @@ export function PayeePicker({ id, payees, categories, payeeId, merchant, categor
     .filter(available).filter((entry) => !query || !ownMatches.some((payee) => matchingPayee([payee], entry.name, entry)))
     .slice(0, query || browse ? 20 : 6);
   const choose = (id: string, name: string) => { onChange(id, name); setOpen(false); };
-  const chip = { ...btnOutline, display: 'inline-flex' as const, alignItems: 'center', gap: 6, padding: '5px 10px', minHeight: 34, whiteSpace: 'normal' as const };
+  // chip: a compact inline button with slightly smaller padding than the base zc-btn
+  const chipStyle = { display: 'inline-flex' as const, alignItems: 'center', gap: 6, padding: '5px 10px', minHeight: 34, whiteSpace: 'normal' as const };
   return <div onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
     <div style={{ display: 'flex', gap: 6 }}>
       <input id={id} className="zc-input" style={{ minWidth: 0, flex: 1 }} value={value}
         placeholder={type === 'income' ? '搜索或输入付款人、公司、平台' : '搜索或输入商家、平台、收款人'}
         onFocus={() => setOpen(true)} onChange={(event) => { onChange('', event.target.value); setOpen(true); }}
         onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); } if (event.key === 'Enter') { event.preventDefault(); setOpen(false); } }} />
-      {(value || payeeId) && <button type="button" style={chip} aria-label="清除交易对象" onClick={() => onChange('', '')}>清除</button>}
+      {(value || payeeId) && <button type="button" className="zc-btn" style={chipStyle} aria-label="清除交易对象" onClick={() => onChange('', '')}>清除</button>}
     </div>
     {selected && (!selected.isActive || selected.isDeleted) && <p className="zc-meta">历史交易对象已停用；保留原记录，或重新选择。</p>}
     {open && <div style={{ marginTop: 6, padding: 12, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', maxHeight: 300, overflowY: 'auto' }}>
       {query ? <div className="zc-meta">我的交易对象</div> : <div style={{ display: 'flex', gap: 6 }}>
-        <button type="button" style={chip} aria-pressed={historyOrder === 'recent'} onClick={() => setHistoryOrder('recent')}>最近使用</button>
-        <button type="button" style={chip} aria-pressed={historyOrder === 'frequent'} onClick={() => setHistoryOrder('frequent')}>常用对象</button>
+        <button type="button" className="zc-btn" style={chipStyle} aria-pressed={historyOrder === 'recent'} onClick={() => setHistoryOrder('recent')}>最近使用</button>
+        <button type="button" className="zc-btn" style={chipStyle} aria-pressed={historyOrder === 'frequent'} onClick={() => setHistoryOrder('frequent')}>常用对象</button>
       </div>}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '6px 0 12px' }}>
-        {(query ? ownMatches.slice(0, 20) : recent).map((payee) => <button key={payee.id} type="button" style={chip} onClick={() => choose(payee.id, payee.name)}><EntityIcon icon={payee.icon} platformId={payee.id} platformName={payee.name} fallback="store" /><span>{payee.name}</span></button>)}
+        {(query ? ownMatches.slice(0, 20) : recent).map((payee) => <button key={payee.id} type="button" className="zc-btn" style={chipStyle} onClick={() => choose(payee.id, payee.name)}><EntityIcon icon={payee.icon} platformId={payee.id} platformName={payee.name} fallback="store" /><span>{payee.name}</span></button>)}
         {!query && !recent.length && <span className="zc-meta">使用后会显示在这里，也可以直接输入名称。</span>}
       </div>
       {usageError && <p className="zc-meta">最近使用暂时无法读取，仍可搜索或输入。</p>}
-      <button type="button" style={chip} aria-expanded={browse} onClick={() => { setBrowse(!browse); if (!scene) setScene(PAYEE_SCENES[0].id); }}>按场景浏览</button>
+      <button type="button" className="zc-btn" style={chipStyle} aria-expanded={browse} onClick={() => { setBrowse(!browse); if (!scene) setScene(PAYEE_SCENES[0].id); }}>按场景浏览</button>
       {browse && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-        {PAYEE_SCENES.map((item) => <button type="button" key={item.id} style={chip} aria-pressed={scene === item.id} onClick={() => setScene(item.id)}>{item.name}</button>)}
+        {PAYEE_SCENES.map((item) => <button type="button" key={item.id} className="zc-btn" style={chipStyle} aria-pressed={scene === item.id} onClick={() => setScene(item.id)}>{item.name}</button>)}
       </div>}
       {!!catalog.length && <>
         <p className="zc-meta">{query ? '平台目录' : browse ? PAYEE_SCENES.find((item) => item.id === scene)?.name : '相关平台'}</p>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {catalog.map((entry) => { const existing = matchingPayee(allPayees, entry.name, entry); return <button type="button" key={entry.id} style={chip} onClick={() => choose(existing?.id ?? '', existing?.name ?? entry.name)}><EntityIcon icon={existing?.icon} platformId={entry.id} platformName={entry.name} fallback="store" /><span>{existing?.name ?? entry.name}</span></button>; })}
+          {catalog.map((entry) => { const existing = matchingPayee(allPayees, entry.name, entry); return <button type="button" key={entry.id} className="zc-btn" style={chipStyle} onClick={() => choose(existing?.id ?? '', existing?.name ?? entry.name)}><EntityIcon icon={existing?.icon} platformId={entry.id} platformName={entry.name} fallback="store" /><span>{existing?.name ?? entry.name}</span></button>; })}
         </div>
       </>}
       {isBlocked ? <p role="status" className="zc-meta">这个交易对象已停用或删除，请在管理页恢复后使用。</p>
@@ -99,7 +99,7 @@ export function ExistingPayeePicker({ payees, value, onChange, label, emptyLabel
       <span>{value === emptyValue ? emptyLabel : selected?.name ?? (value ? `历史对象 ${value}` : clearLabel ?? emptyLabel)}</span><span aria-hidden="true">▾</span>
     </button>
     {open && <DialogShell labelledBy={titleId} onDismiss={() => setOpen(false)} backdropStyle={{ zIndex: 1300 }} panelClassName="zc-existing-payee-dialog">
-      <div className="zc-existing-payee-heading"><b id={titleId}>{label}</b><button type="button" style={btnOutline} aria-label="关闭交易对象选择" onClick={() => setOpen(false)}>×</button></div>
+      <div className="zc-existing-payee-heading"><b id={titleId}>{label}</b><button type="button" className="zc-btn" aria-label="关闭交易对象选择" onClick={() => setOpen(false)}>×</button></div>
       <input className="zc-input" aria-label="搜索已有交易对象" placeholder="搜索名称或别名" value={query} onChange={(event) => setQuery(event.target.value)} />
       <div role="listbox" aria-label="已有交易对象" className="zc-existing-payee-options">
         <button type="button" role="option" aria-selected={value === emptyValue} onClick={() => choose(emptyValue)}>{emptyLabel}</button>

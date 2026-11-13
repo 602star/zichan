@@ -3,8 +3,6 @@ import { D, isValidDay, localToday, newId, type Asset, type PriceMark } from '@z
 import { useStore } from '../db/store.js';
 import { amount, significant } from '../format.js';
 import { DialogShell } from '../ui/DialogShell.js';
-import { btnOutline, btnPrimary } from '../ui/styles.js';
-
 /** A total holding value is entered as a quote; PriceMark remains a per-unit market price. */
 export function holdingUnitPrice(input: string, mode: 'total' | 'unit', holdings: string): string {
   const entered = D(input);
@@ -60,7 +58,7 @@ export function HoldingPriceModal({ asset, quoteAsset, holdings, onSave, onClose
     backdropClassName="zc-backdrop zc-conversion-backdrop" panelClassName="zc-conversion-detail">
     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
       <h2 id={titleId} style={{ flex: 1 }}>补充 {asset.code} 现值 / 价格</h2>
-      <button style={btnOutline} disabled={busy} onClick={onClose}>关闭</button>
+      <button className="zc-btn" disabled={busy} onClick={onClose}>关闭</button>
     </div>
     <p>当前余额 {amount(holdings, asset.decimals)} {asset.code}。价格按 {quoteAsset.code} 计价；这条行情用于现值和报表折算，不会改变历史取得成本。</p>
     {canEnterTotal && <label style={{ display: 'block', marginBottom: 12 }}>填写方式
@@ -77,6 +75,6 @@ export function HoldingPriceModal({ asset, quoteAsset, holdings, onSave, onClose
     </label>
     {unitPrice && <p role="status">将保存：1 {asset.code} = {symbol}{significant(unitPrice)}{mode === 'unit' && canEnterTotal ? ` · 当前持仓现值 ${symbol}${significant(D(holdings).times(unitPrice))}` : ''}</p>}
     {error && <p role="alert" style={{ color: 'var(--negative)' }}>{error}</p>}
-    <button style={btnPrimary} disabled={busy} onClick={() => void save()}>{busy ? '保存中…' : '保存价格'}</button>
+    <button className="zc-btn zc-btn--primary" disabled={busy} onClick={() => void save()}>{busy ? '保存中…' : '保存价格'}</button>
   </DialogShell>;
 }

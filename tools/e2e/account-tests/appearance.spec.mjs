@@ -87,21 +87,21 @@ test('a dark system paints the ledger dark, and the choice outranks it', async (
 
     const dark = await readPalette(page);
     expect(dark.colorScheme, 'the root must declare a dark colour scheme').toBe('dark');
-    expect(dark.bg, 'the dark palette must be the one applied').toBe('#191512');
+    expect(dark.bg, 'the dark palette must be the one applied').toBe('#1b1b1a');
     // The page itself must be dark, and its text light: a token that is applied
     // but never reaches <body> leaves a cream page behind dark components.
     expect(dark.bodyBackgroundLuminance, `body background is ${dark.bodyBackground}`).toBeLessThan(80);
     expect(dark.bodyTextLuminance, `body text is ${dark.bodyColor}`).toBeGreaterThan(150);
     // The browser-chrome tint follows the palette instead of staying cream.
-    expect(dark.themeColor).toBe('#191512');
+    expect(dark.themeColor).toBe('#1b1b1a');
 
     // An explicit light choice has to beat a dark system setting.
     await page.getByRole('radio', { name: '浅色', exact: true }).click();
     await expect.poll(async () => (await readPalette(page)).colorScheme).toBe('light');
     const light = await readPalette(page);
-    expect(light.bg).toBe('#f0e9dc');
+    expect(light.bg).toBe('#ebe8df');
     expect(light.bodyBackgroundLuminance).toBeGreaterThan(150);
-    expect(light.themeColor).toBe('#f0e9dc');
+    expect(light.themeColor).toBe('#ebe8df');
 
     // And an explicit dark choice has to beat a light system setting.
     await page.emulateMedia({ colorScheme: 'light' });
@@ -124,14 +124,14 @@ test('a dark screen survives a reload, and the accent family is a separate axis'
     // The palette is a device preference, so it has to come back without the server.
     await page.reload();
     await expect.poll(async () => (await readPalette(page)).colorScheme).toBe('dark');
-    expect((await readPalette(page)).bg).toBe('#191512');
+    expect((await readPalette(page)).bg).toBe('#1b1b1a');
 
-    // Switching the accent family keeps the mode: they are separate axes.
+    // Switching the paper tint keeps the mode and the action ink.
     await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
     await page.locator('.zc-sidebar button[title="设置"]').click();
     await page.getByRole('tab', { name: '外观', exact: true }).click();
-    await page.getByRole('radio', { name: '鼠尾草 · 苔绿', exact: true }).click();
-    await expect.poll(async () => (await readPalette(page)).bg).toBe('#121814');
+    await page.getByRole('radio', { name: '青灰纸 · 墨朱', exact: true }).click();
+    await expect.poll(async () => (await readPalette(page)).bg).toBe('#191d1b');
     expect((await readPalette(page)).colorScheme).toBe('dark');
   } finally { await f.close(); }
 });

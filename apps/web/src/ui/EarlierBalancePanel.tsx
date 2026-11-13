@@ -2,8 +2,6 @@ import { useId, useState } from 'react';
 import { D, normalizeOccurrence, type Account, type Setting } from '@zichan/core';
 import { applyEarlierBalance, previewEarlierBalance, type SqlLedgerStore, type EarlierBalanceInput } from '@zichan/db';
 import { DialogShell } from './DialogShell.js';
-import { btnOutline, btnPrimary } from './styles.js';
-
 export function EarlierBalancePanel({ store, account, setting, onSaved, onClose }: {
   store: SqlLedgerStore; account: Account; setting?: Setting; onSaved: () => void; onClose: () => void;
 }) {
@@ -26,13 +24,13 @@ export function EarlierBalancePanel({ store, account, setting, onSaved, onClose 
     {preview && <div role="status"><p>按已录入记录推算原起点余额：{preview.reconstructed}</p><p>与原已知余额的差额：{preview.difference}</p>{!D(preview.difference).isZero() && <p>请先补齐漏记、核实账户归属或更早余额，再重新预览。</p>}</div>}
     {error && <p role="alert">{error}</p>}
     <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
-      <button style={btnOutline} disabled={busy || !at || amount.trim() === ''} onClick={() => void run(async () => {
+      <button className="zc-btn" disabled={busy || !at || amount.trim() === ''} onClick={() => void run(async () => {
         const occurrence = normalizeOccurrence({ date: at.slice(0, 10), time: at.slice(11), timezone: setting?.timezone });
         const next = { accountId: account.id, openingBalance: amount, balanceStartAt: occurrence.occurredAtUtc!, balanceStartDate: occurrence.date };
         setInput(next); setPreview(await previewEarlierBalance(store, next));
       })}>预览核对差额</button>
-      {preview && input && <button style={btnPrimary} disabled={busy || !D(preview.difference).isZero()} onClick={() => void run(async () => { await applyEarlierBalance(store, input, preview.signature); onSaved(); })}>确认前移余额起点</button>}
-      <button style={btnOutline} disabled={busy} onClick={onClose}>关闭</button>
+      {preview && input && <button className="zc-btn zc-btn--primary" disabled={busy || !D(preview.difference).isZero()} onClick={() => void run(async () => { await applyEarlierBalance(store, input, preview.signature); onSaved(); })}>确认前移余额起点</button>}
+      <button className="zc-btn" disabled={busy} onClick={onClose}>关闭</button>
     </div>
   </DialogShell>;
 }

@@ -22,7 +22,7 @@ import {
   listDevices,
   registerSync,
 } from '../db/cloud.js';
-import { btnDanger, btnOutline, btnPrimary, card, td as tdStyle, th as thStyle } from '../ui/styles.js';
+import { td as tdStyle, th as thStyle } from '../ui/styles.js';
 import { categoryLabel, TYPE_LABEL } from '../transactionMeta.js';
 import { DateRangeBar, dateRangeValue, localDateOfInstant, type DateRangeValue } from '../ui/DateRangeBar.js';
 import {
@@ -355,10 +355,7 @@ const statusText: Record<SyncConnectionStatus, string> = {
   replica_retired: '已移出副本组',
 };
 
-const outline = btnOutline;
-const primary = btnPrimary;
-const danger = btnDanger;
-const inputGrid = { display: 'grid', gridTemplateColumns: '1fr 120px 1fr 100px', gap: 10, marginBottom: 10 } as const;
+const inputGrid = { gridTemplateColumns: '1fr 120px 1fr 100px' } as const;
 
 export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, onSelectSection, onExportBackup, onImportBackup }: {
   theme: ThemeId;
@@ -1549,7 +1546,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
    * so the same password fields can never appear twice at once.
    */
   const ledgerKeyCard = (
-    <div style={card}>
+    <div className="zc-card">
       <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>账本密码</div>
@@ -1565,16 +1562,16 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
         <div style={{ display: 'flex', alignItems: 'end', gap: 10, flexWrap: 'wrap' }}>
           <div style={{ minWidth: 230, flex: '1 1 260px' }}><label className="zc-label">账本密码</label><input aria-label="账本密码" className="zc-input" type="password" autoComplete="off" value={ledgerPassword} onChange={(event) => setLedgerPassword(event.target.value)} /></div>
           {!ledgerKey.initialized && <div style={{ minWidth: 230, flex: '1 1 260px' }}><label className="zc-label">确认账本密码</label><input aria-label="确认账本密码" className="zc-input" type="password" autoComplete="off" value={ledgerPasswordConfirm} onChange={(event) => setLedgerPasswordConfirm(event.target.value)} /></div>}
-          <button type="button" onClick={() => void createOrUnlockLedgerKey()} disabled={ledgerKeyBusy || ledgerPassword.length < 8 || (!ledgerKey.initialized && ledgerPassword !== ledgerPasswordConfirm)} style={primary}>{ledgerKeyBusy ? '处理中…' : ledgerKey.initialized ? '解锁' : '创建密钥包'}</button>
-          {selected && <button type="button" onClick={() => void fetchRemoteLedgerKey(selected)} disabled={ledgerKeyBusy || !selected.username.trim() || !hasAccountSession(credentials[selected.id])} style={outline}>从当前服务器获取</button>}
+          <button type="button" onClick={() => void createOrUnlockLedgerKey()} disabled={ledgerKeyBusy || ledgerPassword.length < 8 || (!ledgerKey.initialized && ledgerPassword !== ledgerPasswordConfirm)} className="zc-btn zc-btn--primary">{ledgerKeyBusy ? '处理中…' : ledgerKey.initialized ? '解锁' : '创建密钥包'}</button>
+          {selected && <button type="button" onClick={() => void fetchRemoteLedgerKey(selected)} disabled={ledgerKeyBusy || !selected.username.trim() || !hasAccountSession(credentials[selected.id])} className="zc-btn">从当前服务器获取</button>}
         </div>
       ) : (
         <div style={{ display: 'flex', alignItems: 'end', gap: 10, flexWrap: 'wrap' }}>
           <div style={{ minWidth: 220, flex: '1 1 240px' }}><label className="zc-label">新的账本密码</label><input aria-label="新的账本密码" className="zc-input" type="password" autoComplete="new-password" value={newLedgerPassword} onChange={(event) => setNewLedgerPassword(event.target.value)} /></div>
           <div style={{ minWidth: 220, flex: '1 1 240px' }}><label className="zc-label">确认新的账本密码</label><input aria-label="确认新的账本密码" className="zc-input" type="password" autoComplete="new-password" value={newLedgerPasswordConfirm} onChange={(event) => setNewLedgerPasswordConfirm(event.target.value)} /></div>
-          <button type="button" onClick={() => void changeLedgerKeyPassword()} disabled={ledgerKeyBusy || newLedgerPassword.length < 8 || newLedgerPassword !== newLedgerPasswordConfirm} style={outline}>修改账本密码</button>
-          <button type="button" onClick={() => void rotateLedgerDataKeyNow()} disabled={ledgerKeyBusy || newLedgerPassword.length < 8} style={outline}>轮换数据密钥</button>
-          <button type="button" onClick={() => lockLedgerKey()} disabled={ledgerKeyBusy} style={outline}>锁定</button>
+          <button type="button" onClick={() => void changeLedgerKeyPassword()} disabled={ledgerKeyBusy || newLedgerPassword.length < 8 || newLedgerPassword !== newLedgerPasswordConfirm} className="zc-btn">修改账本密码</button>
+          <button type="button" onClick={() => void rotateLedgerDataKeyNow()} disabled={ledgerKeyBusy || newLedgerPassword.length < 8} className="zc-btn">轮换数据密钥</button>
+          <button type="button" onClick={() => lockLedgerKey()} disabled={ledgerKeyBusy} className="zc-btn">锁定</button>
         </div>
       )}
       {ledgerKeyError && <div style={{ marginTop: 10, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{ledgerKeyError}</div>}
@@ -1616,7 +1613,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
           </select>
           <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>{autoSyncStatus}</span>
         </div>
-      {<div style={card}>
+      {<div className="zc-card">
         <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>服务器配置</div>
@@ -1625,7 +1622,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
               {!isTauriRuntime() && '本站账号负责登录与缓存隔离，附加服务器独立使用令牌会话，保存在此标签页的 sessionStorage；关闭标签页后需重新登录，不覆盖本站 Cookie。'}
             </div>
           </div>
-          <button onClick={addProfile} style={primary}>新增服务器</button>
+          <button onClick={addProfile} className="zc-btn zc-btn--primary">新增服务器</button>
         </div>
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: '10px 0 14px', borderTop: '1px solid var(--border)' }}>
@@ -1638,7 +1635,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
             placeholder="粘贴不含秘密的连接链接"
             spellCheck={false}
           />
-          <button type="button" onClick={() => importConnectionLink(connectionLinkDraft)} disabled={!connectionLinkDraft.trim()} style={outline}>导入连接</button>
+          <button type="button" onClick={() => importConnectionLink(connectionLinkDraft)} disabled={!connectionLinkDraft.trim()} className="zc-btn">导入连接</button>
         </div>
 
         {vault.kind === 'native-stronghold' && (
@@ -1664,7 +1661,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
                 <input aria-label="确认 Stronghold 本机密码" className="zc-input" type="password" autoComplete="off" spellCheck={false} value={vaultPasswordConfirm} onChange={(event) => setVaultPasswordConfirm(event.target.value)} placeholder="再次输入本机密码" disabled={vaultBusy} />
               </div>
             )}
-            <button type="button" onClick={() => void unlockVault()} disabled={vault.unlocked || vaultBusy || vaultPassword.length < 8 || (!vault.initialized && vaultPassword !== vaultPasswordConfirm)} style={vault.unlocked ? outline : primary}>
+            <button type="button" onClick={() => void unlockVault()} disabled={vault.unlocked || vaultBusy || vaultPassword.length < 8 || (!vault.initialized && vaultPassword !== vaultPasswordConfirm)} className={vault.unlocked ? 'zc-btn' : 'zc-btn zc-btn--primary'}>
               {vault.unlocked ? '已解锁' : vaultBusy ? '解锁中…' : vault.initialized ? '解锁' : '创建并解锁'}
             </button>
             <div style={{ flex: '1 1 240px', fontSize: 'var(--fs-caption)', color: vaultError ? 'var(--negative)' : vault.unlocked ? 'var(--positive)' : 'var(--fg-subtle)', fontWeight: 'var(--fw-medium)' }}>
@@ -1691,7 +1688,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
               </div>
             </div>
             {(wizardMode === 'lan' || wizardMode === 'public') && (
-              <div className="zc-sync-wizard-grid" style={{ display: 'grid', gridTemplateColumns: wizardMode === 'public' ? '1fr 180px' : '1fr', gap: 10, marginBottom: 10 }}>
+              <div className="zc-sync-wizard-grid" style={{ gridTemplateColumns: wizardMode === 'public' ? '1fr 180px' : '1fr' }}>
                 <div>
                   <label className="zc-label" htmlFor="zc-sync-wizard-host">{wizardMode === 'public' ? '公网域名' : '局域网 IP / 主机名'}</label>
                   <input id="zc-sync-wizard-host" className="zc-input" value={wizardHost} onChange={(e) => setWizardHost(e.target.value)} placeholder={wizardMode === 'public' ? 'ledger.example.com' : '192.168.1.100'} />
@@ -1705,8 +1702,8 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
               </div>
             )}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button onClick={applyWizard} style={outline}>套用到当前服务器</button>
-              <button onClick={() => void applyWizardAndTest()} disabled={testingId === selected.id} style={outline}>{testingId === selected.id ? '测试中…' : '套用并测试连通性'}</button>
+              <button onClick={applyWizard} className="zc-btn">套用到当前服务器</button>
+              <button onClick={() => void applyWizardAndTest()} disabled={testingId === selected.id} className="zc-btn">{testingId === selected.id ? '测试中…' : '套用并测试连通性'}</button>
               <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>
                 {buildBaseUrl({ ...selected, ...wizardPatch(wizardMode, wizardHost, wizardBasePath) })}
               </span>
@@ -1718,7 +1715,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
                   远端账本 {selectedRemoteLedgerId}。系统会先只读验证远端密码、提交和账本一致性，再保存本机保护备份并原子替换；任何一步失败都会保留本机账本。
                 </div>
                 {joinTarget?.profileId !== selected.id ? (
-                  <button type="button" disabled={busy} onClick={() => { setJoinTarget({ profileId: selected.id, ledgerId: selectedRemoteLedgerId }); setJoinConfirmation(''); setJoinLedgerPassword(''); }} style={{ ...danger, marginTop: 10 }}>加入远端账本</button>
+                  <button type="button" disabled={busy} onClick={() => { setJoinTarget({ profileId: selected.id, ledgerId: selectedRemoteLedgerId }); setJoinConfirmation(''); setJoinLedgerPassword(''); }} className="zc-btn zc-btn--danger" style={{ marginTop: 10 }}>加入远端账本</button>
                 ) : (
                   <div style={{ display: 'flex', gap: 8, alignItems: 'end', flexWrap: 'wrap', marginTop: 10 }}>
                     <div style={{ minWidth: 240 }}>
@@ -1729,8 +1726,8 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
                       <label className="zc-label">远端账本密码</label>
                       <input aria-label="远端账本密码" className="zc-input" type="password" value={joinLedgerPassword} onChange={(event) => setJoinLedgerPassword(event.target.value)} autoComplete="off" />
                     </div>
-                    <button type="button" disabled={busy || joinConfirmation !== '替换本机' || joinLedgerPassword.length < 8} onClick={() => void joinRemoteLedger(selected, selectedRemoteLedgerId)} style={danger}>验证、备份并加入</button>
-                    <button type="button" disabled={busy} onClick={() => { setJoinTarget(null); setJoinConfirmation(''); setJoinLedgerPassword(''); }} style={outline}>取消</button>
+                    <button type="button" disabled={busy || joinConfirmation !== '替换本机' || joinLedgerPassword.length < 8} onClick={() => void joinRemoteLedger(selected, selectedRemoteLedgerId)} className="zc-btn zc-btn--danger">验证、备份并加入</button>
+                    <button type="button" disabled={busy} onClick={() => { setJoinTarget(null); setJoinConfirmation(''); setJoinLedgerPassword(''); }} className="zc-btn">取消</button>
                   </div>
                 )}
               </div>
@@ -1749,7 +1746,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
               <label>这台服务器的账号密码<br /><input className="zc-input" type="password"
                 autoComplete="current-password" value={browserReplicaPassword}
                 onChange={(event) => setBrowserReplicaPassword(event.target.value)} /></label>
-              <button type="button" style={primary} disabled={busy || !ledgerKey.unlocked || browserReplicaPassword.length < 8}
+              <button type="button" className="zc-btn zc-btn--primary" disabled={busy || !ledgerKey.unlocked || browserReplicaPassword.length < 8}
                 onClick={() => void connectBrowserReplica()}>{busy ? '处理中…' : '添加为浏览器同步副本'}</button>
             </div>
           </div>
@@ -1772,7 +1769,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
                   <td style={{ ...tdStyle, color: p.status === 'online' ? 'var(--positive)' : p.status === 'offline' || p.status === 'identity_changed' || p.status === 'replica_retired' ? 'var(--negative)' : 'var(--fg-muted)', fontWeight: 'var(--fw-bold)' }}>{statusText[p.status]}</td>
                   <td style={tdStyle}>{p.lastLatencyMs !== undefined ? `${p.lastLatencyMs}ms` : '—'}</td>
                   <td style={{ ...tdStyle, textAlign: 'right' }}>
-                    <button onClick={(e) => { e.stopPropagation(); void testProfile(p, 'health'); }} disabled={testingId === p.id} style={outline}>{testingId === p.id ? '测试中…' : '测试连通性'}</button>
+                    <button onClick={(e) => { e.stopPropagation(); void testProfile(p, 'health'); }} disabled={testingId === p.id} className="zc-btn">{testingId === p.id ? '测试中…' : '测试连通性'}</button>
                   </td>
                 </tr>
               ))}
@@ -1796,8 +1793,8 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
                   placeholder="https://ledger.example.com/zichan"
                   spellCheck={false}
                 />
-                <button type="button" onClick={() => setAdvancedAddress((value) => !value)} style={outline}>{advancedAddress ? '收起字段填写' : '按字段填写'}</button>
-                <button type="button" onClick={saveAddress} disabled={selectedIsPrimary || Boolean(addressError) || addressDraft === selected.baseUrl} style={primary}>保存地址</button>
+                <button type="button" onClick={() => setAdvancedAddress((value) => !value)} className="zc-btn">{advancedAddress ? '收起字段填写' : '按字段填写'}</button>
+                <button type="button" onClick={saveAddress} disabled={selectedIsPrimary || Boolean(addressError) || addressDraft === selected.baseUrl} className="zc-btn zc-btn--primary">保存地址</button>
               </div>
               <div style={{ marginTop: 5, fontSize: 'var(--fs-meta)', color: addressError ? 'var(--negative)' : 'var(--fg-subtle)', fontWeight: addressError ? 'var(--fw-bold)' : 'var(--fw-regular)' }}>
                 {addressError || '完整 URL 是唯一保存值；高级字段只是同一地址的编辑视图。公网必须使用 HTTPS。'}
@@ -1837,16 +1834,16 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
               </div>
             )}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button onClick={() => void testProfile(selected, 'auth')} disabled={busy || testingId === selected.id} style={outline}>{testingId === selected.id ? '验证中…' : '验证账号密码'}</button>
-              <button onClick={() => void registerProfile(selected)} disabled={selectedIsPrimary || busy || Boolean(testingId) || selectedHealth?.claimed === false || selectedHealth?.registrationMode === 'closed'} style={outline}>注册</button>
-              <button onClick={() => void submitLogin(selected)} disabled={selectedIsPrimary || busy || Boolean(testingId)} style={outline}>登录</button>
-              <button onClick={() => void doSync(selected)} disabled={busy || !ledgerKey.unlocked} style={primary}>{busy ? '同步中…' : '同步此服务器'}</button>
-              <button type="button" onClick={() => void createConnectionShare(selected)} disabled={busy || !selected.serverId || !selected.serverPublicKey} style={outline}>连接链接 / 二维码</button>
+              <button onClick={() => void testProfile(selected, 'auth')} disabled={busy || testingId === selected.id} className="zc-btn">{testingId === selected.id ? '验证中…' : '验证账号密码'}</button>
+              <button onClick={() => void registerProfile(selected)} disabled={selectedIsPrimary || busy || Boolean(testingId) || selectedHealth?.claimed === false || selectedHealth?.registrationMode === 'closed'} className="zc-btn">注册</button>
+              <button onClick={() => void submitLogin(selected)} disabled={selectedIsPrimary || busy || Boolean(testingId)} className="zc-btn">登录</button>
+              <button onClick={() => void doSync(selected)} disabled={busy || !ledgerKey.unlocked} className="zc-btn zc-btn--primary">{busy ? '同步中…' : '同步此服务器'}</button>
+              <button type="button" onClick={() => void createConnectionShare(selected)} disabled={busy || !selected.serverId || !selected.serverPublicKey} className="zc-btn">连接链接 / 二维码</button>
               <button
                 onClick={() => { operations.current.cancel(selected.id); setRemoveWarning(''); setRemoveTarget(selected.id); }}
                 disabled={selectedIsPrimary || profiles.length <= 1 || busy || (vault.kind === 'native-stronghold' && vault.initialized && !vault.unlocked)}
                 title={vault.kind === 'native-stronghold' && vault.initialized && !vault.unlocked ? '请先解锁 Stronghold，确保同步凭据一并删除' : '删除服务器'}
-                style={danger}
+                className="zc-btn zc-btn--danger"
               >删除</button>
               <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>
                 {selected.serverId ? `服务器 ID：${selected.serverId}` : '尚未识别服务器 ID'}
@@ -1864,8 +1861,8 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
                   <div style={{ marginTop: 5, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', lineHeight: 1.6 }}>只包含应用入口、服务器完整 URL、serverId 和 OPAQUE 公钥指纹；扫码或导入后仍必须单独登录。</div>
                   <textarea readOnly value={connectionShare.link} aria-label="无秘密连接链接" onFocus={(event) => event.currentTarget.select()} style={{ boxSizing: 'border-box', width: '100%', minHeight: 92, marginTop: 9, padding: 9, resize: 'vertical', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', color: 'var(--text-secondary)', fontSize: 'var(--fs-meta)', userSelect: 'text', WebkitUserSelect: 'text' }} />
                   <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-                    <button type="button" onClick={() => void copyTextToClipboard(connectionShare.link).then(() => setSyncNotice('连接链接已复制。')).catch((error) => setSyncNotice(`复制失败：${msg(error)}`))} style={outline}>复制链接</button>
-                    <button type="button" onClick={() => setConnectionShare(null)} style={outline}>关闭</button>
+                    <button type="button" onClick={() => void copyTextToClipboard(connectionShare.link).then(() => setSyncNotice('连接链接已复制。')).catch((error) => setSyncNotice(`复制失败：${msg(error)}`))} className="zc-btn">复制链接</button>
+                    <button type="button" onClick={() => setConnectionShare(null)} className="zc-btn">关闭</button>
                   </div>
                 </div>
               </div>
@@ -1874,7 +1871,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
         )}
       </div>}
 
-      <div style={card}>
+      <div className="zc-card">
         <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>同步结果</div>
@@ -1957,7 +1954,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
         )}
       </div>
 
-      <div style={card}>
+      <div className="zc-card">
         <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>设备</div>
         <div className="zc-scroll-x"><table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr><th style={thStyle}>设备 ID</th><th style={thStyle}>上次同步</th><th style={thStyle}>上次应用</th></tr></thead>
@@ -1982,7 +1979,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 980 }}>
         {section === 'server' && <>
-          <div style={card}>
+          <div className="zc-card">
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
               <div>
                 <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>当前设备 · 同步状态</div>
@@ -1990,13 +1987,13 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
                 <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4, lineHeight: 1.6 }}>{syncStatus.detail}</div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                <button onClick={() => void doSync()} disabled={busy || !ledgerKey.unlocked || enabledProfiles.length === 0} style={primary}>{busy ? '同步中…' : '同步账本'}</button>
-                <button type="button" onClick={() => onSelectSection('restore')} disabled={!ledgerKey.unlocked} style={outline}>恢复数据</button>
+                <button onClick={() => void doSync()} disabled={busy || !ledgerKey.unlocked || enabledProfiles.length === 0} className="zc-btn zc-btn--primary">{busy ? '同步中…' : '同步账本'}</button>
+                <button type="button" onClick={() => onSelectSection('restore')} disabled={!ledgerKey.unlocked} className="zc-btn">恢复数据</button>
               </div>
             </div>
             {enabledProfiles.length === 0 && (
               <div style={{ marginTop: 14 }}>
-                <button type="button" onClick={() => setShowSettings(true)} style={outline}>配置服务器连接</button>
+                <button type="button" onClick={() => setShowSettings(true)} className="zc-btn">配置服务器连接</button>
               </div>
             )}
           </div>
@@ -2009,13 +2006,13 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
           {!accountProtection() && !ledgerKey.unlocked && ledgerKeyCard}
 
           {invalidCommits.length > 0 && (
-            <div style={{ ...card, border: '1px solid var(--negative)' }}>
+            <div className="zc-card" style={{ border: '1px solid var(--negative)' }}>
               <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 8 }}>
                 <div>
                   <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>有 {invalidCommits.length} 条记录没能同步</div>
                   <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4, lineHeight: 1.6 }}>这些记录没有写进账本，通常是来源设备的数据有问题。修好来源设备后再同步，或导出诊断信息排查。</div>
                 </div>
-                <button type="button" onClick={exportInvalidCommits} style={outline}>导出诊断 JSON</button>
+                <button type="button" onClick={exportInvalidCommits} className="zc-btn">导出诊断 JSON</button>
               </div>
               <div className="zc-scroll-x">
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -2042,7 +2039,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
             * of pushing the everyday status off screen.
             */}
           {conflicts.length > 0 && (
-            <div style={{ ...card, border: '1px solid var(--negative)' }}>
+            <div className="zc-card" style={{ border: '1px solid var(--negative)' }}>
               <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
                 <div>
                   <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>冲突 <span style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)' }}>{filteredConflicts.length}/{conflicts.length}</span></div>
@@ -2051,8 +2048,8 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                  <button type="button" onClick={exportConflicts} style={outline}>导出 JSON</button>
-                  <button type="button" onClick={() => setShowConflicts((value) => !value)} style={showConflicts ? outline : primary}>{showConflicts ? '收起' : '去处理'}</button>
+                  <button type="button" onClick={exportConflicts} className="zc-btn">导出 JSON</button>
+                  <button type="button" onClick={() => setShowConflicts((value) => !value)} className={showConflicts ? 'zc-btn' : 'zc-btn zc-btn--primary'}>{showConflicts ? '收起' : '去处理'}</button>
                 </div>
               </div>
               {showConflicts && (
@@ -2072,9 +2069,9 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
                             </div>
                           </div>
                           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                            <button disabled={busy} onClick={() => void keepLocal(c)} style={outline}>全部保留本机</button>
-                            <button disabled={busy} onClick={() => void keepSelected(c)} style={outline}>采用所选分支</button>
-                            <button disabled={busy} onClick={() => void mergeByFields(c)} style={primary}>按字段合并</button>
+                            <button disabled={busy} onClick={() => void keepLocal(c)} className="zc-btn">全部保留本机</button>
+                            <button disabled={busy} onClick={() => void keepSelected(c)} className="zc-btn">采用所选分支</button>
+                            <button disabled={busy} onClick={() => void mergeByFields(c)} className="zc-btn zc-btn--primary">按字段合并</button>
                           </div>
                         </div>
                         {conflictAggregates(c).map((aggregate) => {
@@ -2116,7 +2113,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
                                   </tbody>
                                 </table>
                               </div>
-                              <details style={{ marginTop: 8 }}>
+                              <details style={{ marginTop: 'var(--sp-2)' }}>
                                 <summary style={{ cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' }}>查看各分支原始 JSON</summary>
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10, marginTop: 8 }}>
                                   {aggregate.branches.map((branch, index) => (
@@ -2153,7 +2150,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
             securityPanel={<>
               {!accountProtection() && ledgerKey.unlocked && ledgerKeyCard}
               {!isTauriRuntime() && (
-                <div style={card}>
+                <div className="zc-card">
                   <h3 style={{ fontSize: 'var(--fs-title)', margin: 0 }}>本站登录账号</h3>
                   <p>{primaryConnection?.username} · {primaryConnection?.accountId}</p>
                   <p style={{ marginBottom: 0 }}>切换同步服务器不会切换本站账号。切换账号请退出后重新登录；不同账号的缓存独立保存。</p>
@@ -2188,7 +2185,7 @@ function SyncSection({ id, title, summary, open, onToggle, children }: {
   children: ReactNode;
 }) {
   return (
-    <section id={id} style={card}>
+    <section id={id} className="zc-card">
       <button
         type="button"
         aria-expanded={open}
@@ -2201,7 +2198,7 @@ function SyncSection({ id, title, summary, open, onToggle, children }: {
         </span>
         <span aria-hidden="true" style={{ flex: '0 0 auto', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--accent)' }}>{open ? '收起' : '展开'}</span>
       </button>
-      {open && <div style={{ marginTop: 16 }}>{children}</div>}
+      {open && <div style={{ marginTop: 'var(--sp-4)' }}>{children}</div>}
     </section>
   );
 }

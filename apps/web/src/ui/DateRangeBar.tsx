@@ -87,7 +87,7 @@ export function DateRangeBar(props: {
           ))}
         </div>
       )}
-      <select aria-label="快捷时间范围" className="zc-select zc-date-preset" value={value.preset} onChange={(event) => changePreset(event.target.value as DateRangePreset)} style={{ width: 128 }}>
+      <select aria-label="快捷时间范围" className="zc-select zc-date-preset" value={value.preset} onChange={(event) => changePreset(event.target.value as DateRangePreset)} style={{ width: 'var(--date-preset-w, 128px)' }}>
         {DATE_PRESETS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
       </select>
       <label className="zc-date-boundary" style={dateLabel}>
@@ -108,12 +108,12 @@ const clearButton = linkDanger;
 
 function viewButton(active: boolean): CSSProperties {
   return {
-    height: 38,
-    minWidth: 58,
+    height: 'var(--date-view-height, 38px)',
+    minWidth: 'var(--date-view-min-w, 58px)',
     border: '1px solid var(--border)',
     background: active ? 'var(--accent)' : 'var(--surface)',
     color: active ? 'var(--on-accent)' : 'var(--fg-muted)',
-    padding: '0 11px',
+    padding: '0 var(--date-view-pad, 11px)',
     fontSize: 'var(--fs-caption)',
     fontWeight: 'var(--fw-medium)',
     cursor: 'pointer',

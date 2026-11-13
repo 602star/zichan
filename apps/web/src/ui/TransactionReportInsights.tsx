@@ -4,7 +4,7 @@ import type {
   ComparisonValue,
   TransactionComparison,
 } from '../selectors/report-analysis.js';
-import { card, pillBtn, td as tdStyle, th as thStyle } from './styles.js';
+import { pillBtn, td as tdStyle, th as thStyle } from './styles.js';
 
 interface Props {
   comparison: TransactionComparison | null;
@@ -84,7 +84,7 @@ export function ReportSummaryStrip(props: {
   const { comparison, formatAmount, formatSignedAmount } = props;
   if (!comparison) {
     return (
-      <div style={{ ...card, padding: '12px 14px', fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>
+      <div className="zc-card is-tight" style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>
         请选择同时包含开始和结束日期的范围后查看收支汇总。
       </div>
     );
@@ -118,7 +118,7 @@ function ComparisonMetricCard(props: {
   const { label, kind, value, formatAmount, formatSignedAmount } = props;
   const current = kind === 'net' ? formatSignedAmount(value.current) : formatAmount(value.current);
   return (
-    <div style={{ ...card, padding: 15 }}>
+    <div className="zc-card">
       <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{label}</div>
       <div style={{ marginTop: 6, fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{current}</div>
       <div style={{ display: 'grid', gap: 5, marginTop: 10, fontSize: 'var(--fs-meta)' }}>
@@ -150,7 +150,7 @@ const BUDGET_HEADINGS = [
 export function TransactionReportInsights(props: Props) {
   const { comparison, budget, formatAmount, formatSignedAmount, onDrill } = props;
   return (
-    <details style={{ ...card, padding: 0, overflow: 'hidden' }}>
+    <details className="zc-card" style={{ padding: 0, overflow: "hidden" }}>
       <summary style={{ padding: '14px 16px', cursor: 'pointer', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
         分析明细
         <span style={{ marginLeft: 8, fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-regular)', color: 'var(--text-tertiary)' }}>
@@ -176,7 +176,7 @@ export function TransactionReportInsights(props: Props) {
                 对比期间缺少 {comparison.missingRateAssetCodes.join('、')} 的汇率；当前仅展示可折算部分，百分比不代表完整账本。
               </div>
             )}
-            <div style={{ ...card, padding: 15 }}>
+            <div className="zc-card">
               <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>前三变化驱动</div>
               <div style={{ marginTop: 3, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>按相对上期对净收支影响的绝对值排序；可分别下钻本期或上期流水。</div>
               <div style={{ display: 'grid', gap: 8, marginTop: 11 }}>
@@ -201,7 +201,7 @@ export function TransactionReportInsights(props: Props) {
           </section>
         )}
 
-        <section aria-labelledby="budget-variance-heading" style={{ ...card, padding: 0, overflow: 'hidden' }}>
+        <section aria-labelledby="budget-variance-heading" className="zc-card" style={{ padding: 0, overflow: "hidden" }}>
           <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
             <div>
               <div id="budget-variance-heading" style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>预算偏差</div>

@@ -1,14 +1,7 @@
 /**
- * Design tokens. The semantic palette follows the prototype (THEMES in the
- * .dc.html), with contrast adjustments for readable text and controls.
- * The categorical slots are ours and are documented in place.
- *
- * A theme is one accent family (terracotta / sage / plum) and a mode (`light` /
- * `dark`). They are separate axes on purpose: choosing a warm accent should not
- * also force a background, and a reader who wants a dark screen should not lose
- * the accent they picked. `THEMES` holds the light values for every family and
- * `DARK_THEMES` the dark ones, keyed by the same token names so the two can be
- * swapped without any call site knowing which it got.
+ * 大福帳 · 墨与朱. The persisted theme ids select paper tints, while vermilion
+ * remains the sole action accent. Income, expense, warning and chart slots each
+ * have separate semantic tokens. Light and dark maps carry identical keys.
  */
 export type ThemeId = 'terracotta' | 'sage' | 'plum';
 
@@ -17,107 +10,6 @@ export type ThemeMode = 'light' | 'dark';
 
 /** What the reader asked for. `system` follows the operating system setting. */
 export type ThemeModePreference = ThemeMode | 'system';
-
-/*
- * Categorical colours for composition charts.
- *
- * A category cannot borrow a semantic colour: `--negative` already means 「支出」
- * on these same screens, so a red segment would claim two things at once. The
- * six slots are therefore ordered rather than meaningful - slot 1 follows each
- * theme's accent so the first slice always looks native to the palette, and the
- * remaining hues stay put so a legend is still recognisable when the theme
- * changes. `--cat-other` is the 「其他」 bucket and is the only desaturated slot,
- * because it is a leftover rather than a category.
- *
- * `styles.css` repeats these as `:root` defaults; the theme wins at runtime
- * because it is injected as an inline custom-property set on the app shell.
- */
-const CATEGORICAL: Record<ThemeId, Record<string, string>> = {
-  terracotta: {
-    '--cat-1': '#a0522d', '--cat-2': '#3f7d92', '--cat-3': '#6b8f3f',
-    '--cat-4': '#b8862f', '--cat-5': '#a04a72', '--cat-6': '#5b5f9e',
-    '--cat-other': '#9c948a',
-  },
-  sage: {
-    '--cat-1': '#406d54', '--cat-2': '#33707f', '--cat-3': '#6f8b3a',
-    '--cat-4': '#ab8226', '--cat-5': '#9a4a6e', '--cat-6': '#575c99',
-    '--cat-other': '#96a094',
-  },
-  plum: {
-    '--cat-1': '#8f5670', '--cat-2': '#4a7086', '--cat-3': '#6d8a41',
-    '--cat-4': '#b08033', '--cat-5': '#a3486a', '--cat-6': '#5a5a9e',
-    '--cat-other': '#9e929a',
-  },
-};
-
-/*
- * The same slots for a dark screen. They are not the light hues dimmed by a
- * fixed factor: a mid-tone that reads well on paper turns muddy on a dark
- * surface, so each slot is re-picked to keep the same hue and a lightness that
- * separates it from the background. Slot 1 again follows the accent, so the
- * donut still looks native to the palette it was drawn in.
- */
-const DARK_CATEGORICAL: Record<ThemeId, Record<string, string>> = {
-  terracotta: {
-    '--cat-1': '#e0a072', '--cat-2': '#7fb6cc', '--cat-3': '#a3c47a',
-    '--cat-4': '#d9b46a', '--cat-5': '#cf8fb0', '--cat-6': '#9aa0d8',
-    '--cat-other': '#9c948a',
-  },
-  sage: {
-    '--cat-1': '#7fb894', '--cat-2': '#6fb0c0', '--cat-3': '#a8c47a',
-    '--cat-4': '#d3b06a', '--cat-5': '#cb8aab', '--cat-6': '#9398d6',
-    '--cat-other': '#96a094',
-  },
-  plum: {
-    '--cat-1': '#cf8fae', '--cat-2': '#7fb0c6', '--cat-3': '#a8c47a',
-    '--cat-4': '#d3b06a', '--cat-5': '#c9889f', '--cat-6': '#9297d4',
-    '--cat-other': '#9e929a',
-  },
-};
-
-/*
- * Status surfaces and control text.
- *
- * These exist because the management console already referred to them
- * (`var(--surface-muted, #f1f3f4)` and friends) without anything ever declaring
- * them: every one of those references fell through to its hardcoded light
- * fallback, which is why the console could not be themed at all. Naming them
- * here - once per theme and once per mode - is what makes a badge or a disabled
- * control belong to the palette instead of to a literal.
- *
- * `--on-accent` is the text that sits on an accent-filled button. It is white in
- * light mode and near-black in dark mode, because a dark accent is the readable
- * choice on paper while a light accent is the readable choice on a dark screen.
- */
-const SURFACES: Record<ThemeId, Record<string, string>> = {
-  terracotta: {
-    '--border-strong': '#d3c5ae', '--surface-muted': '#f1ece2',
-    '--ok-surface': '#e6f4ea', '--warn-surface': '#fdf3dc', '--danger-surface': '#fce8e6',
-  },
-  sage: {
-    '--border-strong': '#c2d0c4', '--surface-muted': '#e6ece7',
-    '--ok-surface': '#e4f1e7', '--warn-surface': '#fbf3da', '--danger-surface': '#fbe7e4',
-  },
-  plum: {
-    '--border-strong': '#d6c3ce', '--surface-muted': '#f2ecf0',
-    '--ok-surface': '#e6f4ea', '--warn-surface': '#fdf3dc', '--danger-surface': '#fce8e6',
-  },
-};
-
-const DARK_SURFACES: Record<ThemeId, Record<string, string>> = {
-  terracotta: {
-    '--border-strong': '#4d4239', '--surface-muted': '#2a2420',
-    '--ok-surface': '#1e2f26', '--warn-surface': '#332a1a', '--danger-surface': '#38211e',
-  },
-  sage: {
-    '--border-strong': '#3f4c43', '--surface-muted': '#212922',
-    '--ok-surface': '#1b2c22', '--warn-surface': '#2f2818', '--danger-surface': '#331e1c',
-  },
-  plum: {
-    '--border-strong': '#493b44', '--surface-muted': '#282023',
-    '--ok-surface': '#1d2c24', '--warn-surface': '#302818', '--danger-surface': '#341e1d',
-  },
-};
 
 /** The ordered categorical slots a composition chart may use. */
 export const CATEGORY_COLORS = ['var(--cat-1)', 'var(--cat-2)', 'var(--cat-3)', 'var(--cat-4)', 'var(--cat-5)', 'var(--cat-6)'];
@@ -151,96 +43,80 @@ const SHADOWS: Record<ThemeMode, Record<string, string>> = {
 /** The bucket that collects every category past the visible slots. */
 export const OTHER_CATEGORY_COLOR = 'var(--cat-other)';
 
+// The historical theme ids remain stable for saved preferences. Each now selects
+// a paper tint inside the same ink-and-vermilion visual language.
+const INK_LIGHT_BASE = {
+  '--fg': '#211d18', '--fg-muted': '#56514b', '--fg-subtle': '#625d56',
+  '--accent': '#b63226', '--accent-soft': '#f2ded9',
+  '--positive': '#2b6079', '--negative': '#a72f24', '--warning': '#76531c',
+  '--on-accent': '#ffffff', '--danger': '#a72f24', '--text-muted': '#56514b',
+  '--ok-surface': '#e5edf0', '--warn-surface': '#f3ead9', '--danger-surface': '#f4e0dc',
+  '--sidebar-bg': '#24221f', '--sidebar-fg': '#e8e3d9',
+  '--sidebar-muted': '#b7afa4', '--sidebar-active': '#38312b',
+  '--cat-1': '#2b6079', '--cat-2': '#697851', '--cat-3': '#a0793d',
+  '--cat-4': '#7e6173', '--cat-5': '#696877', '--cat-6': '#617b78',
+  '--cat-other': '#969188',
+};
+const INK_DARK_BASE = {
+  '--fg': '#f1eee6', '--fg-muted': '#c7c0b4', '--fg-subtle': '#b6ad9f',
+  '--accent': '#ee7868', '--accent-soft': '#4b2925',
+  '--positive': '#8ec5dc', '--negative': '#f18c78', '--warning': '#e1b371',
+  '--on-accent': '#211b18', '--danger': '#f18c78', '--text-muted': '#c7c0b4',
+  '--ok-surface': '#20343d', '--warn-surface': '#3a3022', '--danger-surface': '#412824',
+  '--sidebar-bg': '#141413', '--sidebar-fg': '#e9e4db',
+  '--sidebar-muted': '#b8afa4', '--sidebar-active': '#302823',
+  '--cat-1': '#8ec5dc', '--cat-2': '#b3c98e', '--cat-3': '#d6b77a',
+  '--cat-4': '#c7a4b7', '--cat-5': '#a7a5c5', '--cat-6': '#9bbfbb',
+  '--cat-other': '#9e998f',
+};
+const INK_LIGHT_PAPER: Record<ThemeId, Record<string, string>> = {
+  terracotta: { '--bg': '#ebe8df', '--surface': '#faf9f5', '--surface-2': '#f1efe8', '--border': '#d3cec2', '--border-strong': '#bcb4a5', '--surface-muted': '#e9e5dc' },
+  sage: { '--bg': '#e7e9e5', '--surface': '#f9faf6', '--surface-2': '#eef0eb', '--border': '#ccd3ca', '--border-strong': '#b5bfb3', '--surface-muted': '#e3e8e1' },
+  plum: { '--bg': '#eae7e9', '--surface': '#fbf8fa', '--surface-2': '#f1edf0', '--border': '#d5cbd2', '--border-strong': '#bfb2bc', '--surface-muted': '#e9e2e7' },
+};
+const INK_DARK_PAPER: Record<ThemeId, Record<string, string>> = {
+  terracotta: { '--bg': '#1b1b1a', '--surface': '#262521', '--surface-2': '#302e2a', '--border': '#48443e', '--border-strong': '#5b554d', '--surface-muted': '#302d29' },
+  sage: { '--bg': '#191d1b', '--surface': '#232925', '--surface-2': '#2b332d', '--border': '#414b43', '--border-strong': '#566157', '--surface-muted': '#29312b' },
+  plum: { '--bg': '#1d1a1d', '--surface': '#292329', '--surface-2': '#342c33', '--border': '#4c414b', '--border-strong': '#60525e', '--surface-muted': '#302831' },
+};
+
 export const THEMES: Record<ThemeId, Record<string, string>> = {
-  terracotta: {
-    '--bg': '#f0e9dc', '--surface': '#fffcf6', '--surface-2': '#f6efe2',
-    '--fg': '#2b2620', '--fg-muted': '#6b6155', '--fg-subtle': '#706558',
-    '--border': '#e6dccb', '--accent': '#a0522d', '--accent-soft': '#f6e4d5',
-    '--positive': '#317554', '--negative': '#a64c37', '--warning': '#855916',
-    '--on-accent': '#ffffff', '--danger': '#a64c37', '--text-muted': '#6b6155',
-    ...SURFACES.terracotta,
-    ...CATEGORICAL.terracotta,
-  },
-  sage: {
-    '--bg': '#e9eee9', '--surface': '#fbfdfb', '--surface-2': '#eef3ee',
-    '--fg': '#25302a', '--fg-muted': '#5c6b62', '--fg-subtle': '#5e6e61',
-    '--border': '#d8e2d9', '--accent': '#406d54', '--accent-soft': '#dfeae1',
-    '--positive': '#317554', '--negative': '#a64c37', '--warning': '#855916',
-    '--on-accent': '#ffffff', '--danger': '#a64c37', '--text-muted': '#5c6b62',
-    ...SURFACES.sage,
-    ...CATEGORICAL.sage,
-  },
-  plum: {
-    '--bg': '#f1eaee', '--surface': '#fffcfe', '--surface-2': '#f6eef3',
-    '--fg': '#2c2429', '--fg-muted': '#6b5d65', '--fg-subtle': '#74646e',
-    '--border': '#e8dbe3', '--accent': '#8f5670', '--accent-soft': '#f2e2ec',
-    '--positive': '#317554', '--negative': '#a64c37', '--warning': '#855916',
-    '--on-accent': '#ffffff', '--danger': '#a64c37', '--text-muted': '#6b5d65',
-    ...SURFACES.plum,
-    ...CATEGORICAL.plum,
-  },
+  terracotta: { ...INK_LIGHT_BASE, ...INK_LIGHT_PAPER.terracotta },
+  sage: { ...INK_LIGHT_BASE, ...INK_LIGHT_PAPER.sage },
+  plum: { ...INK_LIGHT_BASE, ...INK_LIGHT_PAPER.plum },
 };
 
 /**
- * The dark palette for each accent family, with the same token names as `THEMES`.
- *
- * The dark surfaces are warm-neutral rather than pure grey so the accent still
- * looks related to them, and every status colour is re-picked instead of reused:
- * `--negative` at its light value is unreadable on a dark surface, and a
- * re-picked one keeps 「支出」 recognisably red without glowing.
+ * Dark paper is re-inked for contrast rather than numerically inverted.
  */
 export const DARK_THEMES: Record<ThemeId, Record<string, string>> = {
-  terracotta: {
-    '--bg': '#191512', '--surface': '#221d19', '--surface-2': '#2b2521',
-    '--fg': '#f2e9dd', '--fg-muted': '#b9ab9a', '--fg-subtle': '#9b8f81',
-    '--border': '#3b322b', '--accent': '#e0a072', '--accent-soft': '#3a2a1f',
-    '--positive': '#6fc79b', '--negative': '#e79079', '--warning': '#d9ad63',
-    '--on-accent': '#241a12', '--danger': '#e79079', '--text-muted': '#b9ab9a',
-    ...DARK_SURFACES.terracotta,
-    ...DARK_CATEGORICAL.terracotta,
-  },
-  sage: {
-    '--bg': '#121814', '--surface': '#1a211c', '--surface-2': '#222a24',
-    '--fg': '#e8f0e9', '--fg-muted': '#a8b8ac', '--fg-subtle': '#91a093',
-    '--border': '#2d3830', '--accent': '#7fb894', '--accent-soft': '#1e2b23',
-    '--positive': '#6fc79b', '--negative': '#e79079', '--warning': '#d3ab63',
-    '--on-accent': '#0f1a13', '--danger': '#e79079', '--text-muted': '#a8b8ac',
-    ...DARK_SURFACES.sage,
-    ...DARK_CATEGORICAL.sage,
-  },
-  plum: {
-    '--bg': '#171214', '--surface': '#201a1d', '--surface-2': '#292125',
-    '--fg': '#f1e8ec', '--fg-muted': '#bda9b4', '--fg-subtle': '#9c8b95',
-    '--border': '#372c33', '--accent': '#cf8fae', '--accent-soft': '#33222c',
-    '--positive': '#6fc79b', '--negative': '#e79079', '--warning': '#d3ab63',
-    '--on-accent': '#1f1319', '--danger': '#e79079', '--text-muted': '#bda9b4',
-    ...DARK_SURFACES.plum,
-    ...DARK_CATEGORICAL.plum,
-  },
+  terracotta: { ...INK_DARK_BASE, ...INK_DARK_PAPER.terracotta },
+  sage: { ...INK_DARK_BASE, ...INK_DARK_PAPER.sage },
+  plum: { ...INK_DARK_BASE, ...INK_DARK_PAPER.plum },
 };
 
 export const ACCENTS: Record<ThemeId, string> = {
-  terracotta: '#a0522d', sage: '#406d54', plum: '#8f5670',
+  terracotta: '#b63226', sage: '#b63226', plum: '#b63226',
 };
 
 export const DARK_ACCENTS: Record<ThemeId, string> = {
-  terracotta: '#e0a072', sage: '#7fb894', plum: '#cf8fae',
+  terracotta: '#ee7868', sage: '#ee7868', plum: '#ee7868',
 };
 
 export const THEME_NAMES: Record<ThemeId, string> = {
-  terracotta: '暖纸 · 赭石', sage: '鼠尾草 · 苔绿', plum: '梅子 · 紫褐',
+  terracotta: '文献纸 · 墨朱', sage: '青灰纸 · 墨朱', plum: '紫灰纸 · 墨朱',
 };
 
 export const THEME_MODE_NAMES: Record<ThemeModePreference, string> = {
   light: '浅色', dark: '深色', system: '跟随系统',
 };
 
-/** The palette for one accent family in one mode. */
+/** The palette for one paper tint in one mode. */
 export function themeTokens(theme: ThemeId, mode: ThemeMode): Record<string, string> {
   return { ...(mode === 'dark' ? DARK_THEMES[theme] : THEMES[theme]), ...SHADOWS[mode] };
 }
 
-/** The accent swatch for one accent family in one mode. */
+/** The shared vermilion action swatch for one mode. */
 export function themeAccent(theme: ThemeId, mode: ThemeMode): string {
   return mode === 'dark' ? DARK_ACCENTS[theme] : ACCENTS[theme];
 }

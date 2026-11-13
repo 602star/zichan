@@ -7,6 +7,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { addDays, dayOfInstant } from '@zichan/core';
 import type { EncryptedBlobStore } from './blob-store.js';
 import { ADMIN_BODY_BYTES, pathParts, readBody, send, sendDownload } from './http-util.js';
 import { isJobType, jobOutcome, jobParamsFor, type JobRunner } from './jobs.js';
@@ -722,7 +723,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const range = search.get('range') ?? '7d';
       if (!['7d', '30d', '90d'].includes(range)) return send(res, 400, { error: 'invalid range' });
       const days = Number.parseInt(range, 10);
-      const fromDay = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+      const fromDay = addDays(dayOfInstant(new Date(), 'UTC'), 1 - days);
       return send(res, 200, { range, fromDay, buckets: await store.startupTimingSummary(fromDay) });
     }
 

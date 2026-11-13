@@ -8,7 +8,6 @@ import { AccountProfilePanel } from '../ui/AccountProfilePanel.js';
 import { AccountEmailPanel } from '../ui/AccountEmailPanel.js';
 import { AccountSecurityPanel } from '../ui/AccountSecurityPanel.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
-import { btnOutline } from '../ui/styles.js';
 
 interface AccountUsage {
   commits: { usedBytes: number; quotaBytes: number | null; commitCount: number };
@@ -92,10 +91,10 @@ export function Account() {
       <section className="zc-card" aria-label="数据保护入口">
         <h2 className="zc-section-title">数据保护</h2>
         <p className="zc-caption">查看当前账本连接了哪些服务器、各服务器的副本是否就绪；服务器同步组由管理员配置。</p>
-        <button type="button" style={btnOutline} onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'settings', tab: 'server' } }))}>查看服务器上的账本</button>
+        <button type="button" className="zc-btn" onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'settings', tab: 'server' } }))}>查看服务器上的账本</button>
       </section>
       <section className="zc-card" aria-label="存储配额">
-        <div className="zc-section-head"><div><h2 className="zc-section-title">存储配额</h2><p className="zc-meta">当前服务器：{profile.alias || profile.baseUrl}。只统计此账号在这台服务器上的加密数据。</p></div><button type="button" style={btnOutline} disabled={busy} onClick={() => void refreshUsage()}>{busy ? '查询中…' : '刷新用量'}</button></div>
+        <div className="zc-section-head"><div><h2 className="zc-section-title">存储配额</h2><p className="zc-meta">当前服务器：{profile.alias || profile.baseUrl}。只统计此账号在这台服务器上的加密数据。</p></div><button type="button" className="zc-btn" disabled={busy} onClick={() => void refreshUsage()}>{busy ? '查询中…' : '刷新用量'}</button></div>
         {roleInfo && <p className="zc-caption">本站角色：{roleInfo.node} · 当前账本权限：{roleInfo.ledger}</p>}
         {usage && <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 14 }}>
           <QuotaCard title="加密记录" used={usage.commits.usedBytes} limit={usage.commits.quotaBytes} detail={`${usage.commits.commitCount} 条同步提交`} />
@@ -106,8 +105,8 @@ export function Account() {
         {error && <p role="alert">{error}</p>}
       </section>
       <AccountSecurityPanel onExit={exitAccount} />
-      {exitAccount && <section className="zc-card" aria-label="退出账号"><h2 className="zc-section-title">退出账号</h2><p className="zc-caption">退出会锁定本机账本并撤销会话；加密缓存与未同步记录仍留在本机。</p><button type="button" style={btnOutline} onClick={() => setConfirmExit(true)}>退出记账账号</button></section>}
+      {exitAccount && <section className="zc-card" aria-label="退出账号"><h2 className="zc-section-title">退出账号</h2><p className="zc-caption">退出会锁定本机账本并撤销会话；加密缓存与未同步记录仍留在本机。</p><button type="button" className="zc-btn" onClick={() => setConfirmExit(true)}>退出记账账号</button></section>}
       {confirmExit && exitAccount && <ConfirmDialog title="退出记账账号" confirmLabel="确认退出" onCancel={() => setConfirmExit(false)} onConfirm={exitAccount}><p>退出前请确认重要记录已同步，或已导出加密备份。未同步数据会留在本机；请勿清除网站数据。</p></ConfirmDialog>}
-    </> : <section className="zc-card"><h2 className="zc-section-title">本地账本</h2><p>此账本当前没有登录中的服务器账号，因此没有服务器存储配额。</p><button type="button" style={btnOutline} onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'settings', tab: 'device' } }))}>查看数据保护</button></section>}
+    </> : <section className="zc-card"><h2 className="zc-section-title">本地账本</h2><p>此账本当前没有登录中的服务器账号，因此没有服务器存储配额。</p><button type="button" className="zc-btn" onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'settings', tab: 'device' } }))}>查看数据保护</button></section>}
   </div>;
 }

@@ -18,7 +18,7 @@ import {
   type TransactionDetailRow,
 } from '../selectors/reports.js';
 import { money } from '../format.js';
-import { card, th as thStyle, td as tdStyle, pillBtn, selectBase } from '../ui/styles.js';
+import { th as thStyle, td as tdStyle, pillBtn, selectBase } from '../ui/styles.js';
 import { CompositionDonut, RankBars, type ChartSlice } from '../ui/charts.js';
 import { categoryLabel, categoryName, rootCategoryId } from '../transactionMeta.js';
 import { createReportCurrency } from '../reportCurrency.js';
@@ -515,12 +515,12 @@ export function Reports() {
         </div>
       </div>
       {!!table.missingRateAssetCodes?.length && (
-        <div style={{ ...card, padding: '12px 14px', borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-medium)' }}>
+        <div className="zc-card is-tight" style={{ borderColor: "var(--warning)", color: "var(--warning)", fontSize: "var(--fs-body)", fontWeight: "var(--fw-medium)" }}>
           缺少 {table.missingRateAssetCodes.join('、')} → {table.reportCurrencyCode} 的价格标记；相关记录显示为“未折算”，且不参与可比汇总。
         </div>
       )}
       {tab === 'transactions' && transactionAggregateError && (
-        <div role="alert" style={{ ...card, padding: '12px 14px', borderColor: 'var(--negative)', color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
+        <div role="alert" className="zc-card is-tight" style={{ borderColor: "var(--negative)", color: "var(--negative)", fontSize: "var(--fs-caption)", fontWeight: "var(--fw-medium)" }}>
           对比与汇总读取失败：{transactionAggregateError}
         </div>
       )}
@@ -542,7 +542,7 @@ export function Reports() {
         onSelectChild={(parent, child) => toggleChildDrill(parent, child, effectiveRange)}
         transactionTable={tab === 'transactions' ? table : undefined}
       />
-      <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
+      <div className="zc-card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table className="zc-card-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -740,8 +740,8 @@ function TransactionDetailTable(props: {
     window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'transactions' } }));
   };
   return (
-    <div id="transaction-report-details" style={{ ...card, padding: 0, overflow: 'hidden', scrollMarginTop: 16 }}>
-      <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+    <div id="transaction-report-details" className="zc-card" style={{ padding: 0, overflow: 'hidden', scrollMarginTop: 16 }}>
+      <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--sp-3)', padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
         <div>
           <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{rangeLabel(range)}流水明细{drillLabel}</div>
           <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>
@@ -847,10 +847,10 @@ function TimeTrendChart(props: {
   const max = Math.max(...rows.map((row) => row.value.abs().toNumber()), 1);
   const title = `${TABS.find(([id]) => id === tab)?.[1] ?? '报表'} · ${granularity === 'day' ? '按日' : granularity === 'month' ? '按月' : '按年'}期间变化`;
   return (
-    <div style={card}>
+    <div className="zc-card">
       {/* The granularity control lives with the chart it re-buckets, so it can
           never show up on a tab that has no trend to bucket. */}
-      <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+      <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--sp-3)', marginBottom: 'var(--sp-3)' }}>
         <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', minWidth: 0 }}>{title}</div>
         {/*
           * Granularity re-buckets this chart and nothing else, so it sits with
@@ -867,7 +867,7 @@ function TimeTrendChart(props: {
           {GRANULARITIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
       </div>
-      <div className="zc-report-chart-grid" style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(rows.length, 1)}, minmax(42px, 1fr))`, gap: 8, minHeight: 130, alignItems: 'end' }}>
+      <div className="zc-report-chart-grid" style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(rows.length, 1)}, minmax(42px, 1fr))`, gap: 'var(--sp-2)', minHeight: 130, alignItems: 'end' }}>
         {rows.map((row) => <div key={row.label} style={{ minWidth: 0, textAlign: 'center' }}><div style={{ height: 82, background: 'var(--surface-2)', display: 'flex', alignItems: 'end' }}><div style={{ width: '100%', height: `${Math.max(5, row.value.abs().div(max).times(100).toNumber())}%`, background: row.value.isNegative() ? 'var(--negative)' : 'var(--positive)' }} /></div><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{row.label}</div><div style={{ fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', marginTop: 3 }}>{report.formatSignedReport(row.value)}</div></div>)}
         {rows.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>该时间范围内暂无可绘制数据</div>}
       </div>
@@ -1013,8 +1013,8 @@ function ReportChart(props: {
   const slices = chartSlices(composition, onSelectParent);
   const childSlices = children ? chartSlices(children, (category) => onSelectChild(selectedParent, category)) : [];
   return (
-    <div style={card}>
-      <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+    <div className="zc-card">
+      <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--sp-3)', marginBottom: 'var(--sp-3)' }}>
         <div className={isComposition ? 'zc-report-composition-title' : undefined} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', minWidth: 0 }}>
           {isComposition ? <><span>{rangeLabel(dateRange)}</span>{parentLabel && <span>{parentLabel}</span>}<span>分类支出</span></> : title}
         </div>

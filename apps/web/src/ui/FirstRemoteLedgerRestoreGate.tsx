@@ -11,11 +11,7 @@ import {
   saveSyncConnections,
   type SyncConnection,
 } from '../sync-config.js';
-import { btnOutline, btnPrimary } from './styles.js';
 import { measureStartupStage, recordStartupCount } from '../startup-timing.js';
-
-const button = btnOutline;
-const primary = btnPrimary;
 
 export function FirstRemoteLedgerRestoreGate(props: {
   store: SqlLedgerStore;
@@ -128,16 +124,16 @@ export function FirstRemoteLedgerRestoreGate(props: {
           />
         </label>}
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 20 }}>
-          <button type="button" onClick={() => void restore()} disabled={busy || passphrase.length < 8} style={primary}>{busy ? '验证并恢复中…' : '验证并恢复账本'}</button>
-          <button type="button" onClick={props.onUseDifferentAccount} disabled={busy} style={button}>改用其他账号或模式</button>
-          {!automaticSecret && <button type="button" onClick={() => { setReplacing(!replacing); setConfirmation(''); }} disabled={busy} style={button}>忘记账本密码，重新开账本</button>}
+          <button type="button" onClick={() => void restore()} disabled={busy || passphrase.length < 8} className="zc-btn zc-btn--primary">{busy ? '验证并恢复中…' : '验证并恢复账本'}</button>
+          <button type="button" onClick={props.onUseDifferentAccount} disabled={busy} className="zc-btn">改用其他账号或模式</button>
+          {!automaticSecret && <button type="button" onClick={() => { setReplacing(!replacing); setConfirmation(''); }} disabled={busy} className="zc-btn">忘记账本密码，重新开账本</button>}
         </div>
         {replacing && <section aria-label="替换旧账本确认" style={{ marginTop: 20, padding: 16, border: '1px solid var(--negative)', borderRadius: 'var(--r-sm)' }}>
           <strong>使用账号 {props.connection.username} 创建新账本</strong>
           <p style={{ lineHeight: 1.7 }}>确认后将删除此服务器上旧账本的同步记录和密钥，替换为人民币收支空账本。账号密码和权限不变，其他设备会话将退出。新账本使用刚设置的本机账本密码，币种和记账模式可在设置中调整。</p>
           <p style={{ lineHeight: 1.7 }}>旧附件和服务器备份仍保留并占用配额，但不能从新账本访问；其他服务器副本不受影响。需要保留旧数据时，请先保存外部加密备份，恢复仍需原账本密码。</p>
           <label>输入“替换旧账本”确认<input aria-label="替换旧账本确认文字" value={confirmation} disabled={busy} onChange={(event) => setConfirmation(event.target.value)} style={{ display: 'block', width: '100%', boxSizing: 'border-box', minHeight: 42, margin: '8px 0' }} /></label>
-          <button type="button" disabled={busy || confirmation !== '替换旧账本'} onClick={() => void startNew()} style={primary}>{busy ? '正在创建…' : '确认替换并创建新账本'}</button>
+          <button type="button" disabled={busy || confirmation !== '替换旧账本'} onClick={() => void startNew()} className="zc-btn zc-btn--primary">{busy ? '正在创建…' : '确认替换并创建新账本'}</button>
         </section>}
         {message && <div role="status" style={{ marginTop: 14, color: message.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', lineHeight: 1.6 }}>{message}</div>}
       </section>

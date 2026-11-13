@@ -6,8 +6,6 @@ import { useSnapshot } from '../db/snapshot.js';
 import { moduleCurrencyId } from '../currencyPreferences.js';
 import { amount, significant } from '../format.js';
 import { DialogShell } from '../ui/DialogShell.js';
-import { btnOutline, btnPrimary } from '../ui/styles.js';
-
 export function CostBasisOpeningModal({ onClose, onConfirmed }: { onClose: () => void; onConfirmed?: () => void }) {
   const { store, bump } = useStore();
   const snap = useSnapshot('convert');
@@ -50,7 +48,7 @@ export function CostBasisOpeningModal({ onClose, onConfirmed }: { onClose: () =>
   const changeCost = (id: string, costInBase: string | null) => setPreview((current) => current && ({ ...current, opening: { ...current.opening,
     items: current.opening.items.map((item) => item.id === id ? { ...item, costInBase } : item) } }));
   return <DialogShell labelledBy={titleId} onDismiss={onClose} dismissDisabled={busy} panelClassName="zc-cost-opening">
-    <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}><h2 id={titleId} style={{ flex: 1 }}>核对成本起点</h2><button aria-label="关闭成本起点" style={btnOutline} disabled={busy} onClick={onClose}>关闭</button></div>
+    <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}><h2 id={titleId} style={{ flex: 1 }}>核对成本起点</h2><button aria-label="关闭成本起点" className="zc-btn" disabled={busy} onClick={onClose}>关闭</button></div>
     <p>起点只承接成本，不会增加余额。核算币种将固定，之后修改报表币种不会改写成本。</p>
     {snap.costState && <p>已有核算期间将保留原来的价值与盈亏口径。本次确认建立新的核算期间。</p>}
     {!preview ? <>
@@ -60,7 +58,7 @@ export function CostBasisOpeningModal({ onClose, onConfirmed }: { onClose: () =>
         <label>核算币种<select aria-label="成本核算币种" className="zc-select" value={baseId} onChange={(event) => setCurrency(event.target.value)}>{snap.assets.filter((asset) => asset.isActive && !asset.isDeleted && asset.type !== 'game' && asset.type !== 'fixed').map((asset) => <option key={asset.id} value={asset.id}>{asset.code} · {asset.name}</option>)}</select></label>
       </div>
       <p>时区：{timezone}。起点当天只有日期的流水，需要先补充准确时间以明确先后关系。</p>
-      <button style={btnPrimary} disabled={busy} onClick={() => void calculate()}>{busy ? '核对中…' : '核对余额与已有成本'}</button>
+      <button className="zc-btn zc-btn--primary" disabled={busy} onClick={() => void calculate()}>{busy ? '核对中…' : '核对余额与已有成本'}</button>
     </> : <>
       <p>{date} {time} · {timezone} · 核算币种 {code(preview.opening.baseCurrencyAssetId)}</p>
       <p>下面是该时间点的真实余额。要让持仓成本显示，请为对应批次填写实际原始总成本；不知道的部分可保留为“未知”，现值或今天的行情不能代替历史成本。</p>
@@ -84,8 +82,8 @@ export function CostBasisOpeningModal({ onClose, onConfirmed }: { onClose: () =>
       {preview.assets.length === 0 && <p>此时点没有金融资产余额；确认后，新发生的金融流水将使用统一成本核算。</p>}
       {reviewing && <p>已知总成本 {significant(sum(preview.opening.items.map((item) => item.costInBase ?? '0')))} {code(baseId)}；{preview.opening.items.filter((item) => item.costInBase === null).length} 个批次保留未知成本。未知部分不会显示为零盈亏。</p>}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 16 }}>
-        <button style={btnOutline} disabled={busy} onClick={() => { if (reviewing) setReviewing(false); else setPreview(null); }}>{reviewing ? '返回修改成本' : '重新选择起点'}</button>
-        <button style={btnPrimary} disabled={busy} onClick={reviewing ? () => void confirm() : review}>{busy ? '保存中…' : reviewing ? '确认成本起点' : '预览启用结果'}</button>
+        <button className="zc-btn" disabled={busy} onClick={() => { if (reviewing) setReviewing(false); else setPreview(null); }}>{reviewing ? '返回修改成本' : '重新选择起点'}</button>
+        <button className="zc-btn zc-btn--primary" disabled={busy} onClick={reviewing ? () => void confirm() : review}>{busy ? '保存中…' : reviewing ? '确认成本起点' : '预览启用结果'}</button>
       </div>
     </>}
     {error && <p role="alert" style={{ color: 'var(--negative)' }}>{error}</p>}

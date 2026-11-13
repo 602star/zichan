@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { buildSyncBaseUrl, type SyncConnection } from '../sync-config.js';
 import { authenticateSyncProfile } from '../sync-auth.js';
-import { btnOutline, card } from './styles.js';
 
 interface GroupStatus {
   joined: boolean;
@@ -107,7 +106,7 @@ export function NodeReplicaPanel({ profile, profiles, ledgerId, onConfigureServe
   const singleMemberGroup = view.kind === 'group' && expected === 1;
   const browserReplicas = profiles.filter((item) => item.browserBridge && item.ledgerId === ledgerId);
 
-  return <section aria-label="服务器上的账本" style={{ ...card, marginBottom: 16 }}>
+  return <section aria-label="服务器上的账本" className="zc-card" style={{ marginBottom: "var(--sp-4)" }}>
     <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', gap: 12 }}>
       <div>
         <h3 style={{ margin: 0, fontSize: 'var(--fs-title)' }}>服务器上的账本</h3>
@@ -115,7 +114,7 @@ export function NodeReplicaPanel({ profile, profiles, ledgerId, onConfigureServe
           查看这本账保存在哪些服务器，以及各副本是否已同步完成。
         </p>
       </div>
-      <button type="button" style={btnOutline} disabled={checking || view.kind === 'loading'} onClick={() => void refresh()}>
+      <button type="button" className="zc-btn" disabled={checking || view.kind === 'loading'} onClick={() => void refresh()}>
         {checking ? '核对中…' : '刷新状态'}
       </button>
     </div>
@@ -124,13 +123,13 @@ export function NodeReplicaPanel({ profile, profiles, ledgerId, onConfigureServe
     {view.kind === 'no-server' && <div style={{ marginTop: 14 }}>
       <strong>尚未连接服务器</strong>
       <p>连接服务器后，才可以在其他设备登录并同步这本账。</p>
-      <button type="button" style={btnOutline} onClick={onConfigureServers}>配置服务器连接</button>
+      <button type="button" className="zc-btn" onClick={onConfigureServers}>配置服务器连接</button>
     </div>}
     {view.kind === 'unavailable' && <div style={{ marginTop: 14 }}>
       <strong>暂时无法核对服务器副本</strong>
       <p>当前连接可能已断开或登录已过期。你仍可查看本机账本；请检查下方的服务器连接。</p>
       <details><summary>查看原因</summary><p role="alert">{view.error}</p></details>
-      <button type="button" style={btnOutline} onClick={onConfigureServers}>查看服务器连接</button>
+      <button type="button" className="zc-btn" onClick={onConfigureServers}>查看服务器连接</button>
     </div>}
     {view.kind === 'single' && <div style={{ marginTop: 14 }}>
       <strong>当前服务器未加入同步组</strong>
@@ -185,7 +184,7 @@ export function NodeReplicaPanel({ profile, profiles, ledgerId, onConfigureServe
         {item.alias} · {item.lastSyncError ? `上次同步有问题：${item.lastSyncError}`
           : item.lastSyncAt ? `上次同步：${readableTime(item.lastSyncAt)}` : '等待首次完整同步'}
       </div>)}
-      <button type="button" style={btnOutline} onClick={onSyncBrowser}>立即同步</button>
+      <button type="button" className="zc-btn" onClick={onSyncBrowser}>立即同步</button>
     </div>}
   </section>;
 }

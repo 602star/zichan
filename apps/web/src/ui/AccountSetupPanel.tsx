@@ -4,8 +4,6 @@ import { useId, useState } from 'react';
 import { D, newId, dayOfInstant, normalizeOccurrence, type Account, type Asset, type Setting } from '@zichan/core';
 import { createFundAccount, saveAccountDetails, type SqlLedgerStore } from '@zichan/db';
 import { DialogShell } from './DialogShell.js';
-import { btnOutline, btnPrimary } from './styles.js';
-
 export function AccountSetupPanel({ store, assets, accounts = [], setting, initial, onSaved, onClose }: {
   store: SqlLedgerStore; assets: Asset[]; accounts?: Account[]; setting?: Setting; initial?: Account;
   onSaved: (account: Account) => void; onClose: () => void;
@@ -69,7 +67,7 @@ export function AccountSetupPanel({ store, assets, accounts = [], setting, initi
       <p className="zc-meta">这笔余额作为计算起点，不算收入。时间按账本时区 {setting?.timezone ?? '当前设备时区'} 记录。</p>
       </>}
       {initial && <div className="zc-meta">余额起点：{initial.balanceStartDate ?? '未设置'} · {initial.openingBalance ?? '—'} {assets.find((asset) => asset.id === initial.openingAssetId)?.code}
-        {initial.balanceStartAt && <button type="button" style={btnOutline} onClick={() => setBalanceOpen(true)}>修正余额起点（从更早日期核算）</button>}
+        {initial.balanceStartAt && <button type="button" className="zc-btn" onClick={() => setBalanceOpen(true)}>修正余额起点（从更早日期核算）</button>}
       </div>}
       <details open={!!initial && Object.values(details).some(Boolean)}><summary>更多信息</summary>
         {detailField('platform', '平台')}{detailField('note', '备注')}
@@ -81,7 +79,7 @@ export function AccountSetupPanel({ store, assets, accounts = [], setting, initi
       <label style={{ display: 'block', margin: '12px 0' }}><input type="checkbox" checked={expense} onChange={(e) => setExpense(e.target.checked)} />今后支出默认使用这个账户</label>
       <label style={{ display: 'block', margin: '12px 0' }}><input type="checkbox" checked={income} onChange={(e) => setIncome(e.target.checked)} />今后收入默认使用这个账户</label>
       {error && <p role="alert" style={{ color: 'var(--negative)' }}>{error}</p>}
-      <div style={{ display: 'flex', gap: 12, marginTop: 20 }}><button type="submit" style={btnPrimary} disabled={busy}>{busy ? '正在保存…' : initial ? '保存' : '保存并开始使用'}</button><button type="button" style={btnOutline} disabled={busy} onClick={onClose}>取消</button></div>
+      <div style={{ display: 'flex', gap: 12, marginTop: 20 }}><button type="submit" className="zc-btn zc-btn--primary" disabled={busy}>{busy ? '正在保存…' : initial ? '保存' : '保存并开始使用'}</button><button type="button" className="zc-btn" disabled={busy} onClick={onClose}>取消</button></div>
       </fieldset>
     </form>
     {initial && balanceOpen && <EarlierBalancePanel store={store} account={initial} setting={setting} onClose={() => setBalanceOpen(false)} onSaved={() => { setBalanceOpen(false); onSaved(initial); }} />}

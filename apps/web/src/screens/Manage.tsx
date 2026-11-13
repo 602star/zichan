@@ -28,7 +28,7 @@ import {
   categoryForm, fixedAssetCategoryForm, payeeForm, budgetCategoryForm, scheduledTransactionForm,
   transactionLocationForm, transactionTagForm, transactionTemplateForm,
 } from '../forms.js';
-import { card, th as thStyle, td as tdStyle } from '../ui/styles.js';
+import { th as thStyle, td as tdStyle } from '../ui/styles.js';
 import { AccountSetupPanel } from '../ui/AccountSetupPanel.js';
 import { QuickCategorySettings } from '../ui/QuickCategorySettings.js';
 import { DateRangeBar, dateRangeValue } from '../ui/DateRangeBar.js';
@@ -193,7 +193,7 @@ export function Manage() {
         <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>资产与资料中心</div>
         <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4 }}>在资产标签管理货币与资产的加入、停用和归档；其他标签维护分类与基础资料。</div>
         {onboardingGuide && (
-          <button type="button" style={{ marginTop: 8, padding: 0, border: 0, background: 'transparent', color: 'var(--accent)', cursor: 'pointer' }} onClick={() => {
+          <button type="button" style={{ marginTop: 'var(--sp-2)', padding: 0, border: 0, background: 'transparent', color: 'var(--accent)', cursor: 'pointer' }} onClick={() => {
             updateOnboarding(onboardingGuide, { dismissed: false });
             window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'transactions' } }));
           }}>返回新手指南</button>
@@ -215,7 +215,7 @@ export function Manage() {
       <div {...primaryTabs.panelProps} style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       {tab === 'transactionCategories' && (
         <>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap' }}>
             <button type="button" onClick={() => setCategoryMode('structure')} style={manageFilterButton(categoryMode === 'structure', true)}>结构管理</button>
             <button type="button" onClick={() => setCategoryMode('quick')} style={manageFilterButton(categoryMode === 'quick', true)}>快捷显示与排序</button>
           </div>
@@ -223,19 +223,19 @@ export function Manage() {
             ? <CategorySection snap={snap} store={store} bump={bump} />
             : (
               <>
-                <div style={card}>
+                <div className="zc-card">
                   <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>扩展包</div>
                   <div style={{ marginTop: 4, color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>
                     扩展包只补充默认没有的可选分类：启用后可在新增记账中选用，停用后不再可选，不会删除历史分类、改动已有流水，也不会影响默认分类。
                     点开卡片名称可以查看包内每一项的当前状态，并单独启用或停用。
                   </div>
-                  <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 8 }}>
+                  <div style={{ marginTop: 'var(--sp-3)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 'var(--sp-2)' }}>
                     {CATEGORY_PACKS.map((pack) => {
                       const state = categoryPackState(pack, snap.categories);
                       const busy = categoryPackBusy === pack.id;
                       const expanded = expandedPack === pack.id;
                       return (
-                        <div key={pack.id} data-testid={`category-pack-${pack.id}`} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 11, display: 'grid', gap: 8, alignContent: 'start' }}>
+                        <div key={pack.id} data-testid={`category-pack-${pack.id}`} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 11, display: 'grid', gap: 'var(--sp-2)', alignContent: 'start' }}>
                           <button type="button" aria-expanded={expanded} aria-label={`查看${pack.name}扩展包成员`} onClick={() => setExpandedPack(expanded ? '' : pack.id)} style={packHeaderButton}>
                             <b style={{ fontSize: 'var(--fs-body)' }}>{pack.name}</b>
                             <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{packStatusLabel(state)}</span>
@@ -274,7 +274,7 @@ export function Manage() {
                   {categoryPackNotice && <div style={{ marginTop: 10, color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{categoryPackNotice}</div>}
                   {categoryPackError && <div role="alert" style={{ marginTop: 10, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>扩展包操作失败：{categoryPackError}</div>}
                 </div>
-                <div style={card}><QuickCategorySettings categories={snap.categories} onSave={saveCategoryPreferences} /></div>
+                <div className="zc-card"><QuickCategorySettings categories={snap.categories} onSave={saveCategoryPreferences} /></div>
               </>
             )}
         </>
@@ -304,7 +304,7 @@ export function Manage() {
             bump={bump} masterKind="location"
             lifecycleCandidates={snap.transactionLocations.filter((row) => row.isActive).map((row) => ({ id: row.id, label: row.name }))}
           />
-          <div role="tablist" aria-label="交易对象视图" style={{ display: 'flex', gap: 8 }}>
+          <div role="tablist" aria-label="交易对象视图" style={{ display: 'flex', gap: 'var(--sp-2)' }}>
             <button type="button" {...payeeTabs.tabProps('mine')} style={manageFilterButton(payeeView === 'mine', true)}>我的交易对象</button>
             <button type="button" {...payeeTabs.tabProps('catalog')} style={manageFilterButton(payeeView === 'catalog', true)}>平台目录</button>
           </div>
@@ -343,9 +343,9 @@ export function Manage() {
             bump={bump} masterKind="asset"
             lifecycleCandidates={snap.assets.filter((row) => !row.isDeleted && row.isActive).map((row) => ({ id: row.id, label: `${row.code} · ${row.name}` }))}
           />
-          <details style={card}>
+          <details className="zc-card">
             <summary style={{ color: 'var(--accent)', fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>添加常用资产</summary>
-            <div style={{ marginTop: 8, color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>预设不会自动加入账本。选中后只添加资产定义，不生成余额或交易；已停用和已归档的资产可在这里重新启用。</div>
+            <div style={{ marginTop: 'var(--sp-2)', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>预设不会自动加入账本。选中后只添加资产定义，不生成余额或交易；已停用和已归档的资产可在这里重新启用。</div>
             {ASSET_PRESET_GROUPS.map((group) => <div key={group.label}>
               <div className="zc-asset-preset-group-title">{group.label}</div>
               <div className="zc-asset-preset-grid">
@@ -594,7 +594,7 @@ function CategorySection({ snap, store, bump }: {
   };
 
   return (
-    <div style={card}>
+    <div className="zc-card">
       <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
         <div>
           <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>
@@ -868,7 +868,7 @@ function FixedCategorySection({ snap, store, bump }: {
     bump();
   };
   return (
-    <div style={card}>
+    <div className="zc-card">
       <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>物品资产分类<span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginLeft: 8 }}>{categories.length}</span></div>
@@ -1176,7 +1176,7 @@ function Section<T extends { id: string; version: number }>(props: {
     : filteredByQuery;
 
   return (
-    <div style={card}>
+    <div className="zc-card">
       <div className="zc-manage-toolbar" style={{ display: 'grid', gridTemplateColumns: '1fr minmax(180px, 280px) auto auto', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{title}<span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginLeft: 8, fontWeight: 'var(--fw-medium)' }}>{items.length}</span></div>
@@ -1335,7 +1335,7 @@ function AttachmentSection({ items, preview, onDelete }: { items: Attachment[]; 
     ? items.filter((item) => `${item.fileName} ${item.entityType} ${item.entityId} ${item.mimeType ?? ''} ${item.sha256}`.toLowerCase().includes(q))
     : items;
   return (
-    <div style={card}>
+    <div className="zc-card">
       <div className="zc-manage-toolbar" style={{ display: 'grid', gridTemplateColumns: '1fr minmax(180px, 280px)', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>附件<span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginLeft: 8, fontWeight: 'var(--fw-medium)' }}>{items.length}</span></div>

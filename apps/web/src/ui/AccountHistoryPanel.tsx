@@ -4,8 +4,6 @@ import { assignTransactionAccounts, previewAccountAssignment, saveTransactionAgg
 import { categoryLabel } from '../transactionMeta.js';
 import { CategoryPicker } from './EntityFormModal.js';
 import { DialogShell } from './DialogShell.js';
-import { btnOutline, btnPrimary } from './styles.js';
-
 export function AccountHistoryPanel({ store, accounts, assets, categories, timeZone, initialAccountId, onChanged, onClose }: {
   store: SqlLedgerStore; accounts: Account[]; assets: Asset[]; categories: Category[]; timeZone?: string; initialAccountId?: string; onChanged: () => void; onClose: () => void;
 }) {
@@ -42,7 +40,7 @@ export function AccountHistoryPanel({ store, accounts, assets, categories, timeZ
         return { value: id, icon: item?.icon, parentId: item?.parentId, parentIcon: categories.find((entry) => entry.id === item?.parentId)?.icon, color: item?.color, label: categoryLabel(id, categories), name: item?.name ?? id,
           parentName: categories.find((entry) => entry.id === item?.parentId)?.name ?? '其他', inactive: item?.isActive === false };
       })} onChange={setCategory} />
-    <button style={btnOutline} disabled={busy} onClick={() => { setSelected(Object.fromEntries(visible.map((t) => [t.id, true]))); setPreview(null); }}>选择筛选结果（{visible.length} 笔）</button>
+    <button className="zc-btn" disabled={busy} onClick={() => { setSelected(Object.fromEntries(visible.map((t) => [t.id, true]))); setPreview(null); }}>选择筛选结果（{visible.length} 笔）</button>
     <div style={{ maxHeight: 280, overflow: 'auto', marginTop: 12 }}>{visible.map((t) => <div key={t.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
       <label><input type="checkbox" checked={!!selected[t.id]} disabled={busy} onChange={(e) => { setSelected({ ...selected, [t.id]: e.target.checked }); setPreview(null); }} />{t.date} · {t.description || categoryLabel(t.category, categories)} · {t.amount} {assets.find((a) => a.id === t.assetId)?.code}</label>
       {account && account.openingAssetId === t.assetId && accountBalanceTiming(account, { ...t, balanceTiming: undefined, balanceTimingAccountId: undefined }) === 'unknown' && <select aria-label={`记录 ${t.id} 与余额起点的关系`} className="zc-select" value={timing[t.id] ?? ''} onChange={(e) => { setTiming({ ...timing, [t.id]: e.target.value as 'before' | 'after' }); setPreview(null); }}><option value="">请确认发生在余额起点之前还是之后</option><option value="before">之前，已经包含在起始余额里</option><option value="after">之后，需要计算余额变化</option></select>}
@@ -50,12 +48,12 @@ export function AccountHistoryPanel({ store, accounts, assets, categories, timeZ
     {notice && <p role="status">{notice}</p>}{error && <p role="alert" style={{ color: 'var(--negative)' }}>{error}</p>}
     {preview && <div role="status"><p>将整理 {preview.changes.length} 笔，收支总额不变。</p>{Object.entries(preview.impacts).filter(([, value]) => !D(value).isZero()).map(([key, value]) => { const [id, asset] = key.split('|'); return <p key={key}>{accounts.find((a) => a.id === id)?.name}余额变化：{D(value).isPositive() ? '+' : ''}{value} {assets.find((a) => a.id === asset)?.code}</p>; })}{Object.values(preview.impacts).every((v) => D(v).isZero()) && <p>这些记录只补充账户归属，当前余额不变。</p>}</div>}
     <div style={{ display: 'flex', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
-      {!preview ? <button style={btnPrimary} disabled={busy || !input.length || !target} onClick={() => void run(async () => setPreview(await previewAccountAssignment(store, target, input)))}>预览 {input.length} 笔调整</button> : <button style={btnPrimary} disabled={busy} onClick={() => void run(async () => {
+      {!preview ? <button className="zc-btn zc-btn--primary" disabled={busy || !input.length || !target} onClick={() => void run(async () => setPreview(await previewAccountAssignment(store, target, input)))}>预览 {input.length} 笔调整</button> : <button className="zc-btn zc-btn--primary" disabled={busy} onClick={() => void run(async () => {
         const result = await assignTransactionAccounts(store, target, input, preview.targetVersion);
         const saved = result.changes.map((c, index) => ({ before: c.before, version: result.saved[index]!.transaction.version }));
         setUndo(saved); setPreview(null); setSelected({}); setNotice(`已整理 ${saved.length} 笔记录`); await reload(); onChanged();
       })}>确认整理</button>}
-      {undo && <button style={btnOutline} disabled={busy} onClick={() => void run(async () => {
+      {undo && <button className="zc-btn" disabled={busy} onClick={() => void run(async () => {
         await store.runInAuditBatch('撤销账户归属整理', async (tx) => { for (const item of undo) {
           const current = await tx.transactions.get(item.before.id);
           if (!current || current.version !== item.version) throw new Error('记录后来已变化，请刷新后单独调整');
@@ -64,7 +62,7 @@ export function AccountHistoryPanel({ store, accounts, assets, categories, timeZ
         } });
         setUndo(null); setNotice('已撤销整理'); await reload(); onChanged();
       })}>撤销刚才的整理</button>}
-      <button style={btnOutline} disabled={busy} onClick={onClose}>完成</button>
+      <button className="zc-btn" disabled={busy} onClick={onClose}>完成</button>
     </div>
   </DialogShell>;
 }

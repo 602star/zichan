@@ -1,6 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { DialogShell } from './DialogShell.js';
-import { btnOutline } from './styles.js';
 
 const panel = {
   background: 'var(--surface)',
@@ -11,8 +10,6 @@ const panel = {
   maxWidth: 'calc(100vw - 32px)',
   boxShadow: 'var(--shadow-lg)',
 } as const;
-
-const button = btnOutline;
 
 export function confirmDialogErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message;
@@ -72,9 +69,9 @@ export function ConfirmDialog(props: {
     });
   }
 
-  const confirmStyle = props.tone === 'danger'
-    ? { ...button, border: '1px solid var(--negative)', background: 'var(--negative)', color: 'var(--on-accent)' }
-    : { ...button, border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)' };
+  /* Confirm button uses a filled accent/danger look regardless of base button style. */
+  const confirmCls = props.tone === 'danger' ? 'zc-btn zc-btn--danger zc-btn--filled' : 'zc-btn zc-btn--primary';
+  const confirmExtraStyle = busy || props.confirmDisabled ? { opacity: 0.65 } : undefined;
 
   return (
     <DialogShell
@@ -88,15 +85,15 @@ export function ConfirmDialog(props: {
         <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 10 }}>{props.title}</div>
         <div id={descriptionId} style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', lineHeight: 1.65 }}>{props.children}</div>
         {actionError && (
-          <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', lineHeight: 1.55, overflowWrap: 'anywhere' }}>
+          <div role="alert" style={{ marginTop: 'var(--sp-3)', color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', lineHeight: 1.55, overflowWrap: 'anywhere' }}>
             操作失败：{actionError}
           </div>
         )}
-        <div className="zc-confirm-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+        <div className="zc-confirm-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--sp-2)', marginTop: 18 }}>
           {props.cancelLabel !== undefined && props.onCancel && (
-            <button data-dialog-initial-focus onClick={props.onCancel} disabled={busy} style={button}>{props.cancelLabel}</button>
+            <button data-dialog-initial-focus onClick={props.onCancel} disabled={busy} className="zc-btn">{props.cancelLabel}</button>
           )}
-          <button data-dialog-initial-focus={!props.onCancel ? '' : undefined} onClick={confirm} disabled={busy || props.confirmDisabled} style={{ ...confirmStyle, opacity: busy || props.confirmDisabled ? 0.65 : 1 }}>
+          <button data-dialog-initial-focus={!props.onCancel ? '' : undefined} onClick={confirm} disabled={busy || props.confirmDisabled} className={confirmCls} style={confirmExtraStyle}>
             {busy ? '处理中…' : props.confirmLabel ?? '确定'}
           </button>
         </div>

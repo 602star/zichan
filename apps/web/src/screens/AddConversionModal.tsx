@@ -51,7 +51,7 @@ import {
   type AssetPreset,
   type AssetPresetCode,
 } from '../assetPresets.js';
-import { btnOutline, btnPrimary, btnSmall, iconBtn, linkDanger } from '../ui/styles.js';
+import { iconBtn, linkDanger } from '../ui/styles.js';
 
 type FeeSide = 'source' | 'target' | 'third';
 
@@ -763,7 +763,7 @@ export function AddConversionModal({
           <button type="button" data-dialog-initial-focus aria-label="关闭" title="关闭" onClick={requestClose} disabled={saving} style={iconButton}>×</button>
         </div>
 
-        <div className="zc-conversion-head-grid" style={{ display: 'grid', gridTemplateColumns: '140px 110px 130px minmax(180px, 1fr) 180px', gap: 12, marginBottom: 14 }}>
+        <div className="zc-conversion-head-grid">
           <Field label="日期"><input aria-label="日期" className="zc-input" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></Field>
           <Field label="时间"><input aria-label="时间" className="zc-input" type="time" value={time} onChange={(event) => setTime(event.target.value)} /></Field>
           <Field label="类型"><select aria-label="类型" className="zc-select" value={type} onChange={(event) => setType(event.target.value as ConversionType)}>{[...TYPES, ...(snap.costState ? [['swap', '资产互换']] : [])].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
@@ -779,10 +779,10 @@ export function AddConversionModal({
         <details open={!!bookValueInBase || type === 'dca'} style={{ marginBottom: 14 }}>
           <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>记账设置 · 手动折算、定投关联与时区</summary>
           <div style={{ marginTop: 10 }}><Field label="记账币种">{assetSelect('投资成本记账币种', effectiveBookCurrencyId, setBookCurrencyId, false, !!snap.costState)}</Field></div>
-        <div className="zc-conversion-secondary-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
+        <div className="zc-conversion-secondary-grid">
           <Field label="账面成本 / 收入折算（按需）">
             <input aria-label="账面价值折算" className="zc-input" inputMode="decimal" value={bookValueInBase} onChange={(event) => { setBookValueInBase(event.target.value); setBookValueFingerprint(valueFingerprint); }} placeholder={`买入/卖出链路不含 ${code(effectiveBookCurrencyId)} 时填写`} />
-            {bookValueStale && <div role="alert">条件已变化，请重新确认。<button type="button" style={smallButton} onClick={() => setBookValueFingerprint(valueFingerprint)}>确认原折算值</button><button type="button" style={smallButton} onClick={() => setBookValueInBase('')}>清除折算值</button></div>}
+            {bookValueStale && <div role="alert">条件已变化，请重新确认。<button type="button" className="zc-btn zc-btn--sm" onClick={() => setBookValueFingerprint(valueFingerprint)}>确认原折算值</button><button type="button" className="zc-btn zc-btn--sm" onClick={() => setBookValueInBase('')}>清除折算值</button></div>}
           </Field>
           {type === 'dca' && activePlans.length > 0 ? (
             <Field label="关联定投计划（可选）">
@@ -818,7 +818,7 @@ export function AddConversionModal({
 
         {(type === 'sell' || snap.costState) && (
           <div style={{ border: '1px solid var(--border)', background: 'var(--surface-2)', padding: 12, marginBottom: 14 }}>
-            <div className="zc-conversion-sell-grid" style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 12, alignItems: 'end' }}>
+            <div className="zc-conversion-sell-grid">
               <Field label="卖出成本匹配">
                 <select aria-label="成本匹配方式" className="zc-select" value={method} onChange={(event) => setMethod(event.target.value as LotMethod)}>
                   <option value="fifo">FIFO · 先进先出</option><option value="lifo">LIFO · 后进先出</option>
@@ -849,7 +849,7 @@ export function AddConversionModal({
               </div>
               <div style={{ padding: 14 }}>
                 {errorField?.stepIndex === stepIndex && <p role="alert" style={{ color: 'var(--negative)' }}>{errorField.message}</p>}
-                <div className="zc-conversion-step-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 10 }}>
+                <div className="zc-conversion-step-grid">
                   <Field label="来源资产">{assetSelect('来源资产', step.fromAssetId, (value) => update(stepIndex, { fromAssetId: value }))}</Field>
                   <Field label="来源数量">
                     <input aria-label="来源数量" className="zc-input" inputMode="decimal" value={step.fromInput} onChange={(event) => update(stepIndex, { fromInput: event.target.value })} />
@@ -884,7 +884,7 @@ export function AddConversionModal({
                   <Field label="保留上一步余额"><input aria-label="保留余额" className="zc-input" inputMode="decimal" value={step.retainedBefore ?? ''} onChange={(event) => update(stepIndex, { retainedBefore: event.target.value, supplementalBefore: '0' })} /></Field>
                   <Field label="额外补入数量"><input aria-label="补入数量" className="zc-input" inputMode="decimal" value={step.supplementalBefore ?? ''} onChange={(event) => update(stepIndex, { supplementalBefore: event.target.value, retainedBefore: '0' })} /></Field>
                   {!!step.supplementalBefore && step.supplementalBefore !== '0' && <Field label="补入资金所在账户">{accountSelect('补入资金所在账户', step.supplementalAccountId ?? '', (value) => update(stepIndex, { supplementalAccountId: value }))}</Field>}
-                  <button type="button" style={smallButton} onClick={() => {
+                  <button type="button" className="zc-btn zc-btn--sm" onClick={() => {
                     const available = D(preview[stepIndex - 1]?.targetCredit ?? '0').minus(step.retainedBefore || 0).plus(step.supplementalBefore || 0);
                     const fees = step.fees.filter((fee) => fee.side === 'source').reduce((total, fee) => total.plus(fee.amount || 0), D(0));
                     update(stepIndex, { fromAssetId: drafts[stepIndex - 1]!.toAssetId, accountFromId: drafts[stepIndex - 1]!.accountToId,
@@ -895,7 +895,7 @@ export function AddConversionModal({
                 <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: step.fees.length ? 8 : 0 }}>
                     <b style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>手续费</b>
-                    <button onClick={() => addFee(stepIndex)} style={smallButton}>+ 添加手续费</button>
+                    <button onClick={() => addFee(stepIndex)} className="zc-btn zc-btn--sm">+ 添加手续费</button>
                   </div>
                   {step.fees.map((fee) => {
                     const forcedAsset = fee.side === 'source' ? step.fromAssetId : fee.side === 'target' ? step.toAssetId : fee.assetId;
@@ -906,8 +906,8 @@ export function AddConversionModal({
                         <Field label="手续费资产">{assetSelect('手续费资产', forcedAsset, (value) => updateFee(stepIndex, fee.id, { assetId: value }), true, fee.side !== 'third')}</Field>
                         <Field label="手续费数量"><input aria-label="手续费数量" className="zc-input" inputMode="decimal" value={fee.amount} onChange={(event) => updateFee(stepIndex, fee.id, { amount: event.target.value })} /></Field>
                         <Field label={`折算 ${code(effectiveBookCurrencyId)}`}>{forcedAsset === effectiveBookCurrencyId ? <div>直接采用手续费数量 {fee.amount || '—'}</div> : <input aria-label="手续费折算" className="zc-input" inputMode="decimal" value={fee.valueInBase} onChange={(event) => updateFee(stepIndex, fee.id, { valueInBase: event.target.value })} placeholder="填写、采用建议值或保留未知" />}
-                          {forcedAsset !== effectiveBookCurrencyId && fee.valueInBase && fee.confirmedFingerprint !== valueFingerprint && <div role="alert">条件已变化，请重新确认。<button type="button" style={smallButton} onClick={() => updateFee(stepIndex, fee.id, { valueInBase: fee.valueInBase })}>确认原折算值</button><button type="button" style={smallButton} onClick={() => updateFee(stepIndex, fee.id, { valueInBase: '' })}>清除折算值</button></div>}
-                          {forcedAsset !== effectiveBookCurrencyId && (suggestion ? <button type="button" style={smallButton} title={suggestion.basis} onClick={() => updateFee(stepIndex, fee.id, { valueInBase: suggestion.value, valueEvidence: { source: suggestion.priceMarkIds?.length ? 'price_mark' : 'transaction', priceMarkIds: suggestion.priceMarkIds ?? [], quoteDate: suggestion.quoteDate, explanation: suggestion.basis } })}>采用折算值 {significant(suggestion.value)} · {suggestion.basis}</button> : <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>暂无可用汇率，请填写实际折算价值。</span>)}
+                          {forcedAsset !== effectiveBookCurrencyId && fee.valueInBase && fee.confirmedFingerprint !== valueFingerprint && <div role="alert">条件已变化，请重新确认。<button type="button" className="zc-btn zc-btn--sm" onClick={() => updateFee(stepIndex, fee.id, { valueInBase: fee.valueInBase })}>确认原折算值</button><button type="button" className="zc-btn zc-btn--sm" onClick={() => updateFee(stepIndex, fee.id, { valueInBase: '' })}>清除折算值</button></div>}
+                          {forcedAsset !== effectiveBookCurrencyId && (suggestion ? <button type="button" className="zc-btn zc-btn--sm" title={suggestion.basis} onClick={() => updateFee(stepIndex, fee.id, { valueInBase: suggestion.value, valueEvidence: { source: suggestion.priceMarkIds?.length ? 'price_mark' : 'transaction', priceMarkIds: suggestion.priceMarkIds ?? [], quoteDate: suggestion.quoteDate, explanation: suggestion.basis } })}>采用折算值 {significant(suggestion.value)} · {suggestion.basis}</button> : <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>暂无可用汇率，请填写实际折算价值。</span>)}
                         </Field>
                         <button aria-label="删除手续费" title="删除手续费" onClick={() => update(stepIndex, { fees: step.fees.filter((row) => row.id !== fee.id) })} style={{ ...iconButton, color: 'var(--negative)', marginBottom: 2 }}>×</button>
                         {fee.side === 'third' && <Field label="手续费扣款账户">{accountSelect('手续费扣款账户', fee.accountId, (value) => updateFee(stepIndex, fee.id, { accountId: value }), fee.assetId)}</Field>}
@@ -923,12 +923,12 @@ export function AddConversionModal({
                     value={step.costValue?.valueInBase ?? ''} onChange={(event) => update(stepIndex, { costValue: { valueInBase: event.target.value || null, source: event.target.value ? 'manual' : 'unknown', priceMarkIds: [], explanation: '用户确认本步成交价值' }, costValueFingerprint: valueFingerprint })} /></Field>
                   {stepIndex === drafts.length - 1 && bookValueInBase && <p>已填写整笔账面价值，本步采用 {significant(bookValueInBase)} {code(effectiveBookCurrencyId)}。如需使用此处价值，请先清除整笔账面价值。</p>}
                   {step.costValue?.valueInBase && step.costValueFingerprint !== valueFingerprint && <p role="alert">条件已变化，请重新确认。
-                    <button type="button" style={smallButton} onClick={() => update(stepIndex, { costValue: { ...step.costValue!, source: 'manual', priceMarkIds: [], quoteDate: undefined, explanation: '条件变化后用户重新确认' }, costValueFingerprint: valueFingerprint })}>确认本步价值</button>
-                    <button type="button" style={smallButton} onClick={() => update(stepIndex, { costValue: { valueInBase: null, source: 'unknown', priceMarkIds: [] }, costValueFingerprint: valueFingerprint })}>清除本步价值</button></p>}
+                    <button type="button" className="zc-btn zc-btn--sm" onClick={() => update(stepIndex, { costValue: { ...step.costValue!, source: 'manual', priceMarkIds: [], quoteDate: undefined, explanation: '条件变化后用户重新确认' }, costValueFingerprint: valueFingerprint })}>确认本步价值</button>
+                    <button type="button" className="zc-btn zc-btn--sm" onClick={() => update(stepIndex, { costValue: { valueInBase: null, source: 'unknown', priceMarkIds: [] }, costValueFingerprint: valueFingerprint })}>清除本步价值</button></p>}
                   {(() => {
                     const suggestion = normalized && (suggestFeeValue(null, normalized.fromAssetId, normalized.fromAmount, effectiveBookCurrencyId, snap.priceMarks, date)
                       ?? suggestFeeValue(null, normalized.toAssetId, normalized.toAmount, effectiveBookCurrencyId, snap.priceMarks, date));
-                    return suggestion ? <button type="button" style={smallButton} title={suggestion.value} onClick={() => update(stepIndex, { costValue: { valueInBase: suggestion.value,
+                    return suggestion ? <button type="button" className="zc-btn zc-btn--sm" title={suggestion.value} onClick={() => update(stepIndex, { costValue: { valueInBase: suggestion.value,
                       source: suggestion.priceMarkIds?.length ? 'price_mark' : 'transaction', priceMarkIds: suggestion.priceMarkIds ?? [], quoteDate: suggestion.quoteDate, explanation: suggestion.basis }, costValueFingerprint: valueFingerprint })}>采用本步价值 {significant(suggestion.value)} · {suggestion.basis}</button> : <p>没有可靠行情时可保留未知。</p>;
                   })()}
                   {step.costValue?.explanation && <p>{step.costValue.explanation}</p>}
@@ -958,7 +958,7 @@ export function AddConversionModal({
           next.accountFromId = previous.accountToId;
           try { next.fromInput = conversionStepAmounts(normalizeDraft(previous)).targetCredit; } catch { next.fromInput = ''; }
           setSteps([...drafts, next]);
-        }} style={{ ...smallButton, width: '100%', padding: 10, borderStyle: 'dashed', marginBottom: 16 }}>+ 添加转换步骤</button>
+        }} className="zc-btn zc-btn--sm" style={{ width: '100%', padding: 'var(--sp-2)', borderStyle: 'dashed', marginBottom: 'var(--sp-4)' }}>+ 添加转换步骤</button>
         {/*
          * The refusal lives inside the sticky footer on purpose. This form is taller
          * than the panel on a phone, and the save button is pinned to the bottom, so
@@ -971,8 +971,8 @@ export function AddConversionModal({
             <div role="alert" style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', lineHeight: 1.6 }}>{err}</div>
           )}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-            <button onClick={requestClose} disabled={saving} style={secondaryButton}>取消</button>
-            <button onClick={() => void save()} disabled={saving || creatingAssetCode !== null || completed.current} style={{ ...primaryButton, opacity: saving || creatingAssetCode !== null ? 0.6 : 1 }}>{saving || creatingAssetCode !== null ? '处理中…' : initial ? '预览影响' : '保存转换'}</button>
+            <button onClick={requestClose} disabled={saving} className="zc-btn">取消</button>
+            <button onClick={() => void save()} disabled={saving || creatingAssetCode !== null || completed.current} className="zc-btn zc-btn--primary" style={{ opacity: saving || creatingAssetCode !== null ? 0.6 : 1 }}>{saving || creatingAssetCode !== null ? '处理中…' : initial ? '预览影响' : '保存转换'}</button>
           </div>
         </div>
       {(draftState.error || draftState.status) && <div role={draftState.error ? 'alert' : 'status'}>{draftState.error || draftState.status}</div>}
@@ -1048,9 +1048,6 @@ function Metric({ label, value, strong = false }: { label: string; value: string
 }
 
 const iconButton = iconBtn;
-const smallButton = btnSmall;
 const dangerLink = linkDanger;
-const secondaryButton = btnOutline;
-const primaryButton = btnPrimary;
 const subSelect = { marginTop: 5, height: 30, paddingTop: 3, paddingBottom: 3, fontSize: 'var(--fs-caption)' } as const;
 const lotChip = (active: boolean) => ({ display: 'inline-flex', gap: 6, alignItems: 'center', border: '1px solid var(--border)', background: active ? 'var(--accent-soft)' : 'var(--surface)', color: active ? 'var(--accent)' : 'var(--fg-muted)', padding: '6px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', cursor: 'pointer' } as const);

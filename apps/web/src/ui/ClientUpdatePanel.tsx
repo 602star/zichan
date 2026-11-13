@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Channel } from '@tauri-apps/api/core';
 import { isTauriRuntime, tauriInvoke } from '../tauri.js';
-import { btnOutline, btnPrimary } from './styles.js';
-
 interface ClientUpdateInfo {
   enabled: boolean;
   mode: string;
@@ -115,10 +113,10 @@ export function ClientUpdatePanel() {
     {installing ? <p role="status">{progress.stage}{progress.total ? ` · ${Math.min(100, Math.floor(progress.received / progress.total * 100))}%` : ''} · {(progress.received / 1024 / 1024).toFixed(1)} MiB
       {progress.total ? ` / ${(progress.total / 1024 / 1024).toFixed(1)} MiB` : ''}</p> : null}
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sp-2)' }}>
-      <button type="button" style={btnOutline} disabled={checking || installing} onClick={() => { void check(); }}>
+      <button type="button" className="zc-btn" disabled={checking || installing} onClick={() => { void check(); }}>
         {checking ? '正在检查…' : '检查更新'}
       </button>
-      {info?.targetVersion ? <button type="button" style={btnPrimary} disabled={checking || installing} onClick={() => { void install(); }}>
+      {info?.targetVersion ? <button type="button" className="zc-btn zc-btn--primary" disabled={checking || installing} onClick={() => { void install(); }}>
         {installing ? '正在更新…' : `更新至 ${info.targetVersion}`}
       </button> : null}
     </div>

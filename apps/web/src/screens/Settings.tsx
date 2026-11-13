@@ -6,14 +6,14 @@ import { useStore } from '../db/store.js';
 import { useSnapshot } from '../db/snapshot.js';
 import { baseAsset } from '../db/derive.js';
 import { setBaseSymbol } from '../format.js';
-import { btnDanger, btnOutline, btnPrimary, iconBtn, td as tdStyle, th as thStyle } from '../ui/styles.js';
+import { iconBtn, td as tdStyle, th as thStyle } from '../ui/styles.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { AS_OF_MODE_LABELS, asOfSummary, earliestRecordedDay, ledgerAsOf, needsAsOfAttention } from '../as-of.js';
 import { draftSetting, saveLedgerSetting } from '../db/ledger-settings.js';
 import { DeviceSecurityPanel } from '../ui/DeviceSecurityPanel.js';
 import { LedgerProtectionPanel } from '../ui/LedgerProtectionPanel.js';
 import { accountProtection } from '../account-protection.js';
-import { ACCENTS, DARK_ACCENTS, THEME_NAMES, THEME_MODE_NAMES, THEMES, type ThemeId, type ThemeMode, type ThemeModePreference } from '../theme.js';
+import { DARK_THEMES, THEME_NAMES, THEME_MODE_NAMES, THEMES, type ThemeId, type ThemeMode, type ThemeModePreference } from '../theme.js';
 import { PortableStoragePanel } from '../ui/PortableStoragePanel.js';
 import { ClientUpdatePanel } from '../ui/ClientUpdatePanel.js';
 import { allCategories, categoryIsHidden } from '../transactionMeta.js';
@@ -684,7 +684,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
             <button type="button" className="zc-settings-mobile-toggle" aria-expanded={mobileLedgerMoreOpen} onClick={() => setMobileLedgerMoreOpen((open) => !open)}>
               更多结算选项<span aria-hidden="true">{mobileLedgerMoreOpen ? '收起' : '展开'} ▾</span>
             </button>
-            <div className="zc-settings-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
+            <div className="zc-settings-grid">
               <div className="zc-field">
                 <label className="zc-label">全局报表币种</label>
                 <select aria-label="全局报表币种" className="zc-select" value={setting?.baseCurrencyAssetId ?? base?.id ?? ''} onChange={(e) => onBaseCurrency(e.target.value)}>
@@ -747,7 +747,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   className="zc-select"
                   value={setting?.asOfMode ?? 'manual'}
                   onChange={(e) => void saveSetting({ asOfMode: e.target.value as AsOfMode }, { label: '调整账本日维护方式' })}
-                  style={{ marginTop: 8 }}
+                  style={{ marginTop: 'var(--sp-2)' }}
                 >
                   {AS_OF_MODE_LABELS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
@@ -804,13 +804,13 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                 <h2 className="zc-section-title">记账分类</h2>
                 <p className="zc-meta" style={{ marginTop: 4 }}>高频 {frequentCategoryCount} 项 · 隐藏 {hiddenCategoryCount} 项</p>
               </div>
-              <button type="button" className="zc-settings-card-action" onClick={openCategoryCenter} style={btnOutline}>进入分类中心</button>
+              <button type="button" className="zc-settings-card-action zc-btn" onClick={openCategoryCenter}>进入分类中心</button>
               <button type="button" className="zc-settings-mobile-toggle" aria-expanded={mobileSectionOpen.categories} aria-controls="zc-settings-categories-body" onClick={() => setMobileSectionOpen((open) => ({ ...open, categories: !open.categories }))}>
                 分类设置<span aria-hidden="true">{mobileSectionOpen.categories ? '收起' : '展开'} ▾</span>
               </button>
             </div>
             <div id="zc-settings-categories-body" className="zc-settings-collapsible-body">
-              <div className="zc-settings-category-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 320px) 1fr', gap: 14, alignItems: 'end', marginTop: 14 }}>
+              <div className="zc-settings-category-grid">
                 <div className="zc-field">
                   <label className="zc-label">记账弹窗默认分类范围</label>
                   <select
@@ -847,7 +847,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   ['常用', transactionFormPresetKeys('common', usesAccounts)],
                   ['完整', transactionFormPresetKeys('full', usesAccounts)],
                 ].map(([label, keys]) => (
-                  <button key={String(label)} onClick={() => void saveFormFields(keys as string[])} style={btnOutline}>{String(label)}</button>
+                  <button key={String(label)} onClick={() => void saveFormFields(keys as string[])} className="zc-btn">{String(label)}</button>
                 ))}
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -878,7 +878,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   勾选的模块会按下方顺序直接显示在桌面和平板侧栏；手机底栏显示前 3 项，其余已启用项进入“更多”。隐藏入口不会删除模块数据。
                 </p>
               </div>
-              <button className="zc-settings-card-action" type="button" disabled={navigationBusy} onClick={() => void saveNavigation(defaultNavigationPreferences())} style={btnOutline}>
+              <button className="zc-settings-card-action zc-btn" type="button" disabled={navigationBusy} onClick={() => void saveNavigation(defaultNavigationPreferences())}>
                 恢复推荐布局
               </button>
               <button type="button" className="zc-settings-mobile-toggle" aria-expanded={mobileSectionOpen.navigation} aria-controls="zc-settings-navigation-body" onClick={() => setMobileSectionOpen((open) => ({ ...open, navigation: !open.navigation }))}>
@@ -948,13 +948,13 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                       <option value="manual">手动</option>
                       <option value="pre-import">导入前</option>
                     </select>
-                    {externalStatus.kind !== 'portable' && <button onClick={chooseExternalDirectory} disabled={backupBusy !== null} style={btnOutline}>{externalStatus.configured ? '更换外部目录' : '选择外部目录'}</button>}
-                    <button onClick={manualBackup} disabled={backupBusy !== null} style={btnPrimary}>创建手动备份</button>
+                    {externalStatus.kind !== 'portable' && <button onClick={chooseExternalDirectory} disabled={backupBusy !== null} className="zc-btn">{externalStatus.configured ? '更换外部目录' : '选择外部目录'}</button>}
+                    <button onClick={manualBackup} disabled={backupBusy !== null} className="zc-btn zc-btn--primary">创建手动备份</button>
                   </div>
                 </div>
                 <div className="zc-section-head zc-responsive-header">
                   <p className="zc-caption">要把当前账本带出此设备，请导出加密 .zcbak 文件并保存到其他位置。下方“创建手动备份”会保存在本机备份列表中。</p>
-                  <button type="button" onClick={() => void exportBackupFile()} disabled={backupBusy !== null} style={btnOutline}>{backupBusy === 'export-file' ? '导出中…' : '导出加密备份文件'}</button>
+                  <button type="button" onClick={() => void exportBackupFile()} disabled={backupBusy !== null} className="zc-btn">{backupBusy === 'export-file' ? '导出中…' : '导出加密备份文件'}</button>
                 </div>
                 {warnings.length > 0 && (
                   <div className="zc-section">
@@ -963,7 +963,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                         <h2 className="zc-section-title" style={{ color: warnings.some((w) => w.tone === 'danger') ? 'var(--negative)' : 'var(--accent)' }}>数据安全提醒</h2>
                         <p className="zc-caption">{warnings.map((w) => w.message).join('；')}</p>
                       </div>
-                      <button onClick={quickSafetyCheck} disabled={backupBusy !== null} style={btnPrimary}>{backupBusy === 'safety' ? '检查中…' : '一键备份 + 自检'}</button>
+                      <button onClick={quickSafetyCheck} disabled={backupBusy !== null} className="zc-btn zc-btn--primary">{backupBusy === 'safety' ? '检查中…' : '一键备份 + 自检'}</button>
                     </div>
                   </div>
                 )}
@@ -984,7 +984,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                     </p>
                   </div>
                 )}
-                <div className="zc-settings-health-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+                <div className="zc-settings-health-grid">
                   <HealthTile label="最近备份" value={latestBackup ? new Date(latestBackup.createdAt).toLocaleString() : '暂无'} tone={latestBackup ? 'var(--positive)' : 'var(--negative)'} />
                   <HealthTile label="自动备份" value={latestAuto ? new Date(latestAuto.createdAt).toLocaleString() : '暂无'} tone={latestAuto ? 'var(--positive)' : 'var(--fg-subtle)'} />
                   <HealthTile label="最近演练" value={safetyState.lastRehearsalAt ? `${safetyState.lastRehearsalOk ? '通过' : '未通过'} · ${safetyState.lastRehearsalLabel ?? ''}` : '未运行'} tone={safetyState.lastRehearsalOk ? 'var(--positive)' : safetyState.lastRehearsalAt ? 'var(--negative)' : 'var(--fg-subtle)'} />
@@ -1023,18 +1023,18 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                           </td>
                           <td style={tdStyle}>
                             <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                              <button onClick={() => rehearse(b)} disabled={backupBusy !== null} style={btnOutline}>{backupBusy === b.id ? '演练中…' : '演练'}</button>
+                              <button onClick={() => rehearse(b)} disabled={backupBusy !== null} className="zc-btn">{backupBusy === b.id ? '演练中…' : '演练'}</button>
                               <button
                                 type="button"
                                 onClick={() => void shareOrDownloadBackup(b)}
                                 disabled={backupBusy !== null}
-                                style={btnOutline}
+                                className="zc-btn"
                               >
                                 {backupBusy === `download-${b.id}` ? '保存中…' : storageBackend === 'native-sqlite' ? '另存为…' : '分享 / 下载'}
                               </button>
-                              <button onClick={() => openRestorePicker(`local:${b.id}`)} disabled={backupBusy !== null} style={btnOutline}>恢复…</button>
+                              <button onClick={() => openRestorePicker(`local:${b.id}`)} disabled={backupBusy !== null} className="zc-btn">恢复…</button>
                               {storageBackend === 'browser-indexeddb' && (
-                                <button type="button" onClick={() => setPendingLocalDelete(b)} disabled={backupBusy !== null} style={btnDanger}>删除本机副本</button>
+                                <button type="button" onClick={() => setPendingLocalDelete(b)} disabled={backupBusy !== null} className="zc-btn zc-btn--danger">删除本机副本</button>
                               )}
                             </div>
                           </td>
@@ -1064,8 +1064,8 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   <p className="zc-caption">从加密 .zcbak 文件导入，或选择本机和服务器上的恢复点。恢复前会校验并演练，再显示变更范围供确认。</p>
                 </div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button type="button" onClick={onImportBackup} disabled={backupBusy !== null} style={btnOutline}>从文件导入</button>
-                  <button type="button" onClick={() => openRestorePicker()} disabled={backupBusy !== null} style={btnPrimary}>选择恢复点</button>
+                  <button type="button" onClick={onImportBackup} disabled={backupBusy !== null} className="zc-btn">从文件导入</button>
+                  <button type="button" onClick={() => openRestorePicker()} disabled={backupBusy !== null} className="zc-btn zc-btn--primary">选择恢复点</button>
                 </div>
               </div>
               {backupNote && <p role="status" className="zc-caption" style={{ color: backupNote.includes('未通过') || backupNote.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 'var(--fw-bold)' }}>{backupNote}</p>}
@@ -1083,7 +1083,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   <button
                     onClick={refreshRemoteBackups}
                     disabled={backupBusy !== null}
-                    style={btnOutline}
+                    className="zc-btn"
                   >
                     {backupBusy === 'remote-list' ? '读取中…' : '刷新服务器备份'}
                   </button>
@@ -1118,15 +1118,15 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                                 <button
                                   onClick={() => void prepareRemoteRestore(row, 'rehearse')}
                                   disabled={backupBusy !== null}
-                                  style={btnOutline}
+                                  className="zc-btn"
                                 >
                                   {backupBusy === busyId ? '校验中…' : '演练'}
                                 </button>
-                                <button onClick={() => openRestorePicker(`remote:${row.profile.id}:${row.backup.archiveId}`)} disabled={backupBusy !== null} style={btnOutline}>恢复…</button>
+                                <button onClick={() => openRestorePicker(`remote:${row.profile.id}:${row.backup.archiveId}`)} disabled={backupBusy !== null} className="zc-btn">恢复…</button>
                                 <button
                                   onClick={() => setPendingRemoteDelete(row)}
                                   disabled={backupBusy !== null}
-                                  style={btnDanger}
+                                  className="zc-btn zc-btn--danger"
                                 >
                                   删除
                                 </button>
@@ -1157,13 +1157,13 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
 
           {section === 'device' && <details className="zc-card">
             <summary style={{ cursor: 'pointer', fontWeight: 'var(--fw-bold)' }}>检查与维护</summary>
-            <div style={{ marginTop: 16 }}>
+            <div style={{ marginTop: 'var(--sp-4)' }}>
               <section className="zc-section">
                 <div className="zc-section-head zc-responsive-header">
                   <h2 className="zc-section-title">数据自检</h2>
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={runCheck} style={btnOutline}>运行自检</button>
-                    <button onClick={runRecompute} style={btnPrimary}>重算缓存</button>
+                    <button onClick={runCheck} className="zc-btn">运行自检</button>
+                    <button onClick={runRecompute} className="zc-btn zc-btn--primary">重算缓存</button>
                   </div>
                 </div>
                 {note && <p className="zc-caption" style={{ color: note.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 'var(--fw-medium)' }}>{note}</p>}
@@ -1205,9 +1205,9 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   重置会清空本机数据并返回首次设置，可重新选择空账本、导入备份或演示账本。加密备份文件的导出和导入分别位于“本机备份”和“恢复数据”。
                 </p>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <button onClick={purgeOld} style={btnOutline}>清理已确认的删除记录</button>
-                  <button onClick={() => setCleanupOpen(true)} disabled={backupBusy !== null} style={btnOutline}>清理测试流水</button>
-                  <button onClick={() => setResetOpen(true)} style={btnDanger}>重置本机账本</button>
+                  <button onClick={purgeOld} className="zc-btn">清理已确认的删除记录</button>
+                  <button onClick={() => setCleanupOpen(true)} disabled={backupBusy !== null} className="zc-btn">清理测试流水</button>
+                  <button onClick={() => setResetOpen(true)} className="zc-btn zc-btn--danger">重置本机账本</button>
                 </div>
               </section>
             </div>
@@ -1262,7 +1262,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
             autoComplete="off"
             value={backupPassphrase}
             onChange={(event) => setBackupPassphrase(event.target.value)}
-            style={{ marginTop: 12 }}
+            style={{ marginTop: 'var(--sp-3)' }}
           />
         </ConfirmDialog>
       )}
@@ -1346,6 +1346,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                 key={id}
                 type="button"
                 role="radio"
+                className="zc-appearance-option"
                 aria-checked={theme === id}
                 onClick={() => setTheme(id)}
                 style={{
@@ -1353,7 +1354,6 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   display: 'flex',
                   alignItems: 'center',
                   gap: 10,
-                  minHeight: 'var(--control-h)',
                   padding: '0 14px',
                   borderRadius: 'var(--r-sm)',
                   cursor: 'pointer',
@@ -1363,9 +1363,8 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   fontWeight: 'var(--fw-medium)',
                 }}
               >
-                {/* The swatch shows the accent of the mode in effect, so picking a
-                    family does not preview a colour the reader will never see. */}
-                <span aria-hidden="true" style={{ width: 18, height: 18, borderRadius: 'var(--r-round)', background: resolvedMode === 'dark' ? DARK_ACCENTS[id] : ACCENTS[id] }} />
+                {/* Paper tint varies; the vermilion action ink stays consistent. */}
+                <span aria-hidden="true" className="zc-theme-paper-swatch" style={{ background: resolvedMode === 'dark' ? DARK_THEMES[id]['--bg'] : THEMES[id]['--bg'] }} />
                 {THEME_NAMES[id]}
               </button>
             ))}
@@ -1381,6 +1380,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                 key={option}
                 type="button"
                 role="radio"
+                className="zc-appearance-option"
                 aria-checked={mode === option}
                 onClick={() => setMode(option)}
                 style={{
@@ -1388,7 +1388,6 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                   display: 'flex',
                   alignItems: 'center',
                   gap: 10,
-                  minHeight: 'var(--control-h)',
                   padding: '0 14px',
                   borderRadius: 'var(--r-sm)',
                   cursor: 'pointer',

@@ -22,10 +22,11 @@ import { EntityFormModal } from '../ui/EntityFormModal.js';
 import { gameAccountForm, gameRecordForm, gameSeasonForm, type GameRecordFormValue } from '../forms.js';
 import { ALL_GAME_RECORDS, UNASSIGNED_GAME_RECORDS, buildGameSeason } from '../selectors/game.js';
 import { money, signedMoney, num } from '../format.js';
-import { amountColor, btnOutline, btnPrimary, card, pillBtn, tag as tagStyle } from '../ui/styles.js';
+import { amountColor, pillBtn, tag as tagStyle } from '../ui/styles.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
+import { CardHeader } from '../ui/CardHeader.js';
 
 const REC_LABEL: Record<GameRecordType, string> = {
   buy_currency: '买入游戏币', sell_currency: '游戏币卖出', produce: '游戏币产出', consume: '游戏币消耗',
@@ -36,9 +37,9 @@ const REC_LABEL: Record<GameRecordType, string> = {
 function recBadge(type: GameRecordType) {
   const base = { padding: '3px 9px', borderRadius: 'var(--r-sm)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', flexShrink: 0, whiteSpace: 'nowrap' } as const;
   if (type === 'buy_currency' || type === 'buy_equipment' || type === 'buy_material' || type === 'topup') return { ...base, background: 'var(--accent-soft)', color: 'var(--accent)' };
-  if (type === 'fee') return { ...base, background: 'rgba(194,96,74,.13)', color: 'var(--negative)' };
+  if (type === 'fee') return { ...base, background: 'color-mix(in srgb, var(--negative) 13%, var(--surface))', color: 'var(--negative)' };
   if (type === 'produce' || type === 'consume') return { ...base, background: 'var(--surface-2)', color: 'var(--text-tertiary)' };
-  return { ...base, background: 'rgba(63,143,107,.13)', color: 'var(--positive)' };
+  return { ...base, background: 'color-mix(in srgb, var(--positive) 13%, var(--surface))', color: 'var(--positive)' };
 }
 
 function cashflowDraft(value: GameRecordFormValue, role: 'settlement' | 'fee', usesAccounts: boolean): GameCashflowDraft {
@@ -193,7 +194,7 @@ export function Game() {
 
   if (!vm) {
     return (
-      <div style={{ ...card, maxWidth: 620, margin: '8vh auto 0', padding: 28 }}>
+      <div className="zc-card" style={{ maxWidth: 620, margin: '8vh auto 0', padding: 28 }}>
         <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--accent)', fontWeight: 'var(--fw-medium)' }}>首次使用</div>
         <h2 style={{ margin: '8px 0 0', fontSize: 'var(--fs-display)' }}>{selectedGame ? '创建当前赛季' : '开始记录游戏'}</h2>
         <p style={{ margin: '10px 0 20px', color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.65 }}>
@@ -219,7 +220,8 @@ export function Game() {
           <button
             type="submit"
             disabled={creatingGame || (!selectedGame && !newGameName.trim())}
-            style={{ ...primaryBtn, minHeight: 42, marginTop: 18, opacity: creatingGame || (!selectedGame && !newGameName.trim()) ? 0.55 : 1 }}
+            className="zc-btn zc-btn--primary"
+            style={{ minHeight: 42, marginTop: 18, opacity: creatingGame || (!selectedGame && !newGameName.trim()) ? 0.55 : 1 }}
           >
             {creatingGame ? '正在创建…' : selectedGame ? '创建并进入' : '开始记录'}
           </button>
@@ -234,7 +236,7 @@ export function Game() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}>
       {vm.missingRateAssetCodes.length > 0 && (
-        <div style={{ ...card, padding: '12px 14px', borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
+        <div className="zc-card" style={{ padding: '12px 14px', borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
           缺少 {vm.missingRateAssetCodes.join('、')} → {vm.reportCurrencyCode} 的价格标记；相关游戏记录未计入赛季汇总。
         </div>
       )}
@@ -271,9 +273,9 @@ export function Game() {
           })}
         </div>
         <div className="zc-game-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={() => setAddAccount(true)} style={outlineBtn}>+ 账号</button>
-          <button onClick={() => setAddSeason(true)} style={outlineBtn}>+ 赛季</button>
-          <button onClick={() => setEditRec('new')} style={primaryBtn}>+ 记录</button>
+          <button onClick={() => setAddAccount(true)} className="zc-btn">+ 账号</button>
+          <button onClick={() => setAddSeason(true)} className="zc-btn">+ 赛季</button>
+          <button onClick={() => setEditRec('new')} className="zc-btn zc-btn--primary">+ 记录</button>
         </div>
       </div>
 
@@ -287,18 +289,18 @@ export function Game() {
         </>}
       </div>
       <DateRangeBar value={dateRange} onChange={setDateRange} />
-      {(accountFilter || recordTypeFilter !== 'all') && <button style={{ ...outlineBtn, alignSelf: 'flex-start' }} onClick={() => { setAccountFilter(''); setRecordTypeFilter('all'); }}>清除其他筛选</button>}
+      {(accountFilter || recordTypeFilter !== 'all') && <button className="zc-btn" style={{ alignSelf: 'flex-start' }} onClick={() => { setAccountFilter(''); setRecordTypeFilter('all'); }}>清除其他筛选</button>}
       {saveNotice && <div role="status" className="zc-meta">{saveNotice}</div>}
       {vm.activeId === UNASSIGNED_GAME_RECORDS && <p className="zc-meta">这些记录尚未分配赛季。点击记录编辑，即可选择所属赛季；不会自动改动历史归属。</p>}
 
-      {view === 'overview' ? <><div className="zc-game-overview-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: 18, minWidth: 0 }}>
-        <div style={card}>
+      {view === 'overview' ? <><div className="zc-game-overview-grid" style={{ minWidth: 0 }}>
+        <div className="zc-card">
           <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>{vm.scopeName} · 净收益（{vm.reportCurrencyCode}）</div>
           <div style={{ fontSize: 'var(--fs-hero)', fontWeight: 'var(--fw-bold)', marginTop: 8, letterSpacing: 0, color: vm.net >= 0 ? 'var(--positive)' : 'var(--negative)' }}>
             {signedMoney(vm.net)}
           </div>
           <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4, fontWeight: 'var(--fw-regular)' }}>{vm.range}</div>
-          <div className="zc-game-kpi-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 20 }}>
+          <div className="zc-game-kpi-grid" style={{ marginTop: 20 }}>
             {[
               ['收入', money(vm.income), 'var(--positive)'],
               ['支出', money(vm.expense), 'var(--negative)'],
@@ -319,11 +321,8 @@ export function Game() {
           </div>
         </div>
 
-        <div style={{ ...card, padding: '22px 24px' }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-            <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}> {vm.scopeName} · 记录流</div>
-            <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>不强制库存 · 允许卖出 &gt; 买入</div>
-          </div>
+        <div className="zc-card" style={{ padding: '22px 24px' }}>
+          <CardHeader title={`${vm.scopeName} · 记录流`} note="不强制库存 · 允许卖出 > 买入" />
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {!vm.records.length && <p className="zc-meta">当前范围没有记录，可查看“全部记录”或调整筛选。</p>}
             {vm.records.map((r) => (
@@ -344,7 +343,7 @@ export function Game() {
         </div>
       </div>
 
-      <div className="zc-game-detail-grid" style={{ display: 'grid', gridTemplateColumns: accountOptions.length > 0 ? '1fr 1fr' : '1fr', gap: 18 }}>
+      <div className="zc-game-detail-grid" style={{ gridTemplateColumns: accountOptions.length > 0 ? '1fr 1fr' : '1fr' }}>
         {accountOptions.length > 0 && <EfficiencyPanel title="账号效率" rows={vm.byAccount.map((r) => ({ ...r, label: r.label }))} />}
         <EfficiencyPanel title="类型拆分" rows={vm.byType.map((r) => ({ ...r, label: REC_LABEL[r.id as GameRecordType] ?? r.label }))} />
       </div></> : (
@@ -441,8 +440,6 @@ export function Game() {
   );
 }
 
-const outlineBtn = btnOutline;
-const primaryBtn = btnPrimary;
 
 function EfficiencyPanel(props: {
   title: string;
@@ -450,7 +447,7 @@ function EfficiencyPanel(props: {
 }) {
   const max = Math.max(...props.rows.map((r) => Math.abs(r.net)), 1);
   return (
-    <div style={card}>
+    <div className="zc-card">
       <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>{props.title}</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {props.rows.map((r) => (

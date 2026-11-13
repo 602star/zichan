@@ -21,7 +21,6 @@ import {
   type BaseCurrencyChoice,
 } from '../db/ledger-initialization.js';
 import { importPortableLedger, preflightPortableBackup } from '../db/portable-backup.js';
-import { btnOutline } from './styles.js';
 import { startOnboarding, type OnboardingState } from '../onboarding.js';
 
 type FirstRunChoice = 'advanced' | 'import' | 'demo' | null;
@@ -68,8 +67,6 @@ export async function restoreFirstRunBackup(
   if (!setting) throw new Error('备份恢复后缺少初始化标识');
   return setting;
 }
-
-const button = btnOutline;
 
 const field: CSSProperties = {
   width: '100%',
@@ -181,11 +178,11 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 18, marginTop: 24 }}>
           <section style={{ padding: 24, background: 'var(--surface-2)', border: '2px solid var(--accent)', borderRadius: 'var(--r-md)' }}>
             <h2>先记收支</h2><p>看赚了多少、花在哪里。系统准备好收入和支出账户，你直接记金额和分类。</p><p className="zc-meta">不确定就先选这个。</p>
-            <button disabled={busy} style={button} onClick={() => void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode: 'spending' }), 'spending')}>{busy ? '正在创建…' : '开始记账'}</button>
+            <button disabled={busy} className="zc-btn" onClick={() => void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode: 'spending' }), 'spending')}>{busy ? '正在创建…' : '开始记账'}</button>
           </section>
           <section style={{ padding: 24, background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 'var(--r-md)' }}>
             <h2>分账户记账</h2><p>还想知道每张卡、每个钱包剩多少钱。添加账户和当前余额，记账时选择收付款账户，之后可以转账和核对账单。</p>
-            <button disabled={busy} style={button} onClick={() => void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode: 'accounts' }), 'accounts')}>{busy ? '正在创建…' : '添加常用账户'}</button>
+            <button disabled={busy} className="zc-btn" onClick={() => void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode: 'accounts' }), 'accounts')}>{busy ? '正在创建…' : '添加常用账户'}</button>
           </section>
         </div>
         <p style={{ marginTop: 16 }}>两种方式都能使用全部功能；这个选择只影响开始时的设置。</p>
@@ -217,7 +214,7 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
             <div>
               <h2 style={{ margin: 0, fontSize: 'var(--fs-heading)' }}>导入加密备份</h2>
               <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.6 }}>文件会先完成结构预检和独立恢复演练。任何失败都不会写入业务数据。</p>
-              <label style={{ display: 'inline-flex', alignItems: 'center', ...button, opacity: busy ? 0.55 : 1 }}>
+              <label className="zc-btn" style={{ display: 'inline-flex', alignItems: 'center', opacity: busy ? 0.55 : 1 }}>
                 {busy ? '正在验证…' : '选择 .zcbak 文件'}
                 <input type="file" accept="application/x-zichan-backup,.zcbak" disabled={busy} onChange={(event) => void handleFile(event)} style={{ display: 'none' }} />
               </label>
@@ -227,13 +224,13 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
                     备份加密密码
                     <input autoFocus type="password" autoComplete="current-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} style={field} />
                   </label>
-                  <button type="submit" disabled={busy || !passphrase} style={{ ...button, marginTop: 12, opacity: busy || !passphrase ? 0.55 : 1 }}>解锁并验证</button>
+                  <button type="submit" disabled={busy || !passphrase} className="zc-btn" style={{ marginTop: 12, opacity: busy || !passphrase ? 0.55 : 1  }}>解锁并验证</button>
                 </form>
               )}
               {openedBackup && (
                 <div role="status" style={{ marginTop: 16, padding: 14, borderRadius: 'var(--r-sm)', background: 'var(--ok-surface)', color: 'var(--positive)', lineHeight: 1.55 }}>
                   <strong>预检与演练通过</strong><br />{backupSummary}
-                  <div><button type="button" disabled={busy} onClick={() => void complete(restoreSelectedBackup)} style={{ ...button, marginTop: 12 }}>恢复这个备份</button></div>
+                  <div><button type="button" disabled={busy} onClick={() => void complete(restoreSelectedBackup)} className="zc-btn" style={{ marginTop: 12 }}>恢复这个备份</button></div>
                 </div>
               )}
             </div>
@@ -243,7 +240,7 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
             <div>
               <h2 style={{ margin: 0, fontSize: 'var(--fs-heading)' }}>创建演示账本</h2>
               <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.6 }}>将写入用于体验功能的模拟资产、流水、定投、游戏和物品数据。它不会被伪装成正式账本。</p>
-              <button type="button" disabled={busy} onClick={() => void complete(() => initializeDemoLedger(store))} style={{ ...button, opacity: busy ? 0.55 : 1 }}>{busy ? '正在创建…' : '创建演示账本'}</button>
+              <button type="button" disabled={busy} onClick={() => void complete(() => initializeDemoLedger(store))} className="zc-btn" style={{ opacity: busy ? 0.55 : 1  }}>{busy ? '正在创建…' : '创建演示账本'}</button>
             </div>
           )}
 

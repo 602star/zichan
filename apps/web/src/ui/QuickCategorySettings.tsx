@@ -9,8 +9,6 @@ import {
   sortCategorySiblings,
 } from '../categoryPreferences.js';
 import { allCategories, categoryIsHidden } from '../transactionMeta.js';
-import { btnOutline, btnPrimary, btnSmall } from './styles.js';
-
 interface QuickCategorySettingsProps {
   categories: Category[];
   onSave: (updates: Category[]) => Promise<void>;
@@ -199,9 +197,9 @@ export function QuickCategorySettings({ categories, onSave }: QuickCategorySetti
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {dirty && <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--accent)', fontWeight: 'var(--fw-medium)' }}>未保存 {updates.length} 项</span>}
-          <button type="button" onClick={resetAll} style={outlineButton}>恢复全部默认</button>
-          <button type="button" onClick={cancel} disabled={!dirty || busy} style={outlineButton}>取消修改</button>
-          <button type="button" onClick={() => void save()} disabled={!dirty || busy} style={primaryButton}>{busy ? '保存中…' : '保存分类设置'}</button>
+          <button type="button" onClick={resetAll} className="zc-btn">恢复全部默认</button>
+          <button type="button" onClick={cancel} disabled={!dirty || busy} className="zc-btn">取消修改</button>
+          <button type="button" onClick={() => void save()} disabled={!dirty || busy} className="zc-btn zc-btn--primary">{busy ? '保存中…' : '保存分类设置'}</button>
         </div>
       </div>
 
@@ -271,9 +269,9 @@ export function QuickCategorySettings({ categories, onSave }: QuickCategorySetti
               已选 {selectedInCurrent.length}
             </label>
             <span style={{ flex: '1 1 auto' }} />
-            <button type="button" disabled={selectedInCurrent.length === 0} onClick={() => setVisibility(selectedIds, true)} style={smallButton}>设为高频</button>
-            <button type="button" disabled={selectedInCurrent.length === 0} onClick={() => setVisibility(selectedIds, false)} style={smallButton}>设为隐藏</button>
-            {!q && <button type="button" onClick={resetCurrent} style={smallButton}>恢复本组默认</button>}
+            <button type="button" disabled={selectedInCurrent.length === 0} onClick={() => setVisibility(selectedIds, true)} className="zc-btn zc-btn--sm">设为高频</button>
+            <button type="button" disabled={selectedInCurrent.length === 0} onClick={() => setVisibility(selectedIds, false)} className="zc-btn zc-btn--sm">设为隐藏</button>
+            {!q && <button type="button" onClick={resetCurrent} className="zc-btn zc-btn--sm">恢复本组默认</button>}
           </div>
 
           {q ? (
@@ -381,10 +379,10 @@ function SearchCategoryRow(props: {
       <span className={`zc-category-state${hidden ? '' : ' is-frequent'}`}>
         {isCatalogOnly(props.category) ? '未启用' : hidden ? '隐藏' : '高频'}
       </span>
-      <button type="button" onClick={props.onToggle} style={smallButton}>
+      <button type="button" onClick={props.onToggle} className="zc-btn zc-btn--sm">
         {isCatalogOnly(props.category) ? '启用并设高频' : hidden ? '设为高频' : '设为隐藏'}
       </button>
-      <button type="button" onClick={props.onPin} style={smallButton}>置顶</button>
+      <button type="button" onClick={props.onPin} className="zc-btn zc-btn--sm">置顶</button>
     </div>
   );
 }
@@ -421,7 +419,3 @@ function segmentButton(active: boolean) {
     cursor: 'pointer',
   } as const;
 }
-
-const outlineButton = btnOutline;
-const primaryButton = btnPrimary;
-const smallButton = btnSmall;

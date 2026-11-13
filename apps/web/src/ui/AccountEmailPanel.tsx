@@ -4,8 +4,6 @@ import { accountProtection } from '../account-protection.js';
 import { authenticateSyncProfile } from '../sync-auth.js';
 import { buildSyncBaseUrl, loadSyncConnections } from '../sync-config.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
-import { btnOutline } from './styles.js';
-
 interface EmailState {
   federated?: boolean;
   email?: string;
@@ -90,7 +88,7 @@ export function AccountEmailPanel({ quotaUnlimited = false }: { quotaUnlimited?:
         await refresh(); setNotice('通知偏好已保存。');
       })} />配额接近上限时发送邮件提醒</label>
       <p className="zc-caption">{quotaUnlimited ? '当前账号无限配额，不会触发容量提醒；角色变更后，已保存的偏好会生效。' : '默认关闭。服务器在用量达到告警阈值时提醒一次；恢复后再次达到阈值才会重新提醒。'}</p>
-      <button type="button" style={btnOutline} disabled={busy} onClick={() => setRemoveOpen(true)}>移除邮箱</button>
+      <button type="button" className="zc-btn" disabled={busy} onClick={() => setRemoveOpen(true)}>移除邮箱</button>
     </div>}
     {removeOpen && <ConfirmDialog title="移除邮箱" confirmLabel="确认移除" onCancel={() => setRemoveOpen(false)} onConfirm={async () => { if (await run(async () => { await api('', 'DELETE'); await refresh(); setNotice('邮箱已移除，邮件提醒已关闭。'); })) setRemoveOpen(false); }}><p>移除后将停止发送提醒。再次使用需要重新验证邮箱。</p></ConfirmDialog>}
     {notice && <p role="status">{notice}</p>}

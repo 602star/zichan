@@ -17,12 +17,9 @@ import type { Snapshot } from '../db/snapshot.js';
 import { categoryLabel } from '../transactionMeta.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { DialogShell } from '../ui/DialogShell.js';
-import { btnOutline, btnPrimary, inputBase } from '../ui/styles.js';
+import { inputBase } from '../ui/styles.js';
 
 const inputStyle = inputBase;
-const button = btnOutline;
-const primary = btnPrimary;
-
 export function latestStatementDate(statementDay: number | undefined, today = localToday()): string {
   if (!statementDay) return today;
   const [year, month, day] = today.split('-').map(Number);
@@ -162,7 +159,7 @@ export function ReconciliationModal(props: Props) {
     >
         <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'center' }}>
           <div><div id={titleId} style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{session ? '对账详情' : '核对账单'}</div><div style={{ marginTop: 4, fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>日常交易逐笔勾选；期间资产转换按账户实扣和到账自动计入</div></div>
-          <button type="button" data-dialog-initial-focus onClick={props.onClose} disabled={busy} aria-label="关闭" style={{ ...button, minWidth: 40, padding: 0 }}>×</button>
+          <button type="button" data-dialog-initial-focus onClick={props.onClose} disabled={busy} aria-label="关闭" className="zc-btn" style={{ minWidth: 40, padding: 0 }}>×</button>
         </div>
 
         <div style={{ overflowY: 'auto', padding: 24 }}>
@@ -191,8 +188,8 @@ export function ReconciliationModal(props: Props) {
             <>
               <div style={{ display: 'flex', gap: 10, marginTop: 18, alignItems: 'center' }}>
                 <input aria-label="搜索对账记录" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索日期、摘要、商户、分类或金额" style={{ ...inputStyle, flex: 1 }} />
-                <button type="button" onClick={() => setSelectedIds(preview?.candidates.filter((row) => row.transaction.status !== 'pending').map((row) => row.transaction.id) ?? [])} style={button}>勾选无需核实的记录</button>
-                <button type="button" onClick={() => setSelectedIds([])} style={button}>清空</button>
+                <button type="button" onClick={() => setSelectedIds(preview?.candidates.filter((row) => row.transaction.status !== 'pending').map((row) => row.transaction.id) ?? [])} className="zc-btn">勾选无需核实的记录</button>
+                <button type="button" onClick={() => setSelectedIds([])} className="zc-btn">清空</button>
               </div>
               <div style={{ marginTop: 10, borderTop: '1px solid var(--border)' }}>
                 {visibleCandidates.map(({ transaction, postingAmount }) => (
@@ -233,9 +230,9 @@ export function ReconciliationModal(props: Props) {
 
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
           {session
-            ? <button type="button" disabled={busy} onClick={() => setUndoOpen(true)} style={{ ...button, color: 'var(--negative)', borderColor: 'var(--negative)' }}>{busy ? '处理中…' : '撤销本次对账'}</button>
+            ? <button type="button" disabled={busy} onClick={() => setUndoOpen(true)} className="zc-btn zc-btn--danger">{busy ? '处理中…' : '撤销本次对账'}</button>
             : <label className="zc-check-row-inline" style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: difference.isZero() ? 'var(--fg-subtle)' : 'var(--fg)' }}><span className="zc-check-target"><input type="checkbox" disabled={difference.isZero()} checked={createAdjustment && !difference.isZero()} onChange={(event) => setCreateAdjustment(event.target.checked)} /></span>创建 {difference.abs().toString()} 的余额调整流水</label>}
-          <div style={{ display: 'flex', gap: 8 }}><button type="button" disabled={busy} onClick={props.onClose} style={button}>关闭</button>{!session && <button type="button" disabled={busy || !preview || (!difference.isZero() && !createAdjustment)} onClick={() => void finish()} style={primary}>{busy ? '正在完成…' : '完成对账'}</button>}</div>
+          <div style={{ display: 'flex', gap: 8 }}><button type="button" disabled={busy} onClick={props.onClose} className="zc-btn">关闭</button>{!session && <button type="button" disabled={busy || !preview || (!difference.isZero() && !createAdjustment)} onClick={() => void finish()} className="zc-btn zc-btn--primary">{busy ? '正在完成…' : '完成对账'}</button>}</div>
         </div>
         {undoOpen && session && (
           <ConfirmDialog

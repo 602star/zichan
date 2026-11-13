@@ -51,6 +51,7 @@ import { adoptUnlockedLedgerKeyEnvelope, runtimeLedgerCryptoSession } from './le
 import { accountProtection } from './account-protection.js';
 import { isTauriRuntime } from './tauri.js';
 import type { SettingsSection } from './screens/Settings.js';
+import { ArrowLeftRight, BarChart3, BookOpen, Ellipsis, Gamepad2, Grid2X2, History as HistoryIcon, LayoutDashboard, List, Package, Settings2, UserRound, Cloud, type LucideIcon } from 'lucide-react';
 import {
   NAVIGATION_ITEMS,
   navigationLabel,
@@ -76,6 +77,23 @@ const History = lazy(() => import('./screens/History.js').then((module) => ({ de
 const ACTIVE_SCREEN_KEY = 'zichan.activeScreen';
 const RETRY_SCREEN_KEY = 'zichan.retryScreen';
 const SCREEN_IDS = new Set<ScreenId>(NAVIGATION_ITEMS.map((item) => item.id));
+const NAV_ICONS: Record<ScreenId, LucideIcon> = {
+  dashboard: LayoutDashboard,
+  convert: ArrowLeftRight,
+  transactions: List,
+  game: Gamepad2,
+  fixed: Package,
+  reports: BarChart3,
+  history: HistoryIcon,
+  manage: Grid2X2,
+  sync: Cloud,
+  account: UserRound,
+  settings: Settings2,
+};
+function NavIcon({ id, size = 18 }: { id: ScreenId; size?: number }) {
+  const Icon = NAV_ICONS[id] ?? BookOpen;
+  return <Icon aria-hidden="true" size={size} strokeWidth={1.8} />;
+}
 
 /**
  * Screens a preview must never open.
@@ -140,7 +158,7 @@ function formatAsOfDate(date?: string): string {
   return [y, m, d].filter(Boolean).join(' · ');
 }
 
-const ghostBtn = btnGhost;
+const ghostBtn = 'zc-btn zc-btn--ghost';
 
 type ImportDialog =
   | { kind: 'password'; file: File }
@@ -553,14 +571,14 @@ export function App() {
           position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 5,
         }}>
           <div className="zc-header-title">
-            <h1 style={{ margin: 0, fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{title}</h1>
+            <h1 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{title}</h1>
             <div className="zc-header-subtitle" style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginTop: 3 }}>{sub}</div>
           </div>
           <div className="zc-header-meta" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <div style={{
-              display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface)',
-              border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '8px 15px',
-              fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)',
+              display: 'flex', alignItems: 'center', gap: 8, background: 'transparent',
+              border: 'none', borderRadius: 0, padding: 0,
+              fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-medium)',
             }}>
               <span style={{ color: 'var(--text-tertiary)', fontWeight: 'var(--fw-regular)' }}>报表币种</span>
               {base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}
@@ -585,12 +603,12 @@ export function App() {
 
         <div className="zc-page-content">
           {safety.length > 0 && screen !== 'settings' && (
-            <div className="zc-safety-banner" style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '12px 14px', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
+            <div className="zc-safety-banner" style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>
               <div>
-                <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color: safety.some((w) => w.tone === 'danger') ? 'var(--negative)' : 'var(--accent)' }}>数据安全提醒</div>
+                <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color: safety.some((w) => w.tone === 'danger') ? 'var(--negative)' : 'var(--warning)' }}>数据安全提醒</div>
                 <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', marginTop: 4 }}>{safety.slice(0, 3).map((w) => w.message).join('；')}</div>
               </div>
-              <button onClick={() => { setSettingsSection('device'); setScreen('settings'); }} style={ghostBtn}>去处理</button>
+              <button onClick={() => { setSettingsSection('device'); setScreen('settings'); }} className={ghostBtn}>去处理</button>
             </div>
           )}
           <Suspense fallback={<div role="status" style={{ minHeight: 240, padding: 24, color: 'var(--text-tertiary)' }}>正在载入…</div>}>
@@ -783,34 +801,35 @@ function Sidebar(props: {
   const mainNav = orderedNavigationItems(navigation);
   return (
     <aside className="zc-sidebar" style={{
-      background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex',
+      background: 'var(--sidebar-bg)', color: 'var(--sidebar-fg)', borderRight: '1px solid var(--sidebar-bg)', display: 'flex',
       flexDirection: 'column', gap: 6,
     }}>
       <div className="zc-sidebar-brand" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px 20px' }}>
-        <div style={{
-          width: 36, height: 36, borderRadius: 'var(--r-sm)', background: 'var(--accent)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-title)',
+        <div className="zc-sidebar-seal" style={{
+          width: 38, height: 38, borderRadius: 'var(--r-seal)', border: '2px solid var(--accent)', background: 'transparent', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', color: 'var(--accent)', fontFamily: 'var(--font-display)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-title)',
         }}>资</div>
         <div className="zc-sidebar-brand-copy">
-          <div style={{ fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-title)', letterSpacing: 0 }}>资产生命周期</div>
-          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', letterSpacing: 0, fontWeight: 'var(--fw-medium)' }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-title)', letterSpacing: 0 }}>资产生命周期</div>
+          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--sidebar-muted)', letterSpacing: 0, fontWeight: 'var(--fw-medium)' }}>
             LIFECYCLE LEDGER
           </div>
         </div>
       </div>
 
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {mainNav.map(({ id, icon }) => {
+        {mainNav.map(({ id }) => {
           const label = navigationLabel(id, ledgerMode);
           const active = screen === id;
           const withQuick = id === 'transactions';
           return (
             <div
               key={id}
+              className={`zc-sidebar-nav-row${active ? ' is-active' : ''}`}
               style={{
                 display: 'flex', alignItems: 'center', borderRadius: 'var(--r-sm)', overflow: 'hidden',
-                background: active ? 'var(--accent-soft)' : 'transparent',
-                color: active ? 'var(--accent)' : 'var(--fg-muted)',
+                background: active ? 'var(--sidebar-active)' : 'transparent',
+                color: active ? 'var(--sidebar-fg)' : 'var(--sidebar-muted)',
               }}
             >
               <button
@@ -825,7 +844,7 @@ function Sidebar(props: {
                   fontWeight: active ? 'var(--fw-bold)' : 'var(--fw-medium)',
                 }}
               >
-                <span style={{ width: 20, textAlign: 'center', fontSize: 'var(--fs-title)' }}>{icon}</span>
+                <span style={{ width: 20, display: 'inline-flex', justifyContent: 'center' }}><NavIcon id={id} /></span>
                 <span className="zc-sidebar-nav-label" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
               </button>
               {withQuick && (
@@ -838,9 +857,9 @@ function Sidebar(props: {
                   style={{
                     /* Geometry lives in `.zc-sidebar-quick-inline` so the box
                        stays square; only the active tint is dynamic. */
-                    border: active ? '1px solid var(--accent)' : '1px solid var(--border)',
-                    background: active ? 'var(--accent)' : 'var(--surface-2)',
-                    color: active ? 'var(--on-accent)' : 'var(--accent)',
+                    border: active ? '1px solid var(--accent)' : '1px solid var(--sidebar-muted)',
+                    background: active ? 'var(--accent)' : 'transparent',
+                    color: active ? 'var(--on-accent)' : 'var(--sidebar-fg)',
                   }}
                 >
                   <PlusIcon size={20} />
@@ -941,19 +960,19 @@ function MobileNavigation(props: {
         aria-label="移动端主导航"
         style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
       >
-        {beforeQuick.map(({ id, icon }) => (
+        {beforeQuick.map(({ id }) => (
           <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
-            <span>{icon}</span><small>{navigationLabel(id, props.ledgerMode)}</small>
+            <span><NavIcon id={id} size={19} /></span><small>{navigationLabel(id, props.ledgerMode)}</small>
           </button>
         ))}
         <button className="zc-mobile-quick" aria-label="快速记账" onClick={props.onQuickTransaction}><span><PlusIcon size={24} /></span><small>快记</small></button>
-        {afterQuick.map(({ id, icon }) => (
+        {afterQuick.map(({ id }) => (
           <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
-            <span>{icon}</span><small>{navigationLabel(id, props.ledgerMode)}</small>
+            <span><NavIcon id={id} size={19} /></span><small>{navigationLabel(id, props.ledgerMode)}</small>
           </button>
         ))}
         <button className={moreIds.has(props.screen) || props.moreOpen ? 'is-active' : ''} onClick={() => props.onMoreOpen(true)}>
-          <span>•••</span><small>更多</small>
+          <span><Ellipsis aria-hidden="true" size={19} strokeWidth={1.8} /></span><small>更多</small>
         </button>
       </nav>
       {props.moreOpen && (
@@ -968,8 +987,8 @@ function MobileNavigation(props: {
             <div className="zc-mobile-drawer-head"><b id={drawerTitleId}>更多功能</b><button type="button" data-dialog-initial-focus aria-label="关闭更多菜单" onClick={() => props.onMoreOpen(false)}>×</button></div>
             {moreItems.length > 0 && (
               <div className="zc-mobile-drawer-grid">
-                {moreItems.map(({ id, icon }) => (
-                  <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}><span>{icon}</span><b>{navigationLabel(id, props.ledgerMode)}</b></button>
+                {moreItems.map(({ id }) => (
+                  <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}><span><NavIcon id={id} /></span><b>{navigationLabel(id, props.ledgerMode)}</b></button>
                 ))}
               </div>
             )}
@@ -977,14 +996,14 @@ function MobileNavigation(props: {
               <>
                 <div className="zc-mobile-drawer-section-head">未启用模块</div>
                 <div className="zc-mobile-drawer-grid zc-mobile-drawer-grid-hidden">
-                  {hiddenItems.map(({ id, icon }) => (
+                  {hiddenItems.map(({ id }) => (
                     <button
                       key={id}
                       className="zc-mobile-drawer-add"
                       disabled={props.enablingModule === id}
                       onClick={() => props.onEnableModule(id)}
                     >
-                      <span>{icon}</span><b>{navigationLabel(id, props.ledgerMode)}</b>
+                      <span><NavIcon id={id} /></span><b>{navigationLabel(id, props.ledgerMode)}</b>
                       <small>{props.enablingModule === id ? '启用中…' : '启用'}</small>
                     </button>
                   ))}
@@ -1002,5 +1021,3 @@ function MobileNavigation(props: {
     </>
   );
 }
-
-import { btnGhost } from './ui/styles.js';

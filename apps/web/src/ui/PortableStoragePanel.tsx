@@ -3,8 +3,6 @@ import {
   readDesktopStorageStatus,
   type DesktopStorageStatus,
 } from '../portable-desktop.js';
-import { card } from './styles.js';
-
 export function PortableStoragePanel() {
   const [status, setStatus] = useState<DesktopStorageStatus | null>(null);
   const [error, setError] = useState('');
@@ -23,7 +21,7 @@ export function PortableStoragePanel() {
 
   if (!status && !error) return null;
   return (
-    <div style={card}>
+    <div className="zc-card">
       <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{status?.mode === 'installed' ? '安装版存储' : '完全便携存储'}</div>
       {status ? (
         <>

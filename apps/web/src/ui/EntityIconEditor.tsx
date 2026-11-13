@@ -1,8 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { readEntityIcon } from '../entity-icon-upload.js';
 import { EntityIcon, ENTITY_ICONS } from './EntityIcon.js';
-import { btnOutline } from './styles.js';
-
 export function EntityIconEditor({ id, value, defaultIcon, platformName, platformId, disabled = false, onChange, onBusyChange }: {
   id: string; value: string; defaultIcon?: string; platformName?: string; platformId?: string;
   disabled?: boolean;
@@ -16,8 +14,8 @@ export function EntityIconEditor({ id, value, defaultIcon, platformName, platfor
   return <div>
     <div className="zc-icon-editor-actions">
       <span className="zc-icon-preview" aria-label="图标预览"><EntityIcon icon={value || defaultIcon} platformName={platformName} platformId={platformId} fallback="store" size={28} /></span>
-      <button id={id} type="button" style={btnOutline} disabled={busy || disabled} onClick={() => input.current?.click()}>{busy ? '处理图片…' : '上传图片'}</button>
-      <button type="button" style={btnOutline} disabled={busy || disabled || !value} onClick={() => { setError(''); onChange(''); }}>恢复默认图标</button>
+      <button id={id} type="button" className="zc-btn" disabled={busy || disabled} onClick={() => input.current?.click()}>{busy ? '处理图片…' : '上传图片'}</button>
+      <button type="button" className="zc-btn" disabled={busy || disabled || !value} onClick={() => { setError(''); onChange(''); }}>恢复默认图标</button>
       <input ref={input} type="file" accept="image/png,image/jpeg,image/webp" aria-label="上传自定义图标" hidden disabled={busy || disabled}
         onChange={async (event) => {
           const file = event.target.files?.[0]; event.target.value = '';

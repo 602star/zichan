@@ -9,7 +9,6 @@ import { TagPicker } from './TagPicker.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { DialogShell } from './DialogShell.js';
 import { FormDraftStatus, useFormDraftAutosave } from './FormDraftStatus.js';
-import { btnOutline } from './styles.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
 import { readAttachmentBlob, type AttachmentDraftData } from '../db/attachment-storage.js';
 import { useStore } from '../db/store.js';
@@ -737,10 +736,10 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
 
         {duplicates && <div role="alert">
           <p>{duplicates.message}</p>
-          {duplicates.matches.map((row) => <button type="button" key={row.id} style={btnOutline} onClick={() => setExistingChoice(row as T)}>
+          {duplicates.matches.map((row) => <button type="button" key={row.id} className="zc-btn" onClick={() => setExistingChoice(row as T)}>
             查看或使用已有：{String(row.groupName ?? row.serverName ?? '')} {String(row.name ?? row.accountName ?? '')}
           </button>)}
-          <button type="button" style={btnOutline} onClick={() => { setDuplicates(null); setErr(null); }}>返回修改</button>
+          <button type="button" className="zc-btn" onClick={() => { setDuplicates(null); setErr(null); }}>返回修改</button>
         </div>}
         {existingChoice && <EntityFormModal spec={spec} initial={existingChoice} onSave={async (value) => { await onSave(value); savedOrDeleted.current = true; await deleteFormDraft(draftKey).catch(() => undefined); onClose(); }} onClose={() => setExistingChoice(undefined)} />}
         {saveWarning && <ConfirmDialog title="可能重复的定期交易" confirmLabel="仍然创建 / 保存" cancelLabel="返回修改" onCancel={() => setSaveWarning(null)} onConfirm={async () => { const warning = saveWarning; setSaveWarning(null); await save(warning); }}>{saveWarning}</ConfirmDialog>}
@@ -1200,7 +1199,7 @@ export function CategoryPicker(props: {
         {!groups.length && <p className="zc-meta">没有匹配分类</p>}
       </div> : <>
         <div className="zc-category-step-nav">
-          {childrenStep ? <button type="button" style={btnOutline} onClick={() => setChildrenStep(false)}>返回一级分类</button> : <span>选择一级分类</span>}
+          {childrenStep ? <button type="button" className="zc-btn" onClick={() => setChildrenStep(false)}>返回一级分类</button> : <span>选择一级分类</span>}
           {childrenStep && <strong className="zc-category-option-text">{activeGroup?.parent}</strong>}
         </div>
         <div className={`zc-category-picker-grid${childrenStep ? ' is-children' : ''}`}>

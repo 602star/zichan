@@ -17,9 +17,7 @@ import {
   VAULT_STATE_CHANGED_EVENT,
   type CredentialVaultState,
 } from '../credential-vault.js';
-import { btnOutline, card } from './styles.js';
 
-const outline = btnOutline;
 
 function statusText(status: BiometricStatus | null): string {
   if (!status) return '检测中…';
@@ -126,7 +124,7 @@ export function DeviceSecurityPanel() {
   }
 
   return (
-    <div style={card}>
+    <div className="zc-card">
       <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14, marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>设备安全与权限</div>
@@ -138,11 +136,11 @@ export function DeviceSecurityPanel() {
         </div>
         {vault.kind === 'native-stronghold' && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {vault.unlocked && <button type="button" onClick={() => void lockVault()} disabled={!!busy} style={outline}>{busy === 'vault' ? '锁定中…' : '锁定 Stronghold'}</button>}
+            {vault.unlocked && <button type="button" onClick={() => void lockVault()} disabled={!!busy} className="zc-btn">{busy === 'vault' ? '锁定中…' : '锁定 Stronghold'}</button>}
           </div>
         )}
       </div>
-      <div className="zc-settings-health-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
+      <div className="zc-settings-health-grid">
         <DeviceControl
           label="应用锁"
           value={statusText(biometry)}
@@ -160,8 +158,8 @@ export function DeviceSecurityPanel() {
         <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 11, background: 'var(--surface-2)' }}>
           <div style={{ fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>设备能力测试</div>
           <div style={{ display: 'flex', gap: 7, marginTop: 9, flexWrap: 'wrap' }}>
-            <button type="button" onClick={() => void testLocation()} disabled={!!busy} style={outline}>{busy === 'location' ? '定位中…' : '测试定位'}</button>
-            <button type="button" onClick={() => void testNotification()} disabled={!!busy || notificationPermission === 'unsupported'} style={outline}>测试通知</button>
+            <button type="button" onClick={() => void testLocation()} disabled={!!busy} className="zc-btn">{busy === 'location' ? '定位中…' : '测试定位'}</button>
+            <button type="button" onClick={() => void testNotification()} disabled={!!busy || notificationPermission === 'unsupported'} className="zc-btn">测试通知</button>
           </div>
         </div>
       </div>

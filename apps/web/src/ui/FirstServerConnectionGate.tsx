@@ -34,8 +34,6 @@ interface ServerHealth {
   capabilities?: string[];
 }
 
-const button = btnOutline;
-
 const input: CSSProperties = { boxSizing: 'border-box', width: '100%', minHeight: 42, padding: '0 11px', border: '1px solid var(--border-strong)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', color: 'var(--text-primary)' };
 
 const PRESETS: { id: SyncAddressPreset; label: string }[] = [
@@ -254,18 +252,18 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
   return (
     <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(20px, 5vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif' }}>
       <section style={{ width: accountOnly ? 'min(440px, 100%)' : 'min(780px, 100%)', margin: '0 auto' }}>
-        {!accountOnly && <button type="button" onClick={onCancel} disabled={busy} style={{ ...button, minHeight: 34, padding: '0 11px' }}>返回模式选择</button>}
+        {!accountOnly && <button type="button" onClick={onCancel} disabled={busy} className="zc-btn" style={{ minHeight: 34, padding: '0 11px' }}>返回模式选择</button>}
         <h1 style={{ margin: '18px 0 6px', color: 'var(--text-primary)', fontSize: 'var(--fs-hero)' }}>{accountOnly ? registering ? '注册账号' : '账号登录' : '连接同步服务器'}</h1>
         <p style={{ margin: '0 0 22px', color: 'var(--text-secondary)', lineHeight: 1.7 }}>{accountOnly ? '使用账号密码登录并打开账本。本机自动准备离线访问，联网后继续同步。' : '先验证服务器身份并登录。服务器地址可以来自当前网站、本机、局域网或公网。'}</p>
 
         <div style={{ padding: 'clamp(20px, 4vw, 28px)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', background: 'var(--surface)' }}>
           {!accountOnly && <><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-            {PRESETS.map((item) => <button key={item.id} type="button" disabled={busy} onClick={() => selectPreset(item.id)} style={{ ...button, background: preset === item.id ? 'var(--accent-soft)' : 'var(--surface)' }}>{item.label}</button>)}
+            {PRESETS.map((item) => <button key={item.id} type="button" disabled={busy} onClick={() => selectPreset(item.id)} className="zc-btn" style={{ background: preset === item.id ? 'var(--accent-soft)' : 'var(--surface)' }}>{item.label}</button>)}
           </div>
           <label style={{ display: 'block', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>完整服务器地址</label>
           <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
             <input aria-label="完整服务器地址" value={address} onChange={(event) => setAddressDraft(event.target.value)} disabled={busy} spellCheck={false} style={{ ...input, flex: '1 1 420px' }} />
-            <button type="button" onClick={() => setAdvanced((value) => !value)} disabled={busy} style={button}>{advanced ? '收起高级设置' : '高级设置'}</button>
+            <button type="button" onClick={() => setAdvanced((value) => !value)} disabled={busy} className="zc-btn">{advanced ? '收起高级设置' : '高级设置'}</button>
           </div>
           <div style={{ marginTop: 6, color: 'var(--text-secondary)', fontSize: 'var(--fs-meta)', lineHeight: 1.55 }}>
             HTTPS 网站中的浏览器可能阻止普通 HTTP 局域网地址（混合内容或私有网络限制）；遇到此情况请使用可信 HTTPS、服务器自带 Web，或 Windows 便携版。
@@ -306,7 +304,7 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
           {accountOnly && identityProviders.length > 0 && <section style={{ marginTop: 18, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
             <strong>使用统一账号登录</strong>
             <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>账号资料已同步时，可直接在上方输入账号密码登录；首次开通尚未完成时，也可通过身份节点登录。</p>
-            {identityProviders.map((provider) => <button key={provider.linkId} type="button" style={{ ...button, marginRight: 8 }}
+            {identityProviders.map((provider) => <button key={provider.linkId} type="button" className="zc-btn" style={{ marginRight: 8 }}
               onClick={() => window.location.assign(`${initialUrl}/api/auth/federation/start?issuer=${encodeURIComponent(provider.issuerNodeId)}&link=${encodeURIComponent(provider.linkId)}`)}>
               通过 {new URL(provider.issuerUrl).host} 登录账本 {provider.ledgerId}
             </button>)}
@@ -316,5 +314,3 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
     </main>
   );
 }
-
-import { btnOutline } from './styles.js';

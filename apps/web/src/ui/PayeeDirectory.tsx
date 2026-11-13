@@ -6,8 +6,6 @@ import { catalogPayeeId, matchingPayee, normalizedPayeeName, PAYEE_SCENES, PLATF
 import { payeeForm } from '../forms.js';
 import { EntityFormModal } from './EntityFormModal.js';
 import { EntityIcon } from './EntityIcon.js';
-import { btnOutline } from './styles.js';
-
 export function PayeeDirectory({ snap }: { snap: Snapshot }) {
   const { store, rev, bump } = useStore();
   const [scene, setScene] = useState('all');
@@ -41,7 +39,7 @@ export function PayeeDirectory({ snap }: { snap: Snapshot }) {
         return <div className="zc-payee-directory-card" key={entry.id}>
           <span className="zc-entity-name"><EntityIcon icon={existing?.icon} platformId={entry.id} platformName={entry.name} fallback="store" /><b>{existing?.name ?? entry.name}</b></span>
           <span className="zc-meta">{existing && existing.name !== entry.name ? `${entry.name} · ` : ''}{entry.scenes.map((id) => PAYEE_SCENES.find((item) => item.id === id)?.name).join('、')}{existing?.isActive === false ? ' · 已停用' : ''}</span>
-          <button type="button" style={btnOutline} disabled={!all || existing?.isDeleted === true} onClick={() => setEditing({ entry, isNew: !existing, initial: existing ?? {
+          <button type="button" className="zc-btn" disabled={!all || existing?.isDeleted === true} onClick={() => setEditing({ entry, isNew: !existing, initial: existing ?? {
             id: catalogPayeeId(entry), name: entry.name, aliases: [entry.name, ...entry.aliases], isActive: true,
             createdAt: '', updatedAt: '', version: 1, isDeleted: false,
           } })}>{existing?.isDeleted ? '已删除' : existing ? '编辑交易对象' : '添加并编辑'}</button>

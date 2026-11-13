@@ -189,22 +189,15 @@ describe('responsive shell contract', () => {
    * desktop columns and gets clipped by the (previously) hidden overflow.
    * `repeat(auto-fit|auto-fill, ...)` grids are exempt: they already wrap.
    */
-  /*
-   * 分类列写死 112px 时，「一级 / 二级」标签（内置分类最长实测 139px）会顶出格子，
-   * 而两列之间只有 12px 间距——宽过 124px 的标签就直接画到旁边的描述文字上。
-   * 宽屏把这一列放到 200px（minmax 两端都是固定值，浏览器会直接撑到上限，行与行列宽一致），
-   * 窄屏收回 112px 以避免把摘要挤没。
-   */
-  it('lets the transaction category column follow its content instead of covering the summary', () => {
-    expect(transactions).toContain('var(--zc-category-track)');
-    expect(css).toMatch(/--zc-category-track:\s*minmax\(112px,\s*200px\)/);
-    expect(css).toMatch(/--zc-category-track:\s*112px/);
-    // 宽屏才放开；窄屏（<1024px）必须收回默认宽度。
-    expect(css).toMatch(/@media \(min-width: 1024px\) \{[\s\S]{0,200}--zc-category-track:\s*minmax\(112px,\s*200px\)/);
-    // 有天花板就得配省略号与 hover 全名，否则窄屏上标签会压回去。
+  /* 桌面真实表格保留列头与宽度，手机重排记录；分类保留完整悬停文本。 */
+  it('keeps the transaction table readable across desktop and phone widths', () => {
+    expect(transactions).toContain('<table className={`zc-transaction-table');
+    expect(transactions).toContain('<th scope="col" className="is-category">分类</th>');
+    expect(css).toMatch(/\.zc-transaction-table th\.is-category\s*\{\s*width:\s*120px/);
+    expect(css).toMatch(/@media \(min-width: 1200px\) \{\s*\.zc-transaction-table th\.is-category\s*\{ width: 180px/);
     expect(transactions).toMatch(/maxWidth:\s*'100%'[\s\S]{0,140}textOverflow:\s*'ellipsis'/);
     expect(transactions).toContain('title={item.categoryLabel}');
-    // 手机版仍然让这一列跟内容走（覆盖上面的桌面列宽），别把固定宽度带回去。
+    expect(css).toMatch(/\.zc-transaction-table thead\s*\{ display: none; \}/);
     expect(css).toMatch(/\.zc-transaction-row\s*\{[\s\S]{0,160}grid-template-columns:\s*minmax\(0,\s*1fr\)\s*auto\s*!important/);
   });
 

@@ -14,7 +14,7 @@ import {
 import { reconcileAttachmentStorage } from '../db/attachment-storage.js';
 import { useStore } from '../db/store.js';
 import { useSnapshot, type Snapshot } from '../db/snapshot.js';
-import { btnOutline, card, selectBase, tag as tagStyle, td as tdStyle, th as thStyle } from '../ui/styles.js';
+import { selectBase, tag as tagStyle, td as tdStyle, th as thStyle } from '../ui/styles.js';
 import { categoryLabel, TYPE_LABEL } from '../transactionMeta.js';
 import { DateRangeBar, localDateOfInstant, localDateRangeToUtc, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
@@ -164,8 +164,6 @@ const FIELD_LABELS: Record<string, string> = {
   lotMethod: '卖出匹配方式',
   manualLotIds: '手动匹配批次',
 };
-
-const button = btnOutline;
 
 const selectStyle = selectBase;
 
@@ -374,18 +372,18 @@ export function History() {
     <>
     <div className="zc-history-layout" style={{ display: 'grid', gridTemplateColumns: detailOpen && selected ? 'minmax(0, 1fr) minmax(360px, 420px)' : 'minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
-        <div style={card}>
-          <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+        <div className="zc-card">
+          <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--sp-3)', marginBottom: 14 }}>
             <div>
               <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>操作历史</div>
               <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3 }}>共 {filtered.length} 条记录，默认隐藏系统初始化和无业务变化的技术日志；批量操作会折叠显示。</div>
             </div>
-            {(!compactView || advancedOpen) && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button onClick={() => downloadText('zichan-audit-history.json', JSON.stringify({ exportedAt: new Date().toISOString(), events: filtered }, null, 2), 'application/json')} style={button}>导出 JSON</button>
-              <button onClick={() => downloadText('zichan-audit-history.csv', eventsToCsv(filtered), 'text/csv;charset=utf-8')} style={button}>导出 CSV</button>
+            {(!compactView || advancedOpen) && <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap' }}>
+              <button onClick={() => downloadText('zichan-audit-history.json', JSON.stringify({ exportedAt: new Date().toISOString(), events: filtered }, null, 2), 'application/json')} className="zc-btn">导出 JSON</button>
+              <button onClick={() => downloadText('zichan-audit-history.csv', eventsToCsv(filtered), 'text/csv;charset=utf-8')} className="zc-btn">导出 CSV</button>
             </div>}
           </div>
-          <div style={{ marginBottom: 12 }}><DateRangeBar value={range} onChange={setRange} view={view} onViewChange={setView} /></div>
+          <div style={{ marginBottom: 'var(--sp-3)' }}><DateRangeBar value={range} onChange={setRange} view={view} onViewChange={setView} /></div>
           <input aria-label="历史搜索" className="zc-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索摘要、对象、字段、设备" style={{ width: '100%', marginBottom: 10 }} />
           {compactView && <button type="button" className="zc-btn zc-btn--outline" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((open) => !open)}>{advancedOpen ? '收起筛选与导出' : `筛选与导出${kind !== 'all' || op !== 'all' || entityType !== 'all' || source !== 'user' ? ' · 已筛选' : ''}`}</button>}
           {(!compactView || advancedOpen) && <div className="zc-history-filters" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(120px, 1fr))', gap: 10, marginTop: 10 }}>
@@ -417,7 +415,7 @@ export function History() {
           </div>}
         </div>
 
-        {view === 'list' ? <div style={{ ...card, padding: 0, overflow: 'hidden' }}>
+        {view === 'list' ? <div className="zc-card" style={{ padding: 0, overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}>
             <table className="zc-card-table" data-history-table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
               <thead>
@@ -502,7 +500,7 @@ function HistoryDetail({
   onReverseBatch: (compensation: BusinessCompensationRecord) => Promise<void>;
 }) {
   if (!event) {
-    return <div style={card}><div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>选择一条历史记录查看详情</div></div>;
+    return <div className="zc-card"><div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>选择一条历史记录查看详情</div></div>;
   }
   if (event.kind === 'batch') {
     return (
@@ -526,10 +524,10 @@ function OperationDetail({ log, snap, actionBusy, actionMessage, onReverse }: { 
   const hasMoreDiff = Object.keys(diff).length > Object.keys(visibleDiff).length;
   const reversible = (log.source ?? 'local') === 'local' && (log.entityType === 'transaction' || (log.entityType === 'conversion_chain' && Object.hasOwn(diff, 'recordState')));
   return (
-    <div style={card}>
+    <div className="zc-card">
       <DetailHeader title={`${OP_LABEL[log.op]}「${historyObjectName(log)}」`} sub={`${formatTime(log.at)} · ${SOURCE_LABEL[log.source ?? 'local'] ?? log.source ?? '本地'}`} />
-      {reversible && <button type="button" disabled={actionBusy} onClick={() => void onReverse(log)} style={{ ...button, borderColor: 'var(--accent)', color: 'var(--accent)', marginBottom: 12 }}>{actionBusy ? '处理中…' : '撤销此操作'}</button>}
-      {actionMessage && <div style={{ color: actionMessage === '已完成反向操作。' ? 'var(--positive)' : 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>{actionMessage}</div>}
+      {reversible && <button type="button" disabled={actionBusy} onClick={() => void onReverse(log)} className="zc-btn" style={{ borderColor: 'var(--accent)', color: 'var(--accent)', marginBottom: 'var(--sp-3)' }}>{actionBusy ? '处理中…' : '撤销此操作'}</button>}
+      {actionMessage && <div style={{ color: actionMessage === '已完成反向操作。' ? 'var(--positive)' : 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 'var(--sp-3)' }}>{actionMessage}</div>}
       {Object.keys(visibleDiff).length > 0 && <DiffTable diff={visibleDiff} snap={snap} />}
       {hasMoreDiff && <details className="zc-history-expand"><summary>查看全部 {Object.keys(diff).length} 项字段变化</summary><DiffTable diff={diff} snap={snap} /></details>}
       {Object.keys(diff).length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>没有记录到字段变化</div>}
@@ -556,28 +554,28 @@ function BatchDetail({
 }) {
   const changeCount = event.logs.length || event.batch.entityCount;
   return (
-    <div style={card}>
+    <div className="zc-card">
       <DetailHeader title={historyBatchLabel(event.batch)} sub={`${formatTime(event.batch.startedAt)} · ${changeCount} 条变更`} />
       {compensation?.status === 'pending' && (
         <button
           type="button"
           disabled={actionBusy}
           onClick={() => void onReverse(compensation)}
-          style={{ ...button, borderColor: 'var(--accent)', color: 'var(--accent)', marginBottom: 12 }}
+          className="zc-btn" style={{ borderColor: 'var(--accent)', color: 'var(--accent)', marginBottom: 'var(--sp-3)' }}
         >
           {actionBusy ? '撤销中…' : `撤销整个批次（${compensation.affectedEntities.length} 项）`}
         </button>
       )}
-      {compensation?.status === 'applied' && <div style={{ color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>该批次已完整撤销</div>}
-      {compensation?.status === 'blocked' && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>不可撤销：{compensation.error ?? '相关对象后来发生了变化'}</div>}
-      {compensation?.status === 'pending' && compensation.error && <div style={{ color: 'var(--warning)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>上次尝试未完成，可重试：{compensation.error}</div>}
+      {compensation?.status === 'applied' && <div style={{ color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 'var(--sp-3)' }}>该批次已完整撤销</div>}
+      {compensation?.status === 'blocked' && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 'var(--sp-3)' }}>不可撤销：{compensation.error ?? '相关对象后来发生了变化'}</div>}
+      {compensation?.status === 'pending' && compensation.error && <div style={{ color: 'var(--warning)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 'var(--sp-3)' }}>上次尝试未完成，可重试：{compensation.error}</div>}
       {actionMessage && <div style={{ color: actionMessage === '已完整撤销该批次。'
         ? 'var(--positive)'
         : actionMessage.includes('已经提交')
           ? 'var(--warning)'
-          : 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 12 }}>{actionMessage}</div>}
-      {event.batch.summary && <div style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginBottom: 12, overflowWrap: 'anywhere' }}>{event.batch.summary}</div>}
-      {compensation && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginBottom: 12 }}>影响范围：{affectedEntitySummary(compensation)}</div>}
+          : 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 'var(--sp-3)' }}>{actionMessage}</div>}
+      {event.batch.summary && <div style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginBottom: 'var(--sp-3)', overflowWrap: 'anywhere' }}>{event.batch.summary}</div>}
+      {compensation && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginBottom: 'var(--sp-3)' }}>影响范围：{affectedEntitySummary(compensation)}</div>}
       {event.logs.length > 0 && <details className="zc-history-expand"><summary>查看 {event.logs.length} 条具体变更</summary>
         <div className="zc-history-batch-logs">
           {event.logs.map((log) => (
@@ -595,7 +593,7 @@ function ResolutionDetail({ resolution }: { resolution: SyncConflictResolution }
   const aggregates = resolutionAggregates(resolution);
   const changedPaths = resolutionChangedPaths(resolution);
   return (
-    <div style={card}>
+    <div className="zc-card">
       <DetailHeader title={`冲突解决 · ${resolutionActionLabel(resolution.action)}`} sub={`${formatTime(resolution.resolvedAt)} · ${resolution.resolverDeviceId ?? '未知设备'} · 冲突组 ${resolution.groupId.slice(0, 8)}`} />
       <div className="zc-history-resolution-facts" style={{ display: 'grid', gridTemplateColumns: '110px minmax(0, 1fr)', gap: '8px 12px', fontSize: 'var(--fs-caption)' }}>
         <span style={{ color: 'var(--text-tertiary)' }}>合并提交</span><code>{resolution.resolvedCommitId ?? '仅记录，未生成提交'}</code>
@@ -620,7 +618,7 @@ function DetailHeader({ title, sub }: { title: string; sub: string }) {
 function KeyTags({ keys }: { keys: string[] }) {
   if (!keys.length) return null;
   return (
-    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 'var(--sp-3)' }}>
       {keys.map((key) => <span key={key} style={tagStyle}>{fieldLabel(key)}</span>)}
     </div>
   );
@@ -644,7 +642,7 @@ function DiffTable({ diff, compact = false, snap }: { diff: Record<string, { bef
 function JsonBlock({ title, value }: { title: string; value?: string }) {
   if (!value) return null;
   return (
-    <details style={{ marginTop: 12 }}>
+    <details style={{ marginTop: 'var(--sp-3)' }}>
       <summary style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)', cursor: 'pointer' }}>{title}</summary>
       <pre style={{ margin: '8px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)', background: 'var(--surface-2)', borderRadius: 'var(--r-sm)', padding: 10 }}>
         {prettyJson(value)}

@@ -44,7 +44,7 @@ import {
   transactionForm, transactionSplitForm, transactionTemplateForm, type AttachmentDraft, type TransactionFormValue,
 } from '../forms.js';
 import { amount as fmtAmount, money, signedMoney } from '../format.js';
-import { amountColor, btnOutline, btnPrimary, card, cardTight, selectBase, tag as tagStyle, td as tdStyle, th as thStyle } from '../ui/styles.js';
+import { amountColor, selectBase, tag as tagStyle, td as tdStyle, th as thStyle } from '../ui/styles.js';
 import { ChartLegend, CompositionDonut, TrendBars, type ChartSlice } from '../ui/charts.js';
 import { CATEGORY_COLORS, OTHER_CATEGORY_COLOR } from '../theme.js';
 import { CATEGORY_PACKS, categoryPackState, categoryLabel, categoryName, categoryOptions, categoryType as metaCategoryType, rootCategoryId, transactionSummaryTitle, TYPE_LABEL } from '../transactionMeta.js';
@@ -179,8 +179,8 @@ function mergeAccountLedgerPage(current: AccountLedgerPage, page: AccountLedgerP
 
 const selectStyle = selectBase;
 
-const button = btnOutline;
-const primary = btnPrimary;
+const buttonCls = 'zc-btn';
+const primaryCls = 'zc-btn zc-btn--primary';
 
 type Tab = 'records' | 'accounts' | 'budget' | 'bills';
 
@@ -558,7 +558,7 @@ export function Transactions() {
       : null
   ), [accountBalanceRows, pageSnap, snap, transactionRead, trendMonths, viewFilters]);
   if (!snap || !transactionRead || !vm || !pageSnap) return transactionReadError
-    ? <div role="alert" style={{ ...cardTight, color: 'var(--negative)' }}>流水读取失败：{transactionReadError}</div>
+    ? <div role="alert" className="zc-card is-tight" style={{ color: 'var(--negative)' }}>流水读取失败：{transactionReadError}</div>
     : null;
   const readyTransactionRead = transactionRead;
   const readySnap = pageSnap;
@@ -1291,15 +1291,15 @@ export function Transactions() {
   const hasEnabledCategoryPack = CATEGORY_PACKS.some((pack) => categoryPackState(pack, readySnap.categories).enabledCount > 0);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+    <div className="zc-ledger-page" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
       {vm.missingRateAssetCodes.length > 0 && (
-        <div style={{ ...cardTight, borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
+        <div className="zc-card is-tight" style={{ borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
           缺少 {vm.missingRateAssetCodes.join('、')} → {vm.reportCurrencyCode} 的价格标记；相关流水不会静默当作 0，汇总和预算会标记为未完整折算。
         </div>
       )}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {visibleTabs.map(([id, label]) => (
-          <button key={id} onClick={() => setTab(id)} style={activeTab === id ? primary : button}>{label}</button>
+          <button key={id} onClick={() => setTab(id)} className={activeTab === id ? primaryCls : buttonCls}>{label}</button>
         ))}
       </div>
 
@@ -1318,27 +1318,27 @@ export function Transactions() {
             {onboarding.path === 'accounts' && (
               <div className="zc-onboarding-step">
                 <div><strong>设置常用账户</strong><p>添加银行卡或钱包，再填写当前余额。</p></div>
-                <button type="button" style={button} onClick={() => { setTab('accounts'); setAccountSetupOpen(true); }}>添加账户</button>
+                <button type="button" className={buttonCls} onClick={() => { setTab('accounts'); setAccountSetupOpen(true); }}>添加账户</button>
               </div>
             )}
             <div className="zc-onboarding-step">
               <div><strong>记第一笔{onboarding.firstTransactionRecorded ? ' · 已完成' : ''}</strong><p>先记金额和分类，其他信息可稍后补充。</p></div>
-              <button type="button" style={onboarding.firstTransactionRecorded ? button : primary} onClick={openNewTransaction}>{onboarding.firstTransactionRecorded ? '再记一笔' : '记第一笔'}</button>
+              <button type="button" className={onboarding.firstTransactionRecorded ? buttonCls : primaryCls} onClick={openNewTransaction}>{onboarding.firstTransactionRecorded ? '再记一笔' : '记第一笔'}</button>
             </div>
             <div className="zc-onboarding-step">
               <div><strong>按场景补充分类{hasEnabledCategoryPack ? ' · 已启用' : onboarding.categorySkipped ? ' · 已跳过' : ''}</strong><p>养宠、旅行等分类按需启用，已有记录不会改变。</p></div>
-              <div className="zc-first-entry-actions"><button type="button" style={button} onClick={openCategoryPacks}>查看扩展包</button>{!onboarding.categorySkipped && <button type="button" style={button} onClick={() => setOnboarding(updateOnboarding(onboarding, { categorySkipped: true }))}>暂不需要</button>}</div>
+              <div className="zc-first-entry-actions"><button type="button" className={buttonCls} onClick={openCategoryPacks}>查看扩展包</button>{!onboarding.categorySkipped && <button type="button" className={buttonCls} onClick={() => setOnboarding(updateOnboarding(onboarding, { categorySkipped: true }))}>暂不需要</button>}</div>
             </div>
             <div className="zc-onboarding-step">
               <div><strong>用模板快速记账{onboarding.templateUsed ? ' · 已体验' : ''}</strong><p>先试用自带模板；记过一笔后，也能保存自己的常用交易。</p></div>
               <div className="zc-first-entry-actions">
-                {firstTemplate && <button type="button" style={button} onClick={() => { setTab('records'); createFromTemplate(firstTemplate); }}>试用{firstTemplate.name}模板</button>}
-                {onboarding.firstTransactionRecorded && <button type="button" style={button} onClick={openOwnTemplate}>创建自己的模板</button>}
-                <button type="button" style={button} onClick={openTemplateCenter}>查看全部模板</button>
+                {firstTemplate && <button type="button" className={buttonCls} onClick={() => { setTab('records'); createFromTemplate(firstTemplate); }}>试用{firstTemplate.name}模板</button>}
+                {onboarding.firstTransactionRecorded && <button type="button" className={buttonCls} onClick={openOwnTemplate}>创建自己的模板</button>}
+                <button type="button" className={buttonCls} onClick={openTemplateCenter}>查看全部模板</button>
               </div>
             </div>
           </div>
-          <div className="zc-first-entry-actions"><button type="button" style={button} onClick={dismissOnboarding}>暂时收起</button></div>
+          <div className="zc-first-entry-actions"><button type="button" className={buttonCls} onClick={dismissOnboarding}>暂时收起</button></div>
         </section>
       )}
       {onboarding && showFirstEntryGuide && compactView && (
@@ -1354,14 +1354,14 @@ export function Transactions() {
             <div className="zc-mobile-guide-content">
               <h2>设置常用账户</h2>
               <p>需要分清银行卡、微信和支付宝余额时，先添加常用账户。也可以稍后再做。</p>
-              <div className="zc-first-entry-actions"><button type="button" style={primary} onClick={() => { setTab('accounts'); setAccountSetupOpen(true); }}>添加账户</button></div>
+              <div className="zc-first-entry-actions"><button type="button" className={primaryCls} onClick={() => { setTab('accounts'); setAccountSetupOpen(true); }}>添加账户</button></div>
             </div>
           )}
           {mobileGuideKind === 'entry' && (
             <div className="zc-mobile-guide-content">
               <h2>记第一笔{onboarding.firstTransactionRecorded ? ' · 已完成' : ''}</h2>
               <p>先填金额和分类，其他信息以后可以补充。准备好时再开始。</p>
-              <div className="zc-first-entry-actions"><button type="button" style={primary} onClick={openNewTransaction}>{onboarding.firstTransactionRecorded ? '再记一笔' : '记第一笔'}</button></div>
+              <div className="zc-first-entry-actions"><button type="button" className={primaryCls} onClick={openNewTransaction}>{onboarding.firstTransactionRecorded ? '再记一笔' : '记第一笔'}</button></div>
             </div>
           )}
           {mobileGuideKind === 'categories' && (
@@ -1369,8 +1369,8 @@ export function Transactions() {
               <h2>按场景补充分类{hasEnabledCategoryPack ? ' · 已启用' : onboarding.categorySkipped ? ' · 已跳过' : ''}</h2>
               <p>养宠、旅行等分类按需启用，原有记录不会改变。</p>
               <div className="zc-first-entry-actions">
-                <button type="button" style={primary} onClick={openCategoryPacks}>查看扩展包</button>
-                {!onboarding.categorySkipped && <button type="button" style={button} onClick={() => setOnboarding(updateOnboarding(onboarding, { categorySkipped: true, mobileStep: mobileGuideStep + 1 }))}>暂不需要</button>}
+                <button type="button" className={primaryCls} onClick={openCategoryPacks}>查看扩展包</button>
+                {!onboarding.categorySkipped && <button type="button" className={buttonCls} onClick={() => setOnboarding(updateOnboarding(onboarding, { categorySkipped: true, mobileStep: mobileGuideStep + 1 }))}>暂不需要</button>}
               </div>
             </div>
           )}
@@ -1379,9 +1379,9 @@ export function Transactions() {
               <h2>用模板快速记账{onboarding.templateUsed ? ' · 已体验' : ''}</h2>
               <p>试用自带模板；记过一笔后，也能从它保存自己的常用交易。</p>
               <div className="zc-first-entry-actions">
-                {firstTemplate && <button type="button" style={primary} onClick={() => { setTab('records'); createFromTemplate(firstTemplate); }}>试用{firstTemplate.name}模板</button>}
-                {onboarding.firstTransactionRecorded && <button type="button" style={button} onClick={openOwnTemplate}>创建自己的模板</button>}
-                <button type="button" style={button} onClick={openTemplateCenter}>查看全部模板</button>
+                {firstTemplate && <button type="button" className={primaryCls} onClick={() => { setTab('records'); createFromTemplate(firstTemplate); }}>试用{firstTemplate.name}模板</button>}
+                {onboarding.firstTransactionRecorded && <button type="button" className={buttonCls} onClick={openOwnTemplate}>创建自己的模板</button>}
+                <button type="button" className={buttonCls} onClick={openTemplateCenter}>查看全部模板</button>
               </div>
             </div>
           )}
@@ -1397,22 +1397,26 @@ export function Transactions() {
       {activeTab === 'records' && (
         <>
           <SummaryGrid vm={vm} usesAccounts={usesAccounts} />
-          <div id="transaction-records" style={{ ...card, scrollMarginTop: 16 }}>
+          <section id="transaction-records" className="zc-card zc-ledger-records" style={{ scrollMarginTop: 16 }}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
               <div>
-                <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{usesAccounts ? '日常流水' : '日常支出'}</div>
+                <h2 style={{ margin: 0, fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{usesAccounts ? '日常流水' : '日常支出'}</h2>
                 <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3 }}>
                   {usesAccounts ? '收入、支出、转账、退款和拆分交易；资产买卖与换汇可在“账户”中核对资金流' : '完整记录支出详情；侧栏或移动端“快记”可只填金额'}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button onClick={() => setShowVoided((value) => !value)} style={showVoided ? primary : button}>作废记录 {voidedPage?.totalCount ?? 0}</button>
-                <button onClick={() => setEditingCategory('new')} style={button}>+ 分类</button>
-                <button onClick={() => setEditingPayee('new')} style={button}>+ 交易对象</button>
-                <button onClick={() => setEditingSplit('new')} style={button}>+ 拆分</button>
-                {/* 图区在列表下方（手机上可能好几屏），所以留一个直接下去的锚点。 */}
-                <button onClick={() => document.getElementById('transaction-charts')?.scrollIntoView({ block: 'start' })} style={button}>构成与趋势 ↓</button>
-                <button onClick={openNewTransaction} className="zc-header-primary" style={primary}>{usesAccounts ? '+ 记账' : '+ 记支出'}</button>
+                <button onClick={openNewTransaction} className="zc-header-primary zc-btn zc-btn--primary">{usesAccounts ? '+ 记账' : '+ 记支出'}</button>
+                <details className="zc-ledger-more">
+                  <summary className="zc-btn">更多操作</summary>
+                  <div className="zc-ledger-more-panel">
+                    <button onClick={() => setShowVoided((value) => !value)} className="zc-menu-item">作废记录 {voidedPage?.totalCount ?? 0}</button>
+                    <button onClick={() => setEditingCategory('new')} className="zc-menu-item">新增分类</button>
+                    <button onClick={() => setEditingPayee('new')} className="zc-menu-item">新增交易对象</button>
+                    <button onClick={() => setEditingSplit('new')} className="zc-menu-item">新增拆分</button>
+                    <button onClick={() => document.getElementById('transaction-charts')?.scrollIntoView({ block: 'start' })} className="zc-menu-item">查看构成与趋势</button>
+                  </div>
+                </details>
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
@@ -1422,8 +1426,9 @@ export function Transactions() {
                 view={recordView}
                 onViewChange={setRecordView}
                 collapseDatesOnMobile
+                compact
               />
-              <button type="button" className="zc-transaction-clear-desktop" onClick={clearOtherFilters} style={button}>清除其他筛选</button>
+              {activeFilterCount > 0 && <button type="button" className="zc-transaction-clear-desktop zc-btn" onClick={clearOtherFilters}>清除其他筛选</button>}
               {/* 下钻是环写进筛选的，所以在环能到的地方必须能退出去：轻量模式没有
                   筛选行，这条面包屑是那两级筛选唯一的出口，也顺便把「现在在看哪一层」
                   写在屏上——图表本身不随筛选变化，不说清楚就只能靠猜。 */}
@@ -1450,9 +1455,18 @@ export function Transactions() {
               )}
             </div>
             {usesAccounts && (
-              <button type="button" className="zc-transaction-filter-toggle" aria-expanded={mobileFiltersOpen} aria-controls="transaction-filter-panel" onClick={() => setMobileFiltersOpen((open) => !open)}>
-                筛选与搜索{activeFilterCount > 0 ? ` · 已启用 ${activeFilterCount} 项` : ''}<span aria-hidden="true">{mobileFiltersOpen ? '收起' : '展开'} ▾</span>
-              </button>
+              <div className="zc-ledger-searchbar">
+                <input
+                  aria-label="快速搜索流水"
+                  className="zc-input"
+                  placeholder="搜索描述、交易对象、备注或标签"
+                  value={viewFilters.search}
+                  onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
+                />
+                <button type="button" className="zc-transaction-filter-toggle zc-btn" aria-expanded={mobileFiltersOpen} aria-controls="transaction-filter-panel" onClick={() => setMobileFiltersOpen((open) => !open)}>
+                  {activeFilterCount > 0 ? `筛选 · ${activeFilterCount} 项` : '筛选'} <span aria-hidden="true">{mobileFiltersOpen ? '收起' : '展开'} ▾</span>
+                </button>
+              </div>
             )}
             {usesAccounts && (
               <div id="transaction-filter-panel" className={`zc-transaction-filter-panel${mobileFiltersOpen ? ' is-open' : ''}`}>
@@ -1469,7 +1483,7 @@ export function Transactions() {
                   onRemove={(v) => void removeSavedView(v)}
                 />
                 <AdvancedQueryBuilder snap={snap} filters={viewFilters} setFilters={setFilters} usesAccounts={usesAccounts} />
-                <button type="button" className="zc-transaction-clear-mobile" onClick={clearOtherFilters} style={{ ...button, display: undefined }}>清除其他筛选</button>
+                <button type="button" className="zc-transaction-clear-mobile zc-btn" onClick={clearOtherFilters}>清除其他筛选</button>
               </div>
             )}
             {showVoided && (
@@ -1483,27 +1497,18 @@ export function Transactions() {
                       <span style={{ ...tagStyle, width: 'fit-content' }}>{TYPE_LABEL[row.type]}</span>
                       <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{transactionSummaryTitle(row, readySnap.payees, categoryLabel(row.category, readySnap.categories))}</span>
                       <b style={{ textAlign: 'right' }}>{row.amount} {readySnap.assets.find((asset) => asset.id === row.assetId)?.code ?? row.assetId}</b>
-                      <button onClick={() => void restoreTx(row)} style={{ ...button, padding: '6px 10px' }}>恢复</button>
+                      <button onClick={() => void restoreTx(row)} className={buttonCls} style={{ padding: '6px 10px' }}>恢复</button>
                     </div>
                   ))}
                 {(voidedPage?.transactions.length ?? 0) === 0 && <div style={{ padding: '12px 0', fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>当前时间范围没有已作废流水。</div>}
-              </div>
-            )}
-            {activeTemplates.length > 0 && (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
-                {activeTemplates.slice(0, 10).map((tpl) => (
-                  <button key={tpl.id} onClick={() => createFromTemplate(tpl)} style={button}>
-                    {tpl.name}{tpl.amount ? ` · ${tpl.amount}` : ''}
-                  </button>
-                ))}
               </div>
             )}
             {selectedIds.length > 0 && (
               <div className="zc-responsive-action-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 0', borderTop: '1px solid var(--border)' }}>
                 <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>已选择 {selectedIds.length} 条流水</span>
                 <span style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={() => setBatchOpen(true)} style={primary}>批量修改</button>
-                  <button onClick={() => setSelectedIds([])} style={button}>清空选择</button>
+                  <button onClick={() => setBatchOpen(true)} className={primaryCls}>批量修改</button>
+                  <button onClick={() => setSelectedIds([])} className={buttonCls}>清空选择</button>
                 </span>
               </div>
             )}
@@ -1550,10 +1555,19 @@ export function Transactions() {
                 emptyText="该时间范围内没有日常流水。"
               />
             )}
+            {activeTemplates.length > 0 && (
+              <div className="zc-transaction-template-rail" aria-label="常用记账模板">
+                {activeTemplates.slice(0, 10).map((tpl) => (
+                  <button key={tpl.id} onClick={() => createFromTemplate(tpl)} className={buttonCls}>
+                    {tpl.name}{tpl.amount ? ` · ${tpl.amount}` : ''}
+                  </button>
+                ))}
+              </div>
+            )}
             {(readyTransactionRead.page.hasMore || transactionReadError) && (
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', paddingTop: 14, borderTop: '1px solid var(--border)' }}>
                 {readyTransactionRead.page.hasMore && (
-                  <button type="button" onClick={() => void loadMoreTransactions()} disabled={transactionPageBusy} style={button}>
+                  <button type="button" onClick={() => void loadMoreTransactions()} disabled={transactionPageBusy} className={buttonCls}>
                     {transactionPageBusy ? '加载中…' : '继续加载 100 笔'}
                   </button>
                 )}
@@ -1563,7 +1577,7 @@ export function Transactions() {
                 {transactionReadError && <span role="alert" style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)' }}>{transactionReadError}</span>}
               </div>
             )}
-          </div>
+          </section>
           {/*
             * 构成在上、趋势在下，各占一行。以前两张图并排：每张只剩半幅，而环的图例
             * 是它唯一的读法，二级分类名被挤成省略号后就等于没画。顺序也顺着阅读：
@@ -1591,28 +1605,28 @@ export function Transactions() {
       {earlierBalanceAccount && <EarlierBalancePanel store={store} account={earlierBalanceAccount} setting={snap.setting} onClose={() => setEarlierBalanceAccount(null)} onSaved={() => { setEarlierBalanceAccount(null); bump(); }} />}
       {accountSetupOpen && <AccountSetupPanel store={store} assets={snap.assets} accounts={snap.accounts} setting={snap.setting} onSaved={(account) => { setAccountSetupOpen(false); setAddedAccount(account); setAccountId(account.id); bump(); }} onClose={() => setAccountSetupOpen(false)} />}
       {accountHistoryOpen && <AccountHistoryPanel store={store} accounts={snap.accounts} assets={snap.assets} categories={snap.categories} timeZone={snap.setting?.timezone} initialAccountId={addedAccount?.id} onChanged={bump} onClose={() => setAccountHistoryOpen(false)} />}
-      {addedAccount && <div style={cardTight} role="status">已添加 {addedAccount.name} · 余额起点 {new Date(addedAccount.balanceStartAt!).toLocaleString('zh-CN', { timeZone: snap.setting?.timezone })}，{addedAccount.openingBalance} {snap.assets.find((a) => a.id === addedAccount.openingAssetId)?.code}。以前的记录已保留。<p>默认付款：{snap.accounts.find((a) => a.id === snap.setting?.expenseDefaultAccountId)?.name}；默认收款：{snap.accounts.find((a) => a.id === snap.setting?.incomeDefaultAccountId)?.name}。</p>
-        <button style={button} onClick={() => setAccountHistoryOpen(true)}>整理以前的记录</button><button style={button} disabled={!snap.accounts.some((account) => account.id === addedAccount.id)} onClick={() => { setAddedAccount(null); openNewTransaction(); }}>记一笔</button>
+      {addedAccount && <div className="zc-card is-tight" role="status">已添加 {addedAccount.name} · 余额起点 {new Date(addedAccount.balanceStartAt!).toLocaleString('zh-CN', { timeZone: snap.setting?.timezone })}，{addedAccount.openingBalance} {snap.assets.find((a) => a.id === addedAccount.openingAssetId)?.code}。以前的记录已保留。<p>默认付款：{snap.accounts.find((a) => a.id === snap.setting?.expenseDefaultAccountId)?.name}；默认收款：{snap.accounts.find((a) => a.id === snap.setting?.incomeDefaultAccountId)?.name}。</p>
+        <button className={buttonCls} onClick={() => setAccountHistoryOpen(true)}>整理以前的记录</button><button className={buttonCls} disabled={!snap.accounts.some((account) => account.id === addedAccount.id)} onClick={() => { setAddedAccount(null); openNewTransaction(); }}>记一笔</button>
       </div>}
       {usesAccounts && activeTab === 'accounts' && (
-        <div style={card}>
+        <div className="zc-card">
           <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'end', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
             <div>
               <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>账户流水与对账</div>
               <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>账户流水列出收支、转账和资产转换。买卖资产会改变账户余额，不计入日常收入或支出。</div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setAccountSetupOpen(true)} style={primary}>添加银行卡 / 钱包</button>
-              <button onClick={() => snap.accounts.some((a) => !isDefaultAccount(a) && a.kind !== 'other') ? setAccountHistoryOpen(true) : setAccountSetupOpen(true)} style={button}>整理以前的记录</button>
+              <button onClick={() => setAccountSetupOpen(true)} className={primaryCls}>添加银行卡 / 钱包</button>
+              <button onClick={() => snap.accounts.some((a) => !isDefaultAccount(a) && a.kind !== 'other') ? setAccountHistoryOpen(true) : setAccountSetupOpen(true)} className={buttonCls}>整理以前的记录</button>
             </div>
           </div>
           <div style={{ marginBottom: 14 }}>
             <DateRangeBar value={activeDateValue} onChange={(next) => setFilters((current) => ({ ...current, range: next.preset, dateFrom: next.from, dateTo: next.to }))} />
           </div>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>{snap.accounts.filter(isDefaultAccount).map((a) => <button key={a.id} style={button} onClick={() => { setFilters((current) => ({ ...current, accountId: a.id })); setTab('records'); }}>{a.name} · 本月{a.purpose === 'default_income' ? '收入' : '净支出'} {defaultAccountTotals[a.id] ?? '…'} · 查看记录</button>)}</div>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>{snap.accounts.filter(isDefaultAccount).map((a) => <button key={a.id} className={buttonCls} onClick={() => { setFilters((current) => ({ ...current, accountId: a.id })); setTab('records'); }}>{a.name} · 本月{a.purpose === 'default_income' ? '收入' : '净支出'} {defaultAccountTotals[a.id] ?? '…'} · 查看记录</button>)}</div>
           <p className="zc-meta">默认账户归集暂不细分来源的收支。下方银行卡与钱包展示账面余额；余额流水从各自的余额起点开始。</p>
           {!selectedAccountId ? <p>添加银行卡或钱包后，可以核对余额和账单。现在也可以继续使用默认账户记收支。</p> : <>
-          <div className="zc-account-filter-grid" style={{ display: 'grid', gridTemplateColumns: '220px 160px 1fr', gap: 10, marginBottom: 14 }}>
+          <div className="zc-account-filter-grid">
             <label className="zc-field">账户
               <select style={selectStyle} value={selectedAccountId} onChange={(e) => setAccountId(e.target.value)}>
                 {snap.accounts.filter((a) => !isDefaultAccount(a) && a.kind !== 'other').map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -1630,9 +1644,9 @@ export function Transactions() {
               ))}
             </div>
           </div>
-          {snap.accounts.find((a) => a.id === selectedAccountId)?.balanceStartAt && <button style={button} onClick={() => setEarlierBalanceAccount(snap.accounts.find((a) => a.id === selectedAccountId)!)}>从更早日期核算</button>}
-          <button style={button} onClick={() => setEditingReconcile('new')}>核对账单</button>
-          <button style={button} onClick={() => { setFilters((current) => ({ ...current, accountId: selectedAccountId })); setTab('records'); }}>查看这个账户的日常收支</button>
+          {snap.accounts.find((a) => a.id === selectedAccountId)?.balanceStartAt && <button className={buttonCls} onClick={() => setEarlierBalanceAccount(snap.accounts.find((a) => a.id === selectedAccountId)!)}>从更早日期核算</button>}
+          <button className={buttonCls} onClick={() => setEditingReconcile('new')}>核对账单</button>
+          <button className={buttonCls} onClick={() => { setFilters((current) => ({ ...current, accountId: selectedAccountId })); setTab('records'); }}>查看这个账户的日常收支</button>
           <Table headers={['日期', '摘要', '分类', '状态', '金额', '余额']}>
             {ledger.map((r) => (
               <tr key={r.id}>
@@ -1648,7 +1662,7 @@ export function Transactions() {
           </Table>
           {accountLedgerPage?.hasMore && (
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 10 }}>
-              <button type="button" onClick={() => void loadMoreAccountLedger()} disabled={accountLedgerBusy} style={button}>
+              <button type="button" onClick={() => void loadMoreAccountLedger()} disabled={accountLedgerBusy} className={buttonCls}>
                 {accountLedgerBusy ? '加载中…' : '继续加载 100 笔'}
               </button>
               <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
@@ -1666,7 +1680,7 @@ export function Transactions() {
                 <td style={tdStyle}>{r.statementBalance}</td>
                 <td style={{ ...tdStyle, ...amountColor(D(r.difference).negated()) }}>{r.difference}</td>
                 <td style={tdStyle}>{r.status === 'closed' ? '已完成' : '进行中'}</td>
-                <td style={tdStyle}><button type="button" style={button} onClick={(event) => { event.stopPropagation(); setEditingReconcile(r); }}>查看对账</button></td>
+                <td style={tdStyle}><button type="button" className={buttonCls} onClick={(event) => { event.stopPropagation(); setEditingReconcile(r); }}>查看对账</button></td>
               </tr>
             ))}
             {reconciliationRows.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={7}>该时间范围内暂无对账记录</td></tr>}
@@ -1675,25 +1689,25 @@ export function Transactions() {
       )}
 
       {activeTab === 'budget' && (
-        <div style={card}>
+        <div className="zc-card">
           <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, marginBottom: 14 }}>
             <div>
               <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{budgetView === 'year' ? `${budgetMonth.slice(0, 4)} 年度预算` : `${budgetMonth} 分类预算`}</div>
               <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>预算冻结创建时币种，统一折算为 {vm.reportCurrencyCode}；拆分交易进入对应二级分类。</div>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              <button onClick={() => setBudgetView('year')} style={budgetView === 'year' ? primary : button}>年度</button>
-              <button onClick={() => setBudgetView('month')} style={budgetView === 'month' ? primary : button}>月份</button>
+              <button onClick={() => setBudgetView('year')} className={budgetView === 'year' ? primaryCls : buttonCls}>年度</button>
+              <button onClick={() => setBudgetView('month')} className={budgetView === 'month' ? primaryCls : buttonCls}>月份</button>
               {budgetView === 'year'
                 ? <input aria-label="预算年度" className="zc-input" type="number" min="1900" max="9999" value={budgetMonth.slice(0, 4)} onChange={(event) => setBudgetMonth(`${event.target.value || localToday().slice(0, 4)}-01`)} style={{ width: 108 }} />
                 : <input aria-label="预算月份" className="zc-input" type="month" value={budgetMonth} onChange={(event) => setBudgetMonth(event.target.value)} style={{ width: 150 }} />}
-              <button onClick={() => setEditingBudget('new')} style={primary}>+ 预算</button>
+              <button onClick={() => setEditingBudget('new')} className={primaryCls}>+ 预算</button>
             </div>
           </div>
           {budgetView === 'year' ? (
-            <div className="zc-budget-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
+            <div className="zc-budget-grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
               {budgetYearRows.map((row) => (
-                <button key={row.month} onClick={() => { setBudgetMonth(row.month); setBudgetView('month'); }} style={{ ...cardTight, minHeight: 112, textAlign: 'left', cursor: 'pointer' }}>
+                <button key={row.month} onClick={() => { setBudgetMonth(row.month); setBudgetView('month'); }} className="zc-card is-tight" style={{ minHeight: 112, textAlign: 'left', cursor: 'pointer' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><b>{Number(row.month.slice(5))} 月</b><span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' }}>{row.rows.length} 项</span></div>
                   <div style={{ marginTop: 14, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>预算 {money(row.planned)}</div>
                   <div style={{ marginTop: 5, fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color: row.actual.gt(row.planned) ? 'var(--negative)' : 'var(--fg)' }}>实际 {money(row.actual)}</div>
@@ -1701,9 +1715,9 @@ export function Transactions() {
               ))}
             </div>
           ) : (
-            <div className="zc-budget-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+            <div className="zc-budget-grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
               {budgetRows.map((b) => (
-                <button key={b.id ?? b.category} onClick={() => setEditingBudget(snap.budgetCategories.find((x) => x.id === b.id) ?? 'new')} style={{ ...cardTight, textAlign: 'left', cursor: 'pointer' }}>
+                <button key={b.id ?? b.category} onClick={() => setEditingBudget(snap.budgetCategories.find((x) => x.id === b.id) ?? 'new')} className="zc-card is-tight" style={{ textAlign: 'left', cursor: 'pointer' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
                     <span>{b.label}</span>
                     <span style={{ color: b.over ? 'var(--negative)' : b.conversionKnown ? 'var(--fg)' : 'var(--warning)' }}>{b.conversionKnown ? money(b.remaining) : '未折算'}</span>
@@ -1723,13 +1737,13 @@ export function Transactions() {
       )}
 
       {activeTab === 'bills' && (
-        <div style={card}>
+        <div className="zc-card">
           <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 14 }}>
             <div>
               <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>定期交易与账单</div>
               <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>启用后会在打开应用时自动补齐；关闭应用期间不会在后台执行。</div>
             </div>
-            <button onClick={() => setEditingSchedule('new')} style={primary}>+ 定期交易</button>
+            <button onClick={() => setEditingSchedule('new')} className={primaryCls}>+ 定期交易</button>
           </div>
           <div style={{ marginBottom: 14 }}><DateRangeBar value={billRange} onChange={setBillRange} view={billView} onViewChange={setBillView} /></div>
           <div style={{
@@ -1755,8 +1769,8 @@ export function Transactions() {
                     <td style={tdStyle}>{s.nextDate}</td>
                     <td style={{ ...tdStyle, color: s.status === 'overdue' ? 'var(--negative)' : s.status === 'due' ? 'var(--accent)' : 'var(--fg-subtle)', fontWeight: 'var(--fw-bold)' }}>{scheduleLabel(s.status)}</td>
                     <td style={{ ...tdStyle, textAlign: 'right' }}>
-                      <button onClick={() => void materializeSchedule(row)} disabled={row.status !== 'active'} style={button}>生成</button>
-                      <button onClick={() => setEditingSchedule(row)} style={{ ...button, marginLeft: 8 }}>编辑</button>
+                      <button onClick={() => void materializeSchedule(row)} disabled={row.status !== 'active'} className={buttonCls}>生成</button>
+                      <button onClick={() => setEditingSchedule(row)} className={buttonCls} style={{ marginLeft: 8 }}>编辑</button>
                     </td>
                   </tr>
                 );
@@ -1805,7 +1819,7 @@ export function Transactions() {
                             type="button"
                             disabled={retryingExecutionId === execution.id}
                             onClick={() => void retryScheduleExecution(execution.id)}
-                            style={button}
+                            className={buttonCls}
                           >{retryingExecutionId === execution.id ? '重试中…' : '立即重试'}</button>
                         )}
                       </td>
@@ -2144,7 +2158,7 @@ function SavedViews(props: {
           placeholder="筛选名称"
           style={{ width: 180, height: 36 }}
         />
-        <button onClick={props.onSave} style={primary}>保存当前筛选</button>
+        <button onClick={props.onSave} className={primaryCls}>保存当前筛选</button>
         {props.error && <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-medium)' }}>{props.error}</span>}
       </div>
       {props.views.length > 0 && (
@@ -2161,28 +2175,29 @@ function SavedViews(props: {
                         props.onRename(view, editingName);
                         setEditingId('');
                       }}
-                      style={{ ...button, padding: '6px 9px' }}
+                      className={buttonCls}
+                      style={{ padding: '6px 9px' }}
                     >
                       保存
                     </button>
                   </>
                 ) : (
                   <>
-                    <button onClick={() => props.onApply(view)} style={{ ...button, border: 'none', padding: '6px 10px', background: 'transparent' }}>{view.name}</button>
-                    <button onClick={() => props.onTogglePin(view)} title={view.isPinned ? '取消置顶' : '置顶'} style={{ ...button, padding: '6px 8px' }}>{view.isPinned ? '★' : '☆'}</button>
+                    <button onClick={() => props.onApply(view)} className="zc-btn zc-btn--ghost">{view.name}</button>
+                    <button onClick={() => props.onTogglePin(view)} title={view.isPinned ? '取消置顶' : '置顶'} className="zc-btn zc-btn--sm">{view.isPinned ? '★' : '☆'}</button>
                     <button
                       onClick={() => {
                         setEditingId(view.id);
                         setEditingName(view.name);
                       }}
                       title="重命名"
-                      style={{ ...button, padding: '6px 8px' }}
+                      className="zc-btn zc-btn--sm"
                     >
                       改名
                     </button>
                   </>
                 )}
-                <button type="button" aria-label={`删除保存的筛选 ${view.name}`} onClick={() => props.onRemove(view)} title="删除保存的筛选" style={{ ...button, padding: '6px 8px' }}>×</button>
+                <button type="button" aria-label={`删除保存的筛选 ${view.name}`} onClick={() => props.onRemove(view)} title="删除保存的筛选" className="zc-btn zc-btn--sm">×</button>
               </span>
             );
           })}
@@ -2240,16 +2255,16 @@ function AdvancedQueryBuilder(props: { snap: Snapshot; filters: TransactionFilte
   return (
     <div style={{ borderTop: '1px solid var(--border)', borderBottom: open ? '1px solid var(--border)' : undefined, padding: '12px 0', marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-        <button onClick={() => setOpen((v) => !v)} style={button}>高级查询{conditionCount ? ` · ${conditionCount}` : ''}</button>
-        {conditionCount > 0 && <button onClick={() => setQuery(undefined)} style={button}>清空高级条件</button>}
+        <button onClick={() => setOpen((v) => !v)} className={buttonCls}>高级查询{conditionCount ? ` · ${conditionCount}` : ''}</button>
+        {conditionCount > 0 && <button onClick={() => setQuery(undefined)} className={buttonCls}>清空高级条件</button>}
       </div>
       {open && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button onClick={() => applyPreset('reimburse')} style={button}>待报销</button>
-            <button onClick={() => applyPreset('large_expense')} style={button}>大额支出</button>
-            <button onClick={() => applyPreset('with_attachment')} style={button}>含附件</button>
-            <button onClick={() => applyPreset('food')} style={button}>本月餐饮</button>
+            <button onClick={() => applyPreset('reimburse')} className={buttonCls}>待报销</button>
+            <button onClick={() => applyPreset('large_expense')} className={buttonCls}>大额支出</button>
+            <button onClick={() => applyPreset('with_attachment')} className={buttonCls}>含附件</button>
+            <button onClick={() => applyPreset('food')} className={buttonCls}>本月餐饮</button>
           </div>
           {queryPreview && (
             <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 10, background: 'var(--surface-2)', fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>
@@ -2260,7 +2275,7 @@ function AdvancedQueryBuilder(props: { snap: Snapshot; filters: TransactionFilte
             <div key={group.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 10 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 8, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>
                 <span>{groupIndex === 0 ? '满足以下全部条件' : '或者满足以下全部条件'}</span>
-                <button onClick={() => addCondition(group.id)} style={button}>+ 条件</button>
+                <button onClick={() => addCondition(group.id)} className={buttonCls}>+ 条件</button>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {group.conditions.map((condition) => (
@@ -2277,7 +2292,7 @@ function AdvancedQueryBuilder(props: { snap: Snapshot; filters: TransactionFilte
               </div>
             </div>
           ))}
-          <button onClick={addGroup} style={{ ...button, width: 'fit-content' }}>+ 条件组 OR</button>
+          <button onClick={addGroup} className={buttonCls} style={{ width: 'fit-content' }}>+ 条件组 OR</button>
         </div>
       )}
     </div>
@@ -2329,7 +2344,7 @@ function AdvancedConditionRow(props: {
       {condition.op === 'between'
         ? <ConditionValueInput snap={snap} field={condition.field} value={condition.value2 ?? ''} options={options} onChange={(value2) => onChange({ value2 })} />
         : <span />}
-      <button type="button" aria-label="删除筛选条件" onClick={onRemove} title="删除条件" style={{ ...button, padding: '8px 10px' }}>×</button>
+      <button type="button" aria-label="删除筛选条件" onClick={onRemove} title="删除条件" className={buttonCls} style={{ padding: '8px 10px' }}>×</button>
     </div>
   );
 }
@@ -2460,45 +2475,18 @@ function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilter
 function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof buildTransactions>>; usesAccounts: boolean }) {
   if (!usesAccounts) {
     return (
-      <div className="zc-transaction-summary-grid">
+      <div className="zc-transaction-summary-grid is-simple" role="group" aria-label="本月收支摘要">
         <div className="zc-transaction-summary-metric"><Kpi label={`${vm.month} 本月支出`} value={money(vm.expense)} tone="var(--negative)" sub="自动汇总全部支出" /></div>
         <div className="zc-transaction-summary-metric"><Kpi label="当前范围" value={`${vm.count} 笔`} tone="var(--accent)" sub={`合计支出 ${money(vm.filteredExpense)}`} /></div>
-        <div>
-          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>常用支出分类</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 11 }}>
-            {vm.topExpenseCategories.length === 0 && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>记下第一笔支出后会自动汇总</div>}
-            {vm.topExpenseCategories.slice(0, 3).map((category) => (
-              <div key={category.category} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
-                <span>{category.label}</span><span>{money(category.amount)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
     );
   }
   return (
-    <div className="zc-transaction-summary-grid has-accounts">
+    <div className="zc-transaction-summary-grid has-accounts" role="group" aria-label="本月收支摘要">
       <div className="zc-transaction-summary-metric"><Kpi label={`${vm.month} 本月收入`} value={money(vm.income)} tone="var(--positive)" sub="不受筛选影响" /></div>
       <div className="zc-transaction-summary-metric"><Kpi label={`${vm.month} 本月支出`} value={money(vm.expense)} tone="var(--negative)" sub={usesAccounts ? '转账不计入支出' : '只统计收入和支出'} /></div>
       <div className="zc-transaction-summary-metric"><Kpi label="本月结余" value={signedMoney(vm.net)} tone={Number(vm.net) >= 0 ? 'var(--positive)' : 'var(--negative)'} sub="收入 - 支出" /></div>
       <div className="zc-transaction-summary-metric"><Kpi label="当前筛选" value={`${vm.count} 条`} tone="var(--accent)" sub={`收 ${money(vm.filteredIncome)} · 支 ${money(vm.filteredExpense)} · ${signedMoney(vm.filteredNet)}`} /></div>
-      <div>
-        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>Top 支出分类</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 11 }}>
-          {vm.topExpenseCategories.length === 0 && <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>本月暂无支出</div>}
-          {vm.topExpenseCategories.map((c) => (
-            <div key={c.category}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
-                <span>{c.label}</span><span>{money(c.amount)}</span>
-              </div>
-              <div style={{ height: 6, background: 'var(--surface-2)', borderRadius: 'var(--r-pill)', overflow: 'hidden', marginTop: 5 }}>
-                <div style={{ height: 6, width: `${Math.max(4, c.weight * 100)}%`, background: 'var(--negative)', borderRadius: 'var(--r-pill)' }} />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
@@ -2526,7 +2514,19 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
       {vm.groups.map((g) => (
         <div key={g.key}>
           <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', marginBottom: 8 }}>{g.label}</div>
-          <div style={{ borderTop: '1px solid var(--border)' }}>
+          <table className={`zc-transaction-table${setSelectedIds ? ' has-selection' : ''}${usesAccounts ? ' has-account' : ''}`}>
+            <thead>
+              <tr>
+                {setSelectedIds && <th scope="col" className="is-select"><span className="zc-sr-only">选择</span></th>}
+                <th scope="col" className="is-date">日期</th>
+                <th scope="col" className="is-category">分类</th>
+                <th scope="col">摘要</th>
+                {usesAccounts && <th scope="col" className="is-status">状态</th>}
+                <th scope="col" className="is-numeric">金额</th>
+                <th scope="col" className="is-actions"><span className="zc-sr-only">操作</span></th>
+              </tr>
+            </thead>
+            <tbody>
             {g.items.map((item) => {
               const tx = item.tx;
               const title = item.title;
@@ -2578,18 +2578,13 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
                 files ? `附件 ${files}` : undefined,
               ].filter(Boolean).join(' · ');
               return (
-                <div
+                <tr
                   className={`zc-transaction-row${setSelectedIds ? ' has-selection' : ''}${usesAccounts ? ' has-account' : ''}`}
                   key={tx.id}
                   onClick={() => onEdit(tx)}
-                  style={{
-                    width: '100%', display: 'grid', gridTemplateColumns: `${setSelectedIds ? '34px ' : ''}${usesAccounts ? '88px var(--zc-category-track) 1fr 150px 110px 72px' : '88px var(--zc-category-track) 1fr 110px 72px'}`,
-                    alignItems: 'center', gap: 12, border: 'none', borderBottom: '1px solid var(--border)',
-                    background: 'transparent', color: 'var(--text-primary)', padding: '13px 0', textAlign: 'left', cursor: 'pointer',
-                  }}
                 >
                   {setSelectedIds && (
-                    <span className="zc-check-target">
+                    <td><span className="zc-check-target">
                       <input
                         type="checkbox"
                         checked={selected.has(tx.id)}
@@ -2599,21 +2594,21 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
                         onChange={() => { if (selectable) toggle(tx.id); }}
                         aria-label={`选择 ${title}`}
                       />
-                    </span>
+                    </span></td>
                   )}
-                  <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{tx.date}{tx.time ? <span className="zc-transaction-time"><br />{tx.time}</span> : null}</span>
+                  <td style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{tx.date}{tx.time ? <span className="zc-transaction-time"><br />{tx.time}</span> : null}</td>
                   {/*
                     分类列宽屏能给到 200px（内置标签最长约 139px，写全了），但自建的超长名仍会
                     触到天花板，那时在这里省略；完整的「一级 / 二级」留在 hover 的 title 里，
                     否则省略之后就只剩半截了。
                   */}
-                  <span
+                  <td
                     style={{ ...tagStyle, width: 'fit-content', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', color: tx.type === 'income' || tx.type === 'refund' ? 'var(--positive)' : tx.type === 'expense' ? 'var(--negative)' : 'var(--accent)' }}
                     title={item.categoryLabel}
                   >
                     {item.categoryLabel}
-                  </span>
-                  <span style={{ minWidth: 0 }}>
+                  </td>
+                  <td style={{ minWidth: 0 }}>
                     <span className="zc-transaction-summary-title" style={{ display: 'block', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...(settled ? { textDecoration: 'line-through', color: 'var(--text-tertiary)' } : {}) }}>{title}</span>
                     <span style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
                       <span className="zc-transaction-details-desktop" style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
@@ -2629,26 +2624,27 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
                         >{refundChip.label}</button>
                       )}
                     </span>
-                  </span>
-                  {usesAccounts && <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{item.statusLabel}</span>}
-                  <span style={{ justifySelf: 'end', fontSize: 'var(--fs-body)', ...(settled ? { textDecoration: 'line-through', color: 'var(--text-tertiary)' } : amountColor(item.signedAmount)) }}>
+                  </td>
+                  {usesAccounts && <td><span className={item.statusLabel === '已对账' ? 'zc-ledger-stamp' : undefined} style={{ fontSize: 'var(--fs-meta)', color: item.statusLabel === '已对账' ? 'var(--accent)' : 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{item.statusLabel}</span></td>}
+                  <td className="is-numeric" style={{ fontSize: 'var(--fs-body)', ...(settled ? { textDecoration: 'line-through', color: 'var(--text-tertiary)' } : amountColor(item.signedAmount)) }}>
                     {tx.type === 'transfer' ? '' : tx.type === 'income' || tx.type === 'refund' || (tx.type === 'adjustment' && tx.adjustmentDirection === 'increase') ? '+' : '-'}{tx.amount} {item.assetCode}
-                  </span>
-                  <span className="zc-transaction-actions" style={{ justifySelf: 'end', display: 'flex', gap: 4 }}>
-                    <button type="button" aria-label={`查看 ${title} 的详情`} onClick={(event) => { event.stopPropagation(); onEdit(tx); }} style={{ ...button, padding: '6px 8px' }}>详情</button>
+                  </td>
+                  <td className="zc-transaction-actions">
+                    <button type="button" aria-label={`查看 ${title} 的详情`} onClick={(event) => { event.stopPropagation(); onEdit(tx); }} className="zc-btn zc-btn--sm">详情</button>
                     {tx.type === 'expense' && D(remaining).gt(0) ? (
                       <button
                         type="button"
                         onClick={(event) => { event.stopPropagation(); onRefund(tx); }}
-                        style={{ ...button, padding: '6px 8px' }}
+                        className="zc-btn zc-btn--sm"
                         title={`剩余可退 ${remaining}`}
                       >退款</button>
                     ) : null}
-                  </span>
-                </div>
+                  </td>
+                </tr>
               );
             })}
-          </div>
+            </tbody>
+          </table>
         </div>
       ))}
     </div>
@@ -2695,7 +2691,7 @@ function RefundHistoryDialog(props: {
             {original.date} · {title} · 原支出 {original.amount} {originalCode}
           </div>
         </div>
-        <button type="button" data-dialog-initial-focus onClick={onClose} style={button}>关闭</button>
+        <button type="button" data-dialog-initial-focus onClick={onClose} className={buttonCls}>关闭</button>
       </div>
 
       <div style={{ display: 'flex', gap: 16, marginTop: 14, fontSize: 'var(--fs-meta)' }}>
@@ -2719,8 +2715,8 @@ function RefundHistoryDialog(props: {
                 </span>
               </span>
               <span style={{ display: 'flex', gap: 6, justifySelf: 'end' }}>
-                <button type="button" onClick={() => void onEditRefund(refund.id)} style={{ ...button, padding: '6px 10px' }}>编辑</button>
-                <button type="button" onClick={() => setPendingVoid(refund)} style={{ ...button, padding: '6px 10px' }}>作废</button>
+                <button type="button" onClick={() => void onEditRefund(refund.id)} className="zc-btn zc-btn--sm">编辑</button>
+                <button type="button" onClick={() => setPendingVoid(refund)} className="zc-btn zc-btn--sm">作废</button>
               </span>
             </div>
           );
@@ -2732,7 +2728,7 @@ function RefundHistoryDialog(props: {
 
       {canRefundAgain && (
         <div style={{ marginTop: 16 }}>
-          <button type="button" onClick={() => onNewRefund(original)} style={primary}>再记一笔退款</button>
+          <button type="button" onClick={() => onNewRefund(original)} className={primaryCls}>再记一笔退款</button>
           <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 6 }}>
             金额可改小，即部分退款；剩余可退 {remaining} {originalCode}。
           </div>
@@ -2831,9 +2827,9 @@ function BatchEditModal(props: {
             <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>批量修改流水</div>
             <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3 }}>将修改应用到 {count} 条流水，金额不会被批量改动。</div>
           </div>
-          <button type="button" data-dialog-initial-focus disabled={busy} onClick={onClose} style={button}>关闭</button>
+          <button type="button" data-dialog-initial-focus disabled={busy} onClick={onClose} className={buttonCls}>关闭</button>
         </div>
-        <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+        <div className="zc-modal-form-grid">
           <CategoryPicker
             fieldId="batch-category"
             name="batchCategory"
@@ -2872,7 +2868,7 @@ function BatchEditModal(props: {
             </select>
           </label>
         </div>
-        <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 10 }}>
+        <div className="zc-modal-form-grid" style={{ marginTop: "var(--sp-2)" }}>
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>
             追加标签
             <select multiple style={{ ...selectStyle, height: 118, padding: 8 }} value={addTagIds} onChange={(e) => { markDirty(); setAddTagIds(readMulti(e)); }}>
@@ -2906,8 +2902,8 @@ function BatchEditModal(props: {
         </div>
         {error && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginTop: 12 }}>{error}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-          <button onClick={onClose} disabled={busy} style={button}>取消</button>
-          <button onClick={() => void submit()} disabled={busy} style={primary}>{busy ? '正在应用…' : review ? '确认应用' : '预览修改'}</button>
+          <button onClick={onClose} disabled={busy} className={buttonCls}>取消</button>
+          <button onClick={() => void submit()} disabled={busy} className={primaryCls}>{busy ? '正在应用…' : review ? '确认应用' : '预览修改'}</button>
         </div>
     </DialogShell>
   );
@@ -2948,7 +2944,7 @@ function Trend(props: {
       null,
     );
   return (
-    <div style={card}>
+    <div className="zc-card">
       <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
         <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', minWidth: 0 }}>全部流水趋势 · 近 {months} 个月</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
@@ -3027,7 +3023,7 @@ function ExpenseCompositionCard(props: {
   const child = drill?.child ?? '';
   const children = parent ? vm.expenseChildren[parent] : undefined;
   return (
-    <div style={card}>
+    <div className="zc-card">
       <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>本月支出构成</div>
       <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3, marginBottom: 14 }}>
         {composition.slices.length === 0

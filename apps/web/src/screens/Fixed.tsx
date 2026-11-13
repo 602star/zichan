@@ -63,7 +63,7 @@ import {
 import { buildFixed, canConvertFixedUpgrade, canPlaceFixedComponent, type FixedCardVM, type FixedTimelineVM } from '../selectors/fixed.js';
 import { ledgerAsOfDate } from '../as-of.js';
 import { amount as fmtAmount, money } from '../format.js';
-import { btnPrimary, card, linkAccent, metaText, pillBtn } from '../ui/styles.js';
+import { linkAccent, metaText, pillBtn } from '../ui/styles.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
@@ -287,7 +287,7 @@ export function Fixed() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         {(['overview', 'list', 'year', 'month', 'day'] as const).map((mode) => <button key={mode} onClick={() => setView(mode)} style={pillBtn(view === mode)}>{mode === 'overview' ? '概览' : mode === 'list' ? '时间线' : mode === 'year' ? '年度' : mode === 'month' ? '月历' : '单日'}</button>)}
         <div style={{ flex: 1 }} />
-        <button onClick={() => setAssetModal('new')} style={primaryButton}>+ 新增物品</button>
+        <button onClick={() => setAssetModal('new')} className="zc-btn zc-btn--primary">+ 新增物品</button>
       </div>
 
       {view !== 'overview' && <DateRangeBar value={dateRange} onChange={setDateRange} />}
@@ -299,13 +299,13 @@ export function Fixed() {
         />
       ) : (
         <>
-          <div className="zc-fixed-kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+          <div className="zc-fixed-kpi-grid">
             <Kpi label="整件物品" value={`${vm.filter((item) => !item.isComponent).length} 件`} />
             <Kpi label="正在使用" value={`${activeCount} 件`} tone="var(--positive)" />
             <Kpi label="已过保" value={`${warrantyWarnings} 件`} tone={warrantyWarnings ? 'var(--negative)' : 'var(--fg)'} />
             <Kpi label="耗材提醒" value={`${consumableWarnings} 项`} tone={consumableWarnings ? 'var(--negative)' : 'var(--fg)'} />
           </div>
-          <div className="zc-fixed-filter-grid" style={{ display: 'grid', gridTemplateColumns: '160px minmax(220px, 1fr) 220px 180px', gap: 10 }}>
+          <div className="zc-fixed-filter-grid">
             <select aria-label="物品状态" className="zc-select" value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="all">全部状态</option><option value="active">在用 / 闲置</option><option value="terminal">已售 / 报废 / 清退</option></select>
             <input aria-label="搜索物品" className="zc-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、品牌、型号或条形码" />
             <CategoryPicker fieldId="fixed-filter-category" name="fixedCategory" ariaLabel="物品分类"
@@ -473,7 +473,7 @@ function FixedEmptyState({
   onSelect: (categoryId: string) => void;
 }) {
   return (
-    <section style={{ ...card, padding: 22 }}>
+    <section className="zc-card" style={{ padding: 22 }}>
       <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>记录第一件真实物品</div>
       <div style={{ marginTop: 7, color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.7 }}>
         选择常用类型可直接打开现有新增表单并预选分类。你仍需填写真实名称，取消表单不会留下任何物品或资金记录。
@@ -516,8 +516,8 @@ function Overview(props: {
 }) {
   const groups = new Map<string, FixedCardVM[]>();
   for (const item of props.cards) groups.set(item.categoryParent, [...(groups.get(item.categoryParent) ?? []), item]);
-  if (!props.cards.length) return <div style={{ ...card, color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>该筛选下暂无物品资产</div>;
-  return <>{[...groups.entries()].map(([group, items]) => <section key={group} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}><div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>{group}<span style={{ marginLeft: 8, color: 'var(--text-tertiary)' }}>{items.length}</span></div><div className="zc-fixed-card-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>{items.map((item) => <ItemCard key={item.id} item={item} {...props} />)}</div></section>)}</>;
+  if (!props.cards.length) return <div className="zc-card" style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>该筛选下暂无物品资产</div>;
+  return <>{[...groups.entries()].map(([group, items]) => <section key={group} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}><div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>{group}<span style={{ marginLeft: 8, color: 'var(--text-tertiary)' }}>{items.length}</span></div><div className="zc-fixed-card-grid">{items.map((item) => <ItemCard key={item.id} item={item} {...props} />)}</div></section>)}</>;
 }
 
 function ItemCard({ item, onEdit, onEvent, onAddComponent, onPlacement, onConvertUpgrade, onMetric, onUsage, onConsumable, onGoal, onTimeline }: Omit<Parameters<typeof Overview>[0], 'cards'> & { item: FixedCardVM }) {
@@ -525,7 +525,7 @@ function ItemCard({ item, onEdit, onEvent, onAddComponent, onPlacement, onConver
   const [expanded, setExpanded] = useState(false);
   const cash = (value: string) => money(value, item.currencySymbol);
   const canPlaceComponent = !item.sold && canPlaceFixedComponent(item.raw);
-  return <article style={card}>
+  return <article className="zc-card">
     <div className={`zc-fixed-card-header${item.imageAttachment ? ' has-image' : ''}`} style={{ display: 'grid', gridTemplateColumns: item.imageAttachment ? '92px 1fr auto' : '1fr auto', gap: 14, alignItems: 'start' }}>
       {item.imageAttachment && <AttachmentPreview className="zc-fixed-card-image" attachment={item.imageAttachment} alt={item.name} style={{ width: 92, height: 92, objectFit: 'cover', border: '1px solid var(--border)' }} />}
       <div style={{ minWidth: 0 }}>
@@ -554,7 +554,7 @@ function ItemCard({ item, onEdit, onEvent, onAddComponent, onPlacement, onConver
   </article>;
 }
 
-function Kpi({ label, value, tone = 'var(--fg)' }: { label: string; value: string; tone?: string }) { return <div style={card}><div style={smallLabel}>{label}</div><div style={{ marginTop: 7, fontSize: 'var(--fs-display)', fontWeight: 'var(--fw-bold)', color: tone }}>{value}</div></div>; }
+function Kpi({ label, value, tone = 'var(--fg)' }: { label: string; value: string; tone?: string }) { return <div className="zc-card"><div style={smallLabel}>{label}</div><div style={{ marginTop: 7, fontSize: 'var(--fs-display)', fontWeight: 'var(--fw-bold)', color: tone }}>{value}</div></div>; }
 
 const timelineMoneyVisual = {
   spend: { label: '支出', prefix: '−', color: 'var(--negative)' },
@@ -571,10 +571,9 @@ function TimelineAmount({ entry }: { entry: FixedTimelineVM }) {
   </span>;
 }
 
-const primaryButton = btnPrimary;
 const linkButton = linkAccent;
 const smallLabel = metaText;
 const metricButton = { minWidth: 130, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-primary)', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start', cursor: 'pointer', fontSize: 'var(--fs-meta)' } as const;
 const timelineRow = { width: '100%', border: 'none', borderBottom: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 9, padding: '8px 0', fontSize: 'var(--fs-meta)', cursor: 'pointer' } as const;
-const statusBadge = (terminal: boolean) => ({ padding: '3px 7px', border: '1px solid var(--border)', background: terminal ? 'var(--surface-2)' : 'rgba(63,143,107,.12)', color: terminal ? 'var(--fg-subtle)' : 'var(--positive)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' } as const);
-const infoBadge = (tone: FixedCardVM['warrantyTone']) => ({ padding: '3px 7px', border: '1px solid var(--border)', background: tone === 'positive' ? 'rgba(63,143,107,.12)' : tone === 'warning' ? 'rgba(194,96,74,.12)' : 'var(--surface-2)', color: tone === 'positive' ? 'var(--positive)' : tone === 'warning' ? 'var(--negative)' : 'var(--fg-subtle)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' } as const);
+const statusBadge = (terminal: boolean) => ({ padding: '3px 7px', border: '1px solid var(--border)', background: terminal ? 'var(--surface-2)' : 'color-mix(in srgb, var(--positive) 12%, var(--surface))', color: terminal ? 'var(--fg-subtle)' : 'var(--positive)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' } as const);
+const infoBadge = (tone: FixedCardVM['warrantyTone']) => ({ padding: '3px 7px', border: '1px solid var(--border)', background: tone === 'positive' ? 'color-mix(in srgb, var(--positive) 12%, var(--surface))' : tone === 'warning' ? 'color-mix(in srgb, var(--negative) 12%, var(--surface))' : 'var(--surface-2)', color: tone === 'positive' ? 'var(--positive)' : tone === 'warning' ? 'var(--negative)' : 'var(--fg-subtle)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' } as const);
