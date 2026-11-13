@@ -9,6 +9,7 @@ import {
 } from '../db/form-drafts.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { DialogShell } from './DialogShell.js';
+import { DateTimeInput } from './DateTimeInput.js';
 import { FormDraftStatus, useFormDraftAutosave } from './FormDraftStatus.js';
 import { CategoryPicker, type FieldOption } from './EntityFormModal.js';
 import { ASSET_PRESETS, ASSET_PRESET_GROUPS, ensureAssetPreset } from '../assetPresets.js';
@@ -547,8 +548,8 @@ export function QuickExpenseModal({
         <details style={{ marginTop: 16, color: 'var(--text-secondary)' }}>
           <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>更多信息</summary>
           <div className="zc-quick-expense-split" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginTop: 12 }}>
-            <label><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>日期</span><input aria-label="支出日期" type="date" value={date} onChange={(event) => { touched.current = true; setDate(event.target.value); }} style={field} /></label>
-            <label><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>时间</span><input aria-label="支出时间" type="time" value={time} onChange={(event) => { touched.current = true; setTime(event.target.value); }} style={field} /></label>
+            <label><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>日期</span><DateTimeInput aria-label="支出日期" type="date" value={date} onChange={(next) => { touched.current = true; setDate(next); }} required style={field} /></label>
+            <label><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>时间</span><DateTimeInput aria-label="支出时间" type="time" value={time} onChange={(next) => { touched.current = true; setTime(next); }} style={field} /></label>
             <label style={{ gridColumn: '1 / -1' }}><span style={{ display: 'block', marginBottom: 6, fontSize: 'var(--fs-meta)' }}>币种</span>
               <select aria-label="支出币种" value={assetId} disabled={assetPresetBusy} onChange={(event) => void chooseAsset(event.target.value)} style={field}>
                 {activeAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.code}</option>)}

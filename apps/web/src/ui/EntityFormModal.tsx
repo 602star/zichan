@@ -7,6 +7,7 @@ import type { Category, Payee } from '@zichan/core';
 import { PayeePicker } from './PayeePicker.js';
 import { TagPicker } from './TagPicker.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
+import { DateTimeInput } from './DateTimeInput.js';
 import { DialogShell } from './DialogShell.js';
 import { FormDraftStatus, useFormDraftAutosave } from './FormDraftStatus.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
@@ -959,13 +960,16 @@ function FormField(props: {
             </div>
           )}
         </div>
+      ) : f.type === 'date' || f.type === 'time' ? (
+        <DateTimeInput id={fieldId} name={f.key} className="zc-input" type={f.type} value={value}
+          aria-label={f.label} onChange={(next) => set(f.key, next)} required={f.required} />
       ) : (
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input
             id={fieldId}
             name={f.key}
             className="zc-input"
-            type={f.type === 'date' ? 'date' : f.type === 'time' ? 'time' : 'text'}
+            type="text"
             inputMode={f.type === 'number' ? 'decimal' : undefined}
             value={value}
             placeholder={f.placeholder}

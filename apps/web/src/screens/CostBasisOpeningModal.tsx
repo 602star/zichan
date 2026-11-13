@@ -6,6 +6,7 @@ import { useSnapshot } from '../db/snapshot.js';
 import { moduleCurrencyId } from '../currencyPreferences.js';
 import { amount, significant } from '../format.js';
 import { DialogShell } from '../ui/DialogShell.js';
+import { DateTimeInput } from '../ui/DateTimeInput.js';
 export function CostBasisOpeningModal({ onClose, onConfirmed }: { onClose: () => void; onConfirmed?: () => void }) {
   const { store, bump } = useStore();
   const snap = useSnapshot('convert');
@@ -53,8 +54,8 @@ export function CostBasisOpeningModal({ onClose, onConfirmed }: { onClose: () =>
     {snap.costState && <p>已有核算期间将保留原来的价值与盈亏口径。本次确认建立新的核算期间。</p>}
     {!preview ? <>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
-        <label>起点日期<input aria-label="成本起点日期" className="zc-input" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
-        <label>准确时间<input aria-label="成本起点时间" className="zc-input" type="time" step="1" value={time} onChange={(event) => setTime(event.target.value)} /></label>
+        <label>起点日期<DateTimeInput aria-label="成本起点日期" className="zc-input" type="date" value={date} onChange={setDate} required /></label>
+        <label>准确时间<DateTimeInput aria-label="成本起点时间" className="zc-input" type="time" step="1" value={time} onChange={setTime} required /></label>
         <label>核算币种<select aria-label="成本核算币种" className="zc-select" value={baseId} onChange={(event) => setCurrency(event.target.value)}>{snap.assets.filter((asset) => asset.isActive && !asset.isDeleted && asset.type !== 'game' && asset.type !== 'fixed').map((asset) => <option key={asset.id} value={asset.id}>{asset.code} · {asset.name}</option>)}</select></label>
       </div>
       <p>时区：{timezone}。起点当天只有日期的流水，需要先补充准确时间以明确先后关系。</p>

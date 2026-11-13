@@ -8,6 +8,7 @@ import {
 } from '@zichan/core';
 import type { CSSProperties } from 'react';
 import { linkDanger } from './styles.js';
+import { DateTimeInput } from './DateTimeInput.js';
 
 export type TimelineViewMode = 'list' | 'year' | 'month' | 'day';
 
@@ -92,11 +93,11 @@ export function DateRangeBar(props: {
       </select>
       <label className="zc-date-boundary" style={dateLabel}>
         <span>从</span>
-        <input aria-label="开始日期" className="zc-input" type="date" value={value.from ?? ''} onChange={(event) => changeFrom(event.target.value)} style={{ width: 146 }} />
+        <DateTimeInput aria-label="开始日期" className="zc-input" type="date" value={value.from ?? ''} onChange={changeFrom} style={{ width: 146 }} />
       </label>
       <label className="zc-date-boundary" style={dateLabel}>
         <span>至</span>
-        <input aria-label="结束日期" className="zc-input" type="date" value={value.to ?? ''} onChange={(event) => changeTo(event.target.value)} style={{ width: 146 }} />
+        <DateTimeInput aria-label="结束日期" className="zc-input" type="date" value={value.to ?? ''} onChange={changeTo} style={{ width: 146 }} />
       </label>
       {(value.from || value.to) && <button type="button" onClick={() => onChange(dateRangeValue('all', anchor))} style={clearButton}>清除</button>}
     </div>

@@ -1,4 +1,5 @@
 import { ExistingPayeePicker } from '../ui/PayeePicker.js';
+import { ChevronRight } from 'lucide-react';
 import { EarlierBalancePanel } from '../ui/EarlierBalancePanel.js';
 import { AccountSetupPanel } from '../ui/AccountSetupPanel.js';
 import { AccountHistoryPanel } from '../ui/AccountHistoryPanel.js';
@@ -392,6 +393,10 @@ export function Transactions() {
     let cancelled = false;
     const month = queryAsOf.slice(0, 7);
     const summaryRange = trendRange(month, trendMonths);
+    const today = localToday();
+    const week = dateRangeForPreset('this_week', today);
+    summaryRange.from = [summaryRange.from, week.from ?? today].sort()[0]!;
+    summaryRange.to = [summaryRange.to, week.to ?? today].sort().at(-1)!;
     setTransactionPageBusy(true);
     setTransactionReadError('');
     void Promise.all([
@@ -1396,6 +1401,16 @@ export function Transactions() {
 
       {activeTab === 'records' && (
         <>
+          <div className="zc-period-expenses" role="group" aria-label={`每日每周支出 · ${vm.reportCurrencyCode}`}>
+            {([{ preset: 'today', label: '今日支出', amount: vm.todayExpense }, { preset: 'this_week', label: '本周支出', amount: vm.weekExpense }] as const).map((period) => (
+              <button key={period.preset} type="button" aria-pressed={viewFilters.range === period.preset} onClick={() => {
+                const range = dateRangeValue(period.preset);
+                setCategoryDrill(null);
+                setFilters({ ...DEFAULT_FILTERS, range: range.preset, dateFrom: range.from, dateTo: range.to });
+                setRecordView('list');
+              }}><span>{period.label}</span><strong>{money(period.amount)}</strong><ChevronRight size={16} aria-hidden="true" /></button>
+            ))}
+          </div>
           <SummaryGrid vm={vm} usesAccounts={usesAccounts} />
           <section id="transaction-records" className="zc-card zc-ledger-records" style={{ scrollMarginTop: 16 }}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
@@ -2513,7 +2528,10 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
       {vm.groups.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)', padding: '20px 0' }}>暂无流水</div>}
       {vm.groups.map((g) => (
         <div key={g.key}>
-          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', marginBottom: 8 }}>{g.label}</div>
+          <div className="zc-transaction-day-summary" aria-label={`${g.label}收支小计`}>
+            <span>{g.label}</span>
+            <span>{usesAccounts && <span className="zc-day-income">收入 {money(g.income)}</span>}<span className="zc-day-expense">支出 {money(g.expense)}</span></span>
+          </div>
           <table className={`zc-transaction-table${setSelectedIds ? ' has-selection' : ''}${usesAccounts ? ' has-account' : ''}`}>
             <thead>
               <tr>

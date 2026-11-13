@@ -116,6 +116,8 @@ export interface TransactionGroupVM {
   key: string;
   label: string;
   items: TransactionItemVM[];
+  income: string;
+  expense: string;
 }
 
 export interface TransactionCategoryVM {
@@ -218,6 +220,8 @@ export interface AccountLedgerRowVM {
 
 export interface TransactionsVM {
   month: string;
+  todayExpense: string;
+  weekExpense: string;
   income: string;
   expense: string;
   net: string;
@@ -273,11 +277,10 @@ export function transactionDateRange(asOf: string, filters: Pick<TransactionFilt
 
 function groupLabel(date: string, today: string, asOf: string): { key: string; label: string } {
   const diff = Math.round((dateMs(today) - dateMs(date)) / 86_400_000);
-  if (diff === 0) return { key: 'today', label: '今天' };
-  if (diff === 1) return { key: 'yesterday', label: '昨天' };
-  if (diff >= 0 && diff < 7) return { key: 'week', label: '本周' };
-  if (date === asOf && asOf !== today) return { key: `ledger-day-${date}`, label: `账本日 ${date}` };
-  return { key: date.slice(0, 7), label: date.slice(0, 7) };
+  if (diff === 0) return { key: date, label: `今天 · ${date}` };
+  if (diff === 1) return { key: date, label: `昨天 · ${date}` };
+  if (date === asOf && asOf !== today) return { key: date, label: `账本日 ${date}` };
+  return { key: date, label: date };
 }
 
 function amountBase(report: ReportCurrency, assetId: string, amount: string, date?: string): string {
@@ -859,8 +862,8 @@ export function buildFilteredTransactions(snap: Snapshot, filters: TransactionFi
   const asOf = ledgerAsOfDate(snap);
   const range = transactionDateRange(asOf, filters);
   return snap.transactions
-    .filter((t) => isTransactionActive(t) && matches(snap, t, filters, range))
-    .sort((a, b) => b.date.localeCompare(a.date) || b.updatedAt.localeCompare(a.updatedAt));
+    .filter((t) => isTransactionActive(t) && matches(snap, t, filters, range, transactionEffectDate(snap, t)))
+    .sort((a, b) => transactionEffectDate(snap, b).localeCompare(transactionEffectDate(snap, a)) || b.updatedAt.localeCompare(a.updatedAt));
 }
 
 function calendarMonthForRange(asOf: string, range: TransactionRange): string {
@@ -1122,10 +1125,19 @@ export function buildTransactionsFromReadModel(
   const items = filtered.map((transaction) => itemForTransaction(snap, transaction, report));
   const groups = new Map<string, TransactionGroupVM>();
   for (const item of items) {
-    const label = groupLabel(item.tx.date, today, asOf);
-    if (!groups.has(label.key)) groups.set(label.key, { key: label.key, label: label.label, items: [] });
+    const label = groupLabel(transactionEffectDate(snap, item.tx), today, asOf);
+    if (!groups.has(label.key)) groups.set(label.key, { key: label.key, label: label.label, items: [], income: '0', expense: '0' });
     groups.get(label.key)!.items.push(item);
   }
+  // Use the complete filtered aggregates, including rows beyond the current SQL page.
+  for (const row of input.filteredAggregates) {
+    const group = groups.get(row.reportDate);
+    const converted = group && aggregateAmount(report, row);
+    if (group && converted) group[row.direction] = D(group[row.direction]).plus(converted).toString();
+  }
+  const weekRange = dateRangeForPreset('this_week', today);
+  const todayTotals = aggregateTotals(report, input.summaryAggregates.filter((row) => row.reportDate === today));
+  const weekTotals = aggregateTotals(report, input.summaryAggregates.filter((row) => isDateInRange(row.reportDate, weekRange)));
   const monthAggregates = input.summaryAggregates.filter((row) => row.reportDate.slice(0, 7) === month);
   const monthTotals = aggregateTotals(report, monthAggregates);
   const filteredTotals = aggregateTotals(report, input.filteredAggregates);
@@ -1154,6 +1166,8 @@ export function buildTransactionsFromReadModel(
   const monthLeafCategories = groupedExpenseCategories(baseSnap, report, monthAggregates);
   return {
     month,
+    todayExpense: todayTotals.expense.toString(),
+    weekExpense: weekTotals.expense.toString(),
     income: monthTotals.income.toString(),
     expense: monthTotals.expense.toString(),
     net: monthTotals.income.minus(monthTotals.expense).toString(),
@@ -1162,7 +1176,7 @@ export function buildTransactionsFromReadModel(
     filteredNet: filteredTotals.income.minus(filteredTotals.expense).toString(),
     count: input.filteredCount,
     items,
-    groups: [...groups.values()],
+    groups: [...groups.values()].sort((a, b) => b.key.localeCompare(a.key)),
     topExpenseCategories: composition.slices.slice(0, 3),
     expenseComposition: composition,
     expenseChildren: expenseChildrenByParent(monthLeafCategories, baseSnap),
@@ -1219,10 +1233,19 @@ export function buildTransactions(snap: Snapshot, filters: TransactionFilters, t
   const groups = new Map<string, TransactionGroupVM>();
   for (const item of items) {
     const tx = item.tx;
-    const label = groupLabel(tx.date, today, asOf);
-    if (!groups.has(label.key)) groups.set(label.key, { key: label.key, label: label.label, items: [] });
-    groups.get(label.key)!.items.push(item);
+    const label = groupLabel(transactionEffectDate(snap, tx), today, asOf);
+    if (!groups.has(label.key)) groups.set(label.key, { key: label.key, label: label.label, items: [], income: '0', expense: '0' });
+    const group = groups.get(label.key)!;
+    group.items.push(item);
+    group.income = D(group.income).plus(item.incomeBase).toString();
+    group.expense = D(group.expense).plus(item.expenseBase).toString();
   }
+
+  const weekRange = dateRangeForPreset('this_week', today);
+  const periodExpenses = snap.transactions.filter(isTransactionActive).map((transaction) => ({
+    date: transactionEffectDate(snap, transaction),
+    expense: transactionReportValues(snap, report, transaction).expense,
+  }));
 
   const monthRows = snap.transactions.filter((t) => isTransactionActive(t) && t.type !== 'transfer' && transactionEffectDate(snap, t).slice(0, 7) === month);
   const monthValues = monthRows.map((transaction) => transactionReportValues(snap, report, transaction));
@@ -1253,6 +1276,8 @@ export function buildTransactions(snap: Snapshot, filters: TransactionFilters, t
 
   return {
     month,
+    todayExpense: sum(periodExpenses.filter((row) => row.date === today).map((row) => row.expense)).toString(),
+    weekExpense: sum(periodExpenses.filter((row) => isDateInRange(row.date, weekRange)).map((row) => row.expense)).toString(),
     income: income.toString(),
     expense: expense.toString(),
     net: income.minus(expense).toString(),
@@ -1261,7 +1286,7 @@ export function buildTransactions(snap: Snapshot, filters: TransactionFilters, t
     filteredNet: filteredIncome.minus(filteredExpense).toString(),
     count: filtered.length,
     items,
-    groups: [...groups.values()],
+    groups: [...groups.values()].sort((a, b) => b.key.localeCompare(a.key)),
     topExpenseCategories,
     expenseComposition,
     expenseChildren: expenseChildrenByParent(monthLeafCategories, snap),

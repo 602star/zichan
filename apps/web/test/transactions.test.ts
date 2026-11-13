@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { round, systemCategory, type Category } from '@zichan/core';
 import { budgetCategoryForm, categoryForm, gameRecordForm, payeeForm, scheduledTransactionForm, transactionForm, transactionSplitForm, transactionTemplateForm } from '../src/forms.js';
 import {
@@ -23,6 +23,43 @@ function optionsOf(field: FieldDef, values: Record<string, string> = {}) {
 }
 
 describe('buildTransactions', () => {
+  it('shows exact daily and cross-month weekly spending independently of list filters', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-01T12:00:00'));
+    try {
+      const s = makeSnapshot();
+      s.transactions = [
+        makeTransaction({ date: '2026-03-01', type: 'expense', amount: '0.1', assetId: s.ids.gbp }),
+        makeTransaction({ date: '2026-03-01', type: 'expense', amount: '0.2', assetId: s.ids.gbp }),
+        makeTransaction({ date: '2026-02-28', type: 'expense', amount: '10', assetId: s.ids.gbp }),
+        makeTransaction({ date: '2026-02-23', type: 'expense', amount: '20', assetId: s.ids.gbp }),
+        makeTransaction({ date: '2026-02-22', type: 'expense', amount: '100', assetId: s.ids.gbp }),
+        makeTransaction({ date: '2026-03-01', type: 'transfer', amount: '900', assetId: s.ids.gbp, transferAccountId: s.ids.cash }),
+        makeTransaction({ date: '2026-03-01', type: 'expense', amount: '800', assetId: s.ids.gbp, recordState: 'voided' }),
+      ];
+      const vm = buildTransactions(s, { range: 'all', type: 'all', category: 'all', accountId: 'all', search: '' });
+      expect(vm.todayExpense).toBe('0.3');
+      expect(vm.weekExpense).toBe('30.3');
+      expect(vm.groups.map((group) => group.key)).toEqual(['2026-03-01', '2026-02-28', '2026-02-23', '2026-02-22']);
+      expect(vm.groups[0]?.expense).toBe('0.3');
+      const filtered = buildTransactions(s, { range: 'all', type: 'income', category: 'all', accountId: 'all', search: '' });
+      expect(filtered.items).toEqual([]);
+      expect(filtered.todayExpense).toBe('0.3');
+      expect(filtered.weekExpense).toBe('30.3');
+
+      const aggregates = s.transactions.filter((tx) => tx.type === 'expense' && tx.recordState !== 'voided').map((tx) => ({
+        reportDate: tx.date, reportAssetId: tx.assetId, direction: 'expense' as const, category: tx.category, amounts: [tx.amount], count: 1,
+      }));
+      const paged = buildTransactionsFromReadModel(s, { range: 'all', type: 'all', category: 'all', accountId: 'all', search: '' }, {
+        page: { ...s, transactions: [s.transactions[0]!] }, summaryAggregates: aggregates, filteredAggregates: aggregates, filteredCount: 5,
+      });
+      expect(paged.items).toHaveLength(1);
+      expect(paged.groups[0]?.expense).toBe('0.3');
+      expect(paged.todayExpense).toBe(vm.todayExpense);
+      expect(paged.weekExpense).toBe(vm.weekExpense);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('builds monthly summary, groups, top categories and trend', () => {
     const s = makeSnapshot();
     s.transactions = [
@@ -97,6 +134,8 @@ describe('buildTransactions', () => {
 
     const vm = buildTransactions(s, { range: 'this_month', type: 'all', category: 'all', accountId: 'all', search: '' });
     expect(round(vm.expense, 2)).toBe('70.00');
+    expect(vm.groups).toHaveLength(1);
+    expect(vm.groups[0]).toMatchObject({ key: original.date, expense: '70', income: '0' });
     expect(vm.budgets[0]).toMatchObject({ actual: '70', remaining: '50' });
     expect(vm.topExpenseCategories[0]).toMatchObject({ category: 'food_parent', amount: '70' });
     expect(vm.calendarDays.find((day) => day.date === original.date)).toMatchObject({ count: 2, expense: '70' });

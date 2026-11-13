@@ -39,6 +39,7 @@ import { moduleCurrencyId } from '../currencyPreferences.js';
 import { useUndo } from '../ui/UndoToast.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { DialogShell } from '../ui/DialogShell.js';
+import { DateTimeInput } from '../ui/DateTimeInput.js';
 import { AssetIcon } from '../ui/AssetIcon.js';
 import { useConversionDraft } from '../ui/useConversionDraft.js';
 import { buildDcaConversionPreset } from '../dca-conversion-preset.js';
@@ -764,8 +765,8 @@ export function AddConversionModal({
         </div>
 
         <div className="zc-conversion-head-grid">
-          <Field label="日期"><input aria-label="日期" className="zc-input" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></Field>
-          <Field label="时间"><input aria-label="时间" className="zc-input" type="time" value={time} onChange={(event) => setTime(event.target.value)} /></Field>
+          <Field label="日期"><DateTimeInput aria-label="日期" className="zc-input" type="date" value={date} onChange={setDate} required /></Field>
+          <Field label="时间"><DateTimeInput aria-label="时间" className="zc-input" type="time" value={time} onChange={setTime} /></Field>
           <Field label="类型"><select aria-label="类型" className="zc-select" value={type} onChange={(event) => setType(event.target.value as ConversionType)}>{[...TYPES, ...(snap.costState ? [['swap', '资产互换']] : [])].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
           <Field label="标题（可选）"><input aria-label="标题" className="zc-input" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="USD → USDT → BTC" /></Field>
           <div style={{ fontSize: 'var(--fs-caption)', alignSelf: 'end' }}>记账币种：{code(effectiveBookCurrencyId)}</div>
