@@ -9,6 +9,7 @@ import {
   type PriceMark,
   type ReconciliationItem,
   type ReconciliationSession,
+  type Setting,
   type SyncCommitV2,
   type Transaction,
 } from '@zichan/core';
@@ -115,6 +116,77 @@ async function expectHealthyReplica(store: Awaited<ReturnType<typeof openLedger>
 }
 
 describe('sync protocol v2', () => {
+  it('shares completed safety checks and restore rehearsals across devices without device backup state', async () => {
+    const a = await openLedger({ deviceId: 'A' });
+    const b = await openLedger({ deviceId: 'B' });
+    try {
+      await shareLedgerId(a, b);
+      await a.assets.put({ ...asset('CNY'), id: 'CNY' });
+      const setting = await a.settings.put({
+        ...base(),
+        baseCurrencyAssetId: 'CNY',
+        dataSafetyStateJson: JSON.stringify({
+          lastCheckAt: '2026-11-13T01:00:00.000Z',
+          lastCheckCount: 0,
+          lastRehearsalAt: '2026-11-13T02:00:00.000Z',
+          lastRehearsalOk: true,
+          lastRehearsalLabel: '手动备份',
+          lastBackupError: '仅限本机',
+          lastExternalBackupAt: '2026-11-13T01:30:00.000Z',
+        }),
+      } as Setting);
+      const projected = await a.getSyncAggregate('setting', setting.id);
+      expect(JSON.parse(String(projected?.['dataSafetyStateJson']))).toEqual({
+        lastCheckAt: '2026-11-13T01:00:00.000Z',
+        lastCheckCount: 0,
+        lastRehearsalAt: '2026-11-13T02:00:00.000Z',
+        lastRehearsalOk: true,
+        lastRehearsalLabel: '手动备份',
+      });
+
+      const result = await syncOneWay(a, b, memoryCommitTransport());
+      expect(result).toMatchObject({ conflicts: 0, invalid: 0, pending: 0 });
+      expect(JSON.parse((await b.settings.get(setting.id))!.dataSafetyStateJson!)).toEqual(
+        JSON.parse(String(projected?.['dataSafetyStateJson'])),
+      );
+      await expectHealthyReplica(b);
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
+  it('publishes an existing rehearsal that an older client omitted from sync history', async () => {
+    const { store: a, rawPut } = await openDiagnosticLedger({ deviceId: 'A' });
+    const b = await openLedger({ deviceId: 'B' });
+    try {
+      await shareLedgerId(a, b);
+      await a.assets.put({ ...asset('CNY'), id: 'CNY' });
+      const original = await a.settings.put({ ...base(), baseCurrencyAssetId: 'CNY' } as Setting);
+      await rawPut('settings', {
+        ...original,
+        dataSafetyStateJson: JSON.stringify({ lastRehearsalAt: '2026-11-13T02:00:00.000Z', lastRehearsalOk: true }),
+      });
+      const oldHead = (await a.syncGraph()).entityHeads.get(aggregateKey('setting', original.id))![0]!;
+      expect((await a.syncGraph()).revisions.get(oldHead)?.payload?.['dataSafetyStateJson']).toBeUndefined();
+
+      const transport = memoryCommitTransport();
+      const target = [{ id: 'memory', endpoint: 'memory', transport }];
+      expect((await syncReplicas(a, target)).converged).toBe(true);
+      expect((await syncReplicas(b, target)).converged).toBe(true);
+      expect(JSON.parse((await b.settings.get(original.id))!.dataSafetyStateJson!)).toEqual({
+        lastRehearsalAt: '2026-11-13T02:00:00.000Z', lastRehearsalOk: true,
+      });
+      const commitCount = (await a.listSyncCommits()).length;
+      await syncReplicas(a, target);
+      expect((await a.listSyncCommits()).length).toBe(commitCount);
+      await expectHealthyReplica(b);
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+
   it('applies reconciliation adjustments before their closed snapshot and replays an undo', async () => {
     const a = await openLedger({ deviceId: 'A' });
     const b = await openLedger({ deviceId: 'B' });

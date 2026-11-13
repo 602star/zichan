@@ -660,11 +660,25 @@ export async function pushReplica(
   return { pushed, headSeq };
 }
 
+/** Older clients stored safety results locally but omitted them from setting revisions. */
+async function publishLegacySafetyState(store: SqlLedgerStore): Promise<void> {
+  const setting = (await store.settings.list({ limit: 1 }))[0];
+  if (!setting?.dataSafetyStateJson) return;
+  const payload = await store.getSyncAggregate('setting', setting.id);
+  const shared = payload?.['dataSafetyStateJson'];
+  if (typeof shared !== 'string' || shared === '{}') return;
+  const graph = await store.syncGraph();
+  const heads = graph.entityHeads.get(aggregateKey('setting', setting.id)) ?? [];
+  if (heads.length > 1 || heads.some((id) => graph.revisions.get(id)?.payload?.['dataSafetyStateJson'] !== undefined)) return;
+  await store.settings.put(setting);
+}
+
 /** One complete round against one replica. Multi-replica orchestration uses the phase functions above. */
 export async function syncReplica(store: SqlLedgerStore, transport: CommitTransport, endpoint: string): Promise<CommitSyncResult> {
   const connection = await connectReplica(store, transport);
   const pulled = await pullReplica(store, transport, connection);
   const applied = await applyPendingCommits(store);
+  await publishLegacySafetyState(store);
   const pushed = await pushReplica(store, transport, { ...connection, headSeq: pulled.headSeq });
   return { ...applied, pulled: pulled.pulled, pushed: pushed.pushed, identity: connection, endpoint };
 }
@@ -764,6 +778,7 @@ export async function syncReplicas(
     }
 
     await apply();
+    if (round === 1) await publishLegacySafetyState(store);
 
     for (const current of connected) {
       if (current.row.error) continue;

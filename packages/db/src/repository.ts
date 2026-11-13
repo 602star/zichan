@@ -745,9 +745,33 @@ function assertSyncAggregateIdentity(
   assertOwner(payload, 'id', '实体');
 }
 
+const SHARED_SAFETY_FIELDS = [
+  'lastCheckAt', 'lastCheckCount', 'lastRehearsalAt', 'lastRehearsalOk', 'lastRehearsalLabel',
+] as const;
+
+function sharedSafetyStateJson(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+    const state = parsed as Record<string, unknown>;
+    const shared: Record<string, unknown> = {};
+    for (const field of SHARED_SAFETY_FIELDS) {
+      if (state[field] !== undefined) shared[field] = state[field];
+    }
+    return JSON.stringify(shared);
+  } catch {
+    return undefined;
+  }
+}
+
 function projectEntity(value: Record<string, unknown>): Record<string, unknown> {
   const projected = syncPayload(value);
-  if ('dataSafetyStateJson' in projected) delete projected['dataSafetyStateJson'];
+  if ('dataSafetyStateJson' in projected) {
+    const shared = sharedSafetyStateJson(projected['dataSafetyStateJson']);
+    if (shared === undefined) delete projected['dataSafetyStateJson'];
+    else projected['dataSafetyStateJson'] = shared;
+  }
   return projected;
 }
 
@@ -3821,8 +3845,9 @@ export class SqlLedgerStore implements LedgerStore {
       await this.withValidatedRestore(['account:' + id], [], async (restore) => { await restore.accounts.put({ ...payload, id, createdAt: current.createdAt, updatedAt: current.updatedAt, version: current.version, isDeleted: false } as unknown as import('@zichan/core').Account); });
       return;
     }
+    const incoming = type === 'setting' ? projectEntity(payload) : payload;
     await collection.put({
-      ...(current ?? {}), ...payload, id,
+      ...(current ?? {}), ...incoming, id,
       createdAt: current?.createdAt || String(payload['createdAt'] ?? ''),
       updatedAt: current?.updatedAt ?? '', version: current?.version ?? 0,
       isDeleted: payload['isDeleted'] === true,
