@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { DARK_THEMES, THEMES } from '../src/theme.js';
+import ts from 'typescript';
 
 /*
  * Batch 0 of the visual-density plan: the scale must exist in CSS, and every
@@ -97,11 +98,55 @@ describe('design scale contract', () => {
   it('provides the shared component vocabulary', () => {
     for (const cls of [
       '.zc-card', '.zc-card.is-flush', '.zc-section', '.zc-section-title', '.zc-meta', '.zc-caption',
+      '.zc-card-head', '.zc-card-group', '.zc-card-metric', '.zc-card-fact', '.zc-card-band', '.zc-alert',
       '.zc-btn', '.zc-btn--primary', '.zc-btn--ghost', '.zc-btn--danger', '.zc-btn--sm',
       '.zc-tabs', '.zc-tab', '.zc-field', '.zc-summary-bar', '.zc-menu', '.zc-menu-item',
     ]) {
       expect(css, `${cls} must exist`).toContain(cls);
     }
+  });
+
+  it('keeps card padding in CSS and internal groups free of nested sheets', () => {
+    const offenders: string[] = [];
+    for (const file of sources.filter((source) => source.full.endsWith('.tsx'))) {
+      const ast = ts.createSourceFile(file.full, file.text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+      const visit = (node: ts.Node, insideCard = false) => {
+        if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) {
+          const opening = ts.isJsxElement(node) ? node.openingElement : node;
+          const attributes = opening.attributes.properties;
+          const className = attributes.find((attr) => ts.isJsxAttribute(attr) && attr.name.getText(ast) === 'className');
+          const name = opening.tagName.getText(ast);
+          const isCard = name === 'Card' || name === 'SyncSection'
+            || Boolean(className && /(?:[\s"`])zc-card(?:[\s"`])/.test(className.getText(ast)));
+          const line = ast.getLineAndCharacterOfPosition(node.getStart(ast)).line + 1;
+          if (isCard) {
+            if (insideCard) offenders.push(`${file.path}:${line}: nested card`);
+            const style = attributes.find((attr) => ts.isJsxAttribute(attr) && attr.name.getText(ast) === 'style');
+            if (style && /\bpadding(?:Top|Right|Bottom|Left|Inline(?:Start|End)?|Block(?:Start|End)?)?\s*:/.test(style.getText(ast))) {
+              offenders.push(`${file.path}:${line}: inline card padding`);
+            }
+          }
+          ts.forEachChild(node, (child) => visit(child, insideCard || isCard));
+          return;
+        }
+        ts.forEachChild(node, (child) => visit(child, insideCard));
+      };
+      visit(ast);
+    }
+    expect(offenders.join('\n')).toBe('');
+  });
+
+  it('uses a single ink rule for alerts and admin user state', () => {
+    const adminCss = readFileSync(new URL('../src/admin/admin.css', import.meta.url), 'utf8');
+    const offenders = [...`${css}\n${adminCss}`.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .filter(([, selector]) => /\.zc-(?:card\b|alert\b|admin-user-card\b)/.test(selector))
+      .flatMap(([, selector, body]) => [...body.matchAll(/border-(?:left|right)(?:-width)?:\s*([\d.]+)px/g)]
+        .filter((match) => Number(match[1]) > 1)
+        .map(() => selector.trim()));
+    expect(offenders).toEqual([]);
+    expect(css).toMatch(/\.zc-alert::before[\s\S]*?border-left: 1px solid var\(--text-primary\)/);
+    expect(adminCss).not.toMatch(/\.zc-admin-user-card\s*\{[^}]*box-shadow/);
+    expect(css).not.toContain('.zc-card-header');
   });
 
   /*

@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import { useState } from 'react';
 import { browserLocalCapability, type FirstUseMode } from '../browser-storage-policy.js';
 import { isTauriRuntime } from '../tauri.js';
 
@@ -19,11 +19,6 @@ export function BrowserStorageConsent({ busy, onContinue }: { busy: boolean; onC
     <button type="button" disabled={busy || !accepted} onClick={() => void onContinue()} style={{ padding: '10px 16px' }}>确认风险，继续本地使用</button>
   </section>;
 }
-const modeCard: CSSProperties = {
-  minHeight: 168,
-  cursor: 'pointer',
-};
-
 export function FirstUseModeGate({ busy, error = '', onSelect, persistence, onContinueLocal }: FirstUseModeGateProps) {
   const native = isTauriRuntime();
   const capability = browserLocalCapability();
@@ -60,7 +55,7 @@ export function FirstUseModeGate({ busy, error = '', onSelect, persistence, onCo
           <BrowserStorageConsent busy={busy} onContinue={onContinueLocal} />
         </>}
         {error && (
-          <div role="alert" style={{ marginTop: 18, padding: 14, border: '1px solid var(--negative)', borderRadius: 'var(--r-sm)', background: 'var(--danger-surface)', color: 'var(--negative)', lineHeight: 1.6 }}>
+          <div role="alert" className="zc-alert is-danger" style={{ marginTop: 18 }}>
             {error}
           </div>
         )}

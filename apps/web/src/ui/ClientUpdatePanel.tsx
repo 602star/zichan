@@ -103,7 +103,7 @@ export function ClientUpdatePanel() {
     }
     finally { setInstalling(false); }
   };
-  return <section className="zc-card" aria-label="应用版本更新" style={{ padding: 'var(--sp-5)' }}>
+  return <section className="zc-card" aria-label="应用版本更新" >
     <h2 className="zc-section-title">应用版本更新</h2>
     <p className="zc-caption">当前版本 {info?.currentVersion ?? '读取中'} · {info?.mode === 'portable' ? 'Windows 便携版' : info?.mode === 'installed' ? 'Windows 安装版' : info?.mode === 'android' ? 'Android' : info?.mode === 'ios' ? 'iOS' : 'Linux 原生版'}</p>
     {info?.reason ? <p className="zc-caption">{info.reason}</p> : null}

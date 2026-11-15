@@ -8,6 +8,9 @@ import { AccountProfilePanel } from '../ui/AccountProfilePanel.js';
 import { AccountEmailPanel } from '../ui/AccountEmailPanel.js';
 import { AccountSecurityPanel } from '../ui/AccountSecurityPanel.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
+import { useCompactView } from '../ui/useCompactView.js';
+import { MobilePageHeader, TaskList, useMobileSection } from '../ui/MobilePage.js';
+import { navigateTo, useScreenTarget } from '../screen-target.js';
 
 interface AccountUsage {
   commits: { usedBytes: number; quotaBytes: number | null; commitCount: number };
@@ -25,14 +28,14 @@ function bytes(value: number): string {
 }
 
 function QuotaCard({ title, used, limit, detail }: { title: string; used: number; limit: number | null; detail: string }) {
-  if (limit === null) return <div style={{ flex: '1 1 240px', padding: 16, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', background: 'var(--surface-2)' }}>
+  if (limit === null) return <div className="zc-card-metric">
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><strong>{title}</strong><span>无限配额</span></div>
     <div style={{ margin: '12px 0 6px' }}><strong>{bytes(used)}</strong> 已用</div>
     <div style={{ color: 'var(--text-secondary)' }}>{detail}</div>
   </div>;
   const ratio = limit > 0 ? used / limit : 0;
   const label = ratio >= 1 ? '已达上限' : ratio >= 0.9 ? '接近上限' : '可用';
-  return <div style={{ flex: '1 1 240px', padding: 16, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', background: 'var(--surface-2)' }}>
+  return <div className="zc-card-metric">
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><strong>{title}</strong><span>{label} · 已用 {Math.round(ratio * 100)}%</span></div>
     <div style={{ margin: '12px 0 6px' }}><strong>{bytes(used)}</strong> / {bytes(limit)}</div>
     <progress aria-label={`${title}用量`} max={limit || 1} value={Math.min(used, limit || 1)} style={{ width: '100%' }} />
@@ -41,6 +44,9 @@ function QuotaCard({ title, used, limit, detail }: { title: string; used: number
 }
 
 export function Account() {
+  const compact = useCompactView();
+  const target = useScreenTarget('account');
+  const [view, open, back] = useMobileSection('account');
   const { exitAccount } = useStore();
   const profileId = accountProtection()?.profileId;
   const profile = loadSyncConnections().find((row) => row.id === profileId);
@@ -49,6 +55,7 @@ export function Account() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirmExit, setConfirmExit] = useState(false);
+  useEffect(() => { if (compact && target?.tab && ['profile', 'email', 'security', 'quota'].includes(target.tab)) open(target.tab); }, [compact, target, open]);
 
   useEffect(() => {
     if (!profileId) return;
@@ -84,29 +91,45 @@ export function Account() {
 
   useEffect(() => { void refreshUsage(); }, [refreshUsage]);
 
-  return <div>
+  const logout = confirmExit && exitAccount && <ConfirmDialog title="退出记账账号" confirmLabel="确认退出" onCancel={() => setConfirmExit(false)} onConfirm={exitAccount}><p>退出前请确认重要记录已同步，或已导出加密备份。未同步数据会留在本机；请勿清除网站数据。</p></ConfirmDialog>;
+  if (compact && view === 'index' && profile) return <div className="zc-mobile-task-page">
+    <section className="zc-paper-detail"><h2>{profile.username || profile.alias || '我的账号'}</h2><p className="zc-caption">{profile.alias || '当前服务器'}{roleInfo ? ` · ${roleInfo.node}` : ''}</p></section>
+    <TaskList title="账号资料" items={[
+      { label: '个人资料', note: '昵称与登录身份', onClick: () => open('profile') },
+      { label: '邮箱', note: '绑定、验证和恢复途径', onClick: () => open('email') },
+      { label: '账号安全', note: '密码与登录会话', onClick: () => open('security') },
+      { label: '存储配额', note: error ? '暂时无法读取用量，打开后可重试' : '加密记录、附件与传输用量', onClick: () => open('quota') },
+    ]} />
+    <TaskList title="数据与设备" items={[
+      { label: '数据保护', note: '服务器副本与同步状态', onClick: () => navigateTo({ screen: 'settings', tab: 'server' }) },
+      ...(exitAccount ? [{ label: '退出记账账号', onClick: () => setConfirmExit(true) }] : []),
+    ]} />
+    {logout}
+  </div>;
+  return <div className="zc-mobile-task-page">
+    {compact && profile && <MobilePageHeader title={({ profile: '个人资料', email: '邮箱', security: '账号安全', quota: '存储配额' } as Record<string, string>)[view] ?? '我的账号'} onBack={back} backLabel="返回账号" />}
     {profile ? <>
-      <div className="zc-card"><AccountProfilePanel /></div>
-      <AccountEmailPanel quotaUnlimited={usage?.commits.quotaBytes === null && usage?.attachments.quotaBytes === null} />
-      <section className="zc-card" aria-label="数据保护入口">
+      {(!compact || view === 'profile') && <div className="zc-card"><AccountProfilePanel /></div>}
+      {(!compact || view === 'email') && <AccountEmailPanel quotaUnlimited={usage?.commits.quotaBytes === null && usage?.attachments.quotaBytes === null} />}
+      {!compact && <section className="zc-card" aria-label="数据保护入口">
         <h2 className="zc-section-title">数据保护</h2>
         <p className="zc-caption">查看当前账本连接了哪些服务器、各服务器的副本是否就绪；服务器同步组由管理员配置。</p>
         <button type="button" className="zc-btn" onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'settings', tab: 'server' } }))}>查看服务器上的账本</button>
-      </section>
-      <section className="zc-card" aria-label="存储配额">
+      </section>}
+      {(!compact || view === 'quota') && <section className="zc-card" aria-label="存储配额">
         <div className="zc-section-head"><div><h2 className="zc-section-title">存储配额</h2><p className="zc-meta">当前服务器：{profile.alias || profile.baseUrl}。只统计此账号在这台服务器上的加密数据。</p></div><button type="button" className="zc-btn" disabled={busy} onClick={() => void refreshUsage()}>{busy ? '查询中…' : '刷新用量'}</button></div>
         {roleInfo && <p className="zc-caption">本站角色：{roleInfo.node} · 当前账本权限：{roleInfo.ledger}</p>}
-        {usage && <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 14 }}>
+        {usage && <div className="zc-card-band is-inset zc-account-quota-band">
           <QuotaCard title="加密记录" used={usage.commits.usedBytes} limit={usage.commits.quotaBytes} detail={`${usage.commits.commitCount} 条同步提交`} />
           <QuotaCard title="附件" used={usage.attachments.usedBytes} limit={usage.attachments.quotaBytes} detail={`${usage.attachments.objectCount} 个有效附件对象`} />
         </div>}
         {usage && <p className="zc-caption">附件用量包含有效附件、回收站（{bytes(usage.attachments.trashBytes)}）和暂存上传（{bytes(usage.attachments.stagingBytes)}）。{usage.attachments.quotaBytes === null ? '当前账号无限额，仍受单文件大小与服务器磁盘空间限制。' : '配额由服务器管理员设置；达到上限后，新数据可能无法上传。'}</p>}
         {usage?.transfer && <p className="zc-caption">本站同步 {usage.transfer.syncRuns} 轮（已收敛 {usage.transfer.convergedRuns}、待续 {usage.transfer.partialRuns}、失败 {usage.transfer.failedRuns}）；上传 {bytes(usage.transfer.commitUploadBytes + usage.transfer.blobUploadBytes)}、下载 {bytes(usage.transfer.commitDownloadBytes + usage.transfer.blobDownloadBytes)}。只统计已记录的加密正文，重试计入流量。</p>}
         {error && <p role="alert">{error}</p>}
-      </section>
-      <AccountSecurityPanel onExit={exitAccount} />
-      {exitAccount && <section className="zc-card" aria-label="退出账号"><h2 className="zc-section-title">退出账号</h2><p className="zc-caption">退出会锁定本机账本并撤销会话；加密缓存与未同步记录仍留在本机。</p><button type="button" className="zc-btn" onClick={() => setConfirmExit(true)}>退出记账账号</button></section>}
-      {confirmExit && exitAccount && <ConfirmDialog title="退出记账账号" confirmLabel="确认退出" onCancel={() => setConfirmExit(false)} onConfirm={exitAccount}><p>退出前请确认重要记录已同步，或已导出加密备份。未同步数据会留在本机；请勿清除网站数据。</p></ConfirmDialog>}
+      </section>}
+      {(!compact || view === 'security') && <AccountSecurityPanel onExit={exitAccount} />}
+      {!compact && exitAccount && <section className="zc-card" aria-label="退出账号"><h2 className="zc-section-title">退出账号</h2><p className="zc-caption">退出会锁定本机账本并撤销会话；加密缓存与未同步记录仍留在本机。</p><button type="button" className="zc-btn" onClick={() => setConfirmExit(true)}>退出记账账号</button></section>}
+      {logout}
     </> : <section className="zc-card"><h2 className="zc-section-title">本地账本</h2><p>此账本当前没有登录中的服务器账号，因此没有服务器存储配额。</p><button type="button" className="zc-btn" onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'settings', tab: 'device' } }))}>查看数据保护</button></section>}
   </div>;
 }

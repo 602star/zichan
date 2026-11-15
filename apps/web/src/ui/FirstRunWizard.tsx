@@ -1,4 +1,5 @@
 import { accountSessionStorage } from '../account-storage.js';
+import { ValuePicker } from './ValuePicker.js';
 import { accountProtection } from '../account-protection.js';
 import { useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
 import type { Setting } from '@zichan/core';
@@ -169,18 +170,17 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
   }
 
   return (
-    <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(22px, 5vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif' }}>
+    <main className="zc-auth-page" style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(22px, 5vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif' }}>
       <section style={{ width: 'min(920px, 100%)', margin: '0 auto' }}>
-        <div style={{ color: 'var(--accent)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.12em' }}>ZICHAN · 首次设置</div>
         <h1 className="zc-first-run-title" style={{ margin: '10px 0' }}>你希望怎样开始记账？</h1>
         <p>先决定要不要分开记录银行卡、微信和支付宝。以后随时可以添加账户。</p>
-        <label>记账币种 <select aria-label="记账币种" value={baseCurrencyCode} onChange={(e) => setBaseCurrencyCode(e.target.value as BaseCurrencyChoice['code'])} style={field}>{BASE_CURRENCY_CHOICES.map((c) => <option key={c.code} value={c.code}>{c.name}（{c.code}）</option>)}</select></label>
+        <div className="zc-field"><label htmlFor="first-run-currency">记账币种</label><ValuePicker id="first-run-currency" label="记账币种" value={baseCurrencyCode} options={BASE_CURRENCY_CHOICES.map((currency) => ({ value: currency.code, label: `${currency.name}（${currency.code}）` }))} onChange={(value) => setBaseCurrencyCode(value as BaseCurrencyChoice['code'])} /></div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 18, marginTop: 24 }}>
-          <section style={{ padding: 24, background: 'var(--surface-2)', border: '2px solid var(--accent)', borderRadius: 'var(--r-md)' }}>
+          <section className="zc-first-run-option is-primary">
             <h2>先记收支</h2><p>看赚了多少、花在哪里。系统准备好收入和支出账户，你直接记金额和分类。</p><p className="zc-meta">不确定就先选这个。</p>
-            <button disabled={busy} className="zc-btn" onClick={() => void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode: 'spending' }), 'spending')}>{busy ? '正在创建…' : '开始记账'}</button>
+            <button disabled={busy} className="zc-btn zc-btn--primary" onClick={() => void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode: 'spending' }), 'spending')}>{busy ? '正在创建…' : '开始记账'}</button>
           </section>
-          <section style={{ padding: 24, background: 'var(--surface)', border: '1px solid var(--border-strong)', borderRadius: 'var(--r-md)' }}>
+          <section className="zc-first-run-option">
             <h2>分账户记账</h2><p>还想知道每张卡、每个钱包剩多少钱。添加账户和当前余额，记账时选择收付款账户，之后可以转账和核对账单。</p>
             <button disabled={busy} className="zc-btn" onClick={() => void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode: 'accounts' }), 'accounts')}>{busy ? '正在创建…' : '添加常用账户'}</button>
           </section>

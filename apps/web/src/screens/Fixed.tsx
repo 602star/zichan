@@ -1,5 +1,8 @@
+import { Card, CardMetric } from '../ui/Card.js';
 import { withCashflowPayee } from '../payee-recording.js';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
+import { MobilePageHeader, TaskList, useMobileSection } from '../ui/MobilePage.js';
+import { useTabSet } from '../ui/useTabSet.js';
 import { useCompactView } from '../ui/useCompactView.js';
 import {
   isDateInRange,
@@ -63,7 +66,7 @@ import {
 import { buildFixed, canConvertFixedUpgrade, canPlaceFixedComponent, type FixedCardVM, type FixedTimelineVM } from '../selectors/fixed.js';
 import { ledgerAsOfDate } from '../as-of.js';
 import { amount as fmtAmount, money } from '../format.js';
-import { linkAccent, metaText, pillBtn } from '../ui/styles.js';
+import { linkAccent, pillBtn } from '../ui/styles.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
@@ -109,7 +112,9 @@ function cashflowDraft(value: {
   };
 }
 
-export function Fixed() {
+export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = {}) {
+  const compact = useCompactView();
+  const [mobileView, openMobile, backMobile] = useMobileSection(navigationKey);
   const snap = useSnapshot('fixed');
   const { store, bump } = useStore();
   const undo = useUndo(store, bump);
@@ -282,8 +287,22 @@ export function Fixed() {
     bump();
   }
 
+  const mobileItem = compact && mobileView.startsWith('item:') ? vm.find((item) => item.id === mobileView.slice(5)) : undefined;
+  const itemActions: Omit<Parameters<typeof Overview>[0], 'cards' | 'onOpen'> = {
+    onEdit: setAssetModal,
+    onEvent: (assetId) => setEventModal({ assetId }),
+    onAddComponent: (hostId, bundled) => setAssetModal({ kind: 'component', hostId, bundled }),
+    onPlacement: (assetId) => setEventModal({ assetId, placement: true }),
+    onConvertUpgrade: (host, event) => setUpgradeConversion({ host, event }),
+    onMetric: (assetId, metric) => setMetricModal({ assetId, metric }),
+    onUsage: (metric) => setUsageModal({ metric }),
+    onConsumable: (assetId) => setConsumableModal({ assetId }),
+    onGoal: (assetId, goal) => setGoalModal({ assetId, goal }),
+    onTimeline: openTimeline,
+  };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {mobileItem ? <MobileItemDetail item={mobileItem} onBack={backMobile} {...itemActions} /> : <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         {(['overview', 'list', 'year', 'month', 'day'] as const).map((mode) => <button key={mode} onClick={() => setView(mode)} style={pillBtn(view === mode)}>{mode === 'overview' ? '概览' : mode === 'list' ? '时间线' : mode === 'year' ? '年度' : mode === 'month' ? '月历' : '单日'}</button>)}
         <div style={{ flex: 1 }} />
@@ -299,7 +318,7 @@ export function Fixed() {
         />
       ) : (
         <>
-          <div className="zc-fixed-kpi-grid">
+          <div className="zc-card-band zc-fixed-kpi-grid">
             <Kpi label="整件物品" value={`${vm.filter((item) => !item.isComponent).length} 件`} />
             <Kpi label="正在使用" value={`${activeCount} 件`} tone="var(--positive)" />
             <Kpi label="已过保" value={`${warrantyWarnings} 件`} tone={warrantyWarnings ? 'var(--negative)' : 'var(--fg)'} />
@@ -314,7 +333,7 @@ export function Fixed() {
               onChange={(next) => setCategoryId(next || 'all')} />
             <div style={{ alignSelf: 'center', textAlign: 'right', color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>找到 {cards.length} 件</div>
           </div>
-          <Overview cards={cards} onEdit={setAssetModal} onEvent={(assetId) => setEventModal({ assetId })} onAddComponent={(hostId, bundled) => setAssetModal({ kind: 'component', hostId, bundled })} onPlacement={(assetId) => setEventModal({ assetId, placement: true })} onConvertUpgrade={(host, event) => setUpgradeConversion({ host, event })} onMetric={(assetId, metric) => setMetricModal({ assetId, metric })} onUsage={(metric) => setUsageModal({ metric })} onConsumable={(assetId) => setConsumableModal({ assetId })} onGoal={(assetId, goal) => setGoalModal({ assetId, goal })} onTimeline={openTimeline} />
+          <Overview cards={cards} {...itemActions} onOpen={(item) => openMobile(`item:${item.id}`)} />
         </>
       )) : (
         <TimelineExplorer
@@ -337,6 +356,7 @@ export function Fixed() {
         />
       )}
 
+      </>}
       {assetModal !== null && (() => {
         const isChoice = typeof assetModal === 'object' && 'kind' in assetModal;
         const isPreset = isChoice && assetModal.kind === 'preset';
@@ -473,7 +493,7 @@ function FixedEmptyState({
   onSelect: (categoryId: string) => void;
 }) {
   return (
-    <section className="zc-card" style={{ padding: 22 }}>
+    <section className="zc-card">
       <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>记录第一件真实物品</div>
       <div style={{ marginTop: 7, color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.7 }}>
         选择常用类型可直接打开现有新增表单并预选分类。你仍需填写真实名称，取消表单不会留下任何物品或资金记录。
@@ -503,6 +523,7 @@ function FixedEmptyState({
 
 function Overview(props: {
   cards: FixedCardVM[];
+  onOpen?: (item: FixedCardVM) => void;
   onEdit: (asset: FixedAsset) => void;
   onEvent: (assetId: string) => void;
   onAddComponent: (hostId: string, bundled: boolean) => void;
@@ -514,18 +535,26 @@ function Overview(props: {
   onGoal: (assetId: string, goal?: FixedAssetGoal) => void;
   onTimeline: (item: FixedCardVM, entry: FixedTimelineVM) => void;
 }) {
+  const compact = useCompactView();
+  if (compact) return <TaskList title="物品" items={props.cards.map((item) => ({
+    label: item.name,
+    note: `${item.status} · 净投入 ${money(item.net, item.currencySymbol)} · ${money(item.perDay, item.currencySymbol)}/天`,
+    value: item.category,
+    onClick: () => props.onOpen?.(item),
+  }))} />;
   const groups = new Map<string, FixedCardVM[]>();
   for (const item of props.cards) groups.set(item.categoryParent, [...(groups.get(item.categoryParent) ?? []), item]);
   if (!props.cards.length) return <div className="zc-card" style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>该筛选下暂无物品资产</div>;
   return <>{[...groups.entries()].map(([group, items]) => <section key={group} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}><div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>{group}<span style={{ marginLeft: 8, color: 'var(--text-tertiary)' }}>{items.length}</span></div><div className="zc-fixed-card-grid">{items.map((item) => <ItemCard key={item.id} item={item} {...props} />)}</div></section>)}</>;
 }
 
-function ItemCard({ item, onEdit, onEvent, onAddComponent, onPlacement, onConvertUpgrade, onMetric, onUsage, onConsumable, onGoal, onTimeline }: Omit<Parameters<typeof Overview>[0], 'cards'> & { item: FixedCardVM }) {
-  const compactView = useCompactView();
+function ItemCard({ item, detail = false, onEdit, onEvent, onAddComponent, onPlacement, onConvertUpgrade, onMetric, onUsage, onConsumable, onGoal, onTimeline }: Omit<Parameters<typeof Overview>[0], 'cards'> & { item: FixedCardVM; detail?: boolean }) {
+  const isCompact = useCompactView();
+  const compactView = isCompact && !detail;
   const [expanded, setExpanded] = useState(false);
   const cash = (value: string) => money(value, item.currencySymbol);
   const canPlaceComponent = !item.sold && canPlaceFixedComponent(item.raw);
-  return <article className="zc-card">
+  return <ItemSurface detail={detail}>
     <div className={`zc-fixed-card-header${item.imageAttachment ? ' has-image' : ''}`} style={{ display: 'grid', gridTemplateColumns: item.imageAttachment ? '92px 1fr auto' : '1fr auto', gap: 14, alignItems: 'start' }}>
       {item.imageAttachment && <AttachmentPreview className="zc-fixed-card-image" attachment={item.imageAttachment} alt={item.name} style={{ width: 92, height: 92, objectFit: 'cover', border: '1px solid var(--border)' }} />}
       <div style={{ minWidth: 0 }}>
@@ -538,10 +567,10 @@ function ItemCard({ item, onEdit, onEvent, onAddComponent, onPlacement, onConver
     {compactView && <div className="zc-fixed-mobile-summary"><span>累计净投入 <b>{cash(item.net)}</b></span>{item.referenceValue && <span>参考现值 {cash(item.referenceValue)}</span>}</div>}
     {compactView && <button type="button" className="zc-fixed-mobile-expand zc-btn zc-btn--outline" aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>{expanded ? '收起详情' : '查看指标与操作'}</button>}
     {(!compactView || expanded) && <>
-    <div className="zc-fixed-card-metrics" style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr 1fr', gap: 18, marginTop: 16, padding: '14px 0', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
-      <div><div style={smallLabel}>累计净投入</div><div style={{ fontSize: 'var(--fs-display)', fontWeight: 'var(--fw-bold)', marginTop: 4 }}>{cash(item.net)}</div><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>累计支出 {cash(item.invested)} · 累计回款 {cash(item.recovered)}</div>{item.referenceValue && <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>参考现值 {cash(item.referenceValue)}（不参与净投入）</div>}</div>
-      <div><div style={smallLabel}>日均净投入</div><div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)', marginTop: 7 }}>{cash(item.perDay)}<small style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}> / 天</small></div><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 5 }}>{item.days} 天</div></div>
-      <div><div style={smallLabel}>主使用指标</div>{item.metrics.length ? <><div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)', marginTop: 7 }}>{fmtAmount(item.metrics.find((row) => row.raw.isPrimary)?.total ?? item.metrics[0]!.total, 2)}<small style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}> {item.metrics.find((row) => row.raw.isPrimary)?.unitLabel ?? item.metrics[0]!.unitLabel}</small></div><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 5 }}>{cash(item.metrics.find((row) => row.raw.isPrimary)?.perUnit ?? item.metrics[0]!.perUnit)} / 单位</div></> : <button onClick={() => onMetric(item.id)} style={{ ...linkButton, marginTop: 12 }}>添加指标</button>}</div>
+    <div className="zc-card-band is-inset zc-fixed-card-metrics">
+      <CardMetric label="累计净投入" value={cash(item.net)} note={<>累计支出 {cash(item.invested)} · 累计回款 {cash(item.recovered)}{item.referenceValue && <div>参考现值 {cash(item.referenceValue)}（不参与净投入）</div>}</>} />
+      <CardMetric label="日均净投入" value={<>{cash(item.perDay)}<small className="zc-card-metric-unit"> / 天</small></>} note={`${item.days} 天`} />
+      <CardMetric label="主使用指标" value={item.metrics.length ? <>{fmtAmount(item.metrics.find((row) => row.raw.isPrimary)?.total ?? item.metrics[0]!.total, 2)}<small className="zc-card-metric-unit"> {item.metrics.find((row) => row.raw.isPrimary)?.unitLabel ?? item.metrics[0]!.unitLabel}</small></> : <button onClick={() => onMetric(item.id)} style={linkButton}>添加指标</button>} note={item.metrics.length ? `${cash(item.metrics.find((row) => row.raw.isPrimary)?.perUnit ?? item.metrics[0]!.perUnit)} / 单位` : undefined} />
     </div>
     {item.metrics.length > 0 && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>{item.metrics.map((metric) => <div key={metric.raw.id} style={{ display: 'flex', alignItems: 'stretch' }}><button onClick={() => onUsage(metric.raw)} style={metricButton}><b>{metric.raw.name}</b><span>{fmtAmount(metric.total, 2)} {metric.unitLabel}</span><small>{cash(metric.perUnit)} / {metric.unitLabel}</small></button><button title="编辑使用指标" aria-label={`编辑 ${metric.raw.name}`} onClick={() => onMetric(item.id, metric.raw)} style={{ border: '1px solid var(--border)', borderLeft: 'none', background: 'var(--surface)', color: 'var(--text-tertiary)', cursor: 'pointer', width: 30 }}>⋮</button></div>)}</div>}
     {item.goals.length > 0 && <div style={{ marginTop: 14 }}>{item.goals.map((goal) => <div key={goal.raw.id} style={{ marginTop: 9 }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 'var(--fs-meta)' }}><button onClick={() => onGoal(item.id, goal.raw)} style={{ ...linkButton, color: 'var(--text-primary)' }}>{goal.raw.name}</button><span>{fmtAmount(goal.currentUsage, 1)} / {fmtAmount(goal.targetUsage, 1)} {goal.unitLabel} · 当前 {cash(goal.currentUnitCost)} / {goal.unitLabel}</span></div><div style={{ height: 7, background: 'var(--surface-2)', border: '1px solid var(--border)', marginTop: 5 }}><div style={{ width: `${Math.max(0, Math.min(100, goal.progress * 100))}%`, height: '100%', background: goal.achieved ? 'var(--positive)' : 'var(--accent)' }} /></div></div>)}</div>}
@@ -551,10 +580,41 @@ function ItemCard({ item, onEdit, onEvent, onAddComponent, onPlacement, onConver
     <div style={{ display: 'flex', gap: 14, marginTop: 14, flexWrap: 'wrap' }}><button onClick={() => onEvent(item.id)} style={linkButton}>+ 生命周期事件</button>{canPlaceComponent && (item.isComponent ? <button onClick={() => onPlacement(item.id)} style={linkButton}>+ {item.installedIn ? '拆下／转装' : '安装'}配件</button> : <><button onClick={() => onAddComponent(item.id, false)} style={linkButton}>+ 购入配件</button><button onClick={() => onAddComponent(item.id, true)} style={linkButton}>+ 登记原配件</button></>)}<button onClick={() => onMetric(item.id)} style={linkButton}>+ 使用指标</button><button onClick={() => onConsumable(item.id)} style={linkButton}>+ 耗材</button><button onClick={() => onGoal(item.id)} style={linkButton}>+ 成本目标</button></div>
     <details style={{ marginTop: 13 }}><summary style={{ cursor: 'pointer', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>完整时间线 ({item.timeline.length})</summary><div style={{ marginTop: 8 }}>{item.timeline.slice(0, 20).map((entry) => <button className="zc-fixed-timeline-entry" key={`${entry.kind}:${entry.id}`} onClick={() => onTimeline(item, entry)} style={timelineRow}><span style={{ width: 8, height: 8, background: entry.color, borderRadius: 'var(--r-round)' }} /><b>{entry.label}</b><span>{entry.date}</span><span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.detail}</span><TimelineAmount entry={entry} /></button>)}</div>{canPlaceComponent && !item.isComponent && item.timeline.filter((entry) => entry.kind === 'event' && canConvertFixedUpgrade(item.raw, entry.raw as FixedAssetEvent)).map((entry) => <button key={`convert:${entry.id}`} onClick={() => onConvertUpgrade(item.raw, entry.raw as FixedAssetEvent)} style={{ ...linkButton, marginTop: 8, display: 'block' }}>将 {entry.date} 的升级支出转为配件</button>)}</details>
     </>}
-  </article>;
+  </ItemSurface>;
 }
 
-function Kpi({ label, value, tone = 'var(--fg)' }: { label: string; value: string; tone?: string }) { return <div className="zc-card"><div style={smallLabel}>{label}</div><div style={{ marginTop: 7, fontSize: 'var(--fs-display)', fontWeight: 'var(--fw-bold)', color: tone }}>{value}</div></div>; }
+function ItemSurface({ detail, children }: { detail: boolean; children: ReactNode }) {
+  return detail ? <div className="zc-fixed-detail-body">{children}</div> : <Card as="article">{children}</Card>;
+}
+
+function MobileItemDetail({ item, onBack, ...actions }: Omit<Parameters<typeof Overview>[0], 'cards' | 'onOpen'> & { item: FixedCardVM; onBack: () => void }) {
+  const [tab, setTab] = useState<'overview' | 'usage' | 'events'>('overview');
+  const [visible, setVisible] = useState(30);
+  const tabs = useTabSet(['overview', 'usage', 'events'] as const, tab, setTab);
+  const records = item.timeline.filter((entry) => tab === 'usage' ? entry.kind === 'usage' : entry.kind !== 'usage');
+  return <div className="zc-mobile-task-page">
+    <MobilePageHeader title={item.name} onBack={onBack} backLabel="返回物品" />
+    <div className="zc-tabs" role="tablist" aria-label="物品详情">{(['overview', 'usage', 'events'] as const).map((id) => <button key={id} type="button" {...tabs.tabProps(id)} className={tab === id ? 'zc-tab is-active' : 'zc-tab'}>{({ overview: '概况', usage: '使用', events: '事件' })[id]}</button>)}</div>
+    <div {...tabs.panelProps}>
+      {tab === 'overview' && <ItemCard item={item} detail {...actions} />}
+      {tab === 'usage' && <>
+        <TaskList title="使用指标" items={item.metrics.map((metric) => ({ label: metric.raw.name, note: `${fmtAmount(metric.total, 4)} ${metric.unitLabel} · ${money(metric.perUnit, item.currencySymbol)}/${metric.unitLabel}`, onClick: () => actions.onUsage(metric.raw) }))} />
+        {!item.metrics.length && <p className="zc-caption">先添加使用指标，再记录次数、时长或累计读数。</p>}
+        <div className="zc-mobile-shortcuts"><button type="button" className="zc-btn" onClick={() => actions.onMetric(item.id)}>添加使用指标</button><button type="button" className="zc-btn" onClick={() => actions.onConsumable(item.id)}>登记耗材</button></div>
+      </>}
+      {tab === 'events' && <button type="button" className="zc-btn zc-btn--primary" onClick={() => actions.onEvent(item.id)}>记录费用或生命周期事件</button>}
+      {tab !== 'overview' && <>
+        <TaskList title={tab === 'usage' ? '使用记录' : '物品事件'} items={records.slice(0, visible).map((entry) => ({ label: entry.label, note: `${entry.date} · ${entry.detail}`, value: entry.amount ? `${entry.moneyKind === 'spend' ? '−' : entry.moneyKind === 'recover' ? '+' : ''}${entry.amount}` : undefined, onClick: () => actions.onTimeline(item, entry) }))} />
+        {!records.length && <p className="zc-caption">还没有此类记录。</p>}
+        {records.length > visible && <button type="button" className="zc-btn" onClick={() => setVisible((count) => count + 30)}>查看更多记录</button>}
+      </>}
+    </div>
+  </div>;
+}
+
+function Kpi({ label, value, tone = 'var(--fg)' }: { label: string; value: string; tone?: string }) {
+  return <CardMetric label={label} value={value} tone={tone === 'var(--positive)' ? 'positive' : tone === 'var(--negative)' ? 'negative' : 'default'} />;
+}
 
 const timelineMoneyVisual = {
   spend: { label: '支出', prefix: '−', color: 'var(--negative)' },
@@ -572,7 +632,6 @@ function TimelineAmount({ entry }: { entry: FixedTimelineVM }) {
 }
 
 const linkButton = linkAccent;
-const smallLabel = metaText;
 const metricButton = { minWidth: 130, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-primary)', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start', cursor: 'pointer', fontSize: 'var(--fs-meta)' } as const;
 const timelineRow = { width: '100%', border: 'none', borderBottom: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 9, padding: '8px 0', fontSize: 'var(--fs-meta)', cursor: 'pointer' } as const;
 const statusBadge = (terminal: boolean) => ({ padding: '3px 7px', border: '1px solid var(--border)', background: terminal ? 'var(--surface-2)' : 'color-mix(in srgb, var(--positive) 12%, var(--surface))', color: terminal ? 'var(--fg-subtle)' : 'var(--positive)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' } as const);

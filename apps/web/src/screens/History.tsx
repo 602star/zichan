@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCompactView } from '../ui/useCompactView.js';
+import { MobilePageHeader, useMobileSection } from '../ui/MobilePage.js';
 import { addDays, isDateInRange, localToday, type AuditBatch, type OperationLogEntry, type OperationType, type SyncConflictResolution, type Transaction } from '@zichan/core';
 import {
   restoreConversion,
@@ -168,6 +169,7 @@ const FIELD_LABELS: Record<string, string> = {
 const selectStyle = selectBase;
 
 export function History() {
+  const [mobileView, openMobile, backMobile] = useMobileSection('history');
   const compactView = useCompactView();
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const { store, rev, bump } = useStore();
@@ -178,6 +180,7 @@ export function History() {
   const [resolutions, setResolutions] = useState<SyncConflictResolution[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [detailOpen, setDetailOpen] = useState(false);
+  useEffect(() => { if (mobileView === 'index') setDetailOpen(false); }, [mobileView]);
   const detailRef = useRef<HTMLDivElement>(null);
   const [range, setRange] = useState<DateRangeValue>(() => ({ preset: 'custom', from: addDays(localToday(), -29), to: localToday() }));
   const [view, setView] = useState<TimelineViewMode>('list');
@@ -360,6 +363,7 @@ export function History() {
   function openDetail(event: HistoryEvent) {
     setSelectedId(event.id);
     setDetailOpen(true);
+    if (compactView) openMobile('detail');
   }
 
   useEffect(() => {
@@ -371,7 +375,7 @@ export function History() {
   return (
     <>
     <div className="zc-history-layout" style={{ display: 'grid', gridTemplateColumns: detailOpen && selected ? 'minmax(0, 1fr) minmax(360px, 420px)' : 'minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+      {(!compactView || !detailOpen || !selected) && <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
         <div className="zc-card">
           <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--sp-3)', marginBottom: 14 }}>
             <div>
@@ -415,7 +419,7 @@ export function History() {
           </div>}
         </div>
 
-        {view === 'list' ? <div className="zc-card" style={{ padding: 0, overflow: 'hidden' }}>
+        {view === 'list' ? <div className="zc-card is-flush">
           <div style={{ overflowX: 'auto' }}>
             <table className="zc-card-table" data-history-table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
               <thead>
@@ -451,8 +455,9 @@ export function History() {
         )}
       </div>
 
+      }
       {detailOpen && selected && <div ref={detailRef} className="zc-history-detail" style={{ position: 'sticky', top: 92, minWidth: 0 }}>
-        <div className="zc-history-detail-toolbar"><span>记录详情</span><button type="button" onClick={() => setDetailOpen(false)} aria-label="收起记录详情">收起 ×</button></div>
+        {compactView ? <MobilePageHeader title="记录详情" onBack={backMobile} backLabel="返回历史" /> : <div className="zc-history-detail-toolbar"><span>记录详情</span><button type="button" onClick={() => setDetailOpen(false)} aria-label="收起记录详情">收起 ×</button></div>}
         <HistoryDetail
           event={selected}
           snap={snap}

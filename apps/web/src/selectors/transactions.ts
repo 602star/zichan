@@ -97,6 +97,7 @@ export interface TransactionFilters {
 export interface TransactionItemVM {
   tx: Transaction;
   assetCode: string;
+  assetDecimals: number;
   accountName: string;
   /** 商户显示名；没商户时是 `undefined`（不是占位符，见 `payeeName`）。 */
   payeeName?: string;
@@ -118,6 +119,8 @@ export interface TransactionGroupVM {
   items: TransactionItemVM[];
   income: string;
   expense: string;
+  /** This day's complete filtered aggregate includes an amount without a conversion rate. */
+  incomplete?: boolean;
 }
 
 export interface TransactionCategoryVM {
@@ -248,6 +251,7 @@ export interface TransactionsVM {
   schedules: ScheduleRowVM[];
   accountBalances: AccountBalanceVM[];
   reportCurrencyCode: string;
+  reportCurrencyDecimals: number;
   missingRateAssetCodes: string[];
 }
 
@@ -837,6 +841,7 @@ function itemForTransaction(snap: Snapshot, tx: Transaction, report: ReportCurre
   return {
     tx,
     assetCode: assetCode(snap, tx.assetId),
+    assetDecimals: snap.assets.find((asset) => asset.id === tx.assetId)?.decimals ?? 8,
     accountName: tx.type === 'transfer'
       ? `${accountName(snap, tx.accountId)} → ${accountName(snap, tx.transferAccountId)}`
       : accountName(snap, tx.accountId),
@@ -1134,6 +1139,7 @@ export function buildTransactionsFromReadModel(
     const group = groups.get(row.reportDate);
     const converted = group && aggregateAmount(report, row);
     if (group && converted) group[row.direction] = D(group[row.direction]).plus(converted).toString();
+    if (group && converted === undefined) group.incomplete = true;
   }
   const weekRange = dateRangeForPreset('this_week', today);
   const todayTotals = aggregateTotals(report, input.summaryAggregates.filter((row) => row.reportDate === today));
@@ -1188,6 +1194,7 @@ export function buildTransactionsFromReadModel(
     schedules: buildSchedules(baseSnap, asOf),
     accountBalances: input.accountBalances ?? [],
     reportCurrencyCode: report.code,
+    reportCurrencyDecimals: report.decimals,
     missingRateAssetCodes: report.missingCodes(),
   };
 }
@@ -1239,6 +1246,7 @@ export function buildTransactions(snap: Snapshot, filters: TransactionFilters, t
     group.items.push(item);
     group.income = D(group.income).plus(item.incomeBase).toString();
     group.expense = D(group.expense).plus(item.expenseBase).toString();
+    if (report.toReportAt(transactionEffectAmount(snap, tx), transactionEffectAssetId(snap, tx), transactionEffectDate(snap, tx)) === undefined) group.incomplete = true;
   }
 
   const weekRange = dateRangeForPreset('this_week', today);
@@ -1298,6 +1306,7 @@ export function buildTransactions(snap: Snapshot, filters: TransactionFilters, t
     schedules: buildSchedules(snap, asOf),
     accountBalances: buildAccountBalances(snap),
     reportCurrencyCode: report.code,
+    reportCurrencyDecimals: report.decimals,
     missingRateAssetCodes: report.missingCodes(),
   };
 }

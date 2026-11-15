@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCompactView } from '../ui/useCompactView.js';
+import { CardFact } from '../ui/Card.js';
 import {
   D,
   canonicalJson,
@@ -242,6 +244,7 @@ export function AddConversionModal({
   assetPresetCode?: AssetPresetCode;
   entry?: { type: ConversionType; fromAssetId?: string; toAssetId?: string };
 }) {
+  const compact = useCompactView();
   const initial = useMemo(() => initialOperation ? { chain: { ...initialOperation.conversions[0]!.chain, title: initialOperation.operation.title,
     type: initialOperation.conversions.at(-1)!.chain.type, bookValueInBase: initialOperation.conversions.at(-1)!.chain.bookValueInBase },
     steps: initialOperation.conversions.flatMap((row) => row.steps) } : initialRecord, [initialOperation, initialRecord]);
@@ -285,6 +288,7 @@ export function AddConversionModal({
   const [err, setErr] = useState<string | null>(null);
   const [errorField, setErrorField] = useState<ConversionFieldError | null>(null);
   const [pending, setPending] = useState<PreparedConversion | null>(null);
+  const [mobileReview, setMobileReview] = useState<PreparedConversion | null>(null);
   const [operationPreview, setOperationPreview] = useState<ConversionPreview | null>(null);
   const [operationIdentity] = useState(() => initialOperation?.operation ?? { id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false, chainIds: [] });
   const [impactText, setImpactText] = useState('');
@@ -682,6 +686,7 @@ export function AddConversionModal({
         setSaving(false);
         return;
       }
+      if (compact && !initial) { setMobileReview(prepared); setSaving(false); return; }
       await persist(prepared);
     } catch (error) {
       showError(error);
@@ -973,7 +978,7 @@ export function AddConversionModal({
           )}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
             <button onClick={requestClose} disabled={saving} className="zc-btn">取消</button>
-            <button onClick={() => void save()} disabled={saving || creatingAssetCode !== null || completed.current} className="zc-btn zc-btn--primary" style={{ opacity: saving || creatingAssetCode !== null ? 0.6 : 1 }}>{saving || creatingAssetCode !== null ? '处理中…' : initial ? '预览影响' : '保存转换'}</button>
+            <button onClick={() => void save()} disabled={saving || creatingAssetCode !== null || completed.current} className="zc-btn zc-btn--primary" style={{ opacity: saving || creatingAssetCode !== null ? 0.6 : 1 }}>{saving || creatingAssetCode !== null ? '处理中…' : initial ? '预览影响' : compact ? '核对转换' : '保存转换'}</button>
           </div>
         </div>
       {(draftState.error || draftState.status) && <div role={draftState.error ? 'alert' : 'status'}>{draftState.error || draftState.status}</div>}
@@ -990,6 +995,19 @@ export function AddConversionModal({
         onCancel={() => setCloseRequested(false)} onConfirm={async () => { await draftState.keep(); onClose(); }}>
         草稿会加密保存在当前账号、当前账本的本机存储中。
         <button type="button" style={{ ...dangerLink, display: 'block', marginTop: 12 }} onClick={() => void draftState.finish().then(onClose).catch((cause: unknown) => setErr(String(cause)))}>放弃草稿并关闭</button>
+      </ConfirmDialog>}
+      {mobileReview && <ConfirmDialog title="核对转换" confirmLabel="确认保存转换" cancelLabel="返回修改" busy={saving} onCancel={() => setMobileReview(null)} onConfirm={async () => { await persist(mobileReview); setMobileReview(null); }}>
+        <p>{mobileReview.chain.title || '资产转换'} · {mobileReview.chain.date}</p>
+        {mobileReview.steps.map((step, index) => {
+          const amounts = conversionStepAmounts(step);
+          return <section className="zc-conversion-review-step" key={step.id}>
+            <h3>步骤 {index + 1} · {code(step.fromAssetId)} → {code(step.toAssetId)}</h3>
+            <CardFact label="账户实扣" value={`${quantity(step.fromAssetId, amounts.sourceDebit)} ${code(step.fromAssetId)}`} />
+            <CardFact label="实际到账" value={`${quantity(step.toAssetId, amounts.targetCredit)} ${code(step.toAssetId)}`} />
+            {step.fees?.map((fee) => <CardFact key={fee.id} label="手续费" value={`${quantity(fee.assetId, fee.amount)} ${code(fee.assetId)}`} />)}
+          </section>;
+        })}
+        <p className="zc-caption">确认后写入账本。手续费已按各步骤的扣款与到账口径计入。</p>
       </ConfirmDialog>}
       {pending && (
         <ConfirmDialog

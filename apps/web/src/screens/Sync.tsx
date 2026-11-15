@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCompactView } from '../ui/useCompactView.js';
+import { TaskList } from '../ui/MobilePage.js';
 import {
   requestJson, aggregateKey, registerAccount, loginAccount, fetchAuthMe, fetchLedgerKeyEnvelope, checkConsistency, recomputeCaches, resolveConflictGroup,
   type StoredSyncCommit, type SyncConflictBranchRow, type SyncConflictGroupRow,
@@ -368,6 +370,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
   onExportBackup: () => Promise<void>;
   onImportBackup: () => void;
 }) {
+  const compact = useCompactView();
   const { store, bump } = useStore();
   const snap = useSnapshot('sync');
   const [profiles, setProfiles] = useState<SyncConnection[]>(loadSyncConnections);
@@ -1613,7 +1616,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
           </select>
           <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)' }}>{autoSyncStatus}</span>
         </div>
-      {<div className="zc-card">
+      {<div className="zc-card-group">
         <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>服务器配置</div>
@@ -1871,7 +1874,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
         )}
       </div>}
 
-      <div className="zc-card">
+      <div className="zc-card-group">
         <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>同步结果</div>
@@ -1954,7 +1957,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
         )}
       </div>
 
-      <div className="zc-card">
+      <div className="zc-card-group">
         <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 12 }}>设备</div>
         <div className="zc-scroll-x"><table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr><th style={thStyle}>设备 ID</th><th style={thStyle}>上次同步</th><th style={thStyle}>上次应用</th></tr></thead>
@@ -2006,7 +2009,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
           {!accountProtection() && !ledgerKey.unlocked && ledgerKeyCard}
 
           {invalidCommits.length > 0 && (
-            <div className="zc-card" style={{ border: '1px solid var(--negative)' }}>
+            <div className="zc-card is-alert is-danger">
               <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 8 }}>
                 <div>
                   <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>有 {invalidCommits.length} 条记录没能同步</div>
@@ -2039,7 +2042,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
             * of pushing the everyday status off screen.
             */}
           {conflicts.length > 0 && (
-            <div className="zc-card" style={{ border: '1px solid var(--negative)' }}>
+            <div className="zc-card is-alert is-danger">
               <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
                 <div>
                   <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>冲突 <span style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)' }}>{filteredConflicts.length}/{conflicts.length}</span></div>
@@ -2137,6 +2140,10 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
           )}
 
         </>}
+          {compact && section === 'server' && <TaskList label="备份与恢复" items={[
+            { label: '本机备份', note: '创建恢复点，或导出加密文件', onClick: () => onSelectSection('device') },
+            { label: '恢复数据', note: '选择恢复点，先演练再确认', onClick: () => onSelectSection('restore') },
+          ]} />}
           <Settings
             theme={theme}
             mode={mode}

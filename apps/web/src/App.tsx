@@ -1,5 +1,5 @@
 import { accountSessionStorage } from './account-storage.js';
-import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type SetStateAction } from 'react';
 import type { LedgerBackup } from '@zichan/db';
 import { type LedgerMode, localToday, newId } from '@zichan/core';
 import { useStore } from './db/store.js';
@@ -36,6 +36,9 @@ import { ledgerAsOf } from './as-of.js';
 import { AppSecurityGate } from './ui/AppSecurityGate.js';
 import { runSynchronousFlight, VaultUnlockPrompt } from './ui/VaultUnlockPrompt.js';
 import { DialogShell } from './ui/DialogShell.js';
+import { TaskList } from './ui/MobilePage.js';
+import { hasMobileDialog } from './ui/mobile-dialog-history.js';
+import { navigateTo, rememberScreenTarget, type ScreenTarget } from './screen-target.js';
 import { installSyncLifecycle } from './background-sync.js';
 import { connectionLinkFromLocation } from './connection-link.js';
 import {
@@ -69,11 +72,13 @@ const Transactions = lazy(() => import('./screens/Transactions.js').then((module
 const SettingsPage = lazy(() => import('./screens/SettingsPage.js').then((module) => ({ default: module.SettingsPage })));
 const Account = lazy(() => import('./screens/Account.js').then((module) => ({ default: module.Account })));
 const History = lazy(() => import('./screens/History.js').then((module) => ({ default: module.History })));
+const Assets = lazy(() => import('./screens/Assets.js').then((module) => ({ default: module.Assets })));
 
 const ACTIVE_SCREEN_KEY = 'zichan.activeScreen';
 const RETRY_SCREEN_KEY = 'zichan.retryScreen';
 const SCREEN_IDS = new Set<ScreenId>(NAVIGATION_ITEMS.map((item) => item.id));
 const NAV_ICONS: Record<ScreenId, LucideIcon> = {
+  assets: BookOpen,
   dashboard: LayoutDashboard,
   convert: ArrowLeftRight,
   transactions: List,
@@ -134,6 +139,7 @@ function initialScreen(preview: boolean): ScreenId {
 }
 
 const META: Record<ScreenId, [string, string]> = {
+  assets: ['资产', '账户 · 持仓 · 物品'],
   dashboard: ['总览', '净资产、配置与近期动态一览'],
   convert: ['资产转换', '多步换汇链路 · 汇率与手续费全程可追溯'],
   transactions: ['日常收支', '工资、房租、餐饮、购物与现金流'],
@@ -291,7 +297,39 @@ function importDiff(backup: LedgerBackup, snap: Snapshot | null): ImportDiff {
 export function App() {
   const { store, bump, storageBackend, dataLocation, preview } = useStore();
   const snap = useSnapshot('shell');
-  const [screen, setScreen] = useState<ScreenId>(() => initialScreen(Boolean(preview)));
+  const [screen, setScreenState] = useState<ScreenId>(() => initialScreen(Boolean(preview)));
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
+  const [quickEntryOpen, setQuickEntryOpen] = useState(false);
+  const setScreen = useCallback((value: SetStateAction<ScreenId>) => {
+    const next = typeof value === 'function' ? value(screenRef.current) : value;
+    if (next === screenRef.current) {
+      window.dispatchEvent(new CustomEvent('zichan:reset-page', { detail: { screen: next } }));
+      return;
+    }
+    if (window.matchMedia('(max-width: 767px)').matches) {
+      const state = { zcScreen: next };
+      if (history.state?.zcDialog) history.replaceState(state, '');
+      else history.pushState(state, '');
+    }
+    screenRef.current = next;
+    setScreenState(next);
+    setQuickEntryOpen(false);
+    window.scrollTo({ top: 0 });
+  }, []);
+  useEffect(() => {
+    history.replaceState({ ...history.state, zcScreen: screenRef.current }, '');
+    const restore = () => {
+      if (hasMobileDialog()) return;
+      const next = history.state?.zcScreen;
+      if (typeof next === 'string' && SCREEN_IDS.has(next as ScreenId)) {
+        setScreenState(preview ? clampPreviewScreen(next as ScreenId) : next as ScreenId);
+        setMobileMoreOpen(false); setQuickEntryOpen(false);
+      }
+    };
+    window.addEventListener('popstate', restore);
+    return () => window.removeEventListener('popstate', restore);
+  }, [preview]);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(() => {
     try {
       return connectionLinkFromLocation() || accountSessionStorage.getItem(ACTIVE_SCREEN_KEY) === 'sync' ? 'server' : 'ledger';
@@ -344,20 +382,27 @@ export function App() {
   // them to the dashboard rather than reporting the wrong machine's state as the user's.
   useEffect(() => {
     if (preview) setScreen((current) => clampPreviewScreen(current));
-  }, [preview]);
+  }, [preview, setScreen]);
   useEffect(() => {
     if (base) setBaseSymbol(base.symbol ?? `${base.code} `);
   }, [base]);
 
   useEffect(() => {
     const onNavigate = (event: Event) => {
-      const detail = (event as CustomEvent<{ screen?: ScreenId; tab?: SettingsSection }>).detail;
-      if (detail?.tab) setSettingsSection(detail.tab);
-      if (detail?.screen) setScreen(detail.screen === 'sync' ? 'settings' : detail.screen);
+      const detail = (event as CustomEvent<ScreenTarget>).detail;
+      if (!detail?.screen || (!SCREEN_IDS.has(detail.screen) && detail.screen !== 'sync')) return;
+      const next = detail.screen === 'sync' ? 'settings' : detail.screen;
+      const tab = detail.screen === 'sync' ? 'server' : detail.tab;
+      const target = { ...detail, screen: next, tab };
+      rememberScreenTarget(target);
+      window.dispatchEvent(new CustomEvent('zichan:screen-target', { detail: target }));
+      if (next === 'settings' && tab && ['ledger', 'device', 'server', 'restore', 'security', 'appearance'].includes(tab)) setSettingsSection(tab as SettingsSection);
+      if (next !== screenRef.current || (!tab && !detail.id)) setScreen(next);
+      setMobileMoreOpen(false);
     };
     window.addEventListener('zichan:navigate', onNavigate);
     return () => window.removeEventListener('zichan:navigate', onNavigate);
-  }, []);
+  }, [setScreen]);
 
   useEffect(() => {
     try {
@@ -365,6 +410,7 @@ export function App() {
     } catch {
       // Session storage can be unavailable in hardened browser contexts.
     }
+    document.getElementById('zc-app-main')?.focus({ preventScroll: true });
   }, [screen]);
 
   // A preview is a read-only copy of somebody else's ledger: installing the sync lifecycle
@@ -512,6 +558,10 @@ export function App() {
   }
 
   function quickTransaction() {
+    if (window.matchMedia('(max-width: 767px)').matches && screenRef.current !== 'transactions') {
+      setQuickEntryOpen(true);
+      return;
+    }
     setScreen('transactions');
     try {
       accountSessionStorage.setItem('zichan.quickTransaction', '1');
@@ -539,14 +589,14 @@ export function App() {
     <div className="zc-app-shell" style={rootStyle}>
       <a className="zc-skip-link" href="#zc-app-main" onClick={(event) => { event.preventDefault(); document.getElementById('zc-app-main')?.focus(); }}>跳转到主要内容</a>
       <Sidebar screen={screen} setScreen={setScreen} onQuickTransaction={quickTransaction} ledgerMode={ledgerMode} navigation={effectiveNavigation} />
-      <main id="zc-app-main" className="zc-app-main" tabIndex={-1}>
+      <main id="zc-app-main" className="zc-app-main" tabIndex={-1} aria-labelledby="zc-page-title">
         <header className="zc-app-header" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           borderBottom: '1px solid var(--border)',
           position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 5,
         }}>
           <div className="zc-header-title">
-            <h1 style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{title}</h1>
+            <h1 id="zc-page-title" style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{title}</h1>
             <div className="zc-header-subtitle" style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginTop: 3 }}>{sub}</div>
           </div>
           <div className="zc-header-meta" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -579,6 +629,7 @@ export function App() {
         <div className="zc-page-content">
           <Suspense fallback={<div role="status" style={{ minHeight: 240, padding: 24, color: 'var(--text-tertiary)' }}>正在载入…</div>}>
             {screen === 'dashboard' && <Dashboard />}
+            {screen === 'assets' && <Assets />}
             {screen === 'convert' && <Convert />}
             {screen === 'transactions' && <Transactions />}
             {screen === 'game' && <Game />}
@@ -620,6 +671,7 @@ export function App() {
         onEnableModule={(id) => void enableModule(id)}
       />
       <div id="zc-dialog-portal" />
+      {quickEntryOpen && <Suspense fallback={<div role="status" className="zc-entry-loading">正在打开记账…</div>}><Transactions entryOnly onEntryClose={() => setQuickEntryOpen(false)} /></Suspense>}
       {!preview && <input ref={fileRef} type="file" accept="application/x-zichan-backup,.zcbak" onChange={doImport} style={{ display: 'none' }} />}
       {importDialog?.kind === 'password' && (
         <ConfirmDialog
@@ -894,9 +946,7 @@ function MobileNavigation(props: {
   }, [onMoreOpen]);
 
   const visibleItems = orderedNavigationItems(props.navigation);
-  const mainItems = visibleItems.slice(0, 3);
-  const moreItems = visibleItems.slice(3);
-  const moreIds = new Set(moreItems.map((item) => item.id));
+  const mainItems = (['dashboard', 'transactions', 'assets'] as const).map((id) => NAVIGATION_ITEMS.find((item) => item.id === id)!);
   const shownIds = new Set(visibleItems.map((item) => item.id));
   /*
    * The quick action owns the exact middle column, and 日常收支 sits directly to
@@ -927,17 +977,17 @@ function MobileNavigation(props: {
         style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
       >
         {beforeQuick.map(({ id }) => (
-          <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
-            <span><NavIcon id={id} size={19} /></span><small>{navigationLabel(id, props.ledgerMode)}</small>
+          <button key={id} aria-label={navigationLabel(id, props.ledgerMode)} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
+            <span><NavIcon id={id} size={19} /></span><small>{id === 'transactions' ? '收支' : navigationLabel(id, props.ledgerMode)}</small>
           </button>
         ))}
-        <button className="zc-mobile-quick" aria-label="快速记账" onClick={props.onQuickTransaction}><span><PlusIcon size={24} /></span><small>快记</small></button>
+        <button className="zc-mobile-quick" aria-label="快速记账" onClick={props.onQuickTransaction}><span><PlusIcon size={24} /></span><small>记一笔</small></button>
         {afterQuick.map(({ id }) => (
-          <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
+          <button key={id} aria-label={navigationLabel(id, props.ledgerMode)} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
             <span><NavIcon id={id} size={19} /></span><small>{navigationLabel(id, props.ledgerMode)}</small>
           </button>
         ))}
-        <button className={moreIds.has(props.screen) || props.moreOpen ? 'is-active' : ''} onClick={() => props.onMoreOpen(true)}>
+        <button className={!mainItems.some((item) => item.id === props.screen) || props.moreOpen ? 'is-active' : ''} onClick={() => props.onMoreOpen(true)}>
           <span><Ellipsis aria-hidden="true" size={19} strokeWidth={1.8} /></span><small>更多</small>
         </button>
       </nav>
@@ -951,16 +1001,26 @@ function MobileNavigation(props: {
         >
             <div className="zc-mobile-drawer-handle" />
             <div className="zc-mobile-drawer-head"><b id={drawerTitleId}>更多功能</b><button type="button" data-dialog-initial-focus aria-label="关闭更多菜单" onClick={() => props.onMoreOpen(false)}>×</button></div>
-            {moreItems.length > 0 && (
-              <div className="zc-mobile-drawer-grid">
-                {moreItems.map(({ id }) => (
-                  <button key={id} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}><span><NavIcon id={id} /></span><b>{navigationLabel(id, props.ledgerMode)}</b></button>
-                ))}
-              </div>
-            )}
+            <TaskList title="查看与计划" items={[
+              { label: '报表', note: '收支、资产、物品与游戏', icon: BarChart3, onClick: () => props.onNavigate('reports') },
+              { label: '预算', note: '本月计划与剩余额度', onClick: () => navigateTo({ screen: 'transactions', tab: 'budget' }) },
+              { label: '账单', note: '到期事项与定期交易', onClick: () => navigateTo({ screen: 'transactions', tab: 'bills' }) },
+              { label: '游戏赛季', note: '投入、产出与回收', icon: Gamepad2, onClick: () => props.onNavigate('game') },
+            ]} />
+            <TaskList title="账本资料" items={[
+              { label: '资产转换', note: '换汇、买卖和连续步骤', icon: ArrowLeftRight, onClick: () => props.onNavigate('convert') },
+              { label: '物品资产', note: '使用、费用与生命周期', icon: Package, onClick: () => props.onNavigate('fixed') },
+              { label: '资料管理', note: '分类、账户、交易对象与价格', icon: Grid2X2, onClick: () => props.onNavigate('manage') },
+              { label: '操作历史', note: '记录变更与撤销', icon: HistoryIcon, onClick: () => props.onNavigate('history') },
+            ]} />
+            {props.navigation.visible.includes('settings') && <TaskList title="我的与设备" items={[
+              { label: '同步与备份', note: '连接、恢复点和恢复演练', icon: Cloud, onClick: () => navigateTo({ screen: 'settings', tab: 'server' }) },
+              { label: '设置', note: '记账、外观与设备', icon: Settings2, onClick: () => props.onNavigate('settings') },
+              { label: '我的账号', note: '资料、邮箱、配额与安全', icon: UserRound, onClick: () => props.onNavigate('account') },
+            ]} />}
             {hiddenItems.length > 0 && (
-              <>
-                <div className="zc-mobile-drawer-section-head">未启用模块</div>
+              <details className="zc-mobile-disclosure">
+                <summary>添加到桌面侧栏</summary>
                 <div className="zc-mobile-drawer-grid zc-mobile-drawer-grid-hidden">
                   {hiddenItems.map(({ id }) => (
                     <button
@@ -974,13 +1034,12 @@ function MobileNavigation(props: {
                     </button>
                   ))}
                 </div>
-              </>
+              </details>
             )}
             <div className="zc-mobile-drawer-status">
               <span>报表币种 <b>{props.reportCurrency}</b></span>
               <span>基准日 <b>{props.asOf}</b></span>
-              <span>数据引擎 <b>{props.storageLabel}</b></span>
-              <small title={props.dataLocation}>{props.dataLocation}</small>
+              <details><summary>存储位置</summary><span>{props.storageLabel}</span><small title={props.dataLocation}>{props.dataLocation}</small></details>
             </div>
         </DialogShell>
       )}

@@ -60,6 +60,30 @@ describe('buildTransactions', () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it('marks only the affected day incomplete, including missing-rate rows beyond the SQL page', () => {
+    const s = makeSnapshot();
+    const jpy = { ...s.assets[0]!, id: 'asset-jpy', code: 'JPY', name: '日元', symbol: '¥', decimals: 0 };
+    s.assets.push(jpy);
+    const known = makeTransaction({ id: 'known', date: '2026-03-03', amount: '0.10', assetId: s.ids.gbp });
+    const hidden = makeTransaction({ id: 'hidden', date: known.date, amount: '120', assetId: jpy.id });
+    const otherDay = makeTransaction({ id: 'other', date: '2026-03-02', amount: '0.20', assetId: s.ids.gbp });
+    s.transactions = [known, hidden, otherDay];
+    const filters: TransactionFilters = { range: 'all', type: 'all', category: 'all', accountId: 'all', search: '' };
+    const full = buildTransactions(s, filters);
+    const aggregates = s.transactions.map((tx) => ({ reportDate: tx.date, reportAssetId: tx.assetId, direction: 'expense' as const, category: tx.category, amounts: [tx.amount], count: 1 }));
+    const paged = buildTransactionsFromReadModel(s, filters, {
+      page: { ...s, transactions: [known, otherDay] },
+      summaryAggregates: aggregates, filteredAggregates: aggregates, filteredCount: 3,
+    });
+    for (const vm of [full, paged]) {
+      expect(vm.groups.find((group) => group.key === known.date)).toMatchObject({ expense: '0.1', incomplete: true });
+      expect(vm.groups.find((group) => group.key === otherDay.date)?.incomplete).not.toBe(true);
+      expect(vm.reportCurrencyDecimals).toBe(2);
+    }
+    s.setting!.baseCurrencyAssetId = jpy.id;
+    expect(buildTransactions(s, filters).reportCurrencyDecimals).toBe(0);
+  });
+
   it('builds monthly summary, groups, top categories and trend', () => {
     const s = makeSnapshot();
     s.transactions = [

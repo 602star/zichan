@@ -33,6 +33,8 @@ import { AccountSetupPanel } from '../ui/AccountSetupPanel.js';
 import { QuickCategorySettings } from '../ui/QuickCategorySettings.js';
 import { DateRangeBar, dateRangeValue } from '../ui/DateRangeBar.js';
 import { useCompactView } from '../ui/useCompactView.js';
+import { MobilePageHeader, TaskList, useMobileSection } from '../ui/MobilePage.js';
+import { useScreenTarget } from '../screen-target.js';
 import { allCategories, availableExtensionCategories, CATEGORY_PACKS, categoryIsHidden, categoryLabel, categoryPackMemberState, categoryPackState, categoryPacksContaining, TYPE_LABEL, type CatalogCategory, type CategoryPack, type CategoryPackMemberState, type CategoryPackState } from '../transactionMeta.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { attachmentStorageStatus, reconcileAttachmentStorage } from '../db/attachment-storage.js';
@@ -57,6 +59,9 @@ type OtherDataTab = 'accounts' | 'templates' | 'prices' | 'plans' | 'games' | 'a
 const MANAGE_TABS: readonly ManageTab[] = ['transactionCategories', 'fixedCategories', 'labels', 'assets', 'other'];
 const OTHER_DATA_TABS: readonly OtherDataTab[] = ['accounts', 'templates', 'prices', 'plans', 'games', 'attachments'];
 const PAYEE_TABS = ['mine', 'catalog'] as const;
+function mobileManageLabel(view: string) {
+  return ({ transactionCategories: '收支分类', fixedCategories: '物品分类', labels: '标签与交易对象', assets: '资产', accounts: '账户', templates: '记账模板', prices: '价格标记', plans: '定投计划', games: '游戏资料', attachments: '附件' } as Record<string, string>)[view] ?? '资料管理';
+}
 type CategoryCenterMode = 'structure' | 'quick';
 type ManageTarget = { tab?: ManageTab; categoryMode?: CategoryCenterMode; otherTab?: OtherDataTab };
 
@@ -72,6 +77,9 @@ function readManageTarget(): ManageTarget {
 }
 
 export function Manage() {
+  const compact = useCompactView();
+  const target = useScreenTarget('manage');
+  const [mobileView, openMobile, backMobile] = useMobileSection('manage');
   const { store, bump, preview } = useStore();
   const snap = useSnapshot('manage');
   const [accountSetupOpen, setAccountSetupOpen] = useState(false);
@@ -80,6 +88,16 @@ export function Manage() {
   const [initialTarget] = useState(readManageTarget);
   const [tab, setTab] = useState<ManageTab>(initialTarget.tab ?? 'transactionCategories');
   const [otherTab, setOtherTab] = useState<OtherDataTab>(initialTarget.otherTab ?? 'accounts');
+  useEffect(() => {
+    if (MANAGE_TABS.includes(mobileView as ManageTab)) setTab(mobileView as ManageTab);
+    if (OTHER_DATA_TABS.includes(mobileView as OtherDataTab)) { setTab('other'); setOtherTab(mobileView as OtherDataTab); }
+  }, [mobileView]);
+  useEffect(() => {
+    if (compact && target?.tab && [...MANAGE_TABS, ...OTHER_DATA_TABS].includes(target.tab as ManageTab & OtherDataTab)) openMobile(target.tab);
+  }, [compact, target, openMobile]);
+  useEffect(() => {
+    if (compact && initialTarget.tab) openMobile(initialTarget.tab === 'other' ? initialTarget.otherTab ?? 'accounts' : initialTarget.tab);
+  }, [compact, initialTarget, openMobile]);
   const primaryTabs = useTabSet(MANAGE_TABS, tab, setTab);
   const otherTabs = useTabSet(OTHER_DATA_TABS, otherTab, setOtherTab);
   const payeeTabs = useTabSet(PAYEE_TABS, payeeView, setPayeeView);
@@ -187,9 +205,28 @@ export function Manage() {
     }
   }
 
+  if (compact && mobileView === 'index') return <div className="zc-mobile-task-page">
+    <TaskList title="日常记账" items={[
+      { label: '收支分类', note: '分类层级、显示与排序', onClick: () => openMobile('transactionCategories') },
+      { label: '标签与交易对象', note: '标签、地点、商户与平台', onClick: () => openMobile('labels') },
+      { label: '记账模板', note: '常用交易快速填写', onClick: () => openMobile('templates') },
+    ]} />
+    <TaskList title="资产资料" items={[
+      { label: '资产', note: '币种与资产启用状态', onClick: () => openMobile('assets') },
+      { label: '账户', note: '现金、银行与信用账户', onClick: () => openMobile('accounts') },
+      { label: '价格标记', note: '折算与估值依据', onClick: () => openMobile('prices') },
+      { label: '物品分类', onClick: () => openMobile('fixedCategories') },
+    ]} />
+    <TaskList title="计划与维护" items={[
+      { label: '定投计划', onClick: () => openMobile('plans') },
+      { label: '游戏资料', onClick: () => openMobile('games') },
+      { label: '附件', note: '文件可用性与存储位置', onClick: () => openMobile('attachments') },
+    ]} />
+  </div>;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
-      <div>
+      {compact && <MobilePageHeader title={mobileManageLabel(mobileView)} onBack={backMobile} backLabel="返回资料" />}
+      {!compact && <div>
         <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>资产与资料中心</div>
         <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4 }}>在资产标签管理货币与资产的加入、停用和归档；其他标签维护分类与基础资料。</div>
         {onboardingGuide && (
@@ -198,9 +235,9 @@ export function Manage() {
             window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'transactions' } }));
           }}>返回新手指南</button>
         )}
-      </div>
+      </div>}
 
-      <div role="tablist" aria-label="资产与资料中心" className="zc-manage-primary-tabs" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', overflowX: 'auto' }}>
+      {!compact && <div role="tablist" aria-label="资产与资料中心" className="zc-manage-primary-tabs" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', overflowX: 'auto' }}>
         {([
           ['transactionCategories', '收支分类'],
           ['fixedCategories', '物品分类'],
@@ -210,7 +247,7 @@ export function Manage() {
         ] as const).map(([id, label]) => (
           <button key={id} {...primaryTabs.tabProps(id)} type="button" style={manageTabButton(tab === id)}>{label}</button>
         ))}
-      </div>
+      </div>}
 
       <div {...primaryTabs.panelProps} style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
       {tab === 'transactionCategories' && (

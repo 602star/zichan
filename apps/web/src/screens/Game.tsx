@@ -1,8 +1,11 @@
+import { CardAlert, CardFact, CardMetric } from '../ui/Card.js';
+import { MobileDisclosure, MobilePageHeader, useMobileSection } from '../ui/MobilePage.js';
 import { withCashflowPayee } from '../payee-recording.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCompactView } from '../ui/useCompactView.js';
 import {
   localToday,
+  D,
   newId,
   type Game as GameEntity,
   type GameRecordType,
@@ -138,6 +141,7 @@ function gameRecordEntity(value: GameRecordFormValue): GameRecord {
 
 export function Game() {
   const compactView = useCompactView();
+  const [mobileView, openMobile, backMobile] = useMobileSection('game');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const snap = useSnapshot('game');
   const { store, bump } = useStore();
@@ -194,7 +198,7 @@ export function Game() {
 
   if (!vm) {
     return (
-      <div className="zc-card" style={{ maxWidth: 620, margin: '8vh auto 0', padding: 28 }}>
+      <div className="zc-card" style={{ maxWidth: 620, margin: '8vh auto 0' }}>
         <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--accent)', fontWeight: 'var(--fw-medium)' }}>首次使用</div>
         <h2 style={{ margin: '8px 0 0', fontSize: 'var(--fs-display)' }}>{selectedGame ? '创建当前赛季' : '开始记录游戏'}</h2>
         <p style={{ margin: '10px 0 20px', color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.65 }}>
@@ -233,11 +237,30 @@ export function Game() {
   const accountOptions = snap.gameAccounts.filter((account) =>
     !account.isDeleted && !account.archivedAt && !account.mergedIntoId && account.gameId === selectedGameId);
 
+  const detailRecord = compactView && mobileView.startsWith('record:') ? vm.records.find((row) => row.raw.id === mobileView.slice(7)) : undefined;
+  const detailAssetCode = snap.assets.find((asset) => asset.id === detailRecord?.raw.settlementAssetId)?.code;
+  const detailUnvalued = detailRecord?.nativeAmount === '—' || !!(detailAssetCode && vm.missingRateAssetCodes.includes(detailAssetCode));
+  const openRecord = (record: GameRecord) => compactView ? openMobile(`record:${record.id}`) : setEditRec(record);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}>
+      {detailRecord ? <>
+        <MobilePageHeader title="游戏记录" onBack={backMobile} backLabel="返回赛季" />
+        <section className="zc-paper-detail">
+          <h2>{detailRecord.item || REC_LABEL[detailRecord.type]}</h2>
+          <CardFact label="日期" value={detailRecord.date} />
+          <CardFact label="类型" value={REC_LABEL[detailRecord.type]} />
+          <CardFact label="赛季" value={detailRecord.seasonName || '未指定'} />
+          <CardFact label="游戏账号" value={detailRecord.acc || '未指定'} />
+          <CardFact label={detailRecord.raw.gameCurrencyAmount ? '游戏币数量' : '原币收支'} value={detailRecord.raw.gameCurrencyAmount ? `${detailRecord.raw.gameCurrencyAmount} ${detailRecord.raw.gameCurrencyName || '游戏币'}` : detailRecord.nativeAmount} />
+          <CardFact label="折算收支" value={detailUnvalued ? '尚未完整估值' : signedMoney(detailRecord.amountExact)} />
+          {detailUnvalued && <CardAlert>此记录缺少价格或实际收支。请编辑记录补充当时汇率或结算金额；缺少币种折算率时，可在资料管理的价格标记中补录。</CardAlert>}
+          {detailRecord.raw.note && <CardFact label="备注" value={detailRecord.raw.note} />}
+        </section>
+        <button type="button" className="zc-btn zc-btn--primary" onClick={() => setEditRec(detailRecord.raw)}>编辑游戏记录</button>
+      </> : <>
       {vm.missingRateAssetCodes.length > 0 && (
-        <div className="zc-card" style={{ padding: '12px 14px', borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
-          缺少 {vm.missingRateAssetCodes.join('、')} → {vm.reportCurrencyCode} 的价格标记；相关游戏记录未计入赛季汇总。
+        <div className="zc-alert" role="status">
+          缺少 {vm.missingRateAssetCodes.join('、')} → {vm.reportCurrencyCode} 的价格标记；相关游戏记录未计入赛季汇总。请在“数据管理 → 价格标记”补录后重新查看。
         </div>
       )}
       <div className="zc-game-header" style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
@@ -300,17 +323,14 @@ export function Game() {
             {signedMoney(vm.net)}
           </div>
           <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4, fontWeight: 'var(--fw-regular)' }}>{vm.range}</div>
-          <div className="zc-game-kpi-grid" style={{ marginTop: 20 }}>
+          <div className="zc-card-band is-inset zc-game-kpi-grid" style={{ marginTop: 20 }}>
             {[
               ['收入', money(vm.income), 'var(--positive)'],
               ['支出', money(vm.expense), 'var(--negative)'],
               ['每小时收益', vm.filtered || !vm.season ? '—' : money(vm.perHour), 'var(--fg)'],
               ['每日收益', vm.season ? money(vm.perDay) : '—', 'var(--fg)'],
             ].map(([l, v, c]) => (
-              <div key={l} style={{ background: 'var(--surface-2)', borderRadius: 'var(--r-md)', padding: 14 }}>
-                <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-medium)' }}>{l}</div>
-                <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)', marginTop: 4, color: c }}>{v}</div>
-              </div>
+              <CardMetric key={l} className="is-detail" label={l} value={v} tone={c === 'var(--positive)' ? 'positive' : c === 'var(--negative)' ? 'negative' : 'default'} />
             ))}
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16, paddingTop: 14, borderTop: '1px dashed var(--border)' }}>
@@ -321,12 +341,12 @@ export function Game() {
           </div>
         </div>
 
-        <div className="zc-card" style={{ padding: '22px 24px' }}>
+        <div className="zc-card">
           <CardHeader title={`${vm.scopeName} · 记录流`} note="不强制库存 · 允许卖出 > 买入" />
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {!vm.records.length && <p className="zc-meta">当前范围没有记录，可查看“全部记录”或调整筛选。</p>}
             {vm.records.map((r) => (
-              <div id={`game-record-${r.raw.id}`} className="zc-game-record-row" key={r.raw.id} role="button" tabIndex={0} aria-label={`编辑游戏记录 ${r.item || REC_LABEL[r.type]}`} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setEditRec(r.raw); } }} onClick={() => setEditRec(r.raw)} title="点击编辑">
+              <div id={`game-record-${r.raw.id}`} className="zc-game-record-row" key={r.raw.id} role="button" tabIndex={0} aria-label={`${compactView ? '查看' : '编辑'}游戏记录 ${r.item || REC_LABEL[r.type]}`} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openRecord(r.raw); } }} onClick={() => openRecord(r.raw)} title={compactView ? '查看记录' : '点击编辑'}>
                 <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', width: 38, flexShrink: 0 }}>{r.date.slice(5)}</div>
                 <span style={recBadge(r.type)}>{REC_LABEL[r.type]}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -335,7 +355,7 @@ export function Game() {
                 </div>
                 <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', textAlign: 'right', flexShrink: 0 }}>{r.acc}</div>
                 <div style={{ fontSize: 'var(--fs-body)', textAlign: 'right', ...amountColor(r.amt) }}>
-                  {r.amt === 0 ? money(0) : signedMoney(r.amt)}
+                  {D(r.amountExact).isZero() ? money(0) : signedMoney(r.amountExact)}
                 </div>
               </div>
             ))}
@@ -343,10 +363,10 @@ export function Game() {
         </div>
       </div>
 
-      <div className="zc-game-detail-grid" style={{ gridTemplateColumns: accountOptions.length > 0 ? '1fr 1fr' : '1fr' }}>
+      <MobileDisclosure title="账号效率与类型拆分"><div className="zc-game-detail-grid" style={{ gridTemplateColumns: accountOptions.length > 0 ? '1fr 1fr' : '1fr' }}>
         {accountOptions.length > 0 && <EfficiencyPanel title="账号效率" rows={vm.byAccount.map((r) => ({ ...r, label: r.label }))} />}
         <EfficiencyPanel title="类型拆分" rows={vm.byType.map((r) => ({ ...r, label: REC_LABEL[r.id as GameRecordType] ?? r.label }))} />
-      </div></> : (
+      </div></MobileDisclosure></> : (
         <TimelineExplorer
           items={vm.records}
           view={view}
@@ -356,17 +376,18 @@ export function Game() {
           dateOf={(record) => record.date}
           keyOf={(record) => record.raw.id}
           renderCompact={(record) => <>{record.date.slice(8)} · <b>{REC_LABEL[record.type]}</b> · {record.item || record.nativeAmount}</>}
-          renderEntry={(record) => <div className="zc-game-timeline-entry" style={{ display: 'grid', gridTemplateColumns: '100px 130px minmax(0, 1fr) 100px 130px', gap: 12, alignItems: 'center' }}><span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' }}>{record.date}</span><span style={recBadge(record.type)}>{REC_LABEL[record.type]}</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{record.item || REC_LABEL[record.type]}</span><span style={{ color: 'var(--text-tertiary)', textAlign: 'right' }}>{record.acc}</span><b style={{ textAlign: 'right', ...amountColor(record.amt) }}>{record.amt === 0 ? money(0) : signedMoney(record.amt)}</b></div>}
+          renderEntry={(record) => <div className="zc-game-timeline-entry" style={{ display: 'grid', gridTemplateColumns: '100px 130px minmax(0, 1fr) 100px 130px', gap: 12, alignItems: 'center' }}><span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' }}>{record.date}</span><span style={recBadge(record.type)}>{REC_LABEL[record.type]}</span><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{record.item || REC_LABEL[record.type]}</span><span style={{ color: 'var(--text-tertiary)', textAlign: 'right' }}>{record.acc}</span><b style={{ textAlign: 'right', ...amountColor(record.amt) }}>{D(record.amountExact).isZero() ? money(0) : signedMoney(record.amountExact)}</b></div>}
           renderSummary={(rows) => {
-            const income = rows.filter((row) => row.amt > 0).reduce((total, row) => total + row.amt, 0);
-            const expense = Math.abs(rows.filter((row) => row.amt < 0).reduce((total, row) => total + row.amt, 0));
+            const income = rows.filter((row) => D(row.amountExact).gt(0)).reduce((total, row) => total.plus(row.amountExact), D(0));
+            const expense = rows.filter((row) => D(row.amountExact).lt(0)).reduce((total, row) => total.plus(row.amountExact), D(0)).abs();
             return <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>收 {money(income)} · 支 {money(expense)}</span>;
           }}
-          onOpen={(record) => setEditRec(record.raw)}
+          onOpen={(record) => openRecord(record.raw)}
           emptyText="该时间范围内没有游戏记录。"
         />
       )}
 
+      </>}
       {editRec !== null && (
         <EntityFormModal
           spec={gameRecordForm(snap, { gameId: selectedGameId, seasonId: vm.season?.id, gameAccountId: accountFilter || (accountOptions.some((a) => a.id === preferredAccountId) ? preferredAccountId : undefined) })}

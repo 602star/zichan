@@ -1,3 +1,8 @@
+import { CardFact, CardMetric } from '../ui/Card.js';
+import { ActionSheet } from '../ui/ActionSheet.js';
+import { TaskList, MobileDisclosure } from '../ui/MobilePage.js';
+import { useCompactView } from '../ui/useCompactView.js';
+import { useMobileHomeFocus, writeMobileHomeFocus } from '../mobile-preferences.js';
 import { accountSessionStorage } from '../account-storage.js';
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { checkConsistency, recomputeCaches, purgeTombstones, type BackupPreflight, type ConsistencyIssue } from '@zichan/db';
@@ -116,6 +121,9 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   onExportBackup: () => Promise<void>;
   onImportBackup: () => void;
 }) {
+  const mobileHomeFocus = useMobileHomeFocus();
+  const compact = useCompactView();
+  const [backupDetailId, setBackupDetailId] = useState('');
   const { store, bump, storageBackend, dataLocation, firstUseMode, browserStoragePersistent, resetLocalData } = useStore();
   const snap = useSnapshot('settings');
   const [issues, setIssues] = useState<ConsistencyIssue[] | null>(null);
@@ -679,6 +687,14 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)', maxWidth: 980 }}>
       {section === 'ledger' && (
         <>
+          <section className="zc-card" aria-label="手机总览偏好">
+            <h2 className="zc-section-title">手机总览优先展示</h2>
+            <div className="zc-mobile-shortcuts" role="group" aria-label="手机总览优先展示">
+              <button type="button" className="zc-btn" aria-pressed={mobileHomeFocus === 'spending'} onClick={() => writeMobileHomeFocus('spending')}>收支优先</button>
+              <button type="button" className="zc-btn" aria-pressed={mobileHomeFocus === 'assets'} onClick={() => writeMobileHomeFocus('assets')}>资产优先</button>
+            </div>
+            <p className="zc-caption">保存在当前设备，切换只调整手机总览的阅读顺序。</p>
+          </section>
           <div className={`zc-card zc-settings-ledger-card${mobileLedgerMoreOpen ? ' is-expanded' : ''}`}>
             <h2 className="zc-section-title">结算与偏好</h2>
             <button type="button" className="zc-settings-mobile-toggle" aria-expanded={mobileLedgerMoreOpen} onClick={() => setMobileLedgerMoreOpen((open) => !open)}>
@@ -926,6 +942,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
       {section !== 'ledger' && section !== 'appearance' && (
         <>
           {section === 'device' && <section aria-label="当前设备" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+            <MobileDisclosure title="当前设备与权限">
             <ClientUpdatePanel />
             <div>
               <h2 className="zc-section-title">当前设备</h2>
@@ -933,6 +950,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
             </div>
             <PortableStoragePanel />
             <DeviceSecurityPanel />
+            </MobileDisclosure>
             <div className="zc-card">
               <section className="zc-section">
                 <div className="zc-section-head zc-responsive-header">
@@ -984,7 +1002,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                     </p>
                   </div>
                 )}
-                <div className="zc-settings-health-grid">
+                <div className="zc-card-band is-inset zc-settings-health-grid">
                   <HealthTile label="最近备份" value={latestBackup ? new Date(latestBackup.createdAt).toLocaleString() : '暂无'} tone={latestBackup ? 'var(--positive)' : 'var(--negative)'} />
                   <HealthTile label="自动备份" value={latestAuto ? new Date(latestAuto.createdAt).toLocaleString() : '暂无'} tone={latestAuto ? 'var(--positive)' : 'var(--fg-subtle)'} />
                   <HealthTile label="最近演练" value={safetyState.lastRehearsalAt ? `${safetyState.lastRehearsalOk ? '通过' : '未通过'} · ${safetyState.lastRehearsalLabel ?? ''}` : '未运行'} tone={safetyState.lastRehearsalOk ? 'var(--positive)' : safetyState.lastRehearsalAt ? 'var(--negative)' : 'var(--fg-subtle)'} />
@@ -1000,7 +1018,25 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                 {storageBackend === 'browser-indexeddb' && <p className="zc-meta">本机备份与账本共用浏览器存储。上方大小为归档合计，不含存储开销。可删除不再需要的恢复点；最后一份本机备份、通过预检的备份和通过恢复演练的备份会受到保护。</p>}
                 {externalStatus.kind === 'portable' && <p className="zc-meta" style={{ overflowWrap: 'anywhere' }}>{externalStatus.desktopMode === 'installed' ? '安装版本地备份' : '便携本地备份'}：{externalStatus.label}。请启用同步服务器备份，或用“分享 / 下载”复制到其他磁盘。</p>}
                 {backupNote && <p className="zc-caption" style={{ color: backupNote.includes('未通过') || backupNote.includes('失败') ? 'var(--negative)' : 'var(--positive)', fontWeight: 'var(--fw-bold)' }}>{backupNote}</p>}
-                <div style={{ overflowX: 'auto' }}>
+                {compact && <>
+                  <TaskList title="本机恢复点" items={visibleBackups.map((entry) => ({ label: entry.label, note: `${new Date(entry.createdAt).toLocaleString()} · ${reasonLabel(entry.reason)}${entry.verifiedAt ? ' · 已通过恢复演练' : ''}`, value: backupSize(entry), onClick: () => setBackupDetailId(entry.id) }))} />
+                  {!visibleBackups.length && <p className="zc-caption">{backups.length ? '当前筛选下没有备份。' : '还没有备份，可先创建手动备份。'}</p>}
+                  {backupDetailId && (() => {
+                    const entry = backups.find((row) => row.id === backupDetailId);
+                    if (!entry) return null;
+                    const choose = (action: () => void) => { setBackupDetailId(''); action(); };
+                    return <ActionSheet title="备份详情" description={entry.label} onClose={() => setBackupDetailId('')} actions={[
+                      { label: '恢复演练', disabled: backupBusy !== null, onSelect: () => choose(() => { void rehearse(entry); }) },
+                      { label: storageBackend === 'native-sqlite' ? '另存为…' : '分享 / 下载', disabled: backupBusy !== null, onSelect: () => choose(() => { void shareOrDownloadBackup(entry); }) },
+                      { label: '选择此恢复点', disabled: backupBusy !== null, onSelect: () => choose(() => openRestorePicker(`local:${entry.id}`)) },
+                      ...(storageBackend === 'browser-indexeddb' ? [{ label: '删除本机副本', disabled: backupBusy !== null, onSelect: () => choose(() => setPendingLocalDelete(entry)) }] : []),
+                    ]}>
+                      <div className="zc-record-sheet-facts"><CardFact label="时间" value={new Date(entry.createdAt).toLocaleString()} /><CardFact label="来源" value={reasonLabel(entry.reason)} /><CardFact label="大小" value={backupSize(entry)} /><CardFact label="恢复演练" value={entry.verifiedAt ? `已通过 · ${new Date(entry.verifiedAt).toLocaleString()}` : '尚未通过演练'} /></div>
+                      <p className="zc-caption">演练不会替换当前账本；正式恢复仍需核对变更并确认。</p>
+                    </ActionSheet>;
+                  })()}
+                </>}
+                {!compact && <div style={{ overflowX: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
                       <tr><th style={thStyle}>时间</th><th style={thStyle}>来源</th><th style={thStyle}>大小</th><th style={thStyle}>校验</th><th style={thStyle}>操作</th></tr>
@@ -1043,7 +1079,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                       {visibleBackups.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={5}>{backups.length === 0 ? '还没有备份。保存任意数据后会自动创建，也可以手动创建。' : '当前筛选下没有备份。'}</td></tr>}
                     </tbody>
                   </table>
-                </div>
+                </div>}
               </section>
             </div>
           </section>}
@@ -1416,12 +1452,7 @@ const navigationOrderButton = (enabled: boolean): CSSProperties => ({
   opacity: enabled ? 1 : 0.45,
 });
 
-/* A stat tile in the backup-health strip: tinted, not another bordered surface. */
+/** Backup status shares the metric vocabulary, with body-sized dates. */
 function HealthTile({ label, value, tone }: { label: string; value: string; tone: string }) {
-  return (
-    <div style={{ background: 'var(--surface-2)', borderRadius: 'var(--r-sm)', padding: 10 }}>
-      <div className="zc-meta" style={{ fontWeight: 'var(--fw-bold)' }}>{label}</div>
-      <div className="zc-caption" style={{ color: tone, fontWeight: 'var(--fw-bold)', marginTop: 5 }}>{value}</div>
-    </div>
-  );
+  return <CardMetric className="is-detail" label={label} value={value} tone={tone === 'var(--positive)' ? 'positive' : tone === 'var(--negative)' ? 'negative' : 'default'} />;
 }

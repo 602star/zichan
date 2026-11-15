@@ -34,6 +34,8 @@ import {
 import { ReportSummaryStrip, TransactionReportInsights } from '../ui/TransactionReportInsights.js';
 import { LedgerCutoffNotice } from '../ui/LedgerCutoffNotice.js';
 import { useCompactView } from '../ui/useCompactView.js';
+import { ActionSheet } from '../ui/ActionSheet.js';
+import { MobileDisclosure } from '../ui/MobilePage.js';
 import { CATEGORY_COLORS, OTHER_CATEGORY_COLOR } from '../theme.js';
 
 /** 空构成：非日常收支页签也要给图一个合法形状，免得再写一遍内联字面量。 */
@@ -57,6 +59,7 @@ export function Reports() {
   const { store } = useStore();
   const [tab, setTab] = useState<TabId>('transactions');
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [reportPickerOpen, setReportPickerOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
   const exportTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [ranges, setRanges] = useState<Record<TabId, DateRangeValue>>(() => ({
@@ -383,8 +386,9 @@ export function Reports() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div className="zc-report-tabs" style={{ display: 'flex', gap: 8 }}>
         {TABS.map(([id, label]) => (
-          <button key={id} onClick={() => { setTab(id); setExportMenuOpen(false); }} style={pillBtn(tab === id)}>{label}</button>
+          (!compactView || ['transactions', 'fixed', 'season'].includes(id) || tab === id) && <button key={id} aria-pressed={tab === id} onClick={() => { setTab(id); setExportMenuOpen(false); }} style={pillBtn(tab === id)}>{compactView ? ({ transactions: '收支', fixed: '物品', season: '游戏' } as Record<string, string>)[id] ?? label : label}</button>
         ))}
+        {compactView && <button type="button" className="zc-btn" onClick={() => setReportPickerOpen(true)}>更多报表</button>}
       </div>
       {/* Filtering semantics, separated: the range stays in `DateRangeBar`, and
           the drill-down is a breadcrumb on the same row — it names the level that
@@ -449,7 +453,12 @@ export function Reports() {
           >
             导出
           </button>
-          {exportMenuOpen && (
+          {exportMenuOpen && compactView && <ActionSheet title="导出报表" description="导出当前报表及所选期间的数据。" onClose={() => setExportMenuOpen(false)} actions={[
+            ...(tab === 'transactions' ? [{ label: detailExportBusy ? `导出明细中 ${detailExported}` : '明细 CSV', onSelect: () => { setExportMenuOpen(false); if (!detailExportBusy) void exportTransactionDetails(); } }] : []),
+            { label: 'CSV', onSelect: () => { setExportMenuOpen(false); exportReportCsv(); } },
+            { label: pdfBusy ? '正在生成 PDF' : 'PDF', onSelect: () => { setExportMenuOpen(false); if (!pdfBusy) void exportPdf(); } },
+          ]} />}
+          {exportMenuOpen && !compactView && (
             <div className="zc-menu-list">
               {tab === 'transactions' && (
                 <button
@@ -515,23 +524,23 @@ export function Reports() {
         </div>
       </div>
       {!!table.missingRateAssetCodes?.length && (
-        <div className="zc-card is-tight" style={{ borderColor: "var(--warning)", color: "var(--warning)", fontSize: "var(--fs-body)", fontWeight: "var(--fw-medium)" }}>
-          缺少 {table.missingRateAssetCodes.join('、')} → {table.reportCurrencyCode} 的价格标记；相关记录显示为“未折算”，且不参与可比汇总。
+        <div className="zc-alert" role="status">
+          缺少 {table.missingRateAssetCodes.join('、')} → {table.reportCurrencyCode} 的价格标记；相关记录显示为“未折算”，且不参与可比汇总。请在“数据管理 → 价格标记”补录。
         </div>
       )}
       {tab === 'transactions' && transactionAggregateError && (
-        <div role="alert" className="zc-card is-tight" style={{ borderColor: "var(--negative)", color: "var(--negative)", fontSize: "var(--fs-caption)", fontWeight: "var(--fw-medium)" }}>
-          对比与汇总读取失败：{transactionAggregateError}
+        <div role="alert" className="zc-alert is-danger">
+          对比与汇总读取失败：{transactionAggregateError}。请刷新页面重试。
         </div>
       )}
-      <TimeTrendChart
+      <MobileDisclosure title="期间走势"><TimeTrendChart
         snap={snap}
         tab={tab}
         dateRange={effectiveRange}
         granularity={granularity}
         onGranularityChange={setGranularity}
         transactionAggregates={transactionAggregates ?? []}
-      />
+      /></MobileDisclosure>
       <ReportChart
         snap={snap}
         tab={tab}
@@ -542,7 +551,7 @@ export function Reports() {
         onSelectChild={(parent, child) => toggleChildDrill(parent, child, effectiveRange)}
         transactionTable={tab === 'transactions' ? table : undefined}
       />
-      <div className="zc-card" style={{ padding: 0, overflow: 'hidden' }}>
+      <div className="zc-card is-flush">
         <div style={{ overflowX: 'auto' }}>
           <table className="zc-card-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -610,6 +619,7 @@ export function Reports() {
           onDrill={(category, range) => drillTransactions(rootCategoryId(category, snap.categories), category, range)}
         />
       )}
+      {reportPickerOpen && <ActionSheet title="选择报表" onClose={() => setReportPickerOpen(false)} actions={TABS.map(([id, label]) => ({ label, onSelect: () => { setTab(id); setReportPickerOpen(false); } }))} />}
     </div>
   );
 }
@@ -740,7 +750,7 @@ function TransactionDetailTable(props: {
     window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'transactions' } }));
   };
   return (
-    <div id="transaction-report-details" className="zc-card" style={{ padding: 0, overflow: 'hidden', scrollMarginTop: 16 }}>
+    <div id="transaction-report-details" className="zc-card is-flush" style={{ scrollMarginTop: 16 }}>
       <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--sp-3)', padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
         <div>
           <div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{rangeLabel(range)}流水明细{drillLabel}</div>

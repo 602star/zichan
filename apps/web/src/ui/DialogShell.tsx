@@ -12,6 +12,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useBodyScrollLock } from './body-scroll-lock.js';
+import { useMobileDialogHistory } from './mobile-dialog-history.js';
 
 const DialogLayerContext = createContext(40);
 
@@ -128,6 +129,7 @@ export function DialogShell({
   }
 
   useBodyScrollLock();
+  useMobileDialogHistory(onDismiss, dismissDisabled, !!portalTarget);
 
   useLayoutEffect(() => {
     if (!portalTarget) setPortalTarget(document.getElementById('zc-dialog-portal') ?? document.body);

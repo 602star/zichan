@@ -143,7 +143,7 @@ test('conversion balances, saved metadata, compact rates and responsive details'
   await page.locator('.zc-sidebar nav button').filter({ hasText: '设置' }).click();
   await page.getByRole('tab', { name: '外观' }).click();
   await page.getByRole('radio', { name: '深色' }).click();
-  for (const theme of ['暖纸 · 赭石', '鼠尾草 · 苔绿', '梅子 · 紫褐']) {
+  for (const theme of ['文献纸 · 墨朱', '青灰纸 · 墨朱', '紫灰纸 · 墨朱']) {
     await page.getByRole('radio', { name: theme }).click();
     await page.locator('.zc-sidebar nav button').filter({ hasText: '资产转换' }).click();
     const surface = await page.locator('.zc-convert-asset-header').first().evaluate((element) => getComputedStyle(element).backgroundColor);
@@ -202,7 +202,9 @@ test('selecting a new common currency from the asset field creates only its defi
   await page.getByRole('button', { name: '重新启用 GBP' }).click();
   await expect(page.getByRole('row').filter({ hasText: 'GBP' })).toContainText('可用');
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByRole('tab', { name: '资产', exact: true })).toBeVisible();
+  await page.getByRole('region', { name: '资产资料', exact: true }).getByRole('button', { name: '资产', exact: true }).click();
+  await expect(page.locator('.zc-mobile-page-head h2')).toHaveText('资产');
+  await page.getByText('添加常用资产', { exact: true }).click();
   await expect(page.getByRole('button', { name: '已加入 DOGE' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('asset-catalog-phone.png') });
 });
@@ -277,7 +279,9 @@ test('cost opening, encrypted draft, retained continuous conversion and whole-gr
   await form.getByLabel('标题', { exact: true }).fill('连续转换已编辑');
   await form.getByRole('button', { name: '预览影响', exact: true }).click();
   await expect(form).toBeHidden();
+  await page.getByRole('dialog', { name: '连续转换已编辑', exact: true }).getByRole('button', { name: '关闭详情', exact: true }).click();
   await page.locator('.zc-undo-toast').getByRole('button', { name: '撤销', exact: true }).click();
+  await page.getByText('连续转换保留余额', { exact: true }).click();
   detail = page.getByRole('dialog', { name: '连续转换保留余额', exact: true });
   await expect(detail).toBeVisible();
   await detail.getByRole('button', { name: '整组编辑', exact: true }).click();
@@ -310,6 +314,7 @@ test('cost opening, encrypted draft, retained continuous conversion and whole-gr
   preview = page.getByRole('dialog', { name: '连续转换整组预览', exact: true });
   await preview.getByRole('button', { name: '确认保存', exact: true }).click();
   await expect(form).toBeHidden();
+  await page.getByRole('dialog', { name: '连续转换已编辑', exact: true }).getByRole('button', { name: '关闭详情', exact: true }).click();
   await page.locator('.zc-undo-toast').getByRole('button', { name: '撤销', exact: true }).click();
   await expect(page.locator('.zc-undo-toast')).toBeHidden();
 });

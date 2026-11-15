@@ -57,7 +57,7 @@ export function AccountSecurityPanel({ onExit }: { onExit?: () => Promise<void> 
     const result = await api('devices');
     setDevices(result.devices); setCurrent(result.currentSessionId);
   }
-  return <section className="zc-protection" aria-label="账号安全" style={{ padding: 20, border: '1px solid var(--border)', borderRadius: 'var(--r-md)', marginBottom: 16 }}>
+  return <section className="zc-card zc-protection" aria-label="账号安全">
     <h2 style={{ fontSize: 'var(--fs-title)' }}>账号安全 · {identity?.loginUsername ?? profile.username}</h2>
     {identity?.issuerNodeId ? <p>此账号由身份源节点 {identity.issuerNodeId} 管理密码。
       {identity.issuerUrl ? <>请在 <a href={`${identity.issuerUrl}/`}>身份源网站</a> 修改或找回密码。</> : '请到创建此账号的网站修改或找回密码。'}

@@ -1,11 +1,11 @@
 import { ExistingPayeePicker } from '../ui/PayeePicker.js';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, FileText, MoreHorizontal, Pencil, Undo2 } from 'lucide-react';
 import { EarlierBalancePanel } from '../ui/EarlierBalancePanel.js';
 import { AccountSetupPanel } from '../ui/AccountSetupPanel.js';
 import { AccountHistoryPanel } from '../ui/AccountHistoryPanel.js';
 import { accountSessionStorage } from '../account-storage.js';
 import { readOnboarding, updateOnboarding, type OnboardingState } from '../onboarding.js';
-import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { QueryGeneration } from '../query-generation.js';
 import {
   D, accountBalanceTiming, isDefaultAccount, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, newId,
@@ -44,7 +44,7 @@ import {
   budgetCategoryForm, categoryForm, payeeForm, scheduledTransactionForm,
   transactionForm, transactionSplitForm, transactionTemplateForm, type AttachmentDraft, type TransactionFormValue,
 } from '../forms.js';
-import { amount as fmtAmount, money, signedMoney } from '../format.js';
+import { amount as fmtAmount, money, num, signedMoney } from '../format.js';
 import { amountColor, selectBase, tag as tagStyle, td as tdStyle, th as thStyle } from '../ui/styles.js';
 import { ChartLegend, CompositionDonut, TrendBars, type ChartSlice } from '../ui/charts.js';
 import { CATEGORY_COLORS, OTHER_CATEGORY_COLOR } from '../theme.js';
@@ -87,6 +87,11 @@ import { DialogShell } from '../ui/DialogShell.js';
 import { useCompactView } from '../ui/useCompactView.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { QuickExpenseModal, type QuickExpenseDraft } from '../ui/QuickExpenseModal.js';
+import { ActionSheet } from '../ui/ActionSheet.js';
+import { CardFact } from '../ui/Card.js';
+import { useRecordGestures } from '../ui/useRecordGestures.js';
+import { useScreenTarget } from '../screen-target.js';
+import { TaskList, useMobileSection } from '../ui/MobilePage.js';
 
 const TYPE_OPTIONS: { value: 'all' | TransactionType; label: string }[] = [
   { value: 'all', label: '全部' },
@@ -195,12 +200,32 @@ function initialTransactionTab(): Tab {
   }
 }
 
-export function Transactions() {
+export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: boolean; onEntryClose?: () => void } = {}) {
   const compactView = useCompactView();
+  const screenTarget = useScreenTarget('transactions');
   const { store, bump, rev } = useStore();
   const undo = useUndo(store, bump);
   const snap = useSnapshot('transactions');
-  const [tab, setTab] = useState<Tab>(initialTransactionTab);
+  const [initialTab] = useState(initialTransactionTab);
+  const [tab, setTabState] = useState<Tab>(initialTab);
+  const [mobileTab, selectMobileTab] = useMobileSection('transactions', initialTab);
+  const setTab = useCallback((next: Tab) => {
+    setTabState(next);
+    if (!entryOnly) selectMobileTab(next);
+  }, [entryOnly, selectMobileTab]);
+  useEffect(() => { if (!entryOnly && compactView && ['records', 'accounts', 'budget', 'bills'].includes(mobileTab)) setTabState(mobileTab as Tab); }, [mobileTab, compactView, entryOnly]);
+  useEffect(() => {
+    if (entryOnly) return;
+    if (screenTarget?.tab && ['records', 'accounts', 'budget', 'bills'].includes(screenTarget.tab)) setTab(screenTarget.tab as Tab);
+    if (screenTarget?.tab === 'accounts' && screenTarget.id) setAccountId(screenTarget.id);
+    let active = true;
+    if (screenTarget?.tab === 'records' && screenTarget.id) {
+      void store.transactions.get(screenTarget.id).then((row) => {
+        if (active && row) setFilters({ ...DEFAULT_FILTERS, range: 'custom', dateFrom: row.date, dateTo: row.date });
+      }).catch((cause) => { if (active) setTransactionReadError(cause instanceof Error ? cause.message : String(cause)); });
+    }
+    return () => { active = false; };
+  }, [screenTarget, store, entryOnly, setTab]);
   const [editingTx, setEditingTx] = useState<Transaction | 'new' | null>(null);
   const [showFirstEntryGuide, setShowFirstEntryGuide] = useState(false);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
@@ -213,6 +238,10 @@ export function Transactions() {
   const [quickTemplate, setQuickTemplate] = useState<TransactionTemplate | null>(null);
   const [editingSplit, setEditingSplit] = useState<TransactionSplit | 'new' | null>(null);
   const [editingBudget, setEditingBudget] = useState<BudgetCategory | 'new' | null>(null);
+  const [budgetDetailKey, setBudgetDetailKey] = useState('');
+  const [billDetailKey, setBillDetailKey] = useState('');
+  const [billActionBusy, setBillActionBusy] = useState(false);
+  const [billActionError, setBillActionError] = useState('');
   const [editingSchedule, setEditingSchedule] = useState<ScheduledTransaction | 'new' | null>(null);
   const [editingCategory, setEditingCategory] = useState<Category | 'new' | null>(null);
   const [editingPayee, setEditingPayee] = useState<Payee | 'new' | null>(null);
@@ -330,6 +359,7 @@ export function Transactions() {
       setTemplateDraft(null);
       setEditingTx('new');
     };
+    if (entryOnly) openQuickTransaction();
     try {
       if (accountSessionStorage.getItem('zichan.quickTransaction') === '1') {
         accountSessionStorage.removeItem('zichan.quickTransaction');
@@ -345,7 +375,7 @@ export function Transactions() {
     }
     window.addEventListener('zichan:quick-transaction', openQuickTransaction);
     return () => window.removeEventListener('zichan:quick-transaction', openQuickTransaction);
-  }, []);
+  }, [entryOnly, setTab]);
   const visibleTabs: [Tab, string][] = usesAccounts
     ? [['records', '流水'], ['accounts', '账户'], ['budget', '预算'], ['bills', '账单']]
     : [['records', '支出']];
@@ -562,8 +592,10 @@ export function Transactions() {
       })
       : null
   ), [accountBalanceRows, pageSnap, snap, transactionRead, trendMonths, viewFilters]);
-  if (!snap || !transactionRead || !vm || !pageSnap) return transactionReadError
-    ? <div role="alert" className="zc-card is-tight" style={{ color: 'var(--negative)' }}>流水读取失败：{transactionReadError}</div>
+  if (!snap || !transactionRead || !vm || !pageSnap) return entryOnly
+    ? <ActionSheet title="记一笔" onClose={() => onEntryClose?.()} actions={[]}><p role={transactionReadError ? 'alert' : 'status'}>{transactionReadError ? `流水读取失败：${transactionReadError}。请关闭后重试。` : '正在读取记账资料…'}</p></ActionSheet>
+    : transactionReadError
+    ? <div role="alert" className="zc-alert is-danger">流水读取失败：{transactionReadError}。请刷新页面重试。</div>
     : null;
   const readyTransactionRead = transactionRead;
   const readySnap = pageSnap;
@@ -1296,9 +1328,9 @@ export function Transactions() {
   const hasEnabledCategoryPack = CATEGORY_PACKS.some((pack) => categoryPackState(pack, readySnap.categories).enabledCount > 0);
 
   return (
-    <div className="zc-ledger-page" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
+    <div className="zc-ledger-page" style={{ display: entryOnly ? 'none' : 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
       {vm.missingRateAssetCodes.length > 0 && (
-        <div className="zc-card is-tight" style={{ borderColor: 'var(--warning)', color: 'var(--warning)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
+        <div className="zc-alert" role="status">
           缺少 {vm.missingRateAssetCodes.join('、')} → {vm.reportCurrencyCode} 的价格标记；相关流水不会静默当作 0，汇总和预算会标记为未完整折算。
         </div>
       )}
@@ -1530,6 +1562,7 @@ export function Transactions() {
             {recordView === 'list' ? (
               <TransactionList
                 vm={vm}
+                initialDetailId={screenTarget?.tab === 'records' ? screenTarget.id : undefined}
                 onEdit={openTransaction}
                 usesAccounts={usesAccounts}
                 tagName={tagName}
@@ -1722,7 +1755,7 @@ export function Transactions() {
           {budgetView === 'year' ? (
             <div className="zc-budget-grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
               {budgetYearRows.map((row) => (
-                <button key={row.month} onClick={() => { setBudgetMonth(row.month); setBudgetView('month'); }} className="zc-card is-tight" style={{ minHeight: 112, textAlign: 'left', cursor: 'pointer' }}>
+                <button key={row.month} onClick={() => { setBudgetMonth(row.month); setBudgetView('month'); }} className="zc-budget-row">
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}><b>{Number(row.month.slice(5))} 月</b><span style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)' }}>{row.rows.length} 项</span></div>
                   <div style={{ marginTop: 14, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>预算 {money(row.planned)}</div>
                   <div style={{ marginTop: 5, fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color: row.actual.gt(row.planned) ? 'var(--negative)' : 'var(--fg)' }}>实际 {money(row.actual)}</div>
@@ -1732,7 +1765,7 @@ export function Transactions() {
           ) : (
             <div className="zc-budget-grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
               {budgetRows.map((b) => (
-                <button key={b.id ?? b.category} onClick={() => setEditingBudget(snap.budgetCategories.find((x) => x.id === b.id) ?? 'new')} className="zc-card is-tight" style={{ textAlign: 'left', cursor: 'pointer' }}>
+                <button key={b.id ?? b.category} onClick={() => compactView ? setBudgetDetailKey(b.id ?? b.category) : setEditingBudget(snap.budgetCategories.find((x) => x.id === b.id) ?? 'new')} className="zc-budget-row">
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>
                     <span>{b.label}</span>
                     <span style={{ color: b.over ? 'var(--negative)' : b.conversionKnown ? 'var(--fg)' : 'var(--warning)' }}>{b.conversionKnown ? money(b.remaining) : '未折算'}</span>
@@ -1772,6 +1805,8 @@ export function Transactions() {
             {scheduledBacklog[0] && <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)' }}>最早：{scheduledBacklog[0].occurrenceDate} · {scheduledBacklog[0].scheduleName}</span>}
           </div>
           {billView === 'list' ? (
+            <>{compactView && <TaskList label="定期账单" items={vm.schedules.filter((schedule) => isDateInRange(schedule.nextDate, billRange)).map((schedule) => ({ label: schedule.name, note: `${schedule.nextDate} · ${scheduleLabel(schedule.status)}`, value: schedule.amount, onClick: () => { setBillActionError(''); setBillDetailKey(schedule.id); } }))} />}
+            {!compactView &&
             <Table headers={['名称', '类型', '分类', '金额', '下次日期', '状态', '']}>
               {vm.schedules.filter((schedule) => isDateInRange(schedule.nextDate, billRange)).map((s) => {
                 const row = snap.scheduledTransactions.find((x) => x.id === s.id)!;
@@ -1792,6 +1827,7 @@ export function Transactions() {
               })}
               {vm.schedules.filter((schedule) => isDateInRange(schedule.nextDate, billRange)).length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={7}>该时间范围内暂无到期交易</td></tr>}
             </Table>
+            }</>
           ) : (
             <TimelineExplorer
               items={billOccurrences}
@@ -1804,7 +1840,7 @@ export function Transactions() {
               renderCompact={(item) => <>{item.date.slice(8)} · <b>{item.name}</b> · {item.amount}</>}
               renderEntry={(item) => <div className="zc-transaction-timeline-entry" style={{ display: 'grid', gridTemplateColumns: '100px 120px minmax(0, 1fr) 130px', gap: 12 }}><span>{item.date}</span><b>{item.typeLabel}</b><span>{item.name} · {item.categoryLabel}</span><b style={{ textAlign: 'right' }}>{item.amount}</b></div>}
               renderSummary={(rows) => <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{rows.length} 笔待办</span>}
-              onOpen={(item) => setEditingSchedule(item.schedule)}
+              onOpen={(item) => compactView ? setBillDetailKey(item.schedule.id) : setEditingSchedule(item.schedule)}
               emptyText="该时间范围内没有定期交易待办。"
             />
           )}
@@ -1848,6 +1884,38 @@ export function Transactions() {
         </div>
       )}
 
+      {budgetDetailKey && (() => {
+        const row = budgetRows.find((budget) => (budget.id ?? budget.category) === budgetDetailKey);
+        if (!row) return null;
+        return <ActionSheet title="预算详情" description={`${budgetMonth} · ${row.label}`} onClose={() => setBudgetDetailKey('')} actions={[{ label: '编辑预算', onSelect: () => { setBudgetDetailKey(''); setEditingBudget(snap.budgetCategories.find((budget) => budget.id === row.id) ?? 'new'); } }]}>
+          <div className="zc-record-sheet-facts">
+            <CardFact label="原预算" value={row.plannedNative} />
+            <CardFact label="实际支出" value={`${num(row.actual, vm.reportCurrencyDecimals)} ${vm.reportCurrencyCode}`} />
+            <CardFact label="剩余额度" value={row.conversionKnown ? `${num(row.remaining, vm.reportCurrencyDecimals)} ${vm.reportCurrencyCode}` : '未完整折算'} tone={row.over ? 'negative' : 'default'} />
+            <CardFact label="上月结转" value={`${num(row.carryIn, vm.reportCurrencyDecimals)} ${vm.reportCurrencyCode}`} />
+            <CardFact label="下月结转" value={`${num(row.carryOut, vm.reportCurrencyDecimals)} ${vm.reportCurrencyCode}`} />
+          </div>
+          {!row.conversionKnown && <p className="zc-caption">缺少流水或预算币种的汇率，请补充价格后查看完整额度。</p>}
+        </ActionSheet>;
+      })()}
+      {billDetailKey && (() => {
+        const row = vm.schedules.find((schedule) => schedule.id === billDetailKey);
+        const schedule = snap.scheduledTransactions.find((item) => item.id === billDetailKey);
+        if (!row || !schedule) return null;
+        return <ActionSheet title="账单详情" description={row.name} dismissDisabled={billActionBusy} onClose={() => { if (!billActionBusy) setBillDetailKey(''); }} actions={[
+          { label: billActionBusy ? '正在生成流水…' : '生成本期流水', disabled: billActionBusy || schedule.status !== 'active', onSelect: () => {
+            if (billActionBusy || schedule.status !== 'active') return;
+            setBillActionBusy(true); setBillActionError('');
+            void materializeSchedule(schedule).then(() => setBillDetailKey('')).catch((cause) => setBillActionError(cause instanceof Error ? cause.message : String(cause))).finally(() => setBillActionBusy(false));
+          } },
+          { label: '编辑定期交易', disabled: billActionBusy, onSelect: () => { setBillDetailKey(''); setEditingSchedule(schedule); } },
+        ]}>
+          <div className="zc-record-sheet-facts"><CardFact label="金额" value={row.amount} /><CardFact label="下次日期" value={row.nextDate} /><CardFact label="状态" value={scheduleLabel(row.status)} /><CardFact label="分类" value={row.categoryLabel} /></div>
+          <p className="zc-caption">确认生成后才会写入流水；同一期不会重复生成。</p>
+          {billActionError && <p role="alert">{billActionError}</p>}
+        </ActionSheet>;
+      })()}
+
       {quickExpenseOpen && !usesAccounts && (
         <QuickExpenseModal
           key={quickTemplate?.id ?? 'quick-expense'}
@@ -1859,7 +1927,7 @@ export function Transactions() {
           defaultAssetId={moduleCurrencyId(readySnap.setting, 'transaction', readySnap.assets[0]?.id || '')}
           categoryShowHiddenDefault={readySnap.setting?.categoryPickerDefaultScope === 'all'}
           onSave={saveQuickExpense}
-          onClose={() => { setQuickExpenseOpen(false); setQuickTemplate(null); }}
+          onClose={() => { setQuickExpenseOpen(false); setQuickTemplate(null); onEntryClose?.(); }}
         />
       )}
 
@@ -1898,7 +1966,7 @@ export function Transactions() {
           }}
           onDelete={editingTx !== 'new' ? async () => voidTx(editingTx) : undefined}
           deleteLabel="作废"
-          onClose={() => { setEditingTx(null); setRefundDraft(null); setTemplateDraft(null); }}
+          onClose={() => { setEditingTx(null); setRefundDraft(null); setTemplateDraft(null); onEntryClose?.(); }}
         />
       )}
       {refundHistoryFor && (
@@ -2506,8 +2574,9 @@ function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof b
   );
 }
 
-function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, onManageRefunds, assetCode, usesAccounts, tagName, locationName, attachmentCount, selectedIds, setSelectedIds }: {
+function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemaining, refundsFor, onManageRefunds, assetCode, usesAccounts, tagName, locationName, attachmentCount, selectedIds, setSelectedIds }: {
   vm: NonNullable<ReturnType<typeof buildTransactions>>;
+  initialDetailId?: string;
   onEdit: (tx: Transaction) => void;
   onRefund: (tx: Transaction) => void;
   refundRemaining: (tx: Transaction) => string;
@@ -2523,14 +2592,40 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
 }) {
   const selected = new Set(selectedIds ?? []);
   const toggle = (id: string) => setSelectedIds?.((ids) => ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
+  const compact = useCompactView();
+  const previousCompact = useRef(compact);
+  const [panel, setPanel] = useState<{ id: string; mode: 'detail' | 'actions' } | null>(null);
+  const openedInitial = useRef('');
+  useEffect(() => {
+    if (initialDetailId && openedInitial.current !== initialDetailId && vm.items.some((item) => item.tx.id === initialDetailId)) {
+      openedInitial.current = initialDetailId;
+      setPanel({ id: initialDetailId, mode: 'detail' });
+    }
+  }, [initialDetailId, vm.items]);
+  const gestures = useRecordGestures((id) => setPanel({ id, mode: 'actions' }), compact);
+  const active = panel && vm.items.find((item) => item.tx.id === panel.id);
+  const activeRefunds = active?.tx.type === 'expense' ? refundsFor(active.tx) : [];
+  const activeRefunded = activeRefunds.reduce((total, refund) => total.plus(refund.appliedAmount), D(0));
+  const closePanel = () => setPanel(null);
+  const choose = (action: () => void) => { closePanel(); action(); };
+  useEffect(() => { setPanel((current) => current && !vm.items.some((item) => item.tx.id === current.id) ? null : current); }, [vm]);
+  useEffect(() => {
+    if (previousCompact.current !== compact) setPanel(null);
+    previousCompact.current = compact;
+  }, [compact]);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+    <div className="zc-transaction-days">
+      <p className="zc-record-gesture-hint">点按查看详情，长按或左右滑动打开流水操作。</p>
       {vm.groups.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)', padding: '20px 0' }}>暂无流水</div>}
       {vm.groups.map((g) => (
-        <div key={g.key}>
+        <div className="zc-transaction-day" key={g.key}>
           <div className="zc-transaction-day-summary" aria-label={`${g.label}收支小计`}>
-            <span>{g.label}</span>
-            <span>{usesAccounts && <span className="zc-day-income">收入 {money(g.income)}</span>}<span className="zc-day-expense">支出 {money(g.expense)}</span></span>
+            <span className="zc-transaction-day-date">{g.label}</span>
+            <span>
+              {usesAccounts && <span className="zc-day-income">收入 {num(g.income, vm.reportCurrencyDecimals)}</span>}
+              <span className="zc-day-expense">支出合计 <strong>{num(g.expense, vm.reportCurrencyDecimals)}</strong> <span className="zc-day-currency">{vm.reportCurrencyCode}</span></span>
+              {g.incomplete && <span className="zc-day-incomplete">未完整折算</span>}
+            </span>
           </div>
           <table className={`zc-transaction-table${setSelectedIds ? ' has-selection' : ''}${usesAccounts ? ' has-account' : ''}`}>
             <thead>
@@ -2594,12 +2689,31 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
                 usesAccounts && item.statusLabel !== '已记录' ? item.statusLabel : undefined,
                 item.splitSummary || undefined,
                 files ? `附件 ${files}` : undefined,
+                tx.date !== g.key ? `${tx.date}${tx.time ? ` ${tx.time}` : ''}` : tx.time,
               ].filter(Boolean).join(' · ');
               return (
                 <tr
                   className={`zc-transaction-row${setSelectedIds ? ' has-selection' : ''}${usesAccounts ? ' has-account' : ''}`}
                   key={tx.id}
-                  onClick={() => onEdit(tx)}
+                  {...gestures.bind(tx.id)}
+                  data-gesture-direction={gestures.preview?.id === tx.id ? gestures.preview.direction : undefined}
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      if (compact) setPanel({ id: tx.id, mode: 'detail' });
+                      else onEdit(tx);
+                    } else if (compact && (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) {
+                      event.preventDefault();
+                      setPanel({ id: tx.id, mode: 'actions' });
+                    }
+                  }}
+                  onClick={(event) => {
+                    event.currentTarget.focus({ preventScroll: true });
+                    if (compact) setPanel({ id: tx.id, mode: 'detail' });
+                    else onEdit(tx);
+                  }}
                 >
                   {setSelectedIds && (
                     <td><span className="zc-check-target">
@@ -2645,15 +2759,20 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
                   </td>
                   {usesAccounts && <td><span className={item.statusLabel === '已对账' ? 'zc-ledger-stamp' : undefined} style={{ fontSize: 'var(--fs-meta)', color: item.statusLabel === '已对账' ? 'var(--accent)' : 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{item.statusLabel}</span></td>}
                   <td className="is-numeric" style={{ fontSize: 'var(--fs-body)', ...(settled ? { textDecoration: 'line-through', color: 'var(--text-tertiary)' } : amountColor(item.signedAmount)) }}>
-                    {tx.type === 'transfer' ? '' : tx.type === 'income' || tx.type === 'refund' || (tx.type === 'adjustment' && tx.adjustmentDirection === 'increase') ? '+' : '-'}{tx.amount} {item.assetCode}
+                    {tx.type === 'transfer' ? '' : tx.type === 'income' || tx.type === 'refund' || (tx.type === 'adjustment' && tx.adjustmentDirection === 'increase') ? '+' : '-'}{num(tx.amount, item.assetDecimals)} {item.assetCode}
                   </td>
                   <td className="zc-transaction-actions">
-                    <button type="button" aria-label={`查看 ${title} 的详情`} onClick={(event) => { event.stopPropagation(); onEdit(tx); }} className="zc-btn zc-btn--sm">详情</button>
+                    <button type="button" aria-label={`查看 ${title} 的详情`} onClick={(event) => {
+                      event.stopPropagation();
+                      if (compact) setPanel({ id: tx.id, mode: 'detail' });
+                      else onEdit(tx);
+                    }} className="zc-btn zc-btn--sm zc-record-details">详情</button>
+                    <button type="button" className="zc-record-more" aria-label={`打开 ${title} 的流水操作`} onClick={(event) => { event.stopPropagation(); setPanel({ id: tx.id, mode: 'actions' }); }}><MoreHorizontal size={20} aria-hidden="true" /></button>
                     {tx.type === 'expense' && D(remaining).gt(0) ? (
                       <button
                         type="button"
                         onClick={(event) => { event.stopPropagation(); onRefund(tx); }}
-                        className="zc-btn zc-btn--sm"
+                        className="zc-btn zc-btn--sm zc-record-refund"
                         title={`剩余可退 ${remaining}`}
                       >退款</button>
                     ) : null}
@@ -2665,6 +2784,43 @@ function TransactionList({ vm, onEdit, onRefund, refundRemaining, refundsFor, on
           </table>
         </div>
       ))}
+      {active && panel && (
+        <ActionSheet
+          title={panel.mode === 'detail' ? '流水详情' : '流水操作'}
+          description={`${active.tx.date}${active.tx.time ? ` ${active.tx.time}` : ''} · ${active.typeLabel}`}
+          onClose={closePanel}
+          actions={[
+            ...(panel.mode === 'actions' ? [
+              { label: active.tx.type === 'adjustment' && active.tx.reconciliationSessionId ? '查看关联对账' : '编辑流水', icon: <Pencil size={20} />, onSelect: () => choose(() => onEdit(active.tx)) },
+              ...(active.tx.type === 'expense' && D(refundRemaining(active.tx)).gt(0) ? [{ label: '记录退款', note: `剩余可退 ${refundRemaining(active.tx)} ${active.assetCode}`, icon: <Undo2 size={20} />, onSelect: () => choose(() => onRefund(active.tx)) }] : []),
+              ...(refundsFor(active.tx).length ? [{ label: '查看退款记录', icon: <FileText size={20} />, onSelect: () => choose(() => onManageRefunds(active.tx)) }] : []),
+              { label: '查看详情', icon: <FileText size={20} />, onSelect: () => setPanel({ id: active.tx.id, mode: 'detail' }) },
+            ] : [
+              { label: '流水操作', note: active.tx.type === 'expense' ? '编辑、退款及相关记录' : '编辑及相关记录', icon: <MoreHorizontal size={20} />, onSelect: () => setPanel({ id: active.tx.id, mode: 'actions' }) },
+            ]),
+          ]}
+        >
+          <div className="zc-record-sheet-summary">
+            <h3>{active.title}</h3>
+            <p className="zc-record-sheet-amount" style={amountColor(active.signedAmount)}>{D(active.signedAmount).isNegative() ? '−' : D(active.signedAmount).gt(0) ? '+' : ''}{num(active.tx.amount, active.assetDecimals)} <span>{active.assetCode}</span></p>
+          </div>
+          {panel.mode === 'detail' && <div className="zc-record-sheet-facts">
+            <CardFact label="分类" value={active.categoryLabel} />
+            {usesAccounts && <CardFact label="账户" value={active.accountName} />}
+            <CardFact label="状态" value={active.statusLabel} />
+            {activeRefunds.length > 0 && <>
+              <CardFact label="累计退款" value={`${num(activeRefunded, active.assetDecimals)} ${active.assetCode}`} />
+              <CardFact label="剩余可退" value={`${num(refundRemaining(active.tx), active.assetDecimals)} ${active.assetCode}`} />
+            </>}
+            {active.payeeName && <CardFact label="交易对象" value={active.payeeName} />}
+            {active.splitSummary && <CardFact label="拆分" value={active.splitSummary} />}
+            {!!active.tx.tagIds?.length && <CardFact label="标签" value={active.tx.tagIds.map(tagName).join(' / ')} />}
+            {locationName(active.tx) && <CardFact label="地点" value={locationName(active.tx)} />}
+            {!!attachmentCount(active.tx) && <CardFact label="附件" value={`${attachmentCount(active.tx)} 个`} />}
+            {active.tx.note && <CardFact label="备注" value={active.tx.note} />}
+          </div>}
+        </ActionSheet>
+      )}
     </div>
   );
 }

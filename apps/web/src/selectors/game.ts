@@ -20,6 +20,7 @@ export interface GameRecordVM {
   item: string;
   acc: string;
   amt: number;
+  amountExact: string;
   nativeAmount: string;
   seasonName: string;
 }
@@ -158,6 +159,7 @@ export function buildGameSeason(snap: Snapshot, gameId: string | null, selectedI
       date: r.date, type: r.recordType, item: r.note ?? '',
       acc: accName(r.gameAccountId),
       amt: financial(r).net.toNumber(),
+      amountExact: financial(r).net.toString(),
       nativeAmount: (() => {
         const cash = r.settlementAssetId && r.settlementAmount
           ? report.formatNative(r.settlementAmount, r.settlementAssetId) : undefined;

@@ -92,8 +92,9 @@ describe('responsive shell contract', () => {
     expect(charts).toContain('zc-trend-grid');
     expect(css).toContain('.zc-chart-pair');
     expect(css).toContain('.zc-donut');
-    expect(reportInsights).toContain('zc-report-insight-grid');
-    expect(css).toContain('.zc-report-insight-grid');
+    // Comparison metrics now inherit the shared band reflow instead of a page-only grid.
+    expect(reportInsights).toContain('zc-card-band is-inset zc-report-insight-grid');
+    expect(css).toMatch(/@media \(max-width: 767px\)\s*\{\s*\.zc-card-band \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
     expect(css).toContain('.zc-report-driver-row');
     expect(css).toContain('.zc-report-chart-grid');
     expect(css).toContain('overscroll-behavior-inline: contain');

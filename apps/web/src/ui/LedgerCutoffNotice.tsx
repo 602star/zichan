@@ -44,9 +44,8 @@ export function LedgerCutoffNotice({ snap }: { snap: Snapshot }) {
 
   return (
     <div
-      className="zc-cutoff-notice zc-card is-tight"
+      className="zc-cutoff-notice zc-alert"
       style={{
-        borderColor: 'var(--warning)',
         display: 'flex',
         flexWrap: 'wrap',
         alignItems: 'center',

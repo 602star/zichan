@@ -1,6 +1,6 @@
 import type { LedgerMode } from '@zichan/core';
 
-export type ScreenId = 'dashboard' | 'convert' | 'transactions' | 'game' | 'fixed' | 'reports' | 'history' | 'manage' | 'sync' | 'account' | 'settings';
+export type ScreenId = 'dashboard' | 'assets' | 'convert' | 'transactions' | 'game' | 'fixed' | 'reports' | 'history' | 'manage' | 'sync' | 'account' | 'settings';
 
 export interface NavigationItem {
   id: ScreenId;
@@ -16,6 +16,7 @@ export interface NavigationPreferences {
 
 export const NAVIGATION_ITEMS: readonly NavigationItem[] = [
   { id: 'dashboard', label: '总览', icon: '◈', description: '净资产和近期动态' },
+  { id: 'assets', label: '资产', icon: '▤', description: '账户、持仓和物品' },
   { id: 'convert', label: '资产转换', icon: '⇄', description: '换汇、买卖和转换链路' },
   { id: 'transactions', label: '日常收支', icon: '≋', description: '日常支出与收支流水' },
   { id: 'game', label: '游戏赛季', icon: '◆', description: '游戏投入、产出与回收' },
@@ -35,12 +36,12 @@ const SCREEN_ID_SET = new Set<ScreenId>(ALL_SCREEN_IDS);
 /*
  * What a brand-new ledger shows. The pinned entries from REQUIRED_NAVIGATION_IDS
  * are added on top, so a fresh sidebar reads 总览 → 日常收支 → 物品资产 → 我的账号 → 设置
- * and the phone bar keeps its three primary slots for the modules a person
- * actually opens every day.
+ * while the phone uses a fixed 总览／收支／记一笔／资产／更多 bar.
  *
  * The set is the same for every ledger mode on purpose: switching from 轻量记账
  * to 账户/资产记账 later must not silently add seven entries, and a module that
- * starts hidden is still one tap away under 更多 → 未启用模块.
+ * starts hidden is still available in the phone task directory. Sidebar
+ * visibility is configured separately under 添加到桌面侧栏.
  */
 const DEFAULT_VISIBLE_SCREEN_IDS: readonly ScreenId[] = ['dashboard', 'transactions', 'fixed', 'account'];
 

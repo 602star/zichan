@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { registerAccount } from '@zichan/db';
 
-export function PasswordRecovery({ baseUrl, onComplete }: { baseUrl: string; onComplete: (username: string) => void }) {
+export function PasswordRecovery({ baseUrl, onComplete, expanded = false }: { baseUrl: string; onComplete: (username: string) => void; expanded?: boolean }) {
   const [username, setUsername] = useState('');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
@@ -9,7 +9,7 @@ export function PasswordRecovery({ baseUrl, onComplete }: { baseUrl: string; onC
   const [busy, setBusy] = useState(false);
   const [emailBusy, setEmailBusy] = useState(false);
   const [notice, setNotice] = useState('');
-  return <details style={{ marginTop: 20 }}><summary>忘记账号密码</summary>
+  const content = <>
     <p className="zc-caption" style={{ marginTop: 10 }}>可向已验证邮箱发送重置码，或联系管理员核实身份后取得一次性重置码。两种方式修改同一个账号密码；在附属节点登录的统一账号，请到创建账号的身份源网站申请找回。</p>
     <form onSubmit={(event) => {
       event.preventDefault();
@@ -48,5 +48,6 @@ export function PasswordRecovery({ baseUrl, onComplete }: { baseUrl: string; onC
       <label className="zc-field">确认新账号密码<input className="zc-input" aria-label="确认新账号密码" type="password" required minLength={8} autoComplete="new-password" value={confirmation} disabled={busy} onChange={(event) => setConfirmation(event.target.value)} /></label>
       <button className="zc-btn zc-btn--primary" disabled={busy} type="submit">{busy ? '重置中…' : '重置账号密码'}</button>
     </form>{notice && <p role="status">{notice}</p>}
-  </details>;
+  </>;
+  return expanded ? <section aria-label="找回账号密码">{content}</section> : <details style={{ marginTop: 20 }}><summary>忘记账号密码</summary>{content}</details>;
 }

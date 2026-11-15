@@ -124,21 +124,21 @@ function Navigator(props: { label: string; onPrevious: () => void; onNext: () =>
 }
 
 function EntryList<T>(props: { rows: T[]; keyOf: (item: T) => string; renderEntry: (item: T) => ReactNode; onOpen?: (item: T) => void; emptyText: string }) {
-  if (!props.rows.length) return <div className="zc-card" style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>{props.emptyText}</div>;
+  if (!props.rows.length) return <div className="zc-card-empty" style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>{props.emptyText}</div>;
   return (
-    <div className="zc-card" style={{ paddingTop: 4, paddingBottom: 4 }}>
+    <div className="zc-card-group zc-entry-list">
       {props.rows.map((item) => (
         props.onOpen ? (
           <button
             key={props.keyOf(item)}
             type="button"
             onClick={() => props.onOpen?.(item)}
-            style={{ display: 'block', width: '100%', border: 0, borderBottom: '1px solid var(--border)', padding: '9px 0', background: 'transparent', color: 'inherit', font: 'inherit', textAlign: 'left', cursor: 'pointer' }}
+            style={{ display: 'block', width: '100%', border: 0, borderBottom: '1px solid var(--border)', padding: '10px 16px', background: 'transparent', color: 'inherit', font: 'inherit', textAlign: 'left', cursor: 'pointer' }}
           >
             {props.renderEntry(item)}
           </button>
         ) : (
-          <div key={props.keyOf(item)} style={{ borderBottom: '1px solid var(--border)', padding: '9px 0' }}>
+          <div key={props.keyOf(item)} style={{ borderBottom: '1px solid var(--border)', padding: '10px 16px' }}>
             {props.renderEntry(item)}
           </div>
         )

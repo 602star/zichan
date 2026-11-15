@@ -18,6 +18,7 @@ export async function enableEveryNavigationModule(page) {
   if (await bottom.isVisible()) {
     await bottom.getByRole('button', { name: /更多/ }).click();
     const drawer = page.getByRole('dialog', { name: '更多功能' });
+    if (await drawer.getByText('添加到桌面侧栏', { exact: true }).isVisible()) await drawer.getByText('添加到桌面侧栏', { exact: true }).click();
     const add = drawer.locator('.zc-mobile-drawer-add');
     for (let round = 0; round < 12 && await add.count(); round += 1) {
       const previous = await add.count();

@@ -8,6 +8,8 @@ import { PayeePicker } from './PayeePicker.js';
 import { TagPicker } from './TagPicker.js';
 import { ConfirmDialog } from './ConfirmDialog.js';
 import { DateTimeInput } from './DateTimeInput.js';
+import { ValuePicker } from './ValuePicker.js';
+import { formTaskGroups } from './form-task-groups.js';
 import { DialogShell } from './DialogShell.js';
 import { FormDraftStatus, useFormDraftAutosave } from './FormDraftStatus.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
@@ -384,6 +386,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   const groups = spec.progressiveFields ? progressiveFieldGroups(spec.fields, values, prefilledValues, optionalFieldKeys ?? [], compactKeys) : undefined;
   const moreFields = groups?.more ?? allMoreFields.filter((f) => isFieldVisible(f, values));
   const coreFields = groups?.core ?? spec.fields.filter((f) => f.section !== 'more' && isFieldVisible(f, values));
+  const coreGroups = compactView && coreFields.length > 6 ? formTaskGroups(coreFields, /日常|退款/.test(spec.title)) : [{ title: '', fields: coreFields }];
   const visibleOptional = new Set(optionalFieldKeys ?? moreFields.map((f) => f.key));
   const visibleMoreFields = groups ? moreFields : moreFields.filter((f) => isMoreFieldVisible(f, values, optionalFieldKeys, allMoreFieldKeys));
   const moreExpanded = moreOpen ?? spec.moreInitiallyOpen ?? visibleMoreFields.length > 0;
@@ -652,8 +655,10 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
           </div>
         )}
 
-        <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          {coreFields.map((f) => {
+        {coreGroups.map((group) => <fieldset className="zc-form-task-group" key={group.title}>
+          {group.title && <legend>{group.title}</legend>}
+          <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          {group.fields.map((f) => {
             const fieldId = `${formId}-${f.key}`;
             const options = optionsWithCreatedAssets(f, values);
             return (
@@ -684,7 +689,8 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
               />
             );
           })}
-        </div>
+          </div>
+        </fieldset>)}
 
         {moreFields.length > 0 && (
           <details open={moreExpanded} style={{ marginTop: 16 }}>
@@ -864,13 +870,11 @@ function FormField(props: {
     <div className="zc-form-field" key={f.key} data-form-field={fieldId} style={{ gridColumn: f.half ? 'span 1' : 'span 2' }}>
       <label className="zc-label" htmlFor={fieldId}>{f.type === 'payee' && payeeType === 'income' ? '付款方' : f.label}{f.required && <span style={{ color: 'var(--negative)', marginLeft: 3 }}>*</span>}</label>
       {f.type === 'select' && f.singleOptionSummary && options.length === 1 ? <output id={fieldId} aria-label={f.label} style={{ display: 'block', padding: '8px 0' }}>{options[0]!.label}</output> : f.type === 'select' ? (
-        <select id={fieldId} name={f.key} className="zc-select" required={f.required} disabled={presetBusy} value={value} onChange={(e) => void chooseSelect(e.target.value)}>
-          {f.allowEmpty && <option value="">（无）</option>}
-          {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          {availablePresetGroups.map((group) => <optgroup key={group.label} label={`添加${group.label}`}>
-            {group.presets.map((preset) => <option key={preset.code} value={`__add_asset_preset__:${preset.code}`}>{preset.code} · {preset.name}</option>)}
-          </optgroup>)}
-        </select>
+        <ValuePicker id={fieldId} name={f.key} label={f.label} required={f.required} disabled={presetBusy} value={value} onChange={(next) => void chooseSelect(next)} options={[
+          ...(f.allowEmpty ? [{ value: '', label: '（无）' }] : []),
+          ...options.map((option) => ({ value: option.value, label: option.label, group: option.groupName })),
+          ...availablePresetGroups.flatMap((group) => group.presets.map((preset) => ({ value: `__add_asset_preset__:${preset.code}`, label: `${preset.code} · ${preset.name}`, group: `添加${group.label}` }))),
+        ]} />
       ) : f.type === 'icon' ? (
         <EntityIconEditor disabled={props.iconDisabled} id={fieldId} value={value} platformId={f.iconKind === 'payee' ? props.entityId : undefined} platformName={f.iconKind === 'payee' ? values.name : undefined}
           defaultIcon={f.iconKind === 'payee' ? undefined : categoryIconValue(props.entityId ?? values.parentId ?? '', (f.categories ?? []).map((row) => row.id === props.entityId ? { ...row, icon: undefined, parentId: values.parentId } : row))}

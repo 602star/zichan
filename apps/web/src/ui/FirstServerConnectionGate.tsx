@@ -3,6 +3,8 @@ import { fetchAuthMe, loginAccount, registerAccount, type SyncAuthSession } from
 import { getDeviceId } from '../db/cloud.js';
 import { rememberLoginPassword } from '../login-password.js';
 import { PasswordRecovery } from './PasswordRecovery.js';
+import { useCompactView } from './useCompactView.js';
+import { MobilePageHeader, useMobileSection } from './MobilePage.js';
 import { applySyncAuthSession, preferredSessionTransport } from '../sync-auth.js';
 import {
   buildSyncUrlFromParts,
@@ -64,6 +66,8 @@ async function readHealth(baseUrl: string): Promise<ServerHealth> {
 }
 
 export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = false, onAuthenticated, initialProfile }: { onReady: () => Promise<void>; onCancel: () => void; accountOnly?: boolean; initialProfile?: SyncConnection; onAuthenticated?: (connection: SyncConnection, session: SyncAuthSession) => Promise<void> }) {
+  const compact = useCompactView();
+  const [authView, openAuth, backAuth] = useMobileSection('auth', 'login');
   const initialConnectionLink = useMemo(() => accountOnly ? null : connectionLinkFromLocation(), [accountOnly]);
   const initialUrl = useMemo(() => initialConnectionLink?.url ?? initialProfile?.baseUrl ?? syncAddressPresetUrl('current'), [initialConnectionLink, initialProfile?.baseUrl]);
   const [expectedLink, setExpectedLink] = useState<SyncConnectionLinkPayload | null>(initialConnectionLink ?? null);
@@ -77,6 +81,9 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
   const [confirmation, setConfirmation] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [registering, setRegistering] = useState(false);
+  useEffect(() => {
+    if (compact && (authView === 'login' || authView === 'register')) setRegistering(authView === 'register');
+  }, [authView, compact]);
   const [health, setHealth] = useState<ServerHealth | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -249,8 +256,12 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
     }
   }
 
+  if (compact && authView === 'recovery') return <main className="zc-auth-page"><section className="zc-auth-content">
+    <MobilePageHeader title="找回账号密码" onBack={backAuth} backLabel="返回登录" />
+    <PasswordRecovery baseUrl={address} expanded onComplete={(value) => { setUsername(value); setPassword(''); setRegistering(false); backAuth(); }} />
+  </section></main>;
   return (
-    <main style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(20px, 5vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif' }}>
+    <main className="zc-auth-page" style={{ minHeight: '100dvh', overflowY: 'auto', padding: 'clamp(20px, 5vw, 64px)', boxSizing: 'border-box', background: 'var(--bg)', color: 'var(--text-primary)', fontFamily: 'system-ui, sans-serif' }}>
       <section style={{ width: accountOnly ? 'min(440px, 100%)' : 'min(780px, 100%)', margin: '0 auto' }}>
         {!accountOnly && <button type="button" onClick={onCancel} disabled={busy} className="zc-btn" style={{ minHeight: 34, padding: '0 11px' }}>返回模式选择</button>}
         <h1 style={{ margin: '18px 0 6px', color: 'var(--text-primary)', fontSize: 'var(--fs-hero)' }}>{accountOnly ? registering ? '注册账号' : '账号登录' : '连接同步服务器'}</h1>
@@ -292,14 +303,14 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
           <div className="zc-login-actions">
             <button className="zc-btn zc-btn--primary" type="submit" disabled={busy || health?.claimed === false || health?.ledgerWebAccess === false}>{busy ? '处理中…' : registering ? '注册并登录' : '登录'}</button>
             <div className="zc-login-secondary-actions">
-              <button className="zc-btn" type="button" onClick={() => setRegistering((value) => !value)} disabled={busy || !registering && (health?.claimed === false || health?.registrationMode === 'closed')}>{registering ? '返回登录' : '注册新账号'}</button>
+              <button className="zc-btn" type="button" onClick={() => { setRegistering((value) => !value); openAuth(registering ? 'login' : 'register'); }} disabled={busy || !registering && (health?.claimed === false || health?.registrationMode === 'closed')}>{registering ? '返回登录' : '注册新账号'}</button>
               <button className="zc-btn zc-btn--ghost" type="button" onClick={() => void inspectServer()} disabled={busy}>{accountOnly ? '重试连接' : '检查服务器'}</button>
             </div>
           </div>
           </form>
           {error && <div role="alert" style={{ marginTop: 12, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{error}</div>}
           {message && <div role="status" style={{ marginTop: 12, color: 'var(--positive)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{message}</div>}
-          {health?.claimed && !registering && <div style={{ maxWidth: 440 }}><PasswordRecovery baseUrl={address} onComplete={(value) => { setUsername(value); setRegistering(false); }} /></div>}
+          {health?.claimed && !registering && (compact ? <button type="button" className="zc-btn zc-btn--ghost" onClick={() => openAuth('recovery')}>忘记账号密码</button> : <div style={{ maxWidth: 440 }}><PasswordRecovery baseUrl={address} onComplete={(value) => { setUsername(value); setRegistering(false); }} /></div>)}
           {accountOnly && <section aria-label="账号登录权限说明" style={{ marginTop: 18, fontSize: 'var(--fs-caption)', lineHeight: 1.7 }}><strong>登录会使用什么权限？</strong><p>验证本站账号并建立 HttpOnly 会话 Cookie。登录后用账号密码加密本浏览器的离线解锁资料，不保存明文密码。</p></section>}
           {accountOnly && identityProviders.length > 0 && <section style={{ marginTop: 18, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
             <strong>使用统一账号登录</strong>

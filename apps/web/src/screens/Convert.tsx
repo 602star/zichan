@@ -1,4 +1,6 @@
-import { useId, useMemo, useState } from 'react';
+import { CardGroup } from '../ui/Card.js';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useScreenTarget } from '../screen-target.js';
 import { restoreConversion, voidConversion, setConversionOperationState, conversionOperationDependency, type ConversionOperationInput } from '@zichan/db';
 import { D, isDateInRange, localToday, type Asset, type ChainWithSteps, type ConversionType } from '@zichan/core';
 import { useSnapshot } from '../db/snapshot.js';
@@ -43,6 +45,8 @@ function badgeStyle(type: string) {
 }
 
 export function Convert() {
+  const target = useScreenTarget('convert');
+  const handledTarget = useRef<object | null>(null);
   const snap = useSnapshot('convert');
   const { store, bump } = useStore();
   const undo = useUndo(store, bump);
@@ -70,6 +74,15 @@ export function Convert() {
   const detailTitleId = useId();
   const [deletingChainId, setDeletingChainId] = useState<string | null>(null);
   const vm = useMemo(() => (snap ? buildConvert(snap) : null), [snap]);
+  useEffect(() => {
+    if (!target?.id || !snap?.assets.some((asset) => asset.id === target.id) || handledTarget.current === target) return;
+    handledTarget.current = target;
+    if (target.tab === 'price') setPriceAssetId(target.id);
+    else if (target.tab === 'activity') setActivityAssetId(target.id);
+    else if (target.tab === 'buy') setAdding({ entry: { type: 'buy', toAssetId: target.id } });
+    else if (target.tab === 'sell') setAdding({ entry: { type: 'sell', fromAssetId: target.id } });
+    else setOpenGroup((current) => ({ ...current, [target.id!]: true }));
+  }, [snap, target]);
   if (!snap || !vm) return null;
   const reportAsset = baseAsset(snap);
   const reportSymbol = reportAsset?.symbol ?? `${reportAsset?.code ?? ''} `;
@@ -212,7 +225,7 @@ export function Convert() {
       )}
 
       {showVoided && (
-        <div className="zc-card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="zc-card is-flush">
           <div style={{ padding: '13px 18px', borderBottom: '1px solid var(--border)', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>已作废转换</div>
           {voidedChains.map((row) => (
             <div key={row.chain.id} className="zc-voided-row" style={{ display: 'grid', gridTemplateColumns: '120px 100px minmax(0, 1fr) 90px', alignItems: 'center', gap: 12, padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
@@ -237,7 +250,7 @@ export function Convert() {
         const needsValue = g.hasPosition && g.value === null;
         const needsCost = g.hasPosition && !g.costBasisKnown;
         return (
-          <div key={g.assetId} className="zc-convert-asset-card zc-card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div key={g.assetId} className="zc-convert-asset-card zc-card is-flush">
             <button
               onClick={() => setOpenGroup((s) => ({ ...s, [g.assetId]: !open }))}
               className="zc-convert-asset-header"
@@ -311,10 +324,10 @@ export function Convert() {
                       </button>
                       {co && (
                         <div className="zc-convert-detail-grid" style={{ padding: '4px 22px 20px', background: 'var(--surface-2)', display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) minmax(0, 1fr)', gap: 24 }}>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          <div>
                             <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', letterSpacing: 0 }}>换算步骤</div>
                             {c.steps.map((s) => (
-                              <div key={s.n} className="zc-card" style={{ padding: '14px 16px' }}>
+                              <CardGroup key={s.n} className="zc-convert-step">
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                                   <span style={{ width: 22, height: 22, borderRadius: 'var(--r-round)', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{s.n}</span>
                                   <span style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>{s.from}</span>
@@ -327,10 +340,10 @@ export function Convert() {
                                   {s.fee && <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--negative)', fontWeight: 'var(--fw-medium)' }}>{s.fee}</span>}
                                   <details style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}><summary style={{ cursor: 'pointer' }}>成交口径与完整汇率</summary>{s.details.map((detail) => <div key={detail}>{detail}</div>)}<div style={{ userSelect: 'text' }}>{s.fullRate}</div></details>
                                 </div>
-                              </div>
+                              </CardGroup>
                             ))}
                           </div>
-                          <div className="zc-card" style={{ padding: '16px 18px', alignSelf: 'start' }}>
+                          <CardGroup className="zc-convert-accounting">
                             <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', letterSpacing: 0, marginBottom: 6 }}>收付与记账明细</div>
                             {c.calc.map((r, index) => (
                               <div key={`${r.l}-${index}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', overflowWrap: 'anywhere', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
@@ -342,7 +355,7 @@ export function Convert() {
                               <button onClick={() => void openEditor(c.chain.id)} style={{ padding: '6px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'transparent', color: 'var(--accent)', fontWeight: 'var(--fw-medium)', fontSize: 'var(--fs-caption)', cursor: 'pointer', marginRight: 8 }}>{c.chain.operationId ? '整组编辑' : '编辑'}</button>
                               <button onClick={() => setDeletingChainId(c.chain.id)} style={{ padding: '6px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', fontWeight: 'var(--fw-medium)', fontSize: 'var(--fs-caption)', cursor: 'pointer' }}>作废</button>
                             </div>
-                          </div>
+                          </CardGroup>
                         </div>
                       )}
                     </div>
@@ -444,7 +457,7 @@ function ConvertEmptyState({
     </button>;
   };
   return (
-    <section className="zc-card" style={{ padding: 22 }}>
+    <section className="zc-card">
       <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{onlyCny ? '当前只有人民币' : '还没有资产转换记录'}</div>
       <div style={{ marginTop: 7, color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 1.7 }}>
         选一个常用目标资产开始填写真实转换。系统只会在需要时补充资产定义，不会伪造余额、持仓或交易。
