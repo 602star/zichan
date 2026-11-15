@@ -97,7 +97,7 @@ export function Dashboard() {
   const reportDecimals = snap ? baseAsset(snap)?.decimals ?? 2 : 2;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
+    <div className="zc-desktop-workbench" style={compactView ? { display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' } : undefined}>
       <DateRangeBar value={dateRange} onChange={setDateRange} />
       {snap && <LedgerCutoffNotice snap={snap} />}
       {vm.missingRateAssetCodes.length > 0 && (
@@ -139,20 +139,20 @@ export function Dashboard() {
         )}
       </div>
 
-      {compactView && <>
-        <div className="zc-mobile-shortcuts">
+      <div className="zc-dashboard-recent">
+        {compactView && <div className="zc-mobile-shortcuts">
           <button type="button" className="zc-btn" onClick={() => navigateTo({ screen: 'reports' })}>收支报表</button>
           <button type="button" className="zc-btn" onClick={() => navigateTo({ screen: 'transactions', tab: 'budget' })}>预算</button>
           <button type="button" className="zc-btn" onClick={() => navigateTo({ screen: 'assets' })}>查看资产</button>
-        </div>
-        <TaskList title="最近流水" items={(transactionReadModel?.recentTransactions ?? []).slice(0, 3).map((row) => ({
+        </div>}
+        <TaskList title="最近流水" items={(transactionReadModel?.recentTransactions ?? []).slice(0, compactView ? 3 : 6).map((row) => ({
           label: row.description || row.merchant || ({ expense: '支出', income: '收入', refund: '退款', transfer: '转账', adjustment: '余额调整' })[row.type],
           note: row.date,
           value: `${row.type === 'expense' ? '−' : row.type === 'income' || row.type === 'refund' ? '+' : ''}${num(row.amount, snap?.assets.find((asset) => asset.id === row.assetId)?.decimals ?? 8)} ${snap?.assets.find((asset) => asset.id === row.assetId)?.code ?? ''}`,
           onClick: () => navigateTo({ screen: 'transactions', tab: 'records', id: row.id }),
         }))} />
         <button type="button" className="zc-btn" onClick={() => navigateTo({ screen: 'transactions', tab: 'records' })}>查看全部流水</button>
-      </>}
+      </div>
 
       {compactView && <button type="button" className="zc-dashboard-more-metrics-toggle zc-btn" aria-expanded={showAllMetrics} onClick={() => setShowAllMetrics((open) => !open)}>{showAllMetrics ? '收起完整指标' : '查看完整指标'}</button>}
 

@@ -11,6 +11,7 @@ import { DateTimeInput } from './DateTimeInput.js';
 import { ValuePicker } from './ValuePicker.js';
 import { formTaskGroups } from './form-task-groups.js';
 import { DialogShell } from './DialogShell.js';
+import { WorkspaceDialog } from './WorkspaceDialog.js';
 import { FormDraftStatus, useFormDraftAutosave } from './FormDraftStatus.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
 import { readAttachmentBlob, type AttachmentDraftData } from '../db/attachment-storage.js';
@@ -250,7 +251,7 @@ export async function persistDraftBeforeClose(
   close();
 }
 
-export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, deleteLabel = '删除', onClose, optionalFieldKeys, onOptionalFieldKeysChange, optionalFieldPresets }: {
+export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, deleteLabel = '删除', onClose, optionalFieldKeys, onOptionalFieldKeysChange, optionalFieldPresets, workspace = 'page', initialFieldValues, onSaveContinue, retainEntryFields, onRetainEntryFieldsChange }: {
   spec: EntityFormSpec<T>;
   initial?: T;
   /** Treat a prefilled entity as a new record rather than an existing record being edited. */
@@ -262,6 +263,11 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   optionalFieldKeys?: string[];
   onOptionalFieldKeysChange?: (keys: string[]) => Promise<void> | void;
   optionalFieldPresets?: { label: string; keys: string[] }[];
+  workspace?: 'page' | 'composer' | false;
+  initialFieldValues?: Record<string, string>;
+  onSaveContinue?: (values: Record<string, string>) => void;
+  retainEntryFields?: boolean;
+  onRetainEntryFieldsChange?: (retain: boolean) => void;
 }) {
   const compactView = useCompactView();
   const { store, bump, preview } = useStore();
@@ -271,8 +277,8 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   const formId = useId().replace(/:/g, '');
   const titleId = `${formId}-title`;
   const initialValues = useMemo(
-    () => initial ? { ...defaults(spec), ...spec.toValues(initial) } : defaults(spec),
-    [initial, spec],
+    () => ({ ...(initial ? { ...defaults(spec), ...spec.toValues(initial) } : defaults(spec)), ...initialFieldValues }),
+    [initial, spec, initialFieldValues],
   );
   const initialFiles = useMemo<Record<string, FileRow[]>>(() => ({}), []);
   const entity = initial && typeof initial === 'object' ? initial as { id?: unknown; version?: unknown } : undefined;
@@ -413,6 +419,12 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     setPendingFocus(key);
   };
   useEffect(() => {
+    if (workspace === 'composer' && creating && !compactView && draftReady && !pendingDraft) {
+      focusAttempts.current = 0;
+      setPendingFocus('amount');
+    }
+  }, [workspace, creating, compactView, draftReady, pendingDraft]);
+  useEffect(() => {
     if (!pendingFocus) return;
     const field = spec.fields.find((f) => f.key === pendingFocus);
     if (field && !isFieldVisible(field, values)) {
@@ -508,7 +520,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     });
   }, [initial, pendingDraft, spec]);
 
-  async function save(confirmedWarning?: string) {
+  async function save(confirmedWarning?: string, keepOpen = false) {
     if (busy || iconBusy || !draftReady || pendingDraft) return;
     setErr(null);
     const normalized = { ...values };
@@ -547,7 +559,8 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
       savedOrDeleted.current = true;
       await draftAutosave.stopAndDrain();
       await deleteFormDraft(draftKey).catch(() => undefined);
-      onClose();
+      if (keepOpen && onSaveContinue) onSaveContinue(normalized);
+      else onClose();
     } catch (e) {
       if (e instanceof DuplicateMasterDataError && e.kind === spec.identityKind) setDuplicates(e);
       setErr(e instanceof Error ? e.message : String(e));
@@ -579,7 +592,10 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   }
 
   return (
-    <DialogShell
+    <WorkspaceDialog
+      workspace={workspace}
+      navigationBlocked={dirty || !!pendingDraft}
+      onSaveShortcut={() => void save(undefined, !!onSaveContinue)}
       labelledBy={titleId}
       onDismiss={requestClose}
       dismissDisabled={busy || iconBusy}
@@ -657,14 +673,14 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
 
         {coreGroups.map((group) => <fieldset className="zc-form-task-group" key={group.title}>
           {group.title && <legend>{group.title}</legend>}
-          <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="zc-modal-form-grid" style={{ display: 'grid', gridTemplateColumns: workspace === 'composer' && !compactView ? 'repeat(3, minmax(0, 1fr))' : '1fr 1fr', gap: 12 }}>
           {group.fields.map((f) => {
             const fieldId = `${formId}-${f.key}`;
             const options = optionsWithCreatedAssets(f, values);
             return (
               <FormField
                 key={f.key}
-                f={f}
+                f={workspace === 'composer' && !compactView ? { ...f, half: f.type !== 'textarea' && f.type !== 'file' } : f}
                 fieldId={fieldId}
                 options={options}
                 values={values}
@@ -774,6 +790,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
           </div>
         )}
 
+        {!compactView && onSaveContinue && <div className="zc-entry-retain"><label><input type="checkbox" checked={retainEntryFields} aria-describedby={`${formId}-continue-note`} onChange={(event) => onRetainEntryFieldsChange?.(event.target.checked)} />沿用常用字段</label><span id={`${formId}-continue-note`}>保留日期、账户、币种和分类；金额与描述每次重新填写。</span></div>}
         <div className="zc-modal-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 20 }}>
           <div>
             {initial && onDelete && (
@@ -785,6 +802,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
               {pendingDraft ? '请先处理上方草稿' : '正在加载草稿…'}
             </span>}
             <button onClick={requestClose} disabled={busy || iconBusy} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>取消</button>
+            {!compactView && onSaveContinue && <button type="button" className="zc-btn" disabled={busy || iconBusy || !draftReady || !!pendingDraft} onClick={() => void save(undefined, true)}>保存并继续</button>}
             <button onClick={() => void save()} disabled={busy || iconBusy || !draftReady || !!pendingDraft} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy || !draftReady || !!pendingDraft ? 0.6 : 1 }}>
               {busy ? '保存中…' : '保存'}
             </button>
@@ -820,7 +838,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
             当前修改尚未提交。关闭后会保留自动草稿，下次打开同一表单时继续填写。
           </ConfirmDialog>
         )}
-    </DialogShell>
+    </WorkspaceDialog>
   );
 }
 

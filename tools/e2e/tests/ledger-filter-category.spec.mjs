@@ -6,8 +6,9 @@ test.setTimeout(480_000);
 /** Open the daily ledger and its category filters. */
 async function openDailyTransactions(page) {
   const sidebar = page.locator('.zc-sidebar');
-  await sidebar.getByRole('button', { name: /日常收支$/ }).click();
+  await sidebar.locator('[data-destination="records"] .zc-sidebar-nav-item').click();
   await expect(page.getByText('日常流水', { exact: true }).first()).toBeVisible();
+  await page.getByRole('button', { name: /^筛选/ }).click();
 }
 
 test('filters daily transactions with the same category control as the record dialog', async ({ page }) => {

@@ -24,6 +24,7 @@ test('conversion balances, saved metadata, compact rates and responsive details'
   if (!(await toggle.isChecked())) await toggle.click();
   await expect(toggle).toBeChecked();
   await page.locator('.zc-sidebar nav button').filter({ hasText: '资产转换' }).click();
+  await page.getByRole('tab', { name: '持仓概览', exact: true }).click();
   await page.getByRole('button', { name: '+ 新增转换' }).click();
   let dialog = page.getByRole('dialog', { name: '新增资产转换' });
   await expect(dialog.getByRole('button', { name: /USDC · 美元稳定币/ })).toBeVisible();
@@ -81,7 +82,8 @@ test('conversion balances, saved metadata, compact rates and responsive details'
   let details = page.getByRole('dialog', { name: 'BTC · 流水与账户' });
   await expect(details.getByText('流入 111 BTC', { exact: false })).toBeVisible();
   let bounds = await details.boundingBox();
-  expect(Math.abs(bounds.x + bounds.width / 2 - page.viewportSize().width / 2)).toBeLessThan(4);
+  let contentBounds = await page.locator('.zc-page-content').boundingBox();
+  expect(Math.abs(bounds.x + bounds.width / 2 - (contentBounds.x + contentBounds.width / 2))).toBeLessThan(4);
   await details.getByRole('button', { name: '关闭资产流水' }).click();
   await page.getByRole('tab', { name: '时间线', exact: true }).click();
   await expect(page.getByText('测试标题与汇率', { exact: true })).toBeVisible();
@@ -91,7 +93,8 @@ test('conversion balances, saved metadata, compact rates and responsive details'
   await btcTimeline.click();
   details = page.getByRole('dialog', { name: '测试标题与汇率' });
   bounds = await details.boundingBox();
-  expect(Math.abs(bounds.x + bounds.width / 2 - page.viewportSize().width / 2)).toBeLessThan(4);
+  contentBounds = await page.locator('.zc-page-content').boundingBox();
+  expect(Math.abs(bounds.x + bounds.width / 2 - (contentBounds.x + contentBounds.width / 2))).toBeLessThan(4);
   await details.getByRole('button', { name: '关闭详情' }).click();
   await page.getByLabel('历史涉及资产').selectOption({ label: 'USDT' });
   await expect(page.getByText('测试标题与汇率', { exact: true })).toBeHidden();
@@ -146,6 +149,7 @@ test('conversion balances, saved metadata, compact rates and responsive details'
   for (const theme of ['文献纸 · 墨朱', '青灰纸 · 墨朱', '紫灰纸 · 墨朱']) {
     await page.getByRole('radio', { name: theme }).click();
     await page.locator('.zc-sidebar nav button').filter({ hasText: '资产转换' }).click();
+    await page.getByRole('tab', { name: '持仓概览', exact: true }).click();
     const surface = await page.locator('.zc-convert-asset-header').first().evaluate((element) => getComputedStyle(element).backgroundColor);
     expect(surface).not.toBe('rgba(0, 0, 0, 0)');
     await page.screenshot({ path: testInfo.outputPath(`conversion-dark-${theme.slice(0, 2)}.png`), fullPage: true });
@@ -179,13 +183,14 @@ test('selecting a new common currency from the asset field creates only its defi
   await expect(dialog.getByText('已添加 GBP 资产定义', { exact: false })).toBeVisible();
   await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('dialog', { name: '保留未完成的转换？' }).getByRole('button', { name: '放弃草稿并关闭' }).click();
+  await page.getByRole('tab', { name: '持仓概览', exact: true }).click();
   await expect(page.locator('.zc-convert-asset-header').filter({ hasText: 'GBP' })).toContainText('当前余额 0');
   await expect(page.locator('.zc-convert-asset-header').filter({ hasText: 'GBP' })).toContainText('0/0 笔');
   await page.locator('.zc-sidebar nav button').filter({ hasText: '设置' }).click();
   const manageToggle = page.getByLabel('在侧边栏显示管理');
   if (!(await manageToggle.isChecked())) await manageToggle.click();
   await page.locator('.zc-sidebar nav button').filter({ hasText: '管理' }).click();
-  await page.getByRole('tab', { name: '资产', exact: true }).click();
+  await page.getByRole('navigation', { name: '资产与资料中心', exact: true }).getByRole('button', { name: '资产', exact: true }).click();
   await expect(page.getByRole('row').filter({ hasText: 'GBP' })).toContainText('可用');
   await page.getByText('添加常用资产', { exact: true }).click();
   await expect(page.getByRole('button', { name: '加入资产 NZD' })).toBeVisible();

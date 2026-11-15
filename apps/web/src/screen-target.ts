@@ -5,10 +5,15 @@ import type { ScreenId } from './navigationPreferences.js';
 export interface ScreenTarget { screen: ScreenId; tab?: string; id?: string; }
 const key = (screen: string) => `zichan.screen-target.${screen}`;
 
+export function canNavigateWorkspace(): boolean {
+  return window.dispatchEvent(new Event('zichan:before-navigate', { cancelable: true }));
+}
+
 export function rememberScreenTarget(target: ScreenTarget) {
   try { accountSessionStorage.setItem(key(target.screen), JSON.stringify(target)); } catch { /* Live navigation remains available. */ }
 }
 export function navigateTo(target: ScreenTarget) {
+  if (!canNavigateWorkspace()) return;
   rememberScreenTarget(target);
   if (target.screen === 'transactions' && target.tab) {
     try { accountSessionStorage.setItem('zichan.transactions.tab', target.tab); } catch { /* Live target below. */ }

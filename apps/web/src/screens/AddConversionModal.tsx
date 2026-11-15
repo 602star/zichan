@@ -40,7 +40,7 @@ import { conversionGap, suggestFeeValue } from '../conversion-entry.js';
 import { moduleCurrencyId } from '../currencyPreferences.js';
 import { useUndo } from '../ui/UndoToast.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
-import { DialogShell } from '../ui/DialogShell.js';
+import { WorkspaceDialog } from '../ui/WorkspaceDialog.js';
 import { DateTimeInput } from '../ui/DateTimeInput.js';
 import { AssetIcon } from '../ui/AssetIcon.js';
 import { useConversionDraft } from '../ui/useConversionDraft.js';
@@ -756,7 +756,8 @@ export function AddConversionModal({
   );
 
   return (
-    <DialogShell
+    <WorkspaceDialog
+      navigationBlocked={draftState.dirty || !!draftState.pending}
       labelledBy={titleId}
       onDismiss={requestClose}
       dismissDisabled={saving}
@@ -1054,7 +1055,7 @@ export function AddConversionModal({
         </div>
       </ConfirmDialog>}
       </div>
-    </DialogShell>
+    </WorkspaceDialog>
   );
 }
 

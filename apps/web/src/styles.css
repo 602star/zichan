@@ -1,5 +1,4 @@
-/* Mirrors the prototype's base styles (资产记账系统.dc.html <style>). */
-
+/* Shared ledger surfaces. Desktop workspaces reuse phone fields and business forms. */
 /* Touch date/time selection shares the ledger's paper, ink and vermilion. */
 .zc-mobile-task-page { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .zc-mobile-shortcuts { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -4284,4 +4283,112 @@ input[type="radio"] {
     --fs-display: 36px;
     --fs-input: 18px;
   }
+}
+
+/* Desktop task workspaces keep the shared ledger vocabulary. */
+.zc-page-body, .zc-workspace-host { min-width: 0; }
+.zc-account-workspace-body, .zc-dashboard-recent { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.zc-workspace-host:empty { display: none; }
+.zc-sidebar-collapse { display: none; }
+.zc-sidebar-group { padding: 16px 12px 5px; font-size: var(--fs-meta); color: var(--sidebar-muted); }
+.zc-workspace-table { width: 100%; border-collapse: collapse; }
+.zc-workspace-table th { color: var(--text-tertiary); font-weight: var(--fw-medium); text-align: left; }
+.zc-workspace-table th, .zc-workspace-table td { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.zc-workspace-table .is-numeric { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.zc-workspace-link { border: 0; padding: 4px 0; background: transparent; color: var(--accent); font: inherit; text-align: left; cursor: pointer; }
+.zc-entry-retain { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 16px; color: var(--text-secondary); font-size: var(--fs-caption); }
+
+@media (min-width: 768px) {
+  .zc-app-shell { --workspace-side: 212px; }
+  .zc-app-shell[data-nav-collapsed="true"] { --workspace-side: 72px; }
+  .zc-app-shell[data-nav-collapsed="true"] .zc-sidebar-brand-copy,
+  .zc-app-shell[data-nav-collapsed="true"] .zc-sidebar-nav-label,
+  .zc-app-shell[data-nav-collapsed="true"] .zc-sidebar-group,
+  .zc-app-shell[data-nav-collapsed="true"] .zc-sidebar-quick-inline { display: none; }
+  .zc-app-shell[data-nav-collapsed="true"] .zc-sidebar { padding-inline: 8px; }
+  .zc-sidebar-collapse { display: flex; gap: 10px; align-items: center; min-height: 38px; margin-top: auto; border: 0; background: transparent; color: var(--sidebar-muted); font: inherit; cursor: pointer; padding: 8px 12px; }
+  .zc-sidebar-collapse svg { flex-shrink: 0; }
+  .zc-page-content[data-workspace-mode="page"] > .zc-page-body { display: none; }
+  .zc-workspace-host { scroll-margin-top: 96px; }
+  .zc-workspace-editor { box-sizing: border-box; width: 100%; max-width: none; max-height: none; height: auto; overflow: visible; padding: 20px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border); }
+  .zc-workspace-editor.is-page { max-width: 1120px; margin-inline: auto; }
+  .zc-workspace-editor .zc-modal-header { font-family: var(--font-display); }
+  .zc-workspace-editor .zc-modal-footer { flex-wrap: wrap; gap: 12px; }
+  .zc-workspace-editor .zc-modal-footer > div:last-child { flex-wrap: wrap; }
+  .zc-workspace-editor.is-composer .zc-modal-form-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .zc-workspace-editor.is-composer .zc-form-field { grid-column: span 1; }
+  .zc-workspace-editor.is-composer .zc-form-field:has(textarea),
+  .zc-workspace-editor.is-composer .zc-form-field:has(input[type="file"]) { grid-column: 1 / -1; }
+  .zc-ledger-page { gap: 12px; }
+  .zc-ledger-page .zc-period-expenses { display: none; }
+  .zc-ledger-page > .zc-onboarding-reopen { align-self: flex-end; margin-block: -8px; font-size: var(--fs-meta); }
+  .zc-ledger-page.is-records > .zc-transaction-local-tabs { display: none; }
+  .zc-ledger-page .zc-transaction-summary-grid { margin: 0; padding-block: 10px; }
+  .zc-transaction-summary-grid .zc-card-metric-value { font-size: var(--fs-title); }
+  .zc-ledger-page .zc-transaction-filter-panel:not(.is-open) { display: none; }
+  .zc-ledger-page .zc-transaction-filter-toggle { display: inline-flex; }
+  .zc-ledger-records .zc-responsive-header { margin-bottom: 10px; }
+  .zc-ledger-records .zc-responsive-header > div:first-child > div { display: none; }
+  .zc-transaction-days { gap: 10px; }
+  .zc-transaction-day-summary { padding-block: 7px; }
+  .zc-transaction-table .zc-transaction-row td { height: 43px; padding-block: 6px; }
+  .zc-transaction-table .zc-transaction-details-desktop { display: none; }
+  .zc-transaction-table th.is-category { width: 145px; }
+  .zc-transaction-table th.is-status { width: 115px; }
+  .zc-transaction-table th.is-numeric { width: 165px; }
+  .zc-transaction-table .zc-transaction-actions .zc-record-refund { display: none; }
+  .zc-record-expansion-row > td { padding: 0; overflow: visible; }
+  .zc-record-expansion { padding: 18px 16px; background: var(--surface-2); border-block: 1px solid var(--border-strong); }
+  .zc-record-expansion-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+  .zc-record-expansion h3 { font-family: var(--font-display); font-size: var(--fs-title); margin: 0; }
+  .zc-record-expansion-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; margin-top: 14px; }
+  .zc-record-expansion-note { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .zc-record-expansion-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .zc-settings-workspace, .zc-manage-workspace { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 24px; align-items: start; }
+  .zc-workspace-nav { display: flex; flex-direction: column; gap: 4px; border: 0; border-right: 1px solid var(--border); padding: 0 14px 12px 0; min-width: 0; position: sticky; top: 104px; }
+  .zc-workspace-nav > button { width: 100%; min-height: 38px; padding: 8px 10px; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--text-secondary); text-align: left; font: inherit; cursor: pointer; }
+  .zc-workspace-nav > button:hover { background: var(--surface-2); }
+  .zc-workspace-nav > button[aria-current="page"], .zc-workspace-nav > button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); font-weight: var(--fw-medium); }
+  .zc-manage-desktop-intro { grid-column: 1 / -1; }
+  .zc-desktop-redundant-tabs { display: none; }
+  .zc-history-detail { position: static; }
+  .zc-account-workspace { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 24px; align-items: start; }
+  .zc-account-workspace-body, .zc-asset-workspace { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+  .zc-transaction-summary-grid.is-query-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .zc-ledger-page .zc-transaction-summary-grid.is-query-summary { gap: 0; padding: 0; border-radius: 0; background: transparent; border-block: 1px solid var(--border); }
+  .zc-transaction-summary-grid.is-query-summary > div { background: transparent; padding: 10px 16px; }
+  .zc-transaction-summary-grid.is-query-summary > div + div { border-left: 1px solid var(--border); }
+  .is-query-summary .zc-summary-kpi-value { font-size: var(--fs-heading); margin-top: 4px; }
+  .is-query-summary .zc-summary-kpi-sub { margin-top: 3px; }
+  .zc-transaction-table .zc-transaction-actions .zc-record-more { display: none; }
+  .zc-report-workspace-charts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-items: start; }
+  .zc-report-workspace-charts > * { min-width: 0; }
+  .zc-workspace-editor.zc-reconciliation-modal { box-shadow: none; }
+  .zc-desktop-workbench { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--sp-5); }
+  .zc-desktop-workbench > * { grid-column: 1 / -1; order: 2; min-width: 0; }
+  .zc-desktop-workbench > .zc-date-range-bar { grid-row: 1; order: -1; }
+  .zc-desktop-workbench > .zc-dashboard-tasks { grid-column: 1; grid-row: 2; order: 0; }
+  .zc-desktop-workbench > .zc-dashboard-recent { grid-column: 2; grid-row: 2; order: 0; padding: 20px; border-top: 1px solid var(--text-secondary); }
+  .zc-desktop-workbench .zc-dashboard-recent .zc-task-list button { min-height: 50px; padding-block: 8px; }
+  .zc-desktop-workbench .zc-dashboard-recent > .zc-btn { margin-top: 12px; }
+  .zc-desktop-workbench > .zc-dashboard-hero-grid { order: 1; }
+}
+@media (min-width: 1440px) { .zc-report-workspace-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 768px) and (pointer: fine) {
+  .zc-transaction-table .zc-check-target { min-height: 28px; height: 28px; min-width: 28px; width: 28px; }
+  .zc-transaction-table .zc-transaction-actions .zc-record-details { min-height: 28px; padding: 3px 8px; }
+}
+@media (min-width: 1200px) {
+  .zc-app-shell.zc-app-shell { grid-template-columns: var(--workspace-side) minmax(0, 1fr); }
+  .zc-sidebar.zc-sidebar { width: var(--workspace-side); padding: 16px 12px; }
+  .zc-app-header.zc-app-header { min-height: 72px; padding: 14px 24px; }
+  .zc-page-content.zc-page-content { padding: 18px 24px 56px; }
+}
+@media (min-width: 768px) and (max-width: 1199px) {
+  .zc-sidebar-group { height: 10px; padding: 0; font-size: 0; }
+  .zc-settings-workspace, .zc-manage-workspace { grid-template-columns: 130px minmax(0, 1fr); gap: 16px; }
+  .zc-transaction-table th.is-date { width: 60px; }
+  .zc-transaction-table th.is-category { width: 100px; }
+  .zc-transaction-table th.is-status { width: 95px; }
+  .zc-transaction-table th.is-select { width: 32px; }
 }

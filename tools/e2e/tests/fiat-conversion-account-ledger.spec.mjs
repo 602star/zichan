@@ -52,7 +52,7 @@ test('fiat conversion appears in account ledger without becoming daily income or
   await conversion.getByRole('button', { name: '保存转换', exact: true }).click();
   await expect(conversion).toBeHidden();
 
-  await page.locator('.zc-sidebar nav button').filter({ hasText: '日常收支' }).click();
+  await page.locator('.zc-sidebar [data-destination="records"] .zc-sidebar-nav-item').click();
   await page.getByRole('button', { name: '账户', exact: true }).click();
   const rows = page.getByRole('row').filter({ hasText: '换入美元' });
   await expect(rows).toHaveCount(2);

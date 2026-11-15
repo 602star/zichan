@@ -1,5 +1,6 @@
 import { CardGroup } from '../ui/Card.js';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCompactView } from '../ui/useCompactView.js';
 import { useScreenTarget } from '../screen-target.js';
 import { restoreConversion, voidConversion, setConversionOperationState, conversionOperationDependency, type ConversionOperationInput } from '@zichan/db';
 import { D, isDateInRange, localToday, type Asset, type ChainWithSteps, type ConversionType } from '@zichan/core';
@@ -10,7 +11,7 @@ import { money, signedMoney, amount as fmtAmount, num, significant } from '../fo
 import { baseAsset, financialPostings } from '../db/derive.js';
 import { pillBtn } from '../ui/styles.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
-import { DialogShell } from '../ui/DialogShell.js';
+import { WorkspaceDialog } from '../ui/WorkspaceDialog.js';
 import { AssetIcon } from '../ui/AssetIcon.js';
 import { AddConversionModal } from './AddConversionModal.js';
 import { CostBasisOpeningModal } from './CostBasisOpeningModal.js';
@@ -45,6 +46,7 @@ function badgeStyle(type: string) {
 }
 
 export function Convert() {
+  const compact = useCompactView();
   const target = useScreenTarget('convert');
   const handledTarget = useRef<object | null>(null);
   const snap = useSnapshot('convert');
@@ -60,7 +62,7 @@ export function Convert() {
   const [pendingTrade, setPendingTrade] = useState<{ type: ConversionType; fromAssetId?: string; toAssetId?: string } | null>(null);
   const [priceAssetId, setPriceAssetId] = useState<string | null>(null);
   const [showVoided, setShowVoided] = useState(false);
-  const [view, setView] = useState<'overview' | TimelineViewMode>('overview');
+  const [view, setView] = useState<'overview' | TimelineViewMode>(() => compact ? 'overview' : 'list');
   const viewTabs = useTabSet(CONVERT_VIEWS, view, setView);
   const [focusDate, setFocusDate] = useState(localToday);
   const [dateRange, setDateRange] = useState<DateRangeValue>(() => dateRangeValue('all'));
@@ -133,6 +135,7 @@ export function Convert() {
   }
 
   async function openEditor(id: string) {
+    setActivityAssetId(null);
     try {
       const row = await store.getChainWithSteps(id);
       if (!row) throw new Error('转换记录不存在');
@@ -395,15 +398,15 @@ export function Convert() {
 
       </div>
 
-      {detail && <DialogShell labelledBy={detailTitleId} onDismiss={() => setDetailId(null)} backdropClassName="zc-backdrop zc-conversion-backdrop" panelClassName="zc-conversion-detail">
+      {detail && (compact || !editing && !editingOperation) && <WorkspaceDialog labelledBy={detailTitleId} onDismiss={() => setDetailId(null)} backdropClassName="zc-backdrop zc-conversion-backdrop" panelClassName="zc-conversion-detail">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h2 id={detailTitleId} style={{ flex: 1 }}>{detail.title}</h2><button aria-label="关闭详情" style={pillBtn(false)} onClick={() => setDetailId(null)}>关闭</button></div>
         <p>{detail.occurred} · {TYPE_LABEL[detail.chain.type]}</p>
         {detail.steps.map((step) => <section key={step.n} style={{ borderBottom: '1px solid var(--border)', padding: '12px 0' }}><b>{step.from} → {step.to}</b><p>{step.rate}</p><p>{step.accounts}</p>{step.fee && <p>{step.fee}</p>}{step.details.map((text, index) => <p key={index}>{text}</p>)}<details><summary>完整汇率</summary>{step.fullRate}</details></section>)}
         <dl className="zc-conversion-fact-list">{detail.calc.map((row, index) => <div key={index}><dt>{row.l}</dt><dd>{row.v}</dd></div>)}</dl>
         <button style={pillBtn(false)} onClick={() => void openEditor(detail.chain.id)}>{detail.chain.operationId ? '整组编辑' : '编辑'}</button>
         <button style={pillBtn(false)} onClick={() => setDeletingChainId(detail.chain.id)}>作废</button>
-      </DialogShell>}
-      {activityAsset && <DialogShell labelledBy={detailTitleId} onDismiss={() => setActivityAssetId(null)} backdropClassName="zc-backdrop zc-conversion-backdrop" panelClassName="zc-conversion-detail">
+      </WorkspaceDialog>}
+      {activityAsset && <WorkspaceDialog labelledBy={detailTitleId} onDismiss={() => setActivityAssetId(null)} backdropClassName="zc-backdrop zc-conversion-backdrop" panelClassName="zc-conversion-detail">
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><h2 id={detailTitleId} style={{ flex: 1 }}>{activityAsset.code} · 流水与账户</h2><button aria-label="关闭资产流水" style={pillBtn(false)} onClick={() => setActivityAssetId(null)}>关闭</button></div>
         <h3>账户分布</h3>
         {activityAccounts.map((id) => <p key={id}>{snap.accounts.find((account) => account.id === id)?.name ?? '未分配账户'} · {fmtAmount(activityPostings.filter((posting) => (posting.accountId ?? '') === id).reduce((total, posting) => total.plus(posting.amount), D(0)), activityAsset.decimals)} {activityAsset.code}</p>)}
@@ -416,7 +419,7 @@ export function Convert() {
         })}
         <h3>日常收支与转账</h3>
         {snap.transactions.filter((row) => !row.isDeleted && row.recordState !== 'voided' && (row.assetId === activityAsset.id || row.transferAssetId === activityAsset.id)).map((row) => <p key={row.id}>{row.date} · {{ income: '收入', expense: '支出', transfer: '转账', refund: '退款', adjustment: '余额调整' }[row.type]} · {activityFlow(activityPostings.filter((posting) => posting.source.kind === 'transaction' && posting.source.id === row.id))}{row.note ? ` · ${row.note}` : ''}</p>)}
-      </DialogShell>}
+      </WorkspaceDialog>}
       {adding && <AddConversionModal assetPresetCode={adding.assetPresetCode} entry={adding.entry} onClose={() => setAdding(null)} />}
       {editing && <AddConversionModal initial={editing} onClose={() => setEditing(null)} />}
       {editingOperation && <AddConversionModal initialOperation={editingOperation} onClose={() => setEditingOperation(null)} />}

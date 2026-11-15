@@ -113,7 +113,6 @@ function cashflowDraft(value: {
 }
 
 export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = {}) {
-  const compact = useCompactView();
   const [mobileView, openMobile, backMobile] = useMobileSection(navigationKey);
   const snap = useSnapshot('fixed');
   const { store, bump } = useStore();
@@ -287,7 +286,7 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
     bump();
   }
 
-  const mobileItem = compact && mobileView.startsWith('item:') ? vm.find((item) => item.id === mobileView.slice(5)) : undefined;
+  const mobileItem = mobileView.startsWith('item:') ? vm.find((item) => item.id === mobileView.slice(5)) : undefined;
   const itemActions: Omit<Parameters<typeof Overview>[0], 'cards' | 'onOpen'> = {
     onEdit: setAssetModal,
     onEvent: (assetId) => setEventModal({ assetId }),
@@ -542,10 +541,10 @@ function Overview(props: {
     value: item.category,
     onClick: () => props.onOpen?.(item),
   }))} />;
-  const groups = new Map<string, FixedCardVM[]>();
-  for (const item of props.cards) groups.set(item.categoryParent, [...(groups.get(item.categoryParent) ?? []), item]);
   if (!props.cards.length) return <div className="zc-card" style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>该筛选下暂无物品资产</div>;
-  return <>{[...groups.entries()].map(([group, items]) => <section key={group} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}><div style={{ fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', color: 'var(--text-secondary)' }}>{group}<span style={{ marginLeft: 8, color: 'var(--text-tertiary)' }}>{items.length}</span></div><div className="zc-fixed-card-grid">{items.map((item) => <ItemCard key={item.id} item={item} {...props} />)}</div></section>)}</>;
+  return <div className="zc-card is-flush"><div className="zc-scroll-x"><table className="zc-workspace-table"><thead><tr><th>物品</th><th>分类</th><th>累计净投入</th><th>参考现值</th><th>日均成本</th><th>状态</th></tr></thead><tbody>
+    {props.cards.map((item) => <tr key={item.id}><td><button type="button" className="zc-workspace-link" onClick={() => props.onOpen?.(item)}>{item.name}</button></td><td>{item.category}</td><td className="is-numeric">{money(item.net, item.currencySymbol)}</td><td className="is-numeric">{item.referenceValue ? money(item.referenceValue, item.currencySymbol) : '尚无参考估值'}</td><td className="is-numeric">{money(item.perDay, item.currencySymbol)} / 天</td><td>{item.status}</td></tr>)}
+  </tbody></table></div></div>;
 }
 
 function ItemCard({ item, detail = false, onEdit, onEvent, onAddComponent, onPlacement, onConvertUpgrade, onMetric, onUsage, onConsumable, onGoal, onTimeline }: Omit<Parameters<typeof Overview>[0], 'cards'> & { item: FixedCardVM; detail?: boolean }) {

@@ -1,18 +1,18 @@
 import { useId, type KeyboardEvent } from 'react';
 
-type TabKey = 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End';
+type TabKey = 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown' | 'Home' | 'End';
 
 export function nextTabValue<T extends string>(items: readonly T[], current: T, key: TabKey): T | null {
   if (items.length === 0) return null;
   const index = items.indexOf(current);
   if (key === 'Home') return items[0] ?? null;
   if (key === 'End') return items[items.length - 1] ?? null;
-  if (key === 'ArrowRight') return items[(index + 1) % items.length] ?? null;
+  if (key === 'ArrowRight' || key === 'ArrowDown') return items[(index + 1) % items.length] ?? null;
   return items[(index - 1 + items.length) % items.length] ?? null;
 }
 
 /** Automatic-activation tabs with one roving tab stop and a shared current panel. */
-export function useTabSet<T extends string>(items: readonly T[], selected: T, onSelect: (item: T) => void) {
+export function useTabSet<T extends string>(items: readonly T[], selected: T, onSelect: (item: T) => void, orientation: 'horizontal' | 'vertical' = 'horizontal') {
   const baseId = useId();
   const panelId = `${baseId}-panel`;
   const tabId = (item: T) => `${baseId}-tab-${items.indexOf(item)}`;
@@ -26,7 +26,7 @@ export function useTabSet<T extends string>(items: readonly T[], selected: T, on
       tabIndex: selected === item ? 0 : -1,
       onClick: () => onSelect(item),
       onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => {
-        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        if (!(orientation === 'vertical' ? ['ArrowUp', 'ArrowDown', 'Home', 'End'] : ['ArrowLeft', 'ArrowRight', 'Home', 'End']).includes(event.key)) return;
         event.preventDefault();
         const next = nextTabValue(items, item, event.key as TabKey);
         if (!next) return;

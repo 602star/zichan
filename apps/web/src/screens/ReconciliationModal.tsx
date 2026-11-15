@@ -16,7 +16,7 @@ import {
 import type { Snapshot } from '../db/snapshot.js';
 import { categoryLabel } from '../transactionMeta.js';
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
-import { DialogShell } from '../ui/DialogShell.js';
+import { WorkspaceDialog } from '../ui/WorkspaceDialog.js';
 import { inputBase } from '../ui/styles.js';
 
 const inputStyle = inputBase;
@@ -149,7 +149,7 @@ export function ReconciliationModal(props: Props) {
 
   const difference = D(preview?.difference ?? session?.difference ?? 0);
   return (
-    <DialogShell
+    <WorkspaceDialog workspace="composer" navigationBlocked
       labelledBy={titleId}
       onDismiss={props.onClose}
       dismissDisabled={busy}
@@ -247,6 +247,6 @@ export function ReconciliationModal(props: Props) {
             确定撤销 {session.statementDate} 的对账？相关流水将恢复到对账前状态。
           </ConfirmDialog>
         )}
-    </DialogShell>
+    </WorkspaceDialog>
   );
 }

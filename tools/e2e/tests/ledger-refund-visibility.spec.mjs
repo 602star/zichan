@@ -5,7 +5,7 @@ test.setTimeout(360_000);
 
 /** One expense row, located by its description. */
 function rowFor(page, description) {
-  return page.locator('.zc-transaction-row').filter({ hasText: description });
+  return page.locator('.zc-transaction-row').filter({ has: page.getByText(description, { exact: true }) });
 }
 
 async function recordExpense(page, { amount, description }) {
@@ -20,8 +20,14 @@ async function recordExpense(page, { amount, description }) {
 
 /** The amount cell of a row, so its strike-through can be measured. */
 async function amountDecoration(row) {
-  return row.locator('span').filter({ hasText: /CNY$/ }).last()
+  return row.locator('td.is-numeric')
     .evaluate((el) => getComputedStyle(el).textDecorationLine);
+}
+
+async function refundFromDetails(row) {
+  const details = row.locator('xpath=following-sibling::tr[1]').locator('.zc-record-expansion');
+  if (!(await details.count())) await row.locator('.zc-transaction-summary-title').click();
+  return row.locator('xpath=following-sibling::tr[1]').getByRole('button', { name: '记录退款', exact: true });
 }
 
 test('a refund in the same currency never asks for a second amount', async ({ page }) => {
@@ -29,7 +35,7 @@ test('a refund in the same currency never asks for a second amount', async ({ pa
   await recordExpense(page, { amount: '100', description: '退款可见性' });
   const row = rowFor(page, '退款可见性');
 
-  await row.getByRole('button', { name: '退款', exact: true }).click();
+  await (await refundFromDetails(row)).click();
   const form = page.getByRole('dialog', { name: '新增 · 记录退款' });
   await expect(form).toBeVisible();
   // 同币种时到账金额就是冲减金额，第二个字段只是让人把两个数填岔。
@@ -41,15 +47,15 @@ test('a refund in the same currency never asks for a second amount', async ({ pa
 
   // 部分退款：行上写明已退多少，仍然能继续退，金额不画掉。
   await expect(row.locator('.zc-refund-chip')).toHaveText('部分退款 · 已退 30 / 100 CNY');
-  await expect(row.getByRole('button', { name: '退款', exact: true })).toBeVisible();
+  await expect(await refundFromDetails(row)).toBeVisible();
   expect(await amountDecoration(row)).not.toContain('line-through');
 
   // 两张卡片必须读同一个口径：100 - 30 = 70。
   const summary = page.locator('.zc-transaction-summary-grid');
-  await expect(summary).toContainText('本月支出');
+  await expect(summary).toContainText('当前范围支出');
   await expect(summary).toContainText('¥70.00');
   await expect(summary.locator('.zc-transaction-summary-metric').nth(1)).toContainText('¥70.00');
-  await expect(summary.locator('.zc-transaction-summary-metric').nth(3)).toContainText('¥70.00');
+  await expect(summary.locator('.zc-transaction-summary-metric').nth(2)).toContainText('¥70.00');
 });
 
 test('a full refund settles the row instead of leaving it looking unpaid', async ({ page }) => {
@@ -57,7 +63,7 @@ test('a full refund settles the row instead of leaving it looking unpaid', async
   await recordExpense(page, { amount: '80', description: '全额退款可见性' });
   const row = rowFor(page, '全额退款可见性');
 
-  await row.getByRole('button', { name: '退款', exact: true }).click();
+  await (await refundFromDetails(row)).click();
   const form = page.getByRole('dialog', { name: '新增 · 记录退款' });
   await expect(form).toBeVisible();
   await form.getByRole('button', { name: '保存', exact: true }).click();
@@ -71,7 +77,7 @@ test('a full refund settles the row instead of leaving it looking unpaid', async
   const summary = page.locator('.zc-transaction-summary-grid');
   await expect(summary).toContainText('¥0.00');
   await expect(summary.locator('.zc-transaction-summary-metric').nth(1)).toContainText('¥0.00');
-  await expect(summary.locator('.zc-transaction-summary-metric').nth(3)).toContainText('¥0.00');
+  await expect(summary.locator('.zc-transaction-summary-metric').nth(2)).toContainText('¥0.00');
 });
 
 test('a fully refunded expense keeps a way into its refunds, and voiding restores it', async ({ page }) => {
@@ -79,7 +85,7 @@ test('a fully refunded expense keeps a way into its refunds, and voiding restore
   await recordExpense(page, { amount: '80', description: '退款后仍可管理' });
   const row = rowFor(page, '退款后仍可管理');
 
-  await row.getByRole('button', { name: '退款', exact: true }).click();
+  await (await refundFromDetails(row)).click();
   const form = page.getByRole('dialog', { name: '新增 · 记录退款' });
   await expect(form).toBeVisible();
   await form.getByRole('button', { name: '保存', exact: true }).click();
@@ -100,8 +106,8 @@ test('a fully refunded expense keeps a way into its refunds, and voiding restore
 
   // 作废退款后原支出回到未退款状态，两个入口各自复位。
   await expect(row.locator('.zc-refund-chip')).toHaveCount(0);
-  await expect(row.getByRole('button', { name: '退款', exact: true })).toBeVisible();
+  await expect(await refundFromDetails(row)).toBeVisible();
   const summary = page.locator('.zc-transaction-summary-grid');
   await expect(summary.locator('.zc-transaction-summary-metric').nth(1)).toContainText('¥80.00');
-  await expect(summary.locator('.zc-transaction-summary-metric').nth(3)).toContainText('¥80.00');
+  await expect(summary.locator('.zc-transaction-summary-metric').nth(2)).toContainText('¥80.00');
 });

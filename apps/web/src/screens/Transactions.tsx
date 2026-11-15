@@ -5,7 +5,10 @@ import { AccountSetupPanel } from '../ui/AccountSetupPanel.js';
 import { AccountHistoryPanel } from '../ui/AccountHistoryPanel.js';
 import { accountSessionStorage } from '../account-storage.js';
 import { readOnboarding, updateOnboarding, type OnboardingState } from '../onboarding.js';
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { continuedEntryFields } from '../desktop-workspace.js';
+import { DcaPlans } from './DcaPlans.js';
+import { useWorkspaceState } from '../ui/useWorkspaceState.js';
 import { QueryGeneration } from '../query-generation.js';
 import {
   D, accountBalanceTiming, isDefaultAccount, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, newId,
@@ -90,7 +93,7 @@ import { QuickExpenseModal, type QuickExpenseDraft } from '../ui/QuickExpenseMod
 import { ActionSheet } from '../ui/ActionSheet.js';
 import { CardFact } from '../ui/Card.js';
 import { useRecordGestures } from '../ui/useRecordGestures.js';
-import { useScreenTarget } from '../screen-target.js';
+import { canNavigateWorkspace, useScreenTarget } from '../screen-target.js';
 import { TaskList, useMobileSection } from '../ui/MobilePage.js';
 
 const TYPE_OPTIONS: { value: 'all' | TransactionType; label: string }[] = [
@@ -188,13 +191,13 @@ const selectStyle = selectBase;
 const buttonCls = 'zc-btn';
 const primaryCls = 'zc-btn zc-btn--primary';
 
-type Tab = 'records' | 'accounts' | 'budget' | 'bills';
+type Tab = 'records' | 'accounts' | 'budget' | 'bills' | 'dca';
 
 function initialTransactionTab(): Tab {
   try {
     const requested = accountSessionStorage.getItem('zichan.transactions.tab');
     accountSessionStorage.removeItem('zichan.transactions.tab');
-    return requested === 'accounts' || requested === 'budget' || requested === 'bills' ? requested : 'records';
+    return requested === 'accounts' || requested === 'budget' || requested === 'bills' || requested === 'dca' ? requested : 'records';
   } catch {
     return 'records';
   }
@@ -206,6 +209,9 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   const { store, bump, rev } = useStore();
   const undo = useUndo(store, bump);
   const snap = useSnapshot('transactions');
+  const [accountId, setAccountId] = useWorkspaceState('transactions.account', '');
+  const [assetId, setAssetId] = useWorkspaceState('transactions.asset', 'all');
+  const [filters, setFilters] = useWorkspaceState<TransactionFilters>('transactions.filters', DEFAULT_FILTERS);
   const [initialTab] = useState(initialTransactionTab);
   const [tab, setTabState] = useState<Tab>(initialTab);
   const [mobileTab, selectMobileTab] = useMobileSection('transactions', initialTab);
@@ -213,10 +219,10 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     setTabState(next);
     if (!entryOnly) selectMobileTab(next);
   }, [entryOnly, selectMobileTab]);
-  useEffect(() => { if (!entryOnly && compactView && ['records', 'accounts', 'budget', 'bills'].includes(mobileTab)) setTabState(mobileTab as Tab); }, [mobileTab, compactView, entryOnly]);
+  useEffect(() => { if (!entryOnly && compactView && ['records', 'accounts', 'budget', 'bills', 'dca'].includes(mobileTab)) setTabState(mobileTab as Tab); }, [mobileTab, compactView, entryOnly]);
   useEffect(() => {
     if (entryOnly) return;
-    if (screenTarget?.tab && ['records', 'accounts', 'budget', 'bills'].includes(screenTarget.tab)) setTab(screenTarget.tab as Tab);
+    if (screenTarget?.tab && ['records', 'accounts', 'budget', 'bills', 'dca'].includes(screenTarget.tab)) setTab(screenTarget.tab as Tab);
     if (screenTarget?.tab === 'accounts' && screenTarget.id) setAccountId(screenTarget.id);
     let active = true;
     if (screenTarget?.tab === 'records' && screenTarget.id) {
@@ -225,8 +231,11 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
       }).catch((cause) => { if (active) setTransactionReadError(cause instanceof Error ? cause.message : String(cause)); });
     }
     return () => { active = false; };
-  }, [screenTarget, store, entryOnly, setTab]);
+  }, [screenTarget, store, entryOnly, setTab, setAccountId, setFilters]);
   const [editingTx, setEditingTx] = useState<Transaction | 'new' | null>(null);
+  const [entryGeneration, setEntryGeneration] = useState(0);
+  const [entryFields, setEntryFields] = useState<Record<string, string>>({});
+  const [retainEntryFields, setRetainEntryFields] = useState(true);
   const [showFirstEntryGuide, setShowFirstEntryGuide] = useState(false);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [creatingOwnTemplate, setCreatingOwnTemplate] = useState<TransactionTemplate | null>(null);
@@ -248,7 +257,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   const [editingReconcile, setEditingReconcile] = useState<ReconciliationSession | 'new' | null>(null);
   const [batchOpen, setBatchOpen] = useState(false);
   const [showVoided, setShowVoided] = useState(false);
-  const [recordView, setRecordView] = useState<TimelineViewMode>('list');
+  const [recordView, setRecordView] = useWorkspaceState<TimelineViewMode>('transactions.view', 'list');
   /*
    * Trend window. It is a view of the same unfiltered read the month KPIs come
    * from, so it lives here rather than in `filters`: widening it must not look
@@ -263,9 +272,6 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   const [billFocusDate, setBillFocusDate] = useState(localToday);
   const [billRange, setBillRange] = useState<DateRangeValue>(() => dateRangeValue('all'));
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [accountId, setAccountId] = useState('');
-  const [assetId, setAssetId] = useState('all');
-  const [filters, setFilters] = useState<TransactionFilters>(DEFAULT_FILTERS);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [categoryDrill, setCategoryDrill] = useState<CategoryDrill | null>(null);
   const [savedViewName, setSavedViewName] = useState('本月常用查询');
@@ -342,7 +348,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     } catch {
       // Ignore stale navigation payloads.
     }
-  }, []);
+  }, [setFilters]);
   useEffect(() => {
     if (!snap) return;
     let active = true;
@@ -353,6 +359,9 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   }, [snap, store]);
   useEffect(() => {
     const openQuickTransaction = () => {
+      if (!canNavigateWorkspace()) return;
+      setEntryFields({});
+      setEntryGeneration((current) => current + 1);
       setTab('records');
       setEditingTx(null);
       setRefundDraft(null);
@@ -377,9 +386,12 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     return () => window.removeEventListener('zichan:quick-transaction', openQuickTransaction);
   }, [entryOnly, setTab]);
   const visibleTabs: [Tab, string][] = usesAccounts
-    ? [['records', '流水'], ['accounts', '账户'], ['budget', '预算'], ['bills', '账单']]
+    ? [['records', '流水'], ['accounts', '账户'], ['budget', '预算'], ['bills', '账单'], ...(!compactView || tab === 'dca' ? [['dca', '定投'] as [Tab, string]] : [])]
     : [['records', '支出']];
   const activeTab = usesAccounts ? tab : 'records';
+  useEffect(() => {
+    if (!entryOnly) window.dispatchEvent(new CustomEvent('zichan:transaction-tab', { detail: activeTab }));
+  }, [activeTab, entryOnly]);
   const viewFilters = useMemo<TransactionFilters>(() => {
     if (usesAccounts) return filters;
     return {
@@ -711,6 +723,9 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     .sort((a, b) => Number(b.isPinned ?? false) - Number(a.isPinned ?? false) || (a.sortOrder ?? 100) - (b.sortOrder ?? 100) || a.name.localeCompare(b.name));
 
   function openNewTransaction() {
+    if (!canNavigateWorkspace()) return;
+    setEntryGeneration((current) => current + 1);
+    setEntryFields({});
     setQuickExpenseOpen(false);
     setQuickTemplate(null);
     setRefundDraft(null);
@@ -766,6 +781,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   }
 
   function openTransaction(transaction: Transaction) {
+    if (!canNavigateWorkspace()) return;
     if (transaction.type === 'adjustment' && transaction.reconciliationSessionId) {
       const session = readySnap.reconciliationSessions.find((row) => row.id === transaction.reconciliationSessionId);
       if (session) {
@@ -818,6 +834,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   }
 
   function startRefund(original: Transaction) {
+    if (!canNavigateWorkspace()) return;
     const remaining = remainingRefundAmount(original);
     if (D(remaining).lte(0)) return;
     const now = new Date();
@@ -1328,14 +1345,14 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   const hasEnabledCategoryPack = CATEGORY_PACKS.some((pack) => categoryPackState(pack, readySnap.categories).enabledCount > 0);
 
   return (
-    <div className="zc-ledger-page" style={{ display: entryOnly ? 'none' : 'flex', flexDirection: 'column', gap: 'var(--sp-5)' }}>
+    <div className={`zc-ledger-page is-${activeTab}`} style={{ display: entryOnly ? 'none' : 'flex', flexDirection: 'column', gap: compactView ? 'var(--sp-5)' : 'var(--sp-3)' }}>
       {vm.missingRateAssetCodes.length > 0 && (
         <div className="zc-alert" role="status">
           缺少 {vm.missingRateAssetCodes.join('、')} → {vm.reportCurrencyCode} 的价格标记；相关流水不会静默当作 0，汇总和预算会标记为未完整折算。
         </div>
       )}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {visibleTabs.map(([id, label]) => (
+      <div className="zc-transaction-local-tabs" style={{ display: !compactView && !['budget', 'bills', 'dca'].includes(activeTab) ? 'none' : 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {visibleTabs.filter(([id]) => compactView || (['budget', 'bills', 'dca'].includes(activeTab) ? ['budget', 'bills', 'dca'].includes(id) : id === activeTab)).map(([id, label]) => (
           <button key={id} onClick={() => setTab(id)} className={activeTab === id ? primaryCls : buttonCls}>{label}</button>
         ))}
       </div>
@@ -1345,7 +1362,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
           查看新手指南
         </button>
       )}
-      {onboarding && showFirstEntryGuide && !compactView && (
+      {onboarding && showFirstEntryGuide && !compactView && !onboarding.firstTransactionRecorded && (
         <section className="zc-first-entry-guide" aria-label="首次记账引导">
           <div>
             <h2>账本已准备好</h2>
@@ -1445,7 +1462,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
           </div>
           <SummaryGrid vm={vm} usesAccounts={usesAccounts} />
           <section id="transaction-records" className="zc-card zc-ledger-records" style={{ scrollMarginTop: 16 }}>
-            <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
+            <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: compactView ? 16 : 10 }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{usesAccounts ? '日常流水' : '日常支出'}</h2>
                 <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3 }}>
@@ -1736,6 +1753,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
         </div>
       )}
 
+      {activeTab === 'dca' && <DcaPlans />}
       {activeTab === 'budget' && (
         <div className="zc-card">
           <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14, marginBottom: 14 }}>
@@ -1943,6 +1961,16 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
 
       {editingTx && (
         <EntityFormModal
+          key={`${entryGeneration}-${editingTx === 'new' ? 'new' : editingTx.id}`}
+          workspace={editingTx === 'new' && !refundDraft ? 'composer' : 'page'}
+          initialFieldValues={editingTx === 'new' && !refundDraft && !templateDraft ? entryFields : undefined}
+          retainEntryFields={retainEntryFields}
+          onRetainEntryFieldsChange={setRetainEntryFields}
+          onSaveContinue={!compactView && editingTx === 'new' && !refundDraft ? (values) => {
+            setEntryFields(continuedEntryFields(values, retainEntryFields));
+            setTemplateDraft(null);
+            setEntryGeneration((current) => current + 1);
+          } : undefined}
           spec={transactionForm(readySnap, {
             usesAccounts,
             refundMode: editingTx === 'new' ? !!refundDraft : editingTx.type === 'refund',
@@ -1984,6 +2012,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
       )}
       {editingSplit && (
         <EntityFormModal
+          workspace={false}
           spec={transactionSplitForm(snap)}
           initial={editingSplit === 'new' ? undefined : editingSplit}
           onSave={saveSplit}
@@ -2041,6 +2070,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
       )}
       {editingCategory && (
         <EntityFormModal
+          workspace={false}
           spec={categoryForm(snap)}
           initial={editingCategory === 'new' ? undefined : editingCategory}
           onSave={async (e) => {
@@ -2064,6 +2094,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
       )}
       {editingPayee && (
         <EntityFormModal
+          workspace={false}
           spec={payeeForm(snap, { usesAccounts })}
           initial={editingPayee === 'new' ? undefined : editingPayee}
           onSave={async (e) => {
@@ -2556,6 +2587,12 @@ function Filters(props: { snap: Snapshot; filters: TransactionFilters; setFilter
 }
 
 function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof buildTransactions>>; usesAccounts: boolean }) {
+  const compact = useCompactView();
+  if (!compact) return <div className="zc-transaction-summary-grid has-accounts is-query-summary" role="group" aria-label="当前范围收支摘要">
+    <div className="zc-transaction-summary-metric"><Kpi label="当前范围收入" value={money(vm.filteredIncome)} tone="var(--positive)" sub="转账不计入收入" /></div>
+    <div className="zc-transaction-summary-metric"><Kpi label="当前范围支出" value={money(vm.filteredExpense)} tone="var(--negative)" sub="按既有退款归属口径" /></div>
+    <div className="zc-transaction-summary-metric"><Kpi label="当前范围结余" value={signedMoney(vm.filteredNet)} tone={D(vm.filteredNet).gte(0) ? 'var(--positive)' : 'var(--negative)'} sub={`${vm.count} 条 · ${vm.reportCurrencyCode}`} /></div>
+  </div>;
   if (!usesAccounts) {
     return (
       <div className="zc-transaction-summary-grid is-simple" role="group" aria-label="本月收支摘要">
@@ -2631,10 +2668,10 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
             <thead>
               <tr>
                 {setSelectedIds && <th scope="col" className="is-select"><span className="zc-sr-only">选择</span></th>}
-                <th scope="col" className="is-date">日期</th>
+                <th scope="col" className="is-date">{compact ? '日期' : '时间'}</th>
                 <th scope="col" className="is-category">分类</th>
                 <th scope="col">摘要</th>
-                {usesAccounts && <th scope="col" className="is-status">状态</th>}
+                {usesAccounts && <th scope="col" className="is-status">{compact ? '状态' : '账户'}</th>}
                 <th scope="col" className="is-numeric">金额</th>
                 <th scope="col" className="is-actions"><span className="zc-sr-only">操作</span></th>
               </tr>
@@ -2692,6 +2729,7 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
                 tx.date !== g.key ? `${tx.date}${tx.time ? ` ${tx.time}` : ''}` : tx.time,
               ].filter(Boolean).join(' · ');
               return (
+                <Fragment key={tx.id}>
                 <tr
                   className={`zc-transaction-row${setSelectedIds ? ' has-selection' : ''}${usesAccounts ? ' has-account' : ''}`}
                   key={tx.id}
@@ -2702,8 +2740,7 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
                     if (event.target !== event.currentTarget) return;
                     if (event.key === 'Enter') {
                       event.preventDefault();
-                      if (compact) setPanel({ id: tx.id, mode: 'detail' });
-                      else onEdit(tx);
+                      setPanel((current) => !compact && current?.id === tx.id ? null : { id: tx.id, mode: 'detail' });
                     } else if (compact && (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) {
                       event.preventDefault();
                       setPanel({ id: tx.id, mode: 'actions' });
@@ -2711,8 +2748,7 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
                   }}
                   onClick={(event) => {
                     event.currentTarget.focus({ preventScroll: true });
-                    if (compact) setPanel({ id: tx.id, mode: 'detail' });
-                    else onEdit(tx);
+                    setPanel((current) => !compact && current?.id === tx.id ? null : { id: tx.id, mode: 'detail' });
                   }}
                 >
                   {setSelectedIds && (
@@ -2728,14 +2764,14 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
                       />
                     </span></td>
                   )}
-                  <td style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{tx.date}{tx.time ? <span className="zc-transaction-time"><br />{tx.time}</span> : null}</td>
+                  <td style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{compact ? tx.date : tx.time || tx.date.slice(5)}{compact && tx.time ? <span className="zc-transaction-time"><br />{tx.time}</span> : null}</td>
                   {/*
                     分类列宽屏能给到 200px（内置标签最长约 139px，写全了），但自建的超长名仍会
                     触到天花板，那时在这里省略；完整的「一级 / 二级」留在 hover 的 title 里，
                     否则省略之后就只剩半截了。
                   */}
                   <td
-                    style={{ ...tagStyle, width: 'fit-content', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', color: tx.type === 'income' || tx.type === 'refund' ? 'var(--positive)' : tx.type === 'expense' ? 'var(--negative)' : 'var(--accent)' }}
+                    style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', color: tx.type === 'income' || tx.type === 'refund' ? 'var(--positive)' : tx.type === 'expense' ? 'var(--negative)' : 'var(--accent)' }}
                     title={item.categoryLabel}
                   >
                     {item.categoryLabel}
@@ -2757,15 +2793,14 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
                       )}
                     </span>
                   </td>
-                  {usesAccounts && <td><span className={item.statusLabel === '已对账' ? 'zc-ledger-stamp' : undefined} style={{ fontSize: 'var(--fs-meta)', color: item.statusLabel === '已对账' ? 'var(--accent)' : 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{item.statusLabel}</span></td>}
+                  {usesAccounts && <td><span className={item.statusLabel === '已对账' ? 'zc-ledger-stamp' : undefined} style={{ fontSize: 'var(--fs-meta)', color: item.statusLabel === '已对账' ? 'var(--accent)' : 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{compact ? item.statusLabel : item.accountName}</span></td>}
                   <td className="is-numeric" style={{ fontSize: 'var(--fs-body)', ...(settled ? { textDecoration: 'line-through', color: 'var(--text-tertiary)' } : amountColor(item.signedAmount)) }}>
                     {tx.type === 'transfer' ? '' : tx.type === 'income' || tx.type === 'refund' || (tx.type === 'adjustment' && tx.adjustmentDirection === 'increase') ? '+' : '-'}{num(tx.amount, item.assetDecimals)} {item.assetCode}
                   </td>
                   <td className="zc-transaction-actions">
                     <button type="button" aria-label={`查看 ${title} 的详情`} onClick={(event) => {
                       event.stopPropagation();
-                      if (compact) setPanel({ id: tx.id, mode: 'detail' });
-                      else onEdit(tx);
+                      setPanel((current) => !compact && current?.id === tx.id ? null : { id: tx.id, mode: 'detail' });
                     }} className="zc-btn zc-btn--sm zc-record-details">详情</button>
                     <button type="button" className="zc-record-more" aria-label={`打开 ${title} 的流水操作`} onClick={(event) => { event.stopPropagation(); setPanel({ id: tx.id, mode: 'actions' }); }}><MoreHorizontal size={20} aria-hidden="true" /></button>
                     {tx.type === 'expense' && D(remaining).gt(0) ? (
@@ -2778,13 +2813,37 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
                     ) : null}
                   </td>
                 </tr>
+                {!compact && panel?.id === tx.id && <tr className="zc-record-expansion-row"><td colSpan={(setSelectedIds ? 1 : 0) + (usesAccounts ? 6 : 5)}>
+                  <section className="zc-record-expansion" aria-label={`${title}的详情`}>
+                    <div className="zc-record-expansion-head"><h3>{title}</h3><button type="button" className="zc-btn zc-btn--sm" onClick={closePanel}>收起详情</button></div>
+                    <div className="zc-record-expansion-facts">
+                      <CardFact label="日期" value={`${tx.date} ${tx.time ?? ''}`} />
+                      <CardFact label="原币金额" value={`${tx.amount} ${item.assetCode}`} />
+                      <CardFact label="分类" value={item.categoryLabel} />
+                      {usesAccounts && <CardFact label="账户" value={item.accountName} />}
+                      <CardFact label="状态" value={item.statusLabel} />
+                      {item.payeeName && <CardFact label="交易对象" value={item.payeeName} />}
+                      {tags.length > 0 && <CardFact label="标签" value={tags.join(' / ')} />}
+                      {files > 0 && <CardFact label="附件" value={`${files} 个 · 编辑流水可查看凭证`} />}
+                      {loc && <CardFact label="地点" value={loc} />}
+                      {refunds.length > 0 && <CardFact label="累计退款" value={`${num(refunded, item.assetDecimals)} ${item.assetCode}`} />}
+                    </div>
+                    {tx.note && <p className="zc-record-expansion-note">{tx.note}</p>}
+                    <div className="zc-record-expansion-actions">
+                      <button type="button" className="zc-btn zc-btn--primary" onClick={() => onEdit(tx)}><Pencil size={15} aria-hidden="true" />{tx.type === 'adjustment' && tx.reconciliationSessionId ? '查看关联对账' : '编辑流水'}</button>
+                      {tx.type === 'expense' && D(remaining).gt(0) && <button type="button" className="zc-btn" onClick={() => onRefund(tx)}>记录退款</button>}
+                      {refunds.length > 0 && <button type="button" className="zc-btn" onClick={() => onManageRefunds(tx)}>查看退款记录</button>}
+                    </div>
+                  </section>
+                </td></tr>}
+                </Fragment>
               );
             })}
             </tbody>
           </table>
         </div>
       ))}
-      {active && panel && (
+      {compact && active && panel && (
         <ActionSheet
           title={panel.mode === 'detail' ? '流水详情' : '流水操作'}
           description={`${active.tx.date}${active.tx.time ? ` ${active.tx.time}` : ''} · ${active.typeLabel}`}

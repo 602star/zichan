@@ -69,10 +69,8 @@ test('a long 「一级 / 二级」 chip stays inside its own column and is not e
    * 分类列不再固定 112px。行首还可能有勾选框轨道，所以按「分类标签是这一行的第几个
    * 子元素」去取对应的轨道，而不是写死下标。
    */
-  const chipIndex = await chip.evaluate((el) => [...el.parentElement.children].indexOf(el));
-  const tracks = (await row.evaluate((el) => getComputedStyle(el).gridTemplateColumns))
-    .trim().split(/\s+/).map(Number.parseFloat);
-  expect(tracks[chipIndex]).toBeGreaterThan(112);
+  // Desktop now uses semantic table cells; measure the real column, not old grid tracks.
+  expect((await chip.boundingBox()).width).toBeGreaterThan(112);
 
   // 桌面宽度够，就一个都不省略。
   expect(await chip.evaluate((el) => el.scrollWidth > el.clientWidth + 1)).toBe(false);

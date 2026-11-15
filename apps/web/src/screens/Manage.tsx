@@ -93,7 +93,11 @@ export function Manage() {
     if (OTHER_DATA_TABS.includes(mobileView as OtherDataTab)) { setTab('other'); setOtherTab(mobileView as OtherDataTab); }
   }, [mobileView]);
   useEffect(() => {
-    if (compact && target?.tab && [...MANAGE_TABS, ...OTHER_DATA_TABS].includes(target.tab as ManageTab & OtherDataTab)) openMobile(target.tab);
+    if (target?.tab && [...MANAGE_TABS, ...OTHER_DATA_TABS].includes(target.tab as ManageTab & OtherDataTab)) {
+      if (compact) openMobile(target.tab);
+      else if (OTHER_DATA_TABS.includes(target.tab as OtherDataTab)) { setTab('other'); setOtherTab(target.tab as OtherDataTab); }
+      else setTab(target.tab as ManageTab);
+    }
   }, [compact, target, openMobile]);
   useEffect(() => {
     if (compact && initialTarget.tab) openMobile(initialTarget.tab === 'other' ? initialTarget.otherTab ?? 'accounts' : initialTarget.tab);
@@ -224,9 +228,9 @@ export function Manage() {
     ]} />
   </div>;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+    <div className="zc-manage-workspace" style={compact ? { display: 'flex', flexDirection: 'column', gap: 22 } : undefined}>
       {compact && <MobilePageHeader title={mobileManageLabel(mobileView)} onBack={backMobile} backLabel="返回资料" />}
-      {!compact && <div>
+      {!compact && <div className="zc-manage-desktop-intro">
         <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>资产与资料中心</div>
         <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4 }}>在资产标签管理货币与资产的加入、停用和归档；其他标签维护分类与基础资料。</div>
         {onboardingGuide && (
@@ -237,19 +241,23 @@ export function Manage() {
         )}
       </div>}
 
-      {!compact && <div role="tablist" aria-label="资产与资料中心" className="zc-manage-primary-tabs" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', overflowX: 'auto' }}>
+      {!compact && <nav aria-label="资产与资料中心" className="zc-workspace-nav">
         {([
           ['transactionCategories', '收支分类'],
           ['fixedCategories', '物品分类'],
           ['labels', '标签与交易对象'],
           ['assets', '资产'],
-          ['other', '其他资料'],
+          ['accounts', '账户'], ['templates', '交易模板'], ['prices', '价格汇率'],
+          ['plans', '计划预算'], ['games', '游戏资料'], ['attachments', '附件'],
         ] as const).map(([id, label]) => (
-          <button key={id} {...primaryTabs.tabProps(id)} type="button" style={manageTabButton(tab === id)}>{label}</button>
+          <button key={id} type="button" aria-current={(tab === id || tab === 'other' && otherTab === id) ? 'page' : undefined} onClick={() => {
+            if (OTHER_DATA_TABS.includes(id as OtherDataTab)) { setTab('other'); setOtherTab(id as OtherDataTab); }
+            else setTab(id as ManageTab);
+          }}>{label}</button>
         ))}
-      </div>}
+      </nav>}
 
-      <div {...primaryTabs.panelProps} style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+      <div {...(compact ? primaryTabs.panelProps : { role: 'region', 'aria-label': mobileManageLabel(tab === 'other' ? otherTab : tab) })} style={{ display: 'flex', flexDirection: 'column', gap: 22, minWidth: 0 }}>
       {tab === 'transactionCategories' && (
         <>
           <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap' }}>
@@ -404,7 +412,7 @@ export function Manage() {
 
       {tab === 'other' && (
         <>
-          <div role="tablist" aria-label="其他资料类别" className="zc-manage-other-tabs">
+          <div role="tablist" aria-label="其他资料类别" className="zc-manage-other-tabs zc-desktop-redundant-tabs">
             {([
               ['accounts', '账户'],
               ['templates', '交易模板'],
@@ -487,20 +495,6 @@ export function Manage() {
       </div>
     </div>
   );
-}
-
-function manageTabButton(active: boolean) {
-  return {
-    border: 'none',
-    borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
-    background: active ? 'var(--accent-soft)' : 'transparent',
-    color: active ? 'var(--accent)' : 'var(--fg-muted)',
-    padding: '10px 16px',
-    fontSize: 'var(--fs-body)',
-    fontWeight: 'var(--fw-bold)',
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-  } as const;
 }
 
 type CategoryTypeFilter = 'all' | Category['type'];

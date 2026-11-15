@@ -1,5 +1,7 @@
 import { accountSessionStorage } from './account-storage.js';
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type SetStateAction } from 'react';
+import { Fragment, lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type SetStateAction } from 'react';
+import { desktopDestinations } from './desktop-workspace.js';
+import { useCompactView } from './ui/useCompactView.js';
 import type { LedgerBackup } from '@zichan/db';
 import { type LedgerMode, localToday, newId } from '@zichan/core';
 import { useStore } from './db/store.js';
@@ -38,7 +40,7 @@ import { runSynchronousFlight, VaultUnlockPrompt } from './ui/VaultUnlockPrompt.
 import { DialogShell } from './ui/DialogShell.js';
 import { TaskList } from './ui/MobilePage.js';
 import { hasMobileDialog } from './ui/mobile-dialog-history.js';
-import { navigateTo, rememberScreenTarget, type ScreenTarget } from './screen-target.js';
+import { canNavigateWorkspace, navigateTo, rememberScreenTarget, type ScreenTarget } from './screen-target.js';
 import { installSyncLifecycle } from './background-sync.js';
 import { connectionLinkFromLocation } from './connection-link.js';
 import {
@@ -50,7 +52,7 @@ import { adoptUnlockedLedgerKeyEnvelope, runtimeLedgerCryptoSession } from './le
 import { accountProtection } from './account-protection.js';
 import { isTauriRuntime } from './tauri.js';
 import type { SettingsSection } from './screens/Settings.js';
-import { ArrowLeftRight, BarChart3, BookOpen, Ellipsis, Gamepad2, Grid2X2, History as HistoryIcon, LayoutDashboard, List, Package, Settings2, UserRound, Cloud, type LucideIcon } from 'lucide-react';
+import { ArrowLeftRight, BarChart3, BookOpen, Ellipsis, Gamepad2, Grid2X2, History as HistoryIcon, LayoutDashboard, List, Package, Settings2, UserRound, Cloud, Wallet, CalendarDays, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react';
 import {
   NAVIGATION_ITEMS,
   navigationLabel,
@@ -298,10 +300,19 @@ export function App() {
   const { store, bump, storageBackend, dataLocation, preview } = useStore();
   const snap = useSnapshot('shell');
   const [screen, setScreenState] = useState<ScreenId>(() => initialScreen(Boolean(preview)));
+  const compactView = useCompactView();
+  const [transactionTab, setTransactionTab] = useState('records');
+  const [navigationCollapsed, setNavigationCollapsed] = useState(false);
+  useEffect(() => {
+    const update = (event: Event) => setTransactionTab((event as CustomEvent<string>).detail);
+    window.addEventListener('zichan:transaction-tab', update);
+    return () => window.removeEventListener('zichan:transaction-tab', update);
+  }, []);
   const screenRef = useRef(screen);
   screenRef.current = screen;
   const [quickEntryOpen, setQuickEntryOpen] = useState(false);
   const setScreen = useCallback((value: SetStateAction<ScreenId>) => {
+    if (!canNavigateWorkspace()) return;
     const next = typeof value === 'function' ? value(screenRef.current) : value;
     if (next === screenRef.current) {
       window.dispatchEvent(new CustomEvent('zichan:reset-page', { detail: { screen: next } }));
@@ -328,7 +339,16 @@ export function App() {
       }
     };
     window.addEventListener('popstate', restore);
-    return () => window.removeEventListener('popstate', restore);
+    // Programmatic dialog cleanup can finish after a fast page navigation.
+    // Keep the entry under the next sheet attached to the page actually shown.
+    const settleDialogHistory = () => {
+      if (!hasMobileDialog()) history.replaceState({ ...history.state, zcScreen: screenRef.current }, '');
+    };
+    window.addEventListener('zichan:dialog-history-settled', settleDialogHistory);
+    return () => {
+      window.removeEventListener('popstate', restore);
+      window.removeEventListener('zichan:dialog-history-settled', settleDialogHistory);
+    };
   }, [preview]);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>(() => {
     try {
@@ -558,6 +578,7 @@ export function App() {
   }
 
   function quickTransaction() {
+    if (!canNavigateWorkspace()) return;
     if (window.matchMedia('(max-width: 767px)').matches && screenRef.current !== 'transactions') {
       setQuickEntryOpen(true);
       return;
@@ -580,15 +601,17 @@ export function App() {
     fontVariantNumeric: 'tabular-nums',
   };
 
-  const [title, sub] = META[screen];
+  const [title, sub] = !compactView && screen === 'transactions'
+    ? [transactionTab === 'accounts' ? '账户与核对' : ['budget', 'bills', 'dca'].includes(transactionTab) ? '计划' : '流水', '查询与核对 · 按原币记入，按账本口径汇总']
+    : !compactView && screen === 'dashboard' ? ['工作台', '待处理事项与近期账本活动'] : META[screen];
   const asOf = snap ? ledgerAsOf(snap) : null;
   // A manual cut-off that has fallen behind is a data-correctness problem, not a
   // preference, so the header flags it instead of showing a neutral date.
   const staleCutoff = asOf?.stale && asOf.mode === 'manual' ? asOf : null;
   return (
-    <div className="zc-app-shell" style={rootStyle}>
+    <div className="zc-app-shell" data-nav-collapsed={navigationCollapsed} style={rootStyle}>
       <a className="zc-skip-link" href="#zc-app-main" onClick={(event) => { event.preventDefault(); document.getElementById('zc-app-main')?.focus(); }}>跳转到主要内容</a>
-      <Sidebar screen={screen} setScreen={setScreen} onQuickTransaction={quickTransaction} ledgerMode={ledgerMode} navigation={effectiveNavigation} />
+      <Sidebar screen={screen} setScreen={setScreen} onQuickTransaction={quickTransaction} ledgerMode={ledgerMode} navigation={effectiveNavigation} transactionTab={transactionTab} collapsed={navigationCollapsed} onToggle={() => setNavigationCollapsed((value) => !value)} />
       <main id="zc-app-main" className="zc-app-main" tabIndex={-1} aria-labelledby="zc-page-title">
         <header className="zc-app-header" style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -627,6 +650,8 @@ export function App() {
         </header>
 
         <div className="zc-page-content">
+          <div id="zc-workspace-editor" className="zc-workspace-host" />
+          <div className="zc-page-body" data-screen={screen}>
           <Suspense fallback={<div role="status" style={{ minHeight: 240, padding: 24, color: 'var(--text-tertiary)' }}>正在载入…</div>}>
             {screen === 'dashboard' && <Dashboard />}
             {screen === 'assets' && <Assets />}
@@ -653,6 +678,7 @@ export function App() {
               />
             )}
           </Suspense>
+          </div>
         </div>
       </main>
       <MobileNavigation
@@ -814,9 +840,12 @@ function Sidebar(props: {
   onQuickTransaction: () => void;
   ledgerMode: LedgerMode;
   navigation: NavigationPreferences;
+  transactionTab: string;
+  collapsed: boolean;
+  onToggle: () => void;
 }) {
-  const { screen, setScreen, onQuickTransaction, ledgerMode, navigation } = props;
-  const mainNav = orderedNavigationItems(navigation);
+  const { screen, setScreen, onQuickTransaction, ledgerMode, navigation, transactionTab, collapsed, onToggle } = props;
+  const mainNav = desktopDestinations(navigation, ledgerMode);
   return (
     <aside className="zc-sidebar" style={{
       background: 'var(--sidebar-bg)', color: 'var(--sidebar-fg)', borderRight: '1px solid var(--sidebar-bg)', display: 'flex',
@@ -836,13 +865,17 @@ function Sidebar(props: {
       </div>
 
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {mainNav.map(({ id }) => {
-          const label = navigationLabel(id, ledgerMode);
-          const active = screen === id;
-          const withQuick = id === 'transactions';
+        {mainNav.map(({ id, label, target, group }, index) => {
+          const active = target.screen === 'transactions'
+            ? screen === 'transactions' && (id === 'plans' ? ['budget', 'bills', 'dca'].includes(transactionTab) : transactionTab === target.tab)
+            : screen === target.screen;
+          const withQuick = id === 'records';
           return (
+            <Fragment key={id}>
+            {mainNav[index - 1]?.group !== group && <div className="zc-sidebar-group">{group}</div>}
             <div
               key={id}
+              data-destination={id}
               className={`zc-sidebar-nav-row${active ? ' is-active' : ''}`}
               style={{
                 display: 'flex', alignItems: 'center', borderRadius: 'var(--r-sm)', overflow: 'hidden',
@@ -852,8 +885,10 @@ function Sidebar(props: {
             >
               <button
                 title={label}
+                aria-label={id === 'records' ? '流水（日常收支）' : label}
+                aria-current={active ? 'page' : undefined}
                 className="zc-sidebar-nav-item"
-                onClick={() => setScreen(id)}
+                onClick={() => target.screen === 'transactions' ? navigateTo(target) : setScreen(target.screen)}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', borderRadius: 'var(--r-sm)',
                   border: 'none', cursor: 'pointer', flex: 1, minWidth: 0, textAlign: 'left', fontSize: 'var(--fs-body)',
@@ -862,7 +897,7 @@ function Sidebar(props: {
                   fontWeight: active ? 'var(--fw-bold)' : 'var(--fw-medium)',
                 }}
               >
-                <span style={{ width: 20, display: 'inline-flex', justifyContent: 'center' }}><NavIcon id={id} /></span>
+                <span style={{ width: 20, display: 'inline-flex', justifyContent: 'center' }}>{id === 'accounts' ? <Wallet size={18} aria-hidden="true" /> : id === 'plans' ? <CalendarDays size={18} aria-hidden="true" /> : <NavIcon id={target.screen} />}</span>
                 <span className="zc-sidebar-nav-label" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
               </button>
               {withQuick && (
@@ -884,9 +919,11 @@ function Sidebar(props: {
                 </button>
               )}
             </div>
+            </Fragment>
           );
         })}
       </nav>
+      <button type="button" className="zc-sidebar-collapse" onClick={onToggle} aria-label={collapsed ? '展开侧栏' : '收起侧栏'}>{collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}<span className="zc-sidebar-nav-label">收起侧栏</span></button>
 
       {/*
        * Wide-rail and compact-rail variants of the same action. Keeping one

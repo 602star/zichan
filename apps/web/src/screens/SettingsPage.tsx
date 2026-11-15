@@ -37,7 +37,7 @@ export function SettingsPage({ theme, mode, resolvedMode, setTheme, setMode, sec
   }, [compact, target, open]);
   const appearance = { theme, mode, resolvedMode, setTheme, setMode };
   const backupActions = { onExportBackup, onImportBackup };
-  const tabs = useTabSet(TABS.map(([id]) => id), active, select);
+  const tabs = useTabSet(TABS.map(([id]) => id), active, select, compact ? 'horizontal' : 'vertical');
   if (compact && view === 'index') return <div className="zc-mobile-task-page">
     <TaskList title="日常使用" items={[
       { label: '记账', note: '默认币种、表单与分类', onClick: () => select('ledger') },
@@ -55,9 +55,9 @@ export function SettingsPage({ theme, mode, resolvedMode, setTheme, setMode, sec
     ]} />
   </div>;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
+    <div className="zc-settings-workspace" style={compact ? { display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' } : undefined}>
       {compact && <MobilePageHeader title={TABS.find(([id]) => id === active)?.[1] ?? '设置'} onBack={back} backLabel="返回设置" />}
-      {!compact && <div className="zc-tabs" role="tablist" aria-label="设置分类">
+      {!compact && <div className="zc-tabs zc-workspace-nav" role="tablist" aria-label="设置分类" aria-orientation="vertical">
         {TABS.map(([id, label]) => (
           <button
             key={id}

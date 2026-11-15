@@ -237,10 +237,10 @@ export function Game() {
   const accountOptions = snap.gameAccounts.filter((account) =>
     !account.isDeleted && !account.archivedAt && !account.mergedIntoId && account.gameId === selectedGameId);
 
-  const detailRecord = compactView && mobileView.startsWith('record:') ? vm.records.find((row) => row.raw.id === mobileView.slice(7)) : undefined;
+  const detailRecord = mobileView.startsWith('record:') ? vm.records.find((row) => row.raw.id === mobileView.slice(7)) : undefined;
   const detailAssetCode = snap.assets.find((asset) => asset.id === detailRecord?.raw.settlementAssetId)?.code;
   const detailUnvalued = detailRecord?.nativeAmount === '—' || !!(detailAssetCode && vm.missingRateAssetCodes.includes(detailAssetCode));
-  const openRecord = (record: GameRecord) => compactView ? openMobile(`record:${record.id}`) : setEditRec(record);
+  const openRecord = (record: GameRecord) => openMobile(`record:${record.id}`);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, minWidth: 0 }}>
       {detailRecord ? <>
@@ -346,7 +346,7 @@ export function Game() {
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {!vm.records.length && <p className="zc-meta">当前范围没有记录，可查看“全部记录”或调整筛选。</p>}
             {vm.records.map((r) => (
-              <div id={`game-record-${r.raw.id}`} className="zc-game-record-row" key={r.raw.id} role="button" tabIndex={0} aria-label={`${compactView ? '查看' : '编辑'}游戏记录 ${r.item || REC_LABEL[r.type]}`} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openRecord(r.raw); } }} onClick={() => openRecord(r.raw)} title={compactView ? '查看记录' : '点击编辑'}>
+              <div id={`game-record-${r.raw.id}`} className="zc-game-record-row" key={r.raw.id} role="button" tabIndex={0} aria-label={`查看游戏记录 ${r.item || REC_LABEL[r.type]}`} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openRecord(r.raw); } }} onClick={() => openRecord(r.raw)} title="查看记录">
                 <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', width: 38, flexShrink: 0 }}>{r.date.slice(5)}</div>
                 <span style={recBadge(r.type)}>{REC_LABEL[r.type]}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>

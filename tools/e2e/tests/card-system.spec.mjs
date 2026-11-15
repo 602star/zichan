@@ -77,6 +77,7 @@ for (const width of [1280, 390]) {
           }
           if (screen === 'fixed' && width === 390) await page.getByRole('button', { name: '日常使用的相机与长名称镜头组合', exact: true }).click();
           if (screen === 'convert') {
+            await page.getByRole('tab', { name: '持仓概览', exact: true }).click();
             const record = page.getByText('换算步骤与记账明细核对', { exact: true });
             if (!await record.isVisible()) await page.locator('.zc-convert-asset-header').first().click();
             await record.click();
@@ -100,7 +101,8 @@ for (const width of [1280, 390]) {
     await assertStructure(page);
     await page.screenshot({ path: test.info().outputPath(`sync-expanded-${width}.png`), fullPage: true });
     await navigate(page, 'transactions');
-    await page.getByRole('button', { name: '预算', exact: true }).click();
+    if (width === 1280) await page.locator('.zc-sidebar [data-destination="plans"] .zc-sidebar-nav-item').click();
+    else await page.getByRole('button', { name: '预算', exact: true }).click();
     await page.getByRole('button', { name: '年度', exact: true }).click();
     await expect(page.locator('.zc-budget-row').first()).toBeVisible();
     await page.locator('.zc-budget-row').first().click();

@@ -55,7 +55,8 @@ export function Account() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirmExit, setConfirmExit] = useState(false);
-  useEffect(() => { if (compact && target?.tab && ['profile', 'email', 'security', 'quota'].includes(target.tab)) open(target.tab); }, [compact, target, open]);
+  useEffect(() => { if (target?.tab && ['profile', 'email', 'security', 'quota'].includes(target.tab)) open(target.tab); }, [target, open]);
+  const active = view === 'index' ? 'profile' : view;
 
   useEffect(() => {
     if (!profileId) return;
@@ -106,17 +107,19 @@ export function Account() {
     ]} />
     {logout}
   </div>;
-  return <div className="zc-mobile-task-page">
+  return <div className={`zc-mobile-task-page${!compact && profile ? ' zc-account-workspace' : ''}`}>
+    {!compact && profile && <nav className="zc-workspace-nav" aria-label="账号分类">{([['profile', '个人资料'], ['email', '邮箱'], ['security', '账号安全'], ['quota', '存储配额']] as const).map(([id, label]) => <button type="button" key={id} aria-current={active === id ? 'page' : undefined} onClick={() => open(id)}>{label}</button>)}</nav>}
+    <div className="zc-account-workspace-body">
     {compact && profile && <MobilePageHeader title={({ profile: '个人资料', email: '邮箱', security: '账号安全', quota: '存储配额' } as Record<string, string>)[view] ?? '我的账号'} onBack={back} backLabel="返回账号" />}
     {profile ? <>
-      {(!compact || view === 'profile') && <div className="zc-card"><AccountProfilePanel /></div>}
-      {(!compact || view === 'email') && <AccountEmailPanel quotaUnlimited={usage?.commits.quotaBytes === null && usage?.attachments.quotaBytes === null} />}
-      {!compact && <section className="zc-card" aria-label="数据保护入口">
+      {(compact ? view === 'profile' : active === 'profile') && <div className="zc-card"><AccountProfilePanel /></div>}
+      {(compact ? view === 'email' : active === 'email') && <AccountEmailPanel quotaUnlimited={usage?.commits.quotaBytes === null && usage?.attachments.quotaBytes === null} />}
+      {!compact && active === 'profile' && <section className="zc-card" aria-label="数据保护入口">
         <h2 className="zc-section-title">数据保护</h2>
         <p className="zc-caption">查看当前账本连接了哪些服务器、各服务器的副本是否就绪；服务器同步组由管理员配置。</p>
         <button type="button" className="zc-btn" onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'settings', tab: 'server' } }))}>查看服务器上的账本</button>
       </section>}
-      {(!compact || view === 'quota') && <section className="zc-card" aria-label="存储配额">
+      {(compact ? view === 'quota' : active === 'quota') && <section className="zc-card" aria-label="存储配额">
         <div className="zc-section-head"><div><h2 className="zc-section-title">存储配额</h2><p className="zc-meta">当前服务器：{profile.alias || profile.baseUrl}。只统计此账号在这台服务器上的加密数据。</p></div><button type="button" className="zc-btn" disabled={busy} onClick={() => void refreshUsage()}>{busy ? '查询中…' : '刷新用量'}</button></div>
         {roleInfo && <p className="zc-caption">本站角色：{roleInfo.node} · 当前账本权限：{roleInfo.ledger}</p>}
         {usage && <div className="zc-card-band is-inset zc-account-quota-band">
@@ -127,9 +130,10 @@ export function Account() {
         {usage?.transfer && <p className="zc-caption">本站同步 {usage.transfer.syncRuns} 轮（已收敛 {usage.transfer.convergedRuns}、待续 {usage.transfer.partialRuns}、失败 {usage.transfer.failedRuns}）；上传 {bytes(usage.transfer.commitUploadBytes + usage.transfer.blobUploadBytes)}、下载 {bytes(usage.transfer.commitDownloadBytes + usage.transfer.blobDownloadBytes)}。只统计已记录的加密正文，重试计入流量。</p>}
         {error && <p role="alert">{error}</p>}
       </section>}
-      {(!compact || view === 'security') && <AccountSecurityPanel onExit={exitAccount} />}
-      {!compact && exitAccount && <section className="zc-card" aria-label="退出账号"><h2 className="zc-section-title">退出账号</h2><p className="zc-caption">退出会锁定本机账本并撤销会话；加密缓存与未同步记录仍留在本机。</p><button type="button" className="zc-btn" onClick={() => setConfirmExit(true)}>退出记账账号</button></section>}
+      {(compact ? view === 'security' : active === 'security') && <AccountSecurityPanel onExit={exitAccount} />}
+      {!compact && active === 'security' && exitAccount && <section className="zc-card" aria-label="退出账号"><h2 className="zc-section-title">退出账号</h2><p className="zc-caption">退出会锁定本机账本并撤销会话；加密缓存与未同步记录仍留在本机。</p><button type="button" className="zc-btn" onClick={() => setConfirmExit(true)}>退出记账账号</button></section>}
       {logout}
     </> : <section className="zc-card"><h2 className="zc-section-title">本地账本</h2><p>此账本当前没有登录中的服务器账号，因此没有服务器存储配额。</p><button type="button" className="zc-btn" onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'settings', tab: 'device' } }))}>查看数据保护</button></section>}
+    </div>
   </div>;
 }

@@ -533,7 +533,7 @@ export function Reports() {
           对比与汇总读取失败：{transactionAggregateError}。请刷新页面重试。
         </div>
       )}
-      <MobileDisclosure title="期间走势"><TimeTrendChart
+      <div className="zc-report-workspace-charts"><MobileDisclosure title="期间走势"><TimeTrendChart
         snap={snap}
         tab={tab}
         dateRange={effectiveRange}
@@ -551,6 +551,7 @@ export function Reports() {
         onSelectChild={(parent, child) => toggleChildDrill(parent, child, effectiveRange)}
         transactionTable={tab === 'transactions' ? table : undefined}
       />
+      </div>
       <div className="zc-card is-flush">
         <div style={{ overflowX: 'auto' }}>
           <table className="zc-card-table" style={{ width: '100%', borderCollapse: 'collapse' }}>

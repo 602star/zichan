@@ -7,26 +7,30 @@ import { buildConvert } from '../selectors/convert.js';
 import { baseAsset } from '../db/derive.js';
 import { num, signedMoney } from '../format.js';
 import { navigateTo, useScreenTarget } from '../screen-target.js';
-import { CardAlert, CardEmpty, CardFact } from '../ui/Card.js';
+import { CardAlert, CardEmpty, CardFact, CardMetric } from '../ui/Card.js';
+import { useCompactView } from '../ui/useCompactView.js';
 import { MobilePageHeader, TaskList, useMobileSection } from '../ui/MobilePage.js';
 import { useTabSet } from '../ui/useTabSet.js';
 import { hasMobileDialog } from '../ui/mobile-dialog-history.js';
 
 const Fixed = lazy(() => import('./Fixed.js').then((module) => ({ default: module.Fixed })));
-const TABS = ['accounts', 'holdings', 'items'] as const;
+const TABS = ['overview', 'accounts', 'holdings', 'items'] as const;
 type AssetTab = typeof TABS[number];
 
 export function Assets() {
+  const compact = useCompactView();
   const { store, rev, preview } = useStore();
   const snap = useSnapshot('convert');
   const target = useScreenTarget('assets');
   const [view, open, back] = useMobileSection('assets');
-  const [tab, setTabState] = useState<AssetTab>(() => typeof window !== 'undefined' && TABS.includes(history.state?.zcAssetsTab) ? history.state.zcAssetsTab : 'accounts');
+  const [tab, setTabState] = useState<AssetTab>(() => typeof window !== 'undefined' && TABS.includes(history.state?.zcAssetsTab) ? history.state.zcAssetsTab : compact ? 'accounts' : 'overview');
   const setTab = useCallback((next: AssetTab) => { setTabState(next); history.replaceState({ ...history.state, zcAssetsTab: next }, ''); }, []);
   const [balances, setBalances] = useState<AccountBalanceAggregateRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const tabs = useTabSet(TABS, tab, setTab);
+  const visibleTabs = compact ? TABS.filter((id) => id !== 'overview') : TABS;
+  const tabs = useTabSet(visibleTabs, tab, setTab);
+  useEffect(() => { if (compact && tab === 'overview') setTab('accounts'); }, [compact, tab, setTab]);
   const conversion = useMemo(() => snap ? buildConvert(snap) : null, [snap]);
   useEffect(() => {
     const restore = () => { if (!hasMobileDialog() && history.state?.zcScreen === 'assets' && TABS.includes(history.state?.zcAssetsTab)) setTabState(history.state.zcAssetsTab); };
@@ -87,16 +91,30 @@ export function Assets() {
     ]} />
   </div>;
   return <div className="zc-mobile-task-page">
-    <div className="zc-tabs" role="tablist" aria-label="资产分类">{TABS.map((id) => <button type="button" key={id} {...tabs.tabProps(id)} className={tab === id ? 'zc-tab is-active' : 'zc-tab'}>{({ accounts: '账户', holdings: '持仓', items: '物品' })[id]}</button>)}</div>
+    <div className="zc-tabs" role="tablist" aria-label="资产分类">{visibleTabs.map((id) => <button type="button" key={id} {...tabs.tabProps(id)} className={tab === id ? 'zc-tab is-active' : 'zc-tab'}>{({ overview: '总览', accounts: '账户', holdings: '持仓', items: '物品' })[id]}</button>)}</div>
     {error && <CardAlert tone="danger">{error}</CardAlert>}
     <div {...tabs.panelProps}>
+      {tab === 'overview' && <div className="zc-asset-workspace">
+        <div className="zc-card-band">
+          <CardMetric label="已估值金融资产（含资金账户）" value={reportValue(conversion.groups.filter((group) => group.hasPosition && group.value !== null).reduce((total, group) => total.plus(group.value!), D(0)).toString())} />
+          <CardMetric label="持仓资产" value={`${conversion.groups.filter((group) => group.hasPosition).length} 类`} />
+          <CardMetric label="待补价格" value={`${conversion.groups.filter((group) => group.hasPosition && group.value === null).length} 类`} />
+        </div>
+        {conversion.groups.some((group) => group.hasPosition && group.value === null) && <CardAlert>部分资产缺少价格，未计入已估值金额。原币数量仍完整保留，请在持仓中补充价格。</CardAlert>}
+        <section><h2 className="zc-section-title">持仓与资金 · 原币数量和估值</h2><div className="zc-card is-flush"><div className="zc-scroll-x"><table className="zc-workspace-table"><thead><tr><th>资产</th><th>原币数量</th><th>参考现值</th><th>成本依据</th></tr></thead><tbody>{conversion.groups.filter((group) => group.hasPosition).map((group) => <tr key={group.assetId}><td><button type="button" className="zc-workspace-link" onClick={() => open(`holding:${group.assetId}`)}>{group.assetCode}</button></td><td className="is-numeric">{num(group.holdings, group.decimals)} {group.assetCode}</td><td className="is-numeric">{group.value === null ? '缺少价格' : reportValue(group.value)}</td><td>{group.costBasisKnown ? '成本已知' : '成本尚未完整核对'}</td></tr>)}</tbody></table></div></div></section>
+        <TaskList label="资产操作" items={[
+          { label: '账户与核对', note: '按账户查看原币余额和分录', onClick: () => navigateTo({ screen: 'transactions', tab: 'accounts' }) },
+          { label: '连续转换', note: '换汇、买卖、手续费和保留余额', onClick: () => navigateTo({ screen: 'convert' }) },
+          { label: '物品与使用成本', note: '参考残值与金融资产估值分别查看', onClick: () => setTab('items') },
+        ]} />
+      </div>}
       {tab === 'accounts' && <>
         <TaskList label="账户列表" items={snap.accounts.filter((row) => row.kind !== 'other' && !isDefaultAccount(row)).map((row) => ({ label: row.name, note: accountRows(row.id).map((b) => `${num(b.amount, b.decimals)} ${b.code}`).join(' · ') || (loading ? '正在读取余额…' : '暂无余额'), onClick: () => open(`account:${row.id}`) }))} />
         {!snap.accounts.some((row) => row.kind !== 'other' && !isDefaultAccount(row)) && <CardEmpty>还没有自行管理的账户，可从添加账户开始。</CardEmpty>}
         {!preview && <button type="button" className="zc-btn zc-btn--primary" onClick={() => navigateTo({ screen: 'manage', tab: 'accounts' })}>添加或管理账户</button>}
       </>}
       {tab === 'holdings' && <>
-        <TaskList label="资产持仓" items={positions.map((group) => ({ label: group.assetCode, note: `${num(group.holdings, group.decimals)} ${group.assetCode}`, value: group.value === null ? '缺少价格' : reportValue(group.value), onClick: () => open(`holding:${group.assetId}`) }))} />
+        {compact ? <TaskList label="资产持仓" items={positions.map((group) => ({ label: group.assetCode, note: `${num(group.holdings, group.decimals)} ${group.assetCode}`, value: group.value === null ? '缺少价格' : reportValue(group.value), onClick: () => open(`holding:${group.assetId}`) }))} /> : <div className="zc-card is-flush"><div className="zc-scroll-x"><table className="zc-workspace-table"><thead><tr><th>资产</th><th>持有数量</th><th>参考现值</th><th>持仓成本</th></tr></thead><tbody>{positions.map((group) => <tr key={group.assetId}><td><button type="button" className="zc-workspace-link" onClick={() => open(`holding:${group.assetId}`)}>{group.assetCode}</button></td><td className="is-numeric">{num(group.holdings, group.decimals)} {group.assetCode}</td><td className="is-numeric">{group.value === null ? '缺少价格' : reportValue(group.value)}</td><td className="is-numeric">{group.costTotal === null ? '待核对' : `${num(group.costTotal, 8)} ${snap.assets.find((asset) => asset.id === group.costCurrencyAssetId)?.code ?? ''}`}</td></tr>)}</tbody></table></div></div>}
         {!positions.length && <CardEmpty>尚无持仓，已有转换记录会自动归入对应资产。</CardEmpty>}
         <TaskList label="转换入口" items={[{ label: '资产转换', note: '换汇、买卖及连续转换', onClick: () => navigateTo({ screen: 'convert' }) }]} />
       </>}

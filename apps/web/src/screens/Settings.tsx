@@ -236,7 +236,9 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   }
 
   function moveNavigation(id: ScreenId, direction: -1 | 1) {
-    void saveNavigation(moveNavigationItem(navigation, id, direction));
+    const adjacent = navigation.order[navigation.order.indexOf(id) + direction];
+    const next = moveNavigationItem(navigation, id, direction);
+    void saveNavigation(adjacent === 'assets' ? moveNavigationItem(next, id, direction) : next);
   }
 
   async function saveSafetyState(patch: Partial<SafetyState>) {
@@ -891,7 +893,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
               <div>
                 <h2 className="zc-section-title">侧边栏与模块</h2>
                 <p className="zc-meta zc-settings-card-description" style={{ marginTop: 4 }}>
-                  勾选的模块会按下方顺序直接显示在桌面和平板侧栏；手机底栏显示前 3 项，其余已启用项进入“更多”。隐藏入口不会删除模块数据。
+                  勾选的模块显示在桌面和平板侧栏。手机底栏固定为总览、收支、记一笔、资产、更多；资产聚合账户、持仓和物品。隐藏入口不会删除模块数据。
                 </p>
               </div>
               <button className="zc-settings-card-action zc-btn" type="button" disabled={navigationBusy} onClick={() => void saveNavigation(defaultNavigationPreferences())}>
@@ -903,7 +905,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
             </div>
             <div id="zc-settings-navigation-body" className="zc-settings-collapsible-body">
               <div className="zc-navigation-settings-list" style={{ display: 'grid', gap: 8, marginTop: 14 }}>
-                {orderedNavigationItems(navigation, true).map((item, index, items) => {
+                {orderedNavigationItems(navigation, true).filter((item) => item.id !== 'assets').map((item, index, items) => {
                   const required = REQUIRED_NAVIGATION_IDS.has(item.id);
                   const visible = navigation.visible.includes(item.id);
                   return (

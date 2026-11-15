@@ -15,6 +15,7 @@ function settle() {
   const top = owners.at(-1);
   if (top && history.state?.zcDialog !== top.id) history.pushState(top.state, '');
   else if (!top && history.state?.zcDialog) { expectedPops += 1; history.back(); }
+  else if (!top && expectedPops === 0) window.dispatchEvent(new Event('zichan:dialog-history-settled'));
 }
 
 function install() {

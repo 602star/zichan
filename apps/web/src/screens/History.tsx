@@ -374,8 +374,8 @@ export function History() {
 
   return (
     <>
-    <div className="zc-history-layout" style={{ display: 'grid', gridTemplateColumns: detailOpen && selected ? 'minmax(0, 1fr) minmax(360px, 420px)' : 'minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
-      {(!compactView || !detailOpen || !selected) && <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+    <div className="zc-history-layout" style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
+      {(!detailOpen || !selected) && <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
         <div className="zc-card">
           <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--sp-3)', marginBottom: 14 }}>
             <div>
@@ -456,7 +456,7 @@ export function History() {
       </div>
 
       }
-      {detailOpen && selected && <div ref={detailRef} className="zc-history-detail" style={{ position: 'sticky', top: 92, minWidth: 0 }}>
+      {detailOpen && selected && <div ref={detailRef} className="zc-history-detail" style={{ position: compactView ? 'sticky' : 'static', top: 92, minWidth: 0 }}>
         {compactView ? <MobilePageHeader title="记录详情" onBack={backMobile} backLabel="返回历史" /> : <div className="zc-history-detail-toolbar"><span>记录详情</span><button type="button" onClick={() => setDetailOpen(false)} aria-label="收起记录详情">收起 ×</button></div>}
         <HistoryDetail
           event={selected}
