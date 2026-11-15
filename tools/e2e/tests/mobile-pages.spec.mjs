@@ -217,8 +217,8 @@ test('accounts, budgets, bills and conversion review connect to the ledger', asy
   await expect(page.locator('.zc-budget-row').first()).toContainText('600');
 
   await go(page, 'transactions', 'bills');
-  await page.getByRole('button', { name: '+ 定期交易', exact: true }).click();
-  form = page.getByRole('dialog', { name: '新增 · 定期交易', exact: true });
+  await page.getByRole('button', { name: '+ 新增账单', exact: true }).click();
+  form = page.getByRole('dialog', { name: '新增 · 账单计划', exact: true });
   await form.getByLabel(/^名称/).fill('手机月费');
   await form.getByLabel(/^金额/).fill('20');
   await capture(page, 'bill-grouped-form');

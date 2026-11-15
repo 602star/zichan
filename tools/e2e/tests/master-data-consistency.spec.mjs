@@ -119,7 +119,7 @@ test('duplicate accounts can reuse existing data, and same-name schedules requir
   await page.getByRole('tab', { name: '计划预算', exact: true }).click();
   for (let index = 0; index < 2; index++) {
     await page.getByRole('button', { name: '+ 新增定期交易', exact: true }).click();
-    const schedule = page.getByRole('dialog', { name: '新增 · 定期交易', exact: true });
+    const schedule = page.getByRole('dialog', { name: '新增 · 账单计划', exact: true });
     await schedule.getByLabel(/^名称/).fill('房租');
     await schedule.getByLabel(/^金额/).fill(index === 0 ? '100' : '200');
     await schedule.getByRole('button', { name: '保存', exact: true }).click();

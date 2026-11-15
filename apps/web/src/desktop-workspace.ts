@@ -12,6 +12,7 @@ export function desktopDestinations(preferences: NavigationPreferences, mode: Le
     { id: 'records', label: '流水', source: 'transactions', target: { screen: 'transactions', tab: 'records' }, group: '日常' },
     ...[
       { id: 'accounts', label: '账户', source: 'transactions' as const, target: { screen: 'transactions' as const, tab: 'accounts' }, group: '日常' as const },
+      { id: 'bills', label: '账单与还款', source: 'transactions' as const, target: { screen: 'transactions' as const, tab: 'bills' }, group: '日常' as const },
       { id: 'plans', label: '计划', source: 'transactions' as const, target: { screen: 'transactions' as const, tab: 'budget' }, group: '日常' as const },
     ],
     { id: 'convert', label: '资产转换', source: 'convert', target: { screen: 'convert' }, group: '资产与分析' },

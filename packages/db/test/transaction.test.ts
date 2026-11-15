@@ -18,6 +18,7 @@ import {
   previewReconciliation,
   monthlyTransactionSummary,
   materializeScheduledTransaction,
+  acknowledgeScheduledTransaction,
   preflightImport,
   previewScheduledBacklog,
   recordConversion,
@@ -949,6 +950,42 @@ describe('transactions persistence', () => {
     expect(await runDueScheduledTransactions(store, new Date('2026-03-31T03:00:00.000Z'))).toMatchObject({ created: 0, skipped: 0, errors: [] });
     expect(await materializeScheduledTransaction(store, schedule.id, 2)).toMatchObject({ id: 'scheduled-transaction-monthly-rent-2' });
     await store.close();
+  });
+
+  it('acknowledges account-free repayments without postings and completes a single occurrence idempotently', async () => {
+    const store = await openTransactionLedger();
+    try {
+      const schedule: ScheduledTransaction = { ...base(), id: 'independent-repayment', name: '借款还款', type: 'expense', category: 'food', amount: '123456789.12', assetId: 'GBP',
+        frequency: 'daily', anchorDate: '2026-03-10', endDate: '2026-03-10', anchorMode: 'calendar_day', timezone: 'Asia/Shanghai', catchUpPolicy: 'all', autoCreate: false, status: 'active' };
+      await store.scheduledTransactions.put(schedule);
+      const first = await acknowledgeScheduledTransaction(store, schedule.id, 0);
+      expect(first).toMatchObject({ status: 'skipped', occurrenceDate: '2026-03-10' });
+      expect(first.transactionId).toBeUndefined();
+      expect(first.completedAt).toBeTruthy();
+      expect(await acknowledgeScheduledTransaction(store, schedule.id, 0)).toMatchObject({ id: first.id, version: first.version });
+      expect(await store.transactions.list()).toEqual([]);
+      await expect(materializeScheduledTransaction(store, schedule.id, 0)).rejects.toThrow('跳过');
+      expect(await previewScheduledBacklog(store, new Date('2026-03-11T12:00:00Z'))).toEqual([]);
+      expect((await exportLedger(store)).scheduledExecutions).toEqual(expect.arrayContaining([expect.objectContaining({ id: first.id, status: 'skipped' })]));
+    } finally { await store.close(); }
+  });
+
+  it('allows either a posting or a no-posting acknowledgement, never both, across two clients', async () => {
+    const location = join(tmpdir(), `zichan-bill-race-${newId()}.sqlite`);
+    const first = await openLedger({ filename: location, deviceId: 'first-device' });
+    await seedTransactionLedger(first);
+    const second = await openLedger({ filename: location, deviceId: 'other-device' });
+    try {
+      const schedule: ScheduledTransaction = { ...base(), id: 'bill-race', name: '房租', type: 'expense', category: 'food', amount: '100.01', assetId: 'GBP',
+        frequency: 'monthly', anchorDate: '2026-03-10', anchorMode: 'calendar_day', timezone: 'Asia/Shanghai', catchUpPolicy: 'all', autoCreate: false, status: 'active' };
+      await first.scheduledTransactions.put(schedule);
+      const results = await Promise.allSettled([acknowledgeScheduledTransaction(first, schedule.id, 0), materializeScheduledTransaction(second, schedule.id, 0)]);
+      expect(results.some((result) => result.status === 'fulfilled')).toBe(true);
+      const execution = await first.scheduledExecutions.get(scheduleExecutionId(schedule.id, 0));
+      const rows = await first.transactions.list();
+      expect(rows).toHaveLength(execution?.status === 'created' ? 1 : 0);
+      expect(execution?.status === 'created' || execution?.status === 'skipped').toBe(true);
+    } finally { await first.close(); await second.close(); rmSync(location, { force: true }); }
   });
 
   it('does not truncate daily schedules beyond 1000 occurrences', async () => {

@@ -1,3 +1,5 @@
+@import './assets/fonts/wenkai.css';
+
 /* Shared ledger surfaces. Desktop workspaces reuse phone fields and business forms. */
 /* Touch date/time selection shares the ledger's paper, ink and vermilion. */
 .zc-mobile-task-page { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
@@ -151,8 +153,9 @@
  * take part and the only tool left was `!important` against itself.
  */
 :root {
-  --font-display: 'Songti SC', 'Noto Serif CJK SC', 'Source Han Serif SC', 'SimSun', serif;
-  --font-body: 'Manrope', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-display: 'LXGW WenKai Screen', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-body: 'LXGW WenKai Screen', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-numeric: 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, var(--font-body);
   --sidebar-bg: #24221f;
   --sidebar-fg: #e8e3d9;
   --sidebar-muted: #b7afa4;
@@ -220,15 +223,15 @@
   --text-muted: #56514b;
 
   /* Type scale: seven steps, down from 27 ad-hoc sizes. */
-  --fs-meta: 11px;      /* labels, badges, chart axes */
-  --fs-caption: 12px;   /* dense secondary text */
+  --fs-meta: 13px;      /* badges and chart axes */
+  --fs-caption: 14px;   /* supporting text and field labels */
   /* The management console's name for the same step; aliased rather than given
      its own size so a stray 12.5px cannot appear there. */
   --fs-sm: var(--fs-caption);
-  --fs-body: 13px;      /* default body */
-  --fs-title: 15px;     /* section titles, row emphasis */
-  --fs-heading: 20px;   /* page and dialog titles */
-  --fs-display: 26px;   /* headline metrics */
+  --fs-body: 16px;      /* default body and ledger records */
+  --fs-title: 18px;     /* section titles, row emphasis */
+  --fs-heading: 24px;   /* page and dialog titles */
+  --fs-display: 30px;   /* headline metrics */
   --fs-hero: clamp(28px, 8vw, 40px);
   --fs-summary-mobile: clamp(22px, 6vw, 28px);
   --fs-summary-kpi-mobile: clamp(18px, 4.7vw, 20px);
@@ -283,6 +286,15 @@
   --cat-5: #696877;
   --cat-6: #617b78;
   --cat-other: #969188;
+}
+
+/* Amounts keep tabular screen numerals; Chinese units use the shared face. */
+.zc-card-metric-value, .zc-summary-value, .zc-summary-kpi-value,
+.zc-record-sheet-amount, .zc-period-expenses strong, .zc-task-list-value,
+.zc-transaction-table td.is-numeric, .zc-workspace-table .is-numeric,
+input[inputmode="decimal"], input[inputmode="numeric"] {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
 }
 
 /*
@@ -369,6 +381,12 @@ html {
 body {
   background: inherit;
   color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  /* The screen face already has reinforced strokes. Do not manufacture bold
+     or italic glyphs; numeric faces retain their own genuine weight variants. */
+  font-synthesis: none;
+  line-height: 1.6;
   /* Let the body contain the page when dialogs lock overflow; a fixed 100%
      height clips it to one viewport and resets the document's scroll position. */
   height: auto;
@@ -3196,10 +3214,11 @@ input[type="radio"] {
   .zc-transaction-summary-metric > div:nth-child(2) {
     max-width: 100%;
     margin-top: 4px;
-    font-size: var(--fs-heading);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-size: var(--fs-summary-kpi-mobile);
+    white-space: normal;
+    overflow-wrap: anywhere;
+    overflow: visible;
+    text-overflow: clip;
     text-align: left;
   }
   .zc-transaction-summary-metric > div:nth-child(3) {
@@ -3305,11 +3324,8 @@ input[type="radio"] {
     border-bottom: 1px solid var(--border);
   }
 
-  .zc-dashboard-tasks { order: 1; }
-  .zc-dashboard-more-metrics-toggle { order: 2; align-self: flex-start; }
-  .zc-dashboard-kpi-grid { order: 3; }
+  .zc-dashboard-more-metrics-toggle { align-self: flex-start; }
   .zc-dashboard-kpi-grid.is-compact > :last-child { grid-column: auto; }
-  .zc-dashboard-detail-grid { order: 4; }
   .zc-dashboard-allocation-name { flex: 0 0 auto; }
   .zc-dashboard-allocation-name > span:first-child { white-space: nowrap; }
   .zc-dashboard-allocation-note { display: none; }
@@ -4265,29 +4281,29 @@ input[type="radio"] {
 }
 @media (min-width: 2560px) {
   :root {
-    --fs-meta: 12px;
-    --fs-caption: 13px;
-    --fs-body: 15px;
-    --fs-title: 17px;
-    --fs-heading: 22px;
-    --fs-display: 30px;
+    --fs-meta: 14px;
+    --fs-caption: 16px;
+    --fs-body: 18px;
+    --fs-title: 21px;
+    --fs-heading: 28px;
+    --fs-display: 36px;
   }
 }
 @media (min-width: 3200px) {
   :root {
-    --fs-meta: 14px;
-    --fs-caption: 15px;
-    --fs-body: 17px;
-    --fs-title: 20px;
-    --fs-heading: 26px;
-    --fs-display: 36px;
-    --fs-input: 18px;
+    --fs-meta: 16px;
+    --fs-caption: 18px;
+    --fs-body: 20px;
+    --fs-title: 24px;
+    --fs-heading: 30px;
+    --fs-display: 40px;
+    --fs-input: 20px;
   }
 }
 
 /* Desktop task workspaces keep the shared ledger vocabulary. */
 .zc-page-body, .zc-workspace-host { min-width: 0; }
-.zc-account-workspace-body, .zc-dashboard-recent { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.zc-account-workspace-body { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
 .zc-workspace-host:empty { display: none; }
 .zc-sidebar-collapse { display: none; }
 .zc-sidebar-group { padding: 16px 12px 5px; font-size: var(--fs-meta); color: var(--sidebar-muted); }
@@ -4365,13 +4381,57 @@ input[type="radio"] {
   .zc-report-workspace-charts > * { min-width: 0; }
   .zc-workspace-editor.zc-reconciliation-modal { box-shadow: none; }
   .zc-desktop-workbench { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--sp-5); }
-  .zc-desktop-workbench > * { grid-column: 1 / -1; order: 2; min-width: 0; }
-  .zc-desktop-workbench > .zc-date-range-bar { grid-row: 1; order: -1; }
-  .zc-desktop-workbench > .zc-dashboard-tasks { grid-column: 1; grid-row: 2; order: 0; }
-  .zc-desktop-workbench > .zc-dashboard-recent { grid-column: 2; grid-row: 2; order: 0; padding: 20px; border-top: 1px solid var(--text-secondary); }
+  .zc-desktop-workbench > * { grid-column: 1 / -1; min-width: 0; }
+  .zc-desktop-workbench > .zc-dashboard-agenda { grid-column: 1; }
+  .zc-desktop-workbench > .zc-dashboard-recent { grid-column: 2; }
   .zc-desktop-workbench .zc-dashboard-recent .zc-task-list button { min-height: 50px; padding-block: 8px; }
-  .zc-desktop-workbench .zc-dashboard-recent > .zc-btn { margin-top: 12px; }
-  .zc-desktop-workbench > .zc-dashboard-hero-grid { order: 1; }
+}
+
+/* Workbench sheets share one frame; internal rows use ink rules only. */
+.zc-dashboard-overview-band { display: grid; grid-template-columns: minmax(0, 1.5fr) repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); }
+.zc-dashboard-overview-band > .zc-card-metric { padding: var(--sp-4); }
+.zc-dashboard-overview-band > .zc-card-metric + .zc-card-metric { border-left: 1px solid var(--border); }
+.zc-dashboard-overview-band > :first-child { padding-left: 0; }
+.zc-dashboard-overview-band .zc-card-metric-value { font-size: var(--fs-heading); }
+.zc-dashboard-overview-band .zc-dashboard-primary .zc-card-metric-value { font-size: var(--fs-display); }
+.zc-dashboard-recent .zc-task-list button { min-height: 60px; }
+.zc-dashboard-recent .zc-task-list button:last-child { border-bottom: 0; }
+.zc-dashboard-recent .zc-task-list-value { font-family: var(--font-numeric); }
+.zc-dashboard-recent-value.is-negative { color: var(--negative); }
+.zc-dashboard-recent-value.is-positive { color: var(--positive); }
+.zc-dashboard-recent .zc-mobile-shortcuts { margin-bottom: var(--sp-4); }
+.zc-dashboard-agenda-filters { display: flex; gap: var(--sp-1); flex-wrap: wrap; margin-bottom: var(--sp-3); }
+.zc-agenda-count { margin-left: var(--sp-1); font-family: var(--font-numeric); }
+.zc-dashboard-agenda-list { padding: 0; margin: 0; list-style: none; }
+.zc-dashboard-agenda-list > li + li { border-top: 1px solid var(--border); }
+.zc-agenda-row { display: grid; grid-template-columns: 54px minmax(0, 1fr) minmax(0, auto); align-items: start; gap: var(--sp-3); padding: var(--sp-3) 0; width: 100%; border: 0; background: transparent; text-align: left; font: inherit; color: var(--text-primary); cursor: pointer; }
+.zc-agenda-row:hover { background: var(--surface-2); }
+.zc-agenda-date { display: flex; flex-direction: column; gap: var(--sp-2); font-size: var(--fs-caption); font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.zc-agenda-date svg { color: var(--text-tertiary); }
+.zc-agenda-copy { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+.zc-agenda-title { overflow-wrap: anywhere; }
+.zc-agenda-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-2); }
+.zc-agenda-detail { color: var(--text-secondary); font-size: var(--fs-caption); overflow-wrap: anywhere; }
+.zc-agenda-state { color: var(--text-secondary); font-size: var(--fs-caption); }
+.zc-agenda-row.is-failed .zc-agenda-state, .zc-agenda-row.is-late .zc-agenda-state { color: var(--danger); }
+.zc-agenda-row.is-today .zc-agenda-state { color: var(--warning); }
+.zc-agenda-value { display: flex; align-items: center; gap: var(--sp-1); font-family: var(--font-numeric); text-align: right; max-width: 150px; overflow-wrap: anywhere; }
+.zc-agenda-value svg { flex-shrink: 0; }
+.zc-agenda-calendar-label { font-family: var(--font-body); font-size: var(--fs-caption); color: var(--text-tertiary); }
+.zc-dashboard-agenda-foot { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-2); color: var(--text-tertiary); font-size: var(--fs-caption); }
+.zc-agenda-expand { margin-top: var(--sp-3); }
+.zc-bill-presets { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+.zc-bill-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-2); max-width: 240px; }
+@media (max-width: 1199px) {
+  .zc-agenda-row { grid-template-columns: 48px minmax(0, 1fr); }
+  .zc-agenda-value { grid-column: 2; max-width: none; justify-self: start; text-align: left; }
+}
+@media (max-width: 767px) {
+  .zc-dashboard-overview-band { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .zc-dashboard-overview-band > .zc-card-metric { padding: var(--sp-3); }
+  .zc-dashboard-overview-band > .zc-card-metric:nth-child(odd) { border-left: 0; }
+  .zc-dashboard-overview-band > .zc-card-metric:nth-child(n + 3) { border-top: 1px solid var(--border); }
+  .zc-dashboard-overview-band .zc-dashboard-primary .zc-card-metric-value { font-size: var(--fs-heading); }
 }
 @media (min-width: 1440px) { .zc-report-workspace-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 768px) and (pointer: fine) {

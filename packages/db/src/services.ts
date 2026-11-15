@@ -2646,6 +2646,7 @@ async function markScheduledOccurrencesSkipped(
   store: SqlLedgerStore,
   schedule: ScheduledTransaction,
   occurrences: ScheduleOccurrence[],
+  manual = false,
 ): Promise<number> {
   const owned: { occurrence: ScheduleOccurrence; executionId: string; token: string }[] = [];
   for (const occurrence of occurrences) {
@@ -2660,6 +2661,7 @@ async function markScheduledOccurrencesSkipped(
       createdAt: deterministicCreatedAt(schedule, occurrence.date),
       attemptedAt,
       leaseUntil: new Date(Date.parse(attemptedAt) + SCHEDULE_CLAIM_LEASE_MS).toISOString(),
+      forceRetry: manual,
     });
     if (claim.state === 'claimed') owned.push({ occurrence, executionId, token: claim.token });
   }
@@ -2667,7 +2669,7 @@ async function markScheduledOccurrencesSkipped(
 
   const batchId = newId();
   const saved = await store.withAuditContext(
-    { batchId, source: 'system' },
+    { batchId, source: manual ? 'local' : 'system' },
     (scoped) => scoped.transaction(async (transactionStore) => {
       const stillOwned: typeof owned = [];
       for (const row of owned) {
@@ -2676,10 +2678,10 @@ async function markScheduledOccurrencesSkipped(
       if (!stillOwned.length) return 0;
       await transactionStore.createAuditBatch({
         id: batchId,
-        type: 'system',
-        label: `跳过定期交易 ${schedule.name}`,
+        type: manual ? 'bulk_update' : 'system',
+        label: manual ? `标记账单已处理 ${schedule.name}` : `跳过定期交易 ${schedule.name}`,
         entityCount: stillOwned.length,
-        summary: `按“只生成最近一期”策略跳过 ${stillOwned.length} 期`,
+        summary: manual ? '用户确认本期已处理，仅标记，不生成流水或改变账户余额' : `按“只生成最近一期”策略跳过 ${stillOwned.length} 期`,
       });
       for (const row of stillOwned) {
         await saveScheduleExecution(transactionStore, schedule, row.occurrence.index, 'skipped');
@@ -2695,6 +2697,30 @@ async function markScheduledOccurrencesSkipped(
     });
   }
   return saved;
+}
+
+/** Acknowledge one explicit occurrence without creating any ledger posting.
+ * Uses the scheduler's claim protocol so a second window cannot book it too.
+ */
+export async function acknowledgeScheduledTransaction(
+  store: SqlLedgerStore,
+  scheduleId: string,
+  occurrenceIndex: number,
+): Promise<ScheduledExecution> {
+  const schedule = await store.scheduledTransactions.get(scheduleId);
+  if (!schedule || schedule.isDeleted) throw new Error('账单计划不存在');
+  if (schedule.status !== 'active') throw new Error('账单计划已暂停');
+  if (!Number.isSafeInteger(occurrenceIndex) || occurrenceIndex < 0) throw new Error('账单期次无效');
+  const date = scheduleOccurrenceDate(schedule, occurrenceIndex);
+  if (schedule.endDate && date > schedule.endDate) throw new Error('账单计划已结束');
+  const executionId = scheduleExecutionId(scheduleId, occurrenceIndex);
+  const existing = await store.scheduledExecutions.get(executionId);
+  if (existing && !existing.isDeleted && existing.status === 'skipped') return existing;
+  if (existing && !existing.isDeleted && existing.status === 'created') throw new Error('本期已生成流水，请从流水处理，不能重复标记');
+  await markScheduledOccurrencesSkipped(store, schedule, [{ index: occurrenceIndex, date }], true);
+  const result = await store.scheduledExecutions.get(executionId);
+  if (!result || result.isDeleted || result.status !== 'skipped') throw new Error('本期正在其他窗口处理，请稍后刷新');
+  return result;
 }
 
 export async function runDueScheduledTransactions(store: SqlLedgerStore, now = new Date()): Promise<ScheduledRunResult> {

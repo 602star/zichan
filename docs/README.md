@@ -6,7 +6,7 @@
 
 - **Web 与账号：**[Web 应用](guides/web.md)、[账号入口](guides/web-account-v2.md)、[注册与资料](guides/account-registration.md)、[账号安全](guides/account-security.md)、[离线应用](guides/offline-app.md)。
 - **账本与界面：**[账本保护](guides/ledger-protection.md)、[数据保护界面](guides/data-protection-ui.md)、[卡片与信息分组](guides/card-system.md)、[移动端页面与操作](guides/mobile-ledger.md)、[页面组落地清单](planning/mobile-pages-implementation.md)、[分类选择器](guides/category-picker-layout.md)、[图标](guides/entity-icons.md)、[交易对象与平台](guides/payee-platform-design.md)。
-- **客户端与管理：**[桌面端](guides/desktop.md)、[电脑端账本工作台](guides/desktop-ledger.md)、[服务器管理后台](guides/server-admin.md)。
+- **客户端与管理：**[桌面端](guides/desktop.md)、[电脑端账本工作台](guides/desktop-ledger.md)、[账单与还款](guides/bills-and-repayments.md)、[服务器管理后台](guides/server-admin.md)。
 
 ## 架构与数据 `architecture/`
 

@@ -26,28 +26,28 @@ colors:
   on-action-dark: "#211b18"
 typography:
   display:
-    fontFamily: "'Songti SC','Noto Serif CJK SC','Source Han Serif SC','SimSun',serif"
+    fontFamily: "'LXGW WenKai Screen','PingFang SC','Microsoft YaHei',system-ui,sans-serif"
     fontSize: "clamp(28px, 8vw, 40px)"
     fontWeight: 700
     lineHeight: 1.05
   headline:
-    fontFamily: "'Songti SC','Noto Serif CJK SC','Source Han Serif SC','SimSun',serif"
-    fontSize: "20px"
+    fontFamily: "'LXGW WenKai Screen','PingFang SC','Microsoft YaHei',system-ui,sans-serif"
+    fontSize: "24px"
     fontWeight: 700
   title:
-    fontFamily: "'Songti SC','Noto Serif CJK SC','Source Han Serif SC','SimSun',serif"
-    fontSize: "15px"
+    fontFamily: "'LXGW WenKai Screen','PingFang SC','Microsoft YaHei',system-ui,sans-serif"
+    fontSize: "18px"
     fontWeight: 700
   body:
-    fontFamily: "'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif"
-    fontSize: "13px"
+    fontFamily: "'LXGW WenKai Screen','PingFang SC','Microsoft YaHei',system-ui,sans-serif"
+    fontSize: "16px"
     fontWeight: 400
   caption:
-    fontFamily: "'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif"
-    fontSize: "12px"
+    fontFamily: "'LXGW WenKai Screen','PingFang SC','Microsoft YaHei',system-ui,sans-serif"
+    fontSize: "14px"
     fontWeight: 400
   touch-input:
-    fontFamily: "'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif"
+    fontFamily: "'LXGW WenKai Screen','PingFang SC','Microsoft YaHei',system-ui,sans-serif"
     fontSize: "16px"
     fontWeight: 400
 rounded:
@@ -104,11 +104,15 @@ components:
 
 ## Typography
 
-标题与重点汇总的发声来自宋／明体栈 --font-display；表单、说明、导航和密集数据使用清楚的无衬线正文栈。账本金额与日期启用等宽数字。当前字体栈依赖设备可用字体，缺字时回退到 serif 或系统无衬线。
+标题、表单、说明与导航使用随应用打包的霞鹜文楷屏幕阅读版 v1.530，--font-display 与 --font-body 共用该字体，保留纸面账簿的书写感。按用户要求保持全量字库，仅转换为单个 WOFF2，不分包、不裁剪字符；随离线壳缓存，不依赖外部 CDN 或用户安装。--font-numeric 在金额与数量位置使用系统无衬线和等宽数字，中文单位仍回退到共用文楷。授权见 public/licenses/lxgw-wenkai-screen.txt，来源、版本与 SHA-256 固定在 scripts/fonts/build-wenkai.py；脚本对比转换前后完整字符映射和字形顺序。
 
-正文 13px，说明 12px，极少数元信息 11px，区块标题 15px，页标题 20px，关键金额采用 26px 或响应式 hero 级。常规字重只有 400、600、700；先用位置、字号和墨色层级区分，不给每行辅助文字加粗。粗指针设备的输入字号提高到 16px。
+正文 16px，说明 14px，徽章与图表轴等元信息 13px，区块标题 18px，页标题 24px，关键金额采用 30px 或响应式 hero 级；基础行高 1.6。字重语义保留 400、600、700，但屏幕文楷只提供常规字形，全局 `font-synthesis: none` 禁止浏览器补造粗体与斜体，汉字使用字体原本已加强的笔画；标题和导航通过字号、留白、墨色与当前状态区分。金额的系统数字字体可使用其真正的字重。输入字号至少 16px，大屏字号递增，不能在更宽断点反而缩小。
 
 ## Layout
+
+“账单与还款”是独立日常任务，不以添加资金账户为前提。首页提供通用新增入口，账户还款日期作为额外来源；单次、持续及固定期数计划共用现有日期控件。只做提醒时默认不自动入账；“仅标记已处理”与“登记流水”明确区分，前者不得改变金额汇总或账户余额。高级生成时间、时区与补齐规则逐步展开，避免首次登记计划时要求理解账户或自动记账配置。
+
+工作台先用一张概况 Sheet 组织净资产与期间收支，随后并排显示“账单与还款”和“最近流水”两张 Sheet，内部用墨线分行，禁止恢复无边框的最近流水外壳。投资与使用指标置于单独 Sheet 的连续信息带，避免资产快照重复。手机收支优先时先看最近流水、提醒默认两项并可展开；信用卡仅提供日期提醒，不从余额推断应还或逾期。资产配置含负余额时仅展示净额，不画比例。
 
 桌面是深墨侧栏与弹性纸面内容区。页首持续显示当前位置、报表币种和账本日。日常收支首先给连续摘要条，再给日期、搜索、可展开筛选和记录；不让维护操作或筛选墙挤走金额。
 

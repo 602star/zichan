@@ -116,18 +116,19 @@ test('platform directory edits the same counterpart and management searches real
 
 test('scheduled entries and templates use the picker and generate referenced counterparts', async ({ page }) => {
   await start(page);
-  await page.getByRole('button', { name: '账单', exact: true }).click();
-  await page.getByRole('button', { name: '+ 定期交易', exact: true }).click();
-  const schedule = page.getByRole('dialog', { name: '新增 · 定期交易', exact: true });
+  await page.locator('.zc-sidebar [data-destination="bills"] button').click();
+  await page.getByRole('button', { name: '+ 新增账单', exact: true }).click();
+  const schedule = page.getByRole('dialog', { name: '新增 · 账单计划', exact: true });
   await schedule.getByLabel(/^名称/).fill('每月京东采购');
   await schedule.getByLabel(/^金额/).fill('20');
+  await schedule.getByLabel('关联资金账户（可选）', { exact: true }).check();
   await schedule.getByLabel('账户', { exact: true }).selectOption({ label: '默认支出账户' });
   await choosePayee(schedule, 'JD', '京东');
   await expect(schedule.getByLabel('商户文本', { exact: true })).toHaveCount(0);
   await schedule.getByRole('button', { name: '保存', exact: true }).click();
   await expect(schedule).toBeHidden();
   const row = page.getByRole('row').filter({ hasText: '每月京东采购' });
-  await row.getByRole('button', { name: '生成', exact: true }).click();
+  await row.getByRole('button', { name: '登记流水', exact: true }).click();
   await page.getByRole('button', { name: '流水', exact: true }).click();
   await page.getByLabel('流水交易对象').click();
   await page.getByRole('dialog', { name: '流水交易对象' }).getByRole('option', { name: '京东', exact: true }).click();

@@ -5,7 +5,7 @@ import { transactionFormFieldOptions } from './transactionFormPrefs.js';
  * EntityFormModal. Select options that depend on existing data take the snapshot.
  */
 import {
-  D, normalizeOccurrence, transactionCostFingerprint, isValidDay, localToday, newId, isDefaultAccount, defaultTransactionAccount, accountBalanceTiming,
+  D, normalizeOccurrence, transactionCostFingerprint, isValidDay, localToday, newId, isDefaultAccount, defaultTransactionAccount, accountBalanceTiming, scheduleOccurrenceDate, listScheduleOccurrences,
   type Asset, type Account, type Attachment, type BudgetCategory, type Category, type DcaPlan,
   type PriceMark, type Game, type GameAccount, type GameSeason, type GameRecord, type GameCashflowMode, type GameCashflowRole, type FixedAsset,
   type FixedAssetCashflowMode, type FixedAssetCategory, type FixedAssetConsumable, type FixedAssetEvent, type FixedAssetGoal,
@@ -808,33 +808,37 @@ export function scheduledTransactionForm(snap: Snapshot, options: LedgerFormOpti
   const usesAccounts = options.usesAccounts ?? true;
   const defaultAssetId = defaultSettlementAssetId(snap);
   const accountFields: FieldDef[] = usesAccounts ? [
-    { key: 'accountId', label: '账户', type: 'select', half: true, resetWhen: ['type'], options: (v) => directionAccountOpts(snap, v.type ?? 'expense'), allowEmpty: true },
-    { key: 'transferAssetId', label: '转入币种', type: 'select', half: true, options: settlementOpts(snap), allowEmpty: true },
-    { key: 'transferAccountId', label: '转入账户', type: 'select', half: true, options: directionAccountOpts(snap, 'transfer'), allowEmpty: true },
-    { key: 'transferAmount', label: '转入金额', type: 'number', half: true },
+    { key: 'linkAccount', label: '关联资金账户（可选）', type: 'checkbox', half: true, defaultValue: 'false', visibleWhen: (v) => v.type !== 'transfer', hint: '不使用账户系统也可以保存和处理账单。' },
+    { key: 'accountId', label: '账户', type: 'select', half: true, resetWhen: ['type'], options: (v) => directionAccountOpts(snap, v.type ?? 'expense'), allowEmpty: true, visibleWhen: (v) => v.linkAccount === 'true' || v.type === 'transfer' },
+    { key: 'transferAssetId', label: '转入币种', type: 'select', half: true, options: settlementOpts(snap), allowEmpty: true, visibleWhen: (v) => v.type === 'transfer' },
+    { key: 'transferAccountId', label: '转入账户', type: 'select', half: true, options: directionAccountOpts(snap, 'transfer'), allowEmpty: true, visibleWhen: (v) => v.type === 'transfer' },
+    { key: 'transferAmount', label: '转入金额', type: 'number', half: true, visibleWhen: (v) => v.type === 'transfer' },
   ] : [];
   return {
     identityKind: 'scheduled_transaction',
-    title: '定期交易',
+    title: '账单计划',
+    draftKey: '定期交易',
     fields: [
       { key: 'name', label: '名称', type: 'text', half: true, required: true },
-      { key: 'type', label: '类型', type: 'select', half: true, options: usesAccounts ? TX_TYPES_STANDARD : TX_TYPES_STANDARD.filter((t) => t.value !== 'transfer') },
-      { key: 'category', label: '二级分类', type: 'category', half: true, options: (v) => categoryOptions(snap.categories, v.type === 'income' ? 'income' : 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap) },
-      { key: 'amount', label: '金额', type: 'number', half: true, required: true },
+      { key: 'type', label: '登记流水类型', type: 'select', half: true, options: usesAccounts ? TX_TYPES_STANDARD : TX_TYPES_STANDARD.filter((t) => t.value !== 'transfer'), hint: '仅登记流水时使用。还款若已在消费时记账，可仅标记本期已处理，避免重复计入支出。' },
+      { key: 'category', label: '二级分类', type: 'category', half: true, defaultValue: snap.categories.find((row) => row.id === 'uncategorized' && !row.isDeleted && row.isActive !== false)?.id, options: (v) => categoryOptions(snap.categories, v.type === 'income' ? 'income' : 'expense', { leafOnly: true, includeHidden: true }), ...categoryPickerPreference(snap) },
+      { key: 'amount', label: '金额', type: 'number', half: true, required: true, hint: '填写本次或每期计划金额；保存计划不会立即增加收支。' },
       { key: 'assetId', label: '币种', type: 'select', half: true, options: settlementOpts(snap), required: true },
       ...accountFields,
       ...payeeFields(snap),
-      { key: 'frequency', label: '频率', type: 'select', half: true, options: SCHEDULE_FREQ },
+      { key: 'frequency', label: '频率', type: 'select', half: true, defaultValue: 'monthly', options: [{ value: 'once', label: '仅一次' }, ...SCHEDULE_FREQ] },
       { key: 'anchorDate', label: '开始日期', type: 'date', half: true, defaultValue: asOf, required: true },
-      { key: 'time', label: '生成时间', type: 'time', half: true, defaultValue: '09:00' },
-      { key: 'timezone', label: '时区', type: 'text', half: true, defaultValue: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai', required: true },
-      { key: 'anchorMode', label: '月度锚点', type: 'select', half: true, options: [
+      { key: 'time', label: '生成时间', type: 'time', half: true, defaultValue: '09:00', section: 'more' },
+      { key: 'timezone', label: '时区', type: 'text', half: true, defaultValue: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai', required: true, section: 'more', keepInMore: true },
+      { key: 'anchorMode', label: '月度锚点', type: 'select', half: true, section: 'more', options: [
         { value: 'calendar_day', label: '固定日（月底自动取最后一天）' },
         { value: 'month_end', label: '始终使用月末' },
       ] },
-      { key: 'endDate', label: '结束日期', type: 'date', half: true },
-      { key: 'autoCreate', label: '打开应用时自动补齐', type: 'checkbox', half: true },
-      { key: 'catchUpPolicy', label: '漏记补齐', type: 'select', half: true, options: [
+      { key: 'limitMode', label: '计划期限', type: 'select', half: true, defaultValue: 'ongoing', visibleWhen: (v) => v.frequency !== 'once', options: [{ value: 'ongoing', label: '持续重复' }, { value: 'count', label: '固定期数（分期等）' }, { value: 'end_date', label: '指定结束日期' }] },
+      { key: 'periodCount', label: '总期数', type: 'number', half: true, defaultValue: '12', visibleWhen: (v) => v.frequency !== 'once' && v.limitMode === 'count', required: true, hint: '含首期，1–600 期；月底日期自动调整。' },
+      { key: 'endDate', label: '结束日期', type: 'date', half: true, visibleWhen: (v) => v.frequency !== 'once' && v.limitMode === 'end_date' },
+      { key: 'autoCreate', label: '打开应用时自动补齐', type: 'checkbox', half: true, section: 'more', hint: '默认关闭。开启后会生成流水，并非自动付款；只做还款提醒时保持关闭。' },
+      { key: 'catchUpPolicy', label: '漏记补齐', type: 'select', half: true, section: 'more', options: [
         { value: 'all', label: '补齐每一期' },
         { value: 'latest', label: '只生成最近一期' },
       ] },
@@ -842,26 +846,33 @@ export function scheduledTransactionForm(snap: Snapshot, options: LedgerFormOpti
       { key: 'description', label: '描述', type: 'text', half: true },
       { key: 'note', label: '备注', type: 'text', half: true },
     ],
-    toValues: (s) => ({
-      name: s.name, type: s.type, category: s.category, amount: s.amount, assetId: s.assetId || defaultAssetId, accountId: s.accountId ?? '',
-      transferAssetId: s.transferAssetId ?? '', transferAccountId: s.transferAccountId ?? '', transferAmount: s.transferAmount ?? '',
-      payeeId: s.payeeId ?? '', frequency: s.frequency, anchorDate: s.anchorDate, anchorMode: s.anchorMode,
-      time: s.time ?? '', timezone: s.timezone, endDate: s.endDate ?? '',
-      autoCreate: s.autoCreate ? 'true' : 'false', catchUpPolicy: s.catchUpPolicy, status: s.status, merchant: s.merchant ?? '',
-      description: s.description ?? '', note: s.note ?? '',
-    }),
+    toValues: (s) => {
+      const bounded = s.endDate && s.endDate !== s.anchorDate ? listScheduleOccurrences(s, { max: 601 }) : [];
+      const periods = bounded.length > 0 && bounded.length <= 600 && bounded.at(-1)?.date === s.endDate ? String(bounded.length) : '';
+      return {
+        name: s.name, type: s.type, category: s.category, amount: s.amount, assetId: s.assetId || defaultAssetId, accountId: s.accountId ?? '', linkAccount: s.accountId ? 'true' : 'false',
+        transferAssetId: s.transferAssetId ?? '', transferAccountId: s.transferAccountId ?? '', transferAmount: s.transferAmount ?? '',
+        payeeId: s.payeeId ?? '', frequency: s.endDate === s.anchorDate ? 'once' : s.frequency, anchorDate: s.anchorDate, anchorMode: s.anchorMode,
+        limitMode: periods ? 'count' : s.endDate ? 'end_date' : 'ongoing', periodCount: periods,
+        time: s.time ?? '', timezone: s.timezone, endDate: s.endDate ?? '',
+        autoCreate: s.autoCreate ? 'true' : 'false', catchUpPolicy: s.catchUpPolicy, status: s.status, merchant: s.merchant ?? '',
+        description: s.description ?? '', note: s.note ?? '',
+      };
+    },
     fromValues: (v, e) => ({
       ...base(e), name: v.name, type: v.type as ScheduledTransaction['type'], category: v.category,
       amount: D(v.amount || '0').abs().toString(), assetId: v.assetId || defaultAssetId,
-      accountId: usesAccounts ? S(v.accountId) : undefined,
+      accountId: usesAccounts && (v.linkAccount !== 'false' || v.type === 'transfer') ? S(v.accountId) : undefined,
       transferAssetId: usesAccounts ? S(v.transferAssetId) : undefined,
       transferAccountId: usesAccounts ? S(v.transferAccountId) : undefined,
       transferAmount: usesAccounts ? S(v.transferAmount) : undefined,
       payeeId: S(v.payeeId), merchant: S(v.merchant), description: S(v.description),
-      frequency: v.frequency as ScheduledTransaction['frequency'],
+      frequency: (v.frequency === 'once' ? 'daily' : v.frequency) as ScheduledTransaction['frequency'],
       anchorDate: v.anchorDate, anchorMode: (v.anchorMode || 'calendar_day') as ScheduledTransaction['anchorMode'],
       time: S(v.time), timezone: v.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai',
-      endDate: S(v.endDate), autoCreate: v.autoCreate === 'true',
+      endDate: v.frequency === 'once' ? v.anchorDate : v.limitMode === 'ongoing' ? undefined : v.limitMode === 'count'
+        ? scheduleOccurrenceDate({ anchorDate: v.anchorDate ?? '', anchorMode: (v.anchorMode || 'calendar_day') as ScheduledTransaction['anchorMode'], frequency: v.frequency as ScheduledTransaction['frequency'] }, Number(v.periodCount) - 1)
+        : S(v.endDate), autoCreate: v.autoCreate === 'true',
       catchUpPolicy: (v.catchUpPolicy || 'all') as ScheduledTransaction['catchUpPolicy'],
       status: v.status as ScheduledTransaction['status'], note: S(v.note),
     }) as ScheduledTransaction,
@@ -870,7 +881,8 @@ export function scheduledTransactionForm(snap: Snapshot, options: LedgerFormOpti
       const anchorDate = v.anchorDate ?? '';
       if (!D(v.amount || '0').gt(0)) errors.amount = '金额必须大于 0';
       if (!isValidDay(anchorDate)) errors.anchorDate = '开始日期无效';
-      if (v.endDate && (!isValidDay(v.endDate) || v.endDate < anchorDate)) errors.endDate = '结束日期不能早于开始日期';
+      if (v.frequency !== 'once' && v.limitMode === 'end_date' && (!v.endDate || !isValidDay(v.endDate) || v.endDate < anchorDate)) errors.endDate = '结束日期不能早于开始日期';
+      if (v.frequency !== 'once' && v.limitMode === 'count' && (!Number.isInteger(Number(v.periodCount)) || Number(v.periodCount) < 1 || Number(v.periodCount) > 600)) errors.periodCount = '总期数应为 1–600 的整数';
       if (v.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(v.time)) errors.time = '生成时间无效';
       try { new Intl.DateTimeFormat('en', { timeZone: v.timezone }).format(); } catch { errors.timezone = '请输入有效的 IANA 时区，例如 Asia/Shanghai'; }
       if (usesAccounts && v.type === 'transfer' && (!v.accountId || !v.transferAccountId)) {

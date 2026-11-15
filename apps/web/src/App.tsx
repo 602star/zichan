@@ -52,7 +52,7 @@ import { adoptUnlockedLedgerKeyEnvelope, runtimeLedgerCryptoSession } from './le
 import { accountProtection } from './account-protection.js';
 import { isTauriRuntime } from './tauri.js';
 import type { SettingsSection } from './screens/Settings.js';
-import { ArrowLeftRight, BarChart3, BookOpen, Ellipsis, Gamepad2, Grid2X2, History as HistoryIcon, LayoutDashboard, List, Package, Settings2, UserRound, Cloud, Wallet, CalendarDays, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react';
+import { ArrowLeftRight, BarChart3, BookOpen, Ellipsis, Gamepad2, Grid2X2, History as HistoryIcon, LayoutDashboard, List, Package, Settings2, UserRound, Cloud, Wallet, CalendarDays, ReceiptText, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react';
 import {
   NAVIGATION_ITEMS,
   navigationLabel,
@@ -602,7 +602,7 @@ export function App() {
   };
 
   const [title, sub] = !compactView && screen === 'transactions'
-    ? [transactionTab === 'accounts' ? '账户与核对' : ['budget', 'bills', 'dca'].includes(transactionTab) ? '计划' : '流水', '查询与核对 · 按原币记入，按账本口径汇总']
+    ? [transactionTab === 'accounts' ? '账户与核对' : transactionTab === 'bills' ? '账单与还款' : ['budget', 'dca'].includes(transactionTab) ? '计划' : '流水', transactionTab === 'bills' ? '独立记录账单与还款计划 · 账户可选' : '查询与核对 · 按原币记入，按账本口径汇总']
     : !compactView && screen === 'dashboard' ? ['工作台', '待处理事项与近期账本活动'] : META[screen];
   const asOf = snap ? ledgerAsOf(snap) : null;
   // A manual cut-off that has fallen behind is a data-correctness problem, not a
@@ -867,7 +867,7 @@ function Sidebar(props: {
       <nav style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         {mainNav.map(({ id, label, target, group }, index) => {
           const active = target.screen === 'transactions'
-            ? screen === 'transactions' && (id === 'plans' ? ['budget', 'bills', 'dca'].includes(transactionTab) : transactionTab === target.tab)
+            ? screen === 'transactions' && (id === 'plans' ? ['budget', 'dca'].includes(transactionTab) : transactionTab === target.tab)
             : screen === target.screen;
           const withQuick = id === 'records';
           return (
@@ -897,7 +897,7 @@ function Sidebar(props: {
                   fontWeight: active ? 'var(--fw-bold)' : 'var(--fw-medium)',
                 }}
               >
-                <span style={{ width: 20, display: 'inline-flex', justifyContent: 'center' }}>{id === 'accounts' ? <Wallet size={18} aria-hidden="true" /> : id === 'plans' ? <CalendarDays size={18} aria-hidden="true" /> : <NavIcon id={target.screen} />}</span>
+                <span style={{ width: 20, display: 'inline-flex', justifyContent: 'center' }}>{id === 'accounts' ? <Wallet size={18} aria-hidden="true" /> : id === 'bills' ? <ReceiptText size={18} aria-hidden="true" /> : id === 'plans' ? <CalendarDays size={18} aria-hidden="true" /> : <NavIcon id={target.screen} />}</span>
                 <span className="zc-sidebar-nav-label" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
               </button>
               {withQuick && (
@@ -1041,7 +1041,7 @@ function MobileNavigation(props: {
             <TaskList title="查看与计划" items={[
               { label: '报表', note: '收支、资产、物品与游戏', icon: BarChart3, onClick: () => props.onNavigate('reports') },
               { label: '预算', note: '本月计划与剩余额度', onClick: () => navigateTo({ screen: 'transactions', tab: 'budget' }) },
-              { label: '账单', note: '到期事项与定期交易', onClick: () => navigateTo({ screen: 'transactions', tab: 'bills' }) },
+              { label: '账单', note: '生活账单、分期和还款 · 无需关联账户', onClick: () => navigateTo({ screen: 'transactions', tab: 'bills' }) },
               { label: '游戏赛季', note: '投入、产出与回收', icon: Gamepad2, onClick: () => props.onNavigate('game') },
             ]} />
             <TaskList title="账本资料" items={[

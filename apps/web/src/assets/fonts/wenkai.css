@@ -1,0 +1,8 @@
+/* Complete upstream v1.530; format conversion only. SIL OFL 1.1. */
+@font-face {
+  font-family: 'LXGW WenKai Screen';
+  src: url('./wenkai-screen-1.530-full.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}

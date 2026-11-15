@@ -123,6 +123,7 @@ export {
   closeReconciliation,
   undoLatestReconciliation,
   materializeScheduledTransaction,
+  acknowledgeScheduledTransaction,
   runDueScheduledTransactions,
   previewScheduledBacklog,
   retryScheduledExecution,

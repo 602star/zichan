@@ -189,7 +189,7 @@ export interface ScheduleRowVM {
   categoryLabel: string;
   amount: string;
   nextDate: string;
-  status: 'overdue' | 'due' | 'future' | 'paused';
+  status: 'overdue' | 'due' | 'future' | 'paused' | 'completed';
 }
 
 export interface ScheduleOccurrenceVM {
@@ -774,7 +774,7 @@ function buildSchedules(snap: Snapshot, asOf: string): ScheduleRowVM[] {
         categoryLabel: categoryLabel(s.category, snap.categories),
         amount: `${s.amount} ${assetCode(snap, s.assetId)}`,
         nextDate,
-        status: paused ? 'paused' : days < 0 ? 'overdue' : days <= 7 ? 'due' : 'future',
+        status: !occurrence ? 'completed' : paused ? 'paused' : days < 0 ? 'overdue' : days <= 7 ? 'due' : 'future',
       };
     })
     .sort((a, b) => a.nextDate.localeCompare(b.nextDate));

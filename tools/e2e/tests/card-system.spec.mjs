@@ -12,6 +12,10 @@ async function assertStructure(page) {
   // Rendered DOM catches nesting introduced across component boundaries too.
   await expect(page.locator('.zc-page-content .zc-card .zc-card')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  const amounts = page.locator('.zc-transaction-summary-metric > div:nth-child(2)');
+  for (const amount of await amounts.all()) {
+    expect(await amount.evaluate((node) => node.scrollWidth <= node.clientWidth + 1 && getComputedStyle(node).textOverflow !== 'ellipsis')).toBe(true);
+  }
 }
 
 for (const width of [1280, 390]) {
@@ -70,9 +74,10 @@ for (const width of [1280, 390]) {
         for (const screen of ['dashboard', 'assets', 'fixed', 'convert', 'transactions', 'reports', 'history', 'manage', 'account', 'game', 'settings']) {
           await navigate(page, screen);
           if (screen === 'dashboard') {
+            await expect(page.getByRole('region', { name: '账本概况', exact: true })).toBeVisible();
+            if (width === 390) await page.getByRole('button', { name: '查看完整指标', exact: true }).click();
             await expect(page.locator('.zc-dashboard-kpi-grid')).toBeVisible();
             expect(await page.locator('.zc-dashboard-kpi-grid').evaluate((node) => getComputedStyle(node).gap)).toMatch(/^(normal|0px)$/);
-            if (width === 390) await page.getByRole('button', { name: '查看完整指标', exact: true }).click();
             await expect(page.locator('.zc-dashboard-kpi-grid > .zc-card-metric')).toHaveCount(5);
           }
           if (screen === 'fixed' && width === 390) await page.getByRole('button', { name: '日常使用的相机与长名称镜头组合', exact: true }).click();

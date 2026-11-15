@@ -122,4 +122,4 @@ export function themeAccent(theme: ThemeId, mode: ThemeMode): string {
 }
 
 export const FONT_FAMILY =
-  "'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif";
+  'var(--font-body)';

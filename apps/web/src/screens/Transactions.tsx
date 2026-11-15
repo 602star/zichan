@@ -11,7 +11,7 @@ import { DcaPlans } from './DcaPlans.js';
 import { useWorkspaceState } from '../ui/useWorkspaceState.js';
 import { QueryGeneration } from '../query-generation.js';
 import {
-  D, accountBalanceTiming, isDefaultAccount, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, newId,
+  D, accountBalanceTiming, isDefaultAccount, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, newId, nextUnhandledScheduleOccurrence,
   type BudgetCategory, type Category, type Payee, type ReconciliationSession,
   type ScheduledTransaction, type Setting, type Transaction, type TransactionSavedView, type TransactionSplit, type TransactionTemplate, type TransactionType,
 } from '@zichan/core';
@@ -21,6 +21,7 @@ import {
   deleteBudgetCategory,
   deleteTransactionSavedView,
   materializeScheduledTransaction,
+  acknowledgeScheduledTransaction,
   previewScheduledBacklog,
   restoreArchivedMasterData,
   restoreDeletedBudgetCategory,
@@ -93,7 +94,7 @@ import { QuickExpenseModal, type QuickExpenseDraft } from '../ui/QuickExpenseMod
 import { ActionSheet } from '../ui/ActionSheet.js';
 import { CardFact } from '../ui/Card.js';
 import { useRecordGestures } from '../ui/useRecordGestures.js';
-import { canNavigateWorkspace, useScreenTarget } from '../screen-target.js';
+import { canNavigateWorkspace, rememberScreenTarget, useScreenTarget } from '../screen-target.js';
 import { TaskList, useMobileSection } from '../ui/MobilePage.js';
 
 const TYPE_OPTIONS: { value: 'all' | TransactionType; label: string }[] = [
@@ -208,6 +209,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   const screenTarget = useScreenTarget('transactions');
   const { store, bump, rev } = useStore();
   const undo = useUndo(store, bump);
+  const billUndo = useUndo();
   const snap = useSnapshot('transactions');
   const [accountId, setAccountId] = useWorkspaceState('transactions.account', '');
   const [assetId, setAssetId] = useWorkspaceState('transactions.asset', 'all');
@@ -252,6 +254,13 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   const [billActionBusy, setBillActionBusy] = useState(false);
   const [billActionError, setBillActionError] = useState('');
   const [editingSchedule, setEditingSchedule] = useState<ScheduledTransaction | 'new' | null>(null);
+  const [billPreset, setBillPreset] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!entryOnly && screenTarget?.tab === 'bills' && screenTarget.id === 'new') {
+      setBillPreset({}); setEditingSchedule('new');
+      rememberScreenTarget({ screen: 'transactions', tab: 'bills' });
+    }
+  }, [entryOnly, screenTarget]);
   const [editingCategory, setEditingCategory] = useState<Category | 'new' | null>(null);
   const [editingPayee, setEditingPayee] = useState<Payee | 'new' | null>(null);
   const [editingReconcile, setEditingReconcile] = useState<ReconciliationSession | 'new' | null>(null);
@@ -1233,6 +1242,34 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     bump();
   }
 
+  function openNewBill(preset: Record<string, string> = {}) {
+    if (!canNavigateWorkspace()) return;
+    setBillPreset(preset);
+    setEditingSchedule('new');
+  }
+
+  async function handleBill(s: ScheduledTransaction, mode: 'mark' | 'record') {
+    if (billActionBusy) return;
+    setBillActionBusy(true); setBillActionError('');
+    try {
+      if (mode === 'record') await materializeSchedule(s);
+      else {
+        const occurrence = nextUnhandledScheduleOccurrence(s, readySnap.scheduledExecutions);
+        if (!occurrence) throw new Error('账单计划已完成');
+        const execution = await acknowledgeScheduledTransaction(store, s.id, occurrence.index);
+        bump();
+        billUndo.offer('本期已处理，未生成收支流水', async () => {
+          const current = await store.scheduledExecutions.get(execution.id);
+          if (!current || current.isDeleted || current.status !== 'skipped' || current.version !== execution.version) throw new Error('本期记录已变化，请刷新后查看');
+          await store.runInAuditBatch('撤销账单处理标记', (transactionStore) => transactionStore.scheduledExecutions.put({ ...current, isDeleted: true }));
+          bump();
+        });
+      }
+      setBillDetailKey('');
+    } catch (cause) { setBillActionError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBillActionBusy(false); }
+  }
+
   async function retryScheduleExecution(executionId: string) {
     setRetryingExecutionId(executionId);
     try {
@@ -1351,18 +1388,18 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
           缺少 {vm.missingRateAssetCodes.join('、')} → {vm.reportCurrencyCode} 的价格标记；相关流水不会静默当作 0，汇总和预算会标记为未完整折算。
         </div>
       )}
-      <div className="zc-transaction-local-tabs" style={{ display: !compactView && !['budget', 'bills', 'dca'].includes(activeTab) ? 'none' : 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {visibleTabs.filter(([id]) => compactView || (['budget', 'bills', 'dca'].includes(activeTab) ? ['budget', 'bills', 'dca'].includes(id) : id === activeTab)).map(([id, label]) => (
+      <div className="zc-transaction-local-tabs" style={{ display: !compactView && !['budget', 'dca'].includes(activeTab) ? 'none' : 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {visibleTabs.filter(([id]) => compactView || (['budget', 'dca'].includes(activeTab) ? ['budget', 'dca'].includes(id) : id === activeTab)).map(([id, label]) => (
           <button key={id} onClick={() => setTab(id)} className={activeTab === id ? primaryCls : buttonCls}>{label}</button>
         ))}
       </div>
 
-      {onboarding && !showFirstEntryGuide && (
+      {onboarding && !showFirstEntryGuide && activeTab === 'records' && (
         <button type="button" className="zc-onboarding-reopen" onClick={() => { setOnboarding(updateOnboarding(onboarding, { dismissed: false })); setShowFirstEntryGuide(true); }}>
           查看新手指南
         </button>
       )}
-      {onboarding && showFirstEntryGuide && !compactView && !onboarding.firstTransactionRecorded && (
+      {onboarding && showFirstEntryGuide && !compactView && activeTab === 'records' && !onboarding.firstTransactionRecorded && (
         <section className="zc-first-entry-guide" aria-label="首次记账引导">
           <div>
             <h2>账本已准备好</h2>
@@ -1395,7 +1432,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
           <div className="zc-first-entry-actions"><button type="button" className={buttonCls} onClick={dismissOnboarding}>暂时收起</button></div>
         </section>
       )}
-      {onboarding && showFirstEntryGuide && compactView && (
+      {onboarding && showFirstEntryGuide && compactView && activeTab === 'records' && (
         <section className="zc-first-entry-guide zc-first-entry-guide-mobile" aria-label="首次记账引导">
           <div className="zc-mobile-guide-header">
             <span>新手引导 · {mobileGuideStep + 1}/{mobileGuideSteps.length}</span>
@@ -1806,11 +1843,16 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
         <div className="zc-card">
           <div className="zc-responsive-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 14 }}>
             <div>
-              <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>定期交易与账单</div>
-              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>启用后会在打开应用时自动补齐；关闭应用期间不会在后台执行。</div>
+              <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>账单与还款计划</div>
+              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', marginTop: 4 }}>不关联账户也能记录。默认只列计划；处理时可仅标记完成，或明确登记流水。</div>
             </div>
-            <button onClick={() => setEditingSchedule('new')} className={primaryCls}>+ 定期交易</button>
+            <button onClick={() => openNewBill()} className={primaryCls}>+ 新增账单</button>
           </div>
+          <div className="zc-bill-presets" role="group" aria-label="常用账单类型">
+            {['房租', '水电燃气', '订阅续费', '信用卡还款', '借款还款', '分期付款'].map((name) => <button type="button" key={name} className="zc-btn zc-btn--sm" onClick={() => openNewBill({ name, frequency: 'monthly', autoCreate: 'false', linkAccount: 'false', ...(name === '分期付款' ? { limitMode: 'count', periodCount: '12' } : {}) })}>{name}</button>)}
+          </div>
+          <p className="zc-caption">还款已在消费时记过账，或在其他地方处理完成，可选“仅标记已处理”，不会重复计入支出。只有主动登记流水或开启自动补齐时才会写入收支。</p>
+          {billActionError && <p role="alert">{billActionError}</p>}
           <div style={{ marginBottom: 14 }}><DateRangeBar value={billRange} onChange={setBillRange} view={billView} onViewChange={setBillView} /></div>
           <div style={{
             display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
@@ -1833,12 +1875,15 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
                     <td style={tdStyle}>{s.name}</td>
                     <td style={tdStyle}>{s.typeLabel}</td>
                     <td style={tdStyle}>{s.categoryLabel}</td>
-                    <td style={tdStyle}>{s.amount}</td>
+                    <td style={tdStyle}>{num(row.amount, snap.assets.find((asset) => asset.id === row.assetId)?.decimals ?? 8)} {assetCodeOf(row.assetId)}</td>
                     <td style={tdStyle}>{s.nextDate}</td>
                     <td style={{ ...tdStyle, color: s.status === 'overdue' ? 'var(--negative)' : s.status === 'due' ? 'var(--accent)' : 'var(--fg-subtle)', fontWeight: 'var(--fw-bold)' }}>{scheduleLabel(s.status)}</td>
-                    <td style={{ ...tdStyle, textAlign: 'right' }}>
-                      <button onClick={() => void materializeSchedule(row)} disabled={row.status !== 'active'} className={buttonCls}>生成</button>
-                      <button onClick={() => setEditingSchedule(row)} className={buttonCls} style={{ marginLeft: 8 }}>编辑</button>
+                    <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'normal' }}>
+                      <div className="zc-bill-row-actions">
+                        <button onClick={() => void handleBill(row, 'mark')} disabled={billActionBusy || row.status !== 'active' || s.status === 'completed'} className={buttonCls}>仅标记已处理</button>
+                        <button onClick={() => void handleBill(row, 'record')} disabled={billActionBusy || row.status !== 'active' || s.status === 'completed'} className={buttonCls}>登记流水</button>
+                        <button onClick={() => setEditingSchedule(row)} className={buttonCls}>编辑</button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1876,10 +1921,10 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
                         ...tdStyle,
                         color: execution.status === 'created' ? 'var(--positive)' : execution.status === 'failed' ? 'var(--negative)' : 'var(--fg-subtle)',
                         fontWeight: 'var(--fw-bold)',
-                      }}>{execution.status === 'created' ? '已生成' : execution.status === 'failed' ? '失败' : '已跳过'}</td>
+                      }}>{execution.status === 'created' ? '已生成' : execution.status === 'failed' ? '失败' : '未入账（标记或跳过）'}</td>
                       <td style={tdStyle}>{execution.attemptedAt ? new Date(execution.attemptedAt).toLocaleString() : '—'}</td>
                       <td style={{ ...tdStyle, maxWidth: 320 }}>
-                        {execution.lastError ?? (execution.status === 'failed' ? '未知错误' : execution.transactionId ? `流水 ${execution.transactionId.slice(0, 8)}` : '按补齐策略跳过')}
+                        {execution.lastError ?? (execution.status === 'failed' ? '未知错误' : execution.transactionId ? `流水 ${execution.transactionId.slice(0, 8)}` : '未生成流水，具体处理原因见操作历史')}
                         {execution.status === 'failed' && <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 2 }}>已重试 {execution.retryCount ?? 0} 次{execution.nextRetryAt ? ` · 下次 ${new Date(execution.nextRetryAt).toLocaleString()}` : ''}</div>}
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right' }}>
@@ -1921,15 +1966,12 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
         const schedule = snap.scheduledTransactions.find((item) => item.id === billDetailKey);
         if (!row || !schedule) return null;
         return <ActionSheet title="账单详情" description={row.name} dismissDisabled={billActionBusy} onClose={() => { if (!billActionBusy) setBillDetailKey(''); }} actions={[
-          { label: billActionBusy ? '正在生成流水…' : '生成本期流水', disabled: billActionBusy || schedule.status !== 'active', onSelect: () => {
-            if (billActionBusy || schedule.status !== 'active') return;
-            setBillActionBusy(true); setBillActionError('');
-            void materializeSchedule(schedule).then(() => setBillDetailKey('')).catch((cause) => setBillActionError(cause instanceof Error ? cause.message : String(cause))).finally(() => setBillActionBusy(false));
-          } },
-          { label: '编辑定期交易', disabled: billActionBusy, onSelect: () => { setBillDetailKey(''); setEditingSchedule(schedule); } },
+          { label: '仅标记已处理', disabled: billActionBusy || row.status === 'completed' || schedule.status !== 'active', onSelect: () => { void handleBill(schedule, 'mark'); } },
+          { label: billActionBusy ? '正在生成流水…' : '生成本期流水', disabled: billActionBusy || row.status === 'completed' || schedule.status !== 'active', onSelect: () => { void handleBill(schedule, 'record'); } },
+          { label: '编辑账单计划', disabled: billActionBusy, onSelect: () => { setBillDetailKey(''); setEditingSchedule(schedule); } },
         ]}>
           <div className="zc-record-sheet-facts"><CardFact label="金额" value={row.amount} /><CardFact label="下次日期" value={row.nextDate} /><CardFact label="状态" value={scheduleLabel(row.status)} /><CardFact label="分类" value={row.categoryLabel} /></div>
-          <p className="zc-caption">确认生成后才会写入流水；同一期不会重复生成。</p>
+          <p className="zc-caption">仅标记已处理不会写入收支或改变账户余额；生成本期流水才会入账。同一期只处理一次。</p>
           {billActionError && <p role="alert">{billActionError}</p>}
         </ActionSheet>;
       })()}
@@ -2045,8 +2087,10 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
       )}
       {editingSchedule && (
         <EntityFormModal
+          key={editingSchedule === 'new' ? `bill-new-${billPreset.name ?? ''}` : editingSchedule.id}
           spec={scheduledTransactionForm(snap, { usesAccounts })}
           initial={editingSchedule === 'new' ? undefined : editingSchedule}
+          initialFieldValues={editingSchedule === 'new' ? billPreset : undefined}
           onSave={async (e) => {
             if (!usesAccounts && e.type === 'transfer') throw new Error('轻量模式不记录转账账单，请在设置中切换到账户模式');
             if (e.type !== 'transfer' && !isLeafCategory(e.category)) throw new Error('请选择二级分类，不能直接选择一级分类');
@@ -3311,8 +3355,9 @@ function Kpi({ label, value, sub, tone }: { label: string; value: string; sub: s
   );
 }
 
-function scheduleLabel(status: 'overdue' | 'due' | 'future' | 'paused'): string {
-  if (status === 'overdue') return '已逾期';
+function scheduleLabel(status: 'overdue' | 'due' | 'future' | 'paused' | 'completed'): string {
+  if (status === 'completed') return '计划已完成';
+  if (status === 'overdue') return '计划日已过';
   if (status === 'due') return '待处理';
   if (status === 'paused') return '已暂停';
   return '未来';

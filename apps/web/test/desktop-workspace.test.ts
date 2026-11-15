@@ -9,13 +9,14 @@ describe('desktop ledger tasks', () => {
     expect(entries.find((entry) => entry.id === 'records')?.target).toEqual({ screen: 'transactions', tab: 'records' });
     expect(entries.find((entry) => entry.id === 'accounts')?.target).toEqual({ screen: 'transactions', tab: 'accounts' });
     expect(entries.find((entry) => entry.id === 'plans')?.target).toEqual({ screen: 'transactions', tab: 'budget' });
+    expect(entries.find((entry) => entry.id === 'bills')?.target).toEqual({ screen: 'transactions', tab: 'bills' });
     expect(entries.some((entry) => entry.id === 'convert')).toBe(false);
   });
 
   it('keeps hidden and preview-only device screens out of the workspace', () => {
     const prefs = defaultNavigationPreferences();
     const entries = desktopDestinations({ ...prefs, visible: ['transactions', 'fixed'] }, 'assets');
-    expect(entries.map((entry) => entry.id)).toEqual(['records', 'accounts', 'plans', 'fixed']);
+    expect(entries.map((entry) => entry.id)).toEqual(['records', 'accounts', 'bills', 'plans', 'fixed']);
   });
 
   it('continues routine fields without duplicating money, attachments or refund links', () => {

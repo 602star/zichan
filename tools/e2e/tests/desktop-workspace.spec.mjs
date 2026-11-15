@@ -46,7 +46,9 @@ test('desktop inline records, continuous entry and safe navigation use the real 
   await expect(page.locator('.zc-first-entry-guide')).toHaveCount(0);
   await expect(page.locator('.zc-transaction-row')).toHaveCount(10);
   const visibleRows = await page.locator('.zc-transaction-row').evaluateAll((rows) => rows.filter((row) => row.getBoundingClientRect().bottom <= innerHeight).length);
-  expect(visibleRows).toBeGreaterThanOrEqual(8);
+  // Readable 16px records take priority over the previous 13px density target.
+  expect(visibleRows).toBeGreaterThanOrEqual(7);
+  expect(await page.locator('.zc-transaction-row td.is-numeric').first().evaluate((cell) => parseFloat(getComputedStyle(cell).fontSize))).toBeGreaterThanOrEqual(16);
   await page.screenshot({ path: test.info().outputPath('desktop-ledger-1280.png') });
   await page.getByLabel('快速搜索流水', { exact: true }).fill('桌面连续记账 9');
   const row = page.locator('.zc-transaction-row').filter({ hasText: '桌面连续记账 9' });
@@ -79,7 +81,7 @@ test('desktop inline records, continuous entry and safe navigation use the real 
   await nav(page, 'plans').click();
   await expect(page.locator('h1')).toHaveText('计划');
   await expect(page.getByRole('button', { name: '预算', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '账单', exact: true })).toBeVisible();
+  await expect(nav(page, 'bills')).toBeVisible();
   await go(page, 'history');
   await page.getByRole('button', { name: /^查看详情：保存流水/ }).first().click();
   await expect(page.locator('.zc-history-detail')).toBeVisible();
