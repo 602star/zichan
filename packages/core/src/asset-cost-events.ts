@@ -79,7 +79,7 @@ export function buildAssetCostEvents(input: CostEventInput): { events: AssetCost
   const accounts = input.accounts ? [...input.accounts] : undefined;
   for (const posting of accountOpeningPostings(accounts ?? [])) {
     const account = accounts!.find((row) => row.id === posting.accountId)!;
-    if (account.kind === 'other' || Date.parse(account.balanceStartAt!) <= Date.parse(opening.occurredAtUtc)
+    if (Date.parse(account.balanceStartAt!) <= Date.parse(opening.occurredAtUtc)
       || (input.asOfUtc && Date.parse(account.balanceStartAt!) > Date.parse(input.asOfUtc))) continue;
     events.push({ id: `account:${account.id}:opening`, sourceKind: 'adjustment', sourceId: account.id,
       occurredAtUtc: account.balanceStartAt!, orderKey: `0:${account.id}`, kind: D(posting.amount).lt(0) ? 'dispose' : 'acquire',

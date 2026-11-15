@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { D, isDefaultAccount } from '@zichan/core';
+import { D, isLegacyExternalAccount } from '@zichan/core';
 import type { AccountBalanceAggregateRow } from '@zichan/db';
 import { useStore } from '../db/store.js';
 import { useSnapshot } from '../db/snapshot.js';
@@ -109,8 +109,9 @@ export function Assets() {
         ]} />
       </div>}
       {tab === 'accounts' && <>
-        <TaskList label="账户列表" items={snap.accounts.filter((row) => row.kind !== 'other' && !isDefaultAccount(row)).map((row) => ({ label: row.name, note: accountRows(row.id).map((b) => `${num(b.amount, b.decimals)} ${b.code}`).join(' · ') || (loading ? '正在读取余额…' : '暂无余额'), onClick: () => open(`account:${row.id}`) }))} />
-        {!snap.accounts.some((row) => row.kind !== 'other' && !isDefaultAccount(row)) && <CardEmpty>还没有自行管理的账户，可从添加账户开始。</CardEmpty>}
+        <button type="button" className="zc-btn" onClick={() => navigateTo({ screen: 'transactions', tab: 'accounts' })}>账户管理与默认收支</button>
+        <TaskList label="账户列表" items={snap.accounts.filter((row) => !isLegacyExternalAccount(row)).map((row) => ({ label: row.name, note: accountRows(row.id).map((b) => `${num(b.amount, b.decimals)} ${b.code}`).join(' · ') || (loading ? '正在读取余额…' : '暂无余额'), onClick: () => open(`account:${row.id}`) }))} />
+        {!snap.accounts.some((row) => !isLegacyExternalAccount(row)) && <CardEmpty>还没有自行管理的账户，可从添加账户开始。</CardEmpty>}
         {!preview && <button type="button" className="zc-btn zc-btn--primary" onClick={() => navigateTo({ screen: 'manage', tab: 'accounts' })}>添加或管理账户</button>}
       </>}
       {tab === 'holdings' && <>

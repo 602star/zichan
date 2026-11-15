@@ -1,4 +1,4 @@
-import { D, newId, isDefaultAccount, accountBalanceTiming, accountTransactionPostings, accountChainPostings,
+import { D, newId, isDefaultAccount, isLegacyExternalAccount, accountBalanceTiming, accountTransactionPostings, accountChainPostings,
   type Account, type Setting, type Transaction } from '@zichan/core';
 import type { SqlLedgerStore } from './repository.js';
 import { saveTransactionAggregate } from './services.js';
@@ -12,20 +12,27 @@ export async function ensureDefaultAccounts(store: SqlLedgerStore): Promise<Sett
   const accounts = await store.accounts.list();
   const defaults = ['default_expense', 'default_income'] as const;
   const ids = defaults.map((purpose) => accounts.find((a) => a.purpose === purpose)?.id ?? `${setting.id}:${purpose}`);
-  const missing = defaults.some((purpose) => !accounts.some((a) => a.purpose === purpose));
+  const legacy = accounts.filter((account) => isDefaultAccount(account) && account.kind === 'wallet');
+  const missing = accounts.length === 0;
   const unassigned = (await store.transactions.list()).filter((t) => !t.accountId && ['expense', 'income', 'refund'].includes(t.type));
-  if (!missing && setting.expenseDefaultAccountId && setting.incomeDefaultAccountId && !unassigned.length) return setting;
-  return store.runInAuditBatch('准备默认收支账户', async (tx) => {
-    for (const [index, purpose] of defaults.entries()) {
-      if (!await tx.accounts.get(ids[index]!)) await tx.accounts.put({ ...base(ids[index]), purpose, kind: 'wallet',
+  const active = accounts.filter((a) => !a.isDeleted && a.isActive !== false && !a.archivedAt && !isLegacyExternalAccount(a));
+  if (!missing && !legacy.length && active.some((a) => a.id === setting.expenseDefaultAccountId) && active.some((a) => a.id === setting.incomeDefaultAccountId) && !unassigned.length) return setting;
+  return store.runInAuditBatch('准备默认账户', async (tx) => {
+    if (missing) for (const [index] of defaults.entries()) {
+      await tx.accounts.put({ ...base(ids[index]), purpose: 'funds', kind: 'other',
         name: index === 0 ? '默认支出账户' : '默认收入账户', isActive: true });
     }
+    if (legacy.length) await tx.withValidatedRestore(legacy.map((a) => `account:${a.id}`), [], async (restore) => {
+      for (const account of legacy) await restore.accounts.put({ ...account, kind: 'other' });
+    });
+    const available = (await tx.accounts.list()).filter((a) => !a.isDeleted && a.isActive !== false && !a.archivedAt && !isLegacyExternalAccount(a));
     const current = (await tx.settings.get(setting.id))!;
     const saved = await tx.settings.put({ ...current,
-      expenseDefaultAccountId: current.expenseDefaultAccountId ?? ids[0], incomeDefaultAccountId: current.incomeDefaultAccountId ?? ids[1] });
+      expenseDefaultAccountId: available.find((a) => a.id === current.expenseDefaultAccountId)?.id ?? available.find((a) => a.id === ids[0])?.id ?? available[0]?.id,
+      incomeDefaultAccountId: available.find((a) => a.id === current.incomeDefaultAccountId)?.id ?? available.find((a) => a.id === ids[1])?.id ?? available[0]?.id });
     for (const row of unassigned) {
       const original = row.refundForId ? await tx.transactions.get(row.refundForId) : undefined;
-      await tx.transactions.put({ ...row, accountId: original?.accountId ?? (row.type === 'income' ? ids[1] : ids[0]) });
+      await tx.transactions.put({ ...row, accountId: original?.accountId ?? (row.type === 'income' ? saved.incomeDefaultAccountId : saved.expenseDefaultAccountId) });
     }
     return saved;
   }, 'system', { undoable: false });
@@ -44,11 +51,24 @@ export async function createFundAccount(store: SqlLedgerStore, input: {
   });
 }
 
+/** Change future entry defaults together; existing postings and balances stay intact. */
+export async function setDefaultTransactionAccounts(store: SqlLedgerStore, input: {
+  expenseAccountId: string; incomeAccountId: string; expectedVersion?: number;
+}): Promise<Setting> {
+  return store.runInAuditBatch('设置默认支出与收入账户', async (tx) => {
+    const setting = (await tx.settings.list())[0];
+    if (!setting) throw new Error('找不到账本设置，请重新打开账本');
+    if (input.expectedVersion !== undefined && setting.version !== input.expectedVersion) throw new Error('默认设置已变化，请刷新后重新选择');
+    if (!input.expenseAccountId || !input.incomeAccountId) throw new Error('请选择默认支出账户和默认收入账户');
+    return tx.settings.put({ ...setting, expenseDefaultAccountId: input.expenseAccountId, incomeDefaultAccountId: input.incomeAccountId });
+  });
+}
+
 export interface AccountAssignment { id: string; version: number; timing?: 'before' | 'after' }
 export async function previewAccountAssignment(store: SqlLedgerStore, targetId: string, rows: AccountAssignment[]) {
   const accounts = await store.accounts.list();
   const target = accounts.find((a) => a.id === targetId && a.isActive !== false);
-  if (!target || isDefaultAccount(target)) throw new Error('请选择银行卡或钱包');
+  if (!target || isLegacyExternalAccount(target)) throw new Error('请选择可用账户');
   const changes: { before: Transaction; after: Transaction }[] = [];
   const impacts = new Map<string, string>();
   for (const item of rows) {
@@ -90,7 +110,7 @@ export interface EarlierBalanceInput {
 /** Reconstruct an earlier start only when it reproduces the known later balance. */
 export async function previewEarlierBalance(store: SqlLedgerStore, input: EarlierBalanceInput) {
   const account = await store.accounts.get(input.accountId);
-  if (!account || isDefaultAccount(account) || !account.balanceStartAt || !account.openingAssetId) throw new Error('请选择已有余额起点的资金账户');
+  if (!account || isLegacyExternalAccount(account) || !account.balanceStartAt || !account.openingAssetId) throw new Error('请选择已有余额起点的资金账户');
   if (!Number.isFinite(Date.parse(input.balanceStartAt)) || Date.parse(input.balanceStartAt) >= Date.parse(account.balanceStartAt)) throw new Error('请选择比现有余额起点更早的时间');
   if ((await store.reconciliationSessions.list({ where: { accountId: account.id } })).length) throw new Error('该账户已有对账记录，请先按原流程撤销相关对账后再前移余额起点');
   const next: Account = { ...account, openingBalance: D(input.openingBalance).toString(), balanceStartAt: input.balanceStartAt, balanceStartDate: input.balanceStartDate };
@@ -138,7 +158,7 @@ export async function applyEarlierBalance(store: SqlLedgerStore, input: EarlierB
 
 
 /** Account metadata and default directions commit together; balance origins are preserved. */
-export async function saveAccountDetails(store: SqlLedgerStore, input: { account: Account; defaultExpense: boolean; defaultIncome: boolean }): Promise<Account> {
+export async function saveAccountDetails(store: SqlLedgerStore, input: { account: Account; defaultExpense: boolean; defaultIncome: boolean; expectedSettingVersion?: number }): Promise<Account> {
   return store.runInAuditBatch('编辑账户资料与默认用途', async (tx) => {
     const current = await tx.accounts.get(input.account.id);
     if (!current || current.isDeleted || current.version !== input.account.version) throw new Error('账户已变化，请重新打开');
@@ -146,10 +166,11 @@ export async function saveAccountDetails(store: SqlLedgerStore, input: { account
       balanceStartAt: current.balanceStartAt, balanceStartDate: current.balanceStartDate, balanceCheckpoints: current.balanceCheckpoints, purpose: current.purpose });
     const setting = (await tx.settings.list())[0];
     if (setting) {
+      if (input.expectedSettingVersion !== undefined && setting.version !== input.expectedSettingVersion) throw new Error('默认收支设置已变化，请重新打开账户');
       const accounts = await tx.accounts.list();
-      const fallback = (purpose: Account['purpose']) => accounts.find((row) => row.purpose === purpose && row.isActive !== false)?.id;
-      const expense = input.defaultExpense ? account.id : setting.expenseDefaultAccountId === account.id ? fallback('default_expense') : setting.expenseDefaultAccountId;
-      const income = input.defaultIncome ? account.id : setting.incomeDefaultAccountId === account.id ? fallback('default_income') : setting.incomeDefaultAccountId;
+      const fallback = () => accounts.find((row) => row.id !== account.id && row.isActive !== false && !row.archivedAt && !isLegacyExternalAccount(row))?.id;
+      const expense = input.defaultExpense ? account.id : setting.expenseDefaultAccountId === account.id ? fallback() : setting.expenseDefaultAccountId;
+      const income = input.defaultIncome ? account.id : setting.incomeDefaultAccountId === account.id ? fallback() : setting.incomeDefaultAccountId;
       await tx.settings.put({ ...setting, expenseDefaultAccountId: expense, incomeDefaultAccountId: income });
     }
     return account;

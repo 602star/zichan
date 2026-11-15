@@ -1965,26 +1965,35 @@ input[type="radio"] {
 
 /*
  * Refund state on a transaction row. A fully refunded expense keeps its place in
- * the list but must not read as money that is still gone, so the amount is struck
- * through; the chip is the only way back into the refunds of a 支出-scoped list.
+ * the list with its original amount. Refunds and the remaining net expense sit
+ * in the amount column; the chip also opens their history in an expense-only view.
  */
 .zc-refund-chip {
-  flex: 0 0 auto;
-  padding: 1px 7px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  background: var(--surface-2);
-  color: var(--text-secondary);
+  display: block;
+  max-width: 100%;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--positive);
   font-size: var(--fs-caption);
   font-weight: var(--fw-medium);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: right;
 }
 .zc-refund-chip:hover {
-  border-color: var(--accent);
-  color: var(--text-primary);
+  color: var(--accent);
+  text-decoration: underline;
 }
+.zc-refund-net { display: block; color: var(--text-secondary); font-size: var(--fs-caption); }
+.zc-transaction-amount-original { display: block; }
+.zc-transaction-category-label { display: block; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.zc-transaction-account > span { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (min-width: 768px) and (pointer: fine) { .zc-refund-chip { min-height: 28px; } }
 
 .zc-refund-row {
   display: grid;
@@ -2620,7 +2629,9 @@ input[type="radio"] {
 }
 .zc-transaction-table th.is-select { width: 44px; }
 .zc-transaction-table th.is-date { width: 92px; }
-.zc-transaction-table th.is-category { width: 120px; }
+/* The widest of all 375 catalog paths measures 12.05 body em in WenKai.
+   Reserve 12.5 body em plus the cell padding, including at larger type scales. */
+.zc-transaction-table th.is-category { width: calc(12.5 * var(--fs-body) + 16px); }
 .zc-transaction-table th.is-status { width: 68px; }
 .zc-transaction-table th.is-numeric { width: 132px; text-align: right; }
 .zc-transaction-table th.is-actions { width: 72px; }
@@ -2635,9 +2646,6 @@ input[type="radio"] {
 .zc-transaction-table .zc-transaction-actions { text-align: right; }
 .zc-transaction-table .zc-transaction-actions button { display: block; margin-left: auto; }
 .zc-transaction-table .zc-transaction-actions button + button { margin-top: 4px; }
-@media (min-width: 1200px) {
-  .zc-transaction-table th.is-category { width: 180px; }
-}
 
 .zc-first-run-title {
   font-size: var(--fs-hero);
@@ -3727,74 +3735,6 @@ input[type="radio"] {
     border-bottom: 1px solid var(--border);
   }
 
-  /* Reconciliation sheet: previously a 4-column grid and a 5-column candidate
-     row with no class, so no phone rule could reach it and the columns were
-     silently clipped by `overflow-x: hidden`. */
-  .zc-reconciliation-modal {
-    width: 100% !important;
-    height: 100dvh;
-    max-height: 100dvh !important;
-    border-radius: 0 !important;
-  }
-
-  .zc-reconciliation-modal > div:nth-child(2) {
-    padding: 14px !important;
-  }
-
-  .zc-reconciliation-inputs,
-  .zc-reconciliation-summary {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-  }
-
-  .zc-reconciliation-candidate {
-    grid-template-columns: 32px minmax(0, 1fr) auto !important;
-    gap: 2px 10px !important;
-    align-items: center !important;
-    padding: 8px 0;
-  }
-
-  .zc-reconciliation-candidate > :nth-child(1) {
-    grid-column: 1;
-    grid-row: 1 / span 2;
-    align-self: center;
-  }
-
-  .zc-reconciliation-candidate > :nth-child(2) {
-    grid-column: 2;
-    grid-row: 2;
-    font-size: var(--fs-meta);
-  }
-
-  .zc-reconciliation-candidate > :nth-child(3) {
-    grid-column: 2;
-    grid-row: 1;
-    white-space: normal !important;
-  }
-
-  .zc-reconciliation-candidate > :nth-child(4) {
-    grid-column: 3;
-    grid-row: 1;
-    text-align: right;
-  }
-
-  .zc-reconciliation-candidate > :nth-child(5) {
-    grid-column: 3;
-    grid-row: 2;
-    text-align: right;
-    font-size: var(--fs-meta);
-  }
-
-  .zc-reconciliation-session-row {
-    grid-template-columns: minmax(0, 1fr) auto !important;
-    gap: 2px 10px !important;
-  }
-
-  .zc-reconciliation-session-row > :nth-child(2) {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    white-space: normal !important;
-  }
-
   /* Voided rows (transactions / conversions) had fixed 4-5 column templates. */
   .zc-voided-row {
     grid-template-columns: minmax(0, 1fr) auto !important;
@@ -4347,9 +4287,8 @@ input[type="radio"] {
   .zc-ledger-records .zc-responsive-header > div:first-child > div { display: none; }
   .zc-transaction-days { gap: 10px; }
   .zc-transaction-day-summary { padding-block: 7px; }
-  .zc-transaction-table .zc-transaction-row td { height: 43px; padding-block: 6px; }
+  .zc-transaction-table .zc-transaction-row td { height: 40px; padding-block: var(--sp-1); }
   .zc-transaction-table .zc-transaction-details-desktop { display: none; }
-  .zc-transaction-table th.is-category { width: 145px; }
   .zc-transaction-table th.is-status { width: 115px; }
   .zc-transaction-table th.is-numeric { width: 165px; }
   .zc-transaction-table .zc-transaction-actions .zc-record-refund { display: none; }
@@ -4422,6 +4361,94 @@ input[type="radio"] {
 .zc-agenda-expand { margin-top: var(--sp-3); }
 .zc-bill-presets { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-3); }
 .zc-bill-row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--sp-2); max-width: 240px; }
+
+/* Account defaults, comparison and detail share sheets and native ledger controls. */
+.zc-reconciliation-head, .zc-reconciliation-footer { display: flex; justify-content: space-between; align-items: start; gap: var(--sp-4); padding: var(--sp-5); }
+.zc-reconciliation-head { border-bottom: 1px solid var(--border); }
+.zc-reconciliation-head h2 { margin: 0; font-size: var(--fs-heading); }
+.zc-reconciliation-head p { margin: var(--sp-2) 0 0; }
+.zc-reconciliation-body { padding: var(--sp-5); overflow-y: auto; min-height: 0; }
+.zc-reconciliation-body h3 { margin: 0 0 var(--sp-2); font-size: var(--fs-title); }
+.zc-reconciliation-body .zc-card-group + .zc-card-group { margin-top: var(--sp-5); }
+.zc-reconciliation-inputs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--sp-3); border: 0; margin: 0; padding: 0; min-width: 0; }
+.zc-reconciliation-inputs .zc-field { min-width: 0; margin: 0; }
+.zc-reconciliation-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.zc-reconciliation-tools > input { flex: 1 1 240px; min-width: 0; }
+.zc-reconciliation-rows { border-top: 1px solid var(--border); }
+.zc-reconciliation-candidate { display: grid; grid-template-columns: 28px 104px minmax(0, 1fr) minmax(120px, auto) 80px; align-items: center; gap: var(--sp-3); padding-block: var(--sp-3); border-bottom: 1px solid var(--border); cursor: pointer; }
+.zc-reconciliation-candidate > span { min-width: 0; overflow-wrap: anywhere; }
+.zc-reconciliation-candidate > :nth-child(2), .zc-reconciliation-candidate > :nth-child(5) { color: var(--text-secondary); font-size: var(--fs-caption); }
+.zc-reconciliation-candidate > :nth-child(4), .zc-reconciliation-session-row > :last-child { text-align: right; font-family: var(--font-numeric); font-variant-numeric: tabular-nums; }
+.zc-reconciliation-candidate .is-negative { color: var(--negative); }
+.zc-reconciliation-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-block: var(--sp-4); }
+.zc-reconciliation-summary .zc-card-metric-value { font-size: var(--fs-title); overflow-wrap: anywhere; }
+.zc-reconciliation-result { color: var(--text-primary); }
+.zc-reconciliation-adjustment, .zc-reconciliation-conversions { margin-top: var(--sp-4); }
+.zc-reconciliation-session-row { display: grid; grid-template-columns: 104px minmax(0, 1fr) minmax(120px, auto); gap: var(--sp-3); align-items: baseline; padding-block: var(--sp-3); border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.zc-reconciliation-note { margin-top: var(--sp-5); }
+.zc-reconciliation-note textarea { min-height: 80px; resize: vertical; }
+.zc-reconciliation-footer { border-top: 1px solid var(--border); background: var(--surface); flex-wrap: wrap; align-items: center; padding-bottom: calc(var(--sp-4) + env(safe-area-inset-bottom)); }
+.zc-reconciliation-footer > p { flex: 1 1 240px; margin: 0; }
+.zc-workspace-editor.zc-reconciliation-modal > .zc-reconciliation-head { padding: 0 0 var(--sp-4); }
+.zc-workspace-editor.zc-reconciliation-modal > .zc-reconciliation-body { padding: var(--sp-5) 0; overflow: visible; }
+.zc-workspace-editor.zc-reconciliation-modal > .zc-reconciliation-footer { padding: var(--sp-4) 0 0; }
+@media (max-width: 767px) {
+  .zc-reconciliation-modal { height: 100dvh; }
+  .zc-reconciliation-head, .zc-reconciliation-body, .zc-reconciliation-footer { padding: var(--sp-4); }
+  .zc-reconciliation-head > div { min-width: 0; }
+  .zc-reconciliation-inputs { grid-template-columns: minmax(0, 1fr); }
+  .zc-reconciliation-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .zc-reconciliation-summary > :nth-child(3) { border-left: 0; }
+  .zc-reconciliation-summary > :nth-child(n + 3) { border-top: 1px solid var(--border); }
+  .zc-reconciliation-candidate { grid-template-columns: 28px minmax(0, 1fr) minmax(0, auto); gap: var(--sp-1) var(--sp-2); }
+  .zc-reconciliation-candidate > :nth-child(1) { grid-column: 1; grid-row: 1 / span 2; }
+  .zc-reconciliation-candidate > :nth-child(2) { grid-column: 2; grid-row: 2; }
+  .zc-reconciliation-candidate > :nth-child(3) { grid-column: 2; grid-row: 1; }
+  .zc-reconciliation-candidate > :nth-child(4) { grid-column: 3; grid-row: 1; max-width: 40vw; }
+  .zc-reconciliation-candidate > :nth-child(5) { grid-column: 3; grid-row: 2; text-align: right; }
+  .zc-reconciliation-session-row { grid-template-columns: minmax(0, 1fr) minmax(0, auto); }
+  .zc-reconciliation-session-row > :nth-child(2) { grid-column: 1 / -1; grid-row: 2; }
+  .zc-reconciliation-footer { padding-bottom: calc(var(--sp-4) + env(safe-area-inset-bottom)); }
+}
+.zc-accounts-workspace { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; }
+.zc-account-added { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: space-between; gap: var(--sp-3); }
+.zc-account-default-grid, .zc-account-setup-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4) var(--sp-6); }
+.zc-account-default-grid > .zc-field, .zc-account-setup-fields > .zc-field { margin: 0; min-width: 0; }
+.zc-account-default-note { margin-block: var(--sp-3) 0; }
+.zc-account-list-foot { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: var(--sp-3); }
+.zc-account-default-choices h3 { margin: 0; font-family: var(--font-display); font-size: var(--fs-title); }
+.zc-account-detail-anchor { scroll-margin-top: calc(var(--sp-6) * 4); }
+.zc-account-error { color: var(--danger); }
+.zc-account-list-tools { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.zc-account-table-wrap { max-width: 100%; overflow-x: auto; }
+.zc-account-list-table { table-layout: fixed; }
+.zc-account-list-table td { overflow-wrap: anywhere; }
+.zc-account-list-table small { display: block; font-size: var(--fs-caption); color: var(--text-secondary); }
+.zc-account-list-table tr.is-selected { background: var(--accent-soft); }
+.zc-account-balances { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; font-family: var(--font-numeric); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.zc-account-balances .is-negative, .zc-account-workspace-detail .is-negative { color: var(--negative); }
+.zc-account-role-badges { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.zc-account-role-badges > span { border: 1px solid var(--border); border-radius: var(--r-sm); padding: 2px 6px; font-size: var(--fs-caption); color: var(--accent); }
+.zc-account-role-badges .is-inactive { color: var(--text-tertiary); }
+.zc-account-list-foot { padding-top: var(--sp-4); font-size: var(--fs-caption); color: var(--text-secondary); }
+.zc-account-selected-balances { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-4); padding-block: var(--sp-3); margin-bottom: var(--sp-4); border-block: 1px solid var(--border); }
+.zc-account-selected-balances > .zc-account-balances { font-size: var(--fs-heading); }
+.zc-account-workspace-detail .zc-tabs { margin-bottom: var(--sp-4); }
+.zc-account-workspace-detail .zc-date-range-bar { margin-bottom: var(--sp-4); }
+.zc-account-ledger-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.zc-account-ledger-tools > :first-child { min-width: 160px; }
+.zc-account-load-more { margin-top: var(--sp-4); }
+.zc-account-setup-fields > .zc-meta, .zc-account-setup-fields > .zc-account-balance-time { grid-column: 1 / -1; }
+.zc-account-credit-dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-4); grid-column: 1 / -1; }
+.zc-account-credit-dates .zc-field { margin: 0; }
+.zc-account-default-choices { margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px solid var(--border); }
+.zc-account-setup details { margin-top: var(--sp-4); }
+@media (max-width: 767px) {
+  .zc-account-default-grid, .zc-account-setup-fields { grid-template-columns: minmax(0, 1fr); }
+  .zc-account-list-tools { grid-template-columns: minmax(0, 1fr); }
+  .zc-account-workspace-detail .zc-workspace-table td.is-numeric { white-space: normal; overflow-wrap: anywhere; }
+  .zc-account-detail-anchor { scroll-margin-top: calc(var(--sp-6) * 3); }
+}
 @media (max-width: 1199px) {
   .zc-agenda-row { grid-template-columns: 48px minmax(0, 1fr); }
   .zc-agenda-value { grid-column: 2; max-width: none; justify-self: start; text-align: left; }
@@ -4448,7 +4475,17 @@ input[type="radio"] {
   .zc-sidebar-group { height: 10px; padding: 0; font-size: 0; }
   .zc-settings-workspace, .zc-manage-workspace { grid-template-columns: 130px minmax(0, 1fr); gap: 16px; }
   .zc-transaction-table th.is-date { width: 60px; }
-  .zc-transaction-table th.is-category { width: 100px; }
   .zc-transaction-table th.is-status { width: 95px; }
   .zc-transaction-table th.is-select { width: 32px; }
+}
+@media (min-width: 768px) and (max-width: 1023px) {
+  /* Keep complete category paths readable; move time and account beneath
+     the summary rather than squeezing the category or the summary to zero. */
+  .zc-transaction-table th.is-date,
+  .zc-transaction-table th.is-status,
+  .zc-transaction-table .zc-transaction-date,
+  .zc-transaction-table .zc-transaction-account { display: none; }
+  .zc-transaction-table .zc-transaction-details-mobile { display: inline; }
+  .zc-transaction-table th.is-numeric { width: 148px; }
+  .zc-transaction-table th.is-actions { width: 60px; }
 }

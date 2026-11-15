@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useState } from 'react';
-import { D, accountBalanceTiming, isDefaultAccount, type Account, type Asset, type Category, type Transaction } from '@zichan/core';
+import { D, accountBalanceTiming, isLegacyExternalAccount, type Account, type Asset, type Category, type Transaction } from '@zichan/core';
 import { assignTransactionAccounts, previewAccountAssignment, saveTransactionAggregate, type SqlLedgerStore } from '@zichan/db';
 import { categoryLabel } from '../transactionMeta.js';
 import { CategoryPicker } from './EntityFormModal.js';
@@ -8,7 +8,7 @@ export function AccountHistoryPanel({ store, accounts, assets, categories, timeZ
   store: SqlLedgerStore; accounts: Account[]; assets: Asset[]; categories: Category[]; timeZone?: string; initialAccountId?: string; onChanged: () => void; onClose: () => void;
 }) {
   const title = useId();
-  const funds = accounts.filter((a) => !isDefaultAccount(a) && a.kind !== 'other' && a.isActive !== false);
+  const funds = accounts.filter((a) => !isLegacyExternalAccount(a) && a.isActive !== false);
   const [target, setTarget] = useState(initialAccountId ?? funds[0]?.id ?? '');
   const [rows, setRows] = useState<Transaction[]>([]);
   const [category, setCategory] = useState('');
@@ -22,7 +22,7 @@ export function AccountHistoryPanel({ store, accounts, assets, categories, timeZ
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const reload = useCallback(async () => setRows((await store.transactions.list()).filter((t) => t.recordState !== 'voided' && accounts.some((a) => a.id === t.accountId && isDefaultAccount(a)))), [store, accounts]);
+  const reload = useCallback(async () => setRows((await store.transactions.list()).filter((t) => t.recordState !== 'voided' && ['expense', 'income', 'refund'].includes(t.type) && t.accountId !== target)), [store, target]);
   useEffect(() => { void reload().catch((e: unknown) => setError(String(e))); }, [reload]);
   const account = funds.find((a) => a.id === target);
   const visible = rows.filter((t) => (!category || t.category === category) && (!from || t.date >= from) && (!to || t.date <= to) && `${t.description ?? ''} ${categoryLabel(t.category, categories)} ${t.amount}`.includes(filter));

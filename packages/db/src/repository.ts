@@ -1379,7 +1379,7 @@ const TRANSACTION_REPORT_DATE_SQL =
 function accountPostingIncludedSql(column: string): string {
   const assetColumn = column === 't.transfer_account_id' ? 'COALESCE(t.transfer_asset_id, t.asset_id)' : 't.asset_id';
   return `NOT EXISTS (SELECT 1 FROM accounts a WHERE a.id = ${column} AND a.is_deleted = 0 AND (
-    COALESCE(a.purpose, 'funds') IN ('default_expense', 'default_income') OR a.kind = 'other'
+    (a.kind = 'other' AND a.purpose IS NULL)
     OR (a.balance_start_at IS NOT NULL AND a.opening_asset_id = ${assetColumn} AND NOT (
       CASE WHEN t.balance_timing_account_id = a.id AND t.balance_timing IS NOT NULL THEN t.balance_timing = 'after'
       WHEN t.occurred_at_utc IS NOT NULL THEN t.occurred_at_utc >= a.balance_start_at
@@ -1387,7 +1387,7 @@ function accountPostingIncludedSql(column: string): string {
     ))))`;
 }
 const OPENING_POSTINGS_SQL = `SELECT id AS account_id, opening_asset_id AS asset_id, opening_balance AS posting_amount
-  FROM accounts WHERE is_deleted = 0 AND opening_balance IS NOT NULL AND COALESCE(purpose, 'funds') = 'funds'`;
+  FROM accounts WHERE is_deleted = 0 AND opening_balance IS NOT NULL AND NOT (kind = 'other' AND purpose IS NULL)`;
 
 const TRANSACTION_POSTINGS_CTE = `postings AS (
   SELECT t.id AS transaction_id, '0' AS posting_side, t.date AS posting_date, t.asset_id AS asset_id,

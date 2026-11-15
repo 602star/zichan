@@ -109,8 +109,7 @@ export async function previewConversionOperation(store: SqlLedgerStore, draft: C
     out.afterCost = calculateAssetCostHistory({ ...after, openings })!;
     if (out.afterCost.invalidAssetIds.length) out.warnings.push({ path: 'opening', message: '成本起点需要重新核对，受影响资产的后续盈亏将标为未完整核算' });
     const accounts = [...ledger.accounts];
-    const external = new Set(accounts.filter((account) => account.kind === 'other').map((account) => account.id));
-    const accountOpenings = accountOpeningPostings(accounts).filter((posting) => !external.has(posting.accountId ?? ''));
+    const accountOpenings = accountOpeningPostings(accounts);
     const allPostings = (chains: readonly ChainWithSteps[]) => [...accountOpenings, ...chains.flatMap((row) => accountChainPostings(row, accounts)), ...ledger.transactions.flatMap((row) => accountTransactionPostings(row, accounts))];
     const previousTotals = totals(allPostings(ledger.chains));
     const nextTotals = totals(allPostings(after.chains));

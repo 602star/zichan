@@ -3,7 +3,8 @@ import { EarlierBalancePanel } from './EarlierBalancePanel.js';
 import { useId, useState } from 'react';
 import { D, newId, dayOfInstant, normalizeOccurrence, type Account, type Asset, type Setting } from '@zichan/core';
 import { createFundAccount, saveAccountDetails, type SqlLedgerStore } from '@zichan/db';
-import { DialogShell } from './DialogShell.js';
+import { WorkspaceDialog } from './WorkspaceDialog.js';
+import { ConfirmDialog } from './ConfirmDialog.js';
 import { DateTimeInput } from './DateTimeInput.js';
 import { ValuePicker } from './ValuePicker.js';
 import { useCompactView } from './useCompactView.js';
@@ -26,11 +27,17 @@ export function AccountSetupPanel({ store, assets, accounts = [], setting, initi
   const [statementDay, setStatementDay] = useState(String(initial?.statementDay ?? 1));
   const [paymentDay, setPaymentDay] = useState(String(initial?.paymentDueDay ?? 20));
   const [balanceOpen, setBalanceOpen] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [initialSettingVersion] = useState(setting?.version);
   const [details, setDetails] = useState({ platform: initial?.platform ?? '', note: initial?.note ?? '', creditLimit: initial?.creditLimit ?? '',
     loanPrincipal: initial?.loanPrincipal ?? '', annualInterestRate: initial?.annualInterestRate ?? '', loanStartDate: initial?.loanStartDate ?? '', loanEndDate: initial?.loanEndDate ?? '' });
   const [active, setActive] = useState(initial?.isActive !== false);
+  const fingerprint = JSON.stringify({ name, kind, amount, assetId, at, expense, income, statementDay, paymentDay, details, active });
+  const [originalFingerprint] = useState(fingerprint);
+  const dirty = fingerprint !== originalFingerprint;
+  const requestClose = () => { if (!busy) { if (dirty) setDiscardOpen(true); else onClose(); } };
   const detailField = (key: keyof typeof details, label: string, type = 'text') => <label className="zc-field">{label}{type === 'date' ? <DateTimeInput className="zc-input" aria-label={label} type="date" value={details[key]} onChange={(next) => setDetails((value) => ({ ...value, [key]: next }))} /> : <input className="zc-input" inputMode={/creditLimit|loanPrincipal|annualInterestRate/.test(key) ? 'decimal' : undefined} type={type} value={details[key]} onChange={(event) => setDetails((value) => ({ ...value, [key]: event.target.value }))} />}</label>;
-  return <DialogShell labelledBy={title} onDismiss={onClose} dismissDisabled={busy} panelClassName="zc-entity-modal" panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', width: 'min(540px, calc(100vw - 24px))', maxHeight: '90dvh', overflow: 'auto', padding: 24 }}>
+  return <WorkspaceDialog labelledBy={title} onDismiss={requestClose} navigationBlocked={dirty || busy} dismissDisabled={busy} panelClassName="zc-entity-modal zc-account-setup" panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', width: 'min(680px, calc(100vw - 24px))', maxHeight: '90dvh', overflow: 'auto', padding: 24 }}>
     <h2 id={title}>{initial ? '编辑账户' : '添加银行卡或钱包'}</h2>
     <p className="zc-meta">{initial ? '编辑账户资料和默认用途。余额起点通过单独的核对流程调整。' : '以前的收支会完整保留。从填写的余额起点开始分账户记账，旧记录可以稍后整理。'}</p>
     <form onSubmit={(event) => { event.preventDefault(); if (busy) return; setBusy(true); setError(''); void (async () => {
@@ -51,18 +58,19 @@ export function AccountSetupPanel({ store, assets, accounts = [], setting, initi
           statementDay: kind === 'credit_card' ? Number(statementDay) : undefined,
           paymentDueDay: kind === 'credit_card' ? Number(paymentDay) : undefined,
         };
-        const input = { account, defaultExpense: expense, defaultIncome: income };
+        const input = { account, defaultExpense: expense, defaultIncome: income, expectedSettingVersion: initialSettingVersion };
         const saved = initial ? await saveAccountDetails(store, input) : await createFundAccount(store, input);
         onSaved(saved);
       } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
       finally { setBusy(false); }
     })(); }}>
       <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0 }}>
+      <div className="zc-account-setup-fields">
       <div className="zc-field"><label htmlFor={`${title}-kind`}>账户类型</label><ValuePicker id={`${title}-kind`} label="账户类型" value={kind} options={ACCOUNT_KINDS} onChange={(value) => setKind(value as Account['kind'])} /></div>
       <label className="zc-field">账户名称<input autoFocus={!compact} className="zc-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：微信零钱" required /></label>
       {!initial && <label className="zc-field">当前余额<input className="zc-input" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} required /></label>}
       {(kind === 'credit_card' || kind === 'loan') && <p className="zc-meta">欠款请填负数，例如欠款 500 元填写 -500。</p>}
-      {kind === 'credit_card' && <div><label>账单日<input className="zc-input" type="number" min="1" max="31" value={statementDay} onChange={(e) => setStatementDay(e.target.value)} /></label><label>还款日<input className="zc-input" type="number" min="1" max="31" value={paymentDay} onChange={(e) => setPaymentDay(e.target.value)} /></label></div>}
+      {kind === 'credit_card' && <div className="zc-account-credit-dates"><label className="zc-field">账单日<input className="zc-input" type="number" min="1" max="31" value={statementDay} onChange={(e) => setStatementDay(e.target.value)} /></label><label className="zc-field">还款日<input className="zc-input" type="number" min="1" max="31" value={paymentDay} onChange={(e) => setPaymentDay(e.target.value)} /></label></div>}
       {!initial && <>
       <div className="zc-field"><label htmlFor={`${title}-currency`}>币种</label><ValuePicker id={`${title}-currency`} label="币种" value={assetId} options={assets.filter((asset) => asset.isActive && !asset.isDeleted).map((asset) => ({ value: asset.id, label: asset.code }))} onChange={setAssetId} /></div>
       {compact ? <fieldset className="zc-form-task-group zc-account-balance-time"><legend>余额截至</legend>
@@ -71,8 +79,9 @@ export function AccountSetupPanel({ store, assets, accounts = [], setting, initi
       </fieldset> : <label className="zc-field">余额截至<input className="zc-input" type="datetime-local" step="1" value={at} onChange={(e) => setAt(e.target.value)} required /></label>}
       <p className="zc-meta">这笔余额作为计算起点，不算收入。时间按账本时区 {setting?.timezone ?? '当前设备时区'} 记录。</p>
       </>}
+      </div>
       {initial && <div className="zc-meta">余额起点：{initial.balanceStartDate ?? '未设置'} · {initial.openingBalance ?? '—'} {assets.find((asset) => asset.id === initial.openingAssetId)?.code}
-        {initial.balanceStartAt && <button type="button" className="zc-btn" onClick={() => setBalanceOpen(true)}>修正余额起点（从更早日期核算）</button>}
+        {initial.balanceStartAt && <button type="button" className="zc-btn" disabled={dirty} onClick={() => setBalanceOpen(true)}>修正余额起点（从更早日期核算）</button>}{dirty && <span>请先保存资料，再调整余额起点。</span>}
       </div>}
       <details open={!!initial && Object.values(details).some(Boolean)}><summary>更多信息</summary>
         {detailField('platform', '平台')}{detailField('note', '备注')}
@@ -80,15 +89,18 @@ export function AccountSetupPanel({ store, assets, accounts = [], setting, initi
         {kind === 'loan' && <>{detailField('loanPrincipal', '贷款本金')}{detailField('annualInterestRate', '年利率（%）')}{detailField('loanStartDate', '贷款开始日期', 'date')}{detailField('loanEndDate', '贷款结束日期', 'date')}</>}
       </details>
       {initial && <label><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} />启用</label>}
-      <p className="zc-meta">当前默认付款：{setting?.expenseDefaultAccountId === id ? name : accounts.find((row) => row.id === setting?.expenseDefaultAccountId)?.name ?? '未设置'}；默认收款：{setting?.incomeDefaultAccountId === id ? name : accounts.find((row) => row.id === setting?.incomeDefaultAccountId)?.name ?? '未设置'}。取消当前默认用途将恢复到系统默认收支账户。</p>
+      <div className="zc-account-default-choices"><h3>默认收支用途</h3>
+      <p className="zc-meta">当前默认支出：{setting?.expenseDefaultAccountId === id ? name : accounts.find((row) => row.id === setting?.expenseDefaultAccountId)?.name ?? '未设置'}；默认收入：{setting?.incomeDefaultAccountId === id ? name : accounts.find((row) => row.id === setting?.incomeDefaultAccountId)?.name ?? '未设置'}。默认用途可分配给任意启用账户，取消后改用其他可用账户。</p>
       <label style={{ display: 'block', margin: '12px 0' }}><input type="checkbox" checked={expense} onChange={(e) => setExpense(e.target.checked)} />今后支出默认使用这个账户</label>
       <label style={{ display: 'block', margin: '12px 0' }}><input type="checkbox" checked={income} onChange={(e) => setIncome(e.target.checked)} />今后收入默认使用这个账户</label>
+      </div>
       <div className="zc-modal-footer" style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 20 }}>
         {error && <p role="alert" style={{ color: 'var(--negative)' }}>{error}</p>}
-        <div className="zc-mobile-shortcuts"><button type="submit" className="zc-btn zc-btn--primary" disabled={busy}>{busy ? '正在保存…' : initial ? '保存' : '保存并开始使用'}</button><button type="button" className="zc-btn" disabled={busy} onClick={onClose}>取消</button></div>
+        <div className="zc-mobile-shortcuts"><button type="submit" className="zc-btn zc-btn--primary" disabled={busy}>{busy ? '正在保存…' : initial ? '保存' : '保存并开始使用'}</button><button type="button" className="zc-btn" disabled={busy} onClick={requestClose}>取消</button></div>
       </div>
       </fieldset>
     </form>
     {initial && balanceOpen && <EarlierBalancePanel store={store} account={initial} setting={setting} onClose={() => setBalanceOpen(false)} onSaved={() => { setBalanceOpen(false); onSaved(initial); }} />}
-  </DialogShell>;
+    {discardOpen && <ConfirmDialog title="关闭未保存账户" confirmLabel="放弃修改" cancelLabel="继续编辑" tone="danger" onCancel={() => setDiscardOpen(false)} onConfirm={onClose}>账户资料尚未保存，关闭后会丢弃本次修改。</ConfirmDialog>}
+  </WorkspaceDialog>;
 }

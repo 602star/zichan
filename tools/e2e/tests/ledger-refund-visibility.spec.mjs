@@ -46,7 +46,7 @@ test('a refund in the same currency never asks for a second amount', async ({ pa
   await form.getByRole('button', { name: '保存', exact: true }).click();
 
   // 部分退款：行上写明已退多少，仍然能继续退，金额不画掉。
-  await expect(row.locator('.zc-refund-chip')).toHaveText('部分退款 · 已退 30 / 100 CNY');
+  await expect(row.locator('.zc-refund-chip')).toHaveText('部分退款 +30.00 CNY');
   await expect(await refundFromDetails(row)).toBeVisible();
   expect(await amountDecoration(row)).not.toContain('line-through');
 
@@ -69,9 +69,10 @@ test('a full refund settles the row instead of leaving it looking unpaid', async
   await form.getByRole('button', { name: '保存', exact: true }).click();
 
   // 原支出留在列表里（历史要留），但要读成已结清：金额划线、不再有“退款”入口。
-  await expect(row.locator('.zc-refund-chip')).toHaveText('已退 80 / 80 CNY');
+  await expect(row.locator('.zc-refund-chip')).toHaveText('全额退款 +80.00 CNY');
   await expect(row.getByRole('button', { name: '退款', exact: true })).toHaveCount(0);
-  expect(await amountDecoration(row)).toContain('line-through');
+  expect(await amountDecoration(row)).not.toContain('line-through');
+  await expect(row.locator('.zc-refund-net')).toHaveText('净支出 0.00 CNY');
 
   // 同一屏的两个数字不再互相矛盾。
   const summary = page.locator('.zc-transaction-summary-grid');

@@ -43,7 +43,7 @@ export async function previewCostBasisOpening(store: SqlLedgerStore, occurredAtU
       return row.date < dayOfInstant(opening.occurredAtUtc, input.timezone);
     };
     const accounts = [...input.accounts];
-    const postings = accountOpeningPostings(accounts.filter((account) => account.kind !== 'other' && Date.parse(account.balanceStartAt ?? '') <= cut));
+    const postings = accountOpeningPostings(accounts.filter((account) => Date.parse(account.balanceStartAt ?? '') <= cut));
     for (const aggregate of input.chains) if (before(aggregate.chain)) postings.push(...accountChainPostings(aggregate, accounts));
     for (const row of input.transactions) if (before(row)) postings.push(...accountTransactionPostings(row, accounts));
     const assets = (await transactionStore.assets.list()).filter((asset) => asset.type !== 'game' && asset.type !== 'fixed');

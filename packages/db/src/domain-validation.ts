@@ -1,7 +1,7 @@
 import { duplicateMasterData, DuplicateMasterDataError } from './master-data-identity.js';
 import {
   D, isValidEntityIcon, assertCostBasisOpening, assertCostQuoteSnapshot, transactionCostFingerprint,
-  isDefaultAccount, accountBalanceTiming, accountTransactionPostings,
+  isLegacyExternalAccount, accountBalanceTiming, accountTransactionPostings,
   assertConversionShape,
   assertDcaExecutionShape,
   assertDcaPlanShape,
@@ -603,13 +603,7 @@ async function validateAccountWrite(
 ): Promise<void> {
   requireText(candidate.name, '账户名称', 'name');
   if (candidate.purpose && !['funds', 'default_expense', 'default_income'].includes(candidate.purpose)) fail('账户用途无效', 'purpose');
-  if (current && current.purpose !== candidate.purpose) fail('账户用途不能直接修改', 'purpose');
-  if (isDefaultAccount(candidate)) {
-    const duplicates = await listEntities<Account>(driver, TABLES.accounts);
-    if (duplicates.some((a) => a.id !== candidate.id && !a.isDeleted && a.purpose === candidate.purpose)) fail('默认收支账户已经存在', 'purpose');
-    if (candidate.openingBalance !== undefined || candidate.balanceStartAt) fail('默认收支账户不填写资金余额', 'openingBalance');
-    if (candidate.isActive === false) fail('默认收支账户需要保留以承接记账', 'isActive');
-  }
+  if (current && !allowReferencedChanges && current.purpose !== candidate.purpose) fail('账户用途不能直接修改', 'purpose');
   if ([candidate.openingBalance, candidate.openingAssetId, candidate.balanceStartAt, candidate.balanceStartDate].some((v) => v !== undefined)) {
     if (candidate.openingBalance === undefined || !candidate.openingAssetId || !candidate.balanceStartAt || !candidate.balanceStartDate) fail('请完整填写余额、币种及余额起点', 'openingBalance');
     const asset = await activeAsset(driver, candidate.openingAssetId, 'openingAssetId');
@@ -721,10 +715,7 @@ async function validateTransactionWrite(
       const derivedTiming = accountBalanceTiming(account, { ...transaction, balanceTiming: undefined, balanceTimingAccountId: undefined });
       if (derivedTiming !== 'unknown' && derivedTiming !== transaction.balanceTiming) fail('起点先后选择与交易日期时间不一致，请重新确认', 'balanceTiming');
     }
-    if (isDefaultAccount(account)) {
-      if (transaction.type === 'transfer' || transaction.type === 'adjustment') fail('转账和对账需要选择银行卡或钱包', 'accountId');
-      if ((transaction.type === 'income') !== (account.purpose === 'default_income')) fail('请选择与收支方向相符的默认账户', 'accountId');
-    } else if ((!account.openingAssetId || account.openingAssetId === (id === transaction.transferAccountId ? transaction.transferAssetId ?? transaction.assetId : transaction.assetId)) && accountBalanceTiming(account, transaction) === 'unknown') {
+    if ((!account.openingAssetId || account.openingAssetId === (id === transaction.transferAccountId ? transaction.transferAssetId ?? transaction.assetId : transaction.assetId)) && accountBalanceTiming(account, transaction) === 'unknown') {
       fail('请确认这笔收支发生在余额起点之前还是之后', 'balanceTiming');
     }
   }
@@ -889,10 +880,10 @@ async function validateReferenceEntity(
       if (row['recordState'] !== undefined && row['recordState'] !== 'active' && row['recordState'] !== 'voided') fail('连续转换状态无效', 'recordState');
       break;
     case 'setting':
-      for (const [field, forbidden] of [['expenseDefaultAccountId', 'default_income'], ['incomeDefaultAccountId', 'default_expense']] as const) {
+      for (const field of ['expenseDefaultAccountId', 'incomeDefaultAccountId'] as const) {
         if (!row[field]) continue;
         const account = await getEntity<Account>(driver, TABLES.accounts, String(row[field]));
-        if (!account || account.isDeleted || (!allowInactiveReferences && account.isActive === false) || account.kind === 'other' || account.purpose === forbidden) fail('请选择对应方向的默认账户或资金账户', field);
+        if (!account || account.isDeleted || (!allowInactiveReferences && (account.isActive === false || account.archivedAt)) || isLegacyExternalAccount(account)) fail('请选择启用的默认账户', field);
       }
       await activeAsset(driver, String(row['baseCurrencyAssetId'] ?? ''), 'baseCurrencyAssetId', allowInactiveReferences);
       for (const field of ['transactionDefaultAssetId', 'investmentCostAssetId', 'fixedAssetDefaultCurrencyAssetId', 'gameDefaultSettlementAssetId']) {
@@ -1246,7 +1237,6 @@ export async function validateEntityDelete<T extends BaseEntity>(
   entityType: string,
   current: T,
 ): Promise<void> {
-  if (entityType === 'account' && isDefaultAccount(current as unknown as Account)) fail('默认收支账户需要保留，不能删除');
   const references = await entityReferenceCount(driver, entityType, current.id);
   if (references > 0) {
     fail(`该${entityDeleteLabel(entityType)}仍有 ${references} 项引用，请使用归档、合并或迁移`);
@@ -1435,7 +1425,6 @@ export async function validateConversionAggregateSnapshot(
   const referencedIds = new Set(steps.flatMap((s) => [s.accountFromId, s.accountToId, ...(s.fees ?? []).map((f) => f.accountId)]).filter(Boolean));
   for (const id of referencedIds) {
     const account = await getEntity<Account>(driver, TABLES.accounts, id!);
-    if (account && isDefaultAccount(account)) fail('资产转换请选择资金账户，默认收支账户不能用于转账', 'steps');
     if (account && steps.some((s) => (s.accountFromId === id && s.fromAssetId === account.openingAssetId) || (s.accountToId === id && s.toAssetId === account.openingAssetId) || (s.fees ?? []).some((f) => f.accountId === id && f.assetId === account.openingAssetId)) && accountBalanceTiming(account, normalized) === 'unknown') fail('请补充准确的转换时间，以确认与账户余额起点的先后顺序', 'time');
   }
   const orderedSteps = [...steps].sort((left, right) => left.order - right.order);
@@ -1474,7 +1463,7 @@ export async function validateReconciliationAggregateSnapshot(
   options: { allowInactiveReferences?: boolean } = {},
 ): Promise<void> {
   const account = await activeAccount(driver, session.accountId, 'accountId', options.allowInactiveReferences);
-  if (isDefaultAccount(account)) fail('默认收支账户不参与资金对账', 'accountId');
+  if (isLegacyExternalAccount(account)) fail('请选择资金账户进行对账', 'accountId');
   const asset = await activeAsset(driver, session.assetId, 'assetId', options.allowInactiveReferences);
   normalizeOccurrence({ date: session.statementDate, timePrecision: 'day' });
   for (const field of ['statementBalance', 'openingBalance', 'selectedTotal', 'clearedBalance', 'difference'] as const) {

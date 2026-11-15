@@ -86,6 +86,7 @@ export interface DialogShellProps {
   closeOnEscape?: boolean;
   closeOnBackdrop?: boolean;
   dismissDisabled?: boolean;
+  onSaveShortcut?: () => void;
   initialFocusRef?: RefObject<HTMLElement | null>;
   backdropClassName?: string;
   panelClassName?: string;
@@ -107,6 +108,7 @@ export function DialogShell({
   closeOnEscape = true,
   closeOnBackdrop = true,
   dismissDisabled = false,
+  onSaveShortcut,
   initialFocusRef,
   backdropClassName = 'zc-backdrop',
   panelClassName,
@@ -176,6 +178,10 @@ export function DialogShell({
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const panel = panelRef.current;
     if (!panel || !(event.target instanceof Node) || !panel.contains(event.target)) return;
+    if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && onSaveShortcut && !dismissDisabled) {
+      event.preventDefault(); event.stopPropagation(); onSaveShortcut(); return;
+    }
     if (event.key === 'Escape') {
       if (shouldDismissDialog(event.key, closeOnEscape, !!onDismiss, dismissDisabled)) {
         event.preventDefault();

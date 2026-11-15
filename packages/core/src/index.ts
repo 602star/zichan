@@ -227,5 +227,5 @@ export type {
   SyncConflictResolution,
   LedgerStore,
 } from './storage.js';
-export { isDefaultAccount, defaultTransactionAccount, accountBalanceTiming, accountTransactionPostings, accountOpeningPostings, accountChainPostings } from './account-ledger.js';
+export { isDefaultAccount, isSystemDefaultAccount, isLegacyExternalAccount, defaultTransactionAccount, accountBalanceTiming, accountTransactionPostings, accountOpeningPostings, accountChainPostings } from './account-ledger.js';
 export { MAX_ENTITY_ICON_LENGTH, isEntityIconImage, isValidEntityIcon } from './entity-icon.js';

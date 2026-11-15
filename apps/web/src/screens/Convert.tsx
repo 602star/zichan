@@ -3,7 +3,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useCompactView } from '../ui/useCompactView.js';
 import { useScreenTarget } from '../screen-target.js';
 import { restoreConversion, voidConversion, setConversionOperationState, conversionOperationDependency, type ConversionOperationInput } from '@zichan/db';
-import { D, isDateInRange, localToday, type Asset, type ChainWithSteps, type ConversionType } from '@zichan/core';
+import { D, isLegacyExternalAccount, isDateInRange, localToday, type Asset, type ChainWithSteps, type ConversionType } from '@zichan/core';
 import { useSnapshot } from '../db/snapshot.js';
 import { useStore } from '../db/store.js';
 import { buildConvert, type ConvertChainVM } from '../selectors/convert.js';
@@ -213,7 +213,7 @@ export function Convert() {
           </select>
           <select aria-label="历史涉及账户" className="zc-select" value={accountFilter} onChange={(event) => setAccountFilter(event.target.value)}>
             <option value="">历史 · 全部账户</option>
-            {snap.accounts.filter((account) => !account.isDeleted && account.kind !== 'other').map((account) => <option key={account.id} value={account.id}>{account.name}{account.isActive === false ? '（已归档）' : ''}</option>)}
+            {snap.accounts.filter((account) => !account.isDeleted && !isLegacyExternalAccount(account)).map((account) => <option key={account.id} value={account.id}>{account.name}{account.isActive === false ? '（已归档）' : ''}</option>)}
           </select>
           <input aria-label="搜索转换" className="zc-input" placeholder="搜索标题、备注或平台" value={search} onChange={(event) => setSearch(event.target.value)} />
           <button onClick={() => setShowVoided((value) => !value)} style={showVoided ? pillBtn(true) : undefined} className={showVoided ? undefined : 'zc-btn'} aria-pressed={showVoided}>作废记录 {snap.chains.filter((row) => row.chain.recordState === 'voided').length}</button>

@@ -12,6 +12,7 @@ async function register(page) {
 }
 
 test('default accounts first, then a wallet and historical attribution', async ({ page }) => {
+  page.setDefaultTimeout(12_000);
   await register(page);
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
   await page.getByRole('button', { name: '记第一笔', exact: true }).click();
@@ -24,10 +25,11 @@ test('default accounts first, then a wallet and historical attribution', async (
   await entry.getByLabel('描述', { exact: true }).fill('昨日微信消费');
   await entry.getByRole('button', { name: '保存', exact: true }).last().click();
   await expect(entry).toBeHidden();
-  await page.getByRole('button', { name: '账户', exact: true }).click();
-  await expect(page.getByRole('button', { name: /默认支出账户/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /默认收入账户/ })).toBeVisible();
-  await expect(page.getByText('添加银行卡或钱包后，可以核对余额和账单。', { exact: false })).toBeVisible();
+  await page.locator('.zc-sidebar [data-destination="accounts"] .zc-sidebar-nav-item').click();
+  const list = page.getByRole('region', { name: '资金账户', exact: true });
+  await expect(list.getByRole('button', { name: '默认支出账户', exact: true })).toBeVisible();
+  await expect(list.getByRole('button', { name: '默认收入账户', exact: true })).toBeVisible();
+  await expect(list.getByRole('row').filter({ hasText: '默认支出账户' })).toContainText('其他');
   await expect(page.getByRole('button', { name: '核对账单', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '添加银行卡 / 钱包' }).click();
   const setup = page.getByRole('dialog', { name: '添加银行卡或钱包' });
@@ -48,7 +50,7 @@ test('default accounts first, then a wallet and historical attribution', async (
   const history = page.getByRole('dialog', { name: '整理以前的记录' });
   await history.getByLabel(/昨日微信消费/).check();
   await history.getByRole('button', { name: /预览 1 笔/ }).click();
-  await expect(history.getByText('这些记录只补充账户归属，当前余额不变。')).toBeVisible();
+  await expect(history.getByText('默认支出账户余额变化：+400 CNY')).toBeVisible();
   await history.getByRole('button', { name: '确认整理' }).click();
   await expect(history.getByText('已整理 1 笔记录', { exact: true })).toBeVisible();
   await history.getByRole('button', { name: '撤销刚才的整理' }).click();
@@ -57,6 +59,7 @@ test('default accounts first, then a wallet and historical attribution', async (
   await history.getByRole('button', { name: /预览 1 笔/ }).click();
   await history.getByRole('button', { name: '确认整理' }).click();
   await history.getByRole('button', { name: '完成', exact: true }).click();
+  await page.getByRole('tab', { name: '账户资料', exact: true }).click();
   await page.getByRole('button', { name: '从更早日期核算', exact: true }).click();
   const earlier = page.getByRole('dialog', { name: '从更早日期核算' });
   await earlier.getByLabel('更早的余额截至时间').fill('2026-09-16T08:00');
@@ -80,8 +83,8 @@ test('fund onboarding can be deferred on a phone without losing the initialized 
   const setup = page.getByRole('dialog', { name: '添加银行卡或钱包' });
   await expect(setup).toBeVisible();
   await setup.getByRole('button', { name: '取消', exact: true }).click();
-  await expect(page.getByRole('button', { name: /默认支出账户/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /默认收入账户/ })).toBeVisible();
+  await expect(page.getByRole('region', { name: '资金账户', exact: true }).getByRole('button', { name: '默认支出账户', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: '资金账户', exact: true }).getByRole('button', { name: '默认收入账户', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '预算', exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/account-onboarding-mobile-accounts.png', fullPage: true });
 });

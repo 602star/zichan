@@ -3,6 +3,8 @@ import { ChevronRight, FileText, MoreHorizontal, Pencil, Undo2 } from 'lucide-re
 import { EarlierBalancePanel } from '../ui/EarlierBalancePanel.js';
 import { AccountSetupPanel } from '../ui/AccountSetupPanel.js';
 import { AccountHistoryPanel } from '../ui/AccountHistoryPanel.js';
+import { AccountsWorkspace } from '../ui/AccountsWorkspace.js';
+import { useTransactionEditor } from '../use-transaction-editor.js';
 import { accountSessionStorage } from '../account-storage.js';
 import { readOnboarding, updateOnboarding, type OnboardingState } from '../onboarding.js';
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
@@ -11,8 +13,8 @@ import { DcaPlans } from './DcaPlans.js';
 import { useWorkspaceState } from '../ui/useWorkspaceState.js';
 import { QueryGeneration } from '../query-generation.js';
 import {
-  D, accountBalanceTiming, isDefaultAccount, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, newId, nextUnhandledScheduleOccurrence,
-  type BudgetCategory, type Category, type Payee, type ReconciliationSession,
+  D, accountBalanceTiming, isLegacyExternalAccount, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, dayOfInstant, newId, nextUnhandledScheduleOccurrence,
+  type Account, type BudgetCategory, type Category, type Payee, type ReconciliationSession,
   type ScheduledTransaction, type Setting, type Transaction, type TransactionSavedView, type TransactionSplit, type TransactionTemplate, type TransactionType,
 } from '@zichan/core';
 import {
@@ -193,6 +195,11 @@ const buttonCls = 'zc-btn';
 const primaryCls = 'zc-btn zc-btn--primary';
 
 type Tab = 'records' | 'accounts' | 'budget' | 'bills' | 'dca';
+type AccountTask =
+  | { kind: 'edit'; account?: Account }
+  | { kind: 'history' }
+  | { kind: 'earlier'; account: Account }
+  | { kind: 'reconcile'; session?: ReconciliationSession; accountId: string; assetId: string };
 
 function initialTransactionTab(): Tab {
   try {
@@ -207,11 +214,12 @@ function initialTransactionTab(): Tab {
 export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: boolean; onEntryClose?: () => void } = {}) {
   const compactView = useCompactView();
   const screenTarget = useScreenTarget('transactions');
-  const { store, bump, rev } = useStore();
+  const { store, bump, rev, preview } = useStore();
   const undo = useUndo(store, bump);
   const billUndo = useUndo();
   const snap = useSnapshot('transactions');
   const [accountId, setAccountId] = useWorkspaceState('transactions.account', '');
+  const [accountRange, setAccountRange] = useWorkspaceState<DateRangeValue>('transactions.account-range', dateRangeValue('all'));
   const [assetId, setAssetId] = useWorkspaceState('transactions.asset', 'all');
   const [filters, setFilters] = useWorkspaceState<TransactionFilters>('transactions.filters', DEFAULT_FILTERS);
   const [initialTab] = useState(initialTransactionTab);
@@ -263,7 +271,8 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   }, [entryOnly, screenTarget]);
   const [editingCategory, setEditingCategory] = useState<Category | 'new' | null>(null);
   const [editingPayee, setEditingPayee] = useState<Payee | 'new' | null>(null);
-  const [editingReconcile, setEditingReconcile] = useState<ReconciliationSession | 'new' | null>(null);
+  const [accountTask, setAccountTask] = useState<AccountTask | null>(null);
+  function openAccountTask(task: AccountTask) { setAccountTask((current) => current ?? task); }
   const [batchOpen, setBatchOpen] = useState(false);
   const [showVoided, setShowVoided] = useState(false);
   const [recordView, setRecordView] = useWorkspaceState<TimelineViewMode>('transactions.view', 'list');
@@ -297,22 +306,13 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   const [transactionReadError, setTransactionReadError] = useState('');
   const [voidedPage, setVoidedPage] = useState<TransactionBrowsePage | null>(null);
   const [budgetAggregates, setBudgetAggregates] = useState<TransactionReportAggregateRow[] | null>(null);
-  const [defaultAccountTotals, setDefaultAccountTotals] = useState<Record<string, string>>({});
-  useEffect(() => {
-    if (!snap || tab !== 'accounts') return;
-    let cancelled = false;
-    const month = localToday().slice(0, 7);
-    void Promise.all(snap.accounts.filter(isDefaultAccount).map(async (a) => {
-      const rows = await store.transactionReportAggregate({ accountId: a.id, from: month + '-01', to: month + '-31' });
-      const totals = new Map<string, string>();
-      for (const row of rows) for (const value of row.amounts) totals.set(row.reportAssetId, D(totals.get(row.reportAssetId) ?? 0).plus(value).toString());
-      return [a.id, [...totals].map(([id, value]) => value + ' ' + (snap.assets.find((asset) => asset.id === id)?.code ?? id)).join(' / ') || '0'] as const;
-    })).then((rows) => { if (!cancelled) setDefaultAccountTotals(Object.fromEntries(rows)); }).catch(() => { if (!cancelled) setDefaultAccountTotals({}); });
-    return () => { cancelled = true; };
-  }, [snap, tab, rev, store]);
   const [accountBalanceAggregates, setAccountBalanceAggregates] = useState<AccountBalanceAggregateRow[]>([]);
+  const [accountBalancesBusy, setAccountBalancesBusy] = useState(true);
+  const [accountBalanceError, setAccountBalanceError] = useState('');
   const [accountLedgerPage, setAccountLedgerPage] = useState<AccountLedgerPage | null>(null);
+  const [accountLedgerKey, setAccountLedgerKey] = useState('');
   const [accountLedgerBusy, setAccountLedgerBusy] = useState(false);
+  const [accountLedgerError, setAccountLedgerError] = useState('');
   const usesAccounts = true;
   useEffect(() => {
     if (!snap?.setting?.id) return;
@@ -320,9 +320,6 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     setOnboarding(state);
     setShowFirstEntryGuide(Boolean(state && !state.dismissed));
   }, [snap?.setting?.id]);
-  const [accountSetupOpen, setAccountSetupOpen] = useState(false);
-  const [accountHistoryOpen, setAccountHistoryOpen] = useState(false);
-  const [earlierBalanceAccount, setEarlierBalanceAccount] = useState<import('@zichan/core').Account | null>(null);
   const [addedAccount, setAddedAccount] = useState<import('@zichan/core').Account | null>(null);
 
   useEffect(() => {
@@ -526,12 +523,16 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
       return;
     }
     let cancelled = false;
+    setAccountBalancesBusy(true);
+    setAccountBalanceError('');
     void store.accountBalanceAggregates()
       .then((rows) => {
         if (!cancelled) setAccountBalanceAggregates(rows);
       })
       .catch((error) => {
-        if (!cancelled) setTransactionReadError(error instanceof Error ? error.message : String(error));
+        if (!cancelled) setAccountBalanceError(error instanceof Error ? error.message : String(error));
+      }).finally(() => {
+        if (!cancelled) setAccountBalancesBusy(false);
       });
     return () => {
       cancelled = true;
@@ -547,11 +548,13 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
         assetCode: snap.assets.find((asset) => asset.id === row.assetId)?.code ?? row.assetId,
         amount: row.amounts.reduce((total, amount) => total.plus(amount), D(0)).toString(),
       }))
-      .filter((row) => !D(row.amount).isZero())
       .sort((left, right) => left.accountName.localeCompare(right.accountName) || left.assetCode.localeCompare(right.assetCode));
   }, [accountBalanceAggregates, snap]);
-  const selectedAccountForRead = accountId || accountBalanceRows[0]?.accountId || snap?.accounts.find((a) => !isDefaultAccount(a) && a.kind !== 'other')?.id || '';
+  const fundAccountsForRead = snap?.accounts.filter((account) => !account.isDeleted && !isLegacyExternalAccount(account)) ?? [];
+  const selectedAccountForRead = fundAccountsForRead.find((account) => account.id === accountId)?.id
+    ?? fundAccountsForRead.find((account) => account.id === accountBalanceRows[0]?.accountId)?.id ?? fundAccountsForRead[0]?.id ?? '';
   const selectedAssetForRead = assetId === 'all' ? undefined : assetId;
+  const expectedAccountLedgerKey = `${selectedAccountForRead}\0${selectedAssetForRead ?? ''}\0${accountRange.from ?? ''}\0${accountRange.to ?? ''}`;
   useEffect(() => {
     const gate = accountQuery.current;
     gate.reset();
@@ -559,16 +562,17 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     const token = gate.start()!;
     let cancelled = false;
     setAccountLedgerBusy(true);
+    setAccountLedgerError('');
     void store.accountLedgerPage({
       accountId: selectedAccountForRead,
       assetId: selectedAssetForRead,
-      from: queryDateRange.from,
-      to: queryDateRange.to,
+      from: accountRange.from,
+      to: accountRange.to,
       limit: 100,
     }).then((page) => {
-      if (!cancelled) setAccountLedgerPage(page);
+      if (!cancelled) { setAccountLedgerPage(page); setAccountLedgerKey(expectedAccountLedgerKey); }
     }).catch((error) => {
-      if (!cancelled) setTransactionReadError(error instanceof Error ? error.message : String(error));
+      if (!cancelled) setAccountLedgerError(error instanceof Error ? error.message : String(error));
     }).finally(() => {
       gate.finish(token);
       if (!cancelled) setAccountLedgerBusy(false);
@@ -579,8 +583,9 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     };
   }, [
     activeTab,
-    queryDateRange.from,
-    queryDateRange.to,
+    expectedAccountLedgerKey,
+    accountRange.from,
+    accountRange.to,
     rev,
     selectedAccountForRead,
     selectedAssetForRead,
@@ -601,6 +606,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
         : snap.scheduledTransactions.filter((schedule) => schedule.type !== 'transfer'),
     };
   }, [snap, transactionRead, usesAccounts]);
+  const transactionEditor = useTransactionEditor(store, pageSnap, editingTx === 'new' ? refundDraft : editingTx, rev);
   const vm = useMemo(() => (
     snap && pageSnap && transactionRead
       ? buildTransactionsFromReadModel(snap, viewFilters, {
@@ -647,7 +653,8 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   ].filter(Boolean).length;
   const selectedAccountId = selectedAccountForRead;
   const selectedAssetId = assetId === 'all' ? undefined : assetId;
-  const ledger = (accountLedgerPage?.rows ?? []).map((row) => {
+  const accountLedgerCurrent = accountLedgerKey === expectedAccountLedgerKey;
+  const ledger = (accountLedgerCurrent ? accountLedgerPage?.rows ?? [] : []).map((row) => {
     const asset = readySnap.assets.find((item) => item.id === row.assetId);
     const quantity = D(row.postingAmount);
     const displayAmount = `${quantity.isZero() ? '' : quantity.isNegative() ? '−' : '+'}${fmtAmount(quantity.abs(), asset?.decimals ?? 8)}`;
@@ -696,7 +703,6 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
       assetCode: asset?.code ?? row.assetId,
     };
   }).filter((row): row is NonNullable<typeof row> => row !== null);
-  const reconciliationRows = readySnap.reconciliationSessions.filter((row) => isDateInRange(row.statementDate, activeDateRange));
   const budgetRows = budgetAggregates
     ? buildBudgetMonthFromAggregates(readySnap, budgetMonth, budgetAggregates)
     : buildBudgetMonth(readySnap, budgetMonth);
@@ -714,7 +720,8 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     .sort((left, right) =>
       (right.attemptedAt ?? right.updatedAt).localeCompare(left.attemptedAt ?? left.updatedAt))
     .slice(0, 50);
-  const accountAssets = [...new Set(readyVm.accountBalances.filter((b) => b.accountId === selectedAccountId).map((b) => b.assetId))];
+  const accountAssets = [...new Set([...readyVm.accountBalances.filter((b) => b.accountId === selectedAccountId).map((b) => b.assetId),
+    ...readySnap.accounts.filter((account) => account.id === selectedAccountId && account.openingAssetId).map((account) => account.openingAssetId!)])];
   const activeTemplates = readySnap.transactionTemplates
     .filter((t) => !t.isDeleted && t.isActive && (usesAccounts || t.type === 'expense'))
     .sort((a, b) => (a.sortOrder ?? 100) - (b.sortOrder ?? 100) || a.name.localeCompare(b.name));
@@ -764,25 +771,25 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   }
 
   async function loadMoreAccountLedger() {
-    if (!accountLedgerPage?.hasMore || !accountLedgerPage.nextCursor || accountLedgerBusy || !selectedAccountId) return;
+    if (!accountLedgerCurrent || !accountLedgerPage?.hasMore || !accountLedgerPage.nextCursor || accountLedgerBusy || !selectedAccountId) return;
     const gate = accountQuery.current;
     const token = gate.start();
     if (!token) return;
     setAccountLedgerBusy(true);
-    setTransactionReadError('');
+    setAccountLedgerError('');
     try {
       const page = await store.accountLedgerPage({
         accountId: selectedAccountId,
         assetId: selectedAssetId,
-        from: activeDateRange.from,
-        to: activeDateRange.to,
+        from: accountRange.from,
+        to: accountRange.to,
         cursor: accountLedgerPage.nextCursor,
         startingBalances: accountLedgerPage.nextStartingBalances,
         limit: 100,
       });
       setAccountLedgerPage((current) => gate.current(token) && current ? mergeAccountLedgerPage(current, page) : current);
     } catch (error) {
-      if (gate.current(token)) setTransactionReadError(error instanceof Error ? error.message : String(error));
+      if (gate.current(token)) setAccountLedgerError(error instanceof Error ? error.message : String(error));
     } finally {
       if (gate.current(token)) setAccountLedgerBusy(false);
       gate.finish(token);
@@ -794,7 +801,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     if (transaction.type === 'adjustment' && transaction.reconciliationSessionId) {
       const session = readySnap.reconciliationSessions.find((row) => row.id === transaction.reconciliationSessionId);
       if (session) {
-        setEditingReconcile(session);
+        openAccountTask({ kind: 'reconcile', session, accountId: session.accountId, assetId: session.assetId });
         return;
       }
     }
@@ -833,26 +840,18 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     return (remaining.gt(0) ? remaining : D(0)).toString();
   }
 
-  /** Remaining refundable amount for the refund form currently open, if any. */
-  function refundFormRemaining(): string | undefined {
-    const editing = editingTx === 'new' ? refundDraft : editingTx;
-    if (!editing || editing.type !== 'refund' || !editing.refundForId) return undefined;
-    const original = readySnap.transactions.find((row) => row.id === editing.refundForId);
-    if (!original) return undefined;
-    return remainingRefundAmount(original, editingTx === 'new' ? undefined : editing.id);
-  }
-
   function startRefund(original: Transaction) {
     if (!canNavigateWorkspace()) return;
     const remaining = remainingRefundAmount(original);
     if (D(remaining).lte(0)) return;
     const now = new Date();
+    const zone = readySnap.setting?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
     const description = original.description ?? original.merchant ?? categoryLabel(original.category, readySnap.categories);
     setRefundDraft({
       id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false,
-      date: todayDate(),
-      time: now.toTimeString().slice(0, 5),
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '系统默认',
+      date: dayOfInstant(now, zone),
+      time: new Intl.DateTimeFormat('en-GB', { timeZone: zone, hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(now),
+      timezone: zone,
       type: 'refund',
       category: original.category,
       amount: remaining,
@@ -1409,7 +1408,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
             {onboarding.path === 'accounts' && (
               <div className="zc-onboarding-step">
                 <div><strong>设置常用账户</strong><p>添加银行卡或钱包，再填写当前余额。</p></div>
-                <button type="button" className={buttonCls} onClick={() => { setTab('accounts'); setAccountSetupOpen(true); }}>添加账户</button>
+                <button type="button" className={buttonCls} onClick={() => { setTab('accounts'); openAccountTask({ kind: 'edit' }); }}>添加账户</button>
               </div>
             )}
             <div className="zc-onboarding-step">
@@ -1445,7 +1444,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
             <div className="zc-mobile-guide-content">
               <h2>设置常用账户</h2>
               <p>需要分清银行卡、微信和支付宝余额时，先添加常用账户。也可以稍后再做。</p>
-              <div className="zc-first-entry-actions"><button type="button" className={primaryCls} onClick={() => { setTab('accounts'); setAccountSetupOpen(true); }}>添加账户</button></div>
+              <div className="zc-first-entry-actions"><button type="button" className={primaryCls} onClick={() => { setTab('accounts'); openAccountTask({ kind: 'edit' }); }}>添加账户</button></div>
             </div>
           )}
           {mobileGuideKind === 'entry' && (
@@ -1704,91 +1703,25 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
         </>
       )}
 
-      {earlierBalanceAccount && <EarlierBalancePanel store={store} account={earlierBalanceAccount} setting={snap.setting} onClose={() => setEarlierBalanceAccount(null)} onSaved={() => { setEarlierBalanceAccount(null); bump(); }} />}
-      {accountSetupOpen && <AccountSetupPanel store={store} assets={snap.assets} accounts={snap.accounts} setting={snap.setting} onSaved={(account) => { setAccountSetupOpen(false); setAddedAccount(account); setAccountId(account.id); bump(); }} onClose={() => setAccountSetupOpen(false)} />}
-      {accountHistoryOpen && <AccountHistoryPanel store={store} accounts={snap.accounts} assets={snap.assets} categories={snap.categories} timeZone={snap.setting?.timezone} initialAccountId={addedAccount?.id} onChanged={bump} onClose={() => setAccountHistoryOpen(false)} />}
-      {addedAccount && <div className="zc-card is-tight" role="status">已添加 {addedAccount.name} · 余额起点 {new Date(addedAccount.balanceStartAt!).toLocaleString('zh-CN', { timeZone: snap.setting?.timezone })}，{addedAccount.openingBalance} {snap.assets.find((a) => a.id === addedAccount.openingAssetId)?.code}。以前的记录已保留。<p>默认付款：{snap.accounts.find((a) => a.id === snap.setting?.expenseDefaultAccountId)?.name}；默认收款：{snap.accounts.find((a) => a.id === snap.setting?.incomeDefaultAccountId)?.name}。</p>
-        <button className={buttonCls} onClick={() => setAccountHistoryOpen(true)}>整理以前的记录</button><button className={buttonCls} disabled={!snap.accounts.some((account) => account.id === addedAccount.id)} onClick={() => { setAddedAccount(null); openNewTransaction(); }}>记一笔</button>
+      {accountTask?.kind === 'earlier' && <EarlierBalancePanel store={store} account={accountTask.account} setting={snap.setting} onClose={() => setAccountTask(null)} onSaved={() => { setAccountTask(null); bump(); }} />}
+      {accountTask?.kind === 'edit' && <AccountSetupPanel key={accountTask.account?.id ?? 'new-account'} store={store} assets={snap.assets} accounts={snap.accounts} setting={snap.setting} initial={accountTask.account} onSaved={(account) => { if (!accountTask.account) setAddedAccount(account); setAccountTask(null); setAccountId(account.id); bump(); }} onClose={() => setAccountTask(null)} />}
+      {accountTask?.kind === 'history' && <AccountHistoryPanel store={store} accounts={snap.accounts} assets={snap.assets} categories={snap.categories} timeZone={snap.setting?.timezone} initialAccountId={selectedAccountId || addedAccount?.id} onChanged={bump} onClose={() => setAccountTask(null)} />}
+      {addedAccount && activeTab === 'accounts' && <div className="zc-card is-tight zc-account-added" role="status"><span>已添加 {addedAccount.name}，余额从 {addedAccount.balanceStartDate} 开始核算。以前的记录已保留。</span>
+        <div className="zc-mobile-shortcuts"><button className={buttonCls} onClick={() => openAccountTask({ kind: 'history' })}>整理以前的记录</button><button className={buttonCls} disabled={!snap.accounts.some((account) => account.id === addedAccount.id)} onClick={() => { setAddedAccount(null); openNewTransaction(); }}>记一笔</button><button type="button" className="zc-workspace-link" onClick={() => setAddedAccount(null)}>收起添加提示</button></div>
       </div>}
-      {usesAccounts && activeTab === 'accounts' && (
-        <div className="zc-card">
-          <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'end', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
-            <div>
-              <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>账户流水与对账</div>
-              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>账户流水列出收支、转账和资产转换。买卖资产会改变账户余额，不计入日常收入或支出。</div>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setAccountSetupOpen(true)} className={primaryCls}>添加银行卡 / 钱包</button>
-              <button onClick={() => snap.accounts.some((a) => !isDefaultAccount(a) && a.kind !== 'other') ? setAccountHistoryOpen(true) : setAccountSetupOpen(true)} className={buttonCls}>整理以前的记录</button>
-            </div>
-          </div>
-          <div style={{ marginBottom: 14 }}>
-            <DateRangeBar value={activeDateValue} onChange={(next) => setFilters((current) => ({ ...current, range: next.preset, dateFrom: next.from, dateTo: next.to }))} />
-          </div>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>{snap.accounts.filter(isDefaultAccount).map((a) => <button key={a.id} className={buttonCls} onClick={() => { setFilters((current) => ({ ...current, accountId: a.id })); setTab('records'); }}>{a.name} · 本月{a.purpose === 'default_income' ? '收入' : '净支出'} {defaultAccountTotals[a.id] ?? '…'} · 查看记录</button>)}</div>
-          <p className="zc-meta">默认账户归集暂不细分来源的收支。下方银行卡与钱包展示账面余额；余额流水从各自的余额起点开始。</p>
-          {!selectedAccountId ? <p>添加银行卡或钱包后，可以核对余额和账单。现在也可以继续使用默认账户记收支。</p> : <>
-          <div className="zc-account-filter-grid">
-            <label className="zc-field">账户
-              <select style={selectStyle} value={selectedAccountId} onChange={(e) => setAccountId(e.target.value)}>
-                {snap.accounts.filter((a) => !isDefaultAccount(a) && a.kind !== 'other').map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </label>
-            <label className="zc-field">币种
-              <select style={selectStyle} value={assetId} onChange={(e) => setAssetId(e.target.value)}>
-                <option value="all">全部币种</option>
-                {accountAssets.map((id) => <option key={id} value={id}>{snap.assets.find((a) => a.id === id)?.code ?? id}</option>)}
-              </select>
-            </label>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {vm.accountBalances.filter((b) => b.accountId === selectedAccountId).map((b) => (
-                <span key={`${b.accountId}:${b.assetId}`} style={tagStyle}>{b.amount} {b.assetCode}</span>
-              ))}
-            </div>
-          </div>
-          {snap.accounts.find((a) => a.id === selectedAccountId)?.balanceStartAt && <button className={buttonCls} onClick={() => setEarlierBalanceAccount(snap.accounts.find((a) => a.id === selectedAccountId)!)}>从更早日期核算</button>}
-          <button className={buttonCls} onClick={() => setEditingReconcile('new')}>核对账单</button>
-          <button className={buttonCls} onClick={() => { setFilters((current) => ({ ...current, accountId: selectedAccountId })); setTab('records'); }}>查看这个账户的日常收支</button>
-          <Table headers={['日期', '摘要', '分类', '状态', '金额', '余额']}>
-            {ledger.map((r) => (
-              <tr key={r.id}>
-                <td style={tdStyle}>{r.date}</td>
-                <td style={tdStyle}>{r.title}</td>
-                <td style={tdStyle}>{r.categoryLabel}</td>
-                <td style={tdStyle}>{r.statusLabel}</td>
-                <td style={{ ...tdStyle, ...amountColor(r.amount) }}>{r.displayAmount} {r.assetCode}</td>
-                <td style={tdStyle}>{r.balance} {r.assetCode}</td>
-              </tr>
-            ))}
-            {ledger.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={6}>暂无账户流水</td></tr>}
-          </Table>
-          {accountLedgerPage?.hasMore && (
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 10 }}>
-              <button type="button" onClick={() => void loadMoreAccountLedger()} disabled={accountLedgerBusy} className={buttonCls}>
-                {accountLedgerBusy ? '加载中…' : '继续加载 100 笔'}
-              </button>
-              <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
-                已加载 {accountLedgerPage.rows.length} / {accountLedgerPage.totalCount} 条账户分录
-              </span>
-            </div>
-          )}
-          <div style={{ marginTop: 18, fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)' }}>对账记录</div>
-          <Table headers={['账单日', '账户', '币种', '账单余额', '差额', '状态', '操作']}>
-            {reconciliationRows.map((r) => (
-              <tr key={r.id} onClick={() => setEditingReconcile(r)} style={{ cursor: 'pointer' }}>
-                <td style={tdStyle}>{r.statementDate}</td>
-                <td style={tdStyle}>{snap.accounts.find((a) => a.id === r.accountId)?.name ?? r.accountId}</td>
-                <td style={tdStyle}>{snap.assets.find((a) => a.id === r.assetId)?.code ?? r.assetId}</td>
-                <td style={tdStyle}>{r.statementBalance}</td>
-                <td style={{ ...tdStyle, ...amountColor(D(r.difference).negated()) }}>{r.difference}</td>
-                <td style={tdStyle}>{r.status === 'closed' ? '已完成' : '进行中'}</td>
-                <td style={tdStyle}><button type="button" className={buttonCls} onClick={(event) => { event.stopPropagation(); setEditingReconcile(r); }}>查看对账</button></td>
-              </tr>
-            ))}
-            {reconciliationRows.length === 0 && <tr><td style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={7}>该时间范围内暂无对账记录</td></tr>}
-          </Table></>}
-        </div>
-      )}
+      {usesAccounts && activeTab === 'accounts' && <AccountsWorkspace
+        snap={snap} balances={vm.accountBalances} selectedId={selectedAccountId} assetId={assetId} accountAssets={accountAssets} readOnly={!!preview}
+        balancesBusy={accountBalancesBusy} balanceError={accountBalanceError} ledgerError={accountLedgerError} onRetryRead={bump}
+        range={accountRange} onRangeChange={setAccountRange}
+        onSelect={(id) => { setAccountId(id); setAssetId('all'); }} onAssetChange={setAssetId}
+        onAdd={() => openAccountTask({ kind: 'edit' })} onEdit={(account) => openAccountTask({ kind: 'edit', account })} onEarlier={(account) => openAccountTask({ kind: 'earlier', account })}
+        onReconcile={(session) => openAccountTask({ kind: 'reconcile', session, accountId: session?.accountId ?? selectedAccountId, assetId: session?.assetId ?? selectedAssetId ?? accountAssets[0] ?? readySnap.assets[0]?.id ?? '' })}
+        onHistory={() => openAccountTask({ kind: fundAccountsForRead.length ? 'history' : 'edit' })}
+        onRecords={(id) => { setFilters((current) => ({ ...current, accountId: id })); setTab('records'); }}
+        ledger={ledger} ledgerBusy={!!selectedAccountId && !accountLedgerCurrent} loadingMore={accountLedgerBusy}
+        hasMore={accountLedgerCurrent && !!accountLedgerPage?.hasMore} totalCount={accountLedgerPage?.totalCount ?? 0}
+        onLoadMore={() => void loadMoreAccountLedger()}
+      />}
 
       {activeTab === 'dca' && <DcaPlans />}
       {activeTab === 'budget' && (
@@ -2001,10 +1934,14 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
         />
       )}
 
-      {editingTx && (
+      {editingTx && (transactionEditor.loading || transactionEditor.error) && <DialogShell labelledBy="transaction-editor-loading" onDismiss={() => { setEditingTx(null); setRefundDraft(null); }} panelStyle={{ padding: 24, background: 'var(--surface)', borderRadius: 'var(--r-sm)', width: 'min(560px, calc(100vw - 24px))' }}>
+        <h2 id="transaction-editor-loading">读取退款资料</h2>{transactionEditor.error ? <p role="alert">{transactionEditor.error}</p> : <p role="status">正在读取原消费和退款记录…</p>}
+        {transactionEditor.error && <button type="button" className="zc-btn" onClick={transactionEditor.retry}>重新读取</button>}<button type="button" className="zc-btn" onClick={() => { setEditingTx(null); setRefundDraft(null); }}>关闭</button>
+      </DialogShell>}
+      {editingTx && !transactionEditor.loading && !transactionEditor.error && (
         <EntityFormModal
           key={`${entryGeneration}-${editingTx === 'new' ? 'new' : editingTx.id}`}
-          workspace={editingTx === 'new' && !refundDraft ? 'composer' : 'page'}
+          workspace={false}
           initialFieldValues={editingTx === 'new' && !refundDraft && !templateDraft ? entryFields : undefined}
           retainEntryFields={retainEntryFields}
           onRetainEntryFieldsChange={setRetainEntryFields}
@@ -2013,11 +1950,11 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
             setTemplateDraft(null);
             setEntryGeneration((current) => current + 1);
           } : undefined}
-          spec={transactionForm(readySnap, {
+          spec={transactionForm(transactionEditor.snapshot ?? readySnap, {
             usesAccounts,
             refundMode: editingTx === 'new' ? !!refundDraft : editingTx.type === 'refund',
             expenseOnly: !usesAccounts && !(editingTx === 'new' ? refundDraft : editingTx.type === 'refund'),
-            refundRemaining: refundFormRemaining(),
+            refundRemaining: transactionEditor.remaining,
           })}
           initial={editingTx === 'new' ? refundDraft ?? templateDraft ?? undefined : editingTx}
           isNew={editingTx === 'new'}
@@ -2160,15 +2097,17 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
           onClose={() => setEditingPayee(null)}
         />
       )}
-      {usesAccounts && editingReconcile && (
+      {usesAccounts && accountTask?.kind === 'reconcile' && (
         <ReconciliationModal
           store={store}
           snap={readySnap}
-          session={editingReconcile === 'new' ? undefined : editingReconcile}
-          initialAccountId={selectedAccountId}
-          initialAssetId={selectedAssetId ?? accountAssets[0] ?? readySnap.assets[0]?.id ?? ''}
+          session={accountTask.session}
+          initialAccountId={accountTask.accountId}
+          initialAssetId={accountTask.assetId}
+          readVersion={rev}
+          readOnly={!!preview}
           onChanged={bump}
-          onClose={() => setEditingReconcile(null)}
+          onClose={() => setAccountTask(null)}
         />
       )}
       {batchOpen && (
@@ -2737,9 +2676,6 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
               const refunds = tx.type === 'expense' ? refundsFor(tx) : [];
               const refunded = refunds.reduce((total, refund) => total.plus(refund.appliedAmount), D(0));
               // Speak the row's own units (amount + asset), not the report currency.
-              const refundedLabel = refunds.length
-                ? `${refunded.toString()} / ${tx.amount} ${assetCode(tx.assetId)}`
-                : '';
               // An expense that came back in full is no longer still "spent". It stays
               // in the list (the history is the point) but has to read as settled, and it
               // must keep a way into its refunds: the refund row itself is filtered out
@@ -2747,7 +2683,7 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
               const settled = refunds.length > 0 && !D(remaining).gt(0);
               const refundChip = refunds.length > 0
                 ? {
-                  label: settled ? `已退 ${refundedLabel}` : `部分退款 · 已退 ${refundedLabel}`,
+                  label: `${settled ? '全额退款' : '部分退款'} +${num(refunded, item.assetDecimals)} ${assetCode(tx.assetId)}`,
                   title: settled
                     ? `${refunds.length} 笔退款已全额退回，点开可查看或作废`
                     : `${refunds.length} 笔退款，剩余可退 ${remaining}，点开可查看或作废`,
@@ -2808,38 +2744,28 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
                       />
                     </span></td>
                   )}
-                  <td style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{compact ? tx.date : tx.time || tx.date.slice(5)}{compact && tx.time ? <span className="zc-transaction-time"><br />{tx.time}</span> : null}</td>
-                  {/*
-                    分类列宽屏能给到 200px（内置标签最长约 139px，写全了），但自建的超长名仍会
-                    触到天花板，那时在这里省略；完整的「一级 / 二级」留在 hover 的 title 里，
-                    否则省略之后就只剩半截了。
-                  */}
+                  <td className="zc-transaction-date" style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{compact ? tx.date : tx.time || tx.date.slice(5)}{compact && tx.time ? <span className="zc-transaction-time"><br />{tx.time}</span> : null}</td>
                   <td
-                    style={{ maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', color: tx.type === 'income' || tx.type === 'refund' ? 'var(--positive)' : tx.type === 'expense' ? 'var(--negative)' : 'var(--accent)' }}
+                    className="zc-transaction-category"
+                    style={{ color: tx.type === 'income' || tx.type === 'refund' ? 'var(--positive)' : tx.type === 'expense' ? 'var(--negative)' : 'var(--accent)' }}
                     title={item.categoryLabel}
                   >
-                    {item.categoryLabel}
+                    <span className="zc-transaction-category-label">{item.categoryLabel}</span>
                   </td>
                   <td style={{ minWidth: 0 }}>
-                    <span className="zc-transaction-summary-title" style={{ display: 'block', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', ...(settled ? { textDecoration: 'line-through', color: 'var(--text-tertiary)' } : {}) }}>{title}</span>
+                    <span className="zc-transaction-summary-title" style={{ display: 'block', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
                     <span style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
                       <span className="zc-transaction-details-desktop" style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
                         {details}
                       </span>
                       {mobileDetails && <span className="zc-transaction-details-mobile" style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>{mobileDetails}</span>}
-                      {refundChip && (
-                        <button
-                          type="button"
-                          className="zc-refund-chip"
-                          title={refundChip.title}
-                          onClick={(event) => { event.stopPropagation(); onManageRefunds(tx); }}
-                        >{refundChip.label}</button>
-                      )}
                     </span>
                   </td>
-                  {usesAccounts && <td><span className={item.statusLabel === '已对账' ? 'zc-ledger-stamp' : undefined} style={{ fontSize: 'var(--fs-meta)', color: item.statusLabel === '已对账' ? 'var(--accent)' : 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{compact ? item.statusLabel : item.accountName}</span></td>}
-                  <td className="is-numeric" style={{ fontSize: 'var(--fs-body)', ...(settled ? { textDecoration: 'line-through', color: 'var(--text-tertiary)' } : amountColor(item.signedAmount)) }}>
-                    {tx.type === 'transfer' ? '' : tx.type === 'income' || tx.type === 'refund' || (tx.type === 'adjustment' && tx.adjustmentDirection === 'increase') ? '+' : '-'}{num(tx.amount, item.assetDecimals)} {item.assetCode}
+                  {usesAccounts && <td className="zc-transaction-account"><span title={item.accountName} className={item.statusLabel === '已对账' ? 'zc-ledger-stamp' : undefined} style={{ fontSize: 'var(--fs-meta)', color: item.statusLabel === '已对账' ? 'var(--accent)' : 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{compact ? item.statusLabel : item.accountName}</span></td>}
+                  <td className="is-numeric zc-transaction-amount" style={{ fontSize: 'var(--fs-body)', ...amountColor(item.signedAmount) }}>
+                    <span className="zc-transaction-amount-original">{tx.type === 'transfer' ? '' : tx.type === 'income' || tx.type === 'refund' || (tx.type === 'adjustment' && tx.adjustmentDirection === 'increase') ? '+' : '-'}{num(tx.amount, item.assetDecimals)} {item.assetCode}</span>
+                    {refundChip && <><button type="button" className="zc-refund-chip" aria-label={`查看 ${title} 的退款记录`} title={`${refundChip.title}；此处按原支出币种显示冲减额，实际到账金额见退款记录。`} onClick={(event) => { event.stopPropagation(); onManageRefunds(tx); }}>{refundChip.label}</button>
+                      <span className="zc-refund-net" title="原支出减累计退款冲减，期间统计仍按退款归属设置计算">净支出 {num(remaining, item.assetDecimals)} {item.assetCode}</span></>}
                   </td>
                   <td className="zc-transaction-actions">
                     <button type="button" aria-label={`查看 ${title} 的详情`} onClick={(event) => {

@@ -20,7 +20,7 @@ test('fiat conversion appears in account ledger without becoming daily income or
   await page.getByRole('button', { name: '记第一笔', exact: true }).click();
   await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '关闭', exact: true }).click();
 
-  await page.getByRole('button', { name: '账户', exact: true }).click();
+  await page.locator('.zc-sidebar [data-destination="accounts"] .zc-sidebar-nav-item').click();
   await page.getByRole('button', { name: '添加银行卡 / 钱包', exact: true }).click();
   const setup = page.getByRole('dialog', { name: '添加银行卡或钱包' });
   await setup.getByLabel('账户名称').fill('外币账户');
@@ -52,19 +52,18 @@ test('fiat conversion appears in account ledger without becoming daily income or
   await conversion.getByRole('button', { name: '保存转换', exact: true }).click();
   await expect(conversion).toBeHidden();
 
-  await page.locator('.zc-sidebar [data-destination="records"] .zc-sidebar-nav-item').click();
-  await page.getByRole('button', { name: '账户', exact: true }).click();
+  await page.locator('.zc-sidebar [data-destination="accounts"] .zc-sidebar-nav-item').click();
   const rows = page.getByRole('row').filter({ hasText: '换入美元' });
   await expect(rows).toHaveCount(2);
-  await expect(rows.filter({ hasText: '−100 CNY' })).toContainText('900 CNY');
-  await expect(rows.filter({ hasText: '+20 USD' })).toContainText('20 USD');
+  await expect(rows.filter({ hasText: '−100 CNY' })).toContainText('900.00 CNY');
+  await expect(rows.filter({ hasText: '+20 USD' })).toContainText('20.00 USD');
   await page.getByRole('button', { name: '核对账单', exact: true }).click();
   const reconciliation = page.getByRole('dialog', { name: '核对账单' });
   const cnyId = await reconciliation.getByLabel('币种').locator('option').filter({ hasText: 'CNY' }).getAttribute('value');
   await reconciliation.getByLabel('币种').selectOption(cnyId);
   await reconciliation.getByLabel('账单期末余额').fill('900');
   await expect(reconciliation.getByText('期间资产转换 · 自动计入 -100 CNY')).toBeVisible();
-  await expect(reconciliation.getByText('差额').locator('..')).toContainText('0');
+  await expect(reconciliation.getByText('差额', { exact: true }).locator('..')).toContainText('0.00 CNY');
   await reconciliation.getByRole('button', { name: '完成对账', exact: true }).click();
   await expect(reconciliation).toBeHidden();
   await page.setViewportSize({ width: 390, height: 844 });

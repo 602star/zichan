@@ -418,12 +418,14 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     focusAttempts.current = 0;
     setPendingFocus(key);
   };
+  const supportsContinue = !!onSaveContinue;
+  const amountFirst = spec.fields[0]?.key === 'amount';
   useEffect(() => {
-    if (workspace === 'composer' && creating && !compactView && draftReady && !pendingDraft) {
+    if ((workspace === 'composer' || supportsContinue || amountFirst) && creating && !compactView && draftReady && !pendingDraft) {
       focusAttempts.current = 0;
       setPendingFocus('amount');
     }
-  }, [workspace, creating, compactView, draftReady, pendingDraft]);
+  }, [workspace, supportsContinue, amountFirst, creating, compactView, draftReady, pendingDraft]);
   useEffect(() => {
     if (!pendingFocus) return;
     const field = spec.fields.find((f) => f.key === pendingFocus);

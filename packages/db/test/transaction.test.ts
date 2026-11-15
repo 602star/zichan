@@ -705,6 +705,38 @@ describe('transactions persistence', () => {
     await store.close();
   });
 
+  it('requires an explicit finite statement balance with valid currency precision and cutoff', async () => {
+    const store = await openTransactionLedger();
+    try {
+      const input = { accountId: 'bank', assetId: 'GBP', statementDate: '2026-03-31', statementBalance: '', selectedTransactionIds: [] as string[] };
+      for (const statementBalance of ['', ' ', 'Infinity', 'NaN', 'abc', '0.001']) {
+        await expect(closeReconciliation(store, { ...input, statementBalance, createAdjustment: true })).rejects.toThrow();
+      }
+      await expect(closeReconciliation(store, { ...input, statementBalance: '0', statementDate: '2026-02-30' })).rejects.toThrow('截止日无效');
+      expect(await store.transactions.count()).toBe(0);
+      expect(await store.reconciliationSessions.count()).toBe(0);
+      expect(await closeReconciliation(store, { ...input, statementBalance: '0' })).toMatchObject({ statementBalance: '0', difference: '0' });
+      expect(await store.transactions.count()).toBe(0);
+    } finally { await store.close(); }
+  });
+
+  it('rejects a changed difference instead of silently changing the confirmed adjustment amount', async () => {
+    const store = await openTransactionLedger();
+    try {
+      const expense = await saveTransaction(store, tx({ amount: '10', accountId: 'bank' }));
+      const input = { accountId: 'bank', assetId: 'GBP', statementDate: '2026-03-31', statementBalance: '0', selectedTransactionIds: [expense.id], createAdjustment: true };
+      const preview = await previewReconciliation(store, input);
+      expect(preview.difference).toBe('10');
+      await saveTransaction(store, { ...expense, amount: '12' });
+      await expect(closeReconciliation(store, { ...input, expectedDifference: preview.difference })).rejects.toThrow('差额与刚才确认的不一致');
+      expect(await store.reconciliationSessions.count()).toBe(0);
+      expect(await store.transactions.count()).toBe(1);
+      const current = await previewReconciliation(store, input);
+      const session = await closeReconciliation(store, { ...input, expectedDifference: current.difference });
+      expect(await store.transactions.get(session.adjustmentTransactionId!)).toMatchObject({ amount: '12', adjustmentDirection: 'increase' });
+    } finally { await store.close(); }
+  });
+
   it('reconciles selected bank postings, creates an explicit adjustment, and undoes latest first', async () => {
     const store = await openTransactionLedger();
     const deposit = await saveTransaction(store, tx({ date: '2026-03-01', type: 'income', category: 'salary', amount: '1000', accountId: 'bank', status: 'cleared' }));

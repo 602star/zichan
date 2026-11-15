@@ -3,15 +3,26 @@ import { normalizeOccurrence } from './time.js';
 import { postingsFromChain, postingsFromTransaction, type Posting } from './postings.js';
 import type { Account, ChainWithSteps, Setting, Transaction } from './types.js';
 
+/** Detect old seed markers for normalization, never for account capabilities. */
 export function isDefaultAccount(account: Account): boolean {
   return account.purpose === 'default_expense' || account.purpose === 'default_income';
 }
 
+/** Seed identity survives renaming and changes to the user's default selections. */
+export function isSystemDefaultAccount(account: Account): boolean {
+  return isDefaultAccount(account) || account.id.endsWith(':default_expense') || account.id.endsWith(':default_income');
+}
+
+/** Older ledgers used untyped "other" accounts for external equity offsets.
+ * New accounts, including type "other", explicitly have purpose "funds". */
+export function isLegacyExternalAccount(account: Account): boolean {
+  return account.kind === 'other' && !account.purpose;
+}
+
 export function defaultTransactionAccount(accounts: Account[], setting: Setting | undefined, type: string): string | undefined {
-  const purpose = type === 'income' ? 'default_income' : 'default_expense';
   const selected = type === 'income' ? setting?.incomeDefaultAccountId : setting?.expenseDefaultAccountId;
-  const active = accounts.filter((a) => !a.isDeleted && a.isActive !== false);
-  return active.find((a) => a.id === selected)?.id ?? active.find((a) => a.purpose === purpose)?.id;
+  const active = accounts.filter((a) => !a.isDeleted && a.isActive !== false && !a.archivedAt && !isLegacyExternalAccount(a));
+  return active.find((a) => a.id === selected)?.id;
 }
 
 export function accountBalanceTiming(account: Account, transaction: Pick<Transaction,
@@ -34,7 +45,7 @@ export function accountTransactionPostings(transaction: Transaction, accounts: A
   return postingsFromTransaction(transaction).filter((posting) => {
     const account = accounts.find((a) => a.id === posting.accountId);
     if (!account) return true; // Read old exports without inventing an account.
-    if (isDefaultAccount(account) || account.kind === 'other') return false;
+    if (isLegacyExternalAccount(account)) return false;
     if (account.openingAssetId && posting.assetId !== account.openingAssetId) return true;
     const timing = accountBalanceTiming(account, transaction);
     if (timing === 'unknown') throw new Error(`请确认「${account.name}」的这笔记录发生在余额起点之前还是之后`);
@@ -43,7 +54,7 @@ export function accountTransactionPostings(transaction: Transaction, accounts: A
 }
 
 export function accountOpeningPostings(accounts: Account[]): Posting[] {
-  return accounts.filter((a) => !a.isDeleted && !isDefaultAccount(a) && a.openingBalance !== undefined && a.openingAssetId && a.balanceStartAt)
+  return accounts.filter((a) => !a.isDeleted && !isLegacyExternalAccount(a) && a.openingBalance !== undefined && a.openingAssetId && a.balanceStartAt)
     .map((a) => ({ assetId: a.openingAssetId!, accountId: a.id, amount: D(a.openingBalance!).toString(),
       date: a.balanceStartDate!, source: { kind: 'account_opening', id: a.id } }));
 }
@@ -53,7 +64,7 @@ export function accountChainPostings(chain: ChainWithSteps, accounts: Account[])
   return postingsFromChain(chain).filter((posting) => {
     const account = accounts.find((a) => a.id === posting.accountId);
     if (!account) return true;
-    if (isDefaultAccount(account) || account.kind === 'other') return false;
+    if (isLegacyExternalAccount(account)) return false;
     if (account.openingAssetId && posting.assetId !== account.openingAssetId) return true;
     const timing = accountBalanceTiming(account, chain.chain);
     if (timing === 'unknown') throw new Error('请补充资产转换的准确时间，以确认是否已包含在账户起始余额中');

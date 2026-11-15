@@ -3,6 +3,7 @@ import { useCompactView } from '../ui/useCompactView.js';
 import { CardFact } from '../ui/Card.js';
 import {
   D,
+  isLegacyExternalAccount,
   canonicalJson,
   freezeConversionQuote,
   normalizeOccurrence,
@@ -748,7 +749,7 @@ export function AddConversionModal({
   const accountSelect = (label: string, value: string, onChange: (value: string) => void, assetId?: string) => (
     <select aria-label={label} className="zc-select" value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">未分配账户</option>
-      {snap.accounts.filter((account) => !account.isDeleted && !account.purpose?.startsWith('default_') && account.kind !== 'other' && (account.id === value || account.isActive !== false)).map((account) => {
+      {snap.accounts.filter((account) => !account.isDeleted && !isLegacyExternalAccount(account) && (account.id === value || account.isActive !== false)).map((account) => {
         const balance = assetId ? accountPostings.filter((posting) => posting.accountId === account.id && posting.assetId === assetId).reduce((total, posting) => total.plus(posting.amount), D(0)) : undefined;
         return <option key={account.id} value={account.id}>{account.name}{balance ? ` · 当前 ${significant(balance)} ${code(assetId!)}${balance.lt(0) ? '（负余额）' : ''}` : ''}{account.isActive === false ? '（已归档）' : ''}</option>;
       })}

@@ -16,7 +16,7 @@ export function WorkspaceDialog({ workspace = 'page', navigationBlocked, onSaveS
   const compact = useCompactView();
   const nested = useContext(WorkspaceContext);
   const host = typeof document === 'undefined' ? null : document.getElementById('zc-workspace-editor');
-  if (compact || nested || !workspace || !host) return <DialogShell {...props} />;
+  if (compact || nested || !workspace || !host) return <DialogShell {...props} onSaveShortcut={onSaveShortcut} />;
   return <DesktopEditor {...props} host={host} workspace={workspace} navigationBlocked={navigationBlocked} onSaveShortcut={onSaveShortcut} />;
 }
 

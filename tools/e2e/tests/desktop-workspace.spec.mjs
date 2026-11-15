@@ -25,12 +25,12 @@ test('desktop avoids a duplicate asset overview while mobile keeps its fixed ass
   await page.screenshot({ path: test.info().outputPath('mobile-assets.png') });
 });
 
-test('desktop inline records, continuous entry and safe navigation use the real ledger', async ({ page }) => {
+test('desktop modal records, continuous entry and safe closing use the real ledger', async ({ page }) => {
   const errors = []; page.on('pageerror', (error) => errors.push(error.message));
   await openLedger(page);
   await nav(page, 'records').click();
   await page.locator('#transaction-records').getByRole('button', { name: '+ 记账', exact: true }).click();
-  await expect(entry(page)).toHaveAttribute('aria-modal', 'false');
+  await expect(entry(page)).toHaveAttribute('aria-modal', 'true');
   await expect(page.locator('#transaction-records')).toBeVisible();
   for (let n = 0; n < 10; n += 1) {
     await entry(page).getByLabel(/^金额/).fill(`${n + 1}.23`);
@@ -57,7 +57,7 @@ test('desktop inline records, continuous entry and safe navigation use the real 
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.locator('#transaction-records').getByRole('button', { name: '+ 记账', exact: true }).click();
   await entry(page).getByLabel(/^金额/).fill('99.99');
-  await page.locator('.zc-record-expansion').getByRole('button', { name: '编辑流水', exact: true }).click();
+  await entry(page).getByRole('button', { name: '取消', exact: true }).click();
   let guard = page.getByRole('dialog', { name: '关闭未保存表单', exact: true });
   await guard.getByRole('button', { name: '继续编辑', exact: true }).click();
   await expect(entry(page).getByLabel(/^金额/)).toHaveValue('99.99');
@@ -66,9 +66,9 @@ test('desktop inline records, continuous entry and safe navigation use the real 
   await expect(entry(page)).toBeHidden();
   await page.locator('.zc-record-expansion').getByRole('button', { name: '编辑流水', exact: true }).click();
   const edit = page.getByRole('dialog', { name: '编辑 · 日常收支', exact: true });
-  await expect(edit).toHaveAttribute('aria-modal', 'false');
+  await expect(edit).toHaveAttribute('aria-modal', 'true');
   await edit.getByLabel(/^金额/).fill('11.11');
-  await nav(page, 'accounts').click();
+  await edit.getByRole('button', { name: '取消', exact: true }).click();
   guard = page.getByRole('dialog', { name: '关闭未保存表单', exact: true });
   await guard.getByRole('button', { name: '继续编辑', exact: true }).click();
   await expect(edit.getByLabel(/^金额/)).toHaveValue('11.11');

@@ -257,4 +257,4 @@ export { ensureDefaultAccounts, createFundAccount, previewAccountAssignment, ass
 
 export { normalizeIdentity, masterIdentity, duplicateMasterData, DuplicateMasterDataError } from './master-data-identity.js';
 
-export { saveAccountDetails } from './account-onboarding.js';
+export { saveAccountDetails, setDefaultTransactionAccounts } from './account-onboarding.js';

@@ -59,6 +59,7 @@ export type AccountKind =
   | 'other';
 
 export interface Account extends BaseEntity {
+  /** default_* values retain legacy seed identity; postings still obey ordinary account rules. */
   purpose?: 'funds' | 'default_expense' | 'default_income';
   openingBalance?: string;
   openingAssetId?: string;

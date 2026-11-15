@@ -5,7 +5,7 @@ import { transactionFormFieldOptions } from './transactionFormPrefs.js';
  * EntityFormModal. Select options that depend on existing data take the snapshot.
  */
 import {
-  D, normalizeOccurrence, transactionCostFingerprint, isValidDay, localToday, newId, isDefaultAccount, defaultTransactionAccount, accountBalanceTiming, scheduleOccurrenceDate, listScheduleOccurrences,
+  D, normalizeOccurrence, transactionCostFingerprint, isValidDay, localToday, newId, isLegacyExternalAccount, defaultTransactionAccount, accountBalanceTiming, scheduleOccurrenceDate, listScheduleOccurrences,
   type Asset, type Account, type Attachment, type BudgetCategory, type Category, type DcaPlan,
   type PriceMark, type Game, type GameAccount, type GameSeason, type GameRecord, type GameCashflowMode, type GameCashflowRole, type FixedAsset,
   type FixedAssetCashflowMode, type FixedAssetCategory, type FixedAssetConsumable, type FixedAssetEvent, type FixedAssetGoal,
@@ -52,7 +52,7 @@ const assetOpts = (s: Snapshot) => s.assets.filter((a) => !a.isDeleted).map((a) 
 const accountOpts = (s: Snapshot) => s.accounts.filter((a) => !a.isDeleted && a.isActive !== false).map((a) => ({ value: a.id, label: a.name }));
 const directionAccountOpts = (s: Snapshot, type: string) => {
   const selected = defaultTransactionAccount(s.accounts, s.setting, type);
-  return s.accounts.filter((a) => !a.isDeleted && a.isActive !== false && a.kind !== 'other' && (type === 'transfer' ? !isDefaultAccount(a) : a.purpose !== (type === 'income' ? 'default_expense' : 'default_income')))
+  return s.accounts.filter((a) => !a.isDeleted && a.isActive !== false && !isLegacyExternalAccount(a))
     .sort((a, b) => Number(b.id === selected) - Number(a.id === selected)).map((a) => ({ value: a.id, label: a.name }));
 };
 function payeeFields(snap: Snapshot, key = 'payeeId', nameKey = 'merchant', extra: Partial<FieldDef> = {}): FieldDef[] {
@@ -283,6 +283,7 @@ export function accountForm(): EntityFormSpec<Account> {
     }),
     fromValues: (v, e) => ({
       ...e, ...base(e),
+      purpose: e ? e.purpose : 'funds',
       name: v.name,
       kind: v.kind as Account['kind'],
       platform: S(v.platform),
@@ -539,19 +540,18 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
     const type = v.type ?? 'expense';
     const defaultId = defaultTransactionAccount(snap.accounts, snap.setting, type);
     return snap.accounts.filter((a) => ((!a.isDeleted && a.isActive !== false) || a.id === v.accountId) &&
-      (type === 'transfer' ? !isDefaultAccount(a) && a.kind !== 'other' : a.purpose !== (type === 'income' ? 'default_expense' : 'default_income')))
+      !isLegacyExternalAccount(a))
       .sort((a, b) => Number(b.id === defaultId) - Number(a.id === defaultId))
       .map((a) => ({ value: a.id, label: a.name + (a.isDeleted || a.isActive === false ? '（历史账户）' : '') }));
   };
-  const hasFunds = snap.accounts.some((a) => !isDefaultAccount(a) && a.kind !== 'other');
   const accountFields: FieldDef[] = usesAccounts ? [
-    { key: 'accountId', label: '收付款账户', type: 'select', singleOptionSummary: !hasFunds, half: true, options: transactionAccounts, lockedVisible: true, required: true, hint: hasFunds ? undefined : '使用默认收支账户；需要细分时可在账户页添加银行卡或钱包。' },
+    { key: 'accountId', label: '收付款账户', type: 'select', singleOptionSummary: false, half: true, options: transactionAccounts, lockedVisible: true, required: true, hint: undefined },
     { key: 'balanceTiming', resetWhen: ['date', 'time', 'timezone', 'accountId'], label: '相对于账户余额起点', type: 'select', allowEmpty: true,
       options: [{ value: 'before', label: '之前：已包含在起始余额中' }, { value: 'after', label: '之后：需要计算余额变化' }],
       visibleWhen: (v) => { const a = snap.accounts.find((a) => a.id === v.accountId); return !!a?.balanceStartAt && a.openingAssetId === v.assetId && accountBalanceTiming(a, { date: v.date ?? '', time: v.time || undefined, timezone: v.timezone || undefined }) === 'unknown'; },
       hint: '旧记录时间不够精确时，请确认是否已经包含在填写的余额中。', lockedVisible: true },
     { key: 'transferAssetId', label: '转入币种', type: 'select', half: true, options: settlementOpts(snap), allowEmpty: true, required: true, lockedVisible: true, visibleWhen: (v) => v.type === 'transfer' },
-    { key: 'transferAccountId', label: '转入账户', type: 'select', half: true, options: snap.accounts.filter((a) => !isDefaultAccount(a) && a.kind !== 'other' && a.isActive !== false).map((a) => ({ value: a.id, label: a.name })), allowEmpty: true, required: true, lockedVisible: true, visibleWhen: (v) => v.type === 'transfer' },
+    { key: 'transferAccountId', label: '转入账户', type: 'select', half: true, options: snap.accounts.filter((a) => !isLegacyExternalAccount(a) && a.isActive !== false).map((a) => ({ value: a.id, label: a.name })), allowEmpty: true, required: true, lockedVisible: true, visibleWhen: (v) => v.type === 'transfer' },
     { key: 'transferAmount', label: '转入金额', type: 'number', half: true, required: true, lockedVisible: true, visibleWhen: (v) => v.type === 'transfer' },
     { key: 'status', label: '待核实', type: 'checkbox', checkboxValues: { checked: 'pending', unchecked: 'cleared', label: '这笔记录需要稍后核实' }, hint: '标记后仍计入收支和账户余额。核实完成后可取消勾选。', defaultValue: 'cleared', section: 'more' },
   ] : [];
@@ -750,7 +750,11 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       if (!D(v.amount || '0').gt(0)) return { amount: '金额必须大于 0' } as Record<string, string>;
       if (v.type === 'transfer' && usesAccounts && (!v.accountId || !v.transferAccountId)) return { accountId: '转账需要转出账户', transferAccountId: '转账需要转入账户' } as Record<string, string>;
       if (v.type === 'refund' && !v.refundForId) return { refundForId: '退款必须关联原支出' } as Record<string, string>;
-      if (v.type === 'refund' && v.refundAppliedAmount && !D(v.refundAppliedAmount).gt(0)) return { refundAppliedAmount: '冲减金额必须大于 0' } as Record<string, string>;
+      if (v.type === 'refund' && refundNeedsSeparateOffset(v) && v.refundAppliedAmount && !D(v.refundAppliedAmount).gt(0)) return { refundAppliedAmount: '冲减金额必须大于 0' } as Record<string, string>;
+      if (v.type === 'refund' && options.refundRemaining !== undefined) {
+        const key = refundNeedsSeparateOffset(v) ? 'refundAppliedAmount' : 'amount';
+        if (v[key] && D(v[key]).gt(options.refundRemaining)) return { [key]: `退款金额不能超过剩余可退 ${options.refundRemaining}` } as Record<string, string>;
+      }
       return undefined;
     },
   };

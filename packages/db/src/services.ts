@@ -7,7 +7,7 @@
 import {
   D, endOfMonth, isValidDay,
   componentHostAt,
-  defaultTransactionAccount, isDefaultAccount, accountTransactionPostings, Decimal, traceChain, conversionStepAmounts, assertConversionShape, matchSell, lotFromTrace, isTransactionActive, newId, refundAppliedAmount,
+  defaultTransactionAccount, isDefaultAccount, isSystemDefaultAccount, isLegacyExternalAccount, accountTransactionPostings, Decimal, traceChain, conversionStepAmounts, assertConversionShape, matchSell, lotFromTrace, isTransactionActive, newId, refundAppliedAmount,
   assertDcaExecutionShape, assertDcaPlanShape, assertTransactionShape, dcaOccurrenceDate, transactionReportingEffect,
   normalizeOccurrence, canonicalJson, conversionFinancialFingerprint, assertCostBasisOpening, usesAssetCostState, assetCostSourceSummary, freezeConversionQuote, dayOfInstant,
   listScheduleOccurrences, nextUnhandledScheduleOccurrence, postingsFromTransaction,
@@ -2226,6 +2226,8 @@ export interface ReconciliationInput {
   statementBalance: string;
   selectedTransactionIds: string[];
   createAdjustment?: boolean;
+  /** Reject a changed balance calculation instead of applying an unseen adjustment. */
+  expectedDifference?: string;
   note?: string;
 }
 
@@ -2238,16 +2240,25 @@ function postingAmount(transaction: Transaction, accountId: string, assetId: str
 
 export async function previewReconciliation(store: SqlLedgerStore, input: ReconciliationInput): Promise<ReconciliationPreview> {
   if (!input.accountId || !input.assetId) throw new Error('请选择对账账户和币种');
+  if (!input.statementBalance.trim()) throw new Error('请填写账单期末余额，余额为零时请填写 0');
+  let statementBalance: Decimal;
+  try { statementBalance = D(input.statementBalance.trim()); }
+  catch { throw new Error('请填写有效的账单期末余额'); }
+  if (!statementBalance.isFinite()) throw new Error('请填写有效的账单期末余额');
+  if (!isValidDay(input.statementDate)) throw new Error('账单截止日无效');
+  const asset = await store.assets.get(input.assetId);
+  if (!asset || asset.isDeleted) throw new Error('请选择有效的对账币种');
+  if (statementBalance.decimalPlaces() > asset.decimals) throw new Error('账单余额超过币种精度');
   const account = await store.accounts.get(input.accountId);
-  if (!account || isDefaultAccount(account)) throw new Error('请选择银行卡或钱包进行对账');
+  if (!account || isLegacyExternalAccount(account)) throw new Error('请选择资金账户进行对账');
+  if (isSystemDefaultAccount(account)) throw new Error('系统预建账户不进行账单对账，请选择自行添加的资金账户');
   if (account.balanceStartDate && input.statementDate < account.balanceStartDate) throw new Error('账单日不能早于余额起点');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.statementDate)) throw new Error('账单截止日无效');
   const sessions = (await store.reconciliationSessions.list())
     .filter((row) => row.status === 'closed' && row.accountId === input.accountId && row.assetId === input.assetId)
     .sort((a, b) => b.statementDate.localeCompare(a.statementDate) || (b.closedAt ?? '').localeCompare(a.closedAt ?? ''));
   const previousSession = sessions.find((row) => row.statementDate < input.statementDate);
   if (sessions.some((row) => row.statementDate >= input.statementDate && row.id !== input.id)) {
-    throw new Error('账单截止日必须晚于该账户最近一次对账');
+    throw new Error(`账单截止日必须晚于该账户此币种最近一次对账（${sessions[0]!.statementDate}）；更正已核对的账单，请先撤销该期对账`);
   }
   const activeItems = await store.reconciliationItems.list();
   const closedIds = new Set(sessions.map((row) => row.id));
@@ -2288,7 +2299,7 @@ export async function previewReconciliation(store: SqlLedgerStore, input: Reconc
     .reduce((total, row) => total.plus(row.postingAmount), conversionTotal);
   const openingBalance = D(previousSession?.statementBalance ?? (account.openingAssetId === input.assetId ? account.openingBalance : undefined) ?? 0);
   const clearedBalance = openingBalance.plus(selectedTotal);
-  const difference = D(input.statementBalance || 0).minus(clearedBalance);
+  const difference = statementBalance.minus(clearedBalance);
   return {
     previousSession,
     excluded,
@@ -2308,6 +2319,7 @@ export async function closeReconciliation(store: SqlLedgerStore, input: Reconcil
   const rows = preview.candidates.filter((row) => selected.has(row.transaction.id));
   if (rows.length !== selected.size) throw new Error('部分流水已经被对账或不属于当前账单');
   const originalDifference = D(preview.difference);
+  if (input.expectedDifference !== undefined && !originalDifference.eq(input.expectedDifference)) throw new Error('账户或流水已变化，差额与刚才确认的不一致，请重新核对后再完成');
   if (!originalDifference.isZero() && !input.createAdjustment) throw new Error(`对账差额为 ${originalDifference.toString()}，请继续核对或创建调整流水`);
 
   const sessionId = input.id ?? newId();
@@ -2328,7 +2340,7 @@ export async function closeReconciliation(store: SqlLedgerStore, input: Reconcil
       accountId: input.accountId,
       assetId: input.assetId,
       statementDate: input.statementDate,
-      statementBalance: D(input.statementBalance || 0).toString(),
+      statementBalance: D(input.statementBalance).toString(),
       openingBalance: preview.openingBalance,
       selectedTotal: D(preview.selectedTotal).plus(originalDifference).toString(),
       conversionTotal: preview.conversionTotal,
@@ -4928,25 +4940,6 @@ export async function importLedger(
 ): Promise<ImportResult> {
   const sourcePreflight = preflightImport(data);
   if (!sourcePreflight.ok) throw new Error(`importLedger: preflight failed (${sourcePreflight.issues.filter((i) => i.level === 'error').map((i) => `${i.code}: ${i.message}`).join('; ')})`);
-  const existingDefaults = (await store.accounts.list()).filter(isDefaultAccount);
-  const mapping = new Map<string, string>();
-  for (const account of data.accounts as import('@zichan/core').Account[]) {
-    const existing = existingDefaults.find((a) => a.purpose === account.purpose);
-    if (existing && existing.id !== account.id) mapping.set(account.id, existing.id);
-  }
-  if (mapping.size) {
-    const accountFields = new Set(['accountId', 'accountFromId', 'accountToId', 'transferAccountId', 'defaultAccountId', 'expenseDefaultAccountId', 'incomeDefaultAccountId', 'balanceTimingAccountId']);
-    const remap = (value: unknown): unknown => {
-      if (Array.isArray(value)) return value.map(remap);
-      if (!value || typeof value !== 'object') return value;
-      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key,
-        accountFields.has(key) && typeof item === 'string' ? mapping.get(item) ?? item : remap(item)]));
-    };
-    const rewritten = remap(data) as LedgerBackup;
-    rewritten.accounts = (data.accounts as import('@zichan/core').Account[]).map((a) => mapping.has(a.id) ? existingDefaults.find((x) => x.id === mapping.get(a.id))! : a);
-    rewritten.attachments = (rewritten.attachments as import('@zichan/core').Attachment[]).map((a) => a.entityType === 'account' && mapping.has(a.entityId) ? { ...a, entityId: mapping.get(a.entityId)! } : a);
-    data = rewritten;
-  }
   const preflight = preflightImport(data);
   if (!preflight.ok) {
     throw new Error(`importLedger: preflight failed (${preflight.issues.filter((i) => i.level === 'error').map((i) => `${i.code}: ${i.message}`).join('; ')})`);
@@ -5062,6 +5055,10 @@ export async function importLedger(
       }
     });
     await putAll(store.attachments, data.attachments);
+    if ((data.accounts as import('@zichan/core').Account[]).some(isDefaultAccount)) {
+      const { ensureDefaultAccounts } = await import('./account-onboarding.js');
+      await ensureDefaultAccounts(store);
+    }
     await options.afterImport?.(batchStore);
     return { entities, chains: data.chains.length };
   }), 'import', { undoable: false, onCommitted: options.onCommitted });

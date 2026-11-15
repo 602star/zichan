@@ -5,6 +5,7 @@ const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const transactions = readFileSync(new URL('../src/screens/Transactions.tsx', import.meta.url), 'utf8');
+const accounts = readFileSync(new URL('../src/ui/AccountsWorkspace.tsx', import.meta.url), 'utf8');
 const reports = readFileSync(new URL('../src/screens/Reports.tsx', import.meta.url), 'utf8');
 const charts = readFileSync(new URL('../src/ui/charts.tsx', import.meta.url), 'utf8');
 const reportInsights = readFileSync(new URL('../src/ui/TransactionReportInsights.tsx', import.meta.url), 'utf8');
@@ -78,7 +79,9 @@ describe('responsive shell contract', () => {
   });
 
   it('reflows dense ledger and server controls while keeping charts scrollable', () => {
-    expect(transactions).toContain('zc-account-filter-grid');
+    expect(accounts).toContain('zc-account-list-tools');
+    expect(accounts).toContain('zc-account-ledger-tools');
+    expect(css).toMatch(/\.zc-account-list-tools\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\)/);
     expect(transactions).toContain('zc-transaction-timeline-entry');
     expect(transactions).toContain('zc-budget-grid');
     expect(adminTable).toContain("overflowX: 'auto'");
@@ -190,13 +193,10 @@ describe('responsive shell contract', () => {
    * desktop columns and gets clipped by the (previously) hidden overflow.
    * `repeat(auto-fit|auto-fill, ...)` grids are exempt: they already wrap.
    */
-  /* 桌面真实表格保留列头与宽度，手机重排记录；分类保留完整悬停文本。 */
+  /* 桌面保留语义列头，手机重排记录；实际分类宽度由浏览器回归逐项验收。 */
   it('keeps the transaction table readable across desktop and phone widths', () => {
     expect(transactions).toContain('<table className={`zc-transaction-table');
     expect(transactions).toContain('<th scope="col" className="is-category">分类</th>');
-    expect(css).toMatch(/\.zc-transaction-table th\.is-category\s*\{\s*width:\s*120px/);
-    expect(css).toMatch(/@media \(min-width: 1200px\) \{\s*\.zc-transaction-table th\.is-category\s*\{ width: 180px/);
-    expect(transactions).toMatch(/maxWidth:\s*'100%'[\s\S]{0,140}textOverflow:\s*'ellipsis'/);
     expect(transactions).toContain('title={item.categoryLabel}');
     expect(css).toMatch(/\.zc-transaction-table thead\s*\{ display: none; \}/);
     expect(css).toMatch(/\.zc-transaction-row\s*\{[\s\S]{0,160}grid-template-columns:\s*minmax\(0,\s*1fr\)\s*auto\s*!important/);

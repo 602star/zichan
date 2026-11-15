@@ -6,7 +6,7 @@ import { useMobileHomeFocus, writeMobileHomeFocus } from '../mobile-preferences.
 import { accountSessionStorage } from '../account-storage.js';
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { checkConsistency, recomputeCaches, purgeTombstones, type BackupPreflight, type ConsistencyIssue } from '@zichan/db';
-import { type AsOfMode, type LotMethod, type Setting, localToday } from '@zichan/core';
+import { type AsOfMode, type LotMethod, type Setting, localToday, isLegacyExternalAccount } from '@zichan/core';
 import { useStore } from '../db/store.js';
 import { useSnapshot } from '../db/snapshot.js';
 import { baseAsset } from '../db/derive.js';
@@ -748,7 +748,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
               {(['expense', 'income'] as const).map((direction) => <div className="zc-field" key={direction}>
                 <label className="zc-label">{direction === 'expense' ? '支出默认账户' : '收入默认账户'}</label>
                 <select className="zc-select" aria-label={direction === 'expense' ? '支出默认账户' : '收入默认账户'} value={(direction === 'expense' ? setting?.expenseDefaultAccountId : setting?.incomeDefaultAccountId) ?? ''} onChange={(e) => saveSetting(direction === 'expense' ? { expenseDefaultAccountId: e.target.value } : { incomeDefaultAccountId: e.target.value })}>
-                  {snap.accounts.filter((a) => a.isActive !== false && a.kind !== 'other' && a.purpose !== (direction === 'expense' ? 'default_income' : 'default_expense')).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  {snap.accounts.filter((a) => a.isActive !== false && !isLegacyExternalAccount(a)).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
                 </select><p className="zc-meta">仅用于新的记录，已有记录保留原账户。全部功能均可使用。</p>
               </div>)}
               <div className="zc-field">

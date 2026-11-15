@@ -20,19 +20,13 @@ export function baseAsset(snap: Snapshot): Asset | undefined {
   );
 }
 
-/** Ids of equity/opening accounts (kind 'other') — excluded from cash balances. */
-function externalAccountIds(snap: Snapshot): Set<string> {
-  return new Set(snap.accounts.filter((a) => a.kind === 'other').map((a) => a.id));
-}
-
 /** Postings that move financial value. Game settlement is represented by its
  * linked or module-created transaction, never posted directly by a game record. */
 export function financialPostings(snap: Snapshot): Posting[] {
-  const external = externalAccountIds(snap);
   const out: Posting[] = accountOpeningPostings(snap.accounts);
   for (const c of snap.chains) out.push(...accountChainPostings(c, snap.accounts));
   for (const t of snap.transactions) out.push(...accountTransactionPostings(t, snap.accounts));
-  return out.filter((p) => !(p.accountId && external.has(p.accountId)));
+  return out;
 }
 
 export function balances(snap: Snapshot): Balance[] {
