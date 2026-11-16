@@ -11,7 +11,7 @@ import { sectionId } from '../src/admin/ui.js';
  * links to a section it does not render.
  */
 
-const PAGES = ['OverviewPage', 'SecurityPage', 'UserDetailPage', 'LogsPage', 'UsersPage', 'SessionsPage'];
+const PAGES = ['OverviewPage', 'SecurityPage', 'UserDetailPage', 'LogWorkspacePage', 'UsersPage', 'SessionsPage'];
 const readPage = (name: string): string => readFileSync(new URL(`../src/admin/${name}.tsx`, import.meta.url), 'utf8');
 
 describe('section anchors', () => {

@@ -14,6 +14,7 @@ import {
   type ServerLogLevel,
   type SyncServerStore,
 } from './store.js';
+import { logRequestContext } from './log-context.js';
 
 export interface JobContext {
   job: AdminJob;
@@ -98,7 +99,7 @@ export function createJobRunner(deps: JobRunnerDeps) {
   let activeDrain: Promise<void> | undefined;
   let stopped = false;
 
-  const kick = (): void => { void drain().catch(() => undefined); };
+  const kick = (): void => { logRequestContext.exit(() => { void drain().catch(() => undefined); }); };
 
   const execute = async (job: AdminJob): Promise<void> => {
     // Rights can be revoked while a job waits in the queue; re-checking here is what makes

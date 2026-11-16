@@ -26,52 +26,25 @@ test('investigates logs and monitoring with readable views on desktop and mobile
     await page.getByRole('button', { name: '登录管理后台', exact: true }).click();
     await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible();
 
-    await page.goto(`${url}/e2e-private-entry/admin/logs`);
-    await expect(page.getByRole('heading', { name: '运行日志' })).toBeVisible();
-    await page.getByRole('textbox', { name: '关键词' }).fill('register_success');
-    await page.getByRole('button', { name: '查询日志' }).click();
-    await expect(page).toHaveURL(/search=register_success/);
-    await expect(page.getByText('来源：同步服务器 SQLite')).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath('logs-desktop.png'), fullPage: true });
-
-    await page.getByRole('navigation', { name: '日志与审计视图' }).getByRole('link', { name: /管理审计/ }).click();
-    await expect(page.getByRole('heading', { name: '管理审计' })).toBeVisible();
-    await expect(page.getByText(/失败尝试在页底单独列出/)).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath('audit-desktop.png'), fullPage: true });
-    await page.getByRole('navigation', { name: '日志与审计视图' }).getByRole('link', { name: /登录安全/ }).click();
-    await expect(page.getByRole('heading', { name: '登录安全' })).toBeVisible();
-
-    await page.goto(`${url}/e2e-private-entry/admin/monitor`);
-    await expect(page.getByRole('heading', { name: '监控中心' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: '请求与异常' })).toBeVisible();
-    await page.getByRole('button', { name: '查看告警记录' }).click();
-    await expect(page.getByRole('heading', { name: '告警历史' })).toBeVisible();
-    await page.getByRole('button', { name: '测试通知' }).click();
-    await expect(page.getByText('没有启用的通知渠道')).toBeVisible();
-    await page.goBack();
-    await expect(page.getByRole('heading', { name: '监控中心' })).toBeVisible();
-    await page.getByRole('navigation', { name: '运维监测视图' }).getByRole('button', { name: /访问统计/ }).click();
-    await expect(page.getByRole('heading', { name: '访问统计' })).toBeVisible();
-    await expect(page.getByText('PV · 页面访问')).toBeVisible();
-    await expect(page.getByText('UV · 去重浏览器')).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath('traffic-desktop.png'), fullPage: true });
-    await page.getByRole('navigation', { name: '运维监测视图' }).getByRole('button', { name: /指标总表/ }).click();
-    await expect(page.getByRole('heading', { name: '指标总表' })).toBeVisible();
+    // Legacy links converge on the sole owning page, retaining the selected range.
+    for (const [legacy, canonical, heading] of [
+      ['monitor?view=traffic&range=1h', 'traffic\\?range=1h', '访问分析'],
+      ['monitor?view=overview&range=7d', 'requests\\?range=7d', '请求分析'],
+      ['resources', 'database', '数据库'],
+    ]) {
+      await page.goto(`${url}/e2e-private-entry/admin/${legacy}`);
+      await expect(page).toHaveURL(new RegExp(`/admin/${canonical}`));
+      await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
+    }
+    await page.goto(`${url}/e2e-private-entry/admin/monitor?view=metrics`);
+    await expect(page.getByRole('heading', { name: '运行监控', exact: true })).toBeVisible();
     await page.getByRole('textbox', { name: '搜索指标' }).fill('HTTP');
     await expect(page.getByText('HTTP 请求量', { exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('metrics-desktop.png'), fullPage: true });
-    await page.getByRole('navigation', { name: '运维监测视图' }).getByRole('button', { name: /资源状态/ }).click();
-    await expect(page.getByRole('heading', { name: '资源状态' })).toBeVisible();
-    await expect(page.getByText(/运行方式：/)).toBeVisible();
-    await expect(page.getByRole('heading', { name: '请求与异常' })).toHaveCount(0);
-    await page.screenshot({ path: testInfo.outputPath('resources-desktop.png'), fullPage: true });
-    await page.getByRole('navigation', { name: '运维监测视图' }).getByRole('button', { name: /服务占用/ }).click();
-    await expect(page.getByRole('heading', { name: '服务占用' })).toBeVisible();
-
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${url}/e2e-private-entry/admin/monitor?view=resources&range=1h`);
-    await expect(page.getByRole('heading', { name: '资源状态' })).toBeVisible();
-    await expect(page.getByText(/运行方式：/)).toBeVisible();
+    await expect(page).toHaveURL(/view=system/);
+    await expect(page.getByRole('img', { name: '系统内存趋势', exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
     await page.screenshot({ path: testInfo.outputPath('resources-mobile.png'), fullPage: true });
   } finally {

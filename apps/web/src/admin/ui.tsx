@@ -682,5 +682,5 @@ export function quotaLimit(value: number | null): string {
 }
 
 export function when(value: string | null | undefined): string {
-  return value ? new Date(value).toLocaleString() : '暂无数据';
+  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '暂无数据';
 }

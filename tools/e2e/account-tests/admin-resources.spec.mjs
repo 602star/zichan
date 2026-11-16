@@ -56,45 +56,21 @@ async function signIn(page, url, username = 'operator') {
   await expect(page.getByRole('heading', { name: '运行概览' })).toBeVisible({ timeout: 30_000 });
 }
 
-test('shows server and software monitoring together without leaving the page', async ({ page }) => {
+test('keeps application and system monitoring distinct from database maintenance', async ({ page }) => {
   const f = await fixture();
   try {
     await signIn(page, f.url);
-    await clickAdminLink(page, '监控中心');
-    await expect(page).toHaveURL(/\/admin\/monitor$/);
-    await expect(page.getByRole('heading', { name: '监控中心' })).toBeVisible();
-    const views = page.getByRole('navigation', { name: '运维监测视图' });
-    await views.getByRole('button', { name: /资源状态/ }).click();
-    await expect(page.locator('#section-服务器资源监控')).toBeVisible();
-    await expect(page.getByText(/Windows 直接运行|Linux 直接运行|Linux Docker/)).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByRole('img', { name: /CPU 趋势，近 24h/ }).first()).toBeVisible();
-    const memoryTrend = page.getByRole('img', { name: /内存趋势，近 24h/ }).first();
-    await expect(memoryTrend).toBeVisible();
-    // A host probe may be unavailable under CI load. The chart must still explain the gap.
-    const memoryReading = memoryTrend.locator('circle').first();
-    if (await memoryReading.count() === 0) {
-      await expect(page.getByText(/内存暂不可读/)).toBeVisible();
-      await expect(page.getByText('已用内存：暂无读数')).toBeVisible();
-    } else {
-      await expect(memoryReading).toBeVisible();
-    }
-    await views.getByRole('button', { name: /服务占用/ }).click();
-    await expect(page.locator('#section-软件运行占用监控')).toBeVisible();
-    await expect(page.getByRole('img', { name: '软件内存趋势，近 24h' })).toBeVisible();
-    await views.getByRole('button', { name: /运行总览/ }).click();
-    await expect(page.getByRole('img', { name: '日志异常趋势，近 24h' })).toBeVisible();
-    await expect(page.getByText(/当前未保存可计算 API P95/)).toBeVisible();
+    await clickAdminLink(page, '运行监控');
+    await expect(page.getByText('RSS', { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole('img', { name: '进程 RSS 与 V8 堆趋势', exact: true })).toBeVisible();
+    const views = page.getByRole('navigation', { name: '运行监控视图' });
+    await views.getByRole('button', { name: /系统资源/ }).click();
+    await expect(page.getByRole('img', { name: '系统内存趋势', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '扫描表占用' })).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.getByLabel('历史趋势时间范围').getByRole('button', { name: '1h', exact: true }).click();
-    await expect(page.getByLabel('历史趋势时间范围').getByRole('button', { name: '1h', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    await views.getByRole('button', { name: /服务占用/ }).click();
-    await expect(page.getByRole('img', { name: '软件内存趋势，近 1h' })).toBeVisible();
-    await expect(page).toHaveURL(/\/admin\/monitor\?/);
-    await clickAdminLink(page, '运行日志');
-    await expect(page.getByRole('heading', { name: '错误记录趋势 · 近 24 小时' })).toBeVisible();
-    await page.getByLabel('日志趋势时间范围').getByRole('button', { name: '近 7 天' }).click();
-    await expect(page.getByRole('heading', { name: '错误记录趋势 · 近 7 天' })).toBeVisible();
+    await expect(page).toHaveURL(/range=1h/);
   } finally { await f.close(); }
 });
 
@@ -106,16 +82,7 @@ test('shows process and database readings, and scans tables only on request', as
     await page.route('**/api/admin/resources?tables=1', (route) => { tableScans += 1; void route.continue(); });
 
     await signIn(page, f.url);
-    await clickAdminLink(page, '监控中心');
-    await page.getByRole('navigation', { name: '运维监测视图' }).getByRole('button', { name: /服务占用/ }).click();
-    await expect(page.locator('#section-软件运行占用监控')).toBeVisible();
-
-    // A real reading: resident memory is always larger than zero.
-    await expect(page.getByText('常驻内存（RSS）', { exact: true })).toBeVisible();
-    await expect(page.getByText(/^[1-9][\d.]* (B|KiB|MiB|GiB)$/).first()).toBeVisible();
-    await expect(page.getByText('事件循环延迟', { exact: true })).toBeVisible();
-    // The boundary of what these numbers cover is stated on the page, not left to the reader.
-    await expect(page.getByText(/只统计同步服务器进程本身/)).toBeVisible({ timeout: 20_000 });
+    await clickAdminLink(page, '数据库');
 
     // Database structure is available without any scan.
     await expect(page.getByText('日志模式', { exact: true })).toBeVisible();
@@ -133,7 +100,7 @@ test('shows process and database readings, and scans tables only on request', as
 
     // Reloading the page must not silently start scanning again.
     await page.reload();
-    await expect(page.getByRole('heading', { name: '监控中心' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '数据库' })).toBeVisible();
     await expect(page.getByText(/尚未扫描/)).toBeVisible();
     expect(tableScans).toBe(1);
   } finally { await f.close(); }
@@ -143,14 +110,12 @@ test('queues ANALYZE from the page and reports it as a task', async ({ page }) =
   const f = await fixture();
   try {
     await signIn(page, f.url);
-    await clickAdminLink(page, '监控中心');
-    await page.getByRole('navigation', { name: '运维监测视图' }).getByRole('button', { name: /服务占用/ }).click();
-    await expect(page.getByRole('heading', { name: '监控中心' })).toBeVisible();
+    await clickAdminLink(page, '数据库');
+    await expect(page.getByRole('heading', { name: '数据库' })).toBeVisible();
 
     // Creating the task keeps the operator on the monitoring page.
     await page.getByRole('button', { name: '重建查询计划统计' }).click();
-    await expect(page.getByText(/已创建维护任务/)).toBeVisible();
-    await expect(page).toHaveURL(/\/admin\/monitor\?view=service/);
+    await expect(page).toHaveURL(/\/admin\/jobs\?job=/);
   } finally { await f.close(); }
 });
 
@@ -166,12 +131,10 @@ test('lets a read-only operator read the page and refuses the write', async ({ p
 
     await signIn(page, f.url, 'viewer-one');
     await expect(page.getByRole('status')).toContainText('只读运维角色');
-    await clickAdminLink(page, '监控中心');
-    await page.getByRole('navigation', { name: '运维监测视图' }).getByRole('button', { name: /服务占用/ }).click();
-    await expect(page.getByRole('heading', { name: '监控中心' })).toBeVisible();
+    await clickAdminLink(page, '数据库');
+    await expect(page.getByRole('heading', { name: '数据库' })).toBeVisible();
 
     // Reading stays available, including the on-demand scan.
-    await expect(page.getByText('常驻内存（RSS）', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: '扫描表占用' }).click();
     await expect(page.getByRole('cell', { name: 'sync_users', exact: true })).toBeVisible();
     // The write control is disabled for this role, and the server refuses it independently.
@@ -193,8 +156,7 @@ test('names a server older than the page instead of echoing "not found"', async 
       route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'not found' }) }));
 
     await signIn(page, f.url);
-    await clickAdminLink(page, '监控中心');
-    await page.getByRole('navigation', { name: '运维监测视图' }).getByRole('button', { name: /服务占用/ }).click();
+    await clickAdminLink(page, '数据库');
     // The console states the mismatch and the fix rather than passing the server's wording
     // through, which reads like the data is gone.
     await expect(page.getByText(/运行中的服务端比当前页面旧/).first()).toBeVisible();

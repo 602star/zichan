@@ -1,5 +1,6 @@
 /** Encrypted sync storage with optional account key custody and transactional SQLite WAL. */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { logRequestContext, logComponent } from './log-context.js';
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
@@ -507,7 +508,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           blobStore.chunk(username, ledgerId, blobId, index),
       });
   const log = async (level: ServerLog['level'], action: string, message: string, meta: Omit<ServerLog, 'id' | 'at' | 'level' | 'action' | 'message'> = {}) => {
-    await store.appendLog({ id: randomBytes(12).toString('hex'), at: nowIso(), level, action, message, ...meta });
+    const context = logRequestContext.getStore();
+    if (action === 'login_mfa_success' && context) context.authMethod = meta.detail?.['method'] === 'recovery' ? 'recovery_code' : 'totp';
+    await store.appendLog({ id: randomBytes(12).toString('hex'), at: nowIso(), level, action, message, ...meta,
+      ip: meta.ip ?? context?.ip,
+      detail: { serviceId: 'sync-server', environment: process.env.NODE_ENV ?? 'development', instanceId: store.logWorkspace.instanceId,
+        component: logComponent(action), ...(context ? { requestId: context.requestId, userAgent: context.userAgent, authMethod: context.authMethod } : {}),
+        ...(meta.username && /login|logout|device|session/.test(action) ? { identifierHash: createHmac('sha256', secret).update(meta.username).digest('hex') } : {}), ...meta.detail } });
   };
   // The bucket key stays the primary key; `scope`/`source` are recorded alongside it so the
   // console can show what is being throttled without parsing the key (an IPv6 source contains
@@ -648,7 +655,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       kind: input.adminContext ? 'admin' : 'ledger',
     });
     await store.noteLogin(input.user.username);
-    await log('info', 'login_success', 'Sync user logged in', { ip: input.ip, username: input.user.username, detail: { sessionId: session.id, deviceId: session.deviceId } });
+    await log('info', 'login_success', 'Sync user logged in', { ip: input.ip, username: input.user.username, detail: { sessionId: session.id, deviceId: session.deviceId, deviceName: session.deviceName, accountId: input.user.accountId, actorType: input.adminContext ? 'administrator' : 'user', mfa: ['totp', 'recovery_code'].includes(logRequestContext.getStore()?.authMethod ?? '') } });
     const replica = await store.getReplica(input.user.username);
     if (cookieSession) browserSession.write(input.request, input.response, refreshToken, session.kind === 'ledger' ? session.expiresAt : undefined);
     return {
@@ -814,7 +821,10 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   // Handled here so a caller that never observes `started` cannot crash the process,
   // while `service.started` still rejects for the launcher.
   void started.catch(() => undefined);
-  const server = createServer(async (req, res) => {
+  const server = createServer((req, res) => logRequestContext.run({
+    requestId: `req-${randomBytes(REQUEST_ID_BYTES).toString('hex')}`, ip: origin.clientIp(req),
+    userAgent: (req.headers['user-agent'] ?? '').slice(0, 512), method: req.method ?? 'GET', instanceId: store.logWorkspace.instanceId,
+  }, async () => {
     applyCors(req, res);
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -822,8 +832,12 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     const routedPath = stripBasePath(path, basePath);
     const ip = origin.clientIp(req);
     // One id per request binds the response, the log line and any diagnostic record.
-    const requestId = `req-${randomBytes(REQUEST_ID_BYTES).toString('hex')}`;
+    const requestId = logRequestContext.getStore()!.requestId;
+    logRequestContext.getStore()!.authMethod = routedPath?.includes('/mfa') ? 'totp' : routedPath?.includes('federated') ? 'federated' : routedPath?.includes('/logout') || routedPath?.includes('/devices') ? 'session' : routedPath?.startsWith('/api/auth/') ? 'opaque' : undefined;
     const requestStartedAt = Date.now();
+    let responseHeadMs: number | undefined;
+    const writeHead = res.writeHead.bind(res);
+    res.writeHead = ((...args: Parameters<typeof writeHead>) => { responseHeadMs ??= Date.now() - requestStartedAt; return writeHead(...args); }) as typeof res.writeHead;
     // Set once the request is accepted as a client write, so the outer `finally` can release the
     // count even when the handler throws. A leaked count would make the console claim a write is
     // still in flight forever, which is exactly the signal an operator uses to decide it is safe
@@ -834,6 +848,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     res.setHeader('X-Request-Id', requestId);
     res.once('finish', () => {
       if (!routedPath || !routedPath.startsWith('/api')) return;
+      let sourceOrigin: string | undefined;
+      try { if (typeof req.headers.origin === 'string') sourceOrigin = new URL(req.headers.origin).origin.slice(0, 200); } catch { /* Invalid source is not persisted. */ }
+      metrics.http.observe(routedPath, req.method ?? 'GET', res.statusCode, Date.now() - requestStartedAt, { ip, requestId, userAgent: (req.headers['user-agent'] ?? '').slice(0, 512), origin: sourceOrigin, ttfbMs: responseHeadMs });
       metrics.observeRequest({
         durationMs: Date.now() - requestStartedAt,
         status: res.statusCode,
@@ -845,7 +862,12 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       });
     });
     try {
+      if ((routedPath === '/livez' || routedPath === '/healthz') && req.method === 'GET') return send(res, 200, { ok: true });
       await ready;
+      if (routedPath === '/readyz' && req.method === 'GET') {
+        const healthy = await Promise.race([store.ownerUsername().then(() => true).catch(() => false), new Promise<boolean>((resolveProbe) => { const probeTimer = setTimeout(() => resolveProbe(false), 2000); probeTimer.unref(); })]);
+        return send(res, healthy ? 200 : 503, { ok: healthy });
+      }
       if (routedPath === '/api/health' && req.method === 'GET') {
         // Identity, protocol and policy only. Aggregates belong to /api/admin/overview,
         // which reads a cached snapshot instead of scanning tables on every handshake.
@@ -1003,11 +1025,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           || typeof page !== 'string' || !/^\/(?:app|admin)(?:\/[a-z0-9-]{1,48})?$/.test(page)) {
           return send(res, 400, { error: 'invalid traffic view' });
         }
+        if (body.eventId !== undefined && (typeof body.eventId !== 'string' || !/^[a-f0-9-]{36}$/.test(body.eventId))) return send(res, 400, { error: 'invalid event id' });
+        if (/bot|crawler|spider|headless|uptime|healthcheck/i.test(req.headers['user-agent'] ?? '')) return send(res, 202, { accepted: false, excluded: 'known_bot' });
         const countryHeader = options.trafficCountryHeader?.toLowerCase();
         const rawCountry = countryHeader && origin.trustedPeer(req) ? req.headers[countryHeader] : undefined;
         const country = typeof rawCountry === 'string' && /^[A-Z]{2}$/.test(rawCountry) && !['XX', 'ZZ'].includes(rawCountry) ? rawCountry : null;
         const visitorHash = createHmac('sha256', secret).update(visitorId).digest('hex');
-        await store.recordPageView(visitorHash, page, country);
+        await store.recordPageView(visitorHash, page, country, new Date(), typeof body.eventId === 'string' ? body.eventId : undefined);
         return send(res, 202, { accepted: true });
       }
 
@@ -2277,6 +2301,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         return send(res, 200, await store.accountEmail(user.username));
       }
       if (isAdmin) {
+        const context = logRequestContext.getStore();
+        if (context) { context.actorId = user.accountId; context.role = auth.role; }
         if (auth.role === 'member') {
           await log('warn', 'admin_forbidden', 'Member attempted an administrative request', {
             ip,
@@ -3013,7 +3039,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     } finally {
       if (countedWrite) writeTracker.end();
     }
-  });
+  }));
   server.headersTimeout = 15_000;
   server.requestTimeout = 30_000;
   server.keepAliveTimeout = 5_000;

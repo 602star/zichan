@@ -104,11 +104,12 @@ for (const width of [1280, 390]) {
       await capture('invites');
 
       await clickAdminLink(page, '管理审计');
-      const entry = page.locator('#section-审计记录 tbody tr').first();
-      await entry.getByRole('button', { name: '展开', exact: true }).click();
-      const auditDetails = entry.locator('xpath=following-sibling::tr[1]');
-      await auditDetails.locator('summary', { hasText: '查看变更前后值' }).click();
-      await expect(auditDetails.locator('pre').last()).toBeVisible();
+      await page.getByRole('button', { name: '查看详情', exact: true }).first().click();
+      const auditDetails = page.getByRole('dialog', { name: '操作日志详情' });
+      await auditDetails.locator('summary', { hasText: '变更后' }).click();
+      await expect(auditDetails.locator('details[open] pre').first()).toBeVisible();
+      await page.keyboard.press('Escape');
+      await page.locator('.zc-admin-log-extra-filters > summary').click();
       const timeRange = page.getByRole('group', { name: '时间范围' });
       await timeRange.getByRole('button', { name: '起始日期' }).click();
       const calendar = page.getByRole('dialog', { name: '起始日期' });
@@ -127,7 +128,7 @@ for (const width of [1280, 390]) {
       expect(new URL(page.url()).searchParams.get('until')).toMatch(/\.999Z$/);
       await capture('audit');
 
-      for (const [label, name] of [['设备与会话', 'sessions'], ['同步诊断', 'sync'], ['运行日志', 'logs'], ['登录安全', 'security-events'], ['监控中心', 'monitor']]) {
+      for (const [label, name] of [['设备与会话', 'sessions'], ['同步诊断', 'sync'], ['系统日志', 'logs'], ['登录日志', 'security-events'], ['运行监控', 'monitor']]) {
         await clickAdminLink(page, label);
         await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible();
         if (name === 'sync') expect(await page.locator('#section-诊断记录').evaluate((element) => element.offsetTop)).toBeLessThan(await page.locator('#section-错误分类').evaluate((element) => element.offsetTop));

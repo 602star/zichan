@@ -14,7 +14,7 @@
 
 - **存储和同步：**[持久化层](db.md)、[云同步](architecture/cloud-sync.md)、[账本副本架构](architecture/ledger-replica-architecture.md)。
 - **计算和资产：**[转换与成本](architecture/conversion-display.md)、[物品与配件](architecture/fixed-asset-components.md)、[游戏记录](architecture/game-record-design.md)。
-- **诊断：**[日志](architecture/logging.md)。
+- **诊断：**[日志](architecture/logging.md)、[后台可观测性与宿主机探活](guides/observability.md)。
 
 `db.md` 留在文档根目录，因为发布一致性检查直接读取该文件。
 

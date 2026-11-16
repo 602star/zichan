@@ -54,29 +54,30 @@ test('downloads the run log as JSON and CSV, stating what it redacted', async ({
   try {
     await signIn(page, f.url);
     await clickAdminLink(page, '运行日志');
-    await expect(page.getByRole('heading', { name: '运行日志' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '系统日志' })).toBeVisible();
 
     // The page says what the file will and will not contain, so the reader is not left guessing.
-    await expect(page.getByText(/令牌、密钥、邀请码与重置码不会出现在文件里/)).toBeVisible();
-    await expect(page.getByText(/账号 ID、任务 ID 与请求 ID 保留/)).toBeVisible();
+    await page.locator('.zc-admin-log-extra-filters > summary').click();
+    await expect(page.getByText(/脱敏和 CSV 公式保护/)).toBeVisible();
 
     const jsonDownload = page.waitForEvent('download');
     await page.getByRole('button', { name: '导出 JSON' }).click();
     const json = await jsonDownload;
-    expect(json.suggestedFilename()).toBe('run-log.json');
+    expect(json.suggestedFilename()).toBe('system-logs.json');
     const stream = await json.createReadStream();
     const chunks = [];
     for await (const chunk of stream) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     expect(body.rows.length).toBeGreaterThan(0);
-    expect(body.redaction).toContain('脱敏');
+    expect(body.fields).toContain('requestId');
+    expect(body.meta.source).toBeTruthy();
     // The export is the log itself, not an empty file with the right name.
     expect(body.rows.some((row) => row.action === 'register_success')).toBe(true);
 
     const csvDownload = page.waitForEvent('download');
     await page.getByRole('button', { name: '导出 CSV' }).click();
     const csv = await csvDownload;
-    expect(csv.suggestedFilename()).toBe('run-log.csv');
+    expect(csv.suggestedFilename()).toBe('system-logs.csv');
   } finally { await f.close(); }
 });
 
@@ -86,7 +87,7 @@ test('narrows the export to the filters the page is showing', async ({ page }) =
     await signIn(page, f.url);
     // Filter to one account, so the export must not contain the other account's lines.
     await page.goto(`${f.url}/e2e-private-entry/admin/logs?username=otheruser`);
-    await expect(page.getByRole('heading', { name: '运行日志' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '系统日志' })).toBeVisible();
 
     const download = page.waitForEvent('download');
     await page.getByRole('button', { name: '导出 JSON' }).click();

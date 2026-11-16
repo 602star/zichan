@@ -19,9 +19,10 @@ type StateFilter = '' | 'pending' | 'active' | 'resolved';
 export function AlertsPage({ client, role, navigate, query }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (to: string) => void }) {
   const [testResult, setTestResult] = useState('');
   const [testing, setTesting] = useState(false);
-  const requested = query.get('state') ?? 'resolved';
+  const requested = query.get('state') ?? 'active';
   const state: StateFilter = ['active', 'pending', 'resolved', ''].includes(requested) ? requested as StateFilter : 'resolved';
   const list = useResource(() => client.request<{ alerts: Alert[] }>(`/alerts${state ? `?state=${state}` : ''}`), [state]);
+  const deliveries = useResource(() => client.request<{ data: { deliveries: { id: string; event_key: string; created_at: string; status: string; attempts: number; next_retry_at: string; error_code: string | null }[] } }>('/ops/notifications/deliveries'), []);
 
   const alerts = (list.data?.alerts ?? []).filter((alert) => alert.state !== 'pending' || alert.consecutive > 0);
   const resolved = alerts.filter((alert) => alert.state === 'resolved');
@@ -29,19 +30,29 @@ export function AlertsPage({ client, role, navigate, query }: { client: AdminCli
 
   return (
     <>
-      <PageHeader title="告警历史" description="在当前记录上处理告警；知晓与暂停通知都不代表问题恢复。" actions={<>
+      <PageHeader title="告警中心" description="在当前记录上处理告警；知晓与暂停通知都不代表问题恢复。" actions={<>
         {role === 'owner' ? <><Button onClick={() => navigate('/settings?group=advanced')}>配置规则阈值</Button><Button onClick={() => navigate('/settings?group=notifications')}>通知渠道</Button>
           <Button disabled={testing} onClick={() => {
             setTesting(true); setTestResult('');
             void client.request<{ state: string; error?: string }>('/alerts/test-notification', {}, { idempotencyKey: adminIdempotencyKey('alert-notification-test') })
-              .then((result) => setTestResult(result.state === 'sent' ? result.error ? `测试已送达，${result.error}` : '测试通知已送达' : result.state === 'skipped' ? '没有启用的通知渠道' : `通知发送失败：${result.error ?? '未知原因'}`))
+              .then((result) => setTestResult(result.state === 'sent' ? result.error ? `通知服务已受理，${result.error}` : '通知服务已受理；Bark 受理不等于手机已展示推送' : result.state === 'skipped' ? '没有启用的通知渠道' : `通知发送失败：${result.error ?? '未知原因'}`))
               .catch((error) => setTestResult(error instanceof Error ? error.message : String(error)))
               .finally(() => setTesting(false));
           }}>测试通知</Button></> : null}
-        <Button onClick={list.reload}>刷新</Button>
+        <Button onClick={() => { list.reload(); deliveries.reload(); }}>刷新</Button>
       </>} />
       {testResult ? <Notice tone={testResult.includes('失败') ? 'bad' : 'info'}>{testResult}</Notice> : null}
       <Loading loading={list.loading} error={list.error} stale={list.stale} loadedAt={list.loadedAt} />
+      <Panel title="通知投递" note="触发与恢复分别持久化，失败最多尝试 5 次，按 1、2、4、8 分钟退避。受理不等于设备已展示。显示最近 100 条，含各渠道汇总结果。">
+        <Loading loading={deliveries.loading} error={deliveries.error} stale={deliveries.stale} loadedAt={deliveries.loadedAt} />
+        <DataTable rows={deliveries.data?.data.deliveries ?? []} rowKey={(item) => item.id} empty="暂无通知投递记录。" columns={[
+          { key: 'at', header: '创建时间', render: (item) => when(item.created_at) },
+          { key: 'event', header: '告警', render: (item) => item.event_key },
+          { key: 'state', header: '状态', render: (item) => ({ pending: '等待发送', retrying: '等待重试', sent: '服务已受理', failed: '发送失败', skipped: '已跳过' })[item.status] ?? item.status },
+          { key: 'attempts', header: '尝试次数', render: (item) => item.attempts },
+          { key: 'error', header: '失败或部分失败说明', render: (item) => item.error_code ?? '—' },
+        ]} />
+      </Panel>
 
       <FilterBar>
         <div className="zc-admin-view-switch" aria-label="告警状态">

@@ -1,0 +1,12 @@
+[Unit]
+Description=Independent Zichan host health probe
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/zichan/observability.env
+ExecStart=/usr/bin/node /opt/zichan/scripts/linux/observability-check.mjs
+TimeoutStartSec=50
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

@@ -223,7 +223,7 @@ export const SETTING_FIELDS: SettingField[] = [
   {
     name: 'httpErrorRateWarnPercent', label: 'HTTP 错误率告警阈值（%）', kind: 'number',
     envVar: 'ADMIN_HTTP_ERROR_RATE_WARN_PERCENT', default: 20, min: 1, max: 100,
-    description: '最近 5 分钟内 HTTP 4xx/5xx 占比达到该值，且请求量达到最小样本数后告警。连续两次异常才触发。',
+    description: '最近 5 分钟内 HTTP 5xx 占有效响应的比例达到该值，且请求量达到最小样本数后告警。4xx 单独统计。连续两次异常才触发。',
   },
   {
     name: 'slowRequestRateWarnPercent', label: '慢请求率告警阈值（%）', kind: 'number',

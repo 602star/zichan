@@ -52,6 +52,7 @@ import {
 import { adoptUnlockedLedgerKeyEnvelope, runtimeLedgerCryptoSession } from './ledger-key-vault.js';
 import { accountProtection } from './account-protection.js';
 import { isTauriRuntime } from './tauri.js';
+import { reportPageView } from './traffic-view.js';
 import type { SettingsSection } from './screens/Settings.js';
 import { X, ArrowLeftRight, BarChart3, BookOpen, Ellipsis, Gamepad2, Grid2X2, History as HistoryIcon, LayoutDashboard, List, Package, Settings2, UserRound, Cloud, Wallet, CalendarDays, ReceiptText, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react';
 import {
@@ -301,6 +302,12 @@ export function App() {
   const { store, bump, storageBackend, dataLocation, preview } = useStore();
   const snap = useSnapshot('shell');
   const [screen, setScreenState] = useState<ScreenId>(() => initialScreen(Boolean(preview)));
+  useEffect(() => {
+    if (preview || isTauriRuntime()) return;
+    const match = /^(.*)\/app(?:\/|$)/.exec(window.location.pathname);
+    if (!match && window.location.pathname !== '/') return;
+    reportPageView(`${window.location.origin}${match?.[1] ?? ''}`, `/app/${screen}`);
+  }, [preview, screen]);
   const compactView = useCompactView();
   const [transactionTab, setTransactionTab] = useState('records');
   const [navigationCollapsed, setNavigationCollapsed] = useState(false);

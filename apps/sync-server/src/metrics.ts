@@ -13,6 +13,7 @@ import type { AdminAlert, DatabaseStats, JsonRecord, ServerLogLevel, SyncServerS
 import { parseAlertChannels, webhookPayload, type AlertChannel, type ChannelResult } from './alert-channels.js';
 import { sendAlertEmail } from './smtp-client.js';
 import type { SystemMonitorReading } from './system-monitor.js';
+import { createHttpCollector, summarizeRequests } from './observability.js';
 
 const SAMPLE_INTERVAL_MS = 30_000;
 const HOUSEKEEPING_INTERVAL_MS = 60 * 60 * 1000;
@@ -112,6 +113,7 @@ export interface ProcessSnapshot {
   eventLoopMeanMs: number | null;
   eventLoopMaxMs: number | null;
   eventLoopP99Ms: number | null;
+  eventLoopP95Ms?: number | null;
   heapLimitBytes: number | null;
   constrainedBytes: number | null;
   availableBytes: number | null;
@@ -174,6 +176,7 @@ export function summarizeChannelResults(results: ChannelResult[]): { state: 'sen
 
 export function createMetricsService(deps: MetricsServiceDeps) {
   const { store, blobStore, settings, log, listBackupRecords } = deps;
+  const http = createHttpCollector(store.observability, store.logWorkspace.instanceId);
 
   /** Sends one notification to one channel and never throws: the caller records the reason. */
   const deliver = async (channel: AlertChannel, notification: AlertNotification): Promise<ChannelResult> => {
@@ -188,6 +191,8 @@ export function createMetricsService(deps: MetricsServiceDeps) {
         method: 'POST',
         headers: { 'Content-Type': payload.contentType },
         body: payload.body,
+        signal: AbortSignal.timeout(8000),
+        redirect: 'error',
       });
       if (!response.ok) return { name: channel.name, kind: 'webhook', state: 'failed', error: `HTTP ${String(response.status)}` };
       if (channel.format === 'bark') {
@@ -200,7 +205,7 @@ export function createMetricsService(deps: MetricsServiceDeps) {
         name: channel.name,
         kind: channel.kind,
         state: 'failed',
-        error: error instanceof Error ? error.message : String(error),
+        error: error instanceof Error && error.name === 'TimeoutError' ? 'NOTIFICATION_TIMEOUT' : 'NOTIFICATION_DELIVERY_FAILED',
       };
     }
   };
@@ -234,12 +239,8 @@ export function createMetricsService(deps: MetricsServiceDeps) {
       if (!legacy) return { state: 'skipped' };
       channels = [{ kind: 'webhook', name: 'webhook', url: legacy, format: 'generic', enabled: true }];
     }
-    // Sequential on purpose: a handful of destinations, and a deterministic order keeps the
-    // per-channel record easy to read back.
-    const results: ChannelResult[] = [];
-    for (const channel of channels) {
-      results.push(await deliver(channel, notification));
-    }
+    // At most ten configured channels; their timeouts share a wall-clock window.
+    const results: ChannelResult[] = await Promise.all(channels.map((channel) => deliver(channel, notification)));
     return summarizeChannelResults(results);
   };
   const notifier = deps.notify ?? defaultNotifier;
@@ -271,19 +272,30 @@ export function createMetricsService(deps: MetricsServiceDeps) {
         at: new Date().toISOString(),
         detail: alert.detail ?? {},
       };
+      await store.observability.enqueueNotification(`${alert.key}:${notification.state}:${alert.lastSeenAt}`, alert.key, notification);
+    }
+    // Durable outbox survives restart. A failed attempt is retried with bounded backoff.
+    await Promise.all((await store.observability.dueNotifications()).map(async (delivery) => {
+      const notification = JSON.parse(delivery.payload) as AlertNotification;
+      const alert = alerts.find((item) => item.key === delivery.event_key);
+      if (alert?.silencedUntil && Date.parse(alert.silencedUntil) > now) {
+        await store.observability.finishNotification(delivery.id, delivery.attempts + 1, 'skipped', 'silenced');
+        return;
+      }
       let result: { state: 'sent' | 'failed' | 'skipped'; error?: string };
       try {
         result = await notifier(notification);
       } catch (error) {
         result = { state: 'failed', error: error instanceof Error ? error.message : String(error) };
       }
-      await store.recordAlertNotification(alert.key, result);
+      await store.recordAlertNotification(delivery.event_key, result);
+      await store.observability.finishNotification(delivery.id, delivery.attempts + 1, result.state, result.error);
       // A failing notification must never break sampling: it is recorded, not thrown.
       const action = result.state === 'sent' ? 'alert_notified' : result.state === 'skipped' ? 'alert_notify_skipped' : 'alert_notify_failed';
-      await log(result.state === 'sent' ? 'info' : 'warn', action, `Alert ${notification.state}: ${alert.key}`, {
-        detail: { key: alert.key, state: notification.state, notify: result.state, ...(result.error ? { error: result.error } : {}) },
+      await log(result.state === 'sent' ? 'info' : 'warn', action, `Alert ${notification.state}: ${notification.key}`, {
+        detail: { key: notification.key, state: notification.state, notify: result.state, ...(result.error ? { error: result.error } : {}) },
       });
-    }
+    }));
   };
   let pending = emptyCounters();
   let snapshot: ServiceSnapshot | undefined;
@@ -314,6 +326,7 @@ export function createMetricsService(deps: MetricsServiceDeps) {
   };
 
   const flushCounters = async (): Promise<void> => {
+    await http.flush();
     if (!pending.requests) return;
     const counters = pending;
     pending = emptyCounters();
@@ -601,15 +614,15 @@ export function createMetricsService(deps: MetricsServiceDeps) {
     }), { requests: 0, errors: 0, slow: 0 });
     const minRequests = Number(settings.effective('requestAlertMinCount'));
     const enoughRequests = requestTotals.requests >= minRequests;
-    const errorRate = requestTotals.requests ? requestTotals.errors / requestTotals.requests * 100 : null;
+    const httpWindow = summarizeRequests(await store.observability.httpRows(fiveMinutesAgo, new Date().toISOString()), 300000);
     const slowRate = requestTotals.requests ? requestTotals.slow / requestTotals.requests * 100 : null;
     const errorThreshold = Number(settings.effective('httpErrorRateWarnPercent'));
     const slowThreshold = Number(settings.effective('slowRequestRateWarnPercent'));
     await store.upsertAlert({
       key: 'requests:error-rate', rule: 'http-error-rate', scope: 'http', severity: 'warning',
-      active: enoughRequests && errorRate !== null && errorRate >= errorThreshold,
-      detail: { windowMinutes: 5, requests: requestTotals.requests, errors: requestTotals.errors,
-        ratePercent: errorRate === null ? null : Number(errorRate.toFixed(1)), thresholdPercent: errorThreshold, minRequests },
+      active: httpWindow.totalRequests >= minRequests && httpWindow.errorRate5xx !== null && httpWindow.errorRate5xx * 100 >= errorThreshold,
+      detail: { windowMinutes: 5, requests: httpWindow.totalRequests, errors: httpWindow.errors5xx, statusClass: '5xx',
+        ratePercent: httpWindow.errorRate5xx === null ? null : Number((httpWindow.errorRate5xx * 100).toFixed(1)), thresholdPercent: errorThreshold, minRequests },
     });
     await store.upsertAlert({
       key: 'requests:slow-rate', rule: 'slow-request-rate', scope: 'http', severity: 'warning',
@@ -715,6 +728,7 @@ export function createMetricsService(deps: MetricsServiceDeps) {
         eventLoopMeanMs: reading.eventLoopMeanMs,
         eventLoopMaxMs: reading.eventLoopMaxMs,
         eventLoopP99Ms: reading.eventLoopP99Ms,
+        eventLoopP95Ms: reading.eventLoopP95Ms ?? null,
         heapLimitBytes: identity.heapLimitBytes,
         constrainedBytes: identity.constrainedBytes,
         availableBytes: identity.availableBytes,
@@ -728,7 +742,9 @@ export function createMetricsService(deps: MetricsServiceDeps) {
     snapshotAt = Date.now();
     await recordResourceSample(reading);
     if (deps.systemMonitor) {
+      const systemStarted = Date.now();
       try {
+        await store.observability.heartbeat('system-resources', http.instanceId, 'running');
         const system = await deps.systemMonitor.read();
         const diskTotal = storage.diskTotalBytes;
         const diskFree = storage.diskFreeBytes;
@@ -744,7 +760,9 @@ export function createMetricsService(deps: MetricsServiceDeps) {
           networkRxBytesPerSecond: system.networkRxBytesPerSecond,
           networkTxBytesPerSecond: system.networkTxBytesPerSecond,
         }, new Date(system.sampledAt));
+        await store.observability.heartbeat('system-resources', http.instanceId, 'healthy', Date.now() - systemStarted);
       } catch (error) {
+        await store.observability.heartbeat('system-resources', http.instanceId, 'failed', Date.now() - systemStarted).catch(() => undefined);
         await log('warn', 'system_sample_failed', 'System resource sample failed', {
           error: error instanceof Error ? error.message : String(error),
         }).catch(() => undefined);
@@ -765,6 +783,7 @@ export function createMetricsService(deps: MetricsServiceDeps) {
       const minuteDays = Number(settings.effective('metricsMinuteRetentionDays'));
       const hourDays = Number(settings.effective('metricsHourRetentionDays'));
       await store.pruneMetrics(new Date(), minuteDays, hourDays);
+      await store.logWorkspace.prune();
       await store.recordServiceSample(emptyCounters());
       await log('info', 'housekeeping_completed', 'Retention housekeeping completed', {});
     } catch (error) {
@@ -777,10 +796,17 @@ export function createMetricsService(deps: MetricsServiceDeps) {
   const tick = async (): Promise<void> => {
     if (running) return;
     running = true;
+    const startedAt = Date.now();
     try {
+      await store.observability.heartbeat('runtime-and-http', http.instanceId, 'running');
+      const failures = http.health().writeFailures;
       await flushCounters();
+      await store.observability.heartbeat('http-buckets', http.instanceId, http.health().writeFailures > failures ? 'failed' : 'healthy', Date.now() - startedAt);
       await sample();
+      await store.observability.heartbeat('runtime-and-http', http.instanceId, 'healthy', Date.now() - startedAt);
+      await store.observability.prune(new Date(Date.now() - 7 * 86400000).toISOString());
     } catch (error) {
+      await store.observability.heartbeat('runtime-and-http', http.instanceId, 'failed', Date.now() - startedAt).catch(() => undefined);
       // A failed sample must not stop the next one; the page keeps the last good snapshot.
       await log('warn', 'metrics_sample_failed', 'Runtime sample failed', {
         detail: { error: error instanceof Error ? error.message : String(error) },
@@ -791,6 +817,7 @@ export function createMetricsService(deps: MetricsServiceDeps) {
   };
 
   return {
+    http,
     observeRequest,
     /** Explicit operator test; it does not change an alert's state or history. */
     async testNotifications(): Promise<{ state: 'sent' | 'failed' | 'skipped'; error?: string }> {
@@ -833,6 +860,7 @@ export function createMetricsService(deps: MetricsServiceDeps) {
       timer = undefined;
       housekeepingTimer = undefined;
       await Promise.allSettled([...scheduledWork]);
+      await http.flush();
       runtime.stop();
     },
   };

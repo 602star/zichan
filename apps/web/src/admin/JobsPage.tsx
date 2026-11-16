@@ -166,7 +166,7 @@ export function JobsPage({ client, query, navigate, role }: { client: AdminClien
               {detail.data.events.map((event) => <li key={event.id}>{when(event.at)} · {event.level} · {event.message}</li>)}
             </ul>
           )}
-          <Button onClick={() => navigate(`/logs?action=job_${encodeURIComponent(detail.data!.job.type.replace(/[.]/g, '_'))}`)}>查看同类任务日志</Button>
+          <Button onClick={() => navigate(`/task-logs?jobName=${encodeURIComponent(detail.data!.job.type)}`)}>查看同类任务日志</Button>
         </Panel>
       ) : null}
       <div className="zc-admin-jobs-workspace">

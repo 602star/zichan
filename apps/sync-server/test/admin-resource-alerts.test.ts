@@ -103,10 +103,16 @@ describe('request quality alerts', () => {
     const h = await harness([{}]);
     try {
       await h.store.recordServiceSample({ requests: 100, errors: 25, slowRequests: 30 });
+      const histogram = [0, 0, 0, 0, 100, 0, 0, 0, 0, 0, 0, 0];
+      const bucketAt = new Date(Math.floor(Date.now() / 60000) * 60000).toISOString();
+      await h.store.observability.insertHttp([{ bucketAt, instanceId: 'test', route: '/api/test', method: 'GET', statusClass: 4, requests: 100, durationMs: 10000, histogram }]);
+      await h.activate();
+      expect((await h.store.getAlert('requests:error-rate'))?.state).not.toBe('active');
+      await h.store.observability.insertHttp([{ bucketAt, instanceId: 'test', route: '/api/test', method: 'GET', statusClass: 5, requests: 25, durationMs: 2500, histogram: [0, 0, 0, 0, 25, 0, 0, 0, 0, 0, 0, 0] }]);
       await h.activate();
       expect((await h.store.getAlert('requests:error-rate'))?.state).toBe('active');
       expect((await h.store.getAlert('requests:slow-rate'))?.state).toBe('active');
-      expect((await h.store.getAlert('requests:error-rate'))?.detail).toMatchObject({ requests: 100, thresholdPercent: 20 });
+      expect((await h.store.getAlert('requests:error-rate'))?.detail).toMatchObject({ requests: 125, errors: 25, statusClass: '5xx', thresholdPercent: 20 });
     } finally { await h.close(); }
     const low = await harness([{}]);
     try {

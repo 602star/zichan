@@ -339,6 +339,7 @@ input[inputmode="decimal"], input[inputmode="numeric"] {
     --sidebar-fg: #e9e4db;
     --sidebar-muted: #b8afa4;
     --sidebar-active: #302823;
+    --sidebar-brand: #ee7868;
     --cat-1: #8ec5dc;
     --cat-2: #b3c98e;
     --cat-3: #d6b77a;

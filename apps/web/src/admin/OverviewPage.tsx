@@ -4,35 +4,17 @@ import { useState, type MouseEvent } from 'react';
 import type { AdminClient } from './client.js';
 import { PageHeader, Badge, Button, DataTable, Loading, Notice, Panel, Select, Stat, TextInput, bytes, canWrite, isPlainPrimaryClick, message, muted, roleLabel, row, usePolling, useResource, when } from './ui.js';
 import { alertNextStep, alertStateLabel, acknowledgeAlert, describeAlert, isSilenced, silenceAlert, unsilenceAlert, SILENCE_HOURS } from './alerts.js';
-import { TrendChart } from './chart.js';
-import { MaintenancePanel } from './MaintenancePanel.js';
-import type { TrendPoint } from './trend.js';
-import type { AdminLoginSummary, Alert, Metrics, Overview } from './types.js';
 
-const RANGES = ['1h', '24h', '7d'] as const;
+import { MaintenancePanel } from './MaintenancePanel.js';
+
+import type { AdminLoginSummary, Alert, Overview } from './types.js';
+
+
 
 function jumpToSection(event: MouseEvent<HTMLAnchorElement>) {
   if (!isPlainPrimaryClick(event)) return;
   event.preventDefault();
   document.getElementById(decodeURIComponent(event.currentTarget.hash.slice(1)))?.scrollIntoView({ block: 'start' });
-}
-
-/** Bucket series the trend chart can draw; totals stay in the cards above it. */
-const SERIES = [
-  { key: 'requests', label: '请求量' },
-  { key: 'errors', label: '错误数' },
-  { key: 'averageMs', label: '平均耗时' },
-  { key: 'syncFailed', label: '失败同步' },
-] as const;
-type SeriesKey = (typeof SERIES)[number]['key'];
-
-function seriesValue(bucket: Metrics['buckets'][number], key: SeriesKey): number {
-  switch (key) {
-    case 'errors': return bucket.errors;
-    case 'averageMs': return bucket.requests ? Math.round(bucket.durationMs / bucket.requests) : 0;
-    case 'syncFailed': return bucket.syncPushFailed + bucket.blobFailed;
-    default: return bucket.requests;
-  }
 }
 
 /** Silence windows offered in the console: one shift, one day, one week. */
@@ -42,17 +24,15 @@ export function OverviewPage({ client, navigate, role }: {
   navigate: (to: string) => void;
   role: string;
 }) {
-  const [range, setRange] = useState<(typeof RANGES)[number]>('24h');
-  const [series, setSeries] = useState<SeriesKey>('requests');
+
+
   // Silence is a recorded decision: the duration and the reason travel together.
   const [silenceDraft, setSilenceDraft] = useState<{ key: string; hours: number; reason: string }>();
   // Alert actions report in place instead of a blocking dialog that cannot carry a request id.
   const [actionError, setActionError] = useState('');
   const overview = useResource(() => client.request<Overview>('/overview'), []);
-  const metrics = useResource(() => client.request<Metrics>(`/metrics?range=${range}`), [range]);
-  // Both views age together: a poll that refreshed only the overview left the counters stale.
-  usePolling(() => { overview.reload(); metrics.reload(); }, 30_000);
-
+  const requests = useResource(() => client.request<{ data: { totalRequests: number; errorRate5xx: number | null; latencyMs: { p95: number | null } }; meta: { dataAsOf: string | null; stale: boolean } }>('/ops/requests/summary?range=15m'), []);
+  usePolling(() => { overview.reload(); requests.reload(); }, 30000);
   const snapshot = overview.data?.snapshot;
   const backup = snapshot?.backup ?? null;
   const alerts = pendingAlerts(overview.data?.alerts ?? []);
@@ -85,7 +65,7 @@ export function OverviewPage({ client, navigate, role }: {
         <a href="#section-核心指标" onClick={jumpToSection}>请求趋势</a>
         <a href="#section-最近管理员登录" onClick={jumpToSection}>管理员登录</a>
         <a href="#section-维护窗口" onClick={jumpToSection}>维护窗口</a>
-        <button type="button" onClick={() => navigate('/monitor')}>监控中心</button>
+        <button type="button" onClick={() => navigate('/monitor')}>运行监控</button>
       </nav>
       <Loading loading={overview.loading} error={overview.error} stale={overview.stale} loadedAt={overview.loadedAt} />
 
@@ -188,7 +168,7 @@ export function OverviewPage({ client, navigate, role }: {
           <Button onClick={() => navigate('/users')}>查找用户与预览记账</Button>
           <Button onClick={() => navigate('/storage')}>检查备份与恢复保障</Button>
           {role === 'owner' ? <Button onClick={() => navigate('/invites')}>注册与邀请</Button> : null}
-          <Button onClick={() => navigate('/alerts')}>查看历史告警</Button>
+          <Button onClick={() => navigate('/alerts?state=resolved')}>查看已恢复告警</Button>
         </div>
       </Panel>
 
@@ -218,44 +198,16 @@ export function OverviewPage({ client, navigate, role }: {
       </Panel>
 
       <p className="zc-admin-runtime-note" style={muted}>服务版本 {overview.data?.version ?? '未知'} · 已运行 {snapshot ? formatUptime(snapshot.uptimeSeconds) : '未知'} · 服务器 {overview.data?.serverId ?? '未知'}</p>
-      <Panel
-        title="核心指标"
-        action={<div style={row}>{RANGES.map((value) => <Button key={value} disabled={value === range} onClick={() => setRange(value)}>{value}</Button>)}</div>}
-        note={metrics.data?.note}
-      >
-        {metrics.error ? <Notice tone="bad">{metrics.error}</Notice> : null}
-        {metrics.data && metrics.data.totals.requests === 0 ? (
-          <p style={muted}>暂无数据：这个时间范围内还没有采集到请求。</p>
-        ) : null}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
-          <Stat label="请求量" value={metrics.data ? metrics.data.totals.requests : '暂无数据'} />
-          <Stat label="错误率" value={metrics.data?.totals.errorRate === null || metrics.data?.totals.errorRate === undefined ? '暂无数据' : `${(metrics.data.totals.errorRate * 100).toFixed(1)}%`} />
-          <Stat label="平均耗时" value={metrics.data?.totals.averageMs === null || metrics.data?.totals.averageMs === undefined ? '暂无数据' : `${metrics.data.totals.averageMs} ms`}
-            hint={metrics.data ? `慢请求 ${metrics.data.totals.slowRequests}` : undefined} />
-          <Stat label="提交推送" value={metrics.data ? `${metrics.data.totals.syncPushOk} 成功 / ${metrics.data.totals.syncPushFailed} 失败` : '暂无数据'} />
-          <Stat label="附件请求" value={metrics.data ? `${metrics.data.totals.blobOk} 成功 / ${metrics.data.totals.blobFailed} 失败` : '暂无数据'} />
+      <Panel title="核心指标" note="近 15 分钟摘要；请求分析统一使用响应直方图和独立 5xx 口径。" action={<Button onClick={() => navigate('/requests?range=15m')}>进入请求分析</Button>}>
+        {requests.error ? <Notice tone="bad">{requests.error}</Notice> : null}
+        <div className="zc-admin-ops-band">
+          <Stat label="有效响应" value={requests.data?.meta.dataAsOf ? requests.data.data.totalRequests : '未采集'} />
+          <Stat label="5xx 错误率" value={requests.data?.data.errorRate5xx == null ? '—' : `${(requests.data.data.errorRate5xx * 100).toFixed(2)}%`} />
+          <Stat label="P95 延迟" value={requests.data?.data.latencyMs.p95 == null ? '未采集' : `${requests.data.data.latencyMs.p95} ms`} />
         </div>
-        {metrics.data ? (
-          <>
-            <div style={{ ...row, marginTop: 12 }}>
-              {SERIES.map((entry) => (
-                <Button key={entry.key} disabled={entry.key === series} onClick={() => setSeries(entry.key)}>{entry.label}</Button>
-              ))}
-            </div>
-            <TrendChart
-              points={(metrics.data.buckets ?? []).map((bucket): TrendPoint => ({ at: bucket.bucketAt, value: seriesValue(bucket, series) }))}
-              label={`${SERIES.find((entry) => entry.key === series)?.label ?? ''}趋势（近 ${range}）`}
-              formatValue={(value) => series === 'averageMs' ? `${value} ms` : String(value)}
-              tone={series === 'errors' || series === 'syncFailed' ? 'bad' : series === 'averageMs' ? 'warn' : 'ok'}
-              granularityNote={metrics.data.granularity === 'minute' ? '分钟分桶' : '小时分桶'}
-            />
-          </>
-        ) : null}
-        {metrics.data?.observedSince ? <p style={muted}>自 {when(metrics.data.observedSince)} 起有数据。</p> : null}
-        {metrics.loadedAt ? <p style={muted}>最后读取：{new Date(metrics.loadedAt).toLocaleTimeString()}（与「服务状态」一起每 30 秒刷新）</p> : null}
+        <p style={muted}>统计采样：{when(requests.data?.meta.dataAsOf)}{requests.stale || requests.data?.meta.stale ? ' · 数据过期' : ''}</p>
       </Panel>
-
-      <Panel title="进程与数据库" action={<Button onClick={() => navigate('/monitor')}>查看监控中心</Button>}
+      <Panel title="资源摘要" action={<Button onClick={() => navigate('/monitor')}>查看运行监控</Button>}
         note="这一节的数字只是同步服务器进程本身；数据库页缓存之外的部分不在此列。">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
           <Stat label="常驻内存" tone={memoryRatio !== null && memoryRatio >= 0.85 ? 'warn' : undefined}

@@ -13,6 +13,7 @@ function newVisitorId(): string {
 
 export function reportPageView(baseUrl: string, page: string): void {
   if (typeof window === 'undefined' || !window.crypto?.getRandomValues) return;
+  if (navigator.doNotTrack === '1' || (navigator as Navigator & { globalPrivacyControl?: boolean }).globalPrivacyControl) return;
   // StrictMode remounts effects in development. A quick duplicate is not a second view.
   if (page === lastPath && Date.now() - lastSentAt < 1000) return;
   lastPath = page;
@@ -29,7 +30,7 @@ export function reportPageView(baseUrl: string, page: string): void {
   void fetch(`${baseUrl}/api/traffic/view`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ visitorId, page }),
+    body: JSON.stringify({ visitorId, page, eventId: newVisitorId() }),
     keepalive: true,
   }).catch(() => undefined);
 }

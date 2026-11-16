@@ -8,6 +8,9 @@ import { canonicalJson } from '@zichan/core';
 import { cursorValue, readCursor, resolveSort, type ResolvedSort, type SortOption } from './list-sort.js';
 import { MAINTENANCE_KEY } from './maintenance-mode.js';
 import { verifyFederatedCredential, type FederatedCredentialBundle } from './federated-credential.js';
+import { OBS_SCHEMA, ObservabilityStore } from './observability.js';
+import { LOG_WORKSPACE_SCHEMA, LogWorkspaceStore, captureLogContext } from './log-workspace.js';
+import { logRequestContext, safeLogValue } from './log-context.js';
 
 /**
  * Sortable columns of the account list.
@@ -834,6 +837,8 @@ function backupFromRow(row: Record<string, unknown>): ServerBackupArchive {
 
 export class SyncServerStore {
   readonly ready: Promise<void>;
+  readonly observability: ObservabilityStore;
+  readonly logWorkspace: LogWorkspaceStore;
   private readonly driver: NodeSqliteDriver;
   private logWrites = 0;
   private lastLogPruneAt = 0;
@@ -853,6 +858,8 @@ export class SyncServerStore {
     private defaultBlobQuotaBytes = DEFAULT_BLOB_QUOTA_BYTES,
   ) {
     this.driver = new NodeSqliteDriver(databaseFile);
+    this.observability = new ObservabilityStore(this.driver);
+    this.logWorkspace = new LogWorkspaceStore(this.driver);
     this.ready = initializeAfter
       ? initializeAfter.then(() => this.initialize())
       : this.initialize();
@@ -1709,6 +1716,9 @@ CREATE TRIGGER sync_replicas_slot_update AFTER UPDATE ON sync_replicas BEGIN
     AND NOT EXISTS (SELECT 1 FROM ledger_account_routes WHERE replica_id = OLD.replica_id)
     AND NOT EXISTS (SELECT 1 FROM ledger_replacement_checkpoints WHERE replica_id = OLD.replica_id);
 END;`);
+    await this.driver.exec(OBS_SCHEMA);
+    await this.driver.exec(LOG_WORKSPACE_SCHEMA);
+    await this.logWorkspace.backfillLogins();
     if (!hasServerSchema) {
       await this.driver.run('INSERT INTO server_schema_migrations (version, name, applied_at) VALUES (?, ?, ?)',
         [CURRENT_SERVER_SCHEMA, CURRENT_SERVER_SCHEMA_NAME, nowIso()]);
@@ -3018,8 +3028,9 @@ END;`);
       // A preview changes nothing about the account, so it must not advance the revision:
       // doing so would make a concurrent administrator's save look stale.
       if (target && mutation.action !== 'ledger-preview-open') await driver.run('UPDATE sync_users SET revision = revision + 1 WHERE username = ?', [target.username]);
-      await driver.run('INSERT INTO server_admin_audit (at, actor_account_id, target_account_id, action, before_json, after_json, reason, request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [at, actor.account_id, targetId ?? null, mutation.action, JSON.stringify(before), JSON.stringify(after), options.reason ?? null, options.requestId ?? null]);
+      const auditWrite = await driver.run('INSERT INTO server_admin_audit (at, actor_account_id, target_account_id, action, before_json, after_json, reason, request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [at, actor.account_id, targetId ?? null, mutation.action, JSON.stringify(before), JSON.stringify(after), options.reason ?? null, logRequestContext.getStore()?.requestId ?? options.requestId ?? null]);
+      await captureLogContext(driver, 'audit', String(auditWrite.lastInsertRowid));
     });
     return { revoked, revokedSessions };
   }
@@ -5576,11 +5587,15 @@ END;`);
 
   async appendLog(log: ServerLog): Promise<void> {
     await this.ready;
-    await this.driver.run(
+    log = safeLogValue(log) as ServerLog;
+    await this.driver.transaction(async (driver) => {
+    await driver.run(
       `INSERT INTO server_logs (id, at, level, action, message, ip, username, status, detail_json)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [log.id, log.at, log.level, log.action, log.message, log.ip ?? null, log.username ?? null, log.status ?? null, log.detail ? JSON.stringify(log.detail) : null],
     );
+    await this.logWorkspace.recordLogin(log.action === 'rate_limited' && logRequestContext.getStore()?.authMethod ? { ...log, action: 'auth_rate_limited' } : log, driver);
+    });
     this.logWrites += 1;
     const now = Date.now();
     if (this.logWrites >= 200 || now - this.lastLogPruneAt >= 60_000) {
@@ -6352,25 +6367,41 @@ END;`);
   }
 
   /** A page view is a browser-reported visit, never an API request or a person record. */
-  async recordPageView(visitorHash: string, page: string, country: string | null, at = new Date()): Promise<void> {
+  async recordPageView(visitorHash: string, page: string, country: string | null, at = new Date(), eventId?: string): Promise<void> {
     await this.ready;
-    await this.driver.run(
-      'INSERT INTO traffic_page_views (at, visitor_hash, country, page) VALUES (?, ?, ?, ?)',
-      [at.toISOString(), visitorHash, country, page],
-    );
+    await this.driver.transaction(async (driver) => {
+      if (eventId) {
+        const inserted = await driver.run('INSERT OR IGNORE INTO obs_traffic_ids(event_id, at) VALUES (?, ?)', [eventId, at.toISOString()]);
+        if (!inserted.changes) return;
+      }
+      await driver.run('INSERT INTO traffic_page_views (at, visitor_hash, country, page) VALUES (?, ?, ?, ?)', [at.toISOString(), visitorHash, country, page]);
+    });
   }
 
-  async trafficSummary(from: string, until: string, granularity: 'minute' | 'hour' | 'day'): Promise<{
+  async trafficSummary(from: string, until: string, granularity: 'minute' | 'hour' | 'day', country?: string): Promise<{
     pv: number; uv: number; observedSince: string | null;
+    dataAsOf: string | null; sessions: number; activeVisitors5m: number; activeVisitors30m: number; geoUnknownRatio: number | null;
     buckets: { bucketAt: string; pv: number; uv: number }[];
     countries: { country: string | null; pv: number; uv: number }[];
     pages: { page: string; pv: number; uv: number }[];
   }> {
     await this.ready;
-    const bounds = [from, until];
-    const where = 'at >= ? AND at < ?';
-    const total = await this.driver.get<{ pv: number; uv: number; observed_since: string | null }>(
-      `SELECT COUNT(*) AS pv, COUNT(DISTINCT visitor_hash) AS uv, MIN(at) AS observed_since FROM traffic_page_views WHERE ${where}`, bounds);
+    const countryClause = country ? country === 'unknown' ? ' AND country IS NULL' : ' AND country = ?' : '';
+    const countryParams = country && country !== 'unknown' ? [country] : [];
+    const bounds = [from, until, ...countryParams];
+    const where = `at >= ? AND at < ?${countryClause}`;
+    const total = await this.driver.get<{ pv: number; uv: number; observed_since: string | null; data_as_of: string | null; unknown: number }>(
+      `SELECT COUNT(*) AS pv, COUNT(DISTINCT visitor_hash) AS uv, MIN(at) AS observed_since, MAX(at) AS data_as_of, SUM(CASE WHEN country IS NULL THEN 1 ELSE 0 END) AS unknown FROM traffic_page_views WHERE ${where}`, bounds);
+    const active = await this.driver.get<{ five: number; thirty: number }>(`SELECT
+      COUNT(DISTINCT CASE WHEN at >= ? THEN visitor_hash END) AS five, COUNT(DISTINCT visitor_hash) AS thirty
+      FROM traffic_page_views WHERE at >= ? AND at < ?${countryClause}`,
+    [new Date(Date.parse(until) - 300000).toISOString(), new Date(Date.parse(until) - 1800000).toISOString(), until, ...countryParams]);
+    const sessions = await this.driver.get<{ count: number }>(`WITH visits AS (
+      SELECT at, LAG(at) OVER (PARTITION BY visitor_hash ORDER BY at, rowid) AS previous_at
+      FROM traffic_page_views WHERE at >= ? AND at < ?${countryClause})
+      SELECT COUNT(*) AS count FROM visits WHERE at >= ? AND
+      (previous_at IS NULL OR (julianday(at)-julianday(previous_at))*86400 >= 1799.999)`,
+    [new Date(Date.parse(from) - 1800000).toISOString(), until, ...countryParams, from]);
     const expression = granularity === 'minute'
       ? "strftime('%Y-%m-%dT%H:%M:00.000Z', at)"
       : granularity === 'hour' ? "strftime('%Y-%m-%dT%H:00:00.000Z', at)"
@@ -6386,6 +6417,9 @@ END;`);
        FROM traffic_page_views WHERE ${where} GROUP BY page ORDER BY pv DESC LIMIT 50`, bounds);
     return {
       pv: Number(total?.pv ?? 0), uv: Number(total?.uv ?? 0), observedSince: total?.observed_since ?? null,
+      dataAsOf: total?.data_as_of ?? null, sessions: Number(sessions?.count ?? 0),
+      activeVisitors5m: Number(active?.five ?? 0), activeVisitors30m: Number(active?.thirty ?? 0),
+      geoUnknownRatio: total?.pv ? Number(total.unknown) / total.pv : null,
       buckets: buckets.map((row) => ({ bucketAt: row.bucket_at, pv: Number(row.pv), uv: Number(row.uv) })),
       countries: countries.map((row) => ({ country: row.country, pv: Number(row.pv), uv: Number(row.uv) })),
       pages: pages.map((row) => ({ page: row.page, pv: Number(row.pv), uv: Number(row.uv) })),
@@ -6945,6 +6979,7 @@ END;`);
        VALUES (?, ?, ?, 'queued', ?, ?, ?, 0, 0, 0, ?)`,
       [job.jobId, job.type, JSON.stringify(job.params), job.createdAt, job.createdBy, job.targetAccountId ?? null, job.retryOf ?? null],
     );
+    await captureLogContext(this.driver, 'task', job.jobId);
     return job;
   }
 
@@ -7005,6 +7040,7 @@ END;`);
         [at, String(next['job_id'])],
       );
       if (Number(claimed.changes ?? 0) !== 1) return undefined;
+      await captureLogContext(driver, 'task', String(next['job_id']), { instanceId: this.logWorkspace.instanceId }, false);
       return this.mapJob({ ...next, status: 'running', started_at: at, phase: 'starting' });
     });
   }
@@ -7279,7 +7315,7 @@ END;`);
   }): Promise<void> {
     try {
       await this.ready;
-      await this.driver.run(
+      const failureWrite = await this.driver.run(
         `INSERT INTO admin_audit_failures (at, actor_account_id, target_account_id, action, code, message, reason, request_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
@@ -7287,6 +7323,7 @@ END;`);
           input.code ?? null, input.message ?? null, input.reason ?? null, input.requestId ?? null,
         ],
       );
+      await captureLogContext(this.driver, 'failure', String(failureWrite.lastInsertRowid));
       await this.pruneAdminFailures(input.retention ?? 2_000);
     } catch {
       // Diagnostics must never turn a handled management failure into a server error.

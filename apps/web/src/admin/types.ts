@@ -6,6 +6,7 @@ export interface ProcessSnapshot {
   /** Window average since the previous sample; null on the very first one. */
   cpuPercent: number | null;
   eventLoopMeanMs: number | null; eventLoopMaxMs: number | null; eventLoopP99Ms: number | null;
+  eventLoopP95Ms?: number | null;
   heapLimitBytes: number | null;
   /** Container memory limit when the runtime can read one. */
   constrainedBytes: number | null;

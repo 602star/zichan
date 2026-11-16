@@ -329,7 +329,7 @@ export class AdminClient {
   }
 
   /** Controlled export: the server decides which fields are safe to leave the console. */
-  async download(path: string): Promise<Blob> {
+  async download(path: string, metadata?: (value: { truncated: boolean }) => void): Promise<Blob> {
     const generation = this.generation;
     if (!this.session || Date.parse(this.session.accessExpiresAt) < Date.now() + 30_000) await this.refresh();
     this.current(generation);
@@ -339,6 +339,7 @@ export class AdminClient {
     });
     this.current(generation);
     if (!response.ok) throw new AdminError(response.status, '', `导出失败（HTTP ${response.status}）`);
+      metadata?.({ truncated: response.headers.get('X-Log-Export-Truncated') === 'true' });
     return response.blob();
   }
 

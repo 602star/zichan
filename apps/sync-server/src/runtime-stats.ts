@@ -32,6 +32,7 @@ export interface RuntimeSample {
   eventLoopMeanMs: number | null;
   eventLoopMaxMs: number | null;
   eventLoopP99Ms: number | null;
+  eventLoopP95Ms?: number | null;
 }
 
 export interface RuntimeIdentity {
@@ -77,15 +78,16 @@ export function createRuntimeStats(): RuntimeStats {
   };
 
   /** The histogram accumulates between ticks, so it is read and reset in the same step. */
-  const readLag = (): Pick<RuntimeSample, 'eventLoopMeanMs' | 'eventLoopMaxMs' | 'eventLoopP99Ms'> => {
+  const readLag = (): Pick<RuntimeSample, 'eventLoopMeanMs' | 'eventLoopMaxMs' | 'eventLoopP99Ms' | 'eventLoopP95Ms'> => {
     const count = histogram.count;
-    if (!count) return { eventLoopMeanMs: null, eventLoopMaxMs: null, eventLoopP99Ms: null };
+    if (!count) return { eventLoopMeanMs: null, eventLoopMaxMs: null, eventLoopP99Ms: null, eventLoopP95Ms: null };
     // Histogram values are nanoseconds; the console speaks in milliseconds.
     const toMs = (value: number) => Number((value / 1e6).toFixed(2));
     const reading = {
       eventLoopMeanMs: toMs(histogram.mean),
       eventLoopMaxMs: toMs(histogram.max),
       eventLoopP99Ms: toMs(histogram.percentile(99)),
+      eventLoopP95Ms: toMs(histogram.percentile(95)),
     };
     histogram.reset();
     return reading;

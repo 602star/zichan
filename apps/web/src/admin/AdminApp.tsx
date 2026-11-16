@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Activity, Bell, ExternalLink, HardDrive, LayoutDashboard, ListTodo, LogOut, Menu, Monitor, RefreshCw, ScrollText, Settings, ShieldCheck, Ticket, Users, X, type LucideIcon } from 'lucide-react';
+import { Activity, Bell, Database, ExternalLink, Globe, HardDrive, LayoutDashboard, ListTodo, LogOut, Menu, Monitor, RefreshCw, ScrollText, Settings, ShieldCheck, Ticket, Users, X, type LucideIcon } from 'lucide-react';
 import { MfaRequiredError, type SyncAuthMe } from '@zichan/db';
 import {
   appearanceTokens,
+  APPEARANCE_CHANGED_EVENT,
   applyBrowserChrome,
   applyThemeTokens,
   readAppearancePreference,
@@ -12,14 +13,11 @@ import {
 } from '../appearance.js';
 import { AdminClient, type AdminHealth } from './client.js';
 import { adminBasePath, adminHref, navigate as navigateRoute, useRoute } from './router.js';
-import { AuditPage, LogsPage } from './LogsPage.js';
 import { AlertsPage } from './AlertsPage.js';
-import { SecurityEventsPage } from './SecurityEventsPage.js';
 import { InvitesPage } from './InvitesPage.js';
 import { JobsPage } from './JobsPage.js';
 import { OverviewPage } from './OverviewPage.js';
 import { MonitorPage } from './MonitorPage.js';
-import { ResourcesPage } from './ResourcesPage.js';
 import { SessionsPage } from './SessionsPage.js';
 import { SettingsPage } from './SettingsPage.js';
 import { SecurityPage } from './SecurityPage.js';
@@ -33,6 +31,12 @@ import { PasswordRecovery } from '../ui/PasswordRecovery.js';
 import { useBodyScrollLock } from '../ui/body-scroll-lock.js';
 import { Breadcrumbs, isPlainPrimaryClick, roleLabel } from './ui.js';
 import { adminNavigation } from './navigation.js';
+import { BrandMark } from '../ui/BrandMark.js';
+import { OperationsPage } from './OperationsPage.js';
+import { LogWorkspacePage } from './LogWorkspacePage.js';
+import { categoryForLogPath, LOG_DEFINITIONS } from './log-workspace-schema.js';
+import { canonicalAdminRoute } from './workspace-routes.js';
+import { useFocusBoundary } from './focus-boundary.js';
 
 const navigationIcons: Record<string, LucideIcon> = {
   '/overview': LayoutDashboard,
@@ -48,6 +52,14 @@ const navigationIcons: Record<string, LucideIcon> = {
   '/audit': ShieldCheck,
   '/security-events': ShieldCheck,
   '/settings': Settings,
+  '/requests': Activity,
+  '/traffic': Globe,
+  '/database': Database,
+  '/collectors': ListTodo,
+  '/host': Monitor,
+  '/access-logs': ScrollText,
+  '/task-logs': ListTodo,
+  '/container-logs': Monitor,
 };
 
 export function AdminApp({ baseUrl }: { baseUrl: string }) {
@@ -65,18 +77,22 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
   const [message, setMessage] = useState('正在检查服务器与管理会话…');
   // The same device preference the ledger app uses, so the two surfaces agree and
   // an operator who picked a dark screen does not get a cream console.
-  const [appearance] = useState(readAppearancePreference);
+  const [appearance, setAppearance] = useState(readAppearancePreference);
   const [prefersDark, setPrefersDark] = useState(systemPrefersDark);
   const themeMode = resolveThemeMode(appearance.mode, prefersDark);
   useEffect(() => subscribeSystemMode(() => setPrefersDark(systemPrefersDark())), []);
   useEffect(() => {
-    // The management console uses the same sage palette as the green ledger theme.
-    // Keep the device's light/dark preference while giving the console a stable identity.
-    const tokens = appearanceTokens('sage', themeMode);
+    const update = () => setAppearance(readAppearancePreference());
+    window.addEventListener('storage', update);
+    window.addEventListener(APPEARANCE_CHANGED_EVENT, update);
+    return () => { window.removeEventListener('storage', update); window.removeEventListener(APPEARANCE_CHANGED_EVENT, update); };
+  }, []);
+  useEffect(() => {
+    const tokens = appearanceTokens(appearance.theme, themeMode);
     const restore = applyThemeTokens(document.documentElement, tokens, themeMode);
     applyBrowserChrome(tokens);
     return restore;
-  }, [themeMode]);
+  }, [appearance.theme, themeMode]);
   useEffect(() => {
     let active = true;
     const client = new AdminClient(baseUrl, (note) => { if (active) { setAccount(undefined); setPassword(''); setMfaChallenge(undefined); setMfaCode(''); setMessage(note); } });
@@ -196,7 +212,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
     <div className="zc-admin-frame">
       <header className="zc-admin-topbar" data-authenticated={Boolean(account)}>
         <div className="zc-admin-brand">
-          <span className="zc-admin-brand-mark" aria-hidden="true">资</span>
+          <BrandMark />
           <div className="zc-admin-brand-copy">
             <h1>有本</h1>
             <span>服务器管理</span>
@@ -261,17 +277,20 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
 }) {
   const route = useRoute();
   const [navOpen, setNavOpen] = useState(false);
+  const navRef = useRef<HTMLElement>(null);
+  useFocusBoundary(navRef, navOpen);
   useBodyScrollLock(navOpen);
   const basePath = adminBasePath(window.location);
   const go = (to: string) => { navigateRoute(adminHref(basePath, to)); };
   const role = account.role;
   const groups = adminNavigation(role);
   const items = [...groups.flatMap((group) => group.pages), { path: '/security', label: '账号安全' }];
-  const current = items.find((item) => route.path === item.path || route.path.startsWith(`${item.path}/`)) ?? items[0]!;
+  const logCategory = categoryForLogPath(route.path);
+  const current = (logCategory ? items.find((item) => item.path === '/logs') : items.find((item) => route.path === item.path || route.path.startsWith(`${item.path}/`))) ?? items[0]!;
   // A detail page is one level below its list, and the trailing segment is an opaque id rather
   // than a label. Only the user detail route has a readable parent, so only it gets an extra crumb;
   // anything else would be a link whose text an operator cannot read.
-  const detailCrumb = current.path === '/users' && route.segments[1] ? '用户详情' : undefined;
+  const detailCrumb = logCategory ? LOG_DEFINITIONS[logCategory].title : current.path === '/users' && route.segments[1] ? '用户详情' : undefined;
 
   // Several console tabs are open at once during an incident; without a title they are
   // indistinguishable in the tab bar. The user detail page names the account it shows, and a
@@ -291,6 +310,10 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
   useEffect(() => {
     if (/\/admin\/?$/.test(window.location.pathname)) navigateRoute(adminHref(basePath, '/overview'), { replace: true });
   }, [basePath]);
+  useEffect(() => {
+    const canonical = canonicalAdminRoute(route.path, route.query);
+    if (canonical) navigateRoute(adminHref(basePath, canonical), { replace: true });
+  }, [basePath, route.path, route.search]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setNavOpen(false); }, [route.path]);
   useEffect(() => {
     if (!navOpen) return;
@@ -306,6 +329,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
   }, []);
 
   const page = (() => {
+    if (logCategory) return <LogWorkspacePage key={logCategory} client={client} category={logCategory} query={route.query} navigate={go} />;
     const [first, second] = route.segments;
     switch (first) {
       case 'users':
@@ -314,15 +338,14 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
           : <UsersPage client={client} query={route.query} navigate={go} role={role} />;
       case 'sessions': return <SessionsPage client={client} query={route.query} navigate={go} role={role} selfAccountId={account.accountId ?? ''} />;
       case 'sync': return <SyncPage client={client} query={route.query} navigate={go} />;
-      case 'security-events': return <SecurityEventsPage client={client} query={route.query} navigate={go} />;
       case 'alerts': return <AlertsPage client={client} role={role} navigate={go} query={route.query} />;
       case 'invites': return <InvitesPage client={client} role={role} query={route.query} navigate={go} />;
       case 'storage': return <StoragePage client={client} role={role} query={route.query} navigate={go} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
       case 'monitor': return <MonitorPage client={client} role={role} query={route.query} navigate={go} />;
-      case 'resources': return <ResourcesPage client={client} role={role} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
+      case 'requests': case 'traffic': case 'database': case 'collectors': case 'host':
+        return <OperationsPage client={client} role={role} view={first} query={route.query} navigate={go} />;
+      case 'resources': return null;
       case 'jobs': return <JobsPage client={client} query={route.query} navigate={go} role={role} />;
-      case 'logs': return <LogsPage client={client} query={route.query} navigate={go} />;
-      case 'audit': return <AuditPage client={client} query={route.query} navigate={go} />;
       // Changing the account password revokes every session, so the console signs itself out
       // instead of leaving a dead session on screen that fails on the next click.
       case 'security': return <SecurityPage client={client} username={account.username} role={role} onPasswordChanged={() => { onSignedOut('账号密码已修改，请用新密码重新登录。'); }} />;
@@ -343,7 +366,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
         <strong>{current.label}</strong>
       </div>
       {navOpen ? <button type="button" className="zc-admin-nav-scrim" aria-label="关闭管理导航" onClick={() => setNavOpen(false)} /> : null}
-      <nav id="zc-admin-navigation" className="zc-admin-nav" data-open={navOpen} aria-label="管理后台导航">
+      <nav ref={navRef} tabIndex={-1} id="zc-admin-navigation" className="zc-admin-nav" data-open={navOpen} aria-label="管理后台导航">
         <div className="zc-admin-nav-intro"><span>工作台</span><small>{baseUrl}</small></div>
         {groups.map((group) => {
           const link = (item: { path: string; label: string }) => {

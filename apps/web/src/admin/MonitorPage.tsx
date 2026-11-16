@@ -1,180 +1,50 @@
-/** Server resources and application occupancy appear together, with explicit collection scope. */
-import { useState } from 'react';
 import type { AdminClient } from './client.js';
 import { MetricLineChart } from './chart.js';
-import { pendingAlerts, overviewStatus } from './operations.js';
-import { ResourcesPage } from './ResourcesPage.js';
-import { TrafficPanel } from './TrafficPanel.js';
 import { MetricCatalog } from './MetricCatalog.js';
-import { StartupTimingPanel } from './StartupTimingPanel.js';
 import type { Metrics, Overview, SystemMetrics, SystemMonitorReading } from './types.js';
-import { Badge, Button, Loading, Notice, PageHeader, Panel, Stat, bytes, muted, usePolling, useResource, when } from './ui.js';
+import { Badge, Button, DataTable, Loading, Notice, PageHeader, Panel, Stat, bytes, usePolling, useResource, when } from './ui.js';
 
-const RANGES = ['1h', '24h', '7d', '30d', '90d'] as const;
-type Range = (typeof RANGES)[number];
-
-type MonitorView = 'overview' | 'traffic' | 'resources' | 'service' | 'metrics';
-
-export function MonitorPage({ client, role, query, navigate }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (to: string) => void }) {
-  const requestedRange = query.get('range');
-  const range: Range = RANGES.find((value) => value === requestedRange) ?? '24h';
-  const requestedView = query.get('view');
-  const view: MonitorView = requestedView === 'traffic' || requestedView === 'resources' || requestedView === 'service' || requestedView === 'metrics' ? requestedView : 'overview';
-  const [jobId, setJobId] = useState('');
-  const select = (patch: Record<string, string>) => {
-    const next = new URLSearchParams(query);
-    for (const [key, value] of Object.entries(patch)) next.set(key, value);
-    navigate(`/monitor?${next}`);
-  };
+const RANGES = ['1h','24h','7d','30d','90d'] as const;
+export function MonitorPage({ client, query, navigate }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (path: string) => void }) {
+  const range = RANGES.find((r) => r === query.get('range')) ?? '24h';
+  const view = query.get('view') === 'system' ? 'system' : query.get('view') === 'metrics' ? 'metrics' : 'application';
+  const update = (patch: Record<string, string>) => { const next = new URLSearchParams(query); for (const [key, value] of Object.entries(patch)) next.set(key, value); navigate(`/monitor?${next}`); };
   const overview = useResource(() => client.request<Overview>('/overview'), []);
-  const systemResource = useResource(() => client.request<SystemMonitorReading>('/system'), []);
-  const systemMetrics = useResource(() => client.request<SystemMetrics>(`/system/metrics?range=${range}`), [range]);
+  const system = useResource(() => client.request<SystemMonitorReading>('/system'), []);
   const metrics = useResource(() => client.request<Metrics>(`/metrics?range=${range}`), [range]);
-  const logs = useResource(() => client.request<{
-    buckets: { bucketAt: string; info: number; warn: number; error: number }[];
-  }>(`/logs/summary?range=${range}`), [range]);
-  usePolling(() => { overview.reload(); systemResource.reload(); systemMetrics.reload(); metrics.reload(); logs.reload(); }, 30_000);
-  const system = systemResource.data;
-  const storage = overview.data?.snapshot.storage;
-  const scope = system?.scope === 'container' ? '容器' : '主机';
-  const diskUsed = storage?.diskTotalBytes != null && storage.diskFreeBytes != null ? storage.diskTotalBytes - storage.diskFreeBytes : null;
-  const alerts = pendingAlerts(overview.data?.alerts ?? []);
-  const stale = overview.stale || systemResource.stale || metrics.stale;
-  const buckets = metrics.data?.buckets ?? [];
-  const systemBuckets = systemMetrics.data?.buckets ?? [];
-  const logBuckets = logs.data?.buckets ?? [];
-  const bucketMs = range === '1h' ? 60_000 : range === '30d' || range === '90d' ? 86_400_000 : 3_600_000;
-  const logBucketMs = range === '7d' ? 86_400_000 : bucketMs;
-  const asSeries = <T extends { bucketAt: string }>(rows: T[], value: (row: T) => number | null) => rows.map((row) => ({ at: row.bucketAt, value: value(row) }));
-  const percent = (part: number | null, total: number | null) => part === null || total === null || total <= 0 ? null : part / total * 100;
-
+  const history = useResource(() => client.request<SystemMetrics>(`/system/metrics?range=${range}`), [range]);
+  const refresh = () => { overview.reload(); system.reload(); metrics.reload(); history.reload(); };
+  usePolling(refresh, 30000);
+  const current = overview.data?.snapshot.process;
+  const reading = system.data;
+  const scope = reading?.scope === 'container' ? '容器' : '主机';
+  const stale = overview.stale || system.stale || metrics.stale || history.stale || overview.data?.snapshot.stale;
+  const bucketMs = range === '1h' ? 60000 : range === '30d' || range === '90d' ? 86400000 : 3600000;
+  const ms = (n: number | null | undefined) => n == null ? '未采集' : `${n.toFixed(1)} ms`;
   return <>
-    <PageHeader title="监控中心" description="先看当前状态，再按需要查看历史请求与资源采样。" actions={<>
-      <div className="zc-admin-view-switch" aria-label="历史趋势时间范围">{RANGES.map((value) => <Button key={value} aria-pressed={range === value} disabled={range === value} onClick={() => select({ range: value })}>{value}</Button>)}</div>
-      <Button onClick={() => { overview.reload(); systemResource.reload(); systemMetrics.reload(); metrics.reload(); logs.reload(); }}>刷新全部</Button>
-    </>} />
-    <nav className="zc-admin-workspace-nav" aria-label="运维监测视图">
-      {([['overview', '运行总览', '请求、异常与告警'], ['traffic', '访问统计', 'PV、UV 与地区'], ['resources', '资源状态', '主机或容器快照'], ['service', '服务占用', '进程与数据库'], ['metrics', '指标总表', '指标目录与导出']] as const).map(([value, label, description]) =>
-        <button key={value} type="button" aria-current={view === value ? 'page' : undefined} onClick={() => select({ view: value })}><strong>{label}</strong><span>{description}</span></button>)}
-    </nav>
-    {view !== 'traffic' ? <Loading
-      loading={view === 'metrics' ? metrics.loading || systemMetrics.loading : overview.loading || systemResource.loading || systemMetrics.loading || metrics.loading || logs.loading}
-      error={view === 'metrics' ? metrics.error || systemMetrics.error : overview.error || systemResource.error || systemMetrics.error || metrics.error || logs.error}
-      stale={view === 'metrics' ? metrics.stale || systemMetrics.stale : stale || systemMetrics.stale || logs.stale}
-      loadedAt={view === 'metrics' ? metrics.loadedAt : systemResource.loadedAt} /> : null}
-    {view !== 'traffic' && view !== 'metrics' && stale ? <Notice tone="warn">采集数据已过期，以下读数不能代表当前状态。</Notice> : null}
-    {view !== 'traffic' && view !== 'metrics' ? <div className="zc-admin-monitor-context"><Badge tone={stale ? 'warn' : alerts.length ? 'bad' : 'ok'}>{overviewStatus(overview.data, stale)}</Badge><span>当前快照：{system ? when(system.sampledAt) : '等待采集'}</span><span>历史趋势：近 {range} · {metrics.data?.note ?? '等待指标采样'}</span></div> : null}
-
-    {view === 'traffic' ? <TrafficPanel client={client} range={range} /> : null}
-    {view === 'metrics' ? <MetricCatalog metrics={metrics.data} system={systemMetrics.data} reading={system} range={range} /> : null}
-
-    {view === 'resources' ? <section id="section-服务器资源监控" className="zc-admin-monitor-section">
-      <h2>资源状态</h2>
-      <p style={muted}>{system ? `运行方式：${system.mode === 'docker' ? 'Linux Docker' : system.mode === 'windows' ? 'Windows 直接运行' : system.mode === 'linux' ? 'Linux 直接运行' : '其他'} · 采集范围：${scope} · 采样于 ${when(system.sampledAt)}` : '等待系统资源采样'}</p>
-      <Panel title={`${scope}资源`} note={system?.scope === 'container' ? 'CPU/内存采集自 cgroup；网络和进程来自容器当前可见的命名空间。宿主机完整资源需要独立采集器。' : 'CPU、内存、网络和进程来自操作系统；磁盘容量为服务数据所在卷。'}>
-        <div className="zc-admin-monitor-stats">
-          <Stat label={`${scope} CPU`} value={system?.cpuPercent == null ? '不可用' : `${system.cpuPercent.toFixed(1)}%`} hint={system?.scope === 'container' ? system.unavailable.some((item) => item.includes('未设置 CPU 配额')) ? '单核 100% 基准' : '相对于容器 CPU 配额' : '各逻辑 CPU 的总体负载'} />
-          <Stat label={`${scope}内存`} value={system?.memoryUsedBytes == null ? '不可用' : bytes(system.memoryUsedBytes)} hint={system?.memoryTotalBytes == null ? '总量或上限不可用' : `总量或上限 ${bytes(system.memoryTotalBytes)}`} />
-          <Stat label="数据卷已用" value={diskUsed == null || !storage?.diskTotalBytes ? '不可用' : `${(diskUsed / storage.diskTotalBytes * 100).toFixed(1)}%`} hint={storage?.diskFreeBytes == null ? '容量不可读' : `剩余 ${bytes(storage.diskFreeBytes)}`} />
-          <Stat label="网络接收" value={system?.networkRxBytesPerSecond == null ? '不可用' : `${bytes(system.networkRxBytesPerSecond)}/s`} hint={`${scope}可见网卡总速率`} />
-          <Stat label="网络发送" value={system?.networkTxBytesPerSecond == null ? '不可用' : `${bytes(system.networkTxBytesPerSecond)}/s`} hint={`${scope}可见网卡总速率`} />
-          <Stat label="磁盘读取" value={system?.diskReadBytesPerSecond == null ? '不可用' : `${bytes(system.diskReadBytesPerSecond)}/s`} />
-          <Stat label="磁盘写入" value={system?.diskWriteBytesPerSecond == null ? '不可用' : `${bytes(system.diskWriteBytesPerSecond)}/s`} />
-          <Stat label="可见进程" value={system?.processCount == null ? '不可用' : String(system.processCount)} hint={system?.scope === 'container' ? '容器当前可见进程' : '操作系统进程'} />
-        </div>
-        {system?.unavailable.length ? <p style={muted}>采集说明：{system.unavailable.join('；')}。</p> : null}
+    <PageHeader title="运行监控" description="应用自身与当前可见系统资源。请求、访问和数据库分析各自使用独立主入口。" actions={<><div className="zc-admin-view-switch" aria-label="历史趋势时间范围">{RANGES.map((r) => <Button key={r} aria-pressed={range === r} onClick={() => update({ range: r })}>{r}</Button>)}</div><Button onClick={refresh}>刷新</Button></>} />
+    <nav className="zc-admin-workspace-nav" aria-label="运行监控视图">{[['application','应用自身','Node 进程与事件循环'],['system','系统资源','主机或容器可见范围'],['metrics','指标目录','按指标查趋势与导出']].map(([key,label,note]) => <button key={key} aria-current={view === key ? 'page' : undefined} onClick={() => update({ view: key! })}><strong>{label}</strong><span>{note}</span></button>)}</nav>
+    <Loading loading={overview.loading || system.loading || metrics.loading || history.loading} error={overview.error || system.error || metrics.error || history.error} stale={Boolean(stale)} />
+    <div className="zc-admin-ops-provenance"><Badge tone={stale ? 'warn' : 'muted'}>{stale ? '数据过期' : overview.data ? '采样已更新' : '未采集'}</Badge><span>来源：{view === 'application' ? 'Node process API' : reading?.scope === 'container' ? 'cgroup / 当前命名空间' : '操作系统'}</span><span>采样：{when(overview.data?.snapshot.sampledAt)}</span><span>时区：{Intl.DateTimeFormat().resolvedOptions().timeZone} · 近 {range}</span></div>
+    {view === 'metrics' ? <MetricCatalog metrics={metrics.data} system={history.data} reading={reading} range={range} /> : view === 'application' ? <>
+      <Panel title="Node 进程" note="CPU 以单核 100% 为基准，可超过 100%；RSS、V8 堆和 external 属不同内存口径。">
+        <div className="zc-admin-ops-band"><Stat label="RSS" value={current ? bytes(current.rssBytes) : '未采集'} /><Stat label="V8 堆已用" value={current ? bytes(current.heapUsedBytes) : '未采集'} hint={current ? `已分配 ${bytes(current.heapTotalBytes)}` : undefined} /><Stat label="堆外内存" value={current ? bytes(current.externalBytes) : '未采集'} hint={current ? `ArrayBuffer ${bytes(current.arrayBuffersBytes)}` : undefined} /><Stat label="CPU · 单核基准" value={current?.cpuPercent == null ? '未采集' : `${current.cpuPercent.toFixed(1)}%`} /></div>
+        <dl className="zc-admin-ops-facts"><div><dt>事件循环 P95 / P99</dt><dd>{ms(current?.eventLoopP95Ms)} / {ms(current?.eventLoopP99Ms)}</dd></div><div><dt>事件循环均值 / 最大</dt><dd>{ms(current?.eventLoopMeanMs)} / {ms(current?.eventLoopMaxMs)}</dd></div><div><dt>PID / Node</dt><dd>{current?.pid ?? '未采集'} / {current?.nodeVersion ?? '未采集'}</dd></div><div><dt>启动时间</dt><dd>{when(current?.startedAt)}</dd></div></dl>
       </Panel>
-      <div className="zc-admin-monitor-grid">
-        <Panel title={`${scope} CPU 趋势`} note="每个分桶保存最后一次系统采样；断线表示采样缺失。">
-          <MetricLineChart label={`${scope} CPU 趋势，近 ${range}`} bucketMs={bucketMs} formatValue={(value) => `${value.toFixed(0)}%`} maxValue={100}
-            series={[{ label: 'CPU', color: 'var(--accent)', points: asSeries(systemBuckets, (item) => item.cpuPercent) }]} />
-        </Panel>
-        <Panel title={`${scope}内存趋势`}>
-          <MetricLineChart label={`${scope}内存趋势，近 ${range}`} bucketMs={bucketMs} formatValue={bytes}
-            series={[{ label: '已用内存', color: 'var(--accent)', points: asSeries(systemBuckets, (item) => item.memoryUsedBytes) }]} />
-        </Panel>
-        <Panel title="数据卷容量趋势" note="显示服务数据所在卷的已用比例。">
-          <MetricLineChart label={`数据卷容量趋势，近 ${range}`} bucketMs={bucketMs} formatValue={(value) => `${value.toFixed(0)}%`} maxValue={100}
-            series={[{ label: '已用空间', color: 'var(--warning)', points: asSeries(systemBuckets, (item) => percent(item.diskUsedBytes, item.diskTotalBytes)) }]} />
-        </Panel>
-        <Panel title={`${scope}磁盘 IO 趋势`}>
-          <MetricLineChart label={`${scope}磁盘 IO 趋势，近 ${range}`} bucketMs={bucketMs} formatValue={(value) => `${bytes(value)}/s`}
-            series={[
-              { label: '读取', color: 'var(--accent)', points: asSeries(systemBuckets, (item) => item.diskReadBytesPerSecond) },
-              { label: '写入', color: 'var(--warning)', points: asSeries(systemBuckets, (item) => item.diskWriteBytesPerSecond) },
-            ]} />
-        </Panel>
-        <Panel title={`${scope}网络趋势`}>
-          <MetricLineChart label={`${scope}网络趋势，近 ${range}`} bucketMs={bucketMs} formatValue={(value) => `${bytes(value)}/s`}
-            series={[
-              { label: '接收', color: 'var(--accent)', points: asSeries(systemBuckets, (item) => item.networkRxBytesPerSecond) },
-              { label: '发送', color: 'var(--warning)', points: asSeries(systemBuckets, (item) => item.networkTxBytesPerSecond) },
-            ]} />
-        </Panel>
-      </div>
-      <Panel title={`${scope}进程排行`} note="按 CPU 占用排序；仅显示进程名称、PID 和资源占用。">
-        {system?.topProcesses.length ? <div className="zc-admin-monitor-process-list" role="table" aria-label="进程资源排行">
-          <div role="row" className="zc-admin-monitor-process-row"><strong role="columnheader">进程</strong><strong role="columnheader">PID</strong><strong role="columnheader">CPU</strong><strong role="columnheader">RSS</strong></div>
-          {system.topProcesses.map((item) => <div role="row" className="zc-admin-monitor-process-row" key={item.pid}>
-            <span role="cell">{item.name}</span><span role="cell">{item.pid}</span><span role="cell">{item.cpuPercent.toFixed(1)}%</span><span role="cell">{bytes(item.rssBytes)}</span>
-          </div>)}
-        </div> : <p style={muted}>进程列表暂不可用。</p>}
+      <div className="zc-admin-monitor-grid"><Panel title="进程内存趋势" note="每个桶保存峰值，缺失样本不补零。"><MetricLineChart label="进程 RSS 与 V8 堆趋势" bucketMs={bucketMs} formatValue={bytes} series={[
+        { label: 'RSS', color: 'var(--accent)', points: (metrics.data?.buckets ?? []).map((r) => ({ at: r.bucketAt, value: r.rssBytes || null })) },
+        { label: 'V8 堆', color: 'var(--positive)', points: (metrics.data?.buckets ?? []).map((r) => ({ at: r.bucketAt, value: r.heapUsedBytes || null })) },
+      ]} /></Panel><Panel title="进程 CPU 趋势" note="单核 100% 基准；历史为分桶峰值。"><MetricLineChart label="进程 CPU 趋势" bucketMs={bucketMs} formatValue={(n) => `${n.toFixed(1)}%`} series={[{ label: 'CPU', color: 'var(--positive)', points: (metrics.data?.buckets ?? []).map((r) => ({ at: r.bucketAt, value: r.rssBytes ? r.cpuPercent : null })) }]} /></Panel></div>
+    </> : <>
+      <Panel title={`${scope}资源`} note={reading?.scope === 'container' ? 'CPU/内存来自 cgroup；其他指标来自当前命名空间。完整宿主机与容器生命周期状态进入“主机与容器”。' : '直接运行时采集当前主机可见资源。独立探活和容器生命周期状态进入“主机与容器”。'}>
+        <div className="zc-admin-ops-band"><Stat label={`${scope} CPU`} value={reading?.cpuPercent == null ? '未采集' : `${reading.cpuPercent.toFixed(1)}%`} /><Stat label={`${scope}内存`} value={reading?.memoryUsedBytes == null ? '未采集' : bytes(reading.memoryUsedBytes)} hint={reading?.memoryTotalBytes == null ? '总量或限额未配置' : `总量 / 限额 ${bytes(reading.memoryTotalBytes)}`} /><Stat label="网络接收" value={reading?.networkRxBytesPerSecond == null ? '未采集' : `${bytes(reading.networkRxBytesPerSecond)}/s`} /><Stat label="网络发送" value={reading?.networkTxBytesPerSecond == null ? '未采集' : `${bytes(reading.networkTxBytesPerSecond)}/s`} /></div>
+        {reading?.unavailable.length ? <Notice tone="warn">{reading.unavailable.join('；')}</Notice> : null}<Button onClick={() => navigate('/host')}>独立宿主机与容器探测</Button>
       </Panel>
-    </section> : null}
-
-    {view === 'service' ? <section id="section-软件运行占用监控" className="zc-admin-monitor-section">
-      <h2>服务占用</h2>
-      <p style={muted}>专门统计同步服务器 Node 进程的 CPU、内存、事件循环和 SQLite 数据库。桌面外壳与浏览器进程不计入。</p>
-      <div className="zc-admin-monitor-grid">
-        <Panel title="软件 CPU 趋势" note="每个分桶的进程 CPU 峰值。">
-          <MetricLineChart label={`软件 CPU 趋势，近 ${range}`} bucketMs={bucketMs} formatValue={(value) => `${value.toFixed(0)}%`} maxValue={100}
-            series={[{ label: 'Node 进程 CPU', color: 'var(--accent)', points: asSeries(buckets, (item) => item.rssBytes > 0 ? item.cpuPercent : null) }]} />
-        </Panel>
-        <Panel title="软件内存趋势" note="每个分桶的 Node 进程 RSS 峰值。">
-          <MetricLineChart label={`软件内存趋势，近 ${range}`} bucketMs={bucketMs} formatValue={bytes}
-            series={[{ label: 'Node 进程 RSS', color: 'var(--warning)', points: asSeries(buckets, (item) => item.rssBytes > 0 ? item.rssBytes : null) }]} />
-        </Panel>
-      </div>
-      {jobId ? <Notice tone="info">已创建维护任务 {jobId}。可在任务中心查看执行结果。</Notice> : null}
-      <ResourcesPage client={client} role={role} onJob={setJobId} embedded />
-    </section> : null}
-
-    {view === 'overview' ? <section id="section-请求与异常" className="zc-admin-monitor-section">
-      <h2>请求与异常</h2>
-      <StartupTimingPanel client={client} range={range === '1h' || range === '24h' ? '7d' : range} />
-      <div className="zc-admin-monitor-grid">
-        <Panel title="请求表现" note="请求量按分桶累计；错误包含 HTTP 4xx 和 5xx。">
-          <div className="zc-admin-monitor-mini-stats">
-            <Stat label="服务状态" value={stale ? '状态未知' : overviewStatus(overview.data, overview.stale)} />
-            <Stat label="请求量" value={metrics.data ? String(metrics.data.totals.requests) : '暂无数据'} />
-            <Stat label="错误率" value={metrics.data?.totals.errorRate == null ? '暂无数据' : `${(metrics.data.totals.errorRate * 100).toFixed(1)}%`} />
-            <Stat label="平均响应" value={metrics.data?.totals.averageMs == null ? '暂无数据' : `${metrics.data.totals.averageMs} ms`} />
-            <Stat label="慢请求" value={metrics.data ? String(metrics.data.totals.slowRequests) : '暂无数据'} hint="耗时至少 1 秒" />
-          </div>
-          <p style={muted}>当前未保存可计算 API P95 / P99 的延迟分布。</p>
-        </Panel>
-        <Panel title="异常线索" note="活动告警与最近失败操作直接显示在这里。" action={<Button onClick={() => navigate('/alerts')}>查看告警记录</Button>}>
-          <div className="zc-admin-monitor-mini-stats"><Stat label="当前异常" value={overview.data ? String(alerts.length) : '暂无数据'} tone={alerts.length ? 'warn' : undefined} /></div>
-          {!alerts.length && !overview.data?.recentFailures.length ? <p style={muted}>当前没有活动告警或最近失败的管理操作。</p> : null}
-          {alerts.slice(0, 5).map((alert) => <div className="zc-admin-monitor-event" key={alert.key}><Badge tone={alert.severity === 'critical' ? 'bad' : 'warn'}>{alert.state === 'active' ? '活动' : '观察中'}</Badge><span>{alert.rule} · {alert.scope}</span><span style={muted}>{when(alert.lastSeenAt)}</span></div>)}
-          {overview.data?.recentFailures.slice(0, 3).map((failure) => <div className="zc-admin-monitor-event" key={failure.id}><Badge tone="warn">操作失败</Badge><span>{failure.action} · {failure.code ?? '未知原因'}</span><span style={muted}>{when(failure.at)}</span></div>)}
-        </Panel>
-        <Panel title="请求量趋势" note="每个分桶的请求总数。">
-          <MetricLineChart label={`请求量趋势，近 ${range}`} bucketMs={bucketMs} formatValue={(value) => value.toFixed(0)}
-            series={[{ label: '请求', color: 'var(--accent)', points: asSeries(buckets, (item) => item.requests) }]} />
-        </Panel>
-        <Panel title="错误率趋势" note="HTTP 4xx 和 5xx 占该分桶请求的比例；没有请求的分桶留空。">
-          <MetricLineChart label={`错误率趋势，近 ${range}`} bucketMs={bucketMs} formatValue={(value) => `${value.toFixed(0)}%`} maxValue={100}
-            series={[{ label: '错误率', color: 'var(--danger)', points: asSeries(buckets, (item) => item.requests ? item.errors / item.requests * 100 : null) }]} />
-        </Panel>
-        <Panel title="日志异常趋势" note="统计当前保留的运行日志；超过保留期的数据不会显示。">
-          <MetricLineChart label={`日志异常趋势，近 ${range}`} bucketMs={logBucketMs} formatValue={(value) => value.toFixed(0)}
-            series={[
-              { label: '警告', color: 'var(--warning)', points: asSeries(logBuckets, (item) => item.warn) },
-              { label: '错误', color: 'var(--danger)', points: asSeries(logBuckets, (item) => item.error) },
-            ]} />
-        </Panel>
-      </div>
-    </section> : null}
+      <div className="zc-admin-monitor-grid"><Panel title={`${scope}内存趋势`}><MetricLineChart label="系统内存趋势" bucketMs={bucketMs} formatValue={bytes} series={[{ label: '已用内存', color: 'var(--accent)', points: (history.data?.buckets ?? []).map((r) => ({ at: r.bucketAt, value: r.memoryUsedBytes })) }]} /></Panel><Panel title="磁盘 IO 趋势"><MetricLineChart label="系统磁盘 IO 趋势" bucketMs={bucketMs} formatValue={(n) => `${bytes(n)}/s`} series={[
+        { label: '读取', color: 'var(--positive)', points: (history.data?.buckets ?? []).map((r) => ({ at: r.bucketAt, value: r.diskReadBytesPerSecond })) },
+        { label: '写入', color: 'var(--accent)', points: (history.data?.buckets ?? []).map((r) => ({ at: r.bucketAt, value: r.diskWriteBytesPerSecond })) },
+      ]} /></Panel></div>
+      <Panel title="可见进程"><DataTable rows={reading?.topProcesses ?? []} rowKey={(r) => String(r.pid)} empty="未采集到进程列表。" columns={[{ key: 'name', header: '进程', render: (r) => r.name },{ key: 'pid', header: 'PID', render: (r) => r.pid },{ key: 'cpu', header: 'CPU', render: (r) => `${r.cpuPercent.toFixed(1)}%` },{ key: 'rss', header: 'RSS', render: (r) => bytes(r.rssBytes) }]} /></Panel>
+    </>}
   </>;
 }

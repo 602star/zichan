@@ -89,7 +89,8 @@ test('shows failed logins by source and states what it cannot see', async ({ pag
     }
     await signIn(page, f.url);
     await clickAdminLink(page, '登录安全');
-    await expect(page.getByRole('heading', { name: '登录安全' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '登录日志' })).toBeVisible();
+    await page.getByText('失败来源与限流汇总', { exact: true }).click();
 
     // The aggregation is the point: an address, how often, and which accounts it touched.
     // Scoped to the failure panel, because the same address also appears in the bucket table.
@@ -128,7 +129,8 @@ test('marks an address as throttled only once the limiter blocks it', async ({ p
     expect(throttled).toBe(true);
 
     await clickAdminLink(page, '登录安全');
-    await expect(page.getByRole('heading', { name: '登录安全' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '登录日志' })).toBeVisible();
+    await page.getByText('失败来源与限流汇总', { exact: true }).click();
     // Both views agree: the bucket table shows the block, and the failure list marks the source.
     await expect(page.getByText(/限流至/).first()).toBeVisible();
     await expect(page.getByText(/当前有 \d+ 个桶处于限流状态/)).toBeVisible();

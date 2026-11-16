@@ -1,3 +1,5 @@
+import { describeAudit } from './audit-description.js';
+export { describeAudit } from './audit-description.js';
 /**
  * Management API.
  *
@@ -6,6 +8,8 @@
  * plaintext ledger data. The owner-only signed update route requests a supervised restart.
  */
 import { createHash } from 'node:crypto';
+import { readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { addDays, dayOfInstant } from '@zichan/core';
 import type { EncryptedBlobStore } from './blob-store.js';
@@ -17,6 +21,9 @@ import { drainView, resolveMaintenance, type MaintenanceState, type WriteTracker
 import { maskChannel, mergeChannelSecrets, parseAlertChannels, SECRET_PLACEHOLDER } from './alert-channels.js';
 import { redactForExport, redactText } from './log-redaction.js';
 import type { MetricsService } from './metrics.js';
+import { summarizeRequests } from './observability.js';
+import { LogQueryError, logCsv, parseLogQuery, LOG_EXPORT_FIELDS } from './log-workspace.js';
+import { readContainerLogs } from './container-log-source.js';
 import { SETTING_FIELDS, type SettingsFacade } from './settings.js';
 import { executorStatus } from './backup-executor-state.js';
 import {
@@ -182,84 +189,10 @@ export function maskChannelList(value: unknown): string {
   } catch { return ''; }
 }
 
-function bytes(value: number): string {
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
-  let amount = Math.abs(value);
-  let unit = 0;
-  while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; }
-  return `${Number(amount.toFixed(unit === 0 ? 0 : 1))} ${units[unit]}`;
-}
-
-function dateOnly(value: string): string {
-  return value.replace('T', ' ').slice(0, 19);
-}
-
 function optionalIso(value: string | null, name: string): string | undefined {
   if (value === null || value === '') return undefined;
   if (!Number.isFinite(Date.parse(value))) throw new ServerStoreError('INVALID_RANGE', 400, `${name} 不是有效时间`);
   return value;
-}
-
-/** Human-readable sentence first; raw fields stay available in the detail view. */
-export function describeAudit(
-  entry: { action: string; before: unknown; after: unknown; reason?: string | null },
-  actor: string,
-  target: string,
-): string {
-  const before = (entry.before ?? {}) as JsonRecord;
-  const after = (entry.after ?? {}) as JsonRecord;
-  const roleName = (role: unknown) => role === 'owner' ? '所有者' : role === 'admin' ? '管理员' : role === 'viewer' ? '只读运维' : '普通用户';
-  const reason = typeof entry.reason === 'string' && entry.reason.trim() ? ` 原因：${entry.reason.trim()}。` : '';
-  const prefix = target && target !== actor ? `管理员 ${actor} 将用户 ${target}` : `管理员 ${actor}`;
-  switch (entry.action) {
-    case 'role':
-      return `${prefix} 的角色从 ${roleName(before['role'])} 调整为 ${roleName(after['role'])}，并撤销了该账号的现有会话。${reason}`;
-    case 'state':
-      return `${prefix}的账号状态改为${after['disabled'] ? '已禁用（同时撤销全部会话）' : '正常'}。${reason}`;
-    case 'commit-quota':
-      return `${prefix}的提交配额调整为 ${after['bytes'] === null ? '服务器默认值' : bytes(Number(after['bytes']))}。${reason}`;
-    case 'blob-quota':
-      return `${prefix}的附件配额调整为 ${after['bytes'] === null ? '服务器默认值' : bytes(Number(after['bytes']))}。${reason}`;
-    case 'revoke-session':
-      return `${prefix}的一个设备会话被撤销。${reason}`;
-    case 'sessions-revoke-all':
-      return `${prefix}的全部可管理会话被撤销（${String(after['revoked'] ?? 0)} 个）。${reason}`;
-    case 'registration':
-      return `管理员 ${actor} 将注册策略从 ${String(before['value'] ?? before['mode'] ?? '未知')} 改为 ${String(after['mode'])}。${reason}`;
-    case 'invite-create':
-      return `管理员 ${actor} 创建了一个单次邀请码（有效期至 ${after['expiresAt'] ? dateOnly(String(after['expiresAt'])) : '未设置'}）。${reason}`;
-    case 'invite-state':
-      return `管理员 ${actor} 将一个邀请码${after['disabled'] ? '撤销' : '重新启用'}。${reason}`;
-    case 'password-reset-issue':
-      return `${prefix}发放了一次性密码重置码（有效期至 ${after['expiresAt'] ? dateOnly(String(after['expiresAt'])) : '未记录'}）。${reason}`;
-    case 'password-reset-revoke':
-      return `${prefix}撤销了未使用的密码重置码。${reason}`;
-    case 'password-reset-complete':
-      return `${target || actor} 完成了账号密码重置，旧会话已撤销。${reason}`;
-    case 'password-change-authorize':
-      return `${actor} 授权了本人账号的密码变更。${reason}`;
-    case 'owner-recovery-local':
-      return `部署侧为本机所有者发放了恢复凭据。${reason}`;
-    case 'settings-save':
-    case 'settings-update':
-      return `管理员 ${actor} 修改了系统设置：${Object.keys(after).join('、') || '无变化'}。${reason}`;
-    case 'alert-acknowledge':
-      return `管理员 ${actor} 确认了告警 ${String(after['key'] ?? '')}。${reason}`;
-    case 'alert-silence':
-      return `管理员 ${actor} 将告警 ${String(after['key'] ?? '')} 静默 ${String(after['hours'] ?? '')} 小时（至 ${after['silencedUntil'] ? dateOnly(String(after['silencedUntil'])) : '未记录'}），期间不发送外部通知。${reason}`;
-    case 'alert-unsilence':
-      return `管理员 ${actor} 取消了对告警 ${String(after['key'] ?? '')} 的静默。${reason}`;
-    case 'ledger-preview-open':
-      // Reading a decrypted ledger leaves no state behind, so the sentence reports the act
-      // rather than a change.
-      return `管理员 ${actor} 查看了用户 ${target} 的记账数据（预览 ${String(after['previewId'] ?? '')}）。${reason}`;
-    case 'maintenance-on':
-      return `管理员 ${actor} 声明进入维护模式${after['until'] ? `（计划至 ${dateOnly(String(after['until']))}）` : '（未设结束时间）'}，客户端写入被拒绝，读取保持可用。${reason}`;
-    case 'maintenance-off':
-      return `管理员 ${actor} 结束维护模式，客户端写入恢复。${reason}`;
-    default:
-      return `管理员 ${actor} 执行了 ${entry.action}。${reason}`;
-  }
 }
 
 export function createAdminRouter(deps: AdminRouterDeps) {
@@ -281,6 +214,99 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     let suffix = apiPath.slice('/api/admin'.length) || '/';
     let parts = pathParts(suffix);
     const search = new URL(req.url ?? '/', 'http://localhost').searchParams;
+
+    if (req.method === 'GET' && suffix.startsWith('/log-workspace/')) {
+      const [category, operation] = suffix.slice('/log-workspace/'.length).split('/');
+      try {
+        if (operation && operation !== 'export') return send(res, 404, { error: 'unknown log operation' });
+        const exportQuery = new URLSearchParams(search);
+        if (operation === 'export') { exportQuery.delete('cursor'); exportQuery.delete('id'); }
+        const query = parseLogQuery(category ?? '', operation === 'export' ? exportQuery : search);
+        const page = query.category === 'containers' ? await readContainerLogs(deps.dataDir, query, operation === 'export' ? 5000 : undefined)
+          : await store.logWorkspace.query(query, operation === 'export' ? 5000 : undefined);
+        const meta = { source: query.category === 'containers' ? 'host_docker_logs_snapshot' : query.category === 'login' ? 'sqlite_authentication_audit' : query.category === 'operations' ? 'sqlite_management_audit' : query.category === 'tasks' ? 'sqlite_task_runs' : query.category === 'access' ? 'sqlite_http_error_and_slow_index' : 'sqlite_system_logs',
+          sourceState: 'sourceState' in page ? page.sourceState : 'available', generatedAt: new Date().toISOString(),
+          dataAsOf: 'sampledAt' in page ? page.sampledAt : new Date().toISOString(), from: query.from, until: query.until,
+          warnings: 'warnings' in page ? page.warnings : query.category === 'access' ? ['仅索引 4xx/5xx 或耗时至少 1 秒的请求；普通响应仅参与聚合。响应头提交耗时在服务器测量，不包含客户端网络传输。'] : query.category === 'login' ? ['密码、第二因子挑战、最终登录、退出和会话撤销分别记录；同一认证流程可产生多种事件。旧记录缺失的设备或请求信息无法补造。'] : ['旧记录缺失的来源、实例或角色显示为未记录。'],
+          containers: 'containers' in page ? page.containers : [] };
+        if (operation === 'export') {
+          if (meta.sourceState === 'error' || meta.sourceState === 'unconfigured') return send(res, 409, { code: 'LOG_SOURCE_UNAVAILABLE', error: '当前日志来源不可用，无法导出' });
+          const format = search.get('format') ?? 'json';
+          if (!['csv', 'json'].includes(format)) throw new LogQueryError('导出格式须为 csv 或 json');
+          await store.logWorkspace.recordReadAudit(auth.user.accountId, 'logs-export', { category: query.category, from: query.from, until: query.until, filters: query.filters, rows: page.entries.length, truncated: page.hasMore, format });
+          res.setHeader('X-Log-Export-Truncated', String(page.hasMore));
+          const output = format === 'csv' ? logCsv(query.category, page.entries) : JSON.stringify({ meta, fields: LOG_EXPORT_FIELDS[query.category], truncated: page.hasMore, rows: page.entries }, null, 2);
+          return sendDownload(res, 200, Buffer.from(output), format === 'csv' ? 'text/csv' : 'application/json', `${query.category}-logs.${format}`);
+        }
+        return send(res, 200, { ...page, meta });
+      } catch (error) {
+        if (error instanceof LogQueryError) return send(res, 400, { code: error.code, error: error.message });
+        throw error;
+      }
+    }
+
+    if (req.method === 'GET' && suffix.startsWith('/ops/')) {
+      const spans: Record<string, number> = { '15m': 900000, '1h': 3600000, '24h': 86400000, '7d': 604800000 };
+      const range = search.get('range') ?? '24h';
+      if (!spans[range]) return send(res, 400, { code: 'OBS_INVALID_RANGE', error: 'range must be 15m, 1h, 24h or 7d' });
+      const until = new Date();
+      // Histogram buckets are whole UTC minutes; window and denominator share these boundaries.
+      until.setUTCSeconds(0, 0); until.setUTCMinutes(until.getUTCMinutes() + 1);
+      const from = new Date(until.getTime() - spans[range]!);
+      const envelope = (data: unknown, source: string, dataAsOf: string | null, stale = false) => ({ data, meta: { generatedAt: new Date().toISOString(), dataAsOf, source, stale, samplingIntervalSeconds: 30 }, error: null });
+      if (suffix === '/ops/host') {
+        try {
+          const path = join(deps.dataDir, 'host-observability.json');
+          if ((await stat(path)).size > 1048576) throw new Error('invalid host reading');
+          const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+          const at = typeof raw['sampledAt'] === 'string' && Number.isFinite(Date.parse(raw['sampledAt'])) ? raw['sampledAt'] : null;
+          if (!at) throw new Error('invalid host timestamp');
+          return send(res, 200, envelope(redactForExport(raw), 'independent_host_timer', at, Date.now() - Date.parse(at) > 180000));
+        } catch {
+          return send(res, 200, envelope(null, 'independent_host_timer', null, true));
+        }
+      }
+      if (suffix === '/ops/logs/access') {
+        const filters = Object.fromEntries(['requestId', 'route', 'status', 'ip', 'cursor'].map((key) => [key, search.get(key) ?? undefined]));
+        if (Object.values(filters).some((v) => v && v.length > 200) || (filters.status && !/^[1-5]\d\d$/.test(filters.status))) return send(res, 400, { code: 'OBS_INVALID_FILTER', error: 'invalid access filter' });
+        return send(res, 200, envelope(await store.observability.accessEvents(from.toISOString(), until.toISOString(), filters), 'http_error_and_slow_response_index', metrics.http.health().lastSuccessAt));
+      }
+      if (suffix === '/ops/requests/summary') {
+        const route = search.get('route') ?? undefined;
+        if (route && (!/^\/api\/[a-zA-Z0-9/:._-]{1,150}$/.test(route))) return send(res, 400, { code: 'OBS_INVALID_ROUTE', error: 'invalid route template' });
+        const rows = await store.observability.httpRows(from.toISOString(), until.toISOString(), route);
+        const groups = new Map<string, typeof rows>();
+        const times = new Map<string, typeof rows>();
+        for (const row of rows) {
+          const key = `${row.method} ${row.route}`;
+          groups.set(key, [...(groups.get(key) ?? []), row]);
+          const bucket = range === '15m' || range === '1h' ? row.bucketAt : `${row.bucketAt.slice(0, 13)}:00:00.000Z`;
+          times.set(bucket, [...(times.get(bucket) ?? []), row]);
+        }
+        const health = metrics.http.health();
+        return send(res, 200, envelope({ windowStart: from.toISOString(), windowEnd: until.toISOString(),
+          ...summarizeRequests(rows, spans[range]!),
+          routes: [...groups.entries()].map(([key, group]) => ({ key, route: group[0]!.route, method: group[0]!.method, ...summarizeRequests(group, spans[range]!) })).sort((a, b) => b.totalRequests - a.totalRequests).slice(0, 50),
+          buckets: [...times.entries()].map(([bucketAt, group]) => ({ bucketAt, ...summarizeRequests(group, range === '15m' || range === '1h' ? 60000 : 3600000) })),
+          collector: health, note: '响应完成时计数，每 30 秒批量落库。排除健康探针、静态资源、访问上报和本页监控查询；重启或队列写入失败可能丢失少量指标。分位数为固定桶近似值，超过 10 秒的溢出桶显示下界 10000 ms。' }, 'http_finish_histogram', health.lastSuccessAt,
+        !health.lastSuccessAt || Date.now() - Date.parse(health.lastSuccessAt) > 90000));
+      }
+      if (suffix === '/ops/jobs/heartbeats') {
+        return send(res, 200, envelope({ jobs: await store.observability.heartbeats(), http: metrics.http.health() }, 'sqlite_heartbeats', new Date().toISOString()));
+      }
+      if (suffix === '/ops/notifications/deliveries') return send(res, 200, envelope({ deliveries: await store.observability.deliveries() }, 'sqlite_notification_outbox', new Date().toISOString()));
+      if (suffix === '/ops/runtime/current') {
+        const snapshot = await metrics.current();
+        return send(res, 200, envelope({ serviceId: 'sync-server', instanceId: metrics.http.instanceId, process: snapshot.process, uptimeSeconds: snapshot.uptimeSeconds }, 'node_process', snapshot.sampledAt, snapshot.stale));
+      }
+      if (suffix === '/ops/database/current') {
+        const started = performance.now();
+        const database = await store.databaseStats();
+        return send(res, 200, envelope({ engine: 'sqlite', available: true, pingMs: performance.now() - started, ...database,
+          unsupportedFields: ['pgPool', 'pgStatActivity', 'queryP95', 'busyCount'], note: '轻量 PRAGMA 探针。慢 SQL 与 BUSY 计数尚未接入统一 SQL 包装层；完整校验与表扫描请在存储维护中手动执行。' }, 'sqlite_pragma', new Date().toISOString()));
+      }
+      return send(res, 404, { code: 'OBS_NOT_FOUND', error: 'unknown observability endpoint' });
+    }
 
     /**
      * Write routes accept an optional idempotency key so a timeout cannot duplicate work.
@@ -735,10 +761,15 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       const until = new Date();
       const from = new Date(until.getTime() - spanMs);
       const trafficGranularity = range === '1h' ? 'minute' : range === '24h' ? 'hour' : 'day';
+      const country = search.get('country') ?? undefined;
+      if (country && country !== 'unknown' && !/^[A-Z]{2}$/.test(country)) return send(res, 400, { error: 'invalid country' });
       return send(res, 200, {
         range, from: from.toISOString(), until: until.toISOString(),
         granularity: trafficGranularity,
-        ...await store.trafficSummary(from.toISOString(), until.toISOString(), trafficGranularity),
+        ...await store.trafficSummary(from.toISOString(), until.toISOString(), trafficGranularity, country),
+        generatedAt: until.toISOString(), source: 'first_party_page_views', country: country ?? null,
+        uvMethod: 'first_party_browser_distinct', onlineMethod: 'last_page_view_window',
+        botExclusion: 'known_user_agents_and_health_probes',
         countryAvailable: Boolean(deps.trafficCountryConfigured),
         note: 'PV 为浏览器上报的页面进入和后台路由切换；UV 为去重浏览器标识，不等于人数。只保留小时级指标配置对应的天数。',
       });

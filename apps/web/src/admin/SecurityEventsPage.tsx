@@ -12,7 +12,7 @@ import { PageHeader, Badge, Button, DataTable, Field, Loading, Notice, Panel, Se
 import type { AuthFailuresPayload, RateLimitsPayload } from './types.js';
 import { LogWorkspaceNav } from './LogWorkspaceNav.js';
 
-export function SecurityEventsPage({ client, query, navigate }: { client: AdminClient; query: URLSearchParams; navigate: (to: string) => void }) {
+export function SecurityEventsPage({ client, query, navigate, embedded = false }: { client: AdminClient; query: URLSearchParams; navigate: (to: string) => void; embedded?: boolean }) {
   const [minFailures, setMinFailures] = useState('1');
   const failures = useResource(() => client.request<AuthFailuresPayload>(`/auth-failures?minFailures=${minFailures}`), [minFailures]);
   const limits = useResource(() => client.request<RateLimitsPayload>('/rate-limits'), []);
@@ -23,8 +23,7 @@ export function SecurityEventsPage({ client, query, navigate }: { client: AdminC
 
   return (
     <>
-      <PageHeader title="登录安全" description="查看失败登录来源与限流证据。" actions={<><Button onClick={() => { failures.reload(); limits.reload(); }}>刷新</Button></>} />
-      <LogWorkspaceNav current="security-events" query={query} navigate={navigate} />
+      {!embedded ? <><PageHeader title="登录日志" description="查看失败登录来源与限流证据。" actions={<><Button onClick={() => { failures.reload(); limits.reload(); }}>刷新</Button></>} /><LogWorkspaceNav current="security-events" query={query} navigate={navigate} /></> : <p>此处按当前保留的安全记录汇总，独立于上方逐条日志的时间和结果筛选。<Button onClick={() => { failures.reload(); limits.reload(); }}>刷新安全汇总</Button></p>}
       <Loading loading={failures.loading || limits.loading} error={failures.error || limits.error}
         stale={failures.stale || limits.stale} loadedAt={failures.loadedAt ?? limits.loadedAt} />
 
