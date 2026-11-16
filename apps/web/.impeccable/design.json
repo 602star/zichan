@@ -1,13 +1,18 @@
 {
   "schemaVersion": 2,
   "generatedAt": "2026-11-13T05:20:00Z",
-  "title": "Design System: 资产生命周期 · 大福帳",
+  "title": "Design System: 有本 · 大福帳",
   "extensions": {
     "colorMeta": {
       "sidebar": {
         "canonical": "#24221f",
         "displayName": "深墨侧栏",
         "role": "neutral"
+      },
+      "sidebar-brand": {
+        "canonical": "#ee7868",
+        "displayName": "亮朱 · 侧栏账册标记",
+        "role": "primary"
       },
       "paper": {
         "canonical": "#ebe8df",
@@ -206,7 +211,7 @@
     "northStar": "大福帳，墨与朱",
     "overview": "一份需要长期翻阅、记入和核对的个人总账。偏冷的文献纸承托数据，暖墨建立阅读秩序，朱色标记主操作、当前位置和完成的对账状态。历史主题标识保留兼容，三种纸张变体只改变底色与边线。",
     "keyCharacteristics": [
-      "深墨侧栏与朱色资字印记构成清晰的当前位置。",
+      "深墨侧栏以亮朱双页账册、“有本”名称与“收支 · 资产 · 物品”副标题标识品牌，朱色章点标识当前位置。",
       "宋／明体标题、无衬线数据和等宽数字组成账本阅读层级。",
       "收入藍、支出赤、提醒黄土各有独立语义。",
       "桌面连续汇总条与真实表格用细墨线组织信息。"

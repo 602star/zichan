@@ -92,7 +92,7 @@ export function DeviceSecurityPanel() {
 
   async function testNotification() {
     setBusy('notification-test');
-    const sent = await sendDeviceNotification('资产生命周期', '通知功能工作正常。');
+    const sent = await sendDeviceNotification('有本', '通知功能工作正常。');
     setNotificationPermission('Notification' in window ? Notification.permission : 'unsupported');
     setNotice(sent ? '测试通知已发送。' : '通知不可用或未授权。');
     setBusy('');

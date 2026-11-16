@@ -810,7 +810,7 @@ export async function downloadBackup(
       created.blob,
       fileName,
       'application/x-zichan-backup',
-      created.header.label || '资产生命周期账本加密备份',
+      created.header.label || '有本账本加密备份',
     )) return 'shared';
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return 'cancelled';

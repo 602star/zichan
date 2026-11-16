@@ -36,6 +36,7 @@ import {
 import { ConfirmDialog } from './ui/ConfirmDialog.js';
 import { ledgerAsOf } from './as-of.js';
 import { AppSecurityGate } from './ui/AppSecurityGate.js';
+import { BrandMark } from './ui/BrandMark.js';
 import { runSynchronousFlight, VaultUnlockPrompt } from './ui/VaultUnlockPrompt.js';
 import { DialogShell } from './ui/DialogShell.js';
 import { TaskList } from './ui/MobilePage.js';
@@ -851,16 +852,11 @@ function Sidebar(props: {
       background: 'var(--sidebar-bg)', color: 'var(--sidebar-fg)', borderRight: '1px solid var(--sidebar-bg)', display: 'flex',
       flexDirection: 'column', gap: 6,
     }}>
-      <div className="zc-sidebar-brand" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '6px 8px 20px' }}>
-        <div className="zc-sidebar-seal" style={{
-          width: 38, height: 38, borderRadius: 'var(--r-seal)', border: '2px solid var(--accent)', background: 'transparent', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', color: 'var(--accent)', fontFamily: 'var(--font-display)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-title)',
-        }}>资</div>
+      <div className="zc-sidebar-brand" role="img" aria-label="有本 · 收支、资产与物品" title="有本 · 收支、资产与物品">
+        <BrandMark />
         <div className="zc-sidebar-brand-copy">
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 'var(--fw-bold)', fontSize: 'var(--fs-title)', letterSpacing: 0 }}>资产生命周期</div>
-          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--sidebar-muted)', letterSpacing: 0, fontWeight: 'var(--fw-medium)' }}>
-            LIFECYCLE LEDGER
-          </div>
+          <div className="zc-sidebar-brand-name">有本</div>
+          <div className="zc-sidebar-brand-description">收支 · 资产 · 物品</div>
         </div>
       </div>
 

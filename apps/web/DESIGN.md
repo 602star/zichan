@@ -1,6 +1,6 @@
 ---
 version: alpha
-name: 资产生命周期 · 大福帳
+name: 有本 · 大福帳
 description: 以墨、朱和文献纸组织个人多资产账本
 colors:
   action-vermilion: "#b63226"
@@ -19,6 +19,7 @@ colors:
   rule: "#d3cec2"
   sidebar: "#24221f"
   sidebar-ink: "#e8e3d9"
+  sidebar-brand: "#ee7868"
   dark-paper: "#1b1b1a"
   dark-surface: "#262521"
   dark-ink: "#f1eee6"
@@ -86,7 +87,7 @@ components:
     padding: "2px 5px"
 ---
 
-# Design System: 资产生命周期 · 大福帳
+# Design System: 有本 · 大福帳
 
 ## Overview
 
@@ -136,7 +137,7 @@ components:
 
 ## Components
 
-- **导航：** 深墨侧栏以朱色章点标识当前项，顶部“资”字为朱印。手机保留底部导航与居中的快速记账入口。
+- **导航：** 深墨侧栏以朱色章点标识当前项，顶部使用 38px 双页账册标记、“有本”名称与“收支 · 资产 · 物品”副标题。账册使用 `--sidebar-brand` 的亮朱色，确保深墨侧栏上的辨识度；收起侧栏时保留账册标记与品牌提示。浏览器图标沿用同一轮廓，并适配系统浅深色。手机保留底部导航与居中的快速记账入口。
 - **按钮：** 主按钮实心朱色，次级按钮细边框，低优先级操作用透明或次级表面。危险动作使用 --danger。每种状态保留键盘焦点和禁用反馈。
 - **汇总：** 标签在金额上方，单元以一像素分隔组成连续信息带。收入藍、支出赤与结余的文字含义同时可读。
 - **卡片：** 一张卡承载一个真正独立的任务或信息组。Sheet 使用 surface、1px 边线、8px 圆角与 20px 内边距；tight 使用 16px，flush 仅让表格／列表内容贴边，标题与页脚保留内边距。Card 提供统一标题、说明、操作和页脚，CardHeader 保留兼容导出并共用 CardHead。

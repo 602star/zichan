@@ -119,7 +119,7 @@ export function AppSecurityGate() {
       background: 'var(--bg)', color: 'var(--fg)', padding: 24, overflowY: 'auto', overflowWrap: 'anywhere',
     }}>
       <div style={{ width: 'min(380px, 100%)', textAlign: 'center' }}>
-        <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>资产生命周期</div>
+        <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>有本</div>
         <div style={{ marginTop: 10, color: 'var(--fg-muted)', fontSize: 'var(--fs-body)' }}>
           {busy ? '正在等待设备验证…' : '应用已锁定'}
         </div>

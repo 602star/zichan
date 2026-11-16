@@ -76,7 +76,7 @@ export async function biometricStatus(): Promise<BiometricStatus> {
   }
 }
 
-export async function authenticateBiometric(reason = '解锁资产生命周期账本'): Promise<void> {
+export async function authenticateBiometric(reason = '解锁有本账本'): Promise<void> {
   await invokeRequired('plugin:biometric|authenticate', {
     reason,
     allowDeviceCredential: true,
@@ -149,7 +149,7 @@ export async function sendDeviceNotification(title: string, body: string): Promi
   }
 }
 
-export async function shareJsonFile(contents: string, fileName: string, title = '资产生命周期账本备份'): Promise<boolean> {
+export async function shareJsonFile(contents: string, fileName: string, title = '有本账本备份'): Promise<boolean> {
   if (isMobileTauriRuntime()) {
     const result = await invokeRequired<{ shared: boolean }>('plugin:system-share|share', {
       payload: { contents, fileName, mimeType: 'application/json', title },
@@ -167,7 +167,7 @@ export async function shareBlobFile(
   blob: Blob,
   fileName: string,
   mimeType: string,
-  title = '资产生命周期账本备份',
+  title = '有本账本备份',
 ): Promise<boolean> {
   const file = new File([blob], fileName, { type: mimeType });
   const shareData: ShareData = { title, files: [file] };

@@ -160,6 +160,7 @@
   --sidebar-fg: #e8e3d9;
   --sidebar-muted: #b7afa4;
   --sidebar-active: #38312b;
+  --sidebar-brand: #ee7868;
   /* Palette defaults; per-theme values are injected by `theme.ts`. */
   --bg: #ebe8df;
   --surface: #faf9f5;
@@ -1129,7 +1130,11 @@ button,
 }
 .zc-sidebar-nav-item:hover,
 .zc-sidebar-nav-item:focus-visible { color: var(--sidebar-fg); }
-.zc-sidebar-seal { box-shadow: inset 0 0 0 2px var(--sidebar-bg); }
+.zc-sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 20px; }
+.zc-sidebar-brand .zc-brand-mark { flex: 0 0 38px; color: var(--sidebar-brand); }
+.zc-sidebar-brand-copy { min-width: 0; }
+.zc-sidebar-brand-name { font-family: var(--font-display); font-weight: var(--fw-bold); font-size: var(--fs-title); }
+.zc-sidebar-brand-description { color: var(--sidebar-muted); font-size: var(--fs-meta); white-space: nowrap; }
 
 /*
  * Rail-only quick action: hidden while the sidebar shows its full-width variant.

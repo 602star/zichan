@@ -305,7 +305,7 @@ export function Reports() {
     try {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       downloadReportPdf(`zichan-${tab}-${rangeFilePart(effectiveRange)}.pdf`, {
-        title: `资产生命周期 · ${tabLabel}`,
+        title: `有本 · ${tabLabel}`,
         range: rangeLabel(effectiveRange),
         table: reportTable,
       });

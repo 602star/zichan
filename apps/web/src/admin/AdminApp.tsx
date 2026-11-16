@@ -198,7 +198,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
         <div className="zc-admin-brand">
           <span className="zc-admin-brand-mark" aria-hidden="true">资</span>
           <div className="zc-admin-brand-copy">
-            <h1>资产生命周期</h1>
+            <h1>有本</h1>
             <span>服务器管理</span>
           </div>
         </div>
