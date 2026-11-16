@@ -12,6 +12,33 @@ import {
 const log = createLogger({ level: 'error', sinks: [nullSink()] });
 
 describe('current development schema baseline', () => {
+  it('preserves schema 128 inventory metadata when adding usage expenses', async () => {
+    const driver = new NodeSqliteDriver();
+    try {
+      await runMigrations(driver, log);
+      await driver.run("INSERT INTO fixed_assets (id, name, storage_location_id, is_deleted, version) VALUES ('kept', '净水器', 'kitchen', 0, 1)");
+      await driver.exec('ALTER TABLE fixed_asset_events DROP COLUMN operating_cost_json');
+      await driver.run("UPDATE schema_migrations SET version = 128, name = 'current_schema_2026_11_16_fixed_workspace'");
+      expect(await runMigrations(driver, log)).toBe(1);
+      expect(await driver.all('SELECT name, storage_location_id FROM fixed_assets')).toEqual([{ name: '净水器', storage_location_id: 'kitchen' }]);
+      expect(await runMigrations(driver, log)).toBe(0);
+    } finally { await driver.close(); }
+  });
+  it('upgrades the immediately preceding schema without losing inventory or settings', async () => {
+    const driver = new NodeSqliteDriver();
+    try {
+      await runMigrations(driver, log);
+      await driver.run("INSERT INTO fixed_assets (id, name, is_deleted, version) VALUES ('kept', '保留的物品', 0, 1)");
+      await driver.exec('ALTER TABLE settings DROP COLUMN fixed_asset_workspace_json');
+      await driver.exec('ALTER TABLE fixed_asset_events DROP COLUMN operating_cost_json');
+      for (const column of ['purchase_date_precision', 'storage_location_id', 'location_moves_json', 'return_deadline', 'price_protection_deadline', 'maintenance_due_date', 'maintenance_interval_days', 'reminder_days_before']) await driver.exec(`ALTER TABLE fixed_assets DROP COLUMN ${column}`);
+      await driver.run("UPDATE schema_migrations SET version = 127, name = 'current_schema_2026_10_05_consumable_merchant'");
+      expect(await runMigrations(driver, log)).toBe(1);
+      await assertCurrentSchema(driver);
+      expect(await driver.all('SELECT id, name, storage_location_id FROM fixed_assets')).toEqual([{ id: 'kept', name: '保留的物品', storage_location_id: null }]);
+      expect(await runMigrations(driver, log)).toBe(0);
+    } finally { await driver.close(); }
+  });
   it('creates and verifies only the current schema', async () => {
     const driver = new NodeSqliteDriver();
     try {

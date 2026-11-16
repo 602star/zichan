@@ -1,6 +1,7 @@
 /** Physical-item lifecycle cost, usage, goals, and consumable reminders. */
 import { D, safeDiv, sum } from './decimal.js';
 import { heldDays, localToday } from './dates.js';
+import { parseFixedOperatingCost } from './fixed-operating-cost.js';
 import type {
   FixedAsset,
   FixedAssetConsumable,
@@ -37,6 +38,7 @@ export interface FixedAssetCost {
   consumable: string;
   upgrade: string;
   otherCost: string;
+  estimatedOperatingCost: string;
   investedCost: string;
   recoveredCost: string;
   grossCost: string;
@@ -44,8 +46,8 @@ export interface FixedAssetCost {
   currentValuation?: string;
   salePrice?: string;
   netCost: string;
-  heldDays: number;
-  perDay: string;
+  heldDays?: number;
+  perDay?: string;
   usageCosts: FixedUsageCost[];
   basis: 'current' | 'final';
 }
@@ -95,7 +97,11 @@ export function fixedAssetCost(
   const upgrade = bucket('upgrade');
   const consumable = sum(consumables.map((item) => item.amountBase));
   const eventCosts = sum(evs.filter((event) => COST_TYPES.has(event.type)).map((event) => event.amountBase));
-  const investedCost = eventCosts.plus(consumable);
+  const operating = sum(evs.filter((event) => event.type === 'operating_cost'
+    && parseFixedOperatingCost(event.operatingCostJson)?.mode !== 'estimate').map((event) => event.amountBase));
+  const estimated = sum(evs.filter((event) => event.type === 'operating_cost'
+    && parseFixedOperatingCost(event.operatingCostJson)?.mode === 'estimate').map((event) => event.amountBase));
+  const investedCost = eventCosts.plus(consumable).plus(operating);
   const recoveredCost = bucket('part_sale').plus(bucket('sale'));
 
   const residualEvents = evs.filter((event) => event.type === 'residual_update');
@@ -110,9 +116,9 @@ export function fixedAssetCost(
   // Reference value is informational; only recorded proceeds reduce net investment.
   const netCost = investedCost.minus(recoveredCost);
   const endDate = terminalEvent?.date ?? asOf;
-  const days = heldDays(asset.activatedDate ?? asset.purchaseDate, endDate);
+  const days = asset.purchaseDatePrecision === 'year' && !asset.activatedDate ? undefined : heldDays(asset.activatedDate ?? asset.purchaseDate, endDate);
 
-  const usageCosts: FixedUsageCost[] = [{
+  const usageCosts: FixedUsageCost[] = days === undefined ? [] : [{
     name: '持有时间',
     unit: 'day',
     unitLabel: '天',
@@ -136,13 +142,14 @@ export function fixedAssetCost(
     repair: repair.toString(),
     consumable: consumable.toString(),
     upgrade: upgrade.toString(),
-    otherCost: '0',
+    otherCost: operating.toString(),
+    estimatedOperatingCost: estimated.toString(),
     investedCost: investedCost.toString(),
     recoveredCost: recoveredCost.toString(),
     grossCost: investedCost.toString(),
     netCost: netCost.toString(),
     heldDays: days,
-    perDay: safeDiv(netCost, days).toString(),
+    perDay: days === undefined ? undefined : safeDiv(netCost, days).toString(),
     usageCosts,
     basis: final ? 'final' : 'current',
   };
@@ -177,7 +184,7 @@ export function fixedGoalProgress(
     .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt))
     .at(-1);
   let current = D(0);
-  if (goal.unit === 'day') {
+  if (goal.unit === 'day' && (goal.startDate || asset.activatedDate || asset.purchaseDatePrecision !== 'year')) {
     current = D(heldDays(goal.startDate || asset.activatedDate || asset.purchaseDate, terminal?.date ?? asOf));
   } else {
     const metric = metrics.find((row) => row.id === goal.metricId);

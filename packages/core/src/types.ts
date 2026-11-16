@@ -135,6 +135,8 @@ export interface Setting extends BaseEntity {
   categoryPickerDefaultScope?: 'frequent' | 'all';
   /** Versioned JSON containing the per-ledger module visibility and navigation order. */
   navigationLayoutJson?: string;
+  /** Versioned physical-item locations, saved filters and category defaults. */
+  fixedAssetWorkspaceJson?: string;
   /** Which period receives the spending offset created by a refund. */
   refundAttributionMode?: 'original_date' | 'refund_date';
   /** JSON payload for backup/check/rehearsal health status. */
@@ -455,6 +457,10 @@ export interface FixedAsset extends BaseEntity {
   categoryId: string;
   status: FixedAssetStatus;
   purchaseDate: string; // YYYY-MM-DD
+  /** Year-only dates use January 1 as an explicit storage bound, never as a known purchase day. */
+  purchaseDatePrecision?: 'day' | 'year';
+  storageLocationId?: string;
+  locationMovesJson?: string;
   activatedDate?: string;
   baseCurrencyAssetId: string;
   brand?: string;
@@ -465,6 +471,11 @@ export interface FixedAsset extends BaseEntity {
   orderNumber?: string;
   warrantyEndDate?: string;
   warrantyProvider?: string;
+  returnDeadline?: string;
+  priceProtectionDeadline?: string;
+  maintenanceDueDate?: string;
+  maintenanceIntervalDays?: number;
+  reminderDaysBefore?: number;
   archivedAt?: string;
   archiveReason?: string;
   mergedIntoId?: string;
@@ -476,6 +487,7 @@ export type FixedEventType =
   | 'activate'
   | 'repair'
   | 'upgrade'
+  | 'operating_cost'
   | 'part_sale' // sale of a part; the parent item remains in use
   | 'install'
   | 'detach'
@@ -498,6 +510,8 @@ export interface FixedAssetEvent extends BaseEntity {
   /** Residual updates may be entered as current residual or cumulative loss. */
   valueMode?: 'residual' | 'depreciation';
   enteredAmount?: string;
+  /** Versioned usage expenses and cumulative-meter session snapshots. */
+  operatingCostJson?: string;
   cashflowMode?: FixedAssetCashflowMode;
   note?: string;
 }

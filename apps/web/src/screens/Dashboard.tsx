@@ -97,7 +97,7 @@ export function Dashboard() {
       return;
     }
     if (task.action === 'open_bills') navigateTo({ screen: 'transactions', tab: 'bills' });
-    else if (task.action === 'open_fixed') navigateTo({ screen: 'fixed' });
+    else if (task.action === 'open_fixed') navigateTo({ screen: 'fixed', id: task.fixedAssetId, tab: 'attention' });
     else navigateTo({ screen: 'settings', tab: task.action === 'open_settings' ? 'device' : 'server' });
   }
   if (!vm) return <p role="status">正在读取总览…</p>;

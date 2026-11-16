@@ -4,6 +4,7 @@
  * and mobile shells all import from here. See docs/legacy-design/data-model.md.
  */
 export * from './types.js';
+export * from './fixed-workspace.js';
 export * from './fixed-components.js';
 export * from './asset-cost.js';
 export * from './asset-cost-events.js';
@@ -229,3 +230,4 @@ export type {
 } from './storage.js';
 export { isDefaultAccount, isSystemDefaultAccount, isLegacyExternalAccount, defaultTransactionAccount, accountBalanceTiming, accountTransactionPostings, accountOpeningPostings, accountChainPostings } from './account-ledger.js';
 export { MAX_ENTITY_ICON_LENGTH, isEntityIconImage, isValidEntityIcon } from './entity-icon.js';
+export * from './fixed-operating-cost.js';

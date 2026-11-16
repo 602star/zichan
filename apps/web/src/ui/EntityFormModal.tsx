@@ -68,6 +68,8 @@ export interface FieldOption {
 
 export interface FieldDef {
   key: string;
+  /** Optional task grouping for compact forms; groups follow first appearance. */
+  taskGroup?: string;
   label: string;
   relatedValueKeys?: string[];
   payees?: Payee[];

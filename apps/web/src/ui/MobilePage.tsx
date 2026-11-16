@@ -65,6 +65,11 @@ export function useMobileSection(screen: string, fallback = 'index') {
   const select = useCallback((next: string) => {
     if (next === sectionRef.current) return;
     if (compactRef.current) {
+      // Desktop navigation may not have created a mobile history entry before
+      // the viewport changed. Anchor this visible parent before adding its child.
+      if (!history.state?.zcDialog && history.state?.zcScreen !== screen) {
+        history.replaceState({ ...history.state, zcScreen: screen, zcMobileView: { screen, key: sectionRef.current } }, '');
+      }
       const nextState = { ...history.state, zcDialog: undefined, zcScreen: screen, zcMobileView: { screen, key: next } };
       if (history.state?.zcDialog) history.replaceState(nextState, '');
       else history.pushState(nextState, '');

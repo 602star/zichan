@@ -44,11 +44,13 @@ export function fixedAssetAttributedCost(
   const net = invested.minus(recovered);
   return {
     ...own,
+    otherCost: costs.reduce((total, cost) => total.plus(cost.otherCost), D(own.otherCost)).toString(),
+    estimatedOperatingCost: costs.reduce((total, cost) => total.plus(cost.estimatedOperatingCost), D(own.estimatedOperatingCost)).toString(),
     investedCost: invested.toString(),
     grossCost: invested.toString(),
     recoveredCost: recovered.toString(),
     netCost: net.toString(),
-    perDay: safeDiv(net, own.heldDays).toString(),
+    perDay: own.heldDays === undefined ? undefined : safeDiv(net, own.heldDays).toString(),
     usageCosts: own.usageCosts.map((row) => ({ ...row, perUnit: safeDiv(net, row.totalUsage).toString() })),
   };
 }

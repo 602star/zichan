@@ -579,8 +579,8 @@ function fixedTable(snap: Snapshot, options: ReportOptions): Table {
   }).map((f): Cell[] => {
       const c = fixedAssetAttributedCost(f, snap.fixedAssets, snap.fixedEvents, { asOf, usageMetrics: snap.fixedUsageMetrics, usageLogs: snap.fixedUsageLogs, consumables: snap.fixedConsumables });
       const convertedNet = report.toReport(c.netCost, f.baseCurrencyAssetId);
-      const primaryUsage = c.usageCosts.find((row) => row.metricId) ?? c.usageCosts[0]!;
-      const convertedUnit = report.toReport(primaryUsage.perUnit, f.baseCurrencyAssetId);
+      const primaryUsage = c.usageCosts.find((row) => row.metricId) ?? c.usageCosts[0];
+      const convertedUnit = primaryUsage ? report.toReport(primaryUsage.perUnit, f.baseCurrencyAssetId) : undefined;
       return [
         { v: f.name, bold: true },
         { v: snap.assets.find((asset) => asset.id === f.baseCurrencyAssetId)?.code ?? '—', color: 'var(--text-secondary)' },
@@ -590,8 +590,8 @@ function fixedTable(snap: Snapshot, options: ReportOptions): Table {
         { v: report.formatNative(c.recoveredCost, f.baseCurrencyAssetId) },
         { v: report.formatNative(c.netCost, f.baseCurrencyAssetId), bold: true },
         { v: convertedNet ? report.formatReport(convertedNet) : '未折算', data: { reportAmount: convertedNet?.toString() ?? '' } },
-        { v: `${c.heldDays} 天`, color: 'var(--text-secondary)' },
-        { v: convertedUnit ? `${report.formatReport(convertedUnit)} / ${primaryUsage.unitLabel}` : '未折算', color: 'var(--accent)', bold: true },
+        { v: c.heldDays === undefined ? '购买日期不完整' : `${c.heldDays} 天`, color: 'var(--text-secondary)' },
+        { v: convertedUnit && primaryUsage ? `${report.formatReport(convertedUnit)} / ${primaryUsage.unitLabel}` : primaryUsage ? '未折算' : '待补准确日期', color: 'var(--accent)', bold: true },
         { v: statusLabel[f.status], color: 'var(--text-secondary)' },
       ];
     });

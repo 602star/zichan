@@ -103,7 +103,7 @@ test('desktop task directories, item details and responsive papers share product
   await form.getByRole('button', { name: '保存', exact: true }).click();
   await expect(form).toBeHidden();
   await page.getByRole('button', { name: '桌面物品与长名称镜头组合', exact: true }).click();
-  for (const label of ['概况', '使用', '事件']) { await page.getByRole('tab', { name: label, exact: true }).click(); await expect(page.getByRole('tab', { name: label, exact: true })).toHaveAttribute('aria-selected', 'true'); }
+  for (const label of ['概况', '使用与成本', '配件耗材', '记录与凭证']) { await page.getByRole('tab', { name: label, exact: true }).click(); await expect(page.getByRole('tab', { name: label, exact: true })).toHaveAttribute('aria-selected', 'true'); }
   await page.getByRole('button', { name: '返回物品', exact: true }).click();
   await go(page, 'manage');
   await page.getByRole('navigation', { name: '资产与资料中心', exact: true }).getByRole('button', { name: '交易模板', exact: true }).click();

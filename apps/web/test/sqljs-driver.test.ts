@@ -33,6 +33,41 @@ function transaction(id: string, amount: string): Transaction {
 }
 
 describe('SqlJsDriver', () => {
+  it('upgrades persisted schema 128 without losing location metadata or lifecycle amounts', async () => {
+    let bytes: Uint8Array | null = null;
+    const previous = await SqlJsDriver.open(null, (value) => { bytes = value; });
+    await runMigrations(previous, log);
+    await previous.run("INSERT INTO fixed_assets (id, name, storage_location_id, is_deleted, version) VALUES ('kept', '净水器', 'kitchen', 0, 1)");
+    await previous.run("INSERT INTO fixed_asset_events (id, fixed_asset_id, type, date, amount_base, is_deleted, version) VALUES ('purchase', 'kept', 'purchase', '2026-01-01', '100', 0, 1)");
+    await previous.exec('ALTER TABLE fixed_asset_events DROP COLUMN operating_cost_json');
+    await previous.run("UPDATE schema_migrations SET version = 128, name = 'current_schema_2026_11_16_fixed_workspace'");
+    await previous.close();
+    const driver = await SqlJsDriver.open(bytes);
+    try {
+      expect(await runMigrations(driver, log)).toBe(1);
+      expect(await driver.all('SELECT storage_location_id FROM fixed_assets')).toEqual([{ storage_location_id: 'kitchen' }]);
+      expect(await driver.all('SELECT amount_base, operating_cost_json FROM fixed_asset_events')).toEqual([{ amount_base: '100', operating_cost_json: null }]);
+      expect(await runMigrations(driver, log)).toBe(0);
+    } finally { await driver.close(); }
+  });
+  it('upgrades a persisted schema 127 inventory in real sql.js without resetting data', async () => {
+    let snapshot: Uint8Array | null = null;
+    const previous = await SqlJsDriver.open(null, (bytes) => { snapshot = bytes; });
+    await runMigrations(previous, log);
+    await previous.run("INSERT INTO fixed_assets (id, name, is_deleted, version) VALUES ('kept', '厨房咖啡机', 0, 1)");
+    await previous.exec('ALTER TABLE settings DROP COLUMN fixed_asset_workspace_json');
+    await previous.exec('ALTER TABLE fixed_asset_events DROP COLUMN operating_cost_json');
+    for (const column of ['purchase_date_precision', 'storage_location_id', 'location_moves_json', 'return_deadline', 'price_protection_deadline', 'maintenance_due_date', 'maintenance_interval_days', 'reminder_days_before']) await previous.exec(`ALTER TABLE fixed_assets DROP COLUMN ${column}`);
+    await previous.run("UPDATE schema_migrations SET version = 127, name = 'current_schema_2026_10_05_consumable_merchant'");
+    await previous.close();
+    const driver = await SqlJsDriver.open(snapshot);
+    try {
+      expect(await runMigrations(driver, log)).toBe(1);
+      await assertCurrentSchema(driver);
+      expect(await driver.all('SELECT id, name, storage_location_id FROM fixed_assets')).toEqual([{ id: 'kept', name: '厨房咖啡机', storage_location_id: null }]);
+      expect(await runMigrations(driver, log)).toBe(0);
+    } finally { await driver.close(); }
+  });
   it('runs schema 116 and the exact-money Dashboard SQL contract in real sql.js', async () => {
     const driver = await SqlJsDriver.open(null);
     expect(await runMigrations(driver, log)).toBe(1);

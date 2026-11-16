@@ -6,6 +6,7 @@ import { transactionFormFieldOptions } from './transactionFormPrefs.js';
  */
 import {
   D, normalizeOccurrence, transactionCostFingerprint, isValidDay, localToday, newId, isLegacyExternalAccount, defaultTransactionAccount, accountBalanceTiming, scheduleOccurrenceDate, listScheduleOccurrences,
+  parseFixedWorkspace, fixedLocationPath,
   type Asset, type Account, type Attachment, type BudgetCategory, type Category, type DcaPlan,
   type PriceMark, type Game, type GameAccount, type GameSeason, type GameRecord, type GameCashflowMode, type GameCashflowRole, type FixedAsset,
   type FixedAssetCashflowMode, type FixedAssetCategory, type FixedAssetConsumable, type FixedAssetEvent, type FixedAssetGoal,
@@ -1326,6 +1327,7 @@ export function fixedAssetCategoryForm(snap: Snapshot): EntityFormSpec<FixedAsse
 }
 
 export function fixedAssetForm(snap: Snapshot, attachments: Attachment[] = [], purchaseEvent?: FixedAssetEvent): EntityFormSpec<FixedAssetFormValue> {
+  const workspace = parseFixedWorkspace(snap.setting?.fixedAssetWorkspaceJson);
   const asOf = currentDate();
   const preferredCurrency = moduleCurrencyId(snap.setting, 'fixed');
   const expenseCategories = categoryOptions(snap.categories, 'expense', { leafOnly: true, includeHidden: true });
@@ -1368,6 +1370,8 @@ export function fixedAssetForm(snap: Snapshot, attachments: Attachment[] = [], p
     moreInitiallyOpen: false,
     onFieldChange: (values, key, manual) => {
       let next = values;
+      if (key === 'categoryId' && !manual.has('storageLocationId')) next = { ...next, storageLocationId: workspace.categoryLocations[values.categoryId ?? ''] ?? '' };
+      if (key === 'purchaseDatePrecision' && values.purchaseDatePrecision === 'year' && !purchaseEvent?.cashflowMode) next = { ...next, cashflowMode: 'record_only' };
       if ((key === 'categoryId' || (key === 'cashflowMode' && values.cashflowMode === 'create_transaction' && !values.cashflowCategory))
         && !manual.has('cashflowCategory')) {
         next = { ...next, cashflowCategory: suggestedExpenseCategory(values.categoryId ?? '') };
@@ -1391,7 +1395,10 @@ export function fixedAssetForm(snap: Snapshot, attachments: Attachment[] = [], p
       { key: 'bundledFromAssetId', label: '原配件所属物品', type: 'text', hidden: true },
       { key: 'name', label: '名称', type: 'text', half: true, required: true },
       { key: 'categoryId', label: '分类', type: 'category', half: true, options: fixedCategoryOpts(snap), required: true },
-      { key: 'purchaseDate', label: '购买日期', type: 'date', half: true, defaultValue: asOf, required: true },
+      { key: 'purchaseDatePrecision', label: '购买日期精度', type: 'select', half: true, defaultValue: 'day', options: [{ value: 'day', label: '准确到日' }, { value: 'year', label: '只记年份' }] },
+      { key: 'purchaseDate', label: '购买日期', type: 'date', half: true, defaultValue: asOf, required: true, visibleWhen: (v) => v.purchaseDatePrecision !== 'year' },
+      { key: 'purchaseYear', label: '购置年份', type: 'text', half: true, defaultValue: asOf.slice(0, 4), required: true, visibleWhen: (v) => v.purchaseDatePrecision === 'year', hint: '日期未补齐前不计算持有日均；资金来源仅可选择“仅登记”。' },
+      { key: 'storageLocationId', label: '存放位置', type: 'select', half: true, allowEmpty: true, options: workspace.locations.filter((row) => !row.archived).map((row) => ({ value: row.id, label: fixedLocationPath(workspace.locations, row.id) })), hint: '在物品页“管理位置”中添加卧室、厨房或更细的位置。' },
       { key: 'purchaseAmount', label: '购买金额', type: 'number', half: true, defaultValue: '0', required: true },
       { key: 'baseCurrencyAssetId', label: '记账币种', type: 'select', half: true, options: settlementOpts(snap, preferredCurrency), required: true },
       { key: 'purchaseMerchant', label: '购买商户', type: 'payee', payees: snap.payees, categories: snap.categories,
@@ -1422,6 +1429,11 @@ export function fixedAssetForm(snap: Snapshot, attachments: Attachment[] = [], p
       { key: 'barcode', label: '条形码 / 设备码', type: 'text', half: true, section: 'more', deviceAction: 'scan-barcode' },
       { key: 'orderNumber', label: '订单号', type: 'text', half: true, section: 'more' },
       { key: 'warrantyEndDate', label: '保修截止日', type: 'date', half: true, section: 'more' },
+      { key: 'returnDeadline', label: '退货截止日', type: 'date', half: true, section: 'more' },
+      { key: 'priceProtectionDeadline', label: '价保截止日', type: 'date', half: true, section: 'more' },
+      { key: 'maintenanceDueDate', label: '下次保养日期', type: 'date', half: true, section: 'more' },
+      { key: 'maintenanceIntervalDays', label: '保养间隔（天）', type: 'number', half: true, section: 'more', hint: '可不填；填写后，完成保养会生成下次日期。' },
+      { key: 'reminderDaysBefore', label: '提前提醒（天）', type: 'number', half: true, defaultValue: '7', section: 'more' },
       { key: 'warrantyProvider', label: '保修方', type: 'text', half: true, section: 'more' },
       { key: 'imageFiles', label: '物品图片', type: 'file', section: 'more', accept: 'image/*', multiple: true, capture: 'environment' },
       { key: 'invoiceFiles', label: '发票 / 购买凭证', type: 'file', section: 'more', accept: 'image/*,.pdf', multiple: true, capture: 'environment' },
@@ -1435,7 +1447,10 @@ export function fixedAssetForm(snap: Snapshot, attachments: Attachment[] = [], p
       const createdCashflow = purchaseEvent?.cashflowMode === 'create_transaction';
       return ({
       name: asset.name, role: asset.role ?? 'item', bundledFromAssetId: asset.bundledFromAssetId ?? '', categoryId: asset.categoryId, tag: asset.tag ?? '', status: asset.status,
-      purchaseDate: asset.purchaseDate, purchaseAmount: asset.purchaseAmount ?? purchaseEvent?.amountBase ?? '0', activatedDate: asset.activatedDate ?? '', baseCurrencyAssetId: asset.baseCurrencyAssetId,
+      purchaseDate: asset.purchaseDate, purchaseDatePrecision: asset.purchaseDatePrecision ?? 'day', purchaseYear: asset.purchaseDate.slice(0, 4), storageLocationId: asset.storageLocationId ?? '',
+      returnDeadline: asset.returnDeadline ?? '', priceProtectionDeadline: asset.priceProtectionDeadline ?? '', maintenanceDueDate: asset.maintenanceDueDate ?? '',
+      maintenanceIntervalDays: asset.maintenanceIntervalDays?.toString() ?? '', reminderDaysBefore: (asset.reminderDaysBefore ?? 7).toString(),
+      purchaseAmount: asset.purchaseAmount ?? purchaseEvent?.amountBase ?? '0', activatedDate: asset.activatedDate ?? '', baseCurrencyAssetId: asset.baseCurrencyAssetId,
       cashflowMode: purchaseEvent?.cashflowMode ?? 'record_only',
       cashflowTransactionId: cashflowLink?.transactionId ?? '', cashflowSourceAmount: cashflowLink?.sourceAmount ?? purchaseEvent?.amountBase ?? '',
       cashflowCategory: cashflowTransaction?.category ?? '', cashflowAccountId: cashflowTransaction?.accountId ?? '',
@@ -1451,7 +1466,12 @@ export function fixedAssetForm(snap: Snapshot, attachments: Attachment[] = [], p
     },
     fromValues: (v, existing, formFiles) => ({
       ...base(existing), name: v.name, role: (v.role || 'item') as FixedAsset['role'], bundledFromAssetId: S(v.bundledFromAssetId), categoryId: v.categoryId, tag: S(v.tag), status: v.status as FixedAsset['status'],
-      purchaseDate: v.purchaseDate, purchaseAmount: D(v.purchaseAmount || 0).toString(), activatedDate: S(v.activatedDate), baseCurrencyAssetId: v.baseCurrencyAssetId,
+      purchaseDate: v.purchaseDatePrecision === 'year' ? `${v.purchaseYear}-01-01` : v.purchaseDate, purchaseDatePrecision: v.purchaseDatePrecision as FixedAsset['purchaseDatePrecision'],
+      storageLocationId: S(v.storageLocationId), locationMovesJson: existing?.locationMovesJson,
+      returnDeadline: S(v.returnDeadline), priceProtectionDeadline: S(v.priceProtectionDeadline), maintenanceDueDate: S(v.maintenanceDueDate),
+      maintenanceIntervalDays: v.maintenanceIntervalDays ? Number(v.maintenanceIntervalDays) : undefined,
+      reminderDaysBefore: v.reminderDaysBefore ? Number(v.reminderDaysBefore) : 7,
+      purchaseAmount: D(v.purchaseAmount || 0).toString(), activatedDate: S(v.activatedDate), baseCurrencyAssetId: v.baseCurrencyAssetId,
       cashflowMode: (v.cashflowMode || 'record_only') as FixedAssetCashflowMode,
       cashflowTransactionId: S(v.cashflowTransactionId), cashflowSourceAmount: S(v.cashflowSourceAmount),
       cashflowCategory: S(v.cashflowCategory), cashflowAccountId: S(v.cashflowAccountId),
@@ -1466,6 +1486,13 @@ export function fixedAssetForm(snap: Snapshot, attachments: Attachment[] = [], p
       ],
     }) as FixedAssetFormValue,
     validate: (v) => {
+      if (v.purchaseDatePrecision === 'year') {
+        if (!/^\d{4}$/.test(v.purchaseYear ?? '') || !isValidDay(`${v.purchaseYear}-01-01`)) return { purchaseYear: '请填写四位有效年份' };
+        if (v.cashflowMode !== 'record_only' || purchaseEvent?.cashflowMode && purchaseEvent.cashflowMode !== 'record_only') return { purchaseDatePrecision: '只记年份时不能关联资金，请先补齐准确购买日期' };
+      }
+      for (const [key, min, max] of [['maintenanceIntervalDays', 1, 36500], ['reminderDaysBefore', 0, 365]] as const) {
+        if (v[key] && (!Number.isInteger(Number(v[key])) || Number(v[key]) < min || Number(v[key]) > max)) return { [key]: `请填写 ${min}–${max} 的整数` };
+      }
       if (v.warrantyEndDate && v.purchaseDate && v.warrantyEndDate < v.purchaseDate) return { warrantyEndDate: '保修截止日不能早于购买日期' } as Record<string, string>;
       if (v.activatedDate && v.purchaseDate && v.activatedDate < v.purchaseDate) return { activatedDate: '启用日期不能早于购买日期' } as Record<string, string>;
       if (D(v.purchaseAmount || 0).lt(0)) return { purchaseAmount: '购买金额不能为负数' } as Record<string, string>;

@@ -2,6 +2,7 @@ import {
   D,
   fixedConsumableRemaining,
   fixedUsageUnitLabel,
+  fixedDateReminders,
   nextUnhandledDcaOccurrence,
   nextUnhandledScheduleOccurrence,
 } from '@zichan/core';
@@ -14,7 +15,7 @@ export type TaskCenterSeverity = 'danger' | 'warning' | 'info';
 
 export interface TaskCenterItem {
   id: string;
-  kind: 'scheduled' | 'dca' | 'consumable' | 'backup' | 'sync';
+  kind: 'scheduled' | 'dca' | 'consumable' | 'fixed_date' | 'backup' | 'sync';
   severity: TaskCenterSeverity;
   title: string;
   detail: string;
@@ -22,6 +23,7 @@ export interface TaskCenterItem {
   action: TaskCenterAction;
   actionLabel: string;
   dcaPlanId?: string;
+  fixedAssetId?: string;
 }
 
 export interface TaskCenterInput {
@@ -106,10 +108,17 @@ export function buildTaskCenter(input: TaskCenterInput): TaskCenterItem[] {
     });
   }
 
+  for (const reminder of fixedDateReminders(snap.fixedAssets, today)) {
+    const asset = snap.fixedAssets.find((row) => row.id === reminder.assetId)!;
+    items.push({ id: `fixed:${reminder.id}`, kind: 'fixed_date', severity: reminder.days < 0 ? 'danger' : 'warning',
+      title: `${asset.name} · ${reminder.label}`, detail: `${dueLabel(reminder.days)} · ${reminder.date}`,
+      dueDate: reminder.date, action: 'open_fixed', actionLabel: reminder.kind === 'maintenance' ? '处理保养' : '查看物品', fixedAssetId: asset.id });
+  }
   for (const consumable of snap.fixedConsumables.filter((row) => !row.isDeleted && row.status === 'active')) {
     const remaining = fixedConsumableRemaining(consumable, snap.fixedUsageMetrics, snap.fixedUsageLogs);
     if (remaining === undefined || D(remaining).gt(consumable.reminderAtRemaining ?? 0)) continue;
     const asset = snap.fixedAssets.find((row) => row.id === consumable.fixedAssetId);
+    if (!asset || asset.isDeleted || asset.archivedAt || !['active', 'stored'].includes(asset.status)) continue;
     const metric = snap.fixedUsageMetrics.find((row) => row.id === consumable.usageMetricId);
     items.push({
       id: `consumable:${consumable.id}`,
@@ -119,6 +128,7 @@ export function buildTaskCenter(input: TaskCenterInput): TaskCenterItem[] {
       detail: `预计剩余 ${remaining}${metric ? ` ${fixedUsageUnitLabel(metric)}` : ''}`,
       action: 'open_fixed',
       actionLabel: '处理耗材',
+      fixedAssetId: asset?.id,
     });
   }
 

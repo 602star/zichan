@@ -179,11 +179,11 @@ export function buildDashboard(
   }
   const seasonNet = sum(seasonValues);
   const fixedPerDay = sum(snap.fixedAssets
-    .filter((f) => f.status === 'active'
+    .filter((f) => f.status === 'active' && (f.purchaseDatePrecision !== 'year' || !!f.activatedDate)
       && !(f.role === 'component' && componentCostOwnerAt(f, snap.fixedEvents, asOf)))
     .map((f) => converted(
       'fixedPerDay',
-      fixedAssetAttributedCost(f, snap.fixedAssets, snap.fixedEvents, { asOf, usageMetrics: snap.fixedUsageMetrics, usageLogs: snap.fixedUsageLogs, consumables: snap.fixedConsumables }).perDay,
+      fixedAssetAttributedCost(f, snap.fixedAssets, snap.fixedEvents, { asOf, usageMetrics: snap.fixedUsageMetrics, usageLogs: snap.fixedUsageLogs, consumables: snap.fixedConsumables }).perDay!,
       f.baseCurrencyAssetId,
     ))
     .filter((value): value is Decimal => value !== undefined));

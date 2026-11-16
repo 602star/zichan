@@ -1,6 +1,7 @@
 import { duplicateMasterData, DuplicateMasterDataError } from './master-data-identity.js';
 import {
   D, isValidEntityIcon, assertCostBasisOpening, assertCostQuoteSnapshot, transactionCostFingerprint,
+  parseFixedWorkspace, fixedLocationMoves, parseFixedOperatingCost, round,
   isLegacyExternalAccount, accountBalanceTiming, accountTransactionPostings,
   assertConversionShape,
   assertDcaExecutionShape,
@@ -17,6 +18,7 @@ import {
   type ConversionChain,
   type ConversionStep,
   type FixedAssetCategory,
+  type FixedAsset,
   type Payee,
   type ReconciliationItem,
   type ReconciliationSession,
@@ -54,7 +56,7 @@ const GAME_RECORD_TYPES = new Set([
 const FIXED_ASSET_STATUSES = new Set(['active', 'stored', 'sold', 'scrapped', 'retired', 'gifted']);
 const FIXED_EVENT_TYPES = new Set([
   'purchase', 'activate', 'repair', 'upgrade', 'part_sale', 'install', 'detach', 'residual_update',
-  'warranty_expire', 'sale', 'scrap', 'retire', 'gift',
+  'warranty_expire', 'sale', 'scrap', 'retire', 'gift', 'operating_cost',
 ]);
 
 function fail(message: string, field?: string): never {
@@ -885,6 +887,7 @@ async function validateReferenceEntity(
         const account = await getEntity<Account>(driver, TABLES.accounts, String(row[field]));
         if (!account || account.isDeleted || (!allowInactiveReferences && (account.isActive === false || account.archivedAt)) || isLegacyExternalAccount(account)) fail('请选择启用的默认账户', field);
       }
+      if (row['fixedAssetWorkspaceJson']) parseFixedWorkspace(String(row['fixedAssetWorkspaceJson']));
       await activeAsset(driver, String(row['baseCurrencyAssetId'] ?? ''), 'baseCurrencyAssetId', allowInactiveReferences);
       for (const field of ['transactionDefaultAssetId', 'investmentCostAssetId', 'fixedAssetDefaultCurrencyAssetId', 'gameDefaultSettlementAssetId']) {
         if (row[field]) await activeAsset(driver, String(row[field]), field, allowInactiveReferences);
@@ -968,6 +971,15 @@ async function validateReferenceEntity(
         await ref(TABLES.fixedAssets, row['bundledFromAssetId'], 'bundledFromAssetId', '原配件所属物品');
       }
       normalizeOccurrence({ date: String(row['purchaseDate'] ?? ''), timePrecision: 'day' });
+      if (row['purchaseDatePrecision'] && !['day', 'year'].includes(String(row['purchaseDatePrecision']))) fail('购买日期精度无效', 'purchaseDatePrecision');
+      if (row['purchaseDatePrecision'] === 'year' && !String(row['purchaseDate']).endsWith('-01-01')) fail('年份记录的存储日期无效', 'purchaseDate');
+      if (row['locationMovesJson']) fixedLocationMoves(String(row['locationMovesJson']));
+      for (const field of ['returnDeadline', 'priceProtectionDeadline', 'maintenanceDueDate']) {
+        if (row[field] && !isValidDay(String(row[field]))) fail('提醒日期无效', field);
+      }
+      for (const [field, min, max] of [['maintenanceIntervalDays', 1, 36500], ['reminderDaysBefore', 0, 365]] as const) {
+        if (row[field] !== undefined && row[field] !== null && (!Number.isInteger(row[field]) || Number(row[field]) < min || Number(row[field]) > max)) fail('提醒周期超出允许范围', field);
+      }
       break;
     case 'fixed_asset_event':
       await ref(TABLES.fixedAssets, row['fixedAssetId'], 'fixedAssetId', '物品资产');
@@ -981,6 +993,17 @@ async function validateReferenceEntity(
       if (!FIXED_EVENT_TYPES.has(String(row['type']))) fail('物品事件类型无效', 'type');
       normalizeOccurrence({ date: String(row['date'] ?? ''), timePrecision: 'day' });
       if (decimal(row['amountBase'], '事件金额', 'amountBase').lt(0)) fail('事件金额不能小于 0', 'amountBase');
+      if (row['type'] === 'operating_cost') {
+        const data = parseFixedOperatingCost(row['operatingCostJson'] as string | undefined);
+        if (!data) fail('使用费用缺少计量记录', 'operatingCostJson');
+        const known = data.billedAmount !== undefined || (data.quantity !== undefined && data.unitPrice !== undefined);
+        if (data.costKnown !== known) fail('使用费用的定价状态与费用快照不一致');
+        const item = await getEntity<FixedAsset>(driver, TABLES.fixedAssets, String(row['fixedAssetId']));
+        const currency = await getEntity<Asset>(driver, TABLES.assets, String(item?.baseCurrencyAssetId));
+        const expected = data.costKnown ? data.billedAmount ?? D(data.quantity).mul(data.unitPrice ?? '0').plus(data.serviceFee ?? '0').toString() : '0';
+        if (!D(row['amountBase'] as string).eq(round(expected, currency?.decimals ?? 2))) fail('使用费用金额与计量快照不一致');
+        if ((data.mode === 'estimate' || !data.costKnown) && row['cashflowMode'] && row['cashflowMode'] !== 'record_only') fail('估算和未定价用量不能关联资金流水');
+      } else if (row['operatingCostJson']) fail('只有使用费用事件可包含计量记录');
       break;
     case 'fixed_asset_usage_metric':
       await ref(TABLES.fixedAssets, row['fixedAssetId'], 'fixedAssetId', '物品资产');

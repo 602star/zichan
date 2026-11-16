@@ -1,6 +1,6 @@
 import { accountSessionStorage } from '../account-storage.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { componentCostOwnerAt, fixedAssetAttributedCost, isDateInRange, gameRecordReportingPostings, traceChain, D, localToday, type DateRange, type QueryCursor } from '@zichan/core';
+import { componentCostOwnerAt, fixedAssetAttributedCost, isDateInRange, gameRecordReportingPostings, traceChain, D, localToday, parseFixedOperatingCost, type DateRange, type QueryCursor } from '@zichan/core';
 import { useSnapshot, type Snapshot } from '../db/snapshot.js';
 import { useStore } from '../db/store.js';
 import type { TransactionReportAggregateRow, TransactionReportPage } from '@zichan/db';
@@ -840,7 +840,8 @@ function TimeTrendChart(props: {
       }
     }
   } else {
-    for (const event of snap.fixedEvents.filter((row) => !row.isDeleted && ['purchase', 'repair', 'upgrade', 'part_sale', 'sale'].includes(row.type))) {
+    for (const event of snap.fixedEvents.filter((row) => !row.isDeleted && (['purchase', 'repair', 'upgrade', 'part_sale', 'sale'].includes(row.type)
+      || (row.type === 'operating_cost' && parseFixedOperatingCost(row.operatingCostJson)?.mode !== 'estimate')))) {
       const asset = snap.fixedAssets.find((row) => row.id === event.fixedAssetId);
       if (!asset) continue;
       const converted = report.toReportAt(event.amountBase, asset.baseCurrencyAssetId, event.date);

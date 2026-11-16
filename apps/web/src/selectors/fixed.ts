@@ -1,6 +1,7 @@
 /** Physical-item view model — pure selector over a Snapshot. */
 import {
   D,
+  parseFixedOperatingCost, FIXED_OPERATING_LABELS,
   componentCostOwnerAt,
   componentHostAt,
   fixedAssetAttributedCost,
@@ -8,7 +9,10 @@ import {
   fixedGoalProgress,
   fixedUsageTotal,
   fixedUsageUnitLabel,
+  fixedDateReminders, fixedLocationPath, parseFixedWorkspace,
+  type FixedDateReminder,
   localToday,
+  todayIn,
   type Attachment,
   type FixedAsset,
   type FixedAssetConsumable,
@@ -25,7 +29,7 @@ const EVENT_LABEL: Record<FixedEventType, string> = {
   purchase: '购入物品', activate: '启用', repair: '维修支出', upgrade: '升级／改造支出',
   install: '安装／转装配件', detach: '拆下配件',
   part_sale: '卖出配件', residual_update: '更新参考现值', warranty_expire: '保修到期', sale: '卖出整件物品',
-  scrap: '报废', retire: '清退', gift: '赠出',
+  scrap: '报废', retire: '清退', gift: '赠出', operating_cost: '使用费用',
 };
 
 export function canPlaceFixedComponent(asset: FixedAsset): boolean {
@@ -107,6 +111,8 @@ export interface FixedCardVM {
   name: string;
   isComponent: boolean;
   installedIn?: string;
+  installedHostId?: string;
+  costOwnerId?: string;
   costOwner?: string;
   installedComponents: string[];
   category: string;
@@ -114,11 +120,15 @@ export interface FixedCardVM {
   tag: string;
   sold: boolean;
   status: string;
-  days: number;
-  perDay: string;
+  days?: number;
+  perDay?: string;
+  locationPath: string;
+  reminders: FixedDateReminder[];
   net: string;
   invested: string;
   recovered: string;
+  operatingCost: string;
+  estimatedOperatingCost: string;
   residual: string;
   referenceValue?: string;
   currencyCode: string;
@@ -136,7 +146,8 @@ export interface FixedCardVM {
   timeline: FixedTimelineVM[];
 }
 
-export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
+export function buildFixed(snap: Snapshot, asOf = localToday(), today = todayIn(snap.setting?.timezone)): FixedCardVM[] {
+  const locations = parseFixedWorkspace(snap.setting?.fixedAssetWorkspaceJson).locations;
   const categoryById = new Map(snap.fixedAssetCategories.map((category) => [category.id, category]));
   const assetById = new Map(snap.assets.map((asset) => [asset.id, asset]));
   const fixedById = new Map(snap.fixedAssets.map((asset) => [asset.id, asset]));
@@ -178,13 +189,21 @@ export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
     const timeline: FixedTimelineVM[] = [
       ...events.map((event): FixedTimelineVM => {
         const link = cashflowBySource.get(`event:${event.id}`);
-        const moneyKind = eventMoneyKind(event.type);
+        const operating = parseFixedOperatingCost(event.operatingCostJson);
+        const moneyKind = operating ? operating.costKnown ? operating.mode === 'estimate' ? 'reference' : 'spend' : undefined : eventMoneyKind(event.type);
         return {
           id: event.id,
           date: event.date,
-          label: EVENT_LABEL[event.type],
+          label: operating ? `${operating.name} · ${FIXED_OPERATING_LABELS[operating.mode]}` : EVENT_LABEL[event.type],
           detail: joinDetail(
-            event.cashflowMode ? CASHFLOW_LABEL[event.cashflowMode] : undefined,
+            operating?.quantity !== undefined ? `${operating.quantity} ${operating.unit}${operating.costKnown ? '' : ' · 费用待补'}` : undefined,
+            operating?.reading !== undefined ? `累计读数 ${operating.reading} ${operating.unit}` : undefined,
+            operating?.unitPrice !== undefined ? `单价 ${operating.unitPrice}${operating.billedAmount !== undefined ? ' · 已按实际总费用登记' : ''}` : undefined,
+            operating?.mode === 'estimate' ? `估算 ${operating.fromDate} 至 ${operating.toDate}，未计入净投入` : undefined,
+            operating?.mode === 'pause' ? '暂停后未计量；恢复时需设新起点' : undefined,
+            operating?.gapFromDate ? `未计量 ${operating.gapFromDate} 至 ${operating.gapToDate ?? '恢复前'}` : undefined,
+            operating?.mode === 'reset' ? '以新读数开始；未结清段不自动推算' : undefined,
+            event.cashflowMode && (!operating || (operating.costKnown && operating.mode !== 'estimate')) ? CASHFLOW_LABEL[event.cashflowMode] : undefined,
             link || event.cashflowMode === 'record_only' ? undefined : event.cashflowMode ? '资金关联缺失' : undefined,
             event.type === 'install' ? `目标：${fixedById.get(event.hostAssetId ?? '')?.name ?? '未知物品'}` : undefined,
             event.note,
@@ -220,12 +239,14 @@ export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
         if (item.replacedDate) rows.push({ id: `${item.id}:terminal`, date: item.replacedDate, label: item.status === 'replaced' ? '更换耗材' : '丢弃耗材', detail: item.name, color: item.status === 'replaced' ? 'var(--accent)' : 'var(--negative)', kind: 'consumable', raw: item });
         return rows;
       }),
-    ].sort((a, b) => b.date.localeCompare(a.date));
+    ].sort((a, b) => b.date.localeCompare(a.date) || (parseFixedOperatingCost('operatingCostJson' in b.raw ? b.raw.operatingCostJson : undefined)?.sequence ?? 0) - (parseFixedOperatingCost('operatingCostJson' in a.raw ? a.raw.operatingCostJson : undefined)?.sequence ?? 0) || b.raw.createdAt.localeCompare(a.raw.createdAt));
     return {
       id: asset.id,
       name: asset.name,
       isComponent: asset.role === 'component',
       installedIn: asset.role === 'component' ? fixedById.get(componentHostAt(asset.id, snap.fixedEvents, asOf) ?? '')?.name : undefined,
+      installedHostId: asset.role === 'component' ? componentHostAt(asset.id, snap.fixedEvents, asOf) : undefined,
+      costOwnerId: asset.role === 'component' ? componentCostOwnerAt(asset, snap.fixedEvents, asOf) : undefined,
       costOwner: asset.role === 'component' ? fixedById.get(componentCostOwnerAt(asset, snap.fixedEvents, asOf) ?? '')?.name : undefined,
       installedComponents: snap.fixedAssets.filter((row) => row.role === 'component' && componentHostAt(row.id, snap.fixedEvents, asOf) === asset.id).map((row) => row.name),
       category: category?.name ?? '待分类',
@@ -235,9 +256,15 @@ export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
       status: STATUS_LABEL[asset.status],
       days: cost.heldDays,
       perDay: cost.perDay,
+      locationPath: fixedLocationPath(locations,
+        asset.role === 'component' && componentHostAt(asset.id, snap.fixedEvents, asOf)
+          ? fixedById.get(componentHostAt(asset.id, snap.fixedEvents, asOf)!)?.storageLocationId : asset.storageLocationId),
+      reminders: fixedDateReminders([asset], today),
       net: cost.netCost,
       invested: cost.investedCost,
       recovered: cost.recoveredCost,
+      operatingCost: cost.otherCost,
+      estimatedOperatingCost: cost.estimatedOperatingCost,
       residual: cost.salePrice ?? cost.currentResidual ?? '0',
       referenceValue: cost.currentResidual,
       currencyCode: currency?.code ?? '',
@@ -252,6 +279,8 @@ export function buildFixed(snap: Snapshot, asOf = localToday()): FixedCardVM[] {
         { l: '累计回款', v: cash(cost.recoveredCost) },
         { l: '维修／升级支出', v: cash(D(cost.repair).plus(cost.upgrade).toString()) },
         { l: '耗材支出', v: cash(cost.consumable) },
+        { l: '已登记使用费用', v: cash(cost.otherCost) },
+        { l: '估算参考费用（未计入）', v: cash(cost.estimatedOperatingCost) },
       ],
       raw: asset,
       metrics: metricVMs,

@@ -7,6 +7,7 @@
 import {
   assertConversionShape,
   D,
+  parseFixedOperatingCost, prepareFixedOperatingEvent,
   assertDcaExecutionShape,
   assertDcaPlanShape,
   assertScheduledExecutionShape,
@@ -523,8 +524,20 @@ export async function checkConsistency(store: SqlLedgerStore): Promise<Consisten
 
   const purchasesByAsset = new Map<string, typeof fixedEvents>();
   const eventCashflowDirection = (type: string) =>
-    ['sale', 'part_sale'].includes(type) ? 'inflow' : ['purchase', 'repair', 'upgrade'].includes(type) ? 'outflow' : undefined;
+    ['sale', 'part_sale'].includes(type) ? 'inflow' : ['purchase', 'repair', 'upgrade', 'operating_cost'].includes(type) ? 'outflow' : undefined;
   for (const event of fixedEvents) {
+    if (event.type === 'operating_cost') {
+      try {
+        const currencyId = fixedAssetById.get(event.fixedAssetId)?.baseCurrencyAssetId;
+        const prepared = prepareFixedOperatingEvent(event, fixedEvents, assets.find((row) => row.id === currencyId)?.decimals ?? 2);
+        const expected = parseFixedOperatingCost(prepared.operatingCostJson)!;
+        const actual = parseFixedOperatingCost(event.operatingCostJson)!;
+        if (!D(prepared.amountBase).eq(event.amountBase) || expected.quantity !== actual.quantity || expected.costKnown !== actual.costKnown) throw new Error('金额或用量与计量区间不一致');
+      } catch (error) {
+        issues.push({ kind: 'fixed_cashflow_invalid', entityType: 'fixed_asset_event', entityId: event.id,
+          detail: `使用费用计量记录无效：${error instanceof Error ? error.message : '格式错误'}` });
+      }
+    }
     missing(fixedAssetIds.has(event.fixedAssetId), 'fixed_asset_event', event.id, `引用了不存在的固定资产 ${event.fixedAssetId}`);
     if (event.hostAssetId) missing(fixedAssetIds.has(event.hostAssetId), 'fixed_asset_event', event.id, `安装目标物品不存在 ${event.hostAssetId}`);
     if (event.parentSaleEventId) missing(fixedEventById.has(event.parentSaleEventId), 'fixed_asset_event', event.id, `整机出售事件不存在 ${event.parentSaleEventId}`);

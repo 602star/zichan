@@ -18,7 +18,7 @@ describe('buildFixed', () => {
 
   it('rows and timeline expose the normalized lifecycle', () => {
     const f = vms[0]!;
-    expect(f.rows.map((r) => r.l)).toEqual(['累计支出', '累计回款', '维修／升级支出', '耗材支出']);
+    expect(f.rows.map((r) => r.l)).toEqual(['累计支出', '累计回款', '维修／升级支出', '耗材支出', '已登记使用费用', '估算参考费用（未计入）']);
     expect(f.rows[0]!.v).toBe('£500.00');
     expect(f.rows[1]!.v).toBe('£0.00');
     expect(f.timeline.map((e) => e.label)).toEqual(['更新参考现值', '购入物品']);

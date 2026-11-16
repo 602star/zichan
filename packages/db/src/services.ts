@@ -4,8 +4,9 @@
  * don't re-implement business logic. Previously this lived inline in the web
  * seed; now it's one tested place.
  */
+import { prepareFixedAssetMetadata } from './fixed-workspace.js';
 import {
-  D, endOfMonth, isValidDay,
+  D, endOfMonth, isValidDay, todayIn, prepareFixedOperatingEvent, parseFixedOperatingCost, assertFixedOperatingLatest,
   componentHostAt,
   defaultTransactionAccount, isDefaultAccount, isSystemDefaultAccount, isLegacyExternalAccount, accountTransactionPostings, Decimal, traceChain, conversionStepAmounts, assertConversionShape, matchSell, lotFromTrace, isTransactionActive, newId, refundAppliedAmount,
   assertDcaExecutionShape, assertDcaPlanShape, assertTransactionShape, dcaOccurrenceDate, transactionReportingEffect,
@@ -1781,6 +1782,10 @@ function collectionForCompensation(store: SqlLedgerStore, entityType: string): C
 function aggregateKeysForCompensation(states: CompensationEntityState[]): Set<string> {
   const keys = new Set<string>();
   for (const state of states) {
+    if (state.entityType === 'fixed_asset_event' && (state.before?.['type'] === 'operating_cost' || state.after?.['type'] === 'operating_cost')) {
+      const id = state.before?.['fixedAssetId'] ?? state.after?.['fixedAssetId'];
+      if (typeof id === 'string') keys.add(`fixed_operating:${id}`);
+    }
     if (state.entityType === 'transaction') keys.add(`transaction:${state.entityId}`);
     if (state.entityType === 'transaction_split') {
       const id = state.before?.['transactionId'] ?? state.after?.['transactionId'];
@@ -1857,7 +1862,18 @@ async function assertCompensationAggregates(
     const separator = key.indexOf(':');
     const type = key.slice(0, separator);
     const id = key.slice(separator + 1);
-    if (type === 'transaction') {
+    if (type === 'fixed_operating') {
+      const asset = await store.fixedAssets.get(id);
+      const currency = asset ? await store.assets.get(asset.baseCurrencyAssetId) : null;
+      const events = await store.fixedAssetEvents.list({ where: { fixedAssetId: id } });
+      for (const event of events.filter((row) => !row.isDeleted && row.type === 'operating_cost')) {
+        try {
+          const prepared = prepareFixedOperatingEvent(event, events, currency?.decimals ?? 2);
+          const data = parseFixedOperatingCost(event.operatingCostJson)!;
+          if (!D(prepared.amountBase).eq(event.amountBase) || parseFixedOperatingCost(prepared.operatingCostJson)!.quantity !== data.quantity) throw new Error('后续用量会改变');
+        } catch (error) { validation(`后续计量记录依赖此操作，不能直接撤销：${error instanceof Error ? error.message : '计量历史无效'}`); }
+      }
+    } else if (type === 'transaction') {
       const transaction = await store.transactions.get(id);
       const splits = await store.transactionSplits.list({ where: { transactionId: id } });
       const refundAllocations = await store.refundAllocations.list({ where: { refundTransactionId: id } });
@@ -4245,6 +4261,7 @@ const FIXED_EVENT_CASHFLOW_DIRECTION: Partial<Record<FixedEventType, FixedAssetC
   purchase: 'outflow',
   repair: 'outflow',
   upgrade: 'outflow',
+  operating_cost: 'outflow',
   part_sale: 'inflow',
   sale: 'inflow',
 };
@@ -4407,6 +4424,13 @@ export async function saveFixedAssetAcquisition(
     const baseAsset = await requireAsset(store, input.asset.baseCurrencyAssetId, 'baseCurrencyAssetId');
     const purchaseAmount = D(input.purchaseAmount);
     if (purchaseAmount.lt(0)) validation('购买金额不能为负数', 'purchaseAmount');
+    if (input.asset.purchaseDatePrecision === 'year') {
+      if (input.cashflow.mode !== 'record_only') validation('只记年份时请仅登记物品；补齐准确日期后再关联资金', 'purchaseDatePrecision');
+      const purchases = (await store.fixedAssetEvents.list({ where: { fixedAssetId: input.asset.id } })).filter((row) => row.type === 'purchase');
+      if ((await store.fixedAssetCashflowLinks.list({ where: { fixedAssetId: input.asset.id } })).some((row) => purchases.some((event) => event.id === row.sourceId))) {
+        validation('购买记录已关联资金流水，请保留准确购买日期', 'purchaseDatePrecision');
+      }
+    }
     if (input.asset.bundledFromAssetId) {
       if (input.asset.role !== 'component' || !purchaseAmount.isZero() || input.cashflow.mode !== 'record_only') {
         validation('原配件不应重复记录整机已包含的购买支出', 'purchaseAmount');
@@ -4428,7 +4452,7 @@ export async function saveFixedAssetAcquisition(
       validation(`购买金额最多支持 ${baseAsset.decimals} 位小数`, 'purchaseAmount');
     }
     const savedAsset = await store.fixedAssets.put({
-      ...input.asset,
+      ...await prepareFixedAssetMetadata(store, input.asset, existing ?? undefined),
       version: existing ? (input.expectedVersion ?? input.asset.version) : input.asset.version,
     });
     const purchaseEvents = (await store.fixedAssetEvents.list({ where: { fixedAssetId: savedAsset.id } }))
@@ -4656,6 +4680,19 @@ export async function saveFixedAssetEvent(
     }
     const fixedAsset = await store.fixedAssets.get(input.event.fixedAssetId);
     if (!fixedAsset || fixedAsset.isDeleted) validation('物品资产不存在');
+    if (current?.type === 'operating_cost' && input.event.type !== 'operating_cost') validation('使用费用不能改为其他事件类型');
+    if (input.event.type === 'operating_cost') {
+      const currency = await store.assets.get(fixedAsset.baseCurrencyAssetId);
+      input = { ...input, event: prepareFixedOperatingEvent(input.event,
+        await store.fixedAssetEvents.list({ where: { fixedAssetId: fixedAsset.id }, includeDeleted: true }), currency?.decimals ?? 2) };
+      const data = parseFixedOperatingCost(input.event.operatingCostJson)!;
+      if ((data.mode === 'estimate' || !data.costKnown || !D(input.event.amountBase).gt(0))
+        && input.cashflow?.mode && input.cashflow.mode !== 'record_only') validation('估算、未定价用量和计量起点不能关联资金流水');
+    }
+    const locationToday = todayIn((await store.settings.list())[0]?.timezone);
+    const previousPlacements = fixedAsset.role === 'component' ? await store.fixedAssetEvents.list({ where: { fixedAssetId: fixedAsset.id } }) : [];
+    const previousPhysicalHost = componentHostAt(fixedAsset.id, previousPlacements, locationToday);
+    const previousLocationId = previousPhysicalHost ? (await store.fixedAssets.get(previousPhysicalHost))?.storageLocationId : fixedAsset.storageLocationId;
     const amount = D(input.event.amountBase);
     if (amount.lt(0)) validation('金额不能小于 0', 'amountBase');
     if (input.event.type === 'part_sale' && !input.event.note?.trim()) validation('请填写卖出的配件名称', 'note');
@@ -4708,6 +4745,16 @@ export async function saveFixedAssetEvent(
       version: current ? (input.expectedVersion ?? input.event.version) : input.event.version,
       cashflowMode: direction ? input.cashflow?.mode ?? 'record_only' : undefined,
     });
+    if (event.type === 'install' || event.type === 'detach') {
+      const latest = [...previousPlacements.filter((row) => row.id !== event.id), event]
+        .filter((row) => !row.isDeleted && row.date <= locationToday && (row.type === 'install' || row.type === 'detach'))
+        .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)).at(-1);
+      if (latest?.id === event.id) {
+        const locationId = event.type === 'install' ? (await store.fixedAssets.get(event.hostAssetId!))?.storageLocationId : previousLocationId;
+        if (fixedAsset.storageLocationId !== locationId || previousLocationId !== locationId) await store.fixedAssets.put(await prepareFixedAssetMetadata(store,
+          { ...fixedAsset, storageLocationId: locationId }, { ...fixedAsset, storageLocationId: previousLocationId }));
+      }
+    }
     const previousIncluded = (await store.fixedAssetEvents.list({ where: { parentSaleEventId: event.id } }))
       .filter((row) => !row.isDeleted);
     if (event.type === 'sale' && fixedAsset.role !== 'component' && input.includeComponents) {
@@ -4742,7 +4789,7 @@ export async function saveFixedAssetEvent(
         date: event.date,
         amountBase: event.amountBase,
         direction,
-        description: `${event.type === 'sale' ? '出售整件物品' : event.type === 'part_sale' ? '卖出配件' : event.type === 'repair' ? '维修' : '升级'} ${fixedAsset.name}`,
+        description: `${event.type === 'operating_cost' ? parseFixedOperatingCost(event.operatingCostJson)!.name : event.type === 'sale' ? '出售整件物品' : event.type === 'part_sale' ? '卖出配件' : event.type === 'repair' ? '维修' : '升级'} ${fixedAsset.name}`,
       }, input.cashflow ?? { mode: 'record_only', sourceAmount: '0' });
     } else {
       await clearFixedAssetCashflow(
@@ -4774,6 +4821,7 @@ export async function deleteFixedAssetEvent(
   const included = (await store.fixedAssetEvents.list({ where: { parentSaleEventId: event.id } })).filter((row) => !row.isDeleted);
   await store.runInAuditBatch('删除物品生命周期事件', async (store) => {
     if (event.type === 'purchase') validation('购买事件随物品维护，不能单独删除');
+    if (event.type === 'operating_cost') assertFixedOperatingLatest(current, await store.fixedAssetEvents.list({ where: { fixedAssetId: current.fixedAssetId } }));
     await clearFixedAssetCashflow(
       store,
       await currentFixedAssetCashflowLink(store, 'event', event.id),
@@ -4807,6 +4855,12 @@ export async function restoreDeletedFixedAssetEvent(
     const current = await transactionStore.fixedAssetEvents.get(compensation.event.id);
     if (!current?.isDeleted || current.version !== compensation.deletedVersion) {
       validation('物品事件删除后又发生了变化，不能直接撤销');
+    }
+    if (compensation.event.type === 'operating_cost') {
+      const operatingEvents = await transactionStore.fixedAssetEvents.list({ where: { fixedAssetId: compensation.event.fixedAssetId } });
+      assertFixedOperatingLatest(compensation.event, operatingEvents);
+      prepareFixedOperatingEvent(compensation.event, operatingEvents,
+        (await transactionStore.assets.get((await transactionStore.fixedAssets.get(compensation.event.fixedAssetId))!.baseCurrencyAssetId))?.decimals ?? 2);
     }
     const restored = await transactionStore.fixedAssetEvents.put({
       ...compensation.event,

@@ -82,7 +82,7 @@ export const TABLES = {
       c('fixedAssetDefaultCurrencyAssetId'), c('gameDefaultSettlementAssetId'),
       c('ledgerMode'), c('ledgerKind'), c('initializedAt'), c('defaultLotMethod'), c('asOfDate'), c('timezone'),
       c('expenseDefaultAccountId'), c('incomeDefaultAccountId'), c('asOfMode'),
-      c('transactionFormOptionalFields'), c('categoryPickerDefaultScope'), c('navigationLayoutJson'), c('refundAttributionMode'), c('dataSafetyStateJson'), c('syncServersJson'),
+      c('transactionFormOptionalFields'), c('categoryPickerDefaultScope'), c('navigationLayoutJson'), c('refundAttributionMode'), c('dataSafetyStateJson'), c('syncServersJson'), c('fixedAssetWorkspaceJson'),
     ],
     indexes: [
       { name: 'idx_settings_single_active', cols: ['is_deleted'], unique: true, where: 'is_deleted = 0' },
@@ -186,6 +186,8 @@ export const TABLES = {
       c('name'), c('role'), c('bundledFromAssetId'), c('tag'), c('categoryId'), c('status'), c('purchaseDate'), c('activatedDate'),
       c('baseCurrencyAssetId'), c('brand'), c('model'), c('serialNumber'), c('barcode'),
       c('purchaseMerchant'), c('orderNumber'), c('warrantyEndDate'), c('warrantyProvider'),
+      c('purchaseDatePrecision'), c('storageLocationId'), c('locationMovesJson'), c('returnDeadline'), c('priceProtectionDeadline'),
+      c('maintenanceDueDate'), c('maintenanceIntervalDays', 'int'), c('reminderDaysBefore', 'int'),
       c('archivedAt'), c('archiveReason'), c('mergedIntoId'), c('note'),
     ],
     indexes: [{ name: 'idx_fixed_assets_category', cols: ['category_id'] }],
@@ -200,7 +202,7 @@ export const TABLES = {
   },
   fixedAssetEvents: {
     name: 'fixed_asset_events',
-    cols: [c('fixedAssetId'), c('hostAssetId'), c('parentSaleEventId'), c('date'), c('type'), c('amountBase'), c('valueMode'), c('enteredAmount'), c('cashflowMode'), c('note')],
+    cols: [c('fixedAssetId'), c('hostAssetId'), c('parentSaleEventId'), c('date'), c('type'), c('amountBase'), c('valueMode'), c('enteredAmount'), c('operatingCostJson'), c('cashflowMode'), c('note')],
     indexes: [
       { name: 'idx_fevents_asset', cols: ['fixed_asset_id'] },
       { name: 'idx_fevents_component_placement_day', cols: ['fixed_asset_id', 'date'], unique: true,

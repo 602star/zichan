@@ -1,11 +1,16 @@
-import { Card, CardMetric } from '../ui/Card.js';
+import { CardAlert } from '../ui/Card.js';
+import { fixedOperatingCostForm, type FixedOperatingPreset } from '../fixed-operating-form.js';
 import { withCashflowPayee } from '../payee-recording.js';
-import { useMemo, useState, type ReactNode } from 'react';
-import { MobilePageHeader, TaskList, useMobileSection } from '../ui/MobilePage.js';
-import { useTabSet } from '../ui/useTabSet.js';
-import { useCompactView } from '../ui/useCompactView.js';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMobileSection } from '../ui/MobilePage.js';
+import { FixedInventory } from '../ui/FixedInventory.js';
+import { FixedLocationManager } from '../ui/FixedLocationManager.js';
+import { FixedItemDetail, type FixedItemActions } from '../ui/FixedItemDetail.js';
+import { ConfirmDialog } from '../ui/ConfirmDialog.js';
+import { useScreenTarget } from '../screen-target.js';
 import {
   isDateInRange,
+  D, parseFixedWorkspace,
   componentHostAt,
   localToday,
   newId,
@@ -35,19 +40,21 @@ import {
   convertFixedUpgradeToComponent,
   saveFixedAssetConsumable,
   saveFixedAssetEvent,
+  updateFixedWorkspace, completeFixedMaintenance,
   type FixedAssetCashflowDraft,
   type SqlLedgerStore,
 } from '@zichan/db';
 import { useSnapshot } from '../db/snapshot.js';
 import { useStore } from '../db/store.js';
-import { CategoryPicker, EntityFormModal } from '../ui/EntityFormModal.js';
-import { AttachmentPreview } from '../ui/AttachmentPreview.js';
+import { EntityFormModal } from '../ui/EntityFormModal.js';
+import { ensureAttachmentBlobAvailable } from '../attachment-sync.js';
 import {
   abortPreparedAttachments,
   commitPreparedAttachment,
   finalizePreparedAttachments,
   prepareAttachmentDraft,
   reconcileAttachmentStorage,
+  readAttachmentBlob,
   type PreparedAttachment,
 } from '../db/attachment-storage.js';
 import {
@@ -63,10 +70,9 @@ import {
   type FixedAssetEventFormValue,
   type FixedAssetFormValue,
 } from '../forms.js';
-import { buildFixed, canConvertFixedUpgrade, canPlaceFixedComponent, type FixedCardVM, type FixedTimelineVM } from '../selectors/fixed.js';
+import { buildFixed, type FixedCardVM, type FixedTimelineVM } from '../selectors/fixed.js';
 import { ledgerAsOfDate } from '../as-of.js';
-import { amount as fmtAmount, money } from '../format.js';
-import { linkAccent, pillBtn } from '../ui/styles.js';
+import { pillBtn } from '../ui/styles.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
 import { TimelineExplorer } from '../ui/TimelineExplorer.js';
 import { useUndo } from '../ui/UndoToast.js';
@@ -76,7 +82,7 @@ import {
 } from '../assetPresets.js';
 
 type ViewMode = 'overview' | TimelineViewMode;
-type AssetModal = FixedAsset | 'new' | { kind: 'preset'; categoryId: string } | { kind: 'component'; hostId: string; bundled: boolean } | null;
+type AssetModal = FixedAsset | 'new' | { kind: 'preset'; categoryId: string } | { kind: 'component'; hostId: string; bundled: boolean } | { kind: 'transaction'; transactionId: string } | null;
 type EventModal = { assetId: string; event?: FixedAssetEvent; placement?: boolean } | null;
 type MetricModal = { assetId: string; metric?: FixedAssetUsageMetric } | null;
 type UsageModal = { metric: FixedAssetUsageMetric; log?: FixedAssetUsageLog } | null;
@@ -118,11 +124,15 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
   const { store, bump } = useStore();
   const undo = useUndo(store, bump);
   const [view, setView] = useState<ViewMode>('overview');
-  const [status, setStatus] = useState<'all' | 'active' | 'terminal'>('all');
-  const [query, setQuery] = useState('');
-  const [categoryId, setCategoryId] = useState('all');
+  const [fromExpense, setFromExpense] = useState(false);
+  const [maintenance, setMaintenance] = useState<FixedCardVM | null>(null);
+  const [notice, setNotice] = useState('');
+  const [initialAttention, setInitialAttention] = useState(false);
+  const target = useScreenTarget('fixed');
+  const handledTarget = useRef<typeof target>(null);
   const [assetModal, setAssetModal] = useState<AssetModal>(null);
   const [eventModal, setEventModal] = useState<EventModal>(null);
+  const [operatingModal, setOperatingModal] = useState<({ assetId: string; event?: FixedAssetEvent } & FixedOperatingPreset) | null>(null);
   const [upgradeConversion, setUpgradeConversion] = useState<{ host: FixedAsset; event: FixedAssetEvent } | null>(null);
   const [metricModal, setMetricModal] = useState<MetricModal>(null);
   const [usageModal, setUsageModal] = useState<UsageModal>(null);
@@ -131,24 +141,23 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
   const [focusDate, setFocusDate] = useState(todayDate);
   const [dateRange, setDateRange] = useState<DateRangeValue>(() => dateRangeValue('all'));
   const vm = useMemo(() => snap ? buildFixed(snap, ledgerAsOfDate(snap)) : [], [snap]);
+  useEffect(() => {
+    if (!snap || !target || handledTarget.current === target) return;
+    handledTarget.current = target;
+    if (target.id && snap.fixedAssets.some((asset) => asset.id === target.id)) openMobile(`item:${target.id}`);
+    else if (target.tab === 'attention') setInitialAttention(true);
+  }, [target, snap, openMobile]);
   if (!snap) return null;
   const readySnap = snap;
 
-  const q = query.trim().toLowerCase();
-  const cards = vm.filter((item) => {
-    if (status === 'active' && item.sold) return false;
-    if (status === 'terminal' && !item.sold) return false;
-    if (categoryId !== 'all' && item.raw.categoryId !== categoryId) return false;
-    return !q || `${item.name} ${item.categoryParent} ${item.category} ${item.raw.brand ?? ''} ${item.raw.model ?? ''} ${item.raw.barcode ?? ''}`.toLowerCase().includes(q);
-  });
-  const allTimeline = cards
+  const preferences = parseFixedWorkspace(snap.setting?.fixedAssetWorkspaceJson);
+  const availableSource = (transaction: { id: string; amount: string }) => D(transaction.amount).minus(snap.fixedCashflowLinks
+    .filter((link) => !link.isDeleted && link.transactionId === transaction.id).reduce((total, link) => total.plus(link.sourceAmount), D(0)));
+  const allTimeline = vm
     .flatMap((item) => item.timeline.map((entry) => ({ item, entry })))
+    .filter(({ item, entry }) => !(item.raw.purchaseDatePrecision === 'year' && entry.kind === 'event' && (entry.raw as FixedAssetEvent).type === 'purchase'))
     .filter((row) => isDateInRange(row.entry.date, dateRange))
     .sort((a, b) => b.entry.date.localeCompare(a.entry.date));
-  const parents = snap.fixedAssetCategories.filter((category) => !category.parentId && category.isActive && !category.isDeleted);
-  const activeCount = vm.filter((item) => !item.isComponent && !item.sold).length;
-  const warrantyWarnings = vm.filter((item) => item.warrantyTone === 'warning').length;
-  const consumableWarnings = vm.reduce((sum, item) => sum + item.consumables.filter((row) => row.needsAttention).length, 0);
 
   async function prepareAttachments(store: SqlLedgerStore, assetId: string, drafts: NonNullable<FixedAssetFormValue['attachmentDrafts']>) {
     const existing = await store.attachments.list({ where: { entityType: 'fixed_asset', entityId: assetId } });
@@ -196,6 +205,8 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
           cashflow: await withCashflowPayee(transactionStore, cashflow),
           expectedVersion: clean.version,
         });
+        if (saved.asset.storageLocationId) await updateFixedWorkspace(transactionStore, (current) => ({ ...current,
+          categoryLocations: { ...current.categoryLocations, [saved.asset.categoryId]: saved.asset.storageLocationId! } }));
         if (assetModal && typeof assetModal === 'object' && 'kind' in assetModal && assetModal.kind === 'component') {
           await saveFixedAssetEvent(transactionStore, {
             event: {
@@ -236,6 +247,7 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
     if (entry.kind === 'event') {
       const event = entry.raw as FixedAssetEvent;
       if (event.type === 'purchase') setAssetModal(item.raw);
+      else if (event.type === 'operating_cost') setOperatingModal({ assetId: item.id, event });
       else setEventModal({ assetId: event.fixedAssetId, event, placement: event.type === 'install' || event.type === 'detach' });
     }
     else if (entry.kind === 'usage') {
@@ -261,7 +273,7 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
     await store.runInAuditBatch('保存物品事件与交易对象', async (transactionStore) => saveFixedAssetEvent(transactionStore, {
       event,
       cashflow: await withCashflowPayee(transactionStore, cashflow),
-      expectedVersion: eventModal?.event?.version,
+      expectedVersion: value.version,
       includeComponents,
     }));
     bump();
@@ -287,7 +299,7 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
   }
 
   const mobileItem = mobileView.startsWith('item:') ? vm.find((item) => item.id === mobileView.slice(5)) : undefined;
-  const itemActions: Omit<Parameters<typeof Overview>[0], 'cards' | 'onOpen'> = {
+  const itemActions: FixedItemActions = {
     onEdit: setAssetModal,
     onEvent: (assetId) => setEventModal({ assetId }),
     onAddComponent: (hostId, bundled) => setAssetModal({ kind: 'component', hostId, bundled }),
@@ -295,46 +307,46 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
     onConvertUpgrade: (host, event) => setUpgradeConversion({ host, event }),
     onMetric: (assetId, metric) => setMetricModal({ assetId, metric }),
     onUsage: (metric) => setUsageModal({ metric }),
-    onConsumable: (assetId) => setConsumableModal({ assetId }),
+    onOperating: (assetId, preset) => setOperatingModal({ assetId, ...preset }),
+    onConsumable: (assetId, item) => setConsumableModal({ assetId, item }),
     onGoal: (assetId, goal) => setGoalModal({ assetId, goal }),
     onTimeline: openTimeline,
+    onMaintenance: setMaintenance,
   };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {mobileItem ? <MobileItemDetail item={mobileItem} onBack={backMobile} {...itemActions} /> : <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      {notice && <CardAlert tone="danger">{notice}</CardAlert>}
+      {mobileView === 'locations' ? <FixedLocationManager preferences={preferences} assets={snap.fixedAssets} onBack={backMobile} />
+        : mobileItem ? <FixedItemDetail key={mobileItem.id} timezone={snap.setting?.timezone} item={mobileItem} items={vm} actions={itemActions} onBack={backMobile}
+          onOpen={(item) => openMobile(`item:${item.id}`)} attachments={snap.attachments.filter((row) => row.entityType === 'fixed_asset' && row.entityId === mobileItem.id)}
+          onAttachment={(attachment) => { void (async () => {
+            if (!attachment.sha256 || attachment.sizeBytes == null) throw new Error('附件正文信息不足，请从凭证管理页检查');
+            await ensureAttachmentBlobAvailable(store, { sha256: attachment.sha256, sizeBytes: attachment.sizeBytes, mimeType: attachment.mimeType ?? 'application/octet-stream' });
+            const blob = await readAttachmentBlob(attachment.sha256, attachment.mimeType);
+            const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = attachment.fileName; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+          })().catch((reason) => setNotice(reason instanceof Error ? reason.message : String(reason))); }} /> : <>
+      <div className="zc-fixed-page-modes" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         {(['overview', 'list', 'year', 'month', 'day'] as const).map((mode) => <button key={mode} onClick={() => setView(mode)} style={pillBtn(view === mode)}>{mode === 'overview' ? '概览' : mode === 'list' ? '时间线' : mode === 'year' ? '年度' : mode === 'month' ? '月历' : '单日'}</button>)}
         <div style={{ flex: 1 }} />
-        <button onClick={() => setAssetModal('new')} className="zc-btn zc-btn--primary">+ 新增物品</button>
+        {view !== 'overview' && <button onClick={() => setAssetModal('new')} className="zc-btn zc-btn--primary">+ 新增物品</button>}
       </div>
 
-      {view !== 'overview' && <DateRangeBar value={dateRange} onChange={setDateRange} />}
+      <label className="zc-fixed-page-view">查看<select className="zc-select" aria-label="物品页面视图" value={view} onChange={(event) => setView(event.target.value as ViewMode)}><option value="overview">物品清单</option><option value="list">生命周期时间线</option><option value="year">年度</option><option value="month">月历</option><option value="day">单日</option></select></label>
+      {view !== 'overview' && <><DateRangeBar value={dateRange} onChange={setDateRange} /><p className="zc-caption">只记年份的购入记录在物品详情查看，补齐准确日期后进入日历与时间线。</p></>}
 
-      {view === 'overview' ? (vm.length === 0 ? (
-        <FixedEmptyState
+      {view === 'overview' ? (
+        <>
+        {vm.length === 0 && <FixedEmptyState
           categories={snap.fixedAssetCategories}
           onSelect={(categoryId) => setAssetModal({ kind: 'preset', categoryId })}
-        />
-      ) : (
-        <>
-          <div className="zc-card-band zc-fixed-kpi-grid">
-            <Kpi label="整件物品" value={`${vm.filter((item) => !item.isComponent).length} 件`} />
-            <Kpi label="正在使用" value={`${activeCount} 件`} tone="var(--positive)" />
-            <Kpi label="已过保" value={`${warrantyWarnings} 件`} tone={warrantyWarnings ? 'var(--negative)' : 'var(--fg)'} />
-            <Kpi label="耗材提醒" value={`${consumableWarnings} 项`} tone={consumableWarnings ? 'var(--negative)' : 'var(--fg)'} />
-          </div>
-          <div className="zc-fixed-filter-grid">
-            <select aria-label="物品状态" className="zc-select" value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="all">全部状态</option><option value="active">在用 / 闲置</option><option value="terminal">已售 / 报废 / 清退</option></select>
-            <input aria-label="搜索物品" className="zc-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、品牌、型号或条形码" />
-            <CategoryPicker fieldId="fixed-filter-category" name="fixedCategory" ariaLabel="物品分类"
-              value={categoryId === 'all' ? '' : categoryId} allowEmpty emptyLabel="全部分类" placeholder="全部分类" defaultShowHidden
-              options={parents.flatMap((parent) => snap.fixedAssetCategories.filter((child) => child.parentId === parent.id && child.isActive).map((child) => ({ value: child.id, icon: child.icon, parentId: parent.id, parentIcon: parent.icon, color: child.color ?? parent.color, label: `${parent.name} / ${child.name}`, name: child.name, parentName: parent.name })))}
-              onChange={(next) => setCategoryId(next || 'all')} />
-            <div style={{ alignSelf: 'center', textAlign: 'right', color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>找到 {cards.length} 件</div>
-          </div>
-          <Overview cards={cards} {...itemActions} onOpen={(item) => openMobile(`item:${item.id}`)} />
+        />}
+          <FixedInventory key={snap.setting?.id} items={vm} snap={snap} preferences={preferences}
+            onOpen={(item) => openMobile(`item:${item.id}`)} onNew={() => setAssetModal('new')}
+            onFromExpense={() => setFromExpense(true)} onLocations={() => openMobile('locations')}
+            onUsage={(item) => { const metric = item.metrics.find((row) => row.raw.isPrimary) ?? item.metrics[0]; if (metric) setUsageModal({ metric: metric.raw }); }}
+            initialAttention={initialAttention} />
         </>
-      )) : (
+      ) : (
         <TimelineExplorer
           items={allTimeline}
           view={view}
@@ -356,10 +368,21 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
       )}
 
       </>}
+      {fromExpense && <EntityFormModal spec={{ title: '从已有支出登记物品',
+        fields: [{ key: 'transactionId', label: '已有支出流水', type: 'select', required: true, allowEmpty: true,
+          options: snap.transactions.filter((row) => row.type === 'expense' && !row.isDeleted && row.recordState !== 'voided' && availableSource(row).gt(0))
+            .map((row) => ({ value: row.id, label: `${row.date} · ${row.description || row.merchant || '支出'} · 可分配 ${availableSource(row).toString()} ${snap.assets.find((asset) => asset.id === row.assetId)?.code ?? ''}` })),
+          hint: '带入原支出的金额、日期和商户，关联后不重复扣款。已分配部分或包含多件物品时，可在下一步调整金额。' }],
+        toValues: (value: { transactionId: string }) => value, fromValues: (value) => ({ transactionId: value.transactionId ?? '' }) }}
+        onClose={() => setFromExpense(false)} onSave={async (value) => { setFromExpense(false); setAssetModal({ kind: 'transaction', transactionId: value.transactionId }); }} />}
+      {maintenance && <ConfirmDialog title="完成物品保养" confirmLabel="完成保养" onCancel={() => setMaintenance(null)} onConfirm={async () => {
+        await completeFixedMaintenance(store, maintenance.id, maintenance.raw.version, todayDate()); setMaintenance(null); bump();
+      }}><p>确认 {maintenance.name} 已在今天完成保养。{maintenance.raw.maintenanceIntervalDays ? `下次按 ${maintenance.raw.maintenanceIntervalDays} 天间隔生成。` : '本次完成后清除待办。'}有实际费用时，请另记维修支出。</p></ConfirmDialog>}
       {assetModal !== null && (() => {
         const isChoice = typeof assetModal === 'object' && 'kind' in assetModal;
         const isPreset = isChoice && assetModal.kind === 'preset';
         const isComponent = isChoice && assetModal.kind === 'component';
+        const sourceExpense = isChoice && assetModal.kind === 'transaction' ? snap.transactions.find((row) => row.id === assetModal.transactionId) : undefined;
         const existing = assetModal === 'new' || isChoice ? undefined : assetModal;
         const attachments = existing ? snap.attachments.filter((row) => row.entityType === 'fixed_asset' && row.entityId === existing.id) : [];
         const purchase = existing ? snap.fixedEvents.find((row) => row.fixedAssetId === existing.id && row.type === 'purchase') : undefined;
@@ -373,7 +396,7 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
         const presetCashflowCategory = isChoice
           ? baseSpec.onFieldChange?.({ categoryId: chosenCategoryId }, 'categoryId', new Set()).cashflowCategory
           : undefined;
-        const spec = isChoice
+        const preparedSpec = isChoice
           ? {
             ...baseSpec,
             title: isComponent ? assetModal.bundled ? '登记原配件' : '购入配件' : baseSpec.title,
@@ -395,8 +418,20 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
               : field),
           }
           : baseSpec;
+        const sourceDefaults: Record<string, string> = sourceExpense ? {
+          name: sourceExpense.description || sourceExpense.merchant || '', purchaseDate: sourceExpense.date, purchaseAmount: availableSource(sourceExpense).toString(),
+          baseCurrencyAssetId: sourceExpense.assetId, cashflowMode: 'linked_transaction', cashflowTransactionId: sourceExpense.id,
+          cashflowSourceAmount: availableSource(sourceExpense).toString(), purchaseMerchant: sourceExpense.merchant || '',
+        } : {};
+        const spec = { ...preparedSpec, fields: preparedSpec.fields.map((field) => sourceExpense && field.key in sourceDefaults
+          ? { ...field, defaultValue: sourceDefaults[field.key] }
+          : isComponent && field.key === 'storageLocationId' ? { ...field, defaultValue: snap.fixedAssets.find((row) => row.id === assetModal.hostId)?.storageLocationId } : field) };
         return <EntityFormModal spec={spec} initial={existing} onSave={saveAsset} onDelete={existing ? async () => deleteAsset(existing) : undefined} deleteLabel="归档" onClose={() => setAssetModal(null)} />;
       })()}
+      {operatingModal && <EntityFormModal spec={fixedOperatingCostForm(snap, operatingModal.assetId, operatingModal, operatingModal.event)} initial={operatingModal.event} onSave={saveEventValue} onDelete={operatingModal.event ? async () => {
+        const compensation = await deleteFixedAssetEvent(store, operatingModal.event!);
+        bump(); undo.offer('已删除使用费用记录', async () => { await restoreDeletedFixedAssetEvent(store, compensation); bump(); });
+      } : undefined} onClose={() => setOperatingModal(null)} />}
       {eventModal && <EntityFormModal spec={eventModal.placement
         ? fixedComponentPlacementForm(snap, eventModal.assetId, componentHostAt(eventModal.assetId,
           snap.fixedEvents.filter((row) => row.id !== eventModal.event?.id), eventModal.event?.date ?? ledgerAsOfDate(snap)))
@@ -465,7 +500,7 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
       } : undefined} onClose={() => setConsumableModal(null)} />}
       {goalModal && (() => {
         const asset = vm.find((item) => item.id === goalModal.assetId)!;
-        return <EntityFormModal spec={fixedGoalForm(goalModal.assetId, snap.fixedUsageMetrics, asset.net, asset.raw.activatedDate ?? asset.raw.purchaseDate)} initial={goalModal.goal} onSave={async (goal) => {
+        return <EntityFormModal spec={fixedGoalForm(goalModal.assetId, snap.fixedUsageMetrics, asset.net, asset.raw.activatedDate ?? (asset.raw.purchaseDatePrecision === 'year' ? todayDate() : asset.raw.purchaseDate))} initial={goalModal.goal} onSave={async (goal) => {
           await store.runInAuditBatch(
             `${goalModal.goal ? '编辑' : '新增'}物品成本目标`,
             (transactionStore) => transactionStore.fixedAssetGoals.put(goal),
@@ -520,101 +555,6 @@ function FixedEmptyState({
   );
 }
 
-function Overview(props: {
-  cards: FixedCardVM[];
-  onOpen?: (item: FixedCardVM) => void;
-  onEdit: (asset: FixedAsset) => void;
-  onEvent: (assetId: string) => void;
-  onAddComponent: (hostId: string, bundled: boolean) => void;
-  onPlacement: (assetId: string) => void;
-  onConvertUpgrade: (host: FixedAsset, event: FixedAssetEvent) => void;
-  onMetric: (assetId: string, metric?: FixedAssetUsageMetric) => void;
-  onUsage: (metric: FixedAssetUsageMetric) => void;
-  onConsumable: (assetId: string) => void;
-  onGoal: (assetId: string, goal?: FixedAssetGoal) => void;
-  onTimeline: (item: FixedCardVM, entry: FixedTimelineVM) => void;
-}) {
-  const compact = useCompactView();
-  if (compact) return <TaskList title="物品" items={props.cards.map((item) => ({
-    label: item.name,
-    note: `${item.status} · 净投入 ${money(item.net, item.currencySymbol)} · ${money(item.perDay, item.currencySymbol)}/天`,
-    value: item.category,
-    onClick: () => props.onOpen?.(item),
-  }))} />;
-  if (!props.cards.length) return <div className="zc-card" style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>该筛选下暂无物品资产</div>;
-  return <div className="zc-card is-flush"><div className="zc-scroll-x"><table className="zc-workspace-table"><thead><tr><th>物品</th><th>分类</th><th>累计净投入</th><th>参考现值</th><th>日均成本</th><th>状态</th></tr></thead><tbody>
-    {props.cards.map((item) => <tr key={item.id}><td><button type="button" className="zc-workspace-link" onClick={() => props.onOpen?.(item)}>{item.name}</button></td><td>{item.category}</td><td className="is-numeric">{money(item.net, item.currencySymbol)}</td><td className="is-numeric">{item.referenceValue ? money(item.referenceValue, item.currencySymbol) : '尚无参考估值'}</td><td className="is-numeric">{money(item.perDay, item.currencySymbol)} / 天</td><td>{item.status}</td></tr>)}
-  </tbody></table></div></div>;
-}
-
-function ItemCard({ item, detail = false, onEdit, onEvent, onAddComponent, onPlacement, onConvertUpgrade, onMetric, onUsage, onConsumable, onGoal, onTimeline }: Omit<Parameters<typeof Overview>[0], 'cards'> & { item: FixedCardVM; detail?: boolean }) {
-  const isCompact = useCompactView();
-  const compactView = isCompact && !detail;
-  const [expanded, setExpanded] = useState(false);
-  const cash = (value: string) => money(value, item.currencySymbol);
-  const canPlaceComponent = !item.sold && canPlaceFixedComponent(item.raw);
-  return <ItemSurface detail={detail}>
-    <div className={`zc-fixed-card-header${item.imageAttachment ? ' has-image' : ''}`} style={{ display: 'grid', gridTemplateColumns: item.imageAttachment ? '92px 1fr auto' : '1fr auto', gap: 14, alignItems: 'start' }}>
-      {item.imageAttachment && <AttachmentPreview className="zc-fixed-card-image" attachment={item.imageAttachment} alt={item.name} style={{ width: 92, height: 92, objectFit: 'cover', border: '1px solid var(--border)' }} />}
-      <div style={{ minWidth: 0 }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><b style={{ fontSize: 'var(--fs-title)' }}>{item.name}</b><span style={statusBadge(item.sold)}>{item.status}</span></div>
-        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 5 }}>{item.categoryParent} / {item.category}{item.isComponent ? ` · 可追踪配件${item.installedIn ? ` · 安装于 ${item.installedIn}` : ' · 未安装'}` : ''}{item.raw.brand ? ` · ${item.raw.brand}` : ''}{item.raw.model ? ` ${item.raw.model}` : ''}</div>
-        <div style={{ display: 'flex', gap: 7, marginTop: 9, flexWrap: 'wrap' }}><span style={infoBadge(item.warrantyTone)}>{item.warrantyLabel}</span>{item.invoiceCount > 0 && <span style={infoBadge('muted')}>发票 {item.invoiceCount}</span>}{item.attachmentCount > 0 && <span style={infoBadge('muted')}>附件 {item.attachmentCount}</span>}</div>
-      </div>
-      <button onClick={() => onEdit(item.raw)} style={linkButton}>编辑</button>
-    </div>
-    {compactView && <div className="zc-fixed-mobile-summary"><span>累计净投入 <b>{cash(item.net)}</b></span>{item.referenceValue && <span>参考现值 {cash(item.referenceValue)}</span>}</div>}
-    {compactView && <button type="button" className="zc-fixed-mobile-expand zc-btn zc-btn--outline" aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>{expanded ? '收起详情' : '查看指标与操作'}</button>}
-    {(!compactView || expanded) && <>
-    <div className="zc-card-band is-inset zc-fixed-card-metrics">
-      <CardMetric label="累计净投入" value={cash(item.net)} note={<>累计支出 {cash(item.invested)} · 累计回款 {cash(item.recovered)}{item.referenceValue && <div>参考现值 {cash(item.referenceValue)}（不参与净投入）</div>}</>} />
-      <CardMetric label="日均净投入" value={<>{cash(item.perDay)}<small className="zc-card-metric-unit"> / 天</small></>} note={`${item.days} 天`} />
-      <CardMetric label="主使用指标" value={item.metrics.length ? <>{fmtAmount(item.metrics.find((row) => row.raw.isPrimary)?.total ?? item.metrics[0]!.total, 2)}<small className="zc-card-metric-unit"> {item.metrics.find((row) => row.raw.isPrimary)?.unitLabel ?? item.metrics[0]!.unitLabel}</small></> : <button onClick={() => onMetric(item.id)} style={linkButton}>添加指标</button>} note={item.metrics.length ? `${cash(item.metrics.find((row) => row.raw.isPrimary)?.perUnit ?? item.metrics[0]!.perUnit)} / 单位` : undefined} />
-    </div>
-    {item.metrics.length > 0 && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>{item.metrics.map((metric) => <div key={metric.raw.id} style={{ display: 'flex', alignItems: 'stretch' }}><button onClick={() => onUsage(metric.raw)} style={metricButton}><b>{metric.raw.name}</b><span>{fmtAmount(metric.total, 2)} {metric.unitLabel}</span><small>{cash(metric.perUnit)} / {metric.unitLabel}</small></button><button title="编辑使用指标" aria-label={`编辑 ${metric.raw.name}`} onClick={() => onMetric(item.id, metric.raw)} style={{ border: '1px solid var(--border)', borderLeft: 'none', background: 'var(--surface)', color: 'var(--text-tertiary)', cursor: 'pointer', width: 30 }}>⋮</button></div>)}</div>}
-    {item.goals.length > 0 && <div style={{ marginTop: 14 }}>{item.goals.map((goal) => <div key={goal.raw.id} style={{ marginTop: 9 }}><div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 'var(--fs-meta)' }}><button onClick={() => onGoal(item.id, goal.raw)} style={{ ...linkButton, color: 'var(--text-primary)' }}>{goal.raw.name}</button><span>{fmtAmount(goal.currentUsage, 1)} / {fmtAmount(goal.targetUsage, 1)} {goal.unitLabel} · 当前 {cash(goal.currentUnitCost)} / {goal.unitLabel}</span></div><div style={{ height: 7, background: 'var(--surface-2)', border: '1px solid var(--border)', marginTop: 5 }}><div style={{ width: `${Math.max(0, Math.min(100, goal.progress * 100))}%`, height: '100%', background: goal.achieved ? 'var(--positive)' : 'var(--accent)' }} /></div></div>)}</div>}
-    {item.consumables.some((row) => row.raw.status === 'active') && <div style={{ marginTop: 13, fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)' }}>耗材：{item.consumables.filter((row) => row.raw.status === 'active').map((row) => `${row.raw.name}${!row.raw.installedDate ? '（待安装）' : row.remaining !== undefined ? `（剩 ${fmtAmount(row.remaining, 1)} ${row.unitLabel ?? ''}）` : '（使用中）'}`).join(' · ')}</div>}
-    {!item.isComponent && item.installedComponents.length > 0 && <div style={{ marginTop: 13, fontSize: 'var(--fs-meta)', color: 'var(--text-secondary)' }}>当前配件：{item.installedComponents.join(' · ')}</div>}
-    {item.isComponent && item.costOwner && <div style={{ marginTop: 7, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>配件金额已计入 {item.costOwner}，请勿与整机金额相加。</div>}
-    <div style={{ display: 'flex', gap: 14, marginTop: 14, flexWrap: 'wrap' }}><button onClick={() => onEvent(item.id)} style={linkButton}>+ 生命周期事件</button>{canPlaceComponent && (item.isComponent ? <button onClick={() => onPlacement(item.id)} style={linkButton}>+ {item.installedIn ? '拆下／转装' : '安装'}配件</button> : <><button onClick={() => onAddComponent(item.id, false)} style={linkButton}>+ 购入配件</button><button onClick={() => onAddComponent(item.id, true)} style={linkButton}>+ 登记原配件</button></>)}<button onClick={() => onMetric(item.id)} style={linkButton}>+ 使用指标</button><button onClick={() => onConsumable(item.id)} style={linkButton}>+ 耗材</button><button onClick={() => onGoal(item.id)} style={linkButton}>+ 成本目标</button></div>
-    <details style={{ marginTop: 13 }}><summary style={{ cursor: 'pointer', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)' }}>完整时间线 ({item.timeline.length})</summary><div style={{ marginTop: 8 }}>{item.timeline.slice(0, 20).map((entry) => <button className="zc-fixed-timeline-entry" key={`${entry.kind}:${entry.id}`} onClick={() => onTimeline(item, entry)} style={timelineRow}><span style={{ width: 8, height: 8, background: entry.color, borderRadius: 'var(--r-round)' }} /><b>{entry.label}</b><span>{entry.date}</span><span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.detail}</span><TimelineAmount entry={entry} /></button>)}</div>{canPlaceComponent && !item.isComponent && item.timeline.filter((entry) => entry.kind === 'event' && canConvertFixedUpgrade(item.raw, entry.raw as FixedAssetEvent)).map((entry) => <button key={`convert:${entry.id}`} onClick={() => onConvertUpgrade(item.raw, entry.raw as FixedAssetEvent)} style={{ ...linkButton, marginTop: 8, display: 'block' }}>将 {entry.date} 的升级支出转为配件</button>)}</details>
-    </>}
-  </ItemSurface>;
-}
-
-function ItemSurface({ detail, children }: { detail: boolean; children: ReactNode }) {
-  return detail ? <div className="zc-fixed-detail-body">{children}</div> : <Card as="article">{children}</Card>;
-}
-
-function MobileItemDetail({ item, onBack, ...actions }: Omit<Parameters<typeof Overview>[0], 'cards' | 'onOpen'> & { item: FixedCardVM; onBack: () => void }) {
-  const [tab, setTab] = useState<'overview' | 'usage' | 'events'>('overview');
-  const [visible, setVisible] = useState(30);
-  const tabs = useTabSet(['overview', 'usage', 'events'] as const, tab, setTab);
-  const records = item.timeline.filter((entry) => tab === 'usage' ? entry.kind === 'usage' : entry.kind !== 'usage');
-  return <div className="zc-mobile-task-page">
-    <MobilePageHeader title={item.name} onBack={onBack} backLabel="返回物品" />
-    <div className="zc-tabs" role="tablist" aria-label="物品详情">{(['overview', 'usage', 'events'] as const).map((id) => <button key={id} type="button" {...tabs.tabProps(id)} className={tab === id ? 'zc-tab is-active' : 'zc-tab'}>{({ overview: '概况', usage: '使用', events: '事件' })[id]}</button>)}</div>
-    <div {...tabs.panelProps}>
-      {tab === 'overview' && <ItemCard item={item} detail {...actions} />}
-      {tab === 'usage' && <>
-        <TaskList title="使用指标" items={item.metrics.map((metric) => ({ label: metric.raw.name, note: `${fmtAmount(metric.total, 4)} ${metric.unitLabel} · ${money(metric.perUnit, item.currencySymbol)}/${metric.unitLabel}`, onClick: () => actions.onUsage(metric.raw) }))} />
-        {!item.metrics.length && <p className="zc-caption">先添加使用指标，再记录次数、时长或累计读数。</p>}
-        <div className="zc-mobile-shortcuts"><button type="button" className="zc-btn" onClick={() => actions.onMetric(item.id)}>添加使用指标</button><button type="button" className="zc-btn" onClick={() => actions.onConsumable(item.id)}>登记耗材</button></div>
-      </>}
-      {tab === 'events' && <button type="button" className="zc-btn zc-btn--primary" onClick={() => actions.onEvent(item.id)}>记录费用或生命周期事件</button>}
-      {tab !== 'overview' && <>
-        <TaskList title={tab === 'usage' ? '使用记录' : '物品事件'} items={records.slice(0, visible).map((entry) => ({ label: entry.label, note: `${entry.date} · ${entry.detail}`, value: entry.amount ? `${entry.moneyKind === 'spend' ? '−' : entry.moneyKind === 'recover' ? '+' : ''}${entry.amount}` : undefined, onClick: () => actions.onTimeline(item, entry) }))} />
-        {!records.length && <p className="zc-caption">还没有此类记录。</p>}
-        {records.length > visible && <button type="button" className="zc-btn" onClick={() => setVisible((count) => count + 30)}>查看更多记录</button>}
-      </>}
-    </div>
-  </div>;
-}
-
-function Kpi({ label, value, tone = 'var(--fg)' }: { label: string; value: string; tone?: string }) {
-  return <CardMetric label={label} value={value} tone={tone === 'var(--positive)' ? 'positive' : tone === 'var(--negative)' ? 'negative' : 'default'} />;
-}
-
 const timelineMoneyVisual = {
   spend: { label: '支出', prefix: '−', color: 'var(--negative)' },
   recover: { label: '回款', prefix: '＋', color: 'var(--positive)' },
@@ -630,8 +570,4 @@ function TimelineAmount({ entry }: { entry: FixedTimelineVM }) {
   </span>;
 }
 
-const linkButton = linkAccent;
-const metricButton = { minWidth: 130, border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-primary)', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start', cursor: 'pointer', fontSize: 'var(--fs-meta)' } as const;
 const timelineRow = { width: '100%', border: 'none', borderBottom: '1px solid var(--border)', background: 'transparent', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 9, padding: '8px 0', fontSize: 'var(--fs-meta)', cursor: 'pointer' } as const;
-const statusBadge = (terminal: boolean) => ({ padding: '3px 7px', border: '1px solid var(--border)', background: terminal ? 'var(--surface-2)' : 'color-mix(in srgb, var(--positive) 12%, var(--surface))', color: terminal ? 'var(--fg-subtle)' : 'var(--positive)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' } as const);
-const infoBadge = (tone: FixedCardVM['warrantyTone']) => ({ padding: '3px 7px', border: '1px solid var(--border)', background: tone === 'positive' ? 'color-mix(in srgb, var(--positive) 12%, var(--surface))' : tone === 'warning' ? 'color-mix(in srgb, var(--negative) 12%, var(--surface))' : 'var(--surface-2)', color: tone === 'positive' ? 'var(--positive)' : tone === 'warning' ? 'var(--negative)' : 'var(--fg-subtle)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' } as const);

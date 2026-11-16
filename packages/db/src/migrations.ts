@@ -3,8 +3,13 @@ import type { SqlDriver } from './driver.js';
 import { MIGRATIONS_TABLE_SQL, schemaStatements } from './schema.js';
 import { TABLES, allCols, type TableSpec } from './tables.js';
 
-export const CURRENT_SCHEMA_VERSION = 127;
-export const CURRENT_SCHEMA_NAME = 'current_schema_2026_10_05_consumable_merchant';
+export const CURRENT_SCHEMA_VERSION = 129;
+export const CURRENT_SCHEMA_NAME = 'current_schema_2026_11_16_operating_cost';
+const FIXED_WORKSPACE_COLUMNS: Record<string, Record<string, string>> = {
+  settings: { fixed_asset_workspace_json: 'TEXT' },
+  fixed_assets: { purchase_date_precision: 'TEXT', storage_location_id: 'TEXT', location_moves_json: 'TEXT', return_deadline: 'TEXT',
+    price_protection_deadline: 'TEXT', maintenance_due_date: 'TEXT', maintenance_interval_days: 'INTEGER', reminder_days_before: 'INTEGER' },
+};
 export const SCHEMA_RESET_REQUIRED_CODE = 'SCHEMA_RESET_REQUIRED';
 
 export class SchemaResetRequiredError extends Error {
@@ -108,8 +113,12 @@ function difference(left: Iterable<string>, right: Set<string>): string[] {
   return [...left].filter((value) => !right.has(value)).sort();
 }
 
-export async function assertCurrentSchema(driver: SqlDriver): Promise<void> {
+export async function assertCurrentSchema(driver: SqlDriver, previousVersion = CURRENT_SCHEMA_VERSION): Promise<void> {
   const expected = expectedSchema();
+  if (previousVersion === 127) for (const [table, columns] of Object.entries(FIXED_WORKSPACE_COLUMNS)) {
+    expected.set(table, expected.get(table)!.filter((column) => !(column in columns)));
+  }
+  if (previousVersion < 129) expected.set('fixed_asset_events', expected.get('fixed_asset_events')!.filter((column) => column !== 'operating_cost_json'));
   const tableRows = await driver.all<{ name: string }>(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
   );
@@ -207,6 +216,22 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
         'INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)',
         [baseline.version, baseline.name, new Date().toISOString()],
       );
+    });
+    return 1;
+  }
+
+  if (applied.length === 1 && ((applied[0]?.version === 127 && applied[0].name === 'current_schema_2026_10_05_consumable_merchant')
+    || (applied[0]?.version === 128 && applied[0].name === 'current_schema_2026_11_16_fixed_workspace'))) {
+    // The immediately preceding schema gains nullable metadata only. Verify it
+    // before upgrading; never reset records or accept unrelated schema drift.
+    await driver.transaction(async (transaction) => {
+      await assertCurrentSchema(transaction, applied[0]!.version);
+      if (applied[0]!.version === 127) for (const [table, columns] of Object.entries(FIXED_WORKSPACE_COLUMNS)) for (const [column, type] of Object.entries(columns)) {
+        await transaction.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+      await transaction.exec('ALTER TABLE fixed_asset_events ADD COLUMN operating_cost_json TEXT');
+      await assertCurrentSchema(transaction);
+      await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?', [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
     });
     return 1;
   }
