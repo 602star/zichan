@@ -2,12 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import { ensureAttachmentBlobAvailable } from '../attachment-sync.js';
 import { attachmentPreviewUrl, type AttachmentDraftData } from '../db/attachment-storage.js';
 import { useStore } from '../db/store.js';
+import { attachmentPreviewKind } from '../attachment-content.js';
+import { AttachmentOpenButton } from './AttachmentViewer.js';
 
-export function AttachmentPreview({ attachment, alt, className, style }: {
+export function AttachmentPreview({ attachment, alt, className, style, interactive = false }: {
   attachment: AttachmentDraftData;
   alt?: string;
   className?: string;
   style?: React.CSSProperties;
+  interactive?: boolean;
 }) {
   const { store, rev } = useStore();
   const [src, setSrc] = useState('');
@@ -68,8 +71,9 @@ export function AttachmentPreview({ attachment, alt, className, style }: {
 
   useEffect(() => () => { if (src) URL.revokeObjectURL(src); }, [src]);
 
-  if (!src || !isImage) {
-    return <div className={className} title={error || undefined} style={{ ...style, display: 'grid', placeItems: 'center', background: 'var(--surface-2)', color: error ? 'var(--negative)' : 'var(--fg-subtle)', fontSize: 'var(--fs-meta)' }}>{error ? '不可用' : '文件'}</div>;
-  }
-  return <img className={className} src={src} alt={alt ?? attachment.fileName} style={style} />;
+  const kind = attachmentPreviewKind(attachment);
+  const content = !src || !isImage
+    ? <div className={className} title={error || undefined} style={{ ...style, display: 'grid', placeItems: 'center', background: 'var(--surface-2)', color: error ? 'var(--negative)' : 'var(--fg-subtle)', fontSize: 'var(--fs-meta)' }}>{error ? '不可用' : kind === 'pdf' ? 'PDF · 预览' : isImage ? '图片' : '文件'}</div>
+    : <img className={className} src={src} alt={alt ?? attachment.fileName} style={style} />;
+  return interactive && kind ? <AttachmentOpenButton attachment={attachment} className="zc-attachment-trigger">{content}</AttachmentOpenButton> : content;
 }

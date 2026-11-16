@@ -1,5 +1,6 @@
 import { resolveTransactionTags } from '../transaction-tags.js';
 import { PayeeDirectory } from '../ui/PayeeDirectory.js';
+import { AttachmentOpenButton } from '../ui/AttachmentViewer.js';
 import { withRememberedPayee } from '../payee-recording.js';
 import { CategoryMark, EntityIcon } from '../ui/EntityIcon.js';
 import { accountSessionStorage } from '../account-storage.js';
@@ -1370,7 +1371,7 @@ function AttachmentSection({ items, preview, onDelete }: { items: Attachment[]; 
       <div className="zc-manage-toolbar" style={{ display: 'grid', gridTemplateColumns: '1fr minmax(180px, 280px)', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <div>
           <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>附件<span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginLeft: 8, fontWeight: 'var(--fw-medium)' }}>{items.length}</span></div>
-          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>正文保存在平台文件存储中，此处只管理元数据。</div>
+          <div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', marginTop: 3 }}>图片和 PDF 可直接预览；正文不在本机时按需取回。</div>
         </div>
         <input aria-label="搜索附件" className="zc-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索文件、关联对象或校验和" />
       </div>
@@ -1392,6 +1393,7 @@ function AttachmentSection({ items, preview, onDelete }: { items: Attachment[]; 
                 </td>
                 <td style={{ ...tdStyle, fontFamily: 'monospace', fontSize: 'var(--fs-meta)' }}>{attachment.sha256.slice(0, 16)}...</td>
                 <td style={{ ...tdStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <AttachmentOpenButton attachment={attachment} style={{ marginRight: 6 }} />
                   {/* Fetching a body normally downloads it into this device's attachment store.
                       A preview cannot do that — the body is the user's, and only the server can
                       decrypt it — so there it downloads the decrypted file instead. Deleting edits

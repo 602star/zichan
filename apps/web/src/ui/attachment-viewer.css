@@ -1,0 +1,23 @@
+.zc-attachment-trigger { display: block; padding: 0; border: 0; border-radius: var(--r-sm); color: inherit; background: transparent; cursor: zoom-in; text-align: inherit; }
+.zc-attachment-trigger > img, .zc-attachment-trigger > div { display: block; }
+.zc-attachment-viewer { background: var(--surface); color: var(--fg); box-shadow: var(--shadow-lg); }
+.zc-attachment-viewer .zc-dialog-body { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.zc-attachment-heading { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.zc-attachment-heading h2 { flex: 1; min-width: 0; margin: 0; font-size: var(--fs-title); overflow-wrap: anywhere; }
+.zc-attachment-heading .zc-btn { flex: 0 0 auto; }
+.zc-attachment-viewer .zc-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; text-decoration: none; }
+.zc-attachment-toolbar { display: flex; flex: 0 0 auto; justify-content: center; align-items: center; flex-wrap: wrap; gap: var(--sp-2); padding: var(--sp-2) var(--sp-3); border-bottom: 1px solid var(--border); }
+.zc-attachment-toolbar output { min-width: 4ch; text-align: center; font-variant-numeric: tabular-nums; }
+.zc-attachment-stage { flex: 1; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; background: var(--surface-2); }
+.zc-attachment-media { display: grid; place-items: center; width: max-content; min-width: 100%; min-height: 100%; padding: 12px; box-sizing: border-box; }
+.zc-attachment-media[hidden] { display: none; }
+.zc-attachment-media img, .zc-attachment-media canvas { display: block; max-width: none; flex: none; }
+.zc-attachment-pdf { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.zc-attachment-status { padding: var(--sp-5); text-align: center; color: var(--text-secondary); overflow-wrap: anywhere; }
+.zc-attachment-status[role="alert"] { color: var(--negative); }
+@media (max-width: 600px) {
+  .zc-backdrop.zc-attachment-backdrop { --dialog-outer-top: env(safe-area-inset-top, 0px); --dialog-outer-bottom: env(safe-area-inset-bottom, 0px); padding: var(--dialog-outer-top) 0 var(--dialog-outer-bottom); }
+  .zc-attachment-viewer.zc-dialog-panel { width: 100%; height: 100dvh !important; border-radius: 0; }
+  .zc-attachment-viewer .zc-dialog-head { padding: var(--sp-3); }
+  .zc-attachment-heading h2 { font-size: var(--fs-body); }
+}

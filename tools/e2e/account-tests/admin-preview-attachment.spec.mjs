@@ -171,14 +171,22 @@ test('an administrator downloads a user attachment from the read-only preview', 
     await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
 
     await page.locator('.zc-sidebar').getByRole('button', { name: /管理$/ }).click();
-    await expect(page.getByRole('tab', { name: '其他资料' })).toBeVisible({ timeout: 30_000 });
-    await page.getByRole('tab', { name: '其他资料' }).click();
-    await page.getByRole('tab', { name: '附件', exact: true }).click();
+    await page.getByRole('navigation', { name: /^(资产与资料中心|资料管理)$/ }).getByRole('button', { name: '附件', exact: true }).click();
     const attachmentRow = page.getByRole('row').filter({ hasText: fileName });
     await expect(attachmentRow).toBeVisible({ timeout: 20_000 });
 
     // A preview cannot claim this device holds the file, so it says so and offers the download.
     await expect(attachmentRow).toContainText('预览不适用');
+    await attachmentRow.getByRole('button', { name: `预览 ${fileName}`, exact: true }).click();
+    const viewer = page.getByRole('dialog', { name: `附件预览 · ${fileName}`, exact: true });
+    // This fixture deliberately has a PDF signature without a valid page tree: the bytes still
+    // come through the authorized preview route, and a parse error must retain the save action.
+    await expect(viewer.getByRole('alert')).toContainText('PDF 无法读取');
+    const [previewSaved] = await Promise.all([
+      page.waitForEvent('download'), viewer.getByRole('link', { name: '保存', exact: true }).click(),
+    ]);
+    expect(readFileSync(await previewSaved.path(), 'utf8')).toBe(fileBody);
+    await viewer.getByRole('button', { name: '关闭附件预览', exact: true }).click();
     const download = attachmentRow.getByRole('button', { name: '下载' });
     await expect(download).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('preview-attachment.png'), fullPage: true });

@@ -5,6 +5,8 @@ import { amount, money } from '../format.js';
 import { Card, CardAlert, CardEmpty, CardFact, CardGroup, CardMetric } from './Card.js';
 import { MobilePageHeader } from './MobilePage.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
+import { AttachmentOpenButton } from './AttachmentViewer.js';
+import { attachmentPreviewKind } from '../attachment-content.js';
 import { useTabSet } from './useTabSet.js';
 import { FixedEventActions } from './FixedEventActions.js';
 import { FixedOperatingCosts } from './FixedOperatingCosts.js';
@@ -70,7 +72,7 @@ export function FixedItemDetail({ item, items, attachments, actions, onBack, onO
     <div className="zc-tabs" role="tablist" aria-label="物品详情">{(Object.keys(tabNames) as DetailTab[]).map((id) => <button type="button" key={id} {...tabs.tabProps(id)} className={tab === id ? 'zc-tab is-active' : 'zc-tab'}>{tabNames[id]}</button>)}</div>
     <div ref={panel} {...tabs.panelProps}>
       {tab === 'overview' && <Card>
-        {item.imageAttachment && <AttachmentPreview attachment={item.imageAttachment} alt={item.name} className="zc-fixed-detail-image" />}
+        {item.imageAttachment && <AttachmentPreview attachment={item.imageAttachment} interactive alt={item.name} className="zc-fixed-detail-image" />}
         <div className="zc-card-band is-inset zc-fixed-detail-metrics"><CardMetric label="累计净投入" value={cash(item.net)} note={item.sold ? '处置后的最终净投入' : '实际投入减实际回款'} />
           <CardMetric label="持有日均净投入" value={item.perDay === undefined ? <span className="zc-fixed-metric-empty">待补准确日期</span> : `${cash(item.perDay)} / 天`} note={item.days === undefined ? '购买日期只记到年份' : `${item.days} 天，包含闲置期间`} />
           <CardMetric label="主使用指标" value={primary ? `${amount(primary.total, 2)} ${primary.unitLabel}` : <button type="button" className="zc-workspace-link zc-fixed-metric-empty" onClick={() => actions.onMetric(item.id)}>添加使用指标</button>} note={primary && D(primary.total).gt(0) ? `${cash(primary.perUnit)} / ${primary.unitLabel}` : '可按次数、公里或小时记录'} /></div>
@@ -97,7 +99,9 @@ export function FixedItemDetail({ item, items, attachments, actions, onBack, onO
       {tab === 'history' && <Card title="记录与凭证" action={<button type="button" className="zc-btn" onClick={() => actions.onEdit(item.raw)}>管理图片与凭证</button>}>
         <FixedRecordHistory item={item} actions={actions} kind={historyKind} onKindChange={setHistoryKind} />
         <CardGroup><h3>位置变更</h3>{!history.length && <CardEmpty>还没有位置变更记录。</CardEmpty>}{history.map((move, index) => <div className="zc-fixed-record-row" key={`${move.at}:${index}`}><span>{dayOfInstant(move.at, timezone)}</span><span>{move.from} → {move.to}</span></div>)}</CardGroup>
-        <CardGroup><h3>图片、发票与保修凭证</h3>{!attachments.length && <CardEmpty>尚未添加凭证，可从“管理图片与凭证”补充。</CardEmpty>}{attachments.map((attachment) => <button type="button" className="zc-fixed-record-row" key={attachment.id} onClick={() => onAttachment(attachment)}><span>{attachmentRoleLabels[attachment.role ?? ''] ?? '附件'}</span><span>{attachment.fileName}</span><span>下载</span></button>)}</CardGroup>
+        <CardGroup><h3>图片、发票与保修凭证</h3>{!attachments.length && <CardEmpty>尚未添加凭证，可从“管理图片与凭证”补充。</CardEmpty>}{attachments.map((attachment) => attachmentPreviewKind(attachment)
+          ? <AttachmentOpenButton attachment={attachment} className="zc-fixed-record-row" key={attachment.id}><span>{attachmentRoleLabels[attachment.role ?? ''] ?? '附件'}</span><span>{attachment.fileName}</span><span>预览</span></AttachmentOpenButton>
+          : <button type="button" className="zc-fixed-record-row" key={attachment.id} onClick={() => onAttachment(attachment)}><span>{attachmentRoleLabels[attachment.role ?? ''] ?? '附件'}</span><span>{attachment.fileName}</span><span>下载</span></button>)}</CardGroup>
       </Card>}
 
     </div>

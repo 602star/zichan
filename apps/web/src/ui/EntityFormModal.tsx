@@ -15,10 +15,10 @@ import { DialogShell } from './DialogShell.js';
 import { WorkspaceDialog } from './WorkspaceDialog.js';
 import { FormDraftStatus, useFormDraftAutosave } from './FormDraftStatus.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
-import { readAttachmentBlob, type AttachmentDraftData } from '../db/attachment-storage.js';
+import type { AttachmentDraftData } from '../db/attachment-storage.js';
+import { loadAttachmentContent } from '../attachment-content.js';
 import { useStore } from '../db/store.js';
 import { useCompactView } from './useCompactView.js';
-import { ensureAttachmentBlobAvailable } from '../attachment-sync.js';
 import { buildSyncBaseUrl, loadSyncConnections } from '../sync-config.js';
 import { barcodeScannerAvailable, currentDevicePosition, scanBarcode } from '../device-capabilities.js';
 import { ASSET_PRESETS, ASSET_PRESET_GROUPS, ensureAssetPreset, type AssetPresetCode } from '../assetPresets.js';
@@ -984,7 +984,7 @@ function FormField(props: {
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {fileRows.map((row, idx) => (
                 <div key={`${row.fileName}:${idx}`} style={{ width: 82, fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', position: 'relative' }}>
-                  <AttachmentPreview attachment={row} alt={row.fileName} style={{ width: 74, height: 54, objectFit: 'cover', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)' }} />
+                  <AttachmentPreview attachment={row} interactive alt={row.fileName} style={{ width: 74, height: 54, objectFit: 'cover', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)' }} />
                   <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 3 }}>{row.fileName}</div>
                   {row.sizeBytes && <div>{row.sizeBytes > 1024 * 1024 ? `${(row.sizeBytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(row.sizeBytes / 1024))} KB`}</div>}
                   <AttachmentSaveButton attachment={row} />
@@ -1059,23 +1059,14 @@ function AllocationEditor(props: {
 }
 
 function AttachmentSaveButton({ attachment }: { attachment: AttachmentDraftData }) {
-  const { store } = useStore();
+  const { store, downloadPreviewAttachment } = useStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const save = async () => {
     setBusy(true);
     setError('');
     try {
-      let blob = attachment.contentBlob;
-      if (!blob) {
-        if (!attachment.sha256 || attachment.sizeBytes == null) throw new Error('附件缺少正文引用');
-        await ensureAttachmentBlobAvailable(store, {
-          sha256: attachment.sha256,
-          sizeBytes: attachment.sizeBytes,
-          mimeType: attachment.mimeType || 'application/octet-stream',
-        });
-        blob = await readAttachmentBlob(attachment.sha256, attachment.mimeType);
-      }
+      const blob = await loadAttachmentContent(store, attachment, downloadPreviewAttachment);
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -1092,6 +1083,7 @@ function AttachmentSaveButton({ attachment }: { attachment: AttachmentDraftData 
     <button
       type="button"
       title={error || `保存 ${attachment.fileName}`}
+      aria-label={`保存 ${attachment.fileName}`}
       onClick={() => void save()}
       disabled={busy}
       style={{ marginTop: 3, border: 0, padding: 0, background: 'transparent', color: error ? 'var(--negative)' : 'var(--accent)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', cursor: busy ? 'wait' : 'pointer' }}
