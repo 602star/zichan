@@ -1,3 +1,4 @@
+import { X } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useCompactView } from '../ui/useCompactView.js';
 import { CardFact } from '../ui/Card.js';
@@ -764,12 +765,27 @@ export function AddConversionModal({
       dismissDisabled={saving}
       panelClassName="zc-conversion-modal"
       panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 24, width: 980, maxHeight: '92vh', overflow: 'auto' }}
-    >
-      <div ref={formRef} className="zc-conversion-form">
+
+      header={<>
         <div className="zc-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
           <div id={titleId} style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{initial ? '编辑资产转换' : '新增资产转换'}</div>
-          <button type="button" data-dialog-initial-focus aria-label="关闭" title="关闭" onClick={requestClose} disabled={saving} style={iconButton}>×</button>
+          <button type="button" data-dialog-initial-focus aria-label="关闭" title="关闭" onClick={requestClose} disabled={saving} style={iconButton}><X size={20} aria-hidden="true" /></button>
         </div>
+      </>}
+      footer={<>
+        <div className="zc-modal-footer" style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 12 }}>
+          {err && (
+            <div role="alert" style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', lineHeight: 1.6 }}>{err}</div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+            <button onClick={requestClose} disabled={saving} className="zc-btn">取消</button>
+            <button onClick={() => void save()} disabled={saving || creatingAssetCode !== null || completed.current} className="zc-btn zc-btn--primary" style={{ opacity: saving || creatingAssetCode !== null ? 0.6 : 1 }}>{saving || creatingAssetCode !== null ? '处理中…' : initial ? '预览影响' : compact ? '核对转换' : '保存转换'}</button>
+          </div>
+        </div>
+      </>}
+    >
+      <div ref={formRef} className="zc-conversion-form">
+
 
         <div className="zc-conversion-head-grid">
           <Field label="日期"><DateTimeInput aria-label="日期" className="zc-input" type="date" value={date} onChange={setDate} required /></Field>
@@ -968,21 +984,13 @@ export function AddConversionModal({
           setSteps([...drafts, next]);
         }} className="zc-btn zc-btn--sm" style={{ width: '100%', padding: 'var(--sp-2)', borderStyle: 'dashed', marginBottom: 'var(--sp-4)' }}>+ 添加转换步骤</button>
         {/*
-         * The refusal lives inside the sticky footer on purpose. This form is taller
+         * The refusal lives inside the fixed action area on purpose. This form is taller
          * than the panel on a phone, and the save button is pinned to the bottom, so
          * an error rendered at the end of the content sat ~750px below the fold: the
          * tap looked like it did nothing at all. Anchored to the footer it is visible
          * wherever the panel happens to be scrolled.
          */}
-        <div className="zc-modal-footer" style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 12 }}>
-          {err && (
-            <div role="alert" style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', lineHeight: 1.6 }}>{err}</div>
-          )}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-            <button onClick={requestClose} disabled={saving} className="zc-btn">取消</button>
-            <button onClick={() => void save()} disabled={saving || creatingAssetCode !== null || completed.current} className="zc-btn zc-btn--primary" style={{ opacity: saving || creatingAssetCode !== null ? 0.6 : 1 }}>{saving || creatingAssetCode !== null ? '处理中…' : initial ? '预览影响' : compact ? '核对转换' : '保存转换'}</button>
-          </div>
-        </div>
+
       {(draftState.error || draftState.status) && <div role={draftState.error ? 'alert' : 'status'}>{draftState.error || draftState.status}</div>}
       {draftState.pending && <ConfirmDialog title="发现未完成的转换草稿" confirmLabel="继续草稿" cancelLabel="新建" onConfirm={draftState.resume}
         onCancel={() => void draftState.discard().catch((cause: unknown) => setErr(String(cause)))}>

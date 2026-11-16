@@ -1,5 +1,5 @@
 import {
-  addDays, fixedLocationContains, isValidDay, newId, parseFixedWorkspace, withFixedLocationMove,
+  addDays, fixedLocationContains, isValidDay, newId, parseFixedWorkspace, todayIn, withFixedLocationMove,
   type FixedAsset, type FixedWorkspacePreferences,
 } from '@zichan/core';
 import type { SqlLedgerStore } from './repository.js';
@@ -37,6 +37,24 @@ export async function organizeFixedAssets(store: SqlLedgerStore, assets: { id: s
   });
 }
 
+export async function restoreFixedAssetArchive(store: SqlLedgerStore, id: string, expectedVersion: number, usageStatus?: 'active' | 'stored' | 'retired'): Promise<void> {
+  await store.runInAuditBatch('恢复物品档案', async (transaction) => {
+    const asset = await transaction.fixedAssets.get(id);
+    if (!asset || asset.isDeleted || asset.version !== expectedVersion) throw new Error('物品已变更，请刷新后重试');
+    if (!asset.archivedAt || asset.mergedIntoId) throw new Error('该物品未归档或已合并，不能直接恢复');
+    if (usageStatus && !['active', 'stored', 'retired'].includes(usageStatus)) throw new Error('恢复后的使用状态无效');
+    const events = await transaction.fixedAssetEvents.list({ where: { fixedAssetId: id } });
+    if (usageStatus && events.some((row) => ['sale', 'scrap', 'retire', 'gift'].includes(row.type))) throw new Error('已有真实处置事件，请先更正处置记录');
+    await transaction.fixedAssets.put({ ...asset, status: usageStatus ?? asset.status, archivedAt: undefined, archiveReason: undefined });
+    if (usageStatus === 'active' || usageStatus === 'stored') {
+      const today = todayIn((await transaction.settings.list())[0]?.timezone);
+      await transaction.fixedAssetEvents.put({ id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false,
+        fixedAssetId: id, type: usageStatus === 'stored' ? 'store' : 'activate', date: today < asset.purchaseDate ? asset.purchaseDate : today,
+        amountBase: '0', note: '恢复旧档案时确认使用状态' });
+    }
+  });
+}
+
 export async function archiveFixedLocation(store: SqlLedgerStore, id: string, targetId?: string): Promise<void> {
   await store.runInAuditBatch('归档物品位置并迁移物品', async (transaction) => {
     const setting = (await transaction.settings.list())[0];
@@ -63,7 +81,7 @@ export async function completeFixedMaintenance(store: SqlLedgerStore, assetId: s
     const nextDate = asset.maintenanceIntervalDays ? addDays(date, asset.maintenanceIntervalDays) : undefined;
     await transaction.fixedAssets.put({ ...asset, maintenanceDueDate: nextDate });
     await transaction.fixedAssetEvents.put({ id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false,
-      fixedAssetId: assetId, type: 'repair', date, amountBase: '0', cashflowMode: 'record_only',
+      fixedAssetId: assetId, type: 'maintenance', date, amountBase: '0', cashflowMode: 'record_only',
       note: `完成定期保养${nextDate ? `；下次 ${nextDate}` : ''}（本次未登记费用）` });
   });
 }

@@ -3,7 +3,7 @@ import { fixedEventForm, type FixedAssetEventFormValue } from './forms.js';
 import type { Snapshot } from './db/snapshot.js';
 import type { EntityFormSpec, FieldDef } from './ui/EntityFormModal.js';
 
-export interface FixedOperatingPreset { mode?: FixedOperatingMode; meterId?: string }
+export interface FixedOperatingPreset { mode?: FixedOperatingMode; meterId?: string; service?: boolean; name?: string }
 type Values = Record<string, string>;
 const optional = (value: string | undefined) => value?.trim() || undefined;
 
@@ -19,7 +19,7 @@ export function fixedOperatingCostForm(snap: Snapshot, assetId: string, preset: 
   const billing = (v: Values) => ['fee', 'quantity', 'estimate', 'reading', 'pause'].includes(v.mode ?? '');
   const actual = (v: Values) => billing(v) && v.mode !== 'estimate' && (!!optional(v.billedAmount) || (!!optional(v.unitPrice) && (v.mode !== 'pause' || !!optional(v.reading))));
   const taskFields = (fields: FieldDef[]): FieldDef[] => fields.map((field) => ({ ...field,
-    taskGroup: ['date', 'fromDate', 'toDate'].includes(field.key) ? '日期与期间'
+    taskGroup: ['date', 'fromDate', 'toDate', 'serviceFrom', 'serviceTo'].includes(field.key) ? '日期与期间'
       : ['unitPrice', 'serviceFee', 'billedAmount'].includes(field.key) || field.key.startsWith('cashflow') ? '费用与资金'
         : field.key === 'note' ? '备注' : '记录方式与用量',
   }));
@@ -34,6 +34,7 @@ export function fixedOperatingCostForm(snap: Snapshot, assetId: string, preset: 
       billedAmount: billing(v) ? optional(v.billedAmount) : undefined,
       serviceFee: billing(v) ? optional(v.serviceFee) : undefined,
       fromDate: v.mode === 'estimate' ? v.fromDate : undefined, toDate: v.mode === 'estimate' ? v.toDate : undefined,
+      service: v.mode === 'fee' && v.service === 'true' ? { provider: optional(v.provider), fromDate: optional(v.serviceFrom), toDate: optional(v.serviceTo) } : undefined,
     };
     return prepareFixedOperatingEvent({ ...event, type: 'operating_cost', operatingCostJson: JSON.stringify(data),
       cashflowMode: actual(v) ? event.cashflowMode : 'record_only' }, events, currency?.decimals ?? 2);
@@ -47,7 +48,8 @@ export function fixedOperatingCostForm(snap: Snapshot, assetId: string, preset: 
           : v.mode === 'resume' ? '用当前读数重新设起点，暂停期间不跨段计费。空档可另记实际账单或估算。'
             : v.mode === 'reset' ? '新读数作为起点。请先抄旧表结清，未结清部分保留为未计量。'
               : v.mode === 'estimate' ? '只作参考，不计入净投入、不生成资金流水。填此期间合计的估算用量。'
-                : '用量、单价及服务费计算本次费用；实际总费用填写后以该金额为准。单记度数可留空费用，稍后补价。';
+                : v.mode === 'fee' && v.service === 'true' ? '记录本次已支付的软件、云服务、保险或延保费用，可填写服务期间。全部金额计入付款日的净投入；续费时再登记或关联对应账单。'
+                  : '用量、单价及服务费计算本次费用；实际总费用填写后以该金额为准。单记度数可留空费用，稍后补价。';
       try {
         const event = makeEvent(v);
         const data = parseFixedOperatingCost(event.operatingCostJson)!;
@@ -57,7 +59,8 @@ export function fixedOperatingCostForm(snap: Snapshot, assetId: string, preset: 
     onFieldChange: (v, key) => {
       const meter = meters.find((row) => row.id === v.meterId);
       if (key === 'meterId' && meter) return { ...v, name: meter.name, unit: meter.unit, reading: '', unitPrice: '', billedAmount: '', serviceFee: '' };
-      if (key === 'mode') return { ...v, cashflowMode: 'record_only', reading: '', quantity: '', billedAmount: '', serviceFee: '', unitPrice: '' };
+      if (key === 'mode') return { ...v, service: v.mode === 'fee' ? v.service ?? 'false' : 'false', cashflowMode: 'record_only', reading: '', quantity: '', billedAmount: '', serviceFee: '', unitPrice: '' };
+      if (key === 'service' && v.service === 'true') return { ...v, unit: '期', source: 'receipt', name: v.name === '电费' ? '云服务订阅' : v.name ?? '云服务订阅' };
       return v;
     },
     fields: taskFields([
@@ -65,11 +68,15 @@ export function fixedOperatingCostForm(snap: Snapshot, assetId: string, preset: 
         .filter(([mode]) => !old || mode === old.mode).map(([value, label]) => ({ value, label })) },
       { key: 'meterId', label: '计量项目', type: 'select', required: true, defaultValue: preset.meterId, allowEmpty: true,
         options: meters.filter((row) => !old || row.id === old.meterId).map((row) => ({ value: row.id, label: `${row.name} · ${row.active ? '计量中' : '已暂停'} · ${row.reading} ${row.unit}` })), visibleWhen: (v) => meterMode(v) && v.mode !== 'start' },
-      { key: 'name', label: '费用项目', type: 'text', defaultValue: selected?.name ?? '电费', required: true, half: true, placeholder: '电费 / 家充 / 公共充电' },
-      { key: 'unit', label: '用量单位', type: 'text', defaultValue: selected?.unit ?? 'kWh', required: true, half: true, hint: '电量填 kWh（度），也可记录升、立方米等。' },
+      { key: 'service', label: '费用内容', type: 'select', defaultValue: preset.service ? 'true' : 'false', visibleWhen: (v) => v.mode === 'fee', options: [{ value: 'false', label: '一般费用' }, { value: 'true', label: '订阅与服务（软件／云服务／保险延保）' }] },
+      { key: 'name', label: '费用项目', type: 'text', defaultValue: preset.name ?? (preset.service ? '云服务订阅' : selected?.name ?? '电费'), required: true, half: true, placeholder: '电费 / 公共充电 / 监控云存储 / 软件订阅' },
+      { key: 'unit', label: '用量单位', type: 'text', defaultValue: preset.service ? '期' : selected?.unit ?? 'kWh', required: true, half: true, visibleWhen: (v) => v.mode !== 'fee', hint: '电量填 kWh（度），也可记录升、立方米等。' },
+      { key: 'provider', label: '服务商', type: 'text', half: true, visibleWhen: (v) => v.mode === 'fee' && v.service === 'true' },
+      { key: 'serviceFrom', label: '服务开始日期', type: 'date', half: true, visibleWhen: (v) => v.mode === 'fee' && v.service === 'true', hint: '服务期间可不填；填写时请同时填写起止日期。' },
+      { key: 'serviceTo', label: '服务截止日期', type: 'date', half: true, visibleWhen: (v) => v.mode === 'fee' && v.service === 'true' },
       { key: 'date', label: '记录日期', type: 'date', defaultValue: todayIn(snap.setting?.timezone), required: true, half: true },
       { key: 'source', label: '数据来源', type: 'select', defaultValue: 'manual', half: true, options: [
-        { value: 'manual', label: '手动记录' }, { value: 'device', label: '设备自带统计' }, { value: 'meter', label: '外接电能表' }, { value: 'receipt', label: '账单／充电订单' },
+        { value: 'manual', label: '手动记录' }, { value: 'device', label: '设备自带统计' }, { value: 'meter', label: '外接电能表' }, { value: 'receipt', label: '账单／订单' },
       ] },
       { key: 'reading', label: '当前累计读数', type: 'number', half: true, required: false, visibleWhen: meterMode,
         hint: '填写电能表的累计电量（kWh），不是瞬时功率（W）；暂停时可留空。' },
@@ -88,6 +95,7 @@ export function fixedOperatingCostForm(snap: Snapshot, assetId: string, preset: 
     toValues: (event) => {
       const data = parseFixedOperatingCost(event.operatingCostJson)!;
       return { ...legacy.toValues(event), mode: data.mode, name: data.name, unit: data.unit, source: data.source,
+        service: data.service ? 'true' : 'false', provider: data.service?.provider ?? '', serviceFrom: data.service?.fromDate ?? '', serviceTo: data.service?.toDate ?? '',
         meterId: data.meterId ?? '', reading: data.reading ?? '', quantity: data.quantity ?? '', unitPrice: data.unitPrice ?? '',
         serviceFee: data.serviceFee ?? '', billedAmount: data.billedAmount ?? '', fromDate: data.fromDate ?? '', toDate: data.toDate ?? '' };
     },

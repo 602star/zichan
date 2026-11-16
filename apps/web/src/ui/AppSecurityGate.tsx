@@ -116,7 +116,7 @@ export function AppSecurityGate() {
   return (
     <div role="dialog" aria-modal="true" aria-label="应用已锁定" style={{
       position: 'fixed', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center',
-      background: 'var(--bg)', color: 'var(--fg)', padding: 24,
+      background: 'var(--bg)', color: 'var(--fg)', padding: 24, overflowY: 'auto', overflowWrap: 'anywhere',
     }}>
       <div style={{ width: 'min(380px, 100%)', textAlign: 'center' }}>
         <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>资产生命周期</div>

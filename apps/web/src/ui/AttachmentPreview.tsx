@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ensureAttachmentBlobAvailable } from '../attachment-sync.js';
 import { attachmentPreviewUrl, type AttachmentDraftData } from '../db/attachment-storage.js';
 import { useStore } from '../db/store.js';
@@ -9,25 +9,35 @@ export function AttachmentPreview({ attachment, alt, className, style }: {
   className?: string;
   style?: React.CSSProperties;
 }) {
-  const { store } = useStore();
+  const { store, rev } = useStore();
   const [src, setSrc] = useState('');
   const [error, setError] = useState('');
+  const resolved = useRef<{ key: string; local?: Blob; store: typeof store }>();
   const isImage = attachment.mimeType?.startsWith('image/') || !!attachment.thumbnailBlob || !!attachment.thumbnailSha256;
 
   useEffect(() => {
     let active = true;
-    let objectUrl = '';
+    const key = JSON.stringify([attachment.sha256, attachment.thumbnailSha256, attachment.mimeType, attachment.thumbnailMimeType]);
+    const local = attachment.thumbnailBlob ?? attachment.contentBlob;
+    // Metadata can reach the UI before the local file promotion completes.
+    // Retry unresolved previews after writes; keep successful object URLs cached.
+    if (resolved.current?.key === key && resolved.current.local === local && resolved.current.store === store) return;
+    resolved.current = undefined;
+    setSrc('');
+    const publish = (url: string) => {
+      if (!active) { URL.revokeObjectURL(url); return; }
+      resolved.current = { key, local, store };
+      setSrc(url);
+    };
     const previewReference = {
       sha256: attachment.sha256,
       thumbnailSha256: attachment.thumbnailSha256,
       mimeType: attachment.mimeType,
       thumbnailMimeType: attachment.thumbnailMimeType,
     };
-    const local = attachment.thumbnailBlob ?? attachment.contentBlob;
     setError('');
     if (local) {
-      objectUrl = URL.createObjectURL(local);
-      setSrc(objectUrl);
+      publish(URL.createObjectURL(local));
     } else if (isImage && (attachment.thumbnailSha256 || attachment.sha256)) {
       const sha256 = attachment.thumbnailSha256 || attachment.sha256!;
       const sizeBytes = attachment.thumbnailSha256 ? attachment.thumbnailSizeBytes : attachment.sizeBytes;
@@ -42,14 +52,7 @@ export function AttachmentPreview({ attachment, alt, className, style }: {
           await ensureAttachmentBlobAvailable(store, { sha256, sizeBytes, mimeType });
           return attachmentPreviewUrl(previewReference);
         }
-      })().then((value) => {
-        if (!active) {
-          URL.revokeObjectURL(value);
-          return;
-        }
-        objectUrl = value;
-        setSrc(value);
-      }).catch((reason) => {
+      })().then(publish).catch((reason) => {
         if (active) {
           setSrc('');
           setError(reason instanceof Error ? reason.message : String(reason));
@@ -60,9 +63,10 @@ export function AttachmentPreview({ attachment, alt, className, style }: {
     }
     return () => {
       active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [attachment.contentBlob, attachment.mimeType, attachment.sha256, attachment.sizeBytes, attachment.thumbnailBlob, attachment.thumbnailMimeType, attachment.thumbnailSha256, attachment.thumbnailSizeBytes, isImage, store]);
+  }, [attachment.contentBlob, attachment.mimeType, attachment.sha256, attachment.sizeBytes, attachment.thumbnailBlob, attachment.thumbnailMimeType, attachment.thumbnailSha256, attachment.thumbnailSizeBytes, isImage, store, rev]);
+
+  useEffect(() => () => { if (src) URL.revokeObjectURL(src); }, [src]);
 
   if (!src || !isImage) {
     return <div className={className} title={error || undefined} style={{ ...style, display: 'grid', placeItems: 'center', background: 'var(--surface-2)', color: error ? 'var(--negative)' : 'var(--fg-subtle)', fontSize: 'var(--fs-meta)' }}>{error ? '不可用' : '文件'}</div>;

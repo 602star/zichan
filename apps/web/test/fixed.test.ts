@@ -18,7 +18,7 @@ describe('buildFixed', () => {
 
   it('rows and timeline expose the normalized lifecycle', () => {
     const f = vms[0]!;
-    expect(f.rows.map((r) => r.l)).toEqual(['累计支出', '累计回款', '维修／升级支出', '耗材支出', '已登记使用费用', '估算参考费用（未计入）']);
+    expect(f.rows.map((r) => r.l)).toEqual(['累计支出', '累计回款', '保养／维修／升级支出', '耗材支出', '已登记使用费用', '估算参考费用（未计入）']);
     expect(f.rows[0]!.v).toBe('£500.00');
     expect(f.rows[1]!.v).toBe('£0.00');
     expect(f.timeline.map((e) => e.label)).toEqual(['更新参考现值', '购入物品']);
@@ -44,6 +44,19 @@ describe('buildFixed', () => {
     expect(timeline.find((event) => event.label === '安装耗材')?.amount).toBeUndefined();
   });
 
+  it('shows component acquisition and disposal in the host history with the original source and date precision', () => {
+    const snap = makeSnapshot(); const host = snap.fixedAssets[0]!;
+    const part = { ...host, id: newId(), name: '无人机电池', role: 'component' as const, purchaseDatePrecision: 'year' as const, purchaseDate: '2025-01-01' };
+    snap.fixedAssets.push(part);
+    const original = snap.fixedEvents[0]!;
+    snap.fixedEvents.push({ ...original, id: newId(), fixedAssetId: part.id, type: 'purchase', amountBase: '399', date: '2025-01-01' },
+      { ...original, id: newId(), fixedAssetId: part.id, type: 'install', hostAssetId: host.id, amountBase: '0', date: '2025-02-01' },
+      { ...original, id: newId(), fixedAssetId: part.id, type: 'scrap', amountBase: '0', date: '2026-01-01' });
+    const vm = buildFixed(snap, '2026-08-01').find((row) => row.id === host.id)!;
+    expect(vm.timeline.find((row) => row.label === '购入配件 · 无人机电池')).toMatchObject({ related: true, datePrecision: 'year', raw: { fixedAssetId: part.id } });
+    expect(vm.timeline.find((row) => row.label === '报废配件 · 无人机电池')).toMatchObject({ related: true, date: '2026-01-01' });
+    expect(vm.net).toBe('899');
+  });
   it('marks spending, recovery, and reference amounts separately in the timeline', () => {
     const snap = makeSnapshot();
     const original = snap.fixedEvents[0]!;
@@ -54,9 +67,9 @@ describe('buildFixed', () => {
     );
     const timeline = buildFixed(snap, '2026-04-04')[0]!.timeline;
     expect(timeline.find((event) => event.label === '购入物品')).toMatchObject({ moneyKind: 'spend', amount: '£500.00' });
-    expect(timeline.find((event) => event.label === '升级／改造支出')).toMatchObject({ moneyKind: 'spend', amount: '£200.00' });
-    expect(timeline.find((event) => event.label === '卖出配件')).toMatchObject({ moneyKind: 'recover', amount: '£40.00' });
-    expect(timeline.find((event) => event.label === '卖出整件物品')).toMatchObject({ moneyKind: 'recover', amount: '£300.00' });
+    expect(timeline.find((event) => event.label === '升级改造')).toMatchObject({ moneyKind: 'spend', amount: '£200.00' });
+    expect(timeline.find((event) => event.label === '售出未建档配件')).toMatchObject({ moneyKind: 'recover', amount: '£40.00' });
+    expect(timeline.find((event) => event.label === '售出物品')).toMatchObject({ moneyKind: 'recover', amount: '£300.00' });
     expect(timeline.find((event) => event.label === '更新参考现值')).toMatchObject({ moneyKind: 'reference', amount: '£300.00' });
   });
 

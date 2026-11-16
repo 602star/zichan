@@ -1,5 +1,12 @@
 import { test, expect } from './fixtures.mjs';
 
+test.beforeEach(async ({ page }) => page.setDefaultTimeout(15_000));
+async function editRecord(page, title) {
+  const edit = page.locator('.zc-record-expansion').getByRole('button', { name: '编辑流水', exact: true });
+  if (!(await edit.isVisible())) await page.locator('.zc-transaction-summary-title').getByText(title, { exact: true }).click();
+  await edit.click();
+}
+
 async function register(page) {
   await page.goto('/');
   await page.getByRole('button', { name: '注册新账号', exact: true }).click();
@@ -107,7 +114,7 @@ test('field preferences only control defaults; editing reveals existing notes an
   await entry.locator('input[type="file"]').first().setInputFiles({ name: 'receipt.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64') });
   await entry.getByRole('button', { name: '保存', exact: true }).last().click();
   await expect(entry).toBeHidden();
-  await page.getByText('字段展开检查', { exact: true }).first().click();
+  await editRecord(page, '字段展开检查');
   entry = page.getByRole('dialog');
   await expect(entry.getByRole('textbox', { name: '备注', exact: true })).toBeVisible();
   await expect(entry.getByRole('textbox', { name: '备注', exact: true })).toHaveValue('旧内容必须直接可见');
@@ -137,7 +144,7 @@ test('tags can be created, searched and removed; review flags survive editing', 
   await expect(entry.getByText('标记后仍计入收支和账户余额。核实完成后可取消勾选。')).toBeVisible();
   await entry.getByRole('button', { name: '保存', exact: true }).last().click();
   await expect(entry).toBeHidden();
-  await page.getByText('标签与核实检查', { exact: true }).first().click();
+  await editRecord(page, '标签与核实检查');
   entry = page.getByRole('dialog');
   await expect(entry.getByRole('checkbox', { name: '待核实', exact: true })).toBeChecked();
   await entry.getByRole('button', { name: '移除标签 朋友,聚餐' }).click();
@@ -147,7 +154,7 @@ test('tags can be created, searched and removed; review flags survive editing', 
   await page.screenshot({ path: 'test-results/transaction-tags-review.png' });
   await entry.getByRole('button', { name: '保存', exact: true }).last().click();
   await expect(entry).toBeHidden();
-  await page.getByText('标签与核实检查', { exact: true }).first().click();
+  await editRecord(page, '标签与核实检查');
   await expect(page.getByRole('dialog').getByRole('button', { name: '移除标签 朋友,聚餐' })).toBeVisible();
 });
 

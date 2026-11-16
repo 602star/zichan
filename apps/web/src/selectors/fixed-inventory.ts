@@ -3,11 +3,12 @@ import type { FixedCardVM } from './fixed.js';
 import type { Table } from './reports.js';
 import { money } from '../format.js';
 
-export function filterFixedInventory(items: FixedCardVM[], filters: FixedInventoryFilters, preferences: FixedWorkspacePreferences): FixedCardVM[] {
+export function filterFixedInventory(items: FixedCardVM[], filters: FixedInventoryFilters, preferences: FixedWorkspacePreferences, archivedOnly = false): FixedCardVM[] {
   const query = filters.query.trim().toLocaleLowerCase();
   return items.filter((item) => {
-    if (item.isComponent && item.costOwnerId && items.some((owner) => owner.id === item.costOwnerId)) return false;
-    if (filters.status === 'terminal' && !item.sold || filters.status === 'active' && item.raw.status !== 'active'
+    if (Boolean(item.raw.archivedAt) !== archivedOnly) return false;
+    if (!archivedOnly && item.isComponent && item.costOwnerId && items.some((owner) => owner.id === item.costOwnerId)) return false;
+    if (filters.status === 'terminal' && !['sold', 'scrapped', 'retired', 'gifted'].includes(item.raw.status) || filters.status === 'active' && item.raw.status !== 'active'
       || filters.status === 'stored' && item.raw.status !== 'stored') return false;
     if (filters.categoryId !== 'all' && item.raw.categoryId !== filters.categoryId) return false;
     if (filters.year !== 'all' && item.raw.purchaseDate.slice(0, 4) !== filters.year) return false;

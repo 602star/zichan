@@ -20,6 +20,21 @@ describe('物品清单筛选与导出', () => {
     const orphan = { ...rows[0]!, id: 'part-with-archived-host', isComponent: true, costOwnerId: 'archived-host' };
     expect(filterFixedInventory([orphan], defaultFixedFilters(), preferences)).toHaveLength(1);
   });
+  it('uses the same disposed statuses for filtering and labels even for legacy records without a terminal event', () => {
+    const snap = makeSnapshot(); const item = snap.fixedAssets[0]!; item.status = 'scrapped';
+    const rows = buildFixed(snap, '2026-11-16');
+    const filtered = filterFixedInventory(rows, { ...defaultFixedFilters(), status: 'terminal' }, emptyFixedWorkspace());
+    expect(filtered.find((row) => row.id === item.id)?.status).toBe('已报废');
+  });
+  it('hides archived records without changing their costs and exposes them in the archive view', () => {
+    const snap = makeSnapshot(); const item = snap.fixedAssets[0]!;
+    const before = buildFixed(snap, '2026-11-16').find((row) => row.id === item.id)!;
+    item.archivedAt = '2026-11-16T00:00:00Z';
+    const rows = buildFixed(snap, '2026-11-16');
+    expect(rows.find((row) => row.id === item.id)?.net).toBe(before.net);
+    expect(filterFixedInventory(rows, defaultFixedFilters(), emptyFixedWorkspace()).map((row) => row.id)).not.toContain(item.id);
+    expect(filterFixedInventory(rows, defaultFixedFilters(), emptyFixedWorkspace(), true).map((row) => row.id)).toContain(item.id);
+  });
   it('marks incomplete dates and protects spreadsheet cells from formulas', () => {
     const snap = makeSnapshot(); const item = snap.fixedAssets[0]!;
     item.name = '=HYPERLINK("evil")'; item.purchaseDatePrecision = 'year'; item.purchaseDate = '2024-01-01';

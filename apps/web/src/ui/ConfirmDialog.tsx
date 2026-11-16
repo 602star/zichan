@@ -81,9 +81,11 @@ export function ConfirmDialog(props: {
       dismissDisabled={busy}
       panelClassName="zc-confirm-panel"
       panelStyle={panel}
-    >
+
+      header={<>
         <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)', marginBottom: 10 }}>{props.title}</div>
-        <div id={descriptionId} style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', lineHeight: 1.65 }}>{props.children}</div>
+      </>}
+      footer={<>
         {actionError && (
           <div role="alert" style={{ marginTop: 'var(--sp-3)', color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', lineHeight: 1.55, overflowWrap: 'anywhere' }}>
             操作失败：{actionError}
@@ -97,6 +99,11 @@ export function ConfirmDialog(props: {
             {busy ? '处理中…' : props.confirmLabel ?? '确定'}
           </button>
         </div>
+      </>}
+    >
+
+        <div id={descriptionId} style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', lineHeight: 1.65 }}>{props.children}</div>
+
     </DialogShell>
   );
 }

@@ -1,3 +1,4 @@
+import { X } from 'lucide-react';
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { D, localToday, type Asset, type Transaction, type TransactionTemplate } from '@zichan/core';
 import {
@@ -449,15 +450,27 @@ export function QuickExpenseModal({
       initialFocusRef={amountRef}
       panelClassName="zc-quick-expense-dialog"
       panelStyle={{ width: 'min(560px, calc(100vw - 24px))', maxHeight: 'calc(100vh - 24px)', overflow: 'auto' }}
-    >
-      <div style={{ padding: 22 }}>
+
+      header={<>
         <div style={{ display: 'flex', alignItems: 'start', justifyContent: 'space-between', gap: 16 }}>
           <div>
             <h2 id={titleId} style={{ margin: 0, fontSize: 'var(--fs-heading)' }}>记一笔支出</h2>
             <div style={{ marginTop: 5, color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>只填金额即可保存，其他内容均有默认值。</div>
           </div>
-          <button type="button" aria-label="关闭快速记账" onClick={requestClose} disabled={busy} style={{ border: 0, background: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--fs-heading)', cursor: 'pointer' }}>×</button>
+          <button type="button" aria-label="关闭快速记账" onClick={requestClose} disabled={busy} style={{ border: 0, background: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--fs-heading)', cursor: 'pointer' }}><X size={20} aria-hidden="true" /></button>
         </div>
+      </>}
+      footer={<>
+        {error && <div role="alert" style={{ marginTop: 14, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{error}</div>}
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
+          <button type="button" onClick={requestClose} disabled={busy} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', color: 'var(--text-secondary)', padding: '10px 16px', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>取消</button>
+          <button type="button" onClick={() => void submit()} disabled={busy || assetPresetBusy} style={{ border: '1px solid var(--accent)', borderRadius: 'var(--r-sm)', background: 'var(--accent)', color: 'var(--on-accent)', padding: '10px 20px', fontWeight: 'var(--fw-bold)', cursor: busy || assetPresetBusy ? 'wait' : 'pointer' }}>{busy ? '保存中…' : '保存支出'}</button>
+        </div>
+      </>}
+    >
+      <div className="zc-quick-expense-body">
+
 
         {!initialTemplate && recommendation.category && (
           <div data-testid="quick-expense-recommendation" aria-live="polite" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 14, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--accent-soft)', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>
@@ -561,12 +574,7 @@ export function QuickExpenseModal({
           </div>
         </details>
 
-        {error && <div role="alert" style={{ marginTop: 14, color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>{error}</div>}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 22 }}>
-          <button type="button" onClick={requestClose} disabled={busy} style={{ border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface)', color: 'var(--text-secondary)', padding: '10px 16px', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>取消</button>
-          <button type="button" onClick={() => void submit()} disabled={busy || assetPresetBusy} style={{ border: '1px solid var(--accent)', borderRadius: 'var(--r-sm)', background: 'var(--accent)', color: 'var(--on-accent)', padding: '10px 20px', fontWeight: 'var(--fw-bold)', cursor: busy || assetPresetBusy ? 'wait' : 'pointer' }}>{busy ? '保存中…' : '保存支出'}</button>
-        </div>
         {closeOpen && (
           <ConfirmDialog
             title="关闭未保存支出"

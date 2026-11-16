@@ -10,7 +10,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { useScreenTarget } from '../screen-target.js';
 import {
   isDateInRange,
-  D, parseFixedWorkspace,
+  D, parseFixedWorkspace, FIXED_STATUS_LABELS,
   componentHostAt,
   localToday,
   newId,
@@ -83,7 +83,7 @@ import {
 
 type ViewMode = 'overview' | TimelineViewMode;
 type AssetModal = FixedAsset | 'new' | { kind: 'preset'; categoryId: string } | { kind: 'component'; hostId: string; bundled: boolean } | { kind: 'transaction'; transactionId: string } | null;
-type EventModal = { assetId: string; event?: FixedAssetEvent; placement?: boolean } | null;
+type EventModal = { assetId: string; event?: FixedAssetEvent; placement?: boolean; type?: FixedAssetEvent['type'] } | null;
 type MetricModal = { assetId: string; metric?: FixedAssetUsageMetric } | null;
 type UsageModal = { metric: FixedAssetUsageMetric; log?: FixedAssetUsageLog } | null;
 type ConsumableModal = { assetId: string; item?: FixedAssetConsumable } | null;
@@ -155,7 +155,7 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
     .filter((link) => !link.isDeleted && link.transactionId === transaction.id).reduce((total, link) => total.plus(link.sourceAmount), D(0)));
   const allTimeline = vm
     .flatMap((item) => item.timeline.map((entry) => ({ item, entry })))
-    .filter(({ item, entry }) => !(item.raw.purchaseDatePrecision === 'year' && entry.kind === 'event' && (entry.raw as FixedAssetEvent).type === 'purchase'))
+    .filter(({ entry }) => !entry.related && entry.datePrecision !== 'year')
     .filter((row) => isDateInRange(row.entry.date, dateRange))
     .sort((a, b) => b.entry.date.localeCompare(a.entry.date));
 
@@ -246,8 +246,8 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
   function openTimeline(item: FixedCardVM, entry: FixedTimelineVM) {
     if (entry.kind === 'event') {
       const event = entry.raw as FixedAssetEvent;
-      if (event.type === 'purchase') setAssetModal(item.raw);
-      else if (event.type === 'operating_cost') setOperatingModal({ assetId: item.id, event });
+      if (event.type === 'purchase') { const source = readySnap.fixedAssets.find((row) => row.id === event.fixedAssetId); if (source) setAssetModal(source); }
+      else if (event.type === 'operating_cost') setOperatingModal({ assetId: event.fixedAssetId, event });
       else setEventModal({ assetId: event.fixedAssetId, event, placement: event.type === 'install' || event.type === 'detach' });
     }
     else if (entry.kind === 'usage') {
@@ -301,7 +301,7 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
   const mobileItem = mobileView.startsWith('item:') ? vm.find((item) => item.id === mobileView.slice(5)) : undefined;
   const itemActions: FixedItemActions = {
     onEdit: setAssetModal,
-    onEvent: (assetId) => setEventModal({ assetId }),
+    onEvent: (assetId, type) => setEventModal({ assetId, type }),
     onAddComponent: (hostId, bundled) => setAssetModal({ kind: 'component', hostId, bundled }),
     onPlacement: (assetId) => setEventModal({ assetId, placement: true }),
     onConvertUpgrade: (host, event) => setUpgradeConversion({ host, event }),
@@ -377,7 +377,7 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
         onClose={() => setFromExpense(false)} onSave={async (value) => { setFromExpense(false); setAssetModal({ kind: 'transaction', transactionId: value.transactionId }); }} />}
       {maintenance && <ConfirmDialog title="完成物品保养" confirmLabel="完成保养" onCancel={() => setMaintenance(null)} onConfirm={async () => {
         await completeFixedMaintenance(store, maintenance.id, maintenance.raw.version, todayDate()); setMaintenance(null); bump();
-      }}><p>确认 {maintenance.name} 已在今天完成保养。{maintenance.raw.maintenanceIntervalDays ? `下次按 ${maintenance.raw.maintenanceIntervalDays} 天间隔生成。` : '本次完成后清除待办。'}有实际费用时，请另记维修支出。</p></ConfirmDialog>}
+      }}><p>确认 {maintenance.name} 已在今天完成保养。{maintenance.raw.maintenanceIntervalDays ? `下次按 ${maintenance.raw.maintenanceIntervalDays} 天间隔生成。` : '本次完成后清除待办。'}有实际费用时，请在事件入口另记保养费用。</p></ConfirmDialog>}
       {assetModal !== null && (() => {
         const isChoice = typeof assetModal === 'object' && 'kind' in assetModal;
         const isPreset = isChoice && assetModal.kind === 'preset';
@@ -423,10 +423,10 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
           baseCurrencyAssetId: sourceExpense.assetId, cashflowMode: 'linked_transaction', cashflowTransactionId: sourceExpense.id,
           cashflowSourceAmount: availableSource(sourceExpense).toString(), purchaseMerchant: sourceExpense.merchant || '',
         } : {};
-        const spec = { ...preparedSpec, fields: preparedSpec.fields.map((field) => sourceExpense && field.key in sourceDefaults
+        const spec = { ...preparedSpec, summary: existing ? () => `当前状态：${FIXED_STATUS_LABELS[existing.status]}。状态变更请使用“记录生命周期事件”；归档只隐藏档案。` : preparedSpec.summary, fields: preparedSpec.fields.map((field) => field.key === 'status' ? existing ? { ...field, hidden: true } : { ...field, options: [{ value: 'active', label: FIXED_STATUS_LABELS.active }, { value: 'stored', label: FIXED_STATUS_LABELS.stored }] } : sourceExpense && field.key in sourceDefaults
           ? { ...field, defaultValue: sourceDefaults[field.key] }
           : isComponent && field.key === 'storageLocationId' ? { ...field, defaultValue: snap.fixedAssets.find((row) => row.id === assetModal.hostId)?.storageLocationId } : field) };
-        return <EntityFormModal spec={spec} initial={existing} onSave={saveAsset} onDelete={existing ? async () => deleteAsset(existing) : undefined} deleteLabel="归档" onClose={() => setAssetModal(null)} />;
+        return <EntityFormModal spec={spec} initial={existing} onSave={saveAsset} onDelete={existing ? async () => deleteAsset(existing) : undefined} deleteLabel="归档档案" onClose={() => setAssetModal(null)} />;
       })()}
       {operatingModal && <EntityFormModal spec={fixedOperatingCostForm(snap, operatingModal.assetId, operatingModal, operatingModal.event)} initial={operatingModal.event} onSave={saveEventValue} onDelete={operatingModal.event ? async () => {
         const compensation = await deleteFixedAssetEvent(store, operatingModal.event!);
@@ -435,7 +435,7 @@ export function Fixed({ navigationKey = 'fixed' }: { navigationKey?: string } = 
       {eventModal && <EntityFormModal spec={eventModal.placement
         ? fixedComponentPlacementForm(snap, eventModal.assetId, componentHostAt(eventModal.assetId,
           snap.fixedEvents.filter((row) => row.id !== eventModal.event?.id), eventModal.event?.date ?? ledgerAsOfDate(snap)))
-        : fixedEventForm(snap, eventModal.assetId, todayDate(), vm.find((item) => item.id === eventModal.assetId)?.invested ?? '0')} initial={eventModal.event} onSave={saveEventValue} onDelete={eventModal.event ? async () => {
+        : (() => { const spec = fixedEventForm(snap, eventModal.assetId, todayDate(), vm.find((item) => item.id === eventModal.assetId)?.invested ?? '0'); return { ...spec, draftKey: `fixed-event:${eventModal.assetId}:${eventModal.type ?? 'new'}`, fields: spec.fields.map((field) => field.key === 'type' && eventModal.type ? { ...field, defaultValue: eventModal.type } : field) }; })()} initial={eventModal.event} onSave={saveEventValue} onDelete={eventModal.event ? async () => {
         const compensation = await deleteFixedAssetEvent(store, eventModal.event!);
         bump();
         undo.offer('物品事件已删除，关联资金流水已补偿', async () => {

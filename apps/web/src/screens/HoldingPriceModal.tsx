@@ -55,11 +55,15 @@ export function HoldingPriceModal({ asset, quoteAsset, holdings, onSave, onClose
   }
 
   return <DialogShell labelledBy={titleId} onDismiss={onClose} dismissDisabled={busy}
-    backdropClassName="zc-backdrop zc-conversion-backdrop" panelClassName="zc-conversion-detail">
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+    backdropClassName="zc-backdrop zc-conversion-backdrop" panelClassName="zc-conversion-detail"
+    header={<> <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
       <h2 id={titleId} style={{ flex: 1 }}>补充 {asset.code} 现值 / 价格</h2>
       <button className="zc-btn" disabled={busy} onClick={onClose}>关闭</button>
-    </div>
+    </div> </>}
+    footer={<> {error && <p role="alert" style={{ color: 'var(--negative)' }}>{error}</p>}
+    <button className="zc-btn zc-btn--primary" disabled={busy} onClick={() => void save()}>{busy ? '保存中…' : '保存价格'}</button> </>}
+  >
+
     <p>当前余额 {amount(holdings, asset.decimals)} {asset.code}。价格按 {quoteAsset.code} 计价；这条行情用于现值和报表折算，不会改变历史取得成本。</p>
     {canEnterTotal && <label style={{ display: 'block', marginBottom: 12 }}>填写方式
       <select className="zc-select" aria-label="填写方式" value={mode} onChange={(event) => { setMode(event.target.value as 'total' | 'unit'); setEntered(''); }}>
@@ -74,7 +78,6 @@ export function HoldingPriceModal({ asset, quoteAsset, holdings, onSave, onClose
       <input className="zc-input" aria-label="价格日期" type="date" max={localToday()} value={date} onChange={(event) => setDate(event.target.value)} />
     </label>
     {unitPrice && <p role="status">将保存：1 {asset.code} = {symbol}{significant(unitPrice)}{mode === 'unit' && canEnterTotal ? ` · 当前持仓现值 ${symbol}${significant(D(holdings).times(unitPrice))}` : ''}</p>}
-    {error && <p role="alert" style={{ color: 'var(--negative)' }}>{error}</p>}
-    <button className="zc-btn zc-btn--primary" disabled={busy} onClick={() => void save()}>{busy ? '保存中…' : '保存价格'}</button>
+
   </DialogShell>;
 }

@@ -55,7 +55,7 @@ const GAME_RECORD_TYPES = new Set([
 ]);
 const FIXED_ASSET_STATUSES = new Set(['active', 'stored', 'sold', 'scrapped', 'retired', 'gifted']);
 const FIXED_EVENT_TYPES = new Set([
-  'purchase', 'activate', 'repair', 'upgrade', 'part_sale', 'install', 'detach', 'residual_update',
+  'purchase', 'activate', 'store', 'repair', 'maintenance', 'upgrade', 'part_sale', 'install', 'detach', 'residual_update',
   'warranty_expire', 'sale', 'scrap', 'retire', 'gift', 'operating_cost',
 ]);
 

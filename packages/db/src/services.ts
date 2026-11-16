@@ -1460,7 +1460,7 @@ export async function archiveMasterData(
     } else {
       const source = await store.fixedAssets.get(sourceId);
       if (!source) validation('物品资产不存在');
-      const archived = await store.fixedAssets.put({ ...source, version: expectedVersion, status: 'retired', archivedAt, archiveReason: reason });
+      const archived = await store.fixedAssets.put({ ...source, version: expectedVersion, archivedAt, archiveReason: reason });
       return { source, archived };
     }
   });
@@ -4260,6 +4260,7 @@ async function requireFixedAssetLeafCategory(store: SqlLedgerStore, id: string):
 const FIXED_EVENT_CASHFLOW_DIRECTION: Partial<Record<FixedEventType, FixedAssetCashflowDirection>> = {
   purchase: 'outflow',
   repair: 'outflow',
+  maintenance: 'outflow',
   upgrade: 'outflow',
   operating_cost: 'outflow',
   part_sale: 'inflow',
@@ -4528,15 +4529,17 @@ export async function convertFixedUpgradeToComponent(
 export async function reconcileFixedAssetStatus(store: SqlLedgerStore, assetId: string, resetIfNoTerminal = false): Promise<void> {
   const asset = await store.fixedAssets.get(assetId);
   if (!asset) throw new Error(`fixed asset not found: ${assetId}`);
-  const terminal = (await store.fixedAssetEvents.list({ where: { fixedAssetId: assetId } }))
-    .filter((event) => ['sale', 'scrap', 'retire', 'gift'].includes(event.type))
-    .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt))
-    .at(-1);
+  const events = (await store.fixedAssetEvents.list({ where: { fixedAssetId: assetId } }))
+    .filter((event) => !event.isDeleted)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  const terminal = events.filter((event) => ['sale', 'scrap', 'retire', 'gift'].includes(event.type)).at(-1);
+  const usage = events.filter((event) => ['activate', 'store'].includes(event.type)).at(-1);
   const status = terminal?.type === 'sale' ? 'sold'
     : terminal?.type === 'scrap' ? 'scrapped'
       : terminal?.type === 'retire' ? 'retired'
         : terminal?.type === 'gift' ? 'gifted'
-          : resetIfNoTerminal ? 'active' : asset.status;
+          : usage ? usage.type === 'store' ? 'stored' : 'active'
+            : resetIfNoTerminal ? 'active' : asset.status;
   if (status !== asset.status) await store.fixedAssets.put({ ...asset, status });
 }
 
@@ -4689,6 +4692,18 @@ export async function saveFixedAssetEvent(
       if ((data.mode === 'estimate' || !data.costKnown || !D(input.event.amountBase).gt(0))
         && input.cashflow?.mode && input.cashflow.mode !== 'record_only') validation('估算、未定价用量和计量起点不能关联资金流水');
     }
+    if (['activate', 'store'].includes(input.event.type)) {
+      if (!D(input.event.amountBase).isZero() || input.cashflow?.mode && input.cashflow.mode !== 'record_only') validation('启用和闲置只改变使用状态，不产生费用或资金流水');
+      if (input.event.date < fixedAsset.purchaseDate) validation('状态变更日期不能早于购入日期', 'date');
+      const history = (await store.fixedAssetEvents.list({ where: { fixedAssetId: fixedAsset.id } })).filter((row) => row.id !== input.event.id && !row.isDeleted);
+      if (history.some((row) => ['sale', 'scrap', 'retire', 'gift'].includes(row.type) && row.date <= input.event.date)
+        || !history.some((row) => ['sale', 'scrap', 'retire', 'gift'].includes(row.type)) && ['sold', 'scrapped', 'retired', 'gifted'].includes(fixedAsset.status)) validation('已处置物品不能直接启用或闲置，请先更正处置记录');
+      // Preserve the initial idle state of old records when their first activation is undone.
+      if (fixedAsset.status === 'stored' && !history.some((row) => ['activate', 'store'].includes(row.type)) && !current) {
+        await store.fixedAssetEvents.put({ id: newId(), createdAt: fixedAsset.createdAt, updatedAt: '', version: 1, isDeleted: false,
+          fixedAssetId: fixedAsset.id, type: 'store', date: fixedAsset.purchaseDate, amountBase: '0', note: '初始登记为闲置' });
+      }
+    }
     const locationToday = todayIn((await store.settings.list())[0]?.timezone);
     const previousPlacements = fixedAsset.role === 'component' ? await store.fixedAssetEvents.list({ where: { fixedAssetId: fixedAsset.id } }) : [];
     const previousPhysicalHost = componentHostAt(fixedAsset.id, previousPlacements, locationToday);
@@ -4725,11 +4740,11 @@ export async function saveFixedAssetEvent(
         .sort((a, b) => a.date.localeCompare(b.date))[0];
       if (terminal && input.event.date >= terminal.date) validation('已出售或清退的配件不能再安装或拆下', 'date');
     } else if (input.event.hostAssetId) validation('只有安装事件可指定目标物品', 'hostAssetId');
-    if (input.event.type === 'sale' && fixedAsset.role === 'component') {
+    if (['sale', 'scrap', 'retire', 'gift'].includes(input.event.type) && fixedAsset.role === 'component') {
       const futurePlacement = (await store.fixedAssetEvents.list({ where: { fixedAssetId: fixedAsset.id } }))
         .some((row) => !row.isDeleted && row.id !== input.event.id
           && (row.type === 'install' || row.type === 'detach') && row.date > input.event.date);
-      if (futurePlacement) validation('卖出日期之后还有配件安装记录，请先调整安装历史', 'date');
+      if (futurePlacement) validation('处置日期之后还有配件安装记录，请先调整安装历史', 'date');
     }
     if (['sale', 'scrap', 'retire', 'gift'].includes(input.event.type)
       && fixedAsset.role !== 'component' && !(input.event.type === 'sale' && input.includeComponents)) {
@@ -4789,7 +4804,7 @@ export async function saveFixedAssetEvent(
         date: event.date,
         amountBase: event.amountBase,
         direction,
-        description: `${event.type === 'operating_cost' ? parseFixedOperatingCost(event.operatingCostJson)!.name : event.type === 'sale' ? '出售整件物品' : event.type === 'part_sale' ? '卖出配件' : event.type === 'repair' ? '维修' : '升级'} ${fixedAsset.name}`,
+        description: `${event.type === 'operating_cost' ? parseFixedOperatingCost(event.operatingCostJson)!.name : event.type === 'sale' ? '售出物品' : event.type === 'part_sale' ? '售出未建档配件' : event.type === 'maintenance' ? '保养' : event.type === 'repair' ? '维修' : '升级改造'} ${fixedAsset.name}`,
       }, input.cashflow ?? { mode: 'record_only', sourceAmount: '0' });
     } else {
       await clearFixedAssetCashflow(
@@ -4801,7 +4816,7 @@ export async function saveFixedAssetEvent(
     await reconcileFixedAssetStatus(
       store,
       event.fixedAssetId,
-      !!current && ['sale', 'scrap', 'retire', 'gift'].includes(current.type),
+      !!current && ['sale', 'scrap', 'retire', 'gift', 'activate', 'store'].includes(current.type),
     );
     return { event, cashflowLink: cashflow.link, transaction: cashflow.transaction };
   });
@@ -4833,7 +4848,7 @@ export async function deleteFixedAssetEvent(
       await reconcileFixedAssetStatus(store, child.fixedAssetId, true);
     }
     await store.fixedAssetEvents.remove(event.id, event.version);
-    await reconcileFixedAssetStatus(store, event.fixedAssetId, ['sale', 'scrap', 'retire', 'gift'].includes(event.type));
+    await reconcileFixedAssetStatus(store, event.fixedAssetId, ['sale', 'scrap', 'retire', 'gift', 'activate', 'store'].includes(event.type));
   });
   const deleted = await store.fixedAssetEvents.get(event.id);
   return {

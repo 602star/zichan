@@ -1,6 +1,6 @@
 /** Physical-item view model — pure selector over a Snapshot. */
 import {
-  D,
+  D, FIXED_STATUS_LABELS, fixedEventLabel,
   parseFixedOperatingCost, FIXED_OPERATING_LABELS,
   componentCostOwnerAt,
   componentHostAt,
@@ -25,13 +25,6 @@ import {
 import type { Snapshot } from '../db/snapshot.js';
 import { amount as fmtAmount, money } from '../format.js';
 
-const EVENT_LABEL: Record<FixedEventType, string> = {
-  purchase: '购入物品', activate: '启用', repair: '维修支出', upgrade: '升级／改造支出',
-  install: '安装／转装配件', detach: '拆下配件',
-  part_sale: '卖出配件', residual_update: '更新参考现值', warranty_expire: '保修到期', sale: '卖出整件物品',
-  scrap: '报废', retire: '清退', gift: '赠出', operating_cost: '使用费用',
-};
-
 export function canPlaceFixedComponent(asset: FixedAsset): boolean {
   return !asset.isDeleted && (asset.status === 'active' || asset.status === 'stored');
 }
@@ -39,10 +32,6 @@ export function canPlaceFixedComponent(asset: FixedAsset): boolean {
 export function canConvertFixedUpgrade(asset: FixedAsset, event: FixedAssetEvent): boolean {
   return canPlaceFixedComponent(asset) && !event.isDeleted && event.type === 'upgrade' && D(event.amountBase).gt(0);
 }
-
-const STATUS_LABEL: Record<FixedAsset['status'], string> = {
-  active: '使用中', stored: '闲置/库存', sold: '已售出', scrapped: '已报废', retired: '已清退', gifted: '已赠出',
-};
 
 const CASHFLOW_LABEL = {
   record_only: '仅登记，不影响余额',
@@ -55,7 +44,7 @@ function joinDetail(...parts: (string | undefined)[]): string {
 }
 
 function dotColor(type: FixedEventType): string {
-  if (type === 'purchase' || type === 'repair' || type === 'upgrade') return 'var(--negative)';
+  if (type === 'purchase' || type === 'repair' || type === 'maintenance' || type === 'upgrade') return 'var(--negative)';
   if (type === 'sale' || type === 'part_sale') return 'var(--positive)';
   if (type === 'activate') return 'var(--accent)';
   return 'var(--fg-subtle)';
@@ -64,7 +53,7 @@ function dotColor(type: FixedEventType): string {
 export type FixedTimelineMoneyKind = 'spend' | 'recover' | 'reference';
 
 function eventMoneyKind(type: FixedEventType): FixedTimelineMoneyKind | undefined {
-  if (type === 'purchase' || type === 'repair' || type === 'upgrade') return 'spend';
+  if (type === 'purchase' || type === 'repair' || type === 'maintenance' || type === 'upgrade') return 'spend';
   if (type === 'part_sale' || type === 'sale') return 'recover';
   if (type === 'residual_update') return 'reference';
   return undefined;
@@ -79,6 +68,8 @@ export interface FixedTimelineVM {
   moneyKind?: FixedTimelineMoneyKind;
   color: string;
   kind: 'event' | 'usage' | 'consumable';
+  related?: boolean;
+  datePrecision?: 'year';
   raw: FixedAssetEvent | FixedAssetUsageLog | FixedAssetConsumable;
 }
 
@@ -186,6 +177,9 @@ export function buildFixed(snap: Snapshot, asOf = localToday(), today = todayIn(
       const needsAttention = item.status === 'active' && remaining !== undefined && Number(remaining) <= Number(item.reminderAtRemaining ?? 0);
       return { raw: item, remaining, unitLabel: metric ? fixedUsageUnitLabel(metric) : undefined, needsAttention };
     });
+    const relatedParts = asset.role === 'component' ? [] : snap.fixedAssets.filter((part) => part.role === 'component'
+      && componentCostOwnerAt(part, snap.fixedEvents, asOf) === asset.id);
+    const relatedIds = new Set(relatedParts.map((part) => part.id));
     const timeline: FixedTimelineVM[] = [
       ...events.map((event): FixedTimelineVM => {
         const link = cashflowBySource.get(`event:${event.id}`);
@@ -194,9 +188,11 @@ export function buildFixed(snap: Snapshot, asOf = localToday(), today = todayIn(
         return {
           id: event.id,
           date: event.date,
-          label: operating ? `${operating.name} · ${FIXED_OPERATING_LABELS[operating.mode]}` : EVENT_LABEL[event.type],
+          datePrecision: event.type === 'purchase' && asset.purchaseDatePrecision === 'year' ? 'year' : undefined,
+          label: operating ? `${operating.name} · ${operating.service ? '订阅与服务' : FIXED_OPERATING_LABELS[operating.mode]}` : fixedEventLabel(event.type, asset.role === 'component'),
           detail: joinDetail(
             operating?.quantity !== undefined ? `${operating.quantity} ${operating.unit}${operating.costKnown ? '' : ' · 费用待补'}` : undefined,
+            operating?.service ? joinDetail(operating.service.provider, operating.service.fromDate && operating.service.toDate ? `服务期间 ${operating.service.fromDate} 至 ${operating.service.toDate}` : undefined) : undefined,
             operating?.reading !== undefined ? `累计读数 ${operating.reading} ${operating.unit}` : undefined,
             operating?.unitPrice !== undefined ? `单价 ${operating.unitPrice}${operating.billedAmount !== undefined ? ' · 已按实际总费用登记' : ''}` : undefined,
             operating?.mode === 'estimate' ? `估算 ${operating.fromDate} 至 ${operating.toDate}，未计入净投入` : undefined,
@@ -215,6 +211,15 @@ export function buildFixed(snap: Snapshot, asOf = localToday(), today = todayIn(
           raw: event,
         };
       }),
+      ...snap.fixedEvents.filter((event) => !event.isDeleted && relatedIds.has(event.fixedAssetId)
+        && ['purchase', 'install', 'detach', 'sale', 'scrap', 'gift', 'retire'].includes(event.type)).map((event): FixedTimelineVM => ({
+        id: event.id, date: event.date, related: true,
+        datePrecision: event.type === 'purchase' && fixedById.get(event.fixedAssetId)?.purchaseDatePrecision === 'year' ? 'year' : undefined,
+        label: `${fixedEventLabel(event.type, true)} · ${fixedById.get(event.fixedAssetId)?.name ?? '配件'}`,
+        detail: joinDetail('来自配件档案，费用已归属整机，不重复入账', event.note),
+        amount: eventMoneyKind(event.type) && D(event.amountBase).gt(0) ? cash(event.amountBase) : undefined,
+        moneyKind: eventMoneyKind(event.type), color: dotColor(event.type), kind: 'event', raw: event,
+      })),
       ...logs.map((log): FixedTimelineVM => {
         const metric = metrics.find((row) => row.id === log.metricId);
         return { id: log.id, date: log.date, label: metric?.name ?? '使用量', detail: `${log.entryMode === 'meter' ? '累计读数' : '增加'} ${fmtAmount(log.value, 4)} ${metric ? fixedUsageUnitLabel(metric) : ''}${log.note ? ` · ${log.note}` : ''}`, color: 'var(--accent)', kind: 'usage', raw: log };
@@ -253,7 +258,7 @@ export function buildFixed(snap: Snapshot, asOf = localToday(), today = todayIn(
       categoryParent: parent?.name ?? category?.name ?? '其他物品',
       tag: asset.tag ?? '',
       sold: cost.basis === 'final',
-      status: STATUS_LABEL[asset.status],
+      status: FIXED_STATUS_LABELS[asset.status],
       days: cost.heldDays,
       perDay: cost.perDay,
       locationPath: fixedLocationPath(locations,
@@ -277,7 +282,7 @@ export function buildFixed(snap: Snapshot, asOf = localToday(), today = todayIn(
       rows: [
         { l: '累计支出', v: cash(cost.investedCost) },
         { l: '累计回款', v: cash(cost.recoveredCost) },
-        { l: '维修／升级支出', v: cash(D(cost.repair).plus(cost.upgrade).toString()) },
+        { l: '保养／维修／升级支出', v: cash(D(cost.repair).plus(cost.upgrade).toString()) },
         { l: '耗材支出', v: cash(cost.consumable) },
         { l: '已登记使用费用', v: cash(cost.otherCost) },
         { l: '估算参考费用（未计入）', v: cash(cost.estimatedOperatingCost) },

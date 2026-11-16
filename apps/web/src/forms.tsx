@@ -6,7 +6,7 @@ import { transactionFormFieldOptions } from './transactionFormPrefs.js';
  */
 import {
   D, normalizeOccurrence, transactionCostFingerprint, isValidDay, localToday, newId, isLegacyExternalAccount, defaultTransactionAccount, accountBalanceTiming, scheduleOccurrenceDate, listScheduleOccurrences,
-  parseFixedWorkspace, fixedLocationPath,
+  parseFixedWorkspace, fixedLocationPath, FIXED_STATUS_LABELS, FIXED_EVENT_LABELS, fixedEventLabel,
   type Asset, type Account, type Attachment, type BudgetCategory, type Category, type DcaPlan,
   type PriceMark, type Game, type GameAccount, type GameSeason, type GameRecord, type GameCashflowMode, type GameCashflowRole, type FixedAsset,
   type FixedAssetCashflowMode, type FixedAssetCategory, type FixedAssetConsumable, type FixedAssetEvent, type FixedAssetGoal,
@@ -112,18 +112,8 @@ const REC_TYPES = [
   { value: 'account_cost', label: '账号成本' }, { value: 'boosting_cost', label: '代练成本' },
   { value: 'other_expense', label: '其他支出' }, { value: 'other_income', label: '其他收入' },
 ];
-const FIXED_STATUS = [
-  { value: 'active', label: '使用中' }, { value: 'stored', label: '闲置/库存' },
-  { value: 'sold', label: '已售出' }, { value: 'scrapped', label: '已报废' },
-  { value: 'retired', label: '已清退' }, { value: 'gifted', label: '已赠出' },
-];
-const FIXED_EVENTS = [
-  { value: 'purchase', label: '购买' }, { value: 'activate', label: '启用' },
-  { value: 'repair', label: '维修支出' }, { value: 'upgrade', label: '升级／改造支出' },
-  { value: 'part_sale', label: '卖出配件' }, { value: 'residual_update', label: '更新参考现值' }, { value: 'warranty_expire', label: '保修到期' },
-  { value: 'sale', label: '卖出整件物品' }, { value: 'scrap', label: '报废' },
-  { value: 'retire', label: '清退' }, { value: 'gift', label: '赠出' },
-];
+const FIXED_STATUS = Object.entries(FIXED_STATUS_LABELS).map(([value, label]) => ({ value, label }));
+const FIXED_EVENTS = Object.entries(FIXED_EVENT_LABELS).map(([value, label]) => ({ value, label }));
 const FIXED_USAGE_UNITS = [
   { value: 'count', label: '次数' }, { value: 'km', label: '公里' },
   { value: 'hour', label: '实际使用小时' }, { value: 'custom', label: '自定义单位' },
@@ -1513,7 +1503,7 @@ export function fixedEventForm(
   investedCost = '0',
 ): EntityFormSpec<FixedAssetEventFormValue> {
   const usesAccounts = true;
-  const isFinancial = (values: Record<string, string>) => ['repair', 'upgrade', 'part_sale', 'sale'].includes(values.type ?? '');
+  const isFinancial = (values: Record<string, string>) => ['repair', 'maintenance', 'upgrade', 'part_sale', 'sale'].includes(values.type ?? '');
   const isInflow = (values: Record<string, string>) => values.type === 'sale' || values.type === 'part_sale';
   const fixedAsset = snap.fixedAssets.find((row) => row.id === fixedAssetId);
   const fixedCategory = snap.fixedAssetCategories.find((row) => row.id === fixedAsset?.categoryId);
@@ -1521,7 +1511,7 @@ export function fixedEventForm(
     && row.type === 'install' && row.hostAssetId === fixedAssetId);
   const suggestedCategory = (type: string): string => {
     const preferred = type === 'sale' || type === 'part_sale' ? 'sale_income'
-      : type === 'repair' ? fixedCategory?.parentId === 'fixed-vehicle' ? 'car_repair'
+      : ['repair', 'maintenance'].includes(type) ? fixedCategory?.parentId === 'fixed-vehicle' ? 'car_repair'
         : fixedCategory?.parentId === 'fixed-home' || fixedCategory?.parentId === 'fixed-appliance' ? 'home_repair' : ''
         : fixedCategory?.id === 'fixed-electronics-computer' ? 'computer_accessories'
           : fixedCategory?.id === 'fixed-electronics-phone' ? 'phone_accessories'
@@ -1543,6 +1533,7 @@ export function fixedEventForm(
   return {
     title: '物品生命周期事件',
     modalWidth: 760,
+    summary: (v) => ['activate', 'store'].includes(v.type ?? '') ? '只改变使用状态，不新增费用；闲置期间仍计入持有日均。' : ['scrap', 'gift', 'retire'].includes(v.type ?? '') ? '本次仅处理当前物品或配件，历史投入保留；归档只隐藏档案，不代替处置。若有回收收入，请登记售出。' : v.type === 'part_sale' ? '适用于没有单独建档的配件。已建档电池等请在其配件档案中记录售出。' : '实际费用可仅登记、关联已有流水或同时创建流水。',
     onFieldChange: (values, key, manual) => {
       if (key === 'cashflowMode' && values.cashflowMode === 'create_transaction' && !values.cashflowCategory && !manual.has('cashflowCategory')) {
         return { ...values, cashflowCategory: suggestedCategory(values.type ?? '') };
@@ -1554,12 +1545,12 @@ export function fixedEventForm(
     },
     fields: [
       { key: 'type', label: '事件类型', type: 'select', half: true, options: FIXED_EVENTS
-        .filter((option) => !['purchase', 'install', 'detach'].includes(option.value)
+        .filter((option) => !['purchase', 'install', 'detach', 'operating_cost'].includes(option.value)
           && (fixedAsset?.role !== 'component' || option.value !== 'part_sale'))
-        .map((option) => fixedAsset?.role === 'component' && option.value === 'sale' ? { ...option, label: '卖出该配件' } : option), required: true },
+        .map((option) => ({ ...option, label: fixedEventLabel(option.value as FixedAssetEvent['type'], fixedAsset?.role === 'component') })), required: true },
       { key: 'date', label: '日期', type: 'date', half: true, defaultValue: asOf, required: true },
-      { key: 'amountBase', label: '本次金额', type: 'number', half: true, defaultValue: '0', required: true },
-      { key: 'valueMode', label: '参考现值录入口径（仅更新参考现值）', type: 'select', half: true, options: [{ value: 'residual', label: '当前参考现值' }, { value: 'depreciation', label: '累计损耗金额' }] },
+      { key: 'amountBase', label: '本次金额', type: 'number', half: true, defaultValue: '0', required: true, visibleWhen: (v) => isFinancial(v) || v.type === 'residual_update' },
+      { key: 'valueMode', label: '参考现值录入口径', type: 'select', half: true, visibleWhen: (v) => v.type === 'residual_update', options: [{ value: 'residual', label: '当前参考现值' }, { value: 'depreciation', label: '累计损耗金额' }] },
       { key: 'cashflowMode', label: '资金处理', type: 'select', half: true, defaultValue: 'record_only', options: [
         { value: 'record_only', label: '仅登记金额（不影响余额）' },
         { value: 'linked_transaction', label: '关联已有流水' },
@@ -1577,7 +1568,7 @@ export function fixedEventForm(
       ], visibleWhen: (values) => isInflow(values) && values.cashflowMode === 'create_transaction' },
       { key: 'includeComponents', label: '已安装配件随整机出售', type: 'checkbox', defaultValue: 'false',
         visibleWhen: (values) => values.type === 'sale' && fixedAsset?.role !== 'component' && (hasInstalledComponents || values.includeComponents === 'true') },
-      { key: 'note', label: '配件名称 / 备注', type: 'text', half: true },
+      { key: 'note', label: '备注', type: 'text', hint: '未单独建档的配件售出时，填写配件名称。可追踪配件请进入该配件档案记录处置。' },
     ],
     toValues: (event) => {
       const link = snap.fixedCashflowLinks.find((row) => !row.isDeleted && row.sourceType === 'event' && row.sourceId === event.id);
@@ -1602,12 +1593,12 @@ export function fixedEventForm(
     },
     fromValues: (v, existing) => {
       const type = v.type as FixedAssetEvent['type'];
-      const entered = D(v.amountBase || 0);
+      const entered = D(isFinancial(v) || type === 'residual_update' ? v.amountBase || 0 : existing?.type === type ? existing.amountBase : 0);
       const valueMode = v.valueMode as FixedAssetEvent['valueMode'];
       const amountBase = type === 'residual_update' && valueMode === 'depreciation'
         ? D(investedCost).minus(entered)
         : entered;
-      const financial = ['repair', 'upgrade', 'part_sale', 'sale'].includes(type);
+      const financial = ['repair', 'maintenance', 'upgrade', 'part_sale', 'sale'].includes(type);
       return {
         ...base(existing),
         fixedAssetId: existing?.fixedAssetId ?? fixedAssetId,
@@ -1631,7 +1622,7 @@ export function fixedEventForm(
     },
     validate: (v) => {
       const errors: Record<string, string> = {};
-      const amount = D(v.amountBase || 0);
+      const amount = D(isFinancial(v) || v.type === 'residual_update' ? v.amountBase || 0 : 0);
       if (amount.lt(0)) errors.amountBase = '金额不能小于 0';
       if (v.type === 'residual_update' && v.valueMode === 'depreciation' && amount.gt(investedCost)) errors.amountBase = '累计损耗不能超过当前累计投入';
       if (isFinancial(v) && v.cashflowMode !== 'record_only' && !amount.gt(0)) errors.amountBase = '关联资金时金额必须大于 0';

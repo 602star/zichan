@@ -20,7 +20,7 @@ export interface FixedWorkspacePreferences {
   categoryLocations: Record<string, string>;
 }
 export interface FixedLocationMove { at: string; from: string; to: string; }
-export const defaultFixedFilters = (): FixedInventoryFilters => ({ query: '', categoryId: 'all', status: 'all', year: 'all', locationId: 'all', attentionOnly: false, sort: 'newest', display: 'list' });
+export const defaultFixedFilters = (): FixedInventoryFilters => ({ query: '', categoryId: 'all', status: 'all', year: 'all', locationId: 'all', attentionOnly: false, sort: 'newest', display: 'cards' });
 export const emptyFixedWorkspace = (): FixedWorkspacePreferences => ({ version: 1, locations: [], views: [], categoryLocations: {} });
 
 export function fixedLocationPath(locations: readonly FixedStorageLocation[], id?: string): string {

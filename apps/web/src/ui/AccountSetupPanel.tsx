@@ -37,10 +37,19 @@ export function AccountSetupPanel({ store, assets, accounts = [], setting, initi
   const dirty = fingerprint !== originalFingerprint;
   const requestClose = () => { if (!busy) { if (dirty) setDiscardOpen(true); else onClose(); } };
   const detailField = (key: keyof typeof details, label: string, type = 'text') => <label className="zc-field">{label}{type === 'date' ? <DateTimeInput className="zc-input" aria-label={label} type="date" value={details[key]} onChange={(next) => setDetails((value) => ({ ...value, [key]: next }))} /> : <input className="zc-input" inputMode={/creditLimit|loanPrincipal|annualInterestRate/.test(key) ? 'decimal' : undefined} type={type} value={details[key]} onChange={(event) => setDetails((value) => ({ ...value, [key]: event.target.value }))} />}</label>;
-  return <WorkspaceDialog labelledBy={title} onDismiss={requestClose} navigationBlocked={dirty || busy} dismissDisabled={busy} panelClassName="zc-entity-modal zc-account-setup" panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', width: 'min(680px, calc(100vw - 24px))', maxHeight: '90dvh', overflow: 'auto', padding: 24 }}>
-    <h2 id={title}>{initial ? '编辑账户' : '添加银行卡或钱包'}</h2>
+  return <WorkspaceDialog labelledBy={title} onDismiss={requestClose} navigationBlocked={dirty || busy} dismissDisabled={busy} panelClassName="zc-entity-modal zc-account-setup" panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', width: 'min(680px, calc(100vw - 24px))', maxHeight: '90dvh', overflow: 'auto', padding: 24 }}
+      header={<>
+        <h2 id={title}>{initial ? '编辑账户' : '添加银行卡或钱包'}</h2>
+      </>}
+      footer={<>
+        <div className="zc-modal-footer" style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 20 }}>
+        {error && <p role="alert" style={{ color: 'var(--negative)' }}>{error}</p>}
+        <div className="zc-mobile-shortcuts"><button type="submit" form={`${title}-form`} className="zc-btn zc-btn--primary" disabled={busy}>{busy ? '正在保存…' : initial ? '保存' : '保存并开始使用'}</button><button type="button" className="zc-btn" disabled={busy} onClick={requestClose}>取消</button></div>
+      </div>
+      </>}
+    >
     <p className="zc-meta">{initial ? '编辑账户资料和默认用途。余额起点通过单独的核对流程调整。' : '以前的收支会完整保留。从填写的余额起点开始分账户记账，旧记录可以稍后整理。'}</p>
-    <form onSubmit={(event) => { event.preventDefault(); if (busy) return; setBusy(true); setError(''); void (async () => {
+    <form id={`${title}-form`} onSubmit={(event) => { event.preventDefault(); if (busy) return; setBusy(true); setError(''); void (async () => {
       try {
         if (!name.trim() || (!initial && amount.trim() === '')) throw new Error('请填写账户名称和当前余额');
         if (!active && (expense || income)) throw new Error('停用账户前请取消默认付款和收款用途');
@@ -94,10 +103,7 @@ export function AccountSetupPanel({ store, assets, accounts = [], setting, initi
       <label style={{ display: 'block', margin: '12px 0' }}><input type="checkbox" checked={expense} onChange={(e) => setExpense(e.target.checked)} />今后支出默认使用这个账户</label>
       <label style={{ display: 'block', margin: '12px 0' }}><input type="checkbox" checked={income} onChange={(e) => setIncome(e.target.checked)} />今后收入默认使用这个账户</label>
       </div>
-      <div className="zc-modal-footer" style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 20 }}>
-        {error && <p role="alert" style={{ color: 'var(--negative)' }}>{error}</p>}
-        <div className="zc-mobile-shortcuts"><button type="submit" className="zc-btn zc-btn--primary" disabled={busy}>{busy ? '正在保存…' : initial ? '保存' : '保存并开始使用'}</button><button type="button" className="zc-btn" disabled={busy} onClick={requestClose}>取消</button></div>
-      </div>
+
       </fieldset>
     </form>
     {initial && balanceOpen && <EarlierBalancePanel store={store} account={initial} setting={setting} onClose={() => setBalanceOpen(false)} onSaved={() => { setBalanceOpen(false); onSaved(initial); }} />}

@@ -119,6 +119,7 @@ test('item details, usage and game records keep their real editors', async ({ pa
   await page.getByRole('tab', { name: '记录与凭证', exact: true }).click();
   await capture(page, 'item-events');
   await page.getByRole('button', { name: '记录生命周期事件', exact: true }).click();
+  await page.getByRole('dialog', { name: '记录物品事件', exact: true }).getByRole('button', { name: '保养', exact: false }).click();
   await expect(page.getByRole('dialog').last().getByRole('button', { name: '保存', exact: true })).toBeVisible();
   await page.getByRole('dialog').last().getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '返回物品', exact: true }).click();

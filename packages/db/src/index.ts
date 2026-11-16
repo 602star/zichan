@@ -258,4 +258,4 @@ export { ensureDefaultAccounts, createFundAccount, previewAccountAssignment, ass
 export { normalizeIdentity, masterIdentity, duplicateMasterData, DuplicateMasterDataError } from './master-data-identity.js';
 
 export { saveAccountDetails, setDefaultTransactionAccounts } from './account-onboarding.js';
-export { updateFixedWorkspace, organizeFixedAssets, archiveFixedLocation, completeFixedMaintenance } from './fixed-workspace.js';
+export { updateFixedWorkspace, organizeFixedAssets, restoreFixedAssetArchive, archiveFixedLocation, completeFixedMaintenance } from './fixed-workspace.js';

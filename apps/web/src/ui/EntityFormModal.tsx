@@ -1,3 +1,4 @@
+import { X } from 'lucide-react';
 import { DuplicateMasterDataError } from '@zichan/db';
 import { scheduleDuplicateWarning } from '../master-data-saving.js';
 import { EntityIcon, categoryIconValue, categoryOptionIcon } from './EntityIcon.js';
@@ -605,7 +606,8 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
       dismissDisabled={busy || iconBusy}
       panelClassName="zc-entity-modal"
       panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 26, width: `min(${spec.modalWidth ?? 560}px, 100%)`, maxHeight: '90vh', overflow: 'auto' }}
-    >
+
+      header={<>
         <div className="zc-modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
           <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{creating ? '新增' : '编辑'} · {spec.title}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -617,9 +619,31 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                 {spec.progressiveFields ? '常用附加字段' : '字段显示'}
               </button>
             )}
-            <button type="button" data-dialog-initial-focus aria-label="关闭" onClick={requestClose} disabled={busy || iconBusy} style={{ border: 'none', background: 'transparent', fontSize: 'var(--fs-heading)', cursor: busy ? 'not-allowed' : 'pointer', color: 'var(--text-tertiary)', opacity: busy ? 0.6 : 1 }}>×</button>
+            <button type="button" data-dialog-initial-focus aria-label="关闭" onClick={requestClose} disabled={busy || iconBusy} style={{ border: 'none', background: 'transparent', fontSize: 'var(--fs-heading)', cursor: busy ? 'not-allowed' : 'pointer', color: 'var(--text-tertiary)', opacity: busy ? 0.6 : 1 }}><X size={20} aria-hidden="true" /></button>
           </div>
         </div>
+      </>}
+      footer={<>
+        <div className="zc-modal-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 20 }}>
+          <div>
+            {initial && onDelete && (
+              <button onClick={() => setDeleteOpen(true)} disabled={busy || iconBusy} style={{ padding: '9px 16px', borderRadius: 'var(--r-sm)', border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>{deleteLabel}</button>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            {(!draftReady || pendingDraft) && <span role="status" style={{ alignSelf: 'center', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>
+              {pendingDraft ? '请先处理上方草稿' : '正在加载草稿…'}
+            </span>}
+            <button onClick={requestClose} disabled={busy || iconBusy} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>取消</button>
+            {!compactView && onSaveContinue && <button type="button" className="zc-btn" disabled={busy || iconBusy || !draftReady || !!pendingDraft} onClick={() => void save(undefined, true)}>保存并继续</button>}
+            <button onClick={() => void save()} disabled={busy || iconBusy || !draftReady || !!pendingDraft} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy || !draftReady || !!pendingDraft ? 0.6 : 1 }}>
+              {busy ? '保存中…' : '保存'}
+            </button>
+          </div>
+        </div>
+      </>}
+    >
+
 
         {pendingDraft && <div role="status" style={{ padding: 12, marginBottom: 12, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
           <p>发现未完成的记账草稿（{pendingDraft.values.date} {pendingDraft.values.time}）。恢复后会保留原记录时间，请核对账户和余额起点。</p>
@@ -795,23 +819,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
         )}
 
         {!compactView && onSaveContinue && <div className="zc-entry-retain"><label><input type="checkbox" checked={retainEntryFields} aria-describedby={`${formId}-continue-note`} onChange={(event) => onRetainEntryFieldsChange?.(event.target.checked)} />沿用常用字段</label><span id={`${formId}-continue-note`}>保留日期、账户、币种和分类；金额与描述每次重新填写。</span></div>}
-        <div className="zc-modal-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 20 }}>
-          <div>
-            {initial && onDelete && (
-              <button onClick={() => setDeleteOpen(true)} disabled={busy || iconBusy} style={{ padding: '9px 16px', borderRadius: 'var(--r-sm)', border: '1px solid var(--negative)', background: 'transparent', color: 'var(--negative)', fontWeight: 'var(--fw-bold)', cursor: 'pointer' }}>{deleteLabel}</button>
-            )}
-          </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            {(!draftReady || pendingDraft) && <span role="status" style={{ alignSelf: 'center', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>
-              {pendingDraft ? '请先处理上方草稿' : '正在加载草稿…'}
-            </span>}
-            <button onClick={requestClose} disabled={busy || iconBusy} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text-secondary)', fontWeight: 'var(--fw-bold)', cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1 }}>取消</button>
-            {!compactView && onSaveContinue && <button type="button" className="zc-btn" disabled={busy || iconBusy || !draftReady || !!pendingDraft} onClick={() => void save(undefined, true)}>保存并继续</button>}
-            <button onClick={() => void save()} disabled={busy || iconBusy || !draftReady || !!pendingDraft} style={{ padding: '9px 18px', borderRadius: 'var(--r-sm)', border: '1px solid var(--accent)', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 'var(--fw-bold)', cursor: 'pointer', opacity: busy || !draftReady || !!pendingDraft ? 0.6 : 1 }}>
-              {busy ? '保存中…' : '保存'}
-            </button>
-          </div>
-        </div>
+
         {deleteOpen && (
           <ConfirmDialog
             title={`${deleteLabel}${spec.title}`}
@@ -1215,15 +1223,17 @@ export function CategoryPicker(props: {
     {open && <DialogShell labelledBy={titleId} onDismiss={() => setOpen(false)}
       initialFocusRef={typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches ? closeButton : undefined}
       backdropClassName="zc-category-backdrop" panelClassName="zc-category-picker-panel"
-      panelStyle={{ position: 'fixed', ...placement }}>
-      <span id={titleId} className="zc-category-accessible-title">选择分类</span>
-      <div className="zc-category-picker-search">
+      panelStyle={{ position: 'fixed', ...placement }}
+      header={<> <span id={titleId} className="zc-category-accessible-title">选择分类</span>      <div className="zc-category-picker-search">
         <input className="zc-input" value={search} onChange={(event) => setSearch(event.target.value)}
           placeholder="搜索分类" aria-label="搜索分类" />
-        <button ref={closeButton} type="button" className="zc-category-close" aria-label="关闭分类选择" onClick={() => setOpen(false)}>×</button>
+        <button ref={closeButton} type="button" className="zc-category-close" aria-label="关闭分类选择" onClick={() => setOpen(false)}><X size={20} aria-hidden="true" /></button>
         {hiddenCount > 0 && <button type="button" className="zc-category-scope" aria-pressed={showHidden}
           onClick={() => setShowHidden((current) => !current)}>{showHidden ? '只看高频' : `显示隐藏 (${hiddenCount})`}</button>}
-      </div>
+      </div> </>}
+    >
+
+
       {searching ? <div className="zc-category-picker-list" role="listbox" aria-label="分类搜索结果">
         {groups.flatMap((group) => group.children.map((option) => optionRow(option, group.parent)))}
         {!groups.length && <p className="zc-meta">没有匹配分类</p>}

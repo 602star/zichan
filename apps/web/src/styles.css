@@ -1935,6 +1935,8 @@ input[type="radio"] {
 
 /* modal backdrop + inputs (data-entry UI the prototype lacks) */
 .zc-backdrop {
+  --dialog-outer-top: 24px;
+  --dialog-outer-bottom: 24px;
   position: fixed;
   inset: 0;
   background: var(--scrim);
@@ -1944,6 +1946,40 @@ input[type="radio"] {
   z-index: 50;
   padding: 24px;
 }
+
+.zc-dialog-panel { box-sizing: border-box; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; overflow-wrap: anywhere; border-radius: var(--r-md); }
+.zc-dialog-panel.has-frame, .zc-workspace-editor.has-frame { display: flex; flex-direction: column; min-height: 0; padding: 0 !important; overflow: hidden; isolation: isolate; }
+.zc-dialog-head, .zc-dialog-foot { flex: 0 0 auto; min-width: 0; max-height: 35dvh; overflow: auto; padding: var(--sp-4) var(--sp-5); background: var(--surface); }
+.zc-dialog-head { border-bottom: 1px solid var(--border); }
+.zc-dialog-foot { border-top: 1px solid var(--border); }
+.zc-dialog-body { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: var(--sp-5); }
+.zc-dialog-head > :first-child, .zc-dialog-body > :first-child, .zc-dialog-foot > :first-child { margin-top: 0; }
+.zc-dialog-head > :last-child, .zc-dialog-body > :last-child, .zc-dialog-foot > :last-child { margin-bottom: 0; }
+.zc-dialog-head > .zc-modal-header, .zc-dialog-foot > .zc-modal-footer { margin: 0 !important; }
+.zc-dialog-head h2 { min-width: 0; overflow-wrap: anywhere; }
+.zc-dialog-head > :is(.zc-existing-payee-heading, .zc-datetime-heading) { margin: 0; }
+.zc-backdrop.zc-calendar-backdrop { --dialog-outer-top: 12px; --dialog-outer-bottom: 12px; padding: 12px; }
+.zc-calendar-popover .zc-dialog-head h2 { margin: 0; font-size: var(--fs-title); }
+.zc-calendar-popover .zc-dialog-body { padding: var(--sp-2); }
+.zc-calendar-popover .zc-calendar-grid button { min-width: 0; min-height: 44px; }
+.zc-calendar-popover .zc-dialog-foot .zc-calendar-actions { margin: 0; padding: 0; border: 0; }
+.zc-calendar-popover .zc-dialog-foot button { min-height: 44px; }
+@media (max-width: 375px) {
+  .zc-backdrop.zc-calendar-backdrop { --dialog-outer-top: 0px; --dialog-outer-bottom: 0px; padding-inline: 0; }
+  .zc-calendar-popover .zc-dialog-body { padding: var(--sp-1); }
+}
+.zc-dialog-head .zc-modal-header { align-items: flex-start !important; }
+.zc-dialog-head .zc-modal-header > :last-child { position: sticky; top: 0; align-self: flex-start; }
+.zc-dialog-head > :is(div, header) > button:last-child { position: sticky; top: 0; align-self: flex-start; flex-shrink: 0; }
+.zc-dialog-head button[aria-label^="关闭"], .zc-dialog-head [data-dialog-initial-focus] { min-width: 44px; min-height: 44px; }
+.zc-dialog-head button[aria-label^="关闭"] { display: inline-flex; align-items: center; justify-content: center; }
+.zc-dialog-foot > div { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.zc-dialog-foot > div:has([role="alert"]) { flex-direction: column; }
+.zc-dialog-foot button { overflow-wrap: anywhere; white-space: normal; }
+.zc-category-picker-panel.has-frame > .zc-dialog-head, .zc-mobile-drawer.has-frame > .zc-dialog-head { padding: 0; }
+.zc-category-picker-panel.has-frame > .zc-dialog-body { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.zc-dialog-head > .zc-reconciliation-head, .zc-dialog-foot > .zc-reconciliation-footer { padding: 0; border: 0; }
+.zc-dialog-body > .zc-reconciliation-body { padding: 0; overflow: visible; }
 
 .zc-quick-expense-dialog {
   box-sizing: border-box;
@@ -2009,26 +2045,21 @@ input[type="radio"] {
 }
 
 .zc-modal-header {
-  position: sticky;
-  top: -26px;
-  z-index: 6;
-  margin-right: -26px;
-  margin-left: -26px;
-  padding: 18px 26px 12px;
-  background: var(--surface);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
 }
+.zc-modal-header > :first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.zc-modal-header > :last-child { flex-shrink: 0; }
 
 .zc-modal-footer {
-  position: sticky;
-  bottom: -26px;
-  z-index: 4;
-  margin-right: -26px;
-  margin-bottom: -26px;
-  margin-left: -26px;
-  padding: 16px 26px calc(16px + env(safe-area-inset-bottom));
-  border-top: 1px solid var(--border);
-  background: var(--surface);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  min-width: 0;
 }
+.zc-modal-footer > div:last-child { flex-wrap: wrap; min-width: 0; }
 .zc-protection {
   background: var(--surface);
   color: var(--text-primary);
@@ -2647,6 +2678,12 @@ input[type="radio"] {
 .zc-transaction-table .zc-transaction-actions button { display: block; margin-left: auto; }
 .zc-transaction-table .zc-transaction-actions button + button { margin-top: 4px; }
 
+.zc-fixed-event-sheet { width: min(760px, 100%); }
+.zc-fixed-event-groups { display: grid; gap: var(--sp-4); margin-top: var(--sp-4); }
+.zc-fixed-event-groups h3 { margin: 0 0 var(--sp-2); font-size: var(--fs-body); font-weight: var(--fw-medium); }
+.zc-fixed-event-groups section + section { padding-top: var(--sp-2); }
+.zc-fixed-event-groups .zc-action-sheet-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--sp-2); margin-top: 0; border-top: 0; }
+.zc-fixed-event-groups .zc-action-sheet-actions > button { min-height: 44px; border-top: 0; border-bottom: 1px solid var(--border); }
 .zc-fixed-inventory, .zc-fixed-item-detail { display: grid; gap: var(--sp-4); min-width: 0; }
 .zc-fixed-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-3); }
 .zc-fixed-toolbar h2, .zc-fixed-item-detail h3, .zc-fixed-inventory h3 { margin: 0; font-weight: var(--fw-medium); }
@@ -2686,9 +2723,28 @@ input[type="radio"] {
 .zc-fixed-inventory-table td:nth-child(3), .zc-fixed-inventory-table td:nth-child(4), .zc-fixed-inventory-table td:nth-child(5) { font-variant-numeric: tabular-nums; }
 .zc-fixed-inventory-table .zc-fixed-warning { color: var(--warn-fg, var(--text-secondary)); }
 .zc-fixed-part-row { background: var(--surface-2); font-size: var(--fs-caption); }
-.zc-fixed-photo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: var(--sp-4); }
-.zc-fixed-photo-head { display: grid; gap: var(--sp-1); }
-.zc-fixed-inventory-photo { width: 100%; height: 160px; object-fit: contain; }
+.zc-fixed-photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: var(--sp-4); align-items: stretch; }
+.zc-fixed-item-card { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.zc-fixed-card-identity { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: start; gap: var(--sp-3); }
+.zc-fixed-card-photo { display: grid; place-items: center; width: 80px; height: 80px; padding: 0; overflow: hidden; background: var(--surface-2); color: var(--text-secondary); border: 0; border-radius: var(--r-sm); cursor: pointer; }
+.zc-fixed-card-photo:hover { background: var(--accent-soft); color: var(--accent); }
+.zc-fixed-inventory-photo { width: 100%; height: 100%; object-fit: contain; }
+.zc-fixed-card-name { display: grid; justify-items: start; gap: var(--sp-1); min-width: 0; overflow-wrap: anywhere; }
+.zc-fixed-card-name .zc-workspace-link { display: block; text-align: left; white-space: normal; overflow-wrap: anywhere; font-size: var(--fs-title); line-height: 1.5; }
+.zc-fixed-card-status { font-size: var(--fs-caption); color: var(--text-secondary); }
+.zc-fixed-card-context { display: flex; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); font-size: var(--fs-caption); color: var(--text-secondary); }
+.zc-fixed-card-context > span { display: flex; align-items: start; gap: var(--sp-2); overflow-wrap: anywhere; }
+.zc-fixed-card-context svg { flex-shrink: 0; margin-top: var(--sp-1); }
+.zc-fixed-card-costs { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: auto; }
+.zc-fixed-card-costs .zc-card-metric { padding-block: var(--sp-3); }
+.zc-fixed-card-costs .zc-card-metric-value { font-size: var(--fs-title); overflow-wrap: anywhere; }
+.zc-fixed-card-unit { font-size: var(--fs-caption); color: var(--text-secondary); white-space: nowrap; }
+.zc-fixed-card-reminder { display: flex; align-items: start; gap: var(--sp-2); border-top: 1px solid var(--border); padding-top: var(--sp-3); color: var(--text-secondary); font-size: var(--fs-caption); overflow-wrap: anywhere; }
+.zc-fixed-card-reminder.has-pending { color: var(--warning); }
+.zc-fixed-card-reminder svg { flex-shrink: 0; margin-top: var(--sp-1); }
+.zc-fixed-card-reminder small { display: block; font-size: var(--fs-caption); }
+.zc-fixed-card-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-top: auto; }
+.zc-fixed-card-footer .zc-btn { min-height: 44px; }
 .zc-fixed-detail-image { width: 120px; height: 120px; object-fit: contain; margin-bottom: var(--sp-4); }
 .zc-fixed-detail-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .zc-fixed-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--sp-5); }
@@ -3078,6 +3134,8 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
   }
 
   .zc-backdrop {
+    --dialog-outer-top: 0px;
+    --dialog-outer-bottom: 0px;
     align-items: flex-end;
     padding: 0;
   }
@@ -3093,12 +3151,11 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
   }
 
   .zc-modal-header {
-    top: calc(-14px - env(safe-area-inset-top));
-    margin-right: -14px !important;
-    margin-left: -14px !important;
-    padding: calc(14px + env(safe-area-inset-top)) 14px 12px;
-    border-bottom: 1px solid var(--border);
+    align-items: flex-start;
   }
+  .zc-dialog-head { padding: calc(var(--sp-3) + env(safe-area-inset-top)) var(--sp-4) var(--sp-3); }
+  .zc-dialog-body { padding: var(--sp-4); }
+  .zc-dialog-foot { padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + env(safe-area-inset-bottom)); }
 
   .zc-confirm-panel {
     width: 100% !important;
@@ -3118,7 +3175,7 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
     border-radius: var(--r-md) var(--r-md) 0 0;
   }
 
-  .zc-quick-expense-dialog > div {
+  .zc-quick-expense-dialog:not(.has-frame) > div {
     padding-bottom: calc(22px + env(safe-area-inset-bottom)) !important;
   }
 
@@ -3135,11 +3192,7 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
   }
 
   .zc-modal-footer {
-    bottom: 0;
-    margin-right: -14px;
-    margin-bottom: 0;
-    margin-left: -14px;
-    padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+    align-items: stretch;
   }
 
   .zc-modal-footer > div:last-child,

@@ -1,6 +1,6 @@
 import { createContext, useContext, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { DialogShell, type DialogShellProps } from './DialogShell.js';
+import { DialogContent, DialogShell, type DialogShellProps } from './DialogShell.js';
 import { useCompactView } from './useCompactView.js';
 
 const WorkspaceContext = createContext(false);
@@ -20,11 +20,21 @@ export function WorkspaceDialog({ workspace = 'page', navigationBlocked, onSaveS
   return <DesktopEditor {...props} host={host} workspace={workspace} navigationBlocked={navigationBlocked} onSaveShortcut={onSaveShortcut} />;
 }
 
-function DesktopEditor({ host, workspace, navigationBlocked, onSaveShortcut, children, labelledBy, describedBy, onDismiss, dismissDisabled, panelClassName, panelStyle }: WorkspaceDialogProps & { host: HTMLElement; workspace: 'page' | 'composer' }) {
+function DesktopEditor({ host, workspace, navigationBlocked, onSaveShortcut, children, header, footer, labelledBy, describedBy, onDismiss, dismissDisabled, panelClassName, panelStyle }: WorkspaceDialogProps & { host: HTMLElement; workspace: 'page' | 'composer' }) {
+  const framed = header != null || footer != null;
   const panel = useRef<HTMLElement>(null);
   const [returnFocus] = useState(() => document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const latest = useRef({ navigationBlocked, onDismiss, dismissDisabled });
   latest.current = { navigationBlocked, onDismiss, dismissDisabled };
+  useLayoutEffect(() => {
+    if (!framed) return;
+    const appHeader = document.querySelector('.zc-app-header');
+    const update = () => panel.current?.style.setProperty('--workspace-header-height', `${appHeader?.getBoundingClientRect().height ?? 0}px`);
+    update();
+    const observer = new ResizeObserver(update);
+    if (appHeader) observer.observe(appHeader);
+    return () => observer.disconnect();
+  }, [framed]);
   useLayoutEffect(() => {
     const container = host.parentElement!;
     container.dataset.workspaceMode = workspace;
@@ -47,13 +57,13 @@ function DesktopEditor({ host, workspace, navigationBlocked, onSaveShortcut, chi
   }, [host, workspace, returnFocus]);
   return createPortal(<WorkspaceContext.Provider value={true}>
     <section ref={panel} role="dialog" aria-modal="false" aria-labelledby={labelledBy} aria-describedby={describedBy}
-      className={`zc-workspace-editor is-${workspace}${panelClassName ? ` ${panelClassName}` : ''}`} style={{ ...panelStyle, width: '100%', maxWidth: undefined, maxHeight: undefined, height: 'auto', overflow: 'visible', padding: 'var(--sp-5)', borderRadius: 'var(--r-md)', boxShadow: 'none' }}
+      className={`zc-workspace-editor is-${workspace}${framed ? ' has-frame' : ''}${panelClassName ? ` ${panelClassName}` : ''}`} style={{ ...panelStyle, width: '100%', maxWidth: undefined, maxHeight: framed ? 'calc(100dvh - var(--workspace-header-height, 96px) - var(--sp-5) * 2)' : undefined, height: 'auto', overflow: framed ? 'hidden' : 'visible', padding: framed ? 0 : 'var(--sp-5)', borderRadius: 'var(--r-md)', boxShadow: 'none' }}
       onKeyDown={(event) => {
         if (event.defaultPrevented || event.nativeEvent.isComposing || event.target instanceof Element && event.target.closest('[aria-modal="true"]')) return;
         if (event.key === 'Escape' && !dismissDisabled) { event.preventDefault(); onDismiss?.(); }
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !dismissDisabled && onSaveShortcut) { event.preventDefault(); onSaveShortcut(); }
       }}>
-      {children}
+      <DialogContent header={header} footer={footer}>{children}</DialogContent>
     </section>
   </WorkspaceContext.Provider>, host);
 }

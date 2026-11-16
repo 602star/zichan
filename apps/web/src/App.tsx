@@ -52,7 +52,7 @@ import { adoptUnlockedLedgerKeyEnvelope, runtimeLedgerCryptoSession } from './le
 import { accountProtection } from './account-protection.js';
 import { isTauriRuntime } from './tauri.js';
 import type { SettingsSection } from './screens/Settings.js';
-import { ArrowLeftRight, BarChart3, BookOpen, Ellipsis, Gamepad2, Grid2X2, History as HistoryIcon, LayoutDashboard, List, Package, Settings2, UserRound, Cloud, Wallet, CalendarDays, ReceiptText, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react';
+import { X, ArrowLeftRight, BarChart3, BookOpen, Ellipsis, Gamepad2, Grid2X2, History as HistoryIcon, LayoutDashboard, List, Package, Settings2, UserRound, Cloud, Wallet, CalendarDays, ReceiptText, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react';
 import {
   NAVIGATION_ITEMS,
   navigationLabel,
@@ -1035,9 +1035,11 @@ function MobileNavigation(props: {
           backdropClassName="zc-mobile-drawer-backdrop"
           backdropStyle={{ zIndex: 80 }}
           panelClassName="zc-mobile-drawer"
-        >
-            <div className="zc-mobile-drawer-handle" />
-            <div className="zc-mobile-drawer-head"><b id={drawerTitleId}>更多功能</b><button type="button" data-dialog-initial-focus aria-label="关闭更多菜单" onClick={() => props.onMoreOpen(false)}>×</button></div>
+
+      header={<> <div className="zc-mobile-drawer-handle" /><div className="zc-mobile-drawer-head"><b id={drawerTitleId}>更多功能</b><button type="button" data-dialog-initial-focus aria-label="关闭更多菜单" onClick={() => props.onMoreOpen(false)}><X size={20} aria-hidden="true" /></button></div> </>}
+    >
+
+
             <TaskList title="查看与计划" items={[
               { label: '报表', note: '收支、资产、物品与游戏', icon: BarChart3, onClick: () => props.onNavigate('reports') },
               { label: '预算', note: '本月计划与剩余额度', onClick: () => navigateTo({ screen: 'transactions', tab: 'budget' }) },

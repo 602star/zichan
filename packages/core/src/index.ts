@@ -231,3 +231,4 @@ export type {
 export { isDefaultAccount, isSystemDefaultAccount, isLegacyExternalAccount, defaultTransactionAccount, accountBalanceTiming, accountTransactionPostings, accountOpeningPostings, accountChainPostings } from './account-ledger.js';
 export { MAX_ENTITY_ICON_LENGTH, isEntityIconImage, isValidEntityIcon } from './entity-icon.js';
 export * from './fixed-operating-cost.js';
+export * from './fixed-lifecycle.js';

@@ -21,6 +21,21 @@ async function setup() {
   return { store, currency, item, account, expense, save };
 }
 describe('使用费用资金处理与计量历史', () => {
+  it('stores paid service coverage, creates one payment and restores it with its original service period', async () => {
+    const { store, item, account, expense, save } = await setup();
+    try {
+      const service = { provider: '监控云服务商', fromDate: '2026-02-01', toDate: '2027-01-31' };
+      const saved = await save({ mode: 'fee', name: '监控云存储年费', unit: '期', source: 'receipt', billedAmount: '99', service }, '2026-01-02',
+        { mode: 'create_transaction', sourceAmount: '99', createTransaction: { categoryId: expense.id, accountId: account.id } });
+      expect(saved.transaction?.amount).toBe('99'); expect(await store.transactions.list()).toHaveLength(1);
+      expect(parseFixedOperatingCost(saved.event.operatingCostJson)?.service).toEqual(service);
+      expect(fixedAssetCost(item, await store.fixedAssetEvents.list(), '2026-01-02').netCost).toBe('99');
+      const deleted = await deleteFixedAssetEvent(store, saved.event); await restoreDeletedFixedAssetEvent(store, deleted);
+      expect(await store.transactions.list()).toHaveLength(1);
+      expect(parseFixedOperatingCost((await store.fixedAssetEvents.get(saved.event.id))?.operatingCostJson)?.service).toEqual(service);
+      expect(await checkConsistency(store)).toEqual([]);
+    } finally { await store.close(); }
+  });
   it('also guards persistent audit undo when later meter readings depend on the operation', async () => {
     const { store, save } = await setup();
     try {

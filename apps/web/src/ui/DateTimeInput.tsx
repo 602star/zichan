@@ -39,8 +39,10 @@ export function DateTimeInput({ type, value, onChange, ...props }: Props) {
       }}>
       <span>{value || (type === 'date' ? '选择日期' : '选择时间')}</span><Icon size={18} aria-hidden="true" />
     </button>
-    {open && <DialogShell labelledBy={titleId} onDismiss={() => setOpen(false)} panelClassName="zc-datetime-panel" backdropClassName="zc-backdrop zc-datetime-backdrop">
-      <div className="zc-datetime-heading"><h2 id={titleId}>选择{label}</h2><button type="button" className="zc-btn" data-dialog-initial-focus onClick={() => setOpen(false)}>取消</button></div>
+    {open && <DialogShell labelledBy={titleId} onDismiss={() => setOpen(false)} panelClassName="zc-datetime-panel" backdropClassName="zc-backdrop zc-datetime-backdrop"
+      header={<> <div className="zc-datetime-heading"><h2 id={titleId}>选择{label}</h2><button type="button" className="zc-btn" data-dialog-initial-focus onClick={() => setOpen(false)}>取消</button></div> </>}
+    >
+
       {type === 'date'
         ? <DateSelection value={value} onChoose={choose} required={props.required} min={props.min} max={props.max} />
         : <TimeSelection value={value} onChoose={choose} required={props.required} seconds={String(props.step) === '1'} />}

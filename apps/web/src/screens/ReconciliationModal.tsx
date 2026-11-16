@@ -129,9 +129,18 @@ export function ReconciliationModal(props: Props) {
 
   return <WorkspaceDialog workspace="page" navigationBlocked={dirty || busy} labelledBy={titleId} onDismiss={requestClose} dismissDisabled={busy}
     panelClassName="zc-entity-modal zc-reconciliation-modal"
-    panelStyle={{ width: 'min(1120px, calc(100vw - 24px))', maxHeight: '92dvh', overflow: 'hidden', padding: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}>
-    <div className="zc-reconciliation-head"><div><h2 id={titleId}>{session ? '对账详情' : '核对账单'}</h2><p className="zc-caption">对照银行或钱包账单确认已有流水，不会再次记录同一笔收支。</p></div>
+    panelStyle={{ width: 'min(1120px, calc(100vw - 24px))', maxHeight: '92dvh', overflow: 'hidden', padding: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}
+      header={<>
+        <div className="zc-reconciliation-head"><div><h2 id={titleId}>{session ? '对账详情' : '核对账单'}</h2><p className="zc-caption">对照银行或钱包账单确认已有流水，不会再次记录同一笔收支。</p></div>
       <button type="button" className="zc-btn zc-btn--icon" aria-label="关闭" onClick={requestClose} disabled={busy}><X size={20} aria-hidden="true" /></button></div>
+      </>}
+      footer={<>
+        <div className="zc-reconciliation-footer"><p className="zc-caption">{session ? '已核对流水受保护；更正时须从该账户、币种的最新一期开始撤销。' : createAdjustment ? `完成时将新增 ${money(difference!.abs().toString())} 的余额调整。` : '完成仅保存核对结果，不新增收支。'}</p>
+      <div className="zc-mobile-shortcuts">{session && <button type="button" className="zc-btn zc-btn--danger" disabled={busy || props.readOnly} onClick={() => setUndoOpen(true)}>撤销本次对账</button>}<button type="button" className="zc-btn" disabled={busy} onClick={requestClose}>关闭</button>
+        {!session && <button type="button" className="zc-btn zc-btn--primary" disabled={!canFinish} onClick={() => void finish()}>{busy ? '正在完成…' : createAdjustment ? '创建调整并完成对账' : '完成对账'}</button>}</div></div>
+      </>}
+    >
+
     <div className="zc-reconciliation-body">
       <CardGroup><h3>填写实际余额</h3><p className="zc-caption">填写银行或钱包在所选截止日的余额。信用卡账单欠款填负数，不填可用额度；每次只核对一个账户的一种币种。</p>
         <fieldset className="zc-reconciliation-inputs" disabled={busy || !!session || props.readOnly}>
@@ -187,9 +196,7 @@ export function ReconciliationModal(props: Props) {
       <label className="zc-field zc-reconciliation-note">备注<textarea className="zc-input" aria-label="备注" disabled={busy || !!session || props.readOnly} value={note} onChange={(event) => setNote(event.target.value)} placeholder="可记录账单来源或差额原因" /></label>
       {error && <CardAlert tone="danger" role="alert">{error}</CardAlert>}
     </div>
-    <div className="zc-reconciliation-footer"><p className="zc-caption">{session ? '已核对流水受保护；更正时须从该账户、币种的最新一期开始撤销。' : createAdjustment ? `完成时将新增 ${money(difference!.abs().toString())} 的余额调整。` : '完成仅保存核对结果，不新增收支。'}</p>
-      <div className="zc-mobile-shortcuts">{session && <button type="button" className="zc-btn zc-btn--danger" disabled={busy || props.readOnly} onClick={() => setUndoOpen(true)}>撤销本次对账</button>}<button type="button" className="zc-btn" disabled={busy} onClick={requestClose}>关闭</button>
-        {!session && <button type="button" className="zc-btn zc-btn--primary" disabled={!canFinish} onClick={() => void finish()}>{busy ? '正在完成…' : createAdjustment ? '创建调整并完成对账' : '完成对账'}</button>}</div></div>
+
     {discardOpen && <ConfirmDialog title="关闭未完成的对账" confirmLabel="放弃本次核对" cancelLabel="继续核对" onCancel={() => setDiscardOpen(false)} onConfirm={props.onClose}>输入和勾选尚未保存。放弃后不会改动流水、账户余额或已完成的对账。</ConfirmDialog>}
     {undoOpen && session && <ConfirmDialog title="撤销本次对账" confirmLabel="确认撤销" cancelLabel="取消" tone="danger" busy={busy} onCancel={() => setUndoOpen(false)} onConfirm={undo}>撤销 {session.statementDate} 的核对结果；相关流水恢复对账前状态，本次余额调整（如有）同时作废。</ConfirmDialog>}
   </WorkspaceDialog>;

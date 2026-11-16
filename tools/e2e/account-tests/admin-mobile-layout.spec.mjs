@@ -138,7 +138,7 @@ test('management pages fit phone and iPad touch viewports', async ({ page }) => 
           expect(calendar.rows[index].left).toBeGreaterThanOrEqual(calendar.rows[index - 1].right - 1);
         }
       }
-      await page.getByRole('button', { name: '起始日期' }).click();
+      await page.getByRole('dialog', { name: '起始日期', exact: true }).getByRole('button', { name: '关闭日期选择', exact: true }).click();
     }
     for (const viewport of [{ width: 1920, height: 1080 }, { width: 2560, height: 1440 }, { width: 3840, height: 2160 }]) {
       await page.setViewportSize(viewport);

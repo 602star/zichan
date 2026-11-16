@@ -80,6 +80,8 @@ export function shouldRestoreDialogFocus(
 
 export interface DialogShellProps {
   children: ReactNode;
+  header?: ReactNode;
+  footer?: ReactNode;
   labelledBy: string;
   describedBy?: string;
   onDismiss?: () => void;
@@ -94,6 +96,20 @@ export interface DialogShellProps {
   panelStyle?: CSSProperties;
 }
 
+/** The surface clips its corners; only the middle pane scrolls. */
+export function DialogContent({ header, footer, children }: Pick<DialogShellProps, 'header' | 'footer' | 'children'>) {
+  if (header == null && footer == null) return <>{children}</>;
+  return <>
+    {header != null && <div className="zc-dialog-head">{header}</div>}
+    <div className="zc-dialog-body">{children}</div>
+    {footer != null && <div className="zc-dialog-foot">{footer}</div>}
+  </>;
+}
+
+function cssLimit(value: CSSProperties['maxHeight'] | CSSProperties['maxWidth']): string {
+  return typeof value === 'number' ? `${value}px` : value && !['none', 'initial', 'unset'].includes(value) ? value : '100%';
+}
+
 /**
  * Shared modal foundation. Dialogs render into the app's themed portal host so
  * they are not clipped by page overflow, while React's tree still preserves
@@ -102,6 +118,8 @@ export interface DialogShellProps {
  */
 export function DialogShell({
   children,
+  header,
+  footer,
   labelledBy,
   describedBy,
   onDismiss,
@@ -115,6 +133,7 @@ export function DialogShell({
   backdropStyle,
   panelStyle,
 }: DialogShellProps) {
+  const framed = header != null || footer != null;
   const parentLayer = useContext(DialogLayerContext);
   const requestedLayer = typeof backdropStyle?.zIndex === 'number' ? backdropStyle.zIndex : 50;
   const layer = Math.max(parentLayer + 10, requestedLayer);
@@ -214,16 +233,20 @@ export function DialogShell({
       >
         <div
           ref={panelRef}
-          className={panelClassName}
+          className={['zc-dialog-panel', framed && 'has-frame', panelClassName].filter(Boolean).join(' ')}
           role="dialog"
           aria-modal="true"
           aria-labelledby={labelledBy}
           aria-describedby={describedBy}
           tabIndex={-1}
-          style={panelStyle}
+          style={{ ...panelStyle,
+            maxWidth: `min(${cssLimit(panelStyle?.maxWidth)}, 100%)`,
+            maxHeight: `min(${cssLimit(panelStyle?.maxHeight)}, calc(100dvh - var(--dialog-outer-top, 24px) - var(--dialog-outer-bottom, 24px)))`,
+            ...(framed ? { padding: 0, overflow: 'hidden' } : {}),
+          }}
           onKeyDown={onKeyDown}
         >
-          {children}
+          <DialogContent header={header} footer={footer}>{children}</DialogContent>
         </div>
       </div>
     </DialogLayerContext.Provider>,

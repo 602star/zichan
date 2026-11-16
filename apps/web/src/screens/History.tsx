@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCompactView } from '../ui/useCompactView.js';
 import { MobilePageHeader, useMobileSection } from '../ui/MobilePage.js';
-import { addDays, isDateInRange, localToday, type AuditBatch, type OperationLogEntry, type OperationType, type SyncConflictResolution, type Transaction } from '@zichan/core';
+import { FIXED_STATUS_LABELS, FIXED_EVENT_LABELS, addDays, isDateInRange, localToday, type AuditBatch, type OperationLogEntry, type OperationType, type SyncConflictResolution, type Transaction } from '@zichan/core';
 import {
   restoreConversion,
   restoreTransaction,
@@ -87,7 +87,7 @@ const VALUE_LABELS: Record<string, Record<string, string>> = {
     closed: '已关闭',
     sold: '已售出',
     scrapped: '已报废',
-    stored: '闲置/库存',
+    stored: '闲置',
     retired: '已清退',
     gifted: '已赠出',
   },
@@ -533,8 +533,8 @@ function OperationDetail({ log, snap, actionBusy, actionMessage, onReverse }: { 
       <DetailHeader title={`${OP_LABEL[log.op]}「${historyObjectName(log)}」`} sub={`${formatTime(log.at)} · ${SOURCE_LABEL[log.source ?? 'local'] ?? log.source ?? '本地'}`} />
       {reversible && <button type="button" disabled={actionBusy} onClick={() => void onReverse(log)} className="zc-btn" style={{ borderColor: 'var(--accent)', color: 'var(--accent)', marginBottom: 'var(--sp-3)' }}>{actionBusy ? '处理中…' : '撤销此操作'}</button>}
       {actionMessage && <div style={{ color: actionMessage === '已完成反向操作。' ? 'var(--positive)' : 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginBottom: 'var(--sp-3)' }}>{actionMessage}</div>}
-      {Object.keys(visibleDiff).length > 0 && <DiffTable diff={visibleDiff} snap={snap} />}
-      {hasMoreDiff && <details className="zc-history-expand"><summary>查看全部 {Object.keys(diff).length} 项字段变化</summary><DiffTable diff={diff} snap={snap} /></details>}
+      {Object.keys(visibleDiff).length > 0 && <DiffTable diff={visibleDiff} snap={snap} entityType={log.entityType} />}
+      {hasMoreDiff && <details className="zc-history-expand"><summary>查看全部 {Object.keys(diff).length} 项字段变化</summary><DiffTable diff={diff} snap={snap} entityType={log.entityType} /></details>}
       {Object.keys(diff).length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)' }}>没有记录到字段变化</div>}
       <details className="zc-history-expand"><summary>技术信息</summary><div style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)', overflowWrap: 'anywhere' }}>设备：{log.deviceId ?? '未知设备'} · 对象：{entityLabel(log.entityType)}</div></details>
       <JsonBlock title="操作后快照" value={log.afterPayload ?? log.payload} />
@@ -584,7 +584,7 @@ function BatchDetail({
       {event.logs.length > 0 && <details className="zc-history-expand"><summary>查看 {event.logs.length} 条具体变更</summary>
         <div className="zc-history-batch-logs">
           {event.logs.map((log) => (
-            <details key={log.id} className="zc-history-expand"><summary>{historyListSummary({ kind: 'operation', id: `op:${log.id}`, at: log.at, log }, snap)}</summary><DiffTable diff={parseDiff(log)} compact snap={snap} /></details>
+            <details key={log.id} className="zc-history-expand"><summary>{historyListSummary({ kind: 'operation', id: `op:${log.id}`, at: log.at, log }, snap)}</summary><DiffTable diff={parseDiff(log)} compact snap={snap} entityType={log.entityType} /></details>
           ))}
         </div>
       </details>}
@@ -629,7 +629,7 @@ function KeyTags({ keys }: { keys: string[] }) {
   );
 }
 
-function DiffTable({ diff, compact = false, snap }: { diff: Record<string, { before: unknown; after: unknown }>; compact?: boolean; snap: Snapshot | null }) {
+function DiffTable({ diff, compact = false, snap, entityType }: { entityType?: string; diff: Record<string, { before: unknown; after: unknown }>; compact?: boolean; snap: Snapshot | null }) {
   const rows = Object.entries(diff);
   if (!rows.length) return <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)' }}>没有业务字段变化</div>;
   return (
@@ -637,7 +637,7 @@ function DiffTable({ diff, compact = false, snap }: { diff: Record<string, { bef
       {rows.map(([key, value]) => (
         <div className="zc-history-diff-row" key={key}>
           <div className="zc-history-diff-label">{fieldLabel(key)}</div>
-          <div className="zc-history-diff-values"><span>{shortValue(value.before, key, snap)}</span><span aria-hidden="true">→</span><span>{shortValue(value.after, key, snap)}</span></div>
+          <div className="zc-history-diff-values"><span>{shortValue(value.before, key, snap, entityType)}</span><span aria-hidden="true">→</span><span>{shortValue(value.after, key, snap, entityType)}</span></div>
         </div>
       ))}
     </div>
@@ -791,8 +791,8 @@ function historyListSummary(event: HistoryEvent, snap: Snapshot | null): string 
   });
   if (!key) return action;
   const change = diff[key]!;
-  const before = shortValue(change.before, key, snap).slice(0, 24);
-  const after = shortValue(change.after, key, snap).slice(0, 24);
+  const before = shortValue(change.before, key, snap, log.entityType).slice(0, 24);
+  const after = shortValue(change.after, key, snap, log.entityType).slice(0, 24);
   return `${action} · ${fieldLabel(key)} ${before} → ${after}`;
 }
 
@@ -849,10 +849,12 @@ function nameById<T extends { id: string }>(rows: T[] | undefined, id: unknown, 
   return row ? pick(row) : undefined;
 }
 
-function humanValue(key: string, value: unknown, snap: Snapshot | null): string {
+function humanValue(key: string, value: unknown, snap: Snapshot | null, entityType = ''): string {
   if (value === undefined || value === null || value === '') return '空';
-  if (Array.isArray(value)) return value.map((v) => humanValue(key, v, snap)).join(' / ') || '空';
+  if (Array.isArray(value)) return value.map((v) => humanValue(key, v, snap, entityType)).join(' / ') || '空';
   if (typeof value === 'boolean') return value ? '是' : '否';
+  if (key === 'status' && entityType === 'fixed_asset' && String(value) in FIXED_STATUS_LABELS) return FIXED_STATUS_LABELS[value as keyof typeof FIXED_STATUS_LABELS];
+  if (key === 'type' && entityType === 'fixed_asset_event' && String(value) in FIXED_EVENT_LABELS) return FIXED_EVENT_LABELS[value as keyof typeof FIXED_EVENT_LABELS];
   if (VALUE_LABELS[key]?.[String(value)]) return VALUE_LABELS[key]![String(value)]!;
   if (!snap) return typeof value === 'string' ? value : JSON.stringify(value);
   const id = String(value);
@@ -887,9 +889,9 @@ function prettyJson(value: string): string {
   return typeof parsed === 'string' ? parsed : JSON.stringify(parsed, null, 2);
 }
 
-function shortValue(value: unknown, key = '', snap: Snapshot | null = null): string {
+function shortValue(value: unknown, key = '', snap: Snapshot | null = null, entityType = ''): string {
   if (value === undefined || value === null || value === '') return '空';
-  const text = humanValue(key, value, snap);
+  const text = humanValue(key, value, snap, entityType);
   return text.length > 120 ? `${text.slice(0, 120)}...` : text;
 }
 

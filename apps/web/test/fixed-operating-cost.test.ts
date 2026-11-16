@@ -5,6 +5,19 @@ import { fixedOperatingCostForm } from '../src/fixed-operating-form.js';
 import { buildFixed } from '../src/selectors/fixed.js';
 
 describe('使用费用录入与物品成本展示', () => {
+  it('records cloud subscriptions with coverage dates, preserves the period while editing, and does not meter them', () => {
+    const snap = makeSnapshot(); const item = snap.fixedAssets[0]!;
+    const spec = fixedOperatingCostForm(snap, item.id, { mode: 'fee', service: true });
+    const values = { mode: 'fee', service: 'true', name: '监控云存储', unit: '期', source: 'receipt', date: '2026-08-01', provider: '云服务商', serviceFrom: '2026-08-01', serviceTo: '2027-07-31', billedAmount: '99', cashflowMode: 'record_only' };
+    const event = spec.fromValues(values);
+    expect(event.amountBase).toBe('99.00');
+    expect(spec.toValues(event)).toMatchObject({ service: 'true', serviceFrom: '2026-08-01', serviceTo: '2027-07-31' });
+    expect(spec.summary?.(values)).toContain('付款日');
+    expect(spec.validate?.({ ...values, serviceTo: '2026-07-31' })).toContain('起止日期');
+    expect(spec.validate?.({ ...values, serviceTo: '' })).toContain('起止日期');
+    snap.fixedEvents.push(event);
+    expect(buildFixed(snap, '2026-08-01').find((row) => row.id === item.id)?.timeline.find((row) => row.id === event.id)?.detail).toContain('服务期间 2026-08-01 至 2027-07-31');
+  });
   it('previews a charging bill total without adding the service fee twice', () => {
     const snap = makeSnapshot(); const item = snap.fixedAssets[0]!;
     const spec = fixedOperatingCostForm(snap, item.id);

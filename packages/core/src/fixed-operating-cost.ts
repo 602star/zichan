@@ -9,6 +9,8 @@ export interface FixedOperatingCost {
   name: string;
   unit: string;
   source: 'manual' | 'device' | 'meter' | 'receipt';
+  /** A paid service period, such as cloud storage, software, insurance or extended warranty. */
+  service?: { provider?: string; fromDate?: string; toDate?: string };
   meterId?: string;
   sequence?: number;
   previousEventId?: string;
@@ -44,6 +46,12 @@ export function parseFixedOperatingCost(json: string | undefined): FixedOperatin
   }
   if (isFixedMeterMode(value.mode) && (!value.meterId?.trim() || !Number.isSafeInteger(value.sequence) || value.sequence! < 1)) {
     throw new Error('计量记录缺少计量项目或顺序');
+  }
+  if (value.service) {
+    if (value.mode !== 'fee' || typeof value.service !== 'object' || Array.isArray(value.service)
+      || value.service.provider !== undefined && typeof value.service.provider !== 'string') throw new Error('服务订阅请使用直接记费用');
+    const { fromDate, toDate } = value.service;
+    if ((fromDate || toDate) && (!isValidDay(fromDate ?? '') || !isValidDay(toDate ?? '') || fromDate! > toDate!)) throw new Error('请填写完整且有效的服务起止日期');
   }
   return value;
 }

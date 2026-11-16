@@ -1,3 +1,4 @@
+import { X } from 'lucide-react';
 import { EntityIcon } from './EntityIcon.js';
 import { useEffect, useState, useId } from 'react';
 import { DialogShell } from './DialogShell.js';
@@ -98,8 +99,10 @@ export function ExistingPayeePicker({ payees, value, onChange, label, emptyLabel
       {selected && <EntityIcon icon={selected.icon} platformId={selected.id} platformName={selected.name} fallback="store" />}
       <span>{value === emptyValue ? emptyLabel : selected?.name ?? (value ? `历史对象 ${value}` : clearLabel ?? emptyLabel)}</span><span aria-hidden="true">▾</span>
     </button>
-    {open && <DialogShell labelledBy={titleId} onDismiss={() => setOpen(false)} backdropStyle={{ zIndex: 1300 }} panelClassName="zc-existing-payee-dialog">
-      <div className="zc-existing-payee-heading"><b id={titleId}>{label}</b><button type="button" className="zc-btn" aria-label="关闭交易对象选择" onClick={() => setOpen(false)}>×</button></div>
+    {open && <DialogShell labelledBy={titleId} onDismiss={() => setOpen(false)} backdropStyle={{ zIndex: 1300 }} panelClassName="zc-existing-payee-dialog"
+    header={<> <div className="zc-existing-payee-heading"><b id={titleId}>{label}</b><button type="button" className="zc-btn" aria-label="关闭交易对象选择" onClick={() => setOpen(false)}><X size={20} aria-hidden="true" /></button></div> </>}
+  >
+
       <input className="zc-input" aria-label="搜索已有交易对象" placeholder="搜索名称或别名" value={query} onChange={(event) => setQuery(event.target.value)} />
       <div role="listbox" aria-label="已有交易对象" className="zc-existing-payee-options">
         <button type="button" role="option" aria-selected={value === emptyValue} onClick={() => choose(emptyValue)}>{emptyLabel}</button>

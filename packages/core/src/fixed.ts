@@ -13,7 +13,7 @@ import type {
   FixedUsageUnit,
 } from './types.js';
 
-const COST_TYPES = new Set<FixedEventType>(['purchase', 'repair', 'upgrade']);
+const COST_TYPES = new Set<FixedEventType>(['purchase', 'repair', 'maintenance', 'upgrade']);
 const TERMINAL_TYPES = new Set<FixedEventType>(['sale', 'scrap', 'retire', 'gift']);
 
 export interface FixedUsageCost {
@@ -93,7 +93,7 @@ export function fixedAssetCost(
     .filter((item) => item.fixedAssetId === asset.id && !item.isDeleted && item.purchaseDate <= asOf);
   const bucket = (type: FixedEventType) => sum(evs.filter((event) => event.type === type).map((event) => event.amountBase));
   const purchase = bucket('purchase');
-  const repair = bucket('repair');
+  const repair = bucket('repair').plus(bucket('maintenance'));
   const upgrade = bucket('upgrade');
   const consumable = sum(consumables.map((item) => item.amountBase));
   const eventCosts = sum(evs.filter((event) => COST_TYPES.has(event.type)).map((event) => event.amountBase));

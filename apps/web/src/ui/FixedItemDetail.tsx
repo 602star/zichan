@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { D, dayOfInstant, fixedLocationMoves, type Attachment, type FixedAsset, type FixedAssetConsumable, type FixedAssetEvent, type FixedAssetGoal, type FixedAssetUsageMetric } from '@zichan/core';
+import { D, dayOfInstant, fixedLocationMoves, type Attachment, type FixedAsset, type FixedAssetConsumable, type FixedAssetEvent, type FixedEventType, type FixedAssetGoal, type FixedAssetUsageMetric } from '@zichan/core';
 import type { FixedCardVM, FixedTimelineVM } from '../selectors/fixed.js';
 import { amount, money } from '../format.js';
 import { Card, CardAlert, CardEmpty, CardFact, CardGroup, CardMetric } from './Card.js';
 import { MobilePageHeader } from './MobilePage.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
 import { useTabSet } from './useTabSet.js';
+import { FixedEventActions } from './FixedEventActions.js';
 import { FixedOperatingCosts } from './FixedOperatingCosts.js';
 import { FixedRecordHistory } from './FixedRecordHistory.js';
 import type { FixedRecordKind } from '../selectors/fixed-records.js';
@@ -13,7 +14,7 @@ import type { FixedOperatingPreset } from '../fixed-operating-form.js';
 
 export interface FixedItemActions {
   onEdit: (asset: FixedAsset) => void;
-  onEvent: (assetId: string) => void;
+  onEvent: (assetId: string, type?: FixedEventType) => void;
   onAddComponent: (hostId: string, bundled: boolean) => void;
   onPlacement: (assetId: string) => void;
   onConvertUpgrade: (host: FixedAsset, event: FixedAssetEvent) => void;
@@ -34,6 +35,7 @@ export function FixedItemDetail({ item, items, attachments, actions, onBack, onO
   item: FixedCardVM; items: FixedCardVM[]; attachments: Attachment[]; actions: FixedItemActions;
   onBack: () => void; onOpen: (item: FixedCardVM) => void; onAttachment: (attachment: Attachment) => void; initialTab?: DetailTab; timezone?: string;
 }) {
+  const [showEvents, setShowEvents] = useState(false);
   const [tab, setTab] = useState<DetailTab>(initialTab);
   const [historyKind, setHistoryKind] = useState<FixedRecordKind>('all');
   const historyTarget = useRef(false);
@@ -58,11 +60,13 @@ export function FixedItemDetail({ item, items, attachments, actions, onBack, onO
   const history = fixedLocationMoves(item.raw.locationMovesJson).slice().reverse();
   return <div className="zc-fixed-item-detail">
     <MobilePageHeader title={item.name} onBack={onBack} backLabel="返回物品" />
+    {item.raw.archivedAt && <CardAlert>此档案已归档。可在物品清单勾选“查看已归档”并恢复档案；使用状态及历史成本保留。</CardAlert>}
     <div className="zc-fixed-toolbar"><p className="zc-caption">{item.categoryParent} / {item.category} · {item.status} · {item.locationPath}</p><div className="zc-fixed-actions">
-      {!item.sold && primary && <button type="button" className="zc-btn zc-btn--primary" onClick={() => actions.onUsage(primary.raw)}>记录使用</button>}
+      {canPlace && primary && <button type="button" className="zc-btn zc-btn--primary" onClick={() => actions.onUsage(primary.raw)}>记录使用</button>}
       <button type="button" className="zc-btn" onClick={() => actions.onOperating(item.id)}>记录使用费用</button>
-      <button type="button" className="zc-btn" onClick={() => actions.onEdit(item.raw)}>编辑资料</button><button type="button" className="zc-btn" onClick={() => actions.onEvent(item.id)}>记录生命周期事件</button>
+      <button type="button" className="zc-btn" onClick={() => actions.onEdit(item.raw)}>编辑资料</button><button type="button" className="zc-btn" onClick={() => setShowEvents(true)}>记录生命周期事件</button>
     </div></div>
+    {showEvents && <FixedEventActions item={item} actions={actions} onClose={() => setShowEvents(false)} />}
     <div className="zc-tabs" role="tablist" aria-label="物品详情">{(Object.keys(tabNames) as DetailTab[]).map((id) => <button type="button" key={id} {...tabs.tabProps(id)} className={tab === id ? 'zc-tab is-active' : 'zc-tab'}>{tabNames[id]}</button>)}</div>
     <div ref={panel} {...tabs.panelProps}>
       {tab === 'overview' && <Card>
@@ -86,8 +90,8 @@ export function FixedItemDetail({ item, items, attachments, actions, onBack, onO
       </Card>}
       {tab === 'parts' && <Card title="配件与耗材">
         <div className="zc-fixed-actions">{canPlace && (item.isComponent ? <button type="button" className="zc-btn" onClick={() => actions.onPlacement(item.id)}>{item.installedIn ? '拆下或转装配件' : '安装配件'}</button> : <><button type="button" className="zc-btn" onClick={() => actions.onAddComponent(item.id, false)}>购入配件</button><button type="button" className="zc-btn" onClick={() => actions.onAddComponent(item.id, true)}>登记原配件</button></>)}<button type="button" className="zc-btn" onClick={() => actions.onConsumable(item.id)}>登记耗材</button></div>
-        <CardGroup><h3>可追踪配件</h3>{!parts.length && <CardEmpty>{item.isComponent ? `当前${item.installedIn ? `安装于 ${item.installedIn}` : '未安装'}` : '还没有关联配件。'}</CardEmpty>}{parts.map((part) => <div className="zc-fixed-location-row" key={part.id}><div><button type="button" className="zc-workspace-link" onClick={() => onOpen(part)}>{part.name}</button><small>{part.installedIn ? `安装于 ${part.installedIn}` : '未安装'} · {part.costOwner ? `费用归属 ${part.costOwner}` : '独立计算费用'}</small></div><button type="button" className="zc-btn" onClick={() => actions.onPlacement(part.id)}>安装与转装</button></div>)}</CardGroup>
-        <CardGroup><h3>耗材</h3>{!item.consumables.length && <CardEmpty>可登记滤芯、刷头等耗材及其寿命阈值。</CardEmpty>}{item.consumables.map((row) => <div className="zc-fixed-location-row" key={row.raw.id}><div><span>{row.raw.name}</span><small>{row.remaining !== undefined ? `预计剩余 ${amount(row.remaining, 2)} ${row.unitLabel ?? ''}` : '未设置寿命指标'} · {cash(row.raw.amountBase)}{row.needsAttention ? ' · 已到提醒阈值' : ''}</small></div><button type="button" className="zc-btn" aria-label={`管理耗材 ${row.raw.name}`} onClick={() => actions.onConsumable(item.id, row.raw)}>管理与更换</button></div>)}</CardGroup>
+        <CardGroup><h3>可追踪配件</h3>{!parts.length && <CardEmpty>{item.isComponent ? `当前${item.installedIn ? `安装于 ${item.installedIn}` : '未安装'}` : '还没有关联配件。'}</CardEmpty>}{parts.map((part) => <div className="zc-fixed-location-row" key={part.id}><div><button type="button" className="zc-workspace-link" onClick={() => onOpen(part)}>{part.name}</button><small>{part.installedIn ? `安装于 ${part.installedIn}` : '未安装'} · {part.status} · {part.costOwner ? `费用归属 ${part.costOwner}` : '独立计算费用'}</small></div><div className="zc-fixed-actions">{['active', 'stored'].includes(part.raw.status) && <button type="button" className="zc-btn" onClick={() => actions.onPlacement(part.id)}>安装与转装</button>}{['active', 'stored'].includes(part.raw.status) && <button type="button" className="zc-btn" onClick={() => actions.onEvent(part.id, 'scrap')}>报废配件</button>}<button type="button" className="zc-btn" onClick={() => onOpen(part)}>{part.sold ? '查看处置记录' : '查看配件'}</button></div></div>)}</CardGroup>
+        <CardGroup><h3>耗材</h3>{!item.consumables.length && <CardEmpty>滤芯、刷头等按寿命更换；无人机电池、可重复拆装的桨叶需要追踪时请购入配件。</CardEmpty>}{item.consumables.map((row) => <div className="zc-fixed-location-row" key={row.raw.id}><div><span>{row.raw.name}</span><small>{row.remaining !== undefined ? `预计剩余 ${amount(row.remaining, 2)} ${row.unitLabel ?? ''}` : '未设置寿命指标'} · {cash(row.raw.amountBase)}{row.needsAttention ? ' · 已到提醒阈值' : ''}</small></div><button type="button" className="zc-btn" aria-label={`管理耗材 ${row.raw.name}`} onClick={() => actions.onConsumable(item.id, row.raw)}>管理与更换</button></div>)}</CardGroup>
         {canPlace && !item.isComponent && <CardGroup><h3>已有升级支出</h3>{item.timeline.filter((entry) => entry.kind === 'event' && (entry.raw as FixedAssetEvent).type === 'upgrade' && D((entry.raw as FixedAssetEvent).amountBase).gt(0)).map((entry) => <button type="button" className="zc-btn" key={entry.id} onClick={() => actions.onConvertUpgrade(item.raw, entry.raw as FixedAssetEvent)}>将 {entry.date} 的升级支出转为配件</button>)}</CardGroup>}
       </Card>}
       {tab === 'history' && <Card title="记录与凭证" action={<button type="button" className="zc-btn" onClick={() => actions.onEdit(item.raw)}>管理图片与凭证</button>}>

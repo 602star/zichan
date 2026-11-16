@@ -13,7 +13,8 @@ export function fixedRecordProject(entry: FixedTimelineVM): string | undefined {
   return data ? JSON.stringify([data.name, data.unit]) : undefined;
 }
 function exactDay(item: FixedCardVM, entry: FixedTimelineVM): boolean {
-  return !(item.raw.purchaseDatePrecision === 'year' && entry.kind === 'event' && 'type' in entry.raw && entry.raw.type === 'purchase');
+  return entry.datePrecision !== 'year' && !(item.raw.purchaseDatePrecision === 'year' && entry.kind === 'event'
+    && 'type' in entry.raw && entry.raw.type === 'purchase' && entry.raw.fixedAssetId === item.id);
 }
 export function fixedRecordMonths(item: FixedCardVM): string[] {
   return [...new Set(item.timeline.filter((entry) => exactDay(item, entry)).map((entry) => entry.date.slice(0, 7)))].sort().reverse();

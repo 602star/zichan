@@ -28,8 +28,27 @@ export function AccountHistoryPanel({ store, accounts, assets, categories, timeZ
   const visible = rows.filter((t) => (!category || t.category === category) && (!from || t.date >= from) && (!to || t.date <= to) && `${t.description ?? ''} ${categoryLabel(t.category, categories)} ${t.amount}`.includes(filter));
   const input = rows.filter((t) => selected[t.id]).map((t) => ({ id: t.id, version: t.version, timing: timing[t.id] }));
   async function run(action: () => Promise<void>) { setBusy(true); setError(''); try { await action(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } }
-  return <DialogShell labelledBy={title} onDismiss={onClose} dismissDisabled={busy} panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', width: 'min(760px, calc(100vw - 24px))', maxHeight: '90dvh', overflow: 'auto', padding: 24 }}>
-    <h2 id={title}>整理以前的记录</h2><p className="zc-meta">选择确定来自这个账户的记录。余额起点之前只补归属，之后正常计算余额；收支总额不会重复增加。</p>
+  return <DialogShell labelledBy={title} onDismiss={onClose} dismissDisabled={busy} panelStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', width: 'min(760px, calc(100vw - 24px))', maxHeight: '90dvh', overflow: 'auto', padding: 24 }}
+    header={<> <h2 id={title}>整理以前的记录</h2> </>}
+    footer={<> <div style={{ display: 'flex', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
+      {!preview ? <button className="zc-btn zc-btn--primary" disabled={busy || !input.length || !target} onClick={() => void run(async () => setPreview(await previewAccountAssignment(store, target, input)))}>预览 {input.length} 笔调整</button> : <button className="zc-btn zc-btn--primary" disabled={busy} onClick={() => void run(async () => {
+        const result = await assignTransactionAccounts(store, target, input, preview.targetVersion);
+        const saved = result.changes.map((c, index) => ({ before: c.before, version: result.saved[index]!.transaction.version }));
+        setUndo(saved); setPreview(null); setSelected({}); setNotice(`已整理 ${saved.length} 笔记录`); await reload(); onChanged();
+      })}>确认整理</button>}
+      {undo && <button className="zc-btn" disabled={busy} onClick={() => void run(async () => {
+        await store.runInAuditBatch('撤销账户归属整理', async (tx) => { for (const item of undo) {
+          const current = await tx.transactions.get(item.before.id);
+          if (!current || current.version !== item.version) throw new Error('记录后来已变化，请刷新后单独调整');
+          await saveTransactionAggregate(tx, { transaction: { ...item.before, version: current.version }, expectedVersion: current.version,
+            splits: await tx.transactionSplits.list({ where: { transactionId: current.id } }) });
+        } });
+        setUndo(null); setNotice('已撤销整理'); await reload(); onChanged();
+      })}>撤销刚才的整理</button>}
+      <button className="zc-btn" disabled={busy} onClick={onClose}>完成</button>
+    </div> </>}
+  >
+    <p className="zc-meta">选择确定来自这个账户的记录。余额起点之前只补归属，之后正常计算余额；收支总额不会重复增加。</p>
     <label>归入账户<select className="zc-select" value={target} onChange={(e) => { setTarget(e.target.value); setTiming({}); setPreview(null); }}>{funds.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
     {account?.balanceStartAt && <p>余额起点：{new Date(account.balanceStartAt).toLocaleString('zh-CN', { timeZone })} · {account.openingBalance} {assets.find((a) => a.id === account.openingAssetId)?.code}</p>}
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}><input aria-label="筛选历史记录" className="zc-input" placeholder="备注、分类或金额" value={filter} onChange={(e) => setFilter(e.target.value)} /><input aria-label="开始日期" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /><input aria-label="结束日期" type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
@@ -47,22 +66,6 @@ export function AccountHistoryPanel({ store, accounts, assets, categories, timeZ
     </div>)}</div>
     {notice && <p role="status">{notice}</p>}{error && <p role="alert" style={{ color: 'var(--negative)' }}>{error}</p>}
     {preview && <div role="status"><p>将整理 {preview.changes.length} 笔，收支总额不变。</p>{Object.entries(preview.impacts).filter(([, value]) => !D(value).isZero()).map(([key, value]) => { const [id, asset] = key.split('|'); return <p key={key}>{accounts.find((a) => a.id === id)?.name}余额变化：{D(value).isPositive() ? '+' : ''}{value} {assets.find((a) => a.id === asset)?.code}</p>; })}{Object.values(preview.impacts).every((v) => D(v).isZero()) && <p>这些记录只补充账户归属，当前余额不变。</p>}</div>}
-    <div style={{ display: 'flex', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
-      {!preview ? <button className="zc-btn zc-btn--primary" disabled={busy || !input.length || !target} onClick={() => void run(async () => setPreview(await previewAccountAssignment(store, target, input)))}>预览 {input.length} 笔调整</button> : <button className="zc-btn zc-btn--primary" disabled={busy} onClick={() => void run(async () => {
-        const result = await assignTransactionAccounts(store, target, input, preview.targetVersion);
-        const saved = result.changes.map((c, index) => ({ before: c.before, version: result.saved[index]!.transaction.version }));
-        setUndo(saved); setPreview(null); setSelected({}); setNotice(`已整理 ${saved.length} 笔记录`); await reload(); onChanged();
-      })}>确认整理</button>}
-      {undo && <button className="zc-btn" disabled={busy} onClick={() => void run(async () => {
-        await store.runInAuditBatch('撤销账户归属整理', async (tx) => { for (const item of undo) {
-          const current = await tx.transactions.get(item.before.id);
-          if (!current || current.version !== item.version) throw new Error('记录后来已变化，请刷新后单独调整');
-          await saveTransactionAggregate(tx, { transaction: { ...item.before, version: current.version }, expectedVersion: current.version,
-            splits: await tx.transactionSplits.list({ where: { transactionId: current.id } }) });
-        } });
-        setUndo(null); setNotice('已撤销整理'); await reload(); onChanged();
-      })}>撤销刚才的整理</button>}
-      <button className="zc-btn" disabled={busy} onClick={onClose}>完成</button>
-    </div>
+
   </DialogShell>;
 }

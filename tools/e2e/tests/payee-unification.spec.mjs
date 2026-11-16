@@ -1,24 +1,24 @@
 import { test, expect } from './fixtures.mjs';
 import { openLedger } from './helpers.mjs';
+import { enableEveryNavigationModule } from '../account-tests/mobile-onboarding.mjs';
+
+const go = (page, screen, tab) => page.evaluate((detail) => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail })), { screen, tab });
+test.beforeEach(async ({ page }) => page.setDefaultTimeout(15_000));
 
 async function start(page) {
   await openLedger(page);
+  await go(page, 'settings'); await enableEveryNavigationModule(page);
 }
 
 async function manage(page) {
-  await page.setViewportSize({ width: 390, height: 900 });
-  await page.getByRole('button', { name: '••• 更多', exact: true }).click();
-  const drawer = page.getByRole('dialog', { name: '更多功能' });
-  const enable = drawer.getByRole('button', { name: /管理.*启用/ });
-  if (await enable.count()) await enable.click();
-  await drawer.getByRole('button', { name: '⊞ 管理', exact: true }).click();
   await page.setViewportSize({ width: 1280, height: 900 });
+  await go(page, 'manage');
 }
 
 async function transactions(page) {
-  await page.setViewportSize({ width: 390, height: 900 });
-  await page.getByRole('navigation', { name: '移动端主导航' }).getByRole('button', { name: /日常收支/ }).click();
   await page.setViewportSize({ width: 1280, height: 900 });
+  await go(page, 'transactions', 'records');
+  if (!(await page.getByLabel('流水交易对象', { exact: true }).isVisible())) await page.getByRole('button', { name: /^筛选/ }).click();
 }
 
 async function choosePayee(form, name, result = name) {
@@ -29,7 +29,7 @@ async function choosePayee(form, name, result = name) {
 test('platform directory edits the same counterpart and management searches real names', async ({ page }, testInfo) => {
   await start(page);
   await manage(page);
-  await page.getByRole('tab', { name: '标签与交易对象', exact: true }).click();
+  await page.getByRole('button', { name: '标签与交易对象', exact: true }).click();
   await page.getByRole('tab', { name: '平台目录', exact: true }).click();
   await page.getByLabel('平台场景').selectOption('shopping');
   await page.getByLabel('搜索平台目录').fill('JD');
@@ -129,13 +129,12 @@ test('scheduled entries and templates use the picker and generate referenced cou
   await expect(schedule).toBeHidden();
   const row = page.getByRole('row').filter({ hasText: '每月京东采购' });
   await row.getByRole('button', { name: '登记流水', exact: true }).click();
-  await page.getByRole('button', { name: '流水', exact: true }).click();
+  await transactions(page);
   await page.getByLabel('流水交易对象').click();
   await page.getByRole('dialog', { name: '流水交易对象' }).getByRole('option', { name: '京东', exact: true }).click();
   await expect(page.locator('.zc-transaction-row')).toHaveCount(1);
   await manage(page);
-  await page.getByRole('tab', { name: '其他资料', exact: true }).click();
-  await page.getByRole('tab', { name: '交易模板', exact: true }).click();
+  await page.getByRole('button', { name: '交易模板', exact: true }).click();
   await page.getByRole('button', { name: '+ 新增交易模板', exact: true }).click();
   const template = page.getByRole('dialog', { name: '新增 · 交易模板', exact: true });
   await template.getByLabel(/^名称/).fill('京东模板');
@@ -143,7 +142,7 @@ test('scheduled entries and templates use the picker and generate referenced cou
   await choosePayee(template, 'jd', '京东');
   await template.getByRole('button', { name: '保存', exact: true }).click();
   await expect(template).toBeHidden();
-  await page.getByRole('tab', { name: '标签与交易对象', exact: true }).click();
+  await page.getByRole('button', { name: '标签与交易对象', exact: true }).click();
   await page.getByLabel('搜索交易对象').fill('京东');
   await expect(page.getByRole('row').filter({ hasText: '京东' })).toHaveCount(1);
 });

@@ -485,7 +485,9 @@ export interface FixedAsset extends BaseEntity {
 export type FixedEventType =
   | 'purchase'
   | 'activate'
+  | 'store'
   | 'repair'
+  | 'maintenance'
   | 'upgrade'
   | 'operating_cost'
   | 'part_sale' // sale of a part; the parent item remains in use

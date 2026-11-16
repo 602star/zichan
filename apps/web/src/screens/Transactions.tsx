@@ -2886,8 +2886,8 @@ function RefundHistoryDialog(props: {
       backdropStyle={{ background: 'var(--scrim)' }}
       panelClassName="zc-entity-modal zc-refund-history"
       panelStyle={{ width: 'min(560px, 100%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 18, boxShadow: 'var(--shadow-lg)', maxHeight: '86vh', overflow: 'auto' }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+
+      header={<> <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
         <div style={{ minWidth: 0 }}>
           <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>退款记录</div>
           <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 4 }}>
@@ -2895,7 +2895,9 @@ function RefundHistoryDialog(props: {
           </div>
         </div>
         <button type="button" data-dialog-initial-focus onClick={onClose} className={buttonCls}>关闭</button>
-      </div>
+      </div> </>}
+    >
+
 
       <div style={{ display: 'flex', gap: 16, marginTop: 14, fontSize: 'var(--fs-meta)' }}>
         <span>已退 <strong style={{ color: 'var(--positive)' }}>{refunded} {originalCode}</strong></span>
@@ -3024,14 +3026,22 @@ function BatchEditModal(props: {
       backdropStyle={{ background: 'var(--scrim)' }}
       panelClassName="zc-entity-modal zc-batch-modal"
       panelStyle={{ width: 'min(760px, 100%)', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', padding: 18, boxShadow: 'var(--shadow-lg)' }}
-    >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+
+      header={<> <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16 }}>
           <div>
             <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>批量修改流水</div>
             <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3 }}>将修改应用到 {count} 条流水，金额不会被批量改动。</div>
           </div>
           <button type="button" data-dialog-initial-focus disabled={busy} onClick={onClose} className={buttonCls}>关闭</button>
-        </div>
+        </div> </>}
+
+      footer={<> {error && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginTop: 12 }}>{error}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+          <button onClick={onClose} disabled={busy} className={buttonCls}>取消</button>
+          <button onClick={() => void submit()} disabled={busy} className={primaryCls}>{busy ? '正在应用…' : review ? '确认应用' : '预览修改'}</button>
+        </div> </>}
+    >
+
         <div className="zc-modal-form-grid">
           <CategoryPicker
             fieldId="batch-category"
@@ -3103,11 +3113,7 @@ function BatchEditModal(props: {
             ))}
           </div>
         </div>
-        {error && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', marginTop: 12 }}>{error}</div>}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
-          <button onClick={onClose} disabled={busy} className={buttonCls}>取消</button>
-          <button onClick={() => void submit()} disabled={busy} className={primaryCls}>{busy ? '正在应用…' : review ? '确认应用' : '预览修改'}</button>
-        </div>
+
     </DialogShell>
   );
 }
