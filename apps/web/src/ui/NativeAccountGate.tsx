@@ -59,6 +59,6 @@ export function NativeAccountGate({ onReady, onCancel }: { onReady: () => Promis
   }
   if (offline && saved) return <OfflineAccountGate connection={saved}><Ready onReady={onReady} /></OfflineAccountGate>;
   return profile ? <AccountLedgerGate connection={profile}><Ready onReady={onReady} /></AccountLedgerGate>
-    : <>{offlineAvailable && saved && <div className="zc-protection" style={{ padding: 16 }}><p>主服务器暂时不可用，可用账号密码打开此设备已有的账本缓存。</p><button onClick={() => setOffline(true)}>离线打开 {saved.username} 的本机账本</button></div>}
+    : <>{offlineAvailable && saved && <div className="zc-protection" style={{ padding: 16 }}><p>主服务器暂时不可用。可离线打开本设备已有的账本；未开启离线免密或免密已到期时，需要输入账号密码。</p><button onClick={() => setOffline(true)}>离线打开 {saved.username} 的本机账本</button></div>}
       <FirstServerConnectionGate initialProfile={saved} onAuthenticated={authenticated} onReady={async () => {}} onCancel={onCancel} /></>;
 }

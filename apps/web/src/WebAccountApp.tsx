@@ -95,7 +95,7 @@ export function WebAccountApp() {
         if (active) {
           if (!binding && error instanceof HttpRequestError && error.status === 401) return;
           const available = canOfferOfflineCache(error);
-          setNotice(available ? '暂时无法连接账号服务器。可用账号密码或记住设备授权解锁此设备已有的账本缓存；联网后继续同步。'
+          setNotice(available ? '暂时无法连接账号服务器。可离线打开本设备已有的账本；未开启离线免密或免密已到期时，需要输入账号密码。联网后继续同步。'
             : error instanceof HttpRequestError && error.status === 401
               ? '上次登录会话已失效，请重新登录。'
               : `${error instanceof Error ? error.message : '账号验证失败'} 请重新登录或联系部署者。`);
