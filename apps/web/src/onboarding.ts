@@ -7,6 +7,7 @@ export interface OnboardingState {
   settingId: string;
   path: 'spending' | 'accounts';
   dismissed: boolean;
+  completed?: boolean;
   firstTransactionRecorded: boolean;
   categorySkipped: boolean;
   templateUsed: boolean;
@@ -44,6 +45,10 @@ export function resumeOnboarding(settingId: string, path: OnboardingState['path'
   const current = readOnboarding(settingId);
   return current ? updateOnboarding(current, { dismissed: false })
     : updateOnboarding(startOnboarding(settingId, path), { firstTransactionRecorded });
+}
+
+export function completeOnboarding(state: OnboardingState): OnboardingState {
+  return updateOnboarding(state, { completed: true, dismissed: true });
 }
 
 export function updateOnboarding(state: OnboardingState, changes: Partial<OnboardingState>): OnboardingState {

@@ -19,6 +19,7 @@ test('desktop account ledger shows the same optional guide without opening a mod
     await page.getByLabel('服务器账号密码').fill('account-test-password');
     await page.getByRole('button', { name: '登录', exact: true }).click();
     await page.getByRole('button', { name: '添加常用账户' }).click();
+    await page.locator('.zc-sidebar').getByRole('button', { name: '流水', exact: true }).click();
     const guide = page.getByRole('region', { name: '首次记账引导' });
     await expect(guide).toBeVisible();
     await expect(guide.getByRole('button', { name: '添加账户' })).toBeVisible();
@@ -26,7 +27,7 @@ test('desktop account ledger shows the same optional guide without opening a mod
     await page.reload();
     await expect(guide).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(guide).toContainText('新手引导 · 1/4');
+    await expect(guide).toContainText('新手指南 · 1/5');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await guide.getByRole('button', { name: '添加账户' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();

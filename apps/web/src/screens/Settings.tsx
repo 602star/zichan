@@ -895,7 +895,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
 
           <section className="zc-card zc-settings-guide" aria-label="新手指南">
             <h2 className="zc-section-title">新手指南</h2>
-            <p className="zc-caption">重新查看记账弹窗、账户、账单与还款、物品资产及资料管理的操作入口，保留已完成的步骤。</p>
+            <p className="zc-caption">逐步查看记账、账户、分类和模板操作，保留已有进度。完成后不再显示在流水页，仍可从这里重看。</p>
             <button type="button" className="zc-btn" disabled={guideBusy} onClick={() => void (async () => {
               if (!setting?.id || guideBusy) return;
               setGuideBusy(true); setGuideError('');

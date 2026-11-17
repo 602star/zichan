@@ -40,7 +40,7 @@ for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, ini
     await fits();
     await page.screenshot({ path: testInfo.outputPath('mobile-first-entry-guide.png') });
     const guide = page.getByRole('region', { name: '首次记账引导' });
-    await expect(guide).toContainText('新手引导 · 1/3');
+    await expect(guide).toContainText('新手指南 · 1/4');
     await guide.getByRole('button', { name: '下一步' }).click();
     await guide.getByRole('button', { name: '查看扩展包' }).click();
     await expect(page.getByText('扩展包', { exact: true })).toBeVisible();
@@ -54,8 +54,8 @@ for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, ini
     await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '取消', exact: true }).click();
     await page.reload();
     await expect(guide).toBeVisible({ timeout: 30_000 });
-    await expect(guide).toContainText('新手引导 · 3/3');
-    await guide.getByRole('button', { name: '收起' }).click();
+    await expect(guide).toContainText('新手指南 · 3/4');
+    await guide.getByRole('button', { name: '暂时收起' }).click();
     await expect(guide).toBeHidden();
     await page.getByRole('button', { name: '查看新手指南' }).click();
     await expect(guide).toBeVisible();
@@ -84,18 +84,23 @@ for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, ini
     // Data protection remains reachable from the account page on small screens.
     await nav.getByRole('button', { name: /更多$/ }).click();
     await page.getByRole('dialog', { name: '更多功能' }).getByRole('button', { name: /我的账号$/ }).click();
-    await page.getByRole('button', { name: '查看服务器上的账本' }).click();
-    await page.getByRole('tab', { name: '解锁与安全' }).click();
+    await page.getByRole('button', { name: /^数据保护/ }).click();
+    await expect(page.getByRole('region', { name: '服务器', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '返回设置', exact: true }).click();
+    await page.getByRole('button', { name: /^解锁与安全/ }).click();
     const panel = page.getByRole('region', { name: '账本保护' });
     await expect(panel).toBeVisible();
     await expect(panel).toContainText('本机离线访问已准备好');
     await fits();
     await panel.screenshot({ path: testInfo.outputPath('mobile-protection.png') });
-    await page.getByRole('tab', { name: '本机备份' }).click();
+    await page.getByRole('button', { name: '返回设置', exact: true }).click();
+    await page.getByRole('button', { name: /^本机备份/ }).click();
     await expect(page.getByRole('region', { name: '当前设备' })).toBeVisible();
-    await page.getByRole('tab', { name: '服务器与同步' }).click();
+    await page.getByRole('button', { name: '返回设置', exact: true }).click();
+    await page.getByRole('button', { name: /^服务器与同步/ }).click();
     await expect(page.getByRole('region', { name: '服务器', exact: true })).toBeVisible();
-    await page.getByRole('tab', { name: '解锁与安全' }).click();
+    await page.getByRole('button', { name: '返回设置', exact: true }).click();
+    await page.getByRole('button', { name: /^解锁与安全/ }).click();
     await expect(page.getByRole('region', { name: '账本保护' })).toBeVisible();
     await fits();
     await page.screenshot({ path: testInfo.outputPath('mobile-sync.png') });

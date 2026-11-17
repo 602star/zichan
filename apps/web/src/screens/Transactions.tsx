@@ -6,7 +6,7 @@ import { AccountHistoryPanel } from '../ui/AccountHistoryPanel.js';
 import { AccountsWorkspace } from '../ui/AccountsWorkspace.js';
 import { useTransactionEditor } from '../use-transaction-editor.js';
 import { accountSessionStorage } from '../account-storage.js';
-import { readOnboarding, updateOnboarding, ONBOARDING_CHANGED_EVENT, type OnboardingState } from '../onboarding.js';
+import { completeOnboarding, readOnboarding, updateOnboarding, ONBOARDING_CHANGED_EVENT, type OnboardingState } from '../onboarding.js';
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { continuedEntryFields } from '../desktop-workspace.js';
 import { DcaPlans } from './DcaPlans.js';
@@ -1136,7 +1136,12 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     setShowFirstEntryGuide(false);
   }
 
-  function showMobileGuideStep(step: number) {
+  function finishOnboarding() {
+    setOnboarding((current) => current ? completeOnboarding(current) : current);
+    setShowFirstEntryGuide(false);
+  }
+
+  function showGuideStep(step: number) {
     setOnboarding((current) => current ? updateOnboarding(current, { mobileStep: step }) : current);
   }
 
@@ -1339,14 +1344,15 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     else drillTo(parent, child);
   }
 
-  const mobileGuideSteps = onboarding?.path === 'accounts'
+  const guideSteps = onboarding?.path === 'accounts'
     ? (['accounts', 'entry', 'categories', 'templates', 'navigation'] as const)
     : (['entry', 'categories', 'templates', 'navigation'] as const);
-  const mobileGuideStep = Math.min(Math.max(onboarding?.mobileStep ?? 0, 0), mobileGuideSteps.length - 1);
-  const mobileGuideKind = mobileGuideSteps[mobileGuideStep];
+  // Keep the existing storage field so progress follows viewport changes and older guides.
+  const guideStep = Math.min(Math.max(onboarding?.mobileStep ?? 0, 0), guideSteps.length - 1);
+  const guideKind = guideSteps[guideStep];
   const hasEnabledCategoryPack = CATEGORY_PACKS.some((pack) => categoryPackState(pack, readySnap.categories).enabledCount > 0);
 
-  const reopenGuideControl = onboarding && !showFirstEntryGuide && activeTab === 'records' && (
+  const reopenGuideControl = onboarding && !onboarding.completed && !showFirstEntryGuide && activeTab === 'records' && (
         <button type="button" className="zc-onboarding-reopen" onClick={() => { setOnboarding(updateOnboarding(onboarding, { dismissed: false })); setShowFirstEntryGuide(true); }}>
           查看新手指南
         </button>
@@ -1372,99 +1378,83 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
       </div>
 
       {compactView && reopenGuideControl}
-      {onboarding && showFirstEntryGuide && !compactView && activeTab === 'records' && (
-        <section className="zc-first-entry-guide" aria-label="首次记账引导">
-          <div>
-            <h2>账本已准备好</h2>
-            <p>按自己的节奏完成以下步骤。分类和模板都可以以后再设置。</p>
+      {onboarding && showFirstEntryGuide && activeTab === 'records' && (
+        <section className={`zc-first-entry-guide${compactView ? ' zc-first-entry-guide-mobile' : ''}`} aria-label="首次记账引导">
+          <div className="zc-guide-header">
+            <span>新手指南 · {guideStep + 1}/{guideSteps.length}</span>
+            <button type="button" onClick={dismissOnboarding}>暂时收起</button>
           </div>
-          <div className="zc-onboarding-steps">
-            {onboarding.path === 'accounts' && (
-              <div className="zc-onboarding-step">
-                <div><strong>设置常用账户</strong><p>在“账户”添加银行卡或钱包，填写余额与截至时间，再设置默认支出、收入账户。系统预建的两个账户同属“其他”类型，可直接记账；仅这两个账户不提供对账，自行添加的账户仍可核对。</p></div>
-                <button type="button" className={buttonCls} onClick={() => { setTab('accounts'); openAccountTask({ kind: 'edit' }); }}>添加账户</button>
-              </div>
-            )}
-            <div className="zc-onboarding-step">
-              <div><strong>记第一笔{onboarding.firstTransactionRecorded ? ' · 已完成' : ''}</strong><p>在流水页点击“+ 记账”，弹窗里先填金额和分类；保存后回到流水，也可保存并继续。</p></div>
-              <button type="button" className={onboarding.firstTransactionRecorded ? buttonCls : primaryCls} onClick={openNewTransaction}>{onboarding.firstTransactionRecorded ? '再记一笔' : '记第一笔'}</button>
-            </div>
-            <div className="zc-onboarding-step">
-              <div><strong>按场景补充分类{hasEnabledCategoryPack ? ' · 已启用' : onboarding.categorySkipped ? ' · 已跳过' : ''}</strong><p>养宠、旅行等分类按需启用，已有记录不会改变。</p></div>
-              <div className="zc-first-entry-actions"><button type="button" className={buttonCls} onClick={openCategoryPacks}>查看扩展包</button>{!onboarding.categorySkipped && <button type="button" className={buttonCls} onClick={() => setOnboarding(updateOnboarding(onboarding, { categorySkipped: true }))}>暂不需要</button>}</div>
-            </div>
-            <div className="zc-onboarding-step">
-              <div><strong>用模板快速记账{onboarding.templateUsed ? ' · 已体验' : ''}</strong><p>先试用自带模板；记过一笔后，也能保存自己的常用交易。</p></div>
-              <div className="zc-first-entry-actions">
-                {firstTemplate && <button type="button" className={buttonCls} onClick={() => { setTab('records'); createFromTemplate(firstTemplate); }}>试用{firstTemplate.name}模板</button>}
-                {onboarding.firstTransactionRecorded && <button type="button" className={buttonCls} onClick={openOwnTemplate}>创建自己的模板</button>}
-                <button type="button" className={buttonCls} onClick={openTemplateCenter}>查看全部模板</button>
-              </div>
-            </div>
+          <div className="zc-guide-progress" aria-hidden="true">
+            {guideSteps.map((step, index) => <span key={step} className={index <= guideStep ? 'is-active' : ''} />)}
           </div>
-          <div className="zc-onboarding-next-tasks"><h3>找到常用功能</h3>
-            <p>电脑从侧栏进入工作台、流水、账户、账单与还款、计划；资料管理维护分类、交易对象与模板。隐藏的模块可在“设置 → 记账 → 侧边栏与模块”启用。</p>
-            <p>点流水行查看明细，再点“编辑”修改。账单与还款可以独立记录；物品资产默认卡片，可从“记录生命周期事件”购入配件、报废或登记云服务费用。请定期导出加密备份。</p>
-            {guideDestinations}
-          </div>
-          <div className="zc-first-entry-actions"><button type="button" className={buttonCls} onClick={dismissOnboarding}>暂时收起</button></div>
-        </section>
-      )}
-      {onboarding && showFirstEntryGuide && compactView && activeTab === 'records' && (
-        <section className="zc-first-entry-guide zc-first-entry-guide-mobile" aria-label="首次记账引导">
-          <div className="zc-mobile-guide-header">
-            <span>新手指南 · {mobileGuideStep + 1}/{mobileGuideSteps.length}</span>
-            <button type="button" onClick={dismissOnboarding}>收起</button>
-          </div>
-          <div className="zc-mobile-guide-progress" aria-hidden="true">
-            {mobileGuideSteps.map((step, index) => <span key={step} className={index <= mobileGuideStep ? 'is-active' : ''} />)}
-          </div>
-          {mobileGuideKind === 'accounts' && (
-            <div className="zc-mobile-guide-content">
+          <div className="zc-guide-content" aria-live="polite">
+            {guideKind === 'accounts' && <>
               <h2>设置常用账户</h2>
-              <p>从“资产 → 资金账户”添加银行卡或钱包，填写余额与截至时间，并选择默认收支账户。系统预建的两个“其他”账户也可直接记账。</p>
+              <p>想核对银行卡或钱包余额，可以先添加账户；系统预建的默认账户也能直接记账，这一步可以跳过。</p>
+              <ol>
+                <li>点“添加账户”，填写名称，选择银行卡、现金等账户类型。</li>
+                <li>填入实际余额和截至时间，作为之后计算余额的起点。</li>
+                <li>保存后在“账户”中设置默认支出、收入账户，再回到“{compactView ? '收支' : '流水'}”继续引导。</li>
+              </ol>
+              <p>系统预建的两个“其他”账户不提供对账；自行添加的账户可核对余额。</p>
               <div className="zc-first-entry-actions"><button type="button" className={primaryCls} onClick={() => { setTab('accounts'); openAccountTask({ kind: 'edit' }); }}>添加账户</button></div>
-            </div>
-          )}
-          {mobileGuideKind === 'entry' && (
-            <div className="zc-mobile-guide-content">
+            </>}
+            {guideKind === 'entry' && <>
               <h2>记第一笔{onboarding.firstTransactionRecorded ? ' · 已完成' : ''}</h2>
-              <p>在弹窗中填写金额和分类。之后可从底栏“记一笔”快速记录，保存后留在原页。</p>
+              {onboarding.firstTransactionRecorded
+                ? <p>第一笔已经保存。点流水行可查看明细，再点“编辑”修改；接下来可以按需补充分类和模板。</p>
+                : <p>先记一笔真实支出，例如今天的午餐。记账后就能在流水里查看金额和分类。</p>}
+              <ol>
+                <li>点“{onboarding.firstTransactionRecorded ? '再记一笔' : '记第一笔'}”，在弹窗中填写实际金额，确认币种。</li>
+                <li>选择分类，核对日期和支出账户；备注、商户、附件等可以以后再补。</li>
+                <li>点“保存”回到流水{!compactView && '，也可点“保存并继续”接着录入'}。{!compactView && !onboarding.firstTransactionRecorded && '首笔保存后指南会自动收起，可点“查看新手指南”继续。'}</li>
+              </ol>
               <div className="zc-first-entry-actions"><button type="button" className={primaryCls} onClick={openNewTransaction}>{onboarding.firstTransactionRecorded ? '再记一笔' : '记第一笔'}</button></div>
-            </div>
-          )}
-          {mobileGuideKind === 'categories' && (
-            <div className="zc-mobile-guide-content">
+            </>}
+            {guideKind === 'categories' && <>
               <h2>按场景补充分类{hasEnabledCategoryPack ? ' · 已启用' : onboarding.categorySkipped ? ' · 已跳过' : ''}</h2>
-              <p>养宠、旅行等分类按需启用，原有记录不会改变。</p>
+              <p>常用的餐饮、交通等分类已经准备好。养宠、旅行等分类按需添加，不影响原有记录。</p>
+              <ol>
+                <li>点“查看扩展包”，在资料管理中选择需要的场景并启用。</li>
+                <li>点“返回新手指南”继续；下次记账时就能选到新分类。</li>
+              </ol>
               <div className="zc-first-entry-actions">
                 <button type="button" className={primaryCls} onClick={openCategoryPacks}>查看扩展包</button>
-                {!onboarding.categorySkipped && <button type="button" className={buttonCls} onClick={() => setOnboarding(updateOnboarding(onboarding, { categorySkipped: true, mobileStep: mobileGuideStep + 1 }))}>暂不需要</button>}
+                {!onboarding.categorySkipped && !hasEnabledCategoryPack && <button type="button" className={buttonCls} onClick={() => setOnboarding(updateOnboarding(onboarding, { categorySkipped: true, mobileStep: guideStep + 1 }))}>暂不需要</button>}
               </div>
-            </div>
-          )}
-          {mobileGuideKind === 'templates' && (
-            <div className="zc-mobile-guide-content">
+            </>}
+            {guideKind === 'templates' && <>
               <h2>用模板快速记账{onboarding.templateUsed ? ' · 已体验' : ''}</h2>
-              <p>试用自带模板；记过一笔后，也能从它保存自己的常用交易。</p>
+              <p>模板适合午餐、通勤等重复支出。选择模板只会预填表单，确认保存才会记入账本。</p>
+              <ol>
+                <li>试用下方自带模板，或点“查看全部模板”选择其他模板。</li>
+                <li>补上实际金额，核对分类和日期，再点“保存”。</li>
+                <li>记过一笔后，可点“创建自己的模板”保存常用信息，下次从流水下方的模板入口使用。</li>
+              </ol>
               <div className="zc-first-entry-actions">
                 {firstTemplate && <button type="button" className={primaryCls} onClick={() => { setTab('records'); createFromTemplate(firstTemplate); }}>试用{firstTemplate.name}模板</button>}
                 {onboarding.firstTransactionRecorded && <button type="button" className={buttonCls} onClick={openOwnTemplate}>创建自己的模板</button>}
                 <button type="button" className={buttonCls} onClick={openTemplateCenter}>查看全部模板</button>
               </div>
-            </div>
-          )}
-          {mobileGuideKind === 'navigation' && <div className="zc-mobile-guide-content">
-            <h2>找到常用功能</h2>
-            <p>底栏是总览、收支、记一笔、资产、更多。“资产”进入资金账户、持仓与物品，“更多”进入账单与还款、资料管理和设置。</p>
-            <p>点流水看明细，长按或左右滑动打开编辑、退款等操作，也可点行尾更多。物品默认卡片，购入配件、报废和云服务费用都从物品事件入口记录。</p>
-            {guideDestinations}
-          </div>}
-          <div className="zc-mobile-guide-nav">
-            {mobileGuideStep > 0 && <button type="button" onClick={() => showMobileGuideStep(mobileGuideStep - 1)}>上一步</button>}
-            {mobileGuideStep < mobileGuideSteps.length - 1
-              ? <button type="button" onClick={() => showMobileGuideStep(mobileGuideStep + 1)}>下一步</button>
-              : <button type="button" onClick={dismissOnboarding}>完成引导</button>}
+            </>}
+            {guideKind === 'navigation' && <>
+              <h2>找到常用功能</h2>
+              <p>{onboarding.firstTransactionRecorded ? '你已经记下第一笔，入门操作已掌握。' : '基础操作已介绍完，随时可以开始记账。'}分类、模板和账户都可以以后再调整。</p>
+              <p>{compactView
+                ? '底栏是总览、收支、记一笔、资产、更多。“资产”进入资金账户、持仓与物品，“更多”进入账单与还款、资料管理和设置。点流水看明细，长按或左右滑动打开编辑、退款等操作，也可点行尾更多。'
+                : '电脑从侧栏进入工作台、流水、账户、账单与还款、计划；资料管理维护分类、交易对象与模板。隐藏的模块可在“设置 → 记账 → 侧边栏与模块”启用。点流水行查看明细，再点“编辑”修改。'}</p>
+              <details><summary>账单、物品和备份怎么用？</summary>
+                <p>账单与还款可以独立记录；物品默认卡片，从“记录生命周期事件”购入配件、报废或登记云服务费用。请定期到“设置 → 本机”导出加密备份。</p>
+                {guideDestinations}
+              </details>
+              <p>点“完成引导”后，教程及流水页的指南入口都会收起，不再自动显示。需要时可到“设置 → 记账 → 新手指南”重新查看。</p>
+            </>}
+          </div>
+          <div className="zc-guide-nav">
+            {guideStep > 0 && <button type="button" onClick={() => showGuideStep(guideStep - 1)}>上一步</button>}
+            {guideStep < guideSteps.length - 1
+              ? <button type="button" onClick={() => showGuideStep(guideStep + 1)}>{guideKind === 'entry' && !onboarding.firstTransactionRecorded ? '稍后再记，下一步' : '下一步'}</button>
+              : <button type="button" className={primaryCls} onClick={finishOnboarding}>完成引导</button>}
           </div>
         </section>
       )}

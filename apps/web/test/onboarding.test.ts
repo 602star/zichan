@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readOnboarding, resumeOnboarding, startOnboarding, updateOnboarding } from '../src/onboarding.js';
+import { completeOnboarding, readOnboarding, resumeOnboarding, startOnboarding, updateOnboarding } from '../src/onboarding.js';
 
 function memoryStorage(): Storage {
   const data = new Map<string, string>();
@@ -9,6 +9,14 @@ beforeEach(() => { vi.stubGlobal('localStorage', memoryStorage()); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('新手指南重新打开与旧进度兼容', () => {
+  it('distinguishes completing the guide from temporarily dismissing it', () => {
+    const state = updateOnboarding(startOnboarding('a', 'spending'), { dismissed: true });
+    expect(readOnboarding('a')?.completed).not.toBe(true);
+    const completed = completeOnboarding(state);
+    expect(readOnboarding('a')).toEqual({ ...state, dismissed: true, completed: true });
+    expect(resumeOnboarding('a', 'accounts')).toEqual({ ...completed, dismissed: false });
+    expect(completeOnboarding(readOnboarding('a')!)).toEqual(completed);
+  });
   it('resumes completed steps without resetting the selected path or mobile position', () => {
     const state = updateOnboarding(startOnboarding('a', 'accounts'), { dismissed: true, firstTransactionRecorded: true, categorySkipped: true, templateUsed: true, mobileStep: 3 });
     expect(resumeOnboarding('a', 'spending')).toEqual({ ...state, dismissed: false });
