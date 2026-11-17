@@ -68,12 +68,12 @@ async function fixture(): Promise<Fixture> {
     await opaque.ready;
     const start = opaque.client.startLogin({ password });
     const started = await post('/api/auth/login/start', { username, startLoginRequest: start.startLoginRequest });
-    const pending = await started.json() as { loginId: string; loginResponse: string; serverId: string; serverPublicKey: string };
+    const pending = await started.json() as { loginId: string; loginResponse: string; serverId: string; serverPublicKey: string; credentialClientId?: string };
     const finish = opaque.client.finishLogin({
       clientLoginState: start.clientLoginState,
       loginResponse: pending.loginResponse,
       password,
-      identifiers: { client: username, server: pending.serverId },
+      identifiers: { client: pending.credentialClientId ?? username, server: pending.serverId },
       keyStretching: 'memory-constrained',
     });
     const response = await post('/api/auth/login/finish', {
@@ -110,6 +110,23 @@ async function enroll(url: string, username: string) {
 }
 
 describe('administrator second factor', () => {
+  it('requires the same second factor when a manager logs in with a bound email', async () => {
+    const f = await fixture();
+    try {
+      await enroll(f.url, 'owner');
+      const owner = await loginAccount(f.url, 'owner', password);
+      const binding = await fetch(`${f.url}/api/auth/email`, { method: 'PUT', headers: {
+        Authorization: bearer(owner.accessToken), 'Content-Type': 'application/json',
+      }, body: JSON.stringify({ email: 'owner@example.com' }) });
+      expect(binding.status).toBe(200);
+      const login = await f.adminLogin('owner@example.com', 'device-email-admin');
+      expect(login.status).toBe(200);
+      expect(login.body['mfaRequired']).toBe(true);
+      expect(login.body['accessToken']).toBeUndefined();
+      expect((await loginAccount(f.url, 'owner@example.com', password)).accountId).toBe(owner.accountId);
+    } finally { await f.close(); }
+  });
+
   it('requires the code before a management session exists, and accepts each code once', async () => {
     const f = await fixture();
     try {

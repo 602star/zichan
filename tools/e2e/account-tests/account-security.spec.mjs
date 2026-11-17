@@ -15,12 +15,16 @@ test('changes account password and revokes only a selected own device', async ({
     await registerAccount(url, 'owner', 'owner-test-password', { ownerSetupToken: setup });
     await registerAccount(url, 'security-user', 'account-test-password');
     const other = await loginAccount(url, 'security-user', 'account-test-password', { deviceName: '另一部手机' });
+    expect((await fetch(`${url}/api/auth/email`, { method: 'PUT', headers: {
+      Authorization: `Bearer ${other.accessToken}`, 'Content-Type': 'application/json',
+    }, body: JSON.stringify({ email: 'security@example.com' }) })).status).toBe(200);
     await page.goto(`${url}/`);
-    await page.getByLabel('服务器用户名').fill('security-user');
+    await page.getByLabel('服务器用户名').fill('security@example.com');
     await page.getByLabel('服务器账号密码').fill('account-test-password');
     await page.getByRole('button', { name: '登录', exact: true }).click();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
+    await page.getByRole('navigation', { name: '账号分类' }).getByRole('button', { name: '账号安全', exact: true }).click();
     const panel = page.getByRole('region', { name: '账号安全', exact: true });
     await panel.getByText('登录设备', { exact: true }).click();
     await panel.getByRole('button', { name: '刷新登录设备' }).click();
@@ -34,7 +38,7 @@ test('changes account password and revokes only a selected own device', async ({
     await panel.getByLabel('再次输入新密码').fill('new-account-password');
     await panel.getByRole('button', { name: '确认修改账号密码' }).click();
     await expect(page.getByRole('button', { name: '登录', exact: true })).toBeVisible();
-    await page.getByLabel('服务器用户名').fill('security-user');
+    await page.getByLabel('服务器用户名').fill('security@example.com');
     await page.getByLabel('服务器账号密码').fill('new-account-password');
     await page.getByRole('button', { name: '登录', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();

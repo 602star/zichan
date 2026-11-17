@@ -1448,6 +1448,7 @@ CREATE TABLE IF NOT EXISTS account_email_settings (
   window_count INTEGER NOT NULL DEFAULT 0,
   notify_quota INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_account_email_login ON account_email_settings (email COLLATE NOCASE);
 CREATE TABLE IF NOT EXISTS account_email_outbox (
   id TEXT PRIMARY KEY,
   event_key TEXT NOT NULL UNIQUE,
@@ -2208,10 +2209,41 @@ END;`);
     };
   }
 
+  /** Legacy duplicate notification addresses must never select an arbitrary login account. */
+  async usernameForEmail(email: string): Promise<string | undefined> {
+    await this.ready;
+    const rows = await this.driver.all<{ username: string }>(
+      'SELECT username FROM account_email_settings WHERE email = ? COLLATE NOCASE LIMIT 2', [email]);
+    return rows.length === 1 ? rows[0]!.username : undefined;
+  }
+
+  private async assertEmailAvailable(driver: SqlDriver, username: string, email: string): Promise<void> {
+    if (await driver.get('SELECT 1 FROM account_email_settings WHERE email = ? COLLATE NOCASE AND username <> ?', [email, username])) {
+      throw new ServerStoreError('EMAIL_IN_USE', 409, '该邮箱已绑定其他账号，请使用其他邮箱');
+    }
+  }
+
+  async bindAccountEmail(username: string, email: string): Promise<void> {
+    await this.ready;
+    await this.driver.transaction(async (driver) => {
+      await this.assertEmailAvailable(driver, username, email);
+      const previous = await driver.get<{ email: string | null }>('SELECT email FROM account_email_settings WHERE username = ?', [username]);
+      if (previous?.email === email) return;
+      await driver.run(`INSERT INTO account_email_settings (username, email) VALUES (?, ?)
+        ON CONFLICT(username) DO UPDATE SET email = excluded.email, verified_at = NULL,
+          pending_email = NULL, pending_hash = NULL, pending_expires_at = NULL, code_attempts = 0, notify_quota = 0`,
+      [username, email]);
+      await driver.run("UPDATE account_email_outbox SET state = 'skipped' WHERE username = ? AND state = 'pending'", [username]);
+      // A reset sent to an old address must not survive a change of login email.
+      await driver.run('DELETE FROM account_password_email_codes WHERE account_id = (SELECT account_id FROM sync_account_identities WHERE username = ?)', [username]);
+    });
+  }
+
   async startEmailVerification(username: string, email: string, codeHash: string): Promise<void> {
     await this.ready;
     const at = nowIso();
     await this.driver.transaction(async (driver) => {
+      await this.assertEmailAvailable(driver, username, email);
       const row = await driver.get<Record<string, unknown>>('SELECT * FROM account_email_settings WHERE username = ?', [username]);
       if (row?.['email'] === email && row['verified_at']) throw new ServerStoreError('EMAIL_ALREADY_VERIFIED', 409, '该邮箱已验证');
       if (row?.['code_sent_at'] && Date.parse(String(row['code_sent_at'])) > Date.now() - 60_000) throw new ServerStoreError('EMAIL_RATE_LIMIT', 429, '请一分钟后再发送验证码');
@@ -2248,12 +2280,14 @@ END;`);
       const expected = Buffer.from(String(row['pending_hash']), 'hex');
       const actual = Buffer.from(codeHash, 'hex');
       if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return 'invalid';
+      await this.assertEmailAvailable(driver, username, String(row['pending_email']));
       await driver.run(
         `UPDATE account_email_settings SET email = pending_email, verified_at = ?, pending_email = NULL, pending_hash = NULL,
          pending_expires_at = NULL, code_attempts = 0, notify_quota = 0 WHERE username = ?`,
         [nowIso(), username],
       );
       await driver.run("UPDATE account_email_outbox SET state = 'skipped' WHERE username = ? AND state = 'pending'", [username]);
+      await driver.run('DELETE FROM account_password_email_codes WHERE account_id = (SELECT account_id FROM sync_account_identities WHERE username = ?)', [username]);
       return 'verified';
     });
     if (result !== 'verified') throw new ServerStoreError('EMAIL_CODE_INVALID', 400, result === 'attempts' ? '验证码尝试次数已达上限，请重新发送' : '验证码无效或已过期');
@@ -2274,6 +2308,7 @@ END;`);
       await driver.run(`UPDATE account_email_settings SET email = NULL, verified_at = NULL, pending_email = NULL,
         pending_hash = NULL, pending_expires_at = NULL, notify_quota = 0 WHERE username = ?`, [username]);
       await driver.run("UPDATE account_email_outbox SET state = 'skipped' WHERE username = ? AND state = 'pending'", [username]);
+      await driver.run('DELETE FROM account_password_email_codes WHERE account_id = (SELECT account_id FROM sync_account_identities WHERE username = ?)', [username]);
     });
   }
 

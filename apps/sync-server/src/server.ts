@@ -1943,13 +1943,15 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       }
       if (req.method === 'POST' && apiPath === '/api/auth/login/start') {
         const { username: rawUsername, startLoginRequest, sessionContext } = await readBody(req, AUTH_BODY_BYTES);
-        const username = typeof rawUsername === 'string' ? normalizeSyncUsername(rawUsername) : '';
-        if (!/^[\p{L}\p{N}_.-]{2,64}$/u.test(username)
+        const identifier = typeof rawUsername === 'string' ? normalizeSyncUsername(rawUsername) : '';
+        const isEmail = identifier.length <= 254 && /^[^\s@,<>]+@[^\s@,<>]+\.[^\s@,<>]+$/.test(identifier);
+        if ((!/^[\p{L}\p{N}_.-]{2,64}$/u.test(identifier) && !isEmail)
           || typeof startLoginRequest !== 'string'
           || !startLoginRequest
           || startLoginRequest.length > AUTH_BODY_BYTES) {
           return send(res, 400, { error: 'invalid login fields' });
         }
+        const username = isEmail ? await store.usernameForEmail(identifier) ?? identifier : identifier;
         const localUser = await store.getUser(username);
         const federatedCredential = sessionContext === 'ledger' || !localUser
           ? await store.federatedPasswordCredential(username) : undefined;
@@ -1979,6 +1981,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           JSON.stringify({ state: login.serverLoginState,
             credentialHash: createHash('sha256').update(loginRecord ?? '').digest('hex'),
             clientIdentifier: username, serverIdentifier: credentialServerId,
+            ...(isEmail ? { loginEmail: identifier } : {}),
             federated: Boolean(federatedCredential) }),
           ip,
           new Date(Date.now() + OPAQUE_LOGIN_TTL_MS).toISOString(),
@@ -2010,8 +2013,11 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           try {
             const stored = JSON.parse(loginState.serverLoginState) as {
               state: string; credentialHash: string; clientIdentifier?: string;
-              serverIdentifier?: string; federated?: boolean;
+              serverIdentifier?: string; federated?: boolean; loginEmail?: string;
             };
+            if (stored.loginEmail && await store.usernameForEmail(stored.loginEmail) !== loginState.username) {
+              throw new Error('login email changed');
+            }
             const credential = stored.federated && stored.clientIdentifier
               ? await store.federatedPasswordCredential(stored.clientIdentifier) : undefined;
             const currentRecord = credential && credential.localUsername === loginState.username
@@ -2263,9 +2269,17 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       if (req.method === 'GET' && apiPath === '/api/auth/email') {
         return send(res, 200, { ...await store.accountEmail(user.username), available: accountEmailAvailable() });
       }
+      if (req.method === 'PUT' && apiPath === '/api/auth/email') {
+        const body = await readBody(req, 1024);
+        const email = typeof body.email === 'string' ? normalizeSyncUsername(body.email) : '';
+        if (email.length > 254 || !/^[^\s@,<>]+@[^\s@,<>]+\.[^\s@,<>]+$/.test(email)) return send(res, 400, { code: 'INVALID_EMAIL', error: '请输入有效邮箱地址' });
+        await store.bindAccountEmail(user.username, email);
+        await log('info', 'account_email_bound', 'Account login email bound', { username: user.username });
+        return send(res, 200, { ...await store.accountEmail(user.username), available: accountEmailAvailable() });
+      }
       if (req.method === 'POST' && apiPath === '/api/auth/email/request') {
         const body = await readBody(req, 1024);
-        const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+        const email = typeof body.email === 'string' ? normalizeSyncUsername(body.email) : '';
         if (email.length > 254 || !/^[^\s@,<>]+@[^\s@,<>]+\.[^\s@,<>]+$/.test(email)) return send(res, 400, { code: 'INVALID_EMAIL', error: '请输入有效邮箱地址' });
         if (!accountEmailAvailable()) return send(res, 503, { code: 'EMAIL_UNAVAILABLE', error: '服务器尚未配置可用的邮件发送渠道' });
         const code = randomInt(100_000_000).toString().padStart(8, '0');

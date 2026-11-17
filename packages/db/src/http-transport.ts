@@ -426,7 +426,7 @@ export async function loginAccount(
 ): Promise<SyncAuthSession> {
   assertSecureSyncUrl(baseUrl);
   const normalized = normalizeSyncUsername(username);
-  if (!normalized || !password) throw new Error('同步用户名和密码不能为空');
+  if (!normalized || !password) throw new Error('登录账号或邮箱和密码不能为空');
   const opaque = await import('@serenity-kit/opaque');
   await opaque.ready;
   const start = opaque.client.startLogin({ password });
@@ -464,7 +464,7 @@ export async function loginAccount(
       server: startBody.credentialServerId ?? startBody.serverId },
     keyStretching: 'memory-constrained',
   });
-  if (!finish) throw new Error('同步用户名或密码错误');
+  if (!finish) throw new Error('登录账号、邮箱或密码错误');
   if (finish.serverStaticPublicKey !== (startBody.credentialServerPublicKey ?? startBody.serverPublicKey)) {
     throw new Error('同步服务器 OPAQUE 公钥校验失败');
   }

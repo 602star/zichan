@@ -183,7 +183,9 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
     if (busy) return;
     if (action === 'register' && password !== confirmation) { setError('两次输入的账号密码不一致'); return; }
     if (action === 'register' && (!displayName.trim() || Array.from(displayName.trim()).length > 24)) { setError('请输入 1 至 24 个字符的昵称'); return; }
-    if (!/^[\p{L}\p{N}_.-]{2,64}$/u.test(username.trim().normalize('NFKC').toLowerCase())) { setError('登录账号须为 2 至 64 个中文、字母、数字或 _ . -'); return; }
+    const identifier = username.trim().normalize('NFKC').toLowerCase();
+    const emailLogin = action === 'login' && identifier.length <= 254 && /^[^\s@,<>]+@[^\s@,<>]+\.[^\s@,<>]+$/.test(identifier);
+    if (!/^[\p{L}\p{N}_.-]{2,64}$/u.test(identifier) && !emailLogin) { setError(action === 'login' ? '请输入登录账号或已绑定的邮箱地址' : '登录账号须为 2 至 64 个中文、字母、数字或 _ . -'); return; }
     if (!username.trim() || password.length < 8) {
       setError('请输入登录账号和至少 8 个字符的密码');
       return;
@@ -292,7 +294,7 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
           <form className="zc-login-form" onSubmit={(event) => { event.preventDefault(); void authenticate(registering ? 'register' : 'login'); }}>
           <div className="zc-login-fields">
             {registering && <label className="zc-field">昵称<input className="zc-input" aria-label="昵称" value={displayName} onChange={(event) => { setDisplayName(event.target.value); setError(''); }} disabled={busy} autoComplete="nickname" required maxLength={48} placeholder="例如：小明" style={input} /><small className="zc-caption">显示给自己看的名称，之后可以修改，支持中文。</small></label>}
-            <label className="zc-field">登录账号<input className="zc-input" aria-label="服务器用户名" value={username} onChange={(event) => { setUsername(event.target.value); setError(''); }} disabled={busy} autoComplete="username" required autoFocus={accountOnly} placeholder={registering ? '例如：xiaoming 或 小明' : '输入注册时的登录账号'} style={input} />{registering && <small className="zc-caption">用于登录，注册后暂不能修改；支持 2 至 64 个中文、字母、数字或 _ . -。</small>}</label>
+            <label className="zc-field">{registering ? '登录账号' : '登录账号或邮箱'}<input className="zc-input" aria-label="服务器用户名" value={username} onChange={(event) => { setUsername(event.target.value); setError(''); }} disabled={busy} autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={registering ? 64 : 254} required autoFocus={accountOnly} placeholder={registering ? '例如：xiaoming 或 小明' : '输入登录账号或已绑定邮箱'} style={input} />{registering && <small className="zc-caption">用于登录，注册后暂不能修改；支持 2 至 64 个中文、字母、数字或 _ . -。</small>}</label>
             <label className="zc-field">账号密码<input className="zc-input" aria-label="服务器账号密码" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} disabled={busy} autoComplete={registering ? 'new-password' : 'current-password'} required minLength={8} style={input} /></label>
             {registering && <label className="zc-field">确认账号密码<input className="zc-input" aria-label="确认账号密码" type="password" required minLength={8} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy} autoComplete="new-password" style={input} /></label>}
             {health?.registrationMode === 'invite' && (!accountOnly || registering) && <label className="zc-field">邀请码<input className="zc-input" aria-label="邀请码" value={inviteCode} onChange={(event) => { setInviteCode(event.target.value); setError(''); }} disabled={busy} style={input} /></label>}

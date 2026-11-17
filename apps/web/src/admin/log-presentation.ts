@@ -18,6 +18,7 @@ group('登录与账号', {
   federated_login_success: ['联合登录成功', '已通过联合身份建立本节点会话。'],
   logout: ['退出登录', '账号已退出当前会话。'], refresh_failed: ['会话续期失败', '会话续期未通过，需要重新登录。'],
   register_success: ['注册成功', '新账号已注册。'], admin_forbidden: ['管理访问被拒绝', '普通成员尝试访问管理接口。'],
+  account_email_bound: ['邮箱已绑定', '账号已绑定登录邮箱。'],
   account_email_verification_sent: ['验证邮件已发送', '已发送账号邮箱验证邮件。'],
   account_email_verification_send_failed: ['验证邮件发送失败', '账号邮箱验证邮件未能发出。'],
   account_email_verified: ['邮箱验证完成', '账号邮箱已验证。'], account_email_removed: ['邮箱已移除', '账号邮箱已移除。'],

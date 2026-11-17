@@ -104,7 +104,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
           <Stat label="accountId" value={<span style={row}><code style={{ fontSize: 'var(--fs-sm)' }}>{account.accountId}</code><CopyValue value={account.accountId} /></span>} />
           <Stat label="登录账号" value={account.username} />
           <Stat label="昵称" value={account.displayName || '未设置'} />
-          <Stat label="已验证邮箱" value={account.email || '未绑定'} hint={account.emailVerifiedAt ? `验证于 ${when(account.emailVerifiedAt)}` : '由用户在“我的账号”验证'} />
+          <Stat label="绑定邮箱" value={account.email || '未绑定'} hint={account.emailVerifiedAt ? `验证于 ${when(account.emailVerifiedAt)}` : account.email ? '未验证，可用于密码登录；不能用于邮件找回或提醒' : '由用户在“我的账号”绑定'} />
           {account.pendingEmail && <Stat label="待验证邮箱" value={account.pendingEmail} />}
           <Stat label="创建时间" value={when(account.createdAt)} />
           <Stat label="角色" value={roleLabel(account.role)} />

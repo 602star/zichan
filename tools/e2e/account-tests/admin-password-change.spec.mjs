@@ -60,7 +60,7 @@ test('changes the administrator password from the console and signs the console 
     await page.getByLabel('新账号密码').fill(nextPassword);
     await page.getByLabel('再次输入新密码').fill(nextPassword);
     await page.getByRole('button', { name: '确认修改账号密码' }).click();
-    await expect(page.getByText(/同步用户名或密码错误/)).toBeVisible();
+    await expect(page.getByText(/登录账号、邮箱或密码错误/)).toBeVisible();
     await expect(page.getByRole('heading', { name: '账号安全' })).toBeVisible();
 
     // The real change: the console ends up signed out with an explanation, because the change

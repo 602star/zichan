@@ -10,7 +10,7 @@
 `@zichan/sync-server` 可在一个进程中提供 Web、密文同步和管理员 API，适合云主机、NAS 或家中常开的固定 IP 电脑。`ENABLE_WEB` 与 `ENABLE_SYNC` 可独立开关；`BASE_PATH=/home-ledger` 会把 Web、同步和管理端点统一挂到安全路径下。
 只把 `apps/web/dist` 上传到静态文件托管只能得到浏览器前端，浏览器没有权限启动 Node 同步服务；需要同步时必须另外运行本服务，或直接使用其 Web + API 一体化部署。
 
-与用户和账本相关的服务端持久状态包含登录账号与昵称、可选的已验证或待验证邮箱及通知偏好、邮件验证码摘要与配额通知队列、OPAQUE 注册记录、设备会话的 refresh token HMAC、随机托管凭据或恢复码包装的密钥封套、加密托管凭据、密文提交、密文附件分块、已加密 `.zcbak` 归档及必要目录元数据，不保存账号密码。服务器自身另外持久化 `server.secret`、`custody.key`、`server-id`、`opaque.server-setup` 和首次初始化使用的 `owner-setup.secret`。账本字段、附件文件名、MIME、明文 SHA-256 和正文不会以明文上传；备份归档的创建时间、原因、类型、显示标签、大小和代次属于服务器可见的目录元数据。同步组内使用统一账号登录；账本附件采用 V2 加密格式，由服务器后台复制密文。节点复制与统一登录的迁移边界见 [账本副本架构](ledger-replica-architecture.md)。
+与用户和账本相关的服务端持久状态包含登录账号与昵称、可选的绑定邮箱、验证状态、待验证地址及通知偏好、邮件验证码摘要与配额通知队列、OPAQUE 注册记录、设备会话的 refresh token HMAC、随机托管凭据或恢复码包装的密钥封套、加密托管凭据、密文提交、密文附件分块、已加密 `.zcbak` 归档及必要目录元数据，不保存账号密码。服务器自身另外持久化 `server.secret`、`custody.key`、`server-id`、`opaque.server-setup` 和首次初始化使用的 `owner-setup.secret`。账本字段、附件文件名、MIME、明文 SHA-256 和正文不会以明文上传；备份归档的创建时间、原因、类型、显示标签、大小和代次属于服务器可见的目录元数据。同步组内使用统一账号登录；账本附件采用 V2 加密格式，由服务器后台复制密文。节点复制与统一登录的迁移边界见 [账本副本架构](ledger-replica-architecture.md)。
 
 ## 当前 API
 
@@ -18,7 +18,9 @@
 |---|---|---|
 | GET | `/api/health`、`/api/ready` | 存活信息；SQLite 完整性与就绪状态 |
 | POST | `/api/auth/register/start`、`/api/auth/register/finish` | OPAQUE 两阶段注册；客户端产生注册记录 |
-| POST | `/api/auth/login/start`、`/api/auth/login/finish` | OPAQUE 两阶段登录；成功后创建设备会话 |
+| POST | `/api/auth/login/start`、`/api/auth/login/finish` | 接受登录账号或已绑定邮箱的 OPAQUE 两阶段登录；成功后创建设备会话 |
+| GET/PUT/DELETE | `/api/auth/email` | 查询、直接绑定或移除邮箱；绑定不依赖邮件发送服务 |
+| POST/PUT | `/api/auth/email/request`、`verify`、`preferences` | 请求验证码、验证邮箱与保存已验证邮箱的通知偏好 |
 | GET | `/api/auth/me` | 返回当前账号、角色、设备会话与账本绑定状态 |
 | POST | `/api/auth/refresh`、`/api/auth/logout` | 轮换 refresh token 或注销当前设备 |
 | GET/POST | `/api/auth/devices`、`/api/auth/devices/:id/revoke` | 查看并撤销账号设备 |

@@ -1145,7 +1145,9 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
     operation.assertCurrent();
     const account = await fetchAuthMe(buildBaseUrl(profile), session.accessToken, { signal: operation.signal });
     operation.assertCurrent();
-    if (account.username !== profile.username.trim().normalize('NFKC').toLowerCase()
+    const loginIdentifier = profile.username.trim().normalize('NFKC').toLowerCase();
+    if (account.username !== session.session.username
+      || !loginIdentifier.includes('@') && account.username !== loginIdentifier
       || account.session.id !== session.session.id || account.accountId !== session.accountId) {
       throw new Error('账号或会话身份不匹配，已阻止保存');
     }
@@ -1157,7 +1159,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
       if (!usage.ok) throw new Error(`附件能力验证失败：HTTP ${usage.status}`);
     }
     patchProfile(profile.id, {
-      status: 'online', role: account.role, accountId: account.accountId,
+      status: 'online', username: account.username, role: account.role, accountId: account.accountId,
       enabled: account.ledgerId === ledgerKey.ledgerId && profile.enabled,
       ledgerId: account.ledgerId, replicaId: account.replicaId, streamEpoch: account.streamEpoch,
       lastError: verifyAttachments ? '账号、密码和附件能力验证通过' : '登录成功',
@@ -1825,7 +1827,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
             )}
             <div className="zc-sync-input-grid" style={inputGrid}>
               <div><label className="zc-label">中文别名</label><input aria-label="中文别名" className="zc-input" value={selected.alias} onChange={(e) => patchProfile(selected.id, { alias: e.target.value })} /></div>
-              <div><label className="zc-label">登录账号</label><input aria-label="用户名" disabled={selectedIsPrimary} className="zc-input" value={selected.username} onChange={(e) => patchProfile(selected.id, { username: e.target.value })} /><small>用于登录，注册后暂不能修改；支持中文，至少 2 个字符。</small></div>
+              <div><label className="zc-label">登录账号或邮箱</label><input aria-label="用户名" disabled={selectedIsPrimary} className="zc-input" autoCapitalize="none" spellCheck={false} value={selected.username} onChange={(e) => patchProfile(selected.id, { username: e.target.value })} /><small>可使用登录账号或已绑定邮箱登录。注册新账号时请填写至少 2 个字符的登录账号，支持中文。</small></div>
               {!selectedIsPrimary && <div><label className="zc-label">昵称（仅注册需要）</label><input aria-label="注册昵称" className="zc-input" value={registerDisplayName} onChange={(e) => setRegisterDisplayName(e.target.value)} placeholder="例如：小明" /><small>显示名称，注册后可在账号设置修改。</small></div>}
               {!selectedIsPrimary && <div><label className="zc-label">服务器账号密码（仅本次登录使用，不保存密码）</label><input aria-label="服务器账号密码" className="zc-input" type="password" value={cred.password} disabled={vault.kind === 'native-stronghold' && !vault.unlocked} onChange={(e) => patchCredential(selected.id, { password: e.target.value, accessToken: undefined, refreshToken: undefined, accessExpiresAt: undefined, sessionId: undefined, sessionTransport: undefined })} /></div>}
               {!selectedIsPrimary && <div><label className="zc-label">确认服务器账号密码（仅注册需要）</label><input aria-label="确认服务器账号密码" className="zc-input" type="password" value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} /></div>}
