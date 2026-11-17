@@ -157,5 +157,8 @@ test('does not downgrade a later version on subsequent container recreation',opt
     await symlink('releases/v0.8.0',join(f.runtime,'current'),'dir');
     assert.equal(await prepareImageUpgrade(f),'already-current');
     await assert.rejects(readFile(join(f.runtime,'pending.json')),/ENOENT/);
+    await unlink(join(f.runtime,'current'));
+    await symlink('releases/v0.8.0-extra',join(f.runtime,'current'),'dir');
+    await assert.rejects(prepareImageUpgrade(f),/仅用于 0.6.0/);
   } finally {await rm(f.root,{recursive:true,force:true});}
 });

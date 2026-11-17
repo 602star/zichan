@@ -16,8 +16,8 @@ export async function prepareImageUpgrade({ runtime, bootstrap, dataDir }) {
     if (!info.isFile() || info.size === 0) throw new Error('原服务器身份文件缺失，停止升级：' + name);
   }
   const current = await readlink(join(runtime, 'current'));
-  const version = /^releases\/v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(current);
-  if (version && (BigInt(version[1]) > 0n || BigInt(version[2]) >= 7n)) return 'already-current';
+  const version = /^releases\/v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)/.exec(current);
+  if (version && version[0] === current && (BigInt(version[1]) > 0n || BigInt(version[2]) >= 7n)) return 'already-current';
   if (current !== 'releases/v0.6.0') throw new Error('此一次性配置仅用于 0.6.0 升级，当前链接为：' + current);
   if (await exists(join(runtime, 'pending.json'))) return 'pending';
   const marker = join(runtime, 'image-upgrade-0.6.0-to-0.7.0.json');
