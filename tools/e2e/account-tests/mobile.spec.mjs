@@ -7,6 +7,13 @@ import { registerAccount } from '../../../packages/db/dist/index.js';
 
 test.use({ hasTouch: true, isMobile: true });
 
+async function reloadAfterDialogs(page) {
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  // Closing a phone sheet schedules Back; let it finish before starting a reload.
+  await page.waitForFunction(() => !history.state?.zcDialog);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+}
+
 for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, initialization, entry, protection and sync`, async ({ page }, testInfo) => {
   await page.setViewportSize({ width, height: 844 });
   const setup = 'test-mobile-owner-00000000000000000';
@@ -52,7 +59,7 @@ for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, ini
     await guide.getByRole('button', { name: /试用.*模板/ }).click();
     await expect(page.getByRole('dialog', { name: '新增 · 日常收支' })).toBeVisible();
     await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '取消', exact: true }).click();
-    await page.reload();
+    await reloadAfterDialogs(page);
     await expect(guide).toBeVisible({ timeout: 30_000 });
     await expect(guide).toContainText('新手指南 · 3/4');
     await guide.getByRole('button', { name: '暂时收起' }).click();
@@ -69,12 +76,7 @@ for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, ini
     await entry.getByRole('button', { name: '保存', exact: true }).click();
     await expect(guide.getByText('记第一笔 · 已完成')).toBeVisible();
     await expect(entry).toBeHidden();
-    try {
-      await page.reload({ waitUntil: 'domcontentloaded' });
-    } catch (error) {
-      if (!String(error).includes('net::ERR_ABORTED')) throw error;
-      await page.waitForLoadState('domcontentloaded');
-    }
+    await reloadAfterDialogs(page);
     await expect(guide.getByText('记第一笔 · 已完成')).toBeVisible({ timeout: 30_000 });
     await guide.getByRole('button', { name: '下一步' }).click();
     await guide.getByRole('button', { name: '下一步' }).click();
