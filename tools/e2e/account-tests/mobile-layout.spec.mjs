@@ -1,3 +1,4 @@
+import { clickLedgerNavigation as clickNav } from '../ledger-navigation.mjs';
 import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
@@ -39,42 +40,6 @@ const VIEWPORTS = [
   { name: '1024x768', width: 1024, height: 768 },
   { name: '1180x820', width: 1180, height: 820 },
 ];
-
-async function clickNav(page, label) {
-  const first = await page.evaluate((target) => {
-    const norm = (b) => (b.getAttribute('aria-label') || b.textContent || '').replace(/\s+/g, '');
-    const sidebar = document.querySelector('.zc-sidebar');
-    if (sidebar && getComputedStyle(sidebar).display !== 'none') {
-      const btn = [...sidebar.querySelectorAll('.zc-sidebar-nav-item')].find((b) => norm(b).endsWith(target));
-      if (btn) { btn.click(); return 'sidebar'; }
-    }
-    const nav = document.querySelector('.zc-mobile-bottom-nav');
-    if (!nav || getComputedStyle(nav).display === 'none') return 'no-nav';
-    const buttons = [...nav.querySelectorAll('button')];
-    const direct = buttons.find((b) => norm(b).endsWith(target));
-    if (direct) { direct.click(); return 'nav'; }
-    const more = buttons.find((b) => norm(b).includes('更多'));
-    if (!more) return `no-more:${buttons.map(norm).join('|')}`;
-    more.click();
-    return 'drawer';
-  }, label);
-  if (first === 'drawer') {
-    await page.waitForTimeout(250);
-    const second = await page.evaluate((target) => {
-      const drawer = document.querySelector('.zc-mobile-drawer');
-      if (!drawer) return 'no-drawer';
-      const buttons = [...drawer.querySelectorAll('button')].filter((b) => !b.classList.contains('zc-mobile-drawer-add'));
-      const hit = buttons.find((b) => (b.textContent || '').replace(/\s+/g, '').endsWith(target));
-      if (!hit) return `missing:${buttons.map((b) => (b.textContent || '').trim()).join('|')}`;
-      hit.click();
-      return 'ok';
-    }, label);
-    if (second !== 'ok') throw new Error(`drawer navigation failed for ${label}: ${second}`);
-  } else if (first !== 'nav' && first !== 'sidebar') {
-    throw new Error(`navigation failed for ${label}: ${first}`);
-  }
-  await page.waitForTimeout(450);
-}
 
 /** Collect every contract violation for the screen currently on display. */
 function violationsFor(data, viewport, screen) {
@@ -185,7 +150,9 @@ test('every screen keeps the phone/tablet layout contract across the device matr
       // Collapsing the detail table removes many regular-weight cells, raising
       // the bold percentage even though there is less emphasized text overall.
       reports: { screens: 2.8, controls: 26, surfaces: 12, boldCount: 45 },
-      transactions: { screens: 4.35, controls: 70, surfaces: 7, boldShare: 0.25 },
+      // Daily cards collapse older regular-weight rows; cap emphasized blocks
+      // directly instead of dividing by the number of expanded records.
+      transactions: { screens: 4.35, controls: 70, surfaces: 7, boldCount: 30 },
     };
 
     await page.setViewportSize({ width: 390, height: 844 });

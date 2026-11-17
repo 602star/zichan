@@ -78,7 +78,9 @@ export function mobileLayoutProbe(options) {
     if (el.hasAttribute('disabled')) continue;
     const target = hitTarget(el);
     const rect = target.getBoundingClientRect();
-    if (rect.height < 44 || rect.width < 44) {
+    // Seven calendar columns keep 24px minimum width (WCAG 2.5.8); rows remain 44px tall.
+    const minWidth = el.matches('.zc-home-calendar-day') ? 24 : 44;
+    if (rect.height < 44 || rect.width < minWidth) {
       smallTargets.push({
         el: describe(el),
         via: target === el ? 'self' : target.className,

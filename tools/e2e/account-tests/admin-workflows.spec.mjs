@@ -124,8 +124,10 @@ for (const width of [1280, 390]) {
       await expect(page).toHaveURL(/from=/);
       await timeRange.getByRole('button', { name: '结束日期' }).click();
       await page.getByRole('dialog', { name: '结束日期' }).getByRole('button', { name: '今天' }).click();
+      await timeRange.getByLabel('结束时分').fill('23:59');
       await timeRange.getByRole('button', { name: '应用' }).click();
-      expect(new URL(page.url()).searchParams.get('until')).toMatch(/\.999Z$/);
+      const until = new Date(new URL(page.url()).searchParams.get('until'));
+      expect([until.getHours(), until.getMinutes()]).toEqual([23, 59]);
       await capture('audit');
 
       for (const [label, name] of [['设备与会话', 'sessions'], ['同步诊断', 'sync'], ['系统日志', 'logs'], ['登录日志', 'security-events'], ['运行监控', 'monitor']]) {

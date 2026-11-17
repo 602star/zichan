@@ -42,7 +42,7 @@ async function openSync(page) {
 }
 
 async function saveExpense(page, note, attachmentName, attachmentBytes = photo) {
-  await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
+  await page.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
   await page.getByRole('button', { name: /^\+ 记(支出|账)$/ }).click();
   await page.getByRole('textbox', { name: /^金额/ }).fill('12.34');
   await page.getByLabel('描述').fill(note);
@@ -129,8 +129,9 @@ test('the browser carries a personal ledger between independent servers', async 
     await secondPage.getByLabel('服务器账号密码', { exact: true }).fill(password);
     await secondPage.getByRole('button', { name: '登录' }).click();
     await expect(secondPage.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
-    await secondPage.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
-    await secondPage.getByText('first-browser-entry', { exact: true }).click();
+    await secondPage.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
+    await secondPage.locator('.zc-transaction-summary-title').filter({ hasText: 'first-browser-entry' }).click();
+    await secondPage.getByRole('button', { name: '编辑流水', exact: true }).click();
     await expect(secondPage.getByRole('dialog').getByText('browser-photo.png', { exact: true })).toBeVisible();
     await expect.poll(async () => secondPage.getByRole('dialog').getByRole('img', { name: 'browser-photo.png' })
       .evaluate((image) => image.complete && image.naturalWidth > 0)).toBe(true);
@@ -142,7 +143,7 @@ test('the browser carries a personal ledger between independent servers', async 
       const [first, second] = await Promise.all(stores.map((store) => store.replicaInventory('owner', source.ledgerId)));
       return Boolean(first.commitHash) && first.commitHash === second.commitHash;
     }, { timeout: 20_000 }).toBe(true);
-    await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
+    await page.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
     await expect(page.getByText('second-browser-entry', { exact: true })).toBeVisible();
 
     const beforeLarge = (await stores[1].replicaInventory('owner', source.ledgerId)).promisedBlobCount;

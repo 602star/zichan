@@ -128,6 +128,7 @@ test('event tasks buy and scrap a tracked battery, change idle status, and archi
   await page.getByRole('tab', { name: '概况', exact: true }).click(); await expect(detail).toContainText('2,799.00');
   await page.getByRole('button', { name: '记录生命周期事件', exact: true }).click(); await menu().getByRole('button', { name: /^转为闲置/ }).click();
   await save(page.getByRole('dialog', { name: '新增 · 物品生命周期事件', exact: true })); await expect(detail.locator('.zc-fixed-toolbar').first()).toContainText('闲置');
+  await page.clock.setFixedTime(new Date(await page.evaluate(() => Date.now()) + 1000));
   await page.getByRole('button', { name: '记录生命周期事件', exact: true }).click(); await menu().getByRole('button', { name: /^启用/ }).click();
   await save(page.getByRole('dialog', { name: '新增 · 物品生命周期事件', exact: true })); await expect(detail.locator('.zc-fixed-toolbar').first()).toContainText('使用中');
   await page.getByRole('button', { name: '返回物品', exact: true }).click();

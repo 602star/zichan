@@ -68,7 +68,13 @@ for (const width of [320, 360, 390]) test(`mobile ${width}px supports login, ini
     await entry.getByLabel('描述').fill('第一笔午餐');
     await entry.getByRole('button', { name: '保存', exact: true }).click();
     await expect(guide.getByText('记第一笔 · 已完成')).toBeVisible();
-    await page.reload();
+    await expect(entry).toBeHidden();
+    try {
+      await page.reload({ waitUntil: 'domcontentloaded' });
+    } catch (error) {
+      if (!String(error).includes('net::ERR_ABORTED')) throw error;
+      await page.waitForLoadState('domcontentloaded');
+    }
     await expect(guide.getByText('记第一笔 · 已完成')).toBeVisible({ timeout: 30_000 });
     await guide.getByRole('button', { name: '下一步' }).click();
     await guide.getByRole('button', { name: '下一步' }).click();

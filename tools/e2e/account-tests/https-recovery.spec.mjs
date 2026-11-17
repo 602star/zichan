@@ -87,7 +87,7 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
     await page.getByRole('textbox', { name: /^金额/ }).fill('68');
     await page.getByLabel('描述').fill('HTTPS 恢复演练');
     await page.getByRole('button', { name: '保存', exact: true }).click();
-    await expect(page.getByText('HTTPS 恢复演练', { exact: true })).toBeVisible();
+    await expect(page.locator('.zc-transaction-summary-title').filter({ hasText: 'HTTPS 恢复演练' })).toBeVisible();
     expect((await context.cookies()).find((c) => c.name === 'zichan_session')).toMatchObject({ secure: true, httpOnly: true, sameSite: 'Lax' });
     await expect.poll(async () => {
       const driver = new NodeSqliteDriver(join(source, 'server.sqlite'));
@@ -109,7 +109,8 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
     await page.getByLabel('服务器账号密码', { exact: true }).fill('deployment-password');
     await page.getByRole('button', { name: '登录', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText('HTTPS 恢复演练', { exact: true })).toBeVisible();
+    await page.locator('.zc-sidebar').getByRole('button', { name: '流水', exact: true }).click();
+    await expect(page.locator('.zc-transaction-summary-title').filter({ hasText: 'HTTPS 恢复演练' })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('https-restored-ledger.png') });
     await testInfo.attach('deployment-evidence', { body: JSON.stringify({ transport: 'HTTPS', certificateTrust: 'isolated SPKI pin', source: 'separate server.mjs process', restore: 'new process and data directory', files: manifest.files.map((f) => f.path), secureCookie: true, freshDeviceRestored: true }, null, 2), contentType: 'application/json' });
   } finally {

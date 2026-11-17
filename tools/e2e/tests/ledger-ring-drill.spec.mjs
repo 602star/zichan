@@ -225,8 +225,10 @@ test('the 日常收支 charts stack full width, and no legend name is cut off', 
 /** Open the daily ledger's filter controls. */
 async function switchToAssetsMode(page) {
   const sidebar = page.locator('.zc-sidebar');
-  await sidebar.getByRole('button', { name: /日常收支$/ }).click();
+  await sidebar.getByRole('button', { name: /流水$/ }).click();
   await expect(page.getByText('日常流水', { exact: true }).first()).toBeVisible();
+  const toggle = page.locator('.zc-ledger-searchbar .zc-transaction-filter-toggle');
+  if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
 }
 
 /**

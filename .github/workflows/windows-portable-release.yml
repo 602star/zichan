@@ -16,7 +16,7 @@ jobs:
         with:
           node-version-file: .node-version
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.1
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri

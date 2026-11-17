@@ -53,7 +53,7 @@ test.describe('mobile date/time and spending', () => {
     await periods.getByRole('button', { name: /今日支出/ }).click();
     await expect(page.locator('.zc-transaction-row')).toHaveCount(2);
     const guide = page.getByRole('region', { name: '首次记账引导' });
-    if (await guide.isVisible()) await guide.getByRole('button', { name: '收起', exact: true }).click();
+    if (await guide.isVisible()) await guide.getByRole('button', { name: '暂时收起', exact: true }).click();
     await expect(page.getByText('已保存流水', { exact: true })).toBeHidden({ timeout: 15_000 });
     await page.screenshot({ path: test.info().outputPath('spending-phone.png'), fullPage: false });
 

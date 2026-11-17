@@ -62,6 +62,8 @@ test('modal forms and nested confirmation keep their header and footer inside th
   for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }, { width: 320, height: 568 }, { width: 844, height: 390 }, { width: 390, height: 320 }]) {
     await page.setViewportSize(viewport); await page.getByRole('button', { name: '+ 记账', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: '新增 · 日常收支', exact: true });
+    const reset = dialog.getByRole('button', { name: '重新开始', exact: true });
+    if (await reset.isVisible()) await reset.click();
     const more = dialog.locator('summary').filter({ hasText: '更多信息' }); if (await more.count()) await more.first().click();
     await contained(dialog); await scrollBody(dialog);
     await dialog.getByLabel(/^金额/).fill('12.34'); await dialog.getByRole('button', { name: '取消', exact: true }).click();

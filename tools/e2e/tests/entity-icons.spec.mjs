@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures.mjs';
+import { openLedgerSection } from '../ledger-navigation.mjs';
 
 async function start(page) {
   await page.goto('/');
@@ -29,7 +30,8 @@ async function upload(page, form, color = '#0f766e') {
 for (const width of [390, 1280]) test(`payee uploads survive reload and reset at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 });
   await start(page);
-  await page.getByRole('button', { name: '+ 交易对象', exact: true }).click();
+  await openLedgerSection(page, 'manage', 'labels');
+  await page.getByRole('button', { name: '+ 新增交易对象', exact: true }).click();
   const form = page.getByRole('dialog', { name: '新增 · 交易对象', exact: true });
   await form.getByLabel(/^名称/).fill('我的图标商店');
   const source = await upload(page, form);
@@ -42,6 +44,7 @@ for (const width of [390, 1280]) test(`payee uploads survive reload and reset at
   await form.getByRole('button', { name: '保存', exact: true }).click();
   await expect(form).toBeHidden();
   await page.reload();
+  await openLedgerSection(page, 'transactions');
   await page.getByRole('button', { name: '+ 记账', exact: true }).click();
   const entry = page.getByRole('dialog', { name: '新增 · 日常收支', exact: true });
   if (width === 390) {
@@ -51,12 +54,7 @@ for (const width of [390, 1280]) test(`payee uploads survive reload and reset at
   await expect(entry.getByRole('button', { name: '我的图标商店', exact: true }).locator('img')).toHaveAttribute('src', source);
   await entry.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '保留草稿并关闭', exact: true }).click();
-  await page.setViewportSize({ width: 390, height: 900 });
-  await page.getByRole('button', { name: '••• 更多', exact: true }).click();
-  await page.getByRole('dialog', { name: '更多功能' }).getByRole('button', { name: /管理.*启用/ }).click();
-  await page.getByRole('dialog', { name: '更多功能' }).getByRole('button', { name: '⊞ 管理', exact: true }).click();
-  await page.setViewportSize({ width, height: 900 });
-  await page.getByRole('tab', { name: '标签与交易对象', exact: true }).click();
+  await openLedgerSection(page, 'manage', 'labels');
   const row = width === 390
     ? page.getByRole('button', { name: '编辑交易对象 我的图标商店', exact: true })
     : page.getByRole('row').filter({ hasText: '我的图标商店' });
@@ -85,13 +83,15 @@ for (const width of [390, 1280]) test(`payee uploads survive reload and reset at
 
 test('custom category images appear in search and selection without clipping labels', async ({ page }) => {
   await start(page);
-  await page.getByRole('button', { name: '+ 分类', exact: true }).click();
+  await openLedgerSection(page, 'manage', 'transactionCategories');
+  await page.getByRole('button', { name: '+ 新增分类', exact: true }).click();
   const form = page.getByRole('dialog', { name: '新增 · 收支分类', exact: true });
   await form.getByLabel(/^名称/).fill('自定义演出票务与交通');
   await form.getByLabel('父级分类', { exact: true }).selectOption({ label: '交通出行' });
   const source = await upload(page, form);
   await form.getByRole('button', { name: '保存', exact: true }).click();
   await expect(form).toBeHidden();
+  await openLedgerSection(page, 'transactions');
   await page.getByRole('button', { name: '+ 记账', exact: true }).click();
   const entry = page.getByRole('dialog', { name: '新增 · 日常收支', exact: true });
   const trigger = entry.getByLabel(/^分类/);

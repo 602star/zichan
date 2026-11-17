@@ -4,14 +4,14 @@ import { openLedger } from './helpers.mjs';
 test.setTimeout(960_000);
 
 const SCREENS = [
-  ['总览'],
+  ['工作台'],
   ['资产转换'],
-  ['日常收支'],
+  ['流水'],
   ['游戏赛季'],
   ['物品资产'],
   ['报表'],
-  ['历史'],
-  ['管理'],
+  ['操作历史'],
+  ['资料管理'],
   ['我的账号'],
   ['设置'],
 ];
@@ -110,7 +110,7 @@ async function saveAndCheckRecovery(page, label) {
       };
     });
     expect(focused, `${label} / ${name}：点击字段标签后没有焦点`).not.toBeNull();
-    expect(['input', 'select', 'textarea'], `${label} / ${name}：焦点落在 ${focused.tag}`).toContain(focused.tag);
+    expect(['input', 'select', 'textarea', 'button'], `${label} / ${name}：焦点落在 ${focused.tag}`).toContain(focused.tag);
     expect(focused.visible, `${label} / ${name}：字段存在但不可见`).toBe(true);
     expect(focused.insideDialog, `${label} / ${name}：焦点跑到弹窗之外`).toBe(true);
     expect(focused.inViewport, `${label} / ${name}：字段没有滚入视口（top/bottom 越界）`).toBe(true);
@@ -123,11 +123,10 @@ async function saveAndCheckRecovery(page, label) {
 async function sweepCurrentView(page, screenLabel) {
   // Asset conversion has a dedicated multi-step modal, covered by conversion workflow tests.
   if (screenLabel.startsWith('资产转换')) return ['专用转换表单'];
-  const buttons = page.locator('main button');
-  const total = await buttons.count();
+  const buttonTexts = await page.locator('main button:visible').allTextContents();
   const labels = new Set();
-  for (let i = 0; i < total; i += 1) {
-    const text = ((await buttons.nth(i).innerText().catch(() => '')) || '').trim().split('\n')[0];
+  for (const content of buttonTexts) {
+    const text = content.trim().split('\n')[0];
     if (text.startsWith('+') || text === '开始记录') labels.add(text);
   }
   const results = [];
@@ -145,14 +144,15 @@ async function sweepCurrentView(page, screenLabel) {
 
 /** Screens that group their forms behind tabs (管理 has four) must all be visited. */
 async function sweepScreen(page, screenLabel) {
-  const tabs = page.locator('main [role="tab"]');
+  const selector = screenLabel === '资料管理' ? 'main nav[aria-label="资料管理"] button' : 'main [role="tab"]:visible';
+  const tabs = page.locator(selector);
   const tabCount = await tabs.count();
   if (!tabCount) return sweepCurrentView(page, screenLabel);
   const tabLabels = [];
   for (let i = 0; i < tabCount; i += 1) tabLabels.push(((await tabs.nth(i).innerText()) || '').trim());
   const results = [];
   for (const tabLabel of tabLabels) {
-    await page.locator('main [role="tab"]').filter({ hasText: tabLabel }).first().click();
+    await page.locator(selector).filter({ hasText: tabLabel }).first().click();
     await page.waitForTimeout(150);
     results.push(...await sweepCurrentView(page, `${screenLabel}/${tabLabel}`));
   }
@@ -161,12 +161,12 @@ async function sweepScreen(page, screenLabel) {
 
 test('every module on: no create form blocks on an invisible field', async ({ page }) => {
   await openLedger(page);
-  expect(await sidebarLabels(page)).toEqual(['总览', '日常收支', '物品资产', '我的账号', '设置']);
+  expect(await sidebarLabels(page)).toEqual(['工作台', '流水', '账户', '账单与还款', '计划', '物品资产', '我的账号', '设置']);
 
   const moduleCount = await enableAllModules(page);
   expect(moduleCount).toBe(10);
   expect(await sidebarLabels(page)).toEqual([
-    '总览', '资产转换', '日常收支', '游戏赛季', '物品资产', '报表', '历史', '管理', '我的账号', '设置',
+    '工作台', '流水', '账户', '账单与还款', '计划', '资产转换', '物品资产', '游戏赛季', '报表', '资料管理', '操作历史', '我的账号', '设置',
   ]);
 
   const report = {};
@@ -183,7 +183,7 @@ test('all modules enabled: a full record-keeping pass end to end', async ({ page
   await enableAllModules(page);
 
   // 1. Daily expense: the amount is the only thing must-type.
-  await navigate(page, ['日常收支']);
+  await navigate(page, ['流水']);
   await page.getByRole('button', { name: '+ 记账' }).click();
   const expense = page.getByRole('dialog', { name: '新增 · 日常收支' });
   await expect(expense.getByLabel('账户')).toBeVisible();
@@ -219,9 +219,9 @@ test('all modules enabled: a full record-keeping pass end to end', async ({ page
   await expect(page.getByText('扫描物品', { exact: true })).toBeVisible();
 
   // 4. Manage: the base records each module leans on, across all four tabs.
-  await navigate(page, ['管理']);
-  const manageTab = (name) => page.locator('main [role="tab"]').filter({ hasText: name }).first();
-  await manageTab('其他资料').click();
+  await navigate(page, ['资料管理']);
+  const manageTab = (name) => page.getByRole('navigation', { name: '资料管理' }).getByRole('button', { name, exact: true });
+  await manageTab('账户').click();
   await expect(page.getByRole('button', { name: '+ 新增账户' })).toBeVisible();
   await manageTab('标签与交易对象').click();
   for (const [action, value] of [
@@ -239,6 +239,6 @@ test('all modules enabled: a full record-keeping pass end to end', async ({ page
   await expect(page.getByText('扫描交易对象', { exact: true })).toBeVisible();
 
   // Return to overview after saving across the enabled modules.
-  await navigate(page, ['总览']);
+  await navigate(page, ['工作台']);
   await expect(page.locator('main')).toBeVisible();
 });

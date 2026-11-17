@@ -58,6 +58,7 @@ test('populated mobile cards keep amounts and actions within the phone viewport'
         await navigate(screen);
         await viewportFit(width, screen);
         if (width === 320 && ['dashboard', 'reports', 'history'].includes(screen)) {
+          if (screen === 'dashboard') await page.getByRole('combobox', { name: '快捷时间范围' }).first().selectOption('custom');
           const [from, to] = await page.locator('.zc-date-range-bar').first().locator('.zc-date-boundary').evaluateAll((nodes) =>
             nodes.slice(0, 2).map((node) => Math.round(node.getBoundingClientRect().top)));
           expect(to, `320px ${screen} date inputs should be stacked`).toBeGreaterThan(from);
@@ -92,6 +93,8 @@ test('populated mobile cards keep amounts and actions within the phone viewport'
           }
         }
         if (screen === 'manage') {
+          const categories = page.getByRole('button', { name: '收支分类', exact: true });
+          if (await categories.isVisible()) await categories.click();
           const actions = await page.locator('.zc-category-summary-actions').first().locator('button').evaluateAll((nodes) =>
             nodes.map((node) => ({ top: Math.round(node.getBoundingClientRect().top), right: Math.round(node.getBoundingClientRect().right) })));
           expect(actions).toHaveLength(2);
@@ -103,7 +106,7 @@ test('populated mobile cards keep amounts and actions within the phone viewport'
 
     await page.setViewportSize({ width: 390, height: 844 });
     await navigate('transactions');
-    const filterToggle = page.getByRole('button', { name: /筛选与搜索/ });
+    const filterToggle = page.locator('.zc-ledger-searchbar .zc-transaction-filter-toggle');
     await expect(filterToggle).toBeVisible();
     await expect(filterToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByRole('textbox', { name: '流水搜索' })).toBeHidden();
@@ -111,12 +114,13 @@ test('populated mobile cards keep amounts and actions within the phone viewport'
     await expect(page.getByRole('textbox', { name: '流水搜索' })).toBeVisible();
     await page.getByRole('textbox', { name: '流水搜索' }).fill('没有这笔流水');
     await filterToggle.click();
-    await expect(filterToggle).toContainText('已启用 1 项');
+    await expect(filterToggle).toContainText('筛选 · 1 项');
     await expect(page.getByRole('textbox', { name: '流水搜索' })).toBeHidden();
     await page.getByRole('combobox', { name: '快捷时间范围' }).first().selectOption('custom');
     await expect(page.locator('#transaction-records .zc-date-boundary').first()).toBeVisible();
 
     await navigate('settings');
+    await page.getByRole('button', { name: '记账', exact: true }).click();
     await expect(page.getByRole('combobox', { name: '默认卖出匹配方式' })).toBeHidden();
     await expect(page.getByRole('combobox', { name: '记账弹窗默认分类范围' })).toBeHidden();
     await expect(page.getByRole('button', { name: '恢复推荐布局' })).toBeHidden();

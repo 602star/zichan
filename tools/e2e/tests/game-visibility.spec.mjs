@@ -1,3 +1,4 @@
+import { clickLedgerNavigation } from '../ledger-navigation.mjs';
 import { test, expect } from './fixtures.mjs';
 import { openLedger } from './helpers.mjs';
 
@@ -8,13 +9,8 @@ async function start(page) {
 
 async function navigate(page, name) {
   await page.setViewportSize({ width: 390, height: 900 });
-  await page.getByRole('button', { name: '••• 更多', exact: true }).click();
-  const drawer = page.getByRole('dialog', { name: '更多功能' });
-  const enable = drawer.getByRole('button', { name: new RegExp(`${name}.*启用`) });
-  if (await enable.count()) await enable.click();
-  await drawer.getByRole('button', { name: '关闭更多菜单', exact: true }).click();
+  await clickLedgerNavigation(page, name);
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.locator('.zc-sidebar nav button').filter({ hasText: name }).click();
 }
 
 async function save(form) {
@@ -52,7 +48,7 @@ test('game records remain visible, unassigned history can be assigned, and accou
   await form.getByLabel('备注', { exact: true }).fill('保存即见的记录');
   await fillRequiredCurrencyFields(form);
   await save(form);
-  await expect(page.getByRole('button', { name: '编辑游戏记录 保存即见的记录', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看游戏记录 保存即见的记录', exact: true })).toBeVisible();
   await expect(page.getByLabel('游戏记录类型筛选')).toHaveValue('all');
 
   await page.getByRole('button', { name: '+ 赛季', exact: true }).click();
@@ -70,16 +66,18 @@ test('game records remain visible, unassigned history can be assigned, and accou
   await form.getByLabel('备注', { exact: true }).fill('未归属旧记录');
   await fillRequiredCurrencyFields(form);
   await save(form);
-  await expect(page.getByRole('button', { name: '编辑游戏记录 未归属旧记录', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看游戏记录 未归属旧记录', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /^未分配赛季/ })).toHaveAttribute('aria-pressed', 'true');
-  await page.getByRole('button', { name: '编辑游戏记录 未归属旧记录', exact: true }).click();
+  await page.getByRole('button', { name: '查看游戏记录 未归属旧记录', exact: true }).click();
+  await page.getByRole('button', { name: '编辑游戏记录', exact: true }).click();
   form = page.getByRole('dialog', { name: '编辑 · 游戏记录', exact: true });
   await form.getByLabel('赛季', { exact: true }).selectOption(secondSeasonId);
   await save(form);
+  await page.getByRole('button', { name: '返回赛季', exact: true }).click();
   await expect(page.getByRole('button', { name: /第二赛季/ })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('button', { name: '编辑游戏记录 未归属旧记录', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看游戏记录 未归属旧记录', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '全部记录', exact: true }).click();
-  await expect(page.getByRole('button', { name: /^编辑游戏记录 / })).toHaveCount(2);
+  await expect(page.getByRole('button', { name: /^查看游戏记录 / })).toHaveCount(2);
   await page.setViewportSize({ width: 390, height: 900 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   expect(await page.locator('.zc-game-record-row > :nth-child(3)').first().evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(150);
@@ -87,10 +85,9 @@ test('game records remain visible, unassigned history can be assigned, and accou
   await page.reload();
   await expect(page.getByRole('button', { name: '全部记录', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '全部记录', exact: true }).click();
-  await expect(page.getByRole('button', { name: /^编辑游戏记录 / })).toHaveCount(2);
+  await expect(page.getByRole('button', { name: /^查看游戏记录 / })).toHaveCount(2);
   await navigate(page, '管理');
-  await page.getByRole('tab', { name: '其他资料', exact: true }).click();
-  await page.getByRole('tab', { name: '游戏资料', exact: true }).click();
+  await page.getByRole('navigation', { name: '资料管理' }).getByRole('button', { name: '游戏资料', exact: true }).click();
   await page.getByRole('button', { name: '+ 新增游戏赛季', exact: true }).click();
   form = page.getByRole('dialog', { name: '新增 · 游戏赛季', exact: true });
   expect(await form.locator('label.zc-label').allTextContents()).toEqual(seasonLabels);
@@ -113,6 +110,6 @@ test('game records remain visible, unassigned history can be assigned, and accou
   await form.getByLabel('备注', { exact: true }).fill('另一游戏记录');
   await fillRequiredCurrencyFields(form);
   await save(form);
-  await expect(page.getByRole('button', { name: '编辑游戏记录 另一游戏记录', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '编辑游戏记录 保存即见的记录', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '查看游戏记录 另一游戏记录', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看游戏记录 保存即见的记录', exact: true })).toHaveCount(0);
 });

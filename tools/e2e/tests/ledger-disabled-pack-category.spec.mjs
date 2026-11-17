@@ -35,7 +35,7 @@ test('keeps transactions of a disabled pack filterable without re-enabling it', 
   await studentPack.getByRole('button', { name: '启用学生扩展包', exact: true }).click();
   await expect(studentPack.getByText('7 项全部可用', { exact: true })).toBeVisible();
 
-  await page.getByText('日常收支', { exact: true }).first().click();
+  await page.getByText('流水', { exact: true }).first().click();
   await recordExpense(page, { category: '食堂', description: '停用前的食堂消费', amount: '42', dialogName: '新增 · 日常收支' });
   await recordExpense(page, { category: '堂食餐饮', description: '普通午餐', amount: '18', dialogName: '新增 · 日常收支' });
 
@@ -49,7 +49,7 @@ test('keeps transactions of a disabled pack filterable without re-enabling it', 
   await expect(page.getByRole('button', { name: '撤销', exact: true })).toHaveCount(0, { timeout: 20_000 });
 
   // 3. Return to the daily ledger and inspect its filters.
-  await sidebar.getByRole('button', { name: /日常收支$/ }).click();
+  await sidebar.getByRole('button', { name: /流水$/ }).click();
   await expect(page.getByText('日常流水', { exact: true }).first()).toBeVisible();
 
   // 旧流水还在，分类名照常显示。
@@ -58,6 +58,7 @@ test('keeps transactions of a disabled pack filterable without re-enabling it', 
 
   // 4. 读路径：停用分类跟「隐藏」同一套行为——默认列表里不占位置，
   //    但搜得到，也能用「显示隐藏」翻出来，并带「已停用」徽标（不是「隐藏」）。
+  await page.locator('.zc-ledger-searchbar .zc-transaction-filter-toggle').click();
   const filter = page.getByLabel('流水分类');
   const panel = page.locator('.zc-category-picker-panel');
   await filter.click();

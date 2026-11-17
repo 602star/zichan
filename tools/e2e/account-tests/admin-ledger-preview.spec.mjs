@@ -55,7 +55,7 @@ async function recordExpenseAs(page, origin, username, amount) {
   await page.getByRole('button', { name: '记第一笔', exact: true }).click();
   const form = page.getByRole('dialog', { name: '新增 · 日常收支' });
   await form.getByLabel('金额*').fill(amount);
-  await form.getByRole('button', { name: '保存' }).first().click();
+  await form.getByRole('button', { name: '保存', exact: true }).click();
   await expect(form).toHaveCount(0);
   await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
   await page.getByRole('button', { name: '查看服务器上的账本' }).click();
@@ -111,8 +111,8 @@ test('an administrator opens a user ledger as a read-only preview and can close 
     const sidebar = page.locator('.zc-sidebar');
     await expect(sidebar.getByRole('button', { name: /设置$/ })).toHaveCount(0);
     await expect(sidebar.getByRole('button', { name: /数据保护$/ })).toHaveCount(0);
-    await sidebar.getByRole('button', { name: /日常收支$/ }).click();
-    await expect(page.getByText('42.5', { exact: false }).first()).toBeVisible();
+    await sidebar.getByRole('button', { name: /流水$/ }).click();
+    await expect(page.locator('.zc-transaction-row').first()).toContainText('42.50 CNY');
 
     // Export writes the user's ledger to the operator's disk, so the preview has no such control.
     await expect(page.getByRole('button', { name: '导出', exact: true })).toHaveCount(0);

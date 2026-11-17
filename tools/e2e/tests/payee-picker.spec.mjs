@@ -56,6 +56,7 @@ test('contextual platforms, aliases and personal history share a single optional
   await entry.getByRole('button', { name: '保存', exact: true }).last().click();
   await expect(entry).toBeHidden();
   await page.getByText('平台目录第一次使用', { exact: true }).first().click();
+  await page.getByRole('button', { name: '编辑流水', exact: true }).click();
   await expect(page.getByRole('dialog').getByRole('textbox', { name: '商家 / 平台', exact: true })).toHaveValue('京东');
 });
 
@@ -77,6 +78,9 @@ test('scene browsing stays usable on a phone and custom counterpart text saves d
   await entry.getByLabel('描述', { exact: true }).fill('自定义交易对象');
   await entry.getByRole('button', { name: '保存', exact: true }).last().click();
   await expect(entry).toBeHidden();
-  await page.getByText('自定义交易对象', { exact: true }).first().click();
+  await page.locator('.zc-transaction-row').filter({ hasText: '自定义交易对象' }).getByRole('button', { name: '打开 自定义交易对象 的流水操作', exact: true }).click();
+  await page.getByRole('button', { name: '编辑流水', exact: true }).click();
+  const more = page.getByRole('dialog', { name: '编辑 · 日常收支', exact: true }).locator('details').filter({ has: page.locator('summary', { hasText: '更多信息' }) });
+  if (!(await more.getAttribute('open') !== null)) await more.locator('summary').click();
   await expect(page.getByRole('dialog').getByRole('textbox', { name: '商家 / 平台', exact: true })).toHaveValue('楼下便利店');
 });

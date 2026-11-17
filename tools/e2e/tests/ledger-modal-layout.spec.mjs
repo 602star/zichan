@@ -30,7 +30,7 @@ test('refund editing hydrates an original excluded by filters and enforces the r
   await refund.getByLabel(/^金额/).fill('30'); await save(page, refund);
   await expect(original.locator('td.is-numeric .zc-refund-chip')).toHaveText('部分退款 +30.00 CNY');
   await expect(original.locator('.zc-refund-net')).toHaveText('净支出 70.00 CNY');
-  await expect(original.locator('td').nth(3).locator('.zc-refund-chip')).toHaveCount(0);
+  await expect(original.locator('td:has(.zc-transaction-summary-title) .zc-refund-chip')).toHaveCount(0);
   await page.getByRole('button', { name: /^筛选/ }).click();
   await page.getByRole('combobox', { name: '流水类型', exact: true }).selectOption('refund');
   await expect(original).toHaveCount(0);

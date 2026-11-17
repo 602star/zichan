@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures.mjs';
+import { openLedgerSection, selectValue } from '../ledger-navigation.mjs';
 
 async function start(page) {
   await page.goto('/');
@@ -36,9 +37,9 @@ test.describe('touch category selection', () => {
     await expect(entry.getByLabel(/^币种/)).toBeHidden();
     await entry.getByText('更多信息', { exact: true }).click();
     await expect(entry.getByLabel(/^币种/)).toBeVisible();
-    await entry.getByLabel(/^币种/).selectOption('__add_asset_preset__:USD');
+    await selectValue(page, entry.getByLabel(/^币种/), '__add_asset_preset__:USD', /USD · 美元$/);
     await expect(entry.getByLabel('当前币种')).toHaveText('美元');
-    await expect(entry.getByLabel(/^币种/).locator('option:checked')).toHaveText('USD');
+    await expect(entry.getByLabel(/^币种/)).toContainText('USD');
     await entry.getByLabel(/^分类/).click();
     const picker = page.getByRole('dialog', { name: '选择分类', exact: true });
     await expect(picker.getByRole('button', { name: '关闭分类选择' })).toBeFocused();
@@ -57,6 +58,7 @@ test.describe('touch category selection', () => {
     await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '取消', exact: true }).click();
     await page.getByRole('navigation', { name: '移动端主导航' }).getByRole('button', { name: /更多$/ }).click();
     await page.getByRole('dialog', { name: '更多功能' }).getByRole('button', { name: /设置$/ }).click();
+    await page.getByRole('button', { name: '记账', exact: true }).click();
     const currency = page.getByLabel('日常记账默认币种');
     await expect(currency).toBeVisible();
     await currency.selectOption('__add_asset_preset__:USD');
@@ -71,9 +73,11 @@ test('actual half-width forms, filters and advanced queries share the overlay', 
   await start(page);
   await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '取消', exact: true }).click();
   const panel = page.getByRole('dialog', { name: '选择分类', exact: true });
-  await page.getByRole('button', { name: '+ 交易对象', exact: true }).click();
+  await openLedgerSection(page, 'manage', 'labels');
+  await page.getByRole('button', { name: '+ 新增交易对象', exact: true }).click();
   const payee = page.getByRole('dialog', { name: '新增 · 交易对象', exact: true });
   const narrow = payee.getByLabel('默认分类', { exact: true });
+  await narrow.evaluate((node) => { node.style.width = '260px'; });
   expect((await narrow.boundingBox()).width).toBeLessThan(300);
   await narrow.click();
   await fits(panel);
@@ -83,6 +87,8 @@ test('actual half-width forms, filters and advanced queries share the overlay', 
   await expect(narrow).toContainText('打车/网约车');
   await payee.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '保留草稿并关闭', exact: true }).click();
+  await openLedgerSection(page, 'transactions');
+  await page.locator('.zc-ledger-searchbar .zc-transaction-filter-toggle').click();
   await page.getByLabel('流水分类', { exact: true }).click();
   await fits(panel);
   await page.keyboard.press('Escape');
@@ -142,7 +148,8 @@ for (const width of [320, 390, 768, 1280]) {
 test('long custom category names and badges wrap; the panel avoids the right and bottom edges', async ({ page }) => {
   await start(page);
   await page.getByRole('dialog', { name: '新增 · 日常收支' }).getByRole('button', { name: '取消', exact: true }).click();
-  await page.getByRole('button', { name: '+ 分类', exact: true }).click();
+  await openLedgerSection(page, 'manage', 'transactionCategories');
+  await page.getByRole('button', { name: '+ 新增分类', exact: true }).click();
   const form = page.getByRole('dialog', { name: '新增 · 收支分类', exact: true });
   const longName = '跨城市演出交通与住宿费用及超长自定义分类名称完整显示测试';
   await form.getByLabel(/^名称/).fill(longName);
@@ -150,6 +157,7 @@ test('long custom category names and badges wrap; the panel avoids the right and
   await form.getByLabel('在快速选择中隐藏', { exact: true }).check();
   await form.getByRole('button', { name: '保存', exact: true }).click();
   await expect(form).toBeHidden();
+  await openLedgerSection(page, 'transactions');
   await page.getByRole('button', { name: '+ 记账', exact: true }).click();
   const trigger = page.getByRole('dialog', { name: '新增 · 日常收支' }).getByLabel(/^分类/);
   await trigger.evaluate((node) => Object.assign(node.style, { position: 'fixed', right: '12px', bottom: '12px', width: '160px' }));

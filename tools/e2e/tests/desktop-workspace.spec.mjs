@@ -45,6 +45,7 @@ test('desktop modal records, continuous entry and safe closing use the real ledg
   await expect(entry(page)).toBeHidden();
   await expect(page.locator('.zc-first-entry-guide')).toHaveCount(0);
   await expect(page.locator('.zc-transaction-row')).toHaveCount(10);
+  await page.locator('.zc-transaction-row').first().evaluate((node) => node.scrollIntoView({ block: 'start' }));
   const visibleRows = await page.locator('.zc-transaction-row').evaluateAll((rows) => rows.filter((row) => row.getBoundingClientRect().bottom <= innerHeight).length);
   // Readable 16px records take priority over the previous 13px density target.
   expect(visibleRows).toBeGreaterThanOrEqual(7);

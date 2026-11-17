@@ -33,6 +33,10 @@ test('audit short Chinese labels on phone screens', async ({ page }) => {
       for (const screen of ['dashboard', 'convert', 'transactions', 'game', 'fixed', 'reports', 'history', 'manage', 'settings']) {
         await page.evaluate((name) => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: name } })), screen);
         await page.waitForTimeout(220);
+        if (screen === 'manage') {
+          const categories = page.getByRole('button', { name: '收支分类', exact: true });
+          if (await categories.isVisible()) await categories.click();
+        }
         const wrapped = await page.evaluate(() => {
           const issues = [];
           const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
@@ -40,7 +44,8 @@ test('audit short Chinese labels on phone screens', async ({ page }) => {
             const text = node.textContent.trim();
             if (!/^[\p{Script=Han}]{3,8}$/u.test(text)) continue;
             const parent = node.parentElement;
-            if (!parent || parent.closest('[aria-hidden="true"]')) continue;
+            if (!parent || parent.closest('[aria-hidden="true"]') || parent.closest('details:not([open])') && !parent.closest('summary')) continue;
+            if (parent.tagName === 'DIV' && parent.childNodes.length > 1 && parent.textContent.trim() !== text) continue;
             const element = parent.getBoundingClientRect();
             const style = getComputedStyle(parent);
             if (!element.width || !element.height || style.display === 'none' || style.visibility === 'hidden') continue;

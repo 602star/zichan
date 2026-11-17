@@ -26,7 +26,7 @@ test('game season saves an optional in-game fee and a paid record without a cash
   await form.getByLabel('游戏币手续费（可选）').fill('100');
   await form.getByRole('button', { name: '保存', exact: true }).click();
   await expect(form).toBeHidden();
-  await expect(page.getByRole('button', { name: '编辑游戏记录 到账900通货', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看游戏记录 到账900通货', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: '+ 记录', exact: true }).click();
   form = page.getByRole('dialog', { name: '新增 · 游戏记录', exact: true });
@@ -44,7 +44,7 @@ test('game season saves an optional in-game fee and a paid record without a cash
   await form.getByLabel('备注', { exact: true }).fill('付20元到账900通货');
   await form.getByRole('button', { name: '保存', exact: true }).click();
   await expect(form).toBeHidden();
-  await expect(page.getByRole('button', { name: '编辑游戏记录 付20元到账900通货', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '查看游戏记录 付20元到账900通货', exact: true })).toBeVisible();
 
   for (const [recordType, quantity, rate, note, valuation] of [
     ['buy_equipment', '100', '2', '赛季初装备', '估值 50'],
@@ -61,6 +61,6 @@ test('game season saves an optional in-game fee and a paid record without a cash
     await form.getByLabel('备注', { exact: true }).fill(note);
     await form.getByRole('button', { name: '保存', exact: true }).click();
     await expect(form).toBeHidden();
-    await expect(page.getByRole('button', { name: `编辑游戏记录 ${note}`, exact: true })).toContainText(valuation);
+    await expect(page.getByRole('button', { name: `查看游戏记录 ${note}`, exact: true })).toContainText(valuation);
   }
 });

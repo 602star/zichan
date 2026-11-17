@@ -69,7 +69,7 @@ scripts\windows\setup-webview2-runtime.cmd
 
 ## 本地构建
 
-前置条件：`.node-version` 指定的精确 Node.js 版本、npm 依赖、Rust/MSVC C++ 工具、`perl.exe` 和已经准备的 WebView2 固定版。SQLCipher 的 vendored OpenSSL release 构建需要 Perl；一般开发命令仍允许根 `package.json` 中的 Node.js 范围。
+前置条件：`.node-version` 指定的精确 Node.js 版本、npm 依赖、Rust 1.99.1／MSVC C++ 工具、`perl.exe` 和已经准备的 WebView2 固定版。CI 与 Windows、Linux、Android 发布工作流固定使用已验证的 Rust 1.99.1，升级工具链需重新验证原生测试与 SQLCipher schema 契约。SQLCipher 的 vendored OpenSSL release 构建需要 Perl；一般开发命令仍允许根 `package.json` 中的 Node.js 范围。
 
 ```cmd
 scripts\windows\build-desktop.cmd

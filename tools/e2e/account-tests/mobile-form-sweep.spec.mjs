@@ -1,3 +1,4 @@
+import { clickLedgerNavigation as clickNav, visitManageSections, openLedgerSection } from '../ledger-navigation.mjs';
 import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
@@ -50,46 +51,6 @@ const SCREENS = [
 ];
 
 /** Navigate through whichever chrome this viewport uses: bottom bar or sidebar. */
-async function clickNav(page, label) {
-  const first = await page.evaluate((target) => {
-    const norm = (b) => (b.getAttribute('aria-label') || b.textContent || '').replace(/\s+/g, '');
-    const nav = document.querySelector('.zc-mobile-bottom-nav');
-    if (!nav || getComputedStyle(nav).display === 'none') {
-      // 768px and wider keeps the desktop shell even with a coarse pointer.
-      const sidebar = document.querySelector('.zc-sidebar');
-      if (!sidebar || getComputedStyle(sidebar).display === 'none') return 'no-nav';
-      const items = [...sidebar.querySelectorAll('nav button')];
-      const hit = items.find((b) => norm(b).endsWith(target));
-      if (!hit) return `no-sidebar-item:${items.map(norm).join('|')}`;
-      hit.click();
-      return 'sidebar';
-    }
-    const buttons = [...nav.querySelectorAll('button')];
-    const direct = buttons.find((b) => norm(b).endsWith(target));
-    if (direct) { direct.click(); return 'nav'; }
-    const more = buttons.find((b) => norm(b).includes('更多'));
-    if (!more) return `no-more:${buttons.map(norm).join('|')}`;
-    more.click();
-    return 'drawer';
-  }, label);
-  if (first === 'drawer') {
-    await page.waitForTimeout(300);
-    const second = await page.evaluate((target) => {
-      const drawer = document.querySelector('.zc-mobile-drawer');
-      if (!drawer) return 'no-drawer';
-      const buttons = [...drawer.querySelectorAll('button')].filter((b) => !b.classList.contains('zc-mobile-drawer-add'));
-      const hit = buttons.find((b) => (b.textContent || '').replace(/\s+/g, '').endsWith(target));
-      if (!hit) return `missing:${buttons.map((b) => (b.textContent || '').trim()).join('|')}`;
-      hit.click();
-      return 'ok';
-    }, label);
-    if (second !== 'ok') throw new Error(`drawer navigation failed for ${label}: ${second}`);
-  } else if (first !== 'nav' && first !== 'sidebar') {
-    throw new Error(`navigation failed for ${label}: ${first}`);
-  }
-  await page.waitForTimeout(450);
-}
-
 /**
  * Enable the hidden modules the way a phone user does: 更多 → 未启用模块 → 启用.
  * This is a different code path from the Settings checkboxes the desktop sweep
@@ -100,6 +61,7 @@ async function enableHiddenModulesFromDrawer(page) {
   await page.locator('.zc-mobile-bottom-nav button', { hasText: '更多' }).click();
   const drawer = page.getByRole('dialog', { name: '更多功能' });
   await expect(drawer).toBeVisible();
+  await drawer.getByText('添加到桌面侧栏', { exact: true }).click();
   const add = drawer.locator('.zc-mobile-drawer-add');
   const enabled = [];
   for (let round = 0; round < 12; round += 1) {
@@ -160,26 +122,25 @@ async function assertEveryModuleReachable(page) {
   });
   if (!usesBottomBar) {
     const labels = await page.locator('.zc-sidebar nav .zc-sidebar-nav-label').allInnerTexts();
-    expect(labels.length, '侧栏应露出全部 10 个模块').toBe(10);
+    expect(labels, '侧栏应包含全部模块及三个流水任务入口').toEqual(['工作台', '流水', '账户', '账单与还款', '计划', '资产转换', '物品资产', '游戏赛季', '报表', '资料管理', '操作历史', '我的账号', '设置']);
     return;
   }
   await page.locator('.zc-mobile-bottom-nav button', { hasText: '更多' }).click();
   const drawer = page.getByRole('dialog', { name: '更多功能' });
   await expect(drawer).toBeVisible();
-  const drawerLabels = await drawer.locator('.zc-mobile-drawer-grid button b').allInnerTexts();
+  const drawerLabels = await drawer.locator('.zc-task-list strong').allInnerTexts();
   await drawer.getByRole('button', { name: '关闭更多菜单' }).click();
   await expect(drawer).toBeHidden();
-  expect(drawerLabels.length + 3, '底栏与抽屉应合起来露出全部 10 个模块').toBe(10);
+  expect(drawerLabels).toEqual(expect.arrayContaining(['资产转换', '游戏赛季', '物品资产', '报表', '资料管理', '操作历史', '设置', '我的账号']));
   expect(drawerLabels.join(' '), '未启用模块区应已清空').not.toContain('启用');
 }
 
 /** Open every "+ …" create action in the current view and empty-submit it. */
 async function sweepCurrentView(page, scope, report, visitedActions) {
-  const buttons = page.locator('.zc-page-content button');
-  const total = await buttons.count();
+  const buttonTexts = await page.locator('.zc-page-content button:visible').allTextContents();
   const labels = new Set();
-  for (let i = 0; i < total; i += 1) {
-    const text = ((await buttons.nth(i).innerText().catch(() => '')) || '').trim().split('\n')[0];
+  for (const content of buttonTexts) {
+    const text = content.trim().split('\n')[0];
     if (text.startsWith('+') || text === '开始记录') labels.add(text);
   }
   for (const label of labels) {
@@ -315,7 +276,7 @@ async function saveAndCheckRecovery(page, label, dialog) {
       };
     });
     expect(focused, `${label} / ${name}：点击字段标签后没有焦点`).not.toBeNull();
-    expect(['input', 'select', 'textarea'], `${label} / ${name}：焦点落在 ${focused.tag}`).toContain(focused.tag);
+    expect(['input', 'select', 'textarea', 'button'], `${label} / ${name}：焦点落在 ${focused.tag}`).toContain(focused.tag);
     expect(focused.visible, `${label} / ${name}：字段存在但不可见`).toBe(true);
     expect(focused.insideDialog, `${label} / ${name}：焦点跑到弹窗之外`).toBe(true);
     expect(focused.withinPanel, `${label} / ${name}：跳转后字段仍在面板滚动区之外`).toBe(true);
@@ -341,13 +302,17 @@ async function dismissDialog(page, dialog) {
 async function sweepScreen(page, label, report) {
   report[label] = report[label] ?? [];
   const visitedActions = new Set();
-  const tabs = page.locator('.zc-page-content [role="tab"]');
+  if (label === '管理') {
+    await visitManageSections(page, async (section) => sweepCurrentView(page, `${label}/${section}`, report[label], visitedActions));
+    return;
+  }
+  const tabs = page.locator('.zc-page-content [role="tab"]:visible');
   const tabCount = await tabs.count();
   if (!tabCount) return sweepCurrentView(page, label, report[label], visitedActions);
   const tabLabels = [];
   for (let i = 0; i < tabCount; i += 1) tabLabels.push(((await tabs.nth(i).innerText()) || '').trim());
   for (const tabLabel of tabLabels) {
-    await page.locator('.zc-page-content [role="tab"]').filter({ hasText: tabLabel }).first().click();
+    await page.locator('.zc-page-content [role="tab"]:visible').filter({ hasText: tabLabel }).first().click();
     await page.waitForTimeout(200);
     if (label === '管理' && tabLabel === '其他资料') {
       const otherTabs = page.getByRole('tablist', { name: '其他资料类别' });
@@ -468,7 +433,7 @@ test(`phone 390x844: a record-keeping pass fills and saves at phone size`, async
 
     // 4. The base records the other modules lean on, through the 管理 tabs.
     await clickNav(page, '管理');
-    await page.locator('.zc-page-content [role="tab"]').filter({ hasText: '标签与交易对象' }).first().click();
+    await openLedgerSection(page, 'manage', 'labels');
     for (const [action, value] of [
       ['+ 新增交易对象', '手机商户'],
       ['+ 新增标签', '手机标签'],

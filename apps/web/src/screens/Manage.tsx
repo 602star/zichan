@@ -5,7 +5,7 @@ import { withRememberedPayee } from '../payee-recording.js';
 import { CategoryMark, EntityIcon } from '../ui/EntityIcon.js';
 import { accountSessionStorage } from '../account-storage.js';
 import { readOnboarding, updateOnboarding } from '../onboarding.js';
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTabSet } from '../ui/useTabSet.js';
 import { isDateInRange, nextUnhandledScheduleOccurrence, type Attachment, type Category, type FixedAssetCategory } from '@zichan/core';
 import {
@@ -89,6 +89,15 @@ export function Manage() {
   const [initialTarget] = useState(readManageTarget);
   const [tab, setTab] = useState<ManageTab>(initialTarget.tab ?? 'transactionCategories');
   const [otherTab, setOtherTab] = useState<OtherDataTab>(initialTarget.otherTab ?? 'accounts');
+  const previousCompact = useRef(compact);
+  const enteringCompact = compact && !previousCompact.current;
+  const selectedSection = tab === 'other' ? otherTab : tab;
+  // Keep the active section mounted while the responsive layout changes.
+  const visibleMobileView = enteringCompact ? selectedSection : mobileView;
+  useEffect(() => {
+    if (enteringCompact) openMobile(selectedSection);
+    previousCompact.current = compact;
+  }, [compact, enteringCompact, selectedSection, openMobile]);
   useEffect(() => {
     if (MANAGE_TABS.includes(mobileView as ManageTab)) setTab(mobileView as ManageTab);
     if (OTHER_DATA_TABS.includes(mobileView as OtherDataTab)) { setTab('other'); setOtherTab(mobileView as OtherDataTab); }
@@ -100,7 +109,10 @@ export function Manage() {
       else setTab(target.tab as ManageTab);
     }
   }, [compact, target, openMobile]);
+  const initialTargetHandled = useRef(false);
   useEffect(() => {
+    if (initialTargetHandled.current) return;
+    initialTargetHandled.current = true;
     if (compact && initialTarget.tab) openMobile(initialTarget.tab === 'other' ? initialTarget.otherTab ?? 'accounts' : initialTarget.tab);
   }, [compact, initialTarget, openMobile]);
   const primaryTabs = useTabSet(MANAGE_TABS, tab, setTab);
@@ -216,7 +228,7 @@ export function Manage() {
     }
   }
 
-  if (compact && mobileView === 'index') return <div className="zc-mobile-task-page">
+  if (compact && visibleMobileView === 'index') return <div className="zc-mobile-task-page">
     <TaskList title="日常记账" items={[
       { label: '收支分类', note: '分类层级、显示与排序', onClick: () => openMobile('transactionCategories') },
       { label: '标签与交易对象', note: '标签、地点、商户与平台', onClick: () => openMobile('labels') },
@@ -236,7 +248,7 @@ export function Manage() {
   </div>;
   return (
     <div className="zc-manage-workspace" style={compact ? { display: 'flex', flexDirection: 'column', gap: 22 } : undefined}>
-      {compact && <MobilePageHeader title={mobileManageLabel(mobileView)} onBack={backMobile} backLabel="返回资料" />}
+      {compact && <MobilePageHeader title={mobileManageLabel(visibleMobileView)} onBack={backMobile} backLabel="返回资料" />}
       {compact && returnToGuide}
       {!compact && <div className="zc-manage-desktop-intro">
         <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>资料管理</div>

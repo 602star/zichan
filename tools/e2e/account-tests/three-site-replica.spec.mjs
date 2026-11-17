@@ -76,7 +76,7 @@ async function syncCurrentSite(page) {
 
 async function saveExpense(page, amount, note) {
   await expect(page.locator('.zc-app-shell')).toBeVisible();
-  await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
+  await page.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
   await page.getByRole('button', { name: /^\+ 记(支出|账)$/ }).click();
   await page.getByRole('textbox', { name: /^金额/ }).fill(amount);
   await page.getByLabel('描述').fill(note);
@@ -177,13 +177,13 @@ test('records on three separate websites and converges their server replicas', a
       return new Set(counts).size === 1 && new Set(hashes).size === 1 && counts[0] >= 4 ? counts[0] : 0;
     }, { timeout: 30_000 }).toBeGreaterThanOrEqual(4);
     await syncCurrentSite(page);
-    await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
+    await page.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
     for (const note of ['hub-entry', 'home-entry', 'office-entry']) {
       await expect(page.getByText(note, { exact: true })).toBeVisible();
     }
     await page.goto(`${hub.url}/`);
     await syncCurrentSite(page);
-    await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
+    await page.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
     for (const note of ['hub-entry', 'home-entry', 'office-entry']) {
       await expect(page.getByText(note, { exact: true })).toBeVisible();
     }
@@ -226,14 +226,14 @@ test('records on three separate websites and converges their server replicas', a
         ? inventories[0].commitCount : 0;
     }, { timeout: 45_000 }).toBeGreaterThanOrEqual(6);
     await syncCurrentSite(page);
-    await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
+    await page.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
     for (const note of ['hub-entry', 'home-entry', 'office-entry',
       'home-hub-offline', 'office-hub-offline']) {
       await expect(page.getByText(note, { exact: true })).toBeVisible();
     }
     await revisitSite(page, hub.url);
     await syncCurrentSite(page);
-    await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
+    await page.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
     for (const note of ['hub-entry', 'home-entry', 'office-entry',
       'home-hub-offline', 'office-hub-offline']) {
       await expect(page.getByText(note, { exact: true })).toBeVisible();
@@ -287,7 +287,7 @@ test('records on three separate websites and converges their server replicas', a
     }, { timeout: 30_000 }).toBeGreaterThan(hubCount);
     await revisitSite(page, hub.url);
     await syncCurrentSite(page);
-    await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
+    await page.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
     await expect(page.getByText('home-site-after-retirement', { exact: true })).toBeVisible();
   } finally {
     await page.close();

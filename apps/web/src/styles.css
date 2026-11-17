@@ -4592,3 +4592,8 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
 .zc-settings-guide h2, .zc-settings-guide p { margin: 0; }
 .zc-onboarding-next-tasks { border-top: 1px solid var(--border); padding-top: var(--sp-4); }
 .zc-onboarding-next-tasks h3 { font-size: var(--fs-title); font-weight: var(--fw-medium); margin: 0; }
+
+@media (pointer: coarse) {
+  .zc-app-shell :is(.zc-btn--sm, .zc-calendar-trigger, .zc-sidebar-collapse, .zc-transaction-day-toggle, .zc-workspace-nav button),
+  .zc-app-shell summary { min-height: 44px; }
+}

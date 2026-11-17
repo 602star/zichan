@@ -65,7 +65,7 @@ test('plain-HTTP LAN origin unlocks the ledger, saves a record and reloads it', 
     await expect(appShell).toBeVisible({ timeout: 30_000 });
 
     // Record an expense through the ordinary transactions screen.
-    await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
+    await page.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
     await page.getByRole('button', { name: '+ 记账' }).click();
     await page.getByRole('textbox', { name: /^金额/ }).fill('12.50');
     await page.getByLabel('描述').fill(marker);
@@ -109,7 +109,7 @@ test('plain-HTTP LAN origin unlocks the ledger, saves a record and reloads it', 
     await expect(quickStart.or(appShell)).toBeVisible({ timeout: 30_000 });
     if (await quickStart.isVisible().catch(() => false)) await quickStart.click();
     await expect(appShell).toBeVisible({ timeout: 30_000 });
-    await page.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
+    await page.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
     await expect(page.getByText(marker, { exact: true })).toBeVisible({ timeout: 30_000 });
   } finally {
     await page.close();

@@ -15,11 +15,11 @@ test('ink and vermilion ledger renders at desktop and phone widths', async ({ pa
   const dismissGuide = page.getByRole('button', { name: '暂时收起' });
   if (await dismissGuide.isVisible().catch(() => false)) await dismissGuide.click();
 
-  await page.locator('.zc-sidebar-nav-item').filter({ hasText: '总览' }).click();
-  await expect(page.getByRole('heading', { name: '总览', exact: true })).toBeVisible();
-  await expect(page.locator('.zc-dashboard-hero-grid')).toBeVisible({ timeout: 45_000 });
+  await page.locator('.zc-sidebar-nav-item').filter({ hasText: '工作台' }).click();
+  await expect(page.getByRole('heading', { name: '工作台', exact: true })).toBeVisible();
+  await expect(page.locator('.zc-dashboard-overview-band')).toBeVisible({ timeout: 45_000 });
   await page.screenshot({ path: test.info().outputPath('ink-dashboard-desktop.png'), fullPage: true });
-  await page.locator('.zc-sidebar-nav-item').filter({ hasText: '日常收支' }).click();
+  await page.locator('.zc-sidebar-nav-item').filter({ hasText: '流水' }).click();
   await expect(page.locator('.zc-transaction-summary-grid')).toBeVisible();
   await page.getByRole('button', { name: '+ 记账' }).click();
   const form = page.getByRole('dialog', { name: '新增 · 日常收支' });
@@ -40,14 +40,15 @@ test('ink and vermilion ledger renders at desktop and phone widths', async ({ pa
   await expect(page.getByText('记录第一件真实物品')).toBeVisible();
   await page.screenshot({ path: test.info().outputPath('ink-fixed-desktop.png'), fullPage: true });
   await page.locator('.zc-sidebar-nav-item').filter({ hasText: '设置' }).click();
-  await page.getByRole('tab', { name: '外观', exact: true }).click();
+  await page.getByRole('tab', { name: '外观', exact: true }).or(page.getByRole('button', { name: '外观', exact: true })).click();
   await expect(page.getByRole('radiogroup', { name: '视觉方案' })).toBeVisible();
   await page.screenshot({ path: test.info().outputPath('ink-settings-desktop.png'), fullPage: true });
-  await page.locator('.zc-sidebar-nav-item').filter({ hasText: '日常收支' }).click();
+  await page.locator('.zc-sidebar-nav-item').filter({ hasText: '流水' }).click();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.zc-transaction-row')).toBeVisible();
   await page.screenshot({ path: test.info().outputPath('ink-transactions-phone.png'), fullPage: true });
+  await page.locator('#transaction-records').evaluate((node) => node.scrollIntoView({ block: 'start' }));
   const mobileFold = await page.evaluate(() => ({
     search: document.querySelector('.zc-ledger-searchbar')?.getBoundingClientRect().top,
     row: document.querySelector('.zc-transaction-row')?.getBoundingClientRect().top,
@@ -57,11 +58,11 @@ test('ink and vermilion ledger renders at desktop and phone widths', async ({ pa
   expect(mobileFold.row + 70, 'first record should be readable before the bottom bar').toBeLessThan(mobileFold.nav);
   await page.locator('.zc-mobile-bottom-nav').getByRole('button', { name: '总览' }).click();
   await expect(page.getByRole('heading', { name: '总览', exact: true })).toBeVisible();
-  await expect(page.locator('.zc-dashboard-hero-grid')).toBeVisible();
+  await expect(page.locator('.zc-dashboard-overview-band')).toBeVisible();
   await page.screenshot({ path: test.info().outputPath('ink-dashboard-phone.png'), fullPage: true });
   await page.locator('.zc-mobile-bottom-nav').getByRole('button', { name: '更多' }).click();
   await page.getByRole('dialog', { name: '更多功能' }).getByRole('button', { name: /设置/ }).click();
-  await page.getByRole('tab', { name: '外观', exact: true }).click();
+  await page.getByRole('tab', { name: '外观', exact: true }).or(page.getByRole('button', { name: '外观', exact: true })).click();
   await page.getByRole('radio', { name: '深色', exact: true }).click();
   const touchHeights = await page.getByRole('radiogroup').locator('[role="radio"]').evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().height));
   expect(Math.min(...touchHeights)).toBeGreaterThanOrEqual(44);

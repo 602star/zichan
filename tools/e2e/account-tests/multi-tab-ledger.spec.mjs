@@ -30,30 +30,32 @@ test('two browser tabs can write the same ledger and see each other’s records'
     await second.goto(`${url}/`);
     await expect(second.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
     if (await second.getByRole('dialog').isVisible()) await second.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
+    await second.locator('.zc-sidebar').getByRole('button', { name: '流水', exact: true }).click();
 
     async function record(target, description, amount) {
-      await target.locator('.zc-sidebar').getByText('日常收支', { exact: true }).click();
+      await target.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
       await target.getByRole('button', { name: /^\+ 记(支出|账)$/ }).click();
       const restartDraft = target.getByRole('button', { name: '重新开始', exact: true });
       if (await restartDraft.isVisible()) await restartDraft.click();
       await target.getByRole('textbox', { name: /^金额/ }).fill(amount);
       await target.getByLabel('描述').fill(description);
       await target.getByRole('button', { name: '保存', exact: true }).click();
-      await expect(target.getByText(description, { exact: true })).toBeVisible();
+      await expect(target.locator('.zc-transaction-summary-title').filter({ hasText: description })).toBeVisible();
     }
     await record(page, '第一页记账', '12.34');
-    await expect(second.getByText('第一页记账', { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(second.locator('.zc-transaction-summary-title').filter({ hasText: '第一页记账' })).toBeVisible({ timeout: 15_000 });
     await record(second, '第二页记账', '56.78');
-    await expect(page.getByText('第二页记账', { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.zc-transaction-summary-title').filter({ hasText: '第二页记账' })).toBeVisible({ timeout: 15_000 });
     await Promise.all([
       record(page, '同时记账甲', '8.10'),
       record(second, '同时记账乙', '9.20'),
     ]);
-    await expect(page.getByText('同时记账乙', { exact: true })).toBeVisible({ timeout: 15_000 });
-    await expect(second.getByText('同时记账甲', { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.zc-transaction-summary-title').filter({ hasText: '同时记账乙' })).toBeVisible({ timeout: 15_000 });
+    await expect(second.locator('.zc-transaction-summary-title').filter({ hasText: '同时记账甲' })).toBeVisible({ timeout: 15_000 });
     await page.reload();
-    await expect(page.getByText('第一页记账', { exact: true })).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText('第二页记账', { exact: true })).toBeVisible({ timeout: 30_000 });
+    await page.locator('.zc-sidebar').getByRole('button', { name: '流水', exact: true }).click();
+    await expect(page.locator('.zc-transaction-summary-title').filter({ hasText: '第一页记账' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('.zc-transaction-summary-title').filter({ hasText: '第二页记账' })).toBeVisible({ timeout: 30_000 });
     await page.waitForTimeout(2_500);
     let idleSyncRequests = 0;
     const countSync = (request) => {
@@ -66,7 +68,8 @@ test('two browser tabs can write the same ledger and see each other’s records'
     await page.close();
     await record(second, '关闭第一页后继续', '10.30');
     await second.reload();
-    await expect(second.getByText('关闭第一页后继续', { exact: true })).toBeVisible({ timeout: 30_000 });
+    await second.locator('.zc-sidebar').getByRole('button', { name: '流水', exact: true }).click();
+    await expect(second.locator('.zc-transaction-summary-title').filter({ hasText: '关闭第一页后继续' })).toBeVisible({ timeout: 30_000 });
   } finally {
     await second?.close().catch(() => undefined);
     await page.close().catch(() => undefined);
