@@ -207,9 +207,10 @@ test('selecting a new common currency from the asset field creates only its defi
   await page.getByRole('button', { name: '重新启用 GBP' }).click();
   await expect(page.getByRole('row').filter({ hasText: 'GBP' })).toContainText('可用');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('region', { name: '资产资料', exact: true }).getByRole('button', { name: '资产', exact: true }).click();
   await expect(page.locator('.zc-mobile-page-head h2')).toHaveText('资产');
-  await page.getByText('添加常用资产', { exact: true }).click();
+  // Responsive changes preserve the active section and disclosure state.
+  const catalog = page.locator('details').filter({ has: page.locator('summary', { hasText: '添加常用资产' }) });
+  if (await catalog.getAttribute('open') === null) await catalog.locator('summary').click();
   await expect(page.getByRole('button', { name: '已加入 DOGE' })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('asset-catalog-phone.png') });
 });

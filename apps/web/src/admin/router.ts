@@ -7,8 +7,11 @@
  * dependency is added to the offline-capable Web bundle.
  */
 import { useEffect, useState } from 'react';
+import { isMobileDialogHistorySettling } from '../ui/mobile-dialog-history.js';
 
 const NAVIGATE_EVENT = 'zichan:admin:navigate';
+let pendingNavigation: { to: string; options: { replace?: boolean } } | undefined;
+let waitingForDialogHistory = false;
 
 export interface AdminRoute {
   /** Path relative to the admin base, always starting with `/`. */
@@ -51,6 +54,21 @@ export function navigate(to: string, options: { replace?: boolean } = {}): void 
   const url = new URL(to, window.location.origin);
   const current = `${window.location.pathname}${window.location.search}`;
   if (`${url.pathname}${url.search}` === current) return;
+  // A fast filter change must not be undone by the closing sheet's pending Back.
+  if (isMobileDialogHistorySettling()) {
+    pendingNavigation = { to, options };
+    if (!waitingForDialogHistory) {
+      waitingForDialogHistory = true;
+      window.addEventListener('zichan:dialog-history-settled', () => {
+        waitingForDialogHistory = false;
+        const next = pendingNavigation;
+        pendingNavigation = undefined;
+        if (next) navigate(next.to, next.options);
+      }, { once: true });
+    }
+    return;
+  }
+  pendingNavigation = undefined;
   if (options.replace) window.history.replaceState(null, '', url);
   else window.history.pushState(null, '', url);
   window.dispatchEvent(new Event(NAVIGATE_EVENT));

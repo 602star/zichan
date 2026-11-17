@@ -11,6 +11,11 @@ let expectedPops = 0;
 // sheet owns Back, including the traversal caused by programmatic cleanup.
 export function hasMobileDialog() { return owners.length > 0 || expectedPops > 0; }
 
+/** A closed sheet still has an asynchronous history traversal to finish. */
+export function isMobileDialogHistorySettling() {
+  return installed && owners.length === 0 && (expectedPops > 0 || (typeof history !== 'undefined' && !!history.state?.zcDialog));
+}
+
 function settle() {
   const top = owners.at(-1);
   if (top && history.state?.zcDialog !== top.id) history.pushState(top.state, '');

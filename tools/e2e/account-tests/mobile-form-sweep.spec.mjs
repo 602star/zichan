@@ -1,4 +1,4 @@
-import { clickLedgerNavigation as clickNav, visitManageSections, openLedgerSection } from '../ledger-navigation.mjs';
+import { clickLedgerNavigation as clickNav, visitManageSections, openLedgerSection, selectValue } from '../ledger-navigation.mjs';
 import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test, expect } from '@playwright/test';
 import { resolve } from 'node:path';
@@ -414,7 +414,7 @@ test(`phone 390x844: a record-keeping pass fills and saves at phone size`, async
     await page.getByRole('button', { name: '+ 记录' }).click();
     const record = page.getByRole('dialog').last();
     await expect(record).toBeVisible();
-    await record.getByLabel('记录类型').selectOption('produce');
+    await selectValue(page, record.getByLabel('记录类型'), 'produce', '游戏币产出');
     await record.getByLabel('新游戏币名称').fill('游戏金币');
     await record.getByLabel('游戏币数量').fill('20');
     await expect(record.getByLabel('实际收支币种')).toHaveCount(0);
