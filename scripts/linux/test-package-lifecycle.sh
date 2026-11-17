@@ -62,7 +62,8 @@ launch() {
       app_pid=$!
       trap '\''kill "$app_pid" 2>/dev/null || true; wait "$app_pid" 2>/dev/null || true'\'' EXIT
       for attempt in $(seq 1 40); do
-        if xdotool search --onlyvisible --name "Lifecycle Ledger" >/dev/null 2>&1; then
+        # Accept the current title and historical packages used by the upgrade check.
+        if xdotool search --onlyvisible --name "有本 · 收支与资产账本|Lifecycle Ledger" >/dev/null 2>&1; then
           exit 0
         fi
         if ! kill -0 "$app_pid" 2>/dev/null; then
@@ -72,6 +73,7 @@ launch() {
         sleep 1
       done
       echo "GUI window did not appear" >&2
+      while read -r window; do xdotool getwindowname "$window" >&2 || true; done < <(xdotool search --onlyvisible --name ".*" 2>/dev/null || true)
       exit 1
     ' launch "$executable" >"$log" 2>&1 || status=$?
   if [[ "$status" != 0 ]]; then
