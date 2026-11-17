@@ -97,9 +97,11 @@ export function parseRelease(bytes: Buffer, expected: Feed): Release {
     || release.files.length < 2 || release.files.length > 500) throw new Error('更新包内容无效');
   const names = new Set<string>();
   let decoded = 0;
+  // Avoid repeated groups: large bundled resources can overflow the regexp stack.
   for (const file of release.files) {
     if (!file || typeof file.path !== 'string' || !FILE.test(file.path) || file.path.includes('..')
-      || file.path.includes('//') || typeof file.data !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(file.data)
+      || file.path.includes('//') || typeof file.data !== 'string' || file.data.length % 4 !== 0
+      || !/^[A-Za-z0-9+/]*={0,2}$/.test(file.data)
       || names.has(file.path)) throw new Error('更新包含有非法文件');
     names.add(file.path);
     decoded += Buffer.byteLength(file.data, 'base64');

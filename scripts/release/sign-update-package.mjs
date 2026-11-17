@@ -25,11 +25,12 @@ if (release?.format !== 'zichan-release-v1' || release.version !== version
 const allowedFile = /^(?:dist\/(?:server|maintenance)\.mjs|web-dist\/[A-Za-z0-9._/-]+)$/;
 const names = new Set();
 let decodedBytes = 0;
+// Avoid repeated groups: large bundled resources can overflow the regexp stack.
 for (const file of release.files) {
   if (!file || typeof file.path !== 'string' || !allowedFile.test(file.path)
     || file.path.includes('..') || file.path.includes('//') || names.has(file.path)
     || typeof file.data !== 'string'
-    || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(file.data)) {
+    || file.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(file.data)) {
     throw new Error('候选包含有非法文件');
   }
   names.add(file.path);

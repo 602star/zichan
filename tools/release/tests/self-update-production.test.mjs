@@ -62,3 +62,35 @@ test('signing job signs only a version-matched candidate with an Ed25519 key', a
       { stdio: 'pipe' }), /候选包文件名与标签不一致/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+
+test('signing accepts large base64 assets and rejects malformed payloads without a stack overflow', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'zichan-release-large-'));
+  try {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const key = join(directory, 'key.pem');
+    const artifact = join(directory, 'zichan-0.4.1.json');
+    const publicPath = join(directory, 'public.pem');
+    await writeFile(key, privateKey.export({ type: 'pkcs8', format: 'pem' }));
+    await writeFile(publicPath, publicKey.export({ type: 'spki', format: 'pem' }));
+    const data = Buffer.alloc(8 * 1024 * 1024, 0x5a).toString('base64');
+    const candidate = { format: 'zichan-release-v1', version: '0.4.1',
+      schema: { version: 27, name: 'single_user_replica_storage_v27' }, files: [
+        { path: 'dist/server.mjs', data: 'c2VydmVy' },
+        { path: 'dist/maintenance.mjs', data: 'bWFpbnRlbmFuY2U=' },
+        { path: 'web-dist/index.html', data: 'd2Vi' },
+        { path: 'web-dist/assets/large-worker.mjs', data },
+      ] };
+    const script = join(root, 'scripts/release/sign-update-package.mjs');
+    await writeFile(artifact, JSON.stringify(candidate));
+    execFileSync(process.execPath, [script, 'v0.4.1', key, artifact, directory]);
+    execFileSync(process.execPath, [join(root, 'scripts/release/verify-update-package.mjs'),
+      publicPath, join(directory, 'latest.json'), artifact]);
+    for (const invalid of ['A', 'AA=', 'AAA==', 'AA=A', 'AAAA\n', `${data.slice(0, -1)}!`, `${data}====`]) {
+      candidate.files.at(-1).data = invalid;
+      await writeFile(artifact, JSON.stringify(candidate));
+      assert.throws(() => execFileSync(process.execPath, [script, 'v0.4.1', key, artifact, directory],
+        { stdio: 'pipe' }), /候选包含有非法文件/);
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

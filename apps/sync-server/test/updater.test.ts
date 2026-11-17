@@ -78,6 +78,22 @@ describe('signed stable self updates', () => {
     expect(parseRelease(release, verified).version).toBe('0.3.2');
   });
 
+  it('validates multi-megabyte files without overflowing and still rejects malformed base64', () => {
+    const content = JSON.parse(release.toString());
+    const data = Buffer.alloc(8 * 1024 * 1024, 0x5a).toString('base64');
+    content.files.push({ path: 'web-dist/assets/large-worker.mjs', data });
+    const bytes = Buffer.from(JSON.stringify(content));
+    const largeFeed = { ...feed, sha256: createHash('sha256').update(bytes).digest('hex') };
+    expect(parseRelease(bytes, largeFeed).files.at(-1)?.data).toBe(data);
+    for (const invalid of ['A', 'AA=', 'AAA==', 'AA=A', 'AAAA\n', `${data.slice(0, -1)}!`, `${data}====`]) {
+      content.files.at(-1).data = invalid;
+      const malformed = Buffer.from(JSON.stringify(content));
+      expect(() => parseRelease(malformed, { ...feed,
+        sha256: createHash('sha256').update(malformed).digest('hex'),
+      })).toThrow('非法文件');
+    }
+  });
+
   it('rejects a forged or stale feed and a modified package', () => {
     expect(() => parseFeed({ ...feed, sha256: '0'.repeat(64) }, publicPem)).toThrow('签名无效');
     expect(() => parseFeed({ ...feed, artifact: '../bad.json' }, publicPem)).toThrow('格式无效');
