@@ -1,9 +1,33 @@
 import { describe, expect, it } from 'vitest';
 import { continuedEntryFields, desktopDestinations } from '../src/desktop-workspace.js';
-import { defaultNavigationPreferences } from '../src/navigationPreferences.js';
+import { defaultNavigationPreferences, moveSidebarItem, navigationLabel, parseNavigationPreferences, serializeNavigationPreferences, sidebarNavigationItems } from '../src/navigationPreferences.js';
 import { nextTabValue } from '../src/ui/useTabSet.js';
 
 describe('desktop ledger tasks', () => {
+  it('uses matching sidebar and settings names, while keeping the shorter phone labels', () => {
+    const prefs = defaultNavigationPreferences();
+    const settings = sidebarNavigationItems(prefs, true);
+    expect(settings.map((item) => item.label)).toEqual(['工作台', '流水', '资产转换', '物品资产', '游戏赛季', '报表', '资料管理', '操作历史', '我的账号', '设置']);
+    expect(settings.some((item) => item.id === 'assets')).toBe(false);
+    expect(navigationLabel('dashboard', 'spending', 'mobile')).toBe('总览');
+    expect(navigationLabel('transactions', 'spending', 'mobile')).toBe('收支');
+    expect(navigationLabel('history', 'spending')).toBe('操作历史');
+    for (const destination of desktopDestinations({ ...prefs, visible: prefs.order }, 'spending').filter((row) => row.target.screen !== 'transactions')) {
+      expect(destination.label).toBe(settings.find((row) => row.id === destination.target.screen)?.label);
+    }
+  });
+
+  it('applies persisted ordering to the actual sidebar and stops at group boundaries', () => {
+    const original = defaultNavigationPreferences();
+    let prefs = { ...original, visible: original.order };
+    for (let i = 0; i < 3; i++) prefs = moveSidebarItem(prefs, 'reports', -1);
+    prefs = parseNavigationPreferences(serializeNavigationPreferences(prefs));
+    expect(desktopDestinations(prefs, 'spending').filter((row) => row.group === '资产与分析').map((row) => row.id)).toEqual(['reports', 'convert', 'fixed', 'game']);
+    expect(moveSidebarItem(prefs, 'reports', -1)).toEqual(prefs);
+    expect(moveSidebarItem(prefs, 'assets', 1)).toEqual(prefs);
+    const records = desktopDestinations(prefs, 'spending').filter((row) => row.group === '日常');
+    expect(records.map((row) => row.id)).toEqual(['dashboard', 'records', 'accounts', 'bills', 'plans']);
+  });
   it('offers account and plan tasks without changing stored screen identifiers', () => {
     const entries = desktopDestinations(defaultNavigationPreferences(), 'spending');
     expect(entries.find((entry) => entry.id === 'records')?.target).toEqual({ screen: 'transactions', tab: 'records' });

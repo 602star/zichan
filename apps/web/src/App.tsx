@@ -1,5 +1,6 @@
 import { accountSessionStorage } from './account-storage.js';
 import { Fragment, lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type SetStateAction } from 'react';
+import { NavigationIcon as NavIcon } from './ui/NavigationIcon.js';
 import { desktopDestinations } from './desktop-workspace.js';
 import { useCompactView } from './ui/useCompactView.js';
 import type { LedgerBackup } from '@zichan/db';
@@ -54,7 +55,7 @@ import { accountProtection } from './account-protection.js';
 import { isTauriRuntime } from './tauri.js';
 import { reportPageView } from './traffic-view.js';
 import type { SettingsSection } from './screens/Settings.js';
-import { X, ArrowLeftRight, BarChart3, BookOpen, Ellipsis, Gamepad2, Grid2X2, History as HistoryIcon, LayoutDashboard, List, Package, Settings2, UserRound, Cloud, Wallet, CalendarDays, ReceiptText, PanelLeftClose, PanelLeftOpen, type LucideIcon } from 'lucide-react';
+import { X, ArrowLeftRight, BarChart3, Ellipsis, Gamepad2, Grid2X2, History as HistoryIcon, Package, Settings2, UserRound, Cloud, Wallet, CalendarDays, ReceiptText, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {
   NAVIGATION_ITEMS,
   navigationLabel,
@@ -81,25 +82,6 @@ const Assets = lazy(() => import('./screens/Assets.js').then((module) => ({ defa
 const ACTIVE_SCREEN_KEY = 'zichan.activeScreen';
 const RETRY_SCREEN_KEY = 'zichan.retryScreen';
 const SCREEN_IDS = new Set<ScreenId>(NAVIGATION_ITEMS.map((item) => item.id));
-const NAV_ICONS: Record<ScreenId, LucideIcon> = {
-  assets: BookOpen,
-  dashboard: LayoutDashboard,
-  convert: ArrowLeftRight,
-  transactions: List,
-  game: Gamepad2,
-  fixed: Package,
-  reports: BarChart3,
-  history: HistoryIcon,
-  manage: Grid2X2,
-  sync: Cloud,
-  account: UserRound,
-  settings: Settings2,
-};
-function NavIcon({ id, size = 18 }: { id: ScreenId; size?: number }) {
-  const Icon = NAV_ICONS[id] ?? BookOpen;
-  return <Icon aria-hidden="true" size={size} strokeWidth={1.8} />;
-}
-
 /**
  * Screens a preview must never open.
  *
@@ -146,12 +128,12 @@ const META: Record<ScreenId, [string, string]> = {
   assets: ['资产', '账户 · 持仓 · 物品'],
   dashboard: ['总览', '净资产、配置与近期动态一览'],
   convert: ['资产转换', '多步换汇链路 · 汇率与手续费全程可追溯'],
-  transactions: ['日常收支', '工资、房租、餐饮、购物与现金流'],
+  transactions: ['收支', '流水、账户、预算与账单'],
   game: ['游戏赛季', '按赛季与账号记录投入 · 产出 · 回收'],
   fixed: ['物品资产', '使用成本 · 耗材 · 保修 · 生命周期'],
   reports: ['报表', '跨模块的成本与盈亏报表'],
   history: ['操作历史', '改前改后 · 批量操作 · 冲突解决记录'],
-  manage: ['管理', '资产 · 分类 · 商户 · 价格'],
+  manage: ['资料管理', '币种 · 分类 · 交易对象 · 价格 · 模板'],
   sync: ['设置', '备份 · 同步 · 恢复'],
   account: ['我的账号', '个人资料 · 存储配额 · 账号安全'],
   settings: ['设置', '记账 · 备份 · 同步 · 恢复 · 安全 · 外观'],
@@ -888,7 +870,7 @@ function Sidebar(props: {
             >
               <button
                 title={label}
-                aria-label={id === 'records' ? '流水（日常收支）' : label}
+                aria-label={label}
                 aria-current={active ? 'page' : undefined}
                 className="zc-sidebar-nav-item"
                 onClick={() => target.screen === 'transactions' ? navigateTo(target) : setScreen(target.screen)}
@@ -1008,7 +990,7 @@ function MobileNavigation(props: {
   // Modules the user turned off. Surfacing them here means a hidden module does
   // not require a detour through 设置, and hidden modules are never force-added
   // to the drawer grid above.
-  const hiddenItems = orderedNavigationItems(props.navigation, true).filter((item) => !shownIds.has(item.id));
+  const hiddenItems = orderedNavigationItems(props.navigation, true).filter((item) => item.id !== 'assets' && !shownIds.has(item.id));
   return (
     <>
       <nav
@@ -1017,14 +999,14 @@ function MobileNavigation(props: {
         style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
       >
         {beforeQuick.map(({ id }) => (
-          <button key={id} aria-label={navigationLabel(id, props.ledgerMode)} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
-            <span><NavIcon id={id} size={19} /></span><small>{id === 'transactions' ? '收支' : navigationLabel(id, props.ledgerMode)}</small>
+          <button key={id} aria-label={navigationLabel(id, props.ledgerMode, 'mobile')} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
+            <span><NavIcon id={id} size={19} /></span><small>{navigationLabel(id, props.ledgerMode, 'mobile')}</small>
           </button>
         ))}
         <button className="zc-mobile-quick" aria-label="快速记账" onClick={props.onQuickTransaction}><span><PlusIcon size={24} /></span><small>记一笔</small></button>
         {afterQuick.map(({ id }) => (
-          <button key={id} aria-label={navigationLabel(id, props.ledgerMode)} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
-            <span><NavIcon id={id} size={19} /></span><small>{navigationLabel(id, props.ledgerMode)}</small>
+          <button key={id} aria-label={navigationLabel(id, props.ledgerMode, 'mobile')} className={props.screen === id ? 'is-active' : ''} onClick={() => props.onNavigate(id)}>
+            <span><NavIcon id={id} size={19} /></span><small>{navigationLabel(id, props.ledgerMode, 'mobile')}</small>
           </button>
         ))}
         <button className={!mainItems.some((item) => item.id === props.screen) || props.moreOpen ? 'is-active' : ''} onClick={() => props.onMoreOpen(true)}>
@@ -1046,13 +1028,13 @@ function MobileNavigation(props: {
             <TaskList title="查看与计划" items={[
               { label: '报表', note: '收支、资产、物品与游戏', icon: BarChart3, onClick: () => props.onNavigate('reports') },
               { label: '预算', note: '本月计划与剩余额度', onClick: () => navigateTo({ screen: 'transactions', tab: 'budget' }) },
-              { label: '账单', note: '生活账单、分期和还款 · 无需关联账户', onClick: () => navigateTo({ screen: 'transactions', tab: 'bills' }) },
+              { label: '账单与还款', note: '生活账单、分期和还款 · 无需关联账户', onClick: () => navigateTo({ screen: 'transactions', tab: 'bills' }) },
               { label: '游戏赛季', note: '投入、产出与回收', icon: Gamepad2, onClick: () => props.onNavigate('game') },
             ]} />
             <TaskList title="账本资料" items={[
               { label: '资产转换', note: '换汇、买卖和连续步骤', icon: ArrowLeftRight, onClick: () => props.onNavigate('convert') },
               { label: '物品资产', note: '使用、费用与生命周期', icon: Package, onClick: () => props.onNavigate('fixed') },
-              { label: '资料管理', note: '分类、账户、交易对象与价格', icon: Grid2X2, onClick: () => props.onNavigate('manage') },
+              { label: '资料管理', note: '分类、交易对象、币种与价格', icon: Grid2X2, onClick: () => props.onNavigate('manage') },
               { label: '操作历史', note: '记录变更与撤销', icon: HistoryIcon, onClick: () => props.onNavigate('history') },
             ]} />
             {props.navigation.visible.includes('settings') && <TaskList title="我的与设备" items={[
@@ -1080,7 +1062,7 @@ function MobileNavigation(props: {
             )}
             <div className="zc-mobile-drawer-status">
               <span>报表币种 <b>{props.reportCurrency}</b></span>
-              <span>基准日 <b>{props.asOf}</b></span>
+              <span>账本日 <b>{props.asOf}</b></span>
               <details><summary>存储位置</summary><span>{props.storageLabel}</span><small title={props.dataLocation}>{props.dataLocation}</small></details>
             </div>
         </DialogShell>

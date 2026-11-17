@@ -19,11 +19,11 @@ test('expands and collapses a fixed-asset primary category without tripping the 
   const sidebar = page.locator('.zc-sidebar');
 
   await sidebar.getByRole('button', { name: /设置$/ }).click();
-  await page.getByLabel('在侧边栏显示管理').click();
+  await page.getByLabel('在侧边栏显示资料管理').click();
   await sidebar.getByRole('button', { name: /管理$/ }).click();
-  await expect(page.getByText('资产与资料中心', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '资料管理', level: 1, exact: true })).toBeVisible();
 
-  await page.getByRole('tab', { name: '物品分类', exact: true }).click();
+  await page.getByRole('navigation', { name: '资料管理', exact: true }).getByRole('button', { name: '物品分类', exact: true }).click();
   await expect(page.getByRole('button', { name: '+ 新增物品分类' })).toBeVisible();
 
   // 默认收起：一级分类下的二级分类行不可见（<details> 收起时子节点仍在 DOM 里）。

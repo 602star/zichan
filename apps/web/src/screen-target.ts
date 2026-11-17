@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { accountSessionStorage } from './account-storage.js';
 import type { ScreenId } from './navigationPreferences.js';
 
-export interface ScreenTarget { screen: ScreenId; tab?: string; id?: string; }
+export interface ScreenTarget { screen: ScreenId; tab?: string; id?: string; intent?: 'onboarding'; }
 const key = (screen: string) => `zichan.screen-target.${screen}`;
 
 export function canNavigateWorkspace(): boolean {

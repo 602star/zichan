@@ -1,11 +1,14 @@
 import type { LedgerMode } from '@zichan/core';
 
 export type ScreenId = 'dashboard' | 'assets' | 'convert' | 'transactions' | 'game' | 'fixed' | 'reports' | 'history' | 'manage' | 'sync' | 'account' | 'settings';
+export const NAVIGATION_GROUPS = ['日常', '资产与分析', '账本工具'] as const;
+export type NavigationGroup = typeof NAVIGATION_GROUPS[number];
 
 export interface NavigationItem {
   id: ScreenId;
   label: string;
-  icon: string;
+  mobileLabel?: string;
+  group: NavigationGroup;
   description: string;
 }
 
@@ -15,17 +18,17 @@ export interface NavigationPreferences {
 }
 
 export const NAVIGATION_ITEMS: readonly NavigationItem[] = [
-  { id: 'dashboard', label: '总览', icon: '◈', description: '净资产和近期动态' },
-  { id: 'assets', label: '资产', icon: '▤', description: '账户、持仓和物品' },
-  { id: 'convert', label: '资产转换', icon: '⇄', description: '换汇、买卖和转换链路' },
-  { id: 'transactions', label: '日常收支', icon: '≋', description: '日常支出与收支流水' },
-  { id: 'game', label: '游戏赛季', icon: '◆', description: '游戏投入、产出与回收' },
-  { id: 'fixed', label: '物品资产', icon: '▤', description: '物品成本与生命周期' },
-  { id: 'reports', label: '报表', icon: '▦', description: '支出、成本与盈亏报表' },
-  { id: 'history', label: '历史', icon: '◷', description: '操作记录与冲突处理' },
-  { id: 'manage', label: '管理', icon: '⊞', description: '资产、分类和基础资料' },
-  { id: 'account', label: '我的账号', icon: '☺', description: '个人资料、配额和账号安全' },
-  { id: 'settings', label: '设置', icon: '⚙', description: '记账、备份、同步、恢复和外观' },
+  { id: 'dashboard', label: '工作台', mobileLabel: '总览', group: '日常', description: '净资产、最近流水、账单与待办' },
+  { id: 'transactions', label: '流水', mobileLabel: '收支', group: '日常', description: '固定提供流水、账户、账单与还款、计划四个入口' },
+  { id: 'assets', label: '资产', group: '资产与分析', description: '手机端的账户、持仓与物品入口' },
+  { id: 'convert', label: '资产转换', group: '资产与分析', description: '连续换汇、买卖与手续费' },
+  { id: 'fixed', label: '物品资产', group: '资产与分析', description: '物品卡片、配件耗材与使用成本' },
+  { id: 'game', label: '游戏赛季', group: '资产与分析', description: '游戏投入、产出与回收' },
+  { id: 'reports', label: '报表', group: '资产与分析', description: '收支、资产、物品与游戏报表' },
+  { id: 'manage', label: '资料管理', group: '账本工具', description: '分类、交易对象、币种、价格与模板' },
+  { id: 'history', label: '操作历史', group: '账本工具', description: '记录变更、撤销与冲突处理' },
+  { id: 'account', label: '我的账号', group: '账本工具', description: '个人资料、邮箱、配额与账号安全' },
+  { id: 'settings', label: '设置', group: '账本工具', description: '记账、备份、同步、恢复与外观' },
 ] as const;
 
 export const REQUIRED_NAVIGATION_IDS = new Set<ScreenId>(['transactions', 'settings']);
@@ -35,7 +38,7 @@ const SCREEN_ID_SET = new Set<ScreenId>(ALL_SCREEN_IDS);
 
 /*
  * What a brand-new ledger shows. The pinned entries from REQUIRED_NAVIGATION_IDS
- * are added on top, so a fresh sidebar reads 总览 → 日常收支 → 物品资产 → 我的账号 → 设置
+ * are added on top, so a fresh sidebar reads 工作台 → 流水（含账户、账单与还款、计划）→ 物品资产 → 我的账号 → 设置
  * while the phone uses a fixed 总览／收支／记一笔／资产／更多 bar.
  *
  * The set is the same for every ledger mode on purpose: switching from 轻量记账
@@ -125,7 +128,27 @@ export function moveNavigationItem(
   return { order, visible: order.filter((candidate) => preferences.visible.includes(candidate)) };
 }
 
-export function navigationLabel(id: ScreenId, mode: LedgerMode): string {
+export function sidebarNavigationItems(preferences: NavigationPreferences, includeHidden = false): NavigationItem[] {
+  const ordered = orderedNavigationItems(preferences, includeHidden).filter((item) => item.id !== 'assets');
+  return NAVIGATION_GROUPS.flatMap((group) => ordered.filter((item) => item.group === group));
+}
+
+/** Sidebar groups stay fixed; ordering applies to the real neighbours within each group. */
+export function moveSidebarItem(preferences: NavigationPreferences, id: ScreenId, direction: -1 | 1): NavigationPreferences {
+  if (id === 'assets') return preferences;
+  const current = NAVIGATION_ITEMS.find((item) => item.id === id);
+  const peers = sidebarNavigationItems(preferences, true).filter((item) => item.group === current?.group);
+  const neighbour = peers[peers.findIndex((item) => item.id === id) + direction];
+  if (!neighbour || !current) return preferences;
+  const order = [...preferences.order];
+  const from = order.indexOf(id), to = order.indexOf(neighbour.id);
+  if (from < 0 || to < 0) return preferences;
+  [order[from], order[to]] = [order[to]!, order[from]!];
+  return { order, visible: order.filter((candidate) => preferences.visible.includes(candidate)) };
+}
+
+export function navigationLabel(id: ScreenId, mode: LedgerMode, surface: 'desktop' | 'mobile' = 'desktop'): string {
   void mode;
-  return NAVIGATION_ITEMS.find((item) => item.id === id)?.label ?? id;
+  const item = NAVIGATION_ITEMS.find((item) => item.id === id);
+  return (surface === 'mobile' ? item?.mobileLabel ?? item?.label : item?.label) ?? id;
 }

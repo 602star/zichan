@@ -106,7 +106,7 @@ test('desktop task directories, item details and responsive papers share product
   for (const label of ['概况', '使用与成本', '配件耗材', '记录与凭证']) { await page.getByRole('tab', { name: label, exact: true }).click(); await expect(page.getByRole('tab', { name: label, exact: true })).toHaveAttribute('aria-selected', 'true'); }
   await page.getByRole('button', { name: '返回物品', exact: true }).click();
   await go(page, 'manage');
-  await page.getByRole('navigation', { name: '资产与资料中心', exact: true }).getByRole('button', { name: '交易模板', exact: true }).click();
+  await page.getByRole('navigation', { name: '资料管理', exact: true }).getByRole('button', { name: '交易模板', exact: true }).click();
   await expect(page.locator('.zc-page-content')).toContainText('交易模板');
   for (const paper of ['文献纸 · 墨朱', '青灰纸 · 墨朱', '紫灰纸 · 墨朱']) for (const mode of ['浅色', '深色']) {
     await go(page, 'settings', 'appearance');

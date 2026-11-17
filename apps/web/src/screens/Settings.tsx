@@ -1,3 +1,7 @@
+import { ArrowUp, ArrowDown } from 'lucide-react';
+import { NavigationIcon } from '../ui/NavigationIcon.js';
+import { readOnboarding, resumeOnboarding } from '../onboarding.js';
+import { navigateTo } from '../screen-target.js';
 import { CardFact, CardMetric } from '../ui/Card.js';
 import { ActionSheet } from '../ui/ActionSheet.js';
 import { TaskList, MobileDisclosure } from '../ui/MobilePage.js';
@@ -69,9 +73,10 @@ import { adoptUnlockedLedgerKeyEnvelope } from '../ledger-key-vault.js';
 import {
   REQUIRED_NAVIGATION_IDS,
   defaultNavigationPreferences,
-  moveNavigationItem,
+  moveSidebarItem,
+  NAVIGATION_GROUPS,
   navigationLabel,
-  orderedNavigationItems,
+  sidebarNavigationItems,
   parseNavigationPreferences,
   serializeNavigationPreferences,
   setNavigationItemVisible,
@@ -153,6 +158,8 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   const [resetOpen, setResetOpen] = useState(false);
   const [cleanupOpen, setCleanupOpen] = useState(false);
   const [navigationBusy, setNavigationBusy] = useState(false);
+  const [guideBusy, setGuideBusy] = useState(false);
+  const [guideError, setGuideError] = useState('');
   const [mobileLedgerMoreOpen, setMobileLedgerMoreOpen] = useState(false);
   const [currencyPresetBusy, setCurrencyPresetBusy] = useState(false);
   const [currencyPresetError, setCurrencyPresetError] = useState('');
@@ -236,9 +243,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   }
 
   function moveNavigation(id: ScreenId, direction: -1 | 1) {
-    const adjacent = navigation.order[navigation.order.indexOf(id) + direction];
-    const next = moveNavigationItem(navigation, id, direction);
-    void saveNavigation(adjacent === 'assets' ? moveNavigationItem(next, id, direction) : next);
+    void saveNavigation(moveSidebarItem(navigation, id, direction));
   }
 
   async function saveSafetyState(patch: Partial<SafetyState>) {
@@ -888,12 +893,28 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
             </div>
           </div>
 
+          <section className="zc-card zc-settings-guide" aria-label="新手指南">
+            <h2 className="zc-section-title">新手指南</h2>
+            <p className="zc-caption">重新查看记账弹窗、账户、账单与还款、物品资产及资料管理的操作入口，保留已完成的步骤。</p>
+            <button type="button" className="zc-btn" disabled={guideBusy} onClick={() => void (async () => {
+              if (!setting?.id || guideBusy) return;
+              setGuideBusy(true); setGuideError('');
+              try {
+                const current = readOnboarding(setting.id);
+                const recorded = current?.firstTransactionRecorded ?? (await store.transactions.count()) > 0;
+                resumeOnboarding(setting.id, ledgerMode === 'spending' ? 'spending' : 'accounts', recorded);
+                navigateTo({ screen: 'transactions', tab: 'records', intent: 'onboarding' });
+              } catch (error) { setGuideError(error instanceof Error ? error.message : '指南未能打开，请重试'); }
+              finally { setGuideBusy(false); }
+            })()}>{guideBusy ? '正在打开…' : '查看新手指南'}</button>
+            {guideError && <p role="alert" className="zc-caption">{guideError}</p>}
+          </section>
           <div className={`zc-card zc-settings-collapsible-card${mobileSectionOpen.navigation ? ' is-open' : ''}`}>
             <div className="zc-section-head zc-responsive-header">
               <div>
                 <h2 className="zc-section-title">侧边栏与模块</h2>
                 <p className="zc-meta zc-settings-card-description" style={{ marginTop: 4 }}>
-                  勾选的模块显示在桌面和平板侧栏。手机底栏固定为总览、收支、记一笔、资产、更多；资产聚合账户、持仓和物品。隐藏入口不会删除模块数据。
+                  名称与电脑侧栏一致，组内可调整顺序。“流水”固定提供流水、账户、账单与还款、计划四个入口。手机底栏保留总览、收支、记一笔、资产、更多；手机“总览”对应电脑“工作台”。隐藏只调整电脑侧栏，手机“更多”仍可进入；模块数据保留。
                 </p>
               </div>
               <button className="zc-settings-card-action zc-btn" type="button" disabled={navigationBusy} onClick={() => void saveNavigation(defaultNavigationPreferences())}>
@@ -905,14 +926,14 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
             </div>
             <div id="zc-settings-navigation-body" className="zc-settings-collapsible-body">
               <div className="zc-navigation-settings-list" style={{ display: 'grid', gap: 8, marginTop: 14 }}>
-                {orderedNavigationItems(navigation, true).filter((item) => item.id !== 'assets').map((item, index, items) => {
+                {NAVIGATION_GROUPS.map((group) => <section key={group} className="zc-navigation-settings-group" aria-label={`${group}侧栏模块`}><h3>{group}</h3>{sidebarNavigationItems(navigation, true).filter((item) => item.group === group).map((item, index, items) => {
                   const required = REQUIRED_NAVIGATION_IDS.has(item.id);
                   const visible = navigation.visible.includes(item.id);
                   return (
                     <div
                       key={item.id}
                       className="zc-navigation-settings-row"
-                      style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', gap: 12, border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '10px 12px', background: visible ? 'var(--surface)' : 'var(--surface-2)' }}
+                      style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'center', gap: 12, borderBottom: '1px solid var(--border)', padding: '12px 0' }}
                     >
                       <label style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, cursor: required ? 'default' : 'pointer' }}>
                         <input
@@ -922,19 +943,19 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                           disabled={required || navigationBusy}
                           onChange={(event) => setNavigationVisible(item.id, event.target.checked)}
                         />
-                        <span style={{ width: 22, textAlign: 'center', color: 'var(--accent)', fontSize: 'var(--fs-title)' }}>{item.icon}</span>
+                        <span className="zc-navigation-settings-icon"><NavigationIcon id={item.id} /></span>
                         <span style={{ minWidth: 0 }}>
                           <b style={{ display: 'block', fontSize: 'var(--fs-body)' }}>{navigationLabel(item.id, ledgerMode)}{required ? ' · 固定入口' : ''}</b>
                           <small className="zc-meta">{item.description}</small>
                         </span>
                       </label>
                       <div style={{ display: 'flex', gap: 6 }}>
-                        <button type="button" aria-label={`上移${navigationLabel(item.id, ledgerMode)}`} disabled={navigationBusy || index === 0} onClick={() => moveNavigation(item.id, -1)} style={navigationOrderButton(!navigationBusy && index > 0)}>↑</button>
-                        <button type="button" aria-label={`下移${navigationLabel(item.id, ledgerMode)}`} disabled={navigationBusy || index === items.length - 1} onClick={() => moveNavigation(item.id, 1)} style={navigationOrderButton(!navigationBusy && index < items.length - 1)}>↓</button>
+                        <button type="button" aria-label={`上移${navigationLabel(item.id, ledgerMode)}`} disabled={navigationBusy || index === 0} onClick={() => moveNavigation(item.id, -1)} style={navigationOrderButton(!navigationBusy && index > 0)}><ArrowUp size={18} aria-hidden="true" /></button>
+                        <button type="button" aria-label={`下移${navigationLabel(item.id, ledgerMode)}`} disabled={navigationBusy || index === items.length - 1} onClick={() => moveNavigation(item.id, 1)} style={navigationOrderButton(!navigationBusy && index < items.length - 1)}><ArrowDown size={18} aria-hidden="true" /></button>
                       </div>
                     </div>
                   );
-                })}
+                })}</section>)}
               </div>
             </div>
           </div>
@@ -1449,6 +1470,8 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
 /* Row-order arrows build on the shared icon button instead of a local copy. */
 const navigationOrderButton = (enabled: boolean): CSSProperties => ({
   ...iconBtn,
+  width: 44, height: 44,
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   color: enabled ? 'var(--fg-muted)' : 'var(--fg-subtle)',
   cursor: enabled ? 'pointer' : 'not-allowed',
   opacity: enabled ? 1 : 0.45,

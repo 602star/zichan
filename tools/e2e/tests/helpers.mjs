@@ -67,6 +67,6 @@ export async function openLedger(page, options = {}) {
 
 export async function openTransactions(page) {
   await openLedger(page);
-  await page.locator('.zc-sidebar nav').getByRole('button', { name: /日常收支|日常支出/ }).click();
+  await page.locator('.zc-sidebar nav').getByRole('button', { name: '流水', exact: true }).click();
   await expect(page.locator('#transaction-records').getByRole('button', { name: /^\+ 记(账|支出)$/ })).toBeVisible();
 }

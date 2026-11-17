@@ -50,7 +50,7 @@ export function SettingsPage({ theme, mode, resolvedMode, setTheme, setMode, sec
       { label: '解锁与安全', note: '应用锁与本机保护', onClick: () => select('security') },
     ]} />
     <TaskList title="账本资料" items={[
-      { label: '资料管理', note: '分类、账户、价格和模板', onClick: () => navigateTo({ screen: 'manage' }) },
+      { label: '资料管理', note: '分类、交易对象、币种、价格与模板', onClick: () => navigateTo({ screen: 'manage' }) },
       { label: '我的账号', note: '个人资料、邮箱与账号安全', onClick: () => navigateTo({ screen: 'account' }) },
     ]} />
   </div>;

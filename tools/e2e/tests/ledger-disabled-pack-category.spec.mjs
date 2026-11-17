@@ -28,7 +28,7 @@ test('keeps transactions of a disabled pack filterable without re-enabling it', 
 
   // 1. 启用「学生」扩展包，用其中的「食堂」记一笔，另记一笔普通分类作对照。
   await sidebar.getByRole('button', { name: /设置$/ }).click();
-  await page.getByLabel('在侧边栏显示管理').click();
+  await page.getByLabel('在侧边栏显示资料管理').click();
   await sidebar.getByRole('button', { name: /管理$/ }).click();
   await page.getByRole('button', { name: '快捷显示与排序', exact: true }).click();
   const studentPack = page.getByTestId('category-pack-student');

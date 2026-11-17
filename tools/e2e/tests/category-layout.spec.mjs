@@ -61,7 +61,7 @@ test.describe('touch category selection', () => {
     await expect(currency).toBeVisible();
     await currency.selectOption('__add_asset_preset__:USD');
     await expect(currency.locator('option:checked')).toHaveText('USD · 美元');
-    await page.getByRole('navigation', { name: '移动端主导航' }).getByRole('button', { name: /日常收支/ }).click();
+    await page.getByRole('navigation', { name: '移动端主导航' }).getByRole('button', { name: /流水|收支/ }).click();
     await page.locator('#transaction-records').getByRole('button', { name: '+ 记账', exact: true }).click();
     await expect(page.getByRole('dialog', { name: '新增 · 日常收支' }).getByLabel('当前币种')).toHaveText('美元');
   });

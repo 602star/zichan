@@ -75,7 +75,7 @@ test('account workspace applies separate defaults, preserves old records and wor
   await expect(detail(page)).not.toContainText('默认钱包消费');
   await list.getByRole('button', { name: '默认支出账户', exact: true }).click();
   await expect(detail(page)).toContainText('−50 CNY');
-  await detail(page).getByRole('button', { name: '查看这个账户的日常收支', exact: true }).click();
+  await detail(page).getByRole('button', { name: '查看账户流水', exact: true }).click();
   await expect(page.locator('.zc-transaction-row')).toHaveCount(1);
   await expect(page.locator('.zc-transaction-row')).toContainText('未细分来源的旧记录');
   await nav(page, 'accounts').click();

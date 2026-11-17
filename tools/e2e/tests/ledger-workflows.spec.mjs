@@ -21,7 +21,7 @@ test('records a detailed expense and keeps it visible after reload', async ({ pa
   await expect(page.getByText('Playwright 午餐', { exact: true })).toBeVisible();
   await page.reload({ waitUntil: 'domcontentloaded' });
   await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
-  await page.locator('.zc-sidebar nav').getByRole('button', { name: /日常收支/ }).click();
+  await page.locator('.zc-sidebar nav').getByRole('button', { name: /流水|收支/ }).click();
   await expect(page.getByText('Playwright 午餐', { exact: true })).toBeVisible();
 });
 
@@ -99,47 +99,40 @@ test('traps modal focus and preserves the parent lock across nested confirmation
 });
 
 test('customizes sidebar modules and keeps their order after reload', async ({ page }) => {
-  await openLedger(page);
+  await page.clock.setFixedTime(new Date()); await openLedger(page);
   const sidebar = page.locator('.zc-sidebar');
-  await sidebar.getByRole('button', { name: /设置$/ }).click();
-  await expect(page.getByText('侧边栏与模块', { exact: true })).toBeVisible();
-  await expect(sidebar.getByRole('button', { name: /管理$/ })).toHaveCount(0);
-
-  await page.getByLabel('在侧边栏显示管理').click();
-  await expect(page.getByLabel('在侧边栏显示管理')).toBeChecked();
-  await expect(sidebar.getByRole('button', { name: /管理$/ })).toBeVisible();
-  await page.getByRole('button', { name: '上移管理', exact: true }).click();
-  await page.getByRole('button', { name: '上移管理', exact: true }).click();
-  await page.getByRole('button', { name: '上移管理', exact: true }).click();
-
-  const sidebarLabels = async () => page.locator('.zc-sidebar nav > div > button:first-child .zc-sidebar-nav-label').allTextContents();
-  await expect.poll(sidebarLabels).toEqual(['总览', '日常收支', '管理', '物品资产', '我的账号', '设置']);
-
-  await page.reload();
-  await openLedger(page);
-  await expect.poll(sidebarLabels).toEqual(['总览', '日常收支', '管理', '物品资产', '我的账号', '设置']);
-
+  await sidebar.getByRole('button', { name: '设置', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '侧边栏与模块', exact: true })).toBeVisible();
+  await page.getByLabel('在侧边栏显示资料管理', { exact: true }).click(); await expect(page.getByLabel('在侧边栏显示资料管理', { exact: true })).toBeChecked();
+  await page.getByLabel('在侧边栏显示操作历史', { exact: true }).click(); await expect(page.getByLabel('在侧边栏显示操作历史', { exact: true })).toBeChecked();
+  await page.getByRole('button', { name: '下移资料管理', exact: true }).click();
+  const labels = () => sidebar.locator('.zc-sidebar-nav-label').filter({ hasNotText: '收起侧栏' }).allTextContents();
+  const expected = ['工作台', '流水', '账户', '账单与还款', '计划', '物品资产', '操作历史', '资料管理', '我的账号', '设置'];
+  await expect.poll(labels).toEqual(expected);
+  await page.reload(); await openLedger(page); await expect.poll(labels).toEqual(expected);
   await page.setViewportSize({ width: 390, height: 844 });
-  const mobileNavigation = page.getByRole('navigation', { name: '移动端主导航' });
-  await expect(mobileNavigation.getByRole('button', { name: /管理$/ })).toBeVisible();
-  await mobileNavigation.getByRole('button', { name: /更多$/ }).click();
-  const moreDrawer = page.getByRole('dialog', { name: '更多功能' });
-  await expect(moreDrawer.getByRole('button', { name: /设置$/ })).toBeVisible();
-  await moreDrawer.getByRole('button', { name: /设置$/ }).click();
-  await page.getByRole('button', { name: '模块设置' }).click();
-  await page.getByLabel('在侧边栏显示管理').click();
-  await expect(page.getByLabel('在侧边栏显示管理')).not.toBeChecked();
-  await expect(mobileNavigation.getByRole('button', { name: /管理$/ })).toHaveCount(0);
+  const mobile = page.getByRole('navigation', { name: '移动端主导航' });
+  await expect(mobile.getByRole('button')).toHaveText(['总览', '收支', '记一笔', '资产', '更多']);
+  await mobile.getByRole('button', { name: '更多', exact: true }).click();
+  const drawer = page.getByRole('dialog', { name: '更多功能', exact: true });
+  await drawer.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '记账', exact: true }).click();
+  await page.getByRole('button', { name: '模块设置' }).click(); await page.getByLabel('在侧边栏显示资料管理', { exact: true }).click(); await expect(page.getByLabel('在侧边栏显示资料管理', { exact: true })).not.toBeChecked();
+  await mobile.getByRole('button', { name: '更多', exact: true }).click();
+  await expect(drawer.getByRole('button', { name: '资料管理', exact: true })).toBeVisible();
+  await drawer.getByRole('button', { name: '关闭更多菜单', exact: true }).click();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(sidebar.getByRole('button', { name: '资料管理', exact: true })).toHaveCount(0);
 });
 
 test('enables and disables an extension pack for new entries and restores it when re-enabled', async ({ page }) => {
   await openLedger(page);
   const sidebar = page.locator('.zc-sidebar');
   await sidebar.getByRole('button', { name: /设置$/ }).click();
-  await page.getByLabel('在侧边栏显示管理').click();
-  await expect(page.getByLabel('在侧边栏显示管理')).toBeChecked();
+  await page.getByLabel('在侧边栏显示资料管理').click();
+  await expect(page.getByLabel('在侧边栏显示资料管理')).toBeChecked();
   await sidebar.getByRole('button', { name: /管理$/ }).click();
-  await expect(page.getByText('资产与资料中心', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '资料管理', level: 1, exact: true })).toBeVisible();
   await page.getByRole('button', { name: '快捷显示与排序', exact: true }).click();
 
   const studentPack = page.getByTestId('category-pack-student');
@@ -167,7 +160,7 @@ test('enables and disables an extension pack for new entries and restores it whe
   await studentPack.getByRole('button', { name: '停用学生扩展包', exact: true }).click();
   await expect(studentPack.getByText('未启用 · 可选 7 项', { exact: true })).toBeVisible();
 
-  await page.getByText('日常收支', { exact: true }).first().click();
+  await sidebar.getByRole('button', { name: '流水', exact: true }).click();
   await page.getByRole('button', { name: '+ 记账' }).click();
   const expenseForm = page.getByRole('dialog', { name: '新增 · 日常收支' });
   await expenseForm.getByLabel('分类').click();
@@ -182,7 +175,7 @@ test('enables and disables an extension pack for new entries and restores it whe
   await disabledStudentPack.getByRole('button', { name: '启用学生扩展包', exact: true }).click();
   await expect(disabledStudentPack.getByText('7 项全部可用', { exact: true })).toBeVisible();
 
-  await page.getByText('日常收支', { exact: true }).first().click();
+  await sidebar.getByRole('button', { name: '流水', exact: true }).click();
   await page.getByRole('button', { name: '+ 记账' }).click();
   const restoredForm = page.getByRole('dialog', { name: '新增 · 日常收支' });
   await restoredForm.getByLabel('分类').click();
@@ -194,10 +187,10 @@ test('adds a catalog sub-category from the structure list without enabling a who
   await openLedger(page);
   const sidebar = page.locator('.zc-sidebar');
   await sidebar.getByRole('button', { name: /设置$/ }).click();
-  await page.getByLabel('在侧边栏显示管理').click();
-  await expect(page.getByLabel('在侧边栏显示管理')).toBeChecked();
+  await page.getByLabel('在侧边栏显示资料管理').click();
+  await expect(page.getByLabel('在侧边栏显示资料管理')).toBeChecked();
   await sidebar.getByRole('button', { name: /管理$/ }).click();
-  await expect(page.getByText('资产与资料中心', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '资料管理', level: 1, exact: true })).toBeVisible();
 
   // 结构管理默认打开。目录里存在、但账本里还没有的细分分类应当可浏览：
   // 搜索 KTV 会把它所在的「休闲娱乐」连这一项一起展开。
@@ -212,7 +205,7 @@ test('adds a catalog sub-category from the structure list without enabling a who
   await expect(page.getByRole('button', { name: '添加细分分类 KTV', exact: true })).toHaveCount(0);
 
   // 并且出现在新增记账的二级分类里。
-  await page.getByText('日常收支', { exact: true }).first().click();
+  await sidebar.getByRole('button', { name: '流水', exact: true }).click();
   await page.getByRole('button', { name: '+ 记账' }).click();
   const expenseForm = page.getByRole('dialog', { name: '新增 · 日常收支' });
   await expenseForm.getByLabel('分类').click();

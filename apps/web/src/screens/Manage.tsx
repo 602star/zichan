@@ -232,17 +232,17 @@ export function Manage() {
     <div className="zc-manage-workspace" style={compact ? { display: 'flex', flexDirection: 'column', gap: 22 } : undefined}>
       {compact && <MobilePageHeader title={mobileManageLabel(mobileView)} onBack={backMobile} backLabel="返回资料" />}
       {!compact && <div className="zc-manage-desktop-intro">
-        <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>资产与资料中心</div>
-        <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4 }}>在资产标签管理货币与资产的加入、停用和归档；其他标签维护分类与基础资料。</div>
+        <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>资料管理</div>
+        <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', marginTop: 4 }}>在左侧目录维护币种、分类、交易对象、价格与模板；资金账户在“账户”页管理。</div>
         {onboardingGuide && (
           <button type="button" style={{ marginTop: 'var(--sp-2)', padding: 0, border: 0, background: 'transparent', color: 'var(--accent)', cursor: 'pointer' }} onClick={() => {
             updateOnboarding(onboardingGuide, { dismissed: false });
-            window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'transactions' } }));
+            window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'transactions', tab: 'records', intent: 'onboarding' } }));
           }}>返回新手指南</button>
         )}
       </div>}
 
-      {!compact && <nav aria-label="资产与资料中心" className="zc-workspace-nav">
+      {!compact && <nav aria-label="资料管理" className="zc-workspace-nav">
         {([
           ['transactionCategories', '收支分类'],
           ['fixedCategories', '物品分类'],

@@ -6,7 +6,7 @@ import { AccountHistoryPanel } from '../ui/AccountHistoryPanel.js';
 import { AccountsWorkspace } from '../ui/AccountsWorkspace.js';
 import { useTransactionEditor } from '../use-transaction-editor.js';
 import { accountSessionStorage } from '../account-storage.js';
-import { readOnboarding, updateOnboarding, type OnboardingState } from '../onboarding.js';
+import { readOnboarding, updateOnboarding, ONBOARDING_CHANGED_EVENT, type OnboardingState } from '../onboarding.js';
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { continuedEntryFields } from '../desktop-workspace.js';
 import { DcaPlans } from './DcaPlans.js';
@@ -96,7 +96,7 @@ import { QuickExpenseModal, type QuickExpenseDraft } from '../ui/QuickExpenseMod
 import { ActionSheet } from '../ui/ActionSheet.js';
 import { CardFact } from '../ui/Card.js';
 import { useRecordGestures } from '../ui/useRecordGestures.js';
-import { canNavigateWorkspace, rememberScreenTarget, useScreenTarget } from '../screen-target.js';
+import { canNavigateWorkspace, navigateTo, rememberScreenTarget, useScreenTarget } from '../screen-target.js';
 import { TaskList, useMobileSection } from '../ui/MobilePage.js';
 
 const TYPE_OPTIONS: { value: 'all' | TransactionType; label: string }[] = [
@@ -316,10 +316,17 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   const usesAccounts = true;
   useEffect(() => {
     if (!snap?.setting?.id) return;
-    const state = readOnboarding(snap.setting.id);
-    setOnboarding(state);
-    setShowFirstEntryGuide(Boolean(state && !state.dismissed));
-  }, [snap?.setting?.id]);
+    const apply = (state: OnboardingState | null) => {
+      setOnboarding(state); setShowFirstEntryGuide(Boolean(state && !state.dismissed));
+    };
+    apply(readOnboarding(snap.setting.id));
+    const changed = (event: Event) => {
+      const state = (event as CustomEvent<OnboardingState>).detail;
+      if (state.settingId === snap.setting?.id) apply(state);
+    };
+    window.addEventListener(ONBOARDING_CHANGED_EVENT, changed);
+    return () => window.removeEventListener(ONBOARDING_CHANGED_EVENT, changed);
+  }, [snap?.setting?.id, screenTarget?.intent]);
   const [addedAccount, setAddedAccount] = useState<import('@zichan/core').Account | null>(null);
 
   useEffect(() => {
@@ -392,7 +399,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     return () => window.removeEventListener('zichan:quick-transaction', openQuickTransaction);
   }, [entryOnly, setTab]);
   const visibleTabs: [Tab, string][] = usesAccounts
-    ? [['records', '流水'], ['accounts', '账户'], ['budget', '预算'], ['bills', '账单'], ...(!compactView || tab === 'dca' ? [['dca', '定投'] as [Tab, string]] : [])]
+    ? [['records', '流水'], ['accounts', '账户'], ['budget', '预算'], ['bills', '账单与还款'], ...(!compactView || tab === 'dca' ? [['dca', '定投'] as [Tab, string]] : [])]
     : [['records', '支出']];
   const activeTab = usesAccounts ? tab : 'records';
   useEffect(() => {
@@ -1087,7 +1094,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     if (refresh) {
       bump();
       if (!before) {
-        setOnboarding((current) => current ? updateOnboarding(current, { firstTransactionRecorded: true }) : current);
+        setOnboarding((current) => current ? updateOnboarding(current, { firstTransactionRecorded: true, dismissed: current.dismissed || (!compactView && !current.firstTransactionRecorded) }) : current);
         undo.offer(`已保存${saved.type === 'refund' ? '退款' : '流水'}`, async () => {
           await voidTransaction(store, saved.id, '撤销刚才的新增');
           bump();
@@ -1374,12 +1381,24 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   }
 
   const mobileGuideSteps = onboarding?.path === 'accounts'
-    ? (['accounts', 'entry', 'categories', 'templates'] as const)
-    : (['entry', 'categories', 'templates'] as const);
+    ? (['accounts', 'entry', 'categories', 'templates', 'navigation'] as const)
+    : (['entry', 'categories', 'templates', 'navigation'] as const);
   const mobileGuideStep = Math.min(Math.max(onboarding?.mobileStep ?? 0, 0), mobileGuideSteps.length - 1);
   const mobileGuideKind = mobileGuideSteps[mobileGuideStep];
   const hasEnabledCategoryPack = CATEGORY_PACKS.some((pack) => categoryPackState(pack, readySnap.categories).enabledCount > 0);
 
+  const reopenGuideControl = onboarding && !showFirstEntryGuide && activeTab === 'records' && (
+        <button type="button" className="zc-onboarding-reopen" onClick={() => { setOnboarding(updateOnboarding(onboarding, { dismissed: false })); setShowFirstEntryGuide(true); }}>
+          查看新手指南
+        </button>
+      );
+  const guideDestinations = <div className="zc-first-entry-actions">
+    <button type="button" className={buttonCls} onClick={() => setTab('accounts')}>查看账户</button>
+    <button type="button" className={buttonCls} onClick={() => setTab('bills')}>查看账单与还款</button>
+    <button type="button" className={buttonCls} onClick={() => navigateTo({ screen: 'fixed' })}>查看物品资产</button>
+    <button type="button" className={buttonCls} onClick={() => navigateTo({ screen: 'manage' })}>查看资料管理</button>
+    <button type="button" className={buttonCls} onClick={() => navigateTo({ screen: 'settings', tab: 'device' })}>查看本机备份</button>
+  </div>;
   return (
     <div className={`zc-ledger-page is-${activeTab}`} style={{ display: entryOnly ? 'none' : 'flex', flexDirection: 'column', gap: compactView ? 'var(--sp-5)' : 'var(--sp-3)' }}>
       {vm.missingRateAssetCodes.length > 0 && (
@@ -1393,12 +1412,8 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
         ))}
       </div>
 
-      {onboarding && !showFirstEntryGuide && activeTab === 'records' && (
-        <button type="button" className="zc-onboarding-reopen" onClick={() => { setOnboarding(updateOnboarding(onboarding, { dismissed: false })); setShowFirstEntryGuide(true); }}>
-          查看新手指南
-        </button>
-      )}
-      {onboarding && showFirstEntryGuide && !compactView && activeTab === 'records' && !onboarding.firstTransactionRecorded && (
+      {compactView && reopenGuideControl}
+      {onboarding && showFirstEntryGuide && !compactView && activeTab === 'records' && (
         <section className="zc-first-entry-guide" aria-label="首次记账引导">
           <div>
             <h2>账本已准备好</h2>
@@ -1407,12 +1422,12 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
           <div className="zc-onboarding-steps">
             {onboarding.path === 'accounts' && (
               <div className="zc-onboarding-step">
-                <div><strong>设置常用账户</strong><p>添加银行卡或钱包，再填写当前余额。</p></div>
+                <div><strong>设置常用账户</strong><p>在“账户”添加银行卡或钱包，填写余额与截至时间，再设置默认支出、收入账户。系统预建的两个账户同属“其他”类型，可直接记账；仅这两个账户不提供对账，自行添加的账户仍可核对。</p></div>
                 <button type="button" className={buttonCls} onClick={() => { setTab('accounts'); openAccountTask({ kind: 'edit' }); }}>添加账户</button>
               </div>
             )}
             <div className="zc-onboarding-step">
-              <div><strong>记第一笔{onboarding.firstTransactionRecorded ? ' · 已完成' : ''}</strong><p>先记金额和分类，其他信息可稍后补充。</p></div>
+              <div><strong>记第一笔{onboarding.firstTransactionRecorded ? ' · 已完成' : ''}</strong><p>在流水页点击“+ 记账”，弹窗里先填金额和分类；保存后回到流水，也可保存并继续。</p></div>
               <button type="button" className={onboarding.firstTransactionRecorded ? buttonCls : primaryCls} onClick={openNewTransaction}>{onboarding.firstTransactionRecorded ? '再记一笔' : '记第一笔'}</button>
             </div>
             <div className="zc-onboarding-step">
@@ -1428,13 +1443,18 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
               </div>
             </div>
           </div>
+          <div className="zc-onboarding-next-tasks"><h3>找到常用功能</h3>
+            <p>电脑从侧栏进入工作台、流水、账户、账单与还款、计划；资料管理维护分类、交易对象与模板。隐藏的模块可在“设置 → 记账 → 侧边栏与模块”启用。</p>
+            <p>点流水行查看明细，再点“编辑”修改。账单与还款可以独立记录；物品资产默认卡片，可从“记录生命周期事件”购入配件、报废或登记云服务费用。请定期导出加密备份。</p>
+            {guideDestinations}
+          </div>
           <div className="zc-first-entry-actions"><button type="button" className={buttonCls} onClick={dismissOnboarding}>暂时收起</button></div>
         </section>
       )}
       {onboarding && showFirstEntryGuide && compactView && activeTab === 'records' && (
         <section className="zc-first-entry-guide zc-first-entry-guide-mobile" aria-label="首次记账引导">
           <div className="zc-mobile-guide-header">
-            <span>新手引导 · {mobileGuideStep + 1}/{mobileGuideSteps.length}</span>
+            <span>新手指南 · {mobileGuideStep + 1}/{mobileGuideSteps.length}</span>
             <button type="button" onClick={dismissOnboarding}>收起</button>
           </div>
           <div className="zc-mobile-guide-progress" aria-hidden="true">
@@ -1443,14 +1463,14 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
           {mobileGuideKind === 'accounts' && (
             <div className="zc-mobile-guide-content">
               <h2>设置常用账户</h2>
-              <p>需要分清银行卡、微信和支付宝余额时，先添加常用账户。也可以稍后再做。</p>
+              <p>从“资产 → 资金账户”添加银行卡或钱包，填写余额与截至时间，并选择默认收支账户。系统预建的两个“其他”账户也可直接记账。</p>
               <div className="zc-first-entry-actions"><button type="button" className={primaryCls} onClick={() => { setTab('accounts'); openAccountTask({ kind: 'edit' }); }}>添加账户</button></div>
             </div>
           )}
           {mobileGuideKind === 'entry' && (
             <div className="zc-mobile-guide-content">
               <h2>记第一笔{onboarding.firstTransactionRecorded ? ' · 已完成' : ''}</h2>
-              <p>先填金额和分类，其他信息以后可以补充。准备好时再开始。</p>
+              <p>在弹窗中填写金额和分类。之后可从底栏“记一笔”快速记录，保存后留在原页。</p>
               <div className="zc-first-entry-actions"><button type="button" className={primaryCls} onClick={openNewTransaction}>{onboarding.firstTransactionRecorded ? '再记一笔' : '记第一笔'}</button></div>
             </div>
           )}
@@ -1475,6 +1495,12 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
               </div>
             </div>
           )}
+          {mobileGuideKind === 'navigation' && <div className="zc-mobile-guide-content">
+            <h2>找到常用功能</h2>
+            <p>底栏是总览、收支、记一笔、资产、更多。“资产”进入资金账户、持仓与物品，“更多”进入账单与还款、资料管理和设置。</p>
+            <p>点流水看明细，长按或左右滑动打开编辑、退款等操作，也可点行尾更多。物品默认卡片，购入配件、报废和云服务费用都从物品事件入口记录。</p>
+            {guideDestinations}
+          </div>}
           <div className="zc-mobile-guide-nav">
             {mobileGuideStep > 0 && <button type="button" onClick={() => showMobileGuideStep(mobileGuideStep - 1)}>上一步</button>}
             {mobileGuideStep < mobileGuideSteps.length - 1
@@ -1506,6 +1532,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {!compactView && reopenGuideControl}
                 <button onClick={openNewTransaction} className="zc-header-primary zc-btn zc-btn--primary">{usesAccounts ? '+ 记账' : '+ 记支出'}</button>
                 <details className="zc-ledger-more">
                   <summary className="zc-btn">更多操作</summary>

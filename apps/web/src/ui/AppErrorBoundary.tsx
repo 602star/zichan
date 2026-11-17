@@ -81,14 +81,14 @@ export class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorSt
         <div className="zc-error-boundary-card">
           <div className="zc-error-boundary-kicker">页面恢复</div>
           <h1>这个页面暂时无法显示</h1>
-          <p>账本数据库没有被重置。你可以重试当前页面，或返回总览继续使用其他功能。</p>
+          <p>账本数据库没有被重置。你可以重试当前页面，或返回账本首页继续使用其他功能。</p>
           <details>
             <summary>查看错误摘要</summary>
             <code>{error.name}: {error.message}</code>
           </details>
           <div className="zc-error-boundary-actions">
             <button type="button" onClick={this.retryCurrentPage}>重试当前页面</button>
-            <button type="button" onClick={this.returnToDashboard}>返回总览</button>
+            <button type="button" onClick={this.returnToDashboard}>返回账本首页</button>
             <button type="button" onClick={() => void this.copy()}>复制诊断信息</button>
           </div>
           {copyStatus !== 'idle' && (

@@ -17,6 +17,7 @@ import { loadSyncConnections, SYNC_CONFIG_CHANGED_EVENT, type SyncConnection } f
 import { SYNC_LIFECYCLE_RESULT_EVENT, type LifecycleSyncResult } from '../background-sync.js';
 import { buildTaskCenter, type TaskCenterItem } from '../selectors/task-center.js';
 import { LedgerCutoffNotice } from '../ui/LedgerCutoffNotice.js';
+import { navigationLabel } from '../navigationPreferences.js';
 import { useCompactView } from '../ui/useCompactView.js';
 import { navigateTo } from '../screen-target.js';
 import { useMobileHomeFocus } from '../mobile-preferences.js';
@@ -101,7 +102,7 @@ export function Dashboard() {
     else if (task.action === 'open_fixed') navigateTo({ screen: 'fixed', id: task.fixedAssetId, tab: 'attention' });
     else navigateTo({ screen: 'settings', tab: task.action === 'open_settings' ? 'device' : 'server' });
   }
-  if (!vm) return <p role="status">正在读取总览…</p>;
+  if (!vm) return <p role="status">正在读取{navigationLabel('dashboard', snap?.setting?.ledgerMode ?? 'spending', compactView ? 'mobile' : 'desktop')}…</p>;
   const partial = (metric: string) => vm.incompleteMetrics.includes(metric);
   const partialText = (metric: string, value: string) => partial(metric) ? `${value}（已知部分）` : value;
   const spendingFirst = compactView && homeFocus === 'spending';

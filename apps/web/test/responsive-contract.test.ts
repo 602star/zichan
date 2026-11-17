@@ -49,7 +49,7 @@ describe('responsive shell contract', () => {
     expect(dialogShell).toContain("event.key !== 'Tab'");
     expect(dialogShell).toContain('restoreFocus.focus');
     expect(errorBoundary).toContain('重试当前页面');
-    expect(errorBoundary).toContain('返回总览');
+    expect(errorBoundary).toContain('返回账本首页');
     expect(errorBoundary).toContain('复制诊断信息');
     expect(store).toContain('复制诊断信息');
     expect(store).toContain("userSelect: 'text'");

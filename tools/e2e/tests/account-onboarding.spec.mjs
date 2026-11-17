@@ -115,7 +115,7 @@ test('field preferences only control defaults; editing reveals existing notes an
   await entry.getByRole('button', { name: '保存', exact: true }).last().click();
   await expect(entry).toBeHidden();
   await editRecord(page, '字段展开检查');
-  entry = page.getByRole('dialog');
+  entry = page.getByRole('dialog', { name: '编辑 · 日常收支', exact: true });
   await expect(entry.getByRole('textbox', { name: '备注', exact: true })).toBeVisible();
   await expect(entry.getByRole('textbox', { name: '备注', exact: true })).toHaveValue('旧内容必须直接可见');
   await expect(entry.getByText('receipt.png', { exact: true })).toBeVisible();
@@ -169,6 +169,8 @@ test('clear other filters preserves dates while resetting drill and advanced con
   await expect(entry).toBeHidden();
   await page.getByTestId('composition-parent').locator('.zc-donut-legend-row.is-drillable').first().click();
   await expect(page.locator('.zc-drill-crumbs')).toBeVisible();
+  const filterToggle = page.locator('.zc-transaction-filter-toggle');
+  if (await filterToggle.getAttribute('aria-expanded') === 'false') await filterToggle.click();
   await page.getByLabel('流水类型', { exact: true }).selectOption('income');
   await page.getByLabel('流水账户', { exact: true }).selectOption({ label: '默认收入账户' });
   await page.getByLabel('流水状态', { exact: true }).selectOption('pending');
@@ -180,7 +182,8 @@ test('clear other filters preserves dates while resetting drill and advanced con
   await page.getByPlaceholder('筛选名称', { exact: true }).fill('保留的筛选方案');
   await page.getByRole('button', { name: '保存当前筛选', exact: true }).click();
   await expect(page.getByRole('button', { name: '保留的筛选方案', exact: true })).toBeVisible();
-  const dateBeforeClear = await Promise.all(['开始日期', '结束日期', '快捷时间范围'].map((label) => page.getByLabel(label, { exact: true }).inputValue()));
+  const dateBeforeClear = await Promise.all(['开始日期', '结束日期'].map((label) => page.getByRole('button', { name: label, exact: true }).innerText()));
+  const presetBeforeClear = await page.getByLabel('快捷时间范围', { exact: true }).inputValue();
   await page.getByRole('button', { name: '清除其他筛选', exact: true }).click();
   for (const label of ['流水类型', '流水账户', '流水标签', '流水状态']) {
     await expect(page.getByLabel(label, { exact: true })).toHaveValue('all');
@@ -189,23 +192,24 @@ test('clear other filters preserves dates while resetting drill and advanced con
   for (const label of ['最低金额', '最高金额', '流水搜索']) {
     await expect(page.getByLabel(label, { exact: true })).toHaveValue('');
   }
-  for (const [index, label] of ['开始日期', '结束日期', '快捷时间范围'].entries()) {
-    await expect(page.getByLabel(label, { exact: true })).toHaveValue(dateBeforeClear[index]);
+  for (const [index, label] of ['开始日期', '结束日期'].entries()) {
+    await expect(page.getByLabel(label, { exact: true })).toHaveText(dateBeforeClear[index]);
   }
+  await expect(page.getByLabel('快捷时间范围', { exact: true })).toHaveValue(presetBeforeClear);
   await expect(page.locator('.zc-drill-crumbs')).toHaveCount(0);
   await expect(page.getByLabel('高级查询字段')).toHaveCount(0);
   await expect(page.getByText('清除筛选检查', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: '保留的筛选方案', exact: true }).click();
   await expect(page.getByLabel('流水搜索', { exact: true })).toHaveValue('不会匹配');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('button', { name: /筛选与搜索/ }).click();
+  if (await filterToggle.getAttribute('aria-expanded') === 'false') await filterToggle.click();
   await page.getByRole('button', { name: '清除其他筛选', exact: true }).click();
   await expect(page.getByLabel('流水搜索', { exact: true })).toHaveValue('');
-  await expect(page.getByLabel('开始日期')).toHaveValue(dateBeforeClear[0]);
-  await expect(page.getByLabel('结束日期')).toHaveValue(dateBeforeClear[1]);
+  await expect(page.getByLabel('开始日期', { exact: true })).toHaveText(dateBeforeClear[0]);
+  await expect(page.getByLabel('结束日期', { exact: true })).toHaveText(dateBeforeClear[1]);
   await page.getByLabel('快捷时间范围', { exact: true }).selectOption('all');
-  await expect(page.getByLabel('开始日期')).toHaveValue('');
-  await expect(page.getByLabel('结束日期')).toHaveValue('');
+  await expect(page.getByLabel('开始日期', { exact: true })).toHaveText('选择日期');
+  await expect(page.getByLabel('结束日期', { exact: true })).toHaveText('选择日期');
   await expect(page.getByLabel('快捷时间范围')).toHaveValue('all');
 });
 
@@ -241,11 +245,14 @@ test('a newly defaulted account is used after a draft and its spending reaches b
   await expect(entry.getByText(/保存后不会再次扣减余额/)).toBeVisible();
   await entry.getByRole('button', { name: '保存', exact: true }).last().click();
   await expect(entry).toBeHidden();
-  await expect(page.getByText('1000 CNY', { exact: true })).toBeVisible();
+  await expect(page.getByText('1,000.00 CNY', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: '核对账单', exact: true }).click();
   let reconcile = page.getByRole('dialog', { name: '核对账单' });
-  await expect(reconcile.getByText(/1 笔记录已包含在起始余额中/)).toBeVisible();
+  await reconcile.getByLabel('账单期末余额').fill('1000');
+  await expect(reconcile.getByText(/1 笔已包含在账户起始余额中/)).toBeVisible();
   await reconcile.getByRole('button', { name: '关闭', exact: true }).last().click();
+  await page.getByRole('dialog', { name: '关闭未完成的对账', exact: true }).getByRole('button', { name: '放弃本次核对', exact: true }).click();
+  await expect(reconcile).toBeHidden();
   await page.getByRole('button', { name: '流水', exact: true }).click();
   await page.getByRole('button', { name: '+ 记账', exact: true }).click();
   entry = page.getByRole('dialog');
@@ -258,11 +265,11 @@ test('a newly defaulted account is used after a draft and its spending reaches b
   await entry.getByRole('button', { name: '保存', exact: true }).last().click();
   await expect(entry).toBeHidden();
   await page.getByRole('button', { name: '账户', exact: true }).click();
-  await expect(page.getByText('900 CNY', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('900.00 CNY', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: '核对账单', exact: true }).click();
   reconcile = page.getByRole('dialog', { name: '核对账单' });
-  await expect(reconcile.getByText('起点后支出', { exact: true })).toBeVisible();
   await reconcile.getByLabel('账单期末余额').fill('900');
+  await expect(reconcile.getByText('起点后支出', { exact: true })).toBeVisible();
   await reconcile.getByRole('checkbox', { name: /起点后支出/ }).check();
   await reconcile.getByRole('button', { name: '完成对账', exact: true }).click();
   await expect(reconcile).toBeHidden();

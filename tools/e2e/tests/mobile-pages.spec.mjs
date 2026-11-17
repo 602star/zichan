@@ -8,7 +8,7 @@ test.beforeEach(async ({ page }) => { page.setDefaultTimeout(12_000); });
 
 async function go(page, screen, tab, id) {
   await page.evaluate((detail) => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail })), { screen, tab, id });
-  await expect(page.locator('h1')).toHaveText(({ dashboard: '总览', assets: '资产', transactions: '日常收支', fixed: '物品资产', convert: '资产转换', reports: '报表', game: '游戏赛季', manage: '管理', history: '操作历史', settings: '设置', account: '我的账号' })[screen]);
+  await expect(page.locator('h1')).toHaveText(({ dashboard: '总览', assets: '资产', transactions: '收支', fixed: '物品资产', convert: '资产转换', reports: '报表', game: '游戏赛季', manage: '资料管理', history: '操作历史', settings: '设置', account: '我的账号' })[screen]);
 }
 
 async function capture(page, name) {
@@ -58,7 +58,7 @@ test('mobile task directories, quick entry and browser back use real pages', asy
   await expect(page.getByRole('dialog', { name: '流水详情', exact: true })).toBeVisible();
   await back(page);
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(page.locator('h1')).toHaveText('日常收支');
+  await expect(page.locator('h1')).toHaveText('收支');
 
   await nav.getByRole('button', { name: '更多', exact: true }).click();
   more = page.getByRole('dialog', { name: '更多功能', exact: true });
@@ -68,7 +68,7 @@ test('mobile task directories, quick entry and browser back use real pages', asy
   await back(page);
   await expect(page.getByRole('button', { name: '记账', exact: true })).toBeVisible();
   await back(page);
-  await expect(page.locator('h1')).toHaveText('日常收支');
+  await expect(page.locator('h1')).toHaveText('收支');
 
   await go(page, 'manage');
   for (const label of ['收支分类', '标签与交易对象', '记账模板', '资产', '账户', '价格标记', '物品分类', '定投计划', '游戏资料', '附件']) {
@@ -197,7 +197,7 @@ test('accounts, budgets, bills and conversion review connect to the ledger', asy
   await expect(page.getByRole('region', { name: '账户详情', exact: true })).toContainText('100.00 CNY');
   await capture(page, 'asset-account-detail');
   await page.getByRole('button', { name: '查看账户流水', exact: true }).click();
-  await expect(page.locator('h1')).toHaveText('日常收支');
+  await expect(page.locator('h1')).toHaveText('收支');
   await expect(page.getByRole('button', { name: '账户', exact: true })).toHaveClass(/zc-btn--primary/);
   await capture(page, 'asset-account-ledger');
 

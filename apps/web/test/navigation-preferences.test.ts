@@ -27,7 +27,7 @@ describe('navigation preferences', () => {
       .map((item) => item.id)
       .filter((id) => !preferences.visible.includes(id));
 
-    expect(hidden).toEqual(['assets', 'convert', 'game', 'reports', 'history', 'manage']);
+    expect(hidden).toEqual(['assets', 'convert', 'game', 'reports', 'manage', 'history']);
   });
 
   it('persists enabled modules and their order', () => {

@@ -1,11 +1,10 @@
 import type { LedgerMode } from '@zichan/core';
-import type { NavigationPreferences, ScreenId } from './navigationPreferences.js';
+import { NAVIGATION_GROUPS, navigationLabel, type NavigationGroup, type NavigationPreferences, type ScreenId } from './navigationPreferences.js';
 import type { ScreenTarget } from './screen-target.js';
 
-export interface DesktopDestination { id: string; label: string; target: ScreenTarget; group: '日常' | '资产与分析' | '账本工具'; }
+export interface DesktopDestination { id: string; label: string; target: ScreenTarget; group: NavigationGroup; }
 
 export function desktopDestinations(preferences: NavigationPreferences, mode: LedgerMode): DesktopDestination[] {
-  void mode;
   const visible = new Set(preferences.visible);
   const entries: Array<DesktopDestination & { source: ScreenId }> = [
     { id: 'dashboard', label: '工作台', source: 'dashboard', target: { screen: 'dashboard' }, group: '日常' },
@@ -24,7 +23,10 @@ export function desktopDestinations(preferences: NavigationPreferences, mode: Le
     { id: 'account', label: '我的账号', source: 'account', target: { screen: 'account' }, group: '账本工具' },
     { id: 'settings', label: '设置', source: 'settings', target: { screen: 'settings' }, group: '账本工具' },
   ];
-  return entries.filter((entry) => visible.has(entry.source));
+  return entries.filter((entry) => visible.has(entry.source))
+    .map((entry) => ({ ...entry, label: entry.source === 'transactions' ? entry.label : navigationLabel(entry.source, mode) }))
+    .sort((a, b) => NAVIGATION_GROUPS.indexOf(a.group) - NAVIGATION_GROUPS.indexOf(b.group)
+      || preferences.order.indexOf(a.source) - preferences.order.indexOf(b.source));
 }
 
 /** Only routine entry fields survive. Amounts, attachments and refund links never carry over. */

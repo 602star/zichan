@@ -27,7 +27,7 @@ test('other master data opens one focused category at a time on phone and deskto
     await page.evaluate(() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'manage' } })));
     await page.getByRole('tab', { name: '其他资料', exact: true }).click();
 
-    const primaryTabs = page.getByRole('tablist', { name: '资产与资料中心' });
+    const primaryTabs = page.getByRole('tablist', { name: '资料管理' });
     const primaryBounds = await primaryTabs.getByRole('tab').evaluateAll((nodes) => nodes.map((node) => ({
       left: node.getBoundingClientRect().left,
       right: node.getBoundingClientRect().right,

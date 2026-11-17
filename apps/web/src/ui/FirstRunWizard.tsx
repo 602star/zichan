@@ -177,11 +177,11 @@ export function FirstRunWizard({ store, onInitialized }: FirstRunWizardProps) {
         <div className="zc-field"><label htmlFor="first-run-currency">记账币种</label><ValuePicker id="first-run-currency" label="记账币种" value={baseCurrencyCode} options={BASE_CURRENCY_CHOICES.map((currency) => ({ value: currency.code, label: `${currency.name}（${currency.code}）` }))} onChange={(value) => setBaseCurrencyCode(value as BaseCurrencyChoice['code'])} /></div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 18, marginTop: 24 }}>
           <section className="zc-first-run-option is-primary">
-            <h2>先记收支</h2><p>看赚了多少、花在哪里。系统准备好收入和支出账户，你直接记金额和分类。</p><p className="zc-meta">不确定就先选这个。</p>
+            <h2>先记收支</h2><p>看赚了多少、花在哪里。系统准备好默认收入、默认支出两个“其他”类型资金账户，你直接记金额和分类。</p><p className="zc-meta">不确定就先选这个。</p>
             <button disabled={busy} className="zc-btn zc-btn--primary" onClick={() => void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode: 'spending' }), 'spending')}>{busy ? '正在创建…' : '开始记账'}</button>
           </section>
           <section className="zc-first-run-option">
-            <h2>分账户记账</h2><p>还想知道每张卡、每个钱包剩多少钱。添加账户和当前余额，记账时选择收付款账户，之后可以转账和核对账单。</p>
+            <h2>分账户记账</h2><p>还想知道每张卡、每个钱包剩多少钱。在“账户”添加银行卡或钱包，填写余额与截至时间，设置默认收支账户，之后可以转账和核对账单。</p>
             <button disabled={busy} className="zc-btn" onClick={() => void complete(() => initializeEmptyLedger(store, { baseCurrencyCode, ledgerMode: 'accounts' }), 'accounts')}>{busy ? '正在创建…' : '添加常用账户'}</button>
           </section>
         </div>

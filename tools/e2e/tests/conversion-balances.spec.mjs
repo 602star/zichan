@@ -187,10 +187,10 @@ test('selecting a new common currency from the asset field creates only its defi
   await expect(page.locator('.zc-convert-asset-header').filter({ hasText: 'GBP' })).toContainText('当前余额 0');
   await expect(page.locator('.zc-convert-asset-header').filter({ hasText: 'GBP' })).toContainText('0/0 笔');
   await page.locator('.zc-sidebar nav button').filter({ hasText: '设置' }).click();
-  const manageToggle = page.getByLabel('在侧边栏显示管理');
+  const manageToggle = page.getByLabel('在侧边栏显示资料管理');
   if (!(await manageToggle.isChecked())) await manageToggle.click();
   await page.locator('.zc-sidebar nav button').filter({ hasText: '管理' }).click();
-  await page.getByRole('navigation', { name: '资产与资料中心', exact: true }).getByRole('button', { name: '资产', exact: true }).click();
+  await page.getByRole('navigation', { name: '资料管理', exact: true }).getByRole('button', { name: '资产', exact: true }).click();
   await expect(page.getByRole('row').filter({ hasText: 'GBP' })).toContainText('可用');
   await page.getByText('添加常用资产', { exact: true }).click();
   await expect(page.getByRole('button', { name: '加入资产 NZD' })).toBeVisible();
