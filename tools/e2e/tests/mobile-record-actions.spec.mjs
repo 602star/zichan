@@ -48,7 +48,8 @@ test('tap reads, holding or swiping opens ledger actions, and refunds update the
   const yesterday = page.locator('.zc-transaction-day-summary').filter({ hasText: '昨天' });
   await expect(today).toContainText('支出合计 70.30 CNY');
   await expect(yesterday).toContainText('支出合计 8.00 CNY');
-  expect(await today.evaluate((node) => getComputedStyle(node).borderTopWidth)).toBe('1px');
+  expect(await today.evaluate((node) => getComputedStyle(node.closest('.zc-transaction-day')).borderTopWidth)).toBe('1px');
+  expect(await today.evaluate((node) => getComputedStyle(node).borderTopWidth)).toBe('0px');
   const row = rowFor(page, '菜市场采购');
   expect((await row.boundingBox()).height).toBeLessThan(150);
 

@@ -1,5 +1,5 @@
 import { ExistingPayeePicker } from '../ui/PayeePicker.js';
-import { ChevronRight, FileText, MoreHorizontal, Pencil, Undo2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, MoreHorizontal, Pencil, Undo2 } from 'lucide-react';
 import { EarlierBalancePanel } from '../ui/EarlierBalancePanel.js';
 import { AccountSetupPanel } from '../ui/AccountSetupPanel.js';
 import { AccountHistoryPanel } from '../ui/AccountHistoryPanel.js';
@@ -12,6 +12,7 @@ import { continuedEntryFields } from '../desktop-workspace.js';
 import { DcaPlans } from './DcaPlans.js';
 import { useWorkspaceState } from '../ui/useWorkspaceState.js';
 import { QueryGeneration } from '../query-generation.js';
+import { isRecentTransactionDay, loadTransactionBrowseRange } from '../transaction-browse-range.js';
 import {
   D, accountBalanceTiming, isLegacyExternalAccount, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, dayOfInstant, newId, nextUnhandledScheduleOccurrence,
   type Account, type BudgetCategory, type Category, type Payee, type ReconciliationSession,
@@ -164,24 +165,6 @@ function trendRange(month: string, months: number): { from: string; to: string }
   return {
     from: `${shiftMonth(month, -(months - 1))}-01`,
     to: lastDay.toISOString().slice(0, 10),
-  };
-}
-
-function mergeBrowsePage(current: TransactionBrowsePage, page: TransactionBrowsePage): TransactionBrowsePage {
-  return {
-    ...page,
-    transactions: [...current.transactions, ...page.transactions],
-    transactionSplits: [...current.transactionSplits, ...page.transactionSplits],
-    refundAllocations: [...current.refundAllocations, ...page.refundAllocations],
-    attachments: [...current.attachments, ...page.attachments],
-    reconciliationItems: [...current.reconciliationItems, ...page.reconciliationItems],
-    reconciliationSessions: [
-      ...current.reconciliationSessions,
-      ...page.reconciliationSessions.filter((row) =>
-        !current.reconciliationSessions.some((currentRow) => currentRow.id === row.id)),
-    ],
-    refundAppliedAmounts: { ...current.refundAppliedAmounts, ...page.refundAppliedAmounts },
-    refundsByOriginal: { ...current.refundsByOriginal, ...page.refundsByOriginal },
   };
 }
 
@@ -414,7 +397,6 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     };
   }, [filters, usesAccounts]);
   const queryAsOf = snap ? ledgerAsOfDate(snap) : todayDate();
-  const transactionQuery = useRef(new QueryGeneration());
   const accountQuery = useRef(new QueryGeneration());
   const queryDateRange = transactionDateRange(queryAsOf, viewFilters);
   const browseInput = useMemo<TransactionBrowseInput>(() => ({
@@ -442,9 +424,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   }), [queryDateRange.from, queryDateRange.to, usesAccounts, viewFilters]);
   useEffect(() => {
     if (!snap) return;
-    const gate = transactionQuery.current;
-    gate.reset();
-    const token = gate.start()!;
+    const controller = new AbortController();
     let cancelled = false;
     const month = queryAsOf.slice(0, 7);
     const summaryRange = trendRange(month, trendMonths);
@@ -455,7 +435,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     setTransactionPageBusy(true);
     setTransactionReadError('');
     void Promise.all([
-      store.transactionBrowsePage({ ...browseInput, limit: 100 }),
+      loadTransactionBrowseRange((input) => store.transactionBrowsePage(input), browseInput, controller.signal),
       store.transactionBrowseAggregate(browseInput),
       store.transactionReportAggregate(summaryRange),
       store.transactions.list({ where: { type: 'expense' }, orderBy: 'date', desc: true, limit: 1000 }),
@@ -476,12 +456,11 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
         setTransactionReadError(error instanceof Error ? error.message : String(error));
       }
     }).finally(() => {
-      gate.finish(token);
       if (!cancelled) setTransactionPageBusy(false);
     });
     return () => {
       cancelled = true;
-      gate.reset();
+      controller.abort();
     };
   }, [browseInput, queryAsOf, rev, snap, store, trendMonths]);
   useEffect(() => {
@@ -490,19 +469,20 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
       return;
     }
     let cancelled = false;
-    void store.transactionBrowsePage({
+    const controller = new AbortController();
+    void loadTransactionBrowseRange((input) => store.transactionBrowsePage(input), {
       from: queryDateRange.from,
       to: queryDateRange.to,
       recordState: 'voided',
       excludeTypes: usesAccounts ? undefined : ['transfer', 'adjustment'],
-      limit: 500,
-    }).then((page) => {
+    }, controller.signal).then((page) => {
       if (!cancelled) setVoidedPage(page);
     }).catch((error) => {
       if (!cancelled) setTransactionReadError(error instanceof Error ? error.message : String(error));
     });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [queryDateRange.from, queryDateRange.to, rev, showVoided, store, usesAccounts]);
   useEffect(() => {
@@ -630,7 +610,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     ? <ActionSheet title="记一笔" onClose={() => onEntryClose?.()} actions={[]}><p role={transactionReadError ? 'alert' : 'status'}>{transactionReadError ? `流水读取失败：${transactionReadError}。请关闭后重试。` : '正在读取记账资料…'}</p></ActionSheet>
     : transactionReadError
     ? <div role="alert" className="zc-alert is-danger">流水读取失败：{transactionReadError}。请刷新页面重试。</div>
-    : null;
+    : <div role="status" className="zc-ledger-loading">正在加载当前范围全部流水…</div>;
   const readyTransactionRead = transactionRead;
   const readySnap = pageSnap;
   const readyVm = vm;
@@ -754,27 +734,6 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     setRefundDraft(null);
     setTemplateDraft(null);
     setEditingTx('new');
-  }
-
-  async function loadMoreTransactions() {
-    const cursor = readyTransactionRead.page.nextCursor;
-    if (!cursor || !readyTransactionRead.page.hasMore || transactionPageBusy) return;
-    const gate = transactionQuery.current;
-    const token = gate.start();
-    if (!token) return;
-    setTransactionPageBusy(true);
-    setTransactionReadError('');
-    try {
-      const page = await store.transactionBrowsePage({ ...browseInput, cursor, limit: 100 });
-      setTransactionRead((current) => gate.current(token) && current
-        ? { ...current, page: mergeBrowsePage(current.page, page) }
-        : current);
-    } catch (error) {
-      if (gate.current(token)) setTransactionReadError(error instanceof Error ? error.message : String(error));
-    } finally {
-      if (gate.current(token)) setTransactionPageBusy(false);
-      gate.finish(token);
-    }
   }
 
   async function loadMoreAccountLedger() {
@@ -1523,7 +1482,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
             ))}
           </div>
           <SummaryGrid vm={vm} usesAccounts={usesAccounts} />
-          <section id="transaction-records" className="zc-card zc-ledger-records" style={{ scrollMarginTop: 16 }}>
+          <section id="transaction-records" className="zc-ledger-records" aria-busy={transactionPageBusy} style={{ scrollMarginTop: 16 }}>
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: compactView ? 16 : 10 }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{usesAccounts ? '日常流水' : '日常支出'}</h2>
@@ -1641,7 +1600,9 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
             )}
             {recordView === 'list' ? (
               <TransactionList
+                key={JSON.stringify(browseInput)}
                 vm={vm}
+                revealMatches={activeFilterCount > 0}
                 initialDetailId={screenTarget?.tab === 'records' ? screenTarget.id : undefined}
                 onEdit={openTransaction}
                 usesAccounts={usesAccounts}
@@ -1692,19 +1653,10 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
                 ))}
               </div>
             )}
-            {(readyTransactionRead.page.hasMore || transactionReadError) && (
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center', paddingTop: 14, borderTop: '1px solid var(--border)' }}>
-                {readyTransactionRead.page.hasMore && (
-                  <button type="button" onClick={() => void loadMoreTransactions()} disabled={transactionPageBusy} className={buttonCls}>
-                    {transactionPageBusy ? '加载中…' : '继续加载 100 笔'}
-                  </button>
-                )}
-                <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
-                  已加载 {readyTransactionRead.page.transactions.length} / {readyTransactionRead.page.totalCount} 笔
-                </span>
-                {transactionReadError && <span role="alert" style={{ color: 'var(--negative)', fontSize: 'var(--fs-caption)' }}>{transactionReadError}</span>}
-              </div>
-            )}
+            <div className="zc-transaction-load-status" role="status">
+              {transactionPageBusy ? '正在加载当前范围全部流水…' : `已加载当前范围全部 ${readyTransactionRead.page.transactions.length} 笔`}
+            </div>
+            {transactionReadError && <div role="alert" className="zc-alert is-danger">{transactionReadError}</div>}
           </section>
           {/*
             * 构成在上、趋势在下，各占一行。以前两张图并排：每张只剩半幅，而环的图例
@@ -2621,8 +2573,9 @@ function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof b
   );
 }
 
-function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemaining, refundsFor, onManageRefunds, assetCode, usesAccounts, tagName, locationName, attachmentCount, selectedIds, setSelectedIds }: {
+function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund, refundRemaining, refundsFor, onManageRefunds, assetCode, usesAccounts, tagName, locationName, attachmentCount, selectedIds, setSelectedIds }: {
   vm: NonNullable<ReturnType<typeof buildTransactions>>;
+  revealMatches: boolean;
   initialDetailId?: string;
   onEdit: (tx: Transaction) => void;
   onRefund: (tx: Transaction) => void;
@@ -2640,6 +2593,10 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
   const selected = new Set(selectedIds ?? []);
   const toggle = (id: string) => setSelectedIds?.((ids) => ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
   const compact = useCompactView();
+  const dayId = useId();
+  const [dayMode, setDayMode] = useState<'recent' | 'all' | 'none'>(revealMatches ? 'all' : 'recent');
+  const [dayOverrides, setDayOverrides] = useState<Record<string, boolean>>({});
+  const today = localToday();
   const previousCompact = useRef(compact);
   const [panel, setPanel] = useState<{ id: string; mode: 'detail' | 'actions' } | null>(null);
   const openedInitial = useRef('');
@@ -2654,6 +2611,25 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
   const activeRefunds = active?.tx.type === 'expense' ? refundsFor(active.tx) : [];
   const activeRefunded = activeRefunds.reduce((total, refund) => total.plus(refund.appliedAmount), D(0));
   const closePanel = () => setPanel(null);
+  const expandedDay = (group: typeof vm.groups[number]) => (
+    Boolean(panel && group.items.some((item) => item.tx.id === panel.id))
+      || (dayOverrides[group.key] ?? (dayMode === 'all' || (dayMode === 'recent' && isRecentTransactionDay(group.key, today))))
+  );
+  const setAllDays = (mode: 'all' | 'none') => { setPanel(null); setDayOverrides({}); setDayMode(mode); };
+  const columns = () => <>
+    <colgroup>
+      {setSelectedIds && <col className="is-select" />}
+      <col className="is-date" /><col className="is-category" /><col className="is-numeric" /><col />
+      {usesAccounts && <col className="is-status" />}<col className="is-actions" />
+    </colgroup>
+    <thead><tr>
+      {setSelectedIds && <th scope="col" className="is-select"><span className="zc-sr-only">选择</span></th>}
+      <th scope="col" className="is-date">时间</th><th scope="col" className="is-category">分类</th>
+      <th scope="col" className="is-numeric">金额</th><th scope="col">摘要</th>
+      {usesAccounts && <th scope="col" className="is-status">账户</th>}
+      <th scope="col" className="is-actions"><span className="zc-sr-only">操作</span></th>
+    </tr></thead>
+  </>;
   const choose = (action: () => void) => { closePanel(); action(); };
   useEffect(() => { setPanel((current) => current && !vm.items.some((item) => item.tx.id === current.id) ? null : current); }, [vm]);
   useEffect(() => {
@@ -2663,29 +2639,38 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
   return (
     <div className="zc-transaction-days">
       <p className="zc-record-gesture-hint">点按查看详情，长按或左右滑动打开流水操作。</p>
+      {vm.groups.length > 0 && <>
+        <div className="zc-transaction-day-controls">
+          <span>{dayMode === 'recent' ? '默认展开近 7 天 · 含今天' : `共 ${vm.groups.length} 天 · ${vm.count} 笔`}</span>
+          <div role="group" aria-label="日期展开控制">
+            <button type="button" className="zc-btn zc-btn--sm" disabled={vm.groups.every(expandedDay)} onClick={() => setAllDays('all')}>全部展开</button>
+            <button type="button" className="zc-btn zc-btn--sm" disabled={vm.groups.every((group) => !expandedDay(group))} onClick={() => setAllDays('none')}>全部折叠</button>
+          </div>
+        </div>
+        <table className="zc-transaction-table zc-transaction-columns" aria-hidden="true">{columns()}</table>
+      </>}
       {vm.groups.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-body)', padding: '20px 0' }}>暂无流水</div>}
-      {vm.groups.map((g) => (
-        <div className="zc-transaction-day" key={g.key}>
+      {vm.groups.map((g) => {
+        const expanded = expandedDay(g);
+        return (
+        <section className={`zc-transaction-day${expanded ? '' : ' is-collapsed'}`} key={g.key}>
           <div className="zc-transaction-day-summary" aria-label={`${g.label}收支小计`}>
-            <span className="zc-transaction-day-date">{g.label}</span>
+            <button type="button" className="zc-transaction-day-toggle" aria-expanded={expanded} aria-controls={`${dayId}-${g.key}`} onClick={() => {
+              if (panel && g.items.some((item) => item.tx.id === panel.id)) setPanel(null);
+              setDayOverrides((current) => ({ ...current, [g.key]: !expanded }));
+            }}>
+              <ChevronDown size={16} aria-hidden="true" />
+              <span className="zc-transaction-day-date">{g.label}</span><span className="zc-transaction-day-count">{g.items.length} 笔</span>
+            </button>
             <span>
               {usesAccounts && <span className="zc-day-income">收入 {num(g.income, vm.reportCurrencyDecimals)}</span>}
               <span className="zc-day-expense">支出合计 <strong>{num(g.expense, vm.reportCurrencyDecimals)}</strong> <span className="zc-day-currency">{vm.reportCurrencyCode}</span></span>
               {g.incomplete && <span className="zc-day-incomplete">未完整折算</span>}
             </span>
           </div>
-          <table className={`zc-transaction-table${setSelectedIds ? ' has-selection' : ''}${usesAccounts ? ' has-account' : ''}`}>
-            <thead>
-              <tr>
-                {setSelectedIds && <th scope="col" className="is-select"><span className="zc-sr-only">选择</span></th>}
-                <th scope="col" className="is-date">{compact ? '日期' : '时间'}</th>
-                <th scope="col" className="is-category">分类</th>
-                <th scope="col">摘要</th>
-                {usesAccounts && <th scope="col" className="is-status">{compact ? '状态' : '账户'}</th>}
-                <th scope="col" className="is-numeric">金额</th>
-                <th scope="col" className="is-actions"><span className="zc-sr-only">操作</span></th>
-              </tr>
-            </thead>
+          <div id={`${dayId}-${g.key}`} hidden={!expanded}>
+          {expanded && <table className={`zc-transaction-table${setSelectedIds ? ' has-selection' : ''}${usesAccounts ? ' has-account' : ''}`} aria-label={`${g.label}流水`}>
+            {columns()}
             <tbody>
             {g.items.map((item) => {
               const tx = item.tx;
@@ -2759,7 +2744,7 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
                   }}
                 >
                   {setSelectedIds && (
-                    <td><span className="zc-check-target">
+                    <td className="zc-transaction-select"><span className="zc-check-target">
                       <input
                         type="checkbox"
                         checked={selected.has(tx.id)}
@@ -2771,7 +2756,7 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
                       />
                     </span></td>
                   )}
-                  <td className="zc-transaction-date" style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{compact ? tx.date : tx.time || tx.date.slice(5)}{compact && tx.time ? <span className="zc-transaction-time"><br />{tx.time}</span> : null}</td>
+                  <td className="zc-transaction-date" style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{compact ? tx.date : tx.time?.slice(0, 5) || tx.date.slice(5)}{compact && tx.time ? <span className="zc-transaction-time"><br />{tx.time}</span> : null}</td>
                   <td
                     className="zc-transaction-category"
                     style={{ color: tx.type === 'income' || tx.type === 'refund' ? 'var(--positive)' : tx.type === 'expense' ? 'var(--negative)' : 'var(--accent)' }}
@@ -2779,7 +2764,12 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
                   >
                     <span className="zc-transaction-category-label">{item.categoryLabel}</span>
                   </td>
-                  <td style={{ minWidth: 0 }}>
+                  <td className="is-numeric zc-transaction-amount" style={{ fontSize: 'var(--fs-body)', ...amountColor(item.signedAmount) }}>
+                    <span className="zc-transaction-amount-original">{tx.type === 'transfer' ? '' : tx.type === 'income' || tx.type === 'refund' || (tx.type === 'adjustment' && tx.adjustmentDirection === 'increase') ? '+' : '-'}{num(tx.amount, item.assetDecimals)} {item.assetCode}</span>
+                    {refundChip && <><button type="button" className="zc-refund-chip" aria-label={`查看 ${title} 的退款记录`} title={`${refundChip.title}；此处按原支出币种显示冲减额，实际到账金额见退款记录。`} onClick={(event) => { event.stopPropagation(); onManageRefunds(tx); }}>{refundChip.label}</button>
+                      <span className="zc-refund-net" title="原支出减累计退款冲减，期间统计仍按退款归属设置计算">净支出 {num(remaining, item.assetDecimals)} {item.assetCode}</span></>}
+                  </td>
+                  <td className="zc-transaction-summary" style={{ minWidth: 0 }}>
                     <span className="zc-transaction-summary-title" style={{ display: 'block', fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-bold)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
                     <span style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 2 }}>
                       <span className="zc-transaction-details-desktop" style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>
@@ -2789,11 +2779,6 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
                     </span>
                   </td>
                   {usesAccounts && <td className="zc-transaction-account"><span title={item.accountName} className={item.statusLabel === '已对账' ? 'zc-ledger-stamp' : undefined} style={{ fontSize: 'var(--fs-meta)', color: item.statusLabel === '已对账' ? 'var(--accent)' : 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)' }}>{compact ? item.statusLabel : item.accountName}</span></td>}
-                  <td className="is-numeric zc-transaction-amount" style={{ fontSize: 'var(--fs-body)', ...amountColor(item.signedAmount) }}>
-                    <span className="zc-transaction-amount-original">{tx.type === 'transfer' ? '' : tx.type === 'income' || tx.type === 'refund' || (tx.type === 'adjustment' && tx.adjustmentDirection === 'increase') ? '+' : '-'}{num(tx.amount, item.assetDecimals)} {item.assetCode}</span>
-                    {refundChip && <><button type="button" className="zc-refund-chip" aria-label={`查看 ${title} 的退款记录`} title={`${refundChip.title}；此处按原支出币种显示冲减额，实际到账金额见退款记录。`} onClick={(event) => { event.stopPropagation(); onManageRefunds(tx); }}>{refundChip.label}</button>
-                      <span className="zc-refund-net" title="原支出减累计退款冲减，期间统计仍按退款归属设置计算">净支出 {num(remaining, item.assetDecimals)} {item.assetCode}</span></>}
-                  </td>
                   <td className="zc-transaction-actions">
                     <button type="button" aria-label={`查看 ${title} 的详情`} onClick={(event) => {
                       event.stopPropagation();
@@ -2837,9 +2822,10 @@ function TransactionList({ vm, initialDetailId, onEdit, onRefund, refundRemainin
               );
             })}
             </tbody>
-          </table>
-        </div>
-      ))}
+          </table>}
+          </div>
+        </section>
+      );})}
       {compact && active && panel && (
         <ActionSheet
           title={panel.mode === 'detail' ? '流水详情' : '流水操作'}

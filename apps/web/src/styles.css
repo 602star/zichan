@@ -90,8 +90,16 @@
 .zc-period-expenses strong { grid-column: 1; color: var(--negative); font-size: var(--fs-title); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .zc-period-expenses svg { grid-column: 2; grid-row: 1 / 3; align-self: center; color: var(--text-tertiary); }
 .zc-period-expenses button[aria-pressed="true"] { background: var(--accent-soft); }
-.zc-transaction-days { display: flex; flex-direction: column; gap: 24px; }
-.zc-transaction-day-summary { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; font-size: var(--fs-caption); color: var(--text-secondary); padding: 12px 0; border-top: 1px solid var(--text-secondary); border-bottom: 1px solid var(--border); }
+.zc-transaction-days { display: flex; flex-direction: column; gap: 14px; }
+.zc-transaction-day { min-width: 0; padding: 0 12px 8px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); }
+.zc-transaction-day.is-collapsed { padding-bottom: 0; }
+.zc-transaction-day-summary { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px 12px; font-size: var(--fs-caption); color: var(--text-secondary); padding: 10px 0 6px; }
+.zc-transaction-day-toggle { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--text-primary); font: inherit; text-align: left; cursor: pointer; }
+.zc-transaction-day-toggle[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.zc-transaction-day-count { font-size: var(--fs-meta); color: var(--text-secondary); }
+.zc-transaction-day-controls { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; color: var(--text-secondary); font-size: var(--fs-caption); }
+.zc-transaction-day-controls > div { display: flex; gap: 8px; }
+.zc-transaction-load-status, .zc-ledger-loading { padding-block: 12px; font-size: var(--fs-caption); color: var(--text-secondary); }
 .zc-transaction-day-date { font-family: var(--font-display); font-size: var(--fs-body); font-weight: var(--fw-bold); color: var(--fg); }
 .zc-transaction-day-summary > span:last-child { display: flex; flex-wrap: wrap; gap: 4px 12px; font-variant-numeric: tabular-nums; }
 .zc-day-currency { color: var(--text-secondary); font-size: var(--fs-meta); }
@@ -2653,7 +2661,6 @@ input[type="radio"] {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
-  border-top: 1px solid var(--border);
   color: var(--text-primary);
 }
 .zc-transaction-table th {
@@ -2662,27 +2669,29 @@ input[type="radio"] {
   font-size: var(--fs-caption);
   font-weight: var(--fw-medium);
   text-align: left;
-  border-bottom: 1px solid var(--border-strong);
 }
-.zc-transaction-table th.is-select { width: 44px; }
-.zc-transaction-table th.is-date { width: 92px; }
+.zc-transaction-table :is(th, col).is-select { width: 44px; }
+.zc-transaction-table :is(th, col).is-date { width: 92px; }
 /* The widest of all 375 catalog paths measures 12.05 body em in WenKai.
    Reserve 12.5 body em plus the cell padding, including at larger type scales. */
-.zc-transaction-table th.is-category { width: calc(12.5 * var(--fs-body) + 16px); }
-.zc-transaction-table th.is-status { width: 68px; }
-.zc-transaction-table th.is-numeric { width: 132px; text-align: right; }
-.zc-transaction-table th.is-actions { width: 72px; }
+.zc-transaction-table :is(th, col).is-category { width: calc(12.5 * var(--fs-body) + 16px); }
+.zc-transaction-table :is(th, col).is-status { width: 68px; }
+.zc-transaction-table :is(th, col).is-numeric { width: 132px; text-align: right; }
+.zc-transaction-table :is(th, col).is-actions { width: 72px; }
 .zc-transaction-table td {
   padding: 12px 8px;
-  border-bottom: 1px solid var(--border);
   vertical-align: middle;
   overflow: hidden;
 }
 .zc-transaction-table td.is-numeric { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.zc-transaction-table td.zc-transaction-select { padding-inline: 0; text-align: center; }
 .zc-transaction-table .zc-transaction-row { cursor: pointer; }
 .zc-transaction-table .zc-transaction-actions { text-align: right; }
+.zc-transaction-table td.zc-transaction-actions { padding-inline: 0; }
 .zc-transaction-table .zc-transaction-actions button { display: block; margin-left: auto; }
 .zc-transaction-table .zc-transaction-actions button + button { margin-top: 4px; }
+.zc-transaction-days > .zc-transaction-columns { width: calc(100% - 26px); margin-inline: 13px; }
+.zc-transaction-day .zc-transaction-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 .zc-fixed-event-sheet { width: min(760px, 100%); }
 .zc-fixed-event-groups { display: grid; gap: var(--sp-4); margin-top: var(--sp-4); }
@@ -3482,10 +3491,7 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
     padding: 0;
     border: 0;
   }
-  .zc-transaction-table .zc-transaction-row {
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border);
-  }
+  .zc-transaction-table .zc-transaction-row { padding: 12px 0; }
 
   .zc-dashboard-more-metrics-toggle { align-self: flex-start; }
   .zc-dashboard-kpi-grid.is-compact > :last-child { grid-column: auto; }
@@ -3500,87 +3506,33 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
 
   .zc-transaction-details-mobile { display: inline; }
 
-  .zc-transaction-row:not(.has-selection) > :nth-child(1) {
-    grid-column: 1;
-    grid-row: 2;
+  .zc-transaction-days > .zc-transaction-columns { display: none; }
+  .zc-transaction-day { padding-inline: 10px; }
+  .zc-transaction-day-toggle { min-height: 44px; }
+  .zc-transaction-day-summary > span:last-child { padding-left: 24px; }
+  .zc-transaction-table colgroup { display: none; }
+  .zc-transaction-table .zc-transaction-row {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    grid-template-areas: 'category amount' 'summary actions';
+    align-items: center;
+    gap: 6px 8px !important;
   }
-
-  .zc-transaction-row:not(.has-selection) > :nth-child(2) {
-    grid-column: 1;
-    grid-row: 1;
+  .zc-transaction-table .zc-transaction-row.has-selection {
+    grid-template-columns: 44px minmax(0, 1fr) auto !important;
+    grid-template-areas: 'select category amount' 'select summary actions';
   }
-
-  .zc-transaction-row:not(.has-selection) > :nth-child(3) {
-    grid-column: 1 / -1;
-    grid-row: 3;
-  }
-
-  .zc-transaction-row:not(.has-selection):not(.has-account) > :nth-child(4),
-  .zc-transaction-row:not(.has-selection).has-account > :nth-child(5) {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .zc-transaction-actions {
-    grid-column: 1 / -1;
-    grid-row: 4;
-    justify-self: end;
-    display: flex;
-    gap: 4px;
-    text-align: right;
-  }
+  .zc-transaction-row > .zc-transaction-select { grid-area: select; align-self: center; }
+  .zc-transaction-row > .zc-transaction-category { grid-area: category; }
+  .zc-transaction-row > .zc-transaction-amount { grid-area: amount; }
+  .zc-transaction-row > .zc-transaction-summary { grid-area: summary; min-width: 0; }
+  .zc-transaction-row > .zc-transaction-date,
+  .zc-transaction-row > .zc-transaction-account { display: none; }
+  .zc-transaction-table .zc-transaction-actions { grid-area: actions; display: flex; justify-content: flex-end; gap: 4px; }
   .zc-transaction-table .zc-transaction-actions button + button { margin-top: 0; }
-
-  .zc-transaction-row:not(.has-selection).has-account > :nth-child(4),
-  .zc-transaction-row.has-selection.has-account > :nth-child(5) {
-    display: none;
-  }
-
-  .zc-transaction-row.has-selection {
-    grid-template-columns: 34px minmax(0, 1fr) auto !important;
-  }
-
-  .zc-transaction-row.has-selection > :nth-child(1) {
-    grid-column: 1;
-    grid-row: 1 / span 3;
-    align-self: center;
-  }
-
-  .zc-transaction-row.has-selection > :nth-child(2) {
-    grid-column: 2;
-    grid-row: 2;
-  }
-
-  .zc-transaction-row.has-selection > :nth-child(3) {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .zc-transaction-row.has-selection > :nth-child(4) {
-    grid-column: 2 / -1;
-    grid-row: 3;
-  }
-
-  .zc-transaction-row.has-selection:not(.has-account) > :nth-child(5),
-  .zc-transaction-row.has-selection.has-account > :nth-child(6) {
-    grid-column: 3;
-    grid-row: 1;
-  }
-
-  /* The day heading owns the date. Each record is two lines plus a 44px menu,
-     with an actual refund date retained in its metadata when attribution differs. */
-  .zc-transaction-row:not(.has-selection) > :nth-child(1),
-  .zc-transaction-row.has-selection > :nth-child(2) { display: none; }
-  .zc-transaction-row:not(.has-selection) > :nth-child(3) { grid-column: 1; grid-row: 2; align-self: center; }
-  .zc-transaction-row.has-selection > :nth-child(4) { grid-column: 2; grid-row: 2; align-self: center; }
-  .zc-transaction-row.has-selection > :nth-child(1) { grid-row: 1 / span 2; }
-  .zc-transaction-table .zc-transaction-actions { display: flex; grid-column: 2; grid-row: 2; align-self: center; }
-  .zc-transaction-table .has-selection > .zc-transaction-actions { grid-column: 3; }
   .zc-transaction-table .zc-transaction-actions .zc-record-details,
   .zc-transaction-table .zc-transaction-actions .zc-record-refund { display: none; }
   .zc-transaction-table .zc-transaction-actions .zc-record-more { display: inline-flex; }
-  .zc-transaction-table td.is-numeric { max-width: 48vw; white-space: normal; overflow-wrap: anywhere; }
-
+  .zc-transaction-table td.is-numeric { max-width: 45vw; white-space: normal; overflow-wrap: anywhere; }
   .zc-convert-timeline-entry,
   .zc-history-entry,
   .zc-game-timeline-entry {
@@ -4442,10 +4394,10 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
   .zc-ledger-records .zc-responsive-header > div:first-child > div { display: none; }
   .zc-transaction-days { gap: 10px; }
   .zc-transaction-day-summary { padding-block: 7px; }
-  .zc-transaction-table .zc-transaction-row td { height: 40px; padding-block: var(--sp-1); }
+  .zc-transaction-table .zc-transaction-row td { height: 52px; padding-block: var(--sp-2); }
   .zc-transaction-table .zc-transaction-details-desktop { display: none; }
-  .zc-transaction-table th.is-status { width: 115px; }
-  .zc-transaction-table th.is-numeric { width: 165px; }
+  .zc-transaction-table :is(th, col).is-status { width: 115px; }
+  .zc-transaction-table :is(th, col).is-numeric { width: 165px; }
   .zc-transaction-table .zc-transaction-actions .zc-record-refund { display: none; }
   .zc-record-expansion-row > td { padding: 0; overflow: visible; }
   .zc-record-expansion { padding: 18px 16px; background: var(--surface-2); border-block: 1px solid var(--border-strong); }
@@ -4631,20 +4583,20 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
 @media (min-width: 768px) and (max-width: 1199px) {
   .zc-sidebar-group { height: 10px; padding: 0; font-size: 0; }
   .zc-settings-workspace, .zc-manage-workspace { grid-template-columns: 130px minmax(0, 1fr); gap: 16px; }
-  .zc-transaction-table th.is-date { width: 60px; }
-  .zc-transaction-table th.is-status { width: 95px; }
-  .zc-transaction-table th.is-select { width: 32px; }
+  .zc-transaction-table :is(th, col).is-date { width: 60px; }
+  .zc-transaction-table :is(th, col).is-status { width: 95px; }
+  .zc-transaction-table :is(th, col).is-select { width: 32px; }
 }
 @media (min-width: 768px) and (max-width: 1023px) {
   /* Keep complete category paths readable; move time and account beneath
      the summary rather than squeezing the category or the summary to zero. */
-  .zc-transaction-table th.is-date,
-  .zc-transaction-table th.is-status,
+  .zc-transaction-table :is(th, col).is-date,
+  .zc-transaction-table :is(th, col).is-status,
   .zc-transaction-table .zc-transaction-date,
   .zc-transaction-table .zc-transaction-account { display: none; }
   .zc-transaction-table .zc-transaction-details-mobile { display: inline; }
-  .zc-transaction-table th.is-numeric { width: 148px; }
-  .zc-transaction-table th.is-actions { width: 60px; }
+  .zc-transaction-table :is(th, col).is-numeric { width: 148px; }
+  .zc-transaction-table :is(th, col).is-actions { width: 60px; }
 }
 
 .zc-navigation-settings-group { display: grid; gap: var(--sp-2); min-width: 0; }
