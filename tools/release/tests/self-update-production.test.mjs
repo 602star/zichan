@@ -46,7 +46,7 @@ test('signing job signs only a version-matched candidate with an Ed25519 key', a
       schema: { version: 27, name: 'single_user_replica_storage_v27' }, files: [
         { path: 'dist/server.mjs', data: 'c2VydmVy' },
         { path: 'dist/maintenance.mjs', data: 'bWFpbnRlbmFuY2U=' },
-        { path: 'web-dist/index.html', data: 'd2Vi' },
+        { path: 'web-dist/index.html', data: 'aA==' },
       ] }));
     const script = join(root, 'scripts', 'release', 'sign-update-package.mjs');
     execFileSync(process.execPath, [script, 'v0.4.1', key, artifact, directory]);
@@ -86,7 +86,7 @@ test('signing accepts large base64 assets and rejects malformed payloads without
     execFileSync(process.execPath, [script, 'v0.4.1', key, artifact, directory]);
     execFileSync(process.execPath, [join(root, 'scripts/release/verify-update-package.mjs'),
       publicPath, join(directory, 'latest.json'), artifact]);
-    for (const invalid of ['A', 'AA=', 'AAA==', 'AA=A', 'AAAA\n', `${data.slice(0, -1)}!`, `${data}====`]) {
+    for (const invalid of ['A', 'AA=', 'AAA==', 'AA=A', 'AAAA\n', 'AAA\n', 'AAA\r', 'AAA\u2028', 'AAA\u2029', `${data.slice(0, -1)}!`, `${data}====`]) {
       candidate.files.at(-1).data = invalid;
       await writeFile(artifact, JSON.stringify(candidate));
       assert.throws(() => execFileSync(process.execPath, [script, 'v0.4.1', key, artifact, directory],

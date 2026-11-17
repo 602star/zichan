@@ -85,7 +85,14 @@ describe('signed stable self updates', () => {
     const bytes = Buffer.from(JSON.stringify(content));
     const largeFeed = { ...feed, sha256: createHash('sha256').update(bytes).digest('hex') };
     expect(parseRelease(bytes, largeFeed).files.at(-1)?.data).toBe(data);
-    for (const invalid of ['A', 'AA=', 'AAA==', 'AA=A', 'AAAA\n', `${data.slice(0, -1)}!`, `${data}====`]) {
+    for (const valid of ['', 'TQ==', 'TWE=', 'TWFu']) {
+      content.files.at(-1).data = valid;
+      const padded = Buffer.from(JSON.stringify(content));
+      expect(parseRelease(padded, { ...feed,
+        sha256: createHash('sha256').update(padded).digest('hex'),
+      }).files.at(-1)?.data).toBe(valid);
+    }
+    for (const invalid of ['A', 'AA=', 'AAA==', 'AA=A', 'AAAA\n', 'AAA\n', 'AAA\r', 'AAA\u2028', 'AAA\u2029', `${data.slice(0, -1)}!`, `${data}====`]) {
       content.files.at(-1).data = invalid;
       const malformed = Buffer.from(JSON.stringify(content));
       expect(() => parseRelease(malformed, { ...feed,
