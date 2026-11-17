@@ -1,0 +1,18 @@
+name: Test one-time image upgrade
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+      - name: Normalize the delivered Compose and test upgrade and rollback
+        run: |
+          docker compose -f compose.upgrade-0.6.0-to-0.7.0.yml config --format json > "$RUNNER_TEMP/image-upgrade-compose.json"
+          ZICHAN_TEST_COMPOSE_CONFIG="$RUNNER_TEMP/image-upgrade-compose.json" node --test tools/release/tests/image-upgrade.test.mjs
