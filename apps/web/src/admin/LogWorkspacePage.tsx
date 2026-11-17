@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { AdminClient } from './client.js';
 import { LogWorkspaceNav } from './LogWorkspaceNav.js';
 import { LOG_DEFINITIONS, logFieldText, type LogCategory, type LogField } from './log-workspace-schema.js';
-import { TimeRangeFilter } from './filters.js';
-import { TimeRangeSelect } from '../ui/TimeRangeSelect.js';
+import { TrendTimeRange } from './TrendTimeRange.js';
 import { useFocusBoundary } from './focus-boundary.js';
 import { useBodyScrollLock } from '../ui/body-scroll-lock.js';
 import { SecurityEventsPage } from './SecurityEventsPage.js';
@@ -26,7 +25,6 @@ export function LogWorkspacePage({ client, category, query, navigate }: { client
   const [trail, setTrail] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState('');
-  const filtersRef = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     setDraft(Object.fromEntries([...filterFields.map((field) => [field.key, query.get(field.key) ?? '']), ['search', query.get('search') ?? '']]));
     setSelected(undefined);
@@ -82,15 +80,11 @@ export function LogWorkspacePage({ client, category, query, navigate }: { client
       <form onSubmit={(event) => { event.preventDefault(); update(draft); }}>
         <div className="zc-admin-log-quick-query">
           <TextInput aria-label="关键词" value={draft['search'] ?? ''} onChange={(event) => setDraft({ ...draft, search: event.target.value })} maxLength={128} placeholder={category === 'containers' ? '搜索容器输出' : '搜索消息、事件或上下文'} />
-          <TimeRangeSelect label="日志时间范围" value={query.get('from') || query.get('until') ? 'custom' : query.get('range') ?? '24h'} onChange={(value) => { if (value === 'custom') { if (filtersRef.current) filtersRef.current.open = true; } else update({ range: value, from: '', until: '' }); }} options={[
-            { value: '1h', label: '近 1 小时' }, { value: '24h', label: '近 24 小时' }, { value: '7d', label: '近 7 天' },
-            { value: '30d', label: '近 30 天' }, { value: '90d', label: '近 90 天' }, { value: 'custom', label: '自定义时间…' },
-          ]} />
           <Button type="submit">查询日志</Button>
         </div>
-        <details ref={filtersRef} className="zc-admin-log-extra-filters"><summary>筛选条件{filterFields.some((field) => Boolean(query.get(field.key))) ? ` · ${filterFields.filter((field) => Boolean(query.get(field.key))).length} 项已启用` : ' · 按字段与时间'}</summary>
+        <TrendTimeRange label="日志时间范围" query={query} presets={['1h', '24h', '7d', '30d', '90d']} maxDays={90} onChange={patch => update({ ...patch, ...(patch.range === 'custom' ? { range: '24h' } : {}) })} />
+        <details className="zc-admin-log-extra-filters"><summary>筛选条件{filterFields.some((field) => Boolean(query.get(field.key))) ? ` · ${filterFields.filter((field) => Boolean(query.get(field.key))).length} 项已启用` : ' · 按字段'}</summary>
           <div className="zc-admin-log-filters">{filterFields.map(filterControl)}</div>
-          <TimeRangeFilter showPresets={false} from={query.get('from') ?? ''} until={query.get('until') ?? ''} onApply={(range) => update({ from: range.from ?? '', until: range.until ?? '' })} />
           <div className="zc-admin-ops-toolbar"><Button type="submit">应用筛选</Button><Button onClick={() => { setTrail([]); navigate(definition.path); }}>清除筛选</Button>
             <Button aria-pressed={following} disabled={Boolean(query.get('cursor') || query.get('until'))} onClick={() => setFollowing(!following)}>{following ? '暂停追踪' : '追踪新日志'}</Button>
             <Field label="每页条数"><Select value={query.get('limit') ?? '50'} onChange={(event) => update({ limit: event.target.value })}>{[25,50,100,200].map((n) => <option key={n} value={n}>{n} 条</option>)}</Select></Field>

@@ -2,12 +2,9 @@
 export const ADMIN_NAVIGATION = [
   { label: '运维中心', pages: [
     { path: '/overview', label: '运行概览' },
-    { path: '/requests', label: '请求分析' },
-    { path: '/traffic', label: '访问分析' },
+    { path: '/requests', label: '访问与请求' },
     { path: '/monitor', label: '运行监控' },
     { path: '/database', label: '数据库' },
-    { path: '/host', label: '主机与容器' },
-    { path: '/collectors', label: '采集任务' },
     { path: '/alerts', label: '告警中心' },
   ] },
   { label: '用户与访问', pages: [
@@ -25,6 +22,17 @@ export const ADMIN_NAVIGATION = [
   ] },
   { label: '系统设置', pages: [{ path: '/settings', label: '系统设置' }] },
 ] satisfies { label: string; pages: { path: string; label: string; ownerOnly?: boolean }[] }[];
+
+export function adminWorkspacePath(path: string) {
+  return path === '/traffic' ? '/requests' : ['/host', '/collectors'].includes(path) ? '/monitor' : path;
+}
+
+export function adminViewTarget(target: string, view: string, query: URLSearchParams) {
+  const next = new URLSearchParams(query);
+  if (view) next.set('view', view); else next.delete('view');
+  if (target === '/traffic' && next.get('range') === '15m') next.set('range', '1h');
+  return `${target}${next.size ? `?${next}` : ''}`;
+}
 
 export function adminNavigation(role: string) {
   return ADMIN_NAVIGATION.map((group) => ({

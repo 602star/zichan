@@ -4,7 +4,8 @@ import { MetricLineChart } from './chart.js';
 import { StartupTimingPanel } from './StartupTimingPanel.js';
 import { TrafficPanel } from './TrafficPanel.js';
 import { DatabaseDiagnostics } from './DatabaseDiagnostics.js';
-import { TimeRangeSelect } from '../ui/TimeRangeSelect.js';
+import { TrendTimeRange, trendQuery } from './TrendTimeRange.js';
+import { WorkspaceTabs } from './WorkspaceTabs.js';
 import { Badge, Button, DataTable, Loading, Notice, PageHeader, Panel, Stat, bytes, muted, usePolling, useResource, when } from './ui.js';
 
 interface Envelope<T> {
@@ -16,6 +17,8 @@ interface RequestSummary {
   averageMs: number | null; latencyMs: { p50: number | null; p95: number | null; p99: number | null };
 }
 interface Requests extends RequestSummary {
+  bucketMs: number;
+  sourceResolution: 'minute' | 'hour'; observedSince: string | null;
   windowStart: string; windowEnd: string; note: string;
   routes: (RequestSummary & { key: string; route: string; method: string })[];
   buckets: (RequestSummary & { bucketAt: string })[];
@@ -31,15 +34,15 @@ interface Collectors {
 }
 
 const TITLES = { requests: '请求分析', traffic: '访问分析', database: '数据库', collectors: '采集任务', host: '主机与容器' };
-const RANGE_LABELS = { '15m': '近 15 分钟', '1h': '近 1 小时', '24h': '近 24 小时', '7d': '近 7 天', '30d': '近 30 天', '90d': '近 90 天' };
 type View = keyof typeof TITLES;
 const ms = (value: number | null | undefined) => value == null ? '未采集' : `${value.toFixed(1)} ms`;
 const percent = (value: number | null | undefined) => value == null ? '—' : `${(value * 100).toFixed(2)}%`;
 
 export function OperationsPage({ client, view, query, navigate, role }: { client: AdminClient; view: View; query: URLSearchParams; navigate: (to: string) => void; role: string }) {
   const [paused, setPaused] = useState(false);
-  const requested = query.get('range') ?? '24h';
-  const range = requested in RANGE_LABELS && (view !== 'requests' || !['30d','90d'].includes(requested)) ? requested as keyof typeof RANGE_LABELS : '24h';
+  const presets = view === 'requests' ? ['15m', '1h', '24h', '7d', '30d', '90d'] : ['1h', '24h', '7d', '30d', '90d'];
+  const windowQuery = trendQuery(query, presets);
+  const range = new URLSearchParams(windowQuery).get('range')!;
   const update = (patch: Record<string, string>) => {
     const next = new URLSearchParams(query);
     for (const [key, value] of Object.entries(patch)) { if (value) next.set(key, value); else next.delete(key); }
@@ -48,12 +51,13 @@ export function OperationsPage({ client, view, query, navigate, role }: { client
   return <>
     <PageHeader title={TITLES[view]} description={{ requests: '按真实响应分析 API 请求，沿路由和请求 ID 继续排查。', traffic: '页面访问与 API 性能分别统计，保留清楚的访客与活动口径。', database: '只展示当前 SQLite 引擎实际可采集的状态。', collectors: '检查采集任务本身，分开查看最近成功与最近失败。', host: '独立宿主机检查器提供的数据，应用停止后仍可探测和推送。' }[view]}
       actions={<Button aria-pressed={paused} onClick={() => setPaused(!paused)}>{paused ? '恢复自动刷新' : '暂停自动刷新'}</Button>} />
+    {view !== 'database' && <WorkspaceTabs path={`/${view}`} query={query} navigate={navigate} />}
     <div className="zc-admin-ops-toolbar">
-      {view === 'requests' || view === 'traffic' ? <TimeRangeSelect label="统计时间范围" value={range} onChange={(value) => update({ range: value })} options={Object.entries(RANGE_LABELS).filter(([key]) => view === 'traffic' ? key !== '15m' : !['30d','90d'].includes(key)).map(([value, label]) => ({ value, label }))} /> : null}
+      {view === 'requests' || view === 'traffic' ? <TrendTimeRange label="统计时间范围" query={query} presets={presets} maxDays={90} onChange={update} /> : <span>当前状态快照，不提供历史区间查询。</span>}
       <span>时区：{Intl.DateTimeFormat().resolvedOptions().timeZone} · {paused ? '自动刷新已暂停' : '每 30 秒刷新'}</span>
     </div>
-    {view === 'requests' ? <RequestsPanel client={client} range={range} route={query.get('route') ?? ''} paused={paused} update={update} navigate={navigate} /> : null}
-    {view === 'traffic' ? <><TrafficPanel client={client} range={range === '15m' ? '1h' : range} paused={paused} country={query.get('country') ?? ''} onCountry={(country) => update({ country })} /><StartupTimingPanel client={client} range={range === '30d' || range === '90d' ? range : '7d'} /></> : null}
+    {view === 'requests' ? <RequestsPanel client={client} range={range} windowQuery={windowQuery} route={query.get('route') ?? ''} paused={paused} update={update} navigate={navigate} /> : null}
+    {view === 'traffic' ? <><TrafficPanel client={client} range={range} windowQuery={windowQuery} paused={paused} country={query.get('country') ?? ''} onCountry={(country) => update({ country })} /><StartupTimingPanel client={client} range={range === '30d' || range === '90d' ? range : '7d'} windowQuery={range === 'custom' ? windowQuery : undefined} /></> : null}
     {view === 'database' ? <><DatabaseDiagnostics client={client} paused={paused} role={role} onJob={(id) => navigate(`/jobs?job=${encodeURIComponent(id)}`)} /><Button onClick={() => navigate('/storage')}>存储与备份</Button></> : null}
     {view === 'collectors' ? <CollectorsPanel client={client} paused={paused} /> : null}
     {view === 'host' ? <HostPanel client={client} paused={paused} /> : null}
@@ -97,8 +101,8 @@ function Sampling({ meta, stale = false }: { meta?: Envelope<unknown>['meta']; s
   </div>;
 }
 
-export function RequestsPanel({ client, range, route = '', paused = false, update, navigate }: { client: AdminClient; range: string; route?: string; paused?: boolean; update?: (patch: Record<string, string>) => void; navigate: (to: string) => void }) {
-  const resource = useResource(() => client.request<Envelope<Requests>>(`/ops/requests/summary?range=${range}&route=${encodeURIComponent(route)}`), [range, route]);
+export function RequestsPanel({ client, range, windowQuery = `range=${range}`, route = '', paused = false, update, navigate }: { client: AdminClient; range: string; windowQuery?: string; route?: string; paused?: boolean; update?: (patch: Record<string, string>) => void; navigate: (to: string) => void }) {
+  const resource = useResource(() => client.request<Envelope<Requests>>(`/ops/requests/summary?${windowQuery}&route=${encodeURIComponent(route)}`), [windowQuery, route]);
   usePolling(resource.reload, 30000, !paused);
   const data = resource.data?.data;
   const available = data && resource.data?.meta.dataAsOf;
@@ -107,23 +111,24 @@ export function RequestsPanel({ client, range, route = '', paused = false, updat
     <Sampling meta={resource.data?.meta} stale={resource.stale} />
     <Panel title={route ? `${route} · 请求表现` : 'API 请求表现'} action={<><Button onClick={resource.reload}>刷新请求</Button>{route ? <Button onClick={() => update?.({ route: '' })}>全部路由</Button> : null}</>} note={data?.note}>
       <div className="zc-admin-ops-band">
-        <Stat label="有效响应" value={available ? data.totalRequests.toLocaleString() : '未采集'} hint="所选 UTC 分钟窗口内" />
+        <Stat label="有效响应" value={available ? data.totalRequests.toLocaleString() : '未采集'} hint="所选 UTC 统计窗口内" />
         <Stat label="平均 QPS" value={available ? data.qpsAverage.toFixed(2) : '—'} hint="有效响应数 / 窗口秒数" />
         <Stat label="5xx 错误率" value={available ? percent(data.errorRate5xx) : '—'} hint={available ? `${data.errors5xx} 次 5xx / ${data.totalRequests} 次响应` : '等待样本'} tone={data?.errors5xx ? 'bad' : undefined} />
         <Stat label="P95 响应耗时" value={available ? ms(data.latencyMs.p95) : '未采集'} hint="固定直方图桶近似 · ms" />
       </div>
       <p style={muted}>P50 {ms(data?.latencyMs.p50)} · P99 {ms(data?.latencyMs.p99)} · 4xx {data?.errors4xx ?? '—'} 次（单独统计）</p>
-      {data ? <p style={muted}>{when(data.windowStart)} 至 {when(data.windowEnd)} · 无请求时延迟与错误率显示为空。</p> : null}
+      {data ? <p style={muted}>{when(data.windowStart)} 至 {when(data.windowEnd)} · 按完整 UTC {data.sourceResolution === 'hour' ? '小时' : '分钟'}桶覆盖边界；无请求时延迟与错误率显示为空。</p> : null}
+      <p style={muted}>分钟数据保留 7 天，更早转为小时汇总并保留 90 天；长区间按天展示趋势。升级前已清理的数据无法恢复，空区间不代表历史上没有请求。{data?.observedSince ? `本区间最早保留样本：${when(data.observedSince)}。` : ''}</p>
     </Panel>
     <div className="zc-admin-monitor-grid">
       <Panel title="请求量与 5xx" note="计数 / 时间桶；缺失桶保留断线。">
-        <MetricLineChart label="API 请求量与 5xx 趋势" bucketMs={range === '15m' || range === '1h' ? 60000 : 3600000} formatValue={(n) => n.toFixed(0)} series={[
+        <MetricLineChart label="API 请求量与 5xx 趋势" bucketMs={data?.bucketMs ?? (range === '15m' || range === '1h' ? 60000 : 3600000)} formatValue={(n) => n.toFixed(0)} series={[
           { label: '有效响应', color: 'var(--positive)', points: (data?.buckets ?? []).map((r) => ({ at: r.bucketAt, value: r.totalRequests })) },
           { label: '5xx', color: 'var(--danger)', points: (data?.buckets ?? []).map((r) => ({ at: r.bucketAt, value: r.errors5xx })) },
         ]} />
       </Panel>
-      <Panel title="P95 延迟趋势" note="先合并各分钟直方图，再计算分位数；单位 ms。">
-        <MetricLineChart label="API P95 延迟趋势" bucketMs={range === '15m' || range === '1h' ? 60000 : 3600000} formatValue={(n) => `${n.toFixed(0)} ms`} series={[
+      <Panel title="P95 延迟趋势" note="先合并各时间桶直方图，再计算分位数；单位 ms。">
+        <MetricLineChart label="API P95 延迟趋势" bucketMs={data?.bucketMs ?? (range === '15m' || range === '1h' ? 60000 : 3600000)} formatValue={(n) => `${n.toFixed(0)} ms`} series={[
           { label: 'P95', color: 'var(--accent)', points: (data?.buckets ?? []).map((r) => ({ at: r.bucketAt, value: r.latencyMs.p95 })) },
         ]} />
       </Panel>

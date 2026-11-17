@@ -11,6 +11,12 @@ CREATE TABLE IF NOT EXISTS obs_http_buckets (
   histogram TEXT NOT NULL, PRIMARY KEY(bucket_at, instance_id, route, method, status_class)
 );
 CREATE INDEX IF NOT EXISTS obs_http_time ON obs_http_buckets(bucket_at);
+CREATE TABLE IF NOT EXISTS obs_http_hour_buckets (
+  bucket_at TEXT NOT NULL, instance_id TEXT NOT NULL, route TEXT NOT NULL, method TEXT NOT NULL,
+  status_class INTEGER NOT NULL, requests INTEGER NOT NULL, duration_ms REAL NOT NULL,
+  histogram TEXT NOT NULL, PRIMARY KEY(bucket_at, instance_id, route, method, status_class)
+);
+CREATE INDEX IF NOT EXISTS obs_http_hour_time ON obs_http_hour_buckets(bucket_at);
 CREATE TABLE IF NOT EXISTS obs_heartbeats (
   job_key TEXT PRIMARY KEY, instance_id TEXT NOT NULL, started_at TEXT, finished_at TEXT,
   success_at TEXT, failure_at TEXT, status TEXT NOT NULL, duration_ms REAL,
@@ -38,6 +44,12 @@ export interface HttpBucket {
   requests: number; durationMs: number; histogram: number[];
 }
 export interface HttpEvent { id: string; at: string; method: string; route: string; status: number; durationMs: number; ip: string; requestId: string; userAgent?: string; origin?: string; instanceId?: string; ttfbMs?: number }
+
+const sumHistogram = `json_array(${Array.from({ length: LATENCY_BOUNDS.length + 1 }, (_, i) => `SUM(COALESCE(json_extract(histogram, '$[${i}]'), 0))`).join(',')})`;
+const mergeHourHistogram = `json_array(${Array.from({ length: LATENCY_BOUNDS.length + 1 }, (_, i) => `COALESCE(json_extract(obs_http_hour_buckets.histogram, '$[${i}]'), 0) + COALESCE(json_extract(excluded.histogram, '$[${i}]'), 0)`).join(',')})`;
+type HttpSqlRow = { bucket_at: string; instance_id: string; route: string; method: string; status_class: number; requests: number; duration_ms: number; histogram: string };
+const httpBucket = (row: HttpSqlRow): HttpBucket => ({ bucketAt: row.bucket_at, instanceId: row.instance_id, route: row.route,
+  method: row.method, statusClass: Number(row.status_class), requests: Number(row.requests), durationMs: Number(row.duration_ms), histogram: JSON.parse(row.histogram) as number[] });
 
 /** Route vocabulary is bounded; opaque identifiers and private entry paths never reach storage. */
 export function normalizeMetricRoute(path: string): string {
@@ -152,6 +164,49 @@ export class ObservabilityStore {
       statusClass: r.status_class, requests: r.requests, durationMs: r.duration_ms, histogram: JSON.parse(r.histogram) as number[] }));
   }
 
+  /** Aggregate the complete retained window in SQLite; no raw-row LIMIT can undercount it. */
+  async httpHasHourly(from: string, until: string, route?: string) {
+    const start = new Date(Math.floor(Date.parse(from) / 3_600_000) * 3_600_000).toISOString();
+    return Boolean(await this.driver.get(`SELECT 1 AS present FROM obs_http_hour_buckets WHERE bucket_at >= ? AND bucket_at < ?${route ? ' AND route = ?' : ''} LIMIT 1`, [start, until, ...(route ? [route] : [])]));
+  }
+
+  async httpReport(from: string, until: string, granularity: 'minute' | 'hour' | 'day', route?: string) {
+    return this.driver.transaction(driver => this.httpReportData(driver, from, until, granularity, route));
+  }
+
+  async httpWindowReport(from: string, until: string, route?: string) {
+    return this.driver.transaction(async driver => {
+      let fromMs = Date.parse(from); let untilMs = Date.parse(until);
+      const start = new Date(Math.floor(fromMs / 3_600_000) * 3_600_000).toISOString();
+      // Probe precision and read all summaries in the same snapshot as housekeeping moves rows.
+      const hourly = untilMs - fromMs > 7 * 86_400_000 || Boolean(await driver.get(
+        `SELECT 1 AS present FROM obs_http_hour_buckets WHERE bucket_at >= ? AND bucket_at < ?${route ? ' AND route = ?' : ''} LIMIT 1`, [start, until, ...(route ? [route] : [])]));
+      if (hourly) { fromMs = Math.floor(fromMs / 3_600_000) * 3_600_000; untilMs = Math.ceil(untilMs / 3_600_000) * 3_600_000; }
+      const spanMs = untilMs - fromMs;
+      const granularity = spanMs > 7 * 86_400_000 ? 'day' : !hourly && spanMs <= 3_600_000 ? 'minute' : 'hour';
+      const actualFrom = new Date(fromMs).toISOString(); const actualUntil = new Date(untilMs).toISOString();
+      return { ...await this.httpReportData(driver, actualFrom, actualUntil, granularity, route), from: actualFrom, until: actualUntil,
+        spanMs, sourceResolution: hourly ? 'hour' : 'minute', bucketMs: granularity === 'day' ? 86_400_000 : granularity === 'hour' ? 3_600_000 : 60_000 };
+    });
+  }
+
+  private async httpReportData(driver: SqlDriver, from: string, until: string, granularity: 'minute' | 'hour' | 'day', route?: string) {
+    const where = `bucket_at >= ? AND bucket_at < ?${route ? ' AND route = ?' : ''}`;
+    const params = [from, until, ...(route ? [route] : [])];
+    const base = `WITH data AS (SELECT * FROM obs_http_buckets WHERE ${where} UNION ALL SELECT * FROM obs_http_hour_buckets WHERE ${where})`;
+    const bucket = granularity === 'minute' ? 'bucket_at' : granularity === 'hour'
+      ? "strftime('%Y-%m-%dT%H:00:00.000Z', bucket_at)" : "strftime('%Y-%m-%dT00:00:00.000Z', bucket_at)";
+    const totals = await driver.all<HttpSqlRow>(`${base} SELECT MIN(bucket_at) AS bucket_at, '' AS instance_id, '' AS route, '' AS method,
+      status_class, SUM(requests) AS requests, SUM(duration_ms) AS duration_ms, ${sumHistogram} AS histogram FROM data GROUP BY status_class`, [...params, ...params]);
+    const routes = await driver.all<HttpSqlRow>(`${base}, ranked AS (SELECT route, method FROM data GROUP BY route, method ORDER BY SUM(requests) DESC, route, method LIMIT 50)
+      SELECT MIN(bucket_at) AS bucket_at, '' AS instance_id, route, method, status_class, SUM(requests) AS requests,
+      SUM(duration_ms) AS duration_ms, ${sumHistogram} AS histogram FROM data JOIN ranked USING(route, method) GROUP BY route, method, status_class`, [...params, ...params]);
+    const buckets = await driver.all<HttpSqlRow>(`${base} SELECT ${bucket} AS bucket_at, '' AS instance_id, '' AS route, '' AS method,
+      status_class, SUM(requests) AS requests, SUM(duration_ms) AS duration_ms, ${sumHistogram} AS histogram FROM data GROUP BY ${bucket}, status_class ORDER BY bucket_at`, [...params, ...params]);
+    return { totals: totals.map(httpBucket), routes: routes.map(httpBucket), buckets: buckets.map(httpBucket),
+      observedSince: totals.map(row => row.bucket_at).sort()[0] ?? null };
+  }
+
   async heartbeat(key: string, instance: string, status: 'running' | 'healthy' | 'failed', durationMs?: number): Promise<void> {
     const at = new Date().toISOString();
     await this.driver.run(`INSERT INTO obs_heartbeats(job_key, instance_id, status, started_at, finished_at, success_at, failure_at, duration_ms, failure_streak, error_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -174,9 +229,24 @@ export class ObservabilityStore {
   }
 
   async prune(cutoff: string): Promise<void> {
+    // Move each source row once, atomically, with at most 2,000 source rows per pass.
+    // A query can union both tables while a large housekeeping backlog is still being rolled up.
+    await this.driver.transaction(async driver => {
+      const selection = 'SELECT rowid FROM obs_http_buckets WHERE bucket_at < ? ORDER BY bucket_at LIMIT 2000';
+      await driver.run(`INSERT INTO obs_http_hour_buckets
+        SELECT strftime('%Y-%m-%dT%H:00:00.000Z', bucket_at), instance_id, route, method, status_class,
+        SUM(requests), SUM(duration_ms), ${sumHistogram} FROM obs_http_buckets WHERE rowid IN (${selection})
+        GROUP BY strftime('%Y-%m-%dT%H:00:00.000Z', bucket_at), instance_id, route, method, status_class
+        ON CONFLICT(bucket_at, instance_id, route, method, status_class) DO UPDATE SET
+        requests=obs_http_hour_buckets.requests+excluded.requests,
+        duration_ms=obs_http_hour_buckets.duration_ms+excluded.duration_ms, histogram=${mergeHourHistogram}`, [cutoff]);
+      await driver.run(`DELETE FROM obs_http_buckets WHERE rowid IN (${selection})`, [cutoff]);
+    });
+    const historyCutoff = new Date(Date.parse(cutoff) - 83 * 86_400_000).toISOString();
+    await this.driver.run('DELETE FROM obs_http_hour_buckets WHERE rowid IN (SELECT rowid FROM obs_http_hour_buckets WHERE bucket_at < ? LIMIT 2000)', [historyCutoff]);
     // Each pass has a fixed write budget; the next tick continues where this pass stops.
-    for (const table of ['obs_http_buckets', 'obs_traffic_ids', 'obs_http_events', 'obs_notification_deliveries']) {
-      const column = table === 'obs_http_buckets' ? 'bucket_at' : table === 'obs_notification_deliveries' ? 'created_at' : 'at';
+    for (const table of ['obs_traffic_ids', 'obs_http_events', 'obs_notification_deliveries']) {
+      const column = table === 'obs_notification_deliveries' ? 'created_at' : 'at';
       await this.driver.run(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${column} < ? LIMIT 2000)`, [table === 'obs_notification_deliveries' ? new Date(Date.now() - 90 * 86400000).toISOString() : cutoff]);
     }
   }

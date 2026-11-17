@@ -30,7 +30,7 @@ import './admin.css';
 import { PasswordRecovery } from '../ui/PasswordRecovery.js';
 import { useBodyScrollLock } from '../ui/body-scroll-lock.js';
 import { Breadcrumbs, isPlainPrimaryClick, roleLabel } from './ui.js';
-import { adminNavigation } from './navigation.js';
+import { adminNavigation, adminWorkspacePath } from './navigation.js';
 import { BrandMark } from '../ui/BrandMark.js';
 import { OperationsPage } from './OperationsPage.js';
 import { LogWorkspacePage } from './LogWorkspacePage.js';
@@ -223,7 +223,7 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
           <a className="zc-admin-app-link" href={`${baseUrl}/`}>打开记账应用</a>
           {account ? (
             <>
-              <span className="zc-admin-operator"><strong>{account.username}</strong><small>{roleLabel(account.role)}</small></span>
+              <span className="zc-admin-operator" title={account.username}><strong>{account.username}</strong><small>{roleLabel(account.role)}</small></span>
               <a className="zc-admin-security-link" href={adminHref(adminBasePath(window.location), '/security')} onClick={(event) => { if (!isPlainPrimaryClick(event)) return; event.preventDefault(); navigateRoute(adminHref(adminBasePath(window.location), '/security')); }}>账号安全</a>
               <button className="zc-admin-logout" onClick={() => void logout()}><LogOut size={16} aria-hidden="true" />退出</button>
             </>
@@ -286,11 +286,13 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
   const groups = adminNavigation(role);
   const items = [...groups.flatMap((group) => group.pages), { path: '/security', label: '账号安全' }];
   const logCategory = categoryForLogPath(route.path);
-  const current = (logCategory ? items.find((item) => item.path === '/logs') : items.find((item) => route.path === item.path || route.path.startsWith(`${item.path}/`))) ?? items[0]!;
+  const workspacePath = adminWorkspacePath(route.path);
+  const current = (logCategory ? items.find((item) => item.path === '/logs') : items.find((item) => workspacePath === item.path || workspacePath.startsWith(`${item.path}/`))) ?? items[0]!;
   // A detail page is one level below its list, and the trailing segment is an opaque id rather
   // than a label. Only the user detail route has a readable parent, so only it gets an extra crumb;
   // anything else would be a link whose text an operator cannot read.
-  const detailCrumb = logCategory ? LOG_DEFINITIONS[logCategory].title : current.path === '/users' && route.segments[1] ? '用户详情' : undefined;
+  const workspaceTitle: Record<string, string> = { '/requests': '请求分析', '/traffic': '访问分析', '/host': '主机与容器', '/collectors': '采集任务' };
+  const detailCrumb = workspaceTitle[route.path] ?? (logCategory ? LOG_DEFINITIONS[logCategory].title : current.path === '/users' && route.segments[1] ? '用户详情' : undefined);
 
   // Several console tabs are open at once during an incident; without a title they are
   // indistinguishable in the tab bar. The user detail page names the account it shows, and a
@@ -301,7 +303,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
     const detail = route.segments[0] === 'users' && route.segments[1] ? ` · ${route.segments[1]}` : '';
     document.title = preview
       ? `预览 · ${preview} · 服务器管理后台`
-      : `${current.label}${detail} · 服务器管理后台`;
+      : `${workspaceTitle[route.path] ?? current.label}${detail} · 服务器管理后台`;
     // `route.path` is the string identity of the view; `segments` is rebuilt per route object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current.label, route.path]);
@@ -366,6 +368,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
         <strong>{current.label}</strong>
       </div>
       {navOpen ? <button type="button" className="zc-admin-nav-scrim" aria-label="关闭管理导航" onClick={() => setNavOpen(false)} /> : null}
+      <div className="zc-admin-nav-rail">
       <nav ref={navRef} tabIndex={-1} id="zc-admin-navigation" className="zc-admin-nav" data-open={navOpen} aria-label="管理后台导航">
         <div className="zc-admin-nav-intro"><span>工作台</span><small>{baseUrl}</small></div>
         {groups.map((group) => {
@@ -391,11 +394,12 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
           <a href={`${baseUrl}/`}><ExternalLink size={17} strokeWidth={1.8} aria-hidden="true" /><span>打开记账应用</span></a>
         </div>
       </nav>
+      </div>
       <section className="zc-admin-content">
         <Breadcrumbs
           crumbs={[
             { label: '管理后台', href: adminHref(basePath, '/overview') },
-            ...(route.path === current.path
+            ...(route.path === current.path && !workspaceTitle[route.path]
               ? [{ label: current.label }]
               : [{ label: current.label, href: adminHref(basePath, current.path) }, { label: detailCrumb ?? current.label }]),
           ]}

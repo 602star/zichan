@@ -24,8 +24,8 @@ const LABELS: Record<string, string> = {
 interface Bucket { stage: string; latencyBucket: number; samples: number; durationSumMs: number }
 const elapsed = (ms: number) => ms >= 1_000 ? `${(ms / 1_000).toFixed(1)} 秒` : `${Math.round(ms)} 毫秒`;
 
-export function StartupTimingPanel({ client, range }: { client: AdminClient; range: '7d' | '30d' | '90d' }) {
-  const resource = useResource(() => client.request<{ buckets: Bucket[] }>(`/startup-timing?range=${range}`), [range]);
+export function StartupTimingPanel({ client, range, windowQuery = `range=${range}` }: { client: AdminClient; range: '7d' | '30d' | '90d'; windowQuery?: string }) {
+  const resource = useResource(() => client.request<{ buckets: Bucket[]; fromDay: string; untilDay: string }>(`/startup-timing?${windowQuery}`), [windowQuery]);
   const grouped = new Map<string, Bucket[]>();
   for (const bucket of resource.data?.buckets ?? []) grouped.set(bucket.stage, [...(grouped.get(bucket.stage) ?? []), bucket]);
   const rows = [...grouped].map(([stage, buckets]) => {
@@ -39,7 +39,7 @@ export function StartupTimingPanel({ client, range }: { client: AdminClient; ran
     return { stage, samples, average, p95: p95 >= LIMITS.length ? '超过 10 分钟' : `≤ ${elapsed(LIMITS[p95]!)}` };
   }).sort((a, b) => a.stage === 'total' ? -1 : b.stage === 'total' ? 1
     : a.stage === 'first_restore_total' ? -1 : b.stage === 'first_restore_total' ? 1 : b.average - a.average);
-  return <Panel title="浏览器账本打开耗时" note={`近 ${range}；按天汇总，因此最短查看 7 天。浏览器完成打开后上报；服务端仅保存匿名日汇总。P95 是耗时分桶上界的近似值；阶段可能重叠，不能相加为总耗时。`}>
+  return <Panel title="浏览器账本打开耗时" note={`${resource.data ? `${resource.data.fromDay} 至 ${resource.data.untilDay}（结束日不含）` : '正在读取日期范围'}；按 UTC 整天汇总，边界覆盖完整日期，快捷范围最短 7 天。浏览器完成打开后上报；服务端仅保存匿名日汇总。P95 是耗时分桶上界的近似值；阶段可能重叠，不能相加为总耗时。`}>
     <Loading loading={resource.loading} error={resource.error} stale={resource.stale} loadedAt={resource.loadedAt} />
     <div className="zc-admin-monitor-mini-stats">
       <Stat label="成功打开样本" value={String(grouped.get('total')?.reduce((sum, item) => sum + item.samples, 0) ?? 0)} />

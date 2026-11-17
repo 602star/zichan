@@ -6,7 +6,6 @@ export function canonicalAdminRoute(path: string, query: URLSearchParams): strin
   const view = next.get('view');
   if (view === 'traffic' || view === 'overview') {
     next.delete('view');
-    if (view === 'overview' && ['30d','90d'].includes(next.get('range') ?? '')) next.set('range', '7d');
     return `${view === 'traffic' ? '/traffic' : '/requests'}${next.size ? `?${next}` : ''}`;
   }
   if (view === 'service' || view === 'resources') {

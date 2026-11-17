@@ -18,8 +18,8 @@ function countryName(code: string | null): string {
   catch { return code; }
 }
 
-export function TrafficPanel({ client, range, paused = false, country = '', onCountry }: { client: AdminClient; range: string; paused?: boolean; country?: string; onCountry?: (country: string) => void }) {
-  const resource = useResource(() => client.request<Traffic>(`/traffic?range=${range}&country=${encodeURIComponent(country)}`), [range, country]);
+export function TrafficPanel({ client, range, windowQuery = `range=${range}`, paused = false, country = '', onCountry }: { client: AdminClient; range: string; windowQuery?: string; paused?: boolean; country?: string; onCountry?: (country: string) => void }) {
+  const resource = useResource(() => client.request<Traffic>(`/traffic?${windowQuery}&country=${encodeURIComponent(country)}`), [windowQuery, country]);
   usePolling(resource.reload, 30000, !paused);
   const data = resource.data;
   return <section className="zc-admin-monitor-section">
@@ -30,16 +30,16 @@ export function TrafficPanel({ client, range, paused = false, country = '', onCo
       <div className="zc-admin-ops-band">
         <Stat label="PV · 页面访问" value={data ? String(data.pv) : '暂无数据'} />
         <Stat label="UV · 去重浏览器" value={data ? String(data.uv) : '暂无数据'} />
-        <Stat label="近 5 分钟活跃" value={data ? String(data.activeVisitors5m) : '未采集'} hint="最近发生页面浏览的浏览器" />
+        <Stat label={range === 'custom' ? '区间结束前 5 分钟活跃' : '近 5 分钟活跃'} value={data ? String(data.activeVisitors5m) : '未采集'} hint="以统计区间结束时刻为基准" />
         <Stat label="会话" value={data ? String(data.sessions) : '未采集'} hint="空闲至少 30 分钟后重新计数" />
       </div>
-      <p style={muted}>近 30 分钟活跃 {data?.activeVisitors30m ?? '—'}。活跃基于页面浏览估算，停留阅读不会持续上报；此数不等于实时在线人数。UV 按浏览器标识去重，清除存储或跨设备可能重复。</p>
+      <p style={muted}>{range === 'custom' ? '区间结束前' : '近'} 30 分钟活跃 {data?.activeVisitors30m ?? '—'}。活跃基于页面浏览估算，停留阅读不会持续上报；此数不等于实时在线人数。UV 按浏览器标识去重，清除存储或跨设备可能重复。</p>
       <p style={muted}>已排除常见 Bot User-Agent 和健康探针，无法识别所有机器人。时间范围：{data ? `${when(data.from)} 至 ${when(data.until)}` : '等待统计'}。</p>
       {data?.pv === 0 ? <p style={muted}>选定时间范围内还没有网页访问上报。</p> : null}
     </Panel>
     <div className="zc-admin-monitor-grid">
       <Panel title="访问趋势" note="每个分桶的 UV 单独去重，不能相加得到整个时间范围的 UV。">
-        <MetricLineChart label={`访问趋势，近 ${range}`} bucketMs={data?.granularity === 'minute' ? 60_000 : data?.granularity === 'hour' ? 3_600_000 : 86_400_000}
+        <MetricLineChart label={range === 'custom' ? '访问趋势，自定义区间' : `访问趋势，近 ${range}`} bucketMs={data?.granularity === 'minute' ? 60_000 : data?.granularity === 'hour' ? 3_600_000 : 86_400_000}
           formatValue={(value) => value.toFixed(0)} series={[
             { label: 'PV', color: 'var(--accent)', points: (data?.buckets ?? []).map((row) => ({ at: row.bucketAt, value: row.pv })) },
             { label: 'UV', color: 'var(--warning)', points: (data?.buckets ?? []).map((row) => ({ at: row.bucketAt, value: row.uv })) },

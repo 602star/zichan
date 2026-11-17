@@ -133,7 +133,7 @@ test('admin preset dropdowns keep exact local times, UTC boundaries and page-spe
   await page.goto('/e2e-private-entry/admin/requests');
   const requests = page.getByRole('combobox', { name: '统计时间范围' });
   await expect(requests.locator('option[value="15m"]')).toHaveCount(1);
-  await expect(requests.locator('option[value="90d"]')).toHaveCount(0);
+  await expect(requests.locator('option[value="90d"]')).toHaveCount(1);
   await requests.selectOption('7d');
   await expect(page).toHaveURL(/range=7d/);
   await page.goto('/e2e-private-entry/admin/traffic');
@@ -142,8 +142,24 @@ test('admin preset dropdowns keep exact local times, UTC boundaries and page-spe
   await traffic.selectOption('90d');
   await expect(page).toHaveURL(/range=90d/);
   await page.goto('/e2e-private-entry/admin/logs');
+  await expect(page.getByRole('button', { name: '起始日期', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '结束日期', exact: true })).toBeVisible();
+  await expect(page.getByRole('group', { name: '时间范围', exact: true }).getByRole('combobox', { name: '日志时间范围', exact: true })).toBeVisible();
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+    await page.screenshot({ animations: 'disabled', path: test.info().outputPath(`admin-inline-logs-${width}.png`) });
+  }
   await page.getByRole('combobox', { name: '日志时间范围' }).selectOption('custom');
   await expect(page.getByRole('button', { name: '起始日期', exact: true })).toBeVisible();
   await expect(page.getByRole('combobox', { name: '快捷时间范围', exact: true })).toHaveCount(0);
+  await chooseDate(page, '起始日期', '2026-11-10');
+  await page.getByLabel('起始时分').fill('09:15');
+  await chooseDate(page, '结束日期', '2026-11-11');
+  await page.getByLabel('结束时分').fill('10:30');
+  const logWindow = page.waitForResponse(response => response.url().includes('/api/admin/log-workspace/system?') && response.url().includes('from='));
+  await page.getByRole('group', { name: '时间范围', exact: true }).getByRole('button', { name: '应用', exact: true }).click();
+  const logResult = await logWindow; expect(logResult.status()).toBe(200);
+  expect((await logResult.json()).meta).toMatchObject({ from: '2026-11-10T01:15:00.000Z', until: '2026-11-11T02:30:00.000Z' });
   expect(errors).toEqual([]);
 });

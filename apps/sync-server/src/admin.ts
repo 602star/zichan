@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { addDays, dayOfInstant } from '@zichan/core';
+import { dayOfInstant } from '@zichan/core';
 import type { EncryptedBlobStore } from './blob-store.js';
 import { ADMIN_BODY_BYTES, pathParts, readBody, send, sendDownload } from './http-util.js';
 import { isJobType, jobOutcome, jobParamsFor, type JobRunner } from './jobs.js';
@@ -22,6 +22,7 @@ import { maskChannel, mergeChannelSecrets, parseAlertChannels, SECRET_PLACEHOLDE
 import { redactForExport, redactText } from './log-redaction.js';
 import type { MetricsService } from './metrics.js';
 import { summarizeRequests } from './observability.js';
+import { adminTimeWindow, AdminTimeWindowError } from './admin-time-window.js';
 import { LogQueryError, logCsv, parseLogQuery, LOG_EXPORT_FIELDS } from './log-workspace.js';
 import { readContainerLogs } from './container-log-source.js';
 import { SETTING_FIELDS, type SettingsFacade } from './settings.js';
@@ -246,13 +247,10 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     }
 
     if (req.method === 'GET' && suffix.startsWith('/ops/')) {
-      const spans: Record<string, number> = { '15m': 900000, '1h': 3600000, '24h': 86400000, '7d': 604800000 };
-      const range = search.get('range') ?? '24h';
-      if (!spans[range]) return send(res, 400, { code: 'OBS_INVALID_RANGE', error: 'range must be 15m, 1h, 24h or 7d' });
-      const until = new Date();
-      // Histogram buckets are whole UTC minutes; window and denominator share these boundaries.
-      until.setUTCSeconds(0, 0); until.setUTCMinutes(until.getUTCMinutes() + 1);
-      const from = new Date(until.getTime() - spans[range]!);
+      let window;
+      try { window = adminTimeWindow(search, { presets: ['15m', '1h', '24h', '7d', '30d', '90d'], maxDays: 90, buckets: 'minute' }); }
+      catch (error) { if (error instanceof AdminTimeWindowError) return send(res, 400, { code: 'OBS_INVALID_RANGE', error: error.message }); throw error; }
+      const { from, until } = window;
       const envelope = (data: unknown, source: string, dataAsOf: string | null, stale = false) => ({ data, meta: { generatedAt: new Date().toISOString(), dataAsOf, source, stale, samplingIntervalSeconds: 30 }, error: null });
       if (suffix === '/ops/host') {
         try {
@@ -274,20 +272,26 @@ export function createAdminRouter(deps: AdminRouterDeps) {
       if (suffix === '/ops/requests/summary') {
         const route = search.get('route') ?? undefined;
         if (route && (!/^\/api\/[a-zA-Z0-9/:._-]{1,150}$/.test(route))) return send(res, 400, { code: 'OBS_INVALID_ROUTE', error: 'invalid route template' });
-        const rows = await store.observability.httpRows(from.toISOString(), until.toISOString(), route);
-        const groups = new Map<string, typeof rows>();
-        const times = new Map<string, typeof rows>();
-        for (const row of rows) {
+        const report = await store.observability.httpWindowReport(from.toISOString(), until.toISOString(), route);
+        const { spanMs, bucketMs, sourceResolution } = report;
+        const groups = new Map<string, typeof report.routes>();
+        const times = new Map<string, typeof report.buckets>();
+        for (const row of report.routes) {
           const key = `${row.method} ${row.route}`;
           groups.set(key, [...(groups.get(key) ?? []), row]);
-          const bucket = range === '15m' || range === '1h' ? row.bucketAt : `${row.bucketAt.slice(0, 13)}:00:00.000Z`;
-          times.set(bucket, [...(times.get(bucket) ?? []), row]);
         }
+        for (const row of report.buckets) times.set(row.bucketAt, [...(times.get(row.bucketAt) ?? []), row]);
         const health = metrics.http.health();
-        return send(res, 200, envelope({ windowStart: from.toISOString(), windowEnd: until.toISOString(),
-          ...summarizeRequests(rows, spans[range]!),
-          routes: [...groups.entries()].map(([key, group]) => ({ key, route: group[0]!.route, method: group[0]!.method, ...summarizeRequests(group, spans[range]!) })).sort((a, b) => b.totalRequests - a.totalRequests).slice(0, 50),
-          buckets: [...times.entries()].map(([bucketAt, group]) => ({ bucketAt, ...summarizeRequests(group, range === '15m' || range === '1h' ? 60000 : 3600000) })),
+        return send(res, 200, envelope({ windowStart: report.from, windowEnd: report.until,
+          bucketMs, sourceResolution, observedSince: report.observedSince,
+          retention: { minuteDays: 7, hourDays: 90 },
+          ...summarizeRequests(report.totals, spanMs),
+          routes: [...groups.entries()].map(([key, group]) => ({ key, route: group[0]!.route, method: group[0]!.method, ...summarizeRequests(group, spanMs) })).sort((a, b) => b.totalRequests - a.totalRequests).slice(0, 50),
+          buckets: [...times.entries()].map(([bucketAt, group]) => {
+            const start = Math.max(Date.parse(bucketAt), Date.parse(report.from));
+            const end = Math.min(Date.parse(bucketAt) + bucketMs, Date.parse(report.until));
+            return { bucketAt, ...summarizeRequests(group, Math.max(1, end - start)) };
+          }),
           collector: health, note: '响应完成时计数，每 30 秒批量落库。排除健康探针、静态资源、访问上报和本页监控查询；重启或队列写入失败可能丢失少量指标。分位数为固定桶近似值，超过 10 秒的溢出桶显示下界 10000 ms。' }, 'http_finish_histogram', health.lastSuccessAt,
         !health.lastSuccessAt || Date.now() - Date.parse(health.lastSuccessAt) > 90000));
       }
@@ -570,15 +574,14 @@ export function createAdminRouter(deps: AdminRouterDeps) {
      * (`dbstat` walks the whole file, ~250 ms on a 125 MiB database). It is opt-in so the
      * page can poll cheaply and ask for the breakdown only when someone wants it.
      */
+    let historyWindow;
+    if (req.method === 'GET' && ['/system/metrics', '/metrics', '/traffic'].includes(suffix)) {
+      try { historyWindow = adminTimeWindow(search, { presets: ['1h', '24h', '7d', '30d', '90d'], maxDays: 90, buckets: suffix === '/traffic' ? undefined : 'trend' }); }
+      catch (error) { if (error instanceof AdminTimeWindowError) return send(res, 400, { code: 'ADMIN_INVALID_WINDOW', error: error.message }); throw error; }
+    }
     if (req.method === 'GET' && suffix === '/system/metrics') {
-      const range = search.get('range') ?? '24h';
-      if (!['1h', '24h', '7d', '30d', '90d'].includes(range)) return send(res, 400, { error: 'range must be 1h, 24h, 7d, 30d or 90d' });
-      const spanMs = range === '1h' ? 3_600_000 : range === '24h' ? 86_400_000
-        : (range === '7d' ? 7 : range === '30d' ? 30 : 90) * 86_400_000;
-      const granularity = range === '1h' ? 'minute' : range === '30d' || range === '90d' ? 'day' : 'hour';
+      const { range, granularity, from, until } = historyWindow!;
       const bucketMs = granularity === 'minute' ? 60_000 : 3_600_000;
-      const until = new Date();
-      const from = new Date(until.getTime() - spanMs);
       const system = await systemMonitor.read();
       const rawBuckets = await store.listSystemMetricBuckets(system.scope, granularity === 'minute' ? 'minute' : 'hour',
         new Date(Math.floor(from.getTime() / bucketMs) * bucketMs).toISOString(), until.toISOString());
@@ -677,13 +680,7 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     }
 
     if (req.method === 'GET' && suffix === '/metrics') {
-      const range = search.get('range') ?? '24h';
-      if (!['1h', '24h', '7d', '30d', '90d'].includes(range)) return send(res, 400, { error: 'range must be 1h, 24h, 7d, 30d or 90d' });
-      const spanMs = range === '1h' ? 3_600_000 : range === '24h' ? 86_400_000
-        : (range === '7d' ? 7 : range === '30d' ? 30 : 90) * 86_400_000;
-      const granularity = range === '1h' ? 'minute' : range === '30d' || range === '90d' ? 'day' : 'hour';
-      const until = new Date();
-      const from = new Date(until.getTime() - spanMs);
+      const { range, granularity, from, until } = historyWindow!;
       const rawBuckets = granularity === 'minute'
         ? await store.listMetricBuckets('minute', from.toISOString(), until.toISOString())
         : await store.listMetricBuckets('hour', from.toISOString(), until.toISOString());
@@ -746,28 +743,24 @@ export function createAdminRouter(deps: AdminRouterDeps) {
     }
 
     if (req.method === 'GET' && suffix === '/startup-timing') {
-      const range = search.get('range') ?? '7d';
-      if (!['7d', '30d', '90d'].includes(range)) return send(res, 400, { error: 'invalid range' });
-      const days = Number.parseInt(range, 10);
-      const fromDay = addDays(dayOfInstant(new Date(), 'UTC'), 1 - days);
-      return send(res, 200, { range, fromDay, buckets: await store.startupTimingSummary(fromDay) });
+      let window;
+      try { window = adminTimeWindow(search, { presets: ['7d', '30d', '90d'], defaultRange: '7d', maxDays: 90, buckets: 'day' }); }
+      catch (error) { if (error instanceof AdminTimeWindowError) return send(res, 400, { code: 'ADMIN_INVALID_WINDOW', error: error.message }); throw error; }
+      const { range, from, until } = window;
+      const fromDay = dayOfInstant(from, 'UTC'); const untilDay = dayOfInstant(until, 'UTC');
+      return send(res, 200, { range, fromDay, untilDay, buckets: await store.startupTimingSummary(fromDay, untilDay) });
     }
 
     if (req.method === 'GET' && suffix === '/traffic') {
-      const range = search.get('range') ?? '24h';
-      if (!['1h', '24h', '7d', '30d', '90d'].includes(range)) return send(res, 400, { error: 'invalid range' });
-      const spanMs = range === '1h' ? 3_600_000 : range === '24h' ? 86_400_000
-        : Number(range.slice(0, -1)) * 86_400_000;
-      const until = new Date();
-      const from = new Date(until.getTime() - spanMs);
-      const trafficGranularity = range === '1h' ? 'minute' : range === '24h' ? 'hour' : 'day';
+      const { range, from, until } = historyWindow!;
+      const trafficGranularity = historyWindow!.spanMs <= 3_600_000 ? 'minute' : historyWindow!.spanMs <= 86_400_000 ? 'hour' : 'day';
       const country = search.get('country') ?? undefined;
       if (country && country !== 'unknown' && !/^[A-Z]{2}$/.test(country)) return send(res, 400, { error: 'invalid country' });
       return send(res, 200, {
         range, from: from.toISOString(), until: until.toISOString(),
         granularity: trafficGranularity,
         ...await store.trafficSummary(from.toISOString(), until.toISOString(), trafficGranularity, country),
-        generatedAt: until.toISOString(), source: 'first_party_page_views', country: country ?? null,
+        generatedAt: new Date().toISOString(), source: 'first_party_page_views', country: country ?? null,
         uvMethod: 'first_party_browser_distinct', onlineMethod: 'last_page_view_window',
         botExclusion: 'known_user_agents_and_health_probes',
         countryAvailable: Boolean(deps.trafficCountryConfigured),

@@ -13,12 +13,15 @@ import type { AccountRow } from './types.js';
  * The parent keeps `from`/`until` in ISO in the URL; local drafts and the preset label
  * never change the query until applied (quick presets apply immediately).
  */
-export function TimeRangeFilter({ from, until, onApply, label = '时间范围', showPresets = true }: {
+export function TimeRangeFilter({ from, until, onApply, label = '时间范围', showPresets = true, help, showDraftStatus = false, presetControl }: {
   from: string;
   until: string;
   onApply: (range: { from: string | undefined; until: string | undefined }) => void;
   label?: string;
   showPresets?: boolean;
+  help?: string;
+  showDraftStatus?: boolean;
+  presetControl?: { label: string; value: string; options: { value: string; label: string }[]; onChange: (value: string) => void };
 }) {
   const [fromDraft, setFromDraft] = useState(isoToLocalInput(from, true));
   const [untilDraft, setUntilDraft] = useState(isoToLocalInput(until, true));
@@ -34,7 +37,8 @@ export function TimeRangeFilter({ from, until, onApply, label = '时间范围', 
   const setTime = (time: string, draft: string, update: (value: string) => void) => {
     if (draft) update(`${draft.slice(0, 10)}T${time || '00:00'}`);
   };
-  const draftsMatch = fromDraft === isoToLocalInput(from, true) && untilDraft === isoToLocalInput(until, true);
+  const matches = (draft: string, value: string) => (!draft && !value) || Date.parse(localInputToIso(draft) ?? '') === Date.parse(value);
+  const draftsMatch = matches(fromDraft, from) && matches(untilDraft, until);
   const presetValue = draftsMatch && presetSelection?.from === from && presetSelection.until === until
     ? presetSelection.value : fromDraft || untilDraft ? 'custom' : 'all';
   const clear = () => {
@@ -46,7 +50,8 @@ export function TimeRangeFilter({ from, until, onApply, label = '时间范围', 
     <div role="group" aria-label={label}>
       <span style={muted}>{label}</span>
       <div style={row}>
-        {showPresets && <TimeRangeSelect value={presetValue} onChange={(value) => {
+        {showPresets && <TimeRangeSelect label={presetControl?.label} value={presetControl ? draftsMatch ? presetControl.value : 'custom' : presetValue} onChange={(value) => {
+          if (presetControl) { presetControl.onChange(value); return; }
           if (value === 'all') { clear(); return; }
           if (value === 'custom') { setPresetSelection({ value, from, until }); return; }
           const preset = RANGE_PRESETS.find((item) => String(item.hours) === value);
@@ -55,7 +60,7 @@ export function TimeRangeFilter({ from, until, onApply, label = '时间范围', 
           setFromDraft(isoToLocalInput(window.from, true)); setUntilDraft('');
           setPresetSelection({ value, from: window.from, until: '' });
           onApply({ from: window.from, until: undefined });
-        }} options={[
+        }} options={presetControl?.options ?? [
           ...RANGE_PRESETS.map((preset) => ({ value: String(preset.hours), label: preset.label })),
           { value: 'all', label: '全部时间' }, { value: 'custom', label: '自定义' },
         ]} />}
@@ -64,8 +69,8 @@ export function TimeRangeFilter({ from, until, onApply, label = '时间范围', 
           <CalendarDatePicker value={fromDraft.slice(0, 10)} onChange={(date) => setDate(date, fromDraft, setFromDraft, '00:00')} label="起始日期" />
           <TextInput type="time" value={fromDraft.slice(11, 16)} disabled={!fromDraft} onChange={(event) => setTime(event.target.value, fromDraft, setFromDraft)} aria-label="起始时分" />
         </div>
-        <span style={muted}>至</span>
         <div className="zc-admin-time-boundary" role="group" aria-label="结束时间">
+          <span style={muted}>至</span>
           <CalendarDatePicker value={untilDraft.slice(0, 10)} onChange={(date) => setDate(date, untilDraft, setUntilDraft, '23:59:59.999')} label="结束日期" />
           <TextInput type="time" value={untilDraft.slice(11, 16)} disabled={!untilDraft} onChange={(event) => setTime(event.target.value, untilDraft, setUntilDraft)} aria-label="结束时分" />
         </div>
@@ -73,8 +78,9 @@ export function TimeRangeFilter({ from, until, onApply, label = '时间范围', 
         <Button onClick={clear}>清除</Button>
       </div>
       <div style={{ ...row, marginTop: 6 }}>
-        <span style={muted}>显示与保存都按本地时间，发给服务端的仍是 UTC；快捷区间为「从某时刻起」，之后的新记录会继续出现。</span>
+        <span style={muted}>{help ?? '显示与保存都按本地时间，发给服务端的仍是 UTC；快捷区间为「从某时刻起」，之后的新记录会继续出现。'}</span>
       </div>
+      {showDraftStatus && !draftsMatch && <p role="status" style={muted}>修改尚未应用，结果仍按已应用区间显示。</p>}
       {problem ? <Notice tone="bad">{problem}</Notice> : null}
     </div>
   );

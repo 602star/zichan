@@ -57,7 +57,8 @@ export function MetricCatalog({ metrics, system, reading, range }: {
   const filtered = rows.filter((row) => `${row.label} ${row.key} ${row.scope}`.toLowerCase().includes(search.toLowerCase().trim()));
   const visible = filtered.slice(page * pageSize, (page + 1) * pageSize);
   const selected = rows.find((row) => row.key === selectedKey) ?? rows[0]!;
-  const bucketMs = range === '1h' ? 60_000 : range === '30d' || range === '90d' ? 86_400_000 : 3_600_000;
+  const granularity = selected.key.startsWith('system') ? system?.granularity : metrics?.granularity;
+  const bucketMs = granularity === 'minute' ? 60_000 : granularity === 'day' ? 86_400_000 : 3_600_000;
   return <section className="zc-admin-monitor-section">
     <h2>指标总表</h2>
     <p style={muted}>登记的是现有服务器与系统采样。计数列显示最近分桶的次数；采样读数显示当前读数或最近分桶峰值，缺失保持空白。</p>
@@ -77,7 +78,7 @@ export function MetricCatalog({ metrics, system, reading, range }: {
       </div>
     </Panel>
     <Panel title={`${selected.label} · 历史趋势`} note={`${selected.scope} · ${selected.type} · ${selected.unit}。数据从服务端 SQLite 指标分桶读取。`} action={<Button disabled={!selected.points.length} onClick={() => downloadCsv(selected)}>导出 CSV</Button>}>
-      <MetricLineChart label={`${selected.label}，近 ${range}`} bucketMs={bucketMs} formatValue={selected.format}
+      <MetricLineChart label={`${selected.label}，${range === 'custom' ? '自定义区间' : `近 ${range}`}`} bucketMs={bucketMs} formatValue={selected.format}
         series={[{ label: selected.label, color: 'var(--accent)', points: selected.points }]} />
     </Panel>
   </section>;

@@ -6458,11 +6458,11 @@ END;`);
     });
   }
 
-  async startupTimingSummary(fromDay: string): Promise<{ stage: string; latencyBucket: number; samples: number; durationSumMs: number }[]> {
+  async startupTimingSummary(fromDay: string, untilDay?: string): Promise<{ stage: string; latencyBucket: number; samples: number; durationSumMs: number }[]> {
     await this.ready;
     const rows = await this.driver.all<{ stage: string; latency_bucket: number; samples: number; duration_sum_ms: number }>(
       `SELECT stage, latency_bucket, SUM(samples) AS samples, SUM(duration_sum_ms) AS duration_sum_ms
-       FROM startup_timing_buckets WHERE day >= ? GROUP BY stage, latency_bucket ORDER BY stage, latency_bucket`, [fromDay]);
+       FROM startup_timing_buckets WHERE day >= ?${untilDay ? ' AND day < ?' : ''} GROUP BY stage, latency_bucket ORDER BY stage, latency_bucket`, [fromDay, ...(untilDay ? [untilDay] : [])]);
     return rows.map((row) => ({ stage: row.stage, latencyBucket: row.latency_bucket,
       samples: Number(row.samples), durationSumMs: Number(row.duration_sum_ms) }));
   }

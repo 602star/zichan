@@ -4,8 +4,52 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHttpCollector, heartbeatStatus, LATENCY_BOUNDS, normalizeMetricRoute, summarizeRequests } from '../src/observability.js';
 import { SyncServerStore } from '../src/store.js';
+import { NodeSqliteDriver } from '@zichan/db/node';
 
 describe('observability semantics', () => {
+  it('rolls old minutes into hourly histograms atomically without double counting or losing latency bins', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zichan-obs-hour-'));
+    const store = new SyncServerStore(join(dir, 'server.sqlite'), 'invite', 'srv-hour');
+    try {
+      await store.ready;
+      const histogram = Array<number>(LATENCY_BOUNDS.length + 1).fill(0); histogram[0] = 10;
+      const slow = Array<number>(LATENCY_BOUNDS.length + 1).fill(0); slow[7] = 10;
+      const row = { bucketAt: '2026-11-01T03:15:00.000Z', instanceId: 'old-instance', route: '/api/auth/login', method: 'POST', statusClass: 2, requests: 10, durationMs: 10, histogram };
+      await store.observability.insertHttp([row, { ...row, bucketAt: '2026-11-01T03:45:00.000Z', histogram: slow }, { ...row, bucketAt: '2026-11-16T03:15:00.000Z' }]);
+      const before = await store.observability.httpReport('2026-11-01T00:00:00Z', '2026-11-17T00:00:00Z', 'day');
+      const [, concurrent] = await Promise.all([
+        store.observability.prune('2026-11-10T00:00:00.000Z'),
+        store.observability.httpWindowReport('2026-11-01T03:15:00.000Z', '2026-11-01T03:45:00.000Z'),
+      ]);
+      expect(summarizeRequests(concurrent.totals, concurrent.spanMs).totalRequests).toBe(concurrent.sourceResolution === 'hour' ? 20 : 10);
+      await store.observability.prune('2026-11-10T00:00:00.000Z');
+      const after = await store.observability.httpReport('2026-11-01T00:00:00Z', '2026-11-17T00:00:00Z', 'day');
+      expect(summarizeRequests(after.totals, 86_400_000)).toEqual(summarizeRequests(before.totals, 86_400_000));
+      expect(summarizeRequests(after.totals, 86_400_000)).toMatchObject({ totalRequests: 30, latencyMs: { p95: 1000 } });
+      expect(await store.observability.httpHasHourly('2026-11-01T03:30:00Z', '2026-11-01T04:00:00Z')).toBe(true);
+      expect(await store.observability.httpRows('2026-11-01T00:00:00Z', '2026-11-17T00:00:00Z')).toHaveLength(1);
+      expect(after.buckets.map(bucket => bucket.requests)).toEqual([20, 10]);
+    } finally { await store.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('counts more than fifty thousand retained dimensions in totals, route rankings and trend buckets', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zichan-obs-full-'));
+    const path = join(dir, 'server.sqlite');
+    const store = new SyncServerStore(path, 'invite', 'srv-full');
+    const driver = new NodeSqliteDriver(path);
+    try {
+      await store.ready;
+      await driver.run(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<51001)
+        INSERT INTO obs_http_buckets SELECT '2026-11-16T01:00:00.000Z', CAST(i AS TEXT), '/api/auth/login', 'POST', 2, 1, 5, '[1,0,0,0,0,0,0,0,0,0,0,0]' FROM n`);
+      const report = await store.observability.httpReport('2026-11-16T00:00:00Z', '2026-11-17T00:00:00Z', 'hour');
+      expect(summarizeRequests(report.totals, 86_400_000).totalRequests).toBe(51001);
+      expect(report.routes[0]?.requests).toBe(51001); expect(report.buckets[0]?.requests).toBe(51001);
+      expect(summarizeRequests(report.totals, 86_400_000).latencyMs.p95).toBe(5);
+      await store.observability.prune('2026-11-17T00:00:00.000Z');
+      const mixed = await store.observability.httpReport('2026-11-16T00:00:00Z', '2026-11-17T00:00:00Z', 'hour');
+      expect(summarizeRequests(mixed.totals, 86_400_000).totalRequests).toBe(51001);
+    } finally { await driver.close(); await store.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
   it('merges latency distributions and separates 4xx from 5xx', () => {
     const row = { bucketAt: '2026-11-16T01:00:00.000Z', instanceId: 'instance', route: '/api/auth/login', method: 'POST', durationMs: 0 };
     const fast = Array<number>(LATENCY_BOUNDS.length + 1).fill(0); fast[0] = 99;

@@ -98,7 +98,11 @@ test('all six log modes expose real category fields, scoped export, details and 
       const active = page.getByRole('navigation', { name: '日志与审计视图' }).locator('[aria-current=page]');
       await expect(active).toBeInViewport();
       await expect(page.locator('.zc-admin-log-provenance')).toBeInViewport();
-      expect((await page.locator('.zc-admin-log-table tbody tr').first().boundingBox()).y).toBeLessThan(844);
+      // Time boundaries stay visible by request; records follow the full filter on narrow screens.
+      await expect(page.getByRole('button', { name: '起始日期', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: '结束日期', exact: true })).toBeVisible();
+      await page.locator('.zc-admin-log-table tbody tr').first().scrollIntoViewIfNeeded();
+      await expect(page.locator('.zc-admin-log-table tbody tr').first()).toBeInViewport();
       await page.screenshot({ path: resolve(review, `${kind}-mobile.png`), fullPage: true });
     }
     await page.getByRole('button', { name: '查看详情', exact: true }).first().click();

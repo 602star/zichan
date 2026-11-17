@@ -1,33 +1,37 @@
 import type { AdminClient } from './client.js';
 import { MetricLineChart } from './chart.js';
 import { MetricCatalog } from './MetricCatalog.js';
-import { TimeRangeSelect } from '../ui/TimeRangeSelect.js';
+import { TrendTimeRange, trendQuery } from './TrendTimeRange.js';
+import { WorkspaceTabs } from './WorkspaceTabs.js';
 import type { Metrics, Overview, SystemMetrics, SystemMonitorReading } from './types.js';
 import { Badge, Button, DataTable, Loading, Notice, PageHeader, Panel, Stat, bytes, usePolling, useResource, when } from './ui.js';
 
 const RANGES = ['1h','24h','7d','30d','90d'] as const;
-const RANGE_LABELS = ['近 1 小时', '近 24 小时', '近 7 天', '近 30 天', '近 90 天'];
 export function MonitorPage({ client, query, navigate }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (path: string) => void }) {
-  const range = RANGES.find((r) => r === query.get('range')) ?? '24h';
+  const windowQuery = trendQuery(query, [...RANGES]);
+  const range = new URLSearchParams(windowQuery).get('range')!;
   const view = query.get('view') === 'system' ? 'system' : query.get('view') === 'metrics' ? 'metrics' : 'application';
-  const update = (patch: Record<string, string>) => { const next = new URLSearchParams(query); for (const [key, value] of Object.entries(patch)) next.set(key, value); navigate(`/monitor?${next}`); };
+  const update = (patch: Record<string, string>) => { const next = new URLSearchParams(query); for (const [key, value] of Object.entries(patch)) { if (value) next.set(key, value); else next.delete(key); } navigate(`/monitor?${next}`); };
   const overview = useResource(() => client.request<Overview>('/overview'), []);
   const system = useResource(() => client.request<SystemMonitorReading>('/system'), []);
-  const metrics = useResource(() => client.request<Metrics>(`/metrics?range=${range}`), [range]);
-  const history = useResource(() => client.request<SystemMetrics>(`/system/metrics?range=${range}`), [range]);
+  const metrics = useResource(() => client.request<Metrics>(`/metrics?${windowQuery}`), [windowQuery]);
+  const history = useResource(() => client.request<SystemMetrics>(`/system/metrics?${windowQuery}`), [windowQuery]);
   const refresh = () => { overview.reload(); system.reload(); metrics.reload(); history.reload(); };
   usePolling(refresh, 30000);
   const current = overview.data?.snapshot.process;
   const reading = system.data;
   const scope = reading?.scope === 'container' ? '容器' : '主机';
   const stale = overview.stale || system.stale || metrics.stale || history.stale || overview.data?.snapshot.stale;
-  const bucketMs = range === '1h' ? 60000 : range === '30d' || range === '90d' ? 86400000 : 3600000;
+  const granularity = view === 'system' ? history.data?.granularity : metrics.data?.granularity;
+  const bucketMs = granularity === 'minute' ? 60_000 : granularity === 'day' ? 86_400_000 : 3_600_000;
   const ms = (n: number | null | undefined) => n == null ? '未采集' : `${n.toFixed(1)} ms`;
   return <>
-    <PageHeader title="运行监控" description="应用自身与当前可见系统资源。请求、访问和数据库分析各自使用独立主入口。" actions={<><TimeRangeSelect label="历史趋势时间范围" value={range} onChange={(value) => update({ range: value })} options={RANGES.map((value, index) => ({ value, label: RANGE_LABELS[index]! }))} /><Button onClick={refresh}>刷新</Button></>} />
-    <nav className="zc-admin-workspace-nav" aria-label="运行监控视图">{[['application','应用自身','Node 进程与事件循环'],['system','系统资源','主机或容器可见范围'],['metrics','指标目录','按指标查趋势与导出']].map(([key,label,note]) => <button key={key} aria-current={view === key ? 'page' : undefined} onClick={() => update({ view: key! })}><strong>{label}</strong><span>{note}</span></button>)}</nav>
+    <PageHeader title="运行监控" description="应用自身与当前可见系统资源。访问与请求、数据库分析使用各自的主入口。" actions={<Button onClick={refresh}>刷新</Button>} />
+    <WorkspaceTabs path="/monitor" query={query} navigate={navigate} />
+    <TrendTimeRange label="历史趋势时间范围" query={query} presets={[...RANGES]} maxDays={90} onChange={update} />
     <Loading loading={overview.loading || system.loading || metrics.loading || history.loading} error={overview.error || system.error || metrics.error || history.error} stale={Boolean(stale)} />
-    <div className="zc-admin-ops-provenance"><Badge tone={stale ? 'warn' : 'muted'}>{stale ? '数据过期' : overview.data ? '采样已更新' : '未采集'}</Badge><span>来源：{view === 'application' ? 'Node process API' : reading?.scope === 'container' ? 'cgroup / 当前命名空间' : '操作系统'}</span><span>采样：{when(overview.data?.snapshot.sampledAt)}</span><span>时区：{Intl.DateTimeFormat().resolvedOptions().timeZone} · 近 {range}</span></div>
+    <div className="zc-admin-ops-provenance"><Badge tone={stale ? 'warn' : 'muted'}>{stale ? '数据过期' : overview.data ? '采样已更新' : '未采集'}</Badge><span>来源：{view === 'application' ? 'Node process API' : reading?.scope === 'container' ? 'cgroup / 当前命名空间' : '操作系统'}</span><span>采样：{when(overview.data?.snapshot.sampledAt)}</span><span>时区：{Intl.DateTimeFormat().resolvedOptions().timeZone} · {range === 'custom' ? '自定义区间' : `近 ${range}`}</span></div>
+    <p className="zc-admin-history-note">顶部当前读数不受历史区间影响；趋势按完整 UTC 分钟／小时桶覆盖边界，缺失采样不补零。{metrics.data && `${when(metrics.data.from)} 至 ${when(metrics.data.until)}`}</p>
     {view === 'metrics' ? <MetricCatalog metrics={metrics.data} system={history.data} reading={reading} range={range} /> : view === 'application' ? <>
       <Panel title="Node 进程" note="CPU 以单核 100% 为基准，可超过 100%；RSS、V8 堆和 external 属不同内存口径。">
         <div className="zc-admin-ops-band"><Stat label="RSS" value={current ? bytes(current.rssBytes) : '未采集'} /><Stat label="V8 堆已用" value={current ? bytes(current.heapUsedBytes) : '未采集'} hint={current ? `已分配 ${bytes(current.heapTotalBytes)}` : undefined} /><Stat label="堆外内存" value={current ? bytes(current.externalBytes) : '未采集'} hint={current ? `ArrayBuffer ${bytes(current.arrayBuffersBytes)}` : undefined} /><Stat label="CPU · 单核基准" value={current?.cpuPercent == null ? '未采集' : `${current.cpuPercent.toFixed(1)}%`} /></div>
