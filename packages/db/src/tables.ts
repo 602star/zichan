@@ -49,6 +49,19 @@ export function allCols(spec: TableSpec): Col[] {
 // ─────────────────────────── Registry ───────────────────────────
 
 export const TABLES = {
+  calendarEntries: {
+    name: 'calendar_entries',
+    cols: [c('title'), c('kind'), c('startDate'), c('endDate'), c('allDay', 'bool'), c('startTime'), c('endTime'),
+      c('timezone'), c('location'), c('description'), c('calendar'), c('lunarMonth', 'int'), c('lunarDay', 'int'),
+      c('leapPolicy'), c('missingDayPolicy'), c('repeat'), c('interval', 'int'), c('weekdays'), c('untilDate'),
+      c('repeatCount', 'int'), c('reminderMinutes'), c('transactionIds'), c('sourceUid'), c('birthYear', 'int')],
+    indexes: [{ name: 'idx_calendar_entries_date', cols: ['start_date'] }],
+  },
+  calendarOccurrenceStates: {
+    name: 'calendar_occurrence_states',
+    cols: [c('entryId'), c('occurrenceDate'), c('status'), c('completedAt'), c('snoozedUntil')],
+    indexes: [{ name: 'idx_calendar_state_entry', cols: ['entry_id', 'occurrence_date'], unique: true, where: 'is_deleted = 0' }],
+  },
   conversionOperations: {
     name: 'conversion_operations',
     cols: [c('title'), c('chainIds'), c('links'), c('recordState'), c('voidReason')],
@@ -82,7 +95,7 @@ export const TABLES = {
       c('fixedAssetDefaultCurrencyAssetId'), c('gameDefaultSettlementAssetId'),
       c('ledgerMode'), c('ledgerKind'), c('initializedAt'), c('defaultLotMethod'), c('asOfDate'), c('timezone'),
       c('expenseDefaultAccountId'), c('incomeDefaultAccountId'), c('asOfMode'),
-      c('transactionFormOptionalFields'), c('categoryPickerDefaultScope'), c('navigationLayoutJson'), c('refundAttributionMode'), c('dataSafetyStateJson'), c('syncServersJson'), c('fixedAssetWorkspaceJson'),
+      c('transactionFormOptionalFields'), c('categoryPickerDefaultScope'), c('navigationLayoutJson'), c('refundAttributionMode'), c('dataSafetyStateJson'), c('syncServersJson'), c('fixedAssetWorkspaceJson'), c('calendarPreferencesJson'),
     ],
     indexes: [
       { name: 'idx_settings_single_active', cols: ['is_deleted'], unique: true, where: 'is_deleted = 0' },
@@ -477,7 +490,7 @@ export function rowToEntity<T extends BaseEntity>(spec: TableSpec, row: Record<s
         v = rawTags.split(',').map((x: string) => x.trim()).filter(Boolean);
       }
     }
-    if (['balanceCheckpoints', 'items', 'costQuotes', 'costQuote', 'links'].includes(col.field) && typeof v === 'string') v = JSON.parse(v);
+    if (['balanceCheckpoints', 'items', 'costQuotes', 'costQuote', 'links', 'weekdays', 'reminderMinutes', 'transactionIds'].includes(col.field) && typeof v === 'string') v = JSON.parse(v);
     if (v !== undefined) out[col.field] = v;
   }
   // isDeleted must always be a boolean even when stored 0.

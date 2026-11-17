@@ -99,6 +99,7 @@ export type AsOfMode = 'manual' | 'auto_today' | 'auto_on_record';
 
 /** Global config. There is one active Setting row. */
 export interface Setting extends BaseEntity {
+  calendarPreferencesJson?: string;
   /** Global reporting currency. Existing records are never rewritten when it changes. */
   baseCurrencyAssetId: string;
   /** Defaults used only when creating new records; undefined inherits the global currency. */

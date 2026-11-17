@@ -4,6 +4,7 @@ import { MetricLineChart } from './chart.js';
 import { StartupTimingPanel } from './StartupTimingPanel.js';
 import { TrafficPanel } from './TrafficPanel.js';
 import { DatabaseDiagnostics } from './DatabaseDiagnostics.js';
+import { TimeRangeSelect } from '../ui/TimeRangeSelect.js';
 import { Badge, Button, DataTable, Loading, Notice, PageHeader, Panel, Stat, bytes, muted, usePolling, useResource, when } from './ui.js';
 
 interface Envelope<T> {
@@ -48,7 +49,7 @@ export function OperationsPage({ client, view, query, navigate, role }: { client
     <PageHeader title={TITLES[view]} description={{ requests: '按真实响应分析 API 请求，沿路由和请求 ID 继续排查。', traffic: '页面访问与 API 性能分别统计，保留清楚的访客与活动口径。', database: '只展示当前 SQLite 引擎实际可采集的状态。', collectors: '检查采集任务本身，分开查看最近成功与最近失败。', host: '独立宿主机检查器提供的数据，应用停止后仍可探测和推送。' }[view]}
       actions={<Button aria-pressed={paused} onClick={() => setPaused(!paused)}>{paused ? '恢复自动刷新' : '暂停自动刷新'}</Button>} />
     <div className="zc-admin-ops-toolbar">
-      {view === 'requests' || view === 'traffic' ? <div className="zc-admin-view-switch" aria-label="统计时间范围">{Object.entries(RANGE_LABELS).filter(([key]) => view === 'traffic' ? key !== '15m' : !['30d','90d'].includes(key)).map(([key, label]) => <Button key={key} aria-pressed={range === key} onClick={() => update({ range: key })}>{label}</Button>)}</div> : null}
+      {view === 'requests' || view === 'traffic' ? <TimeRangeSelect label="统计时间范围" value={range} onChange={(value) => update({ range: value })} options={Object.entries(RANGE_LABELS).filter(([key]) => view === 'traffic' ? key !== '15m' : !['30d','90d'].includes(key)).map(([value, label]) => ({ value, label }))} /> : null}
       <span>时区：{Intl.DateTimeFormat().resolvedOptions().timeZone} · {paused ? '自动刷新已暂停' : '每 30 秒刷新'}</span>
     </div>
     {view === 'requests' ? <RequestsPanel client={client} range={range} route={query.get('route') ?? ''} paused={paused} update={update} navigate={navigate} /> : null}

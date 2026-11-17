@@ -1,7 +1,9 @@
-import { addDays, addMonths, isValidDay, localToday } from '@zichan/core';
+import { addDays, addMonths, calendarDayInfo, isValidDay, localToday } from '@zichan/core';
 import { CalendarDays, ChevronLeft, ChevronRight, Clock3 } from 'lucide-react';
 import { useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type InputHTMLAttributes } from 'react';
 import { DialogShell } from './DialogShell.js';
+import { useCalendarDisplay } from '../calendar-display.js';
+import './calendar-date-picker.css';
 
 const touchQuery = '(pointer: coarse)';
 const subscribe = (changed: () => void) => {
@@ -54,13 +56,15 @@ function DateSelection({ value, onChoose, required, min, max }: {
   value: string; onChoose: (value: string) => void; required?: boolean; min?: string | number; max?: string | number;
 }) {
   const today = localToday();
+  const preferences = useCalendarDisplay();
+  const metadataId = useId();
   const [draft, setDraft] = useState(isValidDay(value) ? value : today);
   const [cursor, setCursor] = useState(isValidDay(value) ? value : today);
   const [view, setView] = useState<'day' | 'month' | 'year'>('day');
   const year = Number(cursor.slice(0, 4));
   const month = Number(cursor.slice(5, 7));
   const firstYear = Math.max(1, Math.floor(year / 12) * 12);
-  const offset = (new Date(year, month - 1, 1).getDay() + 6) % 7;
+  const offset = (new Date(year, month - 1, 1).getDay() - preferences.firstDay + 7) % 7;
   const days = new Date(year, month, 0).getDate();
   const allowed = (date: string) => (!min || date >= String(min)) && (!max || date <= String(max));
   const shortcut = (date: string) => { setDraft(date); setCursor(date); setView('day'); };
@@ -78,12 +82,14 @@ function DateSelection({ value, onChoose, required, min, max }: {
       {(['year', 'month', 'day'] as const).map((item) => <button key={item} type="button" aria-pressed={view === item} onClick={() => setView(item)}>{item === 'year' ? '年' : item === 'month' ? '月' : '日'}</button>)}
     </div>
     {view === 'day' ? <div className="zc-datetime-days">
-      {['一', '二', '三', '四', '五', '六', '日'].map((day) => <span key={day}>{day}</span>)}
+      {Array.from({ length: 7 }, (_, index) => ['日', '一', '二', '三', '四', '五', '六'][(index + preferences.firstDay) % 7]!).map((day) => <span key={day}>{day}</span>)}
       {Array.from({ length: offset }, (_, index) => <span key={`empty-${index}`} />)}
       {Array.from({ length: days }, (_, index) => {
         const date = `${String(year).padStart(4, '0')}-${pad(month)}-${pad(index + 1)}`;
-        return <button type="button" key={date} aria-label={date} aria-pressed={draft === date} aria-current={date === today ? 'date' : undefined}
-          disabled={!allowed(date)} onClick={() => setDraft(date)}>{index + 1}</button>;
+        const info = calendarDayInfo(date);
+        const sublabel = (preferences.showFestivals && (info.festivals[0] || info.term)) || (preferences.showLunar ? info.lunar : '');
+        return <button type="button" key={date} aria-label={date} aria-describedby={`${metadataId}-${date}`} aria-pressed={draft === date} aria-current={date === today ? 'date' : undefined}
+          disabled={!allowed(date)} onClick={() => setDraft(date)}><span className="zc-sr-only" id={`${metadataId}-${date}`}>{[preferences.showLunar ? info.lunarFull : '', preferences.showFestivals ? [...info.festivals, info.term].filter(Boolean).join('，') : '', preferences.showHolidays && info.holiday ? info.holiday.off ? '放假' : '调休上班' : ''].filter(Boolean).join('，')}</span><span className="zc-calendar-date-number">{index + 1}{preferences.showHolidays && info.holiday && <small className="zc-calendar-holiday">{info.holiday.off ? '休' : '班'}</small>}</span>{sublabel && <span className="zc-calendar-sublabel">{sublabel}</span>}</button>;
       })}
     </div> : <div className="zc-datetime-periods">
       {Array.from({ length: 12 }, (_, index) => view === 'year' ? firstYear + index : index + 1).map((item) => <button type="button" key={item}

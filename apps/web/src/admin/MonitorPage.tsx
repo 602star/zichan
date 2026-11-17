@@ -1,10 +1,12 @@
 import type { AdminClient } from './client.js';
 import { MetricLineChart } from './chart.js';
 import { MetricCatalog } from './MetricCatalog.js';
+import { TimeRangeSelect } from '../ui/TimeRangeSelect.js';
 import type { Metrics, Overview, SystemMetrics, SystemMonitorReading } from './types.js';
 import { Badge, Button, DataTable, Loading, Notice, PageHeader, Panel, Stat, bytes, usePolling, useResource, when } from './ui.js';
 
 const RANGES = ['1h','24h','7d','30d','90d'] as const;
+const RANGE_LABELS = ['近 1 小时', '近 24 小时', '近 7 天', '近 30 天', '近 90 天'];
 export function MonitorPage({ client, query, navigate }: { client: AdminClient; role: string; query: URLSearchParams; navigate: (path: string) => void }) {
   const range = RANGES.find((r) => r === query.get('range')) ?? '24h';
   const view = query.get('view') === 'system' ? 'system' : query.get('view') === 'metrics' ? 'metrics' : 'application';
@@ -22,7 +24,7 @@ export function MonitorPage({ client, query, navigate }: { client: AdminClient; 
   const bucketMs = range === '1h' ? 60000 : range === '30d' || range === '90d' ? 86400000 : 3600000;
   const ms = (n: number | null | undefined) => n == null ? '未采集' : `${n.toFixed(1)} ms`;
   return <>
-    <PageHeader title="运行监控" description="应用自身与当前可见系统资源。请求、访问和数据库分析各自使用独立主入口。" actions={<><div className="zc-admin-view-switch" aria-label="历史趋势时间范围">{RANGES.map((r) => <Button key={r} aria-pressed={range === r} onClick={() => update({ range: r })}>{r}</Button>)}</div><Button onClick={refresh}>刷新</Button></>} />
+    <PageHeader title="运行监控" description="应用自身与当前可见系统资源。请求、访问和数据库分析各自使用独立主入口。" actions={<><TimeRangeSelect label="历史趋势时间范围" value={range} onChange={(value) => update({ range: value })} options={RANGES.map((value, index) => ({ value, label: RANGE_LABELS[index]! }))} /><Button onClick={refresh}>刷新</Button></>} />
     <nav className="zc-admin-workspace-nav" aria-label="运行监控视图">{[['application','应用自身','Node 进程与事件循环'],['system','系统资源','主机或容器可见范围'],['metrics','指标目录','按指标查趋势与导出']].map(([key,label,note]) => <button key={key} aria-current={view === key ? 'page' : undefined} onClick={() => update({ view: key! })}><strong>{label}</strong><span>{note}</span></button>)}</nav>
     <Loading loading={overview.loading || system.loading || metrics.loading || history.loading} error={overview.error || system.error || metrics.error || history.error} stale={Boolean(stale)} />
     <div className="zc-admin-ops-provenance"><Badge tone={stale ? 'warn' : 'muted'}>{stale ? '数据过期' : overview.data ? '采样已更新' : '未采集'}</Badge><span>来源：{view === 'application' ? 'Node process API' : reading?.scope === 'container' ? 'cgroup / 当前命名空间' : '操作系统'}</span><span>采样：{when(overview.data?.snapshot.sampledAt)}</span><span>时区：{Intl.DateTimeFormat().resolvedOptions().timeZone} · 近 {range}</span></div>

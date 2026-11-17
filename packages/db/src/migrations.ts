@@ -3,8 +3,8 @@ import type { SqlDriver } from './driver.js';
 import { MIGRATIONS_TABLE_SQL, schemaStatements } from './schema.js';
 import { TABLES, allCols, type TableSpec } from './tables.js';
 
-export const CURRENT_SCHEMA_VERSION = 129;
-export const CURRENT_SCHEMA_NAME = 'current_schema_2026_11_16_operating_cost';
+export const CURRENT_SCHEMA_VERSION = 130;
+export const CURRENT_SCHEMA_NAME = 'current_schema_2026_11_16_calendar';
 const FIXED_WORKSPACE_COLUMNS: Record<string, Record<string, string>> = {
   settings: { fixed_asset_workspace_json: 'TEXT' },
   fixed_assets: { purchase_date_precision: 'TEXT', storage_location_id: 'TEXT', location_moves_json: 'TEXT', return_deadline: 'TEXT',
@@ -115,6 +115,10 @@ function difference(left: Iterable<string>, right: Set<string>): string[] {
 
 export async function assertCurrentSchema(driver: SqlDriver, previousVersion = CURRENT_SCHEMA_VERSION): Promise<void> {
   const expected = expectedSchema();
+  if (previousVersion < 130) {
+    expected.delete('calendar_entries'); expected.delete('calendar_occurrence_states');
+    expected.set('settings', expected.get('settings')!.filter(column => column !== 'calendar_preferences_json'));
+  }
   if (previousVersion === 127) for (const [table, columns] of Object.entries(FIXED_WORKSPACE_COLUMNS)) {
     expected.set(table, expected.get(table)!.filter((column) => !(column in columns)));
   }
@@ -146,6 +150,7 @@ export async function assertCurrentSchema(driver: SqlDriver, previousVersion = C
   }
 
   for (const spec of Object.values(TABLES) as TableSpec[]) {
+    if (!expected.has(spec.name)) continue;
     if (!spec.indexes?.length) continue;
     const actualIndexes = await driver.all<{ name: string; unique: number; partial: number }>(
       `PRAGMA index_list(${spec.name})`,
@@ -221,7 +226,8 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
   }
 
   if (applied.length === 1 && ((applied[0]?.version === 127 && applied[0].name === 'current_schema_2026_10_05_consumable_merchant')
-    || (applied[0]?.version === 128 && applied[0].name === 'current_schema_2026_11_16_fixed_workspace'))) {
+    || (applied[0]?.version === 128 && applied[0].name === 'current_schema_2026_11_16_fixed_workspace')
+    || (applied[0]?.version === 129 && applied[0].name === 'current_schema_2026_11_16_operating_cost'))) {
     // The immediately preceding schema gains nullable metadata only. Verify it
     // before upgrading; never reset records or accept unrelated schema drift.
     await driver.transaction(async (transaction) => {
@@ -229,7 +235,9 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
       if (applied[0]!.version === 127) for (const [table, columns] of Object.entries(FIXED_WORKSPACE_COLUMNS)) for (const [column, type] of Object.entries(columns)) {
         await transaction.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
       }
-      await transaction.exec('ALTER TABLE fixed_asset_events ADD COLUMN operating_cost_json TEXT');
+      if (applied[0]!.version < 129) await transaction.exec('ALTER TABLE fixed_asset_events ADD COLUMN operating_cost_json TEXT');
+      await transaction.exec('ALTER TABLE settings ADD COLUMN calendar_preferences_json TEXT');
+      for (const statement of schemaStatements()) await transaction.exec(statement);
       await assertCurrentSchema(transaction);
       await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?', [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);
     });

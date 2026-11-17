@@ -1,5 +1,6 @@
 import { duplicateMasterData, DuplicateMasterDataError } from './master-data-identity.js';
 import {
+  assertCalendarEntry, parseCalendarPreferences, type CalendarEntry,
   D, isValidEntityIcon, assertCostBasisOpening, assertCostQuoteSnapshot, transactionCostFingerprint,
   parseFixedWorkspace, fixedLocationMoves, parseFixedOperatingCost, round,
   isLegacyExternalAccount, accountBalanceTiming, accountTransactionPostings,
@@ -881,6 +882,18 @@ async function validateReferenceEntity(
         || row['chainIds'].some((id) => typeof id !== 'string' || !id)) fail('连续转换需要不重复的有序子记录', 'chainIds');
       if (row['recordState'] !== undefined && row['recordState'] !== 'active' && row['recordState'] !== 'voided') fail('连续转换状态无效', 'recordState');
       break;
+    case 'calendar_entry':
+      try { assertCalendarEntry(row as unknown as CalendarEntry); } catch (error) { fail(error instanceof Error ? error.message : '日历事项无效'); }
+      break;
+    case 'calendar_occurrence_state': {
+      if (!isValidDay(String(row['occurrenceDate'] ?? '')) || !['completed', 'skipped', 'open'].includes(String(row['status']))) fail('日历事项处理状态无效');
+      const entry = await getEntity<CalendarEntry>(driver, TABLES.calendarEntries, String(row['entryId'] ?? ''));
+      if (!entry) fail('日历事项不存在', 'entryId');
+      // Keep historical states after a series changes its anchor or recurrence.
+      // Interactive commands validate the current occurrence before writing.
+      if (row['snoozedUntil'] && !Number.isFinite(Date.parse(String(row['snoozedUntil'])))) fail('稍后提醒时间无效');
+      break;
+    }
     case 'setting':
       for (const field of ['expenseDefaultAccountId', 'incomeDefaultAccountId'] as const) {
         if (!row[field]) continue;
@@ -888,6 +901,7 @@ async function validateReferenceEntity(
         if (!account || account.isDeleted || (!allowInactiveReferences && (account.isActive === false || account.archivedAt)) || isLegacyExternalAccount(account)) fail('请选择启用的默认账户', field);
       }
       if (row['fixedAssetWorkspaceJson']) parseFixedWorkspace(String(row['fixedAssetWorkspaceJson']));
+      if (row['calendarPreferencesJson']) parseCalendarPreferences(String(row['calendarPreferencesJson']));
       await activeAsset(driver, String(row['baseCurrencyAssetId'] ?? ''), 'baseCurrencyAssetId', allowInactiveReferences);
       for (const field of ['transactionDefaultAssetId', 'investmentCostAssetId', 'fixedAssetDefaultCurrencyAssetId', 'gameDefaultSettlementAssetId']) {
         if (row[field]) await activeAsset(driver, String(row[field]), field, allowInactiveReferences);
@@ -1574,6 +1588,8 @@ export function syncAggregateApplyPriority(type: string, op: 'put' | 'delete'): 
     transaction_template: 25,
     budget_category: 25,
     scheduled_transaction: 25,
+    calendar_entry: 26,
+    calendar_occurrence_state: 27,
     attachment: 40,
   };
   const priority = order[type] ?? 30;

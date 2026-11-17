@@ -1,45 +1,50 @@
-import { addMonths, localToday } from '@zichan/core';
+import { addMonths, calendarDayInfo, localToday } from '@zichan/core';
 import { useId, useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { DialogShell } from './DialogShell.js';
+import './calendar-date-picker.css';
+import { useCalendarDisplay } from '../calendar-display.js';
 
 type View = 'year' | 'month' | 'day';
 
 const pad = (value: number) => String(value).padStart(2, '0');
 
 /** Compact date picker using the same year → month → day navigation as the ledger timeline. */
-export function CalendarDatePicker({ value, onChange, label }: {
+export function CalendarDatePicker({ value, onChange, label, today = localToday(), required = false }: {
   value: string;
   onChange: (date: string) => void;
   label: string;
+  today?: string;
+  required?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<View>('day');
-  const [cursor, setCursor] = useState(value || localToday());
+  const [cursor, setCursor] = useState(value || today);
   const titleId = useId();
+  const preferences = useCalendarDisplay();
 
   const year = Number(cursor.slice(0, 4));
   const month = Number(cursor.slice(5, 7));
-  const select = (date: string) => { onChange(date); setCursor(date || localToday()); setOpen(false); };
+  const select = (date: string) => { onChange(date); setCursor(date || today); setOpen(false); };
   const move = (direction: -1 | 1) => {
     if (view === 'year') setCursor(`${year + direction * 12}-${pad(month)}-01`);
     else if (view === 'month') setCursor(`${year + direction}-${pad(month)}-01`);
     else setCursor(addMonths(`${cursor.slice(0, 7)}-01`, direction));
   };
   const monthStart = new Date(year, month - 1, 1);
-  const offset = (monthStart.getDay() + 6) % 7;
+  const offset = (monthStart.getDay() - preferences.firstDay + 7) % 7;
   const days = new Date(year, month, 0).getDate();
   const firstYear = Math.floor(year / 12) * 12;
 
-  return <div className="zc-calendar-picker">
+  return <span className="zc-calendar-picker">
     <button type="button" className="zc-calendar-trigger" aria-label={label} aria-haspopup="dialog" aria-expanded={open} onClick={() => {
-      setCursor(value || localToday()); setView('day'); setOpen((current) => !current);
+      setCursor(value || today); setView('day'); setOpen((current) => !current);
     }}>{value || '选择日期'} <CalendarDays size={18} aria-hidden="true" /></button>
     {open ? <DialogShell labelledBy={titleId} onDismiss={() => setOpen(false)}
       backdropClassName="zc-backdrop zc-calendar-backdrop" panelClassName="zc-calendar-popover"
       panelStyle={{ position: 'relative', top: 'auto', left: 'auto', transform: 'none', width: 'min(360px, 100%)' }}
       header={<div className="zc-modal-header"><h2 id={titleId}>{label}</h2><button type="button" className="zc-btn zc-btn--icon" aria-label="关闭日期选择" onClick={() => setOpen(false)}><X size={20} aria-hidden="true" /></button></div>}
-      footer={<div className="zc-calendar-actions"><button type="button" onClick={() => select(localToday())}>今天</button><button type="button" onClick={() => select('')}>清除日期</button></div>}
+      footer={<div className="zc-calendar-actions"><button type="button" onClick={() => select(today)}>今天</button>{!required && <button type="button" onClick={() => select('')}>清除日期</button>}</div>}
     >
       <div className="zc-calendar-nav">
         <button type="button" aria-label="上一页" onClick={() => move(-1)}><ChevronLeft size={20} aria-hidden="true" /></button>
@@ -59,14 +64,16 @@ export function CalendarDatePicker({ value, onChange, label }: {
           className={item === month ? 'selected' : ''} onClick={() => { setCursor(`${year}-${pad(item)}-01`); setView('day'); }}>{item} 月</button>)}
       </div> : null}
       {view === 'day' ? <div className="zc-calendar-grid zc-calendar-grid-day">
-        {['一', '二', '三', '四', '五', '六', '日'].map((item) => <span key={item} className="weekday">{item}</span>)}
+        {Array.from({ length: 7 }, (_, index) => ['日', '一', '二', '三', '四', '五', '六'][(index + preferences.firstDay) % 7]!).map((item) => <span key={item} className="weekday">{item}</span>)}
         {Array.from({ length: offset }, (_, index) => <span key={`empty-${index}`} />)}
         {Array.from({ length: days }, (_, index) => {
           const date = `${year}-${pad(month)}-${pad(index + 1)}`;
-          return <button key={date} type="button" aria-label={date} className={date === value ? 'selected' : date === localToday() ? 'today' : ''}
-            onClick={() => select(date)}>{index + 1}</button>;
+          const info = calendarDayInfo(date);
+          const sublabel = (preferences.showFestivals && (info.festivals[0] || info.term)) || (preferences.showLunar ? info.lunar : '');
+          return <button key={date} type="button" aria-label={date} aria-describedby={`${titleId}-${date}`} aria-pressed={date === value} aria-current={date === today ? 'date' : undefined} className={date === value ? 'selected' : date === today ? 'today' : ''}
+            onClick={() => select(date)}><span className="zc-sr-only" id={`${titleId}-${date}`}>{[preferences.showLunar ? info.lunarFull : '', preferences.showFestivals ? [...info.festivals, info.term].filter(Boolean).join('，') : '', preferences.showHolidays && info.holiday ? info.holiday.off ? '放假' : '调休上班' : ''].filter(Boolean).join('，')}</span><span className="zc-calendar-date-number">{index + 1}{preferences.showHolidays && info.holiday && <small className="zc-calendar-holiday" aria-label={info.holiday.off ? '放假' : '调休上班'}>{info.holiday.off ? '休' : '班'}</small>}</span>{sublabel && <span className="zc-calendar-sublabel">{sublabel}</span>}</button>;
         })}
       </div> : null}
     </DialogShell> : null}
-  </div>;
+  </span>;
 }

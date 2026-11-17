@@ -18,6 +18,9 @@ describe('current development schema baseline', () => {
       await runMigrations(driver, log);
       await driver.run("INSERT INTO fixed_assets (id, name, storage_location_id, is_deleted, version) VALUES ('kept', '净水器', 'kitchen', 0, 1)");
       await driver.exec('ALTER TABLE fixed_asset_events DROP COLUMN operating_cost_json');
+      await driver.exec('DROP TABLE calendar_occurrence_states');
+      await driver.exec('DROP TABLE calendar_entries');
+      await driver.exec('ALTER TABLE settings DROP COLUMN calendar_preferences_json');
       await driver.run("UPDATE schema_migrations SET version = 128, name = 'current_schema_2026_11_16_fixed_workspace'");
       expect(await runMigrations(driver, log)).toBe(1);
       expect(await driver.all('SELECT name, storage_location_id FROM fixed_assets')).toEqual([{ name: '净水器', storage_location_id: 'kitchen' }]);
@@ -30,6 +33,9 @@ describe('current development schema baseline', () => {
       await runMigrations(driver, log);
       await driver.run("INSERT INTO fixed_assets (id, name, is_deleted, version) VALUES ('kept', '保留的物品', 0, 1)");
       await driver.exec('ALTER TABLE settings DROP COLUMN fixed_asset_workspace_json');
+      await driver.exec('DROP TABLE calendar_occurrence_states');
+      await driver.exec('DROP TABLE calendar_entries');
+      await driver.exec('ALTER TABLE settings DROP COLUMN calendar_preferences_json');
       await driver.exec('ALTER TABLE fixed_asset_events DROP COLUMN operating_cost_json');
       for (const column of ['purchase_date_precision', 'storage_location_id', 'location_moves_json', 'return_deadline', 'price_protection_deadline', 'maintenance_due_date', 'maintenance_interval_days', 'reminder_days_before']) await driver.exec(`ALTER TABLE fixed_assets DROP COLUMN ${column}`);
       await driver.run("UPDATE schema_migrations SET version = 127, name = 'current_schema_2026_10_05_consumable_merchant'");

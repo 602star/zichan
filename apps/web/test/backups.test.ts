@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
-import { loginAccount, registerAccount, type LedgerBackup } from '@zichan/db';
+import { loginAccount, newCalendarEntry, registerAccount, type LedgerBackup } from '@zichan/db';
 import { openLedger } from '@zichan/db/node';
 import type { SyncServer } from '../../sync-server/src/server.js';
 import { createTestSyncServer as createSyncServer, OWNER_SETUP_TOKEN } from '../../sync-server/test/support/server-fixture.js';
@@ -120,6 +120,20 @@ describe('encrypted backup archives', () => {
     Reflect.deleteProperty(globalThis, 'localStorage');
     Reflect.deleteProperty(globalThis, 'sessionStorage');
     Reflect.deleteProperty(globalThis, 'window');
+  });
+
+  it('preserves calendar recurrence and occurrence state through an encrypted archive', async () => {
+    await initializeLedgerKey('ledger-calendar-backup', 'calendar-password');
+    const entry = { ...newCalendarEntry('2026-02-17', 'Asia/Shanghai'), title: '家人的农历生日', kind: 'birthday' as const,
+      calendar: 'lunar' as const, repeat: 'yearly' as const, lunarMonth: 1, lunarDay: 1, reminderMinutes: [1440, 0] };
+    const state = { id: 'calendar-state', createdAt: '', updatedAt: '', version: 1, isDeleted: false, entryId: entry.id,
+      occurrenceDate: '2026-02-17', status: 'completed' as const };
+    const original: BackupPayload = { ...payload, ledger: { ...emptyLedger, calendarEntries: [entry], calendarOccurrenceStates: [state] } };
+    const created = await createEncryptedBackupContainer(original, 'manual', 'calendar');
+    lockLedgerKey();
+    const opened = await parseEncryptedBackup(created.blob, 'calendar-password');
+    expect(opened.payload.ledger.calendarEntries).toEqual([entry]);
+    expect(opened.payload.ledger.calendarOccurrenceStates).toEqual([state]);
   });
 
   it('recovers a binary archive and passphrase without device-local key state', async () => {

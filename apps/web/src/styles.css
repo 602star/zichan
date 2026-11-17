@@ -3250,7 +3250,9 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .zc-date-boundary .zc-input {
+  .zc-date-boundary .zc-input,
+  .zc-date-boundary .zc-calendar-picker,
+  .zc-date-boundary .zc-calendar-trigger {
     width: 100% !important;
     min-width: 0;
   }
@@ -4482,6 +4484,8 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
 /* Workbench sheets share one frame; internal rows use ink rules only. */
 .zc-dashboard-overview-band { display: grid; grid-template-columns: minmax(0, 1.5fr) repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--border); }
 .zc-dashboard-overview-band > .zc-card-metric { padding: var(--sp-4); }
+.zc-dashboard-overview.is-tight .zc-card-head { margin-bottom: var(--sp-3); }
+.zc-dashboard-overview.is-tight .zc-dashboard-overview-band > .zc-card-metric { padding-block: var(--sp-3); }
 .zc-dashboard-overview-band > .zc-card-metric + .zc-card-metric { border-left: 1px solid var(--border); }
 .zc-dashboard-overview-band > :first-child { padding-left: 0; }
 .zc-dashboard-overview-band .zc-card-metric-value { font-size: var(--fs-heading); }

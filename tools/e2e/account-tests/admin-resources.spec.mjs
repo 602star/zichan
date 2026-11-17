@@ -69,7 +69,7 @@ test('keeps application and system monitoring distinct from database maintenance
     await expect(page.getByRole('button', { name: '扫描表占用' })).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.getByLabel('历史趋势时间范围').getByRole('button', { name: '1h', exact: true }).click();
+    await page.getByRole('combobox', { name: '历史趋势时间范围' }).selectOption('1h');
     await expect(page).toHaveURL(/range=1h/);
   } finally { await f.close(); }
 });

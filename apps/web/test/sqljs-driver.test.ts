@@ -40,6 +40,9 @@ describe('SqlJsDriver', () => {
     await previous.run("INSERT INTO fixed_assets (id, name, storage_location_id, is_deleted, version) VALUES ('kept', '净水器', 'kitchen', 0, 1)");
     await previous.run("INSERT INTO fixed_asset_events (id, fixed_asset_id, type, date, amount_base, is_deleted, version) VALUES ('purchase', 'kept', 'purchase', '2026-01-01', '100', 0, 1)");
     await previous.exec('ALTER TABLE fixed_asset_events DROP COLUMN operating_cost_json');
+    await previous.exec('DROP TABLE calendar_occurrence_states');
+    await previous.exec('DROP TABLE calendar_entries');
+    await previous.exec('ALTER TABLE settings DROP COLUMN calendar_preferences_json');
     await previous.run("UPDATE schema_migrations SET version = 128, name = 'current_schema_2026_11_16_fixed_workspace'");
     await previous.close();
     const driver = await SqlJsDriver.open(bytes);
@@ -56,6 +59,9 @@ describe('SqlJsDriver', () => {
     await runMigrations(previous, log);
     await previous.run("INSERT INTO fixed_assets (id, name, is_deleted, version) VALUES ('kept', '厨房咖啡机', 0, 1)");
     await previous.exec('ALTER TABLE settings DROP COLUMN fixed_asset_workspace_json');
+    await previous.exec('DROP TABLE calendar_occurrence_states');
+    await previous.exec('DROP TABLE calendar_entries');
+    await previous.exec('ALTER TABLE settings DROP COLUMN calendar_preferences_json');
     await previous.exec('ALTER TABLE fixed_asset_events DROP COLUMN operating_cost_json');
     for (const column of ['purchase_date_precision', 'storage_location_id', 'location_moves_json', 'return_deadline', 'price_protection_deadline', 'maintenance_due_date', 'maintenance_interval_days', 'reminder_days_before']) await previous.exec(`ALTER TABLE fixed_assets DROP COLUMN ${column}`);
     await previous.run("UPDATE schema_migrations SET version = 127, name = 'current_schema_2026_10_05_consumable_merchant'");

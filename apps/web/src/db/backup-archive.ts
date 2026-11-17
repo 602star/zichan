@@ -145,6 +145,8 @@ const LEDGER_SECTIONS = [
   'scheduledExecutions',
   'reconciliationSessions',
   'reconciliationItems',
+  'calendarEntries',
+  'calendarOccurrenceStates',
 ] as const satisfies readonly LedgerSection[];
 
 interface BackupManifestRecord {
@@ -252,7 +254,8 @@ function manifestFor(payload: BackupPayload): BackupManifestRecord {
     ledgerVersion: payload.ledger.version,
     exportedAt: payload.ledger.exportedAt,
     chainCount: payload.ledger.chains.length,
-    sections: LEDGER_SECTIONS.filter((name) => payload.ledger.version === 8 || (name !== 'costBasisOpenings' && name !== 'conversionOperations')).map((name) => ({
+    sections: LEDGER_SECTIONS.filter((name) => (payload.ledger.version === 8 || (name !== 'costBasisOpenings' && name !== 'conversionOperations'))
+      && (!['calendarEntries', 'calendarOccurrenceStates'].includes(name) || payload.ledger[name] !== undefined)).map((name) => ({
       name,
       count: (payload.ledger[name] as unknown[] | undefined)?.length ?? 0,
     })),
@@ -604,11 +607,13 @@ function validManifest(value: unknown, archive: BackupArchiveHeader): value is B
   if (row.record !== 'manifest' || row.payloadVersion !== 2 || row.backupKind !== archive.kind
     || (row.ledgerVersion !== 7 && row.ledgerVersion !== 8) || typeof row.exportedAt !== 'string'
     || !Number.isSafeInteger(row.chainCount) || (row.chainCount ?? -1) < 0
-    || !Array.isArray(row.sections) || row.sections.length !== LEDGER_SECTIONS.length - (row.ledgerVersion === 7 ? 2 : 0)) return false;
-  const expected = new Set<string>(LEDGER_SECTIONS.filter((name) => row.ledgerVersion === 8 || (name !== 'costBasisOpenings' && name !== 'conversionOperations')));
+    || !Array.isArray(row.sections)) return false;
+  const optional = new Set<string>(['calendarEntries', 'calendarOccurrenceStates']);
+  const expected = new Set<string>(LEDGER_SECTIONS.filter((name) => !optional.has(name) && (row.ledgerVersion === 8 || (name !== 'costBasisOpenings' && name !== 'conversionOperations'))));
   if (row.sections.some((section) =>
-    !section || !expected.delete(section.name)
+    !section || !(expected.delete(section.name) || optional.delete(section.name))
     || !Number.isSafeInteger(section.count) || section.count < 0)) return false;
+  if (expected.size) return false;
   if (archive.kind === 'portable') return row.deviceState == null;
   return row.deviceState?.version === 1
     && Array.isArray(row.deviceState.tables)

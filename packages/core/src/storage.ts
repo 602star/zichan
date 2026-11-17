@@ -149,6 +149,8 @@ export interface SyncConflictResolution {
 
 /** The full ledger store: a typed collection per entity + a few relational helpers. */
 export interface LedgerStore {
+  readonly calendarEntries: Collection<import('./calendar.js').CalendarEntry>;
+  readonly calendarOccurrenceStates: Collection<import('./calendar.js').CalendarOccurrenceState>;
   readonly conversionOperations: Collection<import('./types.js').ConversionOperation>;
   readonly costBasisOpenings: Collection<import('./asset-cost.js').CostBasisOpening>;
   readonly assets: Collection<Asset>;

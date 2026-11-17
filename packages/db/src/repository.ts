@@ -676,6 +676,7 @@ const EVENT_SPECS: Record<string, TableSpec> = {
   refund_allocation: TABLES.refundAllocations,
   budget_category: TABLES.budgetCategories, scheduled_transaction: TABLES.scheduledTransactions,
   scheduled_execution: TABLES.scheduledExecutions,
+  calendar_entry: TABLES.calendarEntries, calendar_occurrence_state: TABLES.calendarOccurrenceStates,
 };
 
 const SYNC_DERIVED_TYPES = new Set(['lot', 'lot_consumption']);
@@ -1824,6 +1825,8 @@ export class SqlLedgerStore implements LedgerStore {
   readonly scheduledExecutions: Collection<import('@zichan/core').ScheduledExecution>;
   readonly reconciliationSessions: Collection<import('@zichan/core').ReconciliationSession>;
   readonly reconciliationItems: Collection<import('@zichan/core').ReconciliationItem>;
+  readonly calendarEntries: Collection<import('@zichan/core').CalendarEntry>;
+  readonly calendarOccurrenceStates: Collection<import('@zichan/core').CalendarOccurrenceState>;
   readonly attachmentState: AttachmentStateRepository;
 
   constructor(
@@ -1898,6 +1901,8 @@ export class SqlLedgerStore implements LedgerStore {
     this.budgetCategories = C(TABLES.budgetCategories, 'budget_category');
     this.scheduledTransactions = C(TABLES.scheduledTransactions, 'scheduled_transaction');
     this.scheduledExecutions = C(TABLES.scheduledExecutions, 'scheduled_execution');
+    this.calendarEntries = C(TABLES.calendarEntries, 'calendar_entry');
+    this.calendarOccurrenceStates = C(TABLES.calendarOccurrenceStates, 'calendar_occurrence_state');
     this.reconciliationSessions = C(TABLES.reconciliationSessions, 'reconciliation_session');
     this.reconciliationItems = C(TABLES.reconciliationItems, 'reconciliation_item');
     this.attachmentState = new AttachmentStateRepository(driver);
@@ -3618,6 +3623,7 @@ export class SqlLedgerStore implements LedgerStore {
       transaction_template: this.transactionTemplates, transaction_saved_view: this.transactionSavedViews,
       budget_category: this.budgetCategories, scheduled_transaction: this.scheduledTransactions,
       scheduled_execution: this.scheduledExecutions,
+      calendar_entry: this.calendarEntries, calendar_occurrence_state: this.calendarOccurrenceStates,
       refund_allocation: this.refundAllocations,
     };
     return (rows[type] as Collection<BaseEntity> | undefined) ?? null;

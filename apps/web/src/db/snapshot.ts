@@ -47,6 +47,7 @@ import { useStore } from './store.js';
 export type SnapshotScope =
   | 'all'
   | 'shell'
+  | 'calendar'
   | 'dashboard'
   | 'transactions'
   | 'convert'
@@ -60,6 +61,8 @@ export type SnapshotScope =
 
 /** Page-specific read model. Fields outside the requested scope are empty. */
 export interface Snapshot {
+  calendarEntries?: import('@zichan/core').CalendarEntry[];
+  calendarOccurrenceStates?: import('@zichan/core').CalendarOccurrenceState[];
   costState?: import('@zichan/core').AssetCostState;
   assets: Asset[];
   accounts: Account[];
@@ -110,16 +113,17 @@ const ALL_FIELDS: SnapshotField[] = [
   'fixedCashflowLinks', 'fixedUsageMetrics', 'fixedUsageLogs', 'fixedConsumables', 'fixedGoals', 'attachments',
   'categories', 'transactionTags', 'transactionLocations', 'transactionTemplates', 'transactionSavedViews',
   'payees', 'transactions', 'transactionSplits', 'refundAllocations', 'budgetCategories', 'scheduledTransactions',
-  'scheduledExecutions', 'reconciliationSessions', 'reconciliationItems',
+  'scheduledExecutions', 'reconciliationSessions', 'reconciliationItems', 'calendarEntries', 'calendarOccurrenceStates',
 ];
 
 const SCOPE_FIELDS: Record<Exclude<SnapshotScope, 'all'>, SnapshotField[]> = {
   shell: ['assets', 'settings'],
+  calendar: ['settings', 'calendarEntries', 'calendarOccurrenceStates'],
   dashboard: [
     'assets', 'accounts', 'settings', 'chains', 'lots', 'priceMarks', 'dcaPlans', 'dcaExecutions',
     'games', 'gameAccounts', 'seasons', 'gameRecords', 'gameCashflowLinks', 'fixedAssets', 'fixedAssetCategories', 'fixedEvents',
     'fixedCashflowLinks', 'fixedUsageMetrics', 'fixedUsageLogs', 'fixedConsumables', 'fixedGoals',
-    'categories', 'scheduledTransactions', 'scheduledExecutions',
+    'categories', 'scheduledTransactions', 'scheduledExecutions', 'calendarEntries', 'calendarOccurrenceStates',
   ],
   transactions: [
     'assets', 'accounts', 'settings', 'priceMarks', 'categories', 'transactionTags',
@@ -161,6 +165,7 @@ const SCOPE_FIELDS: Record<Exclude<SnapshotScope, 'all'>, SnapshotField[]> = {
 };
 
 const FIELD_ENTITY_TYPES: Record<SnapshotField, string[]> = {
+  calendarEntries: ['calendar_entry'], calendarOccurrenceStates: ['calendar_occurrence_state'],
   assets: ['asset'],
   accounts: ['account'],
   settings: ['setting'],
@@ -245,7 +250,7 @@ export async function loadSnapshot(store: SqlLedgerStore, scope: SnapshotScope =
     fixedUsageMetrics, fixedUsageLogs, fixedConsumables, fixedGoals,
     attachments, categories, transactionTags, transactionLocations, transactionTemplates,
     transactionSavedViews, payees, transactions, transactionSplits, refundAllocations, budgetCategories, scheduledTransactions,
-    scheduledExecutions, reconciliationSessions, reconciliationItems,
+    scheduledExecutions, reconciliationSessions, reconciliationItems, calendarEntries, calendarOccurrenceStates,
   ] = await Promise.all([
     load('assets', store.assets, scope === 'manage' ? { includeDeleted: true } : {}),
     load('accounts', store.accounts),
@@ -283,6 +288,8 @@ export async function loadSnapshot(store: SqlLedgerStore, scope: SnapshotScope =
     load('scheduledExecutions', store.scheduledExecutions, { orderBy: 'occurrenceDate' }),
     load('reconciliationSessions', store.reconciliationSessions, { orderBy: 'statementDate', desc: true }),
     load('reconciliationItems', store.reconciliationItems, { orderBy: 'selectedAt' }),
+    load('calendarEntries', store.calendarEntries, { orderBy: 'startDate' }),
+    load('calendarOccurrenceStates', store.calendarOccurrenceStates, { orderBy: 'occurrenceDate' }),
   ]);
   const costState = ['all', 'convert', 'dashboard', 'reports', 'manage', 'transactions'].includes(scope) ? await readAssetCostState(store) : undefined;
   return {
@@ -298,7 +305,7 @@ export async function loadSnapshot(store: SqlLedgerStore, scope: SnapshotScope =
     fixedUsageMetrics, fixedUsageLogs, fixedConsumables, fixedGoals, attachments,
     categories, transactionTags, transactionLocations, transactionTemplates, transactionSavedViews,
     payees, transactions, transactionSplits, refundAllocations, budgetCategories, scheduledTransactions,
-    scheduledExecutions, reconciliationSessions, reconciliationItems,
+    scheduledExecutions, reconciliationSessions, reconciliationItems, calendarEntries, calendarOccurrenceStates,
     rowCounts,
   };
 }

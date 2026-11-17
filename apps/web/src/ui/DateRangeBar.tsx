@@ -8,7 +8,8 @@ import {
 } from '@zichan/core';
 import type { CSSProperties } from 'react';
 import { linkDanger } from './styles.js';
-import { DateTimeInput } from './DateTimeInput.js';
+import { CalendarDatePicker } from './CalendarDatePicker.js';
+import { TimeRangeSelect } from './TimeRangeSelect.js';
 
 export type TimelineViewMode = 'list' | 'year' | 'month' | 'day';
 
@@ -88,16 +89,14 @@ export function DateRangeBar(props: {
           ))}
         </div>
       )}
-      <select aria-label="快捷时间范围" className="zc-select zc-date-preset" value={value.preset} onChange={(event) => changePreset(event.target.value as DateRangePreset)} style={{ width: 'var(--date-preset-w, 128px)' }}>
-        {DATE_PRESETS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-      </select>
+      <TimeRangeSelect className="zc-date-preset" value={value.preset} onChange={(preset) => changePreset(preset as DateRangePreset)} options={DATE_PRESETS} />
       <label className="zc-date-boundary" style={dateLabel}>
         <span>从</span>
-        <DateTimeInput aria-label="开始日期" className="zc-input" type="date" value={value.from ?? ''} onChange={changeFrom} style={{ width: 146 }} />
+        <CalendarDatePicker label="开始日期" value={value.from ?? ''} onChange={changeFrom} today={anchor} />
       </label>
       <label className="zc-date-boundary" style={dateLabel}>
         <span>至</span>
-        <DateTimeInput aria-label="结束日期" className="zc-input" type="date" value={value.to ?? ''} onChange={changeTo} style={{ width: 146 }} />
+        <CalendarDatePicker label="结束日期" value={value.to ?? ''} onChange={changeTo} today={anchor} />
       </label>
       {(value.from || value.to) && <button type="button" onClick={() => onChange(dateRangeValue('all', anchor))} style={clearButton}>清除</button>}
     </div>

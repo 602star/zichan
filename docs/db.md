@@ -58,7 +58,7 @@ Indexes cover the hot query columns (FKs + dates): `game_records.season_id`,
 ## 当前 Schema 基线
 
 [migrations.ts](../packages/db/src/migrations.ts) 当前开发基线为
-`current_schema_2026_11_16_operating_cost`（version 129）。物品元数据与使用费用提供范围明确的 127／128 → 129 增量升级：先验证已知旧结构，在同一事务中追加可空列并更新 marker，保留账本记录。Node SQLite 与真实 sql.js 的两种持久快照升级、数据保留及重复启动已有回归。其他旧 marker、旧表、缺列、
+`current_schema_2026_11_16_calendar`（version 130）。已知 127／128／129 提供保留记录的增量升级：先验证旧结构，在同一事务中补齐物品元数据、使用费用与日历结构并更新 marker。新增 `calendar_entries` 保存个人事项与重复规则，`calendar_occurrence_states` 以事项／原期次日期唯一保存完成、跳过与稍后提醒；`settings.calendar_preferences_json` 保存显示偏好。新实体参与同步聚合、审计及加密备份，旧备份可省略日历段。Node SQLite 与真实 sql.js 的旧持久快照、数据保留及重复启动已有回归。其他旧 marker、旧表、缺列、
 多列或额外表时会抛出 `SchemaResetRequiredError`，Web/桌面初始化错误页提供“重置本机开发数据”。Web 端另外会把未加密、
 无法解密或数据密钥不匹配的 IndexedDB 快照标记为需要显式重置，并同时提供重试和返回解锁入口。
 应用不会自动删除账本，也不会猜测性转换旧结构。若数据库已有业务表但缺少 `schema_migrations`，验证会在写入任何 marker
@@ -72,7 +72,7 @@ Indexes cover the hot query columns (FKs + dates): `game_records.season_id`,
 
 到 `1.0` 发布准备阶段，再冻结**当时最终确认的 schema** 作为首个长期兼容基线；正式编号迁移只承诺覆盖
 `1.0 → 后续版本`。届时再单独审批迁移事务、失败回滚、幂等、未来版本拒绝、跨 sql.js / Node SQLite /
-Tauri SQLite 验证和升级测试矩阵。本事项当前状态仍为“已记录、延期”；本次 127／128 → 129 是为保留现有物品记录而增加的范围明确、显式的可空元数据升级路径，不承诺任意开发版本的迁移，也不扩展为正式编号迁移框架。Tauri 真机升级仍需发布验收。
+Tauri SQLite 验证和升级测试矩阵。本事项当前状态仍为“已记录、延期”；本次 127／128／129 → 130 是为保留现有记录而增加的范围明确、显式的元数据与日历升级路径，不承诺任意开发版本的迁移，也不扩展为正式编号迁移框架。Tauri 真机升级仍需发布验收。
 
 每次启动都会逐表、逐列验证当前结构。默认收支分类与物品二级分类属于当前产品资料，由 seed 和
 幂等维护任务写入，不再借 schema migration 播种。便携备份接受完整的 `version=7` 或 `version=8` 载荷，

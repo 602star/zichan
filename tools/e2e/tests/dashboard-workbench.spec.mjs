@@ -40,7 +40,11 @@ test('workbench sheets show real pending bills, card dates and recent entries wi
   await expect(repayment).toContainText('11-18');
   await expect(repayment).toContainText('应还金额请核对账单');
   await expect(repayment).not.toContainText('500');
-  await expect(page.getByRole('region', { name: '资产配置', exact: true })).toContainText('-500.00 CNY');
+  const calendar = page.getByRole('region', { name: '日历', exact: true });
+  await expect(calendar.getByRole('button', { name: /^2026-11-17，/ })).toContainText('房租');
+  await expect(calendar.getByRole('button', { name: /^2026-11-18，/ })).toContainText('生活信用卡');
+  // The existing -500 balance also includes the 35 expense just recorded above.
+  await expect(page.getByRole('region', { name: '资产配置', exact: true })).toContainText('-535.00 CNY');
   await expect(page.getByRole('region', { name: '资产配置', exact: true })).toContainText('含负余额，仅展示净额');
   await expect(recent).toHaveClass(/zc-card/);
   await expect(recent.getByRole('button', { name: '网络月费', exact: true })).toBeVisible();
@@ -57,6 +61,7 @@ test('workbench sheets show real pending bills, card dates and recent entries wi
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(repayment).toContainText('3 天后');
   await page.getByLabel('快捷时间范围', { exact: true }).selectOption('last_month');
+  await expect(calendar.locator('.zc-home-calendar-period')).toContainText('2026 年 11 月');
   await expect(repayment).toContainText('11-18');
   await expect(recent).toContainText('所选期间没有流水');
   await page.getByLabel('快捷时间范围', { exact: true }).selectOption('this_month');

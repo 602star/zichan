@@ -22,6 +22,7 @@ import { navigateTo } from '../screen-target.js';
 import { useMobileHomeFocus } from '../mobile-preferences.js';
 import { DashboardAgenda } from '../ui/DashboardAgenda.js';
 import { DashboardRecent } from '../ui/DashboardRecent.js';
+import { HomeCalendar } from '../ui/HomeCalendar.js';
 
 function fmtDate(d: string) {
   return d.slice(5); // MM-DD
@@ -113,27 +114,28 @@ export function Dashboard() {
 
   return (
     <div className="zc-desktop-workbench" style={compactView ? { display: 'flex', flexDirection: 'column', gap: 'var(--sp-5)' } : undefined}>
-      <DateRangeBar value={dateRange} onChange={setDateRange} />
+      <DateRangeBar value={dateRange} onChange={setDateRange} collapseDatesOnMobile />
       {snap && <LedgerCutoffNotice snap={snap} />}
       {vm.missingRateAssetCodes.length > 0 && (
         <CardAlert>
           缺少 {vm.missingRateAssetCodes.join('、')} → {vm.reportCurrencyCode} 的价格标记；下方相关指标明确显示为"已知部分"，不会把缺价资产按 0 计算。请在"数据管理 → 价格标记"补录。
         </CardAlert>
       )}
-      <Card className="zc-dashboard-overview" title="账本概况" note={`账本日 ${vm.asOf} · 折算 ${vm.reportCurrencyCode}`}
+      <Card className="zc-dashboard-overview" variant="tight" title="账本概况" note={compactView ? `${vm.asOf} · ${vm.reportCurrencyCode}` : `账本日 ${vm.asOf} · 折算 ${vm.reportCurrencyCode}`}
         action={compactView ? undefined : <button type="button" className="zc-btn zc-btn--sm" onClick={() => navigateTo({ screen: 'reports' })}>查看报表</button>}>
         <div className="zc-dashboard-overview-band">
           <CardMetric className="zc-dashboard-primary" label={spendingFirst ? '所选期间支出' : partial('netWorth') ? '已估值净资产' : '净资产总值'}
             value={<span className="zc-hero-amount">{num(spendingFirst ? vm.txExpense : vm.netWorth, reportDecimals)}</span>}
-            note={<span className="zc-hero-asof">{spendingFirst ? partial('transactions') ? '缺价，显示已知部分' : '所选期间的日常支出' : '按账本日估值'}</span>}
+            note={!compactView || partial(spendingFirst ? 'transactions' : 'netWorth') ? <span className="zc-hero-asof">{spendingFirst ? partial('transactions') ? '缺价，显示已知部分' : '所选期间的日常支出' : '按账本日估值'}</span> : undefined}
             tone={spendingFirst ? 'negative' : 'default'} />
           <CardMetric label="期间收入" value={partialText('transactions', money(vm.txIncome))} tone="positive" note="转账不计入收入" />
-          {spendingFirst ? <CardMetric label={partial('netWorth') ? '已估值净资产' : '净资产总值'} value={num(vm.netWorth, reportDecimals)} note={`截至 ${vm.asOf}`} />
+          {spendingFirst ? <CardMetric label={partial('netWorth') ? '已估值净资产' : '净资产总值'} value={num(vm.netWorth, reportDecimals)} note={compactView ? undefined : `截至 ${vm.asOf}`} />
             : <CardMetric label="期间支出" value={partialText('transactions', money(vm.txExpense))} tone="negative" note="按所选统计期间汇总" />}
           <CardMetric label="期间结余" value={partialText('transactions', signedMoney(vm.txNet, undefined, reportDecimals))} tone={vm.txNet.isNegative() ? 'negative' : 'positive'} note="收入减去支出" />
         </div>
       </Card>
 
+      {snap && <HomeCalendar snap={snap} today={today} />}
       {spendingFirst ? <>{recentCard}{agendaCard}</> : <>{agendaCard}{recentCard}</>}
 
       {compactView && <button type="button" className="zc-dashboard-more-metrics-toggle zc-btn" aria-expanded={showAllMetrics} onClick={() => setShowAllMetrics((open) => !open)}>{showAllMetrics ? '收起完整指标' : '查看完整指标'}</button>}

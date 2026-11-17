@@ -168,6 +168,8 @@ const ENTITY_LABELS: Record<string, string> = {
   transaction_saved_view: '保存筛选',
   budget_category: '预算',
   scheduled_transaction: '周期流水',
+  calendar_entry: '日历事项',
+  calendar_occurrence_state: '日历处理状态',
   reconciliation_session: '对账记录',
   attachment: '附件',
 };

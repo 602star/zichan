@@ -1768,6 +1768,7 @@ function collectionForCompensation(store: SqlLedgerStore, entityType: string): C
     budget_category: store.budgetCategories,
     scheduled_transaction: store.scheduledTransactions,
     scheduled_execution: store.scheduledExecutions,
+    calendar_entry: store.calendarEntries, calendar_occurrence_state: store.calendarOccurrenceStates,
     transaction_template: store.transactionTemplates,
     transaction_saved_view: store.transactionSavedViews,
     reconciliation_session: store.reconciliationSessions,
@@ -3260,6 +3261,8 @@ export interface LedgerBackup {
   transactionSplits: TransactionSplit[];
   refundAllocations: RefundAllocation[];
   budgetCategories: BudgetCategory[];
+  calendarEntries?: import('@zichan/core').CalendarEntry[];
+  calendarOccurrenceStates?: import('@zichan/core').CalendarOccurrenceState[];
   scheduledTransactions: ScheduledTransaction[];
   scheduledExecutions: ScheduledExecution[];
   reconciliationSessions: ReconciliationSession[];
@@ -3323,6 +3326,8 @@ const ENTITY_ARRAYS: { key: keyof LedgerBackup; type: string }[] = [
   { key: 'transactionSplits', type: 'transaction_split' },
   { key: 'refundAllocations', type: 'refund_allocation' },
   { key: 'budgetCategories', type: 'budget_category' },
+  { key: 'calendarEntries', type: 'calendar_entry' },
+  { key: 'calendarOccurrenceStates', type: 'calendar_occurrence_state' },
   { key: 'scheduledTransactions', type: 'scheduled_transaction' },
   { key: 'scheduledExecutions', type: 'scheduled_execution' },
   { key: 'reconciliationSessions', type: 'reconciliation_session' },
@@ -3429,6 +3434,7 @@ export function preflightImport(data: unknown): BackupPreflight {
 
   const dataObj = obj as Partial<LedgerBackup>;
   for (const { key, type } of ENTITY_ARRAYS) {
+    if ((key === 'calendarEntries' || key === 'calendarOccurrenceStates') && dataObj[key] === undefined) continue;
     if ((key === 'costBasisOpenings' || key === 'conversionOperations') && dataObj.version === 7 && dataObj[key] === undefined) continue;
     if (!Array.isArray(dataObj[key])) pushIssue(issues, 'error', 'missing_array', `${String(key)} 必须是数组`, type);
   }
@@ -4166,7 +4172,7 @@ export async function exportLedger(store: SqlLedgerStore): Promise<LedgerBackup>
     fixedAssetUsageMetrics, fixedAssetUsageLogs, fixedAssetConsumables, fixedAssetGoals,
     attachments, categories, transactionTags, transactionLocations, transactionTemplates, transactionSavedViews,
     payees, transactions, transactionSplits, refundAllocations, budgetCategories, scheduledTransactions, scheduledExecutions,
-    reconciliationSessions, reconciliationItems,
+    reconciliationSessions, reconciliationItems, calendarEntries, calendarOccurrenceStates,
   ] = await Promise.all([
     store.assets.list(all), store.accounts.list(all), store.settings.list(all),
     store.lots.list(all), store.lotConsumptions.list(all), store.priceMarks.list(all),
@@ -4182,6 +4188,7 @@ export async function exportLedger(store: SqlLedgerStore): Promise<LedgerBackup>
     store.transactions.list(all), store.transactionSplits.list(all), store.refundAllocations.list(all), store.budgetCategories.list(all),
     store.scheduledTransactions.list(all), store.scheduledExecutions.list(all),
     store.reconciliationSessions.list(all), store.reconciliationItems.list(all),
+    store.calendarEntries.list(all), store.calendarOccurrenceStates.list(all),
   ]);
   const costV2 = conversionOperations.length > 0 || costBasisOpenings.length > 0 || chains.some(({ chain }) => chain.costQuotes?.length || chain.type === 'swap') || transactions.some((row) => row.costQuote);
   return {
@@ -4191,7 +4198,7 @@ export async function exportLedger(store: SqlLedgerStore): Promise<LedgerBackup>
     games, gameAccounts, gameSeasons, gameRecords, gameCashflowLinks, fixedAssets, fixedAssetCategories, fixedAssetEvents, fixedAssetCashflowLinks,
     fixedAssetUsageMetrics, fixedAssetUsageLogs, fixedAssetConsumables, fixedAssetGoals, attachments,
     categories, transactionTags, transactionLocations, transactionTemplates, transactionSavedViews, payees, transactions, transactionSplits, refundAllocations, budgetCategories,
-    scheduledTransactions, scheduledExecutions, reconciliationSessions, reconciliationItems,
+    scheduledTransactions, scheduledExecutions, reconciliationSessions, reconciliationItems, calendarEntries, calendarOccurrenceStates,
   };
 }
 
@@ -5110,6 +5117,8 @@ export async function importLedger(
       }
     });
     await putAll(store.budgetCategories, data.budgetCategories);
+    await putAll(store.calendarEntries, data.calendarEntries ?? []);
+    await putAll(store.calendarOccurrenceStates, data.calendarOccurrenceStates ?? []);
     await putAll(store.scheduledTransactions, data.scheduledTransactions);
     await putAll(store.scheduledExecutions, data.scheduledExecutions);
     const reconciliationKeys = data.reconciliationSessions.map((row) => `reconciliation:${row.id}`);
@@ -5173,6 +5182,8 @@ export async function restoreLedger(
       { key: 'fixedAssetCashflowLinks', type: 'fixed_asset_cashflow_link', storeKey: 'fixedAssetCashflowLinks', coll: store.fixedAssetCashflowLinks },
       { key: 'transactionSplits', type: 'transaction_split', storeKey: 'transactionSplits', coll: store.transactionSplits },
       { key: 'refundAllocations', type: 'refund_allocation', storeKey: 'refundAllocations', coll: store.refundAllocations },
+      { key: 'calendarOccurrenceStates', type: 'calendar_occurrence_state', storeKey: 'calendarOccurrenceStates', coll: store.calendarOccurrenceStates },
+      { key: 'calendarEntries', type: 'calendar_entry', storeKey: 'calendarEntries', coll: store.calendarEntries },
       { key: 'scheduledExecutions', type: 'scheduled_execution', storeKey: 'scheduledExecutions', coll: store.scheduledExecutions },
       { key: 'transactions', type: 'transaction', storeKey: 'transactions', coll: store.transactions },
       { key: 'reconciliationSessions', type: 'reconciliation_session', storeKey: 'reconciliationSessions', coll: store.reconciliationSessions },

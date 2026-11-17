@@ -33,6 +33,7 @@ test.describe('mobile date/time and spending', () => {
         await form.getByLabel('日期', { exact: true }).click();
         const picker = page.getByRole('dialog', { name: '选择日期', exact: true });
         await fits(picker);
+        await expect(picker.locator('.zc-calendar-sublabel').first()).toBeVisible();
         if (date === 'yesterday') await picker.getByRole('button', { name: '昨天', exact: true }).click();
         else await picker.getByRole('button', { name: '2026-11-08', exact: true }).click();
         await picker.getByRole('button', { name: /^确定日期/ }).click();

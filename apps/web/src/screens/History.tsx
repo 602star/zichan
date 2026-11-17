@@ -48,6 +48,8 @@ const ENTITY_LABELS: Record<string, string> = {
   attachment: '附件',
   budget_category: '预算',
   scheduled_transaction: '定期交易',
+  calendar_entry: '日历事项',
+  calendar_occurrence_state: '日历处理状态',
   reconciliation_session: '对账',
   price_mark: '价格标记',
   lot: '持仓批次',
