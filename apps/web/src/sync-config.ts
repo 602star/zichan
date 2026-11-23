@@ -146,9 +146,6 @@ function currentSiteUrl(): string | undefined {
     const base = globalThis.document?.baseURI || globalThis.location?.href;
     if (!base) return undefined;
     const url = new URL('.', base);
-    // Older links used /app as the SPA entry; keep accepting those saved server
-    // addresses while the current site and API use the enclosing base path.
-    if (url.pathname.endsWith('/app/')) url.pathname = url.pathname.slice(0, -4);
     return normalizeSyncBaseUrl(url.toString());
   } catch {
     return undefined;

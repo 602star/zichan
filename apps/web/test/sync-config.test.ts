@@ -93,7 +93,7 @@ describe('sync configuration', () => {
     });
   });
 
-  it('derives the current server base path from root and legacy /app URLs', () => {
+  it('derives the current server base path from root and prefixed URLs', () => {
     Object.defineProperty(globalThis, 'document', {
       configurable: true,
       value: { baseURI: 'https://ledger.example.com/home-ledger/index.html' },
@@ -101,9 +101,9 @@ describe('sync configuration', () => {
     expect(syncAddressPresetUrl('current')).toBe('https://ledger.example.com/home-ledger');
     Object.defineProperty(globalThis, 'document', {
       configurable: true,
-      value: { baseURI: 'https://ledger.example.com/home-ledger/app/index.html' },
+      value: { baseURI: 'https://ledger.example.com/' },
     });
-    expect(syncAddressPresetUrl('current')).toBe('https://ledger.example.com/home-ledger');
+    expect(syncAddressPresetUrl('current')).toBe('https://ledger.example.com');
   });
 
   it('recognizes authentication failures independently of server wording', () => {

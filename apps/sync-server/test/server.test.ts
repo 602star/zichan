@@ -914,8 +914,11 @@ describe('sync-server endpoints', () => {
       expect(account.headers.get('content-type')).toContain('application/json');
       expect((await fetch(u + '/ledger/')).status).toBe(200);
       const oldEntry = await fetch(u + '/ledger/app/?federation=sample', { redirect: 'manual' });
-      expect(oldEntry.status).toBe(302);
-      expect(oldEntry.headers.get('location')).toBe('/ledger/?federation=sample');
+      expect(oldEntry.status).toBe(404);
+      expect(oldEntry.headers.get('location')).toBeNull();
+      expect((await fetch(u + '/ledger/app')).status).toBe(404);
+      expect((await fetch(u + '/ledger/app/index.html')).status).toBe(404);
+      expect((await fetch(u + '/app/')).status).toBe(404);
       expect((await fetch(u + '/ledger/app/assets/old.js')).status).toBe(404);
     } finally {
       await s.close();

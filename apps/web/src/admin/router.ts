@@ -2,8 +2,8 @@
  * Minimal path router for the management console.
  *
  * Every page has a real URL under `/<access-path>/admin/...`, so refresh, back/forward and shared
- * links keep the current view and its filters. The server already falls back to
- * `index.html` for extension-less paths, so no server change is needed and no routing
+ * links keep the current view and its filters. The server falls back to
+ * `index.html` for extension-less management paths, so no routing
  * dependency is added to the offline-capable Web bundle.
  */
 import { useEffect, useState } from 'react';

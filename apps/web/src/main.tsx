@@ -10,6 +10,7 @@ import { loadDesktopLedgerProfile } from './desktop-ledger-profile.js';
 import { saveFirstUseMode } from './browser-storage-policy.js';
 import { reportPageView } from './traffic-view.js';
 import { startStartupTiming } from './startup-timing.js';
+import { syncAddressPresetUrl } from './sync-config.js';
 
 const AdminApp = lazy(() => import('./admin/AdminApp.js').then((module) => ({ default: module.AdminApp })));
 const LedgerApp = lazy(() => import('./LedgerApp.js').then((module) => ({ default: module.LedgerApp })));
@@ -48,9 +49,7 @@ function ManagementEntry() {
 }
 function TrackedWebAccountApp() {
   useEffect(() => {
-    const path = window.location.pathname;
-    const prefix = /^(.*)\/app(?:\/|$)/.exec(path)?.[1] ?? (path === '/' ? '' : path.replace(/\/$/, ''));
-    reportPageView(`${window.location.origin}${prefix}`, '/app');
+    reportPageView(syncAddressPresetUrl('current'), '/app');
   }, []);
   return <WebAccountApp />;
 }

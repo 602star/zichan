@@ -6,70 +6,27 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
 
-test('legacy /app/ entry redirects to the root even with a cached root shell', async ({ page }) => {
-  const temporary = mkdtempSync(join(tmpdir(), 'zichan-root-worker-'));
-  const webDir = join(temporary, 'web');
-  cpSync(resolve(fileURLToPath(new URL('../../../', import.meta.url)), 'apps/web/dist'), webDir, { recursive: true });
-  const server = createSyncServer({ webDir, enableWeb: true });
+for (const basePath of ['', '/ledger']) test(`removed entry stays unavailable with an installed shell at ${basePath || '/'}`, async ({ page }) => {
+  const server = createSyncServer({ enableWeb: true, basePath,
+    webDir: resolve(fileURLToPath(new URL('../../../', import.meta.url)), 'apps/web/dist') });
   try {
     await server.ready;
-    await listenOnSafePort(server.server, '127.0.0.1');
-    const origin = `http://127.0.0.1:${server.server.address().port}`;
-    await page.goto(`${origin}/`);
-    await page.evaluate(async () => navigator.serviceWorker.ready);
-    await page.reload();
+    await listenOnSafePort(server.server);
+    const url = `http://127.0.0.1:${server.server.address().port}${basePath}/`;
+    await page.goto(url);
+    await page.evaluate(async () => { await navigator.serviceWorker.ready; });
     await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
-    await page.evaluate(async () => {
-      const current = (await caches.keys()).find((name) => name.startsWith('zichan-shell:/:'));
-      if (!current) throw new Error('root shell cache missing');
-      const oldShell = '<!doctype html><div id="root"></div><script type="module" src="./assets/legacy-only.js"></script>';
-      await (await caches.open(current)).put(new URL('/index.html', location.origin),
-        new Response(oldShell, { headers: { 'Content-Type': 'text/html' } }));
-      await (await caches.open('zichan-shell:/:legacy')).put(new URL('/assets/legacy-only.js', location.origin),
-        new Response("document.getElementById('root').textContent='old root works';",
-          { headers: { 'Content-Type': 'text/javascript' } }));
-    });
-    await page.reload();
-    await expect(page.locator('#root')).toHaveText('old root works');
-    await page.goto(`${origin}/app/`);
-    await expect(page).toHaveURL(`${origin}/`);
-    await expect(page.locator('#root')).toHaveText('old root works');
+    for (const entry of ['app', 'app/', 'app/index.html', 'app/assets/old.js']) {
+      const response = await page.goto(`${url}${entry}?from=bookmark`);
+      expect(response.status()).toBe(404);
+      await expect(page).toHaveURL(`${url}${entry}?from=bookmark`);
+      await expect(page.getByRole('heading', { name: '账号登录', exact: true })).toHaveCount(0);
+    }
+    await page.goto(url);
+    await expect(page.getByRole('heading', { name: '账号登录', exact: true })).toBeVisible();
   } finally {
+    await page.close();
     await closeTestSyncServer(server);
-    rmSync(temporary, { recursive: true, force: true });
-  }
-});
-
-test('opening the root unregisters an old /app/ worker', async ({ page }) => {
-  const temporary = mkdtempSync(join(tmpdir(), 'zichan-app-worker-'));
-  const webDir = join(temporary, 'web');
-  cpSync(resolve(fileURLToPath(new URL('../../../', import.meta.url)), 'apps/web/dist'), webDir, { recursive: true });
-  writeFileSync(join(webDir, 'legacy-sw.js'), `
-    self.addEventListener('install', (event) => event.waitUntil(self.skipWaiting()));
-    self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
-    self.addEventListener('fetch', (event) => {
-      if (event.request.mode === 'navigate') event.respondWith(new Response('<div id="root">old app</div>',
-        { headers: { 'Content-Type': 'text/html' } }));
-    });
-  `);
-  const server = createSyncServer({ webDir, enableWeb: true });
-  try {
-    await server.ready;
-    await listenOnSafePort(server.server, '127.0.0.1');
-    const origin = `http://127.0.0.1:${server.server.address().port}`;
-    await page.goto(`${origin}/`);
-    await page.evaluate(async () => { await navigator.serviceWorker.register('/legacy-sw.js', { scope: '/app/' }); });
-    await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.getRegistrations())
-      .some((registration) => registration.scope.endsWith('/app/') && registration.active?.state === 'activated'))).toBe(true);
-    await page.reload();
-    await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.getRegistrations())
-      .some((registration) => registration.scope.endsWith('/app/')))).toBe(false);
-    await page.goto(`${origin}/app/`);
-    await expect(page).toHaveURL(`${origin}/`);
-    await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
-  } finally {
-    await closeTestSyncServer(server);
-    rmSync(temporary, { recursive: true, force: true });
   }
 });
 

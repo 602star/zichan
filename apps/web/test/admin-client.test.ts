@@ -111,7 +111,7 @@ describe('independent management session lifecycle', () => {
     expect(adminBaseUrls({ origin, pathname: '/private-123456789/admin' })).toEqual([`${origin}/private-123456789`, origin]);
     expect(adminBaseUrls({ origin, pathname: '/ledger/admin/users' })).toEqual([`${origin}/ledger`, origin]);
     expect(adminBaseUrls({ origin, pathname: '/admin' })).toEqual([origin]);
-    expect(adminBaseUrls({ origin, pathname: '/ledger/app/' })).toEqual([]);
+    expect(adminBaseUrls({ origin, pathname: '/ledger/' })).toEqual([]);
     const probe = vi.fn(async (url: string) => reply(url === `${origin}/ledger/api/health` ? health : { error: 'not found' }, url === `${origin}/ledger/api/health` ? 200 : 404));
     expect(await resolveAdminBaseUrl({ origin, pathname: '/ledger/private-123456789/admin/users' }, probe as typeof fetch)).toBe(`${origin}/ledger`);
     expect(await resolveAdminBaseUrl({ origin, pathname: '/ledger/admin/users' }, probe as typeof fetch)).toBe(`${origin}/ledger`);

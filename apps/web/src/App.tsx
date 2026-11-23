@@ -55,6 +55,7 @@ import { adoptUnlockedLedgerKeyEnvelope, runtimeLedgerCryptoSession } from './le
 import { accountProtection } from './account-protection.js';
 import { isTauriRuntime } from './tauri.js';
 import { reportPageView } from './traffic-view.js';
+import { syncAddressPresetUrl } from './sync-config.js';
 import type { SettingsSection } from './screens/Settings.js';
 import { X, ArrowLeftRight, BarChart3, ChartPie, Ellipsis, Gamepad2, Grid2X2, History as HistoryIcon, Package, Settings2, UserRound, Cloud, Wallet, CalendarDays, ReceiptText, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {
@@ -290,9 +291,7 @@ export function App() {
   const [screen, setScreenState] = useState<ScreenId>(() => initialScreen(Boolean(preview)));
   useEffect(() => {
     if (preview || isTauriRuntime()) return;
-    const match = /^(.*)\/app(?:\/|$)/.exec(window.location.pathname);
-    if (!match && window.location.pathname !== '/') return;
-    reportPageView(`${window.location.origin}${match?.[1] ?? ''}`, `/app/${screen}`);
+    reportPageView(syncAddressPresetUrl('current'), `/app/${screen}`);
   }, [preview, screen]);
   const compactView = useCompactView();
   const [transactionTab, setTransactionTab] = useState('records');
