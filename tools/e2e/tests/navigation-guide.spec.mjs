@@ -110,6 +110,9 @@ for (const width of [1280, 768, 390, 320]) test(`guide ${width}px can be skipped
   await page.setViewportSize({ width, height: 900 });
   await openLedger(page);
   await go(page, 'settings', 'ledger');
+  const entry = page.getByRole('region', { name: '新手指南', exact: true });
+  await expect(entry).toBeVisible();
+  await entry.screenshot({ path: test.info().outputPath(`settings-guide-entry-${width}.png`) });
   await page.getByRole('button', { name: '查看新手指南', exact: true }).click();
   const guide = page.getByRole('region', { name: '首次记账引导', exact: true });
   await expect(guide).toContainText('新手指南 · 1/4');

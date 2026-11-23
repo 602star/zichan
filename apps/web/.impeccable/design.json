@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-13T05:20:00Z",
+  "generatedAt": "2026-11-23T15:47:57.791351Z",
   "title": "Design System: 有本 · 大福帳",
   "extensions": {
     "colorMeta": {
@@ -62,8 +62,8 @@
     },
     "typographyMeta": {
       "display": {
-        "displayName": "宋体关键金额",
-        "purpose": "关键账本指标、页标题与大福帳字形。"
+        "displayName": "文楷主标题",
+        "purpose": "页面与账本标题使用随应用提供的文楷；金额使用独立数值字体。"
       },
       "headline": {
         "displayName": "页面标题",
@@ -81,11 +81,7 @@
         "displayName": "说明",
         "purpose": "次级说明与列表补充信息。"
       },
-      "label": {
-        "displayName": "标签",
-        "purpose": "字段标签、徽记和图轴。"
-      },
-      "input-touch": {
+      "touch-input": {
         "displayName": "触控输入",
         "purpose": "粗指针设备上的表单输入。"
       }
@@ -148,7 +144,7 @@
       "refersTo": "button-primary",
       "description": "账本中最重要的提交或继续操作。",
       "html": "<button class=\"ds-btn-primary\">保存记录</button>",
-      "css": ".ds-btn-primary{min-height:var(--control-h,38px);padding:0 16px;border:1px solid var(--accent);border-radius:var(--r-sm,4px);background:var(--accent);color:var(--on-accent);font:600 var(--fs-body,13px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;cursor:pointer;}.ds-btn-primary:hover{border-color:var(--accent);color:var(--on-accent);}.ds-btn-primary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}"
+      "css": ".ds-btn-primary{min-height:var(--control-h,38px);padding:0 16px;border:1px solid var(--accent);border-radius:var(--r-sm,4px);background:var(--accent);color:var(--on-accent);font:600 var(--fs-body,16px) 'LXGW WenKai Screen','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;cursor:pointer;}.ds-btn-primary:hover{border-color:var(--accent);color:var(--on-accent);}.ds-btn-primary:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}"
     },
     {
       "name": "次要按钮",
@@ -156,7 +152,7 @@
       "refersTo": "button-outline",
       "description": "保留清晰边界的辅助操作。",
       "html": "<button class=\"ds-btn-outline\">查看详情</button>",
-      "css": ".ds-btn-outline{min-height:var(--control-h,38px);padding:0 16px;border:1px solid var(--border);border-radius:var(--r-sm,4px);background:var(--surface);color:var(--text-secondary);font:600 var(--fs-body,13px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;cursor:pointer;}.ds-btn-outline:hover{border-color:var(--accent);color:var(--accent);}.ds-btn-outline:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}"
+      "css": ".ds-btn-outline{min-height:var(--control-h,38px);padding:0 16px;border:1px solid var(--border);border-radius:var(--r-sm,4px);background:var(--surface);color:var(--text-secondary);font:600 var(--fs-body,16px) 'LXGW WenKai Screen','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;cursor:pointer;}.ds-btn-outline:hover{border-color:var(--accent);color:var(--accent);}.ds-btn-outline:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}"
     },
     {
       "name": "轻量按钮",
@@ -164,7 +160,7 @@
       "refersTo": "button-ghost",
       "description": "低优先级操作或紧邻主要数据的动作。",
       "html": "<button class=\"ds-btn-ghost\">取消</button>",
-      "css": ".ds-btn-ghost{min-height:var(--control-h,38px);padding:0 16px;border:1px solid transparent;border-radius:var(--r-sm,4px);background:transparent;color:var(--text-secondary);font:600 var(--fs-body,13px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;cursor:pointer;}.ds-btn-ghost:hover{border-color:var(--accent);color:var(--accent);}.ds-btn-ghost:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}"
+      "css": ".ds-btn-ghost{min-height:var(--control-h,38px);padding:0 16px;border:1px solid transparent;border-radius:var(--r-sm,4px);background:transparent;color:var(--text-secondary);font:600 var(--fs-body,16px) 'LXGW WenKai Screen','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;cursor:pointer;}.ds-btn-ghost:hover{border-color:var(--accent);color:var(--accent);}.ds-btn-ghost:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}"
     },
     {
       "name": "内容卡片",
@@ -172,7 +168,7 @@
       "refersTo": "card",
       "description": "单层的账本信息分组，内部用分隔线继续组织。",
       "html": "<section class=\"ds-card\"><strong>本月收支</strong><p>记录汇总</p></section>",
-      "css": ".ds-card{padding:var(--sp-5,20px);border:1px solid var(--border);border-radius:var(--r-md,8px);background:var(--surface);color:var(--text-primary);font:400 var(--fs-body,13px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;}.ds-card strong{font-weight:700;}.ds-card p{margin:8px 0 0;color:var(--text-secondary);}"
+      "css": ".ds-card{padding:var(--sp-5,20px);border:1px solid var(--border);border-radius:var(--r-md,8px);background:var(--surface);color:var(--text-primary);font:400 var(--fs-body,16px) 'LXGW WenKai Screen','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;}.ds-card strong{font-weight:700;}.ds-card p{margin:8px 0 0;color:var(--text-secondary);}"
     },
     {
       "name": "输入字段",
@@ -180,7 +176,7 @@
       "refersTo": "input",
       "description": "带上方标签的账本录入字段。",
       "html": "<label class=\"ds-field\">金额<input class=\"ds-input\" inputmode=\"decimal\" placeholder=\"0.00\"></label>",
-      "css": ".ds-field{display:flex;flex-direction:column;gap:4px;color:var(--text-secondary);font:600 var(--fs-meta,11px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;}.ds-input{min-height:var(--control-h,38px);padding:9px 11px;border:1px solid var(--border);border-radius:var(--r-sm,4px);background:var(--bg);color:var(--text-primary);font:400 var(--fs-body,13px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;font-variant-numeric:tabular-nums;}.ds-input:hover{border-color:var(--border-strong);}.ds-input:focus-visible{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:3px;}@media(pointer:coarse){.ds-input{min-height:44px;font-size:var(--fs-input,16px);}}"
+      "css": ".ds-field{display:flex;flex-direction:column;gap:4px;color:var(--text-secondary);font:600 var(--fs-meta,14px) 'LXGW WenKai Screen','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;}.ds-input{min-height:var(--control-h,38px);padding:9px 11px;border:1px solid var(--border);border-radius:var(--r-sm,4px);background:var(--bg);color:var(--text-primary);font:400 var(--fs-body,16px) 'LXGW WenKai Screen','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;font-variant-numeric:tabular-nums;}.ds-input:hover{border-color:var(--border-strong);}.ds-input:focus-visible{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:3px;}@media(pointer:coarse){.ds-input{min-height:44px;font-size:var(--fs-input,16px);}}"
     },
     {
       "name": "状态标签",
@@ -188,7 +184,7 @@
       "refersTo": "tag",
       "description": "简短的状态或分类说明。",
       "html": "<span class=\"ds-tag\">已同步</span>",
-      "css": ".ds-tag{display:inline-flex;padding:3px 8px;border:1px solid var(--border);border-radius:var(--r-sm,4px);background:var(--surface-2);color:var(--text-secondary);font:600 var(--fs-meta,11px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;}"
+      "css": ".ds-tag{display:inline-flex;padding:3px 8px;border:1px solid var(--border);border-radius:var(--r-sm,4px);background:var(--surface-2);color:var(--text-secondary);font:600 var(--fs-meta,14px) 'LXGW WenKai Screen','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;}"
     },
     {
       "name": "当前标签页",
@@ -196,7 +192,7 @@
       "refersTo": "tab-active",
       "description": "横向标签导航中的当前视图。",
       "html": "<button class=\"ds-tab\">本月</button>",
-      "css": ".ds-tab{min-height:var(--control-h,38px);padding:0 12px;border:0;border-bottom:2px solid var(--accent);background:transparent;color:var(--text-primary);font:700 var(--fs-body,13px) 'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;cursor:pointer;}.ds-tab:hover{color:var(--accent);}.ds-tab:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}"
+      "css": ".ds-tab{min-height:var(--control-h,38px);padding:0 12px;border:0;border-bottom:2px solid var(--accent);background:transparent;color:var(--text-primary);font:700 var(--fs-body,16px) 'LXGW WenKai Screen','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;cursor:pointer;}.ds-tab:hover{color:var(--accent);}.ds-tab:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}"
     },
     {
       "name": "汇总指标",
@@ -204,7 +200,7 @@
       "refersTo": "summary-metric",
       "description": "标签先于金额的连续式汇总条单元。",
       "html": "<div class=\"ds-metric\"><span>本月支出</span><strong>¥ 1,280.00</strong></div>",
-      "css": ".ds-metric{display:flex;flex-direction:column;gap:4px;padding:16px;background:var(--surface);color:var(--text-primary);font-family:'Manrope','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;}.ds-metric span{color:var(--text-tertiary);font-size:var(--fs-meta,11px);font-weight:600;}.ds-metric strong{font-size:var(--fs-display,26px);font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums;}"
+      "css": ".ds-metric{display:flex;flex-direction:column;gap:4px;padding:16px;background:var(--surface);color:var(--text-primary);font-family:'LXGW WenKai Screen','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;}.ds-metric span{color:var(--text-tertiary);font-size:var(--fs-meta,14px);font-weight:600;}.ds-metric strong{font-size:var(--fs-display,26px);font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums;}"
     }
   ],
   "narrative": {
@@ -212,9 +208,10 @@
     "overview": "一份需要长期翻阅、记入和核对的个人总账。偏冷的文献纸承托数据，暖墨建立阅读秩序，朱色标记主操作、当前位置和完成的对账状态。历史主题标识保留兼容，三种纸张变体只改变底色与边线。",
     "keyCharacteristics": [
       "深墨侧栏以亮朱双页账册、“有本”名称与“收支 · 资产 · 物品”副标题标识品牌，朱色章点标识当前位置。",
-      "宋／明体标题、无衬线数据和等宽数字组成账本阅读层级。",
+      "随包文楷用于标题与正文，金额使用系统无衬线和等宽数字。",
       "收入藍、支出赤、提醒黄土各有独立语义。",
-      "桌面连续汇总条与真实表格用细墨线组织信息。"
+      "桌面连续汇总条与真实表格用细墨线组织信息。",
+      "侧栏模块显隐与排序仅在电脑设置中显示；手机通过底栏和更多菜单直接进入各项任务。"
     ],
     "rules": [
       {

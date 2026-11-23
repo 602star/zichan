@@ -849,6 +849,23 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
             <p className="zc-caption">常用字段在“资料管理 → 记账字段”中设置。弹窗顶部高亮项是当前模式；常用模式也可展开“更多字段”临时填写。</p>
           </div>
 
+          <section className="zc-card zc-settings-guide" aria-label="新手指南">
+            <h2 className="zc-section-title">新手指南</h2>
+            <p className="zc-caption">逐步查看记账、账户、分类和模板操作，保留已有进度。完成后不再显示在流水页，仍可从这里重看。</p>
+            <button type="button" className="zc-btn" disabled={guideBusy} onClick={() => void (async () => {
+              if (!setting?.id || guideBusy) return;
+              setGuideBusy(true); setGuideError('');
+              try {
+                const current = readOnboarding(setting.id);
+                const recorded = current?.firstTransactionRecorded ?? (await store.transactions.count()) > 0;
+                resumeOnboarding(setting.id, ledgerMode === 'spending' ? 'spending' : 'accounts', recorded);
+                navigateTo({ screen: 'transactions', tab: 'records', intent: 'onboarding' });
+              } catch (error) { setGuideError(error instanceof Error ? error.message : '指南未能打开，请重试'); }
+              finally { setGuideBusy(false); }
+            })()}>{guideBusy ? '正在打开…' : '查看新手指南'}</button>
+            {guideError && <p role="alert" className="zc-caption">{guideError}</p>}
+          </section>
+
           {!compact && <div className="zc-card">
             <div className="zc-section-head zc-responsive-header">
               <div>
