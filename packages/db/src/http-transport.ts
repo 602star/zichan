@@ -125,7 +125,11 @@ function context(ledgerId: string, commitId: string, contentHash: string) {
 async function errorMessage(prefix: string, response: { status: number; json(): Promise<unknown> }): Promise<Error> {
   try {
     const body = await response.json() as { error?: string; code?: string };
-    return new HttpRequestError('http', `${prefix}: HTTP ${response.status}${body?.code ? ` ${body.code}` : ''}${body?.error ? ` ${body.error}` : ''}`, response.status);
+    const code = typeof body?.code === 'string' ? body.code : undefined;
+    const loginError = prefix === 'login failed' && (code?.startsWith('LOGIN_') || code === 'INVALID_CREDENTIALS');
+    const message = loginError && typeof body?.error === 'string' && body.error
+      ? body.error : `${prefix}: HTTP ${response.status}${code ? ` ${code}` : ''}${body?.error ? ` ${body.error}` : ''}`;
+    return new HttpRequestError('http', message, response.status, code);
   } catch {
     return new HttpRequestError('http', `${prefix}: HTTP ${response.status}`, response.status);
   }

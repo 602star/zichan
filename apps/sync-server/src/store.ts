@@ -159,7 +159,7 @@ export interface OpaqueLoginState {
 
 export type OpaqueLoginConsumeResult =
   | { state: OpaqueLoginState; reason?: never }
-  | { state?: never; reason: 'missing' | 'already_used' | 'ip_changed' | 'expired' | 'raced' };
+  | { state?: never; reason: 'missing' | 'already_used' | 'expired' | 'raced' };
 
 export interface SyncSession {
   id: string;
@@ -2390,7 +2390,7 @@ END;`);
     return loginState;
   }
 
-  async consumeOpaqueLoginState(id: string, ip: string): Promise<OpaqueLoginConsumeResult> {
+  async consumeOpaqueLoginState(id: string): Promise<OpaqueLoginConsumeResult> {
     await this.ready;
     return this.driver.transaction(async (driver) => {
       const row = await driver.get<Record<string, unknown>>(
@@ -2402,7 +2402,8 @@ END;`);
       const usedAt = nowIso();
       if (loginState.usedAt) return { reason: 'already_used' };
       if (loginState.expiresAt <= usedAt) return { reason: 'expired' };
-      if (loginState.ip !== ip) return { reason: 'ip_changed' };
+      // The OPAQUE proof authenticates this exchange. Network addresses are audit
+      // metadata: a CDN hop or a mobile connection may change between requests.
       const result = await driver.run(
         'UPDATE sync_opaque_login_states SET used_at = ? WHERE login_id = ? AND used_at IS NULL',
         [usedAt, id],

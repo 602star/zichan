@@ -37,7 +37,21 @@ export function createRequestOrigin(trustedProxies: string[], allowInsecureHttp 
     const family = isIP(address);
     return family !== 0 && allowed.check(address, family === 4 ? 'ipv4' : 'ipv6');
   };
+  const clientAddress = (req: IncomingMessage) => {
+    const peerIp = normalize(req.socket.remoteAddress ?? 'unknown');
+    const trustedProxy = trusted(peerIp);
+    const header = req.headers['x-forwarded-for'];
+    const direct = { ip: peerIp, peerIp, trustedProxy, ipSource: 'socket' as const };
+    if (!trustedProxy || typeof header !== 'string') return direct;
+    const hops = header.split(',').map((value) => normalize(value.trim()));
+    if (hops.some((hop) => !isIP(hop))) return direct;
+    let current = peerIp;
+    for (let index = hops.length - 1; index >= 0 && trusted(current); index -= 1) current = hops[index]!;
+    return { ip: current, peerIp, trustedProxy, ipSource: 'trusted_xff' as const };
+  };
   return {
+    /** Audit both the socket peer and the address chosen by the configured trust chain. */
+    clientAddress,
     /** The direct socket peer alone decides whether deployment metadata is trusted. */
     trustedPeer(req: IncomingMessage): boolean {
       return trusted(normalize(req.socket.remoteAddress ?? 'unknown'));
@@ -83,14 +97,7 @@ export function createRequestOrigin(trustedProxies: string[], allowInsecureHttp 
       }
     },
     clientIp(req: IncomingMessage): string {
-      const remote = normalize(req.socket.remoteAddress ?? 'unknown');
-      const header = req.headers['x-forwarded-for'];
-      if (!trusted(remote) || typeof header !== 'string') return remote;
-      const hops = header.split(',').map((value) => normalize(value.trim()));
-      if (hops.some((hop) => !isIP(hop))) return remote;
-      let current = remote;
-      for (let index = hops.length - 1; index >= 0 && trusted(current); index -= 1) current = hops[index]!;
-      return current;
+      return clientAddress(req).ip;
     },
     secureTransport(req: IncomingMessage, allowInsecureHttp: boolean): boolean {
       if (allowInsecureHttp) return true;

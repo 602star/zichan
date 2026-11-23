@@ -8,6 +8,19 @@ import { logRequestContext, safeLogValue } from '../src/log-context.js';
 import { readContainerLogs } from '../src/container-log-source.js';
 
 describe('shared log workspace records', () => {
+  it('distinguishes exchange failures and historical IP failures from rejected password proofs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'zichan-login-reasons-'));
+    const store = new SyncServerStore(join(dir, 'server.sqlite'), 'invite', 'srv-reasons');
+    try {
+      await store.ready;
+      for (const reason of ['expired', 'already_used', 'ip_changed', 'invalid_proof']) await store.appendLog({
+        id: reason, at: new Date().toISOString(), level: 'warn', action: 'login_failed', message: 'Login failed', detail: { reason },
+      });
+      const result = await store.logWorkspace.query(parseLogQuery('login', new URLSearchParams()));
+      expect(Object.fromEntries(result.entries.map(row => [row['reason'], row['reasonCode']])))
+        .toEqual({ expired: 'LOGIN_STATE_EXPIRED', already_used: 'LOGIN_STATE_INVALID', ip_changed: 'LOGIN_SOURCE_CHANGED', invalid_proof: 'INVALID_CREDENTIALS' });
+    } finally { await store.close(); rmSync(dir, { recursive: true, force: true }); }
+  });
   it('queries real per-category fields and filters, preserves independent authentication history and task attempts', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zichan-log-fields-'));
     const store = new SyncServerStore(join(dir, 'server.sqlite'), 'invite', 'srv-logs');

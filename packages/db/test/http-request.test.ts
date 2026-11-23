@@ -5,6 +5,13 @@ import { fetchAuthMe, refreshAccountSession } from '../src/http-transport.js';
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('bounded JSON requests', () => {
+  it('preserves a server error code alongside the HTTP status', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 401,
+      json: async () => ({ code: 'SESSION_REFRESH_REQUIRED', error: '登录会话已失效，请重新登录' }) })));
+    await expect(fetchAuthMe('https://example.com', 'test-access')).rejects.toMatchObject({
+      kind: 'http', status: 401, code: 'SESSION_REFRESH_REQUIRED',
+    });
+  });
   it.each(['headers', 'body'])('aborts stalled %s without replaying a write', async (stage) => {
     vi.useFakeTimers();
     const fetcher = vi.fn(async () => stage === 'headers' ? new Promise(() => {})

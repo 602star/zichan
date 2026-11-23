@@ -1,6 +1,7 @@
 /** Encrypted sync storage with optional account key custody and transactional SQLite WAL. */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { logRequestContext, logComponent } from './log-context.js';
+import { loginFailure } from './login-failure.js';
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
@@ -515,7 +516,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     await store.appendLog({ id: randomBytes(12).toString('hex'), at: nowIso(), level, action, message, ...meta,
       ip: meta.ip ?? context?.ip,
       detail: { serviceId: 'sync-server', environment: process.env.NODE_ENV ?? 'development', instanceId: store.logWorkspace.instanceId,
-        component: logComponent(action), ...(context ? { requestId: context.requestId, userAgent: context.userAgent, authMethod: context.authMethod } : {}),
+        component: logComponent(action), ...(context ? { requestId: context.requestId, userAgent: context.userAgent,
+          authMethod: context.authMethod, peerIp: context.peerIp, trustedProxy: context.trustedProxy, ipSource: context.ipSource } : {}),
         ...(meta.username && /login|logout|device|session/.test(action) ? { identifierHash: createHmac('sha256', secret).update(meta.username).digest('hex') } : {}), ...meta.detail } });
   };
   // The bucket key stays the primary key; `scope`/`source` are recorded alongside it so the
@@ -856,7 +858,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
   // while `service.started` still rejects for the launcher.
   void started.catch(() => undefined);
   const server = createServer((req, res) => logRequestContext.run({
-    requestId: `req-${randomBytes(REQUEST_ID_BYTES).toString('hex')}`, ip: origin.clientIp(req),
+    requestId: `req-${randomBytes(REQUEST_ID_BYTES).toString('hex')}`, ...origin.clientAddress(req),
     userAgent: (req.headers['user-agent'] ?? '').slice(0, 512), method: req.method ?? 'GET', instanceId: store.logWorkspace.instanceId,
   }, async () => {
     applyCors(req, res);
@@ -864,7 +866,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = decodePathname(url.pathname);
     const routedPath = stripBasePath(path, basePath);
-    const ip = origin.clientIp(req);
+    const ip = logRequestContext.getStore()!.ip;
     // One id per request binds the response, the log line and any diagnostic record.
     const requestId = logRequestContext.getStore()!.requestId;
     logRequestContext.getStore()!.authMethod = routedPath?.includes('/mfa') ? 'totp' : routedPath?.includes('federated') ? 'federated' : routedPath?.includes('/logout') || routedPath?.includes('/devices') ? 'session' : routedPath?.startsWith('/api/auth/') ? 'opaque' : undefined;
@@ -2037,7 +2039,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         void browserSession.requested(req);
         const { loginId, finishLoginRequest, deviceId, deviceName } = await readBody(req, AUTH_BODY_BYTES);
         const consumed = typeof loginId === 'string'
-          ? await store.consumeOpaqueLoginState(loginId, ip)
+          ? await store.consumeOpaqueLoginState(loginId)
           : { state: undefined, reason: 'invalid_state_id' as const };
         const loginState = consumed.state;
         const user = loginState ? await store.getUser(loginState.username) : undefined;
@@ -2075,9 +2077,11 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           failureReason = 'invalid_finish_request';
         }
         if (!authenticated || !user) {
+          const failure = loginFailure(failureReason);
           await log('warn', 'login_failed', 'Login failed', { ip, username: loginState?.username,
-            status: 401, detail: { reason: failureReason } });
-          return send(res, 401, { error: 'invalid credentials' });
+            status: failure.status, detail: { reason: failureReason, reasonCode: failure.code,
+              ...(loginState ? { startIp: loginState.ip, finishIp: ip } : {}) } });
+          return send(res, failure.status, { code: failure.code, error: failure.error });
         }
         if (user.disabled) {
           await log('warn', 'login_disabled', 'Disabled sync user attempted login', { ip, username: user.username, status: 403 });
@@ -2086,6 +2090,9 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         const identity = deviceIdentityOf({ deviceId, deviceName });
         if (!identity) return send(res, 400, { error: 'invalid device identity' });
 
+        if (loginState && loginState.ip !== ip) await log('info', 'login_source_changed', 'Login source changed during password verification', {
+          ip, username: user.username, detail: { startIp: loginState.ip, finishIp: ip },
+        });
         const adminContext = req.headers['x-zichan-session'] === 'admin-cookie';
         // Second factor. The password is only half the proof for a management account, so a
         // session is not created yet: the console gets a short-lived challenge to answer.

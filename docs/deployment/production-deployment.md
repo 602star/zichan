@@ -45,6 +45,29 @@ export ZICHAN_ALLOW_INSECURE_HTTP=0
 
 原来用于宿主机网络的 `ZICHAN_HOST=127.0.0.1` 不再适用，生产脚本遇到它会拒绝部署并提示改用 `ZICHAN_BIND_IP`。1Panel 的 HTTPS 代理应保留外部 `Host`、客户端地址，并提供单一有效的 `X-Forwarded-Proto: https`。默认 `ZICHAN_TRUSTED_PROXIES=private` 适配 Docker 网桥代理；若后端端口允许不可信客户端直连并伪造转发头，应改为实际代理 IP/CIDR，并用防火墙限制直连。`ZICHAN_ALLOW_INSECURE_HTTP=1` 仅用于受控内网 HTTP；公网须使用 HTTPS 入口。
 
+### Cloudflare 经 1Panel／OpenResty 转发
+
+1Panel 反代编辑器可直接粘贴的完整 `location`、保存检查、日志核对与回退步骤见[Cloudflare + 1Panel 反向代理与真实 IP](cloudflare-1panel-proxy.md)。
+
+链路为“访客 → Cloudflare → OpenResty → 业务容器”时，未恢复真实 IP 的 `$remote_addr` 是 Cloudflare 节点地址；直接转发它会使登录审计和限流把代理节点当成访客。Cloudflare 的不同请求可能由不同节点回源。
+
+仓库提供 [Cloudflare realip 配置](../../scripts/production/cloudflare-realip.conf)，包含 2026-11-23 核对的官方 IPv4／IPv6 网段，以及 `real_ip_header CF-Connecting-IP`。将模板放到 **OpenResty 容器或进程实际可读的目录**，在面向 Cloudflare 的站点 `server` 块中 `include` 该文件的绝对路径；具体路径需按 1Panel 的配置挂载核对。模板不放到业务容器里生效，不替换整个站点配置。
+
+在该站点实际的反代 `location` 中覆盖转发头：
+
+```nginx
+proxy_set_header Host $host;
+proxy_set_header X-Forwarded-Proto https;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $remote_addr;
+```
+
+真实 IP 模块只采信 `set_real_ip_from` 中的 Cloudflare 来源，不使用 `0.0.0.0/0`、`::/0` 或整个私网；不要直接把任意请求的 `$http_cf_connecting_ip` 当作真实来源转发。应用的 `TRUSTED_PROXIES` 则限定到实际连接业务容器的 OpenResty／网桥地址，两层信任规则各自生效。若还有 Tunnel、Worker 或其他中间代理，应先核对完整链路，再设置其信任边界。
+
+保存前执行 OpenResty 的 `nginx -t`，通过后再重载。应用日志的 `peerIp` 是直连对端，`ipSource` 为 `socket` 或 `trusted_xff`，`ip` 是最终用于审计和限流的来源；这些信息用于核对配置，不能仅凭收到某个头就信任其内容。Cloudflare 网段变更时需更新模板；官方来源：[IPv4](https://www.cloudflare.com/ips-v4)、[IPv6](https://www.cloudflare.com/ips-v6)、[恢复真实访客 IP](https://developers.cloudflare.com/support/troubleshooting/restoring-visitor-ips/restoring-original-visitor-ips/)。
+
+隔离验收可在有 Docker 的 Linux 测试机运行 `bash tools/deployment/test-cloudflare-realip.sh`，覆盖 IPv4／IPv6 恢复、非可信来源伪造头和非法 IP。测试只修改容器自身的隔离网络，不重载现有站点；它不代替公网实际代理配置验收。
+
 ## 按 digest 部署与更新
 
 正式 Release 中的 `image-digest.txt` 给出不可变的镜像引用。命令行生产部署示例：

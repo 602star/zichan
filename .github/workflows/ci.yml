@@ -115,6 +115,8 @@ jobs:
         with:
           node-version-file: .node-version
       - run: node --test tools/release/tests/update-launcher-integration.test.mjs
+      - name: Verify documented Cloudflare client IP forwarding
+        run: bash tools/deployment/test-cloudflare-realip.sh
       - name: Build image and verify health endpoints
         shell: bash
         run: |

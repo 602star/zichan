@@ -34,6 +34,14 @@ Web 在线成功打开后在空闲时准备 7 天本机授权。授权包含加�
 
 记账 Cookie 改为 `zichan_session_v2`，管理 Cookie 独立不变。旧版不同 Path 遗留的同名 `zichan_session` 不再干扰新登录；升级后旧记账会话需要重新登录一次，本机数据不清空。新版同名 Cookie 出现歧义仍拒绝认证。刷新失败日志区分 Cookie 缺失／歧义、会话不存在、用户不存在、禁用、撤销、过期及刷新凭据不匹配。没有生产请求和对应日志时，不能仅凭 `Session refresh failed` 判定某个具体原因。
 
+### 登录验证与来源地址
+
+后续修复中，OPAQUE 登录不再要求 `start` 与 `finish` 两次请求的 IP 相同：CDN 节点切换、IPv4／IPv6 或移动网络切换均可能改变地址。IP 继续用于审计与限流，认证仍检查 OPAQUE 密码证明、凭据版本、60 秒有效期和一次性消费；管理员两步验证独立执行。验证通过时的地址变化记录为 `login_source_changed` 信息事件，不计为密码错误。
+
+错误证明返回 `401 INVALID_CREDENTIALS`；凭据在握手期间变化返回 `401 LOGIN_CREDENTIALS_CHANGED`；状态缺失、已消费或并发重复返回 `409 LOGIN_STATE_INVALID`；状态超时返回 `410 LOGIN_STATE_EXPIRED`。客户端保留机器可读错误码和 HTTP 状态，登录界面直接显示中文原因，不自动重复提交登录。新登录日志分别记录原因代码；旧版已经持久化的历史事件不会被批量重写。
+
+真实访客 IP 在受信任代理层恢复，配置见[Cloudflare 与 1Panel 部署说明](../deployment/production-deployment.md#cloudflare-经-1panelopenresty-转发)。该修复尚未包含在已发布的 0.7.1 中；需发布并升级后才影响公网运行程序。
+
 ## 性能入口与口径
 
 管理后台侧栏 **运维中心 → 打开性能**（`/startup`），运行概览也提供入口。支持近 7／30／90 天和自定义 UTC 日期范围、自动刷新、样本数、平均值及近似 P50／P95。单独列出首次快照恢复、本机快速打开、失败等待及后台追平。

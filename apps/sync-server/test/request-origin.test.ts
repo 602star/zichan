@@ -5,6 +5,16 @@ import { createRequestOrigin } from '../src/request-origin.js';
 const request = (remoteAddress: string, headers: Record<string, string> = {}) => ({ socket: { remoteAddress }, headers }) as IncomingMessage;
 
 describe('request origin trust', () => {
+  it('records the chosen source without implicitly trusting Cloudflare headers', () => {
+    const origin = createRequestOrigin(['private']);
+    const req = request('104.22.101.161', { 'cf-connecting-ip': '203.0.113.8', 'x-forwarded-for': '203.0.113.8' });
+    expect(origin.clientAddress(req)).toEqual({ ip: '104.22.101.161', peerIp: '104.22.101.161', trustedProxy: false, ipSource: 'socket' });
+    const forwarded = request('172.18.0.1', { 'x-forwarded-for': '203.0.113.8, 104.22.101.161' });
+    expect(origin.clientAddress(forwarded)).toEqual({ ip: '104.22.101.161', peerIp: '172.18.0.1', trustedProxy: true, ipSource: 'trusted_xff' });
+    // After a trusted edge restores and overwrites the header, the application sees the visitor.
+    expect(origin.clientAddress(request('172.18.0.1', { 'x-forwarded-for': '203.0.113.8' })))
+      .toEqual({ ip: '203.0.113.8', peerIp: '172.18.0.1', trustedProxy: true, ipSource: 'trusted_xff' });
+  });
   it('ignores all forwarded headers from an untrusted peer', () => {
     const origin = createRequestOrigin(['127.0.0.1']);
     const req = request('203.0.113.9', { 'x-forwarded-for': '127.0.0.1', 'x-forwarded-proto': 'https' });

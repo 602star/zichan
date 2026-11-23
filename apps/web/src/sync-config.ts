@@ -398,8 +398,11 @@ export function buildSyncBaseUrl(connection: Pick<SyncConnection, 'baseUrl'>): s
 }
 
 export function isUnauthorizedSyncError(error: unknown): boolean {
+  if (error instanceof Error && 'kind' in error && error.kind === 'http'
+    && 'status' in error && typeof error.status === 'number') return error.status === 401 || error.status === 403;
   const message = error instanceof Error ? error.message : String(error);
-  return /\b40[13]\b|unauthori[sz]ed|认证失败|鉴权失败/i.test(message);
+  // Endpoint reports retain message strings; recognize localized login failures there too.
+  return /\b40[13]\b|unauthori[sz]ed|认证失败|鉴权失败|账号或密码不正确|登录期间账号凭据发生变化|登录账号、邮箱或密码错误/i.test(message);
 }
 
 export function loadSessionCredentials(): Record<string, ServerCredential> {

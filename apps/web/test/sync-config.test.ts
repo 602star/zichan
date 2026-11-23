@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { HttpRequestError } from '@zichan/db';
 import {
   buildSyncBaseUrl,
   buildSyncUrlFromParts,
@@ -110,6 +111,10 @@ describe('sync configuration', () => {
     expect(isUnauthorizedSyncError(new Error('Unauthorized'))).toBe(true);
     expect(isUnauthorizedSyncError('HTTP 403 account disabled')).toBe(true);
     expect(isUnauthorizedSyncError(new Error('network timeout'))).toBe(false);
+    expect(isUnauthorizedSyncError(new HttpRequestError('http', '账号或密码不正确', 401, 'INVALID_CREDENTIALS'))).toBe(true);
+    expect(isUnauthorizedSyncError('登录期间账号凭据发生变化，请重新登录')).toBe(true);
+    expect(isUnauthorizedSyncError('账号或密码不正确')).toBe(true);
+    expect(isUnauthorizedSyncError(new HttpRequestError('http', '登录验证已超时，请重新登录', 410, 'LOGIN_STATE_EXPIRED'))).toBe(false);
   });
 
   it('creates distinct connection ids without depending on randomUUID', () => {

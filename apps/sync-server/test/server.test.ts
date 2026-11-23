@@ -21,7 +21,7 @@ beforeAll(async () => {
   sv = createSyncServer(); // in-memory
   await new Promise<void>((r) => sv.server.listen(0, r));
   const addr = sv.server.address() as AddressInfo;
-  // OPAQUE login state is bound to the client IP; localhost may alternate IPv4 and IPv6.
+  // Keep the HTTP fixture deterministic across IPv4 and IPv6 hosts.
   url = `http://127.0.0.1:${addr.port}`;
 });
 afterAll(() => sv.close());
@@ -355,7 +355,7 @@ describe('sync-server endpoints', () => {
     };
     const login = await post2(url, '/api/auth/login/finish', loginBody);
     expect(login.status).toBe(200);
-    expect((await post2(url, '/api/auth/login/finish', loginBody)).status).toBe(401);
+    expect((await post2(url, '/api/auth/login/finish', loginBody)).status).toBe(409);
     const logDriver = new NodeSqliteDriver(join(sv.dataDir, 'server.sqlite'));
     try {
       const failure = await logDriver.get<{ detail_json: string }>(
@@ -552,17 +552,20 @@ describe('sync-server endpoints', () => {
     }
   });
 
-  it('distinguishes an IP change from an expired or reused one-time login state', async () => {
+  it('consumes a one-time login state atomically and preserves the source for audit', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zichan-login-state-'));
     const store = new SyncServerStore(join(dir, 'server.sqlite'), 'open', 'srv-login-state');
     try {
       await store.ready;
       const state = await store.createOpaqueLoginState('owner', 'opaque-state', '203.0.113.10',
         new Date(Date.now() + 60_000).toISOString());
-      expect(await store.consumeOpaqueLoginState(state.id, '203.0.113.11')).toMatchObject({ reason: 'ip_changed' });
-      expect(await store.consumeOpaqueLoginState(state.id, '203.0.113.10')).toMatchObject({ state: { id: state.id } });
-      expect(await store.consumeOpaqueLoginState(state.id, '203.0.113.10')).toMatchObject({ reason: 'already_used' });
-      expect(await store.consumeOpaqueLoginState('missing', '203.0.113.10')).toMatchObject({ reason: 'missing' });
+      const results = await Promise.all([store.consumeOpaqueLoginState(state.id), store.consumeOpaqueLoginState(state.id)]);
+      expect(results.filter(row => row.state)).toHaveLength(1);
+      expect(results.find(row => row.state)?.state).toMatchObject({ id: state.id, ip: '203.0.113.10' });
+      expect(await store.consumeOpaqueLoginState(state.id)).toMatchObject({ reason: 'already_used' });
+      expect(await store.consumeOpaqueLoginState('missing')).toMatchObject({ reason: 'missing' });
+      const expired = await store.createOpaqueLoginState('owner', 'opaque-state', '203.0.113.10', '2000-01-01T00:00:00.000Z');
+      expect(await store.consumeOpaqueLoginState(expired.id)).toMatchObject({ reason: 'expired' });
     } finally {
       await store.close();
       rmSync(dir, { recursive: true, force: true });

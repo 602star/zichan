@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export interface LogRequestContext {
   requestId: string; ip: string; userAgent: string; method: string; instanceId: string;
   authMethod?: string; actorId?: string; role?: string;
+  peerIp?: string; trustedProxy?: boolean; ipSource?: 'socket' | 'trusted_xff';
 }
 
 export const logRequestContext = new AsyncLocalStorage<LogRequestContext>();

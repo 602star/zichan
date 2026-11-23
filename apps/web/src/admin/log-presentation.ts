@@ -10,6 +10,7 @@ function group(name: string, entries: Record<string, [string, string]>): void {
 
 group('登录与账号', {
   login_success: ['登录成功', '账号已登录。'], login_failed: ['登录失败', '账号登录未通过。'],
+  login_source_changed: ['登录来源变化', '密码验证期间来源地址变化；不影响密码及两步验证校验。'],
   login_disabled: ['停用账号尝试登录', '已停用的账号尝试登录。'],
   login_mfa_challenge: ['等待二次验证', '密码已通过，正在等待二次验证。'],
   login_mfa_success: ['二次验证通过', '登录的二次验证已通过。'],
@@ -131,6 +132,8 @@ const DETAIL_LABELS: Record<string, string> = {
   count: '数量', chunks: '分块数', bytes: '字节数', rows: '记录条数', transactions: '交易笔数',
   generation: '版本代数', revokedSessions: '撤销的会话数', revoked: '撤销数量', type: '类型',
   reason: '原因', error: '错误原因', code: '错误代码', method: '请求或验证方式', path: '请求路径',
+  reasonCode: '原因代码', peerIp: '直连地址', ipSource: 'IP 取值来源', trustedProxy: '直连代理是否可信',
+  startIp: '登录开始地址', finishIp: '登录完成地址',
   status: '状态', mode: '模式', key: '告警标识', hours: '小时数', until: '结束时间',
   keys: '变更字段', changedBy: '操作人', by: '操作人', username: '账号', targetUsername: '目标账号',
   quotaBytes: '附件额度（字节）', commitQuotaBytes: '同步额度（字节）',

@@ -78,7 +78,9 @@ describe('administrator-reviewed password recovery', () => {
       expect(finish).toBeTruthy();
       const issued = await f.issue();
       await registerAccount(f.url, 'recover-user', 'new-user-password', { passwordResetCode: issued.code });
-      expect((await post('login/finish', { loginId: pending.loginId, finishLoginRequest: finish!.finishLoginRequest, deviceId: 'stale-device', deviceName: 'stale' })).status).toBe(401);
+      const stale = await post('login/finish', { loginId: pending.loginId, finishLoginRequest: finish!.finishLoginRequest, deviceId: 'stale-device', deviceName: 'stale' });
+      expect(stale.status).toBe(409);
+      expect(await stale.json()).toMatchObject({ code: 'LOGIN_STATE_INVALID' });
       await expect(store.createSession({ id: 'stale-session', username: 'recover-user', deviceId: 'stale-device', deviceName: 'stale', refreshHash: 'stale', expiresAt: new Date(Date.now() + 60_000).toISOString(), expectedRegistrationRecord: previous!.opaque_registration_record })).rejects.toMatchObject({ code: 'CREDENTIALS_CHANGED' });
       expect(await f.db.get('SELECT session_id FROM sync_sessions WHERE session_id = ?', ['stale-session'])).toBeUndefined();
     } finally { await store.close(); await f.close(); }

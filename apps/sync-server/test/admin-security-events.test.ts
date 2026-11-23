@@ -107,7 +107,8 @@ describe('authentication failure visibility', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ loginId: 'made-up', finishLoginRequest: 'x', deviceId: 'd', deviceName: 'attacker' }),
       });
-      expect(orphan.status).toBe(401);
+      expect(orphan.status).toBe(409);
+      expect(await orphan.json()).toMatchObject({ code: 'LOGIN_STATE_INVALID' });
 
       const body = await (await f.api(f.owner.accessToken, '/auth-failures')).json() as {
         sources: { accounts: string[]; accountCount: number }[];

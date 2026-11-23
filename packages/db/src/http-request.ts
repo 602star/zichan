@@ -14,7 +14,8 @@ interface JsonRequestInit {
 }
 
 export class HttpRequestError extends Error {
-  constructor(readonly kind: 'network' | 'timeout' | 'http', message: string, readonly status = 0) { super(message); }
+  constructor(readonly kind: 'network' | 'timeout' | 'http', message: string, readonly status = 0,
+    readonly code?: string) { super(message); }
 }
 
 /** One attempt only. The deadline covers both headers and the entire JSON body. */

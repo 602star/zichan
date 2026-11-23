@@ -3,6 +3,7 @@ import type { SqlDriver, SqlParam } from '@zichan/db';
 import { createHash, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { safeLogValue, logRequestContext } from './log-context.js';
+import { loginFailure } from './login-failure.js';
 
 export const LOG_CATEGORIES = ['system', 'access', 'login', 'operations', 'tasks', 'containers'] as const;
 export type LogCategory = typeof LOG_CATEGORIES[number];
@@ -19,7 +20,7 @@ CREATE TABLE IF NOT EXISTS obs_record_context (kind TEXT NOT NULL, record_id TEX
 export const AUTH_EVENTS: Record<string, { event: string; result: string; reason?: string }> = {
   login_success: { event: 'login.success', result: 'success' },
   federated_login_success: { event: 'login.success', result: 'success' },
-  login_failed: { event: 'login.failure', result: 'failure', reason: 'BAD_CREDENTIALS' },
+  login_failed: { event: 'login.failure', result: 'failure', reason: 'INVALID_CREDENTIALS' },
   login_disabled: { event: 'login.blocked', result: 'blocked', reason: 'ACCOUNT_DISABLED' },
   login_mfa_enrollment_required: { event: 'login.blocked', result: 'blocked', reason: 'MFA_ENROLLMENT_REQUIRED' },
   login_mfa_challenge: { event: 'mfa.challenge', result: 'challenge' },
@@ -141,10 +142,12 @@ export class LogWorkspaceStore {
     if (!event) return;
     const context = logRequestContext.getStore();
     const detail = log.detail ?? {};
+    const failure = log.action === 'login_failed' && typeof detail['reason'] === 'string'
+      ? loginFailure(detail['reason']) : undefined;
     const account = log.username ? await driver.get<{ account_id: string }>('SELECT account_id FROM sync_account_identities WHERE username=?', [log.username]) : undefined;
     const record = { id: log.id, at: log.at, action: event.event, result: event.result, username: log.username ?? null,
       accountId: detail['accountId'] ?? account?.account_id ?? null, identifierHash: detail['identifierHash'] ?? null,
-      ip: log.ip ?? context?.ip ?? null, reasonCode: detail['reasonCode'] ?? event.reason ?? null, reason: detail['reason'] ?? null,
+      ip: log.ip ?? context?.ip ?? null, reasonCode: detail['reasonCode'] ?? failure?.code ?? event.reason ?? null, reason: detail['reason'] ?? null,
       authMethod: detail['authMethod'] ?? context?.authMethod ?? null, userAgent: detail['userAgent'] ?? context?.userAgent ?? null,
       device: detail['deviceName'] ?? null, deviceId: detail['deviceId'] ?? null,
       requestId: detail['requestId'] ?? context?.requestId ?? null, actorType: detail['actorType'] ?? (context?.role ? 'administrator' : null),
