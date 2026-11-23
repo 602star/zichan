@@ -124,8 +124,7 @@ test('admin preset dropdowns keep exact local times, UTC boundaries and page-spe
   await preset.selectOption('all');
   await expect(range.getByLabel('起始时分')).toBeDisabled();
   await expect(range.getByLabel('结束时分')).toBeDisabled();
-  expect(new URL(page.url()).searchParams.has('from')).toBe(false);
-  expect(new URL(page.url()).searchParams.has('until')).toBe(false);
+  await expect(page).toHaveURL(url => !url.searchParams.has('from') && !url.searchParams.has('until'));
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto('/e2e-private-entry/admin/monitor');
   await page.getByRole('combobox', { name: '历史趋势时间范围' }).selectOption('1h');
