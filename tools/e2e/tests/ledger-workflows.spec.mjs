@@ -10,7 +10,7 @@ test('records a detailed expense and keeps it visible after reload', async ({ pa
   const expenseForm = page.getByRole('dialog', { name: '新增 · 日常收支' });
   await expect(expenseForm).toBeVisible();
   await expect(expenseForm.getByLabel('类型')).toBeVisible();
-  await expenseForm.locator('summary').filter({ hasText: '更多信息' }).click();
+  await expenseForm.getByRole('button', { name: '字段模式：完整', exact: true }).click();
   await expect(expenseForm.getByLabel('附件 / 图片')).toBeVisible();
   await expect(expenseForm.getByRole('textbox', { name: '商家 / 平台', exact: true })).toBeVisible();
   await expect(expenseForm.getByLabel('标签')).toBeVisible();

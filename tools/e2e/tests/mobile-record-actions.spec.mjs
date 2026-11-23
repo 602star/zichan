@@ -10,7 +10,7 @@ async function record(page, amount, description, yesterday = false) {
   await form.getByLabel(/^金额/).fill(amount);
   await form.getByLabel('描述').fill(description);
   if (yesterday) {
-    await form.getByText('更多信息', { exact: true }).click();
+    await form.getByRole('button', { name: '字段模式：完整', exact: true }).click();
     await form.getByLabel('日期', { exact: true }).click();
     const date = page.getByRole('dialog', { name: '选择日期', exact: true });
     await date.getByRole('button', { name: '昨天', exact: true }).click();

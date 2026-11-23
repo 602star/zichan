@@ -16,11 +16,13 @@ const pad = (value: number) => String(value).padStart(2, '0');
 type Props = Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'onChange'> & {
   type: 'date' | 'time';
   value: string;
+  /** A compact visible value; the complete value remains unchanged until edited. */
+  displayValue?: string;
   onChange: (value: string) => void;
 };
 
 /** Touch opens a button-only picker; a fine pointer keeps native keyboard editing. */
-export function DateTimeInput({ type, value, onChange, ...props }: Props) {
+export function DateTimeInput({ type, value, displayValue, onChange, ...props }: Props) {
   const touch = useSyncExternalStore(subscribe, () => window.matchMedia(touchQuery).matches, () => false);
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -39,7 +41,7 @@ export function DateTimeInput({ type, value, onChange, ...props }: Props) {
         trigger.current?.focus({ preventScroll: true });
         setOpen(true);
       }}>
-      <span>{value || (type === 'date' ? '选择日期' : '选择时间')}</span><Icon size={18} aria-hidden="true" />
+      <span>{displayValue || value || (type === 'date' ? '选择日期' : '选择时间')}</span><Icon size={18} aria-hidden="true" />
     </button>
     {open && <DialogShell labelledBy={titleId} onDismiss={() => setOpen(false)} panelClassName="zc-datetime-panel" backdropClassName="zc-backdrop zc-datetime-backdrop"
       header={<> <div className="zc-datetime-heading"><h2 id={titleId}>选择{label}</h2><button type="button" className="zc-btn" data-dialog-initial-focus onClick={() => setOpen(false)}>取消</button></div> </>}

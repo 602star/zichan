@@ -32,6 +32,7 @@ import {
 import { th as thStyle, td as tdStyle } from '../ui/styles.js';
 import { AccountSetupPanel } from '../ui/AccountSetupPanel.js';
 import { QuickCategorySettings } from '../ui/QuickCategorySettings.js';
+import { TransactionFieldSettings } from '../ui/TransactionFieldSettings.js';
 import { DateRangeBar, dateRangeValue } from '../ui/DateRangeBar.js';
 import { useCompactView } from '../ui/useCompactView.js';
 import { MobilePageHeader, TaskList, useMobileSection } from '../ui/MobilePage.js';
@@ -55,13 +56,13 @@ const KIND_LABEL: Record<string, string> = {
 };
 const norm = (value: unknown) => String(value ?? '').trim().toLowerCase();
 
-type ManageTab = 'transactionCategories' | 'fixedCategories' | 'labels' | 'assets' | 'other';
+type ManageTab = 'transactionCategories' | 'fixedCategories' | 'labels' | 'fields' | 'assets' | 'other';
 type OtherDataTab = 'accounts' | 'templates' | 'prices' | 'plans' | 'games' | 'attachments';
-const MANAGE_TABS: readonly ManageTab[] = ['transactionCategories', 'fixedCategories', 'labels', 'assets', 'other'];
+const MANAGE_TABS: readonly ManageTab[] = ['transactionCategories', 'fixedCategories', 'labels', 'fields', 'assets', 'other'];
 const OTHER_DATA_TABS: readonly OtherDataTab[] = ['accounts', 'templates', 'prices', 'plans', 'games', 'attachments'];
 const PAYEE_TABS = ['mine', 'catalog'] as const;
 function mobileManageLabel(view: string) {
-  return ({ transactionCategories: '收支分类', fixedCategories: '物品分类', labels: '标签与交易对象', assets: '资产', accounts: '账户', templates: '记账模板', prices: '价格标记', plans: '定投计划', games: '游戏资料', attachments: '附件' } as Record<string, string>)[view] ?? '资料管理';
+  return ({ transactionCategories: '收支分类', fixedCategories: '物品分类', labels: '标签与交易对象', fields: '记账字段', assets: '资产', accounts: '账户', templates: '记账模板', prices: '价格标记', plans: '定投计划', games: '游戏资料', attachments: '附件' } as Record<string, string>)[view] ?? '资料管理';
 }
 type CategoryCenterMode = 'structure' | 'quick';
 type ManageTarget = { tab?: ManageTab; categoryMode?: CategoryCenterMode; otherTab?: OtherDataTab };
@@ -233,6 +234,7 @@ export function Manage() {
       { label: '收支分类', note: '分类层级、显示与排序', onClick: () => openMobile('transactionCategories') },
       { label: '标签与交易对象', note: '标签、地点、商户与平台', onClick: () => openMobile('labels') },
       { label: '记账模板', note: '常用交易快速填写', onClick: () => openMobile('templates') },
+      { label: '记账字段', note: '设置常用档显示的附加字段', onClick: () => openMobile('fields') },
     ]} />
     <TaskList title="资产资料" items={[
       { label: '资产', note: '币种与资产启用状态', onClick: () => openMobile('assets') },
@@ -261,6 +263,7 @@ export function Manage() {
           ['transactionCategories', '收支分类'],
           ['fixedCategories', '物品分类'],
           ['labels', '标签与交易对象'],
+          ['fields', '记账字段'],
           ['assets', '资产'],
           ['accounts', '账户'], ['templates', '交易模板'], ['prices', '价格汇率'],
           ['plans', '计划预算'], ['games', '游戏资料'], ['attachments', '附件'],
@@ -273,6 +276,7 @@ export function Manage() {
       </nav>}
 
       <div {...(compact ? primaryTabs.panelProps : { role: 'region', 'aria-label': mobileManageLabel(tab === 'other' ? otherTab : tab) })} style={{ display: 'flex', flexDirection: 'column', gap: 22, minWidth: 0 }}>
+      {tab === 'fields' && <TransactionFieldSettings setting={snap.setting} baseCurrencyAssetId={snap.setting?.baseCurrencyAssetId ?? snap.assets[0]?.id ?? ''} usesAccounts={usesAccounts} />}
       {tab === 'transactionCategories' && (
         <>
           <div style={{ display: 'flex', gap: 'var(--sp-2)', flexWrap: 'wrap' }}>

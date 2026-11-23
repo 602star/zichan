@@ -63,7 +63,7 @@ function payeeFields(snap: Snapshot, key = 'payeeId', nameKey = 'merchant', extr
     { key: nameKey, label: '交易对象名称', type: 'text', hidden: true },
   ];
 }
-const locationOpts = (s: Snapshot) => s.transactionLocations.filter((l) => !l.isDeleted && l.isActive).map((l) => ({ value: l.id, label: l.address ? `${l.name} · ${l.address}` : l.name }));
+const locationOpts = (s: Snapshot) => s.transactionLocations.filter((l) => !l.isDeleted && l.isActive).map((l) => ({ value: l.id, name: l.name, label: l.address ? `${l.name} · ${l.address}` : l.name }));
 const categoryPickerPreference = (s: Snapshot) => ({ categoryShowHiddenDefault: s.setting?.categoryPickerDefaultScope === 'all' });
 /** Asset options with the settlement currency first, so new forms default to it. */
 const settlementOpts = (s: Snapshot, preferredId = s.setting?.baseCurrencyAssetId) => {
@@ -574,7 +574,8 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
     modalWidth: 880,
     moreInitiallyOpen: false,
     progressiveFields: true,
-    compactNewFieldKeys: ['time', 'attachmentDrafts'],
+    compactNewFieldKeys: ['time'],
+    compactDateTime: true,
     confirmNewDraft: true,
     refreshDefaults: (values, manual) => manual.has('accountId') || values.type === 'transfer' ? values : { ...values, accountId: defaultTransactionAccount(snap.accounts, snap.setting, values.type ?? 'expense') ?? '' },
     summary: (values) => {
@@ -587,6 +588,10 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
     },
     optionalFieldOptions: transactionFormFieldOptions(true),
     onFieldChange: (values, key, manual) => ({ ...values,
+      ...(key === 'locationId' ? (() => {
+        const location = snap.transactionLocations.find((row) => row.id === values.locationId);
+        return { locationName: location?.name ?? values.locationName, latitude: location?.latitude ?? '', longitude: location?.longitude ?? '', locationAccuracyMeters: '' };
+      })() : {}),
       ...(key === 'type' && !manual.has('accountId') ? { accountId: defaultTransactionAccount(snap.accounts, snap.setting, values.type ?? 'expense') ?? '' } : {}),
       ...(['date', 'time', 'timezone', 'type', 'amount', 'assetId', 'transferAmount', 'transferAssetId', 'costValueInBase'].includes(key) ? { costValueConfirmed: 'false' } : {}),
     }),
@@ -606,7 +611,7 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
         required: true,
       },
       { key: 'category', label: '分类', type: 'category', options: (v) => { const rows = categoryOptions(snap.categories, expenseOnly ? 'expense' : v.type === 'income' ? 'income' : 'expense', { leafOnly: true, includeHidden: true }); return rows.sort((a, b) => Number(b.value === 'uncategorized' || b.value === 'other_income') - Number(a.value === 'uncategorized' || a.value === 'other_income')); }, ...categoryPickerPreference(snap), lockedVisible: true, required: true },
-      { key: 'description', label: '描述', type: 'text', half: true, placeholder: '午餐 / 工资 / 房租（可留空，列表用分类兜底）', lockedVisible: true },
+      { key: 'description', label: '描述', type: 'text', half: true, placeholder: '如午餐、工资、房租（选填）', lockedVisible: true },
       { key: 'attachmentDrafts', label: '附件 / 图片', type: 'file', accept: 'image/*,.pdf', multiple: true, capture: 'environment', lockedVisible: true },
       { key: 'timezone', label: '交易时区', type: 'text', half: true, defaultValue: currentTimezone(), section: 'more' },
       { key: 'costCurrency', label: '成本核算币种', type: 'select', singleOptionSummary: true, section: 'more', lockedVisible: true, visibleWhen: showCostValue,
@@ -621,8 +626,8 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       { key: 'refundAllocationMode', label: '退款分配方式', type: 'select', half: true, options: [{ value: 'proportional', label: '按原单剩余比例' }, { value: 'specified', label: '指定退款项目' }], defaultValue: 'proportional', lockedVisible: true, hidden: expenseOnly, visibleWhen: (v) => v.type === 'refund' && refundAllocationOptions(v).length > 1 },
       { key: 'refundAllocationDrafts', label: '指定退款项目金额', type: 'allocation', options: refundAllocationOptions, lockedVisible: true, hidden: expenseOnly, visibleWhen: (v) => v.type === 'refund' && v.refundAllocationMode === 'specified' },
       ...payeeFields(snap, 'payeeId', 'merchant', { section: 'more' }),
-      { key: 'locationId', label: '地点', type: 'select', half: true, options: locationOpts(snap), allowEmpty: true, section: 'more' },
-      { key: 'locationName', label: '地点文本', type: 'text', half: true, placeholder: '公司附近 / 家 / 某商场', section: 'more', deviceAction: 'current-location' },
+      { key: 'locationId', label: '地点', type: 'location', relatedValueKeys: ['locationName', 'latitude', 'longitude'], options: locationOpts(snap), section: 'more', deviceAction: 'current-location' },
+      { key: 'locationName', label: '地点文本', type: 'text', hidden: true },
       { key: 'latitude', label: '纬度', type: 'text', hidden: true },
       { key: 'longitude', label: '经度', type: 'text', hidden: true },
       { key: 'locationAccuracyMeters', label: '定位精度', type: 'text', hidden: true },
@@ -655,7 +660,7 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
         .map((row) => [row.sourceSplitId ?? '__root__', row.amount]))),
       tagIds: t.tagIds?.join(',') ?? '',
       locationId: t.locationId ?? '',
-      locationName: t.locationName ?? '',
+      locationName: t.locationName ?? snap.transactionLocations.find((location) => location.id === t.locationId)?.name ?? '',
       latitude: t.latitude ?? '',
       longitude: t.longitude ?? '',
       locationAccuracyMeters: t.locationAccuracyMeters ?? '',

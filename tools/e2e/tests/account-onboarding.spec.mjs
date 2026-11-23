@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures.mjs';
+import { openLedgerSection } from '../ledger-navigation.mjs';
 
 test.beforeEach(async ({ page }) => page.setDefaultTimeout(15_000));
 async function editRecord(page, title) {
@@ -99,15 +100,19 @@ test('fund onboarding can be deferred on a phone without losing the initialized 
 test('field preferences only control defaults; editing reveals existing notes and attachments', async ({ page }) => {
   await register(page);
   await page.getByRole('button', { name: '开始记账', exact: true }).click();
-  await page.getByRole('button', { name: '记第一笔', exact: true }).click();
+  await openLedgerSection(page, 'manage', 'fields');
+  const fields = page.getByRole('region', { name: '记账常用字段', exact: true });
+  await fields.getByRole('button', { name: '清空附加字段', exact: true }).click();
+  await expect(fields.getByRole('button', { name: '清空附加字段', exact: true })).toBeEnabled();
+  await openLedgerSection(page, 'transactions', 'records');
+  await page.getByRole('button', { name: '+ 记账', exact: true }).click();
   let entry = page.getByRole('dialog');
   await expect(entry).toBeVisible();
   expect((await entry.boundingBox()).width).toBe(880);
-  await entry.getByRole('button', { name: '常用附加字段', exact: true }).click();
-  await entry.getByRole('button', { name: '仅核心', exact: true }).click();
+  await expect(entry.getByRole('button', { name: '字段模式：常用', exact: true })).toBeVisible();
   await expect(entry.getByRole('checkbox', { name: '账户', exact: true })).toHaveCount(0);
   await expect(entry.getByRole('textbox', { name: '备注', exact: true })).toBeHidden();
-  await entry.locator('summary').filter({ hasText: '更多信息' }).click();
+  await entry.getByRole('button', { name: '字段模式：完整', exact: true }).click();
   await entry.getByRole('textbox', { name: '备注', exact: true }).fill('旧内容必须直接可见');
   await entry.getByLabel(/^金额/).fill('28');
   await entry.getByLabel('描述', { exact: true }).fill('字段展开检查');
@@ -119,8 +124,8 @@ test('field preferences only control defaults; editing reveals existing notes an
   await expect(entry.getByRole('textbox', { name: '备注', exact: true })).toBeVisible();
   await expect(entry.getByRole('textbox', { name: '备注', exact: true })).toHaveValue('旧内容必须直接可见');
   await expect(entry.getByText('receipt.png', { exact: true })).toBeVisible();
-  await entry.getByRole('button', { name: '常用附加字段', exact: true }).click();
-  await expect(entry.getByRole('checkbox', { name: '备注', exact: true })).not.toBeChecked();
+  await expect(entry.getByRole('button', { name: '字段模式：常用', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(entry.getByRole('checkbox', { name: '备注', exact: true })).toHaveCount(0);
   await page.screenshot({ path: 'test-results/transaction-edit-existing-fields.png' });
   await page.setViewportSize({ width: 390, height: 844 });
   expect((await entry.boundingBox()).width).toBeLessThanOrEqual(390);
@@ -139,7 +144,7 @@ test('tags can be created, searched and removed; review flags survive editing', 
   await input.fill('朋友,聚餐');
   await input.press('Enter');
   await expect(entry.getByRole('button', { name: '移除标签 朋友,聚餐' })).toBeVisible();
-  await entry.locator('summary').filter({ hasText: '更多信息' }).click();
+  await entry.getByRole('button', { name: '字段模式：完整', exact: true }).click();
   await entry.getByRole('checkbox', { name: '待核实', exact: true }).check();
   await expect(entry.getByText('标记后仍计入收支和账户余额。核实完成后可取消勾选。')).toBeVisible();
   await entry.getByRole('button', { name: '保存', exact: true }).last().click();

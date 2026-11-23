@@ -35,7 +35,7 @@ test.describe('touch category selection', () => {
     const entry = page.getByRole('dialog', { name: '新增 · 日常收支', exact: true });
     await expect(entry.getByLabel('当前币种')).toHaveText('人民币');
     await expect(entry.getByLabel(/^币种/)).toBeHidden();
-    await entry.getByText('更多信息', { exact: true }).click();
+    await entry.getByRole('button', { name: '字段模式：完整', exact: true }).click();
     await expect(entry.getByLabel(/^币种/)).toBeVisible();
     await selectValue(page, entry.getByLabel(/^币种/), '__add_asset_preset__:USD', /USD · 美元$/);
     await expect(entry.getByLabel('当前币种')).toHaveText('美元');

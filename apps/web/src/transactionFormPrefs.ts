@@ -13,14 +13,13 @@ export const TRANSACTION_FORM_FIELDS: { key: TransactionFormOptionalKey; label: 
   { key: 'timezone', label: '交易时区' },
   { key: 'payeeId', label: '商家 / 平台' },
   { key: 'locationId', label: '地点' },
-  { key: 'locationName', label: '地点文本' },
   { key: 'tagIds', label: '标签' },
   { key: 'status', label: '待核实', accountsOnly: true },
   { key: 'note', label: '备注' },
 ];
 
 export const COMMON_TRANSACTION_FORM_FIELDS: TransactionFormOptionalKey[] = [
-  'payeeId', 'locationId', 'locationName', 'tagIds', 'note',
+  'payeeId', 'locationId', 'tagIds', 'note',
 ];
 
 export function transactionFormFieldOptions(usesAccounts: boolean) {
@@ -40,6 +39,6 @@ export function optionalTransactionFields(setting: Setting | undefined, usesAcco
   if (configured === undefined) return COMMON_TRANSACTION_FORM_FIELDS.filter((key) => allowed.has(key));
   return [...new Set(configured
     .split(',')
-    .map((x) => x.trim() === 'merchant' ? 'payeeId' : x.trim())
+    .map((x) => x.trim() === 'merchant' ? 'payeeId' : x.trim() === 'locationName' ? 'locationId' : x.trim())
     .filter((key) => allowed.has(key as TransactionFormOptionalKey)))];
 }

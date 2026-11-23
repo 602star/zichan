@@ -27,11 +27,6 @@ import { PortableStoragePanel } from '../ui/PortableStoragePanel.js';
 import { ClientUpdatePanel } from '../ui/ClientUpdatePanel.js';
 import { allCategories, categoryIsHidden } from '../transactionMeta.js';
 import {
-  optionalTransactionFields,
-  transactionFormFieldOptions,
-  transactionFormPresetKeys,
-} from '../transactionFormPrefs.js';
-import {
   BackupPassphraseRequiredError,
   describePreflight,
   configureExternalBackupDirectory,
@@ -163,7 +158,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   const [mobileLedgerMoreOpen, setMobileLedgerMoreOpen] = useState(false);
   const [currencyPresetBusy, setCurrencyPresetBusy] = useState(false);
   const [currencyPresetError, setCurrencyPresetError] = useState('');
-  const [mobileSectionOpen, setMobileSectionOpen] = useState({ categories: false, fields: false, navigation: false });
+  const [mobileSectionOpen, setMobileSectionOpen] = useState({ categories: false, navigation: false });
   const [pendingAsOf, setPendingAsOf] = useState<{ date: string; warning: string } | null>(null);
   const [safetyState, setSafetyState] = useState(readSafetyState);
   const storedSafetyStateJson = snap?.setting?.dataSafetyStateJson;
@@ -220,10 +215,6 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
       return;
     }
     void saveSetting({ asOfDate: next }, { label: '更新账本日' });
-  }
-
-  async function saveFormFields(keys: string[]) {
-    await saveSetting({ transactionFormOptionalFields: keys.join(',') }, { label: '调整记账表单字段' });
   }
 
   async function saveNavigation(next: NavigationPreferences) {
@@ -669,9 +660,6 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   }
   const warnings = safetyWarnings(backups, safetyState);
   const hasIndependentBackup = backups.some((backup) => backup.externalSaved) || Boolean(safetyState.lastExternalBackupAt);
-  const usesAccounts = true;
-  const formFields = new Set(optionalTransactionFields(setting, usesAccounts));
-  const formFieldOptions = transactionFormFieldOptions(usesAccounts);
   const categoryCatalog = allCategories(readySnap.categories).filter((category) => category.parentId && category.isActive !== false);
   const frequentCategoryCount = categoryCatalog.filter((category) => !categoryIsHidden(category)).length;
   const hiddenCategoryCount = categoryCatalog.length - frequentCategoryCount;
@@ -853,62 +841,14 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
             </div>
           </div>
 
-          <div className={`zc-card zc-settings-collapsible-card${mobileSectionOpen.fields ? ' is-open' : ''}`}>
+          <div className="zc-card">
             <div className="zc-section-head zc-responsive-header">
-              <h2 className="zc-section-title">常用附加字段</h2>
-              <button type="button" className="zc-settings-mobile-toggle" aria-expanded={mobileSectionOpen.fields} aria-controls="zc-settings-fields-body" onClick={() => setMobileSectionOpen((open) => ({ ...open, fields: !open.fields }))}>
-                字段设置<span aria-hidden="true">{mobileSectionOpen.fields ? '收起' : '展开'} ▾</span>
-              </button>
+              <h2 className="zc-section-title">记账常用字段</h2>
+              <button type="button" className="zc-btn" onClick={() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'manage', tab: 'fields' } }))}>管理常用字段</button>
             </div>
-            <div id="zc-settings-fields-body" className="zc-settings-collapsible-body">
-              <p className="zc-caption" style={{ marginTop: 6 }}>
-                勾选的字段在新增记账时直接展开。其他字段可在更多信息中填写；编辑时已有内容会自动显示。账户、转账和退款必需信息由当前操作决定，无需在这里勾选。
-              </p>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '12px 0 10px' }}>
-                {[
-                  ['仅核心', transactionFormPresetKeys('core', usesAccounts)],
-                  ['常用', transactionFormPresetKeys('common', usesAccounts)],
-                  ['完整', transactionFormPresetKeys('full', usesAccounts)],
-                ].map(([label, keys]) => (
-                  <button key={String(label)} onClick={() => void saveFormFields(keys as string[])} className="zc-btn">{String(label)}</button>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {formFieldOptions.map(({ key, label }) => (
-                  <label key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1px solid var(--border)', borderRadius: 'var(--r-pill)', padding: '7px 11px', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', color: 'var(--text-secondary)', background: formFields.has(key) ? 'var(--accent-soft)' : 'var(--surface-2)' }}>
-                    <input
-                      type="checkbox"
-                      checked={formFields.has(key)}
-                      onChange={(e) => {
-                        const next = new Set(formFields);
-                        if (e.target.checked) next.add(key);
-                        else next.delete(key);
-                        void saveFormFields([...next]);
-                      }}
-                    />
-                    {label}
-                  </label>
-                ))}
-              </div>
-            </div>
+            <p className="zc-caption">常用字段在“资料管理 → 记账字段”中设置。弹窗顶部高亮项是当前模式；常用模式也可展开“更多字段”临时填写。</p>
           </div>
 
-          <section className="zc-card zc-settings-guide" aria-label="新手指南">
-            <h2 className="zc-section-title">新手指南</h2>
-            <p className="zc-caption">逐步查看记账、账户、分类和模板操作，保留已有进度。完成后不再显示在流水页，仍可从这里重看。</p>
-            <button type="button" className="zc-btn" disabled={guideBusy} onClick={() => void (async () => {
-              if (!setting?.id || guideBusy) return;
-              setGuideBusy(true); setGuideError('');
-              try {
-                const current = readOnboarding(setting.id);
-                const recorded = current?.firstTransactionRecorded ?? (await store.transactions.count()) > 0;
-                resumeOnboarding(setting.id, ledgerMode === 'spending' ? 'spending' : 'accounts', recorded);
-                navigateTo({ screen: 'transactions', tab: 'records', intent: 'onboarding' });
-              } catch (error) { setGuideError(error instanceof Error ? error.message : '指南未能打开，请重试'); }
-              finally { setGuideBusy(false); }
-            })()}>{guideBusy ? '正在打开…' : '查看新手指南'}</button>
-            {guideError && <p role="alert" className="zc-caption">{guideError}</p>}
-          </section>
           <div className={`zc-card zc-settings-collapsible-card${mobileSectionOpen.navigation ? ' is-open' : ''}`}>
             <div className="zc-section-head zc-responsive-header">
               <div>

@@ -35,7 +35,6 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     const form = page.getByRole('dialog', { name: '新增 · 日常收支', exact: true });
     await form.getByLabel(/^金额/).fill('26.80');
     await form.getByLabel('描述', { exact: true }).fill('附件预览验收');
-    await form.locator('summary').filter({ hasText: '更多信息' }).click();
     const png = Buffer.from(await page.evaluate(() => {
       const canvas = document.createElement('canvas'); canvas.width = 1800; canvas.height = 1200;
       const context = canvas.getContext('2d'); context.fillStyle = '#faf9f5'; context.fillRect(0, 0, 1800, 1200);
@@ -54,6 +53,10 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     const image = viewer.getByRole('img', { name: '原图凭证.png', exact: true });
     await expect(image).toBeVisible();
     expect(await image.evaluate((element) => element.naturalWidth)).toBe(1800);
+    await expect.poll(() => image.evaluate((element) => {
+      const stage = element.closest('.zc-attachment-stage');
+      return element.width <= stage.clientWidth && element.height <= stage.clientHeight;
+    })).toBe(true);
     const initialWidth = await image.evaluate((element) => element.width);
     await viewer.getByRole('button', { name: '放大', exact: true }).click();
     await expect.poll(() => image.evaluate((element) => element.width)).toBeGreaterThan(initialWidth);

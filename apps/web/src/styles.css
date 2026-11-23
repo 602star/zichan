@@ -1982,7 +1982,7 @@ input[type="radio"] {
   .zc-backdrop.zc-calendar-backdrop { --dialog-outer-top: 0px; --dialog-outer-bottom: 0px; padding-inline: 0; }
   .zc-calendar-popover .zc-dialog-body { padding: var(--sp-1); }
 }
-.zc-dialog-head .zc-modal-header { align-items: flex-start !important; }
+.zc-dialog-head .zc-modal-header:not(.zc-entry-header) { align-items: flex-start !important; }
 .zc-dialog-head .zc-modal-header > :last-child { position: sticky; top: 0; align-self: flex-start; }
 .zc-dialog-head > :is(div, header) > button:last-child { position: sticky; top: 0; align-self: flex-start; flex-shrink: 0; }
 .zc-dialog-head button[aria-label^="关闭"], .zc-dialog-head [data-dialog-initial-focus] { min-width: 44px; min-height: 44px; }
@@ -3179,11 +3179,11 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
     padding-bottom: calc(22px + env(safe-area-inset-bottom)) !important;
   }
 
-  .zc-modal-form-grid {
+  .zc-modal-form-grid:not(.zc-entry-grid) {
     grid-template-columns: minmax(0, 1fr) !important;
   }
 
-  .zc-modal-form-grid > * {
+  .zc-modal-form-grid:not(.zc-entry-grid) > * {
     grid-column: 1 !important;
   }
 
@@ -4596,4 +4596,117 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
 @media (pointer: coarse) {
   .zc-app-shell :is(.zc-btn--sm, .zc-calendar-trigger, .zc-sidebar-collapse, .zc-transaction-day-toggle, .zc-workspace-nav button),
   .zc-app-shell summary { min-height: 44px; }
+}
+
+.zc-entry-text-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  min-height: 44px;
+  padding: 0 var(--sp-2);
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.zc-entry-modes { display: inline-flex; flex-shrink: 0; }
+.zc-entry-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 var(--sp-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--fs-caption);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.zc-entry-mode-toggle:first-child { border-radius: var(--r-sm) 0 0 var(--r-sm); }
+.zc-entry-mode-toggle:last-child { border-radius: 0 var(--r-sm) var(--r-sm) 0; border-left: 0; }
+.zc-entry-mode-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--on-accent); background: var(--accent); }
+.zc-transaction-field-presets { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-4) 0; }
+.zc-transaction-field-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-2) var(--sp-4); }
+.zc-transaction-field-options label { display: flex; align-items: center; gap: var(--sp-2); min-height: 44px; border-bottom: 1px solid var(--border); }
+.zc-transaction-modal .zc-modal-header { min-height: 44px; }
+.zc-transaction-modal .zc-modal-header > div:first-child { line-height: 1.4; }
+.zc-transaction-modal .zc-modal-header button[aria-label="关闭"] { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; }
+.zc-entry-draft {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 var(--sp-1);
+  margin-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: var(--fs-caption);
+}
+.zc-entry-draft > span { flex: 1; }
+.zc-entry-draft--restored { font-size: var(--fs-meta); }
+.zc-entry-field-error { color: var(--negative); font-size: var(--fs-meta); margin: var(--sp-1) 0 0; }
+.zc-entry-datetime {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+.zc-entry-datetime > div { min-width: 0; }
+.zc-entry-datetime .zc-datetime-trigger > span { white-space: nowrap; }
+.zc-entry-section { border: 0; padding: 0; margin: 0 0 var(--sp-3); min-width: 0; }
+.zc-entry-context { padding-bottom: var(--sp-3); border-bottom: 1px solid var(--border); }
+.zc-entry-context .zc-select { background: var(--surface); }
+.zc-entry-primary [data-form-field$="-amount"] input {
+  --fs-input: var(--fs-display);
+  font-size: var(--fs-display);
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+  height: 60px;
+  border-width: 0 0 1px;
+  border-radius: 0;
+  padding: 0 var(--sp-1);
+  background: transparent;
+}
+.zc-location-input-row { display: flex; gap: var(--sp-1); }
+.zc-location-input-row > input { min-width: 0; flex: 1; }
+.zc-location-action { flex-shrink: 0; min-width: 44px; min-height: 44px; padding: var(--sp-2); }
+.zc-location-suggestions {
+  margin-top: var(--sp-2);
+  padding: var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.zc-location-suggestions button {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: var(--sp-2);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.zc-location-suggestions button:hover,
+.zc-location-suggestions button[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); }
+.zc-location-suggestions button > span { overflow-wrap: anywhere; }
+.zc-location-suggestions .zc-meta { margin: var(--sp-2) var(--sp-1) var(--sp-1); }
+
+@media (max-width: 767px) {
+  .zc-transaction-modal .zc-amount-currency { font-size: var(--fs-caption); }
+  .zc-transaction-modal .zc-modal-header { gap: var(--sp-2); }
+  .zc-transaction-modal .zc-modal-header > div:first-child { flex: 1; min-width: 0; }
 }

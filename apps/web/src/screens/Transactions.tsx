@@ -16,7 +16,7 @@ import { isRecentTransactionDay, loadTransactionBrowseRange } from '../transacti
 import {
   D, accountBalanceTiming, isLegacyExternalAccount, dateRangeForPreset, isDateInRange, isTransactionActive, localToday, dayOfInstant, newId, nextUnhandledScheduleOccurrence,
   type Account, type BudgetCategory, type Category, type Payee, type ReconciliationSession,
-  type ScheduledTransaction, type Setting, type Transaction, type TransactionSavedView, type TransactionSplit, type TransactionTemplate, type TransactionType,
+  type ScheduledTransaction, type Transaction, type TransactionSavedView, type TransactionSplit, type TransactionTemplate, type TransactionType,
 } from '@zichan/core';
 import {
   archiveMasterData,
@@ -73,7 +73,7 @@ import {
   type AccountBalanceVM,
   historicalCategoryValueOptions,
 } from '../selectors/transactions.js';
-import { optionalTransactionFields, transactionFormPresetKeys } from '../transactionFormPrefs.js';
+import { optionalTransactionFields } from '../transactionFormPrefs.js';
 import { ledgerAsOfDate } from '../as-of.js';
 import { moduleCurrencyId } from '../currencyPreferences.js';
 import { DateRangeBar, dateRangeValue, type DateRangeValue, type TimelineViewMode } from '../ui/DateRangeBar.js';
@@ -928,19 +928,6 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     await store.runInAuditBatch(
       `${view.isPinned ? '取消固定' : '固定'}保存筛选“${view.name}”`,
       (transactionStore) => transactionStore.transactionSavedViews.put({ ...view, isPinned: !view.isPinned }),
-    );
-    bump();
-  }
-
-  async function saveTransactionFormFields(keys: string[]) {
-    const cur: Setting = readySnap.setting ?? {
-      id: newId(), createdAt: '', updatedAt: '', version: 1, isDeleted: false,
-      baseCurrencyAssetId: readySnap.assets[0]?.id ?? '', defaultLotMethod: 'fifo',
-      ledgerMode: 'spending', asOfDate: todayDate(), categoryPickerDefaultScope: 'frequent', refundAttributionMode: 'original_date',
-    };
-    await store.runInAuditBatch(
-      '调整记账表单字段',
-      (transactionStore) => transactionStore.settings.put({ ...cur, transactionFormOptionalFields: keys.join(',') }),
     );
     bump();
   }
@@ -1929,14 +1916,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
           })}
           initial={editingTx === 'new' ? refundDraft ?? templateDraft ?? undefined : editingTx}
           isNew={editingTx === 'new'}
-          optionalFieldKeys={compactView && editingTx === 'new' && snap.setting?.transactionFormOptionalFields === undefined
-            ? [] : optionalTransactionFields(snap.setting, usesAccounts)}
-          optionalFieldPresets={[
-            { label: '仅核心', keys: transactionFormPresetKeys('core', usesAccounts) },
-            { label: '常用', keys: transactionFormPresetKeys('common', usesAccounts) },
-            { label: '完整', keys: transactionFormPresetKeys('full', usesAccounts) },
-          ]}
-          onOptionalFieldKeysChange={(keys) => saveTransactionFormFields(keys)}
+          optionalFieldKeys={optionalTransactionFields(snap.setting, usesAccounts)}
           onSave={async (entity) => {
             await saveTx(entity);
             if (templateDraft) setOnboarding((current) => current ? updateOnboarding(current, { templateUsed: true }) : current);

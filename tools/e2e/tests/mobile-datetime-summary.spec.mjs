@@ -59,7 +59,7 @@ test.describe('mobile date/time and spending', () => {
 
     const form = await quick(page);
     await form.getByLabel(/^金额/).fill('38');
-    await form.getByText('更多信息', { exact: true }).click();
+    await form.getByRole('button', { name: '字段模式：完整', exact: true }).click();
     await form.getByLabel('交易时间', { exact: true }).click();
     const time = page.getByRole('dialog', { name: '选择交易时间', exact: true });
     await fits(time);
@@ -99,7 +99,7 @@ test.describe('mobile date/time and spending', () => {
     await page.locator('#transaction-records').getByRole('button', { name: /^\+ 记(账|支出)$/ }).click();
     const form = page.getByRole('dialog', { name: /^新增 · 日常(收支|支出)$/ });
     await form.getByLabel(/^金额/).fill('12');
-    await form.getByText('更多信息', { exact: true }).click();
+    await form.getByRole('button', { name: '字段模式：完整', exact: true }).click();
     await form.getByLabel('日期', { exact: true }).click();
     const date = page.getByRole('dialog', { name: '选择日期', exact: true });
     await fits(date);
@@ -119,7 +119,7 @@ test('desktop retains keyboard date and time entry', async ({ page }) => {
   await page.locator('#transaction-records').getByRole('button', { name: /^\+ 记(账|支出)$/ }).click();
   const form = page.getByRole('dialog', { name: /^新增 · 日常(收支|支出)$/ });
   await form.getByLabel('日期', { exact: true }).fill('2026-11-12');
-  await form.getByText('更多信息', { exact: true }).click();
+  await form.getByRole('button', { name: '字段模式：完整', exact: true }).click();
   await form.getByLabel('交易时间', { exact: true }).fill('09:35');
   await expect(form.getByLabel('日期', { exact: true })).toHaveValue('2026-11-12');
   await expect(form.getByLabel('交易时间', { exact: true })).toHaveValue('09:35');

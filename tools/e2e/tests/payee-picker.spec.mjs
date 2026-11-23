@@ -64,7 +64,7 @@ test('scene browsing stays usable on a phone and custom counterpart text saves d
   await page.setViewportSize({ width: 390, height: 844 });
   await register(page);
   const entry = page.getByRole('dialog');
-  await entry.locator('summary').filter({ hasText: '更多信息' }).press('Enter');
+  await entry.getByRole('button', { name: '字段模式：完整', exact: true }).click();
   const input = entry.getByRole('textbox', { name: '商家 / 平台', exact: true });
   await input.click();
   await entry.getByRole('button', { name: '按场景浏览', exact: true }).click();
@@ -80,7 +80,5 @@ test('scene browsing stays usable on a phone and custom counterpart text saves d
   await expect(entry).toBeHidden();
   await page.locator('.zc-transaction-row').filter({ hasText: '自定义交易对象' }).getByRole('button', { name: '打开 自定义交易对象 的流水操作', exact: true }).click();
   await page.getByRole('button', { name: '编辑流水', exact: true }).click();
-  const more = page.getByRole('dialog', { name: '编辑 · 日常收支', exact: true }).locator('details').filter({ has: page.locator('summary', { hasText: '更多信息' }) });
-  if (!(await more.getAttribute('open') !== null)) await more.locator('summary').click();
   await expect(page.getByRole('dialog').getByRole('textbox', { name: '商家 / 平台', exact: true })).toHaveValue('楼下便利店');
 });

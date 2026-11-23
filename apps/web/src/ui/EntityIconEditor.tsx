@@ -8,6 +8,7 @@ export function EntityIconEditor({ id, value, defaultIcon, platformName, platfor
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [query, setQuery] = useState('');
   const input = useRef<HTMLInputElement>(null);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -27,12 +28,16 @@ export function EntityIconEditor({ id, value, defaultIcon, platformName, platfor
         }} />
     </div>
     <p className="zc-meta">PNG、JPG、WebP，最大 2 MB；自动缩小并保留完整图片，保存后随账本同步。</p>
-    <details><summary>选择内置图标</summary><div className="zc-icon-options">
-      {Object.entries(ENTITY_ICONS).map(([key, item]) => <button type="button" key={key} title={item.label} aria-label={`图标：${item.label}`}
+    <details><summary>选择内置图标</summary>
+      <input className="zc-input" aria-label="搜索内置图标" placeholder="搜索图标，如餐饮、交通、药品" value={query} onChange={(event) => setQuery(event.target.value)} />
+      <div className="zc-icon-options">
+      {Object.entries(ENTITY_ICONS).filter(([key, item]) => `${item.label} ${key}`.includes(query.trim())).map(([key, item]) => <button type="button" key={key} title={item.label} aria-label={`图标：${item.label}`}
         aria-pressed={value === `lucide:${key}`} disabled={busy || disabled} onClick={() => { setError(''); onChange(`lucide:${key}`); }}>
         <EntityIcon icon={`lucide:${key}`} />
       </button>)}
-    </div></details>
+    </div>
+    {query && !Object.entries(ENTITY_ICONS).some(([key, item]) => `${item.label} ${key}`.includes(query.trim())) && <p className="zc-meta">没有匹配的图标，试试其他关键词。</p>}
+    </details>
     {error && <p role="alert" className="zc-icon-error">{error}</p>}
   </div>;
 }

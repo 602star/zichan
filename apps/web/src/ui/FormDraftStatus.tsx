@@ -61,19 +61,21 @@ export function useFormDraftAutosave(
   };
 }
 
-export function FormDraftStatus({ status }: { status: DraftSaveStatus }) {
+export function FormDraftStatus({ status, compact = false }: { status: DraftSaveStatus; compact?: boolean }) {
   if (status.state === 'idle') return null;
   const failed = status.state === 'error';
   return (
     <div
+      className={`zc-form-draft-status${failed ? ' is-error' : ''}`}
       role={failed ? 'alert' : 'status'}
-      style={{ marginTop: 10, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--surface-2)', color: failed ? 'var(--negative)' : 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}
+      title={status.state === 'saved' ? new Date(status.savedAt).toLocaleString() : undefined}
+      style={{ marginTop: compact && !failed ? 0 : 10, marginBottom: compact && !failed ? 8 : undefined, padding: compact && !failed ? 0 : '8px 10px', border: compact && !failed ? 0 : '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: compact && !failed ? 'transparent' : 'var(--surface-2)', color: failed ? 'var(--negative)' : 'var(--text-secondary)', fontSize: compact && !failed ? 'var(--fs-meta)' : 'var(--fs-caption)' }}
     >
       {failed
         ? `草稿自动保存失败：${status.message}。当前修改仍在本页，请保持页面打开并尝试继续编辑或手动保存。`
         : status.state === 'saving'
           ? '正在自动保存草稿…'
-          : `草稿已自动保存：${new Date(status.savedAt).toLocaleString()}`}
+          : compact ? '草稿已自动保存' : `草稿已自动保存：${new Date(status.savedAt).toLocaleString()}`}
     </div>
   );
 }

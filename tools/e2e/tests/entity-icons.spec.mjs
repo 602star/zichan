@@ -48,7 +48,7 @@ for (const width of [390, 1280]) test(`payee uploads survive reload and reset at
   await page.getByRole('button', { name: '+ 记账', exact: true }).click();
   const entry = page.getByRole('dialog', { name: '新增 · 日常收支', exact: true });
   if (width === 390) {
-    await entry.locator('summary').filter({ hasText: '更多信息' }).press('Enter');
+    await entry.getByRole('button', { name: '字段模式：完整', exact: true }).click();
   }
   await entry.getByRole('textbox', { name: '商家 / 平台', exact: true }).fill('我的图标商店');
   await expect(entry.getByRole('button', { name: '我的图标商店', exact: true }).locator('img')).toHaveAttribute('src', source);

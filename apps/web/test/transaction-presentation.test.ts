@@ -6,6 +6,29 @@ import { makeSnapshot } from './fixtures.js';
 
 const keys = (fields: { key: string }[]) => fields.map((f) => f.key);
 describe('transaction form presentation', () => {
+  it('keeps phone date and time together and migrates the old location text preference', () => {
+    const snap = makeSnapshot();
+    const spec = transactionForm(snap);
+    expect(spec.compactDateTime).toBe(true);
+    snap.setting!.transactionFormOptionalFields = 'locationName,locationId,note';
+    expect(optionalTransactionFields(snap.setting, true)).toEqual(['locationId', 'note']);
+    expect(spec.optionalFieldOptions!.filter((field) => field.key.startsWith('location'))).toEqual([{ key: 'locationId', label: '地点' }]);
+    const groups = progressiveFieldGroups(spec.fields, { type: 'expense' }, { locationName: '旧记录的手填地点' }, []);
+    expect(keys(groups.core)).toContain('locationId');
+    expect(keys(groups.core)).not.toContain('locationName');
+  });
+
+  it('replaces saved location coordinates when selecting or typing a different place', () => {
+    const snap = makeSnapshot();
+    const location = snap.transactionLocations[0]!;
+    location.latitude = '31.23'; location.longitude = '121.47';
+    const spec = transactionForm(snap);
+    const selected = spec.onFieldChange!({ locationId: location.id, locationName: '旧文本', latitude: '1', longitude: '2', locationAccuracyMeters: '10' }, 'locationId', new Set());
+    expect(selected).toMatchObject({ locationName: location.name, latitude: '31.23', longitude: '121.47', locationAccuracyMeters: '' });
+    const typed = spec.onFieldChange!({ ...selected, locationId: '', locationName: '新地点' }, 'locationId', new Set());
+    expect(typed).toMatchObject({ locationId: '', locationName: '新地点', latitude: '', longitude: '', locationAccuracyMeters: '' });
+  });
+
   it('shows the currency beside the amount and keeps its selector in more information', () => {
     const snap = makeSnapshot();
     const spec = transactionForm(snap);
@@ -43,8 +66,8 @@ describe('transaction form presentation', () => {
     const spec = transactionForm(makeSnapshot());
     const compactKeys = spec.compactNewFieldKeys!;
     const empty = progressiveFieldGroups(spec.fields, { type: 'expense' }, {}, [], compactKeys);
-    expect(keys(empty.more)).toEqual(expect.arrayContaining(['assetId', 'time', 'attachmentDrafts', 'note']));
-    expect(keys(empty.core)).toEqual(expect.arrayContaining(['amount', 'date', 'category']));
+    expect(keys(empty.more)).toEqual(expect.arrayContaining(['assetId', 'time', 'note']));
+    expect(keys(empty.core)).toEqual(expect.arrayContaining(['amount', 'date', 'category', 'attachmentDrafts']));
 
     const populated = progressiveFieldGroups(spec.fields, { type: 'expense' }, { time: '13:45', attachmentDrafts: '[{"fileName":"receipt.jpg"}]' }, [], compactKeys);
     expect(keys(populated.core)).toEqual(expect.arrayContaining(['time', 'attachmentDrafts']));
