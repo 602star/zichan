@@ -97,10 +97,14 @@ test('every screen keeps the phone/tablet layout contract across the device matr
       await page.waitForTimeout(650);
     }
 
-    // Enable every module through the phone drawer, which is the first-run
-    // navigation path and avoids a settings write racing a checkbox click.
+    // Desktop sidebar preferences must be prepared before testing wider widths;
+    // the phone drawer exposes modules without changing desktop visibility.
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('zichan:navigate', { detail: { screen: 'settings', tab: 'ledger' } })));
+    await enableEveryNavigationModule(page);
     await page.setViewportSize({ width: 390, height: 844 });
     await enableEveryNavigationModule(page);
+    await clickNav(page, '日常收支');
 
     // Gate: with `overflow-x: hidden` on <body>, the viewport could not scroll at
     // all, which is what made every earlier occlusion measurement meaningless.

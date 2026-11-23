@@ -56,6 +56,11 @@ test('two browser tabs can write the same ledger and see each other’s records'
     await page.locator('.zc-sidebar').getByRole('button', { name: '流水', exact: true }).click();
     await expect(page.locator('.zc-transaction-summary-title').filter({ hasText: '第一页记账' })).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('.zc-transaction-summary-title').filter({ hasText: '第二页记账' })).toBeVisible({ timeout: 30_000 });
+    // Measure idle traffic only after this document's startup sync has converged.
+    await expect.poll(() => page.evaluate(() => {
+      const report = JSON.parse(sessionStorage.getItem('zichan.startup-timing.v1') || '{}');
+      return report.stages?.some(stage => stage.name === 'background.syncCaughtUp') ?? false;
+    }), { timeout: 30_000 }).toBe(true);
     await page.waitForTimeout(2_500);
     let idleSyncRequests = 0;
     const countSync = (request) => {
