@@ -5,7 +5,7 @@
  */
 import initSqlJs, { type Database } from 'sql.js';
 import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url';
-import { SerialTaskQueue, type SqlDriver, type SqlParam, type SqlRunResult } from '@zichan/db';
+import { SerialTaskQueue, TABLES, type SqlDriver, type SqlParam, type SqlRunResult } from '@zichan/db';
 
 type Persist = (bytes: Uint8Array) => void | Promise<void>;
 type CloseHook = () => void | Promise<void>;
@@ -29,6 +29,7 @@ interface SqlJsState {
   dirty: boolean;
   persistenceFailure?: Error;
 }
+let sqlModule: ReturnType<typeof initSqlJs> | undefined;
 
 export class SqlJsPersistenceError extends Error {
   constructor(cause: unknown) {
@@ -46,7 +47,7 @@ export class SqlJsDriver implements SqlDriver {
   ) {}
 
   static async open(bytes: Uint8Array | null, onPersist?: Persist, onClose?: CloseHook): Promise<SqlJsDriver> {
-    const SQL = await initSqlJs({ locateFile: runtimeWasmUrl });
+    const SQL = await (sqlModule ??= initSqlJs({ locateFile: runtimeWasmUrl }));
     const db = bytes ? new SQL.Database(bytes) : new SQL.Database();
     return new SqlJsDriver({ db, onPersist, onClose, queue: new SerialTaskQueue(), nextSavepoint: 0, closed: false, dirty: false });
   }
@@ -61,6 +62,31 @@ export class SqlJsDriver implements SqlDriver {
       throw this.state.persistenceFailure;
     }
     this.state.dirty = false;
+  }
+
+  async installSnapshot(bytes: Uint8Array): Promise<boolean> {
+    if (this.transactionScoped) throw new Error('快照不能在现有事务内安装');
+    const SQL = await (sqlModule ??= initSqlJs({ locateFile: runtimeWasmUrl }));
+    return this.state.queue.run(async () => {
+      this.assertUsable();
+      const tables = [...Object.values(TABLES).map(spec => spec.name), 'conversion_steps', 'operation_log', 'sync_commits'];
+      for (const table of tables) {
+        if (this.state.db.exec(`SELECT 1 FROM ${table} LIMIT 1`)[0]?.values.length) return false;
+      }
+      const next = new SQL.Database(bytes);
+      const previous = this.state.db;
+      try {
+        this.state.db = next;
+        this.state.dirty = true;
+        await this.persist();
+      } catch (error) {
+        this.state.db = previous;
+        next.close();
+        throw error;
+      }
+      previous.close();
+      return true;
+    });
   }
 
   async exec(sql: string): Promise<void> {

@@ -356,6 +356,8 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   useEffect(() => {
     const openQuickTransaction = () => {
       if (!canNavigateWorkspace()) return;
+      // The live event also consumes the pending request when this page is already mounted.
+      try { accountSessionStorage.removeItem('zichan.quickTransaction'); } catch { /* Storage may be unavailable. */ }
       setEntryFields({});
       setEntryGeneration((current) => current + 1);
       setTab('records');

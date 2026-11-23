@@ -16,6 +16,7 @@ import {
 } from '@zichan/core';
 import type { CommitTransport, ReplicaConnection } from './event-sync.js';
 import type { SyncReplicaIdentity } from './sync-types.js';
+import type { LedgerStartupProtection } from './ledger-open-snapshot.js';
 
 
 export interface HttpTransportOptions {
@@ -77,6 +78,8 @@ export class MfaRequiredError extends Error {
 }
 
 export interface SyncAuthSession {
+  account?: SyncAuthMe;
+  protection?: LedgerStartupProtection;
   accountId?: string;
   sessionTransport?: 'cookie' | 'token';
   accessToken: string;

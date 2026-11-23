@@ -31,6 +31,8 @@ export class SerialTaskQueue {
 }
 
 export interface SqlDriver {
+  /** Install a verified initial snapshot, refusing to replace any initialized local ledger. */
+  installSnapshot?(bytes: Uint8Array): Promise<boolean>;
   /** Execute one or more statements without parameters (DDL, pragmas). */
   exec(sql: string): Promise<void>;
   /** Run a parameterized statement and report how many rows changed. */

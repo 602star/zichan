@@ -33,14 +33,14 @@ interface Collectors {
   http: { instanceId: string; queueDepth: number; dropped: number; writeFailures: number; lastSuccessAt: string | null };
 }
 
-const TITLES = { requests: '请求分析', traffic: '访问分析', database: '数据库', collectors: '采集任务', host: '主机与容器' };
+const TITLES = { requests: '请求分析', traffic: '访问分析', startup: '打开性能', database: '数据库', collectors: '采集任务', host: '主机与容器' };
 type View = keyof typeof TITLES;
 const ms = (value: number | null | undefined) => value == null ? '未采集' : `${value.toFixed(1)} ms`;
 const percent = (value: number | null | undefined) => value == null ? '—' : `${(value * 100).toFixed(2)}%`;
 
 export function OperationsPage({ client, view, query, navigate, role }: { client: AdminClient; view: View; query: URLSearchParams; navigate: (to: string) => void; role: string }) {
   const [paused, setPaused] = useState(false);
-  const presets = view === 'requests' ? ['15m', '1h', '24h', '7d', '30d', '90d'] : ['1h', '24h', '7d', '30d', '90d'];
+  const presets = view === 'startup' ? ['7d', '30d', '90d'] : view === 'requests' ? ['15m', '1h', '24h', '7d', '30d', '90d'] : ['1h', '24h', '7d', '30d', '90d'];
   const windowQuery = trendQuery(query, presets);
   const range = new URLSearchParams(windowQuery).get('range')!;
   const update = (patch: Record<string, string>) => {
@@ -49,15 +49,16 @@ export function OperationsPage({ client, view, query, navigate, role }: { client
     navigate(`/${view}?${next}`);
   };
   return <>
-    <PageHeader title={TITLES[view]} description={{ requests: '按真实响应分析 API 请求，沿路由和请求 ID 继续排查。', traffic: '页面访问与 API 性能分别统计，保留清楚的访客与活动口径。', database: '只展示当前 SQLite 引擎实际可采集的状态。', collectors: '检查采集任务本身，分开查看最近成功与最近失败。', host: '独立宿主机检查器提供的数据，应用停止后仍可探测和推送。' }[view]}
+    <PageHeader title={TITLES[view]} description={{ requests: '按真实响应分析 API 请求，沿路由和请求 ID 继续排查。', traffic: '页面访问与 API 性能分别统计，保留清楚的访客与活动口径。', startup: '从页面访问到可以记账，分别查看首次恢复、本机打开和后台追平。', database: '只展示当前 SQLite 引擎实际可采集的状态。', collectors: '检查采集任务本身，分开查看最近成功与最近失败。', host: '独立宿主机检查器提供的数据，应用停止后仍可探测和推送。' }[view]}
       actions={<Button aria-pressed={paused} onClick={() => setPaused(!paused)}>{paused ? '恢复自动刷新' : '暂停自动刷新'}</Button>} />
     {view !== 'database' && <WorkspaceTabs path={`/${view}`} query={query} navigate={navigate} />}
     <div className="zc-admin-ops-toolbar">
-      {view === 'requests' || view === 'traffic' ? <TrendTimeRange label="统计时间范围" query={query} presets={presets} maxDays={90} onChange={update} /> : <span>当前状态快照，不提供历史区间查询。</span>}
+      {view === 'requests' || view === 'traffic' || view === 'startup' ? <TrendTimeRange label="统计时间范围" query={query} presets={presets} maxDays={90} onChange={update} /> : <span>当前状态快照，不提供历史区间查询。</span>}
       <span>时区：{Intl.DateTimeFormat().resolvedOptions().timeZone} · {paused ? '自动刷新已暂停' : '每 30 秒刷新'}</span>
     </div>
     {view === 'requests' ? <RequestsPanel client={client} range={range} windowQuery={windowQuery} route={query.get('route') ?? ''} paused={paused} update={update} navigate={navigate} /> : null}
-    {view === 'traffic' ? <><TrafficPanel client={client} range={range} windowQuery={windowQuery} paused={paused} country={query.get('country') ?? ''} onCountry={(country) => update({ country })} /><StartupTimingPanel client={client} range={range === '30d' || range === '90d' ? range : '7d'} windowQuery={range === 'custom' ? windowQuery : undefined} /></> : null}
+    {view === 'traffic' ? <TrafficPanel client={client} range={range} windowQuery={windowQuery} paused={paused} country={query.get('country') ?? ''} onCountry={(country) => update({ country })} /> : null}
+    {view === 'startup' ? <StartupTimingPanel client={client} range={range === '30d' || range === '90d' ? range : '7d'} windowQuery={windowQuery} paused={paused} /> : null}
     {view === 'database' ? <><DatabaseDiagnostics client={client} paused={paused} role={role} onJob={(id) => navigate(`/jobs?job=${encodeURIComponent(id)}`)} /><Button onClick={() => navigate('/storage')}>存储与备份</Button></> : null}
     {view === 'collectors' ? <CollectorsPanel client={client} paused={paused} /> : null}
     {view === 'host' ? <HostPanel client={client} paused={paused} /> : null}

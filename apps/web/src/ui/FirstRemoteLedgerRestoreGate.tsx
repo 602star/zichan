@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { accountProtection } from '../account-protection.js';
 import { importLedger, type SqlLedgerStore } from '@zichan/db';
 import type { Setting } from '@zichan/core';
-import { adoptUnlockedLedgerKeyEnvelope } from '../ledger-key-vault.js';
+import { adoptUnlockedLedgerKeyEnvelope, requireLedgerCryptoSession } from '../ledger-key-vault.js';
+import { fetchLedgerOpenSnapshot } from '../ledger-open-snapshot.js';
+import { isTauriRuntime } from '../tauri.js';
 import { prepareRemoteLedgerJoin } from '../remote-ledger-join.js';
 import { authenticateSyncProfile } from '../sync-auth.js';
 import {
@@ -11,7 +13,7 @@ import {
   saveSyncConnections,
   type SyncConnection,
 } from '../sync-config.js';
-import { measureStartupStage, recordStartupCount } from '../startup-timing.js';
+import { measureStartupStage, recordStartupCount, failStartupTiming } from '../startup-timing.js';
 
 export function FirstRemoteLedgerRestoreGate(props: {
   store: SqlLedgerStore;
@@ -59,8 +61,17 @@ export function FirstRemoteLedgerRestoreGate(props: {
       return;
     }
     setBusy(true);
-    setMessage('正在验证服务器身份、密钥封套和全部加密提交…附件在使用时按需下载。');
+    setMessage(automaticSecret && !isTauriRuntime() ? '正在获取加密账本快照…' : '正在验证服务器身份、密钥封套和全部加密提交…附件在使用时按需下载。');
     try {
+      if (automaticSecret && !isTauriRuntime()) {
+        const bytes = await fetchLedgerOpenSnapshot(props.connection, requireLedgerCryptoSession(ledgerId), setMessage);
+        setMessage('正在保存本机加密账本，随后即可记账…');
+        await measureStartupStage('local.installSnapshot', () => props.store.installInitialSnapshot(bytes));
+        const setting = (await props.store.settings.list({ limit: 1 }))[0];
+        if (!setting) throw new Error('打开快照没有活动账本设置');
+        await props.onRestored(setting, setMessage);
+        return;
+      }
       // Authentication always performs an anonymous health identity check first. Cached
       // access/refresh tokens and the password are never sent to an unverified endpoint.
       setMessage('正在验证服务器身份和账号会话…');
@@ -98,6 +109,7 @@ export function FirstRemoteLedgerRestoreGate(props: {
       if (!setting) throw new Error('远端账本没有活动设置');
       await props.onRestored(setting, setMessage);
     } catch (error) {
+      failStartupTiming('remote.restoreFailed');
       setMessage(`恢复失败：${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setBusy(false);
@@ -109,7 +121,9 @@ export function FirstRemoteLedgerRestoreGate(props: {
       <section style={{ width: 'min(720px, 100%)', margin: '3vh auto 0', padding: 'clamp(22px, 5vw, 36px)', border: '1px solid var(--border)', borderRadius: 'var(--r-md)', background: 'var(--surface-2)' }}>
         <div style={{ color: 'var(--accent)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', letterSpacing: '.1em' }}>发现已有远端账本</div>
         <h1 style={{ margin: '10px 0 8px', color: 'var(--text-primary)', fontSize: 'var(--fs-hero)' }}>从 {props.connection.alias} 恢复</h1>
-        <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7 }}>账号 {props.connection.username} 已绑定账本 {props.connection.ledgerId}。系统会先在隔离数据库验证密钥、提交 DAG 与账本一致性，成功后才写入本机。</p>
+        <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7 }}>账号 {props.connection.username} 已绑定账本。{automaticSecret && !isTauriRuntime()
+          ? '正在打开服务器准备的加密快照；打开后即可记账，后续变化在后台同步。附件在使用时按需下载。'
+          : '系统会先在隔离数据库验证密钥、提交与账本一致性，成功后才写入本机。'}</p>
         {!automaticSecret && <label style={{ display: 'block', marginTop: 20, fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' }}>
           账本密码
           <input

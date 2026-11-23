@@ -5,6 +5,7 @@
  * (wa-sqlite on web, a dedicated Rust SQL bridge on native).
  */
 export { requestJson, HttpRequestError, type HttpRequestOptions } from './http-request.js';
+export * from './ledger-open-snapshot.js';
 export * from './asset-cost-service.js';
 export * from './conversion-operation.js';
 export { SerialTaskQueue, type SqlDriver, type SqlParam, type SqlRunResult } from './driver.js';

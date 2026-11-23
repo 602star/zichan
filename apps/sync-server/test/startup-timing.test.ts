@@ -30,6 +30,21 @@ describe('browser startup telemetry', () => {
       expect(rows.filter((row) => row.stage === 'total').reduce((sum, row) => sum + row.samples, 0)).toBe(2);
       expect(rows.filter((row) => row.stage === 'account.unlockLedgerKey').reduce((sum, row) => sum + row.durationSumMs, 0)).toBe(500);
       expect(rows.some((row) => row.stage === 'first_restore_total')).toBe(false);
+      await store.recordStartupTiming({ kind: 'background', totalMs: 3000,
+        stages: [{ name: 'background.syncCaughtUp', durationMs: 4000 }] });
+      await store.recordStartupTiming({ kind: 'failure', totalMs: 5000,
+        stages: [{ name: 'account.restoreFailed', durationMs: 5000 }] });
+      await store.recordStartupTiming({ totalMs: 100,
+        stages: [{ name: 'local.cacheOpen', durationMs: 10 }] });
+      await store.recordStartupTiming({ totalMs: 500,
+        stages: [{ name: 'local.installSnapshot', durationMs: 30 }] });
+      const updated = await store.startupTimingSummary(new Date().toISOString().slice(0, 10));
+      const samples = (stage: string) => updated.filter(row => row.stage === stage).reduce((sum, row) => sum + row.samples, 0);
+      expect(samples('total')).toBe(4);
+      expect(samples('first_restore_total')).toBe(1);
+      expect(samples('cache_total')).toBe(1);
+      expect(samples('failure.total')).toBe(1);
+      expect(samples('background.syncCaughtUp')).toBe(1);
     } finally { await store.close(); rmSync(dir, { recursive: true, force: true }); }
   });
 });

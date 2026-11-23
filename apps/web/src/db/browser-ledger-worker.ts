@@ -6,7 +6,7 @@ import { SqlJsDriver } from './sqljs-driver.js';
 
 type Request = {
   id: number;
-  op: 'open' | 'close' | 'exec' | 'run' | 'all' | 'get' | 'begin' | 'commit' | 'rollback' | 'task-lock' | 'task-unlock';
+  op: 'open' | 'close' | 'exec' | 'run' | 'all' | 'get' | 'begin' | 'commit' | 'rollback' | 'task-lock' | 'task-unlock' | 'snapshot';
   sql?: string;
   params?: SqlParam[];
   txId?: string;
@@ -15,6 +15,7 @@ type Request = {
   cryptoSession?: LedgerCryptoSession;
   taskName?: string;
   taskToken?: string;
+  bytes?: Uint8Array;
 };
 
 type Reply = { id: number; ok: true; value?: unknown } | { id: number; ok: false; error: { name: string; message: string } };
@@ -216,6 +217,12 @@ async function dispatch(port: MessagePort, request: Request): Promise<unknown> {
   if (request.op === 'task-unlock') return releaseTaskLock(port, request.taskName, request.taskToken);
   if (request.op === 'commit' || request.op === 'rollback') return finishTransaction(port, request, request.op === 'rollback');
   const driver = request.txId === undefined ? database.driver : requireTransaction(port, request.txId).driver;
+  if (request.op === 'snapshot') {
+    if (!request.bytes || request.txId) throw new Error('初始快照请求无效');
+    const installed = await database.driver.installSnapshot(request.bytes);
+    if (installed) broadcastChange(port);
+    return installed;
+  }
   if (request.op === 'exec') {
     await driver.exec(request.sql ?? '');
     recordVisibleChange(port, request.txId, request.sql ?? '');

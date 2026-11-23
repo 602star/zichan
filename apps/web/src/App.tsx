@@ -44,6 +44,7 @@ import { TaskList } from './ui/MobilePage.js';
 import { hasMobileDialog } from './ui/mobile-dialog-history.js';
 import { canNavigateWorkspace, navigateTo, rememberScreenTarget, type ScreenTarget } from './screen-target.js';
 import { installSyncLifecycle } from './background-sync.js';
+import { finishStartupTiming } from './startup-timing.js';
 import { connectionLinkFromLocation } from './connection-link.js';
 import {
   exportPortableLedger,
@@ -283,6 +284,12 @@ function importDiff(backup: LedgerBackup, snap: Snapshot | null): ImportDiff {
 export function App() {
   const { store, bump, storageBackend, dataLocation, preview } = useStore();
   const snap = useSnapshot('shell');
+  useEffect(() => {
+    if (preview || !snap?.setting) return;
+    let second = 0;
+    const first = requestAnimationFrame(() => { second = requestAnimationFrame(finishStartupTiming); });
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
+  }, [preview, snap?.setting]);
   const [screen, setScreenState] = useState<ScreenId>(() => initialScreen(Boolean(preview)));
   useEffect(() => {
     if (preview || isTauriRuntime()) return;

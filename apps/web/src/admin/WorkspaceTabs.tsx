@@ -1,9 +1,10 @@
 export function WorkspaceTabs({ path, query, navigate }: {
   path: string; query: URLSearchParams; navigate: (to: string) => void;
 }) {
-  const access = path === '/requests' || path === '/traffic';
+  const access = path === '/requests' || path === '/traffic' || path === '/startup';
   const views = access ? [
     ['/requests', '', '请求分析', 'API 响应与路由'], ['/traffic', '', '访问分析', '页面、访客与地区'],
+    ['/startup', '', '打开性能', '首开、缓存与后台追平'],
   ] : [
     ['/monitor', 'application', '应用自身', 'Node 进程与事件循环'],
     ['/monitor', 'system', '系统资源', '主机或容器可见范围'],

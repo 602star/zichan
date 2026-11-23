@@ -9,6 +9,7 @@ import { OfflineShellStatus } from './ui/OfflineShellStatus.js';
 import { loadDesktopLedgerProfile } from './desktop-ledger-profile.js';
 import { saveFirstUseMode } from './browser-storage-policy.js';
 import { reportPageView } from './traffic-view.js';
+import { startStartupTiming } from './startup-timing.js';
 
 const AdminApp = lazy(() => import('./admin/AdminApp.js').then((module) => ({ default: module.AdminApp })));
 const LedgerApp = lazy(() => import('./LedgerApp.js').then((module) => ({ default: module.LedgerApp })));
@@ -68,6 +69,7 @@ function DesktopLedgerApp() {
   return <LedgerApp />;
 }
 const managementPage = adminBaseUrls(window.location).length > 0;
+if (!managementPage) startStartupTiming(true);
 if (!managementPage && !isTauriRuntime()) enableWebAccounts();
 
 createRoot(document.getElementById('root')!).render(

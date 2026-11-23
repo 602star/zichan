@@ -29,6 +29,7 @@ import { createSystemMonitor } from './system-monitor.js';
 import { createRequestOrigin } from './request-origin.js';
 import { createBrowserSessionCookies } from './browser-session.js';
 import { parseStartupTiming } from './startup-timing.js';
+import { LedgerOpenSnapshots } from './ledger-open-snapshots.js';
 import {
   ADMIN_BODY_BYTES,
   AUTH_BODY_BYTES,
@@ -382,6 +383,7 @@ export interface SyncServer {
   /** Run one outbound node replication pass immediately. */
   flushNodeReplication: () => Promise<void>;
   flushGroupReplication: () => Promise<void>;
+  flushOpenSnapshots: () => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -624,6 +626,37 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     return String(settings.effective('ledgerWebAccess')) === 'on';
   };
 
+  const openSnapshots = new LedgerOpenSnapshots({ store, serverId, directory: join(dataDir, 'ledger-open'),
+    custodyKey: () => custodyKey,
+    onError: (error) => { void log('warn', 'ledger_open_snapshot_failed', '账本打开快照生成失败',
+      { detail: { error: error instanceof Error ? error.message : String(error) } }).catch(() => undefined); },
+  });
+  const snapshotTimer = setInterval(() => { void ready.then(() => openSnapshots.warm()).catch(() => undefined); }, 30_000);
+  snapshotTimer.unref();
+  void ready.then(() => openSnapshots.warm()).catch(() => undefined);
+
+  const startupProtection = async (user: { username: string; accountId: string }, replicaId?: string | null) => {
+    const bound = await store.getReplica(user.username, replicaId ?? undefined);
+    const selected = await store.getReplica(user.username);
+    const protection = !bound || bound.replicaId === selected?.replicaId ? await store.getLedgerProtection(user.username) : undefined;
+    return { mode: protection?.mode ?? (bound ? 'relay' : null), version: protection?.version ?? 0,
+      defaultMode: defaultProtection, custodyEnabled,
+      secret: protection?.mode === 'managed' && protection.sealedSecret
+        ? openCustodySecret(custodyKey, `${serverId}:${user.accountId}`, protection.sealedSecret) : null,
+      envelope: bound && bound.replicaId === selected?.replicaId
+        ? await store.getKeyEnvelope(user.username, bound.ledgerId, 'account', bound.replicaId) ?? null : null,
+      replica: bound ? { serverId, ...bound } : null };
+  };
+  const startupBundle = async (user: { username: string; accountId: string; displayName?: string }, session: SyncSession) => {
+    if (session.kind !== 'ledger') return {};
+    const protection = await startupProtection(user, session.replicaId);
+    const replica = protection.replica;
+    return { protection, account: { username: user.username, accountId: user.accountId, displayName: user.displayName,
+      role: await store.roleForUser(user.username), disabled: false, session: publicSession(session),
+      federatedIdentity: await store.federatedAccount(user.username) ?? null,
+      ...(replica ? { ledgerId: replica.ledgerId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch } : {}) } };
+  };
+
   /**
    * Issues the session once every factor is satisfied. Both login paths end here: the only
    * difference between them is how they proved the account, not what they get afterwards.
@@ -660,6 +693,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     if (cookieSession) browserSession.write(input.request, input.response, refreshToken, session.kind === 'ledger' ? session.expiresAt : undefined);
     return {
       ...issueAccessToken(session),
+      ...await startupBundle(input.user, session),
       accountId: input.user.accountId,
       ...(cookieSession ? { sessionTransport: 'cookie' } : { refreshToken }),
       session: publicSession(session) as unknown as JsonRecord,
@@ -2128,10 +2162,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         const suppliedHash = typeof refreshToken === 'string' ? opaqueHash(secret, refreshToken) : '';
         if (!session || !user || user.disabled || session.revokedAt || session.expiresAt <= nowIso()
           || !safeEqual(session.refreshHash, suppliedHash)) {
-          await log('warn', 'refresh_failed', 'Session refresh failed', { ip, username: user?.username, status: 401 });
+          const reason = !refreshToken ? 'cookie_missing_or_ambiguous' : !session ? 'session_missing'
+            : !user ? 'user_missing' : user.disabled ? 'user_disabled' : session.revokedAt ? 'session_revoked'
+              : session.expiresAt <= nowIso() ? 'session_expired' : 'refresh_mismatch';
+          await log('warn', 'refresh_failed', 'Session refresh failed', { ip, username: user?.username, status: 401, detail: { reason } });
           // A stale refresh response may arrive after a newer login or refresh.
           // Clearing the cookie here would erase that newer, valid session.
-          return send(res, 401, { error: 'invalid refresh token' });
+          return send(res, 401, { code: 'SESSION_REFRESH_REQUIRED', error: '登录会话已失效，请重新登录' });
         }
         if (session.kind !== 'admin' && !await ledgerWebAccess()) return send(res, 403,
           { code: 'LEDGER_WEB_ACCESS_DISABLED', error: '管理员已关闭通过本站网页记账' });
@@ -2146,6 +2183,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         if (cookieSession) browserSession.write(req, res, nextRefreshToken, rotated.kind === 'ledger' ? rotated.expiresAt : undefined);
         return send(res, 200, {
           ...issueAccessToken(rotated),
+          ...await startupBundle(user, rotated),
           accountId: user.accountId,
           ...(cookieSession ? { sessionTransport: 'cookie' } : { refreshToken: nextRefreshToken }),
           session: publicSession(rotated),
@@ -2240,7 +2278,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         const body = await readBody(req, 8192);
         const timing = parseStartupTiming(body);
         if (!timing) return send(res, 400, { error: 'invalid startup timing' });
-        if (!await allow(user.accountId, 'ledger-open-timing', 30, 24 * 60 * 60 * 1000)) {
+        if (!await allow(user.accountId, 'ledger-open-timing', 120, 24 * 60 * 60 * 1000)) {
           return send(res, 429, { error: 'too many startup timings' });
         }
         await store.recordStartupTiming(timing);
@@ -2727,6 +2765,13 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           replica: bound ? { serverId, ...bound } : null,
         };
       };
+      if (req.method === 'GET' && apiPath === '/api/v4/ledger-open-snapshot') {
+        if (!replica || session.kind !== 'ledger') return send(res, 403, { error: 'ledger session required' });
+        await store.assertLedgerAccess(user.username, 'read', session.replicaId);
+        const snapshot = await openSnapshots.read(user.username, replica.replicaId);
+        res.setHeader('Cache-Control', 'no-store');
+        return send(res, snapshot ? 200 : 202, snapshot ?? { status: 'preparing', retryAfterMs: 500 });
+      }
       if (req.method === 'GET' && apiPath === '/api/v3/protection') return send(res, 200, await protectionResponse());
       if (req.method === 'POST' && apiPath === '/api/v3/protection/replace') {
         const body = await readBody(req, 512 * 1024);
@@ -3008,6 +3053,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         }
         const result = await store.pushCommits(user.username, incoming, capabilities as string[], requiredCapabilities as string[],
           'account', session.replicaId);
+        openSnapshots.schedule(user.username);
         const transferBytes = Buffer.byteLength(JSON.stringify({ commits, capabilities, requiredCapabilities }));
         await store.recordAccountTransfer(user.username, 'commit-push', transferBytes);
         if (result.assigned.length) await log('info', 'commits_pushed', 'Received encrypted commits', { ip, username: user.username, detail: { count: result.assigned.length, requestId } });
@@ -3068,6 +3114,7 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
     flushAccountEmails: async () => { processAccountEmails(); await accountEmailFlight; },
     flushNodeReplication: async () => { await ready; await nodeReplication.drain(); await nodeReplication.run(); await nodeReplication.drain(); },
     flushGroupReplication: async () => { await ready; await groupReconciler.run(); },
+    flushOpenSnapshots: async () => { await ready; await openSnapshots.warm(); await openSnapshots.drain(); },
     backupPlan: async () => {
       await runtimeSettings.load();
       return { enabled: settings.effective('backupAutoEnabled') === 'on', directory: String(settings.effective('backupDirectory')),
@@ -3079,6 +3126,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
       clearInterval(queueWatchdog);
       clearInterval(accountEmailTimer);
       clearInterval(nodeReplicationTimer);
+      clearInterval(snapshotTimer);
+      await openSnapshots.close();
       await nodeReplication.drain();
       await groupReconciler.drain();
       await metrics.stop();

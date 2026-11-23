@@ -88,7 +88,7 @@ test('isolated HTTPS process deployment restores managed custody and ledger on a
     await page.getByLabel('描述').fill('HTTPS 恢复演练');
     await page.getByRole('button', { name: '保存', exact: true }).click();
     await expect(page.locator('.zc-transaction-summary-title').filter({ hasText: 'HTTPS 恢复演练' })).toBeVisible();
-    expect((await context.cookies()).find((c) => c.name === 'zichan_session')).toMatchObject({ secure: true, httpOnly: true, sameSite: 'Lax' });
+    expect((await context.cookies()).find((c) => c.name === 'zichan_session_v2')).toMatchObject({ secure: true, httpOnly: true, sameSite: 'Lax' });
     await expect.poll(async () => {
       const driver = new NodeSqliteDriver(join(source, 'server.sqlite'));
       try { return Number((await driver.get('SELECT COUNT(*) AS n FROM ledger_replica_commits')).n); } finally { await driver.close(); }

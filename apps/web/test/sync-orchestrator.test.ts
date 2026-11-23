@@ -273,7 +273,8 @@ describe('configured sync orchestrator', () => {
     const result = await syncConfiguredServers({} as never, [profile]);
     expect(loginAccount).not.toHaveBeenCalled();
     expect(refreshAccountSession).toHaveBeenCalledTimes(1);
-    expect(fetchHealth).toHaveBeenCalledTimes(4);
+    // The verified identity is reused during immediate token refresh and retry.
+    expect(fetchHealth).toHaveBeenCalledTimes(2);
     expect(fetchHealth).toHaveBeenCalledWith('https://ledger.example.com/api/health', { redirect: 'error', signal: expect.any(AbortSignal) });
     expect(httpCommitTransport).toHaveBeenCalledTimes(2);
     expect(result.converged).toBe(true);

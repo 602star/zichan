@@ -1,5 +1,5 @@
 import { requestJson } from '@zichan/db';
-import { unlockLedgerKeyEnvelope, type LedgerKeyEnvelope } from '@zichan/core';
+import { unlockLedgerKeyEnvelope, type LedgerKeyEnvelope, type LedgerCryptoSession } from '@zichan/core';
 import { authenticateSyncProfile } from './sync-auth.js';
 import { buildSyncBaseUrl, patchSavedSyncConnection, type SyncConnection } from './sync-config.js';
 import { adoptUnlockedLedgerKeyEnvelope } from './ledger-key-vault.js';
@@ -18,11 +18,19 @@ export interface UnlockedProtection {
 }
 let unlocked: UnlockedProtection | undefined;
 let revision = 0;
+const startupProtection = new Map<string, ProtectionInfo>();
+export function primeAccountProtection(profileId: string, info: ProtectionInfo): void { startupProtection.set(profileId, info); }
 export const PROTECTION_CHANGED = 'zichan:protection-changed';
 export function accountProtection(): UnlockedProtection | undefined { return unlocked; }
-export function clearAccountProtection(): void { revision += 1; unlocked = undefined; }
+export function accountProtectionRevision(): number { return revision; }
+export function clearAccountProtection(): void { revision += 1; unlocked = undefined; startupProtection.clear(); }
 
 export async function protectionRequest(profile: SyncConnection, method = 'GET', body?: unknown, suffix = ''): Promise<ProtectionInfo> {
+  if (method === 'GET' && !suffix && startupProtection.has(profile.id)) {
+    const info = startupProtection.get(profile.id)!;
+    startupProtection.delete(profile.id);
+    return info;
+  }
   const token = await authenticateSyncProfile(profile);
   const response = await requestJson(`${buildSyncBaseUrl(profile)}/api/v3/protection${suffix}`, {
     method, redirect: 'error', cache: 'no-store', credentials: 'omit',
@@ -41,6 +49,14 @@ export async function unlockAccountProtection(profile: SyncConnection, info: Pro
   if (!secret || !info.envelope || !info.replica || info.envelope.ledgerId !== info.replica.ledgerId || info.replica.serverId !== profile.serverId) throw new Error('账本保护信息不完整');
   const session = await unlockLedgerKeyEnvelope(secret, info.envelope);
   if (atRevision !== revision) throw new Error('账号会话已退出');
+  adoptAccountProtection(profile, info, session);
+}
+
+export function adoptAccountProtection(profile: SyncConnection, info: ProtectionInfo, session: LedgerCryptoSession): void {
+  const secret = info.secret;
+  if (info.mode !== 'managed' || !secret || !info.envelope || !info.replica || info.replica.serverId !== profile.serverId
+    || profile.ledgerId && info.replica.ledgerId !== profile.ledgerId || profile.replicaId && info.replica.replicaId !== profile.replicaId
+    || profile.streamEpoch && info.replica.streamEpoch !== profile.streamEpoch) throw new Error('本机授权与账号账本不一致');
   adoptUnlockedLedgerKeyEnvelope(info.envelope, session, true);
   // Secrets stay in memory. Only public replica identity is persisted.
   unlocked = { profileId: profile.id, secret, info: { ...info, secret: null } };

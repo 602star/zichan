@@ -58,7 +58,7 @@ export function OverviewPage({ client, navigate, role }: {
 
   return (
     <>
-      <PageHeader title="运行概览" />
+      <PageHeader title="运行概览" actions={<Button onClick={() => navigate('/startup?range=7d')}>查看账本打开性能</Button>} />
       <p>服务运行、异常处理与维护操作。</p>
       <nav className="zc-admin-overview-jumps" aria-label="总览分区">
         <a href="#section-待处理事项" onClick={jumpToSection}>处理异常</a>

@@ -6475,14 +6475,25 @@ END;`);
   }
 
   /** Anonymous daily histograms: no username, account, device, IP or ledger identifier is stored. */
-  async recordStartupTiming(timing: { totalMs: number; stages: { name: string; durationMs: number }[] }): Promise<void> {
+  async ledgerOpenCandidates(): Promise<string[]> {
+    await this.ready;
+    return (await this.driver.all<{ username: string }>(`SELECT u.username FROM sync_users u
+      JOIN sync_replicas r ON r.username = u.username JOIN sync_key_custody k ON k.username = u.username
+      WHERE u.disabled = 0 AND k.mode = 'managed' AND r.head_seq > 0`)).map(row => row.username);
+  }
+
+  async recordStartupTiming(timing: { totalMs: number; stages: { name: string; durationMs: number }[]; kind?: 'ready' | 'failure' | 'background' }): Promise<void> {
     await this.ready;
     const day = nowIso().slice(0, 10);
     const thresholds = [100, 250, 500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 120_000, 300_000, 600_000];
     await this.driver.transaction(async (driver) => {
-      const firstRestore = timing.stages.some((stage) => stage.name === 'local.importLedger');
-      const stages = [{ name: 'total', durationMs: timing.totalMs },
-        ...(firstRestore ? [{ name: 'first_restore_total', durationMs: timing.totalMs }] : []), ...timing.stages];
+      const firstRestore = timing.stages.some((stage) => stage.name === 'local.importLedger' || stage.name === 'local.installSnapshot');
+      const stages = timing.kind === 'background' ? timing.stages.filter(stage => stage.name.startsWith('background.'))
+        : timing.kind === 'failure' ? [{ name: 'failure.total', durationMs: timing.totalMs }, ...timing.stages]
+          : [{ name: 'total', durationMs: timing.totalMs },
+            ...(firstRestore ? [{ name: 'first_restore_total', durationMs: timing.totalMs }] : []),
+            ...(!firstRestore && timing.stages.some(stage => stage.name === 'local.cacheOpen')
+              ? [{ name: 'cache_total', durationMs: timing.totalMs }] : []), ...timing.stages];
       for (const stage of stages) {
         const bucket = thresholds.findIndex((limit) => stage.durationMs <= limit);
         await driver.run(`INSERT INTO startup_timing_buckets (day, stage, latency_bucket, samples, duration_sum_ms)

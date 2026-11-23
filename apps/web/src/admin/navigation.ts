@@ -3,6 +3,7 @@ export const ADMIN_NAVIGATION = [
   { label: '运维中心', pages: [
     { path: '/overview', label: '运行概览' },
     { path: '/requests', label: '访问与请求' },
+    { path: '/startup', label: '打开性能' },
     { path: '/monitor', label: '运行监控' },
     { path: '/database', label: '数据库' },
     { path: '/alerts', label: '告警中心' },

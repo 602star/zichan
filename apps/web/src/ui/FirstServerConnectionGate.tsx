@@ -6,6 +6,7 @@ import { PasswordRecovery } from './PasswordRecovery.js';
 import { useCompactView } from './useCompactView.js';
 import { MobilePageHeader, useMobileSection } from './MobilePage.js';
 import { applySyncAuthSession, preferredSessionTransport } from '../sync-auth.js';
+import { measureStartupStage } from '../startup-timing.js';
 import {
   buildSyncUrlFromParts,
   isDeviceLocalSyncUrl,
@@ -209,15 +210,15 @@ export function FirstServerConnectionGate({ onReady, onCancel, accountOnly = fal
         setRegistering(false);
         setMessage('注册成功，正在登录；若登录失败，请直接使用新账号登录。');
       }
-      const session = await loginAccount(checked.baseUrl, username.trim(), password, {
+      const session = await measureStartupStage('account.login', () => loginAccount(checked.baseUrl, username.trim(), password, {
         sessionTransport: preferredSessionTransport(checked.baseUrl),
         sessionContext: 'ledger',
         deviceId: getDeviceId(),
         deviceName: 'Zichan · 首次连接',
         expectedServerPublicKey: checked.health.serverPublicKey,
         expectedServerId: checked.health.serverId,
-      });
-      const account = await fetchAuthMe(checked.baseUrl, session.accessToken);
+      }));
+      const account = session.account ?? await fetchAuthMe(checked.baseUrl, session.accessToken);
       if (!account.accountId) throw new Error('服务器未返回账号身份');
       const connection = {
         ...newSyncConnection(checked.baseUrl),

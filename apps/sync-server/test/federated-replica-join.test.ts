@@ -110,7 +110,7 @@ describe('federated replica join', () => {
       expect(authorize.status).toBe(302);
       const callback = await fetch(authorize.headers.get('location')!, { redirect: 'manual', headers: { Cookie: stateCookie } });
       expect(callback.status).toBe(303);
-      const localCookie = callback.headers.get('set-cookie')!.match(/zichan_session=[^;]+/)?.[0];
+      const localCookie = callback.headers.get('set-cookie')!.match(/zichan_session_v2=[^;]+/)?.[0];
       expect(localCookie).toBeTruthy();
       const refresh = await fetch(`${targetUrl}/api/auth/refresh`, { method: 'POST',
         headers: { Origin: targetUrl, 'X-Zichan-Session': 'cookie', Cookie: localCookie!,

@@ -11,6 +11,12 @@ import { isTauriRuntime } from './tauri.js';
 const EXPIRY_MARGIN_MS = 30_000;
 const authenticationInFlight = new Map<string, Promise<string>>();
 const refreshInFlight = new Map<string, Promise<string>>();
+const verifiedServers = new Map<string, number>();
+const identityKey = (profile: SyncConnection) => `${buildSyncBaseUrl(profile)}\n${profile.serverId}\n${profile.serverPublicKey}`;
+/** Reuse the identity already checked during this document's login/bootstrap. */
+export function rememberVerifiedServer(profile: SyncConnection): void {
+  if (!profile.nodePublicKey) verifiedServers.set(identityKey(profile), Date.now() + 15_000);
+}
 
 export function preferredSessionTransport(baseUrl: string): 'cookie' | 'token' {
   return !isTauriRuntime() && globalThis.location?.origin === new URL(baseUrl).origin ? 'cookie' : 'token';
@@ -42,6 +48,7 @@ function accessTokenIsFresh(credential: ServerCredential): boolean {
 
 export async function assertSyncServerIdentity(profile: SyncConnection): Promise<void> {
   if (!profile.serverId || !profile.serverPublicKey) throw new Error('同步服务器身份尚未固定，请先测试连通性');
+  if ((verifiedServers.get(identityKey(profile)) ?? 0) > Date.now()) return;
   const response = await requestJson(`${buildSyncBaseUrl(profile)}/api/health`, { redirect: 'error' });
   if (!response.ok) throw new Error(`同步服务器身份检查失败：HTTP ${response.status}`);
   const body = await response.json() as { serverId?: string; serverPublicKey?: string; nodePublicKey?: string };
@@ -54,6 +61,7 @@ export async function assertSyncServerIdentity(profile: SyncConnection): Promise
     && await fingerprintServerPublicKey(body.serverPublicKey) !== profile.expectedServerPublicKeyFingerprint) {
     throw new Error('同步服务器公钥指纹与导入连接链接不一致');
   }
+  rememberVerifiedServer(profile);
 }
 
 async function authenticateSyncProfileNow(

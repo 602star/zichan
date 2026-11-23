@@ -54,6 +54,7 @@ const navigationIcons: Record<string, LucideIcon> = {
   '/settings': Settings,
   '/requests': Activity,
   '/traffic': Globe,
+  '/startup': Activity,
   '/database': Database,
   '/collectors': ListTodo,
   '/host': Monitor,
@@ -345,7 +346,7 @@ function AdminShell({ client, account, baseUrl, onSignedOut }: {
       case 'invites': return <InvitesPage client={client} role={role} query={route.query} navigate={go} />;
       case 'storage': return <StoragePage client={client} role={role} query={route.query} navigate={go} onJob={(jobId) => go(`/jobs?job=${jobId}`)} />;
       case 'monitor': return <MonitorPage client={client} role={role} query={route.query} navigate={go} />;
-      case 'requests': case 'traffic': case 'database': case 'collectors': case 'host':
+      case 'requests': case 'traffic': case 'startup': case 'database': case 'collectors': case 'host':
         return <OperationsPage client={client} role={role} view={first} query={route.query} navigate={go} />;
       case 'resources': return null;
       case 'jobs': return <JobsPage client={client} query={route.query} navigate={go} role={role} />;

@@ -5,11 +5,10 @@ import type { SyncConnection } from '../sync-config.js';
 import { persistCredential, runtimeCredentialMap } from '../credential-vault.js';
 import { isTauriRuntime } from '../tauri.js';
 import { cryptoContextProblem } from '../browser-storage-policy.js';
-import { enableOfflinePassword } from '../offline-access.js';
+import { enableOfflinePassword, rememberDevice } from '../offline-access.js';
 import { takeLoginPassword } from '../login-password.js';
 import { adoptFirstWebLedgerReplica } from '../account-storage.js';
-import { STARTUP_READY_EVENT, measureStartupStage, startStartupTiming, startupTimingSnapshot } from '../startup-timing.js';
-import { uploadStartupTiming } from '../startup-timing-upload.js';
+import { STARTUP_READY_EVENT, measureStartupStage, ensureStartupTiming, failStartupTiming } from '../startup-timing.js';
 
 export function AccountProtectionGate({ connection, children }: { connection: SyncConnection; children: ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -19,12 +18,7 @@ export function AccountProtectionGate({ connection, children }: { connection: Sy
 
   useEffect(() => {
     let active = true;
-    startStartupTiming();
-    const sendTiming = () => {
-      const snapshot = startupTimingSnapshot();
-      if (snapshot) void uploadStartupTiming(connection, snapshot).catch(() => undefined);
-    };
-    window.addEventListener(STARTUP_READY_EVENT, sendTiming, { once: true });
+    ensureStartupTiming();
     let prepareOffline: (() => void) | undefined;
     flight.current ??= (async () => {
       return measureStartupStage('account.protectionRequest', async () => {
@@ -52,12 +46,15 @@ export function AccountProtectionGate({ connection, children }: { connection: Sy
         if (credential.refreshToken) await persistCredential(id, credential);
       }
       const password = takeLoginPassword(connection.serverId, connection.accountId);
-      if (password) {
+      {
         prepareOffline = () => {
           if (!active) return;
           const run = () => {
-            if (active) void measureStartupStage('background.prepareOfflinePassword',
-              () => enableOfflinePassword(password)).catch(() => undefined);
+            if (active) {
+              if (!isTauriRuntime()) void measureStartupStage('background.rememberDevice', rememberDevice).catch(() => undefined);
+              if (password) void measureStartupStage('background.prepareOfflinePassword',
+                () => enableOfflinePassword(password)).catch(() => undefined);
+            }
           };
           if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(run, { timeout: 5_000 });
           else globalThis.setTimeout(run, 0);
@@ -65,10 +62,9 @@ export function AccountProtectionGate({ connection, children }: { connection: Sy
         window.addEventListener(STARTUP_READY_EVENT, prepareOffline, { once: true });
       }
       if (active) setReady(true);
-    }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); });
+    }).catch((reason) => { if (active) { failStartupTiming('account.protectionFailed'); setError(reason instanceof Error ? reason.message : String(reason)); } });
     return () => {
       active = false;
-      window.removeEventListener(STARTUP_READY_EVENT, sendTiming);
       if (prepareOffline) window.removeEventListener(STARTUP_READY_EVENT, prepareOffline);
     };
     // This gate is mounted for one fixed authenticated account.
@@ -78,6 +74,8 @@ export function AccountProtectionGate({ connection, children }: { connection: Sy
   if (ready) return <>{children}</>;
   return <main className="zc-protection" style={{ maxWidth: 600, margin: '10vh auto', padding: 24 }}>
     <h1>正在打开账本</h1>
-    {error ? <><p role="alert">{error}</p><button onClick={() => location.reload()}>重新连接</button></> : <p role="status">{stage}</p>}
+    {error ? <><p role="alert">{error}</p><button onClick={() => location.reload()}>重新连接</button><button onClick={() => {
+      sessionStorage.setItem('zichan.web-account.v2.require-login', '1'); location.reload();
+    }}>返回登录</button></> : <p role="status">{stage}</p>}
   </main>;
 }

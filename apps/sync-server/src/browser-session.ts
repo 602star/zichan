@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { ServerStoreError } from './store.js';
 
-const COOKIE_NAME = 'zichan_session';
+// A new canonical name prevents historical Path/domain cookies from poisoning a new login.
+const COOKIE_NAME = 'zichan_session_v2';
 const cookieName = (req: IncomingMessage) => req.headers['x-zichan-session'] === 'admin-cookie' ? 'zichan_admin_session' : COOKIE_NAME;
 
 /** Browser cookies and native JSON refresh tokens are deliberately separate transports. */

@@ -1,8 +1,10 @@
-import { aesGcmDecrypt, aesGcmEncrypt, createLedgerKeyEnvelope, encryptJson, decryptJson, hasNativeSubtle, newId, secureRandomBytes, unlockLedgerKeyEnvelope, type LedgerKeyEnvelope, type Encrypted } from '@zichan/core';
-import { accountLocalStorage, accountDatabaseName } from './account-storage.js';
-import { accountProtection, unlockAccountProtection, type UnlockedProtection } from './account-protection.js';
-import { unlockDeviceStorage } from './device-storage-key.js';
+import { aesGcmDecrypt, aesGcmEncrypt, createLedgerKeyEnvelope, encryptJson, decryptJson, hasNativeSubtle, newId, secureRandomBytes, unlockLedgerKeyEnvelope, type LedgerKeyEnvelope, type Encrypted, type LedgerCryptoSession } from '@zichan/core';
+import { accountLocalStorage, accountDatabaseName, activateWebAccount, webLedgerNamespace } from './account-storage.js';
+import { accountProtection, accountProtectionRevision, adoptAccountProtection, unlockAccountProtection, type UnlockedProtection } from './account-protection.js';
+import { unlockDeviceStorage, requireDeviceStorageSession, adoptBrowserDeviceSession } from './device-storage-key.js';
+import { requireLedgerCryptoSession } from './ledger-key-vault.js';
 import type { SyncConnection } from './sync-config.js';
+import { isTauriRuntime } from './tauri.js';
 
 const OFFLINE_KEY = 'zichan.offline-access.v1';
 const AAD = 'zichan-offline-access-v1';
@@ -17,9 +19,9 @@ type TrustedRecord =
   | { key: CryptoKey; iv: Uint8Array<ArrayBuffer>; ciphertext: ArrayBuffer; expiresAt: number }
   | { kind: 'raw'; key: Uint8Array; iv: Uint8Array; ciphertext: Uint8Array; expiresAt: number };
 
-async function trustedStore<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
+async function trustedStore<T>(mode: IDBTransactionMode, action: (store: IDBObjectStore) => IDBRequest<T>, databaseName = accountDatabaseName()): Promise<T> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(`${accountDatabaseName()}:trusted-device`, 1);
+    const request = indexedDB.open(`${databaseName}:trusted-device`, 1);
     request.onupgradeneeded = () => request.result.createObjectStore('vault');
     request.onerror = () => reject(request.error);
     request.onsuccess = () => {
@@ -48,20 +50,31 @@ export async function enableOfflinePassword(password: string): Promise<void> {
 export async function rememberDevice(): Promise<void> {
   const state = accountProtection();
   if (!state) throw new Error('请先解锁账号账本');
-  const aad = new TextEncoder().encode(accountDatabaseName());
-  const plaintext = new TextEncoder().encode(JSON.stringify(state));
+  const databaseName = accountDatabaseName();
+  const aad = new TextEncoder().encode(databaseName);
+  const pack = (session: LedgerCryptoSession) => ({ ...session,
+    dataKeys: [...session.dataKeys].map(([id, key]) => [id, Array.from(key)]),
+    attachmentSecret: Array.from(session.attachmentSecret), backupSecret: Array.from(session.backupSecret),
+    retiredAttachmentSecrets: session.retiredAttachmentSecrets?.map(key => Array.from(key)),
+    retiredBackupSecrets: session.retiredBackupSecrets?.map(key => Array.from(key)),
+  });
+  const device = requireDeviceStorageSession();
+  const plaintext = new TextEncoder().encode(JSON.stringify(isTauriRuntime() ? state : { version: 2, protection: state,
+    ledger: pack(requireLedgerCryptoSession()), device: { ...device, cryptoSession: pack(device.cryptoSession) } }));
   const expiresAt = Date.now() + 7 * 86400_000;
   if (hasNativeSubtle()) {
     const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, key, plaintext);
-    await trustedStore('readwrite', (store) => store.put({ key, iv, ciphertext, expiresAt } satisfies TrustedRecord, 'access'));
+    if (accountProtection() === state) await trustedStore('readwrite', (store) => accountProtection() === state
+      ? store.put({ key, iv, ciphertext, expiresAt } satisfies TrustedRecord, 'access') : store.get('access'), databaseName);
     return;
   }
   const key = secureRandomBytes(32);
   const iv = secureRandomBytes(12);
   const ciphertext = await aesGcmEncrypt(key, iv, plaintext, aad);
-  await trustedStore('readwrite', (store) => store.put({ kind: 'raw', key, iv, ciphertext, expiresAt } satisfies TrustedRecord, 'access'));
+  if (accountProtection() === state) await trustedStore('readwrite', (store) => accountProtection() === state
+    ? store.put({ kind: 'raw', key, iv, ciphertext, expiresAt } satisfies TrustedRecord, 'access') : store.get('access'), databaseName);
 }
 
 export async function forgetOfflineAccess(): Promise<void> {
@@ -83,13 +96,33 @@ export async function unlockOffline(profile: SyncConnection, password: string): 
 }
 
 export async function unlockRememberedDevice(profile: SyncConnection): Promise<boolean> {
-  const record = await trustedStore<TrustedRecord | undefined>('readonly', (store) => store.get('access'));
+  if (accountProtection()?.profileId === profile.id) return true;
+  const revision = accountProtectionRevision();
+  const databaseName = isTauriRuntime() ? accountDatabaseName()
+    : `${webLedgerNamespace(profile.serverId!, profile.accountId!, profile.replicaId)}database`;
+  const record = await trustedStore<TrustedRecord | undefined>('readonly', (store) => store.get('access'), databaseName);
   if (!record) return false;
-  if (record.expiresAt <= Date.now()) { await trustedStore('readwrite', (store) => store.delete('access')); return false; }
-  const aad = new TextEncoder().encode(accountDatabaseName());
+  if (record.expiresAt <= Date.now()) { await trustedStore('readwrite', (store) => store.delete('access'), databaseName); return false; }
+  const aad = new TextEncoder().encode(databaseName);
   const plaintext = 'kind' in record
     ? await aesGcmDecrypt(record.key, record.iv, record.ciphertext, aad)
     : new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: record.iv, additionalData: aad }, record.key, record.ciphertext));
-  await restore(profile, JSON.parse(new TextDecoder().decode(plaintext)) as UnlockedProtection);
+  if (revision !== accountProtectionRevision()) return false;
+  const payload = JSON.parse(new TextDecoder().decode(plaintext));
+  const state: UnlockedProtection = payload.version === 2 ? payload.protection : payload;
+  if (state.profileId !== profile.id || !state.info.replica || state.info.replica.serverId !== profile.serverId
+    || state.info.replica.replicaId !== profile.replicaId || state.info.replica.streamEpoch !== profile.streamEpoch) return false;
+  if (!isTauriRuntime()) activateWebAccount(profile.serverId!, profile.accountId!, profile.replicaId);
+  if (payload.version === 2) {
+    const unpack = (session: Omit<LedgerCryptoSession, 'dataKeys' | 'attachmentSecret' | 'backupSecret' | 'retiredAttachmentSecrets' | 'retiredBackupSecrets'>
+      & { dataKeys: [string, number[]][]; attachmentSecret: number[]; backupSecret: number[]; retiredAttachmentSecrets?: number[][]; retiredBackupSecrets?: number[][] }): LedgerCryptoSession => ({
+      ...session, dataKeys: new Map(session.dataKeys.map(([id, values]) => [id, new Uint8Array(values)])),
+      attachmentSecret: new Uint8Array(session.attachmentSecret), backupSecret: new Uint8Array(session.backupSecret),
+      retiredAttachmentSecrets: session.retiredAttachmentSecrets?.map(key => new Uint8Array(key)),
+      retiredBackupSecrets: session.retiredBackupSecrets?.map(key => new Uint8Array(key)),
+    });
+    adoptAccountProtection(profile, { ...state.info, secret: state.secret }, unpack(payload.ledger));
+    adoptBrowserDeviceSession({ ...payload.device, cryptoSession: unpack(payload.device.cryptoSession) });
+  } else await restore(profile, state);
   return true;
 }

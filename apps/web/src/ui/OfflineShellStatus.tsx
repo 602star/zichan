@@ -39,6 +39,7 @@ export function OfflineShellStatus() {
     }).catch(() => undefined);
     void navigator.serviceWorker.register(new URL('sw.js', base), { scope: base.pathname, updateViaCache: 'none' }).then((registration) => {
       if (!active) return;
+      if (!registration) { setNotice('error'); return; }
       registrationRef.current = registration;
       const update = () => {
         if (!active) return;

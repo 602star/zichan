@@ -9,7 +9,7 @@ import {
 } from './browser-ledger-lock.js';
 import LedgerWorker from './browser-ledger-worker.ts?sharedworker';
 
-type Operation = 'open' | 'close' | 'exec' | 'run' | 'all' | 'get' | 'begin' | 'commit' | 'rollback' | 'task-lock' | 'task-unlock';
+type Operation = 'open' | 'close' | 'exec' | 'run' | 'all' | 'get' | 'begin' | 'commit' | 'rollback' | 'task-lock' | 'task-unlock' | 'snapshot';
 type Request = {
   id: number;
   op: Operation;
@@ -21,6 +21,7 @@ type Request = {
   cryptoSession?: LedgerCryptoSession;
   taskName?: string;
   taskToken?: string;
+  bytes?: Uint8Array;
 };
 type Reply = { id: number; ok: true; value?: unknown } | { id: number; ok: false; error: { name: string; message: string } };
 
@@ -177,6 +178,11 @@ export class SharedBrowserSqlDriver implements SqlDriver {
       queueMicrotask(listener);
     }
     return () => this.state.listeners.delete(listener);
+  }
+
+  installSnapshot(bytes: Uint8Array): Promise<boolean> {
+    if (this.txId !== undefined) return Promise.reject(new Error('快照不能在现有事务内安装'));
+    return this.operation(() => request<boolean>(this.state, { op: 'snapshot', bytes }));
   }
 
   exec(sql: string): Promise<void> {

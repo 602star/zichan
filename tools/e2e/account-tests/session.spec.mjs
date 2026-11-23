@@ -42,7 +42,7 @@ test('uses real same-origin browser cookies without storing account passwords or
   expect(session.refreshToken).toBeUndefined();
   expect(session.accountId).toMatch(/^account-[a-f0-9]{32}$/);
   await expect(page.getByRole('button', { name: '开始记账', exact: true })).toBeVisible();
-  const cookie = (await context.cookies()).find((row) => row.name === 'zichan_session');
+  const cookie = (await context.cookies()).find((row) => row.name === 'zichan_session_v2');
   expect(cookie?.httpOnly).toBe(true);
   expect(cookie?.sameSite).toBe('Lax');
   expect(cookie?.path).toBe('/ledger/api/auth');
@@ -50,7 +50,7 @@ test('uses real same-origin browser cookies without storing account passwords or
     cookies: document.cookie,
     values: JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }),
   }));
-  expect(storage.cookies).not.toContain('zichan_session');
+  expect(storage.cookies).not.toContain('zichan_session_v2');
   expect(storage.values).not.toContain(password);
   expect(storage.values).not.toContain(session.accessToken);
   expect(storage.values).not.toContain(cookie.value);

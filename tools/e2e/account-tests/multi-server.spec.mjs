@@ -49,7 +49,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     await expect(page.getByLabel('用户名', { exact: true })).toBeDisabled();
     await expect(page.getByRole('button', { name: '删除', exact: true })).toBeDisabled();
     await expect(page.getByText('管理员初始化密钥', { exact: false })).toHaveCount(0);
-    const beforeCookie = (await context.cookies()).find((cookie) => cookie.name === 'zichan_session').value;
+    const beforeCookie = (await context.cookies()).find((cookie) => cookie.name === 'zichan_session_v2').value;
 
     await page.getByRole('button', { name: '新增服务器' }).click();
     await expect(page.getByRole('button', { name: '本机服务器', exact: true })).toBeVisible();
@@ -92,7 +92,7 @@ test('keeps Web login isolated while editing, syncing and restoring multiple ser
     const remoteSession = await (await loginResponse).json();
     expect(remoteSession.refreshToken).toBeTruthy();
     await expect.poll(() => page.evaluate(() => JSON.stringify({ ...sessionStorage }))).toContain(remoteSession.refreshToken);
-    expect((await context.cookies()).find((cookie) => cookie.name === 'zichan_session').value).toBe(beforeCookie);
+    expect((await context.cookies()).find((cookie) => cookie.name === 'zichan_session_v2').value).toBe(beforeCookie);
     // Passwords have been cleared: these clicks exercise the existing-session branch.
     await expect(page.getByLabel('服务器账号密码', { exact: true })).toHaveValue('');
     for (const status of [503, 403]) {

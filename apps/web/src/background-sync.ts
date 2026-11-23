@@ -12,6 +12,7 @@ import { syncConfiguredServers } from './sync-orchestrator.js';
 import { runtimeLedgerCryptoSession } from './ledger-key-vault.js';
 import { hasAccountSession } from './sync-auth.js';
 import { ATTACHMENT_BATCH_EVENT, syncAttachmentBatch, type AttachmentBatchResult } from './attachment-sync.js';
+import { markStartupMilestone } from './startup-timing.js';
 
 export type SyncLifecycleReason = 'startup' | 'interval' | 'online' | 'foreground' | 'credentials' | 'write' | 'attachment-catalog';
 
@@ -71,6 +72,7 @@ export function runLifecycleSync(store: SqlLedgerStore, reason: SyncLifecycleRea
       return messages.map((message) => `${row.alias}：${message}`);
     });
     result.finishedAt = synced.finishedAt;
+    if (result.converged && result.errors.length === 0) markStartupMilestone('background.syncCaughtUp');
     const deviceId = getDeviceId();
     registerSync(deviceId, deviceId, result.applied);
     globalThis.dispatchEvent?.(new CustomEvent(SYNC_LIFECYCLE_RESULT_EVENT, { detail: result }));

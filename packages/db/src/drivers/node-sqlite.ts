@@ -18,6 +18,8 @@ interface DatabaseLike {
   exec(sql: string): void;
   prepare(sql: string): StatementLike;
   close(): void;
+  serialize(): Uint8Array;
+  deserialize(bytes: Uint8Array): void;
 }
 type SqliteModule = {
   DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => DatabaseLike;
@@ -115,6 +117,15 @@ export class NodeSqliteDriver implements SqlDriver {
   async close(): Promise<void> {
     if (this.transactionScoped) return;
     await this.state!.queue.run(async () => { this.state!.db.close(); });
+  }
+
+  /** In-memory snapshots only: never writes a plaintext ledger to a temporary file. */
+  async exportBytes(): Promise<Uint8Array> {
+    return this.operation(async () => new Uint8Array(this.state!.db.serialize()));
+  }
+
+  async importBytes(bytes: Uint8Array): Promise<void> {
+    await this.operation(async () => { this.state!.db.deserialize(bytes); });
   }
 
   private operation<T>(task: () => Promise<T>): Promise<T> {

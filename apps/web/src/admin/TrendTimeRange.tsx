@@ -11,7 +11,8 @@ export const TREND_OPTIONS = [
 
 export function trendQuery(query: URLSearchParams, presets: string[]) {
   const explicit = query.has('from') || query.has('until') || query.get('range') === 'custom';
-  const range = explicit ? 'custom' : presets.includes(query.get('range') ?? '') ? query.get('range')! : '24h';
+  const range = explicit ? 'custom' : presets.includes(query.get('range') ?? '') ? query.get('range')!
+    : presets.includes('24h') ? '24h' : presets[0] ?? '24h';
   const result = new URLSearchParams({ range });
   if (explicit) for (const key of ['from', 'until']) if (query.has(key)) result.set(key, query.get(key)!);
   return result.toString();
@@ -26,6 +27,7 @@ export function TrendTimeRange({ query, presets, maxDays, label, onChange }: {
   const [draftKey, setDraftKey] = useState('');
   const [draftAnchor, setDraftAnchor] = useState<{ key: string; at: number } | null>(null);
   const [error, setError] = useState('');
+  const defaultRange = presets.includes('24h') ? '24h' : presets[0] ?? '24h';
   const custom = applied.get('range') === 'custom' || draftKey === key;
   const bounds = useMemo(() => {
     const params = new URLSearchParams(key); const until = new Date(draftAnchor?.key === key ? draftAnchor.at : Date.now());
@@ -37,9 +39,9 @@ export function TrendTimeRange({ query, presets, maxDays, label, onChange }: {
         setError(''); if (value === 'custom') { setDraftKey(key); return; }
         setDraftKey(''); setDraftAnchor({ key: `range=${value}`, at: Date.now() }); onChange({ range: value, from: '', until: '' });
       } }}
-      help={`显示与保存按本地时间，查询转换为 UTC；最多 ${maxDays} 天。快捷窗口随刷新滚动，手改日期和时分后点应用固定区间；清除恢复近 24 小时。`}
+      help={`显示与保存按本地时间，查询转换为 UTC；最多 ${maxDays} 天。快捷窗口随刷新滚动，手改日期和时分后点应用固定区间；清除恢复${TREND_OPTIONS.find(option => option.value === defaultRange)?.label ?? '近 24 小时'}。`}
       onApply={({ from, until }) => {
-        if (!from && !until) { setDraftKey(''); setError(''); setDraftAnchor({ key: 'range=24h', at: Date.now() }); onChange({ range: '24h', from: '', until: '' }); return; }
+        if (!from && !until) { setDraftKey(''); setError(''); setDraftAnchor({ key: `range=${defaultRange}`, at: Date.now() }); onChange({ range: defaultRange, from: '', until: '' }); return; }
         if (!from || !until) { setError('历史统计需要同时填写起始和结束时间。'); return; }
         if (Date.parse(until) <= Date.parse(from)) { setError('起始时间必须早于结束时间。'); return; }
         if (Date.parse(until) - Date.parse(from) > maxDays * 86_400_000) { setError(`时间区间最多 ${maxDays} 天。`); return; }

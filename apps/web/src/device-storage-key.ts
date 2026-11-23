@@ -309,6 +309,17 @@ export function requireDeviceStorageSession(): DeviceStorageSession {
   return runtimeSession;
 }
 
+/** Called only after decrypting this account's authenticated trusted-device record. */
+export function adoptBrowserDeviceSession(session: DeviceStorageSession): void {
+  const envelope = storedBrowserEnvelope();
+  if (isTauriRuntime() || session.state.kind !== 'browser-envelope' || !session.state.unlocked
+    || session.state.storageId !== session.cryptoSession.ledgerId
+    || envelope?.keyringId !== session.cryptoSession.keyringId || envelope.ledgerId !== session.cryptoSession.ledgerId
+    || envelope.generation !== session.cryptoSession.generation) throw new Error('本机存储授权已变化，请重新登录');
+  runtimeSession = session;
+  emit();
+}
+
 export async function lockDeviceStorage(): Promise<void> {
   runtimeSession = undefined;
   nativePasswordSession = undefined;

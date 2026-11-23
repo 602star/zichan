@@ -3396,6 +3396,14 @@ export class SqlLedgerStore implements LedgerStore {
     return { version: 1, tables };
   }
 
+  /** Initial browser restore only; the driver atomically refuses any existing ledger. */
+  async installInitialSnapshot(bytes: Uint8Array): Promise<boolean> {
+    if (!this.driver.installSnapshot) throw new Error('当前存储不支持快速打开快照');
+    const installed = await this.driver.installSnapshot(bytes);
+    if (installed) this.invalidate(['*']);
+    return installed;
+  }
+
   /** Replace audit, sync cursors/conflicts and attachment transfer state exactly. */
   async restoreDeviceRecoveryState(state: DeviceRecoveryState): Promise<void> {
     if (state.version !== 1 || !state.tables || typeof state.tables !== 'object') throw new Error('完整设备恢复状态无效');

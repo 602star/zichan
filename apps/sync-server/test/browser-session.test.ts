@@ -6,11 +6,17 @@ import { createBrowserSessionCookies } from '../src/browser-session.js';
 const request = (remoteAddress: string, headers: Record<string, string>) => ({ socket: { remoteAddress }, headers }) as IncomingMessage;
 
 describe('browser session origin and cookies', () => {
+  it('ignores duplicate legacy cookies after a new login', () => {
+    const cookies = createBrowserSessionCookies('', () => 'https://ledger.example');
+    const token = `session-${'a'.repeat(32)}.${'b'.repeat(43)}`;
+    expect(cookies.read(request('127.0.0.1', { cookie: `zichan_session=old1; zichan_session=old2; zichan_session_v2=${token}` }))).toBe(token);
+    expect(cookies.read(request('127.0.0.1', { cookie: 'zichan_session=old1; zichan_session=old2' }))).toBeUndefined();
+  });
   it('separates administration and ledger cookies and rejects cross-origin admin refresh', () => {
     const cookies = createBrowserSessionCookies('/ledger', () => 'https://ledger.example');
     const regular = `session-${'a'.repeat(32)}.${'b'.repeat(43)}`;
     const admin = `session-${'c'.repeat(32)}.${'d'.repeat(43)}`;
-    const req = request('127.0.0.1', { origin: 'https://ledger.example', 'x-zichan-session': 'admin-cookie', cookie: `zichan_session=${regular}; zichan_admin_session=${admin}` });
+    const req = request('127.0.0.1', { origin: 'https://ledger.example', 'x-zichan-session': 'admin-cookie', cookie: `zichan_session_v2=${regular}; zichan_admin_session=${admin}` });
     expect(cookies.requested(req)).toBe(true);
     expect(cookies.read(req)).toBe(admin);
     expect(cookies.read(request('127.0.0.1', { cookie: String(req.headers.cookie) }))).toBe(regular);
@@ -111,7 +117,7 @@ describe('browser session origin and cookies', () => {
   it('rejects duplicate cookies and never implicitly selects cookie authentication', () => {
     const cookies = createBrowserSessionCookies('', () => 'https://ledger.example');
     const token = `session-${'a'.repeat(32)}.${'b'.repeat(43)}`;
-    const req = request('127.0.0.1', { cookie: `zichan_session=${token}` });
+    const req = request('127.0.0.1', { cookie: `zichan_session_v2=${token}` });
     expect(cookies.requested(req)).toBe(false);
     expect(cookies.read(req)).toBe(token);
     expect(cookies.read(request('127.0.0.1', { cookie: `${req.headers.cookie}; ${req.headers.cookie}` }))).toBeUndefined();

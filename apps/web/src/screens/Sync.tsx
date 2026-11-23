@@ -776,7 +776,11 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
       alias: `服务器${profiles.length + 1}`,
       username: profiles.find((profile) => profile.username.trim())?.username ?? '',
     };
-    setProfiles((rows) => [...rows, p]);
+    const next = [...latestProfiles.current, p];
+    // Persist edits before a background sync can reload the device directory.
+    saveSyncConnections(next);
+    latestProfiles.current = next;
+    setProfiles(next);
     setSelectedId(p.id);
   }
 
@@ -807,7 +811,10 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
           status: 'unchecked' as const,
           lastError: '连接来自无秘密分享链接；登录前必须验证服务器身份',
         };
-        setProfiles((rows) => [...rows, connection]);
+        const next = [...latestProfiles.current, connection];
+        saveSyncConnections(next);
+        latestProfiles.current = next;
+        setProfiles(next);
         setSelectedId(connection.id);
       }
       setConnectionLinkDraft('');
@@ -862,6 +869,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
       await deleteCredential(id);
       await store.attachmentState.removeReplicaBlobs(id);
       latestProfiles.current = latestProfiles.current.filter((row) => row.id !== id);
+      saveSyncConnections(latestProfiles.current);
       setProfiles(latestProfiles.current);
       setRemoveTarget(undefined);
       setSyncNotice(localOnly ? '已仅删除本机连接和凭据；服务器会话撤销未确认，服务器账本未删除。' : '已删除本机连接并完成会话清理；服务器账本未删除。');
@@ -1198,7 +1206,9 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
       setResult(res);
       setConflicts(pending);
       setInvalidCommits(invalid);
-      setProfiles(mergeSharedSyncDirectory(loadSyncConnections(), await loadSharedSyncDirectory(store)));
+      const sharedServers = await loadSharedSyncDirectory(store);
+      // Read device state after the await so newly added connections survive.
+      setProfiles(mergeSharedSyncDirectory(loadSyncConnections(), sharedServers));
       setLastSyncAt(new Date(res.finishedAt).toLocaleString());
       if (res.endpoints.some((row) => row.error || row.attachments?.error || row.verificationIssue)) {
         setSyncNotice(res.endpoints.flatMap((row) => [row.error, row.attachments?.error,
