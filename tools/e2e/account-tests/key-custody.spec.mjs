@@ -38,9 +38,6 @@ test('managed account opens on another device and prepares offline access automa
     await other.close();
     await page.route('**/api/**', (route) => route.fulfill({ status: 503, json: { error: 'offline' } }));
     await page.reload();
-    await page.getByRole('button', { name: '离线解锁 managed-user 的缓存' }).click();
-    await page.getByLabel('账号密码', { exact: true }).fill('account-test-password');
-    await page.getByRole('button', { name: '解锁缓存' }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
   } finally {
     await second.close(); await page.close();

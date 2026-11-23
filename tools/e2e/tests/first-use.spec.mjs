@@ -30,9 +30,13 @@ test('does not require persistent storage permission for an authenticated accoun
   await expect(page.locator('.zc-app-shell')).toBeVisible();
 });
 
-test('does not open a cached ledger after the account session is revoked', async ({ page, context }) => {
+test('does not open a cached ledger after explicitly signing out', async ({ page }) => {
   await openLedger(page);
-  await context.clearCookies();
+  await page.locator('.zc-sidebar').getByRole('button', { name: /我的账号$/ }).click();
+  await page.getByRole('navigation', { name: '账号分类' }).getByRole('button', { name: '账号安全', exact: true }).click();
+  await page.getByRole('button', { name: '退出记账账号', exact: true }).click();
+  await page.getByRole('button', { name: '确认退出', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
   await expect(page.getByLabel('账本密码', { exact: true })).toHaveCount(0);

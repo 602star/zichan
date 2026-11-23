@@ -7,7 +7,7 @@ import { registerAccount } from '../../../packages/db/dist/index.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 
-test('registers distinct accounts and keeps their database, keys and caches isolated', async ({ page, context }) => {
+test('registers distinct accounts and keeps their database, keys and caches isolated', async ({ page }) => {
   const setup = 'test-account-switch-owner-000000000000';
   const server = createSyncServer({ webDir: resolve(root, 'apps/web/dist'), enableWeb: true, registrationMode: 'open', ownerSetupToken: setup });
   try {
@@ -55,7 +55,7 @@ test('registers distinct accounts and keeps their database, keys and caches isol
     await page.getByRole('button', { name: '登录' }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible();
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('zichan.web-account.v2.binding')).accountId)).toBe(alice.binding.accountId);
-    await context.clearCookies();
+    await logout();
     await page.reload();
     await expect(page.getByRole('heading', { name: '账号登录' })).toBeVisible();
     await expect(page.getByLabel('账本密码', { exact: true })).toHaveCount(0);

@@ -24,7 +24,11 @@ async function addItem(page, name, location, yearOnly = false, image = false) {
   await select(form, /^存放位置/, location);
   if (!yearOnly) {
     const more = form.locator('summary').filter({ hasText: '更多信息' }); if (await more.count()) await more.click();
-    await form.getByLabel(/^下次保养日期/).fill('2026-11-15'); await form.getByLabel(/^保养间隔/).fill('30'); await form.getByLabel(/^保修截止日/).fill('2026-11-18');
+    const dates = await page.evaluate(() => {
+      const day = offset => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+      return { maintenance: day(-1), warranty: day(2) };
+    });
+    await form.getByLabel(/^下次保养日期/).fill(dates.maintenance); await form.getByLabel(/^保养间隔/).fill('30'); await form.getByLabel(/^保修截止日/).fill(dates.warranty);
   }
   if (image) {
     const png = await page.evaluate(() => {

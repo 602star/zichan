@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
 import { registerAccount } from '../../../packages/db/dist/index.js';
+import { expireQuickAuthorization } from './offline-access-fixture.mjs';
 
 for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`unlocks an account cache with ${backendFailure} when the app shell is available, then reconnects`, async ({ page, context }) => {
   const setup = 'test-offline-cache-owner-00000000000';
@@ -20,6 +21,8 @@ for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`un
     await page.getByRole('button', { name: '登录', exact: true }).click();
     await page.getByRole('button', { name: '开始记账', exact: true }).click();
     await expect(page.locator('.zc-app-shell')).toBeVisible({ timeout: 30_000 });
+    // Exercise password fallback with the automatically prepared quick grant expired.
+    await expireQuickAuthorization(page);
     if (backendFailure === 'cold-start') {
       await page.evaluate(async () => { await navigator.serviceWorker.ready; });
       await context.setOffline(true);
@@ -58,6 +61,8 @@ for (const backendFailure of ['disconnected', 'http503', 'cold-start']) test(`un
     else await page.evaluate(() => { Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true }); window.dispatchEvent(new Event('online')); });
     await refreshed;
     if (backendFailure === 'http503') {
+      await expect(page.locator('.zc-app-shell')).toBeVisible();
+      await expireQuickAuthorization(page);
       for (const status of [401, 403]) {
         await page.route('**/api/auth/refresh', (route) => route.fulfill({ status, json: { error: 'denied' } }));
         await page.reload();
