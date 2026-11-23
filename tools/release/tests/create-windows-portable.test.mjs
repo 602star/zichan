@@ -18,10 +18,18 @@ const execFile = promisify(execFileCallback);
 const createWindowsPortable = (options) => createWindowsPortableActual({ inspectNodeVersion: () => NODE_VERSION, ...options });
 
 async function expandPortableArchive(archive, destination) {
-  await execFile('powershell.exe', [
-    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+  // Match the production verifier: a pwsh runner may supply its own module paths.
+  const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const command = [
+    '$ErrorActionPreference = "Stop"',
+    'Import-Module (Join-Path $env:SystemRoot "System32\\WindowsPowerShell\\v1.0\\Modules\\Microsoft.PowerShell.Archive\\Microsoft.PowerShell.Archive.psd1") -ErrorAction Stop',
     'Expand-Archive -LiteralPath $env:ZICHAN_TEST_ARCHIVE -DestinationPath $env:ZICHAN_TEST_EXTRACTED -Force',
+  ].join('; ');
+  await execFile(powershell, [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+    command,
   ], {
+    windowsHide: true,
     env: { ...process.env, ZICHAN_TEST_ARCHIVE: archive, ZICHAN_TEST_EXTRACTED: destination },
   });
 }
