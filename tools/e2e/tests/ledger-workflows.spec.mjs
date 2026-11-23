@@ -117,7 +117,11 @@ test('customizes sidebar modules and keeps their order after reload', async ({ p
   const drawer = page.getByRole('dialog', { name: '更多功能', exact: true });
   await drawer.getByRole('button', { name: '设置', exact: true }).click();
   await page.getByRole('button', { name: '记账', exact: true }).click();
-  await page.getByRole('button', { name: '模块设置' }).click(); await page.getByLabel('在侧边栏显示资料管理', { exact: true }).click(); await expect(page.getByLabel('在侧边栏显示资料管理', { exact: true })).not.toBeChecked();
+  await expect(page.getByLabel('在侧边栏显示资料管理', { exact: true })).toHaveCount(0);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.getByLabel('在侧边栏显示资料管理', { exact: true }).click();
+  await expect(page.getByLabel('在侧边栏显示资料管理', { exact: true })).not.toBeChecked();
+  await page.setViewportSize({ width: 390, height: 844 });
   await mobile.getByRole('button', { name: '更多', exact: true }).click();
   await expect(drawer.getByRole('button', { name: '资料管理', exact: true })).toBeVisible();
   await drawer.getByRole('button', { name: '关闭更多菜单', exact: true }).click();

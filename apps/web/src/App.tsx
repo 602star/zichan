@@ -56,14 +56,11 @@ import { accountProtection } from './account-protection.js';
 import { isTauriRuntime } from './tauri.js';
 import { reportPageView } from './traffic-view.js';
 import type { SettingsSection } from './screens/Settings.js';
-import { X, ArrowLeftRight, BarChart3, Ellipsis, Gamepad2, Grid2X2, History as HistoryIcon, Package, Settings2, UserRound, Cloud, Wallet, CalendarDays, ReceiptText, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { X, ArrowLeftRight, BarChart3, ChartPie, Ellipsis, Gamepad2, Grid2X2, History as HistoryIcon, Package, Settings2, UserRound, Cloud, Wallet, CalendarDays, ReceiptText, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import {
   NAVIGATION_ITEMS,
   navigationLabel,
-  orderedNavigationItems,
   parseNavigationPreferences,
-  serializeNavigationPreferences,
-  setNavigationItemVisible,
   type NavigationPreferences,
   type ScreenId,
 } from './navigationPreferences.js';
@@ -380,7 +377,6 @@ export function App() {
   const [importPassphrase, setImportPassphrase] = useState('');
   const [importUnlockError, setImportUnlockError] = useState('');
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
-  const [enablingModule, setEnablingModule] = useState<ScreenId | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const importUnlockFlight = useRef<Promise<void> | null>(null);
   const bumpRef = useRef(bump);
@@ -438,28 +434,6 @@ export function App() {
     return installSyncLifecycle(store, () => bumpRef.current());
   }, [store, preview]);
 
-  async function enableModule(id: ScreenId) {
-    const current = snap?.setting;
-    if (!current) return;
-    setEnablingModule(id);
-    try {
-      const next = setNavigationItemVisible(navigation, id, true);
-      await store.runInAuditBatch(
-        '启用侧边栏模块',
-        async (transactionStore) => {
-          const stored = await transactionStore.settings.get(current.id);
-          await transactionStore.settings.put({
-            ...(stored ?? current),
-            navigationLayoutJson: serializeNavigationPreferences(next),
-          });
-        },
-        'system',
-      );
-      bump();
-    } finally {
-      setEnablingModule(null);
-    }
-  }
 
   async function doExport() {
     // The portable desktop cannot reliably download a Blob from WebView2.  Write
@@ -690,8 +664,6 @@ export function App() {
         asOf={formatAsOfDate(asOf?.asOf)}
         ledgerMode={ledgerMode}
         navigation={effectiveNavigation}
-        enablingModule={enablingModule}
-        onEnableModule={(id) => void enableModule(id)}
       />
       <div id="zc-dialog-portal" />
       {quickEntryOpen && <Suspense fallback={<div role="status" className="zc-entry-loading">正在打开记账…</div>}><Transactions entryOnly onEntryClose={() => setQuickEntryOpen(false)} /></Suspense>}
@@ -959,8 +931,6 @@ function MobileNavigation(props: {
   asOf: string;
   ledgerMode: LedgerMode;
   navigation: NavigationPreferences;
-  enablingModule: ScreenId | null;
-  onEnableModule: (id: ScreenId) => void;
 }) {
   const { onMoreOpen } = props;
   const drawerTitleId = useId();
@@ -974,9 +944,7 @@ function MobileNavigation(props: {
     return () => mobileViewport.removeEventListener('change', closeOnDesktop);
   }, [onMoreOpen]);
 
-  const visibleItems = orderedNavigationItems(props.navigation);
   const mainItems = (['dashboard', 'transactions', 'assets'] as const).map((id) => NAVIGATION_ITEMS.find((item) => item.id === id)!);
-  const shownIds = new Set(visibleItems.map((item) => item.id));
   /*
    * The quick action owns the exact middle column, and 日常收支 sits directly to
    * its left, so the two most-used targets share the centre of the bar.
@@ -994,10 +962,6 @@ function MobileNavigation(props: {
     ? [...others.slice(0, leftCount - 1), primary]
     : others.slice(0, leftCount);
   const afterQuick = mainItems.filter((item) => !beforeQuick.includes(item));
-  // Modules the user turned off. Surfacing them here means a hidden module does
-  // not require a detour through 设置, and hidden modules are never force-added
-  // to the drawer grid above.
-  const hiddenItems = orderedNavigationItems(props.navigation, true).filter((item) => item.id !== 'assets' && !shownIds.has(item.id));
   return (
     <>
       <nav
@@ -1034,8 +998,8 @@ function MobileNavigation(props: {
 
             <TaskList title="查看与计划" items={[
               { label: '报表', note: '收支、资产、物品与游戏', icon: BarChart3, onClick: () => props.onNavigate('reports') },
-              { label: '预算', note: '本月计划与剩余额度', onClick: () => navigateTo({ screen: 'transactions', tab: 'budget' }) },
-              { label: '账单与还款', note: '生活账单、分期和还款 · 无需关联账户', onClick: () => navigateTo({ screen: 'transactions', tab: 'bills' }) },
+              { label: '预算', note: '本月计划与剩余额度', icon: ChartPie, onClick: () => navigateTo({ screen: 'transactions', tab: 'budget' }) },
+              { label: '账单与还款', note: '生活账单、分期和还款 · 无需关联账户', icon: ReceiptText, onClick: () => navigateTo({ screen: 'transactions', tab: 'bills' }) },
               { label: '游戏赛季', note: '投入、产出与回收', icon: Gamepad2, onClick: () => props.onNavigate('game') },
             ]} />
             <TaskList title="账本资料" items={[
@@ -1049,24 +1013,6 @@ function MobileNavigation(props: {
               { label: '设置', note: '记账、外观与设备', icon: Settings2, onClick: () => props.onNavigate('settings') },
               { label: '我的账号', note: '资料、邮箱、配额与安全', icon: UserRound, onClick: () => props.onNavigate('account') },
             ]} />}
-            {hiddenItems.length > 0 && (
-              <details className="zc-mobile-disclosure">
-                <summary>添加到桌面侧栏</summary>
-                <div className="zc-mobile-drawer-grid zc-mobile-drawer-grid-hidden">
-                  {hiddenItems.map(({ id }) => (
-                    <button
-                      key={id}
-                      className="zc-mobile-drawer-add"
-                      disabled={props.enablingModule === id}
-                      onClick={() => props.onEnableModule(id)}
-                    >
-                      <span><NavIcon id={id} /></span><b>{navigationLabel(id, props.ledgerMode)}</b>
-                      <small>{props.enablingModule === id ? '启用中…' : '启用'}</small>
-                    </button>
-                  ))}
-                </div>
-              </details>
-            )}
             <div className="zc-mobile-drawer-status">
               <span>报表币种 <b>{props.reportCurrency}</b></span>
               <span>账本日 <b>{props.asOf}</b></span>

@@ -22,16 +22,20 @@ test('settings uses real sidebar names, group ordering, phone names and 44px con
     for (const width of [1280, 390, 320]) {
       await page.setViewportSize({ width, height: 900 }); await go(page, 'settings', 'ledger');
       if (width < 768) {
-        const toggle = page.getByRole('button', { name: '模块设置' });
-        if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+        await expect(list).toHaveCount(0);
+        await expect(page.getByRole('heading', { name: '侧边栏与模块', exact: true })).toHaveCount(0);
         await expect(page.locator('.zc-mobile-bottom-nav button')).toHaveText(['总览', '收支', '记一笔', '资产', '更多']);
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-      expect((await page.getByRole('button', { name: '下移报表', exact: true }).boundingBox()).height).toBeGreaterThanOrEqual(44);
-      await list.locator('section').first().evaluate((node) => { node.scrollIntoView({ block: 'start' }); window.scrollBy(0, -document.querySelector('.zc-app-header').getBoundingClientRect().height - 12); });
-      await page.screenshot({ path: test.info().outputPath(`navigation-${mode}-${width}.png`) });
-      await list.locator('section').last().evaluate((node) => { node.scrollIntoView({ block: 'start' }); window.scrollBy(0, -document.querySelector('.zc-app-header').getBoundingClientRect().height - 12); });
-      await page.screenshot({ path: test.info().outputPath(`navigation-tools-${mode}-${width}.png`) });
+      if (width >= 768) {
+        expect((await page.getByRole('button', { name: '下移报表', exact: true }).boundingBox()).height).toBeGreaterThanOrEqual(44);
+        await list.locator('section').first().evaluate((node) => { node.scrollIntoView({ block: 'start' }); window.scrollBy(0, -document.querySelector('.zc-app-header').getBoundingClientRect().height - 12); });
+        await page.screenshot({ path: test.info().outputPath(`navigation-${mode}-${width}.png`) });
+        await list.locator('section').last().evaluate((node) => { node.scrollIntoView({ block: 'start' }); window.scrollBy(0, -document.querySelector('.zc-app-header').getBoundingClientRect().height - 12); });
+        await page.screenshot({ path: test.info().outputPath(`navigation-tools-${mode}-${width}.png`) });
+      } else {
+        await page.screenshot({ path: test.info().outputPath(`navigation-phone-${mode}-${width}.png`) });
+      }
       await page.setViewportSize({ width: 1280, height: 900 });
     }
   }

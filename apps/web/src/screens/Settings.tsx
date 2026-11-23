@@ -158,7 +158,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   const [mobileLedgerMoreOpen, setMobileLedgerMoreOpen] = useState(false);
   const [currencyPresetBusy, setCurrencyPresetBusy] = useState(false);
   const [currencyPresetError, setCurrencyPresetError] = useState('');
-  const [mobileSectionOpen, setMobileSectionOpen] = useState({ categories: false, navigation: false });
+  const [mobileSectionOpen, setMobileSectionOpen] = useState({ categories: false });
   const [pendingAsOf, setPendingAsOf] = useState<{ date: string; warning: string } | null>(null);
   const [safetyState, setSafetyState] = useState(readSafetyState);
   const storedSafetyStateJson = snap?.setting?.dataSafetyStateJson;
@@ -849,7 +849,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
             <p className="zc-caption">常用字段在“资料管理 → 记账字段”中设置。弹窗顶部高亮项是当前模式；常用模式也可展开“更多字段”临时填写。</p>
           </div>
 
-          <div className={`zc-card zc-settings-collapsible-card${mobileSectionOpen.navigation ? ' is-open' : ''}`}>
+          {!compact && <div className="zc-card">
             <div className="zc-section-head zc-responsive-header">
               <div>
                 <h2 className="zc-section-title">侧边栏与模块</h2>
@@ -859,9 +859,6 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
               </div>
               <button className="zc-settings-card-action zc-btn" type="button" disabled={navigationBusy} onClick={() => void saveNavigation(defaultNavigationPreferences())}>
                 恢复推荐布局
-              </button>
-              <button type="button" className="zc-settings-mobile-toggle" aria-expanded={mobileSectionOpen.navigation} aria-controls="zc-settings-navigation-body" onClick={() => setMobileSectionOpen((open) => ({ ...open, navigation: !open.navigation }))}>
-                模块设置<span aria-hidden="true">{mobileSectionOpen.navigation ? '收起' : '展开'} ▾</span>
               </button>
             </div>
             <div id="zc-settings-navigation-body" className="zc-settings-collapsible-body">
@@ -898,7 +895,8 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                 })}</section>)}
               </div>
             </div>
-          </div>
+          </div>}
+
         </>
       )}
 

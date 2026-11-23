@@ -50,47 +50,25 @@ const SCREENS = [
   ['设置', 'settings'],
 ];
 
-/** Navigate through whichever chrome this viewport uses: bottom bar or sidebar. */
-/**
- * Enable the hidden modules the way a phone user does: 更多 → 未启用模块 → 启用.
- * This is a different code path from the Settings checkboxes the desktop sweep
- * drives, so it needs its own coverage. The drawer stays open across taps, so
- * the whole run happens inside one drawer session.
- */
-async function enableHiddenModulesFromDrawer(page) {
+/** Mobile entries are always reachable and do not configure the desktop sidebar. */
+async function verifyMobileModules(page) {
   await page.locator('.zc-mobile-bottom-nav button', { hasText: '更多' }).click();
   const drawer = page.getByRole('dialog', { name: '更多功能' });
   await expect(drawer).toBeVisible();
-  await drawer.getByText('添加到桌面侧栏', { exact: true }).click();
-  const add = drawer.locator('.zc-mobile-drawer-add');
-  const enabled = [];
-  for (let round = 0; round < 12; round += 1) {
-    const left = await add.count();
-    if (left === 0) break;
-    const name = (await add.first().innerText()).replace(/\s+/g, ' ').trim();
-    await add.first().click();
-    // Enabling is a settings write; the button reports progress and the entry
-    // then moves out of 未启用模块 into the drawer grid.
-    await expect(add).toHaveCount(left - 1, { timeout: 20_000 });
-    enabled.push(name);
-  }
-  expect(await add.count(), '抽屉里仍有未启用的模块').toBe(0);
+  await expect(drawer.getByText('添加到桌面侧栏', { exact: true })).toHaveCount(0);
+  for (const name of ['报表', '游戏赛季', '资料管理', '操作历史']) await expect(drawer.getByRole('button', { name, exact: true })).toBeVisible();
   await drawer.getByRole('button', { name: '关闭更多菜单' }).click();
   await expect(drawer).toBeHidden();
-  return enabled;
+  return [];
 }
 
-/**
- * Enable every module using whichever control this chrome actually offers: the
- * drawer below 768px, the Settings checkboxes above it. Both are real user paths
- * and they are separate code, so neither can stand in for the other.
- */
+/** Enable optional modules on desktop; check their direct entrances on phones. */
 async function enableAllModules(page) {
   const usesBottomBar = await page.evaluate(() => {
     const nav = document.querySelector('.zc-mobile-bottom-nav');
     return !!nav && getComputedStyle(nav).display !== 'none';
   });
-  if (usesBottomBar) return enableHiddenModulesFromDrawer(page);
+  if (usesBottomBar) return verifyMobileModules(page);
 
   await clickNav(page, '设置');
   const boxes = page.locator('input[aria-label^="在侧边栏显示"]');
@@ -349,7 +327,8 @@ for (const vp of VIEWPORTS) {
       await openSpendingLedger(page, base, 'sweep-user', 'sweep-user-password');
 
       const enabled = await enableAllModules(page);
-      expect(enabled.length, `启用全部模块后应点过若干次“启用”`).toBeGreaterThan(0);
+      if (vp.width >= 768) expect(enabled.length, `电脑端启用全部模块`).toBeGreaterThan(0);
+      else expect(enabled).toHaveLength(0);
       await assertEveryModuleReachable(page);
 
       const report = {};

@@ -12,19 +12,14 @@ export async function openSpendingLedger(page, base, username, password) {
   await expect(firstEntry).toBeHidden();
 }
 
-/** Expose hidden modules through the control available at the current width. */
+/** Phones expose every module directly; only desktop navigation needs enabling. */
 export async function enableEveryNavigationModule(page) {
   const bottom = page.locator('.zc-mobile-bottom-nav');
   if (await bottom.isVisible()) {
     await bottom.getByRole('button', { name: /更多/ }).click();
     const drawer = page.getByRole('dialog', { name: '更多功能' });
-    if (await drawer.getByText('添加到桌面侧栏', { exact: true }).isVisible()) await drawer.getByText('添加到桌面侧栏', { exact: true }).click();
-    const add = drawer.locator('.zc-mobile-drawer-add');
-    for (let round = 0; round < 12 && await add.count(); round += 1) {
-      const previous = await add.count();
-      await add.first().click();
-      await expect(add).toHaveCount(previous - 1);
-    }
+    await expect(drawer.getByText('添加到桌面侧栏', { exact: true })).toHaveCount(0);
+    for (const name of ['报表', '游戏赛季', '资料管理', '操作历史']) await expect(drawer.getByRole('button', { name, exact: true })).toBeVisible();
     await drawer.getByRole('button', { name: '关闭更多菜单' }).click();
     return;
   }

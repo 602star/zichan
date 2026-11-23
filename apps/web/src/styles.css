@@ -3097,18 +3097,6 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
     font-weight: var(--fw-medium);
   }
 
-  .zc-mobile-drawer-grid-hidden button {
-    min-height: 56px;
-    border-style: dashed;
-    color: var(--text-tertiary);
-  }
-
-  .zc-mobile-drawer-grid-hidden button small {
-    color: var(--accent);
-    font-size: var(--fs-meta);
-    font-weight: var(--fw-medium);
-  }
-
   .zc-mobile-drawer-status {
     display: grid;
     grid-template-columns: 1fr 1fr;

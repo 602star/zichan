@@ -44,7 +44,7 @@ const SCREEN_ID_SET = new Set<ScreenId>(ALL_SCREEN_IDS);
  * The set is the same for every ledger mode on purpose: switching from 轻量记账
  * to 账户/资产记账 later must not silently add seven entries, and a module that
  * starts hidden is still available in the phone task directory. Sidebar
- * visibility is configured separately under 添加到桌面侧栏.
+ * visibility is configured separately in the desktop 侧边栏与模块 settings.
  */
 const DEFAULT_VISIBLE_SCREEN_IDS: readonly ScreenId[] = ['dashboard', 'transactions', 'fixed', 'account'];
 
