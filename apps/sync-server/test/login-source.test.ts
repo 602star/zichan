@@ -42,6 +42,34 @@ async function prepare(url: string, transport?: string) {
 }
 
 describe('OPAQUE login through changing proxy sources', () => {
+  it('does not reveal account existence through public proof failure codes', async () => {
+    await fixture(async (url) => {
+      const unrelated = await prepare(url);
+      const rejectedProof = unrelated.finishLoginRequest.replace(/.$/, c => c === '0' ? '1' : '0');
+      const failures = [];
+      for (const username of ['owner', 'missing-account', 'missing@example.com']) {
+        const start = opaque.client.startLogin({ password: 'incorrect-password' });
+        const pending = await (await post(url, '/api/auth/login/start', {
+          username, startLoginRequest: start.startLoginRequest,
+        }, '104.22.101.160')).json();
+        const response = await post(url, '/api/auth/login/finish', { loginId: pending.loginId,
+          finishLoginRequest: rejectedProof, deviceId: 'device-unknown-test', deviceName: 'Proof rejection test' }, '104.22.101.161');
+        failures.push({ status: response.status, body: await response.json() });
+      }
+      expect(failures).toEqual(Array.from({ length: 3 }, () => ({ status: 401,
+        body: { code: 'INVALID_CREDENTIALS', error: '账号或密码不正确' } })));
+    });
+  });
+  it('reports a changed credential only after a valid password proof', async () => {
+    await fixture(async (url, driver) => {
+      const body = await prepare(url);
+      await driver.run('UPDATE sync_users SET opaque_registration_record = ? WHERE username = ?', ['changed-after-start', 'owner']);
+      const response = await post(url, '/api/auth/login/finish', body, '104.22.101.161');
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ code: 'LOGIN_CREDENTIALS_CHANGED', error: '登录期间账号凭据发生变化，请重新登录' });
+      expect(await driver.get<{ n: number }>('SELECT COUNT(*) AS n FROM sync_sessions')).toMatchObject({ n: 0 });
+    });
+  });
   it.each([undefined, 'cookie', 'admin-cookie'])('accepts a valid proof across IPs using %s without mixing cookies', async transport => {
     await fixture(async (url, driver) => {
       const body = await prepare(url, transport);

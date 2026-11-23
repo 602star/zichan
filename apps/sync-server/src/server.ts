@@ -2051,7 +2051,18 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
               state: string; credentialHash: string; clientIdentifier?: string;
               serverIdentifier?: string; federated?: boolean; loginEmail?: string;
             };
+            // Reject every unproven exchange identically, including dummy records
+            // for unknown accounts. Credential-change detail is safe only after
+            // the client has proved knowledge of the credential used at start.
+            opaque.server.finishLogin({
+              serverLoginState: stored.state,
+              finishLoginRequest,
+              identifiers: { client: stored.clientIdentifier ?? loginState.username,
+                server: stored.serverIdentifier ?? serverId },
+            });
+            if (!user) throw new Error('invalid proof');
             if (stored.loginEmail && await store.usernameForEmail(stored.loginEmail) !== loginState.username) {
+              failureReason = 'credentials_changed';
               throw new Error('login email changed');
             }
             const credential = stored.federated && stored.clientIdentifier
@@ -2059,17 +2070,11 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
             const currentRecord = credential && credential.localUsername === loginState.username
               && !credential.disabled ? credential.registrationRecord
               : stored.federated ? undefined : user?.opaqueRegistrationRecord;
-            if (!user || !currentRecord || stored.credentialHash !== createHash('sha256').update(currentRecord).digest('hex')) {
+            if (!currentRecord || stored.credentialHash !== createHash('sha256').update(currentRecord).digest('hex')) {
               failureReason = 'credentials_changed';
               throw new Error('credentials changed');
             }
-            opaque.server.finishLogin({
-              serverLoginState: stored.state,
-              finishLoginRequest,
-              identifiers: { client: stored.clientIdentifier ?? loginState.username,
-                server: stored.serverIdentifier ?? serverId },
-            });
-            authenticated = Boolean(user);
+            authenticated = true;
           } catch {
             authenticated = false;
           }
