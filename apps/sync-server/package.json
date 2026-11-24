@@ -1,6 +1,6 @@
 {
   "name": "@zichan/sync-server",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "private": true,
   "description": "End-to-end-encrypted commit-replica server with accounts and administration",
   "type": "module",
