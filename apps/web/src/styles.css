@@ -4600,6 +4600,7 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
   cursor: pointer;
 }
 .zc-entry-modes { display: inline-flex; flex-shrink: 0; }
+.zc-entry-mode-label { color: var(--text-secondary); font-size: var(--fs-caption); white-space: nowrap; }
 .zc-entry-mode-toggle {
   display: inline-flex;
   align-items: center;

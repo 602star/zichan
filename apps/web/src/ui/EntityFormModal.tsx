@@ -615,6 +615,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
         <div className={`zc-modal-header${spec.progressiveFields ? ' zc-entry-header' : ''}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: spec.progressiveFields ? 0 : 18 }}>
           <div id={titleId} style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>{creating ? '新增' : '编辑'} · {spec.title}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {spec.progressiveFields && !compactView && <span className="zc-entry-mode-label">字段显示</span>}
             {spec.progressiveFields && <div className="zc-entry-modes" role="group" aria-label="字段显示模式">
               <button type="button" className="zc-entry-mode-toggle" aria-label="字段模式：常用" aria-pressed={!fullFields} onClick={() => setFullFields(false)}>常用</button>
               <button type="button" className="zc-entry-mode-toggle" aria-label="字段模式：完整" aria-pressed={fullFields} onClick={() => setFullFields(true)}>完整</button>
@@ -667,7 +668,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
             <button type="button" className="zc-entry-text-action" aria-label="收起草稿恢复提示" onClick={() => setDraftRestoredAt('')}><X size={16} aria-hidden="true" /></button>
           </div>
         )}
-        {draftReady && dirty && !pendingDraft && (!compactEntry || draftAutosave.status.state === 'error') && <FormDraftStatus status={draftAutosave.status} compact={compactEntry} />}
+        {draftReady && dirty && !pendingDraft && (!spec.compactDateTime || draftAutosave.status.state === 'error') && <FormDraftStatus status={draftAutosave.status} compact={spec.compactDateTime} />}
 
         {spec.summary?.(values) && <p role="status" className="zc-caption">{spec.summary(values)}</p>}
         {coreGroups.map((group) => <Fragment key={`${group.kind}-${group.title}`}>
@@ -680,7 +681,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
             return (
               <FormField
                 key={f.key}
-                f={spec.compactDateTime ? { ...f, half: (group.kind === 'context' && group.fields.length > 1) || (!compactEntry && group.kind === 'details' && f.half), placeholder: f.key === 'amount' ? '0.00' : f.placeholder } : workspace === 'composer' && !compactView ? { ...f, half: f.type !== 'textarea' && f.type !== 'file' } : f}
+                f={spec.compactDateTime ? { ...f, half: (group.kind === 'context' && group.fields.length > 1) || (!compactEntry && group.kind === 'details' && f.key !== 'description' && f.half), placeholder: f.key === 'amount' ? '0.00' : f.placeholder } : workspace === 'composer' && !compactView ? { ...f, half: f.type !== 'textarea' && f.type !== 'file' } : f}
                 compactContext={group.kind === 'context'}
                 fieldId={fieldId}
                 options={options}
@@ -768,7 +769,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
           </details>
         )}
 
-        {compactEntry && draftReady && dirty && !pendingDraft && draftAutosave.status.state !== 'error' && <FormDraftStatus status={draftAutosave.status} compact />}
+        {spec.compactDateTime && draftReady && dirty && !pendingDraft && draftAutosave.status.state !== 'error' && <FormDraftStatus status={draftAutosave.status} compact />}
 
         {duplicates && <div role="alert">
           <p>{duplicates.message}</p>
