@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures.mjs';
-import { openLedger } from './helpers.mjs';
+import { openLedger, restoreEntryDraft } from './helpers.mjs';
 
 test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 }, timezoneId: 'Asia/Shanghai' });
 test.describe.configure({ mode: 'parallel' });
@@ -292,7 +292,7 @@ test('browser back protects a dirty quick entry and its encrypted draft', async 
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.locator('h1')).toHaveText('报表');
   await page.getByRole('button', { name: '快速记账', exact: true }).click();
-  await form.getByRole('button', { name: '恢复草稿', exact: true }).click();
+  await restoreEntryDraft(page, form);
   await expect(form.getByLabel(/^金额/)).toHaveValue('3.21');
   await form.getByRole('button', { name: '保存', exact: true }).click();
   await expect(form).toBeHidden();

@@ -4700,7 +4700,7 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
   .zc-transaction-modal .zc-modal-header > div:first-child { flex: 1; min-width: 0; }
 }
 /* A single attachment owns its extraction and retention session. */
-.zc-ledger-attachments { display: grid; gap: 12px; min-width: 0; }
+.zc-ledger-attachments { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
 .zc-attachment-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .zc-attachment-actions input[type="file"] { flex: 1; min-width: 140px; max-width: 100%; }
 .zc-attachment-item { min-width: 0; border-top: 1px solid var(--border); padding-block: 12px; }

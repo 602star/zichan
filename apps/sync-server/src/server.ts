@@ -5,6 +5,7 @@ import { loginFailure } from './login-failure.js';
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import * as opaque from '@serenity-kit/opaque';
 import { normalizeSyncUsername, createLedgerKeyEnvelope, unlockLedgerKeyEnvelope, newId, PLAIN_HTTP_HOST_ALLOWLIST,
   type LedgerKeyEnvelope } from '@zichan/core';
@@ -332,15 +333,28 @@ function serveWeb(req: IncomingMessage, res: ServerResponse, path: string, webDi
   if (!file && extname(target) === '' && (path === '/' || path === '/admin' || path.startsWith('/admin/'))) {
     file = fileIfExists(join(root, 'index.html'));
   }
-  if (!file) { res.writeHead(404); res.end('not found'); return true; }
+  const gzipFile = !file ? fileIfExists(`${target}.gz`) : null;
+  if (!file && !gzipFile) { res.writeHead(404); res.end('not found'); return true; }
+  const logicalFile = file ?? target;
+  const acceptsGzip = !!gzipFile && (req.headers['accept-encoding'] ?? '').split(',').some((entry) => {
+    const [coding, ...parameters] = entry.trim().toLowerCase().split(';');
+    return coding === 'gzip' && !parameters.some((parameter) => /^\s*q\s*=\s*0(?:\.0*)?\s*$/.test(parameter));
+  });
+  let body: Buffer | undefined;
+  if (req.method !== 'HEAD') {
+    try { body = gzipFile ? acceptsGzip ? readFileSync(gzipFile) : gunzipSync(readFileSync(gzipFile), { maxOutputLength: 64 * 1024 * 1024 }) : readFileSync(file!); }
+    catch { res.writeHead(500, { 'Cache-Control': 'no-store' }); res.end('web resource unavailable'); return true; }
+  }
   res.writeHead(200, {
-    'Content-Type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
-    'Cache-Control': file.endsWith('index.html') || file.endsWith('sw.js') || /[\\/]ocr[\\/](?:manifest|resources)\.json$/.test(file) ? 'no-cache' : 'public, max-age=31536000, immutable',
+    'Content-Type': MIME[extname(logicalFile).toLowerCase()] ?? 'application/octet-stream',
+    'Cache-Control': logicalFile.endsWith('index.html') || logicalFile.endsWith('sw.js') || /[\\/]ocr[\\/](?:manifest|resources)\.json$/.test(logicalFile) ? 'no-cache' : 'public, max-age=31536000, immutable',
+    ...(gzipFile ? { Vary: 'Accept-Encoding' } : {}),
+    ...(acceptsGzip ? { 'Content-Encoding': 'gzip' } : {}),
     'Content-Security-Policy': webAppCsp(allowInsecureHttp),
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
   });
-  if (req.method === 'HEAD') res.end(); else res.end(readFileSync(file));
+  if (req.method === 'HEAD') res.end(); else res.end(body);
   return true;
 }
 

@@ -1,6 +1,7 @@
 import { listenOnSafePort, closeTestSyncServer } from '../safe-listen.mjs';
 import { test as base, expect } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
 import { registerAccount } from '../../../packages/db/dist/index.js';
 
@@ -8,7 +9,8 @@ import { registerAccount } from '../../../packages/db/dist/index.js';
 export const test = base.extend({
   baseURL: async ({}, use) => {
     const setup = 'e2e-only-owner-setup-00000000000000000000';
-    const server = createSyncServer({ enableWeb: true, webDir: fileURLToPath(new URL('../../../apps/web/dist', import.meta.url)), registrationMode: 'open', ownerSetupToken: setup });
+    const webDir = process.env.ZICHAN_E2E_WEB_DIR ? resolve(process.env.ZICHAN_E2E_WEB_DIR) : fileURLToPath(new URL('../../../apps/web/dist', import.meta.url));
+    const server = createSyncServer({ enableWeb: true, webDir, registrationMode: 'open', ownerSetupToken: setup });
     try {
       await server.ready;
       await listenOnSafePort(server.server, '127.0.0.1');

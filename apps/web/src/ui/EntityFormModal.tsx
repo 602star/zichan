@@ -361,11 +361,13 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
         if (!draft || touched.current) return;
         if (creating && spec.confirmNewDraft && !separateDrafts) { setPendingDraft(draft); return; }
         if (separateDrafts) setDraftKey(draft.key);
-        const restored = normalizeValues(spec.fields, { ...initialValues, ...draft.values });
-        setValues(restored);
-        setPrefilledValues(restored);
         manualFields.current = new Set(draft.manualFieldKeys ?? Object.keys(draft.values).filter((key) => draft.values[key] !== initialValues[key]));
         if (spec.expenseCategoryDefaults && draft.values.category) manualFields.current.add('category');
+        let restored = { ...initialValues, ...draft.values };
+        if (!initial && draft.manualFieldKeys && spec.refreshDefaults) restored = spec.refreshDefaults(restored, manualFields.current);
+        restored = normalizeValues(spec.fields, restored);
+        setValues(restored);
+        setPrefilledValues(restored);
         setFileValues(Object.fromEntries(Object.entries(draft.files ?? {}).map(([key, rows]) => [key, rows.map((row) => ({ ...row, id: row.id ?? newId() }))])));
         setDraftRestoredAt(draft.savedAt);
       })
@@ -376,7 +378,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     return () => {
       cancelled = true;
     };
-  }, [draftKey, baseDraftKey, separateDrafts, entityVersion, initialValues, spec.fields, spec.confirmNewDraft, spec.expenseCategoryDefaults, spec.privacyAttachments, creating]);
+  }, [draftKey, baseDraftKey, separateDrafts, entityVersion, initialValues, initial, spec, creating]);
 
   useEffect(() => {
     if (pendingDraft || !dirty || savedOrDeleted.current) return;
@@ -538,7 +540,10 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
       }
       if (captureLive.current.values !== snapshot.values || captureLive.current.fileValues !== snapshot.fileValues) throw new Error('当前输入已变化，请重新选择草稿。');
       manualFields.current = new Set(draft.manualFieldKeys ?? Object.keys(draft.values));
-      setDraftKey(draft.key); setValues(normalizeValues(spec.fields, { ...initialValues, ...draft.values })); setPrefilledValues(draft.values);
+      if (spec.expenseCategoryDefaults && draft.values.category) manualFields.current.add('category');
+      let restored = { ...initialValues, ...draft.values };
+      if (!initial && draft.manualFieldKeys && spec.refreshDefaults) restored = spec.refreshDefaults(restored, manualFields.current);
+      setDraftKey(draft.key); setValues(normalizeValues(spec.fields, restored)); setPrefilledValues(restored);
       setFileValues(Object.fromEntries(Object.entries(draft.files).map(([key, rows]) => [key, rows.map((row) => ({ ...row, id: row.id ?? newId() }))])));
       setDraftRestoredAt(draft.savedAt); touched.current = true;
     } catch (cause) { setErr(cause instanceof Error ? cause.message : '恢复草稿失败，请重试。'); }

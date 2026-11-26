@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { test, expect } from './fixtures.mjs';
-import { openLedger, openTransactions } from './helpers.mjs';
+import { openLedger, openTransactions, restoreEntryDraft } from './helpers.mjs';
 
 test.setTimeout(360_000);
 
@@ -61,7 +61,7 @@ test('auto-saves a form draft and restores it on the next open', async ({ page }
   await page.getByRole('button', { name: '取消', exact: true }).click();
   await page.getByRole('button', { name: '保留草稿并关闭' }).click();
   await page.getByRole('button', { name: '+ 记账' }).click();
-  await page.getByRole('button', { name: '恢复草稿', exact: true }).click();
+  await restoreEntryDraft(page, page.getByRole('dialog'));
   await expect(page.getByRole('textbox', { name: /^金额/ })).toHaveValue('23.50');
   await expect(page.getByLabel('描述')).toHaveValue('未提交草稿');
 });

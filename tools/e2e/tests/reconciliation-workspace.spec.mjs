@@ -99,7 +99,7 @@ test('reconciliation explains outstanding postings, resets adjustment consent an
   await reconcile.getByLabel('账单期末余额', { exact: true }).fill('900');
   await expect(metric(reconcile, '余额基准')).toHaveText('1,000.00 CNY');
   await expect(metric(reconcile, '差额')).toHaveText('-100.00 CNY');
-  await reconcile.getByLabel('搜索对账记录', { exact: true }).fill('餐饮');
+  await reconcile.getByLabel('搜索对账记录', { exact: true }).fill('餐饮已入银行账单');
   await reconcile.getByRole('button', { name: '勾选当前列表', exact: true }).click();
   await expect(metric(reconcile, '勾选流水净额')).toHaveText('-100.00 CNY');
   await expect(metric(reconcile, '本次核对余额')).toHaveText('900.00 CNY');

@@ -30,7 +30,7 @@ async function contained(dialog, viewport = true) {
     expect(result.outer.left).toBeGreaterThanOrEqual(-1); expect(result.outer.right).toBeLessThanOrEqual(result.viewport.width + 1);
     expect(result.outer.top).toBeGreaterThanOrEqual(-1); expect(result.outer.bottom).toBeLessThanOrEqual(result.viewport.height + 1);
   }
-  expect(result.bodyOverflows).toBe(false);
+  expect(result.bodyOverflows, JSON.stringify({ ...result, overflowing: result.bodyOverflows ? await dialog.locator(':scope > .zc-dialog-body').evaluate((body) => [...body.querySelectorAll('*')].filter((node) => node.getBoundingClientRect().right > body.getBoundingClientRect().right + 1).slice(0, 8).map((node) => ({ tag: node.tagName, class: node.className, text: node.textContent?.slice(0, 80) }))) : [] })).toBe(false);
   return result;
 }
 async function scrollBody(dialog) {

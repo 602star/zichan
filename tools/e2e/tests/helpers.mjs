@@ -2,6 +2,13 @@ import { expect } from '@playwright/test';
 
 export const DEVICE_PASSWORD = 'E2E-ledger-2026';
 
+export async function restoreEntryDraft(page, form) {
+  const list = form.locator('.zc-entry-draft-list');
+  await expect(list).toBeVisible();
+  if (!await list.evaluate((node) => node.open)) await list.locator('summary').click();
+  await list.getByRole('button', { name: '恢复这份草稿', exact: true }).first().click();
+}
+
 async function grantDeterministicPersistentStorage(page) {
   await page.addInitScript(() => {
     const storage = globalThis.navigator?.storage;

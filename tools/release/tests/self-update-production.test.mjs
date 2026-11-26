@@ -4,10 +4,35 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { test } from 'node:test';
 import { verifiedPreUpdateBackup } from '../../../apps/sync-server/scripts/pre-update-backup.mjs';
 
 const root = resolve(import.meta.dirname, '../../..');
+
+test('v1 update packing compresses public assets while preserving entry files and original resource bytes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'zichan-update-assets-'));
+  try {
+    for (const path of ['scripts/release', 'apps/sync-server/src', 'apps/sync-server/dist', 'apps/web/dist/assets', 'apps/web/dist/ocr']) await mkdir(join(directory, path), { recursive: true });
+    await writeFile(join(directory, 'scripts/release/create-update-package.mjs'), await readFile(join(root, 'scripts/release/create-update-package.mjs')));
+    await writeFile(join(directory, 'apps/sync-server/package.json'), '{"version":"0.7.5"}');
+    await writeFile(join(directory, 'apps/sync-server/src/store.ts'), "export const CURRENT_SERVER_SCHEMA = 27;\nexport const CURRENT_SERVER_SCHEMA_NAME = 'fixture';");
+    for (const name of ['server', 'maintenance']) await writeFile(join(directory, `apps/sync-server/dist/${name}.mjs`), 'export {};');
+    await writeFile(join(directory, 'apps/web/dist/index.html'), '<title>fixture</title>');
+    await writeFile(join(directory, 'apps/web/dist/ocr/manifest.json'), '{}');
+    const resource = Buffer.alloc(4 * 1024 * 1024, 0x5a);
+    await writeFile(join(directory, 'apps/web/dist/assets/worker.js'), resource);
+    execFileSync(process.execPath, [join(directory, 'scripts/release/create-update-package.mjs'), '--unsigned', join(directory, 'output')]);
+    const packed = JSON.parse(await readFile(join(directory, 'output/zichan-0.7.5.json'), 'utf8'));
+    assert.equal(packed.format, 'zichan-release-v1');
+    assert.ok(packed.files.some((row) => row.path === 'web-dist/index.html'));
+    assert.ok(packed.files.some((row) => row.path === 'web-dist/ocr/manifest.json'));
+    assert.equal(packed.files.some((row) => row.path === 'web-dist/assets/worker.js'), false);
+    const compressed = Buffer.from(packed.files.find((row) => row.path === 'web-dist/assets/worker.js.gz').data, 'base64');
+    assert.ok(compressed.length < resource.length / 10);
+    assert.deepEqual(gunzipSync(compressed), resource);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test('production update verifies an offline backup before starting the target and rechecks it after interruption', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'zichan-update-backup-'));

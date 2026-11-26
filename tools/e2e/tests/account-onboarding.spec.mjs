@@ -1,3 +1,4 @@
+import { restoreEntryDraft } from './helpers.mjs';
 import { test, expect } from './fixtures.mjs';
 import { openLedgerSection } from '../ledger-navigation.mjs';
 
@@ -243,9 +244,9 @@ test('a newly defaulted account is used after a draft and its spending reaches b
   await setup.getByRole('button', { name: '保存并开始使用', exact: true }).click();
   await page.getByRole('button', { name: '记一笔', exact: true }).click();
   entry = page.getByRole('dialog');
-  await expect(entry.getByRole('button', { name: '恢复草稿', exact: true })).toBeVisible();
+  await expect(entry.getByLabel(/^金额/)).toHaveValue('');
   await expect(entry.getByLabel('收付款账户').locator('option:checked')).toHaveText('默认测试银行卡');
-  await entry.getByRole('button', { name: '恢复草稿', exact: true }).click();
+  await restoreEntryDraft(page, entry);
   await expect(entry.getByLabel('收付款账户').locator('option:checked')).toHaveText('默认测试银行卡');
   await expect(entry.getByText(/保存后不会再次扣减余额/)).toBeVisible();
   await entry.getByRole('button', { name: '保存', exact: true }).last().click();
@@ -286,12 +287,12 @@ test('a newly defaulted account is used after a draft and its spending reaches b
   await entry.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('button', { name: '保留草稿并关闭', exact: true }).click();
   await page.getByRole('button', { name: '+ 记账', exact: true }).click();
-  await entry.getByRole('button', { name: '恢复草稿', exact: true }).click();
+  await restoreEntryDraft(page, entry);
   await expect(entry.getByLabel('收付款账户').locator('option:checked')).toHaveText('默认支出账户');
   await entry.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('button', { name: '保留草稿并关闭', exact: true }).click();
   await page.getByRole('button', { name: '+ 记账', exact: true }).click();
-  await entry.getByRole('button', { name: '重新开始', exact: true }).click();
+  await expect(entry.locator('.zc-entry-draft-list')).toBeVisible();
   await expect(entry.getByLabel('收付款账户').locator('option:checked')).toHaveText('默认测试银行卡');
   await expect(entry.getByLabel(/^金额/)).toHaveValue('');
 });

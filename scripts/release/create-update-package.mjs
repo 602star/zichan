@@ -1,6 +1,7 @@
 import { createHash, sign } from 'node:crypto';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
+import { gzipSync } from 'node:zlib';
 
 const unsigned = process.argv[2] === '--unsigned';
 const [privateKeyPath, outputDirectory] = unsigned ? [undefined, process.argv[3]] : process.argv.slice(2);
@@ -26,7 +27,12 @@ async function collect(directory) {
       const bundlePath = name.startsWith('apps/sync-server/dist/')
         ? name.replace('apps/sync-server/', '')
         : name.replace('apps/web/', 'web-');
-      files.push({ path: bundlePath, data: (await readFile(path)).toString('base64') });
+      const data = await readFile(path);
+      // Keep the v1 protocol and old updater limits. Large public Web resources
+      // are stored as gzip sidecars; the target server serves the original URLs.
+      const compressible = bundlePath.startsWith('web-dist/') && !/\.(?:html|json)$/.test(bundlePath) && !bundlePath.endsWith('/sw.js') && data.length >= 1024;
+      const packed = compressible ? gzipSync(data, { level: 9 }) : data;
+      files.push(packed.length < data.length ? { path: `${bundlePath}.gz`, data: packed.toString('base64') } : { path: bundlePath, data: data.toString('base64') });
     } else throw new Error(`不支持符号链接：${path}`);
   }
 }
