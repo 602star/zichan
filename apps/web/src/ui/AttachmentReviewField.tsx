@@ -6,7 +6,7 @@ export function AttachmentReviewField({ label, target, value, included, current,
   onEvidence?: () => void; onCopy?: () => void;
 }) {
   const [alternatives, setAlternatives] = useState(false);
-  const type = target === 'date' ? 'date' : target === 'time' ? 'time' : 'text';
+  const type = target === 'date' || target === 'invoiceDate' ? 'date' : target === 'time' ? 'time' : 'text';
   return <div className={`zc-attachment-review-field is-editable${target === 'date' || target === 'time' ? ' is-datetime' : ''}`}>
     <label className="zc-label"><input type="checkbox" checked={included} disabled={busy} onChange={(event) => onToggle(event.target.checked)} />{label}</label>
     {target === 'assetId' ? <select className="zc-select" aria-label={`${label}候选`} disabled={busy} value={value} onChange={(event) => onChange(event.target.value)}><option value="">不回填币种</option>{choices.map((row) => <option key={row.value} value={row.value}>{row.label}</option>)}</select>

@@ -35,8 +35,10 @@ export async function redactOrderImage(image: ImageBitmap, regions: readonly Mas
 }
 export async function assertReviewedRedactedImage(draft: AttachmentDraftData): Promise<void> {
   const review = draft.privacyReview;
-  if (!draft.contentBlob || draft.mimeType !== 'image/png' || !review || review.version !== 1 || review.rulesVersion !== REDACTION_RULE_VERSION
-    || !review.sourceRevision || !review.outputRevision || draft.fileName !== '订单凭证.png') throw new Error('新增收支附件必须先核对隐私并生成脱敏图片；PDF 请转为图片处理。');
+  // New detection rules do not invalidate an earlier, explicitly reviewed PNG.
+  // Both versions still require the same hash, dimensions and metadata checks.
+  if (!draft.contentBlob || draft.mimeType !== 'image/png' || !review || review.version !== 1 || !['order-privacy.v1', REDACTION_RULE_VERSION].includes(review.rulesVersion)
+    || !review.sourceRevision || !review.outputRevision || draft.fileName !== '订单凭证.png') throw new Error('脱敏附件缺少有效核对信息，请重新核对并生成图片。');
   const bytes = new Uint8Array(await draft.contentBlob.arrayBuffer());
   const dimensions = imageDimensions(bytes.buffer);
   if (!dimensions || dimensions.width !== review.width || dimensions.height !== review.height || await sha256Bytes(bytes) !== review.reviewedSha256) throw new Error('脱敏图片与核对版本不一致，请重新核对。');

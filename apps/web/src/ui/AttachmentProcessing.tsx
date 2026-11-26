@@ -17,8 +17,8 @@ export type AttachmentRetention = 'redacted' | 'original' | 'none';
 export interface AttachmentApplication {
   fields: Record<string, string>; baseline: Record<string, string>; baselineVersions: Record<string, number>; retention: AttachmentRetention; attachment?: ReviewedRedactedImage;
 }
-export function AttachmentProcessing({ file, values, versions, manual, assets, onApply, onClose }: {
-  file: File; values: Record<string, string>; versions: Record<string, number>; manual: ReadonlySet<string>; assets: { value: string; label: string }[];
+export function AttachmentProcessing({ file, pdfPages, values, versions, manual, assets, onApply, onClose }: {
+  file: File; pdfPages?: number; values: Record<string, string>; versions: Record<string, number>; manual: ReadonlySet<string>; assets: { value: string; label: string }[];
   onApply: (application: AttachmentApplication) => Promise<void>; onClose: () => void;
 }) {
   const compact = useCompactView();
@@ -86,6 +86,9 @@ export function AttachmentProcessing({ file, values, versions, manual, assets, o
         if (!valid) throw new Error('请填写大于零的金额，或取消回填金额。');
       }
       if (fields.date !== undefined && !isValidDay(fields.date)) throw new Error('请核对有效日期，或取消回填日期。');
+      if (fields.invoiceDate && !isValidDay(fields.invoiceDate)) throw new Error('请核对有效开票日期，或取消回填。');
+      if (fields.invoiceNumber && !/^(?:\d{8}|\d{20})$/.test(fields.invoiceNumber)) throw new Error('请核对发票号码：通常为 8 位或 20 位数字。');
+      if (fields.invoiceCode && !/^(?:\d{10}|\d{12})$/.test(fields.invoiceCode)) throw new Error('请核对发票代码：通常为 10 位或 12 位数字，数电发票可留空。');
       if (fields.time && timeMinutes(fields.time) === null) throw new Error('请核对有效交易时间。');
       for (const key of ['orderNumber', 'trackingNumber']) if (fields[key] && !/^[A-Za-z0-9_-]{4,80}$/.test(fields[key]!)) throw new Error('订单号或物流单号格式不明确，请直接修改该字段，或取消回填。');
       if (fields.date && !fields.time && !manual.has('time')) fields.time = '';
@@ -115,7 +118,8 @@ export function AttachmentProcessing({ file, values, versions, manual, assets, o
   }, [evidence, result, file]);
   const choicesFor = (source: typeof captureFields[number][0]) => source === 'currency' ? assets : (order?.fields[source].candidates ?? []).map((row) => ({ value: row.value, label: row.value }));
   const recognized = (source: typeof captureFields[number][0]) => source === 'currency' ? assets.find((row) => row.label.split(/\s|[·／/]/)[0]?.toUpperCase() === order?.fields.currency.value?.toUpperCase())?.value : order?.fields[source].value ?? order?.fields[source].candidates[0]?.value;
-  const field = ([source, target, label]: typeof captureFields[number]) => {
+  const field = ([source, target, originalLabel]: typeof captureFields[number]) => {
+    const label = target === 'amount' && order?.documentKind === 'invoice' ? '价税合计' : originalLabel;
     const value = edits[target] ?? selected[target] ?? recognized(source) ?? '';
     const candidates = order?.fields[source].candidates ?? [];
     const candidate = candidates.find((row) => row.value === value);
@@ -123,12 +127,14 @@ export function AttachmentProcessing({ file, values, versions, manual, assets, o
       choices={choicesFor(source)} onToggle={(checked) => setSelected((rows) => { const next = { ...rows }; if (checked) next[target] = value; else delete next[target]; return next; })}
       onChange={(value) => { setEdits((rows) => ({ ...rows, [target]: value })); setSelected((rows) => { const next = { ...rows, [target]: value }; if (target === 'assetId' && !value) delete next[target]; return next; }); }}
       onEvidence={candidates.some((row) => row.lineIds.length) ? () => setEvidence({ label, lineIds: candidate?.lineIds ?? candidates.flatMap((row) => row.lineIds), reason: candidate?.reason ?? (Object.hasOwn(edits, target) ? '已手动修改，下方展示截图中的识别依据。' : candidates[0]?.reason) }) : undefined}
-      onCopy={target === 'orderNumber' || target === 'trackingNumber' ? () => void copyTextToClipboard(value).then(() => setNotice(`${label}已复制`)).catch(() => setNotice('复制未成功，请在号码输入框中长按复制。')) : undefined} />;
+      onCopy={['orderNumber', 'trackingNumber', 'invoiceNumber', 'invoiceCode'].includes(target) ? () => void copyTextToClipboard(value).then(() => setNotice(`${label}已复制`)).catch(() => setNotice('复制未成功，请在号码输入框中长按复制。')) : undefined} />;
   };
-  const isPrimary = ([source, target]: typeof captureFields[number]) => ['amount', 'date', 'time'].includes(target) || (!!recognized(source) && (target !== 'assetId' || recognized(source) !== values.assetId));
-  const primaryFields = captureFields.filter((row) => !['orderNumber', 'trackingNumber'].includes(row[1]) && isPrimary(row));
-  const additionalFields = captureFields.filter((row) => !['orderNumber', 'trackingNumber'].includes(row[1]) && !isPrimary(row));
+  const groupedTargets: string[] = ['orderNumber', 'trackingNumber', 'invoiceNumber', 'invoiceCode', 'invoiceDate'];
+  const isPrimary = ([source, target]: typeof captureFields[number]) => target === 'amount' || (order?.documentKind !== 'invoice' && ['date', 'time'].includes(target)) || (!!recognized(source) && (target !== 'assetId' || recognized(source) !== values.assetId));
+  const primaryFields = captureFields.filter((row) => !groupedTargets.includes(row[1]) && isPrimary(row));
+  const additionalFields = captureFields.filter((row) => !groupedTargets.includes(row[1]) && !isPrimary(row));
   const orderFields = captureFields.filter(([, target]) => ['orderNumber', 'trackingNumber'].includes(target));
+  const invoiceFields = captureFields.filter(([, target]) => ['invoiceNumber', 'invoiceCode', 'invoiceDate'].includes(target));
   const openPrivacy = compact && view === 'info' && retention === 'redacted' && !reviewed;
   const buttons = <div className="zc-attachment-actions"><button type="button" className="zc-btn" disabled={applying} onClick={close}>暂不处理</button><button type="button" className="zc-btn zc-btn--primary" disabled={busy || applying || (!openPrivacy && retention === 'redacted' && !reviewed)} onClick={() => { if (openPrivacy) setView('privacy'); else void apply(); }}>{applying ? '正在应用…' : openPrivacy ? '下一步：核对图片' : '确认并应用'}</button></div>;
   const content = <div className="zc-attachment-processing">
@@ -136,10 +142,13 @@ export function AttachmentProcessing({ file, values, versions, manual, assets, o
     <details className="zc-attachment-file-tools"><summary>{busy ? '正在识别图片' : '图片信息与重新提取'}</summary><div className="zc-attachment-actions"><span className="zc-meta">{file.name}</span><button type="button" className="zc-btn" disabled={applying || busy} onClick={() => void run()}>重新提取</button>{busy && <button type="button" className="zc-btn" onClick={cancel}>取消识别</button>}<p className="zc-meta">{progress?.storage === 'session' ? '本页临时资源，刷新后可能需重新准备。' : '识别在本机运行。'}</p></div></details>
     {busy && <p role="status">{progress?.phase === 'resources' ? `准备识别资源 ${(progress.current / 1024 ** 2).toFixed(1)} / ${(progress.total / 1024 ** 2).toFixed(1)} MiB` : progress?.phase === 'recognizing' ? '正在识别图片…' : '正在启动本机识别…'}</p>}
     {error && <p role="alert" className="zc-entry-field-error">{error}</p>}
+    {pdfPages && <p className="zc-meta">已在本机转换全部 {pdfPages} 页 PDF。保留脱敏图片将替换为包含全部页面的 PNG；保留原始 PDF 则保存原文件。</p>}
     <section id="attachment-info-panel" aria-label="信息核对" hidden={compact && view !== 'info'}>
       <div className="zc-attachment-source-strip"><img src={sourceUrl} alt="当前附件缩略图" /><button type="button" className="zc-entry-text-action" onClick={() => setEvidence({ label: '原图', lineIds: [] })}>查看原图</button></div>
+      {order?.documentKind === 'invoice' && <p className="zc-caption" role="note">发票仅作为票面信息提取，不证明已经付款；开票日期独立保存。请确认未重复记账。</p>}
       <div className="zc-attachment-fields-compact">{primaryFields.map(field)}</div>
-      <details><summary>订单信息{orderFields.some(([source]) => recognized(source)) ? ' · 已识别' : ''}</summary>{orderFields.map(field)}</details>
+      {(order?.documentKind !== 'invoice' || orderFields.some(([source]) => recognized(source))) && <details><summary>订单信息{orderFields.some(([source]) => recognized(source)) ? ' · 已识别' : ''}</summary>{orderFields.map(field)}</details>}
+      {(order?.documentKind === 'invoice' || invoiceFields.some(([source]) => recognized(source))) && <details><summary>发票信息{invoiceFields.some(([source]) => recognized(source)) ? ' · 已识别' : ''}</summary>{invoiceFields.map(field)}</details>}
       {additionalFields.length > 0 && <details><summary>补充字段（{additionalFields.length}）</summary>{additionalFields.map(field)}</details>}
       {order?.warnings.length ? <details><summary>需核对的提示（{order.warnings.length}）</summary>{order.warnings.map((warning) => <p className="zc-caption" key={warning}>{warning}</p>)}</details> : null}
       {notice && <p role="status" className="zc-meta">{notice}</p>}
@@ -147,9 +156,9 @@ export function AttachmentProcessing({ file, values, versions, manual, assets, o
     </section>
     <section id="attachment-privacy-panel" hidden={compact && view !== 'privacy'} aria-label="图片与隐私">
     {compact && <div className="zc-attachment-mobile-preview"><div ref={setPreviewTarget} />{retention !== 'redacted' && <img src={sourceUrl} alt="当前附件原图，仅供核对" style={{ width: '100%', maxHeight: 240, objectFit: 'contain' }} />}</div>}
-    <label className="zc-label">附件保留与隐私<select className="zc-select" aria-label="附件保留与隐私" value={retention} disabled={busy || applying} onChange={(event) => setRetention(event.target.value as AttachmentRetention)}><option value="redacted">保留脱敏图片（推荐）</option><option value="original">保留原始图片</option><option value="none">不保留图片</option></select></label>
+    <label className="zc-label">附件保留与隐私<select className="zc-select" aria-label="附件保留与隐私" value={retention} disabled={busy || applying} onChange={(event) => setRetention(event.target.value as AttachmentRetention)}><option value="redacted">保留脱敏图片（推荐）</option><option value="original">{pdfPages ? '保留原始 PDF' : '保留原始图片'}</option><option value="none">不保留{pdfPages ? '附件' : '图片'}</option></select></label>
     <div hidden={retention !== 'redacted'}><OrderPrivacyEditor file={file} result={result} onReady={setReviewed} previewTarget={compact ? previewTarget : undefined} showPreview={retention === 'redacted'} /></div>
-    {retention !== 'redacted' && <><p className="zc-caption">{retention === 'original' ? '保留原始截图，不进行隐私打码；原图将按普通附件参与同步与备份。' : '回填信息后移除当前图片附件。'}</p>{!compact && <img src={sourceUrl} alt="当前附件原图，仅供核对" style={{ maxWidth: '100%', maxHeight: compact ? 240 : 400, objectFit: 'contain' }} />}</>}
+    {retention !== 'redacted' && <><p className="zc-caption">{retention === 'original' ? pdfPages ? '保留原始 PDF，不打码；原文件按普通附件参与同步与备份。' : '保留原始截图，不进行隐私打码；原图将按普通附件参与同步与备份。' : '回填信息后移除当前附件。'}</p>{!compact && <img src={sourceUrl} alt="当前附件原图，仅供核对" style={{ maxWidth: '100%', maxHeight: compact ? 240 : 400, objectFit: 'contain' }} />}</>}
     </section>
     {discard && <div role="alert"><p>尚未应用本次处理。放弃后，表单与附件保持原样。</p><div className="zc-attachment-actions"><button type="button" className="zc-btn" onClick={() => setDiscard(false)}>继续编辑</button><button type="button" className="zc-btn" onClick={onClose}>放弃本次处理</button></div></div>}
     {!compact && <div className="zc-attachment-panel-footer"><span className="zc-meta">{retention === 'redacted' ? `打码 ${reviewed?.privacyReview.maskCount ?? 0} 处` : retention === 'original' ? '保留原图' : '不保留图片'} · 确认后更新草稿，尚未保存流水</span>{buttons}</div>}

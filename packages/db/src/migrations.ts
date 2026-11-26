@@ -3,8 +3,8 @@ import type { SqlDriver } from './driver.js';
 import { MIGRATIONS_TABLE_SQL, schemaStatements } from './schema.js';
 import { TABLES, allCols, type TableSpec } from './tables.js';
 
-export const CURRENT_SCHEMA_VERSION = 131;
-export const CURRENT_SCHEMA_NAME = 'current_schema_2026_11_26_order_fields';
+export const CURRENT_SCHEMA_VERSION = 132;
+export const CURRENT_SCHEMA_NAME = 'current_schema_2026_11_26_invoice_fields';
 const FIXED_WORKSPACE_COLUMNS: Record<string, Record<string, string>> = {
   settings: { fixed_asset_workspace_json: 'TEXT' },
   fixed_assets: { purchase_date_precision: 'TEXT', storage_location_id: 'TEXT', location_moves_json: 'TEXT', return_deadline: 'TEXT',
@@ -115,6 +115,7 @@ function difference(left: Iterable<string>, right: Set<string>): string[] {
 
 export async function assertCurrentSchema(driver: SqlDriver, previousVersion = CURRENT_SCHEMA_VERSION): Promise<void> {
   const expected = expectedSchema();
+  if (previousVersion < 132) expected.set('transactions', expected.get('transactions')!.filter((column) => !['invoice_number', 'invoice_code', 'invoice_date'].includes(column)));
   if (previousVersion < 131) expected.set('transactions', expected.get('transactions')!.filter((column) => !['order_number', 'tracking_number'].includes(column)));
   if (previousVersion < 130) {
     expected.delete('calendar_entries'); expected.delete('calendar_occurrence_states');
@@ -229,7 +230,8 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
   if (applied.length === 1 && ((applied[0]?.version === 127 && applied[0].name === 'current_schema_2026_10_05_consumable_merchant')
     || (applied[0]?.version === 128 && applied[0].name === 'current_schema_2026_11_16_fixed_workspace')
     || (applied[0]?.version === 129 && applied[0].name === 'current_schema_2026_11_16_operating_cost')
-    || (applied[0]?.version === 130 && applied[0].name === 'current_schema_2026_11_16_calendar'))) {
+    || (applied[0]?.version === 130 && applied[0].name === 'current_schema_2026_11_16_calendar')
+    || (applied[0]?.version === 131 && applied[0].name === 'current_schema_2026_11_26_order_fields'))) {
     // The immediately preceding schema gains nullable metadata only. Verify it
     // before upgrading; never reset records or accept unrelated schema drift.
     await driver.transaction(async (transaction) => {
@@ -239,8 +241,13 @@ export async function runMigrations(driver: SqlDriver, log: Logger): Promise<num
       }
       if (applied[0]!.version < 129) await transaction.exec('ALTER TABLE fixed_asset_events ADD COLUMN operating_cost_json TEXT');
       if (applied[0]!.version < 130) await transaction.exec('ALTER TABLE settings ADD COLUMN calendar_preferences_json TEXT');
-      await transaction.exec('ALTER TABLE transactions ADD COLUMN order_number TEXT');
-      await transaction.exec('ALTER TABLE transactions ADD COLUMN tracking_number TEXT');
+      if (applied[0]!.version < 131) {
+        await transaction.exec('ALTER TABLE transactions ADD COLUMN order_number TEXT');
+        await transaction.exec('ALTER TABLE transactions ADD COLUMN tracking_number TEXT');
+      }
+      await transaction.exec('ALTER TABLE transactions ADD COLUMN invoice_number TEXT');
+      await transaction.exec('ALTER TABLE transactions ADD COLUMN invoice_code TEXT');
+      await transaction.exec('ALTER TABLE transactions ADD COLUMN invoice_date TEXT');
       for (const statement of schemaStatements()) await transaction.exec(statement);
       await assertCurrentSchema(transaction);
       await transaction.run('UPDATE schema_migrations SET version = ?, name = ?, applied_at = ?', [CURRENT_SCHEMA_VERSION, CURRENT_SCHEMA_NAME, new Date().toISOString()]);

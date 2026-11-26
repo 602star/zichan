@@ -335,7 +335,7 @@ export const TABLES = {
       c('originalDateSnapshot'), c('originalAmountSnapshot'),
       c('recordState'), c('voidedAt'), c('voidReason'), c('tagIds'), c('locationId'), c('locationName'),
       c('latitude'), c('longitude'), c('locationAccuracyMeters'), c('description'),
-      c('merchant'), c('note'), c('orderNumber'), c('trackingNumber'),
+      c('merchant'), c('note'), c('orderNumber'), c('trackingNumber'), c('invoiceNumber'), c('invoiceCode'), c('invoiceDate'),
     ],
     indexes: [
       { name: 'idx_transactions_date', cols: ['date'] },

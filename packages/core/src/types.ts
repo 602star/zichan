@@ -867,6 +867,9 @@ export interface Transaction extends BaseEntity {
   merchant?: string; // 商户名称
   orderNumber?: string;
   trackingNumber?: string;
+  invoiceNumber?: string;
+  invoiceCode?: string;
+  invoiceDate?: string;
   note?: string;
 }
 

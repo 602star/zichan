@@ -1,7 +1,7 @@
 import type { OcrLine, OcrResult, Point } from './types.js';
 import { lineBox } from './parser.js';
 
-export const REDACTION_RULE_VERSION = 'order-privacy.v1';
+export const REDACTION_RULE_VERSION = 'order-privacy.v2';
 export interface MaskRegion { x: number; y: number; width: number; height: number; reason: string; required: boolean }
 export function maskBounds(points: Point[], width: number, height: number, reason: string, padding = 10): MaskRegion {
   const xs = points.map(([x]) => x), ys = points.map(([, y]) => y);
@@ -10,9 +10,9 @@ export function maskBounds(points: Point[], width: number, height: number, reaso
   return { x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y), reason, required: true };
 }
 const CONTACT = /收货(?:人|信息|地址)?|收件(?:人|信息|地址)?|寄件(?:人|信息|地址)?|配送地址|详细地址|联系(?:人|电话|方式)|手机(?:号|号码)?|电话|定位|经纬度/;
-const IDENTIFIER = /订单(?:号|编号|号码)|交易(?:号|编号|单号)|支付(?:单号|交易号)|商户单号|运单(?:号|号码)|快递单号|物流(?:单号|编号)|银行卡|身份证|证件号|账号|账户名|会员号|昵称|买家信息/;
+const IDENTIFIER = /订单(?:号|编号|号码)|交易(?:号|编号|单号)|支付(?:单号|交易号)|商户单号|运单(?:号|号码)|快递单号|物流(?:单号|编号)|银行卡|身份证|证件号|账号|账户名|会员号|昵称|买家信息|纳税人识别号|统一社会信用代码|税号|开户银行|银行账户|发票号码|发票代码|校验码|机器编号|开票人|复核人|收款人|购买方|购方信息/;
 const PRIVATE_PATTERN = /(?:\+?86[ -]?)?1[3-9](?:[ -]?\d){9}|\d{3,4}[ -]?(?:\*{3,}|×{3,})[ -]?\d{2,4}|\b\d{15,19}[Xx]?\b|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/;
-const STOP = /商品|实付|付款|支付金额|优惠|运费|订单编号|订单号|交易时间|下单时间|店铺|商家|发票|售后/;
+const STOP = /商品|实付|付款|支付金额|优惠|运费|订单编号|订单号|交易时间|下单时间|店铺|商家|发票|售后|价税合计|税率|税额|开票日期|金额合计/;
 export function detectPrivacyRegions(result: Pick<OcrResult, 'lines' | 'width' | 'height' | 'barcodes'>): MaskRegion[] {
   const { lines, width, height } = result;
   const regions: MaskRegion[] = [];

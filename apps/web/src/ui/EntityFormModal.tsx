@@ -560,7 +560,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     if (changedCaptureFields(application.baseline, latest.values, application.fields, application.baselineVersions, fieldVersions.current).length) throw new Error('表单内容已变化，请重新核对。');
     const liveRows = latest.fileValues.attachmentDrafts ?? rows;
     if (!liveRows.includes(existing)) throw new Error('附件已变化，请重新处理。');
-    const nextRows = application.retention === 'none' ? liveRows.filter((row) => row.id !== id) : liveRows.map((row) => row.id !== id ? row : application.retention === 'redacted' ? { ...application.attachment!, id, note: `附件处理：打码 ${application.attachment!.privacyReview.maskCount ?? 0} 处` } : { ...row, note: '附件处理：保留原图' });
+    const nextRows = application.retention === 'none' ? liveRows.filter((row) => row.id !== id) : liveRows.map((row) => row.id !== id ? row : application.retention === 'redacted' ? { ...application.attachment!, id, note: `附件处理：打码 ${application.attachment!.privacyReview.maskCount ?? 0} 处` } : { ...row, note: row.mimeType === 'application/pdf' ? '附件处理：保留原始 PDF' : '附件处理：保留原图' });
     const nextManual = new Set([...manualFields.current, ...Object.keys(application.fields)]);
     let nextValues: Record<string, string> = { ...latest.values, ...application.fields, ...(application.fields.merchant ? { payeeId: '' } : {}), attachmentDrafts: JSON.stringify(nextRows.map(serializableFile)) };
     for (const key of Object.keys(application.fields)) nextValues = spec.onFieldChange?.(nextValues, key, nextManual) ?? nextValues;

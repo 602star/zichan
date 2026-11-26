@@ -48,4 +48,5 @@
 功能或操作步骤变化时更新对应现行文档；运行日志、测试截图、构建缓存、个人 memory、数据库快照和密钥不提交到仓库。`.github/` 是 CI 配置，`.agents/` 和 `.codex/` 保存设计工具及钩子；它们的下载运行时由 `.gitignore` 排除。
 
 - [从附件提取交易信息](guides/attachment-capture.md)：附件统一入口、三种保留方式、隐私打码及订单／物流业务字段。
+- [平台订单与发票提取规则](guides/capture-platform-rules.md)：平台标签矩阵、发票独立字段、PDF 全页脱敏与适配边界。
 - [附件交互设计](planning/attachment-interaction-design.md)：本轮确认的电脑内联与手机子页设计。

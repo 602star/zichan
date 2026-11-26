@@ -45,6 +45,7 @@ describe('SqlJsDriver', () => {
     await previous.exec('ALTER TABLE settings DROP COLUMN calendar_preferences_json');
     await previous.exec('ALTER TABLE transactions DROP COLUMN order_number');
     await previous.exec('ALTER TABLE transactions DROP COLUMN tracking_number');
+    for (const column of ['invoice_number', 'invoice_code', 'invoice_date']) await previous.exec(`ALTER TABLE transactions DROP COLUMN ${column}`);
     await previous.run("UPDATE schema_migrations SET version = 128, name = 'current_schema_2026_11_16_fixed_workspace'");
     await previous.close();
     const driver = await SqlJsDriver.open(bytes);
@@ -66,6 +67,7 @@ describe('SqlJsDriver', () => {
     await previous.exec('ALTER TABLE settings DROP COLUMN calendar_preferences_json');
     await previous.exec('ALTER TABLE transactions DROP COLUMN order_number');
     await previous.exec('ALTER TABLE transactions DROP COLUMN tracking_number');
+    for (const column of ['invoice_number', 'invoice_code', 'invoice_date']) await previous.exec(`ALTER TABLE transactions DROP COLUMN ${column}`);
     await previous.exec('ALTER TABLE fixed_asset_events DROP COLUMN operating_cost_json');
     for (const column of ['purchase_date_precision', 'storage_location_id', 'location_moves_json', 'return_deadline', 'price_protection_deadline', 'maintenance_due_date', 'maintenance_interval_days', 'reminder_days_before']) await previous.exec(`ALTER TABLE fixed_assets DROP COLUMN ${column}`);
     await previous.run("UPDATE schema_migrations SET version = 127, name = 'current_schema_2026_10_05_consumable_merchant'");

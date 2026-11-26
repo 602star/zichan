@@ -23,7 +23,7 @@ test('retention choices are staged, original downloads match source, and ordinar
   expect(await readFile(await (await downloaded).path())).toEqual(image.buffer);
   await form.getByLabel('附件 / 图片',{exact:true}).setInputFiles({name:'normal.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-1.4 sample')});
   await expect(form.locator('.zc-attachment-item')).toHaveCount(2);
-  await expect(form.locator('.zc-attachment-item').last().getByRole('button',{name:'提取信息',exact:true})).toHaveCount(0);
+  await expect(form.locator('.zc-attachment-item').last().getByRole('button',{name:'提取信息',exact:true})).toBeEnabled();
   await form.getByRole('button',{name:'保存',exact:true}).click(); await expect(form).toBeHidden();
 });
 

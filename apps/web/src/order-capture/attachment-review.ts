@@ -4,6 +4,7 @@ export const captureFields = [
   ['amount', 'amount', '实付金额'], ['paymentDate', 'date', '交易日期'], ['paymentTime', 'time', '交易时间'],
   ['merchant', 'merchant', '交易对象 / 商家'], ['product', 'description', '描述'], ['currency', 'assetId', '币种'],
   ['orderNumber', 'orderNumber', '订单号'], ['trackingNumber', 'trackingNumber', '物流单号'],
+  ['invoiceNumber', 'invoiceNumber', '发票号码'], ['invoiceCode', 'invoiceCode', '发票代码'], ['invoiceDate', 'invoiceDate', '开票日期'],
 ] as const;
 
 export function suggestedCaptureFields(order: ParsedOrder, values: Record<string, string>, manual: ReadonlySet<string>, currencyId?: string): Record<string, string> {

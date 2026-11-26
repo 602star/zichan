@@ -58,7 +58,7 @@ Indexes cover the hot query columns (FKs + dates): `game_records.season_id`,
 ## 当前 Schema 基线
 
 [migrations.ts](../packages/db/src/migrations.ts) 当前开发基线为
-`current_schema_2026_11_26_order_fields`（version 131）。已知 127／128／129／130 提供保留记录的增量升级：先验证旧结构，在同一事务中补齐物品元数据、使用费用与日历结构并更新 marker。新增 `calendar_entries` 保存个人事项与重复规则，`calendar_occurrence_states` 以事项／原期次日期唯一保存完成、跳过与稍后提醒；`settings.calendar_preferences_json` 保存显示偏好。新实体参与同步聚合、审计及加密备份，旧备份可省略日历段。Node SQLite 与真实 sql.js 的旧持久快照、数据保留及重复启动已有回归。其他旧 marker、旧表、缺列、
+`current_schema_2026_11_26_invoice_fields`（version 132）。已知 127／128／129／130／131 提供保留记录的增量升级：先验证旧结构，在同一事务中补齐物品元数据、使用费用与日历结构并更新 marker。新增 `calendar_entries` 保存个人事项与重复规则，`calendar_occurrence_states` 以事项／原期次日期唯一保存完成、跳过与稍后提醒；`settings.calendar_preferences_json` 保存显示偏好。新实体参与同步聚合、审计及加密备份，旧备份可省略日历段。Node SQLite 与真实 sql.js 的旧持久快照、数据保留及重复启动已有回归。其他旧 marker、旧表、缺列、
 多列或额外表时会抛出 `SchemaResetRequiredError`，Web/桌面初始化错误页提供“重置本机开发数据”。Web 端另外会把未加密、
 无法解密或数据密钥不匹配的 IndexedDB 快照标记为需要显式重置，并同时提供重试和返回解锁入口。
 应用不会自动删除账本，也不会猜测性转换旧结构。若数据库已有业务表但缺少 `schema_migrations`，验证会在写入任何 marker
@@ -72,7 +72,7 @@ Indexes cover the hot query columns (FKs + dates): `game_records.season_id`,
 
 到 `1.0` 发布准备阶段，再冻结**当时最终确认的 schema** 作为首个长期兼容基线；正式编号迁移只承诺覆盖
 `1.0 → 后续版本`。届时再单独审批迁移事务、失败回滚、幂等、未来版本拒绝、跨 sql.js / Node SQLite /
-Tauri SQLite 验证和升级测试矩阵。本事项当前状态仍为“已记录、延期”；本次 127／128／129／130 → 131 是为保留现有记录而增加的范围明确、显式的元数据与日历升级路径，不承诺任意开发版本的迁移，也不扩展为正式编号迁移框架。Tauri 真机升级仍需发布验收。
+Tauri SQLite 验证和升级测试矩阵。本事项当前状态仍为“已记录、延期”；本次 127／128／129／130／131 → 132 是为保留现有记录而增加的范围明确、显式的元数据与日历升级路径，不承诺任意开发版本的迁移，也不扩展为正式编号迁移框架。Tauri 真机升级仍需发布验收。
 
 每次启动都会逐表、逐列验证当前结构。默认收支分类与物品二级分类属于当前产品资料，由 seed 和
 幂等维护任务写入，不再借 schema migration 播种。便携备份接受完整的 `version=7` 或 `version=8` 载荷，
@@ -313,3 +313,5 @@ monthly summaries, transfer/split/budget/schedule/reconciliation persistence, ba
 sell, fixed asset, game record, consistency check, and a critical sync conflict.
 
 流水新增 `transactions.order_number`、`tracking_number` 两个可空文本字段，保留前导零；与流水一起参与同步、审计和备份。130 → 131 只增加这两个字段，先核对旧结构再在事务中升级，不重置已有记录。
+
+发票字段补充（schema 132）：`transactions.invoice_number`、`invoice_code`、`invoice_date` 为可空文本，分别保存票号、代码与开票日期，参与流水同步、审计与备份。131 → 132 仅新增这三列；开票日期不覆盖交易日期。

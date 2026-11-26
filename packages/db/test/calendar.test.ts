@@ -73,6 +73,7 @@ describe('calendar storage, sync and backup', () => {
       await driver.exec('ALTER TABLE settings DROP COLUMN calendar_preferences_json');
       await driver.exec('ALTER TABLE transactions DROP COLUMN order_number');
       await driver.exec('ALTER TABLE transactions DROP COLUMN tracking_number');
+      for (const column of ['invoice_number', 'invoice_code', 'invoice_date']) await driver.exec(`ALTER TABLE transactions DROP COLUMN ${column}`);
       await driver.run("INSERT INTO fixed_assets (id, name, version, is_deleted) VALUES ('kept', '保留原记录', 1, 0)");
       await driver.run("UPDATE schema_migrations SET version=129, name='current_schema_2026_11_16_operating_cost'");
       await runMigrations(driver, logger); await assertCurrentSchema(driver);

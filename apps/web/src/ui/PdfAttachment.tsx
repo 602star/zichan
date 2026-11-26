@@ -18,6 +18,51 @@ class PdfBinaryDataFactory {
   }
 }
 
+/** Flatten every page before masking. Never silently retain only the first page. */
+export async function rasterizePdfForCapture(blob: Blob, signal: AbortSignal): Promise<{ blob: Blob; pages: number }> {
+  signal.throwIfAborted();
+  if (blob.size > 20 * 1024 ** 2) throw new Error('PDF 超过 20 MiB，请拆分后提取。');
+  const data = await blob.arrayBuffer(); signal.throwIfAborted();
+  const task = getDocument({ data, useWorkerFetch: false, BinaryDataFactory: PdfBinaryDataFactory, disableWorkerRendering: true, isOffscreenCanvasSupported: false });
+  const abort = () => { void task.destroy().catch(() => undefined); };
+  signal.addEventListener('abort', abort, { once: true });
+  const output = document.createElement('canvas');
+  try {
+    const pdf = await task.promise;
+    if (pdf.numPages > 6) throw new Error('当前最多提取 6 页 PDF，请拆分后处理；原附件未改变。');
+    const pages = [];
+    for (let index = 1; index <= pdf.numPages; index++) {
+      signal.throwIfAborted();
+      const page = await pdf.getPage(index), base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: Math.min(2, 1600 / base.width) });
+      pages.push({ page, viewport, width: Math.ceil(viewport.width), height: Math.ceil(viewport.height) });
+    }
+    const width = Math.max(...pages.map((row) => row.width)), height = pages.reduce((sum, row) => sum + row.height, 0);
+    if (!Number.isFinite(width * height) || width < 1 || height < 1 || height > 16000 || width * height > 24_000_000) throw new Error('PDF 页面像素过大，请拆分后提取。');
+    output.width = width; output.height = height;
+    const context = output.getContext('2d'); if (!context) throw new Error('无法生成 PDF 本机预览。');
+    context.fillStyle = '#fff'; context.fillRect(0, 0, width, height);
+    let offset = 0;
+    for (const row of pages) {
+      signal.throwIfAborted();
+      const canvas = document.createElement('canvas'); canvas.width = row.width; canvas.height = row.height;
+      try {
+        const canvasContext = canvas.getContext('2d'); if (!canvasContext) throw new Error('无法生成 PDF 页面。');
+        await row.page.render({ canvas, canvasContext, viewport: row.viewport, background: '#fff' }).promise;
+        signal.throwIfAborted(); context.drawImage(canvas, 0, offset); offset += row.height;
+      } finally { canvas.width = 1; canvas.height = 1; row.page.cleanup(); }
+    }
+    const image = await new Promise<Blob>((resolve, reject) => output.toBlob((value) => value ? resolve(value) : reject(new Error('PDF 本机预览生成失败。')), 'image/png'));
+    signal.throwIfAborted();
+    if (image.size > 20 * 1024 ** 2) throw new Error('PDF 转换图片超过 20 MiB，请拆分后处理。');
+    return { blob: image, pages: pdf.numPages };
+  } catch (error) {
+    signal.throwIfAborted();
+    if (error instanceof Error && error.name === 'PasswordException') throw new Error('此 PDF 需要密码，请先在本机阅读器解锁后再提取。');
+    throw error;
+  } finally { signal.removeEventListener('abort', abort); output.width = 1; output.height = 1; await task.destroy().catch(() => undefined); }
+}
+
 export default function PdfAttachment({ blob, zoom }: { blob: Blob; zoom: number }) {
   const [pdf, setPdf] = useState<PDFDocumentProxy>();
   const [page, setPage] = useState(1);

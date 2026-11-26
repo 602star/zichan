@@ -1,6 +1,6 @@
 export type Point = [number, number];
 export interface OcrLine { id: string; text: string; poly: Point[]; score: number }
-export type OrderFieldKey = 'amount' | 'currency' | 'paymentDate' | 'paymentTime' | 'orderNumber' | 'trackingNumber' | 'merchant' | 'product';
+export type OrderFieldKey = 'amount' | 'currency' | 'paymentDate' | 'paymentTime' | 'orderNumber' | 'trackingNumber' | 'merchant' | 'product' | 'invoiceNumber' | 'invoiceCode' | 'invoiceDate';
 export interface FieldCandidate {
   value: string;
   lineIds: string[];
@@ -14,7 +14,8 @@ export interface OrderField {
   candidates: FieldCandidate[];
 }
 export interface ParsedOrder {
-  platform: 'unknown' | 'taobao' | 'jd';
+  platform: 'unknown' | 'taobao' | 'jd' | 'pinduoduo' | 'douyin' | 'kuaishou' | 'xianyu' | 'meituan' | 'eleme' | 'vip' | 'suning' | '1688' | 'xiaohongshu' | 'wechat' | 'alipay';
+  documentKind: 'order' | 'payment' | 'invoice';
   fields: Record<OrderFieldKey, OrderField>;
   paymentState: 'paid' | 'unpaid' | 'closed' | 'refunded' | 'ambiguous' | 'unknown';
   ruleIds: string[];

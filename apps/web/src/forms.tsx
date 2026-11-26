@@ -622,6 +622,9 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       { key: 'attachmentDrafts', label: '附件 / 图片', type: 'file', accept: 'image/*,application/pdf', multiple: true, capture: 'environment', lockedVisible: true },
       { key: 'orderNumber', label: '订单号', type: 'text', section: 'more' },
       { key: 'trackingNumber', label: '物流单号', type: 'text', section: 'more' },
+      { key: 'invoiceNumber', label: '发票号码', type: 'text', section: 'more' },
+      { key: 'invoiceCode', label: '发票代码', type: 'text', section: 'more' },
+      { key: 'invoiceDate', label: '开票日期', type: 'date', section: 'more' },
       { key: 'timezone', label: '交易时区', type: 'text', half: true, defaultValue: currentTimezone(), section: 'more' },
       { key: 'costCurrency', label: '成本核算币种', type: 'select', singleOptionSummary: true, section: 'more', lockedVisible: true, visibleWhen: showCostValue,
         options: (v) => { const id = costCurrency(v) ?? v.costCurrency; return id ? [{ value: id, label: snap.assets.find((a) => a.id === id)?.code ?? id }] : []; } },
@@ -676,6 +679,7 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       description: t.description ?? '',
       merchant: t.merchant ?? '',
       orderNumber: t.orderNumber ?? '', trackingNumber: t.trackingNumber ?? '',
+      invoiceNumber: t.invoiceNumber ?? '', invoiceCode: t.invoiceCode ?? '', invoiceDate: t.invoiceDate ?? '',
       note: t.note ?? '',
       attachmentDrafts: JSON.stringify(snap.attachments
         .filter((a) => !a.isDeleted && a.entityType === 'transaction' && a.entityId === t.id)
@@ -732,6 +736,7 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       description: S(v.description),
       merchant: S(v.merchant),
       orderNumber: S(v.orderNumber), trackingNumber: S(v.trackingNumber),
+      invoiceNumber: S(v.invoiceNumber), invoiceCode: S(v.invoiceCode), invoiceDate: S(v.invoiceDate),
       note: S(v.note),
       attachmentDrafts: files?.attachmentDrafts ?? parseAttachmentDrafts(v.attachmentDrafts),
       } as TransactionFormValue;
@@ -749,6 +754,9 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       return transaction;
     },
     validate: (v) => {
+      if (v.invoiceDate && !isValidDay(v.invoiceDate)) return { invoiceDate: '开票日期无效' } as Record<string, string>;
+      if (v.invoiceNumber && !/^(?:\d{8}|\d{20})$/.test(v.invoiceNumber.trim())) return { invoiceNumber: '发票号码应为 8 位或 20 位数字' } as Record<string, string>;
+      if (v.invoiceCode && !/^(?:\d{10}|\d{12})$/.test(v.invoiceCode.trim())) return { invoiceCode: '发票代码应为 10 位或 12 位数字' } as Record<string, string>;
       if (v.costValueInBase) {
         try { if (!D(v.costValueInBase).isFinite() || D(v.costValueInBase).lt(0)) return { costValueInBase: '核算价值必须是非负数' }; }
         catch { return { costValueInBase: '核算价值必须是有效数字' }; }

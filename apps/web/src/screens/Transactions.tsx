@@ -2777,6 +2777,7 @@ function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund,
                       {usesAccounts && <CardFact label="账户" value={item.accountName} />}
                       <CardFact label="状态" value={item.statusLabel} />
                       {(tx.orderNumber || tx.trackingNumber) && <p>订单号：{tx.orderNumber || '—'} · 物流单号：{tx.trackingNumber || '—'}</p>}
+                      {(tx.invoiceNumber || tx.invoiceCode || tx.invoiceDate) && <p>发票号码：{tx.invoiceNumber || '—'} · 发票代码：{tx.invoiceCode || '—'} · 开票日期：{tx.invoiceDate || '—'}</p>}
                       {item.payeeName && <CardFact label="交易对象" value={item.payeeName} />}
                       {tags.length > 0 && <CardFact label="标签" value={tags.join(' / ')} />}
                       {files > 0 && <CardFact label="附件" value={`${files} 个 · 编辑流水可查看凭证`} />}
@@ -2834,6 +2835,7 @@ function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund,
             {!!attachmentCount(active.tx) && <CardFact label="附件" value={`${attachmentCount(active.tx)} 个`} />}
             {active.tx.note && <CardFact label="备注" value={active.tx.note} />}
             {(active.tx.orderNumber || active.tx.trackingNumber) && <p>订单号：{active.tx.orderNumber || '—'} · 物流单号：{active.tx.trackingNumber || '—'}</p>}
+            {(active.tx.invoiceNumber || active.tx.invoiceCode || active.tx.invoiceDate) && <p>发票号码：{active.tx.invoiceNumber || '—'} · 发票代码：{active.tx.invoiceCode || '—'} · 开票日期：{active.tx.invoiceDate || '—'}</p>}
           </div>}
         </ActionSheet>
       )}
