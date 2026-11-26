@@ -1,4 +1,7 @@
 node_modules/
+.agents/.scratch/
+apps/web/public/ocr/
+apps/web/.generated/ocr/
 .tools/
 .runtime/
 /coverage/

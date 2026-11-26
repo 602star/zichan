@@ -1,6 +1,7 @@
 import type { SqlDriver } from '@zichan/db';
 import { isTauriRuntime, tauriInvoke } from '../tauri.js';
 import { deleteWebDatabase, loadDbBytes, saveDbBytes } from './idb.js';
+import { deleteLocalOrderDatabase } from './local-order-private.js';
 import { SqlJsDriver } from './sqljs-driver.js';
 import { TauriSqlDriver } from './tauri-sql-driver.js';
 import { acquireBrowserLedgerLock } from './browser-ledger-lock.js';
@@ -82,6 +83,7 @@ export async function resetPlatformData(): Promise<void> {
   try {
     const { forgetOfflineAccess } = await import('../offline-access.js');
     const { clearAccountProtection } = await import('../account-protection.js');
+    await deleteLocalOrderDatabase();
     if (isTauriRuntime()) {
       const databaseUrl = tauriInvoke<string>('native_sql_database_url');
       if (!databaseUrl) throw new Error('原生数据库路径命令不可用');

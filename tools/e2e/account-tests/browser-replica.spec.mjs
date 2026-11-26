@@ -8,12 +8,11 @@ import { fileURLToPath } from 'node:url';
 import { registerAccount } from '../../../packages/db/dist/index.js';
 import { createSyncServer } from '../../../apps/sync-server/dist/server.js';
 import { SyncServerStore } from '../../../apps/sync-server/dist/store.js';
+import { reviewImageAttachment, syntheticPng } from '../tests/helpers.mjs';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const password = 'browser-replica-account-password';
 const setupToken = 'browser-replica-setup-secret-000000';
-const photo = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64');
-const largeDocument = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(4 * 1024 * 1024 + 1024, 0x41)]);
 
 async function listen(node, host) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -41,14 +40,15 @@ async function openSync(page) {
   if (await settings.getAttribute('aria-expanded') !== 'true') await settings.click();
 }
 
-async function saveExpense(page, note, attachmentName, attachmentBytes = photo) {
+async function saveExpense(page, note, attachmentName, attachmentBytes) {
   await page.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
   await page.getByRole('button', { name: /^\+ 记(支出|账)$/ }).click();
   await page.getByRole('textbox', { name: /^金额/ }).fill('12.34');
   await page.getByLabel('描述').fill(note);
-  if (attachmentName) await page.getByRole('dialog').locator('input[type="file"]').first()
-    .setInputFiles({ name: attachmentName,
-      mimeType: attachmentName.endsWith('.pdf') ? 'application/pdf' : 'image/png', buffer: attachmentBytes });
+  if (attachmentName) {
+    await page.getByRole('dialog').locator('input[type="file"]').first().setInputFiles({ name: attachmentName, mimeType: 'image/png', buffer: attachmentBytes ?? await syntheticPng(page) });
+    await reviewImageAttachment(page);
+  }
   await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).last().click();
   await expect(page.getByText(note, { exact: true })).toBeVisible();
 }
@@ -132,8 +132,8 @@ test('the browser carries a personal ledger between independent servers', async 
     await secondPage.locator('.zc-sidebar').getByText('流水', { exact: true }).click();
     await secondPage.locator('.zc-transaction-summary-title').filter({ hasText: 'first-browser-entry' }).click();
     await secondPage.getByRole('button', { name: '编辑流水', exact: true }).click();
-    await expect(secondPage.getByRole('dialog').getByText('browser-photo.png', { exact: true })).toBeVisible();
-    await expect.poll(async () => secondPage.getByRole('dialog').getByRole('img', { name: 'browser-photo.png' })
+    await expect(secondPage.getByRole('dialog').getByText('订单凭证.png', { exact: true })).toBeVisible();
+    await expect.poll(async () => secondPage.getByRole('dialog').getByRole('img', { name: '订单凭证.png' })
       .evaluate((image) => image.complete && image.naturalWidth > 0)).toBe(true);
     await secondPage.keyboard.press('Escape');
     await saveExpense(secondPage, 'second-browser-entry');
@@ -147,13 +147,15 @@ test('the browser carries a personal ledger between independent servers', async 
     await expect(page.getByText('second-browser-entry', { exact: true })).toBeVisible();
 
     const beforeLarge = (await stores[1].replicaInventory('owner', source.ledgerId)).promisedBlobCount;
-    await saveExpense(secondPage, 'resume-browser-entry', 'large.pdf', largeDocument);
+    await saveExpense(secondPage, 'resume-browser-entry', 'large.png', await syntheticPng(secondPage, 1600, 1600, true));
     await syncSite(secondPage);
     await expect.poll(async () => (await stores[1].replicaInventory('owner', source.ledgerId)).promisedBlobCount)
       .toBeGreaterThan(beforeLarge);
     let interrupted = false;
+    let interruptedBlobId = '';
     await page.route('**/api/v3/blobs/*/chunks/1', (route) => {
       interrupted = true;
+      interruptedBlobId = route.request().url().match(/\/blobs\/([^/]+)\/chunks\//)[1];
       return route.abort('failed');
     });
     await openSync(page);
@@ -169,7 +171,7 @@ test('the browser carries a personal ledger between independent servers', async 
     });
     const repeatedChunks = [];
     page.on('request', (request) => {
-      if (request.url().startsWith(second.url) && /\/api\/v3\/blobs\/[^/]+\/chunks\/\d+$/.test(request.url())) {
+      if (request.url().startsWith(second.url) && request.url().includes(`/api/v3/blobs/${interruptedBlobId}/chunks/`) && /\/chunks\/\d+$/.test(request.url())) {
         repeatedChunks.push(Number(request.url().split('/').at(-1)));
       }
     });

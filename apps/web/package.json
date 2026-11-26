@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node ../../scripts/ocr/prepare-resources.mjs",
     "dev": "vite",
+    "prebuild": "node ../../scripts/ocr/prepare-resources.mjs",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -12,17 +14,21 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@paddleocr/paddleocr-js": "0.4.2",
     "@tauri-apps/api": "^2.12.4",
+    "@techstark/opencv-js": "4.10.0-release.1",
     "@zichan/core": "*",
     "@zichan/db": "*",
     "@zichan/logger": "*",
     "lucide-react": "^1.68.0",
+    "onnxruntime-web": "1.31.1",
     "pdfjs-dist": "^6.5.438",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "simple-icons": "^16.36.0",
-    "sql.js": "^1.15.2"
+    "sql.js": "^1.15.2",
+    "zxing-wasm": "3.1.7"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

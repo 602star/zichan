@@ -18,6 +18,7 @@ import {
   type AutomaticBackupSuspension,
 } from './backups.js';
 import { runLedgerMaintenance } from './maintenance.js';
+import { reconcileLocalOrders } from '../order-capture/lifecycle.js';
 import { successfulBackupSafetyPatch, writeSafetyState } from './safety.js';
 import { openPlatformDriver, resetPlatformData, type StorageBackend } from './platform-driver.js';
 import { withSharedBrowserTaskLock } from './shared-browser-driver.js';
@@ -639,6 +640,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (!active) return;
           await measureStartupStage('background.maintenance', () => runLedgerMaintenance(store));
           if (!active) return;
+          await reconcileLocalOrders(store).catch(() => undefined);
+          if (!active) return;
           await measureStartupStage('background.scheduledTransactions', () => runDueScheduledTransactions(store));
           if (!active) return;
           await measureStartupStage('background.reconcileAttachments', () => reconcileAttachmentStorage(store));
@@ -669,6 +672,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!store || browserLocalRecovery) return;
     return store.subscribe((change) => {
       setRev((value) => value + 1);
+      if (change.entityTypes.includes('transaction') || change.entityTypes.includes('*')) void reconcileLocalOrders(store).catch(() => undefined);
       if (change.entityTypes.includes('setting') || change.entityTypes.includes('*')) {
         void refreshLedgerKindSafely(store, setLedgerKind);
       }

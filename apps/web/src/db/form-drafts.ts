@@ -1,4 +1,4 @@
-import { deleteKv, loadKv, saveKv } from './idb.js';
+import { deleteKv, loadKv, saveKv, openIdb } from './idb.js';
 import type { AttachmentDraftData } from './attachment-storage.js';
 
 const DRAFT_PREFIX = 'form-draft.v1.';
@@ -15,6 +15,23 @@ export interface FormDraft {
 
 function storageKey(key: string): string {
   return `${DRAFT_PREFIX}${encodeURIComponent(key)}`;
+}
+
+/** Read only draft keys; attachment/database values never need to be enumerated. */
+export async function listFormDrafts(baseKey: string): Promise<FormDraft[]> {
+  const db = await openIdb();
+  let keys: IDBValidKey[];
+  try {
+    const prefix = storageKey(baseKey);
+    keys = await new Promise((resolve, reject) => {
+      const request = db.transaction('kv', 'readonly').objectStore('kv').getAllKeys(IDBKeyRange.bound(prefix, `${prefix}\uffff`));
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+  } finally { db.close(); }
+  const names = keys.filter((key): key is string => typeof key === 'string').map((key) => decodeURIComponent(key.slice(DRAFT_PREFIX.length)))
+    .filter((key) => key === baseKey || key.startsWith(`${baseKey}:session:`));
+  const rows = await Promise.all(names.map((key) => loadFormDraft(key)));
+  return rows.filter((row): row is FormDraft => !!row).sort((a, b) => b.savedAt.localeCompare(a.savedAt));
 }
 
 export function formDraftKey(

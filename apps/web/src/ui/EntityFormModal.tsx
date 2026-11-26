@@ -1,10 +1,22 @@
+import { readRestoreEntryDraft } from '../draft-preferences.js';
+import { LedgerAttachmentField } from './LedgerAttachmentField.js';
+import { changedCaptureFields } from '../order-capture/attachment-review.js';
+import type { AttachmentApplication } from './AttachmentProcessing.js';
+import { assertReviewedRedactedImage } from '../order-capture/redaction.js';
 import { X } from 'lucide-react';
 import { DuplicateMasterDataError } from '@zichan/db';
 import { scheduleDuplicateWarning } from '../master-data-saving.js';
 import { EntityIcon, categoryIconValue, categoryOptionIcon } from './EntityIcon.js';
 import { EntityIconEditor } from './EntityIconEditor.js';
-import { Fragment, useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react';
-import type { Category, Payee } from '@zichan/core';
+import { Fragment, useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+
+
+
+
+
+
+
+import { newId, type Category, type Payee } from '@zichan/core';
 import { PayeePicker } from './PayeePicker.js';
 import { LocationPicker } from './LocationPicker.js';
 import { TagPicker } from './TagPicker.js';
@@ -16,10 +28,11 @@ import { DialogShell } from './DialogShell.js';
 import { WorkspaceDialog } from './WorkspaceDialog.js';
 import { FormDraftStatus, useFormDraftAutosave } from './FormDraftStatus.js';
 import { AttachmentPreview } from './AttachmentPreview.js';
-import type { AttachmentDraftData } from '../db/attachment-storage.js';
+import { type AttachmentDraftData } from '../db/attachment-storage.js';
 import { loadAttachmentContent } from '../attachment-content.js';
 import { useStore } from '../db/store.js';
 import { useCompactView } from './useCompactView.js';
+import { useCategoryDefault } from '../use-category-default.js';
 import { buildSyncBaseUrl, loadSyncConnections } from '../sync-config.js';
 import { barcodeScannerAvailable, currentDevicePosition, scanBarcode } from '../device-capabilities.js';
 import { ASSET_PRESETS, ASSET_PRESET_GROUPS, ensureAssetPreset, type AssetPresetCode } from '../assetPresets.js';
@@ -28,7 +41,7 @@ import {
   deleteFormDraft,
   formDraftFingerprint,
   formDraftKey,
-  loadFormDraft,
+  loadFormDraft, listFormDrafts,
   saveFormDraft,
 } from '../db/form-drafts.js';
 import {
@@ -120,6 +133,9 @@ export interface EntityFormSpec<T> {
   /** Keep date and time visible together at the front of a phone transaction form. */
   compactDateTime?: boolean;
   confirmNewDraft?: boolean;
+  expenseCategoryDefaults?: boolean;
+  localOrderCapture?: boolean;
+  privacyAttachments?: boolean;
   refreshDefaults?: (values: Record<string, string>, manual: ReadonlySet<string>) => Record<string, string>;
   summary?: (values: Record<string, string>) => string | undefined;
   optionalFieldOptions?: { key: string; label: string }[];
@@ -287,10 +303,16 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   const initialFiles = useMemo<Record<string, FileRow[]>>(() => ({}), []);
   const entity = initial && typeof initial === 'object' ? initial as { id?: unknown; version?: unknown } : undefined;
   const entityVersion = typeof entity?.version === 'number' ? entity.version : undefined;
-  const draftKey = formDraftKey(spec.draftKey ?? spec.title, entity);
+  const baseDraftKey = formDraftKey(spec.draftKey ?? spec.title, entity);
+  const separateDrafts = !!spec.compactDateTime && !!spec.confirmNewDraft && (isNew ?? !initial);
+  const [draftKey, setDraftKey] = useState(() => separateDrafts ? `${baseDraftKey}:session:${newId()}` : baseDraftKey);
+  const [availableDrafts, setAvailableDrafts] = useState<FormDraft[]>([]);
   const initialFingerprint = useRef(formDraftFingerprint(initialValues, initialFiles));
   const touched = useRef(false);
-  const manualFields = useRef(new Set(initial ? Object.keys(spec.toValues(initial)).filter((key) => !!spec.toValues(initial)[key]) : []));
+  const manualFields = useRef(new Set([
+    ...(initial ? Object.keys(spec.toValues(initial)).filter((key) => !!spec.toValues(initial)[key]) : []),
+    ...Object.keys(initialFieldValues ?? {}).filter((key) => !!initialFieldValues?.[key]),
+  ]));
   const [prefilledValues, setPrefilledValues] = useState(initial ? initialValues : {});
   const savedOrDeleted = useRef(false);
   const [values, setValues] = useState<Record<string, string>>(initialValues);
@@ -305,6 +327,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   const [fullFields, setFullFields] = useState(false);
   const [deviceBusy, setDeviceBusy] = useState('');
   const [fileValues, setFileValues] = useState<Record<string, FileRow[]>>(initialFiles);
+  const [attachmentProcessing, setAttachmentProcessing] = useState(false);
   const [draftReady, setDraftReady] = useState(false);
   const draftHandled = useRef(false);
   const [pendingDraft, setPendingDraft] = useState<FormDraft | null>(null);
@@ -313,6 +336,11 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   const createdAssetOptions = useRef<Record<string, FieldOption[]>>({});
   const [, setCreatedAssetRevision] = useState(0);
   const creating = isNew ?? !initial;
+  const categoryField = spec.fields.find((field) => field.key === 'category');
+  const contextualDefault = useCategoryDefault(values.date ?? '', values.time ?? '', categoryField ? fieldOptions(categoryField, values) : [],
+    !!spec.expenseCategoryDefaults && !initial && creating && values.type === 'expense' && !manualFields.current.has('category'));
+  const showContextReason = spec.expenseCategoryDefaults && !initial && !pendingDraft && values.type === 'expense'
+    && !manualFields.current.has('category') && contextualDefault.category === values.category;
 
   const fingerprint = formDraftFingerprint(values, fileValues);
   const dirty = fingerprint !== initialFingerprint.current;
@@ -325,17 +353,20 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
   useEffect(() => {
     let cancelled = false;
     if (draftHandled.current) return;
-    void loadFormDraft(draftKey, entityVersion)
-      .then((draft) => {
+    void (separateDrafts ? listFormDrafts(baseDraftKey).then((drafts) => { if (!cancelled) setAvailableDrafts(drafts); return readRestoreEntryDraft() ? drafts[0] ?? null : null; }) : loadFormDraft(draftKey, entityVersion))
+      .then(async (draft) => {
         if (cancelled) return;
         draftHandled.current = true;
+        setDraftReady(true);
         if (!draft || touched.current) return;
-        if (creating && spec.confirmNewDraft) { setPendingDraft(draft); return; }
+        if (creating && spec.confirmNewDraft && !separateDrafts) { setPendingDraft(draft); return; }
+        if (separateDrafts) setDraftKey(draft.key);
         const restored = normalizeValues(spec.fields, { ...initialValues, ...draft.values });
         setValues(restored);
         setPrefilledValues(restored);
-        manualFields.current = new Set(Object.keys(draft.values).filter((key) => draft.values[key] !== initialValues[key]));
-        setFileValues(draft.files ?? {});
+        manualFields.current = new Set(draft.manualFieldKeys ?? Object.keys(draft.values).filter((key) => draft.values[key] !== initialValues[key]));
+        if (spec.expenseCategoryDefaults && draft.values.category) manualFields.current.add('category');
+        setFileValues(Object.fromEntries(Object.entries(draft.files ?? {}).map(([key, rows]) => [key, rows.map((row) => ({ ...row, id: row.id ?? newId() }))])));
         setDraftRestoredAt(draft.savedAt);
       })
       .catch(() => undefined)
@@ -345,7 +376,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     return () => {
       cancelled = true;
     };
-  }, [draftKey, entityVersion, initialValues, spec.fields, spec.confirmNewDraft, creating]);
+  }, [draftKey, baseDraftKey, separateDrafts, entityVersion, initialValues, spec.fields, spec.confirmNewDraft, spec.expenseCategoryDefaults, spec.privacyAttachments, creating]);
 
   useEffect(() => {
     if (pendingDraft || !dirty || savedOrDeleted.current) return;
@@ -357,7 +388,9 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     return () => window.removeEventListener('beforeunload', beforeUnload);
   }, [dirty, pendingDraft]);
 
+  const fieldVersions = useRef<Record<string, number>>({});
   const set = (key: string, value: string) => {
+    fieldVersions.current[key] = (fieldVersions.current[key] ?? 0) + 1;
     touched.current = true;
     manualFields.current.add(key);
     setValues((v) => {
@@ -482,7 +515,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
         throw new Error('剩余本地存储空间不足，请先导出备份或减少附件大小');
       }
       const maxBytes = await attachmentFileLimit();
-      const next = await Promise.all([...files].map((file) => prepareFile(file, maxBytes)));
+      const next = await Promise.all([...files].map(async (file) => ({ ...await prepareFile(file, maxBytes), id: newId() })));
       const combined = [...current, ...next];
       touched.current = true;
       setFileValues((rows) => ({ ...rows, [key]: combined }));
@@ -490,6 +523,52 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     } catch (error) {
       setErr(error instanceof Error ? error.message : String(error));
     }
+  }
+  const captureLive = useRef({ values, fileValues }); captureLive.current = { values, fileValues };
+  async function restoreAvailableDraft(draft: FormDraft) {
+    if (busy || attachmentProcessing) return;
+    setBusy(true); setErr(null);
+    const snapshot = captureLive.current;
+    try {
+      await draftAutosave.drainPending();
+      if (captureLive.current.values !== snapshot.values || captureLive.current.fileValues !== snapshot.fileValues) throw new Error('当前输入已变化，请重新选择草稿。');
+      if (dirty) {
+        const saved = await saveFormDraft(draftKey, snapshot.values, snapshot.fileValues, entityVersion, [...manualFields.current]);
+        setAvailableDrafts((rows) => [saved, ...rows.filter((row) => row.key !== saved.key)]);
+      }
+      if (captureLive.current.values !== snapshot.values || captureLive.current.fileValues !== snapshot.fileValues) throw new Error('当前输入已变化，请重新选择草稿。');
+      manualFields.current = new Set(draft.manualFieldKeys ?? Object.keys(draft.values));
+      setDraftKey(draft.key); setValues(normalizeValues(spec.fields, { ...initialValues, ...draft.values })); setPrefilledValues(draft.values);
+      setFileValues(Object.fromEntries(Object.entries(draft.files).map(([key, rows]) => [key, rows.map((row) => ({ ...row, id: row.id ?? newId() }))])));
+      setDraftRestoredAt(draft.savedAt); touched.current = true;
+    } catch (cause) { setErr(cause instanceof Error ? cause.message : '恢复草稿失败，请重试。'); }
+    finally { setBusy(false); }
+  }
+  async function applyAttachment(id: string, application: AttachmentApplication) {
+    const current = captureLive.current;
+    const rows = current.fileValues.attachmentDrafts ?? fileRows('attachmentDrafts');
+    const existing = rows.find((row) => row.id === id);
+    if (!existing) throw new Error('附件已移除或替换，请重新提取。');
+    if (changedCaptureFields(application.baseline, current.values, application.fields, application.baselineVersions, fieldVersions.current).length) throw new Error('表单内容已变化，请重新核对。');
+    if (application.retention === 'redacted') {
+      if (!application.attachment) throw new Error('脱敏图片尚未生成。');
+      await assertReviewedRedactedImage(application.attachment);
+      if (application.attachment.contentBlob.size > await attachmentFileLimit()) throw new Error('脱敏附件超过服务器限制，请裁剪后重试。');
+    }
+    // Re-check after asynchronous image validation; update fields and attachment together.
+    const latest = captureLive.current;
+    if (changedCaptureFields(application.baseline, latest.values, application.fields, application.baselineVersions, fieldVersions.current).length) throw new Error('表单内容已变化，请重新核对。');
+    const liveRows = latest.fileValues.attachmentDrafts ?? rows;
+    if (!liveRows.includes(existing)) throw new Error('附件已变化，请重新处理。');
+    const nextRows = application.retention === 'none' ? liveRows.filter((row) => row.id !== id) : liveRows.map((row) => row.id !== id ? row : application.retention === 'redacted' ? { ...application.attachment!, id, note: `附件处理：打码 ${application.attachment!.privacyReview.maskCount ?? 0} 处` } : { ...row, note: '附件处理：保留原图' });
+    const nextManual = new Set([...manualFields.current, ...Object.keys(application.fields)]);
+    let nextValues: Record<string, string> = { ...latest.values, ...application.fields, ...(application.fields.merchant ? { payeeId: '' } : {}), attachmentDrafts: JSON.stringify(nextRows.map(serializableFile)) };
+    for (const key of Object.keys(application.fields)) nextValues = spec.onFieldChange?.(nextValues, key, nextManual) ?? nextValues;
+    const normalized = normalizeValues(spec.fields, nextValues);
+    touched.current = true;
+    for (const key of Object.keys(application.fields)) { manualFields.current.add(key); fieldVersions.current[key] = (fieldVersions.current[key] ?? 0) + 1; }
+    setFileValues((files) => ({ ...files, attachmentDrafts: nextRows }));
+    setValues(normalized);
   }
 
   async function runDeviceAction(field: FieldDef) {
@@ -529,7 +608,19 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     });
   }, [initial, pendingDraft, spec]);
 
+  useEffect(() => {
+    if (!spec.expenseCategoryDefaults || initial || !creating || !draftReady || pendingDraft || values.type !== 'expense'
+      || manualFields.current.has('category') || !contextualDefault.category) return;
+    setValues((current) => {
+      if (manualFields.current.has('category') || current.type !== 'expense' || current.category === contextualDefault.category) return current;
+      const next = { ...current, category: contextualDefault.category };
+      if (formDraftFingerprint(current, fileValues) === initialFingerprint.current) initialFingerprint.current = formDraftFingerprint(next, fileValues);
+      return next;
+    });
+  }, [spec.expenseCategoryDefaults, initial, creating, draftReady, pendingDraft, values.type, contextualDefault.category, fileValues]);
+
   async function save(confirmedWarning?: string, keepOpen = false) {
+    if (attachmentProcessing) { setErr('请先确认并应用或放弃当前附件处理，再保存流水。'); return; }
     if (busy || iconBusy || !draftReady || pendingDraft) return;
     setErr(null);
     const normalized = { ...values };
@@ -646,19 +737,21 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
     >
 
 
+        {separateDrafts && availableDrafts.some((draft) => draft.key !== draftKey) && <details className="zc-entry-draft-list"><summary>未完成草稿 · {availableDrafts.filter((draft) => draft.key !== draftKey).length} 份</summary>{availableDrafts.filter((draft) => draft.key !== draftKey).map((draft) => <div className="zc-attachment-actions" key={draft.key}><span>{new Date(draft.savedAt).toLocaleString()} · {draft.values.amount || '未填金额'} · 附件 {Object.values(draft.files).reduce((sum, rows) => sum + rows.length, 0)} 个</span><button type="button" className="zc-btn" disabled={busy || attachmentProcessing} onClick={() => void restoreAvailableDraft(draft)}>恢复这份草稿</button></div>)}</details>}
         {pendingDraft && <div role="status" className="zc-entry-draft">
           <span title={`未完成的记账：${pendingDraft.values.date ?? ''} ${pendingDraft.values.time ?? ''}，恢复后请核对账户与余额起点。`}>有未完成草稿</span>
           <button type="button" className="zc-entry-text-action" onClick={() => {
             const draft = pendingDraft;
             const manual = new Set(draft.manualFieldKeys ?? Object.keys(draft.values));
+            if (spec.expenseCategoryDefaults && draft.values.category) manual.add('category');
             let restored = { ...initialValues, ...draft.values };
             if (!initial && draft.manualFieldKeys && spec.refreshDefaults) restored = spec.refreshDefaults(restored, manual);
             manualFields.current = manual;
             setValues(normalizeValues(spec.fields, restored)); setPrefilledValues(restored);
-            setFileValues(draft.files ?? {}); setDraftRestoredAt(draft.savedAt); setPendingDraft(null);
+            setFileValues(Object.fromEntries(Object.entries(draft.files ?? {}).map(([key, rows]) => [key, rows.map((row) => ({ ...row, id: row.id ?? newId() }))]))); setDraftRestoredAt(draft.savedAt); setPendingDraft(null);
           }}>恢复草稿</button>
           <button type="button" className="zc-entry-text-action" onClick={() => void deleteFormDraft(draftKey).then(() => {
-            manualFields.current = new Set(); setValues(initialValues); setPrefilledValues(initial ? initialValues : {});
+            manualFields.current = new Set(Object.keys(initialFieldValues ?? {}).filter((key) => !!initialFieldValues?.[key])); setValues(initialValues); setPrefilledValues(initial ? initialValues : {});
             setFileValues(initialFiles); setDraftRestoredAt(''); setPendingDraft(null);
           }).catch(() => setErr('清除草稿失败，请重试'))}>重新开始</button>
         </div>}
@@ -702,8 +795,9 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
                 deviceBusy={deviceBusy === f.key}
                 runDeviceAction={runDeviceAction}
                 error={fieldErrors[f.key]}
-                hint={f.hint ?? optionHint(f, options.length)}
+                hint={f.key === 'category' && showContextReason ? contextualDefault.reason : f.hint ?? optionHint(f, options.length)}
                 onAddAssetPreset={f.assetPresetOptions && !preview ? (code) => addAssetPreset(f.key, code) : undefined}
+                fileControl={spec.privacyAttachments && f.key === 'attachmentDrafts' && !preview ? <LedgerAttachmentField id={fieldId} rows={fileRows(f.key)} disabled={busy || !!pendingDraft || !draftReady} values={values} versions={fieldVersions.current} manual={manualFields.current} assets={optionsWithCreatedAssets(spec.fields.find((field) => field.key === 'assetId')!, values)} onProcessing={setAttachmentProcessing} readFiles={(files) => readFiles(f.key, files)} load={(row) => loadAttachmentContent(store, row)} remove={(id) => { const next = fileRows(f.key).filter((row) => row.id !== id); setFileValues((files) => ({ ...files, [f.key]: next })); set(f.key, JSON.stringify(next.map(serializableFile))); }} apply={applyAttachment} download={(row) => <AttachmentSaveButton attachment={row} />} /> : undefined}
               />
             );
           })}
@@ -833,7 +927,7 @@ export function EntityFormModal<T>({ spec, initial, isNew, onSave, onDelete, del
               onClose,
             )}
           >
-            当前修改尚未提交。关闭后会保留自动草稿，下次打开同一表单时继续填写。
+            {separateDrafts ? '当前修改尚未提交。关闭后保留草稿；新建记账默认不恢复，可从草稿列表选择，或在设置中开启自动恢复。' : '当前修改尚未提交。关闭后保留草稿，下次打开可继续编辑。'}
           </ConfirmDialog>
         )}
     </WorkspaceDialog>
@@ -860,6 +954,8 @@ function FormField(props: {
   error?: string;
   hint?: string;
   onAddAssetPreset?: (code: AssetPresetCode) => Promise<void>;
+  afterControl?: ReactNode;
+  fileControl?: ReactNode;
 }) {
   const { f, values, fieldId, options, value, selectedValues, fileRows, set, readFiles, setFileRows, deviceBusy, runDeviceAction, error, hint } = props;
   const [presetBusy, setPresetBusy] = useState(false);
@@ -950,7 +1046,7 @@ function FormField(props: {
           style={{ minHeight: 96, resize: 'vertical', paddingTop: 10 }}
           required={f.required}
         />
-      ) : f.type === 'file' ? (
+      ) : f.type === 'file' && props.fileControl ? props.fileControl : f.type === 'file' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input
@@ -960,13 +1056,13 @@ function FormField(props: {
               type="file"
               accept={f.accept}
               multiple={f.multiple !== false}
-              onChange={(e) => void readFiles(f.key, e.currentTarget.files)}
+              onChange={(e) => { const input = e.currentTarget; void readFiles(f.key, input.files).finally(() => { input.value = ''; }); }}
               style={{ paddingTop: 8, flex: 1, minWidth: 0 }}
               required={f.required}
             />
             {f.capture && (
               <>
-                <input id={`${fieldId}-camera`} type="file" accept="image/*" capture={f.capture} onChange={(e) => void readFiles(f.key, e.currentTarget.files)} style={{ display: 'none' }} />
+                <input id={`${fieldId}-camera`} type="file" accept="image/*" capture={f.capture} onChange={(e) => { const input = e.currentTarget; void readFiles(f.key, input.files).finally(() => { input.value = ''; }); }} style={{ display: 'none' }} />
                 <label className="zc-device-action" htmlFor={`${fieldId}-camera`} title="使用相机拍照" style={{ flex: '0 0 auto', height: 38, display: 'inline-flex', alignItems: 'center', padding: '0 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', color: 'var(--text-secondary)', background: 'var(--surface-2)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)', cursor: 'pointer' }}>拍照</label>
               </>
             )}
@@ -1013,6 +1109,7 @@ function FormField(props: {
       {error && <div style={{ color: 'var(--negative)', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', marginTop: 4 }}>{error}</div>}
       {presetError && <div role="alert" style={{ color: 'var(--negative)', fontSize: 'var(--fs-meta)', marginTop: 4 }}>{presetError}</div>}
       {!error && hint && <div style={{ color: 'var(--text-tertiary)', fontSize: 'var(--fs-meta)', marginTop: 4 }}>{hint}</div>}
+      {props.afterControl}
     </div>
   );
 }

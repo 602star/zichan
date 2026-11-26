@@ -6,6 +6,9 @@ const urls = __ASSETS__.map((name) => new URL(name, scope).href);
 const assets = new Set(urls);
 const shell = new URL('index.html', scope).href;
 const assetPath = new URL('assets/', scope).pathname;
+const ocrPrefix = `zichan-ocr:${new URL(scope).pathname}:`;
+const ocrCacheName = `${ocrPrefix}__OCR_VERSION__`;
+const ocrAssets = new Set(__OCR_ASSETS__.map((name) => new URL(name, scope).href));
 const entryPaths = new Set([new URL(scope).pathname, new URL(shell).pathname]);
 async function supportsInPlaceUpdate(worker) {
   return new Promise((resolve) => {
@@ -82,6 +85,13 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET' || url.origin !== new URL(scope).origin || /\/(api|admin)(\/|$)/.test(url.pathname)) return;
   if (request.mode === 'navigate' && entryPaths.has(url.pathname)) {
     event.respondWith((async () => (await (await caches.open(cacheName)).match(shell)) || fetch(request))());
+  } else if (ocrAssets.has(request.url)) {
+    event.respondWith((async () => {
+      if (request.cache === 'reload' || request.cache === 'no-cache') return fetch(request);
+      const cached = await (await caches.open(ocrCacheName)).match(request);
+      if (cached) return cached;
+      return fetch(request);
+    })());
   } else if (assets.has(request.url)) {
     event.respondWith((async () => (await (await caches.open(cacheName)).match(request)) || fetch(request))());
   } else if (url.pathname.startsWith(assetPath)) {

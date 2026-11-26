@@ -254,7 +254,7 @@ function loadPersistedValue(dataDir: string, name: string, provided: string | un
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg', '.ico': 'image/x-icon', '.wasm': 'application/wasm', '.woff': 'font/woff', '.woff2': 'font/woff2',
+  '.jpeg': 'image/jpeg', '.ico': 'image/x-icon', '.wasm': 'application/wasm', '.woff': 'font/woff', '.woff2': 'font/woff2', '.mjs': 'text/javascript; charset=utf-8',
 };
 
 function fileIfExists(file: string): string | undefined {
@@ -335,7 +335,7 @@ function serveWeb(req: IncomingMessage, res: ServerResponse, path: string, webDi
   if (!file) { res.writeHead(404); res.end('not found'); return true; }
   res.writeHead(200, {
     'Content-Type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
-    'Cache-Control': file.endsWith('index.html') || file.endsWith('sw.js') ? 'no-cache' : 'public, max-age=31536000, immutable',
+    'Cache-Control': file.endsWith('index.html') || file.endsWith('sw.js') || /[\\/]ocr[\\/](?:manifest|resources)\.json$/.test(file) ? 'no-cache' : 'public, max-age=31536000, immutable',
     'Content-Security-Policy': webAppCsp(allowInsecureHttp),
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',

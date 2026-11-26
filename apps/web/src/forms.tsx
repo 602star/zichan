@@ -1,5 +1,7 @@
 import { ACCOUNT_KINDS } from './account-fields.js';
 import { transactionFormFieldOptions } from './transactionFormPrefs.js';
+import { recommendExpenseCategory } from './category-defaults.js';
+import { readCategoryDefaultPreferences } from './category-default-preferences.js';
 /**
  * Entity form specs — field definitions + value⇄entity mappers for the generic
  * EntityFormModal. Select options that depend on existing data take the snapshot.
@@ -577,6 +579,9 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
     compactNewFieldKeys: ['time'],
     compactDateTime: true,
     confirmNewDraft: true,
+    expenseCategoryDefaults: !refundMode,
+    localOrderCapture: !refundMode,
+    privacyAttachments: true,
     refreshDefaults: (values, manual) => manual.has('accountId') || values.type === 'transfer' ? values : { ...values, accountId: defaultTransactionAccount(snap.accounts, snap.setting, values.type ?? 'expense') ?? '' },
     summary: (values) => {
       const account = snap.accounts.find((a) => a.id === values.accountId);
@@ -593,6 +598,8 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
         return { locationName: location?.name ?? values.locationName, latitude: location?.latitude ?? '', longitude: location?.longitude ?? '', locationAccuracyMeters: '' };
       })() : {}),
       ...(key === 'type' && !manual.has('accountId') ? { accountId: defaultTransactionAccount(snap.accounts, snap.setting, values.type ?? 'expense') ?? '' } : {}),
+      ...(!manual.has('category') && values.type === 'refund' && ['type', 'refundForId'].includes(key)
+        ? { category: refundOriginal(values)?.category ?? 'uncategorized' } : {}),
       ...(['date', 'time', 'timezone', 'type', 'amount', 'assetId', 'transferAmount', 'transferAssetId', 'costValueInBase'].includes(key) ? { costValueConfirmed: 'false' } : {}),
     }),
     fields: [
@@ -610,9 +617,11 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
         lockedVisible: true,
         required: true,
       },
-      { key: 'category', label: '分类', type: 'category', options: (v) => { const rows = categoryOptions(snap.categories, expenseOnly ? 'expense' : v.type === 'income' ? 'income' : 'expense', { leafOnly: true, includeHidden: true }); return rows.sort((a, b) => Number(b.value === 'uncategorized' || b.value === 'other_income') - Number(a.value === 'uncategorized' || a.value === 'other_income')); }, ...categoryPickerPreference(snap), lockedVisible: true, required: true },
+      { key: 'category', label: '分类', type: 'category', defaultValue: refundMode ? undefined : recommendExpenseCategory([], categoryOptions(snap.categories, 'expense', { leafOnly: true, includeHidden: true }), { date: currentDate(), time: currentTime() }, readCategoryDefaultPreferences()).category, options: (v) => { const rows = categoryOptions(snap.categories, expenseOnly ? 'expense' : v.type === 'income' ? 'income' : 'expense', { leafOnly: true, includeHidden: true }); return rows.sort((a, b) => Number(b.value === 'uncategorized' || b.value === 'other_income') - Number(a.value === 'uncategorized' || a.value === 'other_income')); }, ...categoryPickerPreference(snap), lockedVisible: true, required: true },
       { key: 'description', label: '描述', type: 'text', half: true, placeholder: '如午餐、工资、房租（选填）', lockedVisible: true },
-      { key: 'attachmentDrafts', label: '附件 / 图片', type: 'file', accept: 'image/*,.pdf', multiple: true, capture: 'environment', lockedVisible: true },
+      { key: 'attachmentDrafts', label: '附件 / 图片', type: 'file', accept: 'image/*,application/pdf', multiple: true, capture: 'environment', lockedVisible: true },
+      { key: 'orderNumber', label: '订单号', type: 'text', section: 'more' },
+      { key: 'trackingNumber', label: '物流单号', type: 'text', section: 'more' },
       { key: 'timezone', label: '交易时区', type: 'text', half: true, defaultValue: currentTimezone(), section: 'more' },
       { key: 'costCurrency', label: '成本核算币种', type: 'select', singleOptionSummary: true, section: 'more', lockedVisible: true, visibleWhen: showCostValue,
         options: (v) => { const id = costCurrency(v) ?? v.costCurrency; return id ? [{ value: id, label: snap.assets.find((a) => a.id === id)?.code ?? id }] : []; } },
@@ -666,6 +675,7 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       locationAccuracyMeters: t.locationAccuracyMeters ?? '',
       description: t.description ?? '',
       merchant: t.merchant ?? '',
+      orderNumber: t.orderNumber ?? '', trackingNumber: t.trackingNumber ?? '',
       note: t.note ?? '',
       attachmentDrafts: JSON.stringify(snap.attachments
         .filter((a) => !a.isDeleted && a.entityType === 'transaction' && a.entityId === t.id)
@@ -721,6 +731,7 @@ export function transactionForm(snap: Snapshot, options: LedgerFormOptions = {})
       locationAccuracyMeters: S(v.locationAccuracyMeters),
       description: S(v.description),
       merchant: S(v.merchant),
+      orderNumber: S(v.orderNumber), trackingNumber: S(v.trackingNumber),
       note: S(v.note),
       attachmentDrafts: files?.attachmentDrafts ?? parseAttachmentDrafts(v.attachmentDrafts),
       } as TransactionFormValue;

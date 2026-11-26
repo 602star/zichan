@@ -99,6 +99,7 @@ describe('quick expense defaults', () => {
       transaction({ date: '2026-08-24', time: '08:05', category: 'transport' }),
       transaction({ date: '2026-08-25', time: '07:50', category: 'transport' }),
       transaction({ date: '2026-08-26', time: '08:15', category: 'transport' }),
+      transaction({ date: '2026-08-28', time: '08:10', category: 'transport' }),
       transaction({ date: '2026-08-27', time: '08:20', category: 'food' }),
     ];
 

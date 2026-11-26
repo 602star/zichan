@@ -15,6 +15,9 @@ import { FormDraftStatus, useFormDraftAutosave } from './FormDraftStatus.js';
 import { CategoryPicker, type FieldOption } from './EntityFormModal.js';
 import { ASSET_PRESETS, ASSET_PRESET_GROUPS, ensureAssetPreset } from '../assetPresets.js';
 import { useStore } from '../db/store.js';
+import { recommendExpenseCategory, type CategoryRecommendation } from '../category-defaults.js';
+import { readCategoryDefaultPreferences } from '../category-default-preferences.js';
+import { useCategoryDefault } from '../use-category-default.js';
 
 export type QuickExpenseCategoryOption = FieldOption;
 
@@ -27,7 +30,7 @@ export interface QuickExpenseDraft {
   assetId: string;
 }
 
-export type QuickExpenseRecommendationSource = 'personal' | 'time' | 'recent' | 'fallback';
+export type QuickExpenseRecommendationSource = CategoryRecommendation['source'];
 
 export interface QuickExpenseRecommendation {
   category: string;
@@ -40,7 +43,6 @@ export interface QuickExpenseRecommendation {
 interface QuickExpenseModalProps {
   assets: Asset[];
   categories: QuickExpenseCategoryOption[];
-  recentTransactions: Transaction[];
   templates: TransactionTemplate[];
   initialTemplate?: TransactionTemplate;
   defaultAssetId: string;
@@ -81,86 +83,6 @@ function localTime(): string {
   return new Date().toTimeString().slice(0, 5);
 }
 
-function minutesSinceMidnight(value: string | undefined): number | null {
-  const match = /^(\d{2}):(\d{2})/.exec(value ?? '');
-  if (!match) return null;
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  if (hours > 23 || minutes > 59) return null;
-  return hours * 60 + minutes;
-}
-
-function localDayNumber(value: string): number | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return null;
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const number = Date.UTC(year, month - 1, day) / 86_400_000;
-  return Number.isFinite(number) ? number : null;
-}
-
-function isWeekendDate(value: string): boolean | null {
-  const dayNumber = localDayNumber(value);
-  if (dayNumber === null) return null;
-  const day = new Date(dayNumber * 86_400_000).getUTCDay();
-  return day === 0 || day === 6;
-}
-
-interface MealPeriod {
-  label: '早餐' | '午餐' | '晚餐' | '夜宵';
-  categoryIds: string[];
-}
-
-function mealPeriod(minutes: number): MealPeriod | null {
-  if (minutes < 120 || minutes >= 1260) return { label: '夜宵', categoryIds: ['late_night_snack', 'food'] };
-  if (minutes >= 300 && minutes < 600) return { label: '早餐', categoryIds: ['breakfast', 'food'] };
-  if (minutes >= 630 && minutes < 870) return { label: '午餐', categoryIds: ['lunch_work_meal', 'food'] };
-  if (minutes >= 1020 && minutes < 1260) return { label: '晚餐', categoryIds: ['dinner', 'food'] };
-  return null;
-}
-
-function shortCategoryLabel(category: QuickExpenseCategoryOption | undefined): string {
-  // 选项自带二级名时直接用：`label` 里那个「 / 」分隔符，名字本身也可能含有。
-  return category?.name ?? category?.label.split(' / ').at(-1) ?? '待分类';
-}
-
-function personalizedCategory(
-  transactions: readonly Pick<Transaction, 'type' | 'category' | 'date' | 'time' | 'isDeleted' | 'recordState'>[],
-  allowedCategoryIds: ReadonlySet<string>,
-  now: Date,
-): { category: string; count: number } | null {
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  const today = localToday(now);
-  const todayNumber = localDayNumber(today)!;
-  const weekend = now.getDay() === 0 || now.getDay() === 6;
-  const counts = new Map<string, number>();
-  let total = 0;
-  for (const transaction of transactions) {
-    const transactionMinutes = minutesSinceMidnight(transaction.time);
-    const transactionDay = localDayNumber(transaction.date);
-    if (
-      transaction.type !== 'expense'
-      || transaction.isDeleted
-      || transaction.recordState === 'voided'
-      || !allowedCategoryIds.has(transaction.category)
-      || transactionMinutes === null
-      || transactionDay === null
-      || transactionDay > todayNumber
-      || todayNumber - transactionDay > 60
-      || isWeekendDate(transaction.date) !== weekend
-    ) continue;
-    const distance = Math.abs(transactionMinutes - nowMinutes);
-    if (Math.min(distance, 1440 - distance) > 90) continue;
-    counts.set(transaction.category, (counts.get(transaction.category) ?? 0) + 1);
-    total += 1;
-  }
-  const ranked = [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]));
-  const [top, second] = ranked;
-  if (!top || top[1] < 3 || top[1] / total < 0.6 || top[1] === second?.[1]) return null;
-  return { category: top[0], count: top[1] };
-}
-
 export function latestExpenseCategory(
   transactions: readonly Pick<Transaction, 'type' | 'category' | 'date' | 'time' | 'isDeleted' | 'recordState'>[],
   allowedCategoryIds: ReadonlySet<string>,
@@ -196,54 +118,12 @@ export function recommendQuickExpense(
   categories: readonly QuickExpenseCategoryOption[],
   now = new Date(),
 ): QuickExpenseRecommendation {
-  const allowed = new Set(categories.map((category) => category.value));
-  const byId = new Map(categories.map((category) => [category.value, category]));
-  const meal = mealPeriod(now.getHours() * 60 + now.getMinutes());
-  const personal = personalizedCategory(transactions, allowed, now);
-  if (personal) {
-    const isMealCategory = meal?.categoryIds.includes(personal.category) || personal.category === 'food';
-    return {
-      category: personal.category,
-      ...(isMealCategory && meal ? { description: meal.label } : {}),
-      label: isMealCategory && meal ? meal.label : shortCategoryLabel(byId.get(personal.category)),
-      reason: `根据近 60 天同时段的 ${personal.count} 笔记录`,
-      source: 'personal',
-    };
-  }
-  if (meal) {
-    const category = meal.categoryIds.find((candidate) => allowed.has(candidate));
-    if (category) {
-      return {
-        category,
-        description: meal.label,
-        label: meal.label,
-        reason: `根据当前时间 ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
-        source: 'time',
-      };
-    }
-  }
-  const recent = latestExpenseCategory(transactions, allowed);
-  if (recent) {
-    return {
-      category: recent,
-      label: shortCategoryLabel(byId.get(recent)),
-      reason: '沿用最近一次有效支出分类',
-      source: 'recent',
-    };
-  }
-  const category = allowed.has('uncategorized') ? 'uncategorized' : categories[0]?.value ?? '';
-  return {
-    category,
-    label: shortCategoryLabel(byId.get(category)),
-    reason: '还没有足够的记账习惯，保存后会逐步学习',
-    source: 'fallback',
-  };
+  const recommendation = recommendExpenseCategory(transactions, categories, { date: localToday(now), time: now.toTimeString().slice(0, 5) }, readCategoryDefaultPreferences());
+  return { ...recommendation, label: recommendation.source === 'time' ? recommendation.description ?? recommendation.label : recommendation.label };
 }
-
 export function QuickExpenseModal({
   assets,
   categories,
-  recentTransactions,
   templates,
   initialTemplate,
   defaultAssetId,
@@ -258,16 +138,13 @@ export function QuickExpenseModal({
     () => quickExpenseRecommendationCategories(categories),
     [categories],
   );
-  const recommendation = useMemo(
-    () => recommendQuickExpense(recentTransactions, recommendationCategories),
-    [recentTransactions, recommendationCategories],
-  );
+  const initialRecommendation = useRef(recommendQuickExpense([], recommendationCategories));
   const initialValues = useRef<QuickExpenseDraft>({
     amount: initialTemplate?.amount ?? '',
     category: categories.some((option) => option.value === initialTemplate?.category)
       ? initialTemplate!.category
-      : recommendation.category,
-    description: initialTemplate?.description ?? initialTemplate?.name ?? recommendation.description ?? '',
+      : initialRecommendation.current.category,
+    description: initialTemplate?.description ?? initialTemplate?.name ?? '',
     date: localDate(),
     time: localTime(),
     assetId: assets.some((asset) => !asset.isDeleted && asset.isActive && asset.id === initialTemplate?.assetId)
@@ -283,6 +160,8 @@ export function QuickExpenseModal({
   const [description, setDescription] = useState(initialValues.current.description ?? '');
   const [date, setDate] = useState(initialValues.current.date);
   const [time, setTime] = useState(initialValues.current.time);
+  const categoryProtected = useRef(!!initialTemplate);
+  const recommendation = useCategoryDefault(date, time, recommendationCategories, !categoryProtected.current);
   const [assetId, setAssetId] = useState(initialValues.current.assetId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -331,6 +210,12 @@ export function QuickExpenseModal({
   );
 
   useEffect(() => {
+    if (categoryProtected.current || !recommendation.category || category === recommendation.category) return;
+    if (fingerprint === initialFingerprint.current) initialFingerprint.current = formDraftFingerprint({ ...currentValues, category: recommendation.category }, {});
+    setCategory(recommendation.category);
+  }, [recommendation.category, category, fingerprint, currentValues]);
+
+  useEffect(() => {
     if (draftLoaded.current) return;
     let cancelled = false;
     void loadFormDraft(QUICK_EXPENSE_DRAFT_KEY)
@@ -359,6 +244,7 @@ export function QuickExpenseModal({
           if (initialTemplate.assetId && allowedAssets.has(initialTemplate.assetId)) restored.assetId = initialTemplate.assetId;
         }
         setAmount(restored.amount);
+        categoryProtected.current = true;
         setCategory(restored.category);
         setDescription(restored.description ?? '');
         setDate(restored.date);
@@ -396,6 +282,7 @@ export function QuickExpenseModal({
 
   function applyTemplate(template: TransactionTemplate) {
     touched.current = true;
+    categoryProtected.current = true;
     setCategory(template.category);
     setDescription(template.description ?? template.name);
     setAssetId(activeAssets.some((asset) => asset.id === template.assetId) ? template.assetId! : defaultAssetId);
@@ -405,6 +292,7 @@ export function QuickExpenseModal({
 
   function applyRecommendation() {
     touched.current = true;
+    categoryProtected.current = false;
     setCategory(recommendation.category);
     setDescription(recommendation.description ?? '');
     amountRef.current?.focus();
@@ -475,10 +363,10 @@ export function QuickExpenseModal({
         {!initialTemplate && recommendation.category && (
           <div data-testid="quick-expense-recommendation" aria-live="polite" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 14, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', background: 'var(--accent-soft)', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>
             <span>
-              <b style={{ color: 'var(--accent)' }}>{category === recommendation.category && description === (recommendation.description ?? '') ? '已推荐' : '推荐'}：{recommendation.label}</b>
+              <b style={{ color: 'var(--accent)' }}>{category === recommendation.category ? '已预选' : '推荐'}：{recommendation.label}</b>
               <span style={{ marginLeft: 7 }}>{recommendation.reason}</span>
             </span>
-            {(category !== recommendation.category || description !== (recommendation.description ?? '')) && (
+            {category !== recommendation.category && (
               <button type="button" onClick={applyRecommendation} style={{ flex: '0 0 auto', border: '1px solid var(--accent)', borderRadius: 'var(--r-pill)', background: 'var(--surface)', color: 'var(--accent)', padding: '5px 9px', fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)', cursor: 'pointer' }}>使用推荐</button>
             )}
           </div>
@@ -548,6 +436,7 @@ export function QuickExpenseModal({
               defaultShowHidden={categoryShowHiddenDefault}
               onChange={(value) => {
                 touched.current = true;
+                categoryProtected.current = true;
                 setCategory(value);
               }}
             />

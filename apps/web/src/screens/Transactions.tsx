@@ -92,6 +92,7 @@ import { rememberTransactionPayee, withRememberedPayee } from '../payee-recordin
 import { ReconciliationModal } from './ReconciliationModal.js';
 import { DialogShell } from '../ui/DialogShell.js';
 import { useCompactView } from '../ui/useCompactView.js';
+
 import { ConfirmDialog } from '../ui/ConfirmDialog.js';
 import { QuickExpenseModal, type QuickExpenseDraft } from '../ui/QuickExpenseModal.js';
 import { ActionSheet } from '../ui/ActionSheet.js';
@@ -953,7 +954,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     try {
       for (const draft of drafts.filter((row) => row.fileName && (row.contentBlob || row.sha256))) {
         const id = draft.id ?? newId();
-        prepared.push(await prepareAttachmentDraft(store, id, draft, existingIds.has(id) ? 'replace' : 'create'));
+          prepared.push(await prepareAttachmentDraft(store, id, draft, existingIds.has(id) ? 'replace' : 'create', { requirePrivacyReview: !!draft.privacyReview }));
       }
     } catch (error) {
       await abortPreparedAttachments(store, prepared);
@@ -1872,7 +1873,6 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
           key={quickTemplate?.id ?? 'quick-expense'}
           assets={readySnap.assets}
           categories={categoryOptions(readySnap.categories, 'expense', { leafOnly: true, includeHidden: true })}
-          recentTransactions={readyTransactionRead.recommendationTransactions}
           templates={activeTemplates}
           initialTemplate={quickTemplate ?? undefined}
           defaultAssetId={moduleCurrencyId(readySnap.setting, 'transaction', readySnap.assets[0]?.id || '')}
@@ -2776,6 +2776,7 @@ function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund,
                       <CardFact label="分类" value={item.categoryLabel} />
                       {usesAccounts && <CardFact label="账户" value={item.accountName} />}
                       <CardFact label="状态" value={item.statusLabel} />
+                      {(tx.orderNumber || tx.trackingNumber) && <p>订单号：{tx.orderNumber || '—'} · 物流单号：{tx.trackingNumber || '—'}</p>}
                       {item.payeeName && <CardFact label="交易对象" value={item.payeeName} />}
                       {tags.length > 0 && <CardFact label="标签" value={tags.join(' / ')} />}
                       {files > 0 && <CardFact label="附件" value={`${files} 个 · 编辑流水可查看凭证`} />}
@@ -2832,6 +2833,7 @@ function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund,
             {locationName(active.tx) && <CardFact label="地点" value={locationName(active.tx)} />}
             {!!attachmentCount(active.tx) && <CardFact label="附件" value={`${attachmentCount(active.tx)} 个`} />}
             {active.tx.note && <CardFact label="备注" value={active.tx.note} />}
+            {(active.tx.orderNumber || active.tx.trackingNumber) && <p>订单号：{active.tx.orderNumber || '—'} · 物流单号：{active.tx.trackingNumber || '—'}</p>}
           </div>}
         </ActionSheet>
       )}

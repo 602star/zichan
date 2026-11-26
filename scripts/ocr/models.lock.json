@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "sdkVersion": "0.4.2",
+  "runtimeVersion": "1.31.1",
+  "opencv": { "version": "4.10.0-release.1", "sha256": "19b46167b59efbef9cc3836264b0b657110833e4b1df84282004b8b3141c048d" },
+  "barcodeVersion": "3.1.7",
+  "barcode": { "file": "zxing_reader.wasm", "bytes": 946598, "sha256": "33c8c50be17d0bb05454b4fd3ffb5b5ab9a8e8d1c0ebeb21a1adf4a89c1a8b59" },
+  "models": [
+    {
+      "file": "PP-OCRv5_mobile_det_onnx_infer.tar",
+      "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv5_mobile_det_onnx_infer.tar",
+      "bytes": 4843520,
+      "sha256": "781056046c9ed77a15c94681605db6a0f62317c2e9cce6931c71da2478d4bc30"
+    },
+    {
+      "file": "PP-OCRv5_mobile_rec_onnx_infer.tar",
+      "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv5_mobile_rec_onnx_infer.tar",
+      "bytes": 16701440,
+      "sha256": "f7e792bc836f36e7ef895ad47c426d75b0b75b1650caa6d63fe9418441ffba8c"
+    }
+  ]
+}

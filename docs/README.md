@@ -7,7 +7,7 @@
 - **物品资产：**[整理、使用与维护](guides/physical-items.md)。
 
 - **Web 与账号：**[Web 应用](guides/web.md)、[账号入口](guides/web-account-v2.md)、[快速打开与性能统计](guides/ledger-startup.md)、[注册与资料](guides/account-registration.md)、[账号安全](guides/account-security.md)、[离线应用](guides/offline-app.md)。
-- **账本与界面：**[账本保护](guides/ledger-protection.md)、[数据保护界面](guides/data-protection-ui.md)、[卡片与信息分组](guides/card-system.md)、[移动端页面与操作](guides/mobile-ledger.md)、[页面组落地清单](planning/mobile-pages-implementation.md)、[分类选择器](guides/category-picker-layout.md)、[图标](guides/entity-icons.md)、[交易对象与平台](guides/payee-platform-design.md)。
+- **账本与界面：**[账本保护](guides/ledger-protection.md)、[数据保护界面](guides/data-protection-ui.md)、[卡片与信息分组](guides/card-system.md)、[移动端页面与操作](guides/mobile-ledger.md)、[页面组落地清单](planning/mobile-pages-implementation.md)、[智能预选分类](guides/smart-category-defaults.md)、[本机截图识别](guides/local-order-ocr.md)、[分类选择器](guides/category-picker-layout.md)、[图标](guides/entity-icons.md)、[交易对象与平台](guides/payee-platform-design.md)。
 - **客户端与管理：**[桌面端](guides/desktop.md)、[电脑端账本工作台](guides/desktop-ledger.md)、[首页日历与生日提醒](guides/home-calendar.md)、[资金账户与默认收支](guides/accounts-and-reconciliation.md)、[账单与还款](guides/bills-and-repayments.md)、[服务器管理后台](guides/server-admin.md)。
 
 ## 架构与数据 `architecture/`
@@ -33,7 +33,7 @@
 
 ## 后续规划 `planning/`
 
-[统一时间选择与日常日历方案](planning/unified-date-and-daily-calendar.md)、[管理后台路线图](planning/admin-experience-roadmap.md)、[手机视图后续方案](planning/mobile-view-review-2026-10-17.md)。其中已完成的条目以现行手册为准。
+[全本地订单识别与智能分类方案](planning/local-order-capture.md)、[统一时间选择与日常日历方案](planning/unified-date-and-daily-calendar.md)、[管理后台路线图](planning/admin-experience-roadmap.md)、[手机视图后续方案](planning/mobile-view-review-2026-10-17.md)。其中已完成的条目以现行手册为准。
 
 ## 旧版设计 `legacy-design/`
 
@@ -46,3 +46,6 @@
 [工作日志](worklog.md)保留重要操作、当时的验证证据及历史路径；这些记录不代表当前状态。[发布说明](release-notes.md)记录版本变化。两者留在文档根目录，便于查找。
 
 功能或操作步骤变化时更新对应现行文档；运行日志、测试截图、构建缓存、个人 memory、数据库快照和密钥不提交到仓库。`.github/` 是 CI 配置，`.agents/` 和 `.codex/` 保存设计工具及钩子；它们的下载运行时由 `.gitignore` 排除。
+
+- [从附件提取交易信息](guides/attachment-capture.md)：附件统一入口、三种保留方式、隐私打码及订单／物流业务字段。
+- [附件交互设计](planning/attachment-interaction-design.md)：本轮确认的电脑内联与手机子页设计。

@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures.mjs';
-import { openLedger } from './helpers.mjs';
+import { openLedger, reviewImageAttachment, syntheticPng } from './helpers.mjs';
 import { openLedgerSection } from '../ledger-navigation.mjs';
 
 test.use({ timezoneId: 'Asia/Shanghai' });
@@ -76,11 +76,12 @@ for (const [width, scheme] of [[1280, 'light'], [1440, 'dark']]) {
     await expect(more).toHaveCount(0);
     await expect(note).toHaveValue('常用模式临时填写');
     await assertLayout();
-    await attachment.locator('input[type="file"]').first().setInputFiles({ name: 'desktop-receipt.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64') });
+    await attachment.locator('input[type="file"]').first().setInputFiles({ name: 'desktop-receipt.png', mimeType: 'image/png', buffer: await syntheticPng(page) });
+    await reviewImageAttachment(page);
     await common.click();
     await expect(common).toHaveAttribute('aria-pressed', 'true');
     await expect(note).toBeHidden();
-    await expect(attachment.getByText('desktop-receipt.png', { exact: true })).toBeVisible();
+    await expect(attachment.getByText('订单凭证.png', { exact: true })).toBeVisible();
     await full.click();
     await expect(note).toHaveValue('常用模式临时填写');
     await form.locator('.zc-dialog-body').evaluate((node) => { node.scrollTop = 0; });
@@ -89,9 +90,10 @@ for (const [width, scheme] of [[1280, 'light'], [1440, 'dark']]) {
     await page.getByRole('button', { name: '保留草稿并关闭', exact: true }).click();
     await newEntry.click();
     await expect(common).toHaveAttribute('aria-pressed', 'true');
-    await form.getByRole('button', { name: '恢复草稿', exact: true }).click();
+    await form.locator('.zc-entry-draft-list > summary').click();
+  await form.getByRole('button', { name: '恢复这份草稿', exact: true }).first().click();
     await expect(note).toHaveValue('常用模式临时填写');
-    await expect(attachment.getByText('desktop-receipt.png', { exact: true })).toBeVisible();
+    await expect(attachment.getByText('订单凭证.png', { exact: true })).toBeVisible();
     await expect(form.getByLabel('日期', { exact: true })).toHaveValue('2026-11-23');
     await expect(form.getByLabel('交易时间', { exact: true })).toHaveValue('08:45');
     await form.getByRole('button', { name: '保存', exact: true }).click();

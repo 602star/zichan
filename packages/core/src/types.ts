@@ -865,6 +865,8 @@ export interface Transaction extends BaseEntity {
   locationAccuracyMeters?: string;
   description?: string;
   merchant?: string; // 商户名称
+  orderNumber?: string;
+  trackingNumber?: string;
   note?: string;
 }
 

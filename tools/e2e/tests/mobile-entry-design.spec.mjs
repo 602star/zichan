@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures.mjs';
-import { openLedger } from './helpers.mjs';
+import { openLedger, reviewImageAttachment, syntheticPng } from './helpers.mjs';
 import { openLedgerSection } from '../ledger-navigation.mjs';
 
 test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 }, timezoneId: 'Asia/Shanghai' });
@@ -58,18 +58,20 @@ test('common fields are managed separately; two modes retain input and always sh
   await expect(form.locator('summary').filter({ hasText: '更多字段' })).toHaveCount(0);
   await expect(form.getByLabel('备注', { exact: true })).toHaveValue('常用模式临时补填');
   await form.getByLabel('备注', { exact: true }).fill('切档保留内容');
-  await attachment.locator('input[type="file"]').first().setInputFiles({ name: 'receipt.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64') });
+  await attachment.locator('input[type="file"]').first().setInputFiles({ name: 'receipt.png', mimeType: 'image/png', buffer: await syntheticPng(page) });
+  await reviewImageAttachment(page);
   await form.getByRole('button', { name: '字段模式：常用', exact: true }).click();
   await expect(form.getByLabel('备注', { exact: true })).toBeHidden();
-  await expect(attachment.getByText('receipt.png', { exact: true })).toBeVisible();
+  await expect(attachment.getByText('订单凭证.png', { exact: true })).toBeVisible();
   await form.getByRole('button', { name: '字段模式：完整', exact: true }).click();
   await expect(form.getByLabel('备注', { exact: true })).toHaveValue('切档保留内容');
   await form.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('button', { name: '保留草稿并关闭', exact: true }).click();
   await page.locator('#transaction-records').getByRole('button', { name: /^\+ 记(账|支出)$/ }).click();
   await expect(form.getByRole('button', { name: '字段模式：常用', exact: true })).toBeVisible();
-  await form.getByRole('button', { name: '恢复草稿', exact: true }).click();
-  await expect(attachment.getByText('receipt.png', { exact: true })).toBeVisible();
+  await form.locator('.zc-entry-draft-list > summary').click();
+  await form.getByRole('button', { name: '恢复这份草稿', exact: true }).first().click();
+  await expect(attachment.getByText('订单凭证.png', { exact: true })).toBeVisible();
   await expect(form.getByLabel('备注', { exact: true })).toHaveValue('切档保留内容');
 });
 
@@ -130,11 +132,13 @@ test('compact entry keeps essentials visible and optional controls reversible', 
   await form.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('dialog', { name: '关闭未保存表单', exact: true }).getByRole('button', { name: '保留草稿并关闭', exact: true }).click();
   await page.locator('#transaction-records').getByRole('button', { name: /^\+ 记(账|支出)$/ }).click();
-  const pending = form.locator('.zc-entry-draft');
-  await expect(pending.getByRole('button', { name: '恢复草稿', exact: true })).toBeVisible();
-  expect((await pending.boundingBox()).height).toBeLessThanOrEqual(50);
+  const pending = form.locator('.zc-entry-draft-list');
+  await expect(form.getByLabel(/^金额/)).toHaveValue('');
+  await pending.locator('summary').click();
+  await expect(pending.getByRole('button', { name: '恢复这份草稿', exact: true })).toBeVisible();
+  await expect(form.locator('.zc-entry-draft')).toHaveCount(0);
   await page.screenshot({ path: test.info().outputPath('draft-phone.png') });
-  await pending.getByRole('button', { name: '恢复草稿', exact: true }).click();
+  await pending.getByRole('button', { name: '恢复这份草稿', exact: true }).click();
   await expect(form.getByLabel('日期', { exact: true })).toHaveText('2026-11-22');
   await expect(form.getByLabel('交易时间', { exact: true })).toHaveText('08:05');
   await expect(location).toHaveValue('江边咖啡店');

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { AddressInfo } from 'node:net';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -896,6 +896,9 @@ describe('sync-server endpoints', () => {
   it('serves a web directory independently from the sync API', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'zichan-web-'));
     writeFileSync(join(dir, 'index.html'), '<!doctype html><title>Zichan Web</title><div id="root"></div>');
+    mkdirSync(join(dir, 'ocr'));
+    for (const name of ['manifest.json', 'resources.json']) writeFileSync(join(dir, 'ocr', name), '{}');
+    writeFileSync(join(dir, 'ocr/model.wasm'), 'public fixture');
     const s = createSyncServer({ webDir: dir, enableWeb: true, enableSync: false, basePath: '/ledger' });
     await new Promise<void>((r) => s.server.listen(0, r));
     const u = `http://127.0.0.1:${(s.server.address() as AddressInfo).port}`;
@@ -913,6 +916,12 @@ describe('sync-server endpoints', () => {
       expect(account.status).toBe(503);
       expect(account.headers.get('content-type')).toContain('application/json');
       expect((await fetch(u + '/ledger/')).status).toBe(200);
+      for (const name of ['manifest.json', 'resources.json']) {
+        const manifest = await fetch(`${u}/ledger/ocr/${name}`);
+        expect(manifest.status).toBe(200);
+        expect(manifest.headers.get('cache-control')).toBe('no-cache');
+      }
+      expect((await fetch(`${u}/ledger/ocr/model.wasm`)).headers.get('cache-control')).toContain('immutable');
       const oldEntry = await fetch(u + '/ledger/app/?federation=sample', { redirect: 'manual' });
       expect(oldEntry.status).toBe(404);
       expect(oldEntry.headers.get('location')).toBeNull();

@@ -24,6 +24,12 @@ CMD 默认在结束或失败时暂停，以便双击运行时看到诊断信息�
 
 ## 日常命令
 
+Web 的 `predev`／`prebuild` 会运行 `node scripts/ocr/prepare-resources.mjs`，按 `scripts/ocr/models.lock.json` 下载并校验 PP-OCRv5 mobile 模型，复制锁定版本的 CPU WASM。生成目录 `apps/web/public/ocr/` 已忽略，不提交二进制；第一次开发／构建需要联网，已存在且校验通过的文件不重复下载。浏览器首次识别只从部署同源按需获取公共资源，详见[本机截图识别](../docs/guides/local-order-ocr.md)。
+
+码图检测使用 `zxing-wasm/reader`，准备脚本从锁定的 npm 包复制并校验 `zxing_reader.wasm`（946,598 字节），与 OCR 公共资源共同生成版本清单，不使用运行时第三方 CDN。依赖开发预构建也包含该 reader，避免首次点击识别触发 Vite 页面刷新。
+
+OpenCV 4.10 的四处 Emscripten 包装函数在构建前转换为普通闭包，产物位于忽略的 `apps/web/.generated/ocr/opencv.cjs`，Vite 开发和生产均使用该版本。源文件 SHA-256 锁定在模型锁中，升级或出现额外动态执行时准备脚本直接失败，需要审查适配；不放开页面 `unsafe-eval`。嵌入的 WASM 不改动，修改说明随开源许可分发。`node --test tools/dev/tests/ocr-opencv-csp.test.mjs` 验证禁用字符串代码生成后的调用语义。
+
 | 命令 | 行为 |
 |---|---|
 | `npm start` / `npm run start:server` | 构建后提供同站 `/`、`/<安全路径>/admin/` 和 `/api/health`，默认端口 8787 |

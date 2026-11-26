@@ -1,0 +1,41 @@
+Local OCR components
+
+zxing-wasm 3.1.7 reader
+Copyright (c) 2023 Ze-Zheng Wu. MIT License.
+ZXing-C++ and ZXingWasm.cpp: Apache License 2.0.
+The reader-only binary is pinned by SHA-256 and served by this application.
+https://github.com/Sec-ant/zxing-wasm
+https://github.com/zxing-cpp/zxing-cpp
+
+PaddleOCR.js 0.4.2 and PP-OCRv5 mobile detection/recognition models
+Copyright PaddlePaddle Authors. Apache License 2.0.
+https://github.com/PaddlePaddle/PaddleOCR
+
+OpenCV.js 4.10.0, distributed by @techstark/opencv-js 4.10.0-release.1
+Copyright OpenCV contributors. Apache License 2.0.
+https://github.com/opencv/opencv
+https://github.com/TechStark/opencv-js
+
+ONNX Runtime Web 1.31.1
+Copyright Microsoft Corporation. MIT License.
+https://github.com/microsoft/onnxruntime
+
+js-yaml
+Copyright Vitaly Puzrin and contributors. MIT License.
+https://github.com/nodeca/js-yaml
+
+clipper-lib 6.4.2
+Copyright Angus Johnson 2010-2017 and Timo (JavaScript translation).
+Boost Software License 1.0. See copyright notices retained in the library.
+https://github.com/junmer/clipper-lib
+
+The application runs OCR locally. Original images and OCR text are not included
+in the public OCR resource cache. Model source URLs and SHA-256 values are pinned
+in scripts/ocr/models.lock.json in the application source distribution.
+
+Local modification: the OpenCV 4.10.0 Emscripten JavaScript glue is adapted at
+build time to replace createNamedFunction, makeDynCaller, craftInvokerFunction and
+__emval_get_method_caller string-generated functions with ordinary closures.
+See scripts/ocr/opencv-csp.mjs. This permits
+the bundled OCR worker to run with a Content Security Policy that forbids
+JavaScript unsafe-eval. The embedded OpenCV WASM is unchanged.

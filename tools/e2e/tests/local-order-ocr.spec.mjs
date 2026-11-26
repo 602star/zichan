@@ -1,0 +1,54 @@
+import { test, expect } from './fixtures.mjs';
+import { entry, receipt, addAndExtract, ORDER, TRACKING } from './local-order-helpers.mjs';
+test.setTimeout(180_000);
+test.use({ timezoneId: 'Asia/Shanghai', actionTimeout: 15_000 });
+
+test('extracts the current attachment locally, works offline and protects prior applications', async ({ page, context }) => {
+  await page.setViewportSize({ width: 1280, height: 960 });
+  const form = await entry(page), external = [], uploads = [];
+  await form.getByLabel('描述', { exact: true }).fill('附件识别测试');
+  page.on('request', (r) => { if (/^https?:/.test(r.url()) && new URL(r.url()).origin !== new URL(page.url()).origin) external.push(r.url()); if (/\/api\/v3\/blobs\/uploads/.test(r.url()) && r.method() !== 'GET') uploads.push(r.url()); });
+  const panel = await addAndExtract(page, form, await receipt(page));
+  await expect(panel.getByLabel('实付金额候选', { exact: true })).toHaveValue('49.9');
+  await expect(panel.getByLabel('交易日期候选', { exact: true })).toHaveValue('2026-11-25');
+  await panel.getByLabel('附件保留与隐私', { exact: true }).selectOption('none');
+  await panel.getByRole('button', { name: '确认并应用', exact: true }).click();
+  await expect(form.getByLabel(/^金额/)).toHaveValue('49.9');
+  await expect(form.locator('.zc-attachment-item')).toHaveCount(0);
+  expect(external).toEqual([]); expect(uploads).toEqual([]);
+  await form.getByRole('button', { name: '字段模式：完整', exact: true }).click();
+  await expect(form.getByLabel('订单号', { exact: true })).toHaveValue(ORDER);
+  await expect(form.getByLabel('物流单号', { exact: true })).toHaveValue(TRACKING);
+  await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+  await context.setOffline(true);
+  await addAndExtract(page, form, await receipt(page, '29.90', true));
+  await expect(panel.getByRole('checkbox', { name: '实付金额', exact: true })).not.toBeChecked();
+  await expect(panel.getByLabel('实付金额候选', { exact: true })).toHaveValue('29.9');
+  await panel.getByLabel('附件保留与隐私', { exact: true }).selectOption('none');
+  await panel.getByRole('button', { name: '确认并应用', exact: true }).click();
+  await expect(form.getByLabel(/^金额/)).toHaveValue('49.9');
+  await expect(form.getByLabel('描述', { exact: true })).toHaveValue('附件识别测试');
+  await context.setOffline(false);
+  await form.getByRole('button', { name: '保存', exact: true }).click(); await expect(form).toBeHidden();
+  await expect(page.getByRole('row').filter({ hasText: '附件识别测试' }).first()).toBeVisible();
+});
+
+test('mobile processing fills the screen and cancellation keeps the form and source attachment', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 }); await page.emulateMedia({ colorScheme: 'dark' });
+  const form = await entry(page); await form.getByLabel(/^金额/).fill('38.00'); await form.getByLabel('描述', { exact: true }).fill('已有手填');
+  const panel = await addAndExtract(page, form, await receipt(page));
+  const child = page.getByRole('dialog', { name: '附件处理', exact: true });
+  await expect(child).toBeVisible();
+  await panel.getByRole('tab', { name: /^图片与隐私/ }).click();
+  await panel.locator('canvas').click({position:{x:40,y:40}});
+  await child.getByRole('button',{name:'返回附件处理',exact:true}).click();
+  await panel.getByRole('tab', { name: '核对信息', exact: true }).click();
+  const box = await child.boundingBox(); expect(box.width).toBeGreaterThanOrEqual(389); expect(box.height).toBeGreaterThanOrEqual(843);
+  await expect(panel.getByRole('checkbox', { name: '实付金额', exact: true })).not.toBeChecked();
+  await page.screenshot({ path: test.info().outputPath('attachment-processing-mobile.png') });
+  await child.getByRole('button', { name: '暂不处理', exact: true }).click();
+  await child.getByRole('button', { name: '放弃本次处理', exact: true }).click();
+  await expect(child).toBeHidden(); await expect(form.getByLabel(/^金额/)).toHaveValue('38.00');
+  await expect(form.locator('.zc-attachment-item')).toHaveCount(1);
+  await form.getByRole('button', { name: '保存', exact: true }).click(); await expect(form).toBeHidden();
+});

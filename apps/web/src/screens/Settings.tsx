@@ -1,5 +1,8 @@
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import { NavigationIcon } from '../ui/NavigationIcon.js';
+import { CategoryDefaultSettings } from '../ui/CategoryDefaultSettings.js';
+import { DraftSettings } from '../ui/DraftSettings.js';
+
 import { readOnboarding, resumeOnboarding } from '../onboarding.js';
 import { navigateTo } from '../screen-target.js';
 import { CardFact, CardMetric } from '../ui/Card.js';
@@ -841,6 +844,10 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
             </div>
           </div>
 
+          <CategoryDefaultSettings categories={snap.categories} />
+          <DraftSettings />
+
+
           <div className="zc-card">
             <div className="zc-section-head zc-responsive-header">
               <h2 className="zc-section-title">记账常用字段</h2>
@@ -950,6 +957,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
                 </div>
                 <div className="zc-section-head zc-responsive-header">
                   <p className="zc-caption">要把当前账本带出此设备，请导出加密 .zcbak 文件并保存到其他位置。下方“创建手动备份”会保存在本机备份列表中。</p>
+                  <p className="zc-meta">订单号、物流单号等仅本机保留的信息不包含在普通、设备恢复或远程备份中；清理本机数据后无法从这些备份找回。</p>
                   <button type="button" onClick={() => void exportBackupFile()} disabled={backupBusy !== null} className="zc-btn">{backupBusy === 'export-file' ? '导出中…' : '导出加密备份文件'}</button>
                 </div>
                 {warnings.length > 0 && (

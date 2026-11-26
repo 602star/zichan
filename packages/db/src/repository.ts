@@ -5,6 +5,7 @@
  */
 import {
   D,
+  isValidDay,
   defaultTransactionAccount, accountChainPostings, type Posting,
   newId,
   sha256Json,
@@ -2089,6 +2090,21 @@ export class SqlLedgerStore implements LedgerStore {
       "SELECT payee_id, COUNT(*) AS uses, MAX(COALESCE(occurred_at_utc, date)) AS last_used FROM transactions WHERE is_deleted = 0 AND COALESCE(record_state, 'active') = 'active' AND payee_id IS NOT NULL GROUP BY payee_id",
     );
     return rows.map((row) => ({ payeeId: row.payee_id, count: Number(row.uses), lastUsed: row.last_used }));
+  }
+
+  /** All matching expense history, aggregated independently of list paging and filters. */
+  async expenseCategoryHistory(range: { from: string; to: string }): Promise<{
+    date: string; time?: string; timePrecision?: import('@zichan/core').TimePrecision; category: string; count: number;
+  }[]> {
+    if (!isValidDay(range.from) || !isValidDay(range.to) || range.from > range.to) throw new Error('分类习惯日期范围无效');
+    const rows = await this.driver.all<{ date: string; time: string | null; time_precision: import('@zichan/core').TimePrecision | null; category: string; uses: number }>(
+      `SELECT date, time, time_precision, category, COUNT(*) AS uses FROM transactions
+       WHERE is_deleted = 0 AND COALESCE(record_state, 'active') = 'active'
+         AND type = 'expense' AND date >= ? AND date <= ?
+       GROUP BY date, time, time_precision, category ORDER BY date DESC, time DESC`,
+      [range.from, range.to],
+    );
+    return rows.map((row) => ({ date: row.date, time: row.time ?? undefined, timePrecision: row.time_precision ?? undefined, category: row.category, count: Number(row.uses) }));
   }
 
   subscribe(listener: StoreChangeListener): () => void {

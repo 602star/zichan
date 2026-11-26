@@ -128,7 +128,7 @@ function installTauriMock(failVaultReset = false): string[] {
   const request: DeleteRequestStub = { error: null, onsuccess: null, onerror: null, onblocked: null };
   (globalThis as unknown as { indexedDB: { deleteDatabase(name: string): DeleteRequestStub } }).indexedDB = {
     deleteDatabase(name) {
-      expect(name).toBe('zichan-web');
+      expect(['zichan-web:local-order-private.v1', 'zichan-web']).toContain(name);
       calls.push(`indexeddb:${name}`);
       queueMicrotask(() => request.onsuccess?.());
       return request;
@@ -202,7 +202,7 @@ describe('resetPlatformData', () => {
     const request: DeleteRequestStub = { error: null, onsuccess: null, onerror: null, onblocked: null };
     (globalThis as unknown as { indexedDB: { deleteDatabase(name: string): DeleteRequestStub } }).indexedDB = {
       deleteDatabase(name) {
-        expect(name).toBe('zichan-web');
+        expect(['zichan-web:local-order-private.v1', 'zichan-web']).toContain(name);
         queueMicrotask(() => request.onsuccess?.());
         return request;
       },
@@ -223,6 +223,7 @@ describe('resetPlatformData', () => {
     await resetPlatformData();
 
     expect(calls).toEqual([
+      'indexeddb:zichan-web:local-order-private.v1',
       'native_sql_database_url',
       'native_sql_close',
       'native_sql_delete_database',

@@ -7,6 +7,7 @@ import type {
 } from '@zichan/db';
 import { deleteKv, hasKv, loadKv, moveKv, saveKv } from './idb.js';
 import { isTauriRuntime, tauriInvoke } from '../tauri.js';
+import { assertReviewedRedactedImage, type PrivacyReview } from '../order-capture/redaction.js';
 import {
   decryptDeviceAttachmentBlob,
   encryptDeviceAttachmentBlob,
@@ -23,6 +24,7 @@ const NATIVE_TRANSFER_BYTES = 512 * 1024;
 const STORAGE_RESERVE_BYTES = 8 * 1024 * 1024;
 
 export interface AttachmentDraftData {
+  privacyReview?: PrivacyReview;
   id?: string;
   fileName: string;
   mimeType?: string;
@@ -63,6 +65,7 @@ interface NativeAttachmentStorageStatus {
 }
 
 export interface AttachmentIoOptions {
+  requirePrivacyReview?: boolean;
   signal?: AbortSignal;
   onProgress?: (progress: {
     phase: 'encrypting' | 'writing' | 'reading' | 'verifying';
@@ -332,6 +335,7 @@ export async function prepareAttachmentDraft(
   kind: AttachmentFileOpKind = 'create',
   options?: AttachmentIoOptions,
 ): Promise<PreparedAttachment> {
+  if (options?.requirePrivacyReview) await assertReviewedRedactedImage(draft);
   if (!draft.contentBlob) {
     if (!draft.sha256 || draft.sizeBytes == null) throw new Error(`附件 ${draft.fileName} 缺少内容引用`);
     assertSha256(draft.sha256);

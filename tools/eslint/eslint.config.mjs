@@ -10,6 +10,7 @@ export default [
       '**/coverage/**',
       '**/gen/**',
       '**/resources/**',
+      'apps/web/.generated/ocr/**',
     ],
   },
   {

@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { test, expect } from './fixtures.mjs';
-import { openTransactions } from './helpers.mjs';
+import { openLedger } from './helpers.mjs';
+import { enableEveryNavigationModule } from '../account-tests/mobile-onboarding.mjs';
+import { openLedgerSection } from '../ledger-navigation.mjs';
 
 function twoPagePdf() {
   const objects = [
@@ -23,18 +25,19 @@ function twoPagePdf() {
 }
 
 for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
-  test(`previews original images and PDF pages without losing the form at ${viewport.width}px`, async ({ page }, testInfo) => {
+  test(`previews existing item image and PDF attachments without losing the form at ${viewport.width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     const errors = [];
     const pdfResources = [];
     page.on('request', (request) => { if (/\.(bcmap|ttf|pfb)(?:\?|$)/.test(request.url())) pdfResources.push(request.url()); });
     page.on('pageerror', (error) => errors.push(error.message));
-    await openTransactions(page);
+    await openLedger(page);
+    await openLedgerSection(page, 'settings'); await enableEveryNavigationModule(page); await openLedgerSection(page, 'fixed');
     await page.setViewportSize(viewport);
-    await page.getByRole('button', { name: viewport.width < 600 ? '快速记账' : '+ 记账', exact: true }).click();
-    const form = page.getByRole('dialog', { name: '新增 · 日常收支', exact: true });
-    await form.getByLabel(/^金额/).fill('26.80');
-    await form.getByLabel('描述', { exact: true }).fill('附件预览验收');
+    await page.getByRole('button', { name: '+ 新增物品', exact: true }).click();
+    const form = page.getByRole('dialog', { name: '新增 · 物品资产', exact: true });
+    await form.getByLabel(/^名称/).fill('附件预览验收'); await form.getByLabel(/^购买金额/).fill('26.80');
+    await form.locator('summary').filter({ hasText: '更多信息' }).click();
     const png = Buffer.from(await page.evaluate(() => {
       const canvas = document.createElement('canvas'); canvas.width = 1800; canvas.height = 1200;
       const context = canvas.getContext('2d'); context.fillStyle = '#faf9f5'; context.fillRect(0, 0, 1800, 1200);
@@ -42,7 +45,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
       context.fillStyle = '#b63226'; context.fillRect(120, 350, 1560, 12);
       return Array.from(Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]), (value) => value.charCodeAt(0)));
     }));
-    await form.getByLabel('附件 / 图片', { exact: true }).setInputFiles([
+    await form.getByLabel('发票 / 购买凭证', { exact: true }).setInputFiles([
       { name: '原图凭证.png', mimeType: 'image/png', buffer: png },
       { name: '两页发票.pdf', mimeType: 'application/pdf', buffer: twoPagePdf() },
       { name: '损坏文件.pdf', mimeType: 'application/pdf', buffer: Buffer.from('not a PDF') },
@@ -71,7 +74,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
     await expect(viewer).toBeHidden();
     await expect(form).toBeVisible();
     await expect(imageTrigger).toBeFocused();
-    await expect(form.getByLabel('描述', { exact: true })).toHaveValue('附件预览验收');
+    await expect(form.getByLabel(/^名称/)).toHaveValue('附件预览验收');
 
     await form.getByRole('button', { name: '预览 两页发票.pdf', exact: true }).click();
     const pdf = page.getByRole('dialog', { name: '附件预览 · 两页发票.pdf', exact: true });
