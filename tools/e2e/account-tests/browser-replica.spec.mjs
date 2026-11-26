@@ -163,7 +163,7 @@ test('the browser carries a personal ledger between independent servers', async 
     await expect.poll(() => interrupted).toBe(true);
     // Another peer may finish successfully after this failure. The affected
     // peer's result remains authoritative even when the global banner clears.
-    await expect(page.getByRole('row').filter({ hasText: second.url })).toContainText('Failed to fetch');
+    await expect(page.locator('.zc-sync-result-row').filter({ hasText: second.url })).toContainText('Failed to fetch');
     await page.unroute('**/api/v3/blobs/*/chunks/1');
     await page.evaluate(() => {
       window.__browserReplicaResumeProgress = [];

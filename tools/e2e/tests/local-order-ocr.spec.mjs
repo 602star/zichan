@@ -7,7 +7,15 @@ test('extracts the current attachment locally, works offline and protects prior 
   await page.setViewportSize({ width: 1280, height: 960 });
   const form = await entry(page), external = [], uploads = [];
   await form.getByLabel('描述', { exact: true }).fill('附件识别测试');
-  page.on('request', (r) => { if (/^https?:/.test(r.url()) && new URL(r.url()).origin !== new URL(page.url()).origin) external.push(r.url()); if (/\/api\/v3\/blobs\/uploads/.test(r.url()) && r.method() !== 'GET') uploads.push(r.url()); });
+  page.on('request', (r) => {
+    if (/^https?:/.test(r.url()) && new URL(r.url()).origin !== new URL(page.url()).origin) external.push(r.url());
+    // V1 objects are scheduled encrypted backups. Attachment uploads use V2
+    // manifests; a slow first OCR run may overlap the normal backup timer.
+    if (/\/api\/v3\/blobs\/uploads$/.test(r.url()) && r.method() === 'POST') {
+      const manifest = r.postDataJSON()?.manifest;
+      if (manifest?.v !== 1) uploads.push(r.url());
+    }
+  });
   const panel = await addAndExtract(page, form, await receipt(page));
   await expect(panel.getByLabel('实付金额候选', { exact: true })).toHaveValue('49.9');
   await expect(panel.getByLabel('交易日期候选', { exact: true })).toHaveValue('2026-11-25');
