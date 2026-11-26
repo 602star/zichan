@@ -161,7 +161,9 @@ test('the browser carries a personal ledger between independent servers', async 
     await openSync(page);
     await page.getByRole('button', { name: '立即同步' }).click();
     await expect.poll(() => interrupted).toBe(true);
-    await expect(page.getByText(/上次同步有问题/)).toBeVisible();
+    // Another peer may finish successfully after this failure. The affected
+    // peer's result remains authoritative even when the global banner clears.
+    await expect(page.getByRole('row').filter({ hasText: second.url })).toContainText('Failed to fetch');
     await page.unroute('**/api/v3/blobs/*/chunks/1');
     await page.evaluate(() => {
       window.__browserReplicaResumeProgress = [];
