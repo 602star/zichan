@@ -10,7 +10,9 @@ import {
   resolveThemeMode,
   subscribeSystemMode,
   systemPrefersDark,
+  writeAppearancePreference,
 } from '../appearance.js';
+import { THEME_MODE_NAMES, THEME_NAMES, THEMES, type ThemeId, type ThemeModePreference } from '../theme.js';
 import { AdminClient, type AdminHealth } from './client.js';
 import { adminBasePath, adminHref, navigate as navigateRoute, useRoute } from './router.js';
 import { AlertsPage } from './AlertsPage.js';
@@ -222,6 +224,31 @@ export function AdminApp({ baseUrl }: { baseUrl: string }) {
         </div>
         <div className="zc-admin-topbar-actions">
           {health ? <span className="zc-admin-connection" title={`服务器 ${health.serverId}`}><span aria-hidden="true" />{health.claimed ? '管理服务已连接' : '等待初始化'}</span> : null}
+          <div className="zc-admin-appearance-controls" aria-label="外观切换">
+            <select
+              aria-label="切换账册装帧"
+              className="zc-admin-theme-select"
+              value={appearance.theme}
+              onChange={(event) => setAppearance(writeAppearancePreference({ theme: event.target.value as ThemeId }))}
+            >
+              {(Object.keys(THEMES) as ThemeId[]).map((id) => (
+                <option key={id} value={id}>{THEME_NAMES[id]}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="zc-admin-mode-toggle"
+              aria-label={`切换明暗模式，当前：${THEME_MODE_NAMES[appearance.mode]}`}
+              title={`当前明暗：${THEME_MODE_NAMES[appearance.mode]}，点击切换`}
+              onClick={() => {
+                const order: ThemeModePreference[] = ['system', 'light', 'dark'];
+                const next = order[(order.indexOf(appearance.mode) + 1) % order.length]!;
+                setAppearance(writeAppearancePreference({ mode: next }));
+              }}
+            >
+              {THEME_MODE_NAMES[appearance.mode]}
+            </button>
+          </div>
           <a className="zc-admin-app-link" href={`${baseUrl}/`}>打开记账应用</a>
           {account ? (
             <>

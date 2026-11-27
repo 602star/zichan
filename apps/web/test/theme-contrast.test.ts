@@ -26,6 +26,10 @@ describe('theme text contrast', () => {
         }
         const buttonRatio = contrast(tokens['--on-accent'], tokens['--accent']);
         expect(buttonRatio, `${mode} ${name} primary button: ${buttonRatio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+        for (const sidebarText of ['--sidebar-fg', '--sidebar-muted']) {
+          const sidebarRatio = contrast(tokens[sidebarText], tokens['--sidebar-bg']);
+          expect(sidebarRatio, `${mode} ${name} ${sidebarText} on --sidebar-bg: ${sidebarRatio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+        }
       }
     }
   });

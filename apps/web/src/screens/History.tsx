@@ -431,7 +431,10 @@ export function History() {
                 {filtered.map((event) => (
                   <tr key={event.id} role="button" tabIndex={0} aria-label={`查看详情：${historyListSummary(event, snap)}`} aria-expanded={detailOpen && selected?.id === event.id} onClick={() => openDetail(event)} onKeyDown={(keyEvent) => { if (keyEvent.key === 'Enter' || keyEvent.key === ' ') { keyEvent.preventDefault(); openDetail(event); } }} style={{ cursor: 'pointer', background: detailOpen && selected?.id === event.id ? 'var(--surface-2)' : undefined }}>
                     <td data-label="时间" style={tdStyle}>{formatHistoryListTime(event.at)}</td>
-                    <td data-label="操作" style={{ ...tdStyle, whiteSpace: 'normal', minWidth: 220 }}>{historyListSummary(event, snap)}</td>
+                    <td data-label="操作" style={{ ...tdStyle, whiteSpace: 'normal', minWidth: 220 }}>
+                      <span className={`zc-history-op-tag${event.kind === 'resolution' ? ' is-resolution' : event.kind === 'operation' ? ` is-${event.log.op}` : ''}`}>{eventKindLabel(event)}</span>
+                      {historyListSummary(event, snap)}
+                    </td>
                   </tr>
                 ))}
                 {filtered.length === 0 && <tr><td className="zc-card-table-empty" style={{ ...tdStyle, color: 'var(--text-tertiary)' }} colSpan={2}>暂无匹配的历史记录</td></tr>}
@@ -449,7 +452,7 @@ export function History() {
             keyOf={(event) => event.id}
             timeOf={(event) => event.at}
             renderCompact={(event) => <>{formatHistoryClock(event.at)} · {historyListSummary(event, snap)}</>}
-            renderEntry={(event) => <div className="zc-history-event-line"><time dateTime={event.at}>{formatHistoryClock(event.at)}</time><span>{historyListSummary(event, snap)}</span></div>}
+            renderEntry={(event) => <div className="zc-history-event-line"><time dateTime={event.at}>{formatHistoryClock(event.at)}</time><span><span className={`zc-history-op-tag${event.kind === 'resolution' ? ' is-resolution' : event.kind === 'operation' ? ` is-${event.log.op}` : ''}`}>{eventKindLabel(event)}</span>{historyListSummary(event, snap)}</span></div>}
             renderSummary={(rows) => <span style={{ fontSize: 'var(--fs-meta)', color: 'var(--text-tertiary)' }}>操作 {rows.filter((event) => event.kind === 'operation').length} · 批量 {rows.filter((event) => event.kind === 'batch').length} · 冲突 {rows.filter((event) => event.kind === 'resolution').length}</span>}
             onOpen={openDetail}
             emptyText="该时间范围内没有操作历史。"

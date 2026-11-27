@@ -6,7 +6,10 @@
   box-sizing: border-box;
 }
 .zc-admin-frame { --admin-nav-width: 224px; min-height: 100dvh; }
-.zc-admin-topbar { display: grid; grid-template-columns: var(--admin-nav-width) minmax(0, 1fr); min-height: 76px; border-bottom: 1px solid var(--border); background: var(--surface); box-sizing: border-box; }
+.zc-admin-topbar { display: grid; grid-template-columns: var(--admin-nav-width) minmax(0, 1fr); min-height: 76px; border-bottom: 2px solid var(--border-strong); box-shadow: 0 2px 0 var(--bg), 0 3px 0 var(--border); background: var(--surface); box-sizing: border-box; }
+.zc-admin-appearance-controls { display: inline-flex; align-items: center; gap: 6px; }
+.zc-admin-root .zc-admin-theme-select { min-height: 36px; padding: 4px 8px; font-size: var(--fs-caption); }
+.zc-admin-root .zc-admin-mode-toggle { min-height: 36px; padding: 4px 10px; font-size: var(--fs-caption); }
 .zc-admin-brand { display: flex; gap: 12px; align-items: center; min-width: 0; padding: 14px 26px; background: var(--sidebar-bg); color: var(--sidebar-fg); }
 .zc-admin-brand .zc-brand-mark { flex: none; color: var(--sidebar-brand); }
 .zc-admin-brand-copy { display: grid; min-width: 0; line-height: 1.3; }
@@ -64,10 +67,10 @@
 .zc-admin-root textarea { display: block; box-sizing: border-box; width: 100%; max-width: 520px; min-height: 80px; padding: 10px; font: inherit; color: var(--text-primary); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); }
 .zc-admin-root pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .zc-admin-root tbody tr:hover { background: var(--surface-2); }
-.zc-admin-panel { min-width: 0; margin-top: 16px; padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface); }
+.zc-admin-panel { min-width: 0; margin-top: 16px; padding: var(--sp-5); border: 1px solid var(--border); border-top: 2px solid var(--border-strong); border-radius: var(--r-md); background: var(--surface); }
 .zc-admin-panel-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 16px; }
 .zc-admin-panel-header > strong { font-size: var(--fs-title); font-weight: var(--fw-bold); }
-.zc-admin-stat { display: flex; flex-direction: column; min-width: 0; min-height: 108px; padding: 16px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); overflow-wrap: anywhere; box-sizing: border-box; }
+.zc-admin-stat { display: flex; flex-direction: column; min-width: 0; min-height: 108px; padding: 16px; border: 1px solid var(--border); border-top: 2px solid var(--border-strong); border-radius: var(--r-md); background: var(--surface-2); overflow-wrap: anywhere; box-sizing: border-box; }
 .zc-admin-stat-label, .zc-admin-stat-hint { color: var(--text-secondary); font-size: var(--fs-caption); }
 .zc-admin-stat-value { margin: 6px 0; font-family: var(--font-numeric); font-size: var(--fs-display); font-weight: var(--fw-bold); line-height: 1.25; font-variant-numeric: tabular-nums; }
 .zc-admin-stat[data-tone="warn"] .zc-admin-stat-value { color: var(--warning); }
@@ -75,7 +78,7 @@
 .zc-admin-stat-hint { margin-top: auto; padding-top: 6px; line-height: 1.45; }
 .zc-admin-shell { display: grid; grid-template-columns: var(--admin-nav-width) minmax(0, 1fr); align-items: start; }
 /* The rail owns the full column; its navigation scrolls independently inside it. */
-.zc-admin-nav-rail { align-self: stretch; min-width: 0; min-height: calc(100dvh - 76px); background: var(--sidebar-bg); border-right: 1px solid var(--sidebar-active); }
+.zc-admin-nav-rail { align-self: stretch; min-width: 0; min-height: calc(100dvh - 76px); background: var(--sidebar-bg); border-right: 1px solid var(--sidebar-active); box-shadow: inset -1px 0 0 color-mix(in srgb, var(--sidebar-fg) 12%, transparent), 3px 0 10px rgba(20, 16, 12, 0.07); }
 .zc-admin-nav { display: grid; align-content: start; gap: 14px; position: sticky; top: 76px; padding: 16px 14px 20px; background: var(--sidebar-bg); color: var(--sidebar-fg); height: calc(100dvh - 76px); min-height: calc(100dvh - 76px); max-height: calc(100dvh - 76px); overflow-y: auto; overscroll-behavior-y: contain; box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--sidebar-muted) var(--sidebar-bg); }
 @media (min-width: 1024px) {
   .zc-admin-topbar { position: sticky; top: 0; z-index: 20; height: 76px; }
@@ -84,10 +87,11 @@
 .zc-admin-nav-intro { display: grid; gap: 4px; padding: 0 12px 14px; border-bottom: 1px solid var(--sidebar-active); color: var(--sidebar-fg); font-weight: var(--fw-bold); }
 .zc-admin-nav-intro small { margin: 0; color: var(--sidebar-muted); font-weight: var(--fw-regular); overflow-wrap: anywhere; }
 .zc-admin-nav-group { display: grid; gap: 3px; }
-.zc-admin-nav a { display: flex; align-items: center; gap: 11px; min-height: 40px; padding: 8px 12px; border-radius: var(--r-sm); text-decoration: none; color: var(--sidebar-fg); box-sizing: border-box; }
+.zc-admin-nav a { position: relative; display: flex; align-items: center; gap: 11px; min-height: 40px; padding: 8px 12px; border-radius: var(--r-sm); text-decoration: none; color: var(--sidebar-fg); box-sizing: border-box; }
 .zc-admin-nav a svg { flex: none; }
 .zc-admin-nav a:hover { background: var(--sidebar-active); color: var(--sidebar-fg); }
 .zc-admin-nav a[data-active="true"] { background: var(--sidebar-active); color: var(--sidebar-brand); font-weight: var(--fw-bold); }
+.zc-admin-nav a[data-active="true"]::before { content: ''; position: absolute; left: 0; top: 50%; width: 3px; height: 18px; transform: translateY(-50%); border-radius: var(--r-seal); background: var(--accent); }
 .zc-admin-content { min-width: 0; padding: 28px clamp(20px, 3vw, 42px) 56px; max-width: clamp(1540px, 78vw, 2200px); width: 100%; margin: 0 auto; box-sizing: border-box; }
 .zc-admin-nav-heading { display: block; padding: 0 12px 5px; color: var(--sidebar-muted); font-size: var(--fs-meta); font-weight: var(--fw-medium); }
 .zc-admin-nav-footer { display: none; }

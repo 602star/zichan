@@ -4,12 +4,30 @@ const PAGE_WIDTH = 1240;
 const PAGE_HEIGHT = 1754;
 const PDF_WIDTH = 595.28;
 const PDF_HEIGHT = 841.89;
-const MARGIN = 58;
+const MARGIN = 60;
 const ROW_HEIGHT = 44;
-const HEADER_HEIGHT = 52;
-const FIRST_TABLE_TOP = 190;
-const NEXT_TABLE_TOP = 105;
+const HEADER_HEIGHT = 50;
+const FIRST_TABLE_TOP = 212;
+const NEXT_TABLE_TOP = 128;
 const encoder = new TextEncoder();
+
+// 大福帳 · 纸本清册 palette — matches DESIGN.md light archival paper, sumi ink,
+// vermilion seal, income indigo, expense crimson, and warning ochre.
+const PDF_PAPER = '#faf8f3';
+const PDF_SURFACE_ALT = '#f4f1e9';
+const PDF_INK = '#211d18';
+const PDF_INK_SECONDARY = '#565048';
+const PDF_INK_TERTIARY = '#615b52';
+const PDF_RULE = '#d2cbbd';
+const PDF_RULE_STRONG = '#3a342c';
+const PDF_VERMILION = '#b63226';
+const PDF_VERMILION_SOFT = '#f2ded9';
+const PDF_POSITIVE = '#2b6079';
+const PDF_NEGATIVE = '#a72f24';
+const PDF_WARNING = '#76531c';
+
+const FONT_TEXT = '"LXGW WenKai Screen", "PingFang SC", "Microsoft YaHei", sans-serif';
+const FONT_NUM = '"DIN Alternate", "Bahnschrift", "Segoe UI", "Helvetica Neue", sans-serif';
 
 export interface ReportPdfInput {
   title: string;
@@ -47,6 +65,12 @@ function fitText(context: CanvasRenderingContext2D, value: string, width: number
   return `${clean.slice(0, Math.max(0, left))}…`;
 }
 
+function looksNumeric(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === '—' || trimmed === '-') return false;
+  return /^[+\-−¥$€£]?\s*\d[\d,.\s]*(%|(?:\s*[A-Z]{2,6}))?$/.test(trimmed);
+}
+
 function columnWidths(table: Table): number[] {
   const available = PAGE_WIDTH - MARGIN * 2;
   const scores = table.headers.map((header, index) => {
@@ -60,6 +84,44 @@ function columnWidths(table: Table): number[] {
   return scores.map((score) => available * score / total);
 }
 
+function drawDoubleRule(context: CanvasRenderingContext2D, left: number, right: number, y: number): void {
+  context.strokeStyle = PDF_RULE_STRONG;
+  context.lineWidth = 2.2;
+  context.beginPath();
+  context.moveTo(left, y);
+  context.lineTo(right, y);
+  context.stroke();
+
+  context.strokeStyle = PDF_RULE;
+  context.lineWidth = 1;
+  context.beginPath();
+  context.moveTo(left, y + 4.5);
+  context.lineTo(right, y + 4.5);
+  context.stroke();
+}
+
+function drawFolioSeal(context: CanvasRenderingContext2D, rightX: number, topY: number): void {
+  const width = 104;
+  const height = 34;
+  const x = rightX - width;
+  context.save();
+  context.translate(x + width / 2, topY + height / 2);
+  context.rotate(-0.025);
+  context.fillStyle = PDF_VERMILION_SOFT;
+  context.fillRect(-width / 2, -height / 2, width, height);
+  context.strokeStyle = PDF_VERMILION;
+  context.lineWidth = 2;
+  context.strokeRect(-width / 2, -height / 2, width, height);
+  context.lineWidth = 0.8;
+  context.strokeRect(-width / 2 + 3.5, -height / 2 + 3.5, width - 7, height - 7);
+  context.fillStyle = PDF_VERMILION;
+  context.font = `700 17px ${FONT_TEXT}`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillText('有本清册', 0, 1);
+  context.restore();
+}
+
 function drawTable(
   context: CanvasRenderingContext2D,
   table: Table,
@@ -67,43 +129,76 @@ function drawTable(
   top: number,
   widths: number[],
 ): void {
+  const tableWidth = PAGE_WIDTH - MARGIN * 2;
+  const numericColumn = table.headers.map((_, colIdx) => {
+    const sample = rows.slice(0, 20).map((row) => row[colIdx]?.v ?? '').filter((v) => v && v !== '—');
+    return sample.length > 0 && sample.every(looksNumeric);
+  });
+
+  // Open ledger header: light tinted band framed by double hairline ink rules.
+  context.fillStyle = PDF_SURFACE_ALT;
+  context.fillRect(MARGIN, top, tableWidth, HEADER_HEIGHT);
+  drawDoubleRule(context, MARGIN, MARGIN + tableWidth, top);
+
   context.textBaseline = 'middle';
-  context.font = '700 19px "Microsoft YaHei", "PingFang SC", sans-serif';
-  context.fillStyle = '#f1f5f9';
-  context.fillRect(MARGIN, top, PAGE_WIDTH - MARGIN * 2, HEADER_HEIGHT);
-  context.strokeStyle = '#cbd5e1';
-  context.lineWidth = 1;
+  context.font = `700 18px ${FONT_TEXT}`;
+  context.fillStyle = PDF_INK;
   let x = MARGIN;
   for (let index = 0; index < table.headers.length; index += 1) {
     const width = widths[index]!;
-    context.strokeRect(x, top, width, HEADER_HEIGHT);
-    context.fillStyle = '#0f172a';
-    context.fillText(fitText(context, table.headers[index]!, width - 20), x + 10, top + HEADER_HEIGHT / 2);
+    const alignRight = numericColumn[index];
+    context.textAlign = alignRight ? 'right' : 'left';
+    const textX = alignRight ? x + width - 12 : x + 12;
+    context.fillText(fitText(context, table.headers[index]!, width - 24), textX, top + HEADER_HEIGHT / 2 + 2);
     x += width;
   }
 
-  context.font = '17px "Microsoft YaHei", "PingFang SC", sans-serif';
+  context.strokeStyle = PDF_RULE_STRONG;
+  context.lineWidth = 1.4;
+  context.beginPath();
+  context.moveTo(MARGIN, top + HEADER_HEIGHT);
+  context.lineTo(MARGIN + tableWidth, top + HEADER_HEIGHT);
+  context.stroke();
+
+  // Ledger rows: open paper surface separated by crisp horizontal ink hairlines.
   rows.forEach((row, rowIndex) => {
     const y = top + HEADER_HEIGHT + rowIndex * ROW_HEIGHT;
-    context.fillStyle = rowIndex % 2 ? '#f8fafc' : '#ffffff';
-    context.fillRect(MARGIN, y, PAGE_WIDTH - MARGIN * 2, ROW_HEIGHT);
     let cellX = MARGIN;
     row.forEach((cell, columnIndex) => {
       const width = widths[columnIndex]!;
-      context.strokeStyle = '#e2e8f0';
-      context.strokeRect(cellX, y, width, ROW_HEIGHT);
-      context.fillStyle = cell.color?.includes('positive') ? '#047857'
-        : cell.color?.includes('negative') ? '#b91c1c'
-          : '#1e293b';
-      context.font = `${cell.bold ? '700' : '400'} 17px "Microsoft YaHei", "PingFang SC", sans-serif`;
-      context.fillText(fitText(context, cell.v, width - 20), cellX + 10, y + ROW_HEIGHT / 2);
+      const isNum = numericColumn[columnIndex] || looksNumeric(cell.v);
+      context.fillStyle = cell.color?.includes('positive') ? PDF_POSITIVE
+        : cell.color?.includes('negative') ? PDF_NEGATIVE
+          : cell.color?.includes('warning') ? PDF_WARNING
+            : PDF_INK;
+      context.font = `${cell.bold ? '700' : '400'} 17px ${isNum ? FONT_NUM : FONT_TEXT}`;
+      context.textAlign = isNum ? 'right' : 'left';
+      const textX = isNum ? cellX + width - 12 : cellX + 12;
+      context.fillText(fitText(context, cell.v, width - 24), textX, y + ROW_HEIGHT / 2);
       cellX += width;
     });
+
+    context.strokeStyle = PDF_RULE;
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(MARGIN, y + ROW_HEIGHT);
+    context.lineTo(MARGIN + tableWidth, y + ROW_HEIGHT);
+    context.stroke();
   });
+
+  // Closing bottom rule.
+  const bottomY = top + HEADER_HEIGHT + rows.length * ROW_HEIGHT;
+  context.strokeStyle = PDF_RULE_STRONG;
+  context.lineWidth = 1.8;
+  context.beginPath();
+  context.moveTo(MARGIN, bottomY);
+  context.lineTo(MARGIN + tableWidth, bottomY);
+  context.stroke();
+  context.textAlign = 'left';
 }
 
 function jpegBytes(canvas: HTMLCanvasElement): Uint8Array {
-  const encoded = canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+  const encoded = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
   if (!encoded) throw new Error('PDF 页面图像编码失败');
   const binary = atob(encoded);
   const bytes = new Uint8Array(binary.length);
@@ -113,34 +208,75 @@ function jpegBytes(canvas: HTMLCanvasElement): Uint8Array {
 
 function renderPages(input: ReportPdfInput): Uint8Array[] {
   const generatedAt = input.generatedAt ?? new Date();
-  const firstCapacity = Math.max(1, Math.floor((PAGE_HEIGHT - FIRST_TABLE_TOP - HEADER_HEIGHT - 95) / ROW_HEIGHT));
-  const nextCapacity = Math.max(1, Math.floor((PAGE_HEIGHT - NEXT_TABLE_TOP - HEADER_HEIGHT - 95) / ROW_HEIGHT));
+  const firstCapacity = Math.max(1, Math.floor((PAGE_HEIGHT - FIRST_TABLE_TOP - HEADER_HEIGHT - 100) / ROW_HEIGHT));
+  const nextCapacity = Math.max(1, Math.floor((PAGE_HEIGHT - NEXT_TABLE_TOP - HEADER_HEIGHT - 100) / ROW_HEIGHT));
   const pages = paginateReportRows(input.table.rows, firstCapacity, nextCapacity);
   const widths = columnWidths(input.table);
+  const rightEdge = PAGE_WIDTH - MARGIN;
+
   return pages.map((rows, pageIndex) => {
     const canvas = document.createElement('canvas');
     canvas.width = PAGE_WIDTH;
     canvas.height = PAGE_HEIGHT;
     const context = canvas.getContext('2d');
     if (!context) throw new Error('当前浏览器不能创建 PDF 绘图画布');
-    context.fillStyle = '#ffffff';
+
+    // Warm archival ledger paper canvas.
+    context.fillStyle = PDF_PAPER;
     context.fillRect(0, 0, PAGE_WIDTH, PAGE_HEIGHT);
-    context.fillStyle = '#0f172a';
-    context.font = '700 38px "Microsoft YaHei", "PingFang SC", sans-serif';
-    context.fillText(input.title, MARGIN, 72);
-    context.font = '19px "Microsoft YaHei", "PingFang SC", sans-serif';
-    context.fillStyle = '#475569';
-    context.fillText(`范围：${input.range}`, MARGIN, 113);
-    context.fillText(`生成：${generatedAt.toLocaleString('zh-CN')} · 报表币种：${input.table.reportCurrencyCode ?? '未设置'}`, MARGIN, 145);
-    if (input.table.valuationComplete === false) {
-      context.fillStyle = '#b45309';
-      context.fillText(`估值不完整：缺少 ${(input.table.missingRateAssetCodes ?? []).join('、')} 的汇率`, MARGIN, 174);
+
+    // Top folio double hairline rule.
+    drawDoubleRule(context, MARGIN, rightEdge, 44);
+
+    if (pageIndex === 0) {
+      context.textBaseline = 'alphabetic';
+      context.textAlign = 'left';
+      context.fillStyle = PDF_INK;
+      context.font = `700 36px ${FONT_TEXT}`;
+      context.fillText(input.title, MARGIN, 102);
+
+      context.font = `18px ${FONT_TEXT}`;
+      context.fillStyle = PDF_INK_SECONDARY;
+      context.fillText(`统计范围：${input.range}`, MARGIN, 140);
+      context.fillText(`立册时间：${generatedAt.toLocaleString('zh-CN')} · 本位币：${input.table.reportCurrencyCode ?? '未设置'}`, MARGIN, 170);
+
+      if (input.table.valuationComplete === false) {
+        context.fillStyle = PDF_WARNING;
+        context.fillText(`估值提示：缺少 ${(input.table.missingRateAssetCodes ?? []).join('、')} 的汇率标记`, MARGIN, 198);
+      }
+      drawFolioSeal(context, rightEdge, 68);
+    } else {
+      context.textBaseline = 'alphabetic';
+      context.textAlign = 'left';
+      context.fillStyle = PDF_INK_SECONDARY;
+      context.font = `700 20px ${FONT_TEXT}`;
+      context.fillText(`${input.title}（续页）`, MARGIN, 92);
+      context.textAlign = 'right';
+      context.font = `17px ${FONT_TEXT}`;
+      context.fillStyle = PDF_INK_TERTIARY;
+      context.fillText(`${input.range} · ${input.table.reportCurrencyCode ?? ''}`.trim(), rightEdge, 92);
+      context.textAlign = 'left';
     }
+
     drawTable(context, input.table, rows, pageIndex === 0 ? FIRST_TABLE_TOP : NEXT_TABLE_TOP, widths);
-    context.fillStyle = '#64748b';
-    context.font = '17px "Microsoft YaHei", "PingFang SC", sans-serif';
+
+    // Ledger footer rule & colophon pagination.
+    const footerRuleY = PAGE_HEIGHT - 74;
+    context.strokeStyle = PDF_RULE;
+    context.lineWidth = 1;
+    context.beginPath();
+    context.moveTo(MARGIN, footerRuleY);
+    context.lineTo(rightEdge, footerRuleY);
+    context.stroke();
+
+    context.fillStyle = PDF_INK_TERTIARY;
+    context.font = `16px ${FONT_TEXT}`;
+    context.textBaseline = 'middle';
+    context.textAlign = 'left';
+    context.fillText('有本 · 大福帳 · 个人收支与多资产总账', MARGIN, PAGE_HEIGHT - 44);
+    context.font = `16px ${FONT_NUM}`;
     context.textAlign = 'right';
-    context.fillText(`第 ${pageIndex + 1} / ${pages.length} 页`, PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 45);
+    context.fillText(`第 ${pageIndex + 1} / ${pages.length} 页`, rightEdge, PAGE_HEIGHT - 44);
     context.textAlign = 'left';
     return jpegBytes(canvas);
   });

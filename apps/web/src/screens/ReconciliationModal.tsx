@@ -48,6 +48,7 @@ export function ReconciliationModal(props: Props) {
   const [search, setSearch] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [sealed, setSealed] = useState(false);
   const flight = useRef(false);
   const [sessionItems, setSessionItems] = useState<ReconciliationItem[]>([]);
   const [sessionTransactions, setSessionTransactions] = useState<Record<string, Transaction>>({});
@@ -115,7 +116,11 @@ export function ReconciliationModal(props: Props) {
     try {
       await closeReconciliation(store, { accountId, assetId, statementDate, statementBalance,
         selectedTransactionIds: selectedIds, createAdjustment, expectedDifference: preview!.difference, note: note.trim() || undefined });
-      props.onChanged(); props.onClose();
+      props.onChanged();
+      setSealed(true);
+      const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+      if (!reducedMotion) await new Promise((resolve) => setTimeout(resolve, 260));
+      props.onClose();
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); setAdjustmentFor(null); setRetry((value) => value + 1); }
     finally { flight.current = false; setBusy(false); }
   }
@@ -131,7 +136,15 @@ export function ReconciliationModal(props: Props) {
     panelClassName="zc-entity-modal zc-reconciliation-modal"
     panelStyle={{ width: 'min(1120px, calc(100vw - 24px))', maxHeight: '92dvh', overflow: 'hidden', padding: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)' }}
       header={<>
-        <div className="zc-reconciliation-head"><div><h2 id={titleId}>{session ? '对账详情' : '核对账单'}</h2><p className="zc-caption">对照银行或钱包账单确认已有流水，不会再次记录同一笔收支。</p></div>
+        <div className="zc-reconciliation-head">
+          <div>
+            <div className="zc-reconciliation-title-row">
+              <h2 id={titleId}>{session ? '对账详情' : '核对账单'}</h2>
+              {session && <span className="zc-ledger-stamp zc-ledger-stamp--session">已核对入册</span>}
+              {!session && sealed && <span className="zc-ledger-stamp zc-ledger-stamp--session is-fresh" role="status">已落印入册</span>}
+            </div>
+            <p className="zc-caption">对照银行或钱包账单确认已有流水，不会再次记录同一笔收支。</p>
+          </div>
       <button type="button" className="zc-btn zc-btn--icon" aria-label="关闭" onClick={requestClose} disabled={busy}><X size={20} aria-hidden="true" /></button></div>
       </>}
       footer={<>

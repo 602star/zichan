@@ -22,8 +22,8 @@
 .zc-home-calendar-day, .zc-home-calendar-blank { min-width: 0; min-height: 100px; border: 0; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--surface); }
 .zc-home-calendar-day { position: relative; padding: var(--sp-2); display: flex; flex-direction: column; gap: 2px; text-align: left; color: var(--text-primary); font: inherit; cursor: pointer; }
 .zc-home-calendar-day:hover { background: var(--surface-2); }
-.zc-home-calendar-day.is-today .zc-home-calendar-dayhead > span { text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 4px; }
-.zc-home-calendar-day.is-selected { background: var(--accent-soft); box-shadow: inset 0 -2px var(--accent); }
+.zc-home-calendar-day.is-today .zc-home-calendar-dayhead > span:first-child { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 5px; border: 1.5px solid var(--accent); border-radius: var(--r-round); background: color-mix(in srgb, var(--accent-soft) 65%, var(--surface)); color: var(--accent); font-weight: var(--fw-bold); text-decoration: none; }
+.zc-home-calendar-day.is-selected { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
 .zc-home-calendar-dayhead { display: flex; align-items: center; justify-content: space-between; gap: 2px; }
 .zc-home-calendar-holiday { color: var(--accent); font-size: var(--fs-meta); }
 .zc-home-calendar-subdate { color: var(--text-secondary); font-size: var(--fs-meta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }

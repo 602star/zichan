@@ -22,15 +22,15 @@ interface NotificationPreferences {
   timezone: string;
   privacyMode: boolean;
   emailEnabled: boolean;
-  daily: { enabled: boolean; hour: number; skipIfEmpty: boolean };
-  weekly: { enabled: boolean; dayOfWeek: number; hour: number };
-  monthly: { enabled: boolean; mode: 'calendar' | 'payday' | 'payday_auto'; paydayDay: number; hour: number };
-  inactivity: { enabled: boolean; days: number; cooldownDays: number; hour: number };
-  billDue: { enabled: boolean; daysBefore: number; hour: number };
-  dca: { enabled: boolean; daysBefore: number; hour: number };
-  calendar: { enabled: boolean; daysBefore: number; hour: number };
-  budgetAlert: { enabled: boolean; warnPercent: number };
-  fixedAsset: { enabled: boolean; daysBefore: number; hour: number };
+  daily: { enabled: boolean; hour: number; skipIfEmpty: boolean; channels?: string[] };
+  weekly: { enabled: boolean; dayOfWeek: number; hour: number; channels?: string[] };
+  monthly: { enabled: boolean; mode: 'calendar' | 'payday' | 'payday_auto'; paydayDay: number; hour: number; channels?: string[] };
+  inactivity: { enabled: boolean; days: number; cooldownDays: number; hour: number; channels?: string[] };
+  billDue: { enabled: boolean; daysBefore: number; hour: number; channels?: string[] };
+  dca: { enabled: boolean; daysBefore: number; hour: number; channels?: string[] };
+  calendar: { enabled: boolean; daysBefore: number; hour: number; channels?: string[] };
+  budgetAlert: { enabled: boolean; warnPercent: number; channels?: string[] };
+  fixedAsset: { enabled: boolean; daysBefore: number; hour: number; channels?: string[] };
   pushChannels: PushChannelDraft[];
 }
 
@@ -154,6 +154,95 @@ function ToggleRow({
         />
       </div>
       {checked && children && <div className="zc-notif-controls">{children}</div>}
+    </div>
+  );
+}
+
+function formatRuleChannelsBadge(channels: string[] | undefined, pushChannels: PushChannelDraft[]): string | undefined {
+  if (!channels) return undefined;
+  if (channels.length === 0) return '未选渠道';
+  const labels = channels.map((key) => {
+    if (key === 'email') return '邮件';
+    const name = key.slice('webhook:'.length);
+    const matched = pushChannels.find((ch) => ch.name === name);
+    return matched ? matched.name : name;
+  });
+  return labels.length === 1 ? `仅 ${labels[0]}` : labels.join(' + ');
+}
+
+function ChannelPicker({
+  value,
+  emailEnabled,
+  pushChannels,
+  disabled,
+  onChange,
+}: {
+  value: string[] | undefined;
+  emailEnabled: boolean;
+  pushChannels: PushChannelDraft[];
+  disabled?: boolean;
+  onChange: (next: string[] | undefined) => void;
+}) {
+  const allKeys = ['email', ...pushChannels.map((ch) => `webhook:${ch.name}`)];
+  const isAll = value === undefined;
+
+  function toggleKey(key: string) {
+    if (isAll) {
+      // Switching from "follow all" to an explicit single-channel pick (e.g. only Bark).
+      onChange([key]);
+      return;
+    }
+    const exists = value.includes(key);
+    const next = exists ? value.filter((item) => item !== key) : [...value, key];
+    // If every available channel is selected again, collapse back to "follow all".
+    if (next.length === allKeys.length && allKeys.every((k) => next.includes(k))) {
+      onChange(undefined);
+    } else {
+      onChange(next);
+    }
+  }
+
+  return (
+    <div className="zc-notif-channel-picker" role="group" aria-label="指定通知渠道">
+      <span className="zc-notif-channel-picker-label">投递渠道</span>
+      <button
+        type="button"
+        className="zc-notif-channel-chip"
+        aria-pressed={isAll}
+        disabled={disabled}
+        onClick={() => onChange(undefined)}
+      >
+        全部已启用
+      </button>
+      <button
+        type="button"
+        className={`zc-notif-channel-chip${!emailEnabled ? ' is-dimmed' : ''}`}
+        aria-pressed={!isAll && value.includes('email')}
+        disabled={disabled}
+        title={emailEnabled ? '仅发或包含 HTML 邮件' : '上方「HTML 邮件投递」未开启'}
+        onClick={() => toggleKey('email')}
+      >
+        HTML 邮件{!emailEnabled ? '（未开）' : ''}
+      </button>
+      {pushChannels.map((ch) => {
+        const key = `webhook:${ch.name}`;
+        return (
+          <button
+            key={key}
+            type="button"
+            className={`zc-notif-channel-chip${!ch.enabled ? ' is-dimmed' : ''}`}
+            aria-pressed={!isAll && value.includes(key)}
+            disabled={disabled}
+            title={ch.enabled ? `${FORMAT_LABELS[ch.format]} · ${ch.name}` : `${ch.name} 当前已停用`}
+            onClick={() => toggleKey(key)}
+          >
+            {ch.name}{!ch.enabled ? '（已停用）' : ''}
+          </button>
+        );
+      })}
+      {pushChannels.length === 0 && (
+        <span className="zc-notif-channel-picker-label">可在下方添加 Bark / 飞书等渠道后按条指定</span>
+      )}
     </div>
   );
 }
@@ -395,6 +484,8 @@ export function AccountNotificationsPanel() {
             <div className="zc-notif-list">
               <ToggleRow
                 title="每日统计（日报）"
+                badge={prefs.daily.enabled ? formatRuleChannelsBadge(prefs.daily.channels, prefs.pushChannels) : undefined}
+                badgeOk={prefs.daily.enabled && Boolean(prefs.daily.channels?.length)}
                 description="汇总当日收支、分类支出与大额消费；发送时段早于 12:00 时统计前一日。"
                 checked={prefs.daily.enabled}
                 disabled={busy}
@@ -415,10 +506,19 @@ export function AccountNotificationsPanel() {
                   />
                   <span>当日无交易时不发送</span>
                 </label>
+                <ChannelPicker
+                  value={prefs.daily.channels}
+                  emailEnabled={prefs.emailEnabled}
+                  pushChannels={prefs.pushChannels}
+                  disabled={busy}
+                  onChange={(channels) => setPrefs({ ...prefs, daily: { ...prefs.daily, channels } })}
+                />
               </ToggleRow>
 
               <ToggleRow
                 title="每周统计（周报）"
+                badge={prefs.weekly.enabled ? formatRuleChannelsBadge(prefs.weekly.channels, prefs.pushChannels) : undefined}
+                badgeOk={prefs.weekly.enabled && Boolean(prefs.weekly.channels?.length)}
                 description="总结上一完整自然周（周一至周日）的收支结余、环比变化与分类排行。"
                 checked={prefs.weekly.enabled}
                 disabled={busy}
@@ -441,11 +541,18 @@ export function AccountNotificationsPanel() {
                   disabled={busy}
                   onChange={(hour) => setPrefs({ ...prefs, weekly: { ...prefs.weekly, hour } })}
                 />
+                <ChannelPicker
+                  value={prefs.weekly.channels}
+                  emailEnabled={prefs.emailEnabled}
+                  pushChannels={prefs.pushChannels}
+                  disabled={busy}
+                  onChange={(channels) => setPrefs({ ...prefs, weekly: { ...prefs.weekly, channels } })}
+                />
               </ToggleRow>
 
               <ToggleRow
                 title="每月统计（月报）"
-                badge={prefs.monthly.enabled ? (prefs.monthly.mode === 'payday_auto' ? '智能发薪月' : prefs.monthly.mode === 'payday' ? `每月 ${prefs.monthly.paydayDay} 日` : '自然月') : undefined}
+                badge={prefs.monthly.enabled ? [prefs.monthly.mode === 'payday_auto' ? '智能发薪月' : prefs.monthly.mode === 'payday' ? `每月 ${prefs.monthly.paydayDay} 日` : '自然月', formatRuleChannelsBadge(prefs.monthly.channels, prefs.pushChannels)].filter(Boolean).join(' · ') : undefined}
                 badgeOk={prefs.monthly.enabled}
                 description="支持按工资/薪资收入自动切分发薪周期，或按固定发薪日、自然月统计。"
                 checked={prefs.monthly.enabled}
@@ -495,6 +602,13 @@ export function AccountNotificationsPanel() {
                       ? paydayDescription(prefs.monthly.paydayDay)
                       : '每月 1 日统计并发送上个自然月的收支与分类汇总。'}
                 </p>
+                <ChannelPicker
+                  value={prefs.monthly.channels}
+                  emailEnabled={prefs.emailEnabled}
+                  pushChannels={prefs.pushChannels}
+                  disabled={busy}
+                  onChange={(channels) => setPrefs({ ...prefs, monthly: { ...prefs.monthly, channels } })}
+                />
               </ToggleRow>
             </div>
           </div>
@@ -507,6 +621,8 @@ export function AccountNotificationsPanel() {
             <div className="zc-notif-list">
               <ToggleRow
                 title="未记账提醒"
+                badge={prefs.inactivity.enabled ? formatRuleChannelsBadge(prefs.inactivity.channels, prefs.pushChannels) : undefined}
+                badgeOk={prefs.inactivity.enabled && Boolean(prefs.inactivity.channels?.length)}
                 description="当连续多日未新增流水时发出提醒，并按冷却间隔避免每日重复打扰。"
                 checked={prefs.inactivity.enabled}
                 disabled={busy}
@@ -546,10 +662,19 @@ export function AccountNotificationsPanel() {
                   disabled={busy}
                   onChange={(hour) => setPrefs({ ...prefs, inactivity: { ...prefs.inactivity, hour } })}
                 />
+                <ChannelPicker
+                  value={prefs.inactivity.channels}
+                  emailEnabled={prefs.emailEnabled}
+                  pushChannels={prefs.pushChannels}
+                  disabled={busy}
+                  onChange={(channels) => setPrefs({ ...prefs, inactivity: { ...prefs.inactivity, channels } })}
+                />
               </ToggleRow>
 
               <ToggleRow
                 title="账单还款到期提醒"
+                badge={prefs.billDue.enabled ? formatRuleChannelsBadge(prefs.billDue.channels, prefs.pushChannels) : undefined}
+                badgeOk={prefs.billDue.enabled && Boolean(prefs.billDue.channels?.length)}
                 description="在信用卡或贷款账户的还款日到来前提前提醒，避免逾期。"
                 checked={prefs.billDue.enabled}
                 disabled={busy}
@@ -575,10 +700,19 @@ export function AccountNotificationsPanel() {
                   disabled={busy}
                   onChange={(hour) => setPrefs({ ...prefs, billDue: { ...prefs.billDue, hour } })}
                 />
+                <ChannelPicker
+                  value={prefs.billDue.channels}
+                  emailEnabled={prefs.emailEnabled}
+                  pushChannels={prefs.pushChannels}
+                  disabled={busy}
+                  onChange={(channels) => setPrefs({ ...prefs, billDue: { ...prefs.billDue, channels } })}
+                />
               </ToggleRow>
 
               <ToggleRow
                 title="定投计划提醒"
+                badge={prefs.dca.enabled ? formatRuleChannelsBadge(prefs.dca.channels, prefs.pushChannels) : undefined}
+                badgeOk={prefs.dca.enabled && Boolean(prefs.dca.channels?.length)}
                 description="当有待执行或即将到期的自动定投计划时发出提醒。"
                 checked={prefs.dca.enabled}
                 disabled={busy}
@@ -604,10 +738,19 @@ export function AccountNotificationsPanel() {
                   disabled={busy}
                   onChange={(hour) => setPrefs({ ...prefs, dca: { ...prefs.dca, hour } })}
                 />
+                <ChannelPicker
+                  value={prefs.dca.channels}
+                  emailEnabled={prefs.emailEnabled}
+                  pushChannels={prefs.pushChannels}
+                  disabled={busy}
+                  onChange={(channels) => setPrefs({ ...prefs, dca: { ...prefs.dca, channels } })}
+                />
               </ToggleRow>
 
               <ToggleRow
                 title="日历生日与纪念日提醒"
+                badge={prefs.calendar.enabled ? formatRuleChannelsBadge(prefs.calendar.channels, prefs.pushChannels) : undefined}
+                badgeOk={prefs.calendar.enabled && Boolean(prefs.calendar.channels?.length)}
                 description="结合首页日历中的阳历与农历生日、纪念日，提前 1~3 天发送提醒。"
                 checked={prefs.calendar.enabled}
                 disabled={busy}
@@ -633,10 +776,19 @@ export function AccountNotificationsPanel() {
                   disabled={busy}
                   onChange={(hour) => setPrefs({ ...prefs, calendar: { ...prefs.calendar, hour } })}
                 />
+                <ChannelPicker
+                  value={prefs.calendar.channels}
+                  emailEnabled={prefs.emailEnabled}
+                  pushChannels={prefs.pushChannels}
+                  disabled={busy}
+                  onChange={(channels) => setPrefs({ ...prefs, calendar: { ...prefs.calendar, channels } })}
+                />
               </ToggleRow>
 
               <ToggleRow
                 title="预算超支预警"
+                badge={prefs.budgetAlert.enabled ? formatRuleChannelsBadge(prefs.budgetAlert.channels, prefs.pushChannels) : undefined}
+                badgeOk={prefs.budgetAlert.enabled && Boolean(prefs.budgetAlert.channels?.length)}
                 description="当某分类本月支出达到预警线或 100% 超支时即时推送提醒，同一档位当月只提醒一次。"
                 checked={prefs.budgetAlert.enabled}
                 disabled={busy}
@@ -656,10 +808,19 @@ export function AccountNotificationsPanel() {
                   />
                   <span>%（达到 100% 时再次提醒超支）</span>
                 </label>
+                <ChannelPicker
+                  value={prefs.budgetAlert.channels}
+                  emailEnabled={prefs.emailEnabled}
+                  pushChannels={prefs.pushChannels}
+                  disabled={busy}
+                  onChange={(channels) => setPrefs({ ...prefs, budgetAlert: { ...prefs.budgetAlert, channels } })}
+                />
               </ToggleRow>
 
               <ToggleRow
                 title="物品耗材与质保到期提醒"
+                badge={prefs.fixedAsset.enabled ? formatRuleChannelsBadge(prefs.fixedAsset.channels, prefs.pushChannels) : undefined}
+                badgeOk={prefs.fixedAsset.enabled && Boolean(prefs.fixedAsset.channels?.length)}
                 description="检查物品资产的质保、维保、退货/价保截止日期以及耗材低余量，提前发出提醒。"
                 checked={prefs.fixedAsset.enabled}
                 disabled={busy}
@@ -684,6 +845,13 @@ export function AccountNotificationsPanel() {
                   value={prefs.fixedAsset.hour}
                   disabled={busy}
                   onChange={(hour) => setPrefs({ ...prefs, fixedAsset: { ...prefs.fixedAsset, hour } })}
+                />
+                <ChannelPicker
+                  value={prefs.fixedAsset.channels}
+                  emailEnabled={prefs.emailEnabled}
+                  pushChannels={prefs.pushChannels}
+                  disabled={busy}
+                  onChange={(channels) => setPrefs({ ...prefs, fixedAsset: { ...prefs.fixedAsset, channels } })}
                 />
               </ToggleRow>
             </div>

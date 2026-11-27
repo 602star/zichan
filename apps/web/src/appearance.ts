@@ -23,7 +23,7 @@ export interface AppearancePreference {
 
 export const DEFAULT_APPEARANCE: AppearancePreference = { theme: 'terracotta', mode: 'system' };
 
-const THEME_IDS: readonly ThemeId[] = ['terracotta', 'sage', 'plum'];
+const THEME_IDS: readonly ThemeId[] = ['terracotta', 'indigo', 'sage', 'plum', 'ochre', 'ivory'];
 
 export function isThemeId(value: unknown): value is ThemeId {
   return typeof value === 'string' && (THEME_IDS as readonly string[]).includes(value);

@@ -66,14 +66,23 @@ export function CompositionDonut(props: {
   const { ariaLabel, slices, totalText, totalCaption, selectedKey, emptyText = '本月还没有可归类的支出', testId } = props;
   const total = slices.reduce((sum, slice) => sum + Math.max(0, slice.weight), 0);
 
+  const visibleSlices = slices.filter((slice) => total > 0 && Math.max(0, slice.weight) > 0);
   const arcs: string[] = [];
   let cursor = 0;
-  for (const slice of slices) {
-    const span = total > 0 ? Math.max(0, slice.weight) / total : 0;
-    if (span <= 0) continue;
+  for (const slice of visibleSlices) {
+    const span = Math.max(0, slice.weight) / total;
     const from = cursor * 360;
     cursor += span;
-    arcs.push(`${slice.color} ${from.toFixed(3)}deg ${(cursor * 360).toFixed(3)}deg`);
+    const to = cursor * 360;
+    const spanDeg = to - from;
+    if (visibleSlices.length > 1 && spanDeg > 4) {
+      const gap = 0.7;
+      arcs.push(`var(--surface) ${from.toFixed(3)}deg ${(from + gap).toFixed(3)}deg`);
+      arcs.push(`${slice.color} ${(from + gap).toFixed(3)}deg ${(to - gap).toFixed(3)}deg`);
+      arcs.push(`var(--surface) ${(to - gap).toFixed(3)}deg ${to.toFixed(3)}deg`);
+    } else {
+      arcs.push(`${slice.color} ${from.toFixed(3)}deg ${to.toFixed(3)}deg`);
+    }
   }
 
   const normalised = (weight: number) => (total > 0 ? Math.max(0, weight) / total : 0);

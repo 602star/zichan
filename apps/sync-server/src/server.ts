@@ -53,6 +53,7 @@ import { createJobRunner } from './jobs.js';
 import { createHashOffload } from './hash-offload.js';
 import { parseAlertChannels, type EmailChannel } from './alert-channels.js';
 import { sendEmail } from './smtp-client.js';
+import { renderNoticeEmailHtml, renderVerificationCodeEmailHtml } from './email-theme.js';
 import {
   defaultUserNotificationPreferences,
   maskUserNotificationPreferences,
@@ -854,7 +855,15 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           continue;
         }
         try {
-          await sendAccountMessage(item.email, item.subject, item.body);
+          const html = renderNoticeEmailHtml({
+            badge: '账号容量通知',
+            sealText: '容量提醒',
+            title: item.subject,
+            tone: 'warning',
+            body: item.body,
+            footerText: '有本 · 大福帳 · 可在「我的账号」查看当前存储用量与清理建议。',
+          });
+          await sendAccountMessage(item.email, item.subject, item.body, html);
           await store.finishAccountEmail(item.id, 'sent', item.attempts);
         } catch (error) {
           await store.finishAccountEmail(item.id, 'failed', item.attempts);
@@ -1877,8 +1886,18 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
           new Date(Date.now() + 15 * 60_000).toISOString());
         if (issued) {
           try {
+            const resetHtml = renderVerificationCodeEmailHtml({
+              badge: '账号安全验证',
+              sealText: '安全核验',
+              title: '重置账号密码',
+              lead: '您正在请求重置有本账号的登录密码，请在页面中输入下方一次性重置码：',
+              code,
+              validityNote: '该重置码 15 分钟内有效，且仅可使用一次。',
+              safetyNote: '若您没有发起密码重置，请忽略此邮件并检查账号安全。',
+            });
             await sendAccountMessage(issued.email, '资产账本账号密码重置码',
-              `您的账号密码重置码：${code}\n\n15 分钟内有效，只能使用一次。若您没有请求重置，请忽略此邮件。`);
+              `您的账号密码重置码：${code}\n\n15 分钟内有效，只能使用一次。若您没有请求重置，请忽略此邮件。`,
+              resetHtml);
           } catch (error) {
             await store.revokeEmailPasswordReset(issued.accountId, codeHash);
             await log('error', 'password_reset_email_failed', 'Password reset email delivery failed',
@@ -2385,7 +2404,16 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
         const hash = createHmac('sha256', secret).update(`${user.username}:${code}`).digest('hex');
         await store.startEmailVerification(user.username, email, hash);
         try {
-          await sendAccountMessage(email, '资产账本邮箱验证码', `您的邮箱验证码是：${code}\n\n验证码 10 分钟内有效。若您没有请求验证，请忽略此邮件。`);
+          const verifyHtml = renderVerificationCodeEmailHtml({
+            badge: '邮箱身份验证',
+            sealText: '邮箱核验',
+            title: '验证绑定邮箱',
+            lead: '您正在为有本账号绑定或验证电子邮箱，请在页面中输入下方验证码：',
+            code,
+            validityNote: '该验证码 10 分钟内有效。',
+            safetyNote: '若您没有请求验证此邮箱，请忽略此邮件。',
+          });
+          await sendAccountMessage(email, '资产账本邮箱验证码', `您的邮箱验证码是：${code}\n\n验证码 10 分钟内有效。若您没有请求验证，请忽略此邮件。`, verifyHtml);
         } catch (error) {
           await store.clearPendingEmailVerification(user.username, hash);
           await log('warn', 'account_email_verification_send_failed', 'Account email verification delivery failed', { username: user.username, detail: { reason: error instanceof Error ? error.message : String(error) } });

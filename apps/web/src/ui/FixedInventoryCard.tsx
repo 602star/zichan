@@ -32,7 +32,7 @@ export function FixedInventoryCard({ item, icon, selected, onChoose, onOpen, onU
       <div className="zc-fixed-card-name">
         <h3><button type="button" className="zc-workspace-link" onClick={onOpen}>{item.name}</button></h3>
         <span className="zc-caption">{[item.categoryParent, item.category].filter(Boolean).join(' / ')}</span>
-        <span className="zc-fixed-card-status">{item.raw.archivedAt ? '已归档 · ' : ''}{item.status}</span>
+        <span className={`zc-fixed-card-status${!item.raw.archivedAt && item.raw.status === 'active' ? ' is-active' : item.raw.archivedAt || !['active', 'stored'].includes(item.raw.status) ? ' is-disposed' : ''}`}>{item.raw.archivedAt ? '已归档 · ' : ''}{item.status}</span>
       </div>
     </div>
     <div className="zc-fixed-card-context">

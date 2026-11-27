@@ -25,7 +25,7 @@ import { draftSetting, saveLedgerSetting } from '../db/ledger-settings.js';
 import { DeviceSecurityPanel } from '../ui/DeviceSecurityPanel.js';
 import { LedgerProtectionPanel } from '../ui/LedgerProtectionPanel.js';
 import { accountProtection } from '../account-protection.js';
-import { DARK_THEMES, THEME_NAMES, THEME_MODE_NAMES, THEMES, type ThemeId, type ThemeMode, type ThemeModePreference } from '../theme.js';
+import { DARK_THEMES, THEME_DESCRIPTIONS, THEME_NAMES, THEME_MODE_NAMES, THEMES, type ThemeId, type ThemeMode, type ThemeModePreference } from '../theme.js';
 import { PortableStoragePanel } from '../ui/PortableStoragePanel.js';
 import { ClientUpdatePanel } from '../ui/ClientUpdatePanel.js';
 import { allCategories, categoryIsHidden } from '../transactionMeta.js';
@@ -1363,35 +1363,46 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
       {section === 'appearance' && (
         <section className="zc-section" aria-label="视觉方案">
           <h2 className="zc-section-title">视觉方案</h2>
-          <p className="zc-caption">切换配色与明暗。只影响本机显示，不改变账本数据、同步内容或其它设备上的外观。移动端抽屉不再单独提供入口。</p>
-          <div role="radiogroup" aria-label="视觉方案" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 12 }}>
-            {(Object.keys(THEMES) as ThemeId[]).map((id) => (
-              <button
-                key={id}
-                type="button"
-                role="radio"
-                className="zc-appearance-option"
-                aria-checked={theme === id}
-                onClick={() => setTheme(id)}
-                style={{
-                  flex: '1 1 168px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '0 14px',
-                  borderRadius: 'var(--r-sm)',
-                  cursor: 'pointer',
-                  background: 'var(--surface-2)',
-                  border: theme === id ? '2px solid var(--accent)' : '1px solid var(--border)',
-                  color: 'var(--text-primary)',
-                  fontWeight: 'var(--fw-medium)',
-                }}
-              >
-                {/* Paper tint varies; the vermilion action ink stays consistent. */}
-                <span aria-hidden="true" className="zc-theme-paper-swatch" style={{ background: resolvedMode === 'dark' ? DARK_THEMES[id]['--bg'] : THEMES[id]['--bg'] }} />
-                {THEME_NAMES[id]}
-              </button>
-            ))}
+          <p className="zc-caption">切换账册书衣、纸色与墨温，朱色操作与收入藍／支出赤语义保持一致。只影响本机显示，不改变账本数据、同步内容或其它设备上的外观。</p>
+          <div role="radiogroup" aria-label="视觉方案" className="zc-theme-specimen-grid">
+            {(Object.keys(THEMES) as ThemeId[]).map((id) => {
+              const palette = resolvedMode === 'dark' ? DARK_THEMES[id] : THEMES[id];
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  role="radio"
+                  className="zc-appearance-option zc-theme-specimen"
+                  aria-checked={theme === id}
+                  onClick={() => setTheme(id)}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="zc-theme-specimen-folio"
+                    style={{
+                      background: palette['--bg'],
+                      borderColor: palette['--border-strong'],
+                    }}
+                  >
+                    <span className="zc-theme-specimen-spine" style={{ background: palette['--sidebar-bg'] }}>
+                      <span className="zc-theme-specimen-mark" style={{ background: palette['--sidebar-brand'] }} />
+                    </span>
+                    <span className="zc-theme-specimen-page" style={{ background: palette['--surface'], borderColor: palette['--border'] }}>
+                      <span className="zc-theme-specimen-rule" style={{ borderColor: palette['--fg'] }} />
+                      <span className="zc-theme-specimen-lines">
+                        <span style={{ background: palette['--positive'] }} />
+                        <span style={{ background: palette['--negative'] }} />
+                      </span>
+                      <span className="zc-theme-specimen-seal" style={{ borderColor: palette['--accent'], background: palette['--accent-soft'] }} />
+                    </span>
+                  </span>
+                  <span className="zc-theme-specimen-copy">
+                    <strong>{THEME_NAMES[id]}</strong>
+                    <span>{THEME_DESCRIPTIONS[id]}</span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
           <h2 className="zc-section-title" style={{ marginTop: 22 }}>明暗</h2>
           <p className="zc-caption">

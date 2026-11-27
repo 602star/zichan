@@ -66,6 +66,12 @@ describe('appearance preference', () => {
   it('round-trips a chosen family and mode', () => {
     writeAppearancePreference({ theme: 'plum', mode: 'dark' });
     expect(readAppearancePreference()).toEqual({ theme: 'plum', mode: 'dark' });
+    writeAppearancePreference({ theme: 'indigo', mode: 'light' });
+    expect(readAppearancePreference()).toEqual({ theme: 'indigo', mode: 'light' });
+    writeAppearancePreference({ theme: 'ivory', mode: 'system' });
+    expect(readAppearancePreference()).toEqual({ theme: 'ivory', mode: 'system' });
+    writeAppearancePreference({ theme: 'ochre', mode: 'dark' });
+    expect(readAppearancePreference()).toEqual({ theme: 'ochre', mode: 'dark' });
   });
 
   it('merges a partial change instead of resetting the other axis', () => {

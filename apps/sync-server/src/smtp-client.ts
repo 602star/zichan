@@ -19,6 +19,7 @@ import { connect as connectTcp, type Socket } from 'node:net';
 import { connect as connectTls, TLSSocket } from 'node:tls';
 import { randomBytes } from 'node:crypto';
 import { summarize, type EmailChannel, type AlertNotification } from './alert-channels.js';
+import { renderNoticeEmailHtml } from './email-theme.js';
 
 /** One reply line, or a multiline reply ending with `code + space`. */
 function readReply(socket: Socket | TLSSocket, timeoutMs: number): Promise<{ code: number; text: string }> {
@@ -225,9 +226,21 @@ export async function sendEmail(
 /** Sends an administrator alert using the same SMTP transport. */
 export async function sendAlertEmail(channel: EmailChannel, notification: AlertNotification, options: SmtpOptions = {}): Promise<void> {
   const summary = summarize(notification);
+  const subject = summary.split('\n')[0]!;
+  const detailText = JSON.stringify(notification.detail, null, 2);
+  const html = renderNoticeEmailHtml({
+    badge: '服务器运维告警',
+    sealText: '运维告警',
+    title: subject,
+    tone: notification.severity === 'critical' ? 'danger' : 'warning',
+    body: summary,
+    detailBlock: detailText,
+    footerText: '有本 · 服务器管理后台自动告警，可在管理后台「告警中心」查看详情。',
+  });
   return sendEmail(channel, {
     to: channel.to,
-    subject: summary.split('\n')[0]!,
-    body: `${summary}\n\n${JSON.stringify(notification.detail, null, 2)}`,
+    subject,
+    body: `${summary}\n\n${detailText}`,
+    html,
   }, options);
 }

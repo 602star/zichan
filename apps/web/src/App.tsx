@@ -583,38 +583,32 @@ export function App() {
       <a className="zc-skip-link" href="#zc-app-main" onClick={(event) => { event.preventDefault(); document.getElementById('zc-app-main')?.focus(); }}>跳转到主要内容</a>
       <Sidebar screen={screen} setScreen={setScreen} onQuickTransaction={quickTransaction} ledgerMode={ledgerMode} navigation={effectiveNavigation} transactionTab={transactionTab} collapsed={navigationCollapsed} onToggle={() => setNavigationCollapsed((value) => !value)} />
       <main id="zc-app-main" className="zc-app-main" tabIndex={-1} aria-labelledby="zc-page-title">
-        <header className="zc-app-header" style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          borderBottom: '1px solid var(--border)',
-          position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 5,
-        }}>
+        <header className="zc-app-header">
           <div className="zc-header-title">
             <h1 id="zc-page-title" style={{ margin: 0, fontFamily: 'var(--font-display)', fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-bold)' }}>{title}</h1>
             <div className="zc-header-subtitle" style={{ fontSize: 'var(--fs-body)', color: 'var(--text-secondary)', marginTop: 3 }}>{sub}</div>
           </div>
-          <div className="zc-header-meta" style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 8, background: 'transparent',
-              border: 'none', borderRadius: 0, padding: 0,
-              fontSize: 'var(--fs-body)', fontWeight: 'var(--fw-medium)',
-            }}>
-              <span style={{ color: 'var(--text-tertiary)', fontWeight: 'var(--fw-regular)' }}>报表币种</span>
-              {base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}
-            </div>
-            <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', fontWeight: 'var(--fw-medium)', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.25 }}>
-              <span style={{ fontSize: 'var(--fs-meta)', fontWeight: 'var(--fw-medium)' }}>账本日</span>
-              {staleCutoff ? (
-                <button
-                  type="button"
-                  onClick={() => setScreen('settings')}
-                  title="账本日已落后，点击去设置更新"
-                  style={{ border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', font: 'inherit', fontSize: 'var(--fs-caption)', color: 'var(--warning)', fontWeight: 'var(--fw-medium)' }}
-                >
-                  {formatAsOfDate(asOf?.asOf)} · 早 {staleCutoff.daysBehind} 天
-                </button>
-              ) : (
-                <span>{formatAsOfDate(asOf?.asOf)}</span>
-              )}
+          <div className="zc-header-meta">
+            <div className="zc-header-colophon">
+              <div className="zc-header-colophon-cell">
+                <span className="zc-header-colophon-label">报表币种</span>
+                <span className="zc-header-colophon-value">{base ? `${base.code} · ${base.symbol ?? ''}`.trim() : '未设置'}</span>
+              </div>
+              <div className="zc-header-colophon-cell">
+                <span className="zc-header-colophon-label">账本日</span>
+                {staleCutoff ? (
+                  <button
+                    type="button"
+                    className="zc-header-colophon-value is-stale"
+                    onClick={() => setScreen('settings')}
+                    title="账本日已落后，点击去设置更新"
+                  >
+                    {formatAsOfDate(asOf?.asOf)} · 早 {staleCutoff.daysBehind} 天
+                  </button>
+                ) : (
+                  <span className="zc-header-colophon-value">{formatAsOfDate(asOf?.asOf)}</span>
+                )}
+              </div>
             </div>
           </div>
         </header>

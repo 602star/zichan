@@ -3,6 +3,7 @@
  * inactivity reminders (N days without recording), HTML email rendering, and multi-channel
  * push delivery (Email + Bark / Feishu / DingTalk / WeCom / Discord / Slack / Webhook).
  */
+import { EMAIL_THEME, renderLedgerEmailShell } from './email-theme.js';
 import {
   addDays,
   buildLedgerReportDigest,
@@ -80,12 +81,14 @@ export interface UserNotificationPreferences {
     enabled: boolean;
     hour: number;
     skipIfEmpty: boolean;
+    channels?: string[];
   };
   weekly: {
     enabled: boolean;
     /** ISO weekday: 1 = Monday .. 7 = Sunday. */
     dayOfWeek: number;
     hour: number;
+    channels?: string[];
   };
   monthly: {
     enabled: boolean;
@@ -93,36 +96,43 @@ export interface UserNotificationPreferences {
     /** 1..31, used when `mode === 'payday'`. */
     paydayDay: number;
     hour: number;
+    channels?: string[];
   };
   inactivity: {
     enabled: boolean;
     days: number;
     cooldownDays: number;
     hour: number;
+    channels?: string[];
   };
   billDue: {
     enabled: boolean;
     daysBefore: number;
     hour: number;
+    channels?: string[];
   };
   dca: {
     enabled: boolean;
     daysBefore: number;
     hour: number;
+    channels?: string[];
   };
   calendar: {
     enabled: boolean;
     daysBefore: number;
     hour: number;
+    channels?: string[];
   };
   budgetAlert: {
     enabled: boolean;
     warnPercent: number;
+    channels?: string[];
   };
   fixedAsset: {
     enabled: boolean;
     daysBefore: number;
     hour: number;
+    channels?: string[];
   };
   pushChannels: WebhookChannel[];
 }
@@ -228,6 +238,32 @@ function parsePushChannels(raw: unknown): WebhookChannel[] {
   return result;
 }
 
+function parseRuleChannels(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const cleaned = Array.from(new Set(
+    raw
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter((item) => item === 'email' || (item.startsWith('webhook:') && item.length > 'webhook:'.length && item.length <= 48)),
+  ));
+  return cleaned;
+}
+
+function ruleChannelsForKind(prefs: UserNotificationPreferences, kind: UserNotificationKind | undefined): string[] | undefined {
+  if (!kind) return undefined;
+  switch (kind) {
+    case 'daily': return prefs.daily.channels;
+    case 'weekly': return prefs.weekly.channels;
+    case 'monthly': return prefs.monthly.channels;
+    case 'inactivity': return prefs.inactivity.channels;
+    case 'bill_due': return prefs.billDue.channels;
+    case 'dca': return prefs.dca.channels;
+    case 'calendar': return prefs.calendar.channels;
+    case 'budget_alert': return prefs.budgetAlert.channels;
+    case 'fixed_asset': return prefs.fixedAsset.channels;
+  }
+}
+
 export function parseUserNotificationPreferences(raw: unknown): UserNotificationPreferences {
   const defaults = defaultUserNotificationPreferences();
   const obj = asRecord(raw);
@@ -241,6 +277,7 @@ export function parseUserNotificationPreferences(raw: unknown): UserNotification
   const calendar = asRecord(obj['calendar']) ?? {};
   const budgetAlert = asRecord(obj['budgetAlert']) ?? {};
   const fixedAsset = asRecord(obj['fixedAsset']) ?? {};
+
   const monthlyMode: MonthlyPeriodMode = monthly['mode'] === 'payday_auto'
     ? 'payday_auto'
     : monthly['mode'] === 'payday'
@@ -255,47 +292,56 @@ export function parseUserNotificationPreferences(raw: unknown): UserNotification
       enabled: daily['enabled'] === true,
       hour: parseInteger(daily['hour'], defaults.daily.hour, 0, 23, '日报发送时段'),
       skipIfEmpty: daily['skipIfEmpty'] === undefined ? defaults.daily.skipIfEmpty : daily['skipIfEmpty'] === true,
+      ...(parseRuleChannels(daily['channels']) !== undefined ? { channels: parseRuleChannels(daily['channels']) } : {}),
     },
     weekly: {
       enabled: weekly['enabled'] === true,
       dayOfWeek: parseInteger(weekly['dayOfWeek'], defaults.weekly.dayOfWeek, 1, 7, '周报发送星期'),
       hour: parseInteger(weekly['hour'], defaults.weekly.hour, 0, 23, '周报发送时段'),
+      ...(parseRuleChannels(weekly['channels']) !== undefined ? { channels: parseRuleChannels(weekly['channels']) } : {}),
     },
     monthly: {
       enabled: monthly['enabled'] === true,
       mode: monthlyMode,
       paydayDay: parseInteger(monthly['paydayDay'], defaults.monthly.paydayDay, 1, 31, '发薪日'),
       hour: parseInteger(monthly['hour'], defaults.monthly.hour, 0, 23, '月报发送时段'),
+      ...(parseRuleChannels(monthly['channels']) !== undefined ? { channels: parseRuleChannels(monthly['channels']) } : {}),
     },
     inactivity: {
       enabled: inactivity['enabled'] === true,
       days: parseInteger(inactivity['days'], defaults.inactivity.days, 1, 60, '未记账提醒天数'),
       cooldownDays: parseInteger(inactivity['cooldownDays'], defaults.inactivity.cooldownDays, 1, 30, '未记账冷却天数'),
       hour: parseInteger(inactivity['hour'], defaults.inactivity.hour, 0, 23, '未记账提醒时段'),
+      ...(parseRuleChannels(inactivity['channels']) !== undefined ? { channels: parseRuleChannels(inactivity['channels']) } : {}),
     },
     billDue: {
       enabled: billDue['enabled'] === true,
       daysBefore: parseInteger(billDue['daysBefore'], defaults.billDue.daysBefore, 0, 14, '账单提前提醒天数'),
       hour: parseInteger(billDue['hour'], defaults.billDue.hour, 0, 23, '账单提醒时段'),
+      ...(parseRuleChannels(billDue['channels']) !== undefined ? { channels: parseRuleChannels(billDue['channels']) } : {}),
     },
     dca: {
       enabled: dca['enabled'] === true,
       daysBefore: parseInteger(dca['daysBefore'], defaults.dca.daysBefore, 0, 14, '定投提前提醒天数'),
       hour: parseInteger(dca['hour'], defaults.dca.hour, 0, 23, '定投提醒时段'),
+      ...(parseRuleChannels(dca['channels']) !== undefined ? { channels: parseRuleChannels(dca['channels']) } : {}),
     },
     calendar: {
       enabled: calendar['enabled'] === true,
       daysBefore: parseInteger(calendar['daysBefore'], defaults.calendar.daysBefore, 0, 14, '日历提前提醒天数'),
       hour: parseInteger(calendar['hour'], defaults.calendar.hour, 0, 23, '日历提醒时段'),
+      ...(parseRuleChannels(calendar['channels']) !== undefined ? { channels: parseRuleChannels(calendar['channels']) } : {}),
     },
     budgetAlert: {
       enabled: budgetAlert['enabled'] === true,
       warnPercent: parseInteger(budgetAlert['warnPercent'], defaults.budgetAlert.warnPercent, 50, 99, '预算预警阈值'),
+      ...(parseRuleChannels(budgetAlert['channels']) !== undefined ? { channels: parseRuleChannels(budgetAlert['channels']) } : {}),
     },
     fixedAsset: {
       enabled: fixedAsset['enabled'] === true,
       daysBefore: parseInteger(fixedAsset['daysBefore'], defaults.fixedAsset.daysBefore, 0, 60, '物品提前提醒天数'),
       hour: parseInteger(fixedAsset['hour'], defaults.fixedAsset.hour, 0, 23, '物品提醒时段'),
+      ...(parseRuleChannels(fixedAsset['channels']) !== undefined ? { channels: parseRuleChannels(fixedAsset['channels']) } : {}),
     },
     pushChannels: parsePushChannels(obj['pushChannels']),
   };
@@ -413,87 +459,80 @@ export function renderReportHtml(digest: LedgerReportDigest): string {
           : '日报';
 
   const categoriesHtml = c.topCategories.length === 0
-    ? '<p style="margin:0;color:#625d56;font-size:13px;">本周期暂无分类支出。</p>'
+    ? `<p style="margin:0;color:${EMAIL_THEME.fgSubtle};font-size:13px;">本周期暂无分类支出。</p>`
     : c.topCategories.map((row) => {
       const pct = Math.max(0, Math.min(100, Number(row.sharePercent) || 0));
       return `<div style="margin-bottom:12px;">
         <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;font-variant-numeric:tabular-nums;">
-          <span style="color:#211d18;font-weight:500;">${escapeHtml(row.categoryName)}</span>
-          <span style="color:#56514b;">${escapeHtml(formatMoney(row.amount, c, digest.privacyMode))} · ${escapeHtml(row.sharePercent)}%</span>
+          <span style="color:${EMAIL_THEME.fg};font-weight:600;">${escapeHtml(row.categoryName)}</span>
+          <span style="font-family:${EMAIL_THEME.fontNumeric};color:${EMAIL_THEME.fgMuted};">${escapeHtml(formatMoney(row.amount, c, digest.privacyMode))} · ${escapeHtml(row.sharePercent)}%</span>
         </div>
-        <div style="height:5px;background:#e6e2d8;border-radius:999px;overflow:hidden;">
-          <div style="height:5px;width:${pct}%;background:#b63226;border-radius:999px;"></div>
+        <div style="height:6px;background:${EMAIL_THEME.surface2};border-radius:2px;border-bottom:1px solid ${EMAIL_THEME.border};overflow:hidden;">
+          <div style="height:6px;width:${pct}%;background:${EMAIL_THEME.accent};border-radius:2px 2px 0 0;"></div>
         </div>
       </div>`;
     }).join('');
 
   const topExpensesHtml = c.topExpenses.length === 0
     ? ''
-    : `<div style="margin-top:24px;padding-top:18px;border-top:1px solid #d3cec2;">
-        <h3 style="margin:0 0 10px;font-size:14px;color:#211d18;font-weight:600;">大额支出 Top 3</h3>
+    : `<div style="margin-top:24px;padding-top:16px;border-top:2px solid ${EMAIL_THEME.borderStrong};">
+        <h3 style="margin:0 0 10px;font-size:14px;color:${EMAIL_THEME.fg};font-weight:700;">大额支出 Top 3</h3>
         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;">
           ${c.topExpenses.map((row) => `<tr>
-            <td style="padding:8px 0;border-bottom:1px solid #ece8de;color:#625d56;width:88px;">${escapeHtml(row.date)}</td>
-            <td style="padding:8px 8px;border-bottom:1px solid #ece8de;color:#211d18;">${escapeHtml(row.title)} <span style="color:#857f76;">· ${escapeHtml(row.categoryName)}</span></td>
-            <td style="padding:8px 0;border-bottom:1px solid #ece8de;color:#a72f24;font-weight:600;text-align:right;white-space:nowrap;">${escapeHtml(formatMoney(row.amount, c, digest.privacyMode))}</td>
+            <td style="padding:8px 0;border-bottom:1px solid ${EMAIL_THEME.borderRow};font-family:${EMAIL_THEME.fontNumeric};color:${EMAIL_THEME.fgSubtle};width:88px;">${escapeHtml(row.date)}</td>
+            <td style="padding:8px 8px;border-bottom:1px solid ${EMAIL_THEME.borderRow};color:${EMAIL_THEME.fg};">${escapeHtml(row.title)} <span style="color:${EMAIL_THEME.fgSubtle};">· ${escapeHtml(row.categoryName)}</span></td>
+            <td style="padding:8px 0;border-bottom:1px solid ${EMAIL_THEME.borderRow};font-family:${EMAIL_THEME.fontNumeric};color:${EMAIL_THEME.negative};font-weight:700;text-align:right;white-space:nowrap;">${escapeHtml(formatMoney(row.amount, c, digest.privacyMode))}</td>
           </tr>`).join('')}
         </table>
       </div>`;
 
   const otherCurrenciesHtml = digest.otherCurrencies.length === 0
     ? ''
-    : `<div style="margin-top:20px;padding:12px 14px;background:#f1efe8;border-radius:8px;border:1px solid #d3cec2;">
-        <div style="font-size:13px;font-weight:600;color:#211d18;margin-bottom:6px;">其他币种汇总</div>
-        ${digest.otherCurrencies.map((other) => `<div style="font-size:12px;color:#56514b;line-height:1.7;font-variant-numeric:tabular-nums;">
-          <strong>${escapeHtml(other.assetCode)}</strong>：支出 ${escapeHtml(formatMoney(other.expense, other, digest.privacyMode))} · 收入 ${escapeHtml(formatMoney(other.income, other, digest.privacyMode))} · ${other.transactionCount} 笔
+    : `<div style="margin-top:20px;padding:12px 14px;background:${EMAIL_THEME.surface2};border-radius:4px;border:1px solid ${EMAIL_THEME.border};border-top:2px solid ${EMAIL_THEME.borderStrong};">
+        <div style="font-size:13px;font-weight:700;color:${EMAIL_THEME.fg};margin-bottom:6px;">其他币种汇总</div>
+        ${digest.otherCurrencies.map((other) => `<div style="font-size:12px;color:${EMAIL_THEME.fgMuted};line-height:1.7;font-family:${EMAIL_THEME.fontNumeric};font-variant-numeric:tabular-nums;">
+          <strong style="color:${EMAIL_THEME.fg};">${escapeHtml(other.assetCode)}</strong>：支出 ${escapeHtml(formatMoney(other.expense, other, digest.privacyMode))} · 收入 ${escapeHtml(formatMoney(other.income, other, digest.privacyMode))} · ${other.transactionCount} 笔
         </div>`).join('')}
       </div>`;
 
-  return `<!doctype html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:24px 12px;background:#ebe8df;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#211d18;">
-  <div style="max-width:600px;margin:0 auto;background:#faf9f5;border-radius:12px;border:1px solid #d3cec2;overflow:hidden;">
-    <div style="padding:22px 24px;background:#24221f;color:#faf9f5;border-bottom:3px solid #b63226;">
-      <div style="font-size:12px;color:#d6cfc2;letter-spacing:0.4px;">有本 · ${escapeHtml(modeTag)}</div>
-      <h1 style="margin:6px 0 4px;font-size:20px;line-height:1.3;font-weight:600;">${escapeHtml(digest.period.label)}</h1>
-      <div style="font-size:13px;color:#c9c1b4;font-variant-numeric:tabular-nums;">周期：${escapeHtml(digest.period.from)} 至 ${escapeHtml(digest.period.to)} · 共 ${digest.totalTransactionCount} 笔记录</div>
-    </div>
-    <div style="padding:22px 24px;">
-      ${digest.isEmpty
-    ? '<p style="margin:8px 0;color:#625d56;font-size:14px;">本周期暂无收支记录。</p>'
-    : `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border-top:1px solid #d3cec2;border-bottom:1px solid #d3cec2;font-variant-numeric:tabular-nums;">
+  const bodyHtml = digest.isEmpty
+    ? `<p style="margin:8px 0;color:${EMAIL_THEME.fgSubtle};font-size:14px;">本周期暂无收支记录。</p>`
+    : `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border-top:2px solid ${EMAIL_THEME.borderStrong};border-bottom:1px solid ${EMAIL_THEME.border};font-variant-numeric:tabular-nums;">
         <tr>
-          <td style="width:33.3%;padding:14px 10px 14px 0;vertical-align:top;border-right:1px solid #e4dfd4;">
-            <div style="font-size:12px;color:#625d56;">总支出</div>
-            <div style="font-size:19px;font-weight:700;color:#a72f24;margin-top:4px;">${escapeHtml(formatMoney(c.expense, c, digest.privacyMode))}</div>
-            <div style="font-size:11px;color:#625d56;margin-top:4px;">${escapeHtml(formatDeltaBadge(c, digest.privacyMode))}</div>
+          <td style="width:33.3%;padding:14px 10px 14px 0;vertical-align:top;border-right:1px solid ${EMAIL_THEME.borderRow};">
+            <div style="font-size:12px;color:${EMAIL_THEME.fgSubtle};">总支出</div>
+            <div style="font-family:${EMAIL_THEME.fontNumeric};font-size:20px;font-weight:700;color:${EMAIL_THEME.negative};margin-top:4px;">${escapeHtml(formatMoney(c.expense, c, digest.privacyMode))}</div>
+            <div style="font-size:11px;color:${EMAIL_THEME.fgSubtle};margin-top:4px;">${escapeHtml(formatDeltaBadge(c, digest.privacyMode))}</div>
           </td>
-          <td style="width:33.3%;padding:14px 10px;vertical-align:top;border-right:1px solid #e4dfd4;">
-            <div style="font-size:12px;color:#625d56;">总收入</div>
-            <div style="font-size:19px;font-weight:700;color:#2b6079;margin-top:4px;">${escapeHtml(formatMoney(c.income, c, digest.privacyMode))}</div>
-            <div style="font-size:11px;color:#625d56;margin-top:4px;">活跃记账 ${c.activeDays} 天</div>
+          <td style="width:33.3%;padding:14px 10px 14px 0;vertical-align:top;border-right:1px solid ${EMAIL_THEME.borderRow};">
+            <div style="font-size:12px;color:${EMAIL_THEME.fgSubtle};">总收入</div>
+            <div style="font-family:${EMAIL_THEME.fontNumeric};font-size:20px;font-weight:700;color:${EMAIL_THEME.positive};margin-top:4px;">${escapeHtml(formatMoney(c.income, c, digest.privacyMode))}</div>
+            <div style="font-size:11px;color:${EMAIL_THEME.fgSubtle};margin-top:4px;">活跃记账 ${c.activeDays} 天</div>
           </td>
           <td style="width:33.3%;padding:14px 0 14px 10px;vertical-align:top;">
-            <div style="font-size:12px;color:#625d56;">净结余</div>
-            <div style="font-size:19px;font-weight:700;color:#211d18;margin-top:4px;">${escapeHtml(formatMoney(c.net, c, digest.privacyMode))}</div>
-            <div style="font-size:11px;color:#625d56;margin-top:4px;">${c.savingsRatePercent !== null ? `储蓄率 ${escapeHtml(c.savingsRatePercent)}%` : '—'}</div>
+            <div style="font-size:12px;color:${EMAIL_THEME.fgSubtle};">净结余</div>
+            <div style="font-family:${EMAIL_THEME.fontNumeric};font-size:20px;font-weight:700;color:${EMAIL_THEME.fg};margin-top:4px;">${escapeHtml(formatMoney(c.net, c, digest.privacyMode))}</div>
+            <div style="font-size:11px;color:${EMAIL_THEME.fgSubtle};margin-top:4px;">${c.savingsRatePercent !== null ? `储蓄率 ${escapeHtml(c.savingsRatePercent)}%` : '—'}</div>
           </td>
         </tr>
       </table>
       <div style="margin-top:22px;">
-        <h3 style="margin:0 0 12px;font-size:14px;color:#211d18;font-weight:600;">支出分类 Top 5</h3>
+        <h3 style="margin:0 0 12px;font-size:14px;color:${EMAIL_THEME.fg};font-weight:700;">支出分类 Top 5</h3>
         ${categoriesHtml}
       </div>
       ${topExpensesHtml}
-      ${otherCurrenciesHtml}`}
-    </div>
-    <div style="padding:14px 24px;background:#f1efe8;border-top:1px solid #d3cec2;font-size:12px;color:#625d56;">
-      本报告由您在有本中主动开启的定时统计自动生成，可在「我的账号 → 报告与提醒」中随时调整周期或关闭。
-    </div>
-  </div>
-</body>
-</html>`;
+      ${otherCurrenciesHtml}`;
+
+  return renderLedgerEmailShell({
+    badge: modeTag,
+    sealText: '有本清册',
+    title: digest.period.label,
+    subtitle: `周期：${digest.period.from} 至 ${digest.period.to} · 共 ${digest.totalTransactionCount} 笔记录`,
+    accentColor: EMAIL_THEME.accent,
+    maxWidth: 600,
+    bodyHtml,
+    footerText: '本报告由您在有本中主动开启的定时统计自动生成，可在「我的账号 → 报告与提醒」中随时调整周期或关闭。',
+  });
 }
 
 function renderEditorialReminderHtml(input: {
@@ -505,36 +544,27 @@ function renderEditorialReminderHtml(input: {
   emptyNote?: string;
 }): string {
   const bodyHtml = input.rows.length === 0
-    ? `<p style="margin:0;color:#625d56;font-size:14px;line-height:1.7;">${escapeHtml(input.emptyNote ?? '当前没有待处理事项。')}</p>`
-    : `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;">
+    ? `<p style="margin:0;color:${EMAIL_THEME.fgSubtle};font-size:14px;line-height:1.7;">${escapeHtml(input.emptyNote ?? '当前没有待处理事项。')}</p>`
+    : `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;border-top:2px solid ${EMAIL_THEME.borderStrong};font-size:13px;font-variant-numeric:tabular-nums;">
         ${input.rows.map((row) => `<tr>
-          <td style="padding:10px 8px 10px 0;border-bottom:1px solid #ece8de;color:#211d18;">
+          <td style="padding:10px 8px 10px 0;border-bottom:1px solid ${EMAIL_THEME.borderRow};color:${EMAIL_THEME.fg};">
             <div style="font-weight:600;">${escapeHtml(row.label)}</div>
-            <div style="font-size:12px;color:#625d56;margin-top:2px;">${escapeHtml(row.meta)}</div>
+            <div style="font-size:12px;color:${EMAIL_THEME.fgSubtle};margin-top:2px;">${escapeHtml(row.meta)}</div>
           </td>
-          <td style="padding:10px 0;border-bottom:1px solid #ece8de;text-align:right;white-space:nowrap;font-weight:600;color:${row.rightTone ?? '#211d18'};">${escapeHtml(row.right)}</td>
+          <td style="padding:10px 0;border-bottom:1px solid ${EMAIL_THEME.borderRow};font-family:${EMAIL_THEME.fontNumeric};text-align:right;white-space:nowrap;font-weight:700;color:${row.rightTone ?? EMAIL_THEME.fg};">${escapeHtml(row.right)}</td>
         </tr>`).join('')}
       </table>`;
 
-  return `<!doctype html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:24px 12px;background:#ebe8df;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color:#211d18;">
-  <div style="max-width:560px;margin:0 auto;background:#faf9f5;border-radius:12px;border:1px solid #d3cec2;overflow:hidden;">
-    <div style="padding:20px 24px;background:#24221f;color:#faf9f5;border-bottom:3px solid ${input.accentColor};">
-      <div style="font-size:12px;color:#d6cfc2;">有本 · ${escapeHtml(input.badge)}</div>
-      <h1 style="margin:6px 0 4px;font-size:19px;font-weight:600;">${escapeHtml(input.title)}</h1>
-      <div style="font-size:13px;color:#c9c1b4;">${escapeHtml(input.subtitle)}</div>
-    </div>
-    <div style="padding:20px 24px;">
-      ${bodyHtml}
-    </div>
-    <div style="padding:14px 24px;background:#f1efe8;border-top:1px solid #d3cec2;font-size:12px;color:#625d56;">
-      可在「我的账号 → 报告与提醒」中调整提醒天数、推送渠道或关闭此提醒。
-    </div>
-  </div>
-</body>
-</html>`;
+  return renderLedgerEmailShell({
+    badge: input.badge,
+    sealText: '有本提醒',
+    title: input.title,
+    subtitle: input.subtitle,
+    accentColor: input.accentColor,
+    maxWidth: 560,
+    bodyHtml,
+    footerText: '可在「我的账号 → 报告与提醒」中调整提醒天数、推送渠道或关闭此提醒。',
+  });
 }
 
 export function renderInactivityMessage(status: InactivityReminderStatus): {
@@ -879,11 +909,14 @@ async function deliverToConfiguredChannels(
   deps: UserReportRunnerDeps,
   username: string,
   prefs: UserNotificationPreferences,
-  message: { title: string; text: string; html: string; kind: UserNotificationKind | 'test'; periodKey: string },
+  message: { title: string; text: string; html: string; kind: UserNotificationKind | 'test'; routeKind?: UserNotificationKind; periodKey: string },
 ): Promise<{ status: 'sent' | 'partial' | 'failed' | 'skipped'; results: ChannelResult[] }> {
   const results: ChannelResult[] = [];
+  const routeKind = message.routeKind ?? (message.kind === 'test' ? undefined : message.kind);
+  const selectedChannels = ruleChannelsForKind(prefs, routeKind);
+  const allowEmail = selectedChannels === undefined || selectedChannels.includes('email');
 
-  if (prefs.emailEnabled) {
+  if (prefs.emailEnabled && allowEmail) {
     const emailInfo = await deps.store.accountEmail(username);
     if (!emailInfo.email || !emailInfo.verifiedAt) {
       results.push({ name: '账号邮箱', kind: 'email', state: 'skipped', error: '邮箱未验证' });
@@ -907,6 +940,7 @@ async function deliverToConfiguredChannels(
   const pushDeliverer = deps.sendPush ?? defaultPushDeliverer;
   for (const channel of prefs.pushChannels) {
     if (!channel.enabled) continue;
+    if (selectedChannels !== undefined && !selectedChannels.includes(`webhook:${channel.name}`)) continue;
     try {
       await pushDeliverer(channel, {
         title: message.title,
@@ -1041,6 +1075,7 @@ export async function sendTestUserNotification(
     text: preview.text,
     html: preview.html,
     kind: 'test',
+    routeKind: kind,
     periodKey,
   });
 
