@@ -44,7 +44,8 @@ export function MonitorPage({ client, query, navigate }: { client: AdminClient; 
     </> : <>
       <Panel title={`${scope}资源`} note={reading?.scope === 'container' ? 'CPU/内存来自 cgroup；其他指标来自当前命名空间。完整宿主机与容器生命周期状态进入“主机与容器”。' : '直接运行时采集当前主机可见资源。独立探活和容器生命周期状态进入“主机与容器”。'}>
         <div className="zc-admin-ops-band"><Stat label={`${scope} CPU`} value={reading?.cpuPercent == null ? '未采集' : `${reading.cpuPercent.toFixed(1)}%`} /><Stat label={`${scope}内存`} value={reading?.memoryUsedBytes == null ? '未采集' : bytes(reading.memoryUsedBytes)} hint={reading?.memoryTotalBytes == null ? '总量或限额未配置' : `总量 / 限额 ${bytes(reading.memoryTotalBytes)}`} /><Stat label="网络接收" value={reading?.networkRxBytesPerSecond == null ? '未采集' : `${bytes(reading.networkRxBytesPerSecond)}/s`} /><Stat label="网络发送" value={reading?.networkTxBytesPerSecond == null ? '未采集' : `${bytes(reading.networkTxBytesPerSecond)}/s`} /></div>
-        {reading?.unavailable.length ? <Notice tone="warn">{reading.unavailable.join('；')}</Notice> : null}<Button onClick={() => navigate('/host')}>独立宿主机与容器探测</Button>
+        {reading?.unavailable.length ? <Notice tone="warn">{reading.unavailable.join('；')}</Notice> : null}
+        <div style={{ marginTop: 12 }}><Button onClick={() => navigate('/host')}>独立宿主机与容器探测</Button></div>
       </Panel>
       <div className="zc-admin-monitor-grid"><Panel title={`${scope}内存趋势`}><MetricLineChart label="系统内存趋势" bucketMs={bucketMs} formatValue={bytes} series={[{ label: '已用内存', color: 'var(--accent)', points: (history.data?.buckets ?? []).map((r) => ({ at: r.bucketAt, value: r.memoryUsedBytes })) }]} /></Panel><Panel title="磁盘 IO 趋势"><MetricLineChart label="系统磁盘 IO 趋势" bucketMs={bucketMs} formatValue={(n) => `${bytes(n)}/s`} series={[
         { label: '读取', color: 'var(--positive)', points: (history.data?.buckets ?? []).map((r) => ({ at: r.bucketAt, value: r.diskReadBytesPerSecond })) },

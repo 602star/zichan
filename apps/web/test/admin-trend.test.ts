@@ -57,6 +57,20 @@ describe('admin trend geometry', () => {
     expect(summary.average).toBe(7.3);
   });
 
+  it('caps bar width when maxBarWidth is set so sparse ranges stay legible', () => {
+    const { bars } = trendGeometry([
+      { at: '2026-11-25', value: 1 },
+      { at: '2026-11-26', value: 1 },
+      { at: '2026-11-27', value: 1 },
+    ], { width: 576, height: 144, maxBarWidth: 34 });
+    expect(bars).toHaveLength(3);
+    for (const bar of bars) {
+      expect(bar.width).toBe(34);
+      expect(bar.x).toBeGreaterThanOrEqual(0);
+      expect(bar.x + bar.width).toBeLessThanOrEqual(576);
+    }
+  });
+
   it('labels a counter chart with its total and a resource chart with its peak', () => {
     const points = [
       { at: '2026-09-17T10:00:00.000Z', value: 4 },
@@ -67,5 +81,21 @@ describe('admin trend geometry', () => {
     expect(counter).toContain('合计 16');
     expect(counter).toContain('峰值 12');
     expect(resource).toContain('最高 12');
+  });
+
+  it('keeps date-only bucket labels free of UTC-midnight time shift and draws axes', () => {
+    const html = renderToStaticMarkup(createElement(TrendChart, {
+      points: [
+        { at: '2026-11-25', value: 1 },
+        { at: '2026-11-26', value: 2 },
+        { at: '2026-11-27', value: 1 },
+      ],
+      label: '新账号趋势，90d',
+      formatValue: (value) => `${value} 个账号`,
+    }));
+    expect(html).toContain('11-25');
+    expect(html).toContain('11-27');
+    expect(html).toContain('2026-11-26');
+    expect(html).not.toContain('08:00:00');
   });
 });

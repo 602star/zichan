@@ -128,7 +128,7 @@ export function SecurityPage({ client, username, role, onPasswordChanged }: {
       </Panel>
 
       <Panel title="我的两步验证" note={`当前账号：${username}`}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
+        <div className="zc-admin-security-stats">
           <Stat label="状态" value={data.enabled ? '已启用' : data.pending ? '待确认' : '未启用'} tone={data.enabled ? undefined : 'warn'} />
           <Stat label="启用时间" value={data.enabledAt ? when(data.enabledAt) : '—'} />
           <Stat label="剩余恢复码" value={`${data.recoveryCodesRemaining} 个`} tone={data.enabled && data.recoveryCodesRemaining <= 2 ? 'warn' : undefined} />

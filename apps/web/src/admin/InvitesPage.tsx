@@ -76,9 +76,11 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
     </Panel>
   </>;
 
+  const reloadAll = () => { mode.reload(); invites.reload(); growth.reload(); };
+
   return (
     <>
-      <PageHeader title="注册与邀请" description="管理注册策略与邀请码，查看邀请使用情况。" actions={<><Button onClick={invites.reload}>刷新</Button></>} />
+      <PageHeader title="注册与邀请" description="管理注册策略与邀请码，查看邀请使用情况。" actions={<><Button onClick={reloadAll}>刷新</Button></>} />
       <div className="zc-admin-two-column">
       <Panel title="注册策略" note="新服务器默认仅邀请注册。关闭注册时，邀请码也不能注册。">
         <Loading loading={mode.loading} error={mode.error} />
@@ -112,11 +114,11 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
 
       <Panel title="生成邀请码">
         <div style={{ ...row, alignItems: 'flex-end' }}>
-          <Field label="有效期（1–30 天）"><TextInput value={days} inputMode="numeric" onChange={(event) => setDays(event.target.value)} style={{ width: 90 }} /></Field>
+          <Field label="有效期（1–30 天）"><TextInput value={days} inputMode="numeric" onChange={(event) => setDays(event.target.value)} style={{ width: 96, fontFamily: 'var(--font-numeric)', fontVariantNumeric: 'tabular-nums' }} /></Field>
           <Button variant="primary" disabled={!!mode.data?.sourceNodeId || !writable} onClick={() => {
             setError('');
             void client.request<{ invite: Invite }>('/invites', { days: Number(days) }, { idempotencyKey: adminIdempotencyKey('invite-create') })
-              .then((result) => { setIssued(result.invite); invites.reload(); })
+              .then((result) => { setIssued(result.invite); invites.reload(); growth.reload(); })
               .catch((caught) => setError(message(caught)));
           }}>生成一次性邀请码</Button>
         </div>
@@ -159,7 +161,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
                   disabled={Boolean(invite.usedBy) || Boolean(mode.data?.sourceNodeId)}
                   onClick={() => {
                     void client.request(`/invites/${encodeURIComponent(invite.code)}/disable`, { disabled: !invite.disabled }, { idempotencyKey: adminIdempotencyKey(`invite-${invite.code}-${invite.disabled ? 'enable' : 'disable'}`) })
-                      .then(() => invites.reload())
+                      .then(() => { invites.reload(); growth.reload(); })
                       .catch((caught) => actionError.setError(message(caught)));
                   }}
                 >{invite.disabled ? '重新启用' : '撤销'}</Button>
@@ -198,7 +200,7 @@ export function InvitesPage({ client, role, query, navigate }: { client: AdminCl
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
               <Stat label="新账号" value={String(growth.data.growth.totals.accounts)} hint={`${growth.data.growth.granularity === 'month' ? '按月' : '按日'}分桶，共 ${growth.data.growth.buckets.length} 个`} />
-              <Stat label="其中来自邀请" value={String(growth.data.growth.totals.invited)} />
+              <Stat label="其中来自邀请" value={String(growth.data.growth.totals.invited)} hint="通过邀请码注册" />
               <Stat label="无邀请码" value={String(growth.data.growth.totals.uninvited)} hint="开放注册或部署创建" />
               <Stat
                 label="邀请码使用率"

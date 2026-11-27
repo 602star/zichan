@@ -1541,6 +1541,9 @@ button,
 .zc-rank-track {
   display: flex;
   align-items: flex-end;
+  width: 100%;
+  max-width: 56px;
+  margin-inline: auto;
   height: 86px;
   background: var(--surface-2);
   border-radius: var(--r-sm);

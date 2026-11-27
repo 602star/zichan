@@ -59,7 +59,7 @@ export function OperationsPage({ client, view, query, navigate, role }: { client
     {view === 'requests' ? <RequestsPanel client={client} range={range} windowQuery={windowQuery} route={query.get('route') ?? ''} paused={paused} update={update} navigate={navigate} /> : null}
     {view === 'traffic' ? <TrafficPanel client={client} range={range} windowQuery={windowQuery} paused={paused} country={query.get('country') ?? ''} onCountry={(country) => update({ country })} /> : null}
     {view === 'startup' ? <StartupTimingPanel client={client} range={range === '30d' || range === '90d' ? range : '7d'} windowQuery={windowQuery} paused={paused} /> : null}
-    {view === 'database' ? <><DatabaseDiagnostics client={client} paused={paused} role={role} onJob={(id) => navigate(`/jobs?job=${encodeURIComponent(id)}`)} /><Button onClick={() => navigate('/storage')}>存储与备份</Button></> : null}
+    {view === 'database' ? <><DatabaseDiagnostics client={client} paused={paused} role={role} onJob={(id) => navigate(`/jobs?job=${encodeURIComponent(id)}`)} /><div style={{ marginTop: 12 }}><Button onClick={() => navigate('/storage')}>存储与备份</Button></div></> : null}
     {view === 'collectors' ? <CollectorsPanel client={client} paused={paused} /> : null}
     {view === 'host' ? <HostPanel client={client} paused={paused} /> : null}
   </>;

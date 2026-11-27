@@ -92,7 +92,7 @@ export function StoragePage({ client, role, query, navigate, onJob }: {
       <div className="zc-admin-storage-workspace">
       <Panel title="备份执行状态" note="计划配置、执行记录、校验结果分别判断。登记过一次成功备份，不代表自动执行程序当前仍在运行。">
         <Loading loading={backups.loading} error={backups.error} stale={backups.stale} />
-        <div className="zc-admin-grid">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
           <Stat label="最近执行" value={!summary ? '状态未知' : !summary.lastAttempt ? '尚无执行记录' : summary.lastAttempt.status === 'failed' || summary.lastAttempt.verificationOk === false ? '失败或校验未通过' : '已完成'}
             tone={summary?.lastAttempt?.status === 'failed' || summary?.lastAttempt?.verificationOk === false ? 'bad' : undefined}
             hint={summary?.lastAttempt ? `${when(summary.lastAttempt.createdAt)} · ${summary.lastAttempt.errorMessage ?? summary.lastAttempt.recordId}` : '等待部署侧执行并登记备份'} />

@@ -2,8 +2,26 @@
 import { muted } from './ui.js';
 import { trendGeometry, trendSummary, type TrendPoint } from './trend.js';
 
-const VIEW_WIDTH = 600;
-const VIEW_HEIGHT = 120;
+const BAR_VIEW_WIDTH = 640;
+const BAR_VIEW_HEIGHT = 190;
+const BAR_PAD = { left: 48, right: 16, top: 18, bottom: 28 };
+const MAX_BAR_WIDTH = 34;
+
+/** Format date-only keys (`2026-11-27`, `2026-11`) without UTC-midnight local-time shift. */
+function formatBucketLabel(at: string): string {
+  if (/^\d{4}-\d{2}(?:-\d{2})?$/.test(at)) return at;
+  const parsed = Date.parse(at);
+  return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : at;
+}
+
+function formatAxisDate(at: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(at)) return at.slice(5);
+  if (/^\d{4}-\d{2}$/.test(at)) return at;
+  const parsed = Date.parse(at);
+  return Number.isFinite(parsed)
+    ? new Date(parsed).toLocaleString(undefined, { month: 'numeric', day: 'numeric' })
+    : at;
+}
 
 export interface LineSeries {
   label: string;
@@ -20,7 +38,7 @@ export function MetricLineChart({ series, label, formatValue, bucketMs, maxValue
   maxValue?: number;
 }) {
   const width = 640; const height = 190;
-  const left = 56; const right = 16; const top = 14; const bottom = 28;
+  const left = 68; const right = 16; const top = 14; const bottom = 28;
   const timestamps = series.flatMap((entry) => entry.points.map((point) => Date.parse(point.at))).filter(Number.isFinite);
   const values = series.flatMap((entry) => entry.points.map((point) => point.value))
     .filter((value): value is number => value !== null && Number.isFinite(value) && value >= 0);
@@ -84,32 +102,105 @@ export function TrendChart({ points, label, formatValue, tone, granularityNote, 
   summaryMode?: 'total' | 'peak';
 }) {
   if (!points.length) return <p style={muted}>暂无数据：这个时间范围内还没有采集到分桶。</p>;
-  const { bars, maximum } = trendGeometry(points, { width: VIEW_WIDTH, height: VIEW_HEIGHT });
+  const plotWidth = BAR_VIEW_WIDTH - BAR_PAD.left - BAR_PAD.right;
+  const plotHeight = BAR_VIEW_HEIGHT - BAR_PAD.top - BAR_PAD.bottom;
+  const rawMax = Math.max(0, ...points.map((point) => point.value));
+  const axisMax = Math.max(1, rawMax);
+  const { bars, maximum } = trendGeometry(points, {
+    width: plotWidth,
+    height: plotHeight,
+    maximum: axisMax,
+    maxBarWidth: MAX_BAR_WIDTH,
+  });
   const summary = trendSummary(points);
   const fill = tone === 'bad' ? 'var(--danger)' : tone === 'warn' ? 'var(--warning)' : 'var(--accent)';
+  const yFor = (fraction: number) => BAR_PAD.top + plotHeight * (1 - fraction);
+  const axisTickIndices = bars.length === 1
+    ? [0]
+    : bars.length === 2
+      ? [0, 1]
+      : bars.length <= 7
+        ? bars.map((_, index) => index)
+        : [0, Math.floor((bars.length - 1) / 2), bars.length - 1];
+
   return (
-    <figure style={{ margin: '10px 0 0' }}>
+    <figure className="zc-admin-bar-chart">
       <svg
-        viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
+        viewBox={`0 0 ${BAR_VIEW_WIDTH} ${BAR_VIEW_HEIGHT}`}
         role="img"
         aria-label={label}
-        style={{ display: 'block', width: '100%', height: 'auto', maxHeight: 180 }}
       >
-        {/* A missing bucket renders as nothing at all: zero traffic and "not sampled yet" differ. */}
-        <line x1={0} y1={VIEW_HEIGHT - 0.5} x2={VIEW_WIDTH} y2={VIEW_HEIGHT - 0.5} stroke="var(--border, #dadce0)" strokeWidth={1} />
-        {bars.map((bar) => (
-          <rect key={bar.at} x={bar.x} y={bar.y} width={bar.width} height={bar.height} rx={1} fill={fill}>
-            <title>{`${new Date(bar.at).toLocaleString()} · ${formatValue(bar.value)}`}</title>
-          </rect>
+        {[0, 0.5, 1].map((fraction) => (
+          <g key={fraction}>
+            <line
+              x1={BAR_PAD.left}
+              x2={BAR_VIEW_WIDTH - BAR_PAD.right}
+              y1={yFor(fraction)}
+              y2={yFor(fraction)}
+              stroke="var(--border, #dadce0)"
+              strokeDasharray={fraction === 0 ? undefined : '3 4'}
+            />
+            <text
+              x={BAR_PAD.left - 8}
+              y={yFor(fraction) + 4}
+              textAnchor="end"
+              fill="var(--text-secondary)"
+              fontSize="11"
+            >
+              {Number.isInteger(axisMax * fraction) ? String(axisMax * fraction) : (axisMax * fraction).toFixed(1)}
+            </text>
+          </g>
         ))}
+        {/* A missing bucket renders as nothing at all: zero traffic and "not sampled yet" differ. */}
+        {bars.map((bar) => (
+          <g key={bar.at}>
+            <rect
+              x={BAR_PAD.left + bar.x}
+              y={BAR_PAD.top + bar.y}
+              width={bar.width}
+              height={bar.height}
+              rx={2}
+              fill={fill}
+            >
+              <title>{`${formatBucketLabel(bar.at)} · ${formatValue(bar.value)}`}</title>
+            </rect>
+            {bars.length <= 14 && bar.value > 0 ? (
+              <text
+                x={BAR_PAD.left + bar.x + bar.width / 2}
+                y={Math.max(11, BAR_PAD.top + bar.y - 4)}
+                textAnchor="middle"
+                fill="var(--text-secondary)"
+                fontSize="11"
+              >
+                {bar.value}
+              </text>
+            ) : null}
+          </g>
+        ))}
+        {axisTickIndices.map((index) => {
+          const bar = bars[index];
+          if (!bar) return null;
+          return (
+            <text
+              key={bar.at}
+              x={BAR_PAD.left + bar.x + bar.width / 2}
+              y={BAR_VIEW_HEIGHT - 6}
+              textAnchor="middle"
+              fill="var(--text-secondary)"
+              fontSize="11"
+            >
+              {formatAxisDate(bar.at)}
+            </text>
+          );
+        })}
       </svg>
       <figcaption style={muted}>
         每个分桶：{bars.length} 个{granularityNote ? `（${granularityNote}）` : ''}；
         {summaryMode === 'peak' ? '最高' : '合计'} {formatValue(summaryMode === 'peak' ? summary.peak : summary.total)}
         {summaryMode === 'peak'
-          ? (summary.peakAt ? `（${new Date(summary.peakAt).toLocaleString()}）` : '')
-          : <>{`，峰值 ${formatValue(summary.peak)}`}{summary.peakAt ? `（${new Date(summary.peakAt).toLocaleString()}）` : ''}</>}
-        {maximum > 0 ? '' : '；该范围内没有非零数据'}
+          ? (summary.peakAt ? `（${formatBucketLabel(summary.peakAt)}）` : '')
+          : <>{`，峰值 ${formatValue(summary.peak)}`}{summary.peakAt ? `（${formatBucketLabel(summary.peakAt)}）` : ''}</>}
+        {maximum > 0 && rawMax > 0 ? '' : '；该范围内没有非零数据'}
       </figcaption>
     </figure>
   );

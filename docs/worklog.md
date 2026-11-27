@@ -2,6 +2,14 @@
 
 记录项目的重要改动、原因与验证方式，按时间倒序排列。旧条目反映当时状态；现行行为以对应主题文档和代码为准。历史条目提到的已删除文件仍可从 Git 历史查看。
 
+## 2026-11-27 — 全站图表失真与后台布局对齐修复
+
+- **图表失真**：修复后台 [`TrendChart`](apps/web/src/admin/chart.tsx)（仅用于「注册与邀请」）在稀疏日期分桶下均分占满画布导致柱子拉成巨大纯红方块的问题——在 [`trendGeometry`](apps/web/src/admin/trend.ts) 增加可选 `maxBarWidth`，在 `TrendChart` 限制柱宽上限 `34`、补充 Y 轴参考线/刻度、X 轴日期标注与数值标签，并修正 `YYYY-MM-DD` / `YYYY-MM` 日期键被 `new Date()` 按 UTC 零点转本地时间产生 `08:00:00` 的偏差；同步放宽 [`MetricLineChart`](apps/web/src/admin/chart.tsx) 左侧刻度边距至 `68` 并为折线图/柱状图设置 `max-height` 约束超宽屏拉伸；修复前台报表页 [`RankBars`](apps/web/src/styles.css) 与 [`TimeTrendChart`](apps/web/src/screens/Reports.tsx) 在少分类/少周期时柱宽铺满整列的问题（限制柱轨 `max-width: 56px` 居中）。
+- **统计卡片与数据同步**：[`admin.css`](apps/web/src/admin/admin.css) 将 `.zc-admin-stat` 改为纵向 flex 布局并使 `hint` 贴底对齐，压缩嵌入在统计值里的 `.zc-admin-button` 尺寸；[`InvitesPage.tsx`](apps/web/src/admin/InvitesPage.tsx) 为「其中来自邀请」补充说明文案，并在生成、撤销/启用邀请码及顶部刷新时联动刷新 `growth.reload()`。
+- **控件与双栏高度一致**：[`admin.css`](apps/web/src/admin/admin.css) 将 `.zc-admin-button` 统一为 `min-height: 40px` 与输入框/下拉框/列选择器对齐（表格与账号 ID 紧凑按钮保留 `34px`），移除 `input[type="number"]` 多余外边距并启用等宽数字字体；将 `.zc-admin-two-column`、`.zc-admin-security-workspace`、`.zc-admin-resource-workspace`、`.zc-admin-monitor-grid` 改为 `align-items: stretch` 且统一面板外边距；替换 [`TrafficPanel.tsx`](apps/web/src/admin/TrafficPanel.tsx) 与 [`PasswordResetIssuer.tsx`](apps/web/src/admin/PasswordResetIssuer.tsx) 的原生 `<button>` 为 `<Button>`，为 [`MonitorPage.tsx`](apps/web/src/admin/MonitorPage.tsx) 与 [`OperationsPage.tsx`](apps/web/src/admin/OperationsPage.tsx) 独立跳转按钮补充顶部间距。
+- **不对称并列卡片重构**：[`OverviewPage.tsx`](apps/web/src/admin/OverviewPage.tsx) 与 [`admin.css`](apps/web/src/admin/admin.css) 移除 `2fr / 1fr` 错位双栏，改为全宽分层布局——「常用操作」提至「服务状态」下方作为横向快捷操作条，避免「核心指标」（3 项）与「资源摘要」（5 项被挤成 `2+2+1`）并排形成半屏空白，并调整 5 项网格最小列宽（`150px`）使标准桌面端单行齐平；[`StoragePage.tsx`](apps/web/src/admin/StoragePage.tsx)（`zc-admin-storage-workspace`）与 [`UserDetailPage.tsx`](apps/web/src/admin/UserDetailPage.tsx)（`zc-admin-user-workspace`）改为全宽流式排列，消除「清理状态」单占半行、「容量与配额」半卡留白及窄列内表格横向溢出，并将 8 项网格（[`DatabaseDiagnostics.tsx`](apps/web/src/admin/DatabaseDiagnostics.tsx)、用户「同步情况」）调整为 `minmax(200px, 1fr)` 以 `4+4` 对齐；[`TrafficPanel.tsx`](apps/web/src/admin/TrafficPanel.tsx) 拆分「访问趋势」与「地区分布」全宽堆叠；[`SecurityPage.tsx`](apps/web/src/admin/SecurityPage.tsx)「我的两步验证」4 项统计固定为 `2×2` 网格（`.zc-admin-security-stats`）与左侧密码表单视觉匹配；[`SettingsPage.tsx`](apps/web/src/admin/SettingsPage.tsx)「版本与安全设置」6 项最小列宽收紧至 `155px`。
+- **验证**：新增 `admin-trend.test.ts` 柱宽上限与纯日期坐标轴测试；全仓 `npm run typecheck` 通过，`npm test -w @zichan/web` 共 133 个测试文件 999 项全部通过。
+
 ## 2026-11-27 — 0.7.7 工作区提交与正式发布
 
 - 按用户要求汇总当前工作区的报表通知、邮件 HTML 及前后台体验改动，版本统一为 0.7.7；发布说明补充用户可见变化与 0.7.6 过渡升级说明。0.7.6 已经通过既有发布工作流并正式发布，没有取消或改写其标签与产物。

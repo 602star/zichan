@@ -160,7 +160,7 @@ export function UserDetailPage({ client, accountId, role, navigate, onChanged, s
       </Panel>
 
       <Panel title="同步情况">
-        {sync.transfer && <div className="zc-admin-grid" style={{ marginBottom: 16 }}>
+        {sync.transfer && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 16 }}>
           <Stat label="完整同步轮次" value={String(sync.transfer.syncRuns)} />
           <Stat label="已收敛轮次" value={String(sync.transfer.convergedRuns)} />
           <Stat label="待续轮次" value={String(sync.transfer.partialRuns)} />

@@ -37,7 +37,7 @@ export function DatabaseDiagnostics({ client, role, onJob, paused = false }: { c
 
           <Button disabled={!writable} onClick={analyze}>重建查询计划统计</Button>
         </div>}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
           <Stat label="文件大小" value={bytes(resources.data?.storage.databaseBytes)}
             hint={database ? `逻辑大小 ${bytes(database.logicalBytes)}（${database.pageCount} 页 × ${database.pageSize} B）` : undefined} />
           <Stat label="WAL 文件" tone={walOver ? 'warn' : undefined} value={bytes(wal)}

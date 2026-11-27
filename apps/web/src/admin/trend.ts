@@ -25,14 +25,16 @@ export interface TrendGeometry {
   hasData: boolean;
 }
 
-export function trendGeometry(points: TrendPoint[], options: { width: number; height: number; maximum?: number }): TrendGeometry {
-  const { width, height } = options;
+export function trendGeometry(points: TrendPoint[], options: { width: number; height: number; maximum?: number; maxBarWidth?: number }): TrendGeometry {
+  const { width, height, maxBarWidth } = options;
   const bars: TrendBar[] = [];
   const maximum = options.maximum ?? Math.max(0, ...points.map((point) => point.value));
   const scale = maximum > 0 ? height / maximum : 0;
   const slot = points.length ? width / points.length : width;
-  // A gap between bars keeps adjacent buckets readable, but never eats the whole slot.
-  const barWidth = Math.max(1, slot * 0.8);
+  // A gap between bars keeps adjacent buckets readable, but never eats the whole slot;
+  // callers can also cap barWidth so sparse ranges do not turn into giant solid blocks.
+  const naturalWidth = Math.max(1, slot * 0.8);
+  const barWidth = maxBarWidth !== undefined ? Math.min(maxBarWidth, naturalWidth) : naturalWidth;
   points.forEach((point, index) => {
     const barHeight = point.value > 0 ? Math.max(1, point.value * scale) : 0;
     bars.push({

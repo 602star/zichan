@@ -79,6 +79,15 @@ export function OverviewPage({ client, navigate, role }: {
         </div>
       </Panel>
 
+      <Panel title="常用操作">
+        <div style={row}>
+          <Button onClick={() => navigate('/users')}>查找用户与预览记账</Button>
+          <Button onClick={() => navigate('/storage')}>检查备份与恢复保障</Button>
+          {role === 'owner' ? <Button onClick={() => navigate('/invites')}>注册与邀请</Button> : null}
+          <Button onClick={() => navigate('/alerts?state=resolved')}>查看已恢复告警</Button>
+        </div>
+      </Panel>
+
       <Panel title="待处理事项" note="按活动状态和严重程度排列。标记已知晓只记录处理意向，暂停通知只停止提醒；问题恢复由系统检测。">
         {unknown ? <Notice tone="warn">状态数据尚未就绪或已经过时，请刷新后判断；下方已有记录仅供参考。</Notice> : null}
         {!unknown && alerts.length === 0 && !overview.data?.recentFailures.length && !overview.data?.recentJobs.some((job) => ['failed', 'interrupted'].includes(job.status)) ? <p style={muted}>当前没有检测到待处理事项。备份是否已执行，请继续查看下方数据保障。</p> : null}
@@ -166,17 +175,35 @@ export function OverviewPage({ client, navigate, role }: {
         ) : null}
       </Panel>
 
-      <Panel title="常用操作">
-        <div style={row}>
-          <Button onClick={() => navigate('/users')}>查找用户与预览记账</Button>
-          <Button onClick={() => navigate('/storage')}>检查备份与恢复保障</Button>
-          {role === 'owner' ? <Button onClick={() => navigate('/invites')}>注册与邀请</Button> : null}
-          <Button onClick={() => navigate('/alerts?state=resolved')}>查看已恢复告警</Button>
+      <Panel title="核心指标" note="近 15 分钟摘要；请求分析统一使用响应直方图和独立 5xx 口径。" action={<Button onClick={() => navigate('/requests?range=15m')}>进入请求分析</Button>}>
+        {requests.error ? <Notice tone="bad">{requests.error}</Notice> : null}
+        <div className="zc-admin-ops-band">
+          <Stat label="有效响应" value={requests.data?.meta.dataAsOf ? requests.data.data.totalRequests : '未采集'} />
+          <Stat label="5xx 错误率" value={requests.data?.data.errorRate5xx == null ? '—' : `${(requests.data.data.errorRate5xx * 100).toFixed(2)}%`} />
+          <Stat label="P95 延迟" value={requests.data?.data.latencyMs.p95 == null ? '未采集' : `${requests.data.data.latencyMs.p95} ms`} />
+        </div>
+        <p style={muted}>统计采样：{when(requests.data?.meta.dataAsOf)}{requests.stale || requests.data?.meta.stale ? ' · 数据过期' : ''}</p>
+      </Panel>
+      <Panel title="资源摘要" action={<Button onClick={() => navigate('/monitor')}>查看运行监控</Button>}
+        note="这一节的数字只是同步服务器进程本身；数据库页缓存之外的部分不在此列。">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+          <Stat label="常驻内存" tone={memoryRatio !== null && memoryRatio >= 0.85 ? 'warn' : undefined}
+            value={snapshot?.process ? bytes(snapshot.process.rssBytes) : '暂无数据'}
+            hint={memoryLimit ? `上限 ${bytes(memoryLimit)}，已用 ${((memoryRatio ?? 0) * 100).toFixed(1)}%` : '未设置容器上限或内存阈值'} />
+          <Stat label="堆外内存" value={snapshot?.process ? bytes(snapshot.process.externalBytes) : '暂无数据'}
+            hint="附件校验与备份的缓冲区在这里；只看堆会漏掉它" />
+          <Stat label="CPU 占用" value={snapshot?.process.cpuPercent === null || snapshot?.process.cpuPercent === undefined ? '暂无数据' : `${snapshot.process.cpuPercent.toFixed(1)}%`}
+            hint="采样窗口平均，不是瞬时值" />
+          <Stat label="事件循环延迟" tone={snapshot?.process.eventLoopMeanMs !== null && snapshot?.process.eventLoopMeanMs !== undefined && snapshot.process.eventLoopMeanMs >= 50 ? 'warn' : undefined}
+            value={snapshot?.process.eventLoopMeanMs === null || snapshot?.process.eventLoopMeanMs === undefined ? '暂无数据' : `${snapshot.process.eventLoopMeanMs.toFixed(1)} ms`}
+            hint="单线程 Node 上，这一项升高说明同步任务堵住了请求处理" />
+          <Stat label="数据库大小" value={bytes(snapshot?.storage.databaseBytes)}
+            hint={snapshot?.database ? `WAL ${bytes(snapshot.storage.walBytes)} · 可回收 ${bytes(snapshot.database.freelistBytes)}` : undefined} />
         </div>
       </Panel>
 
       <Panel title="数据保障">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
           <Stat label="磁盘余量" tone={diskLow ? 'bad' : undefined}
             value={diskFree === null ? '暂无数据' : bytes(diskFree)}
             hint={diskFree === null || !diskTotal ? '无法读取磁盘信息' : `共 ${bytes(diskTotal)}，剩余 ${((diskFree / diskTotal) * 100).toFixed(1)}%`} />
@@ -200,34 +227,6 @@ export function OverviewPage({ client, navigate, role }: {
         </p>
       </Panel>
 
-      <p className="zc-admin-runtime-note" style={muted}>服务版本 {overview.data?.version ?? '未知'} · 已运行 {snapshot ? formatUptime(snapshot.uptimeSeconds) : '未知'} · 服务器 {overview.data?.serverId ?? '未知'}</p>
-      <Panel title="核心指标" note="近 15 分钟摘要；请求分析统一使用响应直方图和独立 5xx 口径。" action={<Button onClick={() => navigate('/requests?range=15m')}>进入请求分析</Button>}>
-        {requests.error ? <Notice tone="bad">{requests.error}</Notice> : null}
-        <div className="zc-admin-ops-band">
-          <Stat label="有效响应" value={requests.data?.meta.dataAsOf ? requests.data.data.totalRequests : '未采集'} />
-          <Stat label="5xx 错误率" value={requests.data?.data.errorRate5xx == null ? '—' : `${(requests.data.data.errorRate5xx * 100).toFixed(2)}%`} />
-          <Stat label="P95 延迟" value={requests.data?.data.latencyMs.p95 == null ? '未采集' : `${requests.data.data.latencyMs.p95} ms`} />
-        </div>
-        <p style={muted}>统计采样：{when(requests.data?.meta.dataAsOf)}{requests.stale || requests.data?.meta.stale ? ' · 数据过期' : ''}</p>
-      </Panel>
-      <Panel title="资源摘要" action={<Button onClick={() => navigate('/monitor')}>查看运行监控</Button>}
-        note="这一节的数字只是同步服务器进程本身；数据库页缓存之外的部分不在此列。">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
-          <Stat label="常驻内存" tone={memoryRatio !== null && memoryRatio >= 0.85 ? 'warn' : undefined}
-            value={snapshot?.process ? bytes(snapshot.process.rssBytes) : '暂无数据'}
-            hint={memoryLimit ? `上限 ${bytes(memoryLimit)}，已用 ${((memoryRatio ?? 0) * 100).toFixed(1)}%` : '未设置容器上限或内存阈值'} />
-          <Stat label="堆外内存" value={snapshot?.process ? bytes(snapshot.process.externalBytes) : '暂无数据'}
-            hint="附件校验与备份的缓冲区在这里；只看堆会漏掉它" />
-          <Stat label="CPU 占用" value={snapshot?.process.cpuPercent === null || snapshot?.process.cpuPercent === undefined ? '暂无数据' : `${snapshot.process.cpuPercent.toFixed(1)}%`}
-            hint="采样窗口平均，不是瞬时值" />
-          <Stat label="事件循环延迟" tone={snapshot?.process.eventLoopMeanMs !== null && snapshot?.process.eventLoopMeanMs !== undefined && snapshot.process.eventLoopMeanMs >= 50 ? 'warn' : undefined}
-            value={snapshot?.process.eventLoopMeanMs === null || snapshot?.process.eventLoopMeanMs === undefined ? '暂无数据' : `${snapshot.process.eventLoopMeanMs.toFixed(1)} ms`}
-            hint="单线程 Node 上，这一项升高说明同步任务堵住了请求处理" />
-          <Stat label="数据库大小" value={bytes(snapshot?.storage.databaseBytes)}
-            hint={snapshot?.database ? `WAL ${bytes(snapshot.storage.walBytes)} · 可回收 ${bytes(snapshot.database.freelistBytes)}` : undefined} />
-        </div>
-      </Panel>
-
       <Panel title="最近管理员登录" note="只列管理后台的登录会话（同步客户端会话不在此列）。IP 来自请求来源，反向代理部署时可能是代理地址。">
         {!overview.data?.recentAdminLogins?.length ? <p style={muted}>暂无管理员登录记录。</p> : (
           <DataTable
@@ -245,6 +244,7 @@ export function OverviewPage({ client, navigate, role }: {
       </Panel>
 
       <MaintenancePanel client={client} role={role} view={maintenance} drain={drain} onChanged={() => overview.reload()} />
+      <p className="zc-admin-runtime-note" style={muted}>服务版本 {overview.data?.version ?? '未知'} · 已运行 {snapshot ? formatUptime(snapshot.uptimeSeconds) : '未知'} · 服务器 {overview.data?.serverId ?? '未知'}</p>
       </div>
     </>
   );
