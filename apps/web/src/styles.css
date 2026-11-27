@@ -642,7 +642,12 @@ button,
   display: grid;
   gap: var(--sp-3);
 }
-.zc-settings-grid,
+.zc-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  gap: var(--sp-4);
+  align-items: start;
+}
 .zc-settings-category-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5219,9 +5224,6 @@ button.zc-fixed-record-row:hover { background: var(--surface-2); }
 }
 
 /* Account reports & notifications settings — ink-hairline rows inside a single paper card. */
-.zc-notif-panel {
-  max-width: 760px;
-}
 .zc-notif-group {
   margin-top: 28px;
 }

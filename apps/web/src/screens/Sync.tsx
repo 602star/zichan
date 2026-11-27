@@ -2006,7 +2006,7 @@ export function Sync({ theme, mode, resolvedMode, setTheme, setMode, section, on
   );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 980 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
         {section === 'server' && <>
           <div className="zc-card">
             <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14 }}>

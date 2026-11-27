@@ -7,7 +7,7 @@ import { AccountsWorkspace } from '../ui/AccountsWorkspace.js';
 import { useTransactionEditor } from '../use-transaction-editor.js';
 import { accountSessionStorage } from '../account-storage.js';
 import { completeOnboarding, readOnboarding, updateOnboarding, ONBOARDING_CHANGED_EVENT, type OnboardingState } from '../onboarding.js';
-import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { continuedEntryFields } from '../desktop-workspace.js';
 import { DcaPlans } from './DcaPlans.js';
 import { useWorkspaceState } from '../ui/useWorkspaceState.js';
@@ -281,11 +281,15 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   const [scheduledBacklog, setScheduledBacklog] = useState<ScheduledBacklogItem[]>([]);
   const [retryingExecutionId, setRetryingExecutionId] = useState('');
   const [transactionRead, setTransactionRead] = useState<{
+    browseKey: string;
+    revealMatches: boolean;
     page: TransactionBrowsePage;
     summaryAggregates: TransactionReportAggregateRow[];
     filteredAggregates: TransactionReportAggregateRow[];
     recommendationTransactions: Transaction[];
   } | null>(null);
+  const chartAnchorRef = useRef<HTMLDivElement | null>(null);
+  const chartScrollAnchor = useRef<{ top: number } | null>(null);
   const [transactionPageBusy, setTransactionPageBusy] = useState(false);
   const [transactionReadError, setTransactionReadError] = useState('');
   const [voidedPage, setVoidedPage] = useState<TransactionBrowsePage | null>(null);
@@ -425,6 +429,20 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     } : undefined,
     recordState: 'active',
   }), [queryDateRange.from, queryDateRange.to, usesAccounts, viewFilters]);
+  const browseKey = useMemo(() => JSON.stringify(browseInput), [browseInput]);
+  const hasBrowseFilter = Boolean(
+    browseInput.type
+    || browseInput.category
+    || browseInput.parentCategory
+    || browseInput.accountId
+    || browseInput.payeeId
+    || browseInput.tagId
+    || browseInput.status
+    || browseInput.amountMin
+    || browseInput.amountMax
+    || browseInput.search?.trim()
+    || browseInput.advanced?.groups.length,
+  );
   useEffect(() => {
     if (!snap) return;
     const controller = new AbortController();
@@ -445,6 +463,8 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     ]).then(([page, filteredAggregates, summaryAggregates, recommendationTransactions]) => {
       if (!cancelled) {
         setTransactionRead({
+          browseKey,
+          revealMatches: hasBrowseFilter,
           page,
           filteredAggregates,
           summaryAggregates,
@@ -465,7 +485,23 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
       cancelled = true;
       controller.abort();
     };
-  }, [browseInput, queryAsOf, rev, snap, store, trendMonths]);
+  }, [browseInput, browseKey, hasBrowseFilter, queryAsOf, rev, snap, store, trendMonths]);
+  useLayoutEffect(() => {
+    const anchor = chartScrollAnchor.current;
+    const el = chartAnchorRef.current;
+    if (!anchor || !el) return;
+    const delta = el.getBoundingClientRect().top - anchor.top;
+    if (Math.abs(delta) > 0.5 && typeof window.scrollBy === 'function') {
+      try {
+        window.scrollBy({ top: delta, left: 0, behavior: 'instant' });
+      } catch {
+        window.scrollBy(0, delta);
+      }
+    }
+    if (!transactionPageBusy && transactionRead?.browseKey === browseKey) {
+      chartScrollAnchor.current = null;
+    }
+  }, [browseKey, categoryDrill, recordView, transactionPageBusy, transactionRead]);
   useEffect(() => {
     if (!showVoided) {
       setVoidedPage(null);
@@ -1276,7 +1312,20 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
    * 轻量模式不渲染筛选行（`Filters` 只在资产模式下出现），所以下钻必须是**可撤销**、
    * 且当前层级必须写在屏幕上（面包屑）：否则点一下就把账本锁进一个看不见的筛选里。
    */
+  function captureChartAnchor() {
+    const el = chartAnchorRef.current;
+    if (!el) return;
+    chartScrollAnchor.current = { top: el.getBoundingClientRect().top };
+  }
+
+  function scrollToRecordsSmooth() {
+    chartScrollAnchor.current = null;
+    window.requestAnimationFrame(() => document.getElementById('transaction-records')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  }
+
   function drillTo(parent: string, child: string) {
+    if (child) chartScrollAnchor.current = null;
+    else captureChartAnchor();
     const started = categoryDrill;
     const monthRange = dateRangeValue('this_month');
     setCategoryDrill({
@@ -1293,7 +1342,7 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
     }));
     setRecordView('list');
     setTrendFocus('');
-    window.requestAnimationFrame(() => document.getElementById('transaction-records')?.scrollIntoView({ block: 'start' }));
+    if (child) scrollToRecordsSmooth();
   }
 
   /*
@@ -1325,12 +1374,12 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
   /* 点环上高亮的那一段就是「退回上一层」：细分 → 板块 → 全部。 */
   function toggleParentDrill(parent: string) {
     if (categoryDrill?.parent !== parent) drillTo(parent, '');
-    else if (categoryDrill.child) stepBackToParent();
-    else clearCategoryDrill();
+    else if (categoryDrill.child) { captureChartAnchor(); stepBackToParent(); }
+    else { captureChartAnchor(); clearCategoryDrill(); }
   }
 
   function toggleChildDrill(parent: string, child: string) {
-    if (categoryDrill?.parent === parent && categoryDrill.child === child) stepBackToParent();
+    if (categoryDrill?.parent === parent && categoryDrill.child === child) { captureChartAnchor(); stepBackToParent(); }
     else drillTo(parent, child);
   }
 
@@ -1590,9 +1639,9 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
             )}
             {recordView === 'list' ? (
               <TransactionList
-                key={JSON.stringify(browseInput)}
+                resetKey={readyTransactionRead.browseKey}
                 vm={vm}
-                revealMatches={activeFilterCount > 0}
+                revealMatches={readyTransactionRead.revealMatches}
                 initialDetailId={screenTarget?.tab === 'records' ? screenTarget.id : undefined}
                 onEdit={openTransaction}
                 usesAccounts={usesAccounts}
@@ -1654,11 +1703,14 @@ export function Transactions({ entryOnly = false, onEntryClose }: { entryOnly?: 
             * 是它唯一的读法，二级分类名被挤成省略号后就等于没画。顺序也顺着阅读：
             * 先看「这个月钱花在哪」，再看「几个月下来怎么走」。
             */}
-          <div id="transaction-charts" className="zc-chart-stack" style={{ scrollMarginTop: 16 }}>
+          <div id="transaction-charts" ref={chartAnchorRef} className="zc-chart-stack" style={{ scrollMarginTop: 16 }}>
             <ExpenseCompositionCard
               vm={vm}
               drill={drillView}
               parentLabel={categoryLabel(drillView?.parent ?? '', readySnap.categories)}
+              filteredCount={readyTransactionRead.page.totalCount}
+              filteredBusy={transactionPageBusy || readyTransactionRead.browseKey !== browseKey}
+              onViewRecords={scrollToRecordsSmooth}
               onSelectParent={toggleParentDrill}
               onSelectChild={toggleChildDrill}
             />
@@ -2556,7 +2608,8 @@ function SummaryGrid({ vm, usesAccounts }: { vm: NonNullable<ReturnType<typeof b
   );
 }
 
-function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund, refundRemaining, refundsFor, onManageRefunds, assetCode, usesAccounts, tagName, locationName, attachmentCount, selectedIds, setSelectedIds }: {
+function TransactionList({ resetKey, vm, revealMatches, initialDetailId, onEdit, onRefund, refundRemaining, refundsFor, onManageRefunds, assetCode, usesAccounts, tagName, locationName, attachmentCount, selectedIds, setSelectedIds }: {
+  resetKey: string;
   vm: NonNullable<ReturnType<typeof buildTransactions>>;
   revealMatches: boolean;
   initialDetailId?: string;
@@ -2577,8 +2630,13 @@ function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund,
   const toggle = (id: string) => setSelectedIds?.((ids) => ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
   const compact = useCompactView();
   const dayId = useId();
-  const [dayMode, setDayMode] = useState<'recent' | 'all' | 'none'>(revealMatches ? 'all' : 'recent');
-  const [dayOverrides, setDayOverrides] = useState<Record<string, boolean>>({});
+  const [listState, setListState] = useState<{
+    key: string;
+    dayMode: 'recent' | 'all' | 'none';
+    dayOverrides: Record<string, boolean>;
+  }>(() => ({ key: resetKey, dayMode: revealMatches ? 'all' : 'recent', dayOverrides: {} }));
+  const dayMode = listState.key === resetKey ? listState.dayMode : (revealMatches ? 'all' : 'recent');
+  const dayOverrides = listState.key === resetKey ? listState.dayOverrides : {};
   const today = localToday();
   const previousCompact = useRef(compact);
   const [panel, setPanel] = useState<{ id: string; mode: 'detail' | 'actions' } | null>(null);
@@ -2598,7 +2656,7 @@ function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund,
     Boolean(panel && group.items.some((item) => item.tx.id === panel.id))
       || (dayOverrides[group.key] ?? (dayMode === 'all' || (dayMode === 'recent' && ((vm.groups.length <= 2 && vm.count <= 10) || isRecentTransactionDay(group.key, today)))))
   );
-  const setAllDays = (mode: 'all' | 'none') => { setPanel(null); setDayOverrides({}); setDayMode(mode); };
+  const setAllDays = (mode: 'all' | 'none') => { setPanel(null); setListState({ key: resetKey, dayMode: mode, dayOverrides: {} }); };
   const columns = () => <>
     <colgroup>
       {setSelectedIds && <col className="is-select" />}
@@ -2640,7 +2698,7 @@ function TransactionList({ vm, revealMatches, initialDetailId, onEdit, onRefund,
           <div className="zc-transaction-day-summary" aria-label={`${g.label}收支小计`}>
             <button type="button" className="zc-transaction-day-toggle" aria-expanded={expanded} aria-controls={`${dayId}-${g.key}`} onClick={() => {
               if (panel && g.items.some((item) => item.tx.id === panel.id)) setPanel(null);
-              setDayOverrides((current) => ({ ...current, [g.key]: !expanded }));
+              setListState({ key: resetKey, dayMode, dayOverrides: { ...dayOverrides, [g.key]: !expanded } });
             }}>
               <ChevronDown size={16} aria-hidden="true" />
               <span className="zc-transaction-day-date">{g.label}</span><span className="zc-transaction-day-count">{g.items.length} 笔</span>
@@ -3203,10 +3261,13 @@ function ExpenseCompositionCard(props: {
   drill: CategoryDrill | null;
   /** 选中板块的显示名，由调用方给（它手里有分类目录）。 */
   parentLabel: string;
+  filteredCount?: number;
+  filteredBusy?: boolean;
+  onViewRecords?: () => void;
   onSelectParent: (parent: string) => void;
   onSelectChild: (parent: string, child: string) => void;
 }) {
-  const { vm, drill, parentLabel, onSelectParent, onSelectChild } = props;
+  const { vm, drill, parentLabel, filteredCount, filteredBusy, onViewRecords, onSelectParent, onSelectChild } = props;
   const composition = vm.expenseComposition;
   /* 两个环共用这个装箱函数：分类色按**排名**取（主题里的 --cat-N），标签、金额、份额
      都照搬 selector 给的值——图表不自己算钱。 */
@@ -3234,13 +3295,22 @@ function ExpenseCompositionCard(props: {
   const children = parent ? vm.expenseChildren[parent] : undefined;
   return (
     <div className="zc-card">
-      <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>本月支出构成</div>
-      <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3, marginBottom: 14 }}>
-        {composition.slices.length === 0
-          ? '不随上方筛选变化'
-          : parent
-            ? `左环是本月全部板块；右环是「${parentLabel}」的细分。点细分只看那一项，再点退回上一层`
-            : '点一段：看这个板块的细分，流水只显示它本月的支出；再点同一段取消'}
+      <div className="zc-responsive-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+        <div>
+          <div style={{ fontSize: 'var(--fs-title)', fontWeight: 'var(--fw-bold)' }}>本月支出构成</div>
+          <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-tertiary)', marginTop: 3, marginBottom: 14 }}>
+            {composition.slices.length === 0
+              ? '不随上方筛选变化'
+              : parent
+                ? `左环是本月全部板块；右环是「${parentLabel}」的细分。点细分只看那一项，再点退回上一层`
+                : '点一段：看这个板块的细分，流水只显示它本月的支出；再点同一段取消'}
+          </div>
+        </div>
+        {parent && onViewRecords && (
+          <button type="button" className="zc-btn zc-btn--sm" style={{ flexShrink: 0 }} onClick={onViewRecords}>
+            {filteredBusy ? '查看筛选后的流水' : `查看筛选后的流水（${filteredCount ?? 0} 笔）`}
+          </button>
+        )}
       </div>
       <div className="zc-chart-pair">
         <CompositionDonut

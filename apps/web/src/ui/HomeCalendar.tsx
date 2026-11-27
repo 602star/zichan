@@ -1,18 +1,15 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { CalendarDays, Cake, Check, ChevronLeft, ChevronRight, Clock3, Download, FileText, MapPin, Maximize2, Minimize2, Plus, ReceiptText, SlidersHorizontal, X } from 'lucide-react';
-import { addDays, addMonths, calendarDayInfo, calendarWeekStart, CALENDAR_KIND_LABELS, CALENDAR_REPEAT_LABELS, D, daysBetween, endOfMonth, exportCalendarIcs, importCalendarIcs, newId, parseCalendarPreferences, parseDay,
+import { useEffect, useId, useMemo, useState } from 'react';
+import { CalendarDays, Cake, Check, ChevronLeft, ChevronRight, Clock3, FileText, MapPin, Maximize2, Minimize2, Plus, ReceiptText, Settings, SlidersHorizontal, X } from 'lucide-react';
+import { addDays, addMonths, calendarDayInfo, calendarWeekStart, CALENDAR_KIND_LABELS, CALENDAR_REPEAT_LABELS, D, daysBetween, endOfMonth, newId, parseCalendarPreferences, parseDay,
   type CalendarEntry, type CalendarKind, type CalendarPreferences, type QueryCursor } from '@zichan/core';
-import { newCalendarEntry, saveCalendarEntry, setCalendarOccurrenceStatus, type TransactionBrowsePage, type TransactionReportAggregateRow } from '@zichan/db';
+import { newCalendarEntry, setCalendarOccurrenceStatus, type TransactionBrowsePage, type TransactionReportAggregateRow } from '@zichan/db';
 import type { Snapshot } from '../db/snapshot.js';
 import { useStore } from '../db/store.js';
-import { saveLedgerSetting } from '../db/ledger-settings.js';
 import { cacheCalendarDisplay } from '../calendar-display.js';
 import { buildHomeCalendar, type HomeCalendarItem, type HomeCalendarSource } from '../selectors/home-calendar.js';
 import { createReportCurrency } from '../reportCurrency.js';
 import { num } from '../format.js';
 import { navigateTo } from '../screen-target.js';
-import { requestNotificationPermission } from '../device-capabilities.js';
-import { accountLocalStorage } from '../account-storage.js';
 import { CalendarDatePicker } from './CalendarDatePicker.js';
 import { CalendarEntryEditor } from './CalendarEntryEditor.js';
 import { Card, CardEmpty } from './Card.js';
@@ -24,7 +21,6 @@ type View = CalendarPreferences['defaultView'];
 const viewLabels: Record<View, string> = { month: '月', week: '周', day: '日', year: '年', agenda: '议程' };
 const sourceLabels: Record<HomeCalendarSource, string> = { personal: '个人事项', bills: '账单计划', accounts: '账户日期', assets: '物品提醒', dca: '定投计划' };
 const weekdayLabels = ['日', '一', '二', '三', '四', '五', '六'];
-const notifyKey = 'zichan.calendar-notifications.v1';
 const isoDays = (from: string, to: string) => Array.from({ length: daysBetween(from, to) + 1 }, (_, i) => addDays(from, i));
 
 function CalendarTransactionLinks({ ids }: { ids: string[] }) {
@@ -46,9 +42,7 @@ function CalendarTransactionLinks({ ids }: { ids: string[] }) {
 export function HomeCalendar({ snap, today }: { snap: Snapshot; today: string }) {
   const { store, bump, rev, preview } = useStore();
   const [date, setDate] = useState(today);
-  const storedPreferences = useMemo(() => parseCalendarPreferences(snap.setting?.calendarPreferencesJson), [snap.setting?.calendarPreferencesJson]);
-  const [displayOverride, setDisplayOverride] = useState<CalendarPreferences | null>(null);
-  const preferences = displayOverride ?? storedPreferences;
+  const preferences = useMemo(() => parseCalendarPreferences(snap.setting?.calendarPreferencesJson), [snap.setting?.calendarPreferencesJson]);
   const [view, setView] = useState<View>(preferences.defaultView);
   const [expanded, setExpanded] = useState(preferences.defaultView === 'year');
   const [showFilters, setShowFilters] = useState(false);
@@ -67,7 +61,6 @@ export function HomeCalendar({ snap, today }: { snap: Snapshot; today: string })
   const [pageData, setPageData] = useState<{ key: string; page: TransactionBrowsePage } | null>(null);
   const [cursor, setCursor] = useState<QueryCursor | undefined>();
   const [agendaPage, setAgendaPage] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
   const titleId = useId();
   const timezone = snap.setting?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const month = date.slice(0, 7);
@@ -86,7 +79,6 @@ export function HomeCalendar({ snap, today }: { snap: Snapshot; today: string })
   const readyPage = pageData?.key === pageKey ? pageData.page : undefined;
 
   useEffect(() => cacheCalendarDisplay(preferences), [preferences]);
-  useEffect(() => { if (displayOverride && JSON.stringify(displayOverride) === JSON.stringify(storedPreferences)) setDisplayOverride(null); }, [displayOverride, storedPreferences]);
   useEffect(() => { let cancelled = false;
     void store.transactionBrowseAggregate({ from, to, recordState: 'active' }).then(rows => { if (!cancelled) setSummary({ key: summaryKey, rows }); }).catch(cause => { if (!cancelled) setError(String(cause)); });
     return () => { cancelled = true; };
@@ -125,37 +117,6 @@ export function HomeCalendar({ snap, today }: { snap: Snapshot; today: string })
       replace: { entryId: occurrence.entry.id, date: occurrence.date, version: occurrence.entry.version } });
     setDetail(null);
   }
-  async function changePreferences(patch: Partial<CalendarPreferences>) {
-    if (busy) return;
-    const previous = preferences; const next = { ...previous, ...patch };
-    setDisplayOverride(next); setBusy(true); setError(''); setNotice('正在保存日历显示设置…');
-    try {
-      if (!snap.setting) throw new Error('账本设置未就绪');
-      await saveLedgerSetting(store, snap.setting, snap.setting, { calendarPreferencesJson: JSON.stringify(next) }, '修改日历显示');
-      cacheCalendarDisplay(next); bump(); setNotice('日历显示设置已保存到本机。');
-    } catch (cause) { setDisplayOverride(previous); setError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { setBusy(false); }
-  }
-  async function importFile(file?: File) {
-    if (!file) return;
-    await run(async () => {
-      if (file.size > 5_000_000) throw new Error('日历文件不能超过 5 MB');
-      const text = await file.text();
-      const entries = importCalendarIcs(text, timezone);
-      await store.transaction(async scoped => {
-        const existing = await scoped.calendarEntries.list();
-        for (const entry of entries) { const prior = entry.sourceUid ? existing.find(item => item.sourceUid === entry.sourceUid || `${item.id}@youben` === entry.sourceUid) : undefined;
-          await saveCalendarEntry(scoped, prior ? { ...entry, id: prior.id, createdAt: prior.createdAt, version: prior.version } : entry); }
-      });
-      setNotice(`已导入 ${entries.length} 条日历事项。相同 UID 的事项已更新。`);
-    });
-    if (inputRef.current) inputRef.current.value = '';
-  }
-  function exportFile() {
-    const blob = new Blob([exportCalendarIcs(snap.calendarEntries ?? [])], { type: 'text/calendar;charset=utf-8' });
-    const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `有本日历-${today}.ics`; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setNotice('已导出个人事项；农历规则保留在有本扩展字段中，其他日历可能仅识别首次日期。完成与单次例外请使用完整账本备份保留。');
-  }
   function itemButton(item: HomeCalendarItem, compact = false) {
     const entry = item.occurrence?.entry; const Icon = entry?.kind === 'birthday' ? Cake : item.source === 'bills' ? ReceiptText : entry?.kind === 'note' ? FileText : CalendarDays;
     return <button type="button" key={item.id} className={`zc-home-calendar-item${item.completed ? ' is-completed' : ''}${compact ? ' is-compact' : ''}`} onClick={() => item.target ? navigateTo(item.target) : setDetail(item)}>
@@ -189,12 +150,10 @@ export function HomeCalendar({ snap, today }: { snap: Snapshot; today: string })
     <div className="zc-home-calendar-toolbar"><div className="zc-home-calendar-monthnav"><button type="button" className="zc-btn zc-btn--icon" aria-label="日历上一期间" onClick={() => move(-1)}><ChevronLeft size={18} /></button><CalendarDatePicker required label="日历定位日期" value={date} onChange={next => { if (next) focus(next); }} today={today} /><button type="button" className="zc-btn zc-btn--icon" aria-label="日历下一期间" onClick={() => move(1)}><ChevronRight size={18} /></button><button type="button" className="zc-btn" hidden={!expanded && date === today} onClick={() => focus(today)}>今天</button></div>
       <div className="zc-home-calendar-views" role="group" aria-label="日历视图">{Object.entries(viewLabels).map(([key, label]) => <button type="button" key={key} className={`zc-btn${view === key ? ' zc-btn--primary' : ''}`} aria-pressed={view === key} onClick={() => changeView(key as View)}>{label}</button>)}</div></div>
     <div className="zc-home-calendar-tools"><button type="button" className="zc-btn zc-home-calendar-filter-toggle" aria-expanded={expanded || showFilters} aria-controls={`${titleId}-filters`} onClick={() => setShowFilters(value => !value)}><SlidersHorizontal size={16} aria-hidden="true" />{showFilters ? '收起筛选' : '筛选事项'}{search || kind !== 'all' || !showCompleted || hiddenSources.length ? ' · 已筛选' : ''}</button>
-    <div id={`${titleId}-filters`} className="zc-home-calendar-filters" hidden={!expanded && !showFilters}><input className="zc-input" aria-label="搜索日历事项" placeholder="搜索当前期间的事项" value={search} onChange={e => { setSearch(e.target.value); setAgendaPage(0); }} /><select className="zc-select" aria-label="日历事项类型" value={kind} onChange={e => { setKind(e.target.value); setAgendaPage(0); }}><option value="all">全部事项</option><option value="reminders">账单与提醒</option>{Object.entries(CALENDAR_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><label className="zc-calendar-checkbox"><input type="checkbox" checked={showCompleted} onChange={e => { setShowCompleted(e.target.checked); setAgendaPage(0); }} />显示已完成</label></div>
-    <details className="zc-home-calendar-options"><summary>日历显示与导入导出</summary><div className="zc-home-calendar-option-fields"><label><input type="checkbox" checked={preferences.showLunar} disabled={busy || !!preview} onChange={e => void changePreferences({ showLunar: e.target.checked })} />农历</label><label><input type="checkbox" checked={preferences.showFestivals} disabled={busy || !!preview} onChange={e => void changePreferences({ showFestivals: e.target.checked })} />节日与节气</label><label><input type="checkbox" checked={preferences.showHolidays} disabled={busy || !!preview} onChange={e => void changePreferences({ showHolidays: e.target.checked })} />放假与调休</label><label>每周开始<select className="zc-select" value={preferences.firstDay} disabled={busy || !!preview} onChange={e => void changePreferences({ firstDay: Number(e.target.value) as 0 | 1 })}><option value="1">周一</option><option value="0">周日</option></select></label><label>默认视图<select className="zc-select" value={preferences.defaultView} disabled={busy || !!preview} onChange={e => void changePreferences({ defaultView: e.target.value as View })}>{Object.entries(viewLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label></div>
-      <div className="zc-home-calendar-option-fields">{Object.entries(sourceLabels).map(([key, label]) => <label key={key}><input type="checkbox" checked={!hiddenSources.includes(key as HomeCalendarSource)} onChange={e => { setHiddenSources(e.target.checked ? hiddenSources.filter(s => s !== key) : [...hiddenSources, key as HomeCalendarSource]); setAgendaPage(0); }} />{label}</label>)}</div>
-      <div className="zc-home-calendar-option-fields"><button type="button" className="zc-btn" onClick={() => inputRef.current?.click()} disabled={busy || !!preview}>导入 ICS</button><input hidden type="file" accept=".ics,text/calendar" aria-label="导入日历文件" ref={inputRef} onChange={e => void importFile(e.target.files?.[0])} /><button type="button" className="zc-btn" onClick={exportFile}><Download size={16} aria-hidden="true" />导出个人日历</button><button type="button" className="zc-btn" disabled={!!preview} onClick={() => void run(async () => { const permission = await requestNotificationPermission(); if (permission !== 'granted') throw new Error('系统未授权通知，仍可在日历中查看提醒'); accountLocalStorage.setItem(notifyKey, 'true'); setNotice('应用打开时可发送日历通知；关闭应用后不保证系统通知送达。'); })}>开启系统提醒</button><button type="button" className="zc-btn" onClick={() => { accountLocalStorage.removeItem(notifyKey); setNotice('系统日历提醒已关闭，事项仍保留。'); }}>关闭系统提醒</button></div>
-      <p className="zc-caption">公历／农历及已收录的大陆节假日离线可用。{info.holidayCovered ? `${date.slice(0, 4)} 年调休安排已收录。` : '该年调休安排未收录，仅显示节日和普通周末。'}系统通知需授权，应用打开时检查；全天事项按事项时区当天 09:00 提醒。</p>
-    </details></div>
+    <button type="button" className="zc-workspace-link zc-home-calendar-settings-link" onClick={() => navigateTo({ screen: 'settings', tab: 'ledger' })}><Settings size={15} aria-hidden="true" />日历设置</button>
+    <div id={`${titleId}-filters`} className="zc-home-calendar-filters" hidden={!expanded && !showFilters}><input className="zc-input" aria-label="搜索日历事项" placeholder="搜索当前期间的事项" value={search} onChange={e => { setSearch(e.target.value); setAgendaPage(0); }} /><select className="zc-select" aria-label="日历事项类型" value={kind} onChange={e => { setKind(e.target.value); setAgendaPage(0); }}><option value="all">全部事项</option><option value="reminders">账单与提醒</option>{Object.entries(CALENDAR_KIND_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><label className="zc-calendar-checkbox"><input type="checkbox" checked={showCompleted} onChange={e => { setShowCompleted(e.target.checked); setAgendaPage(0); }} />显示已完成</label>
+      <div className="zc-home-calendar-option-fields zc-home-calendar-sources">{Object.entries(sourceLabels).map(([key, label]) => <label key={key}><input type="checkbox" checked={!hiddenSources.includes(key as HomeCalendarSource)} onChange={e => { setHiddenSources(e.target.checked ? hiddenSources.filter(s => s !== key) : [...hiddenSources, key as HomeCalendarSource]); setAgendaPage(0); }} />{label}</label>)}</div>
+    </div></div>
     {error && <p role="alert" className="zc-calendar-error">{error} <button type="button" className="zc-btn" onClick={() => { setError(''); setRetry(value => value + 1); }}>重试读取</button></p>}{notice && <p role="status" className="zc-caption">{notice}</p>}
     <div className="zc-home-calendar-body"><div className="zc-home-calendar-board"><div className="zc-home-calendar-period">{view === 'year' ? `${date.slice(0, 4)} 年` : view === 'month' ? `${date.slice(0, 4)} 年 ${Number(date.slice(5, 7))} 月` : `${from} — ${to}`}{summary?.key !== summaryKey && <span role="status">正在读取流水汇总…</span>}</div>
     {view === 'month' && dayGrid(month)}

@@ -7,7 +7,7 @@ import {
   type DateRangePreset,
 } from '@zichan/core';
 import type { CSSProperties } from 'react';
-import { linkDanger } from './styles.js';
+
 import { CalendarDatePicker } from './CalendarDatePicker.js';
 import { TimeRangeSelect } from './TimeRangeSelect.js';
 
@@ -104,7 +104,16 @@ export function DateRangeBar(props: {
 }
 
 const dateLabel: CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-tertiary)', fontSize: 'var(--fs-caption)', fontWeight: 'var(--fw-medium)' };
-const clearButton = linkDanger;
+const clearButton: CSSProperties = {
+  border: 'none',
+  background: 'transparent',
+  color: 'var(--text-secondary)',
+  cursor: 'pointer',
+  fontSize: 'var(--fs-caption)',
+  fontWeight: 'var(--fw-medium)',
+  padding: '4px 6px',
+  borderRadius: 'var(--r-sm)',
+};
 
 function viewButton(active: boolean): CSSProperties {
   return {

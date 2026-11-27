@@ -126,11 +126,11 @@ export function Dashboard() {
         action={compactView ? undefined : <button type="button" className="zc-btn zc-btn--sm" onClick={() => navigateTo({ screen: 'reports' })}>查看报表</button>}>
         <div className="zc-dashboard-overview-band">
           <CardMetric className="zc-dashboard-primary" label={spendingFirst ? '所选期间支出' : partial('netWorth') ? '已估值净资产' : '净资产总值'}
-            value={<span className="zc-hero-amount">{num(spendingFirst ? vm.txExpense : vm.netWorth, reportDecimals)}</span>}
+            value={<span className="zc-hero-amount">{(() => { const primary = D(spendingFirst ? vm.txExpense : vm.netWorth); return primary.isNegative() ? `−${money(primary, undefined, reportDecimals)}` : money(primary, undefined, reportDecimals); })()}</span>}
             note={!compactView || partial(spendingFirst ? 'transactions' : 'netWorth') ? <span className="zc-hero-asof">{spendingFirst ? partial('transactions') ? '缺价，显示已知部分' : '所选期间的日常支出' : '按账本日估值'}</span> : undefined}
             tone={spendingFirst ? 'negative' : 'default'} />
           <CardMetric label="期间收入" value={partialText('transactions', money(vm.txIncome))} tone="positive" note="转账不计入收入" />
-          {spendingFirst ? <CardMetric label={partial('netWorth') ? '已估值净资产' : '净资产总值'} value={num(vm.netWorth, reportDecimals)} note={compactView ? undefined : `截至 ${vm.asOf}`} />
+          {spendingFirst ? <CardMetric label={partial('netWorth') ? '已估值净资产' : '净资产总值'} value={D(vm.netWorth).isNegative() ? `−${money(vm.netWorth, undefined, reportDecimals)}` : money(vm.netWorth, undefined, reportDecimals)} note={compactView ? undefined : `截至 ${vm.asOf}`} />
             : <CardMetric label="期间支出" value={partialText('transactions', money(vm.txExpense))} tone="negative" note="按所选统计期间汇总" />}
           <CardMetric label="期间结余" value={partialText('transactions', signedMoney(vm.txNet, undefined, reportDecimals))} tone={vm.txNet.isNegative() ? 'negative' : 'positive'} note="收入减去支出" />
         </div>

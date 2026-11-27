@@ -1,5 +1,6 @@
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import { NavigationIcon } from '../ui/NavigationIcon.js';
+import { CalendarSettings } from '../ui/CalendarSettings.js';
 import { CategoryDefaultSettings } from '../ui/CategoryDefaultSettings.js';
 import { DraftSettings } from '../ui/DraftSettings.js';
 
@@ -682,7 +683,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
   }, new Map<string, ConsistencyIssue[]>()).entries()] : [];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)', maxWidth: 980 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)' }}>
       {section === 'ledger' && (
         <>
           <section className="zc-card" aria-label="手机总览偏好">
@@ -846,6 +847,7 @@ export function Settings({ theme, mode, resolvedMode, setTheme, setMode, section
             </div>
           </div>
 
+          <CalendarSettings snap={snap} />
           <CategoryDefaultSettings categories={snap.categories} />
           <DraftSettings />
 
