@@ -28,7 +28,7 @@
 
 ## 验收记录 `acceptance/`
 
-- **发布和性能：**[发布准备](acceptance/release-readiness.md)、[浏览器账本性能基线](acceptance/browser-ledger-scale-benchmark.md)、[Windows 本机验收](acceptance/native-desktop-acceptance.md)。
+- **发布和性能：**[0.7.5 发布验收](acceptance/release-0.7.5.md)、[发布准备](acceptance/release-readiness.md)、[浏览器账本性能基线](acceptance/browser-ledger-scale-benchmark.md)、[Windows 本机验收](acceptance/native-desktop-acceptance.md)。
 - **部署和副本：**[生产镜像验收](acceptance/production-deployment-acceptance-2026-10-28.md)、[三节点验收清单](acceptance/three-node-acceptance.md)、[五逻辑节点跨机预验收](acceptance/five-node-acceptance-2026-10-28.md)、[节点路由与压力验收](acceptance/replica-routing-and-scale-acceptance.md)。
 
 ## 后续规划 `planning/`
