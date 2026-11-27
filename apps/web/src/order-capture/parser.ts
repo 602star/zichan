@@ -36,15 +36,15 @@ function extract(key: OrderFieldKey, text: string): string[] {
   const value = normalized(text);
   if (key === 'amount') {
     // Currency symbols are optional only after a payment label has established the meaning.
-    const matches = [...value.matchAll(/(?:[¥￥$€]|CNY|RMB|USD|EUR|JPY)?\s*((?:\d{1,3}(?:,\d{3})+|\d{1,8})(?:\.\d{1,4})?)(?:\s*元)?/g)];
+    const matches = [...value.matchAll(/(?:[¥￥$€]|CNY|RMB|USD|EUR|JPY)?\s*((?:\d{1,3}(?:,\d{3})+|\d{1,8})(?:\.\d{1,4})?)(?:\s*元)?(?:\s*(?:CNY|RMB|USD|EUR|JPY))?/gi)];
     return matches.filter((match) => !/[\dA-Za-z\-−负]/.test(value[(match.index ?? 0) - 1] ?? '')
-      && !/[\dA-Za-z:/年月日]/.test(value[(match.index ?? 0) + match[0].length] ?? ''))
+      && !/[\dA-Za-z:/年月日.\-]/.test(value[(match.index ?? 0) + match[0].length] ?? ''))
       .flatMap((match) => { try { const amount = D(match[1]!.replaceAll(',', '')); return amount.gt(0) ? [amount.toString()] : []; } catch { return []; } });
   }
   if (key === 'paymentDate' || key === 'invoiceDate') {
     return [...value.matchAll(/(20\d{2})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})日?/g)].map((match) => `${match[1]}-${match[2]!.padStart(2, '0')}-${match[3]!.padStart(2, '0')}`).filter(isValidDay);
   }
-  if (key === 'paymentTime') return [...value.replace(/(\d)\s*:\s*(?=\d)/g, '$1:').matchAll(/(?:^|[\s日T])([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?(?!\d)/g)]
+  if (key === 'paymentTime') return [...value.replace(/(20\d{2}[-/.年]\d{1,2}[-/.月]\d{2})(?=\d{1,2}\s*:)/g, '$1 ').replace(/(\d)\s*:\s*(?=\d)/g, '$1:').matchAll(/(?:^|[\s日T])([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?(?!\d)/g)]
     .map((match) => `${match[1]!.padStart(2, '0')}:${match[2]}${match[3] ? `:${match[3]}` : ''}`);
   if (key === 'invoiceNumber' || key === 'invoiceCode') {
     const digits = compact(value).replace(/^[:：]+/, '');
@@ -96,7 +96,7 @@ export function parseOrder(lines: readonly OcrLine[], rules: readonly OrderRule[
           for (const near of neighboringValues(line, usable)) {
             const nearby = normalized(near.text);
             // A neighboring label/value belonging to shipping, discount, recipient, or order identifiers is not payment evidence.
-            if (/原价|优惠|运费|商品金额|订单号|运单|电话|收货|收件|地址|下单|创建|税额|税率|纳税|识别号|发票号码|发票代码|购买方|销售方|开票日期/.test(nearby)) continue;
+            if (/原价|优惠|运费|商品金额|订单号|运单|电话|收货|收件|地址|下单|创建|税额|税率|纳税|识别号|发票号码|发票代码|购买方|销售方|开票日期/.test(nearby) || (key === 'amount' && /(?:付款|支付|交易)(?:时间|日期)|20\d{2}\s*[-/.年]\s*\d{1,2}/.test(nearby))) continue;
             if ((key === 'amount' || key === 'paymentDate' || key === 'invoiceDate') && /(?:^|\D)\d{8,}(?:\D|$)/.test(nearby)) continue;
             add(extract(key, nearby), [line, near], 80, `字段邻近：${match[0]}`);
           }

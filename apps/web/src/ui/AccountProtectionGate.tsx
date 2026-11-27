@@ -46,7 +46,11 @@ export function AccountProtectionGate({ connection, children }: { connection: Sy
         if (credential.refreshToken) await persistCredential(id, credential);
       }
       const password = takeLoginPassword(connection.serverId, connection.accountId);
-      {
+      if (isTauriRuntime()) {
+        // Native Ready switches the ledger profile and unmounts this gate before
+        // STARTUP_READY_EVENT. Persist the password envelope before that handoff.
+        if (password) await measureStartupStage('background.prepareOfflinePassword', () => enableOfflinePassword(password));
+      } else {
         prepareOffline = () => {
           if (!active) return;
           const run = () => {

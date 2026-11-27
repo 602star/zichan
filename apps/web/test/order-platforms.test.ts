@@ -8,6 +8,18 @@ const line = (text: string, y: number, x = 20, width = 700): OcrLine => ({ id: `
 const rows = (...text: string[]) => text.map((text, index) => line(text, index * 100));
 
 describe('platform rule registry', () => {
+  it('never extracts a year or a date fragment as a neighboring payment amount', () => {
+    for (const date of ['2026-11-25', '2026/11/25 12:00', '付款时间：2026-11-25 12:34:56']) {
+      const result = parseOrder([line('实付款', 100, 20, 110), line(date, 142, 20, 700)]);
+      expect(result.fields.amount.state).toBe('missing');
+    }
+  });
+  it('handles Linux OCR merging currency and date/time boundaries while rejecting arbitrary suffixes', () => {
+    const result = parseOrder(rows('实付款：29.90CNY', '付款时间：2026-11-2512:34:56'));
+    expect(result.fields.amount.value).toBe('29.9'); expect(result.fields.paymentTime.value).toBe('12:34:56');
+    expect(result.fields.paymentDate.value).toBe('2026-11-25');
+    expect(parseOrder(rows('实付款：29.90ABC')).fields.amount.state).toBe('missing');
+  });
   const cases: [string, ParsedOrder['platform'], string][] = [
     ['京东', 'jd', '实际支付'], ['淘宝', 'taobao', '买家实付'], ['天猫', 'taobao', '买家实付'],
     ['拼多多', 'pinduoduo', '实付共计'], ['抖音', 'douyin', '支付合计'], ['快手小店', 'kuaishou', '实际支付'],
