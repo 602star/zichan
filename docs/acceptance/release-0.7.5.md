@@ -26,6 +26,10 @@
 
 ## 发布关口
 
-本地与 Linux 测试机的发布前关口已通过。正式标签触发的 CI、签名构件及 Release 资源清单仍须通过；发布工作流只在全部完成后公开 Release，结果在完成后补记。真实手机设备性能、OFD／XML 和全部平台截图版本不在本次验收范围。
+本地与 Linux 测试机的发布前关口已通过。正式标签 `v0.7.5` 指向 `cfedc2720155d6464c1266d66e60a7260f72e913`，2026-11-27 09:33（北京时间）[正式发布](https://github.com/602star/zichan/releases/tag/v0.7.5)。[Release 工作流](https://github.com/602star/zichan/actions/runs/45918980791)全部通过，包含五项基础 CI、Windows 便携版、MSI／NSIS 实装卸载、Linux 安装升级卸载启动、Android、正式签名更新包及容器签名。
+
+发布后核对 17 个资源齐全、非草稿且非预发布；校验和旁车与 GitHub 资源摘要一致，Android 索引用客户端固定公钥验签通过。正式自更新 JSON 为 65672847 字节，SHA-256 `3db87545f32cd647c8567e57bb15760b3c3ef896f2c717d9e8e4a81950ed6056`；固定公钥验签通过，与下载后实际完成在线／断网 OCR 的正式 Actions 产物相同。正式 Windows 便携 ZIP SHA-256 为 `c4134000e9fbbc1a21400459a2c4a6e245a6da908c51c45e1058e19a62ed2307`。
+
+正式容器镜像为 `ghcr.io/602star/zichan-sync:v0.7.5`，固定摘要 `sha256:06cf03a55490d937c99c5c9e8e12916d003fd974c4b1f571b8816c9b5c51351d`。真实手机设备性能、OFD／XML 和全部平台截图版本不在本次验收范围。
 
 原始日志、截图、测试密钥与合成账本留在忽略目录，禁止加入发行物。发布不代表对现有生产实例执行升级。
