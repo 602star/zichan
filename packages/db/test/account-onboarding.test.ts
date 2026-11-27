@@ -276,3 +276,36 @@ it('edits account metadata and defaults atomically without rewriting the balance
     expect((await store.settings.get(setting.id))?.expenseDefaultAccountId).toBe(setting.expenseDefaultAccountId);
   } finally { await store.close(); }
 });
+
+it('replays legacy default account kind and purpose migrations across sync without marking commits invalid', async () => {
+  const { memoryCommitTransport, syncReplica } = await import('../src/index.js');
+  const source = await openLedger();
+  const remote = await openLedger({ deviceId: 'remote-legacy-default-test' });
+  try {
+    const transport = memoryCommitTransport();
+    await source.assets.put({ ...base(), id: 'CNY', code: 'CNY', name: '人民币', type: 'fiat', decimals: 2, isActive: true });
+    const expense = await source.accounts.put({ ...base(), id: 'ledger:default_expense', kind: 'wallet', purpose: 'default_expense', name: '默认支出账户', isActive: true });
+    const income = await source.accounts.put({ ...base(), id: 'ledger:default_income', kind: 'wallet', purpose: 'default_income', name: '默认收入账户', isActive: true });
+    await source.settings.put({ ...base(), id: 'ledger', baseCurrencyAssetId: 'CNY', defaultLotMethod: 'fifo', expenseDefaultAccountId: expense.id, incomeDefaultAccountId: income.id });
+    await saveTransaction(source, transaction('expense', '25', '2026-09-17', { accountId: expense.id }));
+    await saveTransaction(source, transaction('income', '80', '2026-09-17', { accountId: income.id }));
+
+    // Case 1: ensureDefaultAccounts migrates referenced legacy default accounts from wallet -> other.
+    await ensureDefaultAccounts(source);
+    // Case 2: historical migration also transitioned default_* purpose -> funds.
+    const migratedExpense = (await source.accounts.get(expense.id))!;
+    await source.withValidatedRestore([`account:${expense.id}`], [], async (restore) => {
+      await restore.accounts.put({ ...migratedExpense, purpose: 'funds' });
+    });
+
+    await remote.adoptLedgerId(await source.getLedgerId());
+    await syncReplica(source, transport, 'memory');
+    const result = await syncReplica(remote, transport, 'memory');
+    expect(result).toMatchObject({ conflicts: 0, invalid: 0, pending: 0 });
+    expect(await remote.accounts.get(expense.id)).toMatchObject({ kind: 'other', purpose: 'funds' });
+    expect(await remote.accounts.get(income.id)).toMatchObject({ kind: 'other', purpose: 'default_income' });
+  } finally {
+    await source.close();
+    await remote.close();
+  }
+});

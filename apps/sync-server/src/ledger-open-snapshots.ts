@@ -34,6 +34,8 @@ function cooperativeDriver(driver: SqlDriver): SqlDriver {
   };
 }
 
+const DEFAULT_RETRY_COOLDOWN_MS = 10 * 60_000;
+
 /** A single bounded builder; only authenticated, compressed ciphertext is persisted. */
 export class LedgerOpenSnapshots {
   private flight = Promise.resolve();
@@ -41,21 +43,30 @@ export class LedgerOpenSnapshots {
   private dirty = new Set<string>();
   private stopped = false;
   private validated = new Map<string, string>();
-  private failed = new Set<string>();
+  private failed = new Map<string, { key?: string; at: number }>();
   constructor(private options: { store: SyncServerStore; serverId: string; directory: string;
-    custodyKey: () => Buffer; onError: (error: unknown) => void }) {}
+    custodyKey: () => Buffer; onError: (error: unknown, context?: { username?: string }) => void; retryCooldownMs?: number }) {}
 
   private file(username: string): string {
     return join(this.options.directory, `${createHash('sha256').update(username).digest('hex')}.json`);
   }
 
-  schedule(username: string): void {
+  schedule(username: string, options: { fromWarm?: boolean } = {}): void {
     if (this.stopped) return;
-    if (this.queued.has(username)) { this.dirty.add(username); return; }
+    if (this.queued.has(username)) { if (!options.fromWarm) this.dirty.add(username); return; }
     this.queued.add(username);
     this.flight = this.flight.then(async () => {
-      try { if (!this.stopped) { await this.build(username); this.failed.delete(username); } }
-      catch (error) { this.failed.add(username); this.options.onError(error); }
+      let attemptKey: string | undefined;
+      try {
+        if (!this.stopped) {
+          const built = await this.build(username, Boolean(options.fromWarm), (key) => { attemptKey = key; });
+          if (built !== 'skipped_cooldown') this.failed.delete(username);
+        }
+      }
+      catch (error) {
+        this.failed.set(username, { key: attemptKey, at: Date.now() });
+        this.options.onError(error, { username });
+      }
       finally {
         this.queued.delete(username);
         if (this.dirty.delete(username)) this.schedule(username);
@@ -64,7 +75,7 @@ export class LedgerOpenSnapshots {
   }
 
   async warm(): Promise<void> {
-    for (const username of await this.options.store.ledgerOpenCandidates()) this.schedule(username);
+    for (const username of await this.options.store.ledgerOpenCandidates()) this.schedule(username, { fromWarm: true });
   }
 
   async drain(): Promise<void> {
@@ -74,7 +85,7 @@ export class LedgerOpenSnapshots {
 
   private async saved(username: string): Promise<LedgerOpenSnapshot | undefined> {
     try { return JSON.parse(await readFile(this.file(username), 'utf8')) as LedgerOpenSnapshot; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.options.onError(error); return undefined; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.options.onError(error, { username }); return undefined; }
   }
 
   async read(username: string, replicaId: string): Promise<LedgerOpenSnapshot | undefined> {
@@ -96,21 +107,26 @@ export class LedgerOpenSnapshots {
     return ready ? saved : undefined;
   }
 
-  private async build(username: string): Promise<void> {
+  private async build(username: string, fromWarm: boolean, setAttemptKey: (key: string) => void): Promise<'built' | 'skipped' | 'skipped_cooldown'> {
     const { store, serverId } = this.options;
     const user = await store.getUser(username);
     const replica = await store.getReplica(username);
     const protection = await store.getLedgerProtection(username);
-    if (!user || user.disabled || !replica || replica.headSeq === 0 || protection?.mode !== 'managed' || !protection.sealedSecret) return;
+    if (!user || user.disabled || !replica || replica.headSeq === 0 || protection?.mode !== 'managed' || !protection.sealedSecret) return 'skipped';
     const envelope = await store.getKeyEnvelope(username, replica.ledgerId) as unknown as LedgerKeyEnvelope | undefined;
-    if (!envelope) return;
+    if (!envelope) return 'skipped';
+    const attemptKey = `${replica.replicaId}:${replica.streamEpoch}:${replica.headSeq}:${envelope.generation}`;
+    setAttemptKey(attemptKey);
+    const previousFailure = this.failed.get(username);
+    const cooldownMs = this.options.retryCooldownMs ?? DEFAULT_RETRY_COOLDOWN_MS;
+    if (fromWarm && previousFailure?.key === attemptKey && Date.now() - previousFailure.at < cooldownMs) return 'skipped_cooldown';
     const previous = await this.saved(username);
     const old = previous?.manifest;
     let reusable = old?.version === 1 && old.schemaVersion === CURRENT_SCHEMA_VERSION && old.serverId === serverId
       && old.accountId === user.accountId && old.ledgerId === replica.ledgerId && old.replicaId === replica.replicaId
       && old.streamEpoch === replica.streamEpoch && old.generation === envelope.generation
       && old.keyringId === envelope.keyringId && old.headSeq <= replica.headSeq;
-    if (reusable && old!.headSeq === replica.headSeq && this.validated.get(username) === fingerprint(previous!)) return;
+    if (reusable && old!.headSeq === replica.headSeq && this.validated.get(username) === fingerprint(previous!)) return 'skipped';
     const secret = openCustodySecret(this.options.custodyKey(), `${serverId}:${user.accountId}`, protection.sealedSecret);
     const crypto = await unlockLedgerKeyEnvelope(secret, envelope);
     let driver = new NodeSqliteDriver();
@@ -123,12 +139,12 @@ export class LedgerOpenSnapshots {
           await driver.importBytes(bytes);
           this.validated.set(username, fingerprint(previous!));
         } catch (error) {
-          this.options.onError(error);
+          this.options.onError(error, { username });
           await driver.close(); driver = new NodeSqliteDriver(); reusable = false;
         }
       }
       const ledger = await createLedgerStore(cooperativeDriver(driver), { deviceId: 'server-open-snapshot' });
-      if (reusable && old!.headSeq === replica.headSeq) return;
+      if (reusable && old!.headSeq === replica.headSeq) return 'skipped';
       if (!reusable) await ledger.adoptLedgerId(replica.ledgerId);
       const identity = { serverId, ledgerId: replica.ledgerId, replicaId: replica.replicaId, streamEpoch: replica.streamEpoch, headSeq: replica.headSeq };
       const transport: CommitTransport = {
@@ -150,7 +166,11 @@ export class LedgerOpenSnapshots {
       const connected = await connectReplica(ledger, transport);
       await pullReplica(ledger, transport, connected);
       const result = await applyPendingCommits(ledger);
-      if (result.invalid || result.pending || (await ledger.listSyncCommits({ state: 'invalid', includeInvalid: true })).length) throw new Error('快照包含无效或缺失依赖的提交');
+      const invalidCommits = await ledger.listSyncCommits({ state: 'invalid', includeInvalid: true });
+      if (result.invalid || result.pending || invalidCommits.length) {
+        const firstError = invalidCommits.find((commit) => commit.error)?.error;
+        throw new Error(firstError ? `快照包含无效或缺失依赖的提交：${firstError}` : '快照包含无效或缺失依赖的提交');
+      }
       if ((await checkConsistency(ledger)).length) throw new Error('快照账本一致性检查失败');
       // Conflicts remain in the database for the user's normal conflict UI.
       const bytes = await driver.exportBytes();
@@ -163,7 +183,7 @@ export class LedgerOpenSnapshots {
       const current = await store.getReplica(username);
       const currentEnvelope = await store.getKeyEnvelope(username, replica.ledgerId);
       if (current?.replicaId !== replica.replicaId || current.streamEpoch !== replica.streamEpoch
-        || currentEnvelope?.['generation'] !== envelope.generation) return;
+        || currentEnvelope?.['generation'] !== envelope.generation) return 'skipped';
       if (current.headSeq > replica.headSeq) this.dirty.add(username);
       await mkdir(this.options.directory, { recursive: true });
       const temporary = `${this.file(username)}.${randomBytes(8).toString('hex')}.tmp`;
@@ -171,6 +191,7 @@ export class LedgerOpenSnapshots {
       await writeFile(temporary, JSON.stringify(snapshot), { mode: 0o600 });
       await rename(temporary, this.file(username));
       this.validated.set(username, fingerprint(snapshot));
+      return 'built';
     } finally { await driver.close(); }
   }
 }

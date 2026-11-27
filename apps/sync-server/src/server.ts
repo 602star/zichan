@@ -663,8 +663,8 @@ export function createSyncServer(options: SyncServerOptions = {}): SyncServer {
 
   const openSnapshots = new LedgerOpenSnapshots({ store, serverId, directory: join(dataDir, 'ledger-open'),
     custodyKey: () => custodyKey,
-    onError: (error) => { void log('warn', 'ledger_open_snapshot_failed', '账本打开快照生成失败',
-      { detail: { error: error instanceof Error ? error.message : String(error) } }).catch(() => undefined); },
+    onError: (error, context) => { void log('warn', 'ledger_open_snapshot_failed', '账本打开快照生成失败',
+      { username: context?.username, detail: { error: error instanceof Error ? error.message : String(error) } }).catch(() => undefined); },
   });
   const snapshotTimer = setInterval(() => { void ready.then(() => openSnapshots.warm()).catch(() => undefined); }, 30_000);
   snapshotTimer.unref();

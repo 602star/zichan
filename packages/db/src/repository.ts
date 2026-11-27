@@ -5,6 +5,7 @@
  */
 import {
   D,
+  isDefaultAccount,
   isValidDay,
   defaultTransactionAccount, accountChainPostings, type Posting,
   newId,
@@ -3874,6 +3875,26 @@ export class SqlLedgerStore implements LedgerStore {
       if (!D(preview.difference).isZero()) throw new Error('同步的余额起点与本地记录不一致');
       await this.withValidatedRestore(['account:' + id], [], async (restore) => { await restore.accounts.put({ ...payload, id, createdAt: current.createdAt, updatedAt: current.updatedAt, version: current.version, isDeleted: false } as unknown as import('@zichan/core').Account); });
       return;
+    }
+    if (type === 'account' && current && payload['isDeleted'] !== true) {
+      const currentAccount = current as import('@zichan/core').Account;
+      const nextKind = payload['kind'];
+      const nextPurpose = payload['purpose'];
+      const kindMigrated = currentAccount.kind === 'wallet' && nextKind === 'other';
+      const purposeMigrated = nextPurpose === 'funds' && currentAccount.purpose !== 'funds';
+      const allowedKind = nextKind === currentAccount.kind || kindMigrated;
+      const allowedPurpose = nextPurpose === currentAccount.purpose || purposeMigrated;
+      const openingUnchanged = (['openingBalance', 'openingAssetId', 'balanceStartAt', 'balanceStartDate'] as const)
+        .every((key) => payload[key] === currentAccount[key]);
+      if (isDefaultAccount(currentAccount) && (kindMigrated || purposeMigrated) && allowedKind && allowedPurpose && openingUnchanged) {
+        await this.withValidatedRestore(['account:' + id], [], async (restore) => {
+          await restore.accounts.put({
+            ...currentAccount, ...payload, id,
+            createdAt: current.createdAt, updatedAt: current.updatedAt, version: current.version, isDeleted: false,
+          } as unknown as import('@zichan/core').Account);
+        });
+        return;
+      }
     }
     const incoming = type === 'setting' ? projectEntity(payload) : payload;
     await collection.put({
